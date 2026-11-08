@@ -389,7 +389,9 @@ def workspace_access(user_id: str, requested: str, default_ws: str) -> tuple[str
 def require_ws(request: Request, write: bool = False) -> str:
     """The workspace this session request works in (401 without a session,
     403 when the account is not a member — or is only a viewer and ``write``
-    is set). Cached on request.state as ``ws`` / ``ws_role``."""
+    is set; 423 for ``write`` while a delete holds the workspace,
+    ``workspaces.refuse_writes``). Cached on request.state as ``ws`` /
+    ``ws_role``."""
     user_id = signed_in(request)
     ws = getattr(request.state, "ws", None)
     if ws is None:
@@ -407,7 +409,16 @@ def require_ws(request: Request, write: bool = False) -> str:
     refusal = _write_refusal(request) if write else ""
     if refusal:
         raise HTTPException(status_code=403, detail=refusal)
+    if write:
+        _refuse_deleting(ws)
     return ws
+
+
+def _refuse_deleting(ws: str) -> None:
+    """WorkspaceDeleting (the app's 423) when a delete holds ``ws``."""
+    from . import workspaces  # local: workspaces imports seed, which imports db
+
+    workspaces.refuse_writes(ws)
 
 
 def _write_refusal(request: Request) -> str:
@@ -425,10 +436,13 @@ def can_write(request: Request) -> bool:
     """Whether the request may change its workspace — an editor or owner,
     and a write-scope token when it comes with one: the rule
     ``require_ws(write=True)`` enforces, for a caller that offers less
-    instead of refusing (the AI chat arms no mutating tools). 403 for a
-    non-member, like ``require_ws``."""
-    require_ws(request)
-    return not _write_refusal(request)
+    instead of refusing (the AI chat arms no mutating tools); false too
+    while a delete holds the workspace. 403 for a non-member, like
+    ``require_ws``."""
+    from . import workspaces  # local: workspaces imports seed, which imports db
+
+    ws = require_ws(request)
+    return not _write_refusal(request) and not workspaces.is_deleting(ws)
 
 
 def ws_role(request: Request) -> str | None:
@@ -790,7 +804,8 @@ def require_ws_writer(request: Request) -> str:
     the request's ?share= token grants edit, else the session's workspace
     with an editor or owner role. Endpoints that accept share editors must
     additionally confine every touched block to share_scope() — the
-    token never reaches the rest of the workspace."""
+    token never reaches the rest of the workspace. 423 while a delete
+    holds the workspace, either way."""
     if request.query_params.get("share"):
         grant = share_grant(request)
         if not grant:
@@ -799,6 +814,7 @@ def require_ws_writer(request: Request) -> str:
             require_ws(request, write=True)
         if grant[2] != "edit":
             raise HTTPException(status_code=403, detail="this share link is view-only")
+        _refuse_deleting(grant[0])
         return grant[0]
     return require_ws(request, write=True)
 
@@ -810,12 +826,14 @@ def require_commenter(request: Request, page_id: str) -> str:
     account a share admits, view or edit, confined to the share's pages.
     403 for a link visitor (no account to sign the comment with: "sign in
     to comment") and for an integration token without the write scope.
-    Whether the page is a page of the library is the writer's check."""
+    Whether the page is a page of the library is the writer's check. 423
+    while a delete holds the workspace."""
     ws = resolve_ws(request)
     if is_link_visitor(request):
         raise HTTPException(status_code=403, detail="sign in to comment")
     if is_token(request) and request.state.token_scope != "write":
         raise HTTPException(status_code=403, detail="this token is read-only")
+    _refuse_deleting(ws)
     scope = share_scope(request)
     if scope is not None:
         with connect_pages_db(ws) as conn:

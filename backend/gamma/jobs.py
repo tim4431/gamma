@@ -15,7 +15,8 @@ Starting one: the endpoint of the work authorizes the request, then calls
 runs in a worker thread with a ``Job`` handle and returns the result (a
 JSON value). It reports through ``job.progress(...)``, which raises
 ``Cancelled`` once the job was stopped, so every report is a place where the
-job can stop; ``stoppable=False`` marks the point after which it no longer
+job can stop (``Refused``, which fails it with a reason, once a delete took
+the workspace a ``writes`` job changes: ``refuse_writers``); ``stoppable=False`` marks the point after which it no longer
 can (a restore swapping the databases). A job that produces a file writes
 it to ``job.artifact_path`` and names the download with
 ``job.set_artifact``. An exception fails the job with its message. What a
@@ -88,6 +89,11 @@ class Cancelled(BaseException):
     Exception`` (an import skipping one bad item) never swallows it."""
 
 
+class Refused(Cancelled):
+    """Raised in a job's run by ``Job.progress`` once ``refuse_writers``
+    stopped it: the job ends failed, saying why (its message)."""
+
+
 class Busy(Exception):
     """``start`` found the same work already queued or running — the same
     owner, kind and key. ``job`` is that job."""
@@ -151,10 +157,13 @@ class _Live:
     ``progress`` (always a new dict) and ``artifact``; ``state`` and
     ``started_at`` change under ``_lock``."""
 
-    def __init__(self, row: dict, run, ended=None):
+    def __init__(self, row: dict, run, ended=None, writes: bool = False):
         self.id = row["id"]
         self.kind = row["kind"]
         self.owner = row["owner"]
+        self.ws = row["workspace_id"]
+        self.writes = writes
+        self.refused = ""  # why refuse_writers stopped it
         self.key = row["key"]
         self.created_at = row["created_at"]
         self.run = run
@@ -208,10 +217,10 @@ class Job:
             # point or is refused, never accepted and then ignored
             with _lock:
                 if live.stoppable and live.cancel.is_set():
-                    raise Cancelled()
+                    raise Refused(live.refused) if live.refused else Cancelled()
                 live.stoppable = False
         if live.stoppable and live.cancel.is_set():
-            raise Cancelled()
+            raise Refused(live.refused) if live.refused else Cancelled()
 
 
 def no_progress(**_) -> None:
@@ -307,7 +316,8 @@ def for_account(owner: str, ws: str = "") -> list[dict]:
 # --- starting and running -------------------------------------------------------------
 
 def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: dict | None = None,
-          key: str = "", artifact: bool = False, ended=None, kept: dict[str, bytes] | None = None) -> dict:
+          key: str = "", artifact: bool = False, ended=None, kept: dict[str, bytes] | None = None,
+          writes: bool = False) -> dict:
     """Queue ``run(job)`` as a job of ``kind`` for ``owner`` (an account's
     id, or ``WORKSPACE`` for a workspace's own work) and return it. ``key``: work
     already queued or running for the same owner, kind and key raises
@@ -321,7 +331,9 @@ def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: 
     what a run needs that ``params`` cannot hold, read back with
     ``kept(id, name)`` by the run or by a later start of the same work.
     They count against the account's share like a finished file (507 past
-    it), so a job that fails at once still cannot pile them up."""
+    it), so a job that fails at once still cannot pile them up. ``writes``:
+    the run changes workspace ``ws`` (an import, a restore, a metadata
+    lookup), so a delete of it stops the job first (``refuse_writers``)."""
     with _lock:
         if key:
             for other in _live.values():
@@ -349,7 +361,7 @@ def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: 
             conn.execute(f"INSERT INTO jobs ({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})",
                          tuple(row.values()))
             conn.commit()
-        live = _Live(row, run, ended)
+        live = _Live(row, run, ended, writes)
         _live[live.id] = live
         _pump()
     return get(live.id)
@@ -434,6 +446,9 @@ def _work(live: _Live) -> None:
             part.replace(final)
             artifact = {"artifact_name": live.artifact[0], "artifact_type": live.artifact[1],
                         "artifact_size": final.stat().st_size}
+    except Refused as exc:
+        state, error = "failed", str(exc)[:500]
+        log.warning(f"[jobs] {live.kind} {live.id} refused: {exc}")
     except Cancelled:
         state = "cancelled"
     except Exception as exc:  # noqa: BLE001 — every failure ends the job with its message
@@ -486,6 +501,36 @@ def cancel(job_id: str) -> dict | None:
                 raise HTTPException(status_code=409, detail="this task can no longer be stopped")
             live.cancel.set()
     return get(job_id)
+
+
+def refuse_writers(ws_ids, why: str, progress=no_progress, poll: float = 0.05) -> list[str]:
+    """Stop the jobs of this process that change one of ``ws_ids`` (started
+    with ``writes``) and wait until they have ended: what a delete does
+    before its final copy, so no import, restore or lookup goes on writing
+    into a workspace whose copy is being made. A queued one fails at once,
+    a running one at its next progress report (``Refused``), both saying
+    ``why``; one past its last stop is waited for, so what it wrote is in
+    the copy. ``progress`` (the delete's own report) is called while it
+    waits, so the delete can still be stopped. Returns the stopped jobs'
+    ids."""
+    ws_ids = set(ws_ids)
+    with _lock:
+        writers = [live for live in _live.values() if live.writes and live.ws in ws_ids]
+        for live in writers:
+            if live.state == "queued":
+                _update(live.id, state="failed", error=why[:500], finished_at=page_now())  # the row first, as in _work
+                live.state = "failed"
+                _live.pop(live.id, None)
+            elif live.stoppable:
+                live.refused = why
+                live.cancel.set()
+    ids = [live.id for live in writers]
+    for live in writers:
+        log.info(f"[jobs] {live.kind} {live.id}: stopped, {why}")
+    while any(job_id in _live or job_id in _ending for job_id in ids):
+        progress()
+        time.sleep(poll)
+    return ids
 
 
 def dismiss(job_id: str) -> bool:

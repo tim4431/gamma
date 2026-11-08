@@ -697,11 +697,16 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     }
     // Refused for good (malformed, not allowed any more): this batch is
     // dropped and the page refetched to show what the server holds; the
-    // rest of the queue still goes out.
+    // rest of the queue still goes out. A workspace being deleted (423,
+    // `workspace_deleting`) takes no edit any more: App, told by the fetch
+    // wrapper, turns the tab read-only and says why on the status line, so
+    // the dropped edit is only the save notice's.
     forget(s, batch.ops);
     s.out = null;
-    const text = t("Save rejected: {message}", { message: err?.message || "" });
-    o().onStatus?.(text);
+    const deleting = status === 423 && data.error === "workspace_deleting";
+    const text = deleting ? t("This workspace is being deleted, so that edit was not saved.")
+      : t("Save rejected: {message}", { message: err?.message || "" });
+    if (!deleting) o().onStatus?.(text);
     o().onSaveNotice?.(text, "rejected");
     if (s === st.session) o().onReload?.(page);
     return null;

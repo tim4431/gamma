@@ -528,8 +528,44 @@ admin demoted while the copy was written is refused there and the copy
 goes again. A guest's workspaces, which get no copy, are not held, so a guest's
 logout racing its expiry stays harmless. A snapshot of the workspace being
 written finishes before the snapshot folder goes, and one that waited for
-it finds the workspace gone (`ws_backup.remove_all`, `create`). Changes
-made in the workspace while its copy is written are not in the copy.
+it finds the workspace gone (`ws_backup.remove_all`, `create`).
+
+A workspace a delete holds takes no more changes, since one made while
+its copy is written would be in neither the copy nor anywhere else once
+the rows go (`workspaces.refuse_writes`). The write gates refuse them:
+`auth.require_ws(write=True)`, `require_ws_writer` (an edit share too)
+and `require_commenter`, and a restore or a merge into it
+(`ws_backup.restore_zip`), each with 423 `{detail, error:
+"workspace_deleting", workspace}` and the header
+`X-Gamma-Workspace-Deleting` (the app's `WorkspaceDeleting` handler);
+`auth.can_write` answers false, so the AI chat arms no mutating tools,
+and a chat turn that armed them before the delete has each changing tool
+call refused (`ai_tools.run_agent_tool`). Work that passed its gate
+before is stopped too: the delete's job, before its final copy, stops the
+background jobs that change the workspace (started with `writes=True`:
+imports, restores, metadata lookups, transcriptions, highlight runs;
+`jobs.refuse_writers`), a queued one at once and a running one at its
+next progress report, each failed saying the workspace is being deleted,
+and waits for one past its last stop, so what it wrote is in the copy.
+Reads, exports, the delete's own Stop and a person's preferences go on.
+The session's listing marks the workspace `deleting`. The web app's fetch
+wrapper and `xhrUpload` turn the header into a `gamma-workspace-deleting`
+event, on which the tab that has the workspace open acts as a viewer of it
+(`workspaceRoles.actingRole`: the notes, the library and the chats read
+only) and says on a pill that stays that changes are no longer saved, with
+a Reload (`app/useWorkspaceDeleting.js`). A tab that opens it meanwhile
+starts that way, from the listing. A share view does the same: the
+refusal marks its share as read-only (`workspaceRoles.shareDeleting`), so
+every page it opens next stays read-only and the pill stays, and one
+opened meanwhile is told by `GET /share/{token}` (`deleting: true`,
+`can_edit: false`). A stopped delete lets the workspace go
+and it takes changes again; a reload brings the editing back. The edit
+the server refused is dropped and the page refetched
+([collab.md](collab.md)). Not held: a request already past its gate as
+the delete starts, until it answers, and an AI tool call already running,
+either of which can land after the copy read the database, and the
+background rounds (a clone's fill, a Zotero link's, the indexer), whose
+changes come from elsewhere.
 
 The directory is then renamed to `.deleting-<id>-…` (atomic, so a
 background pass about to open one of its databases finds none instead of

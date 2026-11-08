@@ -222,6 +222,50 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await ctx.close();
   });
 
+  // A workspace being deleted takes no more changes (docs/dev/workspaces.md
+  // "Deleting a workspace"), and an edit share's visitor learns so from the
+  // refused edit: the share view turns read-only on that page and on every
+  // page it opens next, the pill saying why. The refusal is routed in, in
+  // the server's shape (a real delete of a small workspace is over first).
+  await step("folder share: an edit refused because the workspace is being deleted keeps the share view read-only", async () => {
+    const notes = [];
+    for (const title of ["Frozen share paper A", "Frozen share paper B"]) {
+      const paper = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } });
+      await alice.file(paper.id, { folders: ["freezelab"] });
+      await alice.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: `A note of ${title}` } });
+      notes.push(paper);
+    }
+    const freezelab = await alice.folder("freezelab");
+    const { token } = await alice.api(`/api/share/folder/${freezelab}`, { method: "POST", body: { audience: "anyone", role: "edit" } });
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    await ctx.route(/\/api\/pages\/[^/?]+\/ops\?/, (route) => (route.request().method() !== "POST" ? route.fallback() : route.fulfill({
+      status: 423, headers: { "X-Gamma-Workspace-Deleting": alice.ws },
+      json: { detail: "“Home” is being deleted and takes no more changes", error: "workspace_deleting", workspace: alice.ws },
+    })));
+    try {
+      const v = await openPage(ctx, `${server.base}/?share=${token}&page=${notes[0].id}`);
+      await until(async () => (await v.textContent("body")).includes("Can edit"), { what: "edit badge" });
+      await editRow(v, "A note of Frozen share paper A");
+      await v.keyboard.type(" and after");
+      await closeEditor(v);
+      const pill = v.locator(".statusPill", { hasText: "This workspace is being deleted, so changes are no longer saved." });
+      await pill.getByRole("button", { name: "Reload", exact: true }).waitFor();
+      await v.locator(".blockRow", { hasText: "A note of Frozen share paper A and after" }).waitFor({ state: "detached" });
+      await until(async () => (await v.textContent("body")).includes("View only"), { what: "the badge says view only" });
+      // the next page of the folder opens read-only too, and the pill stays
+      await v.locator(".shareCrumbs .crumbBtn", { hasText: "freezelab" }).click();
+      await v.locator(".fileRow", { hasText: "Frozen share paper B" }).dblclick();
+      await v.locator(".blockRow", { hasText: "A note of Frozen share paper B" }).waitFor({ timeout: 15000 });
+      await pill.waitFor();
+      await v.locator(".blockRow", { hasText: "A note of Frozen share paper B" }).locator(".blockBody").click();
+      await sleep(300);
+      assertEq(await v.locator(".blockEditorCm").count(), 0, "no editor opens on the next page");
+      assert(same(await tree(alice, notes[0].id), [{ content: "A note of Frozen share paper A", children: [] }]), "nothing was saved");
+      assertNoProblems(v, [/\/ops\?.* -> 423$/, /status of 423/]);
+    } finally { await ctx.close(); }
+    await alice.api(`/api/share-settings/folder/${freezelab}`, { method: "DELETE" });
+  });
+
   await step("folder share: Add to my library, and the link pasted into another Gamma's +, copy the folder to the top level", async () => {
     const paper = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Copied folder paper" } });
     await alice.file(paper.id, { folders: ["privatetop/copylab"] });

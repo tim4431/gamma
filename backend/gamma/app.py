@@ -388,6 +388,14 @@ def create_app() -> FastAPI:
         # answers the inviter with the status the failure carries.
         return JSONResponse({"detail": str(exc)}, status_code=exc.status)
 
+    @app.exception_handler(workspaces.WorkspaceDeleting)
+    async def workspace_deleting(request: Request, exc: workspaces.WorkspaceDeleting):
+        # A change to a workspace a delete holds (workspaces.refuse_writes):
+        # the 423 with a code a script can test beside its header, which
+        # the web app's fetch wrapper turns the tab read-only on.
+        return JSONResponse({"detail": exc.detail, "error": "workspace_deleting", "workspace": exc.ws},
+                            status_code=exc.status_code, headers=exc.headers)
+
     app.middleware("http")(read_only_gate)  # added first: runs inside the session middleware
     app.middleware("http")(session_middleware)
     app.add_middleware(JsonGzip)  # outermost: compresses what the rest answered

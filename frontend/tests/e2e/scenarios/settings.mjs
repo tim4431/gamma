@@ -1790,6 +1790,37 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // A workspace being deleted takes no more changes (docs/dev/workspaces.md
+  // "Deleting a workspace"): the server refuses an edit with a 423 that names
+  // it, and the tab turns read-only and says so on a pill that stays. The
+  // refusal is routed in, in the server's shape: a real delete's final copy
+  // of a small workspace is over before a step could type into it.
+  await step("settings: an edit refused because the workspace is being deleted turns the tab read-only", async () => {
+    const ws = (await user.api("/api/session")).default_workspace;
+    const doc = await user.api("/api/pages", { method: "POST", body: { title: "Frozen notes" } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: doc.id, content: "Written before the delete" } });
+    const { ctx, page } = await setup(undefined, (context) => context.route("**/api/pages/*/ops", (route) => (
+      route.request().method() !== "POST" ? route.fallback() : route.fulfill({
+        status: 423, headers: { "X-Gamma-Workspace-Deleting": ws },
+        json: { detail: "“Home” is being deleted and takes no more changes", error: "workspace_deleting", workspace: ws },
+      }))));
+    try {
+      await page.goto(`${server.base}/?block=${doc.id}&ws=${ws}`);
+      await editRow(page, "Written before the delete");
+      await page.keyboard.type(" and after");
+      await closeEditor(page);
+      await page.locator(".statusPill", { hasText: "This workspace is being deleted, so changes are no longer saved." })
+        .getByRole("button", { name: "Reload", exact: true }).waitFor();
+      // read-only now: the refused edit went from the screen, and a note opens no editor
+      await page.locator(".blockRow", { hasText: "Written before the delete and after" }).waitFor({ state: "detached" });
+      await page.locator(".blockRow", { hasText: "Written before the delete" }).first().locator(".blockBody").click();
+      await sleep(300);
+      assertEq(await page.locator(".blockEditorCm").count(), 0, "no editor opens in a workspace being deleted");
+      assert(same(await tree(user, doc.id), [{ content: "Written before the delete", children: [] }]), "nothing was saved");
+      assertNoProblems(page, [/\/ops -> 423$/, /status of 423/]);
+    } finally { await ctx.close(); }
+  });
+
   // Settings → Maintenance: the batch metadata lookup is a background job
   // (kind metadata) — closing Settings right after starting it does not stop
   // it. Note pages that carry a record but no PDF text: their lookup finds

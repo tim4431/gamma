@@ -50,7 +50,7 @@ def transcribe(payload: TranscribeRequest, request: Request):
     transcriber_for(user_id)  # its 503 now, not as the job's failure
     title = " ".join((content or "").split())[:80] or "Recording"
     try:
-        return jobs.start("transcribe", owner=user_id, ws=ws, key=block_id, title=f"Transcribe “{title}”",
+        return jobs.start("transcribe", owner=user_id, ws=ws, key=block_id, title=f"Transcribe “{title}”", writes=True,
                           params={"block_id": block_id, "page_id": page_id, "title": title},
                           run=lambda job: transcribe_job(job, ws, user_id, block_id, payload.model,
                                                          payload.language))

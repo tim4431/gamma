@@ -5126,6 +5126,12 @@ def approval_preview(ws: str, scope: dict, name: str, args: dict) -> tuple:
         return None, f"error: {e}"
 
 
+def _deleting(ws: str) -> bool:
+    from .workspaces import is_deleting  # local: workspaces imports seed, which imports db
+
+    return is_deleting(ws)
+
+
 def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
                    *, allowed_tools=None, approved: str = "") -> tuple[str, dict]:
     """Execute one tool call against a trusted, caller-resolved workspace/scope.
@@ -5158,6 +5164,12 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
         return result, tool_action("error", result[:200], name, args, result, error=True)
     if tool["mutating"] and not scope.get("can_write", True):
         result = "error: you can only view this workspace — no changes are possible"
+        return result, tool_action("error", result[:200], name, args, result, error=True)
+    if tool["mutating"] and _deleting(ws):
+        # a turn that began before the workspace's delete: its tools were
+        # armed then, its changes would be in neither the final copy nor
+        # anywhere else (workspaces.refuse_writes)
+        result = "error: this workspace is being deleted — no changes are possible"
         return result, tool_action("error", result[:200], name, args, result, error=True)
     permitted = {s["name"] for s in agent_tools(scope.get("type") or "", allowed_tools=allowed_tools,
                                                 has=available(scope))}

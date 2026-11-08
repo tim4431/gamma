@@ -355,7 +355,8 @@ def start_import_job(payload: ImportJob, request: Request):
                 pass  # already gone (expired)
 
     try:
-        started = jobs.start("import", owner=user_id, ws=ws, key=token, run=run, title=f"Import {metadata['filename']}",
+        started = jobs.start("import", owner=user_id, ws=ws, key=token, run=run, writes=True,
+                             title=f"Import {metadata['filename']}",
                              params={"review_id": token, "source": metadata["source"], "filename": metadata["filename"],
                                      "folder": metadata["folder"], "size": upload.stat().st_size,
                                      "selected": len(selection), "digest": digest})

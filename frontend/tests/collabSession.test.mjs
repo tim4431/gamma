@@ -289,6 +289,21 @@ test("a rejected batch is dropped and the page reloads", async (t) => {
   assert.equal(h.session.hasPending(), false);
 });
 
+test("a batch refused because the workspace is being deleted is dropped, said once, and not retried", async (t) => {
+  const h = setup(t, async () => {
+    const e = new Error("“Lab” is being deleted and takes no more changes");
+    e.status = 423; e.data = { detail: e.message, error: "workspace_deleting", workspace: "ws1" };
+    throw e;
+  });
+  h.edit([block("a", "mine"), block("b")]);
+  await h.session.flush();
+  assert.deepEqual(h.status, [], "the status line is App's, which turns the tab read-only");
+  assert.deepEqual(h.notices, [["rejected", "This workspace is being deleted, so that edit was not saved."]]);
+  assert.deepEqual(h.reloads, ["page-a"]);
+  assert.equal(h.session.hasPending(), false);
+  assert.equal(h.timers.size, 0, "no retry is armed");
+});
+
 test("a batch refused for a block the server lacks sends that block again, subtree and all", async (t) => {
   // The tab holds "c" (with a child) that never reached the server — its
   // insert was lost. The edit to it is refused; the next POST re-creates it.

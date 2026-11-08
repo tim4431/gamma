@@ -601,7 +601,7 @@ def _start_relocation(owner: str, ws: str, page_id: str, title: str, new_doc: st
 
     try:
         return jobs.start(RELOCATE, owner=owner, ws=ws, key=f"{page_id}:{new_doc}", params=params, run=run,
-                          ended=ended, title=f"Placing the highlights of “{name}”"), ""
+                          ended=ended, title=f"Placing the highlights of “{name}”", writes=True), ""
     except jobs.Busy as busy:
         if not busy.job.get("stopping"):
             return busy.job, ""

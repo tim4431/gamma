@@ -314,7 +314,7 @@ def start_restore(request: Request, file: UploadFile = File(...), mode: str = Fo
             finally:
                 zpath.unlink(missing_ok=True)
 
-        return jobs.start("restore", owner=me, ws=target, run=run, title=f"Restore {filename}",
+        return jobs.start("restore", owner=me, ws=target, run=run, title=f"Restore {filename}", writes=True,
                           params={"ws": target, "name": _name_of(target), "mode": mode, "source": "upload",
                                   "filename": filename, "size": zpath.stat().st_size})
     except BaseException:
@@ -396,7 +396,7 @@ def finish_restore_parts(token: str, request: Request):
                 pass  # already gone (expired)
 
     try:
-        return jobs.start("restore", owner=me, ws=target, run=run, title=f"Restore {filename}",
+        return jobs.start("restore", owner=me, ws=target, run=run, title=f"Restore {filename}", writes=True,
                           params={"ws": target, "name": _name_of(target), "mode": mode, "source": "upload",
                                   "filename": filename, "size": meta["size"]})
     except BaseException:
@@ -432,7 +432,7 @@ def start_snapshot_restore(payload: SnapshotRestoreJob, request: Request):
     def run(job):
         return ws_backup.restore_zip(ws, path, mode, by=me, progress=job.progress)
 
-    return jobs.start("restore", owner=me, ws=ws, run=run, title=f"Restore of {_name_of(ws)}",
+    return jobs.start("restore", owner=me, ws=ws, run=run, title=f"Restore of {_name_of(ws)}", writes=True,
                       params={"ws": ws, "name": _name_of(ws), "mode": mode, "source": "snapshot",
                               "snapshot": payload.name, "snapshot_at": snapshot.get("created_at", "")})
 

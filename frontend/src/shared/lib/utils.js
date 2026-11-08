@@ -95,6 +95,18 @@ function getExpectedUser() {
 // Auth endpoints legitimately inspect or change the session — never guard them.
 const AUTH_PATHS = new Set([`${API}/login`, `${API}/login-guest`, `${API}/logout`, `${API}/session`]);
 
+// A change refused because its workspace is being deleted (423 with
+// X-Gamma-Workspace-Deleting, docs/dev/workspaces.md "Deleting a
+// workspace"): the window hears gamma-workspace-deleting {workspace}, on
+// which App turns the tab read-only and says why. The fetch wrapper and
+// xhrUpload both ask; `header(name)` reads the answer's header.
+const DELETING_HEADER = "X-Gamma-Workspace-Deleting";
+function noteDeletingWorkspace(status, header) {
+  const ws = status === 423 ? header(DELETING_HEADER) : null;
+  if (ws === null || ws === undefined) return;
+  window.dispatchEvent(new CustomEvent("gamma-workspace-deleting", { detail: { workspace: ws } }));
+}
+
 const rawFetch = window.fetch.bind(window);
 // A same-origin API path, whether the caller wrote it relative or absolute —
 // pdf.js resolves the URL it is given against the document before fetching,
@@ -138,6 +150,7 @@ window.fetch = function (input, options) {
         { detail: { user: who } },
       ));
     }
+    noteDeletingWorkspace(r.status, (name) => r.headers.get(name));
     if (!isApi) return;
     const elapsed = Math.round(performance.now() - started);
     if (r.ok && !AUTH_PATHS.has(path) && elapsed < 2000) return;
@@ -414,4 +427,4 @@ async function readNdjson(res, onBatch) {
   }
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, isUnverifiedPaperMeta, metaSourceInfo, apiJson, apiError, proxyRefusal, setShareView, getShareToken, withShare, withWorkspace, blockLinkUrl, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, attachmentViewerUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson, downloadFetched };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, isUnverifiedPaperMeta, metaSourceInfo, apiJson, apiError, proxyRefusal, noteDeletingWorkspace, setShareView, getShareToken, withShare, withWorkspace, blockLinkUrl, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, attachmentViewerUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson, downloadFetched };

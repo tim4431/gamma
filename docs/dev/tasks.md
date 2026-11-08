@@ -65,7 +65,13 @@ marks the point after which the job can no longer stop; a restore reports
 it just before it swaps or merges the databases, a delete once its final
 copy is written. That report is the last place to stop: a stop that landed
 before it raises there (`cancel` and the report decide under one lock), so
-a stop the interface took is never ignored. A job that writes a file
+a stop the interface took is never ignored. A job started with
+`writes=True` changes its workspace (an import, a restore, a metadata
+lookup, a transcription, a highlight run): a delete of that workspace
+stops it before its final copy (`jobs.refuse_writers`), a queued one at
+once and a running one at its next report, which raises `jobs.Refused` (a
+`Cancelled` that fails the job with the reason), and waits for one past
+its last stop. A job that writes a file
 writes it to `job.artifact_path` and names the download with
 `job.set_artifact(name, media_type)`. An exception fails the job: an
 `HTTPException`'s detail, a `ValueError` or an `OSError` is the message as
@@ -230,7 +236,10 @@ asking for the same workspace's or account's delete again is answered
 with the job, which the web app then follows. Who may delete is checked
 as a delete starts, again as it runs and once more at its point of no
 return, under the users.db write lock with the first write, so a
-demotion or another delete that came first wins. Neither delete kind has a
+demotion or another delete that came first wins. While a delete runs, its
+workspaces take no more changes (423 `workspace_deleting`), and before
+its final copy it stops their `writes` jobs, which fail saying the
+workspace is being deleted ([workspaces.md](workspaces.md) "Deleting a workspace"). Neither delete kind has a
 `retry`: starting one again goes through its confirmation. A server
 snapshot's download (`GET /admin/backups/{name}/download`) is no job: it
 streams the zip as it is made, so the browser's download starts at once and
@@ -439,7 +448,9 @@ page or folder by link").
   and the indexer in `test_search.py`. `test_delete_jobs.py` covers the
   delete kinds (a stop during the final copy and just after it deletes
   nothing, none after it, the refusals, a second start of either kind, the
-  check at the point of no return, two admins deleting each other), the database
+  check at the point of no return, two admins deleting each other, the
+  workspace taking no more changes while its delete runs, from requests,
+  a share, the AI's tools and the jobs that change it), the database
   check and the streamed snapshot download; `test_backup_safety.py` the
   final copy itself and the delete holds.
 - Frontend: `tests/tasks.test.mjs` covers the model and kinds (the share view's follow rounds too),
@@ -452,9 +463,11 @@ page or folder by link").
   reads it, opened from its row and imported, and one cancelled. The settings group covers a workspace export
   that downloads itself and a merged backup that reloads the library. The
   files group covers an upload stopped from the tray. The settings group
-  also deletes a workspace through its job and runs the database check
+  also deletes a workspace through its job, turns a tab read-only on an
+  edit refused for a workspace being deleted, and runs the database check
   as one; the trash group deletes twelve selected pages as a batch, in one request.
-  The notes-pdf-share group exports a shared page and a shared folder from
+  The notes-pdf-share group keeps a folder share's view read-only from
+  page to page after an edit refused for a workspace being deleted, and exports a shared page and a shared folder from
   the share view as the share's jobs, the folder's gone with its share,
   and one whose share is stopped while it runs ends as failed in the
   dialog, the tab asking no more.

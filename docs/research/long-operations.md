@@ -115,12 +115,12 @@ again).
 - **The Server pane's backup list** stats every file of every snapshot on
   each listing (`backups._dir_size`); the size could live in the
   snapshot's manifest.
-- **Edits during a delete's final copy** are in neither the copy nor
-  anywhere else once the rows go. Members other than the one deleting can
-  keep editing for the minutes the zip takes. Refusing writes to a
-  workspace being deleted would close it, but the web app learns it may
-  only read from the session's role, not from the page socket, so a
-  refusal mid-session would surface as failed saves; left open.
+- **Edits during a delete's final copy** were in neither the copy nor
+  anywhere else once the rows went. Members other than the one deleting
+  could keep editing for the minutes the zip takes. The web app learned it
+  may only read from the session's role, not from the page socket, so a
+  refusal mid-session would have surfaced as failed saves. Closed below
+  (2026-11-08).
 
 ## Decided
 
@@ -259,17 +259,34 @@ stay, for scripts, the fixed bibliography link and another Gamma's import
 by link, which fetches a whole shared folder as one Gamma export in one
 request and can still be cut on a big one.
 
+A workspace being deleted takes no more changes (2026-11-08). From the
+moment its delete runs, the write gates (`require_ws(write=True)`, an edit
+share's, a comment's, a restore or merge into it) refuse every change
+with 423 `workspace_deleting` and the `X-Gamma-Workspace-Deleting`
+header, and the session lists the workspace `deleting`. The web app
+learns it from the first refused write: the fetch wrapper raises an
+event, and the tab acts as a viewer of the workspace and says on a pill
+that stays that changes are no longer saved; the refused edit is dropped
+and the page refetched. A share view keeps that from page to page, and
+the share's own answer says so to one opened meanwhile. Work that passed
+its gate before the delete is stopped too: the delete stops the jobs that
+change the workspace (imports, restores, metadata lookups, transcriptions,
+highlight runs) before its final copy, failing them with the reason, and
+an AI turn's changing tools are refused at each call. A stopped delete
+lets the workspace go again. A request or an AI tool call already running
+as the delete starts, and the background rounds (a clone's, a Zotero
+link's), are not held
+([dev/workspaces.md](../dev/workspaces.md) "Deleting a workspace").
+
 ## Still open
 
 In the order they matter:
 
-1. A workspace being deleted taking no more changes (above), which needs
-   the web app to learn a lost write right mid-session.
-2. Another Gamma importing a big shared folder by its link: one GET of
+1. Another Gamma importing a big shared folder by its link: one GET of
    the folder's Gamma export, which a proxy can cut (above). The share
    job is there to use, but the importing tab would have to follow a job
    on the other server across origins.
-3. Smaller: a folder link's round shows no progress while it sends PDFs
+2. Smaller: a folder link's round shows no progress while it sends PDFs
    back, nor within one large PDF it fetches; a publish that only
    changes the audience still runs a full round; unlinking Zotero clears
    marks page by page; the health table's and the backup list's scans

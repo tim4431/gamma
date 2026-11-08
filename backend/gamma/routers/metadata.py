@@ -1805,7 +1805,7 @@ def metadata_batch(payload: MetaBatchRequest, request: Request):
         batch = _Batch(key)
         batch.add(papers, payload.force, options)
         job = jobs.start("metadata", owner=user_id, ws=ws, run=lambda job: batch.run(job, ws, user_id),
-                         title="Paper metadata lookup", params={"papers": len(papers)})
+                         title="Paper metadata lookup", params={"papers": len(papers)}, writes=True)
         batch.job_id = job["id"]
         _batches[key] = batch
     return job

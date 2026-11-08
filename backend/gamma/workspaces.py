@@ -52,6 +52,8 @@ import time
 from contextlib import contextmanager
 from functools import partial
 
+from fastapi import HTTPException
+
 from . import collab, jobs, storage
 from .config import WORKSPACES_DIR
 from .db import (account_name, close_workspace_connections, connect_users_db, delete_email_invites, delete_shares,
@@ -86,9 +88,29 @@ class FinalCopyError(ValueError):
     background job says it as it stands (gamma/jobs.py)."""
 
 
+# The header a refused change names its workspace in: the web app's fetch
+# wrapper turns the tab read-only on it (frontend/src/shared/lib/utils.js).
+DELETING_HEADER = "X-Gamma-Workspace-Deleting"
+
+
+class WorkspaceDeleting(HTTPException):
+    """A change to a workspace a delete holds (``refuse_writes``): it would
+    be in neither the final copy nor anywhere else once the rows go. A 423
+    carrying the ``X-Gamma-Workspace-Deleting`` header, which the app's
+    handler answers with ``error: workspace_deleting`` too (gamma/app.py);
+    an HTTPException, so a route's ``except ValueError`` lets it through and
+    a job that meets it says its detail."""
+
+    def __init__(self, ws: str):
+        super().__init__(status_code=423, detail=f"“{_label(ws)}” is being deleted and takes no more changes",
+                         headers={DELETING_HEADER: ws})
+        self.ws = ws
+
+
 # The workspaces a delete is copying or removing right now: a second delete
 # of one of them (another owner's, an admin's, an account's) is refused
-# instead of zipping it again. In this process, which runs every request and
+# instead of zipping it again, and so is every change to them
+# (``refuse_writes``). In this process, which runs every request and
 # job; ``manage.py delete-user`` in a process of its own is not covered.
 _deleting: set[str] = set()
 _deleting_lock = threading.Lock()
@@ -200,7 +222,7 @@ def list_for_user(user_id: str) -> list[dict]:
     non-guest account, every public workspace: ``[{id, name, kind, role,
     access, public_role, created_by, created_at, members, personal,
     default, mirror_of, mirror_detached, publishing, zotero_of,
-    zotero_detached}]``, personal ones first (the default at the top), then
+    zotero_detached, deleting}]``, personal ones first (the default at the top), then
     by name. ``members`` counts explicit members; ``mirror_of`` names the
     remote workspace a mirror follows ("" otherwise, and while it is
     detached); ``mirror_detached`` is true for a whole-workspace clone that
@@ -214,7 +236,9 @@ def list_for_user(user_id: str) -> list[dict]:
     token, for the next publish) but is invisible: nothing is published.
     ``zotero_of`` names the Zotero library a link keeps the workspace in
     step with (gamma/zotero_sync.py), "" when there is none or it is
-    detached; ``zotero_detached`` is true for a detached one."""
+    detached; ``zotero_detached`` is true for a detached one. ``deleting``
+    is true while a delete holds it, when it takes no more changes
+    (``refuse_writes``)."""
     with connect_users_db() as conn:
         me = conn.execute(
             "SELECT default_workspace, is_guest FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -242,7 +266,8 @@ def list_for_user(user_id: str) -> list[dict]:
             continue
         out.append({**info, "role": role, "members": r[9], "personal": info["kind"] == "personal",
                     "default": info["id"] == default, "mirror_of": r[10] or "", "mirror_detached": bool(r[14]),
-                    "publishing": bool(r[11]), "zotero_of": r[12] or "", "zotero_detached": bool(r[13])})
+                    "publishing": bool(r[11]), "zotero_of": r[12] or "", "zotero_detached": bool(r[13]),
+                    "deleting": info["id"] in _deleting})
     out.sort(key=lambda w: (not w["personal"], not w["default"], w["name"].lower()))
     return out
 
@@ -679,14 +704,19 @@ def keep_final_copies(ws_ids, *, by: str = "", progress=jobs.no_progress) -> lis
     all or none: when one cannot be written, the copies already made go
     again and FinalCopyError says which workspace, before anything is
     deleted; a stop (``progress`` raising jobs.Cancelled) takes them along
-    too. ``progress`` hears each copy's bytes, the workspace's name as the
-    item. Returns the copies' file names ("" for a guest's workspace)."""
+    too. Before each copy, the background jobs still changing that
+    workspace (an import, a restore, a metadata lookup started before the
+    delete) are stopped and waited for (``jobs.refuse_writers``), so none
+    writes past the copy. ``progress`` hears each copy's bytes, the
+    workspace's name as the item. Returns the copies' file names ("" for a
+    guest's workspace)."""
     from . import ws_backup  # local: ws_backup imports seed → db
 
     done = []
     try:
         for ws in ws_ids:
             label = _label(ws)
+            jobs.refuse_writers([ws], WorkspaceDeleting(ws).detail, partial(progress, phase="keeping", item=label))
             try:
                 done.append(ws_backup.keep_final_copy(ws, by=by, progress=partial(progress, phase="keeping", item=label)))
             except ws_backup.BackupError as e:
@@ -714,6 +744,20 @@ def _label(ws: str) -> str:
 def is_deleting(ws: str) -> bool:
     """Whether a delete is copying or removing the workspace right now."""
     return ws in _deleting
+
+
+def refuse_writes(ws: str) -> None:
+    """WorkspaceDeleting when a delete holds ``ws``: from the moment its job
+    runs (the final copy) until it is stopped or the workspace is gone, the
+    workspace takes no more changes. The write gates call it
+    (``auth.require_ws(write=True)``, ``require_ws_writer``,
+    ``require_commenter``), and so does a restore or a merge into it
+    (``ws_backup.restore_zip``); the AI's changing tools ask
+    ``is_deleting`` at each call (``ai_tools.run_agent_tool``), and the
+    delete stops the jobs that change the workspace before its final copy
+    (``keep_final_copies``)."""
+    if ws in _deleting:
+        raise WorkspaceDeleting(ws)
 
 
 def _refuse_held(ws_ids) -> None:

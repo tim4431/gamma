@@ -732,6 +732,10 @@ poll (`hidden`), and `peers` / `me` as React state. The session owns:
     signs in again. Typing meanwhile queues behind it;
   - anything else (malformed, not allowed any more): that batch alone is
     dropped, what was queued after it still goes, and the page is refetched.
+    A 423 `workspace_deleting` (the workspace is being deleted,
+    [workspaces.md](workspaces.md) "Deleting a workspace") is dropped the
+    same way, with the "rejected" notice saying why and nothing on the
+    status line, which App's notice holds as it turns the tab read-only.
   While edits wait, a notice says why in words ("Not saved yet — the server
   can't be reached. Retrying…", never the browser's "Failed to fetch"):
   `onSaveNotice(text, "pending")`, a "save" pill in App that goes when the

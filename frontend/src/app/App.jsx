@@ -134,7 +134,7 @@ import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
 import { commandById, commandChord } from "./commands.js";
 import { CommandMenuItem } from "./CommandMenuItem.jsx";
 import { loadSession, saveSession, clearSession, setSessionScope } from "./sessionState";
-import { ROLE_LABEL, workspaceMeta } from "../settings/workspaceRoles.js";
+import { ROLE_LABEL, actingRole, workspaceMeta } from "../settings/workspaceRoles.js";
 import { LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage, cloudOutcomeInUrl } from "../auth/LoginPage";
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
@@ -161,6 +161,7 @@ import { picturesDrag } from "../markup/pictureUpload.js";
 import { usePictures } from "../markup/usePictures";
 import { inkBounds } from "../ink/ink";
 import { useBuildFence } from "../ink/buildFence.js";
+import { useWorkspaceDeleting } from "./useWorkspaceDeleting.js";
 import { useInkStrip } from "../ink/useInkStrip.js";
 import { useInkLive } from "../ink/useInkLive.js";
 import { useInkSave } from "../ink/useInkSave.js";
@@ -597,7 +598,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // (Share → "They can: Edit notes").
   const shareMode = Boolean(initialShare) || Boolean(publicPage);
   const [readOnly, setReadOnly] = useState(shareMode);
-  const [shareInfo, setShareInfo] = useState(null); // resolved share: {owner, role, canEdit, audience, viewer}
+  const [shareInfo, setShareInfo] = useState(null); // resolved share: {owner, role, canEdit, audience, viewer, deleting}
   // A folder share ({id, name}): the share view is then the home library
   // confined to that folder until a page opens; the topbar's home button
   // returns to it.
@@ -624,7 +625,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // What this viewer may do with the library itself (library/libraryAccess.js):
   // every affordance of the home listing asks this, never a role or a share.
   const lib = useMemo(
-    () => libraryAccess({ shareMode, shareFolder: sharedFolder?.id || "", role: workspace?.role || "", tree: libTree }),
+    () => libraryAccess({ shareMode, shareFolder: sharedFolder?.id || "", role: actingRole(workspace), tree: libTree }),
     [shareMode, sharedFolder, workspace, libTree],
   );
   // A folder's breadcrumb from the library's root (a folder share's folder)
@@ -638,8 +639,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [authUser, setAuthUser] = useState(shareMode ? {user:"_public"} : null);
   // Chats and the recents covers are the workspace's, and only its editors
   // and owners write them: a viewer's conversation stays in the tab (ChatDock
-  // `canSave`), its covers in this browser.
-  const canWriteWorkspace = !shareMode && workspace?.role !== "viewer";
+  // `canSave`), its covers in this browser. So does everyone's while the
+  // workspace is being deleted (actingRole).
+  const canWriteWorkspace = !shareMode && actingRole(workspace) !== "viewer";
   const chatSession = useMemo(() => createChatSession((key, messages, updatedAt) => {
     if (getExpectedUser() !== authUser?.user || getCurrentWorkspace() !== wsId) {
       throw new Error("The account or workspace changed.");
@@ -735,7 +737,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setSessionScope(user, id);
     setWorkspace(w);
     setWorkspaces(list);
-    setReadOnly(w.role === "viewer");
+    setReadOnly(actingRole(w) === "viewer");
+    if (w.deleting) sayDeleting();
     try { localStorage.setItem(`gamma-last-ws:${user}`, id); } catch {}
     // Keep the id in the URL so a reload or a copied link lands here again.
     const url = new URL(window.location.href);
@@ -2189,6 +2192,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     else if (action) postPill("status", { msg: text, action }, { after: [8000, null] });
     else postPill("status", { msg: text, spinner: ongoing, final: !ongoing });
   }, [postPill, logSys]);
+  // A workspace being deleted takes no more changes: a refused change, or
+  // the session's listing, turns the tab read-only and says why
+  // (app/useWorkspaceDeleting.js).
+  const sayDeleting = useWorkspaceDeleting({ shareMode, setStatus, setWorkspace, setWorkspaces, setReadOnly, setShareInfo });
   const [loading, setLoading] = useState(false);
   // Window layout: ordered window ids per dock slot. Sizes are handled by
   // react-resizable-panels (persisted via autoSaveId), so this only stores
@@ -6263,7 +6270,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setShareInfo({ owner: data.username || "", role: data.role || "view", canEdit: Boolean(data.can_edit),
                      audience: data.audience || "anyone", viewer: data.viewer || "",
                      viewerIsGuest: Boolean(data.viewer_is_guest), workspace: data.workspace_id || "",
-                     page: data.page_id || "" });
+                     page: data.page_id || "", deleting: Boolean(data.deleting) });
       if (!data.viewer || data.viewer_is_guest) {
         // No account behind this visitor: a per-browser display name labels
         // their presence and edits (X-Gamma-Name / the socket's ?name=).
@@ -6285,6 +6292,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         const want = [initialPageId, initialBlockId].find((id) => id && pages.some((b) => b.id === id));
         if (want) {
           await openSharedPage(token, want, data);
+        } else if (data.deleting) {
+          sayDeleting();
         } else {
           setStatus(t("Loaded shared folder."));
         }
@@ -6352,10 +6361,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setDocId(props.doc_id || "");
     setInputUrl(src);
     setPdfUrl(proxiedUrl);
-    // Edit rights arrive with the share; the autosave effect's suppress flag
-    // (set above) swallows the first blocks change either way.
+    // Edit rights arrive with the share (none while its workspace is being
+    // deleted, which the pill keeps saying); the autosave effect's suppress
+    // flag (set above) swallows the first blocks change either way.
     setReadOnly(!share.can_edit);
-    setStatus(share.can_edit ? t("Shared by {username} — your edits save to their page.", { username: share.username }) : t("Loaded shared page."));
+    if (share.deleting) sayDeleting();
+    else setStatus(share.can_edit ? t("Shared by {username} — your edits save to their page.", { username: share.username }) : t("Loaded shared page."));
     return true;
   }
 
@@ -6372,7 +6383,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const id = pageId || sharedPage;
     if (id) {
       setLoading(true);
-      return openSharedPage(initialShare, id, { can_edit: !!shareInfo?.canEdit, username: shareInfo?.owner || "", page_id: sharedPage }, { push })
+      return openSharedPage(initialShare, id, { can_edit: !!shareInfo?.canEdit, deleting: !!shareInfo?.deleting,
+                                                username: shareInfo?.owner || "", page_id: sharedPage }, { push })
         .catch((err) => {
           setStatus(t("Share open failed: {message}", { message: err.message }));
           return false;

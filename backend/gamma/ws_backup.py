@@ -241,9 +241,13 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
     (a background job's report, gamma/jobs.py) hears each phase — unpacking,
     checking, saving (the pre-restore snapshot), copying (the files), then
     restoring, from which point on the restore can no longer be stopped.
-    Raises BackupError."""
+    Raises BackupError, and WorkspaceDeleting while a delete holds the
+    workspace (``workspaces.refuse_writes``)."""
+    from . import workspaces  # local: workspaces imports seed, which imports db
+
     if mode not in ("replace", "merge"):
         raise BackupError("mode must be 'replace' or 'merge'")
+    workspaces.refuse_writes(ws)
     if selected is not None and mode != "merge":
         raise BackupError("selection is only supported for additive imports")
     progress = progress or jobs.no_progress
