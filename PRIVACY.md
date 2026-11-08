@@ -213,7 +213,8 @@ administer that server, so we can technically reach what is stored on it;
 we do not read it except as the terms say (to run the service, make
 backups, and fix a fault you ask us about). When a Lite or Plus plan ends
 the library is closed but kept; files beyond the free allowance may be
-deleted 90 days later, with notice by e-mail.
+deleted 90 days later, with notice by e-mail. Deleting your Gamma Cloud
+account deletes your library there, as described below.
 
 **Mail.** We send mail to confirm your address, to sign in or reset a
 password, to the old address when your e-mail address is changed, for
@@ -234,12 +235,20 @@ asks us to delete it sooner once the invitation is accepted or
 withdrawn, or what it is to stops being shared. The audit log is kept.
 Deleting your account, on its Settings page, cancels any subscription at
 Stripe, removes the password, the Google or GitHub links, the preference
-profile and the server list at once and signs out every server; 30 days
-later the account's remaining records are removed, and a Pro server
-still running then is deleted with its files and backups. Until then the
-account can be restored on request. A library on the shared server is
-closed when the account's sign-in ends and is then handled as the terms
-describe for a plan that ended.
+profile and the server list at once and signs out every server. Within
+about an hour the shared server deletes the account there and its
+library: its workspaces with their files and backups, the shared
+workspaces only it owned, and the pages it published from them, which
+stop opening; what it wrote in a workspace someone else owns, and a link
+it made to a page there, stay with that workspace. The shared server first
+writes one copy of each workspace it deletes, which only we can reach, and
+removes it after 90 days. Backups of the server made before the deletion
+still hold what they held: the automatic ones until they are replaced in
+their rotation, and a copy we made by hand or keep off-site until we
+delete it; we use them only to recover the server after a fault. 30
+days after the deletion the account's remaining records are removed, and
+a Pro server still running then is deleted with its files and backups. Until then the account can be
+restored on request, without what was already deleted.
 [Deleting your Gamma Cloud account](DELETE_ACCOUNT.md) gives the steps,
 and how to ask for the deletion if you cannot sign in.
 

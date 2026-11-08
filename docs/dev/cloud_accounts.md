@@ -449,6 +449,10 @@ content column):
   A purge deletes the account's hosted server first
   (`hosted.purge_account`, [hosted.md](hosted.md)) and the e-mail
   invitations it sent (`invitations.purge_account`).
+  The shared server deletes the account's library there within the hour of
+  the delete, not of the purge, and a restore does not bring it back ("A
+  deleted account on the share host" below); the portal's Settings →
+  Delete account row and its confirm name that server (`APP_URL`'s host).
 - `PATCH /api/admin/accounts/{id}` takes `plan`, `granted_until`,
   `is_admin`, `verified` and `username`. `plan` is a new grant, with no end
   unless `granted_until` comes with it; `granted_until` alone dates the
@@ -1285,6 +1289,12 @@ and the CLI call the same functions.
   the server list (normalization, loopback, the client's own origin, the
   Overview), the build and schema a server reports, the username lookup
   and its limits, deletion, the step-4 and step-8 upgrades, and the share host's address in `/api/me` and discovery.
+- `test_share_host_deletions.py`: the deleted accounts the share host
+  asks for — one deleted in the portal listed for the share host's client,
+  a restored one left out until it is deleted again, a purged one still
+  listed, the cursor's pages, a wrong pair 401 and another client's 403,
+  and the Settings page's Delete account saying the shared server's
+  library goes.
 - `test_reports.py`: the reports Gamma servers forward — an unsigned one
   kept as sent, a retry stored once, the fields checked and cut (a link
   that is not http(s) dropped), the reporter's token and the server's
@@ -2025,6 +2035,54 @@ the username out of it. It also passes Cloudflare's `CF-Connecting-IP` as
 pinned network only, so its rate limits count each visitor rather than
 each Cloudflare edge. Setup steps: [cloud/deploy/README.md](../../cloud/deploy/README.md)
 "The free share host".
+
+**A deleted account on the share host** (`gamma/cloud_deletions.py`).
+Deleting a Gamma Cloud account deletes its library on the share host: its
+account there, the workspaces `workspaces.delete_account` removes with it
+(its personal ones and the shared ones only it owned, their files and
+snapshots, and the shares that published its pages, so its links and its
+page host stop answering), its sessions and integration tokens. A share
+it made in a shared workspace that stays is that page's one link, which
+the workspace's owners manage, so it stays with the workspace, as the
+policy pages say. The
+account server keeps the record: each `account.delete` audit entry is a
+deletion, and `GET /api/share-host/deletions?after=<entry id>`
+(`routers/share_host.py`, `accounts.deletions`) lists those after a cursor,
+oldest first, 500 at a time, as `{deletions: [{id, account_id,
+deleted_at}], next}`, leaving out an account restored since (a later
+delete is a new entry) and keeping a purged one, so a share host that was
+down misses nothing. Only a `share-host` client may ask, with its client
+id and secret as Basic auth (`oidc.basic_client`, which the reports use
+too): a wrong pair is a 401 counted per IP (30 an hour), another client's
+a 403; the client's own limit is 120 an hour.
+
+The share host asks at startup and then every hour (`cloud_deletions.tick`
+in the app lifespan), when it has cloud sign-in, the share-host switch and
+a client secret. Each deletion whose subject has an identity here (one
+that signed in, or one a publish exchange made) is deleted by the
+`account-delete` job an admin's delete runs
+(`workspaces.start_account_delete`, [tasks.md](tasks.md)), owned by the
+server itself (`jobs.WORKSPACE`, so no one's task list shows it), a final
+copy of each workspace first in `backups/deleted/` for 90 days
+([user_db.md](user_db.md) "Data directory layout"). Two run at a time
+(`AT_ONCE`); one that ends done asks again at once, so a backlog does not
+wait an hour per pair. The cursor (`cloud_deletions_after` in the
+`settings` KV) moves past every deletion a tick reads (at most 20 pages);
+each whose subject has an account here goes on the list of those due
+(`cloud_deletions_pending`, `{subject: entry id}`) and stays there while
+that account does, so a delete that failed or waits its turn is tried
+again at the next tick, and one that is kept never holds back the
+deletions after it. Before it starts or keeps one, the tick asks again
+from that entry (`_stands`): a deletion the account server no longer
+lists, its account restored, comes off the list and the account here
+stays. The job checks, as it starts and at its point of no return, that the
+account is still linked to that subject and is not the server's last
+admin; such an account is kept, with a warning at every tick, and
+unlinking it (`manage.py unlink-identity`) keeps it for good. A share host
+whose account server predates the endpoint logs a warning every hour, so
+the account server is updated first. The first tick on a share host reads
+every deletion the audit log holds, so the libraries of accounts deleted
+before this existed go too. Tests: `backend/tests/test_cloud_deletions.py`.
 
 The rest of the plan's cloud mode is configuration, not code: registration
 is off on every Gamma (accounts come from the admin or the cloud), the

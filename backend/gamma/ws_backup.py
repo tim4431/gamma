@@ -1029,7 +1029,8 @@ def sweep_stale_temp(now: float | None = None) -> int:
     the work files (``_is_temp``) older than STALE_TEMP_S in every
     workspace's snapshot folder, ``backups/deleted/`` and ``backups/`` (the
     server backups' work folders); a younger one may be a snapshot running
-    now. Returns how many went. The app runs it at startup and every
+    now, and the final copies past DELETED_KEEP_DAYS (``_prune_deleted``).
+    Returns how many work files went. The app runs it at startup and every
     STALE_TEMP_S; ``create`` sweeps its own folder first."""
     now = datetime.now(timezone.utc).timestamp() if now is None else now
     dirs = [config.BACKUPS_DIR, deleted_dir()]
@@ -1039,6 +1040,7 @@ def sweep_stale_temp(now: float | None = None) -> int:
     removed = sum(_sweep_temp(d, now) for d in dirs)
     if removed:
         log.info(f"[backups] removed {removed} temp file(s) of snapshots that never finished")
+    _prune_deleted(now)
     return removed
 
 
@@ -1141,8 +1143,14 @@ def keep_final_copy(ws: str, *, by: str = "", progress=None) -> str:
     return dest.name
 
 
-def _prune_deleted() -> None:
-    cutoff = datetime.now(timezone.utc).timestamp() - DELETED_KEEP_DAYS * 86400
+def _prune_deleted(now: float | None = None) -> None:
+    """Remove the final copies older than DELETED_KEEP_DAYS: after each new
+    one, and every STALE_TEMP_S from ``sweep_stale_temp``, so a copy goes
+    on time even when no workspace is deleted after it."""
+    now = datetime.now(timezone.utc).timestamp() if now is None else now
+    cutoff = now - DELETED_KEEP_DAYS * 86400
+    if not deleted_dir().is_dir():
+        return
     for f in deleted_dir().glob("*.zip"):
         try:
             if f.stat().st_mtime < cutoff:

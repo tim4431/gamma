@@ -28,7 +28,9 @@ your data is handled is described in the [privacy policy](PRIVACY.md).
 You need a confirmed e-mail address to use a Gamma Cloud account with a
 Gamma server. Keep your sign-in details to yourself; you are responsible
 for what is done with your account. You can delete the account on its
-Settings page.
+Settings page. Deleting it also deletes your library on the shared
+server and takes down the pages you published there
+([Deleting your Gamma Cloud account](DELETE_ACCOUNT.md)).
 
 ## Plans and payment
 

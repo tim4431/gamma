@@ -1052,6 +1052,29 @@ def delete_account(user_id: str, *, release_now: bool = False, by: str = "", pro
                                allowed=allowed)
 
 
+def start_account_delete(user_id: str, username: str, *, owner: str, by: str, allowed, guest: bool = False,
+                         title: str = "", ended=None) -> dict:
+    """``delete_account`` as a background job (kind ``account-delete``, one
+    per account), owned by ``owner``: an admin's from Settings → Users
+    (``owner`` and ``by`` that admin), or the server's own on a share host,
+    when the account's Gamma Cloud account was deleted
+    (``cloud_deletions``, owner ``jobs.WORKSPACE``). ``allowed(conn)`` is
+    checked as the run starts, since it may wait queued, and again at the
+    point of no return. A second start while it runs answers that job.
+    The caller checked ``check_account_deletable``."""
+    def run(job):
+        with connect_users_db() as conn:
+            allowed(conn)
+        return {"deleted_workspaces": delete_account(user_id, by=by, progress=job.progress, allowed=allowed)}
+
+    try:
+        return jobs.start("account-delete", owner=owner, key=user_id, run=run,
+                          title=title or f"Delete account {username}", params={"username": username, "guest": guest},
+                          ended=ended)
+    except jobs.Busy as busy:  # the same work asked for again: answer it
+        return busy.job
+
+
 def _delete_account(user_id: str, username: str, copied: list[str], *, release_now: bool, by: str,
                     progress, allowed) -> list[str]:
     from . import cloud_auth, cloud_sync, zotero_account  # local: cloud_auth imports this module

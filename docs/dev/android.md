@@ -1392,7 +1392,10 @@ wins over the labels here.
     an in-app way to start deleting it and a public web page for the Data
     safety form ([account deletion](https://support.google.com/googleplay/android-developer/answer/13327111)).
     The page is <https://gammapdf.com/delete-account/>, and the app links
-    to it from Settings → Account & sync.
+    to it from Settings → Account & sync. Deleting the account deletes its
+    library on the shared server and its published pages within the hour
+    ([cloud_accounts.md](cloud_accounts.md) "A deleted account on the
+    share host"), since Play does not count closing them as deletion.
   - The privacy policy is linked in the Console and inside the app,
     among its help links ([User Data](https://support.google.com/googleplay/android-developer/answer/10144311)).
   - Reviewers get a reusable Gamma Cloud test account under App content →

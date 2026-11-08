@@ -17,7 +17,6 @@ account's, a secret's to its client's, since a server forwards everyone's
 reports through one address.
 """
 
-import base64
 from contextlib import closing
 
 from fastapi import APIRouter, HTTPException, Request
@@ -53,9 +52,8 @@ def _caller(conn, request: Request) -> tuple[str, str]:
         return account["id"], row["client_id"]
     if auth.lower().startswith("basic "):
         try:
-            client_id, _, secret = base64.b64decode(auth[6:]).decode().partition(":")
-            client = oidc.authenticate_client(conn, client_id, secret)
-        except (ValueError, UnicodeDecodeError, oidc.OAuthError):
+            client = oidc.basic_client(conn, auth)
+        except oidc.OAuthError:
             raise HTTPException(401, "The client id or secret is wrong.",
                                 headers={"WWW-Authenticate": "Basic"}) from None
         if client["secret_hash"] is None:  # a public client proves nothing

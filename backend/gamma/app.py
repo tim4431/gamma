@@ -14,9 +14,9 @@ import anyio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-from . import backup_schedule, cloud_auth, cloud_sync, comments, config, db_maintenance, email_invites, guests, hosted
-from . import inbox, jobs, migrations, offsite, reports, sync_engine, trash, upload_gc, version, workspaces, ws_backup
-from . import zotero_stream
+from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, email_invites
+from . import guests, hosted, inbox, jobs, migrations, offsite, reports, sync_engine, trash, upload_gc, version
+from . import workspaces, ws_backup, zotero_stream
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
 from .compression import JsonGzip
@@ -355,6 +355,7 @@ def create_app() -> FastAPI:
         # /mcp route from scope["state"]) — it must pass through here.
         async with mcp.lifespan(app) as state, backup_schedule.lifespan(), \
                 every(cloud_sync.CHECK_INTERVAL, cloud_sync.check_all, "cloud: the grant check failed"), \
+                every(cloud_deletions.TICK_S, cloud_deletions.tick, "cloud: the deleted accounts' round failed"), \
                 every(hosted.SYNC_INTERVAL, hosted.tick, "[hosted] the plan sync failed"), \
                 every(guests.SWEEP_INTERVAL_S, guests.delete_expired, "[guests] sweep failed"), \
                 every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"), \

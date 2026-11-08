@@ -26,6 +26,7 @@ from .routers import oidc as oidc_router
 from .routers import portal as portal_router
 from .routers import profile as profile_router
 from .routers import reports as reports_router
+from .routers import share_host as share_host_router
 from .routers import zotero as zotero_router
 
 
@@ -172,6 +173,7 @@ def create_app() -> FastAPI:
     app.include_router(accounts_router.router)
     app.include_router(profile_router.router)
     app.include_router(reports_router.router)
+    app.include_router(share_host_router.router)
     app.include_router(admin_router.router)
     app.include_router(external_router.router)
     app.include_router(connect_router.router)

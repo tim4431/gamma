@@ -809,9 +809,13 @@ def settings_page(account: dict, linked: list[dict] | None = None, enabled: list
     connected = srow("Connected accounts", "Sign in with one click instead of a password.",
                      f"{conns}<div class=msg id=smsg></div>") if conns else ""
     paid = account["plan_source"] == "stripe"   # a subscription pays for the plan: deleting ends it now
+    # the shared server deletes the account's library there within the hour
+    # (docs/dev/cloud_accounts.md "A deleted account on the share host")
+    shared = urlsplit(config.APP_URL).netloc if config.APP_URL else ""
+    gone = (f"Your library and published pages on the shared server, {esc(shared)}, are deleted within about an hour; "
+            "other Gamma servers keep their data." if shared else "Gamma servers keep their data.")
     delete = srow("Delete account", f"Signs everything out and removes the account after {config.PURGE_DELETED_DAYS} days. "
-                  + ("Your subscription ends at once, without a refund."
-                     if paid else "Gamma servers keep their data."),
+                  + gone + (" Your subscription ends at once, without a refund." if paid else ""),
                   "<button class='btn btn--sm btn--danger' id=delopen>Delete my account…</button>"
                   f"<form id=del class=reveal hidden>{pw}{formfoot('Delete my account', 'btn--danger')}</form>")
     inner = (_notice(account)
@@ -832,11 +836,11 @@ bind('name', async (d, msg) => { await api('/api/me', d, 'PATCH'); say(msg, 'Sav
 bind('user', async (d, msg) => { const r = await api('/api/me/username', d); say(msg, 'Your username is now ' + r.account.username + '.'); setTimeout(() => location.reload(), 900); });
 bind('em', async (d, msg) => { await api('/api/email/change', d); say(msg, 'Check the new address for a confirmation link.'); });
 bind('pw', async (d, msg) => { await api('/api/me/password', d); say(msg, 'Saved. Other devices were signed out.'); document.getElementById('pw').reset(); if (!HAS_PW) setTimeout(() => location.reload(), 900); });
-bind('del', async d => { if (!await ask('Delete this account? This cannot be undone.' + (PAID ? ' Your subscription ends now and is not refunded.' : ''), {ok: 'Delete my account', danger: true})) return;
+bind('del', async d => { if (!await ask('Delete this account? This cannot be undone.' + (SHARED ? ' Your library and published pages on ' + SHARED + ' are deleted too.' : '') + (PAID ? ' Your subscription ends now and is not refunded.' : ''), {ok: 'Delete my account', danger: true})) return;
   await api('/api/me/delete', d); location.href = '/login'; });
 """
     return app("Settings", "Your profile and how you sign in.", account, "settings", inner,
-               f"const HAS_PW = {_js(has_pw)}, PAID = {_js(paid)};" + script)
+               f"const HAS_PW = {_js(has_pw)}, PAID = {_js(paid)}, SHARED = {_js(shared)};" + script)
 
 
 def _admin_section(title: str, sub: str, body: str) -> str:

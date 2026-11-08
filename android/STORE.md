@@ -337,7 +337,10 @@ register in the research note and Google's pages. Settled in the app:
   The page is <https://gammapdf.com/delete-account/>; the app links to it
   from Settings → Account & sync, and its URL is the Data safety form's
   answer above. This device's admin account is made and used offline,
-  which Play does not count.
+  which Play does not count. Deleting the account deletes its library on
+  the shared server and the pages it published within the hour, as the
+  page says, rather than only closing them
+  ([cloud_accounts.md "A deleted account on the share host"](../docs/dev/cloud_accounts.md)).
 - **The privacy policy** is linked in the Console and inside the app,
   among its help links; Play asks for both, and for a privacy contact and
   the retention and deletion of data in the policy

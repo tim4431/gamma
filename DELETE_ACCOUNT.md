@@ -61,6 +61,23 @@ deleted and the page says so; try again a few minutes later.
   ([terms](TERMS.md#no-refunds)). A Pro plan's server turns read-only, as
   when a plan ends.
 
+**Within about an hour**, our shared server, app.gammapdf.com, deletes your
+account there and its library: a Lite or Plus plan's library, the pages a
+free account published, and a Pro account's library left there from an
+earlier plan. That is:
+
+- your workspaces there, with their pages, notes, files and backups, and
+  the shared workspaces you alone owned, which their other members lose;
+- the pages you published from those workspaces, which stop opening at
+  their links and at your `<username>-pages.gammapdf.com` address. The
+  pages stay in the app you published them from;
+- your account there, its sign-ins and its connections (an offline copy,
+  the browser extension, an assistant).
+
+What you wrote in a workspace someone else owns stays there, as part of
+that workspace, and so does a link you made to one of its pages: the link
+belongs to the page, and that workspace's owners can turn it off.
+
 **After 30 days** the rest of the account is removed: the username, the
 e-mail address, the display name and plan, the record of the subscription,
 the invitations it sent by e-mail, and a Pro plan's server with its files
@@ -69,17 +86,24 @@ nobody else can take them.
 
 **Within those 30 days** the account can be restored if you ask us (see
 [below](#if-you-cannot-sign-in)). It comes back with its username and
-e-mail address, but not with what was deleted at once: you sign in again by
-resetting the password, or with Google or GitHub on the same address. A
-cancelled subscription stays cancelled.
+e-mail address, but not with what was deleted at once or on the shared
+server: you sign in again by resetting the password, or with Google or
+GitHub on the same address. A cancelled subscription stays cancelled, and
+the library on the shared server does not come back.
 
 **What is kept.** The account server's audit log keeps its entries for the
 account (sign-ins and password reset requests with the IP address they came
 from, plan changes, the deletion itself), and the list of payment events
-Stripe sent about it keeps each event's id, type and date. A report you
-made of a comment, a page or an AI reply stays until it is resolved and
-for 180 days after, without your account once it is removed. Stripe keeps
-its own records of payments under its privacy policy. The
+Stripe sent about it keeps each event's id, type and date. Before the
+shared server deletes a workspace it writes one copy of it, which only we
+can reach, in case the deletion was made in error; that copy is removed
+after 90 days. Backups of the shared server made before the deletion
+still hold what they held: the automatic ones until they are replaced in
+their rotation, and a copy we made by hand or keep off-site until we
+delete it. We use backups only to recover the server after a fault. A
+report you made of a comment, a page or an AI reply stays until it is
+resolved and for 180 days after, without your account once it is removed.
+Stripe keeps its own records of payments under its privacy policy. The
 [privacy policy](PRIVACY.md#gamma-cloud) lists everything the account
 server holds.
 
@@ -94,13 +118,9 @@ server holds.
 - **A Gamma server you or your organisation run.** Its library and the
   account you have on it stay. Delete them on that server: its
   administrator removes an account in Settings → Users.
-- **A library on our shared server, app.gammapdf.com**, which holds a Lite
-  or Plus plan's library and the pages a free account published. It is
-  closed, as when a plan ends, and pages you published stay online
-  ([terms](TERMS.md#when-a-plan-ends-or-a-payment-fails)). Before you
-  delete the account, export what you want to keep, delete what you do not,
-  and unpublish your pages (a page's Share button in Gamma). To have what
-  is left there removed after the account is gone, ask us.
+- **What you exported or downloaded.** Those copies are yours. Export
+  the library on the shared server before you delete the account if you
+  want to keep it: afterwards it cannot be exported.
 
 ## If you cannot sign in
 
@@ -114,5 +134,4 @@ If that does not work, write to
 Cloud account deleted and giving its username; from the account's own
 address if you can. Never send a password. We write to the account's
 e-mail address to confirm that the request is yours, then delete the
-account as described above. Ask the same way to restore a deleted account,
-or to have a library removed from the shared server.
+account as described above. Ask the same way to restore a deleted account.

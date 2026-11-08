@@ -411,8 +411,8 @@ All state is SQLite + files on disk under a data directory (env
   ([workspaces.md](workspaces.md) "Export and backups").
 - `backups/deleted/<id>-<name>-<time>.zip` — the final copy of each deleted
   workspace (the same zip format), kept 90 days: older ones are removed when
-  the next copy is written ([workspaces.md](workspaces.md) "Export and
-  backups").
+  the next copy is written and by the hourly sweep of snapshot work files
+  ([workspaces.md](workspaces.md) "Export and backups").
 - `backups/integrity.json` — the latest failed integrity check per database
   file (`gamma/integrity.py`), what the admins' `db-damage` notice reads;
   `backups/tasks/` holds the backup tasks.

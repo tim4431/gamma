@@ -123,7 +123,10 @@ its library under the free allowance; a Pro server turns read-only at
 once (reads and exports work), is stopped after 30 days and deleted after
 90, with a mail at each step. A grant that was given a date ends the
 same way. Deleting an account cancels at Stripe first and purges the row
-30 days later.
+30 days later; within the hour the shared server deletes the account's
+library there and the pages it published, since it asks the account
+server every hour for the accounts deleted (cloud_accounts.md "A deleted
+account on the share host").
 
 **What a container knows.** A hosted container never hears about money.
 At startup and every hour it posts a short report to the account server

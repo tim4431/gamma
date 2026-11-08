@@ -243,6 +243,18 @@ def authenticate_client(conn, client_id: str, secret: str | None) -> dict:
     return client
 
 
+def basic_client(conn, auth: str) -> dict:
+    """The client an ``Authorization: Basic`` header names, its secret
+    checked: a Gamma server proving it is itself (a report it forwards,
+    the share host asking for deleted accounts). OAuthError (401) when the
+    header cannot be read or the pair is wrong."""
+    try:
+        client_id, _, secret = base64.b64decode(auth.partition(" ")[2]).decode().partition(":")
+    except (ValueError, UnicodeDecodeError):
+        raise OAuthError("invalid_client", "unreadable client credentials", 401) from None
+    return authenticate_client(conn, client_id, secret)
+
+
 def admits(client: dict, account) -> bool:
     """Whether ``account`` may be signed in to ``client``. Only the shared
     server refuses anyone: it takes the accounts ``accounts.on_shared``
