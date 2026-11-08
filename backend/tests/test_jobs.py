@@ -427,6 +427,28 @@ def test_a_job_that_writes_files_needs_room(alice, monkeypatch):
     _finished(_start("jb_alice", lambda job: None)["id"])  # a job without a file still starts
 
 
+def test_what_jobs_keep_counts_against_the_accounts_share(client, monkeypatch):
+    """Kept files take room like a finished file, a failed job's too, so
+    jobs that fail at once cannot pile them up past ``ARTIFACT_CAP``."""
+    from gamma import jobs
+
+    make_user("jb_keeper", "jb-keeper-pw")
+
+    def failing(job):
+        raise ValueError("no")
+
+    monkeypatch.setattr(jobs, "ARTIFACT_CAP", 100)
+    first = _finished(_start("jb_keeper", failing, artifact=True, kept={"layout.json": b"x" * 60})["id"])
+    assert first["state"] == "failed"
+    for artifact in (True, False):  # kept files need room whether or not the job writes a file
+        with pytest.raises(HTTPException) as full:
+            _start("jb_keeper", failing, artifact=artifact, kept={"layout.json": b"y" * 60})
+        assert full.value.status_code == 507 and "keep" in full.value.detail
+    _finished(_start("jb_keeper", lambda job: None)["id"])  # one that keeps nothing still starts
+    assert jobs.dismiss(first["id"])  # removed, its kept file no longer counts
+    assert _finished(_start("jb_keeper", failing, kept={"layout.json": b"y" * 60})["id"])["state"] == "failed"
+
+
 def test_running_scheduled_backups_are_listed_read_only(alice, monkeypatch):
     from gamma import backup_schedule
 

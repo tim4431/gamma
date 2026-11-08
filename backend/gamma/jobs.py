@@ -310,7 +310,9 @@ def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: 
     work it wakes never finds it still running. ``kept``: files (name to
     bytes) the job holds for as long as it is listed, whatever its state —
     what a run needs that ``params`` cannot hold, read back with
-    ``kept(id, name)`` by the run or by a later start of the same work."""
+    ``kept(id, name)`` by the run or by a later start of the same work.
+    They count against the account's share like a finished file (507 past
+    it), so a job that fails at once still cannot pile them up."""
     with _lock:
         if key:
             for other in _live.values():
@@ -320,8 +322,8 @@ def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: 
             raise HTTPException(status_code=429, detail=(
                 f"you already have {MAX_ACTIVE_PER_ACCOUNT} background tasks waiting or running — "
                 "let some of them finish first"))
-        if artifact:
-            _check_room(owner)
+        if artifact or kept:
+            _check_room(owner, sum(len(data) for data in (kept or {}).values()))
         row = {"id": secrets.token_hex(12), "owner": owner, "workspace_id": ws or "", "kind": kind,
                "key": key, "title": title[:300], "params": json.dumps(params or {}), "state": "queued",
                "progress": "{}", "instance": INSTANCE, "created_at": page_now()}
@@ -344,18 +346,32 @@ def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: 
     return get(live.id)
 
 
-def _check_room(owner: str) -> None:
+def _kept_size(job_id: str) -> int:
+    """The bytes a job keeps (``KEPT_DIR``), 0 when it keeps nothing."""
+    try:
+        return sum(entry.stat().st_size for entry in (_dir(job_id) / KEPT_DIR).iterdir() if entry.is_file())
+    except (ValueError, OSError):
+        return 0
+
+
+def _check_room(owner: str, adding: int = 0) -> None:
+    """507 when the disk is almost full, or when the account's files on the
+    server — its finished jobs' files and what all its listed jobs keep,
+    a failed or stopped one's too — with ``adding`` more would pass
+    ``ARTIFACT_CAP``."""
     root().mkdir(parents=True, exist_ok=True)
     if shutil.disk_usage(root()).free < MIN_FREE_BYTES:
         raise HTTPException(status_code=507, detail=(
             "the server's disk is almost full, so no export can be written now — ask the server's admin"))
     if owner != WORKSPACE:
         with connect_users_db() as conn:
-            held = conn.execute("SELECT COALESCE(SUM(artifact_size), 0) FROM jobs "
-                                "WHERE owner = ? AND state = 'done'", (owner,)).fetchone()[0]
-        if held >= ARTIFACT_CAP:
+            rows = conn.execute("SELECT id, CASE WHEN state = 'done' THEN artifact_size ELSE 0 END FROM jobs "
+                                "WHERE owner = ?", (owner,)).fetchall()
+        held = sum(size + _kept_size(job_id) for job_id, size in rows)
+        if held >= ARTIFACT_CAP or (adding and held + adding > ARTIFACT_CAP):
             raise HTTPException(status_code=507, detail=(
-                f"your finished exports take {held / (1 << 30):.1f} GB on the server — "
+                f"your finished exports, and what your background tasks keep to start them again, take "
+                f"{held / (1 << 30):.1f} GB on the server — "
                 "download them and remove them in Background tasks first"))
 
 

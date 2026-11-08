@@ -866,3 +866,29 @@ def test_what_a_translated_exports_retry_refuses(user, paper):
     assert user.delete(f"/api/jobs/{first['id']}").status_code == 200
     r = _start(user, page_id=paper["id"], mode="annotated-pdf", translation_of=first["id"])
     assert r.status_code == 404 and "no longer kept" in r.json()["detail"]
+
+
+def test_a_translated_exports_retry_is_its_own_accounts_only(client):
+    """In a shared workspace a co-member cannot start another member's
+    translated export again by its job's id: same page, same workspace,
+    and still 404, since ``translation_of`` names the account's own export."""
+    make_user("tpdf_boss", "tpdf-boss-pw", is_admin=1)
+    make_user("tpdf_owner", "tpdf-owner-pw")
+    make_user("tpdf_peer", "tpdf-peer-pw")
+    ws = login("tpdf_boss", "tpdf-boss-pw").post(
+        "/api/workspaces", json={"name": "Translated lab", "kind": "shared", "owner": "tpdf_owner"}).json()["id"]
+    owner, peer = login("tpdf_owner", "tpdf-owner-pw"), login("tpdf_peer", "tpdf-peer-pw")
+    assert owner.put(f"/api/workspaces/{ws}/members/tpdf_peer", json={"role": "editor"}).status_code == 200
+    owner.headers["X-Gamma-Workspace"] = peer.headers["X-Gamma-Workspace"] = ws
+    data = _paper()
+    page, doc_id = _pdf_page(owner, "Shared paper", data)
+    first = _finished(owner, page_id=page["id"], mode="annotated-pdf", highlights=False, notes=False,
+                      translation=_translation(doc_id, data))
+    assert first["state"] == "done" and first["workspace"] == ws
+    # the peer exports the page with a translation of their own...
+    assert _finished(peer, page_id=page["id"], mode="annotated-pdf", highlights=False, notes=False,
+                     translation=_translation(doc_id, data))["state"] == "done"
+    # ... but not with the one the owner's export kept
+    r = _start(peer, page_id=page["id"], mode="annotated-pdf", translation_of=first["id"])
+    assert r.status_code == 404 and "no longer kept" in r.json()["detail"]
+    assert _finished(owner, page_id=page["id"], mode="annotated-pdf", translation_of=first["id"])["state"] == "done"

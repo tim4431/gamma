@@ -94,9 +94,10 @@ the protocol of a PDF's upload in parts), since a proxy in front of the
 server caps a request's body (Cloudflare at 100 MB). It is staged like an
 import review's upload (`gamma/import_staging.py`, no size cap, refused only
 when the disk would keep less than 1 GB free); the finish starts the job,
-and the job removes the staged zip once it is over. A job that writes a file does not start while the disk has less
-than 1 GB free or the account's finished files take 10 GB (507, "download
-them and remove them in Background tasks first"). Files are not metered
+and the job removes the staged zip once it is over. A job that writes a file or keeps one does not start while the disk has less
+than 1 GB free or the account's files take 10 GB: its finished jobs' files and
+what all its listed jobs keep, a failed or stopped one's too (507, "download
+them and remove them in Background tasks first"; `jobs._check_room`). Files are not metered
 against the account's storage quota.
 
 What a run needs that its params cannot hold is kept with the job:
@@ -104,7 +105,8 @@ What a run needs that its params cannot hold is kept with the job:
 row goes in, and `jobs.kept(id, name)` reads it back. It stays for as long
 as the job is listed, however the job ended: a failure, a stop and
 `recover` take only what the run wrote. Removing the job, clearing it and
-the sweep take it with the row. A translated annotated-PDF export keeps
+the sweep take it with the row. It counts against the account's 10 GB like a
+finished file, so jobs that fail at once cannot pile it up. A translated annotated-PDF export keeps
 the viewer's layout this way, so it can be started again
 ([translation.md](translation.md#exporting-the-translation)).
 

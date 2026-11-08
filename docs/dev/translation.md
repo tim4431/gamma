@@ -1752,7 +1752,9 @@ session's first translation to finish says so on the pill, with **Export…**.
   `translation_of`, the job's id, in place of `translation`
   (`taskKinds.js`), and the new job writes the same layout and keeps it in
   turn; the server takes it only from the account's own export of the same
-  page in the same workspace, and answers 404 once it is gone. It writes
+  page in the same workspace, and answers 404 once it is gone. Kept layouts
+  count against the account's 10 GB of finished files ([tasks.md](tasks.md)),
+  so a translated export, even one that fails at once, gets 507 past it. It writes
   what the viewer showed when the first export started, so a PDF replaced
   since fails it again. In the dialog, a failed or stopped one offers
   "Export again…" instead while its page is open (`taskKinds.exportAgain`),
