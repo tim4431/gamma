@@ -309,7 +309,16 @@ register in the research note and Google's pages. Settled in the app:
   ([Payments policy](https://support.google.com/googleplay/android-developer/answer/9858738),
   [understanding it](https://support.google.com/googleplay/android-developer/answer/10281818)).
   Plans are bought on account.gammapdf.com in a browser the app does not
-  open for that.
+  open for that. The browser the app's Gamma Cloud sign-in opens shows
+  the account server's sign-in and sign-up pages without their links to
+  gammapdf.com (its pricing) and the account home (*Plan & billing*): the
+  app's authorize URL carries `gamma_app=1`, and a new account comes back
+  to the sign-in rather than to the Overview
+  ([cloud_accounts.md "From a native app"](../docs/dev/cloud_accounts.md#the-oidc-provider)).
+  Still linking *Pricing*: the header of the gammapdf.com pages the app
+  opens (the privacy policy, the deletion steps, the docs), and of the
+  privacy policy the account server's sign-in and sign-up pages link to
+  under their form.
 - **Account deletion.** Play counts a Gamma Cloud account as one the app
   lets the person create, because the sign-in's browser reaches the
   account server's sign-up: account creation includes the case where

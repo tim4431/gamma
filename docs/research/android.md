@@ -752,7 +752,7 @@ not Git Bash's mintty.
 
 | Risk | What the check found | What satisfies it |
 |---|---|---|
-| Payments | The Payments policy still bars a link to a page that "could lead to" another payment method, and an account page passes only if it doesn't "eventually lead to" one ([payments](https://support.google.com/googleplay/android-developer/answer/10281818)). Google's March 2026 post is about fees and billing choice in the EEA, the UK and the US, not a change to that text ([post](https://developer.android.com/blog/posts/a-new-era-for-choice-and-openness)) | The account server's sign-in, sign-up and deletion pages, opened from a native app, drop their top bar, which links to gammapdf.com (pricing) and the account home (Plan & billing) (`cloud/gammacloud/pages.py` `_auth_shell`) |
+| Payments | The Payments policy still bars a link to a page that "could lead to" another payment method, and an account page passes only if it doesn't "eventually lead to" one ([payments](https://support.google.com/googleplay/android-developer/answer/10281818)). Google's March 2026 post is about fees and billing choice in the EEA, the UK and the US, not a change to that text ([post](https://developer.android.com/blog/posts/a-new-era-for-choice-and-openness)) | Built: a sign-in the app started marks its authorize URL (`gamma_app=1`), and the account server's sign-in, sign-up and reset pages in that browser show the top bar's brand without its links to gammapdf.com (pricing) and the account home (Plan & billing), send a new account back to the sign-in, and leave out the Devices, plans and download links (`cloud/gammacloud/pages.py` `in_app`; [cloud_accounts.md "From a native app"](../dev/cloud_accounts.md#the-oidc-provider)). Not covered: the reset page carries no request, so a password reset ends on the Overview; the gammapdf.com pages the app opens (the privacy policy, the deletion steps, the docs), and the privacy policy the account server's sign-in and sign-up pages link to, keep the site's header, which links *Pricing*; and the deletion steps send the person to account.gammapdf.com in a browser of their own, with no mark |
 | User-generated content | Shared pages, comments, public links and Publish are user content on a server the developer runs. Terms that define objectionable content, accepted before posting, and an in-app way to report content and users are needed even for content shared with a chosen set of people; blocking is needed where users can reach each other ([UGC](https://support.google.com/googleplay/android-developer/answer/9876937)) | Terms accepted at Gamma Cloud sign-up and an in-app report, at least. Hiding Publish in the app removes only the public part |
 | AI-generated content | Apps that generate content with AI must let users report or flag offensive output without leaving the app ([AI content](https://support.google.com/googleplay/android-developer/answer/13985936)). Whether an optional chat on the user's own provider and key is in scope is not stated ([FAQ](https://support.google.com/googleplay/android-developer/answer/14094294)) | A Report action on AI replies that reaches the developer. *Report a problem* opens GitHub, which leaves the app |
 | Privacy policy | It must name the developer or the app as the store listing does, and give a privacy contact ([User Data](https://support.google.com/googleplay/android-developer/answer/10144311)) | `PRIVACY.md` names the Play developer and a support address; the developer name matches `DELETE_ACCOUNT.md` |
@@ -785,7 +785,9 @@ real 16 KB device.
 
 ### Still open
 
-The listing's screenshots; the closed test's twelve testers; the four
-policy items above (payments links, user content, AI reports, account
-deletion), which need code; and whether a key the developer supplied is
+The listing's screenshots; the closed test's twelve testers; the policy
+items above that need code (user content, AI reports, account deletion,
+and of payments a password reset's way to the Overview and the *Pricing*
+link in the header of the gammapdf.com pages the app and the account
+server's sign-in pages link to); and whether a key the developer supplied is
 enrolled in hybrid signing, and so what Play's upgrade prompts will ask.

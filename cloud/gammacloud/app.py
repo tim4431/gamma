@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import accounts, alerts, billing, config, db, hosted, identities, invitations, oidc, sessions, settings, zotero
+from . import accounts, alerts, billing, config, db, hosted, identities, invitations, oidc, pages, sessions, settings, zotero
 from .accounts import Problem
 from .log import log
 from .routers import accounts as accounts_router
@@ -119,6 +119,25 @@ def create_app() -> FastAPI:
                 and not same_origin(request)):
             return JSONResponse({"detail": "This request must come from the Gamma Cloud pages."}, status_code=403)
         return await call_next(request)
+
+    @app.middleware("http")
+    async def native_app(request: Request, call_next):
+        """Whether the pages render for a browser a native app opened for its
+        sign-in (``pages.in_app``): ``/authorize`` by the Gamma server's
+        ``gamma_app=1``, which it keeps in the ``gc_app`` cookie (or clears,
+        for a sign-in no app started), every other page by that cookie."""
+        authorize = request.url.path == "/authorize"
+        flag = (request.query_params.get(pages.APP_PARAM) if authorize else request.cookies.get(pages.APP_COOKIE)) == "1"
+        mark = pages.IN_APP.set(flag)
+        try:
+            response = await call_next(request)
+        finally:
+            pages.IN_APP.reset(mark)
+        if authorize and flag:
+            sessions.set_cookie(response, "1", name=pages.APP_COOKIE, max_age=config.APP_BROWSER_TTL)
+        elif authorize and pages.APP_COOKIE in request.cookies:
+            response.delete_cookie(pages.APP_COOKIE, path="/")
+        return response
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):

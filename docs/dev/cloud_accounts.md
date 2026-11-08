@@ -842,6 +842,38 @@ is granted per scope: every client is first party, and the card only says
 who asks and what it gets. Gamma Cloud's own servers do not show it
 ("The entrance" below).
 
+**From a native app.** A sign-in the desktop, Android or iPad app started
+(`app-start`, below) opens these pages in a browser the app opened, and
+Google Play's Payments policy, like the App Store's, bars an app from
+leading to a payment outside its own billing, even through a page that
+"could lead to" one. So that browser's pages drop their links to where
+a plan is bought (`pages.in_app`), all but one, below. The Gamma server's authorize URL for such a
+sign-in carries `gamma_app=1` (`cloud_auth.begin`, which an account
+server that does not know it ignores). `/authorize` keeps the mark in the
+`gc_app` cookie for an hour (`APP_BROWSER_TTL`; `app.py`'s `native_app`),
+so the register, reset and Google/GitHub pages after it have it too, and
+an authorize request without the mark clears it. Those auth pages show
+the top bar's brand without its links to gammapdf.com (its pricing) and
+the Overview (Plan & billing). The sign-in's *Create an account* carries
+`next` back to the request (`/authorize/resume`), so a new account comes
+back to the verify notice there rather than to the Overview, also when
+the verify mail could not be sent (`/api/register` sends it to that
+`next` rather than to the Overview's failure notice). The verify notice
+leaves out *Your account*, and its *Resend the mail* sends the request's
+`/authorize/resume` as the new link's `next` (`RESEND_JS` reads the
+button's `data-next`); the verify link's page has no *Overview* link.
+The confirm card and the chooser name Devices without linking it, the
+no-library page leaves out *See plans* and *Get the desktop app*, and an
+error page has no *Back* to the Overview. The account's own pages (the
+app shell) are unchanged. Two ways still reach a plan: the reset page
+carries no request, so *Forgot password?* then *Back to sign in*, or the
+mailed reset link, ends signed in on the Overview; and the sign-in,
+register and sign-up pages' *privacy policy* line links to
+gammapdf.com/privacy/, whose site header links *Pricing*, as the
+privacy policy the app itself opens does. Closing that needs a
+gammapdf.com page without the header, for the app's links and this one
+alike.
+
 ### The entrance
 
 `entrance.py`, with the authorize step in `routers/oidc.py` and `/open` in
@@ -1238,6 +1270,14 @@ and the CLI call the same functions.
   the server list (normalization, loopback, the client's own origin, the
   Overview), the build and schema a server reports, the username lookup
   and its limits, deletion, the step-4 and step-8 upgrades, and the share host's address in `/api/me` and discovery.
+- `test_in_app.py`: a native app's sign-in — the mark kept in the cookie
+  and cleared by a sign-in no app started, the top bar without links on
+  the sign-in, register, reset and error pages, a new account sent back
+  to the sign-in (its verify mail sent or not), the verify notice's
+  resend going back to the sign-in, the verify notice, verify link page,
+  confirm card and no-library page without their portal links, the
+  privacy policy as their one gammapdf.com link, and the same pages with them in a browser of
+  its own.
 - `test_entrance.py`: the entrance — where the authorize step sends a
   signed-in person when the shared server asks, the sign-ins that skip the
   confirm card, the chooser, the no-library page, a plan's end closing the
@@ -1395,8 +1435,9 @@ to the victim's machine, never to the machine holding the verifier. The
 verifier, a one-try check, also keeps any other program on the same
 machine from redeeming a result it intercepted. The header requirement stops
 another site from posting a claim and signing this browser into an account
-of its choosing. The account server sees nothing new: its redirect URI is
-still the server's own callback, so this works for a local sidecar and for
+of its choosing. The account server sees one thing new, the authorize
+URL's `gamma_app=1`, which only changes its pages' links ("From a native
+app" above): its redirect URI is still the server's own callback, so this works for a local sidecar and for
 a remote server alike, and the session lands on the origin the window has
 open, whatever the server's public URL. A share host's forward of a paying
 person to their own server (`entrance.py`, above) starts a browser sign-in

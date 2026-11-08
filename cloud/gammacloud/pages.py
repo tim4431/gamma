@@ -13,8 +13,23 @@ a constant or a number goes through ``esc`` in the page and ``_js`` in a
 script: ``json.dumps`` alone leaves ``</script>`` in a string to close the
 block, so ``_js`` writes ``<``, ``>`` and ``&`` as escapes (a reset link's
 token reaches ``reset_confirm_page``'s script this way).
+
+A browser a native app opened for its sign-in (``in_app``) gets the auth
+pages without a link to where a plan is bought: Google Play's Payments
+policy and the App Store's bar an app from leading to a payment outside
+their own billing, and gammapdf.com (its pricing) and the account's own
+pages (Plan & billing) are one click from a link there. The Gamma server
+marks the authorize URL of a sign-in the app started (``APP_PARAM``),
+``/authorize`` keeps the mark in a cookie (``APP_COOKIE``, ``app.py``'s
+``native_app``) for the pages after it, sign-up and a forgotten password
+included, and those pages show the brand without its links, send a new
+account back to the sign-in rather than to the Overview, and drop their
+links to the Overview, Devices, the plans and the download page. Their
+privacy policy line (``_terms``) still links to gammapdf.com, whose
+header links its pricing, as the app's own link to the policy does.
 """
 
+import contextvars
 import html
 import json
 import re
@@ -28,6 +43,17 @@ from .providers import NAMES
 SITE = "https://gammapdf.com"
 NO_STORE = {"Cache-Control": "no-store"}
 USERNAME_PATTERN = accounts.USERNAME_RE.pattern.strip("^$")   # the <input pattern> of every username field
+
+# A sign-in a native app started (the module docstring): the authorize URL's
+# parameter, the cookie that keeps it, and this request's answer (``in_app``).
+APP_PARAM, APP_COOKIE = "gamma_app", "gc_app"
+IN_APP = contextvars.ContextVar("gamma_cloud_in_app", default=False)
+
+
+def in_app() -> bool:
+    """This request comes from a browser a native app opened for its sign-in."""
+    return IN_APP.get()
+
 
 LOGO = ('<svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
         '<rect width="32" height="32" rx="7" fill="#1e1e1c"/>'
@@ -265,8 +291,14 @@ def _head(title: str) -> str:
 
 
 def _auth_shell(title: str, card: str, script: str = "", cls: str = "", top: bool = True) -> str:
-    """The centred card; ``top`` adds the brand bar above it."""
-    bar = f"<div class=authtop><a href='{SITE}'>{LOGO}</a><a href='/'>Gamma<em>Cloud</em></a></div>" if top else ""
+    """The centred card; ``top`` adds the brand bar above it, which links to
+    gammapdf.com and the Overview except in a native app's browser."""
+    if not top:
+        bar = ""
+    elif in_app():
+        bar = f"<div class=authtop>{LOGO}<span>Gamma<em>Cloud</em></span></div>"
+    else:
+        bar = f"<div class=authtop><a href='{SITE}'>{LOGO}</a><a href='/'>Gamma<em>Cloud</em></a></div>"
     return (_head(title) + f"<body><div class=authwrap>{bar}<div class='auth card {cls}'>{card}</div></div>"
             f"<script>{JS}{script}</script></body></html>")
 
@@ -305,7 +337,10 @@ def turnstile_widget() -> str:
 
 
 def error_page(title: str, message: str, back: str = "/") -> str:
-    return auth(title, esc(message), f"<p class=links><a href='{esc(back)}'>Back</a></p>")
+    """``back`` is a link under the message, left out in a native app's
+    browser when it is the Overview."""
+    links = "" if in_app() and back == "/" else f"<p class=links><a href='{esc(back)}'>Back</a></p>"
+    return auth(title, esc(message), links)
 
 
 def _social(social: dict | None, verb: str = "continue", context: str = "signin") -> tuple[str, str]:
@@ -327,9 +362,13 @@ def _password_fields() -> str:
             "<button type=submit class='btn btn--primary btn--block'>Sign in</button><div class=msg></div>")
 
 
-def _to_register() -> str:
-    return ("<p class=switch>New to Gamma Cloud? <a href=/register>Create an account</a></p>"
-            if settings.registration() != "closed" else "")
+def _to_register(next_url: str = "/") -> str:
+    """The sign-up link under a sign-in form; ``next_url`` goes along, for the
+    register page to come back to."""
+    if settings.registration() == "closed":
+        return ""
+    href = "/register" + ("?" + urlencode({"next": next_url}) if next_url != "/" else "")
+    return f"<p class=switch>New to Gamma Cloud? <a href='{esc(href)}'>Create an account</a></p>"
 
 
 def _terms() -> str:
@@ -366,7 +405,7 @@ TAKE_INVITE_JS = ("let carried = ''; try { carried = sessionStorage.getItem('gc_
 def login_page(social: dict | None = None) -> str:
     tiles, script = _social(social)
     next_url = (social or {}).get("next", "/")
-    inner = f"<form id=f>{_password_fields()}</form>{tiles}{_to_register()}{_terms()}"
+    inner = f"<form id=f>{_password_fields()}</form>{tiles}{_to_register(next_url)}{_terms()}"
     script = f"bind('f', async d => {{ await api('/api/login', d); location.href = {_js(next_url)}; }});" + script
     return auth("Sign in", "One account for the desktop app and every Gamma server.", inner, script)
 
@@ -417,11 +456,13 @@ def signup_finish_page(flow: dict, suggestion: str) -> str:
 def _token_page(title: str, api_path: str, token: str, done_js: str, then_js: str = "'/'") -> str:
     """A mailed link's landing page: posts the token, shows ``done_js`` (a
     JS expression over the answer ``d``), then goes to ``then_js`` (another
-    one; the Overview by default)."""
+    one; the Overview by default). In a native app's browser it has no link
+    to the Overview."""
     script = (f"api({_js(api_path)}, {{token: {_js(token)}}}).then(d => {{ document.getElementById('msg').textContent = "
               f"{done_js}; setTimeout(() => location.href = {then_js}, 1200); }})"
               f".catch(e => {{ document.getElementById('msg').textContent = e.message; }});")
-    return auth(title, "One moment.", "<p id=msg class=msg></p><p class=links><a href='/'>Overview</a></p>", script)
+    links = "" if in_app() else "<p class=links><a href='/'>Overview</a></p>"
+    return auth(title, "One moment.", "<p id=msg class=msg></p>" + links, script)
 
 
 def verify_page(token: str) -> str:
@@ -605,8 +646,9 @@ def _notice(account: dict, mail_failed: bool = False) -> str:
             "<button class='btn btn--sm' data-resend>Resend the mail</button></div>")
 
 
+# A resend button's ``data-next`` is where the new link goes on to (``ResendBody.next``).
 RESEND_JS = ("document.querySelectorAll('[data-resend]').forEach(r => r.onclick = async () => { r.disabled = true; "
-             "try { await api('/api/verify/resend', {}); r.textContent = 'Sent — check your inbox'; } "
+             "try { await api('/api/verify/resend', r.dataset.next ? {next: r.dataset.next} : {}); r.textContent = 'Sent — check your inbox'; } "
              "catch (e) { r.textContent = e.message; r.disabled = false; } });")
 
 
@@ -1128,6 +1170,12 @@ def _consent(*, title: str, heading: str, where: str, account, gets_label: str, 
     return _auth_shell(title, card, script, cls="consent", top=False)
 
 
+def _devices_link() -> str:
+    """The Devices page in a card's footnote: a link, or its name alone in a
+    native app's browser."""
+    return "your account's Devices page" if in_app() else "<a href=/devices>Devices</a>"
+
+
 def _consent_page(req: dict, account) -> str:
     """A signed-in, verified person confirms the client that asks: who asks
     (a hosted server by the origin of its redirect URI, the desktop app as
@@ -1146,7 +1194,7 @@ def _consent_page(req: dict, account) -> str:
         gets_label=f"What {esc(name)} gets",
         gets=[(icon, words) for wanted, icon, words in SCOPE_WORDS if scopes & wanted],
         go="Continue", cancel="<button class=linkbtn id=cancel>Cancel</button>",
-        foot="You can sign this device out any time from <a href=/devices>Devices</a>.",
+        foot="You can sign this device out any time from " + _devices_link() + ".",
         go_js=(f"document.getElementById('go').onclick = async () => {{ try {{ const d = await api('/authorize/continue', {{request_id: {rid}}}); "
                "location.href = d.redirect; } catch (e) { err.textContent = e.message; } };"),
         cancel_js=(f"document.getElementById('cancel').onclick = (e) => act(e.target, async () => {{ const d = await api('/authorize/cancel', {{request_id: {rid}}}); "
@@ -1198,15 +1246,15 @@ def no_library_page(account, places: list[dict]) -> str:
     (``entrance.decide``'s ``upgrade``): its plan has no library online,
     the plans, the desktop app, and the servers it is a member of
     (``places``), if any. Nothing on it leads into the shared server."""
+    actions = "" if in_app() else (f"<div class=actions><a class='btn btn--primary' href='/plan'>See plans</a>"
+                                   f"<a class=btn href='{SITE}/download'>Get the desktop app</a></div>")
     team = ("<p class=gets>Servers you are a member of</p><div class=dests>"
             + "".join(_place_row(p) for p in places) + "</div>") if places else ""
     card = (f"<div class=cbrand>{LOGO}<span>Gamma<em>Cloud</em></span></div><div class=cbody>"
             "<h1>Your plan has no online library</h1>"
             f"<p class=lead>You are on the <b>{esc(account['plan'].capitalize())}</b> plan: your library lives in the "
             "desktop app. Lite, Plus and Pro add one that is always on, so your devices stay in sync and share "
-            "links work with the laptop closed.</p>"
-            f"<div class=actions><a class='btn btn--primary' href='/plan'>See plans</a>"
-            f"<a class=btn href='{SITE}/download'>Get the desktop app</a></div>{team}"
+            f"links work with the laptop closed.</p>{actions}{team}"
             f"<p class=alt>Signed in as {esc(account['username'])}<span class=sep aria-hidden=true>·</span>"
             "<button class=linkbtn id=other>Use another account</button></p><div class=msg id=err></div></div>"
             "<p class=cfoot>Publishing pages from the desktop app works on every plan.</p>")
@@ -1226,7 +1274,7 @@ def where_page(account, places: list[dict], request_id: str = "") -> str:
             f"<div class=dests>{rows}</div>"
             f"<p class=alt>Signed in as {esc(user)}<span class=sep aria-hidden=true>·</span>"
             "<button class=linkbtn id=other>Use another account</button></p><div class=msg id=err></div></div>"
-            "<p class=cfoot>Every server you have signed in to is listed on <a href=/devices>Devices</a>.</p>")
+            f"<p class=cfoot>Every server you have signed in to is listed on {_devices_link()}.</p>")
     script = ENTRANCE_JS
     if request_id:
         script += ("const stay = document.getElementById('stay'); if (stay) stay.onclick = () => act(stay, async () => { "
@@ -1238,16 +1286,20 @@ def authorize_page(req: dict, account, verify_needed: bool = False, social: dict
     client = req["client"]
     who = esc(client["name"])
     rid = _js(req["id"])
+    # From a native app's browser a new account, and a resent verify link,
+    # come back to this sign-in, not to the Overview.
+    back = "/authorize/resume?" + urlencode({"request_id": req["id"]}) if in_app() else "/"
     if account and verify_needed:
+        resend = f"<button class='btn btn--block' data-resend data-next='{esc(back)}'>" if in_app() else "<button class='btn btn--block' data-resend>"
         inner = (f"<p class=lead><b>{who}</b> wants to sign you in as <b>{esc(account['username'])}</b>, but your e-mail address is not "
                  "confirmed yet. Open the link we mailed you, then try again from the app.</p>"
-                 "<button class='btn btn--block' data-resend>Resend the mail</button>"
-                 "<p class=links><a href=/>Your account</a></p>")
+                 f"{resend}Resend the mail</button>"
+                 + ("" if in_app() else "<p class=links><a href=/>Your account</a></p>"))
         return auth("Confirm your e-mail first", "", inner, RESEND_JS)
     if account:
         return _consent_page(req, account)
     tiles, social_js = _social(social)
-    inner = f"<form id=f>{_password_fields()}</form>{tiles}{_to_register()}{_terms()}"
+    inner = f"<form id=f>{_password_fields()}</form>{tiles}{_to_register(back)}{_terms()}"
     script = (f"bind('f', async d => {{ const r = await api('/authorize/login', {{request_id: {rid}, login: d.login, password: d.password}}); "
               f"if (r.verify_needed) location.reload(); else location.href = r.redirect; }});" + social_js)
     return auth(f"Sign in to {client['name']}", "Use your Gamma Cloud account.", inner, script)

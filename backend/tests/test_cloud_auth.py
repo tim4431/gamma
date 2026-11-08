@@ -448,6 +448,8 @@ def test_the_desktop_app_signs_in_through_the_system_browser(cloud, monkeypatch)
     window, system_browser = browser(), browser()
     auth, verifier = app_start(window, next="/?page=abc")
     assert auth["redirect_uri"] == "http://testserver/api/auth/cloud/callback", "the account server calls back as before"
+    assert auth["gamma_app"] == "1", "the account server's pages then leave out their links to the plans"
+    assert "gamma_app" not in start(browser()), "a sign-in in a browser of its own keeps them"
     # The browser finishes the sign-in, gets no session, and carries a result to the app's address.
     r = callback(system_browser, auth)
     assert "set-cookie" not in r.headers

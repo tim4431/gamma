@@ -1380,6 +1380,13 @@ wins over the labels here.
     Stripe Checkout, and Play's Payments policy forbids linking to "a
     webpage that could lead to an alternate payment method"
     ([payments](https://support.google.com/googleplay/android-developer/answer/10281818)).
+    For the same reason the account server's sign-in and sign-up pages,
+    in the browser the app's Gamma Cloud sign-in opens, show their brand
+    without its links to gammapdf.com and the account home, and lead a new
+    account back to the sign-in
+    ([cloud_accounts.md "From a native app"](cloud_accounts.md#the-oidc-provider)).
+    Their *privacy policy* line still links to gammapdf.com/privacy/,
+    whose header links *Pricing*.
   - Play counts a Gamma Cloud account as one the app lets the person
     create, since the sign-in's browser offers sign-up, so the app needs
     an in-app way to start deleting it and a public web page for the Data

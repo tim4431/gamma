@@ -55,7 +55,8 @@ cloud-signin``, which only the machine the browser runs on can reach, RFC
 verifier of the challenge it started with (``app_claim``), and that
 answer sets the cookie. A sign-in link someone else started delivers its
 result to this person's own machine, never to the one that holds the
-verifier.
+verifier. The app's authorize URL carries ``gamma_app=1``, which tells the
+account server's pages to leave out their links to the plans.
 
 Configuration lives in the ``settings`` KV (issuer, client id, the secret
 Fernet-encrypted with the data directory's key, policy) with ``GAMMA_CLOUD_*``
@@ -499,6 +500,10 @@ def begin(request, *, link_user: str | None, next_path: str, app: dict | None = 
     params = {"response_type": "code", "client_id": cfg["client_id"], "redirect_uri": base + CALLBACK_PATH,
               "scope": SCOPE, "state": state, "nonce": nonce,
               "code_challenge": _b64url(hashlib.sha256(verifier.encode()).digest()), "code_challenge_method": "S256"}
+    if app:
+        # The account server's pages then link nowhere a plan is bought (cloud/gammacloud/pages.py
+        # in_app); an authorization server ignores a parameter it does not know (RFC 6749 §3.1).
+        params["gamma_app"] = "1"
     return doc["authorization_endpoint"] + "?" + urllib.parse.urlencode(params)
 
 
