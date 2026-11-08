@@ -217,18 +217,36 @@ loop, as it already did. Each entry still commits on its own, so the
 write lock is let go between pages and a restore meanwhile is not lost
 ([dev/home_library.md](../dev/home_library.md) "Recently deleted").
 
+The off-site copies' rounds and a folder link's rounds report their
+progress as the other rounds do. An off-site round keeps it in memory for
+its status (`offsite._phase`): the databases looked at of all of them,
+then the files it sends and their bytes, boto3's upload callback moving
+the bytes within a file. To count the whole round from its start, the
+uploads now compare every workspace's files with its listing before the
+first is sent. Settings → Backups' status line reads "copying now… ·
+files 120 / 3,400 · 1.2 GB / 8.0 GB", read every 3 s while the round runs
+([dev/debugging.md](../dev/debugging.md#off-site-copies-in-a-bucket)). A
+folder link's `Round` takes a `progress` callback in place of the `say`
+the server threw away: the files fetched of those to fetch and the PDFs'
+bytes by the manifest's `pdf_size`. `_folder_round` writes it into the
+link's status at most once a second, and the desktop app's sync panel
+reads *Syncing 30 / 120*
+([dev/folder_sync.md](../dev/folder_sync.md) "A folder link's round").
+Neither is a job, so neither is in the tasks tray: they stay recurring
+rounds, shown where they are followed.
+
 ## Still open
 
 In the order they matter:
 
 1. One request for the library's bulk actions (trash many pages, apply
    many page patches), on `ops.apply_batches`.
-2. Progress for the off-site copies' first round and a folder link's
-   rounds (`say` is thrown away in `folder_links._folder_round`).
-3. A share view's export of a big shared folder (the share host sits
+2. A share view's export of a big shared folder (the share host sits
    behind Cloudflare and the share view has no jobs).
-4. A workspace being deleted taking no more changes (above), which needs
+3. A workspace being deleted taking no more changes (above), which needs
    the web app to learn a lost write right mid-session.
-5. Smaller: a publish that only changes the audience still runs a full
-   round; unlinking Zotero clears marks page by page; the health table's
-   and the backup list's scans (above).
+4. Smaller: a folder link's round shows no progress while it sends PDFs
+   back, nor within one large PDF it fetches; a publish that only
+   changes the audience still runs a full round; unlinking Zotero clears
+   marks page by page; the health table's and the backup list's scans
+   (above).

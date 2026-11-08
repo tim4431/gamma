@@ -202,6 +202,25 @@ function zotero(server, info) {
   return { ...item, state: 'ok', text: `Up to date · ${clock(s.last_sync)}`, title: `Up to date since ${clock(s.last_sync)}.` };
 }
 
+// A byte count as the frontend's fmtBytes writes it ("4.2 MB").
+function size(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(0)} KB`;
+  if (n < 1073741824) return `${(n / 1048576).toFixed(1)} MB`;
+  return `${(n / 1073741824).toFixed(1)} GB`;
+}
+
+// A folder's round as it runs (`status.progress`, gamma/folder_links.py
+// _progress_writer: the files fetched of those to fetch, the PDFs' bytes,
+// the file at hand): "Syncing 30 / 120", or "Syncing…" before it knows.
+function folderRun(p) {
+  if (!p || !(Number(p.total) > 0)) return { text: 'Syncing…', title: 'A round is running.' };
+  const b = p.bytes || {};
+  const pdfs = Number(b.total) > 0 ? ` (PDFs ${size(Math.min(Number(b.done) || 0, Number(b.total)))} of ${size(Number(b.total))})` : '';
+  return { text: `Syncing ${count(p.done)} / ${count(p.total)}`,
+    title: `A round is running: ${count(p.done)} of ${count(p.total)} ${Number(p.total) === 1 ? 'file' : 'files'} written${pdfs}${p.path ? `, now ${p.path}` : ''}.` };
+}
+
 // A folder kept on disk by local server `server`: one row of its `GET
 // /api/folder-links`. `push`: the PDFs changed in it go back to Gamma.
 // Of the files the last round kept, `changed` counts the ones a forced
@@ -220,7 +239,7 @@ function folder(server, link, servers) {
     where: link.dest, dest: link.dest, from: link.remote_url ? nameOf(link.remote_url, servers) : server.name,
     changed, held: held.length, push: Boolean(link.push), paused: Boolean(s.paused_at),
   };
-  if (s.running) return { ...item, state: 'busy', text: 'Syncing…', title: 'A round is running.' };
+  if (s.running) return { ...item, state: 'busy', ...folderRun(s.progress) };
   if (item.paused) {
     return { ...item, state: 'paused', text: `Paused · ${clock(s.paused_at)}`, title: 'Nothing here is written until you resume it; Sync runs one round now.' };
   }

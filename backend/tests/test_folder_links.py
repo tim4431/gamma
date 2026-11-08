@@ -202,6 +202,60 @@ def test_a_links_running_is_a_round_holding_it_however_long_that_round_runs(owne
     owner.delete(f"/api/folder-links/{link['id']}", params={"remove_files": 1}).raise_for_status()
 
 
+def _pdf(text: str) -> bytes:
+    import pymupdf
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 72), text)
+    return doc.tobytes()
+
+
+def test_a_folder_round_shows_its_progress_while_it_runs(owner, disk, monkeypatch):
+    """A folder round writes what it has fetched into the status as it goes
+    (``progress``: the files and the PDFs' bytes), at most every
+    ``PROGRESS_S`` and once all is fetched; its own status at the end has
+    none, and a mark no round holds shows none."""
+    folder = make_folder(owner, "FL progress")
+    sizes = []
+    for n in (1, 2):
+        data = _pdf(f"FL progress paper {n}")
+        r = owner.post("/api/uploads", files={"file": ("paper.pdf", data, "application/pdf")})
+        assert r.status_code == 200, r.text
+        sizes.append(len(data))
+        make_page(owner, f"FL progress paper {n}", {"doc_id": r.json()["doc_id"], "folders": [folder]})
+    make_page(owner, "FL progress note", {"folders": [folder]})
+    link = _create(owner, folder=folder, path=str(disk / "Progress"))
+    written, real = [], folder_links._write_status
+
+    def write(link_id, status, **kw):
+        if "progress" in status:
+            written.append(status)
+        real(link_id, status, **kw)
+
+    monkeypatch.setattr(folder_links, "_write_status", write)
+    monkeypatch.setattr(folder_links, "PROGRESS_S", 0)
+    status = _sync(owner, link["id"])
+    assert status["counts"]["added"] == 5 and "progress" not in status
+    assert {s["running"] for s in written} == {True} and all(s["started_at"] for s in written)
+    shown = [s["progress"] for s in written]
+    assert shown[0] == {"done": 0, "total": 5, "path": "", "bytes": {"done": 0, "total": sum(sizes)}}
+    assert shown[-1]["done"] == 5 and shown[-1]["bytes"] == {"done": sum(sizes), "total": sum(sizes)}
+    assert [p["done"] for p in shown] == sorted(p["done"] for p in shown)
+    assert {p["path"] for p in shown if p["path"].endswith(".pdf")} == {
+        "FL progress paper 1.pdf", "FL progress paper 2.pdf"}
+    assert "progress" not in owner.get(f"/api/folder-links/{link['id']}").json()["status"]
+
+    # written at most every PROGRESS_S: a full round says where it begins and that it has fetched everything
+    written.clear()
+    monkeypatch.setattr(folder_links, "PROGRESS_S", 3600)
+    _sync(owner, link["id"], full=1)
+    assert [(p["progress"]["done"], p["progress"]["total"]) for p in written] == [(0, 5), (5, 5)]
+
+    # a mark a stopped server left, its progress with it: neither reads as a round
+    real(link["id"], {"running": True, "started_at": time.time(), "progress": {"done": 1, "total": 5}})
+    assert "progress" not in owner.get(f"/api/folder-links/{link['id']}").json()["status"]
+    owner.delete(f"/api/folder-links/{link['id']}", params={"remove_files": 1}).raise_for_status()
+
+
 def test_a_path_must_be_a_full_one_of_its_own_outside_the_data_directory(owner, disk):
     folder = make_folder(owner, "FL paths")
     make_page(owner, "FL p", {"folders": [folder]})

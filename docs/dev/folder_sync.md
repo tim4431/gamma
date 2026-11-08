@@ -387,6 +387,23 @@ that fails in a way no rule names (any other exception) still ends:
 `last_error` reads `unexpected error: …`, the traceback goes to the log,
 and the retry wait applies.
 
+While it runs, a folder link's round writes how far it is into the status
+as `progress` (`_progress_writer`, from `Round`'s `progress` callback):
+`{done, total, bytes: {done, total}, path}`. From the comparison of the
+manifest with the directory on, it counts the files it fetches (the notes
+files, then the PDFs, then the attachments the notes name, which join
+`total` once the notes are in) and the PDFs' bytes by the manifest's
+`pdf_size`, `path` the file being fetched. It is written at most every
+`PROGRESS_S` (1 s) and once everything is fetched, beside the `running`
+and `started_at` the round began with; the round's own status at its end
+has none, and a row read as not running drops one a stopped server left.
+Before the comparison (the PDFs sent back, the manifest read) there is no
+`progress` yet. The desktop app's sync panel shows it as *Syncing 30 /
+120*, the PDFs' bytes and the file at hand in its tooltip
+([desktop architecture](../../desktop/docs/architecture.md#kept-on-this-computer)).
+A file link's round is one file and writes none. The gamma-sync client
+passes no callback and prints what it does instead.
+
 Rounds run three ways: in a thread of their own when a link is made,
 asked to sync or resumed (`run_in_background`), inline for a sync asked
 to wait (`?wait=1`, for scripts), and from `tick`. `run_in_background`

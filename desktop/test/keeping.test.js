@@ -105,6 +105,17 @@ test('a followed file is named after its page, else the title its rounds saw, el
   assert.deepEqual([a.kind, b.kind], ['folder', 'file'], 'the links split by kind');
 });
 
+test('a folder round says how far it is: the files written of those to write, the PDFs\' bytes', () => {
+  assert.equal(folder({ status: { running: true, progress: { done: 0, total: 0, path: '' } } }).text, 'Syncing…');
+  const going = folder({ status: { running: true, progress: { done: 1200, total: 3400, path: 'Sub/A paper.pdf',
+    bytes: { done: 1.2 * 1073741824, total: 8 * 1073741824 } } } });
+  assert.equal(going.state, 'busy');
+  assert.equal(going.text, 'Syncing 1,200 / 3,400');
+  assert.equal(going.title, 'A round is running: 1,200 of 3,400 files written (PDFs 1.2 GB of 8.0 GB), now Sub/A paper.pdf.');
+  const notes = folder({ status: { running: true, progress: { done: 0, total: 1, path: '', bytes: { done: 0, total: 0 } } } });
+  assert.equal(notes.title, 'A round is running: 0 of 1 file written.');
+});
+
 test('a paused folder reads as paused unless a round asked for runs; a detached clone is paused', () => {
   const paused = folder({ status: { last_sync: now, last_error: 'x', paused_at: now } });
   assert.equal(paused.state, 'paused');

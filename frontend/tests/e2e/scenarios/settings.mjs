@@ -1669,6 +1669,9 @@ export async function settingsScenarios(env) {
       assert((await statusLine.innerText()).startsWith("copying now…"), `the status while copying: ${await statusLine.innerText()}`);
       await page.waitForResponse((r) => r.url().endsWith("/api/admin/offsite") && r.request().method() === "GET", { timeout: 10000 });
       assert(await copying.isDisabled(), "still disabled after a status poll");
+      // held on its first database copy: the line says how far the round is
+      await until(async () => /^copying now… · databases 0 \/ [1-9]\d*/.test(await statusLine.innerText()),
+        { what: "the round's progress in the status line" });
       release();
       await status.getByRole("button", { name: "Copy now", exact: true }).waitFor({ timeout: 15000 });
       await until(async () => (await statusLine.innerText()).includes("last round"), { what: "the finished round's line" });

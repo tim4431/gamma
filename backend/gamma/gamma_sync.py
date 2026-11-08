@@ -499,11 +499,19 @@ class Round:
     difference written to disk — renames first, then new and changed files,
     then the attachments the notes need, then what is gone. A link that
     sends PDFs back (its state's ``push``, and a ``sink`` to write through)
-    first sends the ones changed on disk (``Push``)."""
+    first sends the ones changed on disk (``Push``).
 
-    def __init__(self, link: Link, source, *, sink=None, full=False, force=False, dry_run=False, say=print):
+    ``progress``, when given, is called with what the round fetches as it
+    goes, from the comparison on: ``{done, total, bytes: {done, total},
+    path}``, the files (notes, PDFs, then the attachments the notes name,
+    which join ``total`` once known) and the PDFs' bytes from the
+    manifest's ``pdf_size``, ``path`` the file being fetched now."""
+
+    def __init__(self, link: Link, source, *, sink=None, full=False, force=False, dry_run=False, say=print,
+                 progress=None):
         self.link, self.source = link, source
-        self.full, self.force, self.dry_run, self.say = full, force, dry_run, say
+        self.full, self.force, self.dry_run, self.say, self.progress = full, force, dry_run, say, progress
+        self.done = self.total = self.bytes_done = self.bytes_total = 0
         self.dest = link.dest
         self.state = copy.deepcopy(link.state) if dry_run else link.state
         self.sink = sink if self.state.get("push") else None
@@ -527,6 +535,9 @@ class Round:
         self._rename(files, wanted)
         self._make_dirs(manifest)
         notes_todo, pdf_todo = self._compare(files, wanted)
+        self.total = len(notes_todo) + len(pdf_todo)
+        self.bytes_total = sum(w.get("size", 0) for _, w, _ in pdf_todo)
+        self._report()
         self._fetch_notes(notes_todo, files)
         self._fetch_pdfs(pdf_todo, files)
         self._attachments(files)
@@ -538,6 +549,11 @@ class Round:
         if not self.dry_run:
             self.link.save()
         return self.counts
+
+    def _report(self, path=""):
+        if self.progress is not None:
+            self.progress({"done": self.done, "total": self.total, "path": path,
+                           "bytes": {"done": self.bytes_done, "total": self.bytes_total}})
 
     def _push(self, files):
         """The PDFs changed on disk, sent before the manifest is fetched, so
@@ -557,7 +573,7 @@ class Round:
         wanted = {}
         for p in manifest["pages"]:
             if p.get("pdf") and safe_rel(p["pdf"]):
-                wanted[p["pdf"]] = {"page": p["id"], "doc": p["doc_id"]}
+                wanted[p["pdf"]] = {"page": p["id"], "doc": p["doc_id"], "size": int(p.get("pdf_size") or 0)}
             if self.state.get("notes", True) and p.get("notes") and safe_rel(p["notes"]):
                 wanted[p["notes"]] = {"page": p["id"], "version": p["version"]}
         return wanted
@@ -621,6 +637,7 @@ class Round:
             if not self.dry_run:
                 got = self.source.notes([w["page"] for _, w, _ in batch])
             for path, w, verb in batch:
+                self.done += 1
                 if self.dry_run:
                     self.say(verb, path)
                     self._count(verb)
@@ -633,21 +650,32 @@ class Round:
                 self._count(verb)
                 files[path] = {"page": w["page"], "version": page.get("version") or w["version"],
                                "attachments": page.get("attachments") or [], **write_text(self.dest / path, page["markdown"])}
+            self._report(batch[-1][0])
 
     def _fetch_pdfs(self, todo, files):
         for path, w, verb in todo:
             self.say(verb, path)
             self._count(verb)
             if self.dry_run:
+                self._fetched(w)
                 continue
+            self._report(path)
             target = self.dest / path
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 self.source.download(f"{w['doc']}.pdf", target)
             except SyncError as e:
                 self.keep(path, str(e))
+                self._fetched(w)
                 continue
             files[path] = {"page": w["page"], "doc": w["doc"], **file_stat(target)}
+            self._fetched(w)
+        if todo:
+            self._report()
+
+    def _fetched(self, w):
+        self.done += 1
+        self.bytes_done += w.get("size", 0)
 
     def _attachments(self, files):
         """The pictures and files the notes refer to, by content-hash name:
@@ -655,14 +683,15 @@ class Round:
         referenced = set()
         for e in files.values():
             referenced.update(e.get("attachments") or [])
-        for name in sorted(referenced):
+        todo = [name for name in sorted(referenced) if safe_rel(f"attachments/{name}") and "/" not in name
+                and not (f"attachments/{name}" in files and (self.dest / "attachments" / name).is_file())]
+        self.total += len(todo)
+        for name in todo:
             path = f"attachments/{name}"
-            if not safe_rel(path) or "/" in name:
-                continue
-            if path in files and (self.dest / path).is_file():
-                continue
+            self._report(path)
             self.say("added", path)
             self.counts["added"] += 1
+            self.done += 1
             if self.dry_run:
                 continue
             (self.dest / "attachments").mkdir(exist_ok=True)
@@ -672,6 +701,8 @@ class Round:
                 self.keep(path, str(e))
                 continue
             files[path] = {"attachment": True, **file_stat(self.dest / path)}
+        if todo:
+            self._report()
         for path in [p for p, e in files.items() if kind(e) == "attachment" and p.split("/", 1)[-1] not in referenced]:
             self._delete(path, files)
 

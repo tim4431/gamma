@@ -97,8 +97,13 @@ key, for a bucket several servers share), the interval (default 3600 s, at
 least 60) and the copies kept per database. Test lists the bucket once with
 the form's values, saved or not. Copy now starts a round at once. It is the
 server's own round, not a background job ([tasks.md](tasks.md)), and the
-section's status line follows it: the last round, what it copied, what
-failed and why, and the next round. The settings are stored in users.db
+section's status line follows it: how far a running round is, the last
+round, what it copied, what failed and why, and the next round. A running
+round counts the databases it has looked at of all of them, then the
+files it sends and their bytes (boto3's upload callback), each
+workspace's files compared with one listing of its objects before the
+first is sent, so the first round, which sends every file, counts the
+whole library from its start. The settings are stored in users.db
 under the `settings` key `offsite`, the secret key encrypted with the data
 directory's key like the shared AI provider keys. A round reads them as it
 starts, and the pause after a round is read as the round ends. So a change

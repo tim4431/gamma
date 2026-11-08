@@ -141,12 +141,15 @@ class Client:
             raise S3ConfigError(f"cannot reach {self.where}: {e}") from e
         return int(page.get("KeyCount", len(page.get("Contents", ())))), bool(page.get("IsTruncated"))
 
-    def put_object(self, key: str, path: Path) -> None:
+    def put_object(self, key: str, path: Path, tick=None) -> None:
         """Store the local file at ``path`` as ``key``, streamed; an object
-        of the key is replaced whole. A file that is not there raises
+        of the key is replaced whole. ``tick``, when given, is called with
+        each run of bytes sent as they go (boto3's ``Callback``, from its
+        transfer threads). A file that is not there raises
         FileNotFoundError, never an S3Error."""
         try:
-            self.client.upload_file(str(path), self.bucket, self.prefix + check_key(key))
+            self.client.upload_file(str(path), self.bucket, self.prefix + check_key(key),
+                                    **({"Callback": tick} if tick else {}))
         except (self._client_error, self._boto_error, self._transfer_error) as e:
             reason = str(e)
             if isinstance(e, self._transfer_error):  # "Failed to upload <local path> to <bucket>/<key>: <cause>"

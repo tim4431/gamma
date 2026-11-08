@@ -291,6 +291,10 @@ shown (each named by its tooltip):
   or take back what the sync wrote. *stop* (a file) is `dropFile`, which
   asks nothing: the file is never touched.
 
+A folder whose round runs reads *Syncing 30 / 120*, the files written of
+those the round fetches (the status's `progress`, written as the round
+goes), its tooltip the PDFs' bytes and the file at hand, or *Syncing…*
+before the round has compared the folder with the directory.
 A folder that sends back reads *Up to date · 14:02 · sends back*, with
 *n sent* when its last round sent any. A folder's row adds *n changed
 here* for the files Sync can replace and *n not synced* for the other

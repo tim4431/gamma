@@ -717,6 +717,10 @@ Library:
   the copies are on, Status reads "last round … · 12 databases · 340
   uploads · 0 failed · next round …" (or "no round yet", with the round's
   error under it) beside Copy now, which is disabled while a round runs.
+  A running round leads it with how far it is ("copying now… · databases
+  3 / 12", then "files 120 / 3,400 · 1.2 GB / 8.0 GB",
+  [offsiteRound.js](../../frontend/src/settings/offsiteRound.js)), read
+  every 3 s while it runs.
   With `GAMMA_S3_BUCKET` set, the environment supplies every field: the
   switch is disabled, the summary says "Set by GAMMA_S3_BUCKET in the
   server's environment" (the summary line is its hover title), and its one

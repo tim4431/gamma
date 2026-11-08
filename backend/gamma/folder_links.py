@@ -72,6 +72,7 @@ MAX_LINKS = 10         # folders per workspace
 MAX_FILE_LINKS = 50    # files followed per workspace
 RETRY_S = 300          # a link whose last round failed waits this long for the next try
 KEPT_SHOWN = 50        # kept files listed in the status
+PROGRESS_S = 1.0       # a folder round writes its progress to the status at most this often
 
 _COLS = ("id, workspace_id, folder_id, path, notes, created_by, created_at, cursor, status, remote_url, token, token_id, "
          "kind, page_id, push, state")
@@ -175,6 +176,8 @@ def _row(r, with_token: bool = False) -> dict:
         # a mark no round of this process holds (a server stopped mid-round left it): not running,
         # however long a round that does hold it has run
         status["running"] = False
+    if not status.get("running"):
+        status.pop("progress", None)  # what such a round last said of itself
     link = {"id": r[0], "workspace_id": r[1], "folder_id": r[2], "path": r[3], "notes": bool(r[4]),
             "created_by": r[5], "created_at": r[6], "cursor": r[7] or "", "status": status,
             "remote_url": r[9] or "", "token_id": r[11] or "", "kind": r[12] or "folder", "page_id": r[13] or "",
@@ -668,16 +671,35 @@ def run_link(link_id: str, *, full: bool = False, force: bool = False) -> dict |
     return _held(link_id, link, started, full, force)
 
 
+def _progress_writer(link: dict):
+    """What a folder round reports of itself (``gamma_sync.Round``'s
+    ``progress``) written into the status as ``progress`` while it runs, at
+    most every ``PROGRESS_S``, and always once it has fetched everything,
+    beside the ``running`` and ``started_at`` the round began with. The
+    round's own status at its end has none."""
+    last = [0.0]
+
+    def write(progress: dict) -> None:
+        now = time.monotonic()
+        if now - last[0] < PROGRESS_S and progress["done"] < progress["total"]:
+            return
+        last[0] = now
+        _write_status(link["id"], {**link["status"], "running": True, "progress": progress})
+    return write
+
+
 def _folder_round(link: dict, full: bool, force: bool) -> dict:
     """A folder link's round (``gamma_sync.Round``), the PDFs changed on
-    disk sent back first when the link pushes. → ``{running, last_sync,
-    last_error, counts, kept, folder_path}``, each of ``kept`` ``{path, why,
-    force}``: ``force`` when a forced round would replace the file with
-    Gamma's (one changed on disk), not for one a send could not deliver or
-    one in the way."""
+    disk sent back first when the link pushes, its progress in the status
+    as it goes (``_progress_writer``). → ``{running, last_sync, last_error,
+    counts, kept, folder_path}``, each of ``kept`` ``{path, why, force}``:
+    ``force`` when a forced round would replace the file with Gamma's (one
+    changed on disk), not for one a send could not deliver or one in the
+    way."""
     state = _ensure_state(link)
     sink = sink_of(link) if link["push"] else None
-    rnd = gamma_sync.Round(state, source_of(link), sink=sink, full=full, force=force, say=lambda *_: None)
+    rnd = gamma_sync.Round(state, source_of(link), sink=sink, full=full, force=force, say=lambda *_: None,
+                           progress=_progress_writer(link))
     counts = rnd.run()
     status = {"running": False, "last_sync": page_now(), "last_error": "", "counts": counts,
               "kept": [{"path": p, "why": w, "force": f} for p, w, f in rnd.kept[:KEPT_SHOWN]],
