@@ -7,7 +7,8 @@ Every chat has a *scope* deciding what its tools can touch:
   Builders that write the prompt add ``folder_path``, the folder's path as
   it reads (``agent_system``).
 - ``{"type": "page", "page_id": id}`` — the per-page chat; tools reach only
-  that page.
+  that page, and its reading tools the pages inside it too (``inside``,
+  which ``run_agent_tool`` sets for a reading tool).
 
 ``context_pages`` extends either scope for reads; mutations keep the base scope.
 
@@ -82,9 +83,9 @@ from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canon
 from .blocks_store import (BLOCK_ID_RE, FOLDERS, LABELS, PATH_SEP, TRASH, block_kind, block_to_dict, descend,
                            existing_in, fetch_subtree, filed_folders, filing, folder_chain, folder_inserts,
                            folder_paths, folder_subtree_ids, label_by_name, label_inserts, label_names, load_props,
-                           named, page_attachment, page_descendants, page_in_folder, page_parent, page_parents,
-                           page_root_id, root_pages, top_of, trashed_folders, tree_children, tree_parents,
-                           valid_block_id, write_lock)
+                           named, page_ancestors, page_attachment, page_descendants, page_in_folder, page_parent,
+                           page_parents, page_root_id, root_pages, top_of, trashed_folders, tree_children,
+                           tree_parents, valid_block_id, write_lock)
 from .db import connect_data_db, connect_pages_db
 from .highlights import is_ink
 from .ops import (MAX_OPS, after_commit, after_commits, apply_batches, apply_ops, delete_tree, ensure_filing,
@@ -353,7 +354,9 @@ def _page_in_scope(conn, scope: dict, page_id: str, folders: list[str], reach=_N
     if page_id in (scope.get("context_pages") or []):
         return True
     if scope.get("type") == "page":
-        return page_id == scope.get("page_id")
+        # a reading tool of a page chat reaches the pages inside the page too (run_agent_tool's ``inside``)
+        return page_id == scope.get("page_id") or bool(
+            scope.get("inside") and scope.get("page_id") in page_ancestors(conn, page_id))
     return _filed_in(_reach(conn, scope) if reach is _NO_REACH else reach, folders)
 
 
@@ -381,11 +384,14 @@ def _load_scoped_page(conn, scope: dict, args: dict, reach=_NO_REACH):
 
 
 def _scope_pages(conn, scope: dict) -> dict:
-    """Titles and PDF ids for the base scope plus read-only context pages."""
+    """Titles and PDF ids for the base scope plus read-only context pages:
+    a page chat's page, with the pages inside it for a reading tool
+    (``inside``), or a folder chat's pages."""
     page_ids = list(scope.get("context_pages") or [])
     if scope.get("type") == "page":
         pages = {}
-        page_ids.insert(0, scope.get("page_id"))
+        page_id = str(scope.get("page_id") or "")
+        page_ids[:0] = [page_id] + (page_descendants(conn, page_id) if scope.get("inside") else [])
     else:
         pages = root_pages(conn, _scope_folder(scope))
     for page_id in page_ids:
@@ -816,7 +822,7 @@ def _run_read_page(conn, ws: str, scope: dict, args: dict):
     section = page_report_section(conn, ws, page_id, budget, offset, page,
                                   include_notes=include_notes,
                                   notes_budget=_read_cap(scope.get("read_chars")), report=report,
-                                  notes_seen=notes_seen(scope))
+                                  notes_seen=notes_seen(scope), listing=scope.get("type") != "page")
     if not section:
         return f'"{title}" has no readable content', None
     if notes_wanted and notes_in_context:
@@ -2578,7 +2584,7 @@ def _run_save_paper(conn, ws: str, scope: dict, args: dict):
         text += f". Note: {out['note']}"
     if scope.get("type") == "page":
         text += (". The new page is outside this chat's reach (a page chat reads only its own "
-                 "page); read the paper with fetch_paper")
+                 "page and the pages inside it); read the paper with fetch_paper")
     return text + ".", {"kind": "save", "page_id": page_id, "title": name, "to": path if folder else "",
                         "existed": bool(out.get("existed")), "pdf": bool(out.get("doc_id")),
                         "summary": f"Saved “{name[:60]}” to {path if folder else 'the library root'}"}
@@ -3030,7 +3036,9 @@ def _run_move_page(conn, ws: str, scope: dict, args: dict):
 def _run_list_deleted(conn, ws: str, scope: dict, args: dict):
     """Recently deleted (gamma/trash.py) as far as the chat's folder
     reaches — the pages that were filed under it — the last deleted first,
-    with the folders a restore puts each page back in."""
+    with the folders a restore puts each page back in, the page it goes
+    back inside (``parent``) and how many pages inside it come back with
+    it (``sub_pages``)."""
     query = str(args.get("title_contains") or "").strip().lower()
     reach = _reach(conn, scope)
     pages = [p for p in list_trash(conn) if _filed_in(reach, p["folders"])
@@ -3044,12 +3052,20 @@ def _run_list_deleted(conn, ws: str, scope: dict, args: dict):
         return (f"Recently deleted holds no pages{where}"
                 + (f' with "{query}" in the title' if query else "") + ".", action)
     lines = [f'- id={p["id"]} | "{p["title"]}" | was in {quoted_paths(paths, p["folders"]) or "no folder"} '
-             f'| deleted {p["deleted_at"][:10]}' + (f' by {p["deleted_by"]}' if p["deleted_by"] else "")
+             + (f'| goes back inside page {p["parent"]} ' if p["parent"] else "")
+             + (f'| {_back_with(p["sub_pages"])} ' if p["sub_pages"] else "")
+             + f'| deleted {p["deleted_at"][:10]}' + (f' by {p["deleted_by"]}' if p["deleted_by"] else "")
              + f' | gone for good after {p["purge_at"][:10]}' for p in pages[:_LIST_CAP]]
     more = f"\n(+{len(pages) - _LIST_CAP} more not shown)" if len(pages) > _LIST_CAP else ""
     return (f"Recently deleted{where} ({len(pages)}, the last deleted first; a page is deleted for "
             f"good {KEEP_DAYS} days after it went) — restore_page(page_ids) puts them back in the "
-            "folders they were in:\n" + "\n".join(lines) + more), action
+            "folders they were in, a page deleted from inside a page back inside it, and the pages "
+            "that went with a page back inside it, which are not listed apart:\n" + "\n".join(lines) + more), action
+
+
+def _back_with(n: int) -> str:
+    """How many pages went to Recently deleted with a page, and come back with it."""
+    return "the page inside it comes back with it" if n == 1 else f"the {n} pages inside it come back with it"
 
 
 def _plan_restore_one(conn, trash: dict, reach, page_id: str) -> tuple:
@@ -3124,13 +3140,21 @@ def _run_restore_page(conn, ws: str, scope: dict, args: dict):
     items = [{"page_id": p["page_id"], "title": p["title"], "to": ", ".join(paths_text(paths, p["folders"]))}
              for p in done]
     revert = {"restore": [p["page_id"] for p in done]}  # ai_revert._plan_trash: a revert deletes them again
+    went = sum(p["sub_pages"] for p in done)
+    along = f", with the {went} page{'s' if went != 1 else ''} inside {'it' if len(done) == 1 else 'them'}" \
+        if went else ""
     if batch["asked"] == 1:
         p = done[0]
         where = quoted_paths(paths, p["folders"]) or "the library root"
-        return (f'ok — restored [{p["title"]}](/?page={p["page_id"]}) (page_id {p["page_id"]}) to {where}',
+        if p["parent"]:  # (a sub-page deleted on its own: filed where its parent's top is)
+            where = f"inside page {p['parent']}, filed where that page is ({where})"
+        return (f'ok — restored [{p["title"]}](/?page={p["page_id"]}) (page_id {p["page_id"]}) to {where}{along}',
                 {"kind": "restore", **items[0], "summary": f"Restored “{p['title'][:60]}”", "revert": revert})
     n = len(done)
-    return (_batch_text(f"restored {_of(n, batch['asked'])}", done, batch, links=True),
+    inside = [p for p in done if p["parent"]]
+    back = ("; back inside the pages they were in: " + ", ".join(f"{p['page_id']} inside {p['parent']}"
+                                                                   for p in inside[:_PREVIEW_ITEMS])) if inside else ""
+    return (_batch_text(f"restored {_of(n, batch['asked'])}{along}{back}", done, batch, links=True),
             {"kind": "restore", "summary": f"Restored {n} page{'s' if n != 1 else ''}", "changes": n,
              "items": items, "revert": revert})
 
@@ -4810,7 +4834,8 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
     text = (base.strip() or AGENT_PROMPT) + "\n"
     if scope.get("type") == "page":
         text += (f'This chat is about one page (page_id "{scope.get("page_id")}") — '
-                 "the tools reach it and the explicitly attached context pages below.\n")
+                 "the tools reach it, the read and search tools the pages inside it too (read_page "
+                 "names them), and the explicitly attached context pages below.\n")
     else:
         folder = _scope_folder(scope)
         where = (f'the folder "{scope.get("folder_path", "")}" (id {folder})' if folder
@@ -5153,14 +5178,15 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
         return PLAN_HELD, tool_action("error", f"Held for the plan: {name}", name, args, PLAN_HELD,
                                       error=True, held=True,
                                       **{k: preview[k] for k in ("title", "mode", "count") if preview.get(k)})
-    # Attaching a reference expands read access, never the editing scope.
+    # Attaching a reference expands read access, never the editing scope, and
+    # so does a page's inside: a page chat reads its sub-pages, edits only it.
     # The message's counters (saves, web searches, the works already listed)
     # live in one Tally the copy shares.
     ensure_tally(scope)
     notes_seen(scope)  # made on the caller's scope, so the reads of one turn carry over to its edits
     # The planners check stored files against the workspace (missing_uploads).
     scope = {**scope, "ws": ws, "approved": approved,
-             **({"context_pages": []} if tool["mutating"] else {})}
+             **({"context_pages": [], "inside": False} if tool["mutating"] else {"inside": True})}
     started = time.monotonic()
     try:
         with connect_pages_db(ws) as conn:

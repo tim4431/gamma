@@ -43,9 +43,11 @@ from ..blocks_store import (
     new_block_id,
     page_attachment,
     page_for_doc,
+    page_parents,
     page_top,
     refiled,
     split_path,
+    top_of,
     tree_parents,
     write_lock,
 )
@@ -476,7 +478,9 @@ def library_preview(request: Request, doi: str = "", arxiv_id: str = "", url: st
 def library_folders(request: Request):
     """The popup's pickers: ``{folders: [{id, path}], labels: [{id,
     name}]}`` — every folder (``path`` its names from the top), recently
-    viewed first, and every label by name."""
+    viewed first, and every label by name. A page counts for the folders it
+    is filed in, a page inside another page for its top's
+    (``blocks_store.filed_folders``' rule)."""
     user_id = require_user_id(request)
     ws = require_ws(request)
     recent_views, _ = get_pref(user_id, "recent-views", ws)
@@ -492,9 +496,11 @@ def library_folders(request: Request):
         labels = label_names(conn)
         rows = conn.execute("SELECT id, updated_at, json_extract(properties, '$.folders') FROM unified_blocks "
                             "WHERE parent_id = 'root'").fetchall()
+        tops = page_parents(conn)
+    filed_in = {page_id: filing({FOLDERS: json.loads(filed or "[]")}, FOLDERS) for page_id, _, filed in rows}
     times = dict.fromkeys(paths, ("", ""))
-    for page_id, updated_at, filed in rows:
-        for folder in filing({FOLDERS: json.loads(filed or "[]")}, FOLDERS):
+    for page_id, updated_at, _ in rows:
+        for folder in filed_in.get(top_of(tops, page_id), []):
             while folder in times:  # a folder takes its pages' times, and its subfolders'
                 viewed, updated = times[folder]
                 times[folder] = (max(viewed, viewed_at.get(page_id, "")), max(updated, updated_at or ""))

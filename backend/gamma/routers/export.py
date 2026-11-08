@@ -1396,6 +1396,22 @@ def page_notes_pdf(ws: str, page_id: str, *, highlights=True, notes=True) -> tup
     return builder.render(), f"{builder.base}{builder.suffix}"
 
 
+def page_export_file(ws: str, page_id: str, mode: str, *, highlights=True, notes=True, author="",
+                     sub_pages=False) -> tuple[bytes, str, str]:
+    """One page in the export ``mode``, with ``sub_pages`` the pages inside
+    it too, as its download holds it: ``(bytes, file name, media type)``.
+    For callers that hand over the file itself (the MCP export)."""
+    builder = page_builder(ws, page_id, mode, _export_opts(highlights=highlights, notes=notes, author=author),
+                           sub_pages=sub_pages)
+    tmp = tempfile.NamedTemporaryFile(suffix=builder.suffix, delete=False)
+    tmp.close()
+    try:
+        name, media_type = builder.save(tmp.name)
+        return Path(tmp.name).read_bytes(), name, media_type
+    finally:
+        os.unlink(tmp.name)
+
+
 def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, comments=False, notes_at="beside",
                   author="", scope=None) -> tuple[bytes, str, int, int]:
     """The page's PDF with its highlights, ink, text boxes and pictures as

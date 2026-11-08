@@ -1254,7 +1254,8 @@ What it can reach depends on where the chat is opened — every chat declares an
 - `"page"` — the page chat (`page_id` = the focused page, with or without a
   PDF): tools reach only that page — the reading tools plus the note-block
   editors; the page-level organizers (list/rename/move, folders and labels)
-  don't exist there.
+  don't exist there. The reading tools reach the pages inside it too, as
+  attachments widen reading and never editing ([ai_tools.md](ai_tools.md)).
 
 The request also carries `permissions`, the tool map of the chat's KIND with
 one state per permission (see below), and `granted`, the permissions this

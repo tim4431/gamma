@@ -415,8 +415,21 @@ while the parent stays published ([mirror.md](mirror.md) "Publishing").
 restore brings them back ("Recently deleted" below).
 
 **Elsewhere.** The agent's `list_pages` marks a sub-page with its parent
-and filters by one, and `read_page` names a page's parent and the pages
-inside it ([ai_tools.md](ai_tools.md)). The Markdown and Obsidian exports
+and filters by one, `read_page` names a page's parent and the pages
+inside it, and its properties line a sub-page's path and its top's
+folders; a page chat reads and searches the pages inside its page, and
+edits only that page; `list_deleted` and `restore_page` say which pages
+come back with a page and which go back inside one
+([ai_tools.md](ai_tools.md)). The Zotero link files a sub-page's item in
+its top's collections and never applies Zotero's collections to it
+([zotero_sync.md](zotero_sync.md#collections-and-folders)); the Zotero,
+Notability and GoodNotes imports merge into or pass by a sub-page without
+filing it, naming its top's folders; the Gamma export's review shows a
+sub-page under its parent, and one imported without it is filed in its
+top's folders ([import_export.md](import_export.md#gamma-to-gamma-export)).
+The connector's folder picker counts a sub-page's views and edits for its
+top's folders ([extension.md](extension.md)), and the MCP `export_page`
+takes the pages inside with `sub_pages` ([mcp.md](mcp.md#export-a-page)). The Markdown and Obsidian exports
 and a folder link on disk write a sub-page's file in a directory named for
 its parent, with `parent:` in its front matter, which the Markdown zip
 import reads back ([import_export.md](import_export.md),
@@ -440,7 +453,9 @@ reach of shares and publications, a page made through an edit link, a
 sub-page left out of a publication or waiting for room on the plan),
 `test_sub_pages_ai.py`,
 `test_sub_pages_export.py`, `test_sub_pages_import.py` (a Notion export's
-tree), `frontend/tests/subPages.test.mjs` (the client
+tree), `test_sub_pages_zotero.py` (the Zotero link),
+`test_sub_pages_integrations.py` (the Zotero, Notability and Gamma
+imports, the connector's folders, the MCP export), `frontend/tests/subPages.test.mjs` (the client
 helpers, the drop rule, App's page list and the pickers' matching), `shareReach.test.mjs`
 (the popover's line and the move's question), `refLists.test.mjs`
 (the `[[` picker's) and the browser suite's `sub-pages` group

@@ -31,9 +31,9 @@ from .. import bibtex as bibtex_mod
 from .. import import_staging, jobs, picture, upload_gc, upload_parts
 from ..auth import actor_of, require_user_id, require_ws
 from ..db import connect_pages_db, page_now, safe_doc_id, ws_uploads_dir
-from ..blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, create_page, existing_in, filing, folder_paths,
-                            insert_page_tree, last_child_position, new_block_id, page_for_doc, page_root_id, refiled,
-                            refiled_paths, touch_page, write_lock)
+from ..blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, create_page, existing_in, filed_folders, filing,
+                            folder_paths, insert_page_tree, last_child_position, new_block_id, page_for_doc, page_parent,
+                            page_parents, page_root_id, refiled, refiled_paths, top_of, touch_page, write_lock)
 from ..colors import DEFAULT_HIGHLIGHT, normalize_color
 from ..highlights import position as highlight_position
 from ..logbuf import log
@@ -1890,11 +1890,16 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
 
     under = dest["under"]
     # filed like any refiling (refiled): a merged page's own folders first,
-    # a folder above a new one giving way; labelled on top of its own labels
+    # a folder above a new one giving way — but a page inside another page
+    # is filed where its top is and gets no folders of its own
+    # (blocks_store.filed_folders); labelled on top of its own labels
+    parent = "" if created else page_parent(conn, block_id)
+    inside = bool(parent)
     folders = filing(props, FOLDERS)
-    for folder_id in [dest["folders"][tuple(path)] for path in item["folders"]] or ([under] if under else []):
+    for folder_id in [] if inside else [dest["folders"][tuple(path)] for path in item["folders"]] or (
+            [under] if under else []):
         folders = refiled(conn, folders, folder_id)
-    if folders:
+    if folders and not inside:
         props[FOLDERS] = existing_in(conn, FOLDERS, folders)
     labels = [dest["labels"][tag] for tag in item["tags"]]
     if labels:
@@ -1935,7 +1940,8 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
                                      report)
     return {"item": item, "row": row, "block_id": block_id, "old": old, "props": props,
             "blocks": blocks, "notes": notes, "extras": extras, "heading": heading, "created": created,
-            "folders": [dest["paths"][f] for f in filing(props, FOLDERS) if f in dest["paths"]]}
+            "parent": parent, "folders": [dest["paths"][f] for f in (
+                filed_folders(conn, block_id) if inside else filing(props, FOLDERS)) if f in dest["paths"]]}
 
 
 def _zotero_sources(item):
@@ -1956,7 +1962,8 @@ def _zotero_done(prep, report, uploads):
     report["attachments_imported"] += len(prep["extras"])
     report["pages"].append({"id": prep["block_id"], "title": item["title"] if created else prep["row"][2],
                             "created": created, "kind": "pdf" if props.get("doc_id") else "page",
-                            "folders": prep["folders"], "source_paths": _zotero_sources(item)})
+                            "folders": prep["folders"], "parent": prep["parent"],
+                            "source_paths": _zotero_sources(item)})
     doc_id = props.get("doc_id")
     if doc_id:
         pdf_path = uploads / f"{doc_id}.pdf"
@@ -2090,11 +2097,15 @@ def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
     # Simulate merges within this ZIP too, without storing files or changing pages.
     with connect_pages_db(ws) as conn:
         _, under_path = destination(conn, meta.get("folder", ""))
-        paths = folder_paths(conn)
-        for row in conn.execute("SELECT id, properties, content FROM unified_blocks WHERE parent_id='root'"):
-            props = json.loads(row[1] or "{}")
+        paths, parents = folder_paths(conn), page_parents(conn)
+        rows = conn.execute("SELECT id, properties, content FROM unified_blocks WHERE parent_id='root'").fetchall()
+        props_of = {row[0]: json.loads(row[1] or "{}") for row in rows}
+        for row in rows:
+            props = props_of[row[0]]
+            # a sub-page is filed where its top is, and a merge files it nowhere else (_zotero_prepare)
             target = {"id": row[0], "title": row[2], "props": props, "exists": True,
-                      "folders": [paths[f] for f in filing(props, FOLDERS) if f in paths]}
+                      "parent": parents.get(row[0], ""),
+                      "folders": [paths[f] for f in filing(props_of[top_of(parents, row[0])], FOLDERS) if f in paths]}
             by_id[row[0]] = target
             if props.get("doc_id"):
                 by_digest.setdefault(props["doc_id"], target)
@@ -2111,7 +2122,7 @@ def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
                 target = {"id": f"new:{index}", "title": item["title"], "props": {}, "exists": False, "folders": []}
             props = target["props"]
             folders = target["folders"]
-            for path in _zotero_paths(item, under_path):
+            for path in [] if target.get("parent") else _zotero_paths(item, under_path):
                 folders = refiled_paths(folders, path)
             target["folders"] = folders
             kind = "pdf" if props.get("doc_id") or item["digest"] else "page"
@@ -2123,7 +2134,8 @@ def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
             prior = pages.get(target["id"])
             sources = _zotero_sources(item)
             page = {"key": item["key"], "title": target["title"],
-                    "folders": folders, "kind": kind, "action": "merge" if target["exists"] else "create",
+                    "folders": folders, "parent": target.get("parent", ""), "kind": kind,
+                    "action": "merge" if target["exists"] else "create",
                     "existing_id": target["id"] if target["exists"] else None, "source_path": item["pdf_entry"],
                     "notes": len(item["notes"]), "attachments": len(item["extras"]),
                     "tags": item["tags"], "warnings": warnings,

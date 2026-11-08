@@ -170,7 +170,7 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | `view_image` | The pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), all or one by index |
 | `cite` | The citation records kept with pages: the paper metadata, its BibTeX, the slide citation |
 | `read_gamma_link` | Resolve and read a page, block, or share URL, including PDF page context; a folder-share URL lists the folder's pages |
-| `export_page` | One page as Markdown text, or as a PDF file: the annotated paper or the notes typeset |
+| `export_page` | One page as Markdown text, or as a PDF file: the annotated paper or the notes typeset; with `sub_pages`, the pages inside it too |
 
 The first ten are the Gamma chat's own tools (`gamma/ai_tools.py`, described
 in [ai_tools.md](ai_tools.md)), run through the same dispatcher with a
@@ -227,19 +227,26 @@ server address is what makes them durable.
 dialog makes, without a download link. It renders through the same functions
 as the HTTP export routes (`page_markdown`, `annotated_pdf`, `page_notes_pdf`
 in `routers/export.py`), with the dialog's two switches, `highlights` and
-`notes`, both on by default:
+`notes`, both on by default, and its "Include pages inside", `sub_pages`,
+off by default (a page with none inside exports as without it):
 
 - `markdown`: the readable Markdown export as the result's text. The file is
   not bundled: image and file links become absolute URLs on this server with
   `?ws=`, which open in a signed-in browser. Handwriting links name an SVG that
-  only the zip export writes.
+  only the zip export writes. With `sub_pages`, each page's Markdown in
+  turn, parents first, between `---` lines.
 - `pdf`: the page's PDF with the highlights as annotations and the notes
   painted beside them, the same file `/api/pages/{id}/export-pdf` returns.
   Both switches off gives the stored PDF. A page without a PDF is refused.
-- `notes_pdf`: the notes typeset as their own PDF, for any page.
+  With `sub_pages`, a zip of the PDFs of the page and the pages inside it,
+  nested as the pages are (`page_export_file`, the annotated-PDF export's
+  builder; one PDF among them is that PDF), whose `uri` is
+  `/api/pages/{id}/export-pdf?sub_pages=1`.
+- `notes_pdf`: the notes typeset as their own PDF, for any page; with
+  `sub_pages`, one PDF of every page, each on a fresh sheet.
 
-A PDF is returned as an embedded resource (`application/pdf`, base64 blob)
-after a text line naming the file. Its `uri` is the HTTP export that gives the
+A PDF (`application/pdf`) or a zip (`application/zip`) is returned as an
+embedded resource (base64 blob) after a text line naming the file. Its `uri` is the HTTP export that gives the
 same file to a signed-in browser. Claude Code writes the blob to a file and
 hands the model the path (checked in Claude Code 2.1.283, which does this for
 blobs up to 100 MB). A client that cannot handle embedded resources gets only

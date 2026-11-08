@@ -327,15 +327,16 @@ Shape C was built as designed above, with these differences.
   a folder of a PDF already on a sub-page; the chat's Save to library uses
   the open page's top's folder; the agent's `save_paper` and `move_page`
   refuse a sub-page; the search panel's folder chip keeps hits inside
-  sub-pages. Other writers of `folders` (the Zotero link, imports, a backup
-  restore) may still store some on a sub-page, and every reader passes
-  them by.
+  sub-pages. The Zotero link, the imports and a backup's merge store none
+  on a sub-page either (2026-11-07); a raw write or a merged copy still
+  may, and every reader passes them by.
 - **The agent.** A sub-page's `list_pages` line shows `parent=<page id>`
   in place of its folders, not `in="Parent title"`; a `parent` filter
   lists the pages right inside a page; `read_page`'s header names the
   pages around and inside the page (at most 50, then a `list_pages` call
-  for the rest); `list_folders` counts library pages only. The agent has
-  no page-making tool, so none takes a parent.
+  for the rest, in a page chat the search); `list_folders` counts library
+  pages only. A page chat reads and searches the pages inside its page.
+  The agent has no page-making tool, so none takes a parent.
 - **Trash.** As designed, plus: a page that went with another and is
   restored alone brings back the pages that went with that one from
   inside it (`ops.went_inside`), so nothing inside it is left behind; a
@@ -433,8 +434,6 @@ Shape C was built as designed above, with these differences.
 - Whether a sub-page's `[[id]]` chip should render as a page card (title,
   icon, a line of preview) rather than an inline chip, as Notion's
   sub-page block does.
-- The MCP `export_page` tool exports a page alone; it takes no
-  `sub_pages`.
 - The Pages inside panel follows a sub-page another client makes, moves
   in or takes out when the window comes back, with the library listing (at
   most every 15 s), not while the window keeps the focus: the change
@@ -499,27 +498,24 @@ the address names, with the pages inside it; and an edit share's link
 makes pages inside the shared page (home_library.md "Shares", mirror.md
 "Publishing").
 
-Integrations and the agent:
-
-- The Zotero link reads a sub-page's own folders for its collections
-  (`zotero_sync` page_side): moving a linked paper into another page takes
-  its item out of every collection, and a new sub-page with a record is
-  created in none. It should read `blocks_store.filed_folders`.
-- A Zotero import that merges into an existing sub-page stores the
-  destination folder on it and reports it filed there; a Notability or
-  GoodNotes re-import reports a sub-page as in no folder.
-- The Gamma backup import's review lists sub-pages as loose pages in no
-  folder, and one imported without its parent lands at the library root
-  unfiled.
-- A page chat on a parent lists its sub-pages by id (`read_page`'s
-  header) but cannot read or search them, and points to `list_pages`,
-  which a page chat lacks.
-- `read_page`'s properties line prints a sub-page's stored folders, which
-  a Zotero pull or a backup may have left; the agent's trash tools do not
-  say which pages come back with a parent.
-- The connector's folder picker ranks folders by the views and edits of
-  the pages filed in them by their own folders, so sub-page activity
-  counts for nothing.
+Integrations and the agent: every gap found here is fixed (2026-11-07).
+The Zotero link files a sub-page's item where its top is
+(`blocks_store.filed_folders`), refiles it with its top, and answers
+Zotero's change of its collections with its top's rather than storing
+folders on it (zotero_sync.md "Collections and folders"). The Zotero
+import merging into a sub-page files it nowhere, and it and the Notability
+and GoodNotes re-imports report its top's folders; the Gamma export's
+review shows a sub-page under its parent, and one imported without its
+parent is filed in its top's folders (import_export.md "Gamma-to-Gamma
+export"). A page chat reads and searches the pages inside its page, and
+edits only that page; `read_page`'s properties line names a sub-page's
+path and its top's folders, and its header points a page chat at the
+search rather than `list_pages`; the trash tools say which pages come
+back with a page and which go back inside one (ai_tools.md). The
+connector's folder picker counts a sub-page for its top's folders
+(extension.md), and the MCP `export_page` takes `sub_pages`, its PDF zip
+named by `/pages/{id}/export-pdf?sub_pages=1` (mcp.md "Export a page"):
+the item the survey found still open, which the open list no longer holds.
 
 Deliberate, worth a second look: "Start your library" and the first-run
 tour count library pages only, so a new user whose pages all sit inside

@@ -105,7 +105,7 @@ from datetime import datetime, timezone
 from . import (config, sync_clock, sync_engine, workspaces, zotero_account, zotero_local, zotero_merge,
                zotero_sync_items, zotero_sync_pages, zotero_sync_pdfs, zotero_sync_rows)
 from . import zotero_remote as zr
-from .blocks_store import FOLDERS, label_names, newest_change_seq, write_lock
+from .blocks_store import FOLDERS, filed_folders, label_names, newest_change_seq, page_parents, with_sub_pages, write_lock
 from .db import connect_pages_db, connect_users_db, page_now
 from .logbuf import log
 from .routers.sync import changes as local_changes
@@ -115,6 +115,7 @@ from .zotero_sync_first import first_match, first_notes, preview_first_link
 from .zotero_sync_folders import TREE_ENTRIES, collections_due, collections_gone, collections_pass
 from .zotero_sync_gone import items_gone
 from .zotero_sync_pdfs import STORAGE_WAIT, quota_step
+from .zotero_sync_reads import collection_map
 from .zotero_sync_resolve import resolve_field, resolve_file
 from .zotero_sync_rows import (CLIENT, DEBOUNCE_S, ENGINE, HELD, LINKS, LIVE_POLL_S, LIVE_SAFETY_S, SETTLED, STOPS_ROUND,
                                WORKERS, Detached, Round, json_dict, new_row, patch_status, read_rows, record_conflict,
@@ -990,6 +991,30 @@ def _pages_with_labels(conn, label_ids) -> set[str]:
         (json.dumps(sorted(label_ids)),))}
 
 
+def _refiled_inside(conn, pages: set[str]) -> set[str]:
+    """The linked sub-pages among and inside ``pages``, at any depth, whose
+    item's collections as last synced (the row's ``gbase``) are not those
+    of the folders they are filed in now. A sub-page is filed where its top
+    is (``blocks_store.filed_folders``), so refiling the top refiles the
+    pages inside it without a change of their own for the feed to list, and
+    one whose newest change is the link's own write (a pull) still needs
+    its item refiled."""
+    parents = page_parents(conn)
+    inside = {p for p in with_sub_pages(conn, sorted(pages), parents) if p in parents} if parents and pages else set()
+    if not inside:
+        return set()
+    inverse = {fid: key for key, fid in collection_map(conn).items()}
+    out = set()
+    for page_id, synced in conn.execute(
+            "SELECT page_id, json_extract(gbase, '$.collections') FROM zotero_objects WHERE page_id IN "
+            "(SELECT value FROM json_each(?)) AND kind IN ('item', 'attachment', 'note') AND parent = '' "
+            "AND state = 'live' AND json_extract(gbase, '$.collections') IS NOT NULL", (json.dumps(sorted(inside)),)):
+        now = {inverse[f] for f in filed_folders(conn, page_id) if f in inverse}
+        if now != set(json.loads(synced)):
+            out.add(page_id)
+    return out
+
+
 def _list_gamma(r: Round) -> None:
     """Step 3: the pages the local change feed lists since the cursor (the
     folder and label trees among them) into the queue, but for those whose
@@ -1013,6 +1038,8 @@ def _list_gamma(r: Round) -> None:
             cursor = out["cursor"]
             if not out["more"]:
                 break
+        inside = _refiled_inside(conn, pages)  # from every page the feed lists (a pulled refiling of a top too),
+        # and never passed by below: a sub-page the link last wrote to has no change of its own when its top moves
         if since and pages:  # a page whose newest change is the link's own write, which the unit of the page's
             # own row settled whole (the change number that row keeps, ``detail.gseq``: its item's, a standalone
             # PDF's or note's while no item holds the page), is passed by; a person's edit since moves it on. A
@@ -1022,6 +1049,7 @@ def _list_gamma(r: Round) -> None:
                 "WHERE c.page_id IN (SELECT value FROM json_each(?)) AND json_extract(o.detail, '$.gseq') = c.seq "
                 "AND (o.kind = 'item' OR NOT EXISTS (SELECT 1 FROM zotero_objects i WHERE i.page_id = c.page_id "
                 "AND i.kind = 'item'))", (json.dumps(sorted(pages)),))}
+        pages |= inside
         labels = label_names(conn)
         renamed = [lid for lid, name in labels.items() if r.state["labels"].get(lid) != name]
         if renamed:

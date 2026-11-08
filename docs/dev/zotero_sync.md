@@ -858,6 +858,21 @@ A folder with no live collection behind it stays where a page is filed
 when Zotero's collections are applied, and a collection Gamma has no row
 for stays in an item's collections when Gamma's are sent.
 
+**A page inside another page** ([home_library.md](home_library.md)
+"Sub-pages") is filed where its top page is and carries no folders of its
+own, so its item's collections are its top's folders' (`page_side` reads
+`blocks_store.filed_folders`; a page in Recently deleted reads
+`trashed_folders`, where a restore files it). A paper moved inside a page
+goes to that page's top's collections, and a new sub-page with a record is
+created in them. Refiling the top changes nothing of the sub-page's own, so
+`_list_gamma` queues the linked pages inside a changed page whose item's
+collections as last synced (`gbase`) are no longer their folders'
+(`_refiled_inside`), after the pass-by of the link's own writes, so a
+sub-page the link last wrote to (a pull) is refiled too. Zotero's change of a sub-page item's collections is
+never applied, which would store folders on it: `_Unit._held_collections`
+turns it into Gamma's side, the top's collections, sent back on a two-way
+round.
+
 **A trashed collection whose folder is shared or kept on disk** (a share
 link, or a desktop folder link, `_kept_folders`) stays here: deleting it
 would end its share links and invitations for good, and a restore in
@@ -2758,6 +2773,7 @@ that leaked the key would fail its test).
 |---|---|
 | `test_zotero_sync.py` | the registry and API, the dialog's counts, conflicts, clock and status (Sync now answered before its round, its ask taken off by the round, a detach, a restart, an error before the round or a round of its own where the clock would drop it), listing and the feed, bounded rounds |
 | `test_zotero_sync_folders.py` | collections ↔ folders |
+| `test_sub_pages_zotero.py` | a page inside another page: filed in Zotero where its top is, refiled with it, Zotero's collections answered with its top's, a new one created in them |
 | `test_zotero_sync_items.py` | first fill, records, retypes, trash and removals, both-sides and field conflicts, lost creates, re-parenting, the change-feed skip |
 | `test_zotero_sync_pdfs.py` | downloads, uploads, both sides replaced (in place and beside, with and without a copy, a lost answer, Take Zotero's back on Zotero's PDF), kept copies and the upload GC, full storage (a download it holds still counted when its item changes again), hashing, transfers, the wait while highlights are placed (stubbed and the real relocate job) and going in place once they are, a new attachment decided afresh, standalone PDFs removed for good |
 | `test_zotero_sync_first_link.py` | the first link of an existing workspace, its records and PDFs, force |
@@ -2776,7 +2792,7 @@ that leaked the key would fail its test).
 Each engine file has its own account (`zs_` the registry and API, `zd_`
 folders, `zi_` items, `zp_` PDFs, `zk_` first links, `zlk_` the link's
 lifecycle, `zw_` the words, `za_` annotations, `zn_` notes, `zg_` scale,
-`zh_` hardening, `zc_` crashes, `zf_` the fuzz),
+`zh_` hardening, `zc_` crashes, `zf_` the fuzz, `zsp_` sub-pages),
 and `owner_id` fails when two files claim one. Run them with `--dist loadfile`, as the full suite
 does ([debugging.md](debugging.md#full-backend-suite)); the fuzz takes more
 seeds with `ZOTERO_FUZZ_SEEDS=400` and `-n 8`. The consumers have their

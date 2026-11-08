@@ -418,7 +418,8 @@ Companions:
   too) and every label. Folders rank by the account/workspace's latest
   `recent-views` page timestamp, then latest page modification, with names
   breaking ties; a folder takes the times of the pages filed in it and in
-  its subfolders. Labels stay alphabetical.
+  its subfolders, a page inside another page counting for its top's
+  folders (`blocks_store.filed_folders`' rule). Labels stay alphabetical.
 - `POST /api/clip/note {text, source_url, title,
 page_id?}` — the explicit "clip selection INTO a page" append path (with
 `generate_key_between`; without `page_id` it uses/creates the root page

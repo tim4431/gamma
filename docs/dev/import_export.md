@@ -936,7 +936,11 @@ under the key through `idx_ub_zotero_key` ([user_db.md](user_db.md)), so
 two such pages can sit side by side. The import maps
 collections→folders, nested as in Zotero, made below the destination
 folder (the optional `folder` form field, a folder id) where missing — an
-item in no collection lands in the destination itself —,
+item in no collection lands in the destination itself; an item that merges
+into a page inside another page ([home_library.md](home_library.md)
+"Sub-pages") files it nowhere, since it is filed where its top is, and the
+preview and the report name its top's folders and the page it is inside
+(`parent`) —,
 tags→labels (by name, made where missing), notes→block trees (below),
 the item's other attachments→file chips and
 links under the page's "Attachments" block (below), then runs the
@@ -1339,7 +1343,9 @@ and never sits on disk twice. For each chosen note, in path order:
 
 1. Its Session.plist is read and hashed. A note whose digest a page of the
    library carries (`properties.notability_import`), or that came earlier in
-   the upload, is skipped and shown where it is.
+   the upload, is skipped and shown where it is: in the folders it is
+   filed in, a page inside another page's its top's
+   (`blocks_store.filed_folders`), as a GoodNotes notebook's too.
 2. The PDFs its pages name are checked against `MAX_HELD_BYTES` (256 MB: a
    PDF is read whole into memory, parsed and composed) and opened. One past
    it skips the note; one that does not open becomes paper.
@@ -2082,7 +2088,8 @@ inside it, a zip of their PDFs, the page's at the top (`Tree.pdf`,
 `Tree/Branch.pdf`, `Tree/Branch/Leaf.pdf`; one PDF among them is that PDF);
 `/pages/{id}/export-pdf?sub_pages=1` on a page with pages inside it answers
 the same, without the `X-Annotations-Written` and `X-Notes-Rendered`
-counts, and on a page with none answers as without the flag. For a folder it
+counts, and on a page with none answers as without the flag (the address
+the MCP `export_page` names for its file, [mcp.md](mcp.md#export-a-page)). For a folder it
 is a zip of them, `<subfolder>/<Title>.pdf`, the directories mirroring the
 page's first folder path below the exported folder (`Filing`,
 `obsidian_export.page_dir`), and a sub-page's in its parent's directory
@@ -2097,8 +2104,9 @@ annotations go on ([translation.md](translation.md#exporting-the-translation)).
 The single-page exports are also plain functions, for callers without a
 request: `page_builder` (one page through a mode's builder, what
 `/pages/{id}/export` runs), `page_markdown` (the readable Markdown, unbundled,
-upload links left as `/api/uploads/…`), `page_notes_pdf` and `annotated_pdf`
-(what `/pages/{id}/export-pdf` runs). They raise `HTTPException` like the
+upload links left as `/api/uploads/…`), `page_notes_pdf`, `annotated_pdf`
+(what `/pages/{id}/export-pdf` runs) and `page_export_file` (a mode's
+download as bytes, with `sub_pages` the pages inside too). They raise `HTTPException` like the
 routes. The MCP `export_page` tool is their other caller ([mcp.md](mcp.md)
 "Export a page").
 
@@ -2136,6 +2144,24 @@ Import dialog's "Gamma export (.zip)" source reviews the zip like the
 other library sources, then merges the selected pages (`restore_zip` merge
 with a selection) as the import job; guests can't import. A Gamma export is
 a complete copy, so the Export dialog has no switches for it.
+
+Pages inside pages ([home_library.md](home_library.md) "Sub-pages") keep
+their `parent_page`. The review (`ws_backup._review_import`) gives each
+page entry its `parent`, the entry id of the page it is inside (the
+workspace's page's effective parent for a page it has, else the backup's,
+named by the workspace's page when it has that one), and `folders`, the
+paths of its top's folders, so the library column draws a sub-page under
+its parent. A new sub-page's `folders_alone` are those same folders: where
+it lands when the selection leaves its parent out, since `restore_zip`
+then writes its top's folders on it, and the review brings them (its
+`_tree`). The merge (`_merge`, `_placed`) puts a page inside the page its
+`parent_page` names when that page comes too or the workspace has it (a
+page it has for the same PDF under another id stands for it; a selection
+that leaves that page out has `restore_zip` write the workspace's id in
+first, as the review named it), dropping
+any `folders` of its own; otherwise it drops `parent_page`, and the page is
+a library page filed by its folders, which the report shows with `parent`
+`""`.
 
 Through a share token (`?share=`: another Gamma importing a shared page or
 folder by its link, below) the export carries only what the share shows

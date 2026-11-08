@@ -2,7 +2,10 @@
 sub-page's parent (``parent=<id>``) and lists the pages right inside one
 (``parent``), read_page's header places the page among its sub-pages, a
 folder chat reaches a sub-page through the page it is inside, move_page
-leaves a sub-page to its top, and list_folders counts library pages only."""
+leaves a sub-page to its top, and list_folders counts library pages only;
+a page chat reads and searches the pages inside its page and edits only
+it, read_page's properties name a sub-page's path and its top's folders,
+and the trash tools say which pages come back with a page or inside one."""
 
 import pytest
 
@@ -190,3 +193,58 @@ def test_save_paper_leaves_a_sub_page_filed_where_its_top_is(org):
     text, _ = run_agent_tool(ids["ws"], folder(""), "save_paper", {"source": "arXiv:2601.07777", "folder": "cooling"})
     assert text.startswith("error") and f"inside page {top}" in text and "move_page" in text, text
     assert "folders" not in c.get(f"/api/blocks/{paper}").json()["properties"]
+
+
+def test_a_page_chat_reads_and_searches_its_sub_pages_and_edits_only_its_page(org, tree, monkeypatch):
+    c, ids = org
+    note = c.post("/api/blocks", json={"parent_id": tree["leaf"], "content": "SubPageNeedle observation"}).json()
+    page_chat = {"type": "page", "page_id": ids["a"]}
+    text, _ = run_agent_tool(ids["ws"], page_chat, "read_page", {"page_id": tree["leaf"], "pdf_chars": 0})
+    assert not text.startswith("error") and "SubPageNeedle" in text, text
+    text, _ = run_agent_tool(ids["ws"], page_chat, "search_library", {"query": "SubPageNeedle"})
+    assert tree["leaf"] in text, text
+    text, _ = run_agent_tool(ids["ws"], page_chat, "read_block", {"block_id": note["id"]})
+    assert "SubPageNeedle" in text, text
+    # A page outside it stays out of reach, and a page inside it is read, never edited.
+    text, _ = run_agent_tool(ids["ws"], page_chat, "read_page", {"page_id": tree["lone"]})
+    assert text == "error: page is outside this chat's scope"
+    text, _ = run_agent_tool(ids["ws"], {"type": "page", "page_id": tree["leaf"]}, "read_page", {"page_id": ids["a"]})
+    assert text == "error: page is outside this chat's scope"  # the page it is inside is not its own
+    text, _ = run_agent_tool(ids["ws"], page_chat, "edit_block",
+                             {"block_id": note["id"], "mode": "replace", "content": "changed"})
+    assert text.startswith("error") and "outside this chat's scope" in text, text
+    assert c.get(f"/api/blocks/{note['id']}").json()["content"] == "SubPageNeedle observation"
+    # The header's long list points a page chat at the search, which reaches them, not at list_pages.
+    monkeypatch.setattr(ai_context, "SUB_PAGES_SHOWN", 0)
+    text, _ = run_agent_tool(ids["ws"], page_chat, "read_page", {"page_id": tree["mid"], "pdf_chars": 0})
+    assert "which this chat cannot list — search_library searches them all" in text and "list_pages" not in text
+
+
+def test_read_page_properties_name_a_sub_page_s_path_and_its_top_s_folders(org, tree):
+    c, ids = org
+    with connect_pages_db(ids["ws"]) as cx:  # a stray folder of its own, past the writers, counts for nothing
+        cx.execute("UPDATE unified_blocks SET properties = json_set(properties, '$.folders', json_array(?)) "
+                   "WHERE id = ?", (ids["cooling"], tree["leaf"]))
+        cx.commit()
+    text, _ = run_agent_tool(ids["ws"], folder(""), "read_page", {"page_id": tree["leaf"], "pdf_chars": 0})
+    line = next(line for line in text.splitlines() if line.startswith("Properties: "))
+    assert line == 'Properties: path: "cavity paper" › "Mid" › "Leaf"; folders (its top page\'s): "readout"', line
+    text, _ = run_agent_tool(ids["ws"], folder(""), "read_page", {"page_id": ids["a"], "pdf_chars": 0})
+    assert 'Properties: folders: "readout"; authors' in text
+
+
+def test_the_trash_tools_say_which_pages_come_back_with_a_parent(org):
+    c, ids = org
+    top = _page(c, "Trash top", folders=[ids["readout"]])
+    _page(c, "Trash inner", parent_page=top)
+    kept = _page(c, "Trash kept", folders=[ids["readout"]])
+    alone = _page(c, "Trash alone", parent_page=kept)
+    assert c.delete(f"/api/blocks/{top}").status_code == 200
+    assert c.delete(f"/api/blocks/{alone}").status_code == 200
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "list_deleted", {})
+    assert "| the page inside it comes back with it |" in _line(text, top)
+    assert f"| goes back inside page {kept} |" in _line(text, alone)
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "restore_page", {"page_ids": [top]})
+    assert text.startswith("ok") and text.endswith(", with the 1 page inside it"), text
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "restore_page", {"page_ids": [alone]})
+    assert f'to inside page {kept}, filed where that page is ("readout")' in text, text

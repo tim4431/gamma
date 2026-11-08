@@ -9,8 +9,8 @@ key, allowed scopes, mutating flag, and executor — so arming a chat is one
 filter (`agent_tools`), dispatch is one lookup (`run_agent_tool`), and the
 in-scope check (`_load_scoped_page`/`_scope_pages`: folder = the page is
 filed in the chat's folder or below it, `_reach` / `_filed_in` over
-`blocks_store.folder_subtree_ids`; page = id equality) is shared by every
-executor. A mutating entry also has a `preview`: what its approval card
+`blocks_store.folder_subtree_ids`; page = id equality, and for a reading
+tool the pages inside the page too) is shared by every executor. A mutating entry also has a `preview`: what its approval card
 shows when the user set its permission to Ask. Each changer has three
 parts: a `_plan_*` function checks a call and works out the change, the
 executor applies the plan, and the preview describes it. So the card and
@@ -68,7 +68,19 @@ as its top's (`_load_scoped_page` through `blocks_store.filed_folders`),
 so a folder chat reaches the pages inside the pages filed under its
 folder, `list_pages`' folder filter finds them there, and a page chat's
 `save_paper` files where the open page's top is. Its own stored
-`folders`, if any, are passed by. Labels stay per page.
+`folders`, if any, are passed by, and `read_page`'s properties line names
+its path and its top's folders, never them. Labels stay per page.
+
+A page chat reads the pages inside its page, at any depth, as attached
+context pages are read: `run_agent_tool` gives a reading tool's scope
+`inside`, and `_page_in_scope` then takes a page whose ancestors hold the
+chat's page (`blocks_store.page_ancestors`), `_scope_pages` the page's
+descendants (`page_descendants`), so `read_page`, `read_block`, the view
+tools, `read_chats`, `cite` and `search_library` reach them. A changing
+tool's scope has no `inside` (nor does an approval card's preview): the
+note editors still edit the chat's own page alone, and a page above it is
+out of reach. The prompt says so ("the read and search tools the pages
+inside it too").
 
 Pages in Recently deleted are out of the tools' reach, the MCP adapter's
 included: they are not under `root`, and `_load_scoped_page` and
@@ -195,7 +207,10 @@ with `list_pages`.
 
 Returns a `page_report_section`: the page's title, where it sits among
 pages, a properties line
-(folders, labels, cached metadata, web source, attachment), an excerpt of the
+(folders, labels, cached metadata, web source, attachment; for a sub-page
+`path: "Top" › "Mid" › "Page"` and `folders (its top page's): …`, the
+folders it is filed in, `ai_context.page_properties_line` through
+`blocks_store.filed_folders`), an excerpt of the
 attachment's extracted text when the page carries a PDF, then the page's
 highlights and nested notes. A page without an attachment returns its notes —
 they are its content. `pdf_chars` sizes the excerpt per call, capped by the
@@ -216,7 +231,10 @@ line (`ai_context.page_family_lines`, so the chat's page context, MCP
 ancestors top first, and a page's `Pages inside (n): "Title" (page ID:
 <id>); …`, the pages right inside it in library order. That line names the
 first `SUB_PAGES_SHOWN` (50), then `… N more — list_pages(parent="<id>")
-lists them all`. Titles are cut to 120 characters, and an empty one reads
+lists them all`; in a page chat, which has no `list_pages`, `… N more,
+which this chat cannot list — search_library searches them all` (the
+`listing` argument; the chat's own page context says the same in a page
+chat). Titles are cut to 120 characters, and an empty one reads
 "Untitled". A library page with nothing inside it has neither line.
 
 An area highlight (a Ctrl+drag rectangle: a highlight block with
@@ -1059,8 +1077,8 @@ asked to go, or no folder was asked for, the answer is that it is already
 in the library inside page `<parent>` and nothing changed; any other
 folder is refused with `move_page`'s wording (move the outermost page),
 and the clip is never called.
-In a page chat the new page is outside the chat's reach, and the result
-says to read the paper with `fetch_paper`.
+In a page chat the new page is outside the chat's reach (its page and the
+pages inside it), and the result says to read the paper with `fetch_paper`.
 
 The approval card's preview has the paper's `title` (the one passed, else
 the library page's, else the source), the folder it goes `to` and the source
@@ -1110,15 +1128,23 @@ so the two tools have one each:
 
 - `list_deleted`, under **List pages**, lists such pages, the last deleted
   first: id, title, the folders a restore puts the page back in (the trash
-  entry's `folders` ids, read as paths), when and
+  entry's `folders` ids, read as paths), the page it goes back inside
+  (`| goes back inside page <id>`, the entry's `parent`: a sub-page deleted
+  on its own), how many pages went with it and come back with it (`| the 3
+  pages inside it come back with it`, `sub_pages`), when and
   by whom it was deleted, and when it goes for good (`trash.list_trash`).
-  `title_contains` filters by title. Its chip is a `list` one.
+  The header says so too. `title_contains` filters by title. Its chip is a
+  `list` one.
 - `restore_page`, under **Restore deleted pages** (`restore`, Ask by
   default), takes `page_ids` and runs `ops.restore_page`, the route's
   restore, for each; a page that fails is left out and named, and one that
   came back before the failure counts as restored. The page goes
   back under the library root in its folders, with its notes, highlights,
-  files and chats, and the pages that went with it come back inside it. `_plan_restore_one` finds a page that is not deleted
+  files and chats, and the pages that went with it come back inside it;
+  a sub-page deleted on its own goes back inside its parent. The result
+  says both: `… to inside page <id>, filed where that page is ("A")`, and
+  `…, with the N pages inside it` (a batch names each page that went back
+  inside one). `_plan_restore_one` finds a page that is not deleted
   (a no-op) or was filed outside the chat's folder (refused). Named alone,
   it is answered without a card; in a list, it is left out of the card.
 

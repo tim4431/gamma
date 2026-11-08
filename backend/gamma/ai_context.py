@@ -13,7 +13,7 @@ from urllib.request import Request as URLRequest
 from . import ink as inkmod
 from .ai_pictures import picture as _picture
 from .ai_protocols.base import Protocol, reasoning_text
-from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filing, folder_paths, label_names,
+from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filed_folders, filing, folder_paths, label_names,
                            page_ancestors, page_attachment, page_for_doc, page_root_id, sub_pages)
 from .db import connect_data_db, connect_pages_db, page_now, safe_doc_id
 from .highlights import is_highlight, is_ink, page_of
@@ -1546,19 +1546,29 @@ def quoted_paths(paths: dict, folders: list[str]) -> str:
     return ", ".join(f'"{path}"' for path in paths_text(paths, folders))
 
 
-def page_properties_line(connection, properties: dict) -> str:
+def page_properties_line(connection, properties: dict, page_id: str = "") -> str:
     """One line describing what a page carries and how it is filed —
     folders (their paths), labels (their names), cached metadata (authors,
     year, venue, DOI/arXiv), web source, attachment — so the model can tell
     a paper from a note about one. "" when the page has none of it. A filed
-    page's folders and labels are read from their trees, one query each."""
+    page's folders and labels are read from their trees, one query each.
+    With ``page_id``, a page inside another page shows its path, the
+    titles of the pages it is inside and its own, and the folders it is
+    filed in, its top page's (``blocks_store.filed_folders``), never the
+    ones it may carry itself."""
     properties = properties or {}
     bits = []
-    folders = filing(properties, FOLDERS)
+    ancestors = page_ancestors(connection, page_id) if page_id else []
+    if ancestors:
+        titles = dict(connection.execute(
+            "SELECT id, content FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps(ancestors + [page_id]),)))
+        bits.append("path: " + " › ".join(f'"{(titles.get(p) or "Untitled")[:120]}"' for p in ancestors + [page_id]))
+    folders = filed_folders(connection, page_id) if ancestors else filing(properties, FOLDERS)
     if folders:
         quoted = quoted_paths(folder_paths(connection), folders)
         if quoted:
-            bits.append("folders: " + quoted)
+            bits.append(("folders (its top page's): " if ancestors else "folders: ") + quoted)
     labels = filing(properties, LABELS)
     if labels:
         names = label_names(connection)
@@ -1586,11 +1596,13 @@ def page_properties_line(connection, properties: dict) -> str:
 SUB_PAGES_SHOWN = 50  # sub-pages a page's section names; list_pages(parent=…) lists them all
 
 
-def page_family_lines(connection, page_id: str) -> list[str]:
+def page_family_lines(connection, page_id: str, listing: bool = True) -> list[str]:
     """Where a page sits among sub-pages (blocks_store's effective rule):
     the pages it is inside, top first, with its parent's id, and the pages
     right inside it, by title and id — the first SUB_PAGES_SHOWN of them,
-    then how many more. [] for a library page with no sub-pages."""
+    then how many more, and how to find them: ``list_pages(parent=…)``, or
+    with ``listing`` False (a page chat, which has no list_pages) the
+    search, which reaches them. [] for a library page with no sub-pages."""
     ancestors, inside = page_ancestors(connection, page_id), sub_pages(connection, page_id)
     shown = inside[:SUB_PAGES_SHOWN]
     titles = dict(connection.execute(
@@ -1607,7 +1619,9 @@ def page_family_lines(connection, page_id: str) -> list[str]:
     if inside:
         more = len(inside) - len(shown)
         lines.append(f"Pages inside ({len(inside)}): " + "; ".join(f'"{title(p)}" (page ID: {p})' for p in shown)
-                     + (f'; … {more} more — list_pages(parent="{page_id}") lists them all' if more else ""))
+                     + ((f'; … {more} more — list_pages(parent="{page_id}") lists them all' if listing else
+                         f"; … {more} more, which this chat cannot list — search_library searches them all")
+                        if more else ""))
     return lines
 
 
@@ -1616,7 +1630,7 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
                         document_text: str | None = None,
                         include_notes: bool = True, notes_budget: int = 0,
                         report: dict | None = None,
-                        notes_seen: dict | None = None) -> str | None:
+                        notes_seen: dict | None = None, listing: bool = True) -> str | None:
     """Render one page as context: title, where it sits among sub-pages
     (``page_family_lines``), properties, the attachment's text
     (a windowed excerpt of ``pdf_budget`` chars from ``pdf_offset`` /
@@ -1634,7 +1648,7 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
     "picture N attached" for those, and name the page for the rest). None
     when the page doesn't exist. ``notes_seen`` receives ``{block_id:
     text}`` for every note shown in full — what an edit_block replace may
-    start from."""
+    start from. ``listing``: as ``page_family_lines`` takes it."""
     rows = fetch_subtree(connection, page_id)
     if not rows:
         return None
@@ -1697,8 +1711,8 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
         walk(page_id, 0)
     sections = [f"### {root[3] or 'Untitled'}"]
     sections.append(f"Gamma page ID: {page_id}")
-    sections += page_family_lines(connection, page_id)
-    props_line = page_properties_line(connection, properties)
+    sections += page_family_lines(connection, page_id, listing)
+    props_line = page_properties_line(connection, properties, page_id)
     if props_line:
         sections.append(props_line)
     if properties.get("summary"):
@@ -1914,7 +1928,8 @@ def gather_inputs(ws: str, payload, allow_native: bool,
             section = page_report_section(connection, ws, page_id, 0,
                                           document_text=document_text or "",
                                           include_notes=with_notes, report=shown,
-                                          notes_seen=notes_seen)
+                                          notes_seen=notes_seen,
+                                          listing=getattr(payload, "agent_scope", "") != "page")
             if section:
                 context_sections.append(section)
                 if not doc_id:
