@@ -24,7 +24,12 @@ Servers come in two kinds:
   The shell passes `GAMMA_ADMIN_USER`/`GAMMA_ADMIN_PASSWORD` on the first
   spawn (the server's one-time password print would be lost in the hidden
   console), remembers the credentials in its registry, and auto-logs-in
-  after navigation by POSTing `/api/login` from the page. Several local
+  after navigation by POSTing `/api/login` from the page, then loads the
+  page again itself (`signedInAgain`, through `loadPage`) and waits for it,
+  so an open answers with the signed-in page there and the next load (a
+  workspace, a page) never starts under that reload. The window holds one
+  `session` cookie per host, so a switch between two local servers signs in
+  again each time. Several local
   servers are still possible (one data dir and process each; a sidecar keeps
   running until the app quits, so switching back is instant, and a window
   opened again shows the same process), but the usual shape is one local

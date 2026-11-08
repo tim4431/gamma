@@ -365,6 +365,7 @@ async function main() {
   let bar, content;
   const ids = {};
   const urls = {};
+  const homeWs = {}; // a server's workspace, by the server's key
   const pids = {};
   let pageId, sourceUrl, alphaUploads;
   let backupZip;
@@ -561,6 +562,7 @@ async function main() {
     });
 
     await step('switch back to Alpha: instant, same server, no restart', async () => {
+      homeWs.beta = await waitFor(() => new URL(content.url()).searchParams.get('ws'), 'Beta writes its workspace into the address', 15_000);
       const t0 = Date.now();
       await bar.click('#wsBtn');
       await bar.locator(`#menu .item[data-id="${ids.alpha}"]`).click();
@@ -587,6 +589,31 @@ async function main() {
       const g = await hook(app, (s) => s.gamma());
       assert(g && g.current === lab && g.list.length === 2, 'shell knows the workspaces: ' + JSON.stringify(g));
       assert.equal(new URL(content.url()).origin, urls.alpha, 'same server');
+      // One session cookie per host: signed in on Alpha, the window is signed out of
+      // Beta. Opening Beta signs in again, and its workspace follows at once, as an
+      // origin's or a clone's chip and a PDF opened with Gamma do. openServer answers
+      // once the signed-in page has loaded, so the workspace's load does not start
+      // under the sign-in's reload, and the workspace is there when it resolves. Then
+      // the same way back to Alpha's lab.
+      for (const [k, ws] of [['beta', homeWs.beta], ['alpha', lab]]) {
+        const r = await app.evaluate(({ webContents }, [id, w]) => new Promise((resolve, reject) => {
+          setImmediate(async () => { // a turn of the loop of its own, as hook gives
+            try {
+              const opened = await global.__gammaShell.openServer(id);
+              await global.__gammaShell.openGammaWorkspace(w);
+              const shown = webContents.getAllWebContents().find((c) => c.getURL().startsWith('http'));
+              resolve({ autoLogin: opened.autoLogin, url: shown && shown.getURL() });
+            } catch (e) {
+              reject(e);
+            }
+          });
+        }), [ids[k], ws]);
+        assert.equal(r.autoLogin, 'logged-in', `${k} signed in again`);
+        assert.equal(new URL(r.url).origin, urls[k], `on ${k}`);
+        assert.equal(new URL(r.url).searchParams.get('ws'), ws, `${k}'s workspace shown once its load resolved`);
+        await waitLoggedIn(content);
+      }
+      await waitFor(() => new URL(content.url()).searchParams.get('ws') === lab, 'back in the lab', 15_000);
       return `${lab} on ${urls.alpha}`;
     });
 
@@ -832,10 +859,12 @@ async function main() {
       await kept.locator('[data-act="stop"]').click();
       await menuClosed(bar);
       await waitFor(async () => (await hook(app, (s, w) => s.listFolders(w), ws)).links.length === 0, 'the link is gone', 15_000);
+      // The notice comes once the token is revoked and the host let go (dropFolder's releaseRemote),
+      // which the link's going does not wait for.
+      await waitFor(async () => /no longer kept/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 15_000);
       assert(fs.existsSync(md), 'the files stay');
       assert.equal((await tokensOf()).length, before, 'the token was revoked');
       assert.equal(await hook(app, (s) => s.registry.getSettings().folderHost), '', 'the host no longer starts at launch for it');
-      await waitFor(async () => /no longer kept/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
       return `${links[0].dest} from ${links[0].remote_url}, then dropped`;
     });
 

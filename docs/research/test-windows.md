@@ -79,7 +79,7 @@ with no driver, shows a page's real state. And a page that was never shown is
 not what stops a hidden window: the blocker is that minimizing an unshown window
 activates it.
 
-## Two flakes the runs turned up
+## Flakes the runs turned up
 
 - **A hook's registry write could vanish** (`desktop/test/e2e.js`, the step
   *remote server: a URL*, about one run in six). Playwright's `evaluate` goes
@@ -91,6 +91,12 @@ activates it.
 - **`security.e2e.js` could refuse its own port.** It asserted that `listen(0)`
   gave a port from 9100 up, and this machine's dynamic range starts at 1024
   (`netsh interface ipv4 show dynamicport tcp`). It now asks again below 9100.
+- **"Stop" on a remote's folder could read the host as still kept**
+  (`e2e.js`, *folder from a remote*, 4 of 17 runs on Ubuntu on 8 November
+  2026). The step waited for the link to go and then read `folderHost`, which
+  `dropFolder` clears only after it has revoked the token and listed the links
+  left. It now waits for the bar's notice, which comes after both, and 8 runs
+  since passed it.
 
 ## A false box the minimized runs brought to light
 
@@ -124,8 +130,9 @@ has begun, `did-navigate-in-page` resolves `loadURL` instead, 1 ms before its
 in flight, and Electron pins that cancellation on the new load: it is rejected
 as ` (-3)`, naming the old URL, at the moment it has landed. That hit the step
 after the PDF's in about one run in seven. `loadPage` also lets that rejection go
-when it does come, which a load the shell does not wait for can still cause: a
-reload, or the auto-login's.
+when it does come, which a load the shell does not wait for, such as a reload,
+can still cause. (The auto-login's reload is no longer one: the shell now does it
+through `loadPage` and waits, below.)
 
 The first fix, `did-fail-load` as the mark of a real failure, passed 5 of 5 full
 runs and a review still broke it: a load the shell's redirect guard cancels sends
@@ -152,6 +159,37 @@ pending settles it early, since that event names no URL; so does the old page
 writing the exact address asked for; a newer load starting before this load's own
 `did-start-navigation` passes for this one; and a page landing more than a minute
 after a false alarm gets that alarm as its error.
+
+### On Linux, and the auto-login's reload
+
+Run again on Ubuntu under `xvfb-run -a` (Electron 38.8.6) on 8 November 2026,
+with `loadPage` swapped back for plain `loadURL` and the same trace: 0 false
+alarms in 3 full runs, 96 loads, none of them overlapped. A page there writes
+its address 13 to 50 ms after its `did-finish-load`, and the next load, started
+at once, has committed by then, 6 to 10 ms in. Putting 7 to 13 ms before each
+load brought it back: the clone step failed on the box in 1 of 2 runs, with the
+trace above line for line, and no reload anywhere near it. With `loadPage` and
+the same pause, 4 runs had 5 overlapping loads and no box.
+
+The reload was a real race all the same, the load the shell did not wait for
+named above. It comes only when the window is signed out of the server it
+opens, which is every switch between two local servers, since the window keeps
+one `session` cookie per host (`127.0.0.1`), not per port; the clone step's
+opens were all signed in. A replay in real Electron, a page that writes its
+address 14 ms after it loads, the auto-login's script with its
+`location.reload()`, then the next load 0 to 30 ms later, 160 times a way:
+plain `loadURL` gave 5 false `ERR_FAILED` and 14 early resolutions (and 5 false
+alarms without the reload, the first form), and `loadPage` 25 early
+resolutions, the reload's own `did-finish-load` settling it while the page went
+on to land: the first of the four accepted orderings, which the reload makes
+common. Tallied by the pause, each came with the next load 2 to 18 ms after the
+script answered. The page now does not reload itself: `openServerNow` loads it
+again through `loadPage` and waits (`signedInAgain`), so `openServer` answers
+with the signed-in page there, and that replay gave 320 of 320 clean. The step
+*Gamma workspaces* opens Beta, signed out, and then its workspace at once, and
+back, and checks the workspace is shown when the open resolves. Without the
+change it passed 3 of 3 too: in the app the next load starts at 0 ms, where the
+replay never went wrong. The headed suite passed 5 of 5 with it.
 
 ## The prerender test's `chrome is not defined`
 

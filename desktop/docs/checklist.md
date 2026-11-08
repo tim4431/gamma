@@ -37,7 +37,7 @@ fails too, on any system. Each item below names the e2e step that covers it
 
 | # | Check | How |
 |---|---|---|
-| 2.0 | Bar dropdown lists the open server's Gamma workspaces (check on the current one, role per row); choosing one navigates to `?ws=<id>` on the same server and the bar names it | auto: *Gamma workspaces: the bar lists them and switches with ?ws=* |
+| 2.0 | Bar dropdown lists the open server's Gamma workspaces (check on the current one, role per row); choosing one navigates to `?ws=<id>` on the same server and the bar names it. Opening a server the window is signed out of and then at once one of its workspaces, as an origin's or clone's chip and a PDF opened with Gamma do, signs in and shows that workspace when the open resolves, with no error box | auto: *Gamma workspaces: the bar lists them and switches with ?ws=* |
 | 2.1 | Bar dropdown lists every server with running dots, check on the current one, *All servers…* | auto: *second server; switch from the shell bar while Alpha keeps running* |
 | 2.2 | Switching to another local server starts its sidecar; the first one keeps running | auto (same step) |
 | 2.3 | Switching back is instant and hits the same server process (no restart, session still valid) | auto: *switch back to Alpha: instant, same server, no restart* |
@@ -159,6 +159,7 @@ started after the app opened a folder can use it.
 | `npm run e2e:packaged` (frozen bundle, Windows 11) | 2026-09-02 | 21/21 passed |
 | `npm run e2e` (dev tree, Ubuntu under `xvfb-run -a`, Electron 45) | 2026-11-06 | 35/35 passed with *background*'s minimized-window round trip left out: Xvfb has no window manager, so a window there never reads as minimized and the step fails at it |
 | `npm run e2e -- --headed` (dev tree, Ubuntu under `xvfb-run -a`, Electron 38.8.6) | 2026-11-07 | 35/35 passed. The same run minimized failed 32 of 35 at its clicks (Playwright waiting for the launcher's buttons to be visible), from the second step on |
+| `npm run e2e -- --headed` (dev tree, Ubuntu under `xvfb-run -a`, Electron 38.8.6) | 2026-11-08 | 35/35 passed in 5 runs of 5, with the shell reloading the page after a silent login |
 
 Manual items last looked at 2026-09-01 on Windows 11: 1.6, 2.4, 2.5, 6.2,
 6.4, 6.5 (screenshots of the bar + launcher in dark and light). Not yet

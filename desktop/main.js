@@ -1780,7 +1780,11 @@ function pushState() {
 
 // Local servers log in silently with the credentials the shell seeded.
 // Runs in the page after load: if /api/session says anonymous, POST the
-// stored credentials and reload. Harmless when already logged in.
+// stored credentials and answer 'logged-in'. Harmless when already logged in.
+// The page does not reload itself: the caller loads it again through
+// loadPage and waits (signedInAgain), so the reload is over before whatever
+// load comes next. A location.reload() here ran on after the shell had moved
+// on, and the next load (a server, then its workspace) started under it.
 function autoLoginScript(username, password) {
   return `(async () => {
     try {
@@ -1795,10 +1799,16 @@ function autoLoginScript(username, password) {
         credentials: 'same-origin',
         body: JSON.stringify({ username: ${JSON.stringify(username)}, password: ${JSON.stringify(password)} }),
       });
-      if (r.ok) { location.reload(); return 'logged-in'; }
+      if (r.ok) return 'logged-in';
       return 'login-failed:' + r.status;
     } catch (e) { return 'error:' + e; }
   })()`;
+}
+
+// The page again after a silent login, now signed in, as location.reload()
+// would load it, and over by the time this resolves.
+function signedInAgain(webContents) {
+  return loadPage(webContents, webContents.getURL());
 }
 
 let opening = null; // serialize opens: a second click while one is in flight waits
@@ -1842,6 +1852,7 @@ async function openServerNow(id) {
       const result = await content.webContents
         .executeJavaScript(autoLoginScript(creds.username, creds.password))
         .catch((e) => 'exec-error:' + e);
+      if (String(result) === 'logged-in') await signedInAgain(content.webContents);
       refreshGamma();
       return { url, autoLogin: String(result) };
     }
@@ -2175,7 +2186,7 @@ async function runSmoke() {
     );
     out.firstLogin = String(login);
     if (String(login) === 'logged-in') {
-      await new Promise((r) => setTimeout(r, 1500)); // let the reload settle
+      await signedInAgain(content.webContents);
       const who = await content.webContents.executeJavaScript(
         `fetch('/api/session',{credentials:'same-origin'}).then(r=>r.json()).then(j=>j.user||'')`
       );
