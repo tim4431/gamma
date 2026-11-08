@@ -53,7 +53,10 @@ Who notices what:
   can add one while it deletes, and each due file's date (``storage.stat``,
   one file at a time, never a listing of the workspace while writers wait),
   and refuses a database that looks wrong (``purge_blocker``): logged as a
-  warning, nothing deleted.
+  warning, nothing deleted. It deletes at most ``purge_cap`` files, the
+  longest due first; the due files past the cap wait for the next full
+  pass, a warning saying how many (a big Empty of Recently deleted makes
+  hundreds due on one day, and they go a cap at a time).
 
 Docs: docs/dev/user_db.md "Stored files".
 """
@@ -74,8 +77,9 @@ FIRST_PASS_S = 60             # the first full pass, after startup
 RECONCILE_EVERY_S = 6 * 3600  # the full pass's cadence afterwards
 PARTIAL_MAX_AGE_S = 86400     # a temp file (a write, an upload in parts) older than this is a dead one
 
-# The purge refuses to delete more than PURGE_MAX files at once, or more than
-# PURGE_SHARE of the workspace's files when that is over PURGE_FLOOR.
+# One purge deletes at most PURGE_MAX files, and at most PURGE_SHARE of the
+# workspace's files when that is over PURGE_FLOOR (``purge_cap``); the rest
+# wait for the next full pass.
 PURGE_MAX = 100
 PURGE_FLOOR = 10
 PURGE_SHARE = 0.2
@@ -253,12 +257,13 @@ def check(ws: str, names) -> list[str]:
 
 def reconcile(ws: str) -> dict:
     """The whole picture of one workspace (see the module doc). Returns
-    ``{recorded, cleared, purged, blocked}`` — the file names that got a
-    row, the rows cleared, the files deleted, and why a due purge was
-    refused ("" when it was not). A file is due once unreferenced for its
-    keep (``retain``'s, else RETAIN_S) after both its row's ``since`` and
-    its mtime."""
-    out = {"recorded": [], "cleared": [], "purged": [], "blocked": ""}
+    ``{recorded, cleared, purged, blocked, left}`` — the file names that
+    got a row, the rows cleared, the files deleted, why a due purge was
+    refused ("" when it was not), and how many due files wait for a later
+    pass (those past the purge's cap, or all of them when it was refused).
+    A file is due once unreferenced for its keep (``retain``'s, else
+    RETAIN_S) after both its row's ``since`` and its mtime."""
+    out = {"recorded": [], "cleared": [], "purged": [], "blocked": "", "left": 0}
     with guard(ws):
         if not _has_pages_db(ws):
             return out
@@ -285,41 +290,45 @@ def reconcile(ws: str) -> dict:
                 conn.executemany("DELETE FROM upload_retention WHERE name = ?", [(n,) for n in let_go])
                 conn.commit()
             cleared = set(out["cleared"])
-            due = sorted(n for n, since in rows.items() if n not in cleared
-                         and now - max(_since_s(since, now), files[n]) >= _keep(keeps, n))
-            if due:
-                out["purged"], out["blocked"] = _purge(ws, conn, due, len(files), keeps)
+            due_at = {n: max(_since_s(since, now), files[n]) + _keep(keeps, n)
+                      for n, since in rows.items() if n not in cleared}
+            due = sorted((n for n, at in due_at.items() if at <= now), key=lambda n: (due_at[n], n))
+            if due:  # the longest due first: the order the cap takes them in
+                out["purged"], out["blocked"], out["left"] = _purge(ws, conn, due, len(files), keeps)
     return out
 
 
-def purge_blocker(conn, due: int, stored: int) -> str:
-    """Why a purge of ``due`` of the workspace's ``stored`` files must not
-    run on this database, or "". A pages.db that reads wrong — an
-    interrupted restore, a placeholder a sync client left, a file sqlite3
-    recreated empty after the real one went missing — must never turn every
-    upload of the workspace into an orphan that is then deleted."""
+def purge_blocker(conn) -> str:
+    """Why no purge may run on this database, or "". A pages.db that reads
+    wrong — an interrupted restore, a placeholder a sync client left, a file
+    sqlite3 recreated empty after the real one went missing — must never
+    turn every upload of the workspace into an orphan that is then deleted.
+    How many one purge takes is ``purge_cap``'s."""
     if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = 'root'").fetchone():
         return "its pages.db has no root row"
     if not conn.execute("SELECT 1 FROM unified_blocks WHERE parent_id = 'root' LIMIT 1").fetchone():
         return "its pages.db has no pages"
-    if _too_many(due, stored):
-        return f"{due} of its {stored} files at once is more than one purge may delete"
     result = conn.execute("PRAGMA quick_check").fetchone()[0]
     if result != "ok":
         return f"its pages.db fails quick_check ({result})"
     return ""
 
 
-def _too_many(due: int, stored: int) -> bool:
-    """Whether ``due`` of ``stored`` files are more than one purge may
-    delete; true for every larger ``due`` once true."""
-    return due > PURGE_MAX or (due > PURGE_FLOOR and due > PURGE_SHARE * stored)
+def purge_cap(stored: int) -> int:
+    """How many of a workspace's ``stored`` files one purge may delete:
+    PURGE_MAX at most, and PURGE_SHARE of them once that is over
+    PURGE_FLOOR. A database that reads wrong in a way ``purge_blocker``
+    cannot see loses no more than this a pass; a backlog past it (a big
+    Empty, thirty days on) goes this many a pass until it is gone."""
+    return min(PURGE_MAX, max(PURGE_FLOOR, int(PURGE_SHARE * stored)))
 
 
-def _purge(ws: str, conn, due: list, stored: int, keeps: dict) -> tuple[list, str]:
-    """Delete the ``due`` files that are still unreferenced, under the write
-    lock, each one only once its mtime is as old as its keep (``_keep``).
-    Returns ``(purged names, blocker)``."""
+def _purge(ws: str, conn, due: list, stored: int, keeps: dict) -> tuple[list, str, int]:
+    """Delete the ``due`` files (in the order given) that are still
+    unreferenced, under the write lock, each one only once its mtime is as
+    old as its keep (``_keep``), and no more than ``purge_cap(stored)``.
+    Returns ``(purged names, blocker, how many due files wait for a later
+    pass)``."""
     from .blocks_store import write_lock  # local: blocks_store imports this module
 
     write_lock(conn)
@@ -327,23 +336,22 @@ def _purge(ws: str, conn, due: list, stored: int, keeps: dict) -> tuple[list, st
         refs = referenced(conn)  # again: no batch can add a reference while we hold the lock
         now = time.time()
         unreferenced = [name for name in due if name.lower() not in refs]
-        gone, count = [], 0
+        cap = purge_cap(stored)
+        gone, asked = [], 0
         for name in unreferenced:
+            if len(gone) == cap:  # the cap's worth: the rest are not asked about, and wait
+                break
+            asked += 1
             st = storage.stat(ws, name)  # dated again, the due names alone: re-dated by an upload meanwhile
             if st is not None and now - st[1] >= _keep(keeps, name):
                 gone.append(name)
-                if _too_many(len(gone), stored):
-                    # refused whatever the rest's dates say (so nothing is deleted): ask
-                    # for no more of them, and count every unreferenced due file
-                    gone, count = [], len(unreferenced)
-                    break
-        count = count or len(gone)
-        blocker = purge_blocker(conn, count, stored) if count else ""
+        left = len(unreferenced) - asked
+        blocker = purge_blocker(conn) if gone else ""
         if blocker:
             conn.rollback()
-            log.warning(f"[uploads] workspace {ws}: not purging {count} file(s) unreferenced for "
-                        f"{_spans(gone or unreferenced, keeps)} — {blocker}; they are kept")
-            return [], blocker
+            log.warning(f"[uploads] workspace {ws}: not purging {len(gone) + left} file(s) unreferenced for "
+                        f"{_spans(gone, keeps)} — {blocker}; they are kept")
+            return [], blocker, len(gone) + left
         purged = []
         for name in gone:
             try:
@@ -358,10 +366,14 @@ def _purge(ws: str, conn, due: list, stored: int, keeps: dict) -> tuple[list, st
     except BaseException:
         conn.rollback()
         raise
-    if purged:
+    if left:  # a backlog (a big Empty thirty days on), or a database that reads wrong: an admin should see it
+        log.warning(f"[uploads] workspace {ws}: purged {len(purged)} file(s) unreferenced for "
+                    f"{_spans(gone, keeps)}: {purged}; {left} more due, left for the next pass "
+                    f"(one purge deletes at most {cap} of its {stored} files)")
+    elif purged:
         log.info(f"[uploads] workspace {ws}: purged {len(purged)} file(s) unreferenced for "
                  f"{_spans(purged, keeps)}: {purged}")
-    return purged, ""
+    return purged, "", left
 
 
 def _spans(names, keeps: dict) -> str:

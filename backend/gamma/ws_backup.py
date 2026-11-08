@@ -592,21 +592,34 @@ def _review_import(ws, tdir, upload_names):
     return pages
 
 
-def preview_zip(ws: str, zpath: Path) -> dict:
+def preview_zip(ws: str, zpath, progress=jobs.no_progress) -> dict:
+    """What merging the backup zip ``zpath`` (a path, or a seekable binary
+    file: a staged review's upload is read where it lies) would add, for
+    the import review. Only the databases and the handwriting files are
+    unpacked: the one step that reads uploads (41, the stroke files'
+    version 2) converts the ``.ink`` files, and every other upload is known
+    by its name in the zip's listing, which is all the review asks of it
+    (an attachment the backup lacks). ``progress`` hears ``unpacking``
+    (the files) and ``checking``."""
     from .import_review import archive_entries
     with tempfile.TemporaryDirectory(prefix="gamma-preview-") as td:
         tdir = Path(td)
-        uploads = _unpack(zpath, tdir)
+        uploads = _unpack(zpath, tdir, progress, files=lambda name: name.endswith(".ink"))
+        progress(phase="checking")
         _validate(tdir)
         _normalize_copies(tdir)
-        pages = _review_import(ws, tdir, uploads)
+        written = {p.name for p in (tdir / "uploads").iterdir() if p.is_file()}  # step 41's converted files too
+        pages = _review_import(ws, tdir, sorted(set(uploads) | written))
     with zipfile.ZipFile(zpath) as zf:
         entries = archive_entries(zf)
     return {"pages": [{k: v for k, v in p.items() if not k.startswith("_")} for p in pages],
             "entries": entries, "warnings": [w for p in pages for w in p["warnings"]], "folder": ""}
 
 
-def _unpack(zpath: Path, tdir: Path, progress=jobs.no_progress) -> list[str]:
+def _unpack(zpath, tdir: Path, progress=jobs.no_progress, files=None) -> list[str]:
+    """The backup's databases and uploads written into ``tdir`` → the
+    uploads' names. ``files`` (a test of an upload's name) writes only the
+    uploads it passes; the names are every upload's all the same."""
     progress(phase="unpacking")
     try:
         zf = zipfile.ZipFile(zpath)
@@ -628,18 +641,18 @@ def _unpack(zpath: Path, tdir: Path, progress=jobs.no_progress) -> list[str]:
                 with zf.open(dbname) as src, open(tdir / dbname, "wb") as out:
                     shutil.copyfileobj(src, out)
         (tdir / "uploads").mkdir()
-        upload_names = []
         # Accept flat uploads/<file> entries only — the exporter never
         # writes nested paths or dotfiles (also a zip-slip guard).
         entries = [n for n in sorted(names)
                    if n == f"uploads/{os.path.basename(n)}" and os.path.basename(n)
                    and not os.path.basename(n).startswith(".")]
+        upload_names = [os.path.basename(n) for n in entries]
+        if files is not None:
+            entries = [n for n in entries if files(os.path.basename(n))]
         for i, n in enumerate(entries):
             progress(phase="unpacking", done=i, total=len(entries), unit="files")
-            base = os.path.basename(n)
-            with zf.open(n) as src, open(tdir / "uploads" / base, "wb") as out:
+            with zf.open(n) as src, open(tdir / "uploads" / os.path.basename(n), "wb") as out:
                 shutil.copyfileobj(src, out)
-            upload_names.append(base)
     return upload_names
 
 

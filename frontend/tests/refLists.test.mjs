@@ -6,12 +6,15 @@ import { test } from "node:test";
 import {
   pageByTitle, pickerCounts, rankRefPages, refBlockPath, refBlockText, refInsertEdit, refQueryAt, typedTitleLink,
 } from "../src/editor/refLists.js";
+import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
 
-const page = (id, content, extra = {}) => ({ id, content, _folders: [], _labels: [], _updatedAt: "", ...extra });
+// App's page list (libraryUtils.pageBlocksOf): chips are {id, name}, and
+// the matcher reads the names only.
+const page = (id, content, extra = {}) => ({ id, content, _folderChips: [], _labelChips: [], _path: "", _updatedAt: "", ...extra });
 const PAGES = [
   page("notes", "Attention — reading notes", { _updatedAt: "2026-09-20T00:00:00Z" }),
-  page("paper", "Attention Is All You Need", { _folders: ["ML/Transformers"], _updatedAt: "2026-09-01T00:00:00Z" }),
-  page("rydberg", "Rydberg Atom Arrays", { _labels: ["attention-free"], _updatedAt: "2026-09-25T00:00:00Z" }),
+  page("paper", "Attention Is All You Need", { _folderChips: [{ id: "f9", name: "ML / Transformers" }], _updatedAt: "2026-09-01T00:00:00Z" }),
+  page("rydberg", "Rydberg Atom Arrays", { _labelChips: [{ id: "l7", name: "attention-free" }], _updatedAt: "2026-09-25T00:00:00Z" }),
   page("open", "Attention scratchpad", { _updatedAt: "2026-09-26T00:00:00Z" }),
 ];
 
@@ -23,6 +26,33 @@ test("pages the query names, title hits first, the open page left out", () => {
   assert.equal(rankRefPages(PAGES, "attention is all", "open")[0].id, "paper", "the exact phrase wins");
   assert.equal(rankRefPages(PAGES, "atention is all", "open")[0].id, "paper", "a typo still finds it");
   assert.deepEqual(rankRefPages(PAGES, "zzz", null), []);
+});
+
+test("folders and labels match by name, never by id", () => {
+  assert.deepEqual(rankRefPages(PAGES, "transformers", "open").map((p) => p.id), ["paper"], "a folder by its name");
+  assert.deepEqual(rankRefPages(PAGES, "attention-free", "open").map((p) => p.id), ["rydberg"], "a label by its name");
+  assert.deepEqual(rankRefPages(PAGES, "f9", "open"), [], "a folder's id names nothing");
+  assert.deepEqual(rankRefPages(PAGES, "l7", "open"), [], "nor a label's");
+});
+
+// The listing's rows as App reads them: Project, filed in Physics, with
+// Notes inside it, which carries a folder of its own (an import's) and a
+// label.
+test("a page inside another matches on its path and its top's folders, not its own", () => {
+  const tree = libraryTree({
+    folders: { children: [{ id: "phys", content: "Physics" }, { id: "stale", content: "Stale" }] },
+    labels: { children: [{ id: "wk", content: "weekly" }] },
+  });
+  const pages = pageBlocksOf([
+    { id: "proj", content: "Project", properties: { folders: ["phys"] }, _parentPage: "" },
+    { id: "notes", content: "Notes", properties: { folders: ["stale"], labels: ["wk"] }, _parentPage: "proj" },
+    { id: "other", content: "Other notes", properties: {}, _parentPage: "" },
+  ], tree);
+  const ids = (query) => rankRefPages(pages, query, "").map((p) => p.id);
+  assert.deepEqual(ids("project"), ["proj", "notes"], "the title, then the page whose path names it");
+  assert.deepEqual(ids("physics notes"), ["notes"], "its top's folder and its title");
+  assert.deepEqual(ids("stale"), [], "a folder it carries itself counts for nothing");
+  assert.deepEqual(ids("weekly"), ["notes"], "its own label");
 });
 
 test("before anything is typed, the most recently edited pages", () => {

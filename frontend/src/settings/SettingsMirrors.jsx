@@ -33,8 +33,8 @@ import { MorphText } from "../shared/ui/MotionWidgets";
 import { clock, hostOf, isPublication, isPullOnly, mirrorState, n, roundSummary, versionGap } from "../collaboration/MirrorPopover";
 import { ConflictCard, useConflicts } from "../collaboration/MergeResolver";
 import {
-  LINK_ACTIONS, LINK_BASES, linkCandidates, linkKind, linkPath, pullByKey, reconnectOnly, unsentEdits, zoteroBytesText, zoteroFollowing,
-  zoteroForceConfirm, zoteroLibraryLabel, zoteroLimits, zoteroQueued, zoteroWaitingState,
+  LINK_ACTIONS, LINK_BASES, followSync, linkCandidates, linkKind, linkPath, pullByKey, reconnectOnly, roundAhead, unsentEdits,
+  zoteroBytesText, zoteroFollowing, zoteroForceConfirm, zoteroLibraryLabel, zoteroLimits, zoteroQueued, zoteroWaitingState,
 } from "../collaboration/syncLinks.js";
 import { createZoteroLink } from "../transfers/zoteroApi";
 import { ZoteroLinkDialog, ZoteroLinkSettingsDialog } from "./ZoteroLinkDialog";
@@ -42,13 +42,13 @@ import { useSettingsRead } from "./settingsReads.js";
 import { T, t } from "../shared/i18n/i18n.js";
 
 // A list the pane reads (null while loading; [] when not read, or failed
-// with nothing read yet), and while one of its rounds runs its row moves
-// ("21 of 79 pages", the file in flight): `running` asks the read to come
-// again every 2 s, as does a Zotero link between two bounded rounds of one
-// fill.
+// with nothing read yet), and while one of its rounds is asked for or runs
+// its row moves ("21 of 79 pages", the file in flight): `running` asks the
+// read to come again every 2 s, as does a Zotero link between two bounded
+// rounds of one fill.
 function useListed({ data, error, reload }, key, running, setRunning) {
   const list = error && !data ? [] : data ? data[key] || [] : null;
-  const now = !!list?.some((m) => m.status?.running || (linkKind(m) === "zotero" && zoteroFollowing(m.status)));
+  const now = !!list?.some((m) => roundAhead(m) || (linkKind(m) === "zotero" && zoteroFollowing(m.status)));
   if (now !== running) setRunning(now);
   const refresh = React.useCallback(() => { reload().catch(() => {}); }, [reload]);
   return [list, refresh];
@@ -105,14 +105,26 @@ export function mirrorStatusLine(m) {
   return `${waiting ? `${waiting.text} · ` : ""}${line}${queued}`;
 }
 
-// Busy flag plus "Sync now" for one mirror or link, waiting for the round
-// and reporting its outcome.
+// Busy flag plus "Sync now" for one mirror or link: the round is asked
+// for and followed through the link's status to its end (followSync, no
+// request held open for it), its row moving meanwhile, then its outcome
+// reported. Leaving the pane stops following; the round goes on.
 function useSyncNow(refresh, setStatus) {
   const [busy, setBusy] = React.useState(false);
+  const alive = React.useRef(true);
+  React.useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
   async function syncNow(m) {
     setBusy(true);
     try {
-      const d = await apiJson(`${API}${linkPath(m, m.workspace_id, "/sync?wait=1")}`, { method: "POST" });
+      const d = await followSync(async () => {
+        const asked = await apiJson(`${API}${linkPath(m, m.workspace_id, "/sync")}`, { method: "POST" });
+        refresh(); // the row reads the ask and follows the round's progress
+        return asked;
+      }, () => apiJson(`${API}${linkPath(m, m.workspace_id)}`), { alive: () => alive.current });
+      if (!alive.current) return;
       const s = d.status || {};
       const side = roundSummary(s) || t("nothing had changed on either side");
       // (a Zotero link's round is bounded: what it left goes in the next rounds)

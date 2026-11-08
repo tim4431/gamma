@@ -678,7 +678,7 @@ def _pdf_digest(zf, name: str) -> str:
     return digest_id(digest)
 
 
-def plan_zotero_archive(zf, digests=None) -> dict:
+def plan_zotero_archive(zf, digests=None, progress=None) -> dict:
     """Read-only plan shared by preview and import; file bytes stay in the ZIP.
 
     Each item gets its document — the first of its PDFs that is in the zip
@@ -696,7 +696,9 @@ def plan_zotero_archive(zf, digests=None) -> dict:
     entry to ``[file_size, crc, digest]`` from an earlier plan of the same
     archive (a review's preview, kept for its commit): an entry that still
     has that size and CRC is not read again. The plan's ``digests`` is that
-    map for every PDF it hashed or reused.
+    map for every PDF it hashed or reused. ``progress`` (a background job's
+    report, gamma/jobs.py) hears each item as it is planned, so a review's
+    job counts the items and stops between two.
 
     Files no attachment names are warned of one by one, except Zotero's own
     (``.zotero-ft-cache``, its full-text index of a file) and those beside
@@ -718,7 +720,9 @@ def plan_zotero_archive(zf, digests=None) -> dict:
     named = set()   # every entry an attachment names, imported or not
     folders = {}    # an attachment's files/<id> folder → (its item's title, the attachment's file name)
     unwritten = []  # per file Zotero had not written yet: whether it is a PDF
-    for item in items:
+    for n, item in enumerate(items):
+        if progress:
+            progress(done=n, total=len(items), unit="items", item=item["title"])
         problems, found = item["warnings"], []
         document = document_title = None
         for att in item["attachments"]:

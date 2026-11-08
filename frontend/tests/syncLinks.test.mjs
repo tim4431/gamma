@@ -1,8 +1,9 @@
 // node --test tests/  (from frontend/) — the two kinds of sync link
 // (src/collaboration/syncLinks.js): which API a clone and a Zotero link
-// call, which link the open workspace has, and what a link's error, its
-// progress and queue, what waits, its key's limits and a page's PDF in
-// Zotero read as — against the words the engine writes.
+// call, which link the open workspace has, how Sync now follows its
+// round, and what a link's error, its progress and queue, what waits, its
+// key's limits and a page's PDF in Zotero read as — against the words the
+// engine writes.
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { test } from "node:test";
@@ -10,7 +11,7 @@ import {
   LINK_ACTIONS, LINK_BASES, ZOTERO_ADOPT_LIMITS, ZOTERO_CADENCE_HINT, ZOTERO_CADENCE_TITLE, ZOTERO_DEBOUNCE_S, ZOTERO_LIVE_S,
   ZOTERO_LOG_ACTIONS, ZOTERO_MANUAL, ZOTERO_NOTES_QUIET_S, ZOTERO_PDF_COMING, ZOTERO_PDF_REASONS, ZOTERO_UPLOAD_HINT, ZOTERO_UPLOAD_TITLE,
   ZOTERO_WAIT_REASONS, isZoteroPdfComing, linkCandidates, linkGone, linkKind, linkPath, linkPollMs, onChangeHint, pillLink, pullByKey,
-  reconnectOnly, zoteroUnstarted,
+  reconnectOnly, followSync, roundAhead, zoteroUnstarted,
   unsentEdits, workspaceLink, zoteroAdoptHint, zoteroBytesText, zoteroCadence, zoteroError, zoteroFollowing, zoteroForceConfirm,
   zoteroHalted, zoteroLibraryLabel, zoteroLimits, zoteroPdfCard, zoteroPdfSource, zoteroPdfState, zoteroQueued, zoteroRunText,
   zoteroWaiting, zoteroWaitingNote, zoteroWaitingState, zoteroWorkspaceName,
@@ -39,7 +40,7 @@ test("a mirror's row has no kind; a Zotero link's says so, and each calls its ow
   assert.equal(linkKind(undefined), "mirror");
   assert.equal(linkKind({ kind: "zotero" }), "zotero");
   assert.equal(linkKind("zotero"), "zotero");
-  assert.equal(linkPath({}, "w 1", "/sync?wait=1"), "/mirrors/w%201/sync?wait=1");
+  assert.equal(linkPath({}, "w 1", "/sync"), "/mirrors/w%201/sync");
   assert.equal(linkPath({ kind: "zotero" }, "w1"), "/zotero/links/w1");
   assert.equal(linkPath("zotero", "w1", "/conflicts/7"), "/zotero/links/w1/conflicts/7");
   assert.deepEqual(LINK_BASES, { mirror: "/mirrors", zotero: "/zotero/links" });
@@ -283,6 +284,53 @@ test("the pill reads every 2 s while a round runs, an edit waits or a Zotero lin
   assert.equal(linkPollMs("mirror", { status: {} }), 20000, "a clone that has not synced polls as before");
   assert.equal(linkPollMs("mirror", { status: {} }, { running: true }), 2000);
   assert.equal(linkPollMs("zotero", { ...fresh, status: { last_sync: "x" } }, { pending: true }), 2000);
+});
+
+test("a round is ahead of Sync now while it is asked for or runs, never on a detached link", () => {
+  assert.equal(roundAhead({ status: { asked_at: "2026-11-06T10:00:00.000000Z" } }), true, "Sync now's answer: asked, not started");
+  assert.equal(roundAhead({ status: { running: true } }), true);
+  assert.equal(roundAhead({ status: { running: true, asked_at: "x" } }), true, "asked while another round runs");
+  assert.equal(roundAhead({ status: { running: false, last_sync: "x" } }), false, "over: its outcome");
+  assert.equal(roundAhead({ status: {} }), false);
+  assert.equal(roundAhead({ detached: true, status: { asked_at: "x" } }), false, "a detached link runs none");
+  assert.equal(roundAhead({ mode: "off", status: { running: true } }), false);
+  assert.equal(roundAhead(null), false);
+});
+
+test("Sync now posts, then reads the link until its round is over, and answers the round's outcome", async () => {
+  const answers = [{ status: { running: true } }, { status: { running: true, progress: { done: 2, total: 9 } } },
+    { status: { running: false, last_sync: "t2", pages_pulled: 9 } }];
+  const slept = [];
+  const reads = [];
+  const out = await followSync(async () => ({ status: { asked_at: "t1", last_sync: "t0" } }),
+    async () => { reads.push(1); return answers.shift(); },
+    { every: 5, sleep: async (ms) => { slept.push(ms); } });
+  assert.deepEqual(out, { status: { running: false, last_sync: "t2", pages_pulled: 9 } });
+  assert.equal(reads.length, 3);
+  assert.deepEqual(slept, [5, 5, 5], "one wait before each read");
+
+  // nothing ahead (a detached link, a round already over): no read at all
+  const read = async () => assert.fail("not read");
+  assert.deepEqual(await followSync(async () => ({ detached: true, status: {} }), read), { detached: true, status: {} });
+
+  // a read the network failed is tried again; one the server refused ends it
+  let n = 0;
+  const flaky = await followSync(async () => ({ status: { running: true } }), async () => {
+    n += 1;
+    if (n === 1) throw new TypeError("Failed to fetch");
+    return { status: { last_sync: "t3" } };
+  }, { sleep: async () => {} });
+  assert.deepEqual(flaky, { status: { last_sync: "t3" } });
+  assert.equal(n, 2);
+  const gone = Object.assign(new Error("no such mirror"), { status: 404 });
+  await assert.rejects(followSync(async () => ({ status: { running: true } }), async () => { throw gone; }, { sleep: async () => {} }),
+    /no such mirror/);
+
+  // the surface closed: it stops with what it read last
+  let open = true;
+  const closed = await followSync(async () => ({ status: { asked_at: "t1" } }),
+    async () => { open = false; return { status: { running: true } }; }, { sleep: async () => {}, alive: () => open });
+  assert.deepEqual(closed, { status: { running: true } });
 });
 
 test("a fill counts across its bounded rounds, still syncing between two of them; a force says so", () => {

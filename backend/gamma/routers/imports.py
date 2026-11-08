@@ -2,9 +2,11 @@
 embedded in the PDF itself (e.g. saved by SumatraPDF/Acrobat/Zotero), Markdown
 notes, and whole libraries — a Zotero RDF export, a zip of Markdown notes,
 Notability notes, GoodNotes notebooks, a Gamma export — through the reviewed
-import: the upload
-is staged and previewed (``/import/review``), then the chosen items are
-imported by a background job (``POST /api/jobs/import``, gamma/jobs.py)."""
+import: the upload is staged and previewed, then the chosen items are
+imported. Both are background jobs (gamma/jobs.py): ``POST
+/api/jobs/import-preview`` reads the upload into its review, ``POST
+/api/jobs/import`` imports what was chosen of it; ``/import/review``
+answers the preview in the request, for scripts."""
 
 import copy
 import hashlib
@@ -73,9 +75,10 @@ router = APIRouter(prefix="/api", tags=["import"])
 # Each source is a preview and a commit over a binary file (the staged
 # upload, or a plain endpoint's file) and the review's metadata (filename,
 # folder — the destination folder's id, "" the library's top —, strip):
-# ``preview(ws, data, meta)`` and ``commit(ws, actor, data, meta, selection,
-# progress)`` — ``selection`` the chosen source ids (None: everything),
-# ``progress`` a background job's report (gamma/jobs.py). A preview writes
+# ``preview(ws, data, meta, progress)`` and ``commit(ws, actor, data, meta,
+# selection, progress)`` — ``selection`` the chosen source ids (None:
+# everything), ``progress`` a background job's report (gamma/jobs.py),
+# where a preview's or an import's Stop lands. A preview writes
 # nothing; a commit makes the folders and labels its pages need first
 # (``ops.ensure_filing``). A preview may answer a ``stage`` dict, what its
 # commit can reuse (a Zotero review's PDF digests): a staged review keeps
@@ -111,20 +114,61 @@ def _refuse_linked(ws: str, source: str = "zotero") -> None:
                             detail=f"This workspace is kept in step with {name}; its items arrive by themselves.")
 
 
-def _preview_staged(ws, user_id, token):
-    """The staged upload's preview with the review's ``review_id``, its
-    ``stage`` kept with the review for the commit; a preview that fails
-    discards the upload."""
+def _preview_staged(ws, user_id, token, progress=jobs.no_progress):
+    """The staged upload's preview with the review's ``review_id``, kept
+    beside the upload (``import_staging.keep_review``) with its ``stage``
+    for the commit. A preview that fails or is stopped discards the
+    upload; past its last report (``stoppable=False``) the review is
+    kept."""
     try:
         path, metadata = import_staging.get(token, user_id, ws)
         preview, _ = _review_source(metadata["source"])
         with (path / "upload").open("rb") as data:
-            report = preview(ws, data, metadata)
-        stage = report.pop("stage", None)
-        if stage:
-            import_staging.update(token, user_id, ws, **stage)
-        return {**report, "review_id": token}
-    except Exception:
+            report = preview(ws, data, metadata, progress)
+        progress(stoppable=False)
+        stage = report.pop("stage", None) or {}
+        report = {**report, "review_id": token}
+        import_staging.keep_review(token, user_id, ws, report, **stage)
+        return report
+    except BaseException:  # jobs.Cancelled too
+        try:
+            import_staging.discard(token, user_id, ws)
+        except HTTPException:
+            pass  # gone already, or its import holds it
+        raise
+
+
+def _not_guest(ws: str, source: str) -> None:
+    """A guest's workspace takes no Gamma export, refused before the bytes travel."""
+    if source == "gamma" and is_guest_workspace(ws):
+        raise HTTPException(status_code=403, detail="a guest workspace cannot import backups")
+
+
+def _start_preview(ws, user_id, token):
+    """The staged upload's review as a background job (kind
+    ``import-preview``, keyed by the review): its result counts what the
+    review found, the review itself is read at ``GET /import/review/{id}``.
+    Asking again for the same review answers its job; one that cannot
+    start (429: the account's tasks are full) discards the upload."""
+    prior = jobs.latest(user_id, "import-preview", token)
+    if prior is not None and prior["state"] in ("queued", "running", "done"):
+        return prior
+    path, metadata = import_staging.get(token, user_id, ws)
+
+    def run(job):
+        report = _preview_staged(ws, user_id, token, job.progress)
+        return {"review_id": token, "pages": len(report.get("pages") or []),
+                "warnings": len(report.get("warnings") or [])}
+
+    try:
+        return jobs.start("import-preview", owner=user_id, ws=ws, key=token, run=run,
+                          title=f"Review {metadata['filename']}",
+                          params={"review_id": token, "source": metadata["source"], "filename": metadata["filename"],
+                                  "folder": metadata.get("folder", ""), "strip": bool(metadata.get("strip")),
+                                  "size": (path / "upload").stat().st_size})
+    except jobs.Busy as busy:  # a second start raced this one
+        return busy.job
+    except HTTPException:
         import_staging.discard(token, user_id, ws)
         raise
 
@@ -141,9 +185,28 @@ def upload_import_review(request: Request, file: UploadFile = File(...), source:
     return _preview_staged(ws, request.state.user_id, token)
 
 
+@router.post("/jobs/import-preview")
+def start_import_preview(request: Request, file: UploadFile = File(...), source: str = Form(...),
+                         folder: str = Form(""), strip: bool = Form(False)):
+    """Stage the upload and read its review as a background job (kind
+    ``import-preview``, docs/dev/tasks.md) → the job; ``/jobs/import-preview/parts``
+    for one past 32 MiB. The import dialog follows it, so a review a proxy
+    would cut in the request is kept, and its row in Background tasks opens
+    the dialog on it again."""
+    user_id = require_user_id(request)
+    ws = require_ws(request, write=True)
+    _review_source(source)
+    _refuse_linked(ws, source)
+    _not_guest(ws, source)
+    token = import_staging.create(file, user_id=user_id, ws=ws, source=source, folder=folder, strip=strip)
+    return _start_preview(ws, user_id, token)
+
+
 # An upload larger than a proxy lets one request carry (Cloudflare caps a
 # body at 100 MB) comes in parts, as a PDF does (routers/uploads.py): open →
-# the parts, in order → finish, which answers like POST /import/review.
+# the parts, in order → finish, which answers like POST /import/review — or,
+# at /jobs/import-preview/parts, starts the review's job like POST
+# /jobs/import-preview. Opening and the parts are the same at both.
 
 class ImportParts(BaseModel):
     source: str
@@ -154,14 +217,14 @@ class ImportParts(BaseModel):
 
 
 @router.post("/import/review/parts")
+@router.post("/jobs/import-preview/parts")
 def open_import_review_parts(payload: ImportParts, request: Request):
     """Open an import upload in parts → ``{token, part_bytes, received: 0}``;
     the token becomes the review's ``review_id``."""
     ws = require_ws(request, write=True)
     _review_source(payload.source)
     _refuse_linked(ws, payload.source)
-    if payload.source == "gamma" and is_guest_workspace(ws):  # refused before the bytes travel
-        raise HTTPException(status_code=403, detail="a guest workspace cannot import backups")
+    _not_guest(ws, payload.source)
     token = import_staging.open_parts(user_id=request.state.user_id, ws=ws, source=payload.source,
                                       folder=payload.folder, strip=payload.strip, filename=payload.name,
                                       size=payload.size)
@@ -169,6 +232,7 @@ def open_import_review_parts(payload: ImportParts, request: Request):
 
 
 @router.post("/import/review/parts/{token}")
+@router.post("/jobs/import-preview/parts/{token}")
 def put_import_review_part(token: str, request: Request, part: UploadFile = File(...), offset: int = Form(...)):
     """One part at byte ``offset`` → ``{received}``; at any other offset a
     409 whose body carries ``received``, where the client goes on from."""
@@ -190,10 +254,46 @@ def finish_import_review_parts(token: str, request: Request):
     return _preview_staged(ws, request.state.user_id, token)
 
 
+@router.post("/jobs/import-preview/parts/{token}/finish")
+def finish_import_preview_parts(token: str, request: Request):
+    """The whole upload is in: start its review's job like POST
+    /jobs/import-preview (400 while bytes are missing)."""
+    user_id = require_user_id(request)
+    ws = require_ws(request, write=True)
+    import_staging.finish(token, user_id, ws)
+    return _start_preview(ws, user_id, token)
+
+
+@router.get("/import/review/{token}")
+def get_import_review(token: str, request: Request):
+    """The review its preview kept, as ``POST /import/review`` answers it:
+    what the dialog shows once the review's job is done, also from another
+    tab. Reading it is activity, as a keep-alive is; 409 while the review
+    is still being read, 404 once it is gone."""
+    ws = require_ws(request, write=True)
+    return import_staging.review(token, request.state.user_id, ws)
+
+
 @router.delete("/import/review/{token}")
 def discard_import_review(token: str, request: Request):
+    """Drop the staged upload and its review (409 while its import reads
+    it). A review still being read is stopped instead, and its stop drops
+    the upload; a finished review's row leaves Background tasks with it."""
     ws = require_ws(request, write=True)
-    import_staging.discard(token, request.state.user_id, ws)
+    user_id = request.state.user_id
+    preview = jobs.latest(user_id, "import-preview", token) if user_id else None
+    if preview is not None and preview["state"] in jobs.ACTIVE:
+        try:
+            if jobs.cancel(preview["id"])["state"] in jobs.ACTIVE:
+                return {"ok": True}  # stopping: the run drops the upload at its next report
+        except HTTPException:
+            pass  # past its last report: its review is being kept, and goes here
+    import_staging.discard(token, user_id, ws)
+    if preview is not None:
+        try:
+            jobs.dismiss(preview["id"])
+        except HTTPException:
+            pass  # still ending: its row stays
     return {"ok": True}
 
 
@@ -233,6 +333,9 @@ def start_import_job(payload: ImportJob, request: Request):
     prior = jobs.latest(user_id, "import", token)
     if prior is not None and prior["state"] in ("queued", "running", "done"):
         return same_review(prior)
+    preview = jobs.latest(user_id, "import-preview", token)
+    if preview is not None and preview["state"] in jobs.ACTIVE:
+        raise HTTPException(status_code=409, detail="this review is still being read")
     path, metadata = import_staging.touch(token, user_id, ws)  # pressing Import is activity too
     upload = path / "upload"
     if not upload.exists():
@@ -252,12 +355,18 @@ def start_import_job(payload: ImportJob, request: Request):
                 pass  # already gone (expired)
 
     try:
-        return jobs.start("import", owner=user_id, ws=ws, key=token, run=run, title=f"Import {metadata['filename']}",
-                          params={"review_id": token, "source": metadata["source"], "filename": metadata["filename"],
-                                  "folder": metadata["folder"], "size": upload.stat().st_size,
-                                  "selected": len(selection), "digest": digest})
+        started = jobs.start("import", owner=user_id, ws=ws, key=token, run=run, title=f"Import {metadata['filename']}",
+                             params={"review_id": token, "source": metadata["source"], "filename": metadata["filename"],
+                                     "folder": metadata["folder"], "size": upload.stat().st_size,
+                                     "selected": len(selection), "digest": digest})
     except jobs.Busy as busy:  # a second start raced this one
         return same_review(busy.job)
+    if preview is not None:  # the import's row stands for the review from here on
+        try:
+            jobs.dismiss(preview["id"])
+        except HTTPException:
+            pass
+    return started
 
 
 @router.post("/import/logseq")
@@ -395,8 +504,8 @@ def _markdown_zip(data, ws, folder, *, actor="", preview=False, selection=None, 
                                                   selected=selection, progress=progress)}
 
 
-def _preview_markdown_zip(ws, data, meta):
-    return _markdown_zip(data, ws, meta.get("folder", ""), preview=True)
+def _preview_markdown_zip(ws, data, meta, progress=jobs.no_progress):
+    return _markdown_zip(data, ws, meta.get("folder", ""), preview=True, progress=progress)
 
 
 def _commit_markdown_zip(ws, actor, data, meta, selection, progress=jobs.no_progress):
@@ -416,8 +525,8 @@ def _markdown_file(ws, data, meta, *, actor="", preview=False, selection=None, p
                          progress=progress)
 
 
-def _preview_markdown_file(ws, data, meta):
-    return _markdown_file(ws, data, meta, preview=True)
+def _preview_markdown_file(ws, data, meta, progress=jobs.no_progress):
+    return _markdown_file(ws, data, meta, preview=True, progress=progress)
 
 
 def _commit_markdown_file(ws, actor, data, meta, selection, progress=jobs.no_progress):
@@ -434,16 +543,16 @@ def _note_app(import_fn, ws, data, meta, *, actor="", preview=False, selection=N
                                         actor=actor, preview=preview, selected=selection, progress=progress)}
 
 
-def _preview_notability(ws, data, meta):
-    return _note_app(import_notes, ws, data, meta, preview=True)
+def _preview_notability(ws, data, meta, progress=jobs.no_progress):
+    return _note_app(import_notes, ws, data, meta, preview=True, progress=progress)
 
 
 def _commit_notability(ws, actor, data, meta, selection, progress=jobs.no_progress):
     return _note_app(import_notes, ws, data, meta, actor=actor, selection=selection, progress=progress)
 
 
-def _preview_goodnotes(ws, data, meta):
-    return _note_app(import_goodnotes, ws, data, meta, preview=True)
+def _preview_goodnotes(ws, data, meta, progress=jobs.no_progress):
+    return _note_app(import_goodnotes, ws, data, meta, preview=True, progress=progress)
 
 
 def _commit_goodnotes(ws, actor, data, meta, selection, progress=jobs.no_progress):
@@ -452,21 +561,22 @@ def _commit_goodnotes(ws, actor, data, meta, selection, progress=jobs.no_progres
 
 def _gamma_zip(ws, data, work):
     """Refuses a guest's workspace; spools the export to ``work``."""
-    if is_guest_workspace(ws):
-        raise HTTPException(status_code=403, detail="a guest workspace cannot import backups")
+    _not_guest(ws, "gamma")
     path = Path(work) / "import.zip"
     with path.open("wb") as dest:
         shutil.copyfileobj(data, dest)
     return path
 
 
-def _preview_gamma(ws, data, meta):
+def _preview_gamma(ws, data, meta, progress=jobs.no_progress):
+    """Read where the upload lies, with no copy of it; only its databases
+    and handwriting files are unpacked (``ws_backup.preview_zip``)."""
     from .. import ws_backup
-    with tempfile.TemporaryDirectory(prefix="gamma-import-review-") as td:
-        try:
-            return {"ok": True, **ws_backup.preview_zip(ws, _gamma_zip(ws, data, td))}
-        except ws_backup.BackupError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+    _not_guest(ws, "gamma")
+    try:
+        return {"ok": True, **ws_backup.preview_zip(ws, data, progress)}
+    except ws_backup.BackupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def _commit_gamma(ws, actor, data, meta, selection, progress=jobs.no_progress):
@@ -1948,9 +2058,9 @@ def _open_zotero_zip(data):
         raise HTTPException(status_code=400, detail="not a zip file — zip the exported folder and upload that")
 
 
-def _zotero_plan(zf, digests=None):
+def _zotero_plan(zf, digests=None, progress=None):
     try:
-        return plan_zotero_archive(zf, digests)
+        return plan_zotero_archive(zf, digests, progress)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"could not read the Zotero export: {exc}")
 
@@ -1963,7 +2073,7 @@ def preview_zotero(request: Request, file: UploadFile = File(...), folder: str =
     return report
 
 
-def _preview_zotero(ws, data, meta):
+def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
     """What importing the Zotero export would make of the library, without
     storing a file, making a folder or changing a page (merges within the
     zip simulated, as ``_zotero_existing_page`` finds them). A page's
@@ -1975,7 +2085,7 @@ def _preview_zotero(ws, data, meta):
     review's commit hashing the PDFs again."""
     _refuse_linked(ws)
     with _open_zotero_zip(data) as zf:
-        plan = _zotero_plan(zf)
+        plan = _zotero_plan(zf, progress=progress)
     pages, by_digest, by_key, by_id = {}, {}, {}, {}
     # Simulate merges within this ZIP too, without storing files or changing pages.
     with connect_pages_db(ws) as conn:

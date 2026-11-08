@@ -138,6 +138,26 @@ export const topPageOf = (pagesById, id) => pagesById.get(pageAncestors(pagesByI
 // Where a sub-page is, as a picker's second line names it ("Top › Mid");
 // "" for a library page.
 export const pagePathLabel = (pagesById, id) => pageAncestors(pagesById, id).map((a) => a.title).join(PAGE_PATH_SEP);
+// Where a page is, its own title last ("Top › Mid › Page"): how Recently
+// deleted names the page a restore puts a sub-page back inside.
+export const pagePlaceLabel = (pagesById, id) =>
+  [pagePathLabel(pagesById, id), pagesById.get(id)?.content || t("Untitled")].filter(Boolean).join(PAGE_PATH_SEP);
+// The topmost of pages `ids`: those not inside another of them, at any
+// depth, in their order, from `pages` (page blocks or listing rows, by
+// their `_parentPage`). What Delete and the moves act on, so a page inside
+// a picked page goes, or stays, with it.
+export function topmostPages(pages, ids) {
+  const parents = new Map((pages || []).map((page) => [page.id, page._parentPage]));
+  const picked = new Set(ids);
+  return ids.filter((id) => {
+    const seen = new Set([id]);
+    for (let up = parents.get(id); up && !seen.has(up); up = parents.get(up)) {
+      if (picked.has(up)) return false;
+      seen.add(up);
+    }
+    return true;
+  });
+}
 // The ids of the pages inside pages `ids`, at any depth, parents first,
 // from `pages` (page blocks or listing rows, by their `_parentPage`); none
 // of `ids` among them.
@@ -155,6 +175,61 @@ export function pageDescendants(pages, ids) {
     }
   }
   return queue.slice(ids.length);
+}
+// Pages `ids` dropped on page `target` (a library row or card, a Pages
+// inside row, a crumb), from `pages` as above: `moving`, the topmost of
+// them (as the menu's moves take them) that are not right inside it
+// already, go inside it. `refused` says why none may: "self" when the
+// target is one of them (a drag let go where it began), "inside" when it is
+// a page inside one of them, where they cannot go, as Move into page…
+// leaves those out of its list; "" otherwise.
+export function pagesIntoPage(pages, ids, target) {
+  const tops = topmostPages(pages, ids);
+  if (tops.includes(target)) return { refused: "self", moving: [] };
+  if (pageDescendants(pages, tops).includes(target)) return { refused: "inside", moving: [] };
+  const parents = new Map((pages || []).map((page) => [page.id, page._parentPage]));
+  return { refused: "", moving: tops.filter((id) => parents.get(id) !== target) };
+}
+
+// App's page list (`pageBlocks`): the listing's rows, `_parentPage` added,
+// as the home view's cards and rows, the [[ and @ pickers and the chips
+// read them: {id, content ("Untitled" when empty), _pageId, _attachment,
+// _preview, _folders, _labels (ids the trees have), _folderChips,
+// _labelChips ({id, name}, filingChips), _createdAt, _updatedAt, _pinned,
+// _parentPage, _path, _subPages}. A page is filed by its top, so a
+// sub-page's folders are its top's (the server's blocks_store.filed_folders)
+// and its labels its own; `_path` is where it is (pagePathLabel, "" for a
+// library page) and `_subPages` how many pages are right inside it.
+export function pageBlocksOf(rows, tree) {
+  const byId = new Map(rows.map((b) => [b.id, b]));
+  const chains = rows.map((b) => (b._parentPage ? pageAncestors(byId, b.id) : []));
+  const inside = new Map();
+  for (const chain of chains) {
+    const parent = chain.at(-1)?.id;
+    if (parent) inside.set(parent, (inside.get(parent) || 0) + 1);
+  }
+  return rows.map((b, i) => {
+    const chain = chains[i];
+    const own = filingChips(tree, b.properties);
+    const folders = chain.length ? filingChips(tree, byId.get(chain[0].id).properties).folders : own.folders;
+    return {
+      id: b.id,
+      content: b.content || t("Untitled"),
+      _pageId: b.id,
+      _attachment: pageAttachment(b),
+      _preview: b.preview || "",
+      _folders: folders.map((c) => c.id),
+      _labels: own.labels.map((c) => c.id),
+      _folderChips: folders,
+      _labelChips: own.labels,
+      _createdAt: b.created_at || "",
+      _updatedAt: b.updated_at || "",
+      _pinned: b.properties?.pinned || "",
+      _parentPage: b._parentPage || "",
+      _path: chain.map((a) => a.title).join(PAGE_PATH_SEP),
+      _subPages: inside.get(b.id) || 0,
+    };
+  });
 }
 
 // The confirmation of deleting pages `ids` (the library's Delete and the

@@ -325,27 +325,26 @@ def trash_entry(conn, block_id: str) -> dict | None:
     went_with = conn.execute(
         "SELECT id, content, properties FROM unified_blocks WHERE id = json_extract(?, '$.deleted_with') "
         "AND parent_id = ?", (row[2], TRASH)).fetchone()
-    entry = went_with or row
-    return trashed_page(*entry, folders=trashed_folders(conn, load_props(entry[2])))
+    return trashed_page(conn, *(went_with or row))
 
 
-def trashed_page(page_id: str, title: str, props_raw, folders: list[str]) -> dict:
+def trashed_page(conn, page_id: str, title: str, props_raw) -> dict:
     """A trashed page as Recently deleted lists it: ``{id, title, folders,
-    deleted_at, deleted_by}`` — ``folders`` the folder ids a restore puts it
-    back in (``trashed_folders``, which the caller passes), the stamps
+    parent, deleted_at, deleted_by}`` — ``folders`` the folder ids a restore
+    puts it back in (``trashed_folders``), ``parent`` the live page it goes
+    back inside (``trashed_parent``, "" for none), the stamps
     ``ops.trash_page`` wrote."""
     props = load_props(props_raw)
-    return {"id": page_id, "title": title or "Untitled", "folders": folders,
+    return {"id": page_id, "title": title or "Untitled", "folders": trashed_folders(conn, props),
+            "parent": trashed_parent(conn, props),
             "deleted_at": str(props.get("deleted_at") or ""),
             "deleted_by": str(props.get("deleted_by") or "")}
 
 
-def trashed_folders(conn, props: dict) -> list[str]:
-    """The folder ids of a page in Recently deleted (its ``props``), where a
-    restore puts it back: for a page that went there with another still
-    there (``deleted_with``), that one's; for a sub-page whose parent is
-    still live, its parent's top's (``filed_folders``: a sub-page is filed
-    where its top is); else the page's own."""
+def _restored_props(conn, props: dict) -> dict:
+    """The properties a restore of a page in Recently deleted (its
+    ``props``) goes by: for a page that went there with another still there
+    (``deleted_with``), that one's; else its own."""
     seen = set()
     while isinstance(went := props.get("deleted_with"), str) and went not in seen:
         seen.add(went)
@@ -354,11 +353,30 @@ def trashed_folders(conn, props: dict) -> list[str]:
         if not row:
             break
         props = load_props(row[0])
-    parent = props.get(PARENT_PAGE)
+    return props
+
+
+def trashed_parent(conn, props: dict) -> str:
+    """The page a page in Recently deleted (its ``props``) goes back inside
+    when restored: its stored ``parent_page`` while that names a live page
+    (a sub-page deleted on its own, ``ops.restore_page``), of the page it
+    went there with for one that went with another still there; "" when it
+    comes back in the library."""
+    parent = _restored_props(conn, props).get(PARENT_PAGE)
     if isinstance(parent, str) and conn.execute(
             "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'", (parent,)).fetchone():
-        return filed_folders(conn, parent)
-    return filing(props, FOLDERS)
+        return parent
+    return ""
+
+
+def trashed_folders(conn, props: dict) -> list[str]:
+    """The folder ids of a page in Recently deleted (its ``props``), where a
+    restore puts it back: for a page that went there with another still
+    there (``deleted_with``), that one's; for a sub-page whose parent is
+    still live (``trashed_parent``), its parent's top's (``filed_folders``:
+    a sub-page is filed where its top is); else the page's own."""
+    parent = trashed_parent(conn, props)
+    return filed_folders(conn, parent) if parent else filing(_restored_props(conn, props), FOLDERS)
 
 
 def assert_block_in_scope(conn, block_id: str, scope) -> None:

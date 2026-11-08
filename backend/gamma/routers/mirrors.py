@@ -152,14 +152,15 @@ def force(ws: str, payload: Force, request: Request):
 # threadpool runs them and the event loop stays free.
 @router.post("/{ws}/sync")
 def run_sync(ws: str, request: Request, wait: int = 0):
-    """One round now. ``wait=1`` runs it inline and answers with the round's
-    status; otherwise it runs in the background and the current status is
-    returned."""
-    mirror = _mine(request, ws)
+    """One round now, in the background: the answer comes at once, its
+    status carrying ``asked_at`` until a round starts and then ``running``
+    until it ends, which the client follows with ``GET /{ws}``
+    (``sync_engine.ask_round``). ``wait=1``, for scripts, runs it inline
+    and answers with the round's status."""
+    _mine(request, ws)
     if wait:
         return {"status": sync_engine.sync_workspace(ws), "conflicts_open": sync_engine.open_conflicts(ws)}
-    sync_engine.sync_in_background(ws)
-    return {"status": mirror["status"], "conflicts_open": sync_engine.open_conflicts(ws)}
+    return {"status": sync_engine.ask_round(ws), "conflicts_open": sync_engine.open_conflicts(ws)}
 
 
 @router.delete("/{ws}")

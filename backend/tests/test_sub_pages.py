@@ -289,13 +289,16 @@ def test_a_share_reads_the_family_it_reaches(owner):
     assert [(p["id"], p["parent"]) for p in listing] == [(a, ""), (b, a), (c, b), (d, a)]
 
 
-def test_the_listing_names_the_parent_without_a_preview(owner):
-    a, b, _, _ = _tree(owner, "list")
+def test_the_listing_names_the_parent_and_previews_a_sub_page_too(owner):
+    """A sub-page's card (the pinned and recents strips, a label view)
+    shows its first notes as a library page's does."""
+    a, b, c, _ = _tree(owner, "list")
     for page in (a, b):
         owner.post("/api/blocks", json={"parent_id": page, "content": f"note of {page}"})
     listing = {p["id"]: p for p in owner.get("/api/blocks/root/children").json()["children"]}
     assert listing[a]["parent"] == "" and listing[a]["preview"] == f"note of {a}"
-    assert listing[b]["parent"] == a and listing[b]["preview"] == ""
+    assert listing[b]["parent"] == a and listing[b]["preview"] == f"note of {b}"
+    assert listing[c]["parent"] == b and listing[c]["preview"] == ""  # no notes, no preview
 
 
 # ---- filing and shares ---------------------------------------------------------

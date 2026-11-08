@@ -5,11 +5,11 @@
 // icons. All interaction (selection, drag, rename, context menus) stays wired
 // in App.jsx alongside the shared handlers.
 import React from "react";
-import { CheckIcon, FileIcon, FolderFilesIcon, FolderIcon, GridIcon, ListIcon, LabelIcon, SearchIcon, XIcon } from "../shared/ui/Icons";
+import { CheckIcon, FileIcon, FolderFilesIcon, FolderIcon, GridIcon, ListIcon, LabelIcon, PagesIcon, SearchIcon, XIcon } from "../shared/ui/Icons";
 import { MenuButton } from "../shared/ui/Menus";
 import { FADE_IN, useSlidingPill } from "../shared/ui/MotionWidgets";
 import { menuPress } from "../shared/ui/press.js";
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 
 // Folder + label chips for a page, filtered by the Settings → Appearance →
 // Library "File labels" preference ("off" | "labels" | "folders" | "both"). `folders` and
@@ -18,15 +18,25 @@ import { t } from "../shared/i18n/i18n.js";
 // don't navigate; `onLabelMenu(id)` optionally wires the label rename/delete
 // context menu where the caller offers one. With the chips enabled the span
 // always renders, empty or not: on a card it is the reserved chip line that
-// keeps every footer the same height. `inside`: a sub-page's path, the pages
-// it is in ("Top › Mid"), a chip of its own whatever the preference — a
-// page inside another is filed with it, and the path is where it is.
-function CardLabels({ folders, labels, inside = "", mode = "both", onLabelMenu, className = "cardLabels" }) {
-  if (mode === "off" && !inside) return null;
-  const showFolders = (mode === "both" || mode === "folders") && folders?.length > 0;
+// keeps every footer the same height. Two chips show whatever the
+// preference, as they say where a page is and what it holds rather than
+// how it is filed: `pages`, how many pages are right inside it, and
+// `inside`, a sub-page's path, the pages it is in ("Top › Mid"), in place
+// of folder chips — a page inside another is filed with its top, and the
+// path is where it is.
+function CardLabels({ folders, labels, inside = "", pages = 0, mode = "both", onLabelMenu, className = "cardLabels" }) {
+  if (mode === "off" && !inside && !pages) return null;
+  const showFolders = (mode === "both" || mode === "folders") && folders?.length > 0 && !inside;
   const showLabels = (mode === "both" || mode === "labels") && labels?.length > 0;
+  const holds = pages ? tn("{n} page inside", "{n} pages inside", pages) : "";
   return (
     <span className={className} data-guide={showFolders || showLabels ? "home.cardLabels" : undefined}>
+      {pages ? (
+        <span className="pagesTagBadge" title={holds} aria-label={holds}>
+          <PagesIcon size={10} />
+          {pages}
+        </span>
+      ) : null}
       {inside ? (
         <span className="insideTagBadge" title={t("Inside {path}", { path: inside })}>
           <FileIcon size={10} />
@@ -67,7 +77,7 @@ function CardLabels({ folders, labels, inside = "", mode = "both", onLabelMenu, 
 // with a check where the "⋯" was.
 function PageCard({
   glyph, snap, preview, title, tip, renameNode, kind, count, time,
-  folders, labels, inside, labelMode, onLabelMenu, onMenu, checked = false,
+  folders, labels, inside, pages, labelMode, onLabelMenu, onMenu, checked = false,
   className = "", children, ...rootProps
 }) {
   return (
@@ -79,7 +89,7 @@ function PageCard({
       </div>
       <div className="pageCardBody">
         {renameNode || <div className="pageCardTitle">{title || t("Untitled")}</div>}
-        <CardLabels folders={folders} labels={labels} inside={inside} mode={labelMode} onLabelMenu={onLabelMenu} />
+        <CardLabels folders={folders} labels={labels} inside={inside} pages={pages} mode={labelMode} onLabelMenu={onLabelMenu} />
         {kind || count != null || time ? (
           <div className="pageCardMeta">
             {kind ? <span className="pageCardKind">{kind}</span> : null}

@@ -50,9 +50,12 @@ Code:
   this computer").
 - Tests: `backend/tests/test_folder_sync.py` (the reads and the client,
   driven over the TestClient), `backend/tests/test_folder_links.py` (the
-  links), `backend/tests/test_disk_push.py` (PDFs sent back, file links),
+  links, Sync now answered with its round running, `running` read from
+  the round's lock),
+  `backend/tests/test_disk_push.py` (PDFs sent back, file links),
   `backend/tests/test_upload_retention.py` (the files a replacement leaves),
-  and the desktop suite's folder and file steps (`desktop/test/e2e.js`).
+  and the desktop suite's folder and file steps (`desktop/test/e2e.js`;
+  `desktop/test/main.test.js` follows a folder's sync to its round's end).
 
 ## What lands on disk
 
@@ -384,8 +387,16 @@ that fails in a way no rule names (any other exception) still ends:
 `last_error` reads `unexpected error: …`, the traceback goes to the log,
 and the retry wait applies.
 
-Rounds run three ways: in the background when a link is made, asked to
-sync or resumed, inline for a sync asked to wait, and from `tick`. The
+Rounds run three ways: in a thread of their own when a link is made,
+asked to sync or resumed (`run_in_background`), inline for a sync asked
+to wait (`?wait=1`, for scripts), and from `tick`. `run_in_background`
+takes the link's round lock and writes its `running` before it returns,
+as the off-site copies' Copy now does, so Sync now's answer already says
+the round runs and no request is held open for it: the desktop app reads
+the link (`GET /api/folder-links/{id}`) until `running` comes down and
+then says how the round went. A sync asked while a round runs is answered
+by that round (its `full` and `force` are its own), and no second one
+starts. The
 app's periodic loop runs `tick` every `TICK_S` (30 s), and a link that is
 not paused is *due* when:
 
@@ -417,8 +428,11 @@ for still runs it, and a round already running finishes. The pause is
 `_write_status` keeps it as stored whatever the round read when it began,
 so a pause set mid-round holds.
 
-A round marked running for over ten minutes counts as dead. One round runs
-per link at a time (`_locks`). The tick forgets a link whose workspace on
+One round runs per link at a time (`_locks`), and a link reads `running`
+only while a round holds that lock (`_round_held`, applied wherever a row
+is read): a round reads running however long it takes, and a mark a
+server stopped mid-round left reads not running, so the link is due again
+at once and a client following it stops. The tick forgets a link whose workspace on
 this server is gone. Removing a folder link leaves the directory as it
 is. With `remove_files` it takes back what the rounds wrote and nothing
 else (`_remove_written`): the files as recorded and unchanged, the

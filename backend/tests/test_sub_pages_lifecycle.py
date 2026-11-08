@@ -182,6 +182,31 @@ def test_a_page_trashed_on_its_own_goes_back_inside_a_live_parent_or_to_the_libr
         assert page_parent(conn, a) == "" and page_parent(conn, g) == a
 
 
+def test_a_page_trashed_on_its_own_names_the_page_its_restore_puts_it_inside(owner):
+    folder = make_folder(owner, "spl/named")
+    top = _page(owner, "Named top", folders=[folder])
+    a = _page(owner, "Named a", top)
+    g = _page(owner, "Named g", a)
+    # the delete's answer, the listing and a link's 404 name the live parent,
+    # the folders its top is filed in beside it
+    r = owner.delete(f"/api/blocks/{g}")
+    assert r.status_code == 200, r.text
+    assert (r.json()["trashed"]["parent"], r.json()["trashed"]["folders"]) == (a, [folder])
+    entry = _trashed(owner)[g]
+    assert (entry["parent"], entry["folders"]) == (a, [folder])
+    assert owner.get(f"/api/blocks/{g}").json()["trashed"]["parent"] == a
+    # a page deleted with its parent is the parent's entry, which goes back in the library
+    owner.delete(f"/api/blocks/{top}").raise_for_status()
+    listed = _trashed(owner)
+    assert listed[top]["parent"] == "" and a not in listed
+    # its parent gone too, the page alone comes back in the library: no parent named
+    assert listed[g]["parent"] == "" and listed[g]["folders"] == []
+    owner.post(f"/api/trash/{top}/restore").raise_for_status()
+    assert _trashed(owner)[g]["parent"] == a
+    owner.post(f"/api/trash/{g}/restore").raise_for_status()
+    assert _row(g)[1]["parent_page"] == a
+
+
 def _with_things(c, page_id):
     """A note, a comment, a chat and an op log on the page."""
     note = _child(c, page_id, "a note of its own")

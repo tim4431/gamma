@@ -71,6 +71,7 @@ test("titles read the job's params; local rows keep their own name", () => {
   assert.equal(taskTitle(job({ kind: "restore", params: { name: "Lab", mode: "merge", source: "upload", filename: "b.zip" } })), "Merge b.zip into “Lab”");
   assert.equal(taskTitle(job({ kind: "restore", params: { name: "Lab", mode: "replace", source: "snapshot" } })), "Restore “Lab” from a snapshot");
   assert.equal(taskTitle(job({ kind: "import", params: { filename: "zotero.zip" } })), "Import zotero.zip");
+  assert.equal(taskTitle(job({ kind: "import-preview", params: { filename: "vault.zip" } })), "Review vault.zip");
   assert.equal(taskTitle(job({ kind: "scheduled-backup", params: { name: "Nightly" } })), "Backup task “Nightly”");
   assert.equal(taskTitle(job({ kind: "metadata", params: { papers: 12 } })), "Metadata lookup for 12 papers");
   assert.equal(taskTitle(job({ kind: "relocate-highlights", params: { page_id: "p1", title: "Paper", doc_id: "d1" } })),
@@ -121,6 +122,7 @@ test("what a row offers: stop while it can, then download, start again and remov
   assert.deepEqual(taskActions(job({ state: "done", artifact: { name: "x" } })), ["download", "dismiss"]);
   assert.deepEqual(taskActions(job({ state: "failed" })), ["retry", "dismiss"]);
   assert.deepEqual(taskActions(job({ kind: "import", state: "failed" })), ["dismiss"], "an import's upload is gone");
+  assert.deepEqual(taskActions(job({ kind: "import-preview", state: "failed" })), ["dismiss"], "so is a failed review's");
   assert.deepEqual(taskActions(job({ kind: "restore", state: "failed", params: { source: "upload" } })), ["dismiss"]);
   assert.deepEqual(taskActions(job({ kind: "scheduled-backup", state: "running", stoppable: false, readonly: true })), []);
   // a delete starts again only through its confirm
@@ -202,6 +204,7 @@ test("a finished highlights run says how many moved, are dashed to check, stayed
 test("a click opens the export and import dialogs again, or where the work is managed", () => {
   assert.equal(canOpen(job({})), true);
   assert.equal(kindOf(job({ kind: "import" })).open, "import");
+  assert.equal(kindOf(job({ kind: "import-preview" })).open, "import", "a review opens the import dialog on it");
   assert.equal(kindOf(job({ kind: "snapshot" })).open, "settings:backups");
   assert.equal(kindOf(job({ kind: "metadata" })).open, "settings:maintenance");
   assert.equal(kindOf(job({ kind: "db-check" })).open, "settings:server");

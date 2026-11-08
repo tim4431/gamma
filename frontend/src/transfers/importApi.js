@@ -25,11 +25,14 @@ export function dialogSource(endpoint) {
   return Object.keys(FORMATS).find((source) => FORMATS[source].endpoint === endpoint)
     || (endpoint === "markdown-file" ? "markdown" : "zotero");
 }
-// `file` is a File, or a picked folder or set of files (folderZip.js
-// folderPick, filesUpload), packed into a .zip first. `onProgress` gets
-// {phase: "packing", loaded, total} while they are read, {phase: "upload",
-// loaded, total} while the bytes go up, then {phase: "processing"} while
-// the server reads the archive.
+// The upload, and its review read by a background job (POST
+// /api/jobs/import-preview): resolves to that job, whose params name the
+// review (`review_id`), read once it is done (fetchReview). `file` is a
+// File, or a picked folder or set of files (folderZip.js folderPick,
+// filesUpload), packed into a .zip first. `onProgress` gets {phase:
+// "packing", loaded, total} while they are read, {phase: "upload", loaded,
+// total} while the bytes go up, then {phase: "processing"} while the
+// server starts the review.
 export async function requestImport({ source, file, folder = "", strip }, { signal, onProgress } = {}) {
   const upload = file.folder
     ? await zipFolder(file, { signal, onProgress: (loaded, total) => onProgress?.({ phase: "packing", loaded, total }) })
@@ -45,9 +48,12 @@ export async function requestImport({ source, file, folder = "", strip }, { sign
   };
   // A large file goes in parts (shared/lib/uploadParts.js); an unfinished
   // one is dropped where a review is.
-  return uploadFile(upload, { url: `${API}/import/review`, parts: `${API}/import/review/parts`, fields,
+  return uploadFile(upload, { url: `${API}/jobs/import-preview`, parts: `${API}/jobs/import-preview/parts`, fields,
     discard: (token) => `${API}/import/review/${encodeURIComponent(token)}` }, options);
 }
+// The review its job kept with the upload (409 while it is still read,
+// 404 once it is gone); reading it is activity, as a keep-alive is.
+export const fetchReview = (reviewId) => apiJson(`${API}/import/review/${encodeURIComponent(reviewId)}`);
 
 // The import itself is a background job: tasks.start("import", importJobBody(…)).
 export const importJobBody = (reviewId, selected) => ({ review_id: reviewId, selected: [...selected] });

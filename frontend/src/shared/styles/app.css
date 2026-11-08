@@ -1614,6 +1614,8 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 .homeBtn:disabled {
   cursor: default;
 }
+/* a page dragged over it, which a drop moves to the library */
+.topbar .homeBtn.dragOver { color: var(--accent); background: var(--accent-bg); box-shadow: inset 0 0 0 1px var(--accent-fill); }
 
 /* --- drag-and-drop (Phase A: bigger, whiter, in-row, tight to dot column) --- */
 .dropIndicator {
@@ -2220,10 +2222,22 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 
 /* -- "N pages inside" (editor/SubPagesPanel.jsx), under the notes beside
    "Linked from": its head and rows are that panel's (backlinksHead,
-   backlinkPage), its rows buttons -- */
+   backlinkPage). A row holds the button that opens its page and its "⋯";
+   a page dragged over it would go inside it (.dragOver, as a folder row
+   wears it) -- */
 /* The two sections one after the other read as one. */
 :is(.backlinksPanel, .subPagesPanel) + :is(.backlinksPanel, .subPagesPanel) { margin-top: 8px; }
 .subPageRow {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+.subPageRow:hover { background: var(--bg-hover); }
+.subPageRow .subPageOpen:hover { background: none; }
+.subPageRow.dragOver { background: var(--accent-bg); box-shadow: inset 0 0 0 1px var(--accent-fill); }
+.subPageOpen, .subPageNew {
+  flex: 1;
+  min-width: 0;
   width: 100%;
   padding: 4px 8px;
   border: none;
@@ -2231,6 +2245,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   font-family: inherit;
   text-align: left;
 }
+.subPageMenu { margin-block: calc((20px - var(--ctl-icon-btn)) / 2); }
 .subPageNew { color: var(--text-muted); font-weight: 500; }
 .subPageNew:hover { color: var(--text-secondary); }
 /* The linking block as a short snippet: its rendered markdown, three lines. */

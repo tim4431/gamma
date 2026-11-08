@@ -125,7 +125,7 @@ export function useAppJobs({
       setExportJobId(task.id);
       setExportOpen(true);
     } else if (open === "import") {
-      setImportReview({ jobId: task.id });
+      setImportReview(task.kind === "import-preview" ? { previewJobId: task.id, previewJob: task } : { jobId: task.id });
     } else if (open === "handoff") {
       // A paper the chat could not download: its /go page leads on to the
       // publisher, and Gamma Connector knows the tab by that address.
@@ -161,7 +161,8 @@ export function useAppJobs({
     // The export or import dialog shows it (one that ends as it starts
     // comes here before the dialog knows its id).
     const shownInDialog = (exportOpen && (job.id === exportJobId || (started?.dialog === "export" && !exportJobId)))
-      || (importReview && (job.id === importReview.jobId || (started?.dialog === "import" && !importReview.jobId)));
+      || (importReview && (job.id === importReview.jobId || job.id === importReview.previewJobId
+        || (started?.dialog === "import" && !importReview.jobId)));
     const here = job.workspace && job.workspace === workspaceId;
     if (job.kind === "restore") {
       if (job.state === "done" && here) {
@@ -183,6 +184,17 @@ export function useAppJobs({
       }
       if (started) setStatus(job.state === "done" ? t("{name}: done.", { name: title }) : job.state === "failed"
         ? t("Import failed: {msg}", { msg: t(job.error) }) : t("{name} was stopped.", { name: title }));
+      return;
+    }
+    if (job.kind === "import-preview") {
+      // A review read while its dialog was closed: the pill opens it.
+      if (shownInDialog || !started) return;
+      if (job.state === "done") {
+        postPill(`job:${job.id}`, { msg: t("The review of {file} is ready.", { file: job.params?.filename || "" }),
+          action: { label: t("Open"), run: () => setImportReview({ previewJobId: job.id, previewJob: job }) } }, { after: [20000, null] });
+      } else if (job.state === "failed") {
+        setStatus(t("The review of {file} failed: {msg}", { file: job.params?.filename || "", msg: t(job.error) }));
+      }
       return;
     }
     if (job.kind === "import") {

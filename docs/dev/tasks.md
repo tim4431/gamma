@@ -5,7 +5,7 @@ tasks button in the topbar (on a phone, a row of the More sheet). Two kinds
 of work meet there:
 
 - **Server jobs**: exports, workspace exports, snapshots, restores, library
-  imports, batch metadata lookups, deletes of a workspace or an account,
+  imports and their reviews, batch metadata lookups, deletes of a workspace or an account,
   the admin's server snapshots and database checks, and the search
   indexer. A job lives
   on the server (`gamma/jobs.py`), so it goes on when the tab or the dialog
@@ -74,7 +74,7 @@ The work itself takes the report as a plain `progress` callable, never
 the job: `ws_backup.write_zip`, `create`, `restore_zip` and
 `keep_final_copy`, `backups.create`, `workspaces.delete`, `delete_account`
 and `keep_final_copies`, `integrity.check_all`, the export driver
-`_run_export`, the Zotero and Markdown imports. A caller that does not watch passes nothing; the default is
+`_run_export`, the import sources' previews and commits. A caller that does not watch passes nothing; the default is
 `jobs.no_progress`.
 
 **Limits.** An account runs two jobs at once and the server four; the rest
@@ -82,7 +82,8 @@ wait queued, oldest first. A workspace's own jobs (the indexer) run outside
 those limits. An account may have 20 queued or running jobs (429 past
 that). A `key` makes two jobs of one owner and kind the same work: while
 one is queued or running, starting another raises `jobs.Busy` with it (the
-indexer, one per workspace; an import, one per review; a highlight run, one
+indexer, one per workspace; an import and a review's reading, one each
+per review; a highlight run, one
 per page and file; a delete, one per workspace or account; the database
 check, one per admin).
 
@@ -147,6 +148,7 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | Kind | Route | Started from | Result, file |
 |---|---|---|---|
 | `export` | `export` (`routers/export.py`) | the Export dialog, for a page or a folder | the file; `{pages, skipped}` |
+| `import-preview` | `import-preview` (`routers/imports.py`, an uploaded file; `import-preview/parts` for one in parts; one per review) | the import dialog, once the file is chosen | `{review_id, pages, warnings}`, the counts; the review itself is kept with the staged upload (`GET /import/review/{id}`) |
 | `import` | `import` (`routers/imports.py`) | the import review's Import to library | the import report |
 | `workspace-export` | `workspace-export` (`routers/ws_backups.py`) | Settings → Workspaces → Data → Export…, Export all | the zip |
 | `snapshot` | `snapshot` | Settings → Backups → Back up now, Back up all | `{snapshots, failed}` |
@@ -163,7 +165,12 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 The off-site copies' Copy now (Settings → Backups, `POST
 /api/admin/offsite/run`) is not a job: it starts the server's own
 scheduled round early, one at a time, and the section's status line
-follows it (`gamma/offsite.py`).
+follows it (`gamma/offsite.py`). Nor is Sync now of a clone, a
+publication, a Zotero link or a folder link: it answers at once and the
+surface that asked follows the round's own status to its end (`asked_at`
+until the round starts, then `running`), so no request waits out a long
+round ([mirror.md](mirror.md#rounds-and-cadence),
+[folder_sync.md](folder_sync.md)).
 
 A metadata batch looks its papers up one at a time; a paper nothing is found
 for counts as failed and the batch goes on. A stop lands between two
@@ -177,12 +184,29 @@ the tab that started it says how many were fetched, and the open
 workspace's library reloads, since titles may have changed.
 
 The export driver reads a folder's pages again when the job runs, so a
-queued export holds what the folder holds then. An import job holds the
-staged review's claim while it reads the upload and removes the upload when
-it ends, however it ends. Asking again for the same review answers the job
-already started (409 with another selection). The indexer keeps one row per
+queued export holds what the folder holds then.
+
+An import goes through two jobs. The review's (`import-preview`) stages
+the upload as it starts (`gamma/import_staging.py`, in parts past 32 MiB
+like a restore's zip) and runs the source's preview over it, reporting
+its items (a Gamma export's `unpacking` and `checking`), so the largest
+archives, which a proxy would cut in one request, are read to the end.
+It keeps the review beside the upload rather than in its result, which
+stays small. A stop or a failure drops the upload; once the preview is
+read the job can no longer stop. A review the server's restart cut short
+(failed by `recover`) leaves it: the dialog that still shows the review
+drops it on its Retry preview or its close, else the staging's sweep does
+two hours on. Discarding the review
+(`DELETE /import/review/{id}`, the dialog's Cancel) stops a running one,
+and removes a finished one's row. An import is refused (409) while its
+review is still read, and once it starts its row stands for the review,
+whose row goes. The import job (`import`) holds the staged review's claim
+while it reads the upload and removes the upload when it ends, however it
+ends. Asking again for the same review answers the job already started,
+for either kind (an import 409 with another selection). The indexer keeps one row per
 workspace (`jobs.prune`). Synchronous endpoints serve scripts, the share
 view and the MCP export: `/api/export`, `/export-all`, `/import-data`,
+`/import/review` (the review answered in the request),
 `/pages/{id}/export`, `/folders/{id}/export`, the snapshot endpoints,
 `DELETE /workspaces/{id}`, `DELETE /admin/users/{name}` and
 `/admin/check-databases`. They run the same code as the jobs.
@@ -282,6 +306,8 @@ window does not show:
 - A restore into the open workspace reloads the tab that started it, and
   offers a Reload to any other tab.
 - An import into the open workspace refreshes the library.
+- A review read while its dialog was closed is offered in the pill, whose
+  Open shows it; a failed one says why.
 - A database check started here says whether every file passed.
 - A workspace or an account deleted: when the open workspace went with
   it, the tab reloads into the account's default workspace (no `?ws`)
@@ -303,10 +329,13 @@ The Export dialog's last step follows the export job
 ([import_export.md](import_export.md) "The Export dialog"). It shows
 progress and Stop while the job runs. Once the file is ready, the dialog
 downloads it, lists the pages left out and says what to do next. It may
-close any time, and the job's row opens it again. The import review
-follows its import job the same way. Before Import, its upload and review
-belong to the dialog and have no row, so a close by the backdrop, Escape
-or × asks first.
+close any time, and the job's row opens it again. The import dialog
+follows its two jobs the same way: the review's while the server reads the
+upload, then the import's. While the file goes up it is the dialog's own
+and has no row, so a close by the backdrop, Escape or × asks first; a
+close while the review is read asks nothing and leaves it to its job,
+whose row opens the dialog on the review. A review on screen asks first
+too, since a close drops it.
 
 The library's actions over many pages (delete, delete a folder with its
 pages, move into a page or to the library, pin, add or remove a label or
@@ -354,8 +383,9 @@ by link").
   progress, stop, failure, limits, visibility, files, sweep, recovery and
   the account lifecycle. `test_export_jobs.py` covers every export format
   as a job and the annotated-PDF folder zip; `test_backup_jobs.py` the
-  snapshots, restores and server backups. The import job is tested in
-  `test_import_review.py`, the metadata batch in `test_metadata_batch.py`
+  snapshots, restores and server backups. The import job and the
+  review's (kept for its dialog, in parts, stopped, refused, a Gamma
+  export unpacking no PDF) are tested in `test_import_review.py`, the metadata batch in `test_metadata_batch.py`
   and the indexer in `test_search.py`. `test_delete_jobs.py` covers the
   delete kinds (a stop during the final copy and just after it deletes
   nothing, none after it, the refusals, a second start of either kind, the
@@ -367,7 +397,8 @@ by link").
   `tests/pageBatch.test.mjs` the library's page batches.
 - Browser: the transfers group covers a folder's annotated PDFs closed
   mid-way, reopened from the tray and downloaded, plus every export
-  dialog's finished step. The settings group covers a workspace export
+  dialog's finished step, and an import review closed while the server
+  reads it, opened from its row and imported, and one cancelled. The settings group covers a workspace export
   that downloads itself and a merged backup that reloads the library. The
   files group covers an upload stopped from the tray. The settings group
   also deletes a workspace through its job and runs the database check

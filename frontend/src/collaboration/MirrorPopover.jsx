@@ -6,7 +6,8 @@
 // count when conflicts wait, a dot — accent for local edits not pushed yet,
 // green when up to date, red on a problem — and an unlink glyph when
 // detached; the words live in its tooltip and in `data-state`. The popover:
-// the clone's name with its origin, a Sync button and a gear in the head,
+// the clone's name with its origin, a Sync button (the round asked for,
+// then followed through the status to its end) and a gear in the head,
 // the state line (with the progress bars while a round runs and the
 // conflicts chip when any wait), and the log — a direction arrow per row,
 // its `+3 −1 ~2` block counts, and on click the row's changes block by
@@ -43,9 +44,9 @@ import { Row, Segmented, Toggle } from "../settings/SettingsKit";
 import { ConflictCard, Marked, useConflicts, wordDiff } from "./MergeResolver";
 import {
   LINK_ACTIONS, ZOTERO_CADENCE_HINT, ZOTERO_CADENCE_TITLE, ZOTERO_LIVE_S, ZOTERO_LOG_ACTIONS, ZOTERO_MANUAL, ZOTERO_UPLOAD_HINT,
-  ZOTERO_UPLOAD_TITLE, linkKind, linkPath, linkPollMs, onChangeHint, pullByKey, unsentEdits, zoteroBytesText, zoteroCadence, zoteroError,
-  zoteroFollowing, zoteroForceConfirm, zoteroHalted, zoteroLibraryLabel, zoteroLimits, zoteroQueued, zoteroRunText, zoteroWaitingNote,
-  zoteroWaitingState,
+  ZOTERO_UPLOAD_TITLE, followSync, linkKind, linkPath, linkPollMs, onChangeHint, pullByKey, unsentEdits, zoteroBytesText, zoteroCadence,
+  zoteroError, zoteroFollowing, zoteroForceConfirm, zoteroHalted, zoteroLibraryLabel, zoteroLimits, zoteroQueued, zoteroRunText,
+  zoteroWaitingNote, zoteroWaitingState,
 } from "./syncLinks.js";
 import { needsZoteroConnect } from "../transfers/zoteroApi";
 import { MenuItem } from "../shared/ui/Menus";
@@ -707,12 +708,22 @@ export function MirrorPopover({ wsId, kind = "mirror", mirrorOf: listedAs, publi
     return () => { window.removeEventListener("gamma:mirror", h); window.removeEventListener("gamma:local-edit", edited); };
   }, [load, loadLog, open]);
 
+  // Sync now: the round asked for and followed through the link's status
+  // to its end (followSync; the pill's own reads show its progress), then
+  // the log read again and the other surfaces told.
+  const alive = React.useRef(true);
+  React.useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
   async function syncNow() {
     setBusy(true);
     setInfo((prev) => prev ? { ...prev, status: { ...prev.status, running: true } } : prev);
     try {
-      await apiJson(`${API}${linkPath(kind, wsId, "/sync?wait=1")}`, { method: "POST" });
+      await followSync(() => apiJson(`${API}${linkPath(kind, wsId, "/sync")}`, { method: "POST" }),
+        () => apiJson(`${API}${linkPath(kind, wsId)}`), { alive: () => alive.current });
     } catch {}
+    if (!alive.current) return;
     setEditAt(0);
     await load();
     await loadLog();

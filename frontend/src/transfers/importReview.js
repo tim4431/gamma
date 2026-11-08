@@ -172,6 +172,12 @@ export function resultPages(data) {
   return [...unique.values()];
 }
 export const importWarnings = data => [...(data.skipped || []), ...(data.warnings || [])];
+// Whether a review's job failed on the file itself: the source's refusal
+// (nothing it reads, a damaged archive), which sending the file again
+// cannot help. A review the server's restart cut short (gamma/jobs.py
+// INTERRUPTED) or a bug ("unexpected error …", jobs._message) may get past
+// it on another try.
+export const reviewRefused = error => !/^(interrupted:|unexpected error)/.test(error || "");
 // An import report in one line; a count the source left at 0 (or never
 // reports) is left out, the new pages excepted.
 export function importSummary(data) {

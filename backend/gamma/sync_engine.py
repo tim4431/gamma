@@ -85,6 +85,7 @@ import urllib.request
 
 from . import migrations, pdf_meta, storage, sync_clock, textmerge, workspaces
 from . import ink as inkmod
+from cryptography.fernet import InvalidToken
 from fractional_indexing import FIError, generate_key_between, validate_order_key
 
 from .auth import MIRROR_ACTOR
@@ -612,9 +613,10 @@ def detach_mirror(ws: str) -> dict:
     if mirror["mode"] == "off":
         return mirror
     # a round in flight stops at its next page (``_round`` checks the stored mode) and
-    # brings ``running`` down itself; a force asked for but not yet run is forgotten
+    # brings ``running`` down itself; a force or a Sync now asked for but not yet run is forgotten
     _save(ws, mode="off")
-    _patch_status(ws, {"detached_at": page_now(), "detached_mode": mirror["mode"]}, drop=("force",))
+    _patch_status(ws, {"detached_at": page_now(), "detached_mode": mirror["mode"]},
+                  drop=("force", sync_clock.ASKED))
     return get_mirror(ws)
 
 
@@ -2298,33 +2300,47 @@ def sync_workspace(ws: str, *, fetch=None) -> dict:
 
 
 def _held_round(ws: str, fetch=None) -> dict:
-    """``sync_workspace`` with the round lock held: the clock's ``run``."""
-    mirror = get_mirror(ws, with_token=True)
-    if not mirror:
-        raise ValueError("not a mirror")
+    """``sync_workspace`` with the round lock held: the clock's ``run``. A
+    step that fails before the round's own ``running`` (the token read, a
+    force started, the filter pruned) is the round's error all the same:
+    it is shown, and Sync now's mark comes off with it (no round answers
+    it otherwise, and the next one fails the same way); the exception goes
+    on to the caller."""
     _left[ws] = {}
     try:
+        mirror = get_mirror(ws, with_token=True)
+        if not mirror:
+            raise ValueError("not a mirror")
         return _round(ws, mirror, fetch)
+    except Exception as e:
+        words = ("the stored token cannot be read: the data directory's key changed"
+                 if isinstance(e, InvalidToken) else str(e) or repr(e))
+        _patch_status(ws, {"running": False, "last_error": words, "last_attempt": page_now()},
+                      drop=("progress", "version_gap", sync_clock.ASKED))
+        raise
     finally:
         _left.pop(ws, None)
 
 
 def _round(ws: str, mirror: dict, fetch) -> dict:
     if mirror["mode"] == "off":
-        return mirror["status"]  # detached: nothing runs until it is linked again
+        return _links.answered(ws, mirror["status"])  # detached: nothing runs until it is linked again
     mirror = _start_force(ws, mirror)
     if mirror["page_filter"] is not None:
         mirror = {**mirror, "page_filter": _prune_filter(ws, mirror["page_filter"])}
         if mirror["mode"] == "two-way":  # a receive-only copy never deletes there
             _drop_unreached(ws, mirror, fetch)
         if not mirror["page_filter"]:
-            return mirror["status"]  # a filter naming no page: nothing travels, the remote is not asked
+            # a filter naming no page: nothing travels, the remote is not asked
+            return _links.answered(ws, mirror["status"])
     remote = Remote(mirror["remote_url"], mirror["remote_ws"], mirror["token"], fetch)
     first = not mirror["status"].get("last_sync")  # the first fill (or one that never completed)
     started = time.monotonic()  # local writes up to here are this round's to push
     # the status is only ever patched: what a detach, a force or the filter write
-    # to it while the round runs stays (``_patch_status``)
-    _patch_status(ws, {"running": True, "started_at": page_now(), "progress": None}, drop=("interrupted",))
+    # to it while the round runs stays (``_patch_status``); a Sync now asked for
+    # before this write is this round's to answer
+    _patch_status(ws, {"running": True, "started_at": page_now(), "progress": None},
+                  drop=("interrupted", sync_clock.ASKED))
     report = _blank_report(mirror["status"].get("adopt"), bool(mirror["status"].get("prune")))
     progress: dict = {}
     last_file_save = [0.0]
@@ -2568,6 +2584,23 @@ def _title_of(ws: str, page_id: str) -> str:
     with connect_pages_db(ws) as conn:
         row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
     return ((row[0] if row else "") or {FOLDERS: "Folders", LABELS: "Labels"}.get(page_id, ""))[:120]
+
+
+def ask_round(ws: str) -> dict:
+    """Sync now, answered at once: a round in the background
+    (``sync_in_background``), the ask kept in the status as ``asked_at``
+    until a round starts (the next one, after a round running now) and
+    takes it off with its ``running``, so whoever asked follows the status
+    from this answer on (``GET /api/mirrors/{ws}``) until neither is set.
+    A detached mirror runs none: its status as it is."""
+    mirror = get_mirror(ws)
+    if not mirror:
+        raise ValueError("not a mirror")
+    if mirror["mode"] == "off":
+        return mirror["status"]
+    status = _links.ask(ws)
+    sync_in_background(ws)
+    return status
 
 
 def sync_in_background(ws: str) -> None:

@@ -253,34 +253,50 @@ Zotero, Markdown (ZIP or one file), Obsidian/Notion ZIPs, Notability notes,
 GoodNotes notebooks and Gamma exports share one review flow: Upload → Review →
 Import → Summary.
 
-- `POST /api/import/review` takes the file, its `source` (`zotero`,
+- The review is a background job ([tasks.md](tasks.md)):
+  `POST /api/jobs/import-preview` takes the file, its `source` (`zotero`,
   `markdown-zip`, `markdown-file`, `gamma`, `notability`, `goodnotes`), an optional `folder` (the
   destination folder's id, `""` the library's top; 400 when it is no
   folder, `import_review.destination`) and `strip`.
-  It stages the upload, runs the source's preview and returns the two trees
-  plus a `review_id`; `DELETE` discards it. An upload past 32 MiB comes in
-  parts instead (`POST /api/import/review/parts`, [api.md](api.md)), the
-  protocol of a PDF's upload in parts ([user_db.md](user_db.md) "Stored
-  files"), since a proxy in front of the server caps a request's body
-  (Cloudflare at 100 MB). The parts are appended to the staged upload, and
-  finishing answers with the preview, as the single request does.
+  It stages the upload and starts the job (`import-preview`), which runs
+  the source's preview, reporting its items, and keeps the two trees
+  beside the upload; `GET /api/import/review/{id}` reads them, with the
+  `review_id`, and `DELETE` discards them (stopping a job still reading).
+  An upload past 32 MiB comes in parts instead
+  (`POST /api/jobs/import-preview/parts`, [api.md](api.md)), the protocol
+  of a PDF's upload in parts ([user_db.md](user_db.md) "Stored files"),
+  since a proxy in front of the server caps a request's body (Cloudflare
+  at 100 MB). The parts are appended to the staged upload, and finishing
+  starts the job, as the single request does. The largest archives are the
+  ones whose review takes minutes (every PDF of a Zotero export inflated
+  and hashed), past the 100 s a proxy lets a silent request run: as a job,
+  the review is read to the end and kept. `POST /api/import/review` (and
+  its `/parts`) answers the same review in the request, for scripts.
 - The import itself is a background job ([tasks.md](tasks.md)):
   `POST /api/jobs/import` with `{review_id, selected: [...]}` imports from
   the staged upload against the current library, reporting each item; its
   result is the import report. Asking again for the same review answers the
   job already started (409 with another selection).
 - Each source is a request-free preview and commit in `routers/imports.py`
-  (`_review_source`), over the staged file and the review's metadata; the
-  plain endpoints (`/import/zotero`, `/import/markdown-zip`, …) run the
-  same functions in the request. A preview may return a `stage`, what it
-  learned that the commit can reuse (a Zotero review's PDF digests):
-  `_preview_staged` adds it to the review's metadata
-  (`import_staging.update`), and no answer carries it.
+  (`_review_source`), over the staged file and the review's metadata, each
+  taking a job's `progress`; the plain endpoints (`/import/zotero`,
+  `/import/markdown-zip`, …) run the same functions in the request. A
+  preview may return a `stage`, what it learned that the commit can reuse
+  (a Zotero review's PDF digests): `_preview_staged` adds it to the
+  review's metadata as it keeps the review (`import_staging.keep_review`,
+  `review.json` beside the upload), and no answer carries it. A Gamma
+  export's preview reads the staged zip where it lies and unpacks only its
+  databases and its handwriting files (`ws_backup.preview_zip`): the
+  uploads are known by their names in the zip, and step 41 converts a
+  stroke file of an older backup, as a restore's copy does.
 - Staging (`gamma/import_staging.py`): a directory per review, bound to the
   account and workspace, expiring after two hours (`TTL`; expired ones are
-  swept on the next upload). The import job holds a claim (`running/`
+  swept on the next upload). The review's job drops the upload when it
+  fails or is stopped. The import job holds a claim (`running/`
   mkdir; a `DELETE` meanwhile answers 409) while it reads the upload, and
-  removes the review when it ends — done, failed or stopped. Staging has
+  removes the review when it ends — done, failed or stopped. An import is
+  refused (409) while the review's job still reads; once it starts, the
+  review's job leaves Background tasks, the import's row standing for it. Staging has
   no size cap and is not metered by the account quota; an upload that would
   leave the disk with less than 1 GB free is refused (507,
   `import_staging.MIN_FREE_BYTES`). A review expires two hours after its
@@ -304,20 +320,38 @@ Import → Summary.
 - A stopped import keeps what it wrote: the Zotero and Markdown imports
   write the new pages whose files they already stored, then stop.
 - Frontend (`src/transfers/`): `ImportReviewDialog.jsx` owns the steps and
-  the report. It uploads and reviews itself, then follows the import job
-  (`tasks.start("import", …)`) with its progress and Stop. It may close while
-  the job runs, and the job's row in Background tasks opens it again on that
-  job (`{jobId}`, no file: the summary then shows the library column only).
-  Until Import, the upload and the review are the dialog's own, not a
-  task: a close by the backdrop, Escape or × asks first, since it stops
-  the upload or drops the staged review (or the choices of one gone); its
-  Cancel stays direct. While it shows a review, the dialog sends a
+  the report. It uploads the file itself, then follows the review's job
+  (`tasks.adopt`, its progress block while it reads) and reads the review
+  once it is done; then it follows the import job
+  (`tasks.start("import", …)`) with its progress and Stop. It may close
+  while either job runs, and the job's row in Background tasks opens it
+  again on that job: a review's (`{previewJobId, previewJob}`, no file: its
+  review once read), an import's (`{jobId}`: the summary then shows the
+  library column only). A review read while its dialog was closed is
+  offered in the pill too. A review's job no listing carries any more (its
+  row cleared, or dismissed by an import from another tab) is asked for by
+  its id, and one gone from the server is taken as ended: its review is
+  read if it is still kept, else the dialog says the server no longer
+  holds it. While the file goes up it is the dialog's own, not a task, and once
+  a review shows, closing drops it: a close by the backdrop, Escape or ×
+  asks first then, since it stops the upload or drops the staged review
+  (or the choices of one gone). A close while the review is read asks
+  nothing and leaves it to its job. Its Cancel stays direct and drops the
+  review, stopping a job still reading it, also in a dialog opened on that
+  job's row (the job's params name the review). While it shows a review, the dialog sends a
   keep-alive every 10 minutes and when the window regains focus or becomes
   visible. A review gone anyway (404 once swept, from the keep-alive or
   from Import) is cleared with a message, and Retry preview uploads the
-  file the dialog still holds again, keeping the selection. A preview the server refuses (400, 413, 415: a file the source
-  does not read, such as a Supernote `.note`, or one too large) shows its reason
-  without the retry a lost connection gets. The source column is headed by
+  file the dialog still holds again, keeping the selection (a dialog opened
+  from a row holds no file: it asks for the file again). A preview the
+  server refuses (a failed review job: a file the source does not read,
+  such as a Supernote `.note`, or one too large; or a start refused with
+  400, 413, 415) shows its reason without the retry a lost connection
+  gets, and so does a review stopped from its row. A review job the
+  server's restart cut short, or a bug failed (`importReview.reviewRefused`
+  tells them from a refusal by the error), offers Retry preview, which
+  drops the upload the restart left and uploads the file again (a close
+  drops it too). The source column is headed by
   what was uploaded: one file, a ZIP's contents, a folder, or the files
   picked together.
   `ImportTree.jsx` renders one tree with its checkboxes (a folder toggles

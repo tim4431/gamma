@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 import { API, withShare } from "../shared/lib/utils";
 import { t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
-import { pageKindLabel, pagePathLabel } from "../library/libraryUtils";
+import { pageKindLabel } from "../library/libraryUtils";
 import { pickerCounts, rankRefPages, refBlockPath, refBlockText, refInsertEdit, refQueryAt, typedTitleLink } from "./refLists.js";
 
 export function useRefPicker({ editorRef, excludeId, pages, rootId, lookupBlock, refCache, onCacheRef, write }) {
@@ -38,20 +38,20 @@ export function useRefPicker({ editorRef, excludeId, pages, rootId, lookupBlock,
     }, 120);
     return () => clearTimeout(timer);
   }, [refPopup?.query, excludeId]);
-  // The picker's rows (editor/refLists.js): pages by title, each under its
-  // kind and where it is (a sub-page's path, else its first folder), then
-  // blocks other than pages (a page result is a page row) as plain text.
+  // The picker's rows (editor/refLists.js): pages by title, chips and path,
+  // each under its kind and where it is (a sub-page's path, else its first
+  // folder), then blocks other than pages (a page result is a page row) as
+  // plain text.
   const rows = useMemo(() => {
     if (!refPopup) return [];
     const labelOf = (id) => pages?.find((p) => p.id === id)?.content ?? lookupBlock?.(id)?.content ?? refCache?.[id]?.content;
     const pageHits = rankRefPages(pages, refPopup.query, rootId);
-    const pagesById = new Map((pages || []).map((p) => [p.id, p]));
     const blockHits = searchResults.filter((b) => b.page_root_id !== b.id);
     const [np, nb] = pickerCounts(pageHits.length, blockHits.length);
     return [
       ...pageHits.slice(0, np).map((p) => ({
         kind: "page", id: p.id, title: p.content, isPdf: !!p._attachment,
-        meta: [pageKindLabel(p._attachment), pagePathLabel(pagesById, p.id) || p._folderChips?.[0]?.name].filter(Boolean).join(" · "),
+        meta: [pageKindLabel(p._attachment), p._path || p._folderChips?.[0]?.name].filter(Boolean).join(" · "),
       })),
       ...blockHits.slice(0, nb).map((b) => ({
         kind: "block", id: b.id, title: refBlockText(b.content, labelOf) || t("(empty)"), meta: refBlockPath(b), block: b,

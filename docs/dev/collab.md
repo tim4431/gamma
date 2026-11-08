@@ -81,6 +81,13 @@ give, so this grants nothing: whoever may set a page root's properties may
 already move, refile or delete the page, a share editor may set none, and
 every reader takes a cycle for no parent.
 
+Such a set is an op on the moved page, so only that page's room hears it:
+nothing reaches the rooms of the page it leaves or the page it goes into,
+nor does a page made inside another (`POST /api/pages` with
+`parent_page`) reach its parent's room. An open parent's Pages inside panel
+reads the change when the window comes back, with the library listing
+([home_library.md](home_library.md#sub-pages)).
+
 ### The folder and label trees
 
 Folders and labels are blocks ([home_library.md](home_library.md) "Folders

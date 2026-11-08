@@ -97,7 +97,7 @@ from .blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, MAX_PAGE_DEPTH, PARENT_PAGE, TRASH, TREES, block_to_dict, delete_subtree,
     ensure_reserved, fetch_subtree, filing, filing_ids, folder_inserts, free_position, is_op_page, label_inserts,
     last_child_position, move_subtree_to_page, page_descendants, page_root_id, redundant_source_url, subtree_refs,
-    touch_page, trashed_folders, trashed_page, valid_block_id, valid_parent_value, write_lock)
+    touch_page, trashed_page, valid_block_id, valid_parent_value, write_lock)
 from .db import connect_pages_db, format_stamp, page_now, parse_stamp, ws_uploads_dir
 from .logbuf import log
 from .storage import content_digest, store_file, upload_refs
@@ -1105,7 +1105,7 @@ def trash_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> 
     for page in (page_id, *went):
         collab.publish(ws, page, {"t": "trashed"})
         notify_commit(ws, client, page)
-    return trashed_page(page_id, row[1], props, folders=trashed_folders(conn, json.loads(props)))
+    return trashed_page(conn, page_id, row[1], props)
 
 
 def _to_trash(conn, page_id: str, stamps: dict, actor: str) -> str:

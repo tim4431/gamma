@@ -95,14 +95,13 @@ counts, stops and reports failures honestly is the cheap fix.
 
 ## Found on the way
 
-- **The orphan purge never catches up after a big Empty.**
+- **The orphan purge never caught up after a big Empty.**
   `upload_gc`'s safety cap (`PURGE_MAX = 100`, `PURGE_SHARE = 0.2`)
-  refuses the whole purge when more files fall due at once. Emptying a
+  refused the whole purge when more files fell due at once. Emptying a
   trash of 300 PDF pages records 300 orphans within seconds, so 30 days
   later they all fall due together, and every six-hourly reconcile
-  refuses them again (a log warning only). The files stay stored and
-  counted against the quota. A purge in capped chunks, once the pages.db
-  checks pass, would recover. Not fixed here.
+  refused them again (a log warning only). The files stayed stored and
+  counted against the quota. Fixed below: the purge goes in capped chunks.
 - **Settings → Maintenance's health table** sums the length of every
   indexed page's text (`pdf_index.doc_chars`, a full scan of `pdf_fts`) on
   each read, and the pane reads it again after every paper a metadata
@@ -144,6 +143,19 @@ counted row of Background tasks; the rest is listed as open.
   answer that question, would cancel them without a word.
 - The synchronous endpoints stay for scripts, as the other kinds' twins do.
 
+Later, the import's review became a job too (`import-preview`), which the
+import dialog follows: started by the upload itself (`POST
+/api/jobs/import-preview`, or the finish of `…/parts` for one past
+32 MiB), it reads the review to the end however long it takes and keeps
+it beside the staged upload, where the dialog reads it once the job is
+done (`GET /api/import/review/{id}`). A dialog closed meanwhile leaves the
+review to its job, whose row opens it again; Cancel stops it and drops the
+upload. The Gamma preview no longer copies the upload or unpacks its
+`uploads/`: it reads the staged zip in place and unpacks only the
+databases and the `.ink` files (the one step that reads uploads, 41,
+converts those). `POST /api/import/review` keeps answering in the request,
+for scripts.
+
 Reviewing the design against the code turned up a gap in the job registry
 itself: the report that marks the point of no return set it before looking
 at a stop, so a Stop pressed after the final copy's last report and before
@@ -169,27 +181,47 @@ admin and is refused. An account delete's second start, which a running
 job's hold answered with a 400, now answers that job, as a workspace
 delete's does.
 
+Sync now no longer waits for its round. `POST /api/mirrors/{ws}/sync` and
+the Zotero link's answer at once, the status marked `asked_at` until a
+round starts and takes the mark off in the same write that sets
+`running`; a folder link's (`/api/folder-links/{id}/sync`) takes the
+round lock and writes `running` before it answers, as the off-site Copy
+now does. Every Sync now (the pill, Settings' rows, the publish section,
+the desktop app's folders and files) then reads the link until neither is
+set and reports the round's outcome, its progress moving meanwhile. A
+mark no round will answer (a detached link, a filter naming no page, a
+restart, a step before the round that fails, whose error the status
+then shows) is taken off, and a folder link reads `running` only while
+its round holds the lock, however long that round takes, so nothing
+follows for ever and nothing stops following a round still running. `?wait=1` stays, for
+scripts and the tests ([dev/mirror.md](../dev/mirror.md#rounds-and-cadence)).
+
+The orphan purge goes in capped chunks. The cap no longer refuses the
+whole purge: once the pages.db checks pass (a root row, pages, `PRAGMA
+quick_check`), a purge deletes the cap's worth (`upload_gc.purge_cap`: 100,
+or a fifth of the workspace's files when that is fewer, never fewer than
+10), the longest due first, and leaves the rest to the next six-hourly
+pass with a warning that counts them. The 300 files of the Empty above, in
+a workspace of 1,000, go in three passes; 5,000 go in fifty, under two
+weeks. The cap still bounds what one pass takes from a pages.db that
+reads wrong in a way the checks miss, which is why the chunks keep the
+full pass's cadence instead of running back to back
+([dev/user_db.md](../dev/user_db.md) "Stored files").
+
 ## Still open
 
 In the order they matter:
 
-1. The import preview as a job, or a phase of the import job: the
-   largest archives, the ones the parts protocol exists for, are the ones
-   whose preview a proxy cuts, and the review is thrown away with them.
-   The Gamma preview could also skip unpacking `uploads/`.
-2. Sync now without `?wait=1`: post, then follow the status the round
-   already keeps.
-3. One request for the library's bulk actions (trash many pages, apply
+1. One request for the library's bulk actions (trash many pages, apply
    many page patches), on `ops.apply_batches`.
-4. The orphan purge in chunks (above).
-5. Empty Recently deleted: `purge_unused` once after the loop, one
+2. Empty Recently deleted: `purge_unused` once after the loop, one
    connection, the `deleted_with` map read once.
-6. Progress for the off-site copies' first round and a folder link's
+3. Progress for the off-site copies' first round and a folder link's
    rounds (`say` is thrown away in `folder_links._folder_round`).
-7. A share view's export of a big shared folder (the share host sits
+4. A share view's export of a big shared folder (the share host sits
    behind Cloudflare and the share view has no jobs).
-8. A workspace being deleted taking no more changes (above), which needs
+5. A workspace being deleted taking no more changes (above), which needs
    the web app to learn a lost write right mid-session.
-9. Smaller: a publish that only changes the audience still runs a full
+6. Smaller: a publish that only changes the audience still runs a full
    round; unlinking Zotero clears marks page by page; the health table's
    and the backup list's scans (above).

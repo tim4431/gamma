@@ -71,7 +71,8 @@ the library.
   marked (`MarkedText` in SearchPanel.jsx over `markedParts` from
   `search/snippets.js`); a typo-only match stays unmarked. A page row shows
   its folder and label chips (`CardLabels`, as on a file row), so a
-  label-only match reads as one.
+  label-only match reads as one; a sub-page's row its labels only, its
+  path on the second line saying where it is.
 - A typed list ends with two actions. *Search inside notes and PDFs for "q"*
   (Ctrl+Enter) opens the workspace search with the query (App's
   `openSearchWith`). *Create page "q"* (Shift+Enter, only where
@@ -152,10 +153,11 @@ and run one after another, so a name committed twice is made once.
 
 The home view does not join the trees' rooms. It reads the listing again
 after each of its own writes and when the window comes back (focus or
-visibility, at most every 15 s); that is when another device's changes
-show. The listing's pages are not live either, so one read keeps both in
-step. A view naming a folder or label the trees lack (deleted elsewhere, a
-stale link) goes back to the library's root (a share's folder).
+visibility, at most every 15 s), the open page's family with it
+("Sub-pages"); that is when another device's changes show. The listing's
+pages are not live either, so one read keeps both in step. A view naming
+a folder or label the trees lack (deleted elsewhere, a stale link) goes
+back to the library's root (a share's folder).
 
 The page header's label field (`page.labels` / `page.labelInput`) files
 the open page by both. Its suggestions are the folders (by path, a folder
@@ -237,39 +239,56 @@ there ([api.md](api.md) "Browser extension"). The app follows the same
 rule: the chat's "Save to library" offers the open page's top's first
 folder, a PDF uploaded into a folder while it already sits on a sub-page
 files the top, a drop of sub-pages on a folder is refused ("A page inside
-another page is filed with it."), the page menu has no Move to folder for
-one, and an open sub-page's label field files by labels only ("Folders
-and labels" above). Labels stay per page: a label is a tag, not a place.
+another page is filed with it."), and an open sub-page's label field files
+by labels only ("Folders and labels" above). Filing a selection (Move to
+folder, its "remove from" rows, a drop on a folder or the back row) files
+the library pages in it and leaves its sub-pages out (App's
+`filablePages`): the flyout, offered while the selection holds a library
+page, ends with "N pages inside other pages are left out", and the status
+adds "Left out N pages inside other pages, filed with their tops." Labels stay per page: a label is a tag, not a place.
 
 **Listing and counting.** `GET /blocks/root/children` lists every page,
 sub-pages included, each with `parent`, its effective parent (`""` for a
-library page), and a sub-page with an empty `preview` (no preview query
-runs for it). App keeps `parent` as `_parentPage` on the listing's rows
-and on its page blocks, and the home view's own surfaces draw from the
-library pages alone (`libraryPages`): the root feed and a folder's listing
-(`scopePages`), the folder counts and dates (`folderMeta`), "No label",
-the count of Delete folder, the "Start your library" check and the
-guide's triggers. A label view and a label's count are the exception: they
-take in the sub-pages carrying the label (`labelScopePages`: at the root
-every page, in a folder the pages whose top is filed there), and a
-sub-page without a label is not in "No label". So does the filter box's
-search: with a query, the view's sub-pages (the same `labelScopePages`)
-that match by title, label or path join the matches, after the library
-pages that match, each row with an `insideTagBadge` chip naming its path
-(`CardLabels`' `inside`, shown whatever the File labels preference); with
-the box empty they are not listed, and a label view, "No label" and the
-folders-only and labels views add none. Every other surface keeps
-every page: tabs, the recents and pinned strips (a sub-page may be pinned,
-and the strips' page menu offers it Move to library), and the pickers,
-which name a sub-page's path. Quick open, the page pickers (Move to
-page, Move into page, the link dialog) and the chat's `@` and `+`
-pickers rank through `rankLibraryPages`, which matches the path too, as a
-weaker hit, so typing a parent's title lists the pages inside it after the
-title hits; Quick open's, the page pickers' and the `@` picker's rows
-show the path on their second line, the `+` picker after the title. The
-`[[` picker's meta reads "kind · path" and the `@` menu's page row the
-path, each else the page's first folder. The Ctrl+F search panel names a hit's page "Parent › Child",
-the pages above it muted and shrinking first.
+library page), and its `preview`, a sub-page's as a library page's. App
+keeps `parent` as `_parentPage` on the listing's rows and on its page
+blocks (`pageBlocksOf` in libraryUtils.js), which also give a sub-page
+its top's folders (`_folders`, `_folderChips`: what `filed_folders`
+answers on the server) beside its own labels, its path (`_path`), and
+every page the count of the pages right inside it (`_subPages`). The home
+view's own surfaces draw from the library pages alone (`libraryPages`):
+the root feed and a folder's listing (`scopePages`), the folder counts
+and dates (`folderMeta`), "No label", the count of Delete folder, the
+"Start your library" check and the guide's triggers. A label view and a
+label's count are the exception: they take in the sub-pages carrying the
+label (`labelScopePages`: at the root every page, in a folder the pages
+whose top is filed there), and a sub-page without a label is not in "No
+label". So does the filter box's search: with a query, the view's
+sub-pages (the same `labelScopePages`) that match by title, label or path
+join the matches, after the library pages that match; with the box empty
+they are not listed, and a label view, "No label" and the folders-only
+and labels views add none. Every other surface keeps every page: tabs,
+the recents and pinned strips (a sub-page may be pinned, and the strips'
+page menu offers it Move to library), and the pickers, which name a
+sub-page's path. A sub-page's card or row, wherever one shows (the
+strips, a label view, the filter's matches), names its path in place of
+folder chips, and its cover previews its first notes as any page's does
+("The card" below); a page with pages inside it says how many.
+
+**In the pickers.** A sub-page matches on its title, then, as weaker
+hits, its top's folders, its own labels and its path, so typing a
+parent's title lists the pages inside it after the title hits, and two
+sub-pages of one name read apart. Quick open, the page pickers (Move to
+page, Move into page, the link dialog; `PagePicker`, "Moving one" below)
+and the chat's `@` and `+` pickers rank through `rankLibraryPages` (over
+the listing's rows, `topPageOf` for the folders); their rows show the
+path, Quick open's, the page pickers' and the `@` picker's on their
+second line, the `+` picker's after the title, and a sub-page's row shows
+its label chips only. The `[[` picker and the editor's `@` menu rank
+through `rankRefPages` (editor/refLists.js) over App's page blocks,
+folder and label chips by name; the `[[` picker's meta reads "kind ·
+path" and the `@` menu's page row the path, each else the page's first
+folder. The Ctrl+F search panel names a hit's page "Parent › Child", the
+pages above it muted and shrinking first.
 
 **Reaching one.** Three ways, none of them a page tree in a sidebar:
 
@@ -277,8 +296,11 @@ the pages above it muted and shrinking first.
 - **Pages inside** (`editor/SubPagesPanel.jsx`), under the notes above
   Linked from: "N pages inside", the page's sub-pages in library order,
   each row with its glyph (a PDF's for one that carries a PDF) opening
-  that page, Back returning. Where `lib.organize`, a last row "New page
-  inside" makes another. Its fold is the browser pref `subPagesCollapsed`
+  that page, Back returning. Outside a share view a row has the library's
+  page menu on a right-click, a held finger or its "⋯" ("The context
+  menu" below), for that one page. Where `lib.organize`, a last row "New
+  page inside" makes another, and a row drags and takes a dropped page
+  ("Moving one" below). Its fold is the browser pref `subPagesCollapsed`
   ([settings.md](settings.md)); a page with no sub-pages shows nothing;
 - **the crumbs** (`editor/PageCrumbs.jsx`) at the top of the page header:
   the ancestors, top first, each a button that opens its page (Back
@@ -289,10 +311,14 @@ App reads `GET /pages/{id}/family` ([api.md](api.md) "Pages") for the open
 page: alongside its tree when the listing has the page, as the comments
 are (any other open, a link to a page the listing lacks, reads it once the
 tree has landed, so a page that is gone asks for nothing more); again after its own sub-page writes (a page made,
-either move, a Restore) and when another client's `set` on the open page's
-root changes its `parent_page`. Until the answer lands the page reads as
-having none. A page another device makes inside the open page, or moves
-into it, shows in its panel at the next open.
+either move, a drop, a Duplicate or a Delete from the page menu, a
+Restore), when another client's `set` on the open page's root changes its
+`parent_page`, and when the window comes back, with the listing (focus or
+visibility, at most every 15 s: "Folders and labels" above). A page
+another client makes inside the open page, or moves into or out of it,
+writes nothing to the open page's room ([collab.md](collab.md) "Ops"), so
+its panel shows that at the window's wake, as the listing does, or at the
+next open. Until the answer lands the page reads as having none.
 
 **Making one.** `/page` makes a sub-page of the open page and links it
 where it was typed ("Listing, sorting, filtering" below). **New page
@@ -306,17 +332,40 @@ copied.
 
 **Moving one.** Both moves are a `set` of `parent_page` per page through
 `PUT /blocks/{id}` (`placePages`), and both read the listing and the open
-page's family again after.
+page's family again after. Like Delete, both keep to the topmost pages of
+a selection (`topmostPages` in libraryUtils.js): a page picked with a page
+inside it moves alone, the other staying inside it.
 
 - **Move into page…** (the home page menu, for one page or a selection,
   and a tab's menu) opens the move picker (`PagePicker`, below) as "Move
   into page…" over every page but the moved ones and the pages inside them,
-  where they cannot go. A pick puts each page inside the one picked, and the
-  server drops their folders. "Moved N pages into “Title”."
-- **Move to library** (the same menus, for a sub-page) sends
-  `{parent_page: null, folders: <its top's folders, or null>}`, so the page
-  lands in the folders it was listed under until then. "Moved N pages to
-  the library."
+  where they cannot go, a sub-page's row showing its path. A pick puts each
+  page inside the one picked, and the server drops their folders. "Moved N
+  pages into “Title”."
+- **Move to library** (the same menus, while a topmost page of the
+  selection is a sub-page) sends `{parent_page: null, folders: <its top's
+  folders, or null>}` for each topmost sub-page, so the page lands in the
+  folders it was listed under until then. "Moved N pages to the library."
+- **Drag and drop.** A page drag (a library row or card, a Pages inside
+  row) carries the page's id as its text, which the folder and label drops
+  read, and `PAGE_DRAG_TYPE` beside it, the one thing a drag-over can
+  read: the targets here take a page drag and nothing else (a folder, a
+  file, a block's ⋮⋮). Dropped on a page (a library row or card, the
+  pinned and Recently viewed strips' included, a Pages inside row, or a
+  crumb over the open page's title), the pages go inside it as Move into
+  page… puts them (`dropPagesInto`; `pagesIntoPage` in libraryUtils.js):
+  the topmost of the drag (the selection, from a row of it), less those
+  already right inside it ("Already inside “Title”."). A drop on one of
+  them does nothing, and one on a page inside one of them is refused ("A
+  page can’t go inside a page that is inside it."): the pages Move into
+  page… leaves out of its list. Dropped on the topbar's Home, the
+  library, the sub-pages among them go to the library as Move to library
+  sends them ("Already in the library." when there are none). So a
+  sub-page dragged out of the panel goes up a level on a crumb, into a
+  sibling on its row, and out to the library on Home. A drag from the
+  panel carries its one page: the library's selection is let go. A
+  target shows the drop as a folder does (`.dragOver`), and a drop of
+  sub-pages on a folder stays refused ("Filing by the top" above).
 
 A block's **Move to page…** (its handle menu and the palette; an image,
 table or diagram's "Another page…") goes to a sub-page as to any page
@@ -371,7 +420,8 @@ filing and shares), `test_sub_pages_lifecycle.py` (trash, restore, delete
 for good, the mirror and publishing), `test_sub_pages_ai.py`,
 `test_sub_pages_export.py`, `test_sub_pages_import.py` (a Notion export's
 tree), `frontend/tests/subPages.test.mjs` (the client
-helpers) and the browser suite's `sub-pages` group
+helpers, the drop rule, App's page list and the pickers' matching), `refLists.test.mjs`
+(the `[[` picker's) and the browser suite's `sub-pages` group
 (`frontend/tests/e2e/scenarios/subPages.mjs`).
 
 ## Listing, sorting, filtering
@@ -572,7 +622,15 @@ same card; only the grid stretches it to fill the row, and the recents strip
 The chips (`CardLabels`, also reused by the list rows) are display-only and
 gated by the Folders and Labels switches of Settings → Appearance → Library
 (`gamma-home-file-labels`: off/labels/folders/both); a label chip's menu
-opens on a right-click or a held finger.
+opens on a right-click or a held finger. Two chips say where a page is
+and what it holds rather than how it is filed, so they show whatever the
+switches say (on a card with the switches off, they take the chip line
+the card otherwise leaves out): a page with pages inside it leads with
+`.pagesTagBadge`, a two-pages glyph (`PagesIcon`) and how many are right
+inside it ("N pages inside" on hover; `_subPages`), and a sub-page shows
+its path (`.insideTagBadge`, `inside`: "Top › Mid", cut first when the
+line is full) in place of folder chips, since it is filed with its top
+("Sub-pages" above).
 
 A card takes its menu as `onMenu`: a right-click or a held finger
 (`menuPress`), or the "⋯" in the cover's top-left corner
@@ -632,11 +690,15 @@ finger or the item's "⋯" ([ui-design.md](ui-design.md#one-behaviour-for-mouse-
 It is built from the `shared/ui/Menus.jsx`
 primitives, in groups split by dividers (`menuGroups`). Every page card
 surface opens the SAME page menu, the Recently-viewed strip and the pinned
-strip included:
+strip included, and so does a row of an open page's Pages inside panel
+(`openSubPageMenu`), for its one page and without Rename, which is the
+listing's; there its Open, Share…, Export… and Ask AI keep Back to the
+page the panel is on:
 
 - A page: Open (Enter) · Rename (F2) | New page inside (one page) | Pin ·
-  Add label ▸ · Move to folder ▸ (not for a sub-page) · Move into page… ·
-  Move to library (a sub-page) · Duplicate | Copy link · Share… · Export… ·
+  Add label ▸ · Move to folder ▸ (a library page among them) · Move into
+  page… · Move to library (a sub-page among the topmost) · Duplicate |
+  Copy link · Share… · Export… ·
   Ask AI about this page · Properties | Delete (Del). The three rows for
   pages inside pages are in "Sub-pages" above. Properties, for one page, opens the read-only
   Properties popover at the menu's point
@@ -705,8 +767,8 @@ pages to Recently deleted?"). The library's Delete and the header's
 button ask the same question, built by `deleteConfirm` in
 `library/libraryUtils.js`. Their tabs close too, and none is a place a closed tab goes
 back to. A selection holding a page and a page inside it sends the outer
-one only, so the cascade takes the rest rather than one going alone
-first. Many pages go as a batch (`library/pageBatch.js`, [tasks.md](tasks.md)
+one only (`topmostPages`), so the cascade takes the rest rather than one
+going alone first. Many pages go as a batch (`library/pageBatch.js`, [tasks.md](tasks.md)
 "The web app"): they leave the library at once, a row of Background tasks
 counts them from ten on with Stop, and the status says how many went and
 what failed. The header's button closes the page's tab first, as its × does (back to the latest page still
@@ -750,7 +812,9 @@ entry of the page it went with (`blocks_store.trash_entry`), so a Restore
 from a link brings the whole tree back. An entry's `folders` are where a
 restore files it (`blocks_store.trashed_folders`): for a sub-page
 deleted on its own while its parent is live, the folders of that
-parent's top.
+parent's top. Its `parent` is that live parent, the page a restore puts
+it back inside (`blocks_store.trashed_parent`), `""` for an entry that
+comes back in the library.
 
 Restoring (`ops.restore_page`) puts the page back under `root`, last in the
 library, filed where it was (a folder deleted meanwhile is passed by).
@@ -798,7 +862,10 @@ toolbar (at the library root, where `lib.organize`) or from the
 deleted it and when, the days it has left, its folder and, for a page
 deleted with pages inside it, "with N pages inside", as `aiProvRow`
 rows (a row's folder: the first of its entry's `folders` ids the folder
-tree has, by its path). Each row has Restore and a trash button that deletes for good after
+tree has, by its path). A sub-page deleted on its own says where Restore
+puts it, "comes back inside “Top › Parent”" (its entry's `parent` by its
+path, `pagePlaceLabel`, from the listing App passes as `pages`), and its
+Restore's status says so too ("Restored “Child” inside “Top › Parent”."). Each row has Restore and a trash button that deletes for good after
 App's confirm box, which names the pages inside, and the dialog's footer
 has Empty, whose confirmation and status count every page that goes,
 the pages inside included. The pointer or the

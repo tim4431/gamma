@@ -301,10 +301,10 @@ def _reach(conn, block_id: str, scope) -> str | None:
 def ub_get_children(block_id: str, request: Request):
     """A block's children (block dicts); for ``root``, the library listing:
     every page as its ``page_summary`` (sub-pages too, each naming its
-    parent and with no preview: the home view draws none of them), and the
-    folder and label trees (``_trees``) — what the home view draws, in one
-    request. Sync def: a big library's listing is thousands of queries, in
-    the threadpool."""
+    parent and with its preview, which the pinned and recents strips and a
+    label view draw), and the folder and label trees (``_trees``) — what
+    the home view draws, in one request. Sync def: a big library's listing
+    is thousands of queries, in the threadpool."""
     scope = share_scope(request)
     if scope is not None and block_id == "root" and not scope.lists_library:
         # A page share may not enumerate the owner's library; a folder share
@@ -321,8 +321,7 @@ def ub_get_children(block_id: str, request: Request):
                 allowed = set(scope.pages(conn))  # the allows_page rule, in one read
                 rows = [r for r in rows if r[0] in allowed]
             parents = page_parents(conn)
-            out = {"children": [page_summary(r, "" if r[0] in parents else _page_preview(conn, r[0]),
-                                             parents.get(r[0], "")) for r in rows],
+            out = {"children": [page_summary(r, _page_preview(conn, r[0]), parents.get(r[0], "")) for r in rows],
                    **_trees(conn, scope, rows)}
             conn.rollback()
             return OrjsonResponse(out)

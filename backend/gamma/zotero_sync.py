@@ -353,7 +353,8 @@ def detach_link(ws: str) -> dict:
     if link["mode"] == "off":
         return link
     save_link(ws, mode="off")
-    patch_status(ws, {"detached_at": page_now(), "detached_mode": link["mode"]}, drop=("force",))
+    # a Sync now not started yet is forgotten (the clock drops a request for a detached link unrun)
+    patch_status(ws, {"detached_at": page_now(), "detached_mode": link["mode"]}, drop=("force", sync_clock.ASKED))
     return get_link(ws)
 
 
@@ -669,22 +670,53 @@ def sync_workspace(ws: str) -> dict:
 
 
 def _held_round(ws: str) -> dict:
-    """``sync_workspace`` with the round lock held: the clock's ``run``."""
+    """``sync_workspace`` with the round lock held: the clock's ``run``.
+    What fails outside the round's own handling (the link read, the round
+    set up before its ``running``) is the round's error all the same: it is
+    shown, and Sync now's mark comes off with it (no round answers it
+    otherwise); the exception goes on to the caller."""
+    try:
+        link = get_link(ws)
+        if not link:
+            raise ValueError("not a Zotero link")
+        if link["mode"] == "off":
+            return LINKS.answered(ws, link["status"])  # detached: nothing runs until it is linked again
+        return _round(ws, link)
+    except Exception as e:
+        kind = zr.error_kind(e)
+        patch_status(ws, {"running": False, "last_error": str(e) or kind, "error_kind": kind, "last_attempt": page_now()},
+                     drop=("progress", sync_clock.ASKED))
+        raise
+
+
+def ask_round(ws: str) -> dict:
+    """Sync now, answered at once: a round in the background
+    (``sync_in_background``), the ask kept in the status as ``asked_at``
+    until a round starts (the next one, after a round running now, or once
+    the pool has room) and takes it off with its ``running``, so whoever
+    asked follows the status from this answer on (``GET
+    /api/zotero/links/{ws}``) until neither is set. A detached link runs
+    none: its status as it is."""
     link = get_link(ws)
     if not link:
         raise ValueError("not a Zotero link")
     if link["mode"] == "off":
-        return link["status"]  # detached: nothing runs until it is linked again
-    return _round(ws, link)
+        return link["status"]
+    status = LINKS.ask(ws)
+    sync_in_background(ws)
+    return status
 
 
 def sync_in_background(ws: str) -> None:
     """A round soon, out of the request that asks for it (Sync now, a
     force, a link made or reattached; the tests replace this): the clock's,
-    when its loop runs (its pool bounds how many run at once); else one
-    thread, and none more while one waits for the round lock (one more
-    round comes after a round running now, never more)."""
-    if _clock.looping():
+    when its loop runs and lists the link (its pool bounds how many run at
+    once); else one thread, and none more while one waits for the round
+    lock (one more round comes after a round running now, never more). A
+    link the clock leaves out (its workspace no longer its owner's
+    personal one), whose request it would drop unrun, gets the thread: its
+    round says why it uses no key and takes Sync now's mark off."""
+    if _clock.looping() and any(row[0] == ws for row in _rows()):
         _clock.request(ws, 0)
         return
     with _background_guard:
@@ -715,7 +747,9 @@ def _round(ws: str, link: dict) -> dict:
     r = Round(ws, link, time.monotonic(), library=link["library"])
     fill = link["status"].get("fill") if isinstance(link["status"].get("fill"), dict) else {}
     r.fill_units, r.fill_bytes = int(fill.get("units") or 0), int(fill.get("bytes") or 0)
-    patch_status(ws, {"running": True, "started_at": page_now(), "progress": None}, drop=("interrupted",))
+    # (a Sync now asked for before this write is this round's to answer)
+    patch_status(ws, {"running": True, "started_at": page_now(), "progress": None},
+                 drop=("interrupted", sync_clock.ASKED))
     try:
         _access(r)
         _own_library(r)

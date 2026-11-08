@@ -915,11 +915,28 @@ async function linkOn(serverId, linkId) {
   return { ...at, link, headers: link.remote_url ? {} : { 'X-Gamma-Workspace': link.workspace_id } };
 }
 
-// A round of a kept folder now, waited for, its outcome in the bar. Files
-// changed on disk stay unless the user says to replace them, asked only
-// when there are some a forced round would replace (a kept entry's
-// `force`; not a PDF a send could not deliver, which Gamma's copy would
-// not change) (`force` answers that in tests).
+// A round of a link asked for and followed to its end: the server answers
+// at once with the round's `running` set (the one it started, or one
+// already running, which answers it), and the link is read again every
+// ROUND_POLL_MS until `running` comes down, however long the round takes:
+// the server reads `running` from the round's lock, so a mark a server
+// stopped mid-round left never reads as a round (gamma/folder_links.py
+// _round_held). No request stays open for the round. → the link after it.
+const ROUND_POLL_MS = 1_000;
+async function roundOf(api, origin, link, headers, query = '') {
+  let after = await api(origin, `/api/folder-links/${link.id}/sync${query}`, { method: 'POST', headers });
+  while (after.status && after.status.running) {
+    await new Promise((done) => setTimeout(done, ROUND_POLL_MS));
+    after = await api(origin, `/api/folder-links/${link.id}`, { headers });
+  }
+  return after;
+}
+
+// A round of a kept folder now, followed to its end (roundOf), its outcome
+// in the bar. Files changed on disk stay unless the user says to replace
+// them, asked only when there are some a forced round would replace (a
+// kept entry's `force`; not a PDF a send could not deliver, which Gamma's
+// copy would not change) (`force` answers that in tests).
 async function syncFolder(serverId, linkId, force) {
   const { origin, api, link, headers } = await linkOn(serverId, linkId);
   const changed = ((link.status && link.status.kept) || []).filter((k) => k.force).length;
@@ -935,7 +952,7 @@ async function syncFolder(serverId, linkId, force) {
   busy = `Syncing ${linkName(link)}…`;
   pushState();
   try {
-    const after = await api(origin, `/api/folder-links/${link.id}/sync?wait=1${force ? '&force=1' : ''}`, { method: 'POST', headers });
+    const after = await roundOf(api, origin, link, headers, force ? '?force=1' : '');
     const s = after.status || {};
     const moved = Object.entries(s.counts || {}).filter(([k, n]) => n && k !== 'unchanged' && k !== 'kept').map(([k, n]) => `${n} ${k}`);
     showNotice(s.last_error ? `${linkName(link)}: ${s.last_error}` : `${linkName(link)} is up to date${moved.length ? `: ${moved.join(', ')}` : ''}.`);
@@ -1147,15 +1164,15 @@ async function followFile(wsId, pageId) {
   }
 }
 
-// A round of a followed file now, waited for: the file sent when it
-// changed, and what happened in the bar.
+// A round of a followed file now, followed to its end (roundOf): the file
+// sent when it changed, and what happened in the bar.
 async function sendFile(serverId, linkId) {
   const { origin, api, link, headers } = await linkOn(serverId, linkId);
   const file = path.basename(link.dest);
   busy = `Sending ${file}…`;
   pushState();
   try {
-    const after = await api(origin, `/api/folder-links/${link.id}/sync?wait=1`, { method: 'POST', headers });
+    const after = await roundOf(api, origin, link, headers);
     const s = after.status || {};
     showNotice(s.last_error ? `${linkName(link)}: ${s.last_error}`
       : (s.counts || {}).sent ? `${file} was sent to Gamma.`

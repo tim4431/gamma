@@ -296,10 +296,13 @@ Shape C was built as designed above, with these differences.
   that carries a PDF, so a share view shows the right glyph without a
   listing). It replaces the `/pages/{id}/subpages` the note kept in
   reserve. The app reads it on every page open (beside the tree for a page
-  the library lists) and after its own sub-page writes; a sub-page made or
-  moved in by another client shows at the next open. The listing still
+  the library lists), after its own sub-page writes and, since 2026-11-06,
+  when the window comes back, with the listing; a sub-page made or moved
+  in by another client shows then, or at the next open. The listing still
   carries every page, each with `parent` (the effective one, not the
-  stored key), and skips a sub-page's preview.
+  stored key). It first skipped a sub-page's preview; since 2026-11-06 it
+  reads one for every page, as a sub-page's card shows in the pinned and
+  recents strips and a label view.
 - **The crumbs name pages only.** No folder path comes before them: a page
   inside another shows no folder chips at all, and its label field offers
   labels only, since its folders are its top's.
@@ -309,6 +312,11 @@ Shape C was built as designed above, with these differences.
   ("Move into page…" for a selection too), and "New page inside" is the
   panel's last row. There is no palette command. "Move to folder" is
   hidden for a sub-page, and dropping one on a folder tile is refused.
+  Since 2026-11-06 a Pages inside row has the library's page menu as well
+  (without Rename), and drags: a page dropped on a page (a library row or
+  card, a Pages inside row, a crumb) goes inside it, never into itself or
+  a page inside it, and one dropped on the topbar's Home goes to the
+  library, as Move to library sends it.
 - **Label counts include sub-pages.** The "Listing" paragraph above left
   them out of the label counts while "Filing" had a label view list them;
   the build follows "Filing": a label's tile counts, and its view lists,
@@ -425,11 +433,14 @@ Shape C was built as designed above, with these differences.
 - Whether a sub-page's `[[id]]` chip should render as a page card (title,
   icon, a line of preview) rather than an inline chip, as Notion's
   sub-page block does.
-- Drag and drop between the Pages inside panel and the library.
 - The MCP `export_page` tool exports a page alone; it takes no
   `sub_pages`.
-- The Pages inside panel does not follow, live, a sub-page another client
-  makes or moves in; it shows at the next open.
+- The Pages inside panel follows a sub-page another client makes, moves
+  in or takes out when the window comes back, with the library listing (at
+  most every 15 s), not while the window keeps the focus: the change
+  reaches the moved page's room only, never the parent's. A content-free
+  nudge to the rooms of the page left and the page entered, as the
+  comments' `{t: "comments"}` is, would make it live.
 - On the share host, once the workspace there is at the plan's cap, a
   sub-page made later inside a published page is refused on every round
   (a 402, a round error rather than a quiet deferral).
@@ -440,7 +451,6 @@ Shape C was built as designed above, with these differences.
   pages no longer published (their text kept here). A page moved into a
   page there whose turn comes before that page's deletion here keeps a
   stored `parent_page` naming the deleted page.
-- The `[[` picker does not match a page's path, as Ctrl+P does.
 - Empty and the 30-day sweeper find a page's cascaded rows by reading the
   trash for each page they delete (`ops._went_with`, with a cheap text
   test first); an indexed `deleted_with` column would need a migration
@@ -458,7 +468,25 @@ panel not following other clients, the 402 at the cap, a sub-page
 unpublished alone sent again, a kept page landing unfiled, the `[[`
 picker's path) and found these as well. The library's filter box not
 finding sub-pages was among them and is fixed (home_library.md
-"Listing and counting").
+"Listing and counting"), and so are, on 2026-11-06, the moves of a
+selection holding a page and a page inside it (they keep to the topmost
+pages, as Delete does), Move to folder hidden by one sub-page in a
+selection, the move dialogs matching titles only and Move block to page
+showing no path (both are Ctrl+P's palette now, `PagePicker`), and
+Recently deleted not saying a sub-page deleted on
+its own comes back inside its parent (home_library.md "Moving one" and
+"Recently deleted"). Also fixed that day: the `[[` picker and the
+editor's `@` menu now match a sub-page's path and every page's folders
+and labels by name rather than id (`rankRefPages`); a library row or
+card counts the pages inside a page in a chip of its own; and a
+sub-page's card (the strips, a label view) shows its path in place of
+folder chips and a preview of its notes, which the listing now reads for
+it, while Quick open matches it on its top's folders rather than its own
+(home_library.md "Listing and counting", "In the pickers" and "The
+card"). So, too, are the Pages inside rows without a menu or a drag and
+no page taking a dropped page: a row has the page menu and drags, a page
+row, card, panel row or crumb takes a page inside, and Home takes one to
+the library (home_library.md "Reaching one" and "Moving one").
 
 Sharing and publishing:
 
@@ -506,29 +534,6 @@ Integrations and the agent:
 - The connector's folder picker ranks folders by the views and edits of
   the pages filed in them by their own folders, so sub-page activity
   counts for nothing.
-
-The library and the page:
-
-- Move into page… and Move to library on a selection holding a page and
-  a page inside it move the inner page out of its parent (Delete keeps to
-  the topmost pages; the moves do not).
-- The Pages inside rows have no menu and no drag, and no page is a drop
-  target for "move into this page".
-- A library row or card gives no sign that a page has pages inside it.
-- A sub-page's card where one is shown (the pinned and recents strips, a
-  label view) has no preview text (the listing runs none for a sub-page),
-  shows its own folder chips rather than its path, and Quick open matches
-  it on those own folders.
-- One sub-page in a selection hides Move to folder for the library pages
-  in it too.
-- The move dialogs filter on titles only, and Move block to page shows no
-  path, so two sub-pages of one name read alike.
-- The `[[` picker and the editor's `@` menu match folders and labels by
-  id rather than name (`rankRefPages`), for every page, as well as not
-  matching a sub-page's path.
-- A sub-page deleted on its own is listed in Recently deleted by its
-  top's folder, with nothing saying Restore puts it back inside its
-  parent.
 
 Deliberate, worth a second look: "Start your library" and the first-run
 tour count library pages only, so a new user whose pages all sit inside

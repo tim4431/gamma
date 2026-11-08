@@ -32,8 +32,8 @@ every few milliseconds.
 
 ``LinkTable`` is an engine's stored rows as the clock reads them (users.db
 ``mirrors``, ``zotero_links``): the clock's rows, the startup reset of the
-rounds a restart cut short, and the status JSON patched under one lock per
-table.
+rounds a restart cut short, the status JSON patched under one lock per
+table, and Sync now's ask (``ASKED``), which a round takes off as it starts.
 
 ``start`` runs at app startup (``sync_engine.start_loop``). It runs every
 engine's ``reset``, which marks a round the previous process left running
@@ -47,7 +47,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import config, ops
-from .db import connect_users_db
+from .db import connect_users_db, page_now
 from .logbuf import log
 
 TICK_S = 1            # a loop looks at its rows at least this often
@@ -56,6 +56,11 @@ FIRST_PASS_S = 5      # the first look after startup: a round cut short by a res
 BUSY_RETRY_S = 5      # a workspace whose round is already running is looked at again this much later
 MIN_WAIT_S = 0.05     # the shortest sleep between two looks
 POLL_MAX_S = 86400    # the longest cadence (poll_s) a link takes
+# The status key of a Sync now not started yet (when it was asked): from
+# Sync now's answer until a round starts, which takes it off in the same
+# write that sets ``running`` (``LinkTable.ask``), so the status always
+# reads one or the other until the round asked for is over.
+ASKED = "asked_at"
 
 _engines: list["Engine"] = []
 
@@ -353,6 +358,23 @@ class LinkTable:
             self.save(ws, status=status)
         return status
 
+    def ask(self, ws: str) -> dict:
+        """Sync now's mark (``ASKED``): a round is asked for and has not
+        started yet. The next round of the workspace to start takes it off
+        with its ``running`` (its patch drops ``ASKED``), whether it is the
+        one asked for or the clock's, and so does a round that runs nothing
+        (``answered``), a detach and the startup reset. A round already
+        running when it is asked leaves it on: the next one answers it.
+        Returns the status as saved."""
+        return self.patch_status(ws, {ASKED: page_now()})
+
+    def answered(self, ws: str, status: dict) -> dict:
+        """A held round that runs nothing (detached, nothing to move) takes
+        Sync now's mark off all the same. ``status`` is the row's as the
+        round read it under its lock (an ask made after that read has a
+        round of its own coming); the status as it is after."""
+        return self.patch_status(ws, {}, drop=(ASKED,)) if ASKED in status else status
+
     def stored_mode(self, ws: str) -> str:
         """The row's mode as stored now ("off" when there is no row)."""
         with connect_users_db() as conn:
@@ -370,13 +392,15 @@ class LinkTable:
     def reset_interrupted(self, settle=None) -> list[str]:
         """At startup: a row the previous process left ``running`` is not
         running any more (``interrupted``, its progress gone); the next
-        round picks up where it was. ``settle(ws, mode, status)``, when
-        given, then sees every row's status and may change it in place
-        (True when it did). The workspaces marked interrupted."""
+        round picks up where it was. A Sync now it had not started yet is
+        forgotten (``ASKED``): nothing runs it any more. ``settle(ws, mode,
+        status)``, when given, then sees every row's status and may change
+        it in place (True when it did). The workspaces marked interrupted."""
         marked = []
         with connect_users_db() as conn:
             for ws, mode, raw in conn.execute(f"SELECT workspace_id, mode, status FROM {self.table}").fetchall():
-                status, changed = json_dict(raw), False
+                status = json_dict(raw)
+                changed = status.pop(ASKED, None) is not None
                 if status.get("running"):
                     status.update(running=False, interrupted=True)
                     status.pop("progress", None)
