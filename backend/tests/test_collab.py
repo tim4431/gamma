@@ -340,6 +340,54 @@ def test_ops_log_prunes_and_catchup_reports_gap(guest, monkeypatch):
     assert guest.get(f"/api/pages/{page['id']}/ops", params={"since": 1}).status_code == 410
 
 
+def test_catchup_carries_the_build_beside_the_log(guest):
+    """The op-log read is the whole live channel of a tab whose socket never
+    connects (collabSession.js polls it every 2 s), so it carries the build
+    the socket's hello does: the handwriting fence's comparison."""
+    page = make_page(guest, "Catch-up build page")
+    r = _ops(guest, page["id"], [{"op": "insert", "id": "cb1", "parent": page["id"], "content": "x"}])
+    seq = r.json()["seq"]
+    log = guest.get(f"/api/pages/{page['id']}/ops", params={"since": seq - 1}).json()
+    assert log["seq"] == seq and [b["seq"] for b in log["batches"]] == [seq]
+    assert log["build"] == version.build_info()
+    assert guest.get(f"/api/pages/{page['id']}/ops", params={"since": seq}).json()["batches"] == []
+    gone = guest.get(f"/api/pages/{page['id']}/ops", params={"since": seq + 5})
+    assert gone.status_code == 410 and "build" not in gone.json(), "a 410 is as it was"
+
+
+def test_the_socket_path_over_plain_http_answers_426_and_warns_once_an_hour(guest, monkeypatch):
+    """A page socket whose Upgrade a proxy dropped arrives as a plain GET: it
+    gets 426 (never the SPA's index.html) and, when it carries a browser's
+    Sec-WebSocket-Key, one [collab] warning an hour naming the fix. The
+    socket itself still connects on the same path."""
+    from gamma.logbuf import last_seq, tail
+    from gamma.routers import collab as collab_router
+    monkeypatch.setattr(collab_router, "_proxy_warned_at", None)
+    page = make_page(guest, "Plain HTTP socket page")
+    path = f"/api/ws/page/{page['id']}"
+    key = {"Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version": "13"}
+
+    def warnings_after(seq):
+        return [e for e in tail(seq) if e["level"] == "WARNING" and e["msg"].startswith("[collab]")]
+
+    before = last_seq("warning")
+    r = guest.get(path, headers=key)
+    assert r.status_code == 426 and r.headers["upgrade"] == "websocket"
+    assert "text/html" not in r.headers.get("content-type", "")
+    (line,) = warnings_after(before)
+    assert "drops WebSocket upgrades" in line["msg"] and "/api/ws/" in line["msg"]
+    seen = last_seq("warning")
+    assert guest.get(path, headers=key).status_code == 426
+    assert not warnings_after(seen), "a second one within the hour says nothing"
+    monkeypatch.setattr(collab_router, "_proxy_warned_at", None)
+    assert guest.get(path).status_code == 426
+    assert not warnings_after(seen), "a GET that is no browser's socket warns nobody"
+    # signed out too: the answer reveals nothing, so it asks for nothing
+    assert fresh_client().get(path, headers=key).status_code == 426
+    with guest.websocket_connect(f"{path}?client=hx") as sock:
+        assert recv_hello(sock)["client"] == "hx"
+
+
 # --- shares --------------------------------------------------------------------
 
 @pytest.fixture(scope="module")

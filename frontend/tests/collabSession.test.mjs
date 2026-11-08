@@ -349,7 +349,7 @@ test("a hello with a newer sequence catches up from the log", async (t) => {
     return { seq: 1, batches: [batch(1, [{ op: "set", id: "b", content: "late" }])] };
   });
   h.message({ t: "hello", client: ME, seq: 1, peers: [{ client: ME }, { client: "p2" }] });
-  assert.deepEqual(h.me, { client: ME, connected: true });
+  assert.deepEqual(h.me, { client: ME, connected: true, via: "socket" });
   assert.deepEqual(h.peers.map((p) => p.client), ["p2"]);
   await settle();
   assert.equal(h.tree[1].content, "late");

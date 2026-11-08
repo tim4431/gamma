@@ -5463,8 +5463,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     if (!BLOCK_TOOLS.includes(a.tool)) return;
     // The edit landed: drop its preview, mark the block, and show the real
-    // change. With the page socket up it arrives as ops like any other
-    // client's; otherwise refetch (the open editor survives the swap).
+    // change. With the page live over its socket it has already arrived as
+    // ops like any other client's; otherwise refetch (the open editor
+    // survives the swap). Over the op-log poll (me.via "poll") it would land
+    // only with the next read, after reveal() looked for the block.
     setAiLive((live) => (live && (live.tool === "create_block" || live.blockId === a.block_id) ? null : live));
     if (a.block_id) markAiBlock(a.block_id, a.kind === "create" ? "create" : a.kind === "move" ? "move" : "edit", 6000);
     const reveal = () => {
@@ -5474,7 +5476,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
       });
     };
-    if (collabRef.current.me.connected) { reveal(); return; }
+    const me = collabRef.current.me;
+    if (me.connected && me.via === "socket") { reveal(); return; }
     loadBlocksForBlock(focusedBlockId).then(reveal);
   }
   const agentEventRef = useRef(null);
@@ -11568,10 +11571,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {
-            // The AI edited note blocks server-side. With the page socket up
-            // they already arrived as ops; otherwise refetch the open page.
+            // The AI edited note blocks server-side. With the page live over
+            // its socket they already arrived as ops; otherwise (no socket, or
+            // only the op-log poll, which reads them up to 2 s later) refetch
+            // the open page.
             if (!focusedBlockId || !pageIds.includes(focusedBlockId)) return;
-            if (collabRef.current.me.connected) return;
+            const me = collabRef.current.me;
+            if (me.connected && me.via === "socket") return;
             loadBlocksForBlock(focusedBlockId);
           }}
         />

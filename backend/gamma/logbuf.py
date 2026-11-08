@@ -117,16 +117,24 @@ def setup_logging():
         access.addFilter(_QuietPolls())
 
 
+# A page's op-log read, as uvicorn's access log writes the path: with its
+# query string (?since=…, and ?ws= or ?share=).
+_OP_LOG_READ = re.compile(r"/api/pages/[^/?]+/ops(\?|$)")
+
+
 class _QuietPolls(logging.Filter):
-    """Drops the Background tasks tray's answered polls from uvicorn's access
-    log: ``GET /api/jobs`` comes every 1.5 s while a job runs. A failed or
-    slow poll still has its ``[http]`` line (auth.py)."""
+    """Drops answered polls from uvicorn's access log: the Background tasks
+    tray's ``GET /api/jobs``, which comes every 1.5 s while a job runs, and
+    a page's op-log read ``GET /api/pages/{id}/ops?since=``, which a tab
+    whose socket never connects sends every 2 s (collabSession.js). A
+    failed or slow poll still has its ``[http]`` line (auth.py)."""
 
     def filter(self, record):
         args = record.args
         if isinstance(args, tuple) and len(args) == 5:  # client, method, path, http version, status
             _, method, path, _, status = args
-            if method == "GET" and path == "/api/jobs" and isinstance(status, int) and status < 400:
+            if method == "GET" and isinstance(status, int) and status < 400 and isinstance(path, str) \
+                    and (path == "/api/jobs" or _OP_LOG_READ.match(path)):
                 return False
         return True
 

@@ -1502,6 +1502,18 @@ Bash, `gradlew.bat` from PowerShell. What each test covers:
   `FORWARDED_ALLOW_IPS` lists, so anyone on that port can choose the client
   address rate limits count by. Close the remote port to everything but the
   reverse proxy.
+- **"[collab] a page socket reached the server as plain HTTP …"** is a
+  warning, logged once an hour at most: a proxy in front dropped a page
+  socket's `Upgrade`, so the request reached the server as a plain `GET
+  /api/ws/page/{id}`, answered 426. Each attempt also leaves an `[http] GET
+  /api/ws/page/… status=426` line. The tabs behind it poll the page's op
+  log instead ([collab.md](collab.md) "The client", "without a socket"):
+  others' edits arrive within about 2 s, and nobody sees anyone's cursor.
+  In the browser's Network tab such a tab shows `ops?since=` every 2 s
+  and a socket attempt about once a minute. The fix is the proxy's
+  WebSocket settings (`README.md`, the reverse-proxy paragraph). A
+  TLS-inspecting proxy that holds the socket without passing anything
+  polls the same way, but logs nothing here.
 - **"WebSocket from <peer> dropped: [WinError 121] …"** is an info line for
   a page socket whose peer stopped answering: a laptop asleep, Wi-Fi gone.
   The websockets library logs it as the error "data transfer failed" with a
@@ -1552,8 +1564,10 @@ Bash, `gradlew.bat` from PowerShell. What each test covers:
   file (not stored, unreadable, no text layer).
 - **Two request lines, on purpose.** The console carries uvicorn's access
   log for every request (`INFO: 127.0.0.1:… "GET /api/… HTTP/1.1" 200 OK`)
-  except the Background tasks tray's answered `GET /api/jobs`, which comes
-  every 1.5 s while a job runs (`logbuf._QuietPolls`). Likewise a `[jobs]`
+  except the answered polls (`logbuf._QuietPolls`): the Background tasks
+  tray's `GET /api/jobs`, which comes every 1.5 s while a job runs, and a
+  page's `GET /api/pages/{id}/ops?since=`, which a tab without its socket
+  sends every 2 s. Likewise a `[jobs]`
   line marks how a job ended, except a search-indexer run that simply
   finished. Interleaved with the access log comes Gamma's own line for the ones worth reading
   (`auth.py` `_finish_request_log`): `[http] request=<id> GET /api/… status=…

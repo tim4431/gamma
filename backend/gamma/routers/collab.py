@@ -1,11 +1,14 @@
-"""Collaboration endpoints: the op batch write, the op-log catch-up read,
-and the per-page websocket (presence + fan-out) — for the pages and for the
-pseudo-pages ``folders`` / ``labels`` (the folder and label trees; members
-only). See gamma/ops.py for the op vocabulary and gamma/collab.py for the
-rooms; docs/dev/collab.md for the whole picture."""
+"""Collaboration endpoints: the op batch write, the op-log catch-up read
+(also what a tab without a socket reads every 2 s), the per-page websocket
+(presence + fan-out) and the 426 its path answers a plain HTTP GET (a proxy
+that dropped the upgrade) — for the pages and for the pseudo-pages
+``folders`` / ``labels`` (the folder and label trees; members only). See
+gamma/ops.py for the op vocabulary and gamma/collab.py for the rooms;
+docs/dev/collab.md for the whole picture."""
 
 import json
 import secrets
+import time
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
@@ -18,6 +21,7 @@ from ..auth import (ANONYMOUS_NAME, SESSION_COOKIE, actor_of, is_link_visitor, l
 from ..blocks_store import is_op_page
 from ..db import connect_pages_db
 from ..json_response import OrjsonResponse
+from ..logbuf import log
 from ..ops import OpError, OpsRequest, commit_ops, latest_seq, ops_since
 
 router = APIRouter(prefix="/api", tags=["collab"])
@@ -76,11 +80,13 @@ def post_ops(page_id: str, payload: OpsRequest, request: Request):
 
 @router.get("/pages/{page_id}/ops")
 def get_ops(page_id: str, request: Request, since: int = 0):
-    """The page's op log after ``since`` (a reconnecting client's catch-up):
-    ``{seq, batches: [{seq, actor, client, at, ops}]}``; 410 when the log was
-    pruned past ``since`` or the batches after it are more than a catch-up
-    carries (ops.CATCHUP_MAX_BATCHES / CATCHUP_MAX_BYTES) — reload the tree
-    instead."""
+    """The page's op log after ``since``: ``{seq, batches: [{seq, actor,
+    client, at, ops}], build}``; 410 when the log was pruned past ``since``
+    or the batches after it are more than a catch-up carries
+    (ops.CATCHUP_MAX_BATCHES / CATCHUP_MAX_BYTES) — reload the tree instead.
+    A reconnecting client's catch-up, and every 2 s the whole live channel
+    of a tab whose socket never connects (collabSession.js), which is why it
+    carries ``build`` as the socket's hello does (the handwriting fence)."""
     ws = resolve_ws(request)
     _scope_page(request, ws, page_id)
     with connect_pages_db(ws) as conn:
@@ -90,7 +96,35 @@ def get_ops(page_id: str, request: Request, since: int = 0):
         seq = latest_seq(conn, page_id)
     if pruned:
         raise HTTPException(status_code=410, detail="op log pruned — reload the page")
-    return OrjsonResponse({"seq": seq, "batches": batches})  # up to a megabyte: encoded off the event loop
+    # up to a megabyte: encoded off the event loop
+    return OrjsonResponse({"seq": seq, "batches": batches, "build": version.build_info()})
+
+
+# A page socket that arrives as a plain GET: the proxy in front dropped its
+# Upgrade (nginx without proxy_http_version 1.1 and the two headers, say).
+# Said once an hour at most: such a tab tries again every minute.
+PROXY_WARNING_EVERY_S = 3600
+_proxy_warned_at: float | None = None
+
+
+@router.get("/ws/page/{page_id}")
+def socket_over_http(page_id: str, request: Request):
+    """The page socket's path asked as plain HTTP: 426 with ``Upgrade:
+    websocket``, never the SPA's index.html. A request carrying
+    ``Sec-WebSocket-Key`` is a browser's socket whose upgrade the proxy
+    dropped: it logs a warning naming the fix, at most once an hour (the
+    tabs fall back to polling the op log, collabSession.js). Reads nothing
+    and checks no access: the answer reveals nothing."""
+    global _proxy_warned_at
+    if request.headers.get("sec-websocket-key"):
+        now = time.monotonic()
+        if _proxy_warned_at is None or now - _proxy_warned_at >= PROXY_WARNING_EVERY_S:
+            _proxy_warned_at = now
+            log.warning("[collab] a page socket reached the server as plain HTTP: the proxy in front drops "
+                        "WebSocket upgrades; pages fall back to polling and nobody sees anyone's cursor. "
+                        "Pass Upgrade and Connection on /api/ws/ (README, reverse proxy)")
+    raise HTTPException(status_code=426, detail="a websocket endpoint: the upgrade did not reach the server",
+                        headers={"Upgrade": "websocket"})
 
 
 def _socket_access(sock: WebSocket, page_id: str) -> tuple[str, collab.Peer] | None:
@@ -145,9 +179,11 @@ async def page_socket(sock: WebSocket, page_id: str):
     ``ink-live {client, …}`` a peer's handwriting stroke in progress.
     Client → server: ``cursor {block, anchor, head}`` and ``ink-live``
     (relayed to the others when the sender may edit, never stored:
-    ``collab.ink_live``) — writes are ``POST /pages/{id}/ops``. Closed
-    with 4403 when access is refused or revoked (``collab.revalidate``),
-    4409 when the same tab joined again.
+    ``collab.ink_live``) — writes are ``POST /pages/{id}/ops``. Refused
+    before accept, the handshake is answered HTTP 403 (uvicorn turns the
+    close into it; a browser sees 1006); closed with 4403 when access is
+    revoked while open (``collab.revalidate``), 4409 when the same tab
+    joined again.
     The database reads (the access check, the log position) run in worker
     threads; the room itself lives on the loop. A client gone at any point
     of the handshake (navigated away as the socket opened) is an ordinary

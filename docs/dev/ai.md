@@ -1653,8 +1653,8 @@ that changed several; the loop puts what is left on the scope
 home-feed refresh (`onLibraryChange`), and
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
 reloads the open page's block tree when the AI touched it (`onNotesChange`;
-with the page's live socket up the tools' ops already arrived through it and
-the reload is skipped — [collab.md](collab.md)). A `view_pdf_page`,
+with the page's live socket up (`me.via` `"socket"`, not the op-log poll) the
+tools' ops already arrived through it and the reload is skipped — [collab.md](collab.md)). A `view_pdf_page`,
 `view_ink` or `view_image` result also carries its picture, and a
 `read_page` or `read_block` result the pictures of the area highlights it
 lists: the loop lifts them off the action into the tool message's `images`

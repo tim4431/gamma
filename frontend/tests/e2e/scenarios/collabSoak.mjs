@@ -632,7 +632,7 @@ export async function runSoak({
   // refetch waiting for its retry, as in the browser).
   for (const tab of soak.tabs) if (tab.offline) { tab.offline = false; tab.session.retryNow(); }
   const failures = [];
-  for (let round = 0; soak.tabs.some((t) => t.session.hasPending()) && performance.now() - tRun < 30000; round++) {
+  while (soak.tabs.some((t) => t.session.hasPending()) && performance.now() - tRun < 30000) {
     for (const tab of soak.tabs) tab.session.retryNow();
     await Promise.all(soak.tabs.map((t) => t.session.flush()));
     await sleep(100);
