@@ -35,7 +35,7 @@
 // reader sees the glossary without its edit controls.
 import fs from "node:fs";
 import http from "node:http";
-import { Account, FAKE_AI_MODELS, assertMenuFrom, assertMenuRoles, fakeAiModels, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, assertMenuFrom, assertMenuRoles, embeddedWidth, fakeAiModels, wanted } from "../harness.mjs";
 import { dragSelectPdfText, waitForPdf } from "./pdf.mjs";
 
 // A paragraph on a tinted panel with a formula in it, one on plain paper right
@@ -79,6 +79,37 @@ function twoColumnPage() {
   line(330, 700, "continues with the Hamiltonian of the");
   line(330, 688, "system, which we now write down in full");
   line(330, 676, "for the reader who wants every detail.");
+  return { runs };
+}
+
+// Two paragraphs justified in a font the file holds (makePdf's "F6"), each line
+// but the last filling the measure from 72 to 540 pt, and a ragged one in Times,
+// which the file does not hold.
+const OWN_FACE = "The words of this paragraph are set in the own face of the paper and they run on over the measure until the line is full and spread out to both of its edges as a journal sets its pages for print";
+const SECOND_FACE = "A second paragraph in the same embedded face is justified as well and its translation brings letters the face has never seen so it takes the serif of the overlay instead of the face of the paper";
+function facesPage() {
+  const runs = [];
+  const justified = (text, top) => {
+    let y = top, line = [];
+    const put = (words, spread) => {
+      const widths = words.map((w) => embeddedWidth(w, 10));
+      const gap = spread ? (468 - widths.reduce((a, b) => a + b, 0)) / (words.length - 1) : embeddedWidth(" ", 10);
+      let x = 72;
+      words.forEach((w, k) => { runs.push({ x, y, size: 10, font: "F6", text: w }); x += widths[k] + gap; });
+      y -= 12;
+    };
+    for (const word of text.split(" ")) {
+      if (line.length && embeddedWidth([...line, word].join(" "), 10) > 468) { put(line, true); line = []; }
+      line.push(word);
+    }
+    put(line, false);
+  };
+  justified(OWN_FACE, 720);
+  justified(SECOND_FACE, 660);
+  const line = (y, text) => runs.push({ x: 72, y, size: 10, font: "F2", text });
+  line(600, "A ragged paragraph in Times ends its lines where the words end, which");
+  line(588, "the journal did not spread out to the edge of the measure, so");
+  line(576, "they stop short.");
   return { runs };
 }
 
@@ -1343,6 +1374,41 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
       assert(off(corner) <= 2, `${name}${flip ? " flipped" : ""}: crop ${corner} against the panel ${outside}`);
     }
     await treat(theme, flipped);
+    assertNoProblems(page);
+  });
+
+  await step("translation: a paragraph justified in the original is justified, and set in the paper's own font when it draws every word", async () => {
+    const up = await alice.upload("/api/uploads", makePdf([facesPage()]), "faces.pdf", "application/pdf");
+    const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Faces", source_url: up.source_url } });
+    // Words the embedded font draws for the first paragraph, CJK for the rest.
+    const english = "Set again in the face of the paper, every word of this translation is in letters that the font holds, and it fills the lines out to both edges of the measure as the original did, line after line.";
+    respond = (route, body) => route.fulfill({ contentType: "application/x-ndjson", body: `${JSON.stringify({
+      translations: body.texts.map((t) => (t.includes("own face") ? english : `译:${t.split("{br}").join("{br}译:")}`)),
+      model: "demo:model", cached: false })}\n` });
+    try {
+      await page.goto(`${server.base}/?page=${created.id}&ws=${alice.ws}`);
+      await waitForPdf(page, 1);
+      await page.getByRole("button", { name: "Translate", exact: true }).click();
+      const para = (text) => page.locator('[data-page="1"] .pdfTransPara', { hasText: text });
+      await until(async () => (await para("Set again").count()) && (await para("译:A second").count()) && (await para("译:A ragged").count()),
+        { what: "the three paragraphs translated" });
+      const set = (text) => para(text).evaluate((el) => {
+        const words = el.querySelector(".pdfTransText"), style = getComputedStyle(words);
+        return { own: el.classList.contains("paperFace"), family: style.fontFamily, align: style.textAlign,
+                 face: el.style.getPropertyValue("--paper-face"), loaded: document.fonts.check(`10px ${el.style.getPropertyValue("--paper-face") || "serif"}`) };
+      });
+      const own = await set("Set again"), cjk = await set("译:A second"), ragged = await set("译:A ragged");
+      assert(own.own && /^"g_d\d+_f\d+"$/.test(own.face), `the paper's font, by pdf.js's name: ${JSON.stringify(own)}`);
+      assert(own.family.replace(/"/g, "").startsWith(own.face.replace(/"/g, "")), `its words are set in it: ${own.family}`);
+      assert(own.loaded, "the font is the document's");
+      assertEq(own.align, "justify", "justified, as the original");
+      assert(!cjk.own && /^"?Times New Roman/.test(cjk.family), `a letter the font lacks: the overlay's serif, whole: ${JSON.stringify(cjk)}`);
+      assertEq(cjk.align, "justify", "still justified, as the original");
+      assert(!ragged.own, "a font the file does not hold is not the paper's");
+      assertEq(ragged.align, "start", "ragged, as the original");
+    } finally {
+      respond = null;
+    }
     assertNoProblems(page);
   });
 

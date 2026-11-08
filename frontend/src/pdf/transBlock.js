@@ -13,7 +13,8 @@ export const PAD = 0.75; // pt the boxes stand out from the original's lines (ga
 // with a single line to read it from. CJK glyphs fill the em and keep their own.
 const LEADING = { min: 1.12, max: 1.3, single: 1.15, cjk: 1.28 };
 const CJK_LANG = /^(zh|ja|ko)\b/;
-// A box narrower than this many em of its size opens wide gaps when justified.
+// A box narrower than this many em of its size opens wide gaps when justified
+// (gamma/pdf_translated.py JUSTIFY_EM).
 const JUSTIFY_EM = 18;
 // The part of the em around the baseline that a formula's layout box stays in,
 // inside any line's strut at the leadings above.
@@ -37,7 +38,9 @@ export function blockLeading(p, lang) {
 const textEdges = (p) => p.room || p;
 
 // What a block's text is set to besides its size, at REF_SCALE: `lead` and
-// `ragged` (too narrow to justify), the first line's `indent`, in px of the
+// `ragged`: not justified in the original (pageShape.js isJustified), or too
+// narrow to justify, gamma/pdf_translated.py _setting's rule too; the first
+// line's `indent`, in px of the
 // page since it comes from the page: a paragraph opener's, not a hanging one's,
 // and none on a centred block, whose first line is only shorter than its second;
 // and `italic`: CJK text has no italic, a browser only leans its glyphs.
@@ -45,7 +48,7 @@ export function blockSetting(p, lang) {
   const { x1, x2 } = textEdges(p);
   return {
     lead: blockLeading(p, lang),
-    ragged: x2 - x1 < p.size * JUSTIFY_EM,
+    ragged: !p.justified || x2 - x1 < p.size * JUSTIFY_EM,
     indent: p.centred ? 0 : Math.max(0, p.indent || 0) * REF_SCALE,
     italic: !!p.italic && !CJK_LANG.test(lang),
   };

@@ -189,10 +189,76 @@ Two findings shaped the writer:
   With the surrogates, MuPDF, pypdf and pdf.js all give back
   `∑ᵢ 𝑥ᵢ² ⊗ ℝ → 𝒜` and the emoji.
 
+## Justified text and the paper's own font
+
+Both the overlay and the file set the translation in a plain serif, and
+the overlay justified every box 18 em wide whatever the original did,
+while the file was ragged. Measured in November 2026 on PyMuPDF 1.28.2,
+pdf.js 4.4 and the fixture paper compiled with pdfLaTeX:
+
+- **Telling a justified block.** Lines but the last ending within half an
+  em of one edge mark every body paragraph of the fixture's two pages and
+  none of its table rows, lone lines or reference entries. Ragged lines end
+  where their words do, several em apart; a hyphen or microtype's
+  protrusion stays well inside the half em.
+- **`Story` justifies** (`text-align: justify`), the last line left
+  ragged, and reports a picture in a justified line where it draws it, the
+  widened gaps included (to 0.01 pt), so formulas keep their places.
+- **The paper's fonts are subsets.** The fixture's CMR10 has 43 of the 64
+  characters tried (ASCII letters, a few accented ones, punctuation), and no
+  space; CMR7 has one letter. A translation
+  out of English nearly always needs a letter the subset lacks (ä, z, a
+  capital), so the font is used only for a block it draws whole, and a
+  block falls back whole rather than letter by letter.
+- **`has_glyph` is not enough.** MuPDF's own subsetter keeps the dropped
+  letters' places and empties their outlines, and `has_glyph` still finds
+  them (and `glyph_bbox` gives the font's box for every glyph). The outline
+  must hold ink: MuPDF's `fz_outline_glyph` in the file, a canvas's
+  `actualBoundingBox` in the browser.
+- **Spaces.** A TeX font has no space glyph. Left to MuPDF, the space came
+  from its fallback, Noto Serif, whose subset weighed 60 KB; set in Charis,
+  12.5 KB, a font the file holds anyway once any block keeps the serif.
+- **A program without a cmap.** `Story` finds a letter's glyph only
+  through the font program's own cmap. LuaLaTeX and XeLaTeX embed every
+  OpenType font (Latin Modern among them) as a bare CID-keyed CFF under a
+  Type0/Identity-H, which maps no character: `has_glyph` is 0 for every
+  letter, so every such paper fell back to the serif in the file while
+  pdf.js, mapping from the ToUnicode, showed its font on screen. A subset
+  TrueType program from MuPDF's subsetter has no cmap either. The cmap is
+  built from the ToUnicode (`pdf_font_cmap`). Wrapping the CFF in an
+  OpenType file as it is (glyph index = GID, through its charset) drew
+  nothing: MuPDF reads a CIDFontType0's codes as CIDs, so the text it
+  writes by glyph index found other, empty glyphs. Written again with each
+  glyph at its CID, a LuaLaTeX and a XeLaTeX paper's LMRoman10-Regular set
+  the translation, justified, in its own glyphs.
+- **Embedding.** `Story` takes a font from its archive through
+  `@font-face`; a PFA program works, and every story that loads the same
+  bytes shares one font object in the output. `subset_fonts` leaves a Type
+  1 program whole (21 KB for CMR10, already a subset).
+- **In the browser** pdf.js 4.4 maps each glyph it can name from its
+  character into the rebuilt font's cmap (`toUnicodeExtraMap`) and adds the
+  font to `document.fonts` under its id, so CSS can set text in it. pdf.js
+  drops the font's bytes once loaded unless `fontExtraProperties` is set, so
+  no cmap can be read; whether the font has a character is read from a
+  canvas, the character measured with two different fallbacks behind the
+  font. How it works now:
+  [dev/translation.md](../dev/translation.md#how-a-translation-is-set).
+
 ## Still open
 
 - Formulas as vector glyphs, which would need the isolation above without
   its cost: MuPDF's content filter with a culler, or the formula's glyph
   runs written again with the page's own font resources.
-- Justified text and the paper's own typeface, where the overlay and the
-  file both use a plain serif.
+- A block whose subset lacks a letter falls back to the serif whole. Mixing
+  the paper's font with a matching face for the missing letters (a CM-like
+  face for a TeX paper, Times for a Times one) would keep the look on more
+  blocks, at a font of its own in the file.
+- `Story` does not hyphenate, so a justified paragraph in the file can open
+  wider gaps than the overlay's, which hyphenates where the browser has the
+  language's dictionary.
+- The overlay's face is pdf.js's id for the font in one open document. A
+  paper's blocks outlive that document (the viewer keeps two, the
+  translation eight), so a paper opened again after the viewer let it go
+  shows its translation in the serif, its blocks naming the old ids. Its
+  blocks would need their `font` found again in the new document (by name,
+  among the page's fonts) without losing what their entries are tied to.

@@ -23,7 +23,9 @@ upload → image-XObject registry.
 A page exported while the viewer shows its translation is translated
 first, and so is each paper of a folder's export that this browser left
 translated: its original lines redacted and the translation laid out in
-their place (`gamma/pdf_translated.py`,
+their place by MuPDF's `Story`, not by this engine, justified where the
+original is and in the paper's own embedded font when that font draws every
+letter (`gamma/pdf_translated.py`,
 [translation.md](translation.md#exporting-the-translation)). Everything
 below is written over that file.
 

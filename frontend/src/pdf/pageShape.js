@@ -1,7 +1,7 @@
 // How a page's blocks sit in their columns, for the PDF translated view: a
-// block centred in its column is set centred, a one-line block takes the room
-// beside it, and a block's text stops where the next one's starts inside its
-// box. Pure, like pdf/pageFlow.js, whose columns it reads. It writes
+// block centred in its column is set centred, a justified one justified, a
+// one-line block takes the room beside it, and a block's text stops where the
+// next one's starts inside its box. Pure, like pdf/pageFlow.js, whose columns it reads. It writes
 // on the blocks, so it runs where a page is segmented, as pdf/pageFigures.js
 // markFigures does: the overlay (pdf/transBlock.js) and the export
 // (pdf/translateExport.js) both read a page's blocks, so they read the same
@@ -45,6 +45,34 @@ export function isCentred(p, edge) {
   if (GOES_ON.test(p.text || "") && p.x2 - p.x1 > width * LONG_LINE) return false;
   const widths = lines.map((l) => l.x2 - l.x1);
   return lines.length === 1 || Math.max(...widths) - Math.min(...widths) >= p.size * LINES_DIFFER;
+}
+
+// A justified block's lines but its last end within this many of its em of one
+// right edge (a line's last glyph, a hyphen or a protruded comma stand a little
+// off), and its lines but its first start within it of one left edge. A one-line
+// block that is a line of running text may open this much deeper: an opener's
+// indent.
+const FLUSH = 0.5;
+const OPENER = 2;
+
+// Whether a block is set justified in the original: its lines but the last end
+// at one right edge and its lines but the first start at one left edge, where a
+// ragged block's lines end where their words do. Of two lines the first is the
+// block's widest whatever the setting, so it must also end at its column's
+// `edge` ({x1, x2}, or none). One line, a paragraph's first at a column's foot,
+// must fill the column, from the indent of an opener at most.
+export function isJustified(p, edge) {
+  const lines = p.lines || [];
+  if (!lines.length) return false;
+  const near = p.size * FLUSH;
+  const right = Math.max(...lines.map((l) => l.x2));
+  if (lines.slice(0, -1).some((l) => right - l.x2 > near)) return false;
+  const rest = lines.slice(1);
+  const left = Math.min(...rest.map((l) => l.x1));
+  if (rest.some((l) => l.x1 - left > near)) return false;
+  if (lines.length >= 3) return true;
+  if (!edge || Math.abs(edge.x2 - right) > near) return false;
+  return lines.length === 2 || (lines[0].x1 - edge.x1 >= -near && lines[0].x1 - edge.x1 <= p.size * OPENER);
 }
 
 const beside = (a, b) => Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1) >= Math.min(a.y2 - a.y1, b.y2 - b.y1) * BESIDE_SHARE;
@@ -106,9 +134,10 @@ function nearestColumn(p, columns) {
   return best;
 }
 
-// Marks a page's translated blocks, in place: `centred`, a one-line block's
-// `room` (roomOf) and a block's `foot` (footOf). A block over a `figures` figure
-// stays in its own box: what is beside it there is the drawing.
+// Marks a page's translated blocks, in place: `centred`, else `justified`
+// (isJustified), a one-line block's `room` (roomOf) and a block's `foot`
+// (footOf). A block over a `figures` figure stays in its own box: what is
+// beside it there is the drawing.
 export function markShape(paras, figures = []) {
   const { edges, col } = pageFlow(paras);
   const columns = paras.flatMap((p, i) => (edges[i] ? [{ ...edges[i], y1: p.y1, y2: p.y2 }] : []));
@@ -116,9 +145,10 @@ export function markShape(paras, figures = []) {
     if (!p.translate) return;
     const others = paras.filter((o) => o !== p);
     const edge = edges[i] || (col[i] === "out" && nearestColumn(p, columns));
+    const centred = !!edge && isCentred(p, edge);
+    if (centred) p.centred = true;
+    else if (isJustified(p, edge || null)) p.justified = true;
     if (edge) {
-      const centred = isCentred(p, edge);
-      if (centred) p.centred = true;
       const room = p.nLines === 1 && !p.overFigure && roomOf(p, edge, [...others, ...figures], centred);
       if (room) p.room = room;
     }

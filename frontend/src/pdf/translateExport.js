@@ -35,16 +35,18 @@ function written(entry, key) {
 
 // How a block is set besides its size, as the overlay sets it, and only what it
 // has: the `box` a one-line block's text may fill and the `foot` a block's text
-// stops at (pdf/pageShape.js), the same as on screen, `centred`, `bold`,
-// `italic`, and a paragraph opener's `indent`, which a centred block does not
-// have (transBlock.js blockSetting). Its leading the server works out from the
-// lines, by the overlay's rule, and its ground and ink it reads from the file:
-// a page exported may never have been shown, so what the overlay sampled is
-// not there to send.
+// stops at (pdf/pageShape.js), the same as on screen, `centred` or `justified`,
+// `bold`, `italic`, a paragraph opener's `indent`, which a centred block does
+// not have (transBlock.js blockSetting), and the `face` it is mostly set in,
+// the font's name, which the server looks for in the file (pdf/paperFace.js).
+// Its leading the server works out from the lines, by the overlay's rule, and
+// its ground and ink it reads from the file: a page exported may never have
+// been shown, so what the overlay sampled is not there to send.
 const setting = (p) => ({
   ...(p.room && { box: box({ ...p, ...p.room }) }), ...(p.foot != null && { foot: round(p.foot) }),
-  ...(p.centred && { centred: true }), ...(p.bold && { bold: true }), ...(p.italic && { italic: true }),
-  ...(p.indent > 0 && !p.centred && { indent: round(p.indent) }),
+  ...(p.centred && { centred: true }), ...(p.justified && { justified: true }),
+  ...(p.bold && { bold: true }), ...(p.italic && { italic: true }),
+  ...(p.indent > 0 && !p.centred && { indent: round(p.indent) }), ...(p.face && { face: p.face }),
 });
 
 // What the export writes of a document's translated view: {pages: [{page,

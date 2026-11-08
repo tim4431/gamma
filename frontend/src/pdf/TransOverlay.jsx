@@ -13,6 +13,7 @@ import { REF_SCALE, blockBoxes, blockLanding, blockSetting, blockShow, cropBox, 
 import { langOfKey } from "./translateRecall.js";
 import { bestRatio, bodyBlocks, fitOf, keepCap, keepFit, keepPaints, layerCap, needsFit, pageCap, paintsOf, streamRatio } from "./transFit.js";
 import { pagePaints, sampleScale } from "./transPaint.js";
+import { hasGlyph, paperFamily } from "./paperFace.js";
 import { pageReading } from "./transSelect.js";
 import { textParts } from "./translateReply.js";
 
@@ -150,6 +151,10 @@ function readPaints(src, paras, width, height) {
 // does not fit at the floor runs out of its box, in sight. Its tokens come back
 // as the original's formulas (TransMath), citation markers and URLs.
 //
+// It is set in the paper's own font when that font draws every word of it
+// (paperFace.js), which then carries the block's weight and slant itself, and
+// in the overlay's serif otherwise. The fit is kept with the face it measured.
+//
 // While it streams, only the lines its text has reached are masked; the others
 // stay the original's, washed as a waiting paragraph's are. Where its text ends
 // is read after the fit, from the layout the fit has just made, once an update.
@@ -162,6 +167,9 @@ const TransPara = memo(function TransPara({ paras, index, text, streaming, again
   const block = paras[index];
   const { box, lines } = blockBoxes(block, REF_SCALE);
   const { lead, ragged, indent, italic } = blockSetting(block, lang);
+  // Its tokens read as an export writes them (translateReply.js textParts).
+  const read = textParts(text, { spans: block.spans, page, spanOf });
+  const face = paperFamily(block, read.filter((part) => typeof part === "string"), hasGlyph);
   const ref = useRef(null); // the text container (the fit-measured element)
   // The ratio it mounts with. React leaves it at that, the effect writes others.
   const [startFit] = useState(() => fitOf(paras, index)?.ratio ?? start ?? 1);
@@ -172,7 +180,7 @@ const TransPara = memo(function TransPara({ paras, index, text, streaming, again
     if (!el || !text) return undefined;
     const kept = fitOf(paras, index);
     const bare = el.querySelectorAll(".bare").length;
-    if (!needsFit(kept, text, bare, streaming)) return undefined;
+    if (!needsFit(kept, text, bare, streaming, face)) return undefined;
     const box = el.parentElement;
     const room = box.clientHeight;
     if (!room) {
@@ -188,28 +196,29 @@ const TransPara = memo(function TransPara({ paras, index, text, streaming, again
     const ratio = streaming ? streamRatio(fits, kept?.ratio ?? startFit) : bestRatio(fits);
     el.style.setProperty("--fit", ratio);
     el.style.removeProperty("--cap");
-    keepFit(paras, index, { text, ratio, bare, rough: streaming });
+    keepFit(paras, index, { text, ratio, bare, rough: streaming, face });
     return undefined;
-  }, [paras, index, text, streaming, pictures, startFit, onPicture]);
+  }, [paras, index, text, streaming, pictures, startFit, onPicture, face]);
   useLayoutEffect(() => {
     if (!streaming) return;
     const words = ref.current.firstElementChild;
     const bottom = words.offsetTop + words.offsetHeight;
     setReached((n) => Math.max(n, linesReached(lines, bottom))); // a step down of the fit takes no mask off
   }, [text, streaming]); // eslint-disable-line react-hooks/exhaustive-deps
-  // Its tokens read as an export writes them (translateReply.js textParts).
-  const parts = textParts(text, { spans: block.spans, page, spanOf }).map((part, k) => {
+  const parts = read.map((part, k) => {
     if (typeof part !== "string") {
       return <TransMath key={k} span={part.span} page={part.page} em={block.size} basePaints={basePaints} onPicture={onPicture} />;
     }
     return paint?.ink ? <span key={k} className="pdfTransInk">{part}</span> : part;
   });
   const shape = [streaming && "streaming", landed && "landing", landed === "streamed" && "streamed", body && "bodyText", ragged && "ragged",
-    block.centred && "centred", block.bold && "bold", italic && "italic", block.overFigure && "overFigure", paint?.ink && "inked"];
+    block.centred && "centred", face ? "paperFace" : block.bold && "bold", !face && italic && "italic", block.overFigure && "overFigure",
+    paint?.ink && "inked"];
   const masked = streaming && !again ? lines.slice(0, reached) : lines;
   return (
     <div className={["pdfTransPara", ...shape.filter(Boolean)].join(" ")} data-block={index} style={{
       left: box.left, top: box.top, width: box.width, height: box.height, "--ground": paint?.ground ?? undefined, "--ink": paint?.ink ?? undefined,
+      "--paper-face": face ? `"${face}"` : undefined,
     }}>
       {masked.map((l, i) => (
         <div key={i} className={"pdfTransMask" + (paint?.ground ? " tinted" : "")} style={{ left: l.left, top: l.top, width: l.width, height: l.height }} />

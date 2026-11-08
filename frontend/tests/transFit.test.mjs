@@ -58,6 +58,13 @@ test("a base paint measures a block again only if a formula in it became a pictu
   assert.equal(needsFit({ ...kept, bare: 0 }, "译文", 1, false), false, "a picture let go keeps the ratio");
 });
 
+test("a block set in another face than it was measured in measures again", () => {
+  const kept = { text: "the words", ratio: 0.9, bare: 0, face: "g_d0_f2" };
+  assert.equal(needsFit(kept, "the words", 0, false, "g_d0_f2"), false);
+  assert.equal(needsFit(kept, "the words", 0, true, null), true, "a letter the paper's font lacks streamed in");
+  assert.equal(needsFit({ text: "译文", ratio: 0.8, bare: 0 }, "译文", 0, false, null), false, "a record kept with no face is the serif's");
+});
+
 test("a text that lands as its last partial searches, which the stream did not", () => {
   const rough = { text: "译文", ratio: 0.93, bare: 0, rough: true };
   assert.equal(needsFit(rough, "译文", 0, true), false);

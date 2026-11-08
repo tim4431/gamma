@@ -55,6 +55,27 @@ test("a formula does not count against a bold block, nor a math italic for an it
   assert.equal(segmentPage(mathOnly)[0].italic, false);
 });
 
+test("a block names the font most of its text is in, when the file holds it and it is no Type 3", () => {
+  const roman = words("the roman text of a paragraph runs on", 72, 100).map((r) => ({ ...r, font: "g_d0_f2", face: "CMR10" }));
+  const emphasis = words("in italics", 250, 100).map((r) => ({ ...r, font: "g_d0_f3", face: "CMTI10" }));
+  const [p] = segmentPage([...roman, ...emphasis]);
+  assert.deepEqual([p.font, p.face], ["g_d0_f2", "CMR10"]);
+  const loose = roman.map((r) => ({ ...r, noFile: true }));
+  assert.equal(segmentPage(loose)[0].font, undefined, "drawn in a font of the machine's: not the paper's");
+  assert.equal(segmentPage(roman.map((r) => ({ ...r, type3: true })))[0].font, undefined, "a Type 3 font");
+  assert.equal(segmentPage(roman.map((r) => ({ ...r, face: "" })))[0].font, undefined, "a font without a name");
+  const fixture = blockWith(page(1), "Ensembles of neutral atoms");
+  assert.equal(fixture.face, "CMR10");
+});
+
+test("textRuns says which runs' fonts the file does not hold", () => {
+  const items = [{ str: "Hi", transform: [10, 0, 0, 10, 72, 700], width: 10, fontName: "g_d0_f1" },
+                 { str: "Ho", transform: [10, 0, 0, 10, 90, 700], width: 10, fontName: "g_d0_f2" }];
+  const faces = new Map([["g_d0_f1", { name: "Helvetica", type3: false, noFile: true }], ["g_d0_f2", { name: "CMR10", type3: false, noFile: false }]]);
+  const [loose, held] = textRuns(items, [1, 0, 0, -1, 0, 800], { faces });
+  assert.deepEqual([loose.noFile, held.noFile], [true, undefined]);
+});
+
 test("a face changes a block's style, never what goes to the model", () => {
   const set = (face) => words("Words of a heading set whole", 72, 100).map((r) => ({ ...r, face }));
   const [plain] = segmentPage(set("CMR10")), [bold] = segmentPage(set("CMBX10"));

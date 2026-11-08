@@ -5832,6 +5832,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfTransPara.centred { text-align: center; }
 .pdfTransPara.bold { font-weight: 600; }
 .pdfTransPara.italic { font-style: italic; }
+/* The paper's own font, when it draws every word (pdf/paperFace.js): pdf.js's
+   face, which carries its weight and slant. A blank it lacks comes from the next. */
+.pdfTransPara.paperFace { font-family: var(--paper-face), var(--font-page); /* ds-allow: the PDF's own font, then the page face */ }
 /* A CJK face with no bold of its own stays regular: at body size the browser's
    synthetic bold fills its strokes in. Latin words beside it keep their bold. */
 .pdfTransPara.bold:is(:lang(zh), :lang(ja), :lang(ko)) { font-synthesis: none; }

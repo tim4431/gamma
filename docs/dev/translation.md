@@ -679,14 +679,44 @@ page, so its text never re-wraps and a zoom does no layout.
   relies on no hyphenation: a browser without the language's dictionary breaks
   fewer words and measures that. `overflow-wrap: anywhere` keeps a long word
   in a narrow box.
+- **The paper's own face** (`pdf/paperFace.js`). `blockFace` names the font
+  most of a block's text is in by the characters, formulas left out: `font`,
+  pdf.js's id for it (`g_d0_f2`), and `face`, its name without the subset tag
+  (`CMR10`), when the file holds the font (`pdfFonts` reads pdf.js's
+  `missingFile`) and it is no Type 3 font. pdf.js loads an embedded font into
+  `document.fonts` under that id, its glyphs mapped from the characters it
+  knows (pdf.js 4.4's `toUnicodeExtraMap`), so the block is set in it
+  (`.paperFace`, `--paper-face`, then `--font-page`) when it draws every
+  letter of the block's words, blanks and format characters aside: TeX's fonts
+  have no space, which the browser takes from the next face. `hasGlyph` asks a
+  canvas: a character measured in the font with two different fallbacks
+  behind it is as wide both ways only when the font has it, and its glyph must
+  hold ink, since a subset can keep a letter's place and empty its outline. It
+  keeps the answer per font and character. A subset holds only the letters the
+  paper used, so a translation into another language often needs one it
+  lacks; the block then keeps `--font-page` whole, one face a block, not a
+  letter here and there in another. The paper's font carries its own weight
+  and slant, so the block drops `.bold` and `.italic`. A streaming paragraph
+  can lose the face when a letter it lacks streams in; the fit keeps the face it
+  measured (`transFit.needsFit`), so it measures again then. The id is the open
+  document's: the translation keeps a paper's blocks longer than the viewer
+  keeps its pdf.js document (`MAX_DOCS` against `DOC_CACHE_MAX`), and
+  destroying the document takes its fonts out of `document.fonts`. So the face
+  is used only while its FontFace is there (`fontLive`), and what `hasGlyph`
+  read is kept with the FontFace it read it from; a paper opened again after the
+  viewer let it go sets its translation in `--font-page`, with `.bold` and
+  `.italic`, since its blocks still name the old ids. The export decides
+  the same on the file's own copy of the font ("Exporting the translation").
 - **Leading and shape** (`transBlock.blockSetting`). Latin and Cyrillic targets
   take the block's own pitch, the median step between its lines' tops over its
   size, held to 1.12 to 1.30 (1.15 for one line). CJK keeps 1.28: its glyphs fill
   the em. A paragraph opener's `indent` is its `text-indent`, in the page's
   terms; a hanging indent has nowhere to go, and a centred block has none: its
-  first line is only shorter than its second. A box under 18 em wide is not
-  justified. The export takes the same leading and indent ("Exporting the
-  translation").
+  first line is only shorter than its second. A block is justified when the
+  original is (`justified`, "Centred blocks and room") and its box is 18 em
+  wide or more, and ragged (`.ragged`) otherwise: a narrower box opens wide
+  gaps. The export takes the same leading, indent and justification
+  ("Exporting the translation").
 - **Weight and slant.** `segmentPage` sets a block's `bold` and `italic` when
   90% of its text by the characters is in such a face, formulas left out
   (`blockFace`, `pdfMath.faceStyle`), so a bold lead-in or an italic phrase
@@ -705,7 +735,7 @@ page, so its text never re-wraps and a zoom does no layout.
 
 `pdf/pageShape.js` `markShape` runs where a page is segmented, after
 `markFigures`, so the overlay and the export read the same blocks: `centred`,
-`room` and `foot`. It takes
+`justified`, `room` and `foot`. It takes
 the columns from `pageLayout` (`edges`): a band of one column has the text width
 as its edges, and a block out of the flow, a caption or a running head, takes
 the nearest column that holds most of it.
@@ -716,6 +746,16 @@ the nearest column that holds most of it.
   width are a justified block inset from both edges, as an abstract is. A long
   line opening in lower case goes on from somewhere. Over 467 pages of 60
   papers it marks 412 blocks, 10 of them of several lines.
+- **Justified** (`isJustified`), for a block that is not centred: its lines but
+  the last end within half an em of one right edge (a hyphen or a protruded
+  comma stands a little off) and its lines but the first start within half an
+  em of one left edge, where a ragged block's lines end where their words do.
+  Three lines or more say so by themselves. Of two lines the first is the
+  block's widest whatever the setting, so it must also end at the column's
+  edge; one line must fill the column from its left edge, or from an opener's
+  indent of 2 em at most: a paragraph's first line at a column's foot. On the
+  fixture paper every body paragraph is justified, and its table rows, its
+  lone lines and its reference entries are not.
 - **Room** (`roomOf`): a one-line block's `room`, `{x1, x2}`, the box its text may
   fill out to the column's edge, 1 em short of a line or figure beside it (one
   that shares a quarter of the shorter one's height: lines above and below touch
@@ -1730,10 +1770,12 @@ session's first translation to finish says so on the pill, with **Export…**.
   overlay's own function (`translateReply.textParts`): a formula becomes its
   page, box and baseline, a citation marker or URL its text.
 - **The request** is `translation: {doc_id, lang, pages: [{page, blocks:
-  [{lines, size, parts, box?, foot?, centred?, bold?, italic?, indent?}]}]}`
-  beside the switches in `POST /api/jobs/export` ([api.md](api.md)), in the
-  viewer's units. `box` is a one-line block's room and `foot` where its text
-  stops, the same as on screen; a centred block sends no `indent`. Every field
+  [{lines, size, parts, box?, foot?, centred?, justified?, bold?, italic?,
+  indent?, face?}]}]}` beside the switches in `POST /api/jobs/export`
+  ([api.md](api.md)), in the viewer's units. `box` is a one-line block's room
+  and `foot` where its text stops, the same as on screen; a centred block sends
+  no `indent`. `face` is the name of the font most of the block is in, which
+  the server finds in the file by it; pdf.js's id means nothing there. Every field
   with a `?` may be absent: an older client calls a newer server. The leading comes from
   `lines`, and ground and ink from the file itself, so no colour is sent. App sends it (`exportTranslation`,
   through `tasks/useAppJobs.js` `runExport`) for a page's annotated PDF (a
@@ -1796,12 +1838,41 @@ under `skipped`.
    with its leading (`_leading`: the rule of `transBlock.blockLeading`,
    "Leading and shape"), its first line's indent (in em,
    so it shrinks with the text, where the overlay's stays the page's), bold,
-   italic and centred as the block is (no italic for CJK), shrunk until it
+   italic and centred as the block is (no italic for CJK), justified where the
+   original is and the box is 18 em wide (`_setting`, `JUSTIFY_EM`, the
+   overlay's rule), shrunk until it
    fits, down to 5%, the overlay's `MIN_FIT` too: past that it runs out of its
    box whole, as on screen. Every page's blocks go into one temporary document,
    subset once, whose pages are shown on theirs, so a font is embedded once for
    the whole file. A formula holds its place in the line as an empty picture of
-   its width and its height above the baseline.
+   its width and its height above the baseline; in a justified line too, MuPDF
+   reports the place where it draws it.
+   **The face** is the paper's own where it can be (`_paper_faces`): the
+   block's `face` is looked up by name among its page's fonts (subset tag and
+   a composite font's `-Identity-H` left off both sides), embedded and no Type
+   3, and the font is used when it has a glyph with an outline for every letter
+   the block sets, blanks and format characters aside (`_PaperFont.inked`:
+   MuPDF's own subsetter keeps a dropped letter's place and empties it, which
+   `has_glyph` still counts). A composite font's program often maps no
+   character to a glyph: LuaLaTeX and XeLaTeX embed every OpenType font as a
+   bare CID-keyed CFF, and a subset TrueType program can come without its
+   cmap. Such a program is given a Unicode cmap from the file's ToUnicode
+   first, as pdf.js does for the overlay (`gamma/pdf_font_cmap.py`): a
+   CID-keyed CFF is written again with each glyph at its CID (MuPDF reads a
+   CIDFontType0's codes as CIDs, so the glyph index the text is written with
+   must be one) and wrapped in an OpenType file, a TrueType program has its
+   cmap replaced, its glyphs found through `/CIDToGIDMap`. A CID the
+   ToUnicode names as several characters (a ligature) stays out of it. The
+   program goes into the stories' archive as
+   `pf<xref>.<ext>` and each block's CSS names it in an `@font-face`; MuPDF
+   embeds it once however many blocks load it, and without its weight or slant
+   set over it, which it has itself. The blanks it lacks (TeX's fonts have
+   no space) are set in Charis (`_blanks`, `span.gs`), which the file has for
+   the other blocks anyway, where MuPDF's own fallback would bring in Noto
+   Serif, 60 KB, for the spaces alone. A Type 1 program is embedded as it was
+   extracted: `subset_fonts` leaves it, and it was a subset already (21 KB for
+   the fixture's CMR10). A block whose letters the font lacks, which on a TeX
+   paper translated out of English is most, keeps the serif whole.
 3. **Stamped.** The temporary page is shown over the page, turned with it,
    and each formula goes on the baseline at its placeholder's place as a
    picture of its box on the original page (`FORMULA_DPI`, 600; coarser
@@ -1854,16 +1925,21 @@ pdf.js (236 against 236, 237).
 
 **What the file does not take from the overlay.**
 
-- **The faces.** The export keeps MuPDF's serif fonts, embedded and subset,
-  whatever the machine: Charis SIL, Noto Serif for a letter it lacks, and Droid
-  Sans Fallback for all of Chinese, Japanese and Korean. The overlay's
-  `--font-page` (Times New Roman and a serif per CJK language) is the reader's
-  own machine's and cannot be embedded. So a CJK file is in a sans, and bold CJK is
-  MuPDF's synthetic bold. Charis also sets wider than Times.
+- **The faces.** Where the paper's own font cannot set a block, the export
+  keeps MuPDF's serif fonts, embedded and subset, whatever the machine: Charis
+  SIL, Noto Serif for a letter it lacks, and Droid Sans Fallback for all of
+  Chinese, Japanese and Korean. The overlay's `--font-page` (Times New Roman
+  and a serif per CJK language) is the reader's own machine's and cannot be
+  embedded. So a CJK file is in a sans, and bold CJK is MuPDF's synthetic
+  bold. Charis also sets wider than Times. The paper's own font is the same
+  program on both sides, but the overlay reads pdf.js's rebuilt copy and the
+  export MuPDF's, so on a font whose characters pdf.js cannot name the two can
+  decide differently.
 - **The page's cap.** Each block shrinks by itself, so the body paragraphs of a
   file differ in size where the screen's share a cap.
-- **Justification.** Text is ragged in the file. A line justified in `Story`
-  was not tried: the formulas' places are read from what `Story` reports.
+- **Hyphenation.** `Story` hyphenates nothing, so a justified line in the file
+  can have wider gaps than the overlay's, which hyphenates where the browser
+  has the language's dictionary.
 - **The treatment.** The file holds the page's own colours; flipped colours and
   the themes are the viewer's.
 
@@ -1871,7 +1947,8 @@ MuPDF's behaviour the writer depends on, each held by a test in
 `tests/test_translated_pdf.py`:
 
 - A picture in a line is reported 0.8 of its height above where it is drawn
-  (`_IMAGE_DROP`), with its bottom on the baseline.
+  (`_IMAGE_DROP`), with its bottom on the baseline, and in a justified line
+  at the place the widened gaps move it to.
 - The writer draws the empty placeholder as an opaque pixel stretched over
   its place, so the temporary pages' pictures are taken out before use (each
   drawing replaced by its formula's hidden text).

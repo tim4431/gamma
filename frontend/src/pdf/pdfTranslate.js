@@ -8,10 +8,11 @@
 // A run is {str, x, y, w, h}: baseline-left origin at scale-1 viewport
 // coordinates, w the advance width, h the font height (both viewport units),
 // plus its font's name and glyph metrics (textRuns).
-// A block is {x1, y1, x2, y2, size, nLines, lines, indent, bold, italic, text,
-// src, spans, translate} — the tight bbox the overlay masks and refills, its
-// per-line rects, the dominant font height, whether it is set whole in a bold
-// or italic face (blockFace), the text as extracted, the text for the
+// A block is {x1, y1, x2, y2, size, nLines, lines, indent, bold, italic, font,
+// face, text, src, spans, translate} — the tight bbox the overlay masks and
+// refills, its per-line rects, the dominant font height, whether it is set
+// whole in a bold or italic face and the font most of it is in (blockFace),
+// the text as extracted, the text for the
 // model with its formulas, citations and URLs as tokens and what each token
 // stands for (blockSource), and whether it is prose worth sending at all
 // (equations, bare numbers, stray symbols and author lines stay original — a
@@ -41,7 +42,7 @@ export function textRuns(items, transform, { faces = null, styles = null } = {})
       // Text not running left to right on screen (after the page's own
       // /Rotate, which the viewport transform includes).
       rotated: Math.abs(tx[1]) > Math.abs(tx[0]) * 0.05 || tx[0] < 0,
-      face: face?.name || "", type3: !!face?.type3,
+      face: face?.name || "", type3: !!face?.type3, ...(face?.noFile && { noFile: true }),
       asc: metrics ? style.ascent : 0.8,
       desc: metrics ? style.descent : -0.25,
     };
@@ -488,10 +489,15 @@ function blockSource(lines) {
 // Whether a block is set whole in a bold or italic face: nearly all its text is,
 // by the characters, its formulas left out. A bold lead-in ("Notes:") or an
 // italic phrase in a paragraph is no such block. A font without a name
-// (a Type 3 font's, or none known yet) counts against both.
+// (a Type 3 font's, or none known yet) counts against both. The font most of
+// it is set in, by the same count, is its `font` (pdf.js's id, which the
+// overlay sets the translation in) and `face` (its name, which the export finds
+// it in the file by), when the file holds that font and it is no Type 3 one
+// (pdf/paperFace.js).
 const WHOLE_BLOCK = 0.9;
 function blockFace(lines) {
   let all = 0, bold = 0, italic = 0;
+  const fonts = new Map();
   for (const l of lines) {
     for (const r of l.runs) {
       const chars = r.str.replace(/\s/g, "").length;
@@ -500,9 +506,16 @@ function blockFace(lines) {
       all += chars;
       if (style.bold) bold += chars;
       if (style.italic) italic += chars;
+      const f = fonts.get(r.font) || { run: r, chars: 0 };
+      f.chars += chars;
+      fonts.set(r.font, f);
     }
   }
-  return { bold: all > 0 && bold >= all * WHOLE_BLOCK, italic: all > 0 && italic >= all * WHOLE_BLOCK };
+  const out = { bold: all > 0 && bold >= all * WHOLE_BLOCK, italic: all > 0 && italic >= all * WHOLE_BLOCK };
+  let most = null;
+  for (const f of fonts.values()) if (!most || f.chars > most.chars) most = f;
+  const r = most?.run;
+  return r && r.font && r.face && !r.type3 && !r.noFile ? { ...out, font: r.font, face: r.face } : out;
 }
 
 // A block accumulated too eagerly can wrap AROUND a figure: full-width lines

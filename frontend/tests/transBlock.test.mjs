@@ -192,9 +192,10 @@ test("Latin and Cyrillic take the block's own pitch, within what papers set; CJK
   for (const lang of ["zh-CN", "zh-TW", "ja", "ko"]) assert.equal(blockLeading(block(0, 12, 24), lang), 1.28);
 });
 
-test("a narrow box is not justified, and an opener's indent is the page's, in px of the layout scale", () => {
-  const block = { size: 10, x1: 0, x2: 250, lines: lines(0, 12), indent: 12 };
+test("a block justified in the original is, unless its box is narrow, and an opener's indent is the page's, in px of the layout scale", () => {
+  const block = { size: 10, x1: 0, x2: 250, lines: lines(0, 12), indent: 12, justified: true };
   assert.deepEqual(blockSetting(block, "de"), { lead: 1.2, ragged: false, indent: 24, italic: false });
+  assert.equal(blockSetting({ ...block, justified: undefined }, "de").ragged, true, "ragged where the original is");
   assert.equal(blockSetting({ ...block, x2: 120 }, "de").ragged, true);
   assert.equal(blockSetting({ ...block, x2: 120, room: { x1: 0, x2: 250 } }, "de").ragged, false, "by the room it has");
   assert.equal(blockSetting({ ...block, indent: -14 }, "de").indent, 0, "a hanging one has no place to go");

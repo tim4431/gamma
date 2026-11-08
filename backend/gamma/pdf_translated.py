@@ -26,10 +26,12 @@ file what the overlay does on screen (frontend/src/pdf/TransOverlay.jsx):
    boxes that meet it) are put back as they were.
 2. **The translation is laid out** in the block's box by MuPDF's HTML
    engine (``Story``), at the block's size and with the overlay's leading,
-   shrunk until it fits (down to ``MIN_SCALE``, the overlay's floor too), in
-   a serif face (Charis SIL, Noto Serif for a letter it lacks, Droid Sans
-   Fallback for CJK: MuPDF's own fonts, not the overlay's). Every page's
-   blocks go into one temporary
+   justified where the original is (``_setting``), shrunk until it fits
+   (down to ``MIN_SCALE``, the overlay's floor too), in the paper's own
+   font when the file holds it and it draws every letter of the
+   translation (``_paper_faces``), else in a serif face (Charis SIL, Noto
+   Serif for a letter it lacks, Droid Sans Fallback for CJK: MuPDF's own
+   fonts, not the overlay's). Every page's blocks go into one temporary
    document, so each font is embedded once, subset to the characters used,
    and shared by every page it is stamped on. A formula takes its place in
    the text as an empty picture of its size, which reports where the line
@@ -55,8 +57,9 @@ import itertools
 import io
 import math
 import re
+import unicodedata
 
-from . import pdf_text
+from . import pdf_font_cmap, pdf_text
 
 # Of a line's height, the part above and below its middle that is not
 # redacted. On the library's fixture paper, 0.3 removed every glyph of the
@@ -70,6 +73,9 @@ PAD = 0.75
 # CJK's, whose glyphs fill the em.
 LEADING_MIN, LEADING_MAX, LEADING_SINGLE, LEADING_CJK = 1.12, 1.3, 1.15, 1.28
 INK = "#1c1c1c"     # the overlay's usual text colour (.pdfTransText)
+# A box narrower than this many em of its size is set ragged even where the
+# original is justified: its gaps open wide (transBlock.js JUSTIFY_EM).
+JUSTIFY_EM = 18
 MIN_SCALE = 0.05    # the smallest a translation is shrunk to make it fit (transFit.js MIN_FIT)
 _CJK = {"zh", "ja", "ko"}  # the language tags whose glyphs fill the em and have no italic
 FORMULA_DPI = 600  # a formula's picture: about 1 KB for an inline symbol
@@ -87,6 +93,11 @@ _PLACEHOLDER = b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'
 _PLACEHOLDER_NAME = "formula.svg"
 _DEFAULT_SPACES = ("DefaultGray", "DefaultRGB", "DefaultCMYK")
 _FORMULA_FONTS = []  # a formula's hidden text's faces, loaded on first use (_formula_fonts)
+# A font's name as the viewer sends it and as the file names it: no subset
+# tag, and a composite font's encoding off its end.
+_SUBSET_TAG = re.compile(r"^[A-Z]{6}\+")
+_ENCODING_SUFFIX = re.compile(r"-Identity-[HV]$")
+_BLANKS = re.compile(r"[ \t\r\n]+|\xa0+")  # runs of the blanks set in the serif when the paper's font has none
 # A page's sample, and the rules that read a block's ground and ink from it: the
 # overlay's (frontend/src/pdf/transPaint.js), which says why each is what it is.
 SAMPLE_SCALE = 2           # pixels per pt
@@ -161,17 +172,43 @@ def _formula_ok(part, frames, frame) -> bool:
     return x1 > x0 and y1 > y0 and x0 >= -0.5 and y0 >= -0.5 and x1 <= width + 0.5 and y1 <= height + 0.5
 
 
+def _set_text(block, frames, frame):
+    """What a block's story sets as text: its words, and the text of each
+    formula that cannot be its picture."""
+    for part in block["parts"]:
+        if isinstance(part, str):
+            yield part
+        elif not _formula_ok(part, frames, frame):
+            yield part.get("text") or ""
+
+
+def _blanks(text: str, paper) -> str:
+    """An escaped text with each run of blanks the paper's font does not
+    draw (TeX's fonts have no space) set in the serif (``span.gs``), Charis
+    SIL, which the file has for the other blocks anyway: MuPDF's own fallback
+    would bring in Noto Serif, 60 KB, for the spaces alone."""
+    if paper is None:
+        return text
+
+    def wrap(match):
+        blank = match[0] if match[0][0] == "\xa0" else " "
+        return blank if paper.draws_blank(blank[0]) else f'<span class="gs">{blank}</span>'
+
+    return _BLANKS.sub(wrap, text)
+
+
 def _block_html(block, lang, frames, frame):
     """A block's translation as the HTML its story lays out, and the
     formulas in it in order: ``(part, width, ascent, descent)`` in MuPDF's
     units, a picture ``f<k>`` of ``width`` by ``ascent`` standing for each."""
     out, formulas = [], []
+    paper = block.get("paper")
     for part in block["parts"]:
         if isinstance(part, str):
-            out.append(html.escape(part, quote=False))
+            out.append(_blanks(html.escape(part, quote=False), paper))
             continue
         if not _formula_ok(part, frames, frame):
-            out.append(html.escape(part.get("text") or "", quote=False))
+            out.append(_blanks(html.escape(part.get("text") or "", quote=False), paper))
             continue
         u = frame.unit  # in the viewer's units, the same size on the page it goes on
         x0, _, x1, _ = part["box"]
@@ -210,13 +247,33 @@ def _leading(block, lang: str) -> float:
     return min(LEADING_MAX, max(LEADING_MIN, steps[(len(steps) - 1) // 2] / block["size"]))
 
 
+def _edges(block):
+    """The left and right of the box a block's text fills, in the viewer's
+    units: a one-line block's room (``box``), else its lines'."""
+    if block.get("box") and block["box"][2] > block["box"][0]:
+        return block["box"][0], block["box"][2]
+    return min(line[0] for line in block["lines"]), max(line[2] for line in block["lines"])
+
+
 def _setting(block, lang: str) -> str:
-    """How a block is set besides its size, as CSS. As on screen, CJK text
-    is never italic: its fonts have none. The first line's indent is in em,
-    so it shrinks with the text, where the overlay's stays the page's."""
-    out = ("text-align:center;" if block.get("centred") else "") + ("font-weight:bold;" if block.get("bold") else "")
-    if block.get("italic") and not _is_cjk(lang):
-        out += "font-style:italic;"
+    """How a block is set besides its size, as CSS, the overlay's rules
+    (transBlock.js blockSetting): centred, or justified where the original is
+    (pageShape.js isJustified) and the box is ``JUSTIFY_EM`` wide, else
+    ragged. As on screen, CJK text is never italic: its fonts have none, and
+    a block in the paper's own font takes its weight and slant from it. The
+    first line's indent is in em, so it shrinks with the text, where the
+    overlay's stays the page's."""
+    left, right = _edges(block)
+    if block.get("centred"):
+        out = "text-align:center;"
+    elif block.get("justified") and right - left >= block["size"] * JUSTIFY_EM:
+        out = "text-align:justify;"
+    else:
+        out = ""
+    if block.get("paper") is None:
+        out += "font-weight:bold;" if block.get("bold") else ""
+        if block.get("italic") and not _is_cjk(lang):
+            out += "font-style:italic;"
     if block.get("indent", 0) > 0:
         out += f"text-indent:{block['indent'] / block['size']:.3f}em;"
     return out
@@ -226,8 +283,15 @@ def _hex(colour) -> str:
     return "#{:02x}{:02x}{:02x}".format(*colour)
 
 
-def _css(size: float, lead: float = LEADING_SINGLE, ink: str = INK, setting: str = "") -> str:
-    return (f"body{{margin:0}} p{{margin:0;font-family:serif;font-size:{size:.3f}px;"
+def _css(size: float, lead: float = LEADING_SINGLE, ink: str = INK, setting: str = "", paper=None) -> str:
+    """A block's style sheet: the serif, or the ``paper``'s own font (a
+    ``_PaperFont`` the story's archive holds) with the serif behind it, for
+    the blanks it lacks."""
+    family, face = "serif", ""
+    if paper is not None:
+        family = f"{paper.family},serif"
+        face = f"@font-face{{font-family:{paper.family};src:url({paper.file})}} span.gs{{font-family:serif}} "
+    return (f"{face}body{{margin:0}} p{{margin:0;font-family:{family};font-size:{size:.3f}px;"
             f"line-height:{lead:.3f};color:{ink};{setting}}}")
 
 
@@ -236,17 +300,15 @@ def _layout_block(mupdf, device, archive, block, lang, frames, frame):
     in its box, and say where its formulas went: ``[(part, dest)]``, dest
     the rectangle in the page's display frame, MuPDF's units."""
     u = frame.unit
-    xs0, ys0, xs1, ys1 = zip(*block["lines"])
-    left, right = min(xs0), max(xs1)
-    if block.get("box") and block["box"][2] > block["box"][0]:  # the room the viewer gave a one-line block
-        left, right = block["box"][0], block["box"][2]
+    _, ys0, _, ys1 = zip(*block["lines"])
+    left, right = _edges(block)
     bottom = max(ys1) + PAD
     if block.get("foot") is not None:  # the next block starts inside the box: its text opens PAD above that
         bottom = min(bottom, block["foot"] - PAD)
     box = mupdf.Rect((left - PAD) * u, (min(ys0) - PAD) * u, (right + PAD) * u, bottom * u)
     markup, formulas = _block_html(block, lang, frames, frame)
     ink = _hex(block["ink"]) if block.get("ink") else INK
-    css = _css(block["size"] * u, _leading(block, lang), ink, _setting(block, lang))
+    css = _css(block["size"] * u, _leading(block, lang), ink, _setting(block, lang), block.get("paper"))
     story = mupdf.Story(markup, user_css=css, archive=archive)
     no_overflow = mupdf.mupdf.FZ_PLACE_STORY_FLAG_NO_OVERFLOW
     fit = story.fit_scale(mupdf.Rect(0, 0, box.width, box.height), scale_min=1, scale_max=1 / MIN_SCALE,
@@ -300,7 +362,101 @@ def _pages(pages, count: int) -> dict:
     return dict(sorted(out.items()))
 
 
-def _sheets(mupdf, todo, frames, lang):
+def _font_name(name) -> str:
+    return _ENCODING_SUFFIX.sub("", _SUBSET_TAG.sub("", name or "")).strip()
+
+
+def _unseen(c: str) -> bool:
+    """A character that needs no glyph to be read: a blank or a format
+    character (pdf/paperFace.js UNSEEN)."""
+    return c.isspace() or unicodedata.category(c) == "Cf"
+
+
+class _PaperFont:
+    """A font of the file a translation may be set in: its program as the
+    temporary document's story reads it (``file`` in its archive, ``family``
+    in its CSS), and what it draws. Made and asked under the lock."""
+
+    def __init__(self, mupdf, xref: int, ext: str, buffer: bytes):
+        self.family, self.file, self.buffer = f"pf{xref}", f"pf{xref}.{ext}", buffer
+        self._low = mupdf.mupdf
+        self._font = mupdf.Font(fontbuffer=buffer)
+        self._inked = {}
+
+    def inked(self, c: str) -> bool:
+        """Whether the font has a glyph for ``c`` with an outline: a subset
+        can keep a letter's place in the font and empty its outline (MuPDF's
+        own subsetter does), which ``has_glyph`` still counts. A glyph MuPDF
+        cannot outline counts as none."""
+        if c not in self._inked:
+            low = self._low
+            try:
+                gid = self._font.has_glyph(ord(c))
+                path = low.fz_outline_glyph(self._font.this, gid, low.FzMatrix()) if gid else None
+                self._inked[c] = bool(path is not None and path.m_internal is not None and not low.fz_is_empty_rect(
+                    low.fz_bound_path(path, low.FzStrokeState(), low.FzMatrix())))
+            except Exception:  # a damaged glyph program
+                self._inked[c] = False
+        return self._inked[c]
+
+    def draws_blank(self, c: str) -> bool:
+        return bool(self._font.has_glyph(ord(c))) and self._font.glyph_advance(ord(c)) > 0
+
+    def covers(self, chars) -> bool:
+        return all(self.inked(c) for c in chars if not _unseen(c))
+
+
+def _paper_faces(mupdf, doc, todo, frames) -> dict:
+    """The file's own font each block is set in, as its ``paper``: the one
+    the viewer says most of its text is in (``face``, a name), found by that
+    name among its page's fonts, embedded and no Type 3, when it has a glyph
+    with ink for every letter the block sets (``_set_text``). A subset holds
+    only the letters the paper used, so a translation into another language
+    often needs one it lacks, and the block then keeps the serif whole: one
+    face a block, not a letter here and there in another. The overlay
+    decides the same on pdf.js's copy of the font (pdf/paperFace.js). →
+    {family: _PaperFont} of the fonts used."""
+    fonts, used = {}, {}
+    for pn, blocks in todo.items():
+        wanted = [block for block in blocks if block.get("face") and block["parts"]]
+        if not wanted:
+            continue
+        with pdf_text._lock:
+            listed = doc.get_page_fonts(pn - 1, full=True)
+            named = {}
+            for xref, ext, kind, base, *_ in listed:
+                if ext not in ("", "n/a") and kind != "Type3":
+                    named.setdefault(_font_name(base), []).append((xref, ext))
+            for block in wanted:
+                chars = set("".join(_set_text(block, frames, frames[pn])))
+                for xref, ext in named.get(_font_name(block["face"]), []):
+                    if xref not in fonts:
+                        fonts[xref] = _paper_font(mupdf, doc, xref, ext)
+                    font = fonts[xref]
+                    if font is not None and font.covers(chars):
+                        block["paper"] = used[font.family] = font
+                        break
+    return used
+
+
+def _paper_font(mupdf, doc, xref: int, ext: str):
+    """The font object ``xref`` of the file as a ``_PaperFont``, or None for
+    one MuPDF cannot read. A composite font's program that maps no
+    character to its glyphs (a bare CID-keyed CFF, as LuaLaTeX and XeLaTeX
+    embed every OpenType font) is given a cmap from the file's ToUnicode
+    first (``pdf_font_cmap``), as pdf.js does for the overlay. Under the
+    lock."""
+    try:
+        buffer = doc.extract_font(xref)[3]
+        if not buffer:
+            return None
+        buffer, ext = pdf_font_cmap.unicode_program(mupdf, doc, xref, ext, buffer) or (buffer, ext)
+        return _PaperFont(mupdf, xref, ext, buffer)
+    except Exception:  # a damaged font program: the block keeps the serif
+        return None
+
+
+def _sheets(mupdf, todo, frames, lang, papers=None):
     """Step 2: every page's translation laid out on a page of one new
     document (``_layout_block``), its fonts subset. → (the document, page
     number → the formulas placed on it, the pages with anything drawn).
@@ -308,9 +464,13 @@ def _sheets(mupdf, todo, frames, lang):
     writer draws each formula's empty placeholder as a picture of a pixel
     stretched over its place, opaque; a sheet has no other picture, so each
     drawing of one becomes its formula's hidden text (``_formula_texts``)
-    before the fonts are subset."""
+    before the fonts are subset. ``papers`` (``_paper_faces``) go into the
+    stories' archive: MuPDF embeds a font program once however many
+    stories load it."""
     archive = mupdf.Archive()
     archive.add((_PLACEHOLDER, _PLACEHOLDER_NAME))
+    for paper in (papers or {}).values():
+        archive.add((paper.buffer, paper.file))
     out = io.BytesIO()
     formulas, drawn = {}, set()
     with pdf_text._lock:
@@ -713,7 +873,8 @@ def write(pdf_bytes: bytes, pages, lang: str) -> bytes:
     [{lines: [[x0, y0, x1, y1], …], size, parts: [text | {page, box, base,
     text}]}]}]``, the viewer's units, and how a block is set where the
     overlay sets it so, each optional: ``box``, ``foot``, ``centred``,
-    ``bold``, ``italic``, ``indent``. A block whose ``parts`` are empty loses its lines
+    ``justified``, ``bold``, ``italic``, ``indent``, and ``face``, the name of
+    the font most of it is in. A block whose ``parts`` are empty loses its lines
     and gets nothing (its words went to the part before it). Pages outside the file are left out, and nothing to write answers
     the bytes as they came. ValueError for a file that needs a password."""
     mupdf = pdf_text._pymupdf()
@@ -739,7 +900,8 @@ def write(pdf_bytes: bytes, pages, lang: str) -> bytes:
                     del page
             for block in blocks:
                 block.update(_paint(sample, block))
-        sheets, formulas, drawn = _sheets(mupdf, todo, frames, lang)
+        papers = _paper_faces(mupdf, doc, todo, frames)
+        sheets, formulas, drawn = _sheets(mupdf, todo, frames, lang, papers)
         pictures = _pictures(mupdf, doc, formulas, frames)
         for k, (pn, blocks) in enumerate(todo.items()):
             mine = [pictures[(pn, i)] for i in range(len(formulas[pn]))]

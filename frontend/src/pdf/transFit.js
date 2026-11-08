@@ -33,9 +33,10 @@ export function bestRatio(fits) {
 export const streamRatio = (fits, ratio) => (fits(ratio) ? ratio : Math.max(MIN_FIT, ratio * STREAM_STEP));
 
 // The ratios measured, by the page's `paras` array, so that they live as long
-// as the page's blocks: {block index → {text, ratio, bare, rough}}, `bare`
+// as the page's blocks: {block index → {text, ratio, bare, rough, face}}, `bare`
 // counting the formulas in the block that were text, not pictures, when it was
-// measured, `rough` saying the ratio is a streaming one's.
+// measured, `rough` saying the ratio is a streaming one's, `face` the paper's
+// font it was set in (paperFace.js), null for the overlay's.
 const FITS = new WeakMap();
 
 export const fitOf = (paras, i) => FITS.get(paras)?.get(i) || null;
@@ -66,10 +67,12 @@ export function settledCap(paras, key) {
 export const keepCap = (paras, key, cap) => { CAPS.set(paras, { key, cap }); };
 
 // Whether a block must be measured for `text`, now holding `bare` formulas as
-// text: nothing is kept for that text, a formula has become a picture, or the
-// text has landed (not `streaming`) on a streaming paragraph's rough ratio.
-export function needsFit(kept, text, bare, streaming) {
-  return kept?.text !== text || bare < kept.bare || (!streaming && !!kept.rough);
+// text and set in `face`: nothing is kept for that text, a formula has become a
+// picture, the text has landed (not `streaming`) on a streaming paragraph's
+// rough ratio, or it is set in another face (a letter the paper's font lacks
+// has streamed in).
+export function needsFit(kept, text, bare, streaming, face = null) {
+  return kept?.text !== text || bare < kept.bare || (!streaming && !!kept.rough) || (kept.face ?? null) !== face;
 }
 
 // The page's body paragraphs, by index: running text of two lines or more at

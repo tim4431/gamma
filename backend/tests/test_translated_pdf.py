@@ -9,6 +9,7 @@ of the page with its translation, and what it refuses; and a folder's, with
 ``translations``, each paper's into its own PDF."""
 
 import io
+import struct
 import zipfile
 
 import pytest
@@ -289,6 +290,262 @@ def test_an_openers_indent_goes_with_its_first_line():
     flat, indented = rows(), rows(indent=12)
     assert flat[0] == pytest.approx(flat[1], abs=0.1)
     assert indented[0] - indented[1] > 8 and indented[1] == pytest.approx(flat[1], abs=0.1)
+
+
+def _line_ends(data, top, bottom):
+    """The right end of each output line with its baseline from ``top`` to
+    ``bottom``, top to bottom."""
+    page = _mupdf().open(stream=data, filetype="pdf")[0]
+    ends = {}
+    for b in page.get_text("dict")["blocks"]:
+        for ln in b.get("lines", []):
+            spans = [s for s in ln["spans"] if s["text"].strip()]
+            base = round(spans[0]["origin"][1], 1) if spans else None
+            if base is not None and top <= base <= bottom:
+                ends[base] = max(ends.get(base, 0), ln["bbox"][2])
+    return [ends[k] for k in sorted(ends)]
+
+
+def test_a_block_justified_in_the_original_is_justified_unless_its_box_is_narrow():
+    data = _paper()
+    words = ("Die Übersetzung eines Absatzes hat andere Wörter als das Original und so andere Zeilen, manche "
+             "lang und manche kurz, wie es eben kommt, wenn ein Text in einer anderen Sprache steht. ") * 2
+
+    def ends(right, **setting):
+        # inside the page's frame, where it has no text
+        lines = [[40, y, right, y + 9] for y in (255, 268, 281, 294, 307, 320)]
+        out = _write(data, [{"page": 1, "blocks": [{"lines": lines, "size": 10, "parts": [words], **setting}]}], "de")
+        return _line_ends(out, 250, 335)[:-1]  # the last line ends where its words do
+
+    ragged, justified = ends(260), ends(260, justified=True)
+    assert len(justified) >= 3 and max(justified) - min(justified) < 0.5, justified
+    assert max(ragged) - min(ragged) > 3, "ragged where the original is"
+    narrow = ends(200, justified=True)  # 16 em
+    assert max(narrow) - min(narrow) > 3, "a box under 18 em stays ragged"
+
+
+def _font_paper():
+    """A page whose paragraph is set in an embedded font (MuPDF's Nimbus
+    Roman) subset to the letters it uses, as a paper's fonts are: MuPDF's
+    subsetter keeps the other letters' places and empties their outlines.
+    Its other text is in Helvetica, which the file does not hold."""
+    pymupdf = _mupdf()
+    doc = pymupdf.open()
+    page = doc.new_page(width=PAGE_W, height=PAGE_H)
+    page.insert_font(fontname="F9", fontbuffer=pymupdf.Font("tiro").buffer)
+    page.insert_text((40, 60), "Alpha line one: the quick brown fox", fontname="F9", fontsize=10)
+    page.insert_text((40, 74), "Alpha line two jumps over a lazy dog", fontname="F9", fontsize=10)
+    page.insert_text((40, 200), "Kept paragraph stays", fontname="helv", fontsize=10)
+    doc.subset_fonts()
+    return doc.tobytes(garbage=1, deflate=True)
+
+
+def test_a_block_is_set_in_the_papers_own_font_when_it_draws_every_letter():
+    pymupdf = _mupdf()
+    data = _font_paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    (face,) = {f for t, _, _, f, _ in _shown(src) if t.startswith("Alpha")}
+    kept = next(f for t, _, _, f, _ in _shown(src) if t.startswith("Kept"))
+
+    def fonts(text, lang="en", **setting):
+        out = _write(data, [{"page": 1, "blocks": [_alpha_block(src, [text]) | setting]}], lang)
+        assert text.split()[0] in _text(out)
+        return {f for t, _, _, _, f in _spans(out) if t.strip() and t.strip() in text}, out
+
+    used, _ = fonts("the lazy brown dog jumps", face=face, bold=True)
+    assert used == {face}, "its own face carries its weight: no bold over it"
+    serif = fonts("the lazy brown dog jumps")[0]
+    assert face not in serif and all("Charis" in f for f in serif), "no face sent: the serif"
+    for text, sent, why in (("Die übersetzten Worte", face, "a letter the subset emptied"),
+                            ("翻译", face, "no CJK in it"),
+                            ("the lazy dog", kept, "a font the file does not hold"),
+                            ("the lazy dog", "Nimbus Sans", "a font the page does not have")):
+        used = fonts(text, "zh-CN" if text == "翻译" else "de", face=sent)[0]
+        assert used and face not in used, why
+    # two blocks in one font: the file holds it once
+    two = _write(data, [{"page": 1, "blocks": [
+        {"lines": [_line_box(src, "Alpha line one")], "size": 10, "parts": ["the brown fox"], "face": face},
+        {"lines": [_line_box(src, "Alpha line two")], "size": 10, "parts": ["a lazy dog"], "face": face}]}], "en")
+    held = pymupdf.open(stream=two, filetype="pdf")[0].get_fonts()
+    assert len({f[0] for f in held if face in f[3]}) == 1, held  # (xref, ext, type, basefont, …)
+
+
+def test_the_blanks_a_papers_font_lacks_go_in_the_serif():
+    """TeX's fonts have no space: the spaces are set in the serif the file
+    has anyway, not in MuPDF's fallback (Noto Serif, 60 KB for the spaces)."""
+    from gamma.pdf_translated import _blanks
+
+    class Spaceless:
+        def draws_blank(self, c):
+            return False
+
+    class Spaced:
+        def draws_blank(self, c):
+            return c == " "
+
+    gap = '<span class="gs"> </span>'
+    assert _blanks("a b\n c", None) == "a b\n c"
+    assert _blanks("a b\n c", Spaceless()) == f"a{gap}b{gap}c"
+    assert _blanks("a\xa0b c", Spaced()) == 'a<span class="gs">\xa0</span>b c'
+
+
+_COMPOSITE_LINES = ("Alpha line one: the quick brown fox", "Alpha line two jumps over a lazy dog")
+
+
+def _cid_keyed(cff: bytes, shift: int) -> bytes:
+    """A name-keyed CFF program (MuPDF's Nimbus Roman) written as a CID-keyed
+    one, as LuaLaTeX and XeLaTeX embed an OpenType font: one Font DICT, glyph
+    k at CID k + ``shift``, so CID and GID differ, and no glyph names, so
+    the program maps no character."""
+    from gamma.pdf_font_cmap import _dict, _index, _op, _write_index
+
+    _, at = _index(cff, cff[2])
+    names = cff[cff[2]:at]
+    tops, at = _index(cff, at)
+    top = _dict(tops[0])
+    strings, after_strings = _index(cff, at)
+    _, after_gsubrs = _index(cff, after_strings)
+    gsubrs = cff[after_strings:after_gsubrs]
+    charstrings, _ = _index(cff, top[17][0][0])
+    size, offset = top[18][0]
+    end = offset + size
+    subrs = _dict(cff[offset:end]).get(19)
+    if subrs:
+        end = max(end, _index(cff, offset + subrs[0][0])[1])
+    private, sid, count = cff[offset:end], 391 + len(strings), len(charstrings)
+    kept = b"".join(raw for op, (_, raw) in top.items() if op in (5, 1207))  # FontBBox, FontMatrix
+
+    def top_dict(charset, select, glyphs, fds):
+        return (_op(1230, sid, sid + 1, 0) + kept + _op(1234, count + shift) + _op(15, charset)
+                + _op(1237, select) + _op(17, glyphs) + _op(1236, fds))
+
+    head, string_index = b"\x01\x00\x04\x04", _write_index(strings + [b"Adobe", b"Identity"])
+    charset = b"\x02" + struct.pack(">HH", 1 + shift, count - 2)
+    select = b"\x03" + struct.pack(">HHBH", 1, 0, 0, count)
+    glyphs = _write_index(charstrings)
+    at_charset = len(head) + len(names) + len(_write_index([top_dict(0, 0, 0, 0)])) + len(string_index) + len(gsubrs)
+    at_select = at_charset + len(charset)
+    at_glyphs = at_select + len(select)
+    at_fds = at_glyphs + len(glyphs)
+    at_private = at_fds + len(_write_index([_op(18, size, 0)]))
+    return (head + names + _write_index([top_dict(at_charset, at_select, at_glyphs, at_fds)]) + string_index
+            + gsubrs + charset + select + glyphs + _write_index([_op(18, size, at_private)]) + private)
+
+
+def _composite_paper(kind: str):
+    """A page whose paragraph is set in a composite font (Identity-H, a
+    ToUnicode) whose program maps no character to a glyph: ``cid``, a bare
+    CID-keyed CFF (Nimbus Roman, its CIDs not its GIDs), or ``ttf``, a
+    TrueType program without a cmap (Droid Sans Fallback as MuPDF's
+    subsetter leaves it, named GammaTrue here), its CIDs mapped to its
+    GIDs by a ``/CIDToGIDMap``. → (the file, the font's name)."""
+    pymupdf = _mupdf()
+    from gamma.pdf_font_cmap import _names, _sfnt, _sfnt_tables
+
+    letters = sorted(set("".join(_COMPOSITE_LINES)))
+    if kind == "cid":
+        own, name = pymupdf.Font("tiro"), "GammaCID"
+        program = _cid_keyed(own.buffer, 100)
+        cid = {c: own.has_glyph(ord(c)) + 100 for c in letters}
+    else:
+        own, name = pymupdf.Font("cjk"), "GammaTrue"
+        subset = pymupdf.open()
+        sheet = subset.new_page()
+        sheet.insert_font(fontname="D", fontbuffer=own.buffer)
+        sheet.insert_text((40, 60), "".join(letters), fontname="D")
+        subset.subset_fonts()  # which drops the cmap
+        subset = pymupdf.open(stream=subset.tobytes(garbage=1), filetype="pdf")
+        tables = _sfnt_tables(subset.extract_font(subset.get_page_fonts(0)[0][0])[3])
+        tables.pop(b"cmap", None)
+        tables[b"name"] = _names(name)
+        program = _sfnt(b"\x00\x01\x00\x00", tables)
+        cid = {c: k + 1 for k, c in enumerate(letters)}
+    doc = pymupdf.open()
+    page = doc.new_page(width=PAGE_W, height=PAGE_H)
+    page.insert_text((40, 200), "Kept paragraph stays", fontname="helv", fontsize=10)
+
+    def obj(text, stream=None):
+        xref = doc.get_new_xref()
+        doc.update_object(xref, text)
+        if stream is not None:
+            doc.update_stream(xref, stream)
+        return xref
+
+    pairs = "".join(f"<{cid[c]:04X}> <{ord(c):04X}>\n" for c in letters)
+    to_unicode = obj("<<>>", (
+        "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /Gamma def /CMapType 2 def\n"
+        "1 begincodespacerange <0000> <FFFF> endcodespacerange\n"
+        f"{len(letters)} beginbfchar\n{pairs}endbfchar\nendcmap CMapName currentdict /CMap defineresource pop end end"
+    ).encode())
+    if kind == "cid":
+        file_key, subtype, extra = "FontFile3", "CIDFontType0", ""
+        program_xref = obj("<< /Subtype /CIDFontType0C >>", program)
+    else:
+        file_key, subtype = "FontFile2", "CIDFontType2"
+        program_xref = obj(f"<< /Length1 {len(program)} >>", program)
+        to_gid = [0] * (max(cid.values()) + 1)
+        for c, k in cid.items():
+            to_gid[k] = own.has_glyph(ord(c))
+        extra = f"/CIDToGIDMap {obj('<<>>', struct.pack(f'>{len(to_gid)}H', *to_gid))} 0 R"
+    widths = " ".join(f"{cid[c]} [{round(own.glyph_advance(ord(c)) * 1000)}]" for c in letters)
+    descriptor = obj(f"<< /Type /FontDescriptor /FontName /ABCDEF+{name} /Flags 6 /FontBBox [-200 -250 1100 950] "
+                     f"/ItalicAngle 0 /Ascent 900 /Descent -250 /CapHeight 680 /StemV 80 "
+                     f"/{file_key} {program_xref} 0 R >>")
+    descendant = obj(f"<< /Type /Font /Subtype /{subtype} /BaseFont /ABCDEF+{name} /CIDSystemInfo "
+                     f"<< /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> "
+                     f"/FontDescriptor {descriptor} 0 R /W [{widths}] {extra} >>")
+    font = obj(f"<< /Type /Font /Subtype /Type0 /BaseFont /ABCDEF+{name} /Encoding /Identity-H "
+               f"/DescendantFonts [{descendant} 0 R] /ToUnicode {to_unicode} 0 R >>")
+    held, resources = doc.xref_get_key(page.xref, "Resources")
+    if held == "xref":
+        doc.xref_set_key(int(resources.split()[0]), "Font/FC", f"{font} 0 R")
+    else:
+        doc.xref_set_key(page.xref, "Resources/Font/FC", f"{font} 0 R")
+    text = "".join(f"BT /FC 10 Tf 40 {PAGE_H - y} Td <{''.join(f'{cid[c]:04X}' for c in line)}> Tj ET\n"
+                   for y, line in zip((60, 74), _COMPOSITE_LINES))
+    contents = page.get_contents()[-1]
+    doc.update_stream(contents, doc.xref_stream(contents) + b"\n" + text.encode())
+    return doc.tobytes(garbage=1, deflate=True), name
+
+
+@pytest.mark.parametrize("kind", ["cid", "ttf"])
+def test_a_composite_font_whose_program_maps_no_character_is_used_through_its_tounicode(kind):
+    """LuaLaTeX and XeLaTeX embed every OpenType font as a bare CID-keyed
+    CFF, which maps no character; the file's ToUnicode does
+    (gamma/pdf_font_cmap.py), as pdf.js reads it for the overlay."""
+    pymupdf = _mupdf()
+    data, name = _composite_paper(kind)
+    src = pymupdf.open(stream=data, filetype="pdf")
+    assert "the quick brown fox" in src[0].get_text()
+    (xref,) = [f[0] for f in src.get_page_fonts(0) if name in f[3]]
+    assert not pymupdf.Font(fontbuffer=src.extract_font(xref)[3]).has_glyph(ord("t")), "its program names no letter"
+    (face,) = {f for t, _, _, f, _ in _shown(src[0]) if t.startswith("Alpha")}
+    block = _alpha_block(src[0], ["the lazy brown dog jumps"]) | {"face": face}
+    out = _write(data, [{"page": 1, "blocks": [block]}], "en")
+    assert "the lazy brown dog jumps" in _text(out).replace("\n", " "), "its ToUnicode in the export reads back"
+    assert {f for t, _, _, _, f in _spans(out) if t.strip() and t.strip() in "the lazy brown dog jumps"} == {name}
+    # each glyph drawn is the letter's, not an empty one at another index
+    page = pymupdf.open(stream=out, filetype="pdf")[0]
+    for word in ("lazy", "jumps"):
+        (area,) = page.search_for(word)
+        assert min(page.get_pixmap(dpi=200, clip=area).samples) < 128, word
+    assert len([f for f in page.get_fonts() if name in f[3]]) == 1
+    other = _write(data, [{"page": 1, "blocks": [_alpha_block(src[0], ["Die Wörter"]) | {"face": face}]}], "de")
+    used = {f for t, _, _, _, f in _spans(other) if t.strip() and t.strip() in "Die Wörter"}
+    assert used and name not in used, "a letter it lacks: the serif"
+
+
+def test_a_composite_fonts_program_is_kept_when_it_maps_its_characters():
+    """MuPDF's own Type0 font holds a name-keyed CFF, whose glyph names
+    FreeType maps: no cmap is made for it."""
+    from gamma import pdf_font_cmap
+
+    pymupdf = _mupdf()
+    src = pymupdf.open(stream=_font_paper(), filetype="pdf")
+    fonts = [(xref, ext) for xref, ext, *_ in src.get_page_fonts(0, full=True) if ext == "cid"]
+    assert fonts
+    for xref, ext in fonts:
+        assert pdf_font_cmap.unicode_program(pymupdf, src, xref, ext, src.extract_font(xref)[3]) is None
 
 
 def test_a_mask_stops_at_the_next_lines_top_or_at_its_own_bottom():
@@ -764,6 +1021,34 @@ def test_mupdf_draws_a_picture_in_a_line_where_the_writer_expects_it(size, heigh
     baseline = {round(s["origin"][1], 2) for b in page.get_text("dict")["blocks"] for ln in b.get("lines", [])
                 for s in ln["spans"] if "words" in s["text"]}
     assert baseline == {round(drawn.y1, 2)}
+
+
+def test_mupdf_reports_a_picture_in_a_justified_line_where_it_draws_it():
+    """A justified line's gaps grow after the line is broken: the place
+    MuPDF reports for a picture in it is still where it draws it."""
+    pymupdf = _mupdf()
+    from gamma import pdf_translated
+
+    archive = pymupdf.Archive()
+    archive.add((pdf_translated._PLACEHOLDER, "r.svg"))
+    words = "the green bird is a good friend of the old man who sits by the bridge and reads".split()
+    html = " ".join(w + (f' <img id="f{k}" src="r.svg" style="width:14px;height:7px">' if k in (3, 9, 20) else "")
+                    for k, w in enumerate(words * 2))
+    out = io.BytesIO()
+    writer = pymupdf.DocumentWriter(out)
+    device = writer.begin_page(pymupdf.Rect(0, 0, 300, 300))
+    story = pymupdf.Story(f"<p>{html}</p>", user_css=pdf_translated._css(10, setting="text-align:justify;"), archive=archive)
+    story.place(pymupdf.Rect(0, 0, 200, 280))
+    seen = {}
+    story.element_positions(lambda p: seen.setdefault(p.id, p.rect) if p.id and p.rect[2] > p.rect[0] else None)
+    story.draw(device)
+    writer.end_page()
+    writer.close()
+    page = pymupdf.open(stream=out.getvalue(), filetype="pdf")[0]
+    drawn = sorted(round(i["bbox"][0], 2) for i in page.get_image_info())
+    assert drawn == sorted(round(r[0], 2) for r in seen.values())
+    ends = {round(ln["bbox"][2]) for b in page.get_text("dict")["blocks"] for ln in b.get("lines", [])[:-1]}
+    assert ends == {200}, "the lines but the last are justified"
 
 
 # --- The export job ----------------------------------------------------------
