@@ -134,7 +134,8 @@ reduced-motion rule of its own unless it wants a different still state.
 
 ### Ratchets
 
-Two node tests hold the tokens in place. Each may only get better.
+Three node tests hold the tokens and the conventions in place. Each may
+only get better.
 
 - **Contrast.** `node tools/themes.mjs` resolves tokens.css per theme the
   way a browser does. It prints text contrast for the pairs that matter:
@@ -148,11 +149,45 @@ Two node tests hold the tokens in place. Each may only get better.
   colour literal, a pixel font size, a corner radius over 2 px, an
   elevation shadow, a z-index above 9, a transition's time under half a
   second or its easing written out (a bezier or keyword: a fade leaves it
-  out, anything that moves takes an `--ease-*`). It
+  out, anything that moves takes an `--ease-*`), or a font family other than
+  `var(--font-sans)`, `var(--font-mono)` or `inherit`. It
   fails when a file holds more of one kind than `tests/design-baseline.json`
   records, and lists the new offenders. What is left is mostly the PDF
   page's own colours. After a cleanup,
   `node tools/designTokens.mjs --baseline` records the lower floor.
+- **Conventions.** `tests/uiConventions.test.mjs` scans every script and
+  stylesheet under `src/` (tokens.css aside) for code that goes round a
+  rule of this document:
+  - a native `<select>`, or an `<input type="color">` outside
+    `ColorPicker`;
+  - an `onContextMenu` or `onDoubleClick` past press.js, or a touch
+    handler;
+  - a `pointerType`, `maxTouchPoints` or pointer media query past
+    pointer.js;
+  - an `<input type="file">` past `pickFiles`;
+  - a text field's Enter that does not wait for `composing` (an input, a
+    textarea, a contentEditable, or a component named `…Input` or
+    `…Textarea` such as `AutoGrowTextarea` and `PasswordInput`), and a
+    username field that capitalizes or corrects;
+  - a text ×, an icon size off the scale, a `strokeWidth` on a sized icon;
+  - a class a shared component renders, written by hand (`ctxMenuItem`,
+    `popover`, `settingRow`…), and a `role="menu"` outside Menus.jsx;
+  - an inline z-index, font size, radius or font family, and an `onWheel`
+    that calls `preventDefault`;
+  - in a stylesheet, a hover reveal that still takes a tap,
+    `text-transform: uppercase`, `transition: all`, `font: inherit` on a
+    control, a `:focus` border and an `accent-color` off the root.
+
+  `tools/uiConventions.mjs` holds the rules, each with its fix and the
+  section of this document it comes from. The module a rule points to is
+  never counted, and the ink layer, where a pen draws and a finger scrolls,
+  reads the pointer itself. The test fails when a file holds more breaks
+  of a rule than `tests/ui-baseline.json` records, and lists them with the
+  fix. `node tools/uiConventions.mjs --list [rule]` prints every break.
+  After a fix, `node tools/uiConventions.mjs --baseline` records the lower
+  floor. Some rules are heuristics: an Enter passed down as a prop
+  (`onEnter`) or a CodeMirror keymap is not read, and a hover reveal is
+  paired only within one stylesheet.
 
 A value that is raw on purpose says why in a comment the scanner reads:
 `/* ds-allow: why */` on its line, or `ds-allow-start: why` …
@@ -161,6 +196,18 @@ collaborator colours, the transfer illustration, the custom-colour
 swatch's rainbow, a transition that follows the pointer. (The highlight and
 ink colours are not in a stylesheet at all: they come from the account's
 palette, `shared/model/palette.js`, as inline values.)
+
+A convention broken on purpose says why the same way, and names its rule:
+`ui-allow <rule>: why`. In a script the comment is a `//` line, a `/* */`
+inside a tag or a `{/* */}`; in a stylesheet, a `/* */`. It covers its own
+line, and the next line of code too when it stands alone on its line. A
+break inside a multi-line tag counts on every line of the tag, so a
+comment on any of them covers it. `ui-allow-start <rule>: why` …
+`ui-allow-end` covers a block. The test
+fails on an allow that names no rule, gives no reason or exempts nothing.
+Examples: the layout's `PHONE_MQ`, the library's double-click open (a tap
+opens where a click selects), the custom-colour swatch's native input, the
+model picker's listbox drawn as menu rows, and the two portalled popovers.
 
 ### The desktop shell and the extension
 
@@ -265,7 +312,9 @@ to `1.6 × 24 / size` (`iconStroke`), so a 14 and a 20 beside each other look
 equally heavy; a check mark is a touch heavier (`weight` 2). Pass
 `strokeWidth` only for an icon sized by CSS (`size={null}`). A close button
 is `uiClose` with an `XIcon` inside (14, inline with the title it closes;
-16 in `uiCloseLg`), never a text ×.
+16 in `uiCloseLg`), never a text ×. The conventions ratchet
+([Ratchets](#ratchets)) counts a size off this scale, a `strokeWidth` on a
+sized icon and a text ×.
 
 ### Section labels
 
@@ -275,7 +324,8 @@ handwriting strip's option-row captions) share
 one rule in app.css: sentence case, `--fs-xs`, weight 600, `--text-secondary`
 (dock titles a step up, `--fs-sm`), the Settings rail's look.
 Labels get no `text-transform: uppercase` or letter-spacing: the text keeps
-its own case, so only acronyms ("PDF") are capitals. A new label class joins
+its own case, so only acronyms ("PDF") are capitals. The conventions
+ratchet counts every `uppercase` left. A new label class joins
 that list and keeps only its layout in its own rule. The kind label on a card
 ("Page", "PDF") is the small muted version: `--fs-2xs`, weight 500,
 `--text-muted`; in the list it is a plain muted column.
@@ -992,8 +1042,11 @@ the layout, which follows the screen (`PHONE_MQ`,
 `shared/lib/pickFiles.js` opens the system file picker from code. iOS
 Safari may not open it for an `<input>` outside the document, or may drop
 that input before its `change`, so the input joins the page, hidden, for
-the pick and leaves after it. The backup restore, the imports and the
-markup strip's Picture button pick through it.
+the pick and leaves after it. Every pick goes through it: the Add
+popover's uploads, the empty library's, a page's PDF attach and replace,
+the backup restore, the imports, the chat's attachments and a hand-off
+card's PDF, the note's `/image` and the markup strip's Picture button. No
+`<input type="file">` of its own stays in the page.
 
 ### Sizes and reveals: CSS asks capability
 
@@ -1148,10 +1201,14 @@ own controls.
    too (the folder menu's Move to, Move up, Move down), or keys on its
    grip (a Settings bar list, `useDragOrder`'s `keyProps`).
 8. A text field's Enter handler returns early while an input method
-   composes (`composing` in `chat/enterKey.js`), and an `autoFocus` that
-   would raise an on-screen keyboard is `!touchTyping()`. A username or
-   account field turns capitalization and correction off.
+   composes (`if (composing(e)) return;`, `composing` in
+   `shared/lib/hotkeys.js`), and an `autoFocus` that would raise an
+   on-screen keyboard is `!touchTyping()`. A username or account field
+   turns capitalization and correction off.
 9. A file pick goes through `pickFiles`.
+
+The conventions ratchet ([Ratchets](#ratchets)) checks items 1, 3, 4, 5
+and 9, and item 8's Enter and username fields.
 
 ## Motion
 

@@ -126,7 +126,7 @@ import {
   removeBlockKeepChildren,
   visibleNeighbor,
 } from "../shared/model/blockModel";
-import { chordLabel, dispatch as dispatchHotkey, effectiveKeys, isTextField } from "../shared/lib/hotkeys.js";
+import { chordLabel, composing, dispatch as dispatchHotkey, effectiveKeys, isTextField } from "../shared/lib/hotkeys.js";
 import { APP_COMMANDS, liveAppCommands } from "./appCommands.js";
 import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
 import { commandById, commandChord } from "./commands.js";
@@ -331,8 +331,10 @@ const NO_FAMILY = { page: "", ancestors: [], subPages: [] };
 // gives a tablet held upright the same shell: two docks squeezed into 820px
 // leave ~200px columns, while a full-width reader with full-screen Notes and
 // Chat fits; turning it to landscape brings the docks back (docs/dev/ipad.md).
+// ui-allow-start pointer-kind: the layout follows the screen (ui-design.md, Device questions)
 const PHONE_MQ = "(max-width: 700px), (pointer: coarse) and (max-height: 500px), "
   + "(pointer: coarse) and (orientation: portrait) and (max-width: 1024px)";
+// ui-allow-end
 // A browser that declares itself mobile gets the phone layout regardless of
 // the viewport numbers. "Request desktop site" flips this flag along with the
 // UA, so it stays the escape hatch back to the desktop docks. Android tablets
@@ -955,9 +957,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   const [inputUrl, setInputUrl] = useState(initialUrl); // current page's source URL (shown in page properties)
   const [addUrl, setAddUrl] = useState(""); // "+" popover: URL to open
-  // The "+" menu's file pickers: hidden inputs its Upload rows click.
-  const addFilesRef = useRef(null);
-  const addFolderRef = useRef(null);
   const [pdfUrl, setPdfUrl] = useState("");
   // A pasted citation URL on a cold load opens the paper at the passage.
   const [pdfCitation, setPdfCitation] = useState(() => {
@@ -5991,8 +5990,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // page via POST (attach) or PUT (replace) /pages/{id}/attachment — no new
   // page is created.
   const [attachUrl, setAttachUrl] = useState("");
-  const attachFileRef = useRef(null); // its "Upload a PDF…" row's hidden picker
-  const replaceFileRef = useRef(null); // the "Replace the PDF…" row's hidden picker
   // The metadata popover under its header button. Fixed positioning so it
   // floats above the window stack instead of being clipped by the notes
   // window / drawn under the chat below it.
@@ -9890,6 +9887,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 onChange={(e) => setTitleDraft(e.target.value.replace(/\s*[\r\n]+\s*/g, " "))}
                 onBlur={() => { renameTitle(titleDraft); setTitleEditing(false); }}
                 onKeyDown={(e) => {
+                  if (composing(e)) return;
                   if (e.key === "Enter") {
                     // The first block's editor mounts and takes focus within this same
                     // key event (discrete-event flush), so the key's default insert would
@@ -9964,7 +9962,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           value={labelInput}
                           onChange={(e) => { setLabelSuggestionIdx(-1); setLabelInput(e.target.value); }}
                           onKeyDown={(e) => {
-                            if (e.nativeEvent.isComposing) return;
+                            if (composing(e)) return;
                             if (e.key === "ArrowDown") {
                               e.preventDefault();
                               if (suggestions.length > 0) {
@@ -10119,7 +10117,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         ) : null}
                         {!readOnly ? (
                           <>
-                            <MenuItem icon={UploadIcon} disabled={loading} onClick={() => replaceFileRef.current?.click()}
+                            <MenuItem icon={UploadIcon} disabled={loading}
+                              onClick={() => pickFiles({ accept: ".pdf,application/pdf" }, ([f]) => attachPdfToPage({ file: f, replace: true }))}
                               title={t("Upload a new version of this PDF: the notes and highlights stay, and each highlight moves to where its text is in the new file")}>
                               {t("Replace the PDF…")}
                             </MenuItem>
@@ -10139,13 +10138,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                 : t("Find each highlight's text in this file and move the highlight there; one matched roughly is drawn dashed, one whose text is gone hollow")}>
                               {t("Find highlights in this PDF")}
                             </MenuItem>
-                            <input
-                              ref={replaceFileRef}
-                              type="file"
-                              accept=".pdf,application/pdf"
-                              hidden
-                              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f, replace: true }); }}
-                            />
                             <MenuItem icon={ScissorsIcon} onClick={detachPdfFromPage}>{t("Detach the PDF…")}</MenuItem>
                           </>
                         ) : null}
@@ -10170,18 +10162,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             onChange={(e) => setAttachUrl(e.target.value)}
                             placeholder={t("PDF URL, arXiv id, or DOI — press Enter")}
                             onKeyDown={(e) => {
+                              if (composing(e)) return;
                               if (e.key === "Enter" && attachUrl.trim() && !loading) attachPdfToPage({ url: attachUrl.trim() });
                               else if (e.key === "Escape") setOpenPopover(null);
                             }}
                           />
-                          <MenuItem icon={UploadIcon} disabled={loading} onClick={() => attachFileRef.current?.click()}>{t("Upload a PDF…")}</MenuItem>
-                          <input
-                            ref={attachFileRef}
-                            type="file"
-                            accept=".pdf,application/pdf"
-                            hidden
-                            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
-                          />
+                          <MenuItem icon={UploadIcon} disabled={loading}
+                            onClick={() => pickFiles({ accept: ".pdf,application/pdf" }, ([f]) => attachPdfToPage({ file: f }))}>{t("Upload a PDF…")}</MenuItem>
                         </> : null}
                       </Popover>
                     ) : null}
@@ -10275,6 +10262,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                   value={metaDraft?.[key] ?? ""}
                                   onChange={(e) => setMetaDraft((d) => ({ ...(d || metadataToDraft(null)), [key]: e.target.value }))}
                                   onKeyDown={(e) => {
+                                    if (composing(e)) return;
                                     if (e.key !== "Enter") return;
                                     e.preventDefault();
                                     // Enter = Save (only when something actually changed)
@@ -10327,6 +10315,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                 value={citeKeyDraft}
                                 onChange={(e) => setCiteKeyDraft(e.target.value)}
                                 onKeyDown={(e) => {
+                                  if (composing(e)) return;
                                   if (e.key !== "Enter") return;
                                   e.preventDefault();
                                   if (metaDirty) saveMetaEdits();
@@ -10514,6 +10503,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       tip={t("{f}\nClick to select · double-click to open · drop a page or folder to move it in", { f: folderPath(libTree, f) })}
                       time={formatRelativeTime(folderMeta[f]?.updated)}
                       draggable
+                      // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                       onDoubleClick={() => openFolder(f)}
                     >
                       <button
@@ -10538,6 +10528,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       {...pageDropProps(b._pageId)}
                       checked={selecting && selectedPages.has(b._pageId)}
                       onClick={(e) => handlePageClick(b, e)}
+                      // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                       onDoubleClick={() => openPage(b._pageId)}
                       onMenu={openPageMenu(b._pageId, b.content)}
                     >
@@ -10704,6 +10695,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => setNewFolderName(e.target.value)}
                             onKeyDown={(e) => {
+                              if (composing(e)) return;
                               if (e.key === "Enter") { e.preventDefault(); commitNewFolder(); }
                               else if (e.key === "Escape") { setNewFolderOpen(false); setNewFolderName(""); }
                             }}
@@ -10739,6 +10731,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         labelMode={fileLabels}
                         checked={selecting && selectedLabels.has(l)}
                         onClick={(e) => handleLabelClick(l, e)}
+                        // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                         onDoubleClick={() => openLabel(l)}
                         onMenu={l === NO_LABEL ? undefined : openTagMenu("label", l)}
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(l); }}
@@ -10761,6 +10754,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             defaultValue={libTree.folders.get(f).name}
                             onClick={(e) => e.stopPropagation()}
                             onKeyDown={(e) => {
+                              if (composing(e)) return;
                               if (e.key === "Enter") renameFolder(f, e.currentTarget.value);
                               else if (e.key === "Escape") setFolderRenaming(null);
                             }}
@@ -10768,6 +10762,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           />
                         ) : null}
                         draggable={lib.organize && folderRenaming?.id !== f}
+                        // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                         onDoubleClick={() => { if (folderRenaming?.id !== f) openFolder(f); }}
                       />
                       ); }
@@ -10795,6 +10790,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               defaultValue={b.content}
                               onClick={(e) => e.stopPropagation()}
                               onKeyDown={(e) => {
+                                if (composing(e)) return;
                                 if (e.key === "Enter") commitPageRename(id, e.currentTarget.value);
                                 else if (e.key === "Escape") setHomeEditingId(null);
                               }}
@@ -10806,6 +10802,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           onDragStart={(e) => startPageDrag(e, id)}
                           {...pageDropProps(id)}
                           onClick={(e) => handlePageClick(b, e)}
+                          // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
                           onMenu={openPageMenu(id, b.content)}
                         >
@@ -10847,6 +10844,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           onChange={(e) => setNewFolderName(e.target.value)}
                           placeholder={t("Folder name…")}
                           onKeyDown={(e) => {
+                            if (composing(e)) return;
                             if (e.key === "Enter") { e.preventDefault(); commitNewFolder(); }
                             else if (e.key === "Escape") { setNewFolderOpen(false); setNewFolderName(""); }
                           }}
@@ -10877,6 +10875,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         data-motion-key={item.key}
                         className={`folderRow labelRow rowMenuHost ${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
                         onClick={(e) => handleLabelClick(l, e)}
+                        // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                         onDoubleClick={() => openLabel(l)}
                         {...menuPress(menu)}
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(l); }}
@@ -10899,6 +10898,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         draggable={lib.organize && folderRenaming?.id !== f}
                         onDragStart={(e) => startFolderDrag(e, f)}
                         onClick={(e) => handleFolderClick(f, e)}
+                        // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                         onDoubleClick={() => { if (folderRenaming?.id !== f) openFolder(f); }}
                         {...menuPress(menu)}
                         onDragOver={(e) => dragOverFolder(e, f)}
@@ -10915,6 +10915,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => setFolderRenaming({ id: f, draft: e.target.value })}
                             onKeyDown={(e) => {
+                              if (composing(e)) return;
                               if (e.key === "Enter") renameFolder(f, folderRenaming.draft);
                               else if (e.key === "Escape") setFolderRenaming(null);
                             }}
@@ -10941,6 +10942,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           onDragStart={(e) => startPageDrag(e, id)}
                           {...pageDropProps(id)}
                           onClick={(e) => handlePageClick(b, e)}
+                          // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
                           {...menuPress(menu)}
                           title={t("{content}\nClick to select · double-click to open", { content: b.content })}
@@ -10953,6 +10955,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               defaultValue={b.content}
                               onClick={(e) => e.stopPropagation()}
                               onKeyDown={(e) => {
+                                if (composing(e)) return;
                                 if (e.key === "Enter") commitPageRename(id, e.currentTarget.value);
                                 else if (e.key === "Escape") setHomeEditingId(null);
                               }}
@@ -11852,6 +11855,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onChange={(e) => setAddUrl(e.target.value)}
               placeholder={t("Paste a URL, DOI or arXiv id")}
               onKeyDown={(e) => {
+                if (composing(e)) return;
                 if (e.key === "Enter" && addUrl.trim() && !loading) {
                   setOpenPopover(null);
                   // A share link from another Gamma (or this one) brings the
@@ -11868,27 +11872,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {t("A Gamma share link — Enter copies what it shares, a page or a whole folder, into your library.")}
               </div>
             ) : null}
-            <MenuItem icon={UploadIcon} disabled={loading} data-guide="add.upload" onClick={() => addFilesRef.current?.click()}>{t("Upload files…")}</MenuItem>
-            <MenuItem icon={FolderIcon} disabled={loading} onClick={() => addFolderRef.current?.click()}
+            <MenuItem icon={UploadIcon} disabled={loading} data-guide="add.upload"
+              onClick={() => pickFiles({ accept: PAGE_FILE_ACCEPT, multiple: true }, (files) => { setOpenPopover(null); uploadFiles([...files]); })}>{t("Upload files…")}</MenuItem>
+            <MenuItem icon={FolderIcon} disabled={loading}
+              onClick={() => pickFiles({ directory: true }, (files) => { setOpenPopover(null); uploadFiles([...files]); })}
               title={t("Import every PDF and Markdown note in a folder — subfolders become folders")}>{t("Upload folder…")}</MenuItem>
             <MenuItem icon={FilePlusIcon} data-guide="add.newPage" onClick={() => createPage()}>{t("New page")}</MenuItem>
             <MenuItem icon={NotebookIcon} data-guide="add.newNotebook" onClick={() => createNotebook()}
               title={t("A page of blank paper to write on, with pages added as you go")}>{t("New notebook")}</MenuItem>
-            <input
-              ref={addFilesRef}
-              type="file"
-              accept={PAGE_FILE_ACCEPT}
-              multiple
-              hidden
-              onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
-            />
-            <input
-              ref={addFolderRef}
-              type="file"
-              webkitdirectory=""
-              hidden
-              onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
-            />
           </Popover>
         ) : null}
       </span>
@@ -12524,6 +12515,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               maxLength={LINK_NAME_MAX}
               aria-label={t("Your name on this page")}
               onKeyDown={(e) => {
+                if (composing(e)) return;
                 if (e.key === "Enter") commitLinkName(e.currentTarget.value);
                 else if (e.key === "Escape") setRenamingLink(false);
               }}
@@ -13139,7 +13131,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onFocus={(e) => e.currentTarget.select()}
               onChange={(e) => setLabelRenaming((s) => ({ ...s, draft: e.target.value }))}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.nativeEvent.isComposing) renameLabel(labelRenaming.id, labelRenaming.draft);
+                if (composing(e)) return;
+                if (e.key === "Enter") renameLabel(labelRenaming.id, labelRenaming.draft);
                 else if (e.key === "Escape") setLabelRenaming(null);
               }}
             />
@@ -13658,7 +13651,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           aria-label={t("New label")}
                           onChange={(e) => setHomeMenuLabelDraft(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.nativeEvent.isComposing) return;
+                            if (composing(e)) return;
                             if (e.key === "Enter") { e.preventDefault(); commitNewLabel(); }
                             else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setHomeMenuLabelDraft(null); }
                           }}

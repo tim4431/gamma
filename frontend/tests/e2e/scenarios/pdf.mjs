@@ -1000,7 +1000,10 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     try {
       // A picked file goes to POST /api/ai/pictures and comes back stored.
       const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
-      await page.locator('.chatComposer input[type="file"]').setInputFiles({ name: "figure.png", mimeType: "image/png", buffer: png });
+      await page.getByRole("button", { name: "Add attachments or chat context" }).click();
+      const chooser = page.waitForEvent("filechooser");
+      await page.locator(".chatPlusMenuItem", { hasText: "Add photos & files" }).click();
+      await (await chooser).setFiles({ name: "figure.png", mimeType: "image/png", buffer: png });
       const thumbs = page.locator('[data-guide="chat.imageContext"] img');
       await thumbs.first().waitFor();
       assert((await thumbs.first().getAttribute("src")).includes("/api/uploads/"), "the composer shows the stored picture");

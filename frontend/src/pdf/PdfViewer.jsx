@@ -28,7 +28,7 @@ import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
 import { Chevron, Collapse, IconSwap } from "../shared/ui/MotionWidgets";
 import { menuPress } from "../shared/ui/press.js";
 import { lastPointer } from "../shared/lib/pointer.js";
-import { heldAlone, isHeldKey } from "../shared/lib/hotkeys.js";
+import { composing, heldAlone, isHeldKey } from "../shared/lib/hotkeys.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
@@ -1979,6 +1979,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
             onFocus={(e) => { setPageInput(String(curPage)); e.target.select(); }}
             onChange={(e) => setPageInput(e.target.value.replace(/[^0-9]/g, ""))}
             onKeyDown={(e) => {
+              if (composing(e)) return;
               if (e.key === "Enter") {
                 jumpToPage(parseInt(pageInput, 10));
                 e.currentTarget.blur();

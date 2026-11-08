@@ -1,5 +1,6 @@
 import React from "react";
 import { stepList } from "../shared/ui/listKeys.js";
+import { composing } from "../shared/lib/hotkeys.js";
 import { backdropPress } from "../shared/ui/press.js";
 import { API, apiJson, fmtBytes, isUnverifiedPaperMeta, metaSourceInfo, getCurrentWorkspace } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
@@ -1312,7 +1313,7 @@ export default function SettingsDialog({
                 }}
                 onKeyDown={(event) => {
                   // Enter opens the first match; the arrows walk the list (the modal's onKeyDown).
-                  if (event.key === "Enter" && query.trim() && results.length && !event.nativeEvent.isComposing) {
+                  if (event.key === "Enter" && query.trim() && results.length && !composing(event)) {
                     event.preventDefault(); navigate(results[0].pane, results[0].target);
                   }
                 }} />

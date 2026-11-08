@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { ContextMenu } from "../shared/ui/Menus";
 import { t } from "../shared/i18n/i18n.js";
+import { composing } from "../shared/lib/hotkeys.js";
 
 // Native datalist popups can grow beyond the screen, especially over RDP.
 // Keep focus in the input while the portalled, bounded list handles scrolling.
@@ -49,7 +50,7 @@ export function ModelPicker({ models, value, onChange, onAdd, loading }) {
       onBlur={() => setMenu(null)}
       onChange={(event) => { onChange(event.target.value); setActive(-1); open(); }}
       onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing) return;
+        if (composing(event)) return;
         if (event.key === "Escape" && menu) {
           event.preventDefault(); event.stopPropagation(); setMenu(null);
         } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -63,6 +64,7 @@ export function ModelPicker({ models, value, onChange, onAdd, loading }) {
         }
       }} />
     {menu ? <ContextMenu {...menu} onClose={() => setMenu(null)} ignoreRef={input} className="aiModelMenu" role="none">
+      {/* ui-allow-start owned-class: the model picker's list is a listbox in a ContextMenu, its options drawn as menu rows (ui-design.md, Menus and submenus) */}
       <div ref={list} id={id} role="listbox" aria-label={t("Available models")} className="aiModelOptions">
         {matches.map((model, index) => <button type="button" role="option" tabIndex={-1}
           id={`${id}-${index}`} aria-selected={index === active} key={model}
@@ -70,6 +72,7 @@ export function ModelPicker({ models, value, onChange, onAdd, loading }) {
           onClick={() => add(model)}>{model}</button>)}
         {!matches.length ? <div className="ctxMenuLabel">{loading ? t("Loading models…") : value.trim() ? t("Press Enter to add this model") : t("No models available")}</div> : null}
       </div>
+      {/* ui-allow-end */}
     </ContextMenu> : null}
   </>;
 }

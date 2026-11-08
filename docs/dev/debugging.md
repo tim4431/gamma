@@ -488,7 +488,8 @@ library on each side may check its inputs differently: neither
 fractional-indexing checks a key's characters, so `fractionalkeys.json`'s
 `foreign` keys are the ones the server refuses itself.
 
-The frontend has few component tests (its lint is [below](#frontend-lint)). Its pure modules have
+The frontend has few component tests. Its lint is [below](#frontend-lint),
+and three ratchets (below) hold its styles and conventions. Its pure modules have
 `node --test` tests (`npm test` from `frontend/`, the files in
 `frontend/tests/*.test.mjs`): `blockOps` (diff/apply), `collabSession` (the
 page session's transport logic over fakes — ordering, reconciliation,
@@ -499,10 +500,13 @@ ops), `blockHistory` (the undo classifier), `menuAim` (the safe-triangle
 geometry), `themes` (the design tokens: the desktop copy, the pre-paint's
 theme lists, every theme resolving, the contrast ratchet),
 `designTokens` (the raw-value ratchet on the stylesheets, and no
-`(pointer: coarse)` rule sizing a control but the text box's handle), and
+`(pointer: coarse)` rule sizing a control but the text box's handle),
 `inert` (no string given to the `inert` prop in `src`, and React writing
-the attribute for true and removing it for false).
-Both ratchets are described in [ui-design.md](ui-design.md#ratchets). A
+the attribute for true and removing it for false) and `uiConventions` (the
+conventions ratchet over `src/`: the press helpers, pointer.js,
+`pickFiles`, `composing` on a text field's Enter, the shared components'
+classes, the icon sizes, hover reveals that take a tap).
+The three ratchets are described in [ui-design.md](ui-design.md#ratchets). A
 module is testable there when its relative imports carry the `.js`
 extension (node resolves nothing else). Modules that import React can still be imported for their
 pure exports. A few tests render React itself. The markdown ones

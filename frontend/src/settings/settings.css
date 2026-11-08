@@ -756,7 +756,7 @@
 .paletteGroupHead { display: flex; align-items: center; gap: 6px; }
 .paletteGroupName {
   flex: 1 1 auto; min-width: 0;
-  font: inherit; font-weight: 600; color: var(--text-primary);
+  font: inherit; font-weight: 600; color: var(--text-primary); /* ui-allow font-inherit: an input, which the control reset does not zoom */
   background: transparent; border: 1px solid transparent; border-radius: var(--radius-md);
   padding: 2px 6px; margin-left: -6px;
 }

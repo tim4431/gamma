@@ -10,6 +10,7 @@ import { MenuButton } from "../shared/ui/Menus";
 import { FADE_IN, useSlidingPill } from "../shared/ui/MotionWidgets";
 import { menuPress } from "../shared/ui/press.js";
 import { t, tn } from "../shared/i18n/i18n.js";
+import { composing } from "../shared/lib/hotkeys.js";
 
 // Folder + label chips for a page, filtered by the Settings → Appearance →
 // Library "File labels" preference ("off" | "labels" | "folders" | "both"). `folders` and
@@ -188,8 +189,9 @@ function ListFindBox({ value, onChange, onEnter, keyLabel }) {
         aria-label={t("Filter this listing by title or label")}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
+          if (composing(e)) return;
           if (e.key === "Escape" && value) { e.stopPropagation(); onChange(""); }
-          else if (e.key === "Enter" && value.trim() && onEnter && !e.nativeEvent.isComposing) { e.preventDefault(); onEnter(); }
+          else if (e.key === "Enter" && value.trim() && onEnter) { e.preventDefault(); onEnter(); }
         }}
       />
       {value ? (

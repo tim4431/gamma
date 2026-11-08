@@ -32,6 +32,7 @@ import { guideEvents } from "../guide/events.js";
 import { NOTES_PAGE, PDF_PAGE, TITLES_PAGE, appendNew, searchQuery } from "./searchPages";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { Popover } from "../shared/ui/Surfaces";
+import { composing } from "../shared/lib/hotkeys.js";
 
 export { buildSearchRegex, normalizeQuery };
 
@@ -442,6 +443,7 @@ export default function SearchPanel({
                 value={query}
                 onChange={(e) => { setQuery(e.target.value); setPinned(false); pendingFindRef.current = null; }}
                 onKeyDown={(e) => {
+                  if (composing(e)) return;
                   // Only Tab turns the query into a label filter; Enter
                   // stays the search's own key (next PDF match).
                   if (e.key === "Tab" && !e.shiftKey && suggestions.length) {

@@ -2551,6 +2551,7 @@ export function ColorChoices({ colors, color, alpha, onColor }) {
     {/* no colour (a selection's fill of None, or mixed): nothing is marked */}
     <label className={"colorBtn inkSwatch inkCustomColor" + (listed || !current ? "" : " selected")}
       title={t("Custom color")} style={{ "--ink-custom": color || undefined }}>
+      {/* ui-allow color-input: the tool strip's custom-colour swatch keeps the native input (ui-design.md, ColorPicker) */}
       <input type="color" value={current || "#000000"} aria-label={t("Custom color")} onChange={(e) => onColor(e.target.value.toLowerCase(), alpha)} />
     </label>
   </>;

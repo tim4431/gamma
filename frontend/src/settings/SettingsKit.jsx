@@ -10,7 +10,7 @@
 import React from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
 import { AlertCircleIcon, CheckIcon, CloudCheckIcon, CopyIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon, XIcon } from "../shared/ui/Icons";
-import { bindable, chordFromEvent, heldFromEvent } from "../shared/lib/hotkeys.js";
+import { bindable, chordFromEvent, composing, heldFromEvent } from "../shared/lib/hotkeys.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
 import { UsageRing } from "../shared/ui/UsageRing.jsx";
 import { useInMenu } from "../shared/ui/Menus";
@@ -681,6 +681,7 @@ export function AccountPicker({ accounts, exclude = [], value, onChange, placeho
     onChange(exact ? exact.username : "");
   }
   function onKeyDown(event) {
+    if (composing(event)) return;
     if (event.key === "ArrowDown") { event.preventDefault(); setCursor((c) => Math.min(c + 1, shown.length - 1)); }
     else if (event.key === "ArrowUp") { event.preventDefault(); setCursor((c) => Math.max(c - 1, 0)); }
     else if (event.key === "Enter" && shown[cursor] && shown[cursor].username !== value) { event.preventDefault(); pick(shown[cursor].username); }

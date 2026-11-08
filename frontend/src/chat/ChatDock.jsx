@@ -35,7 +35,9 @@ import { ActionMenu, ContextMenu, MenuButton, MenuItem, MenuSelect } from "../sh
 import { backdropPress, menuPress } from "../shared/ui/press.js";
 import { useAltVariant } from "../shared/ui/altVariant.js";
 import { touchTyping } from "../shared/lib/pointer.js";
-import { composing, sendsOnEnter } from "./enterKey.js";
+import { pickFiles } from "../shared/lib/pickFiles.js";
+import { composing } from "../shared/lib/hotkeys.js";
+import { sendsOnEnter } from "./enterKey.js";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
 import { BLOCK_TOOLS, changePlace, chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
@@ -721,7 +723,6 @@ export default function ChatDock({
   const [chatFiles, setChatFiles] = useState([]); // uploaded PDFs ({name, data}) pending send
   const [docPicker, setDocPicker] = useState(false); // "Add pages" modal
   const [docPickerQuery, setDocPickerQuery] = useState("");
-  const fileInputRef = useRef(null);
   const chatScrollRef = useRef(null);
   // Ctrl+scroll over the transcript: session-only text size (useTextScale).
   const chatTextScale = useTextScale();
@@ -1991,6 +1992,7 @@ export default function ChatDock({
             onChange={(e) => setChatFind(e.target.value)}
             placeholder={t("Find in chat…")}
             onKeyDown={(e) => {
+              if (composing(e)) return;
               if (e.key === "Enter") { e.preventDefault(); gotoChatFind(e.shiftKey ? chatFindIdx - 1 : chatFindIdx + 1); }
               else if (e.key === "Escape") { e.preventDefault(); setChatFindOpen(false); setChatFind(""); }
             }}
@@ -2366,7 +2368,11 @@ export default function ChatDock({
             {openPopover === "chatdocs" ? (
               <Popover className="popUp chatPlusMenu">
                 <button type="button" className="chatPlusMenuItem"
-                  onClick={() => { setOpenPopover(null); fileInputRef.current?.click(); }}>
+                  onClick={() => {
+                    setOpenPopover(null);
+                    pickFiles({ accept: modelInfo?.images === false ? "application/pdf" : "image/*,application/pdf", multiple: true },
+                      (files) => addChatFiles([...files]));
+                  }}>
                   <span className="chatPlusMenuIcon">
                     <PaperclipIcon size={16} />
                   </span>
@@ -2394,14 +2400,6 @@ export default function ChatDock({
               </Popover>
             ) : null}
           </span>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept={modelInfo?.images === false ? "application/pdf" : "image/*,application/pdf"}
-            style={{ display: "none" }}
-            onChange={(e) => { addChatFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
-          />
           {pdfInContext && !aiOff ? <button
             type="button"
             className={`chatAttachToggle chatPdfToggle ${attachPdf ? "on" : ""}`}

@@ -968,9 +968,9 @@ a press keeps an on-screen keyboard up.
   `sendsOnEnter` serves the composer and an edit-and-resend.
 - **Input methods.** An Enter that confirms a word an input method is still
   composing (Chinese, Japanese, Korean; `isComposing` or key code 229)
-  belongs to it: `composing(e)` keeps it from sending, committing or
-  closing in the composer, an edit, the history's rename and a hand-off
-  card's note.
+  belongs to it: `composing(e)` (`shared/lib/hotkeys.js`, which every text
+  field's Enter asks) keeps it from sending, committing or closing in the
+  composer, an edit, the history's rename and a hand-off card's note.
 - **Searches that raise no keyboard.** The history popover's search and the
   page picker's take the focus on open only where typing is not on an
   on-screen keyboard (`autoFocus={!touchTyping()}`).

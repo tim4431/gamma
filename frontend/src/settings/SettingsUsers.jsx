@@ -27,6 +27,7 @@ import { MorphText } from "../shared/ui/MotionWidgets";
 import { TaskBlock } from "../tasks/TasksTray";
 import { useActiveJobs, useJobEnd } from "../tasks/useTasks";
 import { T, t } from "../shared/i18n/i18n.js";
+import { composing } from "../shared/lib/hotkeys.js";
 
 // `onServer` (admins) opens Settings → Server at the Gamma Cloud sign-in.
 export function UsersSettings({ value, selfOnly = false, onServer }) {
@@ -280,7 +281,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
         <div className="settingsForm">
           <Field label={t("Username")} hint={t("Renaming keeps sessions and share links working")}>
             <input
-              className="aiKeyInput" type="text" spellCheck={false}
+              className="aiKeyInput" type="text" spellCheck={false} autoCapitalize="none" autoCorrect="off"
               value={edit.username}
               onChange={(e) => setEdit((f) => ({ ...f, username: e.target.value }))}
             />
@@ -435,7 +436,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
           <div className="settingsForm">
           <Field label={t("Username")} hint={t("Letters, digits, _ . -")}>
             <input
-              className="aiKeyInput" type="text" spellCheck={false} autoFocus
+              className="aiKeyInput" type="text" spellCheck={false} autoCapitalize="none" autoCorrect="off" autoFocus
               value={addForm.username}
               onChange={(e) => setAddForm((f) => ({ ...f, username: e.target.value }))}
             />
@@ -445,7 +446,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
               autoComplete="new-password"
               value={addForm.password}
               onChange={(e) => setAddForm((f) => ({ ...f, password: e.target.value }))}
-              onKeyDown={(e) => { if (e.key === "Enter") submitAdd(); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && !composing(e)) submitAdd(); }}
             />
           </Field>
           <label className="uiCheckRow">
@@ -487,7 +488,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
                 className="aiKeyInput" type="email" spellCheck={false} autoCapitalize="none" autoFocus
                 placeholder="name@example.org" value={inviteForm.email}
                 onChange={(e) => setInviteForm({ email: e.target.value })}
-                onKeyDown={(e) => { if (e.key === "Enter" && looksLikeEmail(inviteForm.email) && !busy) sendInvite(); }}
+                onKeyDown={(e) => { if (e.key === "Enter" && !composing(e) && looksLikeEmail(inviteForm.email) && !busy) sendInvite(); }}
               />
             </Field>
             {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}

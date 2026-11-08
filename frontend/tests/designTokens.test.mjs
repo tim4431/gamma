@@ -1,7 +1,8 @@
 // The design-token ratchet (docs/dev/ui-design.md, "Tokens"): the raw
-// colours, font sizes, corner radii, shadows, layers and durations left in
-// the stylesheets may only go down. tools/designTokens.mjs counts them;
-// tests/design-baseline.json records the counts per file.
+// colours, font sizes, corner radii, shadows, layers, durations, easings and
+// font families left in the stylesheets may only go down.
+// tools/designTokens.mjs counts them; tests/design-baseline.json records the
+// counts per file.
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -42,6 +43,20 @@ test("the scanner tells raw values from tokens", () => {
   assert.deepEqual(kinds("animation", "easeIn var(--dur-base) var(--ease-out)"), [], "a name is not an easing");
   assert.deepEqual(kinds("animation", "pillSpin 0.9s linear infinite"), [], "a loop keeps its period and easing");
   assert.deepEqual(kinds("transition", "transform 520ms cubic-bezier(0.2, 0, 0, 1), opacity var(--dur-base) ease"), ["easing"], "per item of the list");
+  assert.deepEqual(kinds("font-family", "var(--font-mono)"), []);
+  assert.deepEqual(kinds("font-family", "inherit"), []);
+  assert.deepEqual(kinds("font-family", "Georgia, serif"), ["family"]);
+  assert.deepEqual(kinds("font-family", "var(--font-sans), \"Segoe UI Symbol\""), ["family"], "a fallback behind a stack is a family of its own");
+  assert.deepEqual(kinds("font", "inherit"), []);
+  assert.deepEqual(kinds("font", "600 var(--fs-2xs) var(--font-sans)"), []);
+  assert.deepEqual(kinds("font", "12px Georgia, serif"), ["size", "family"]);
+});
+
+test("a declaration knows its rule's selector and the at-rules around it", () => {
+  const [a, b, c] = declarations(".a, .b:hover { color: red; }\n@media (hover: hover) { .c .d { opacity: 0; pointer-events: none; } }");
+  assert.deepEqual([a.selector, a.media, a.rule], [".a, .b:hover", [], 0]);
+  assert.deepEqual([b.selector, b.media, b.rule], [".c .d", ["@media (hover: hover)"], 2]);
+  assert.equal(c.rule, b.rule, "one block, one rule");
 });
 
 test("allow comments exempt a line or a block", () => {

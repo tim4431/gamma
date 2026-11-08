@@ -1,0 +1,112 @@
+{
+  "app/App.jsx": {
+    "pointer-kind": 2,
+    "icon-size": 1,
+    "owned-class": 8,
+    "inline-style": 2
+  },
+  "app/prefDefs.js": {
+    "pointer-kind": 1
+  },
+  "chat/AgentChanges.jsx": {
+    "icon-size": 1
+  },
+  "chat/ChatDock.jsx": {
+    "icon-size": 1
+  },
+  "chat/ReplyPapers.jsx": {
+    "icon-size": 1
+  },
+  "chat/RevertChanges.jsx": {
+    "icon-size": 1
+  },
+  "collaboration/ZoteroPage.jsx": {
+    "icon-size": 1
+  },
+  "comments/CommentComposer.jsx": {
+    "icon-size": 1
+  },
+  "editor/BlockProperties.jsx": {
+    "icon-size": 3
+  },
+  "editor/BlockTree.jsx": {
+    "icon-size": 1
+  },
+  "editor/SelectionToolbar.jsx": {
+    "icon-size": 1
+  },
+  "editor/useSelectionToolbar.js": {
+    "pointer-kind": 1
+  },
+  "guide/GuideOverlay.jsx": {
+    "pointer-kind": 1
+  },
+  "guide/guide.css": {
+    "uppercase": 1
+  },
+  "ink/InkLayer.jsx": {
+    "context-menu": 1,
+    "icon-size": 2
+  },
+  "library/FileBrowser.jsx": {
+    "icon-size": 1
+  },
+  "main.jsx": {
+    "pointer-kind": 1
+  },
+  "markup/PictureLayer.jsx": {
+    "context-menu": 1,
+    "pointer-kind": 2
+  },
+  "markup/TextBoxLayer.jsx": {
+    "pointer-kind": 2
+  },
+  "pdf/PdfViewer.jsx": {
+    "context-menu": 1,
+    "pointer-kind": 3,
+    "inline-style": 1
+  },
+  "pdf/verticalScrollSnap.js": {
+    "pointer-kind": 1
+  },
+  "recording/PlayerBar.jsx": {
+    "icon-size": 2
+  },
+  "settings/SettingsKit.jsx": {
+    "double-click": 1
+  },
+  "settings/settings.css": {
+    "field-focus": 1
+  },
+  "shared/illustrations/FormatIllustration.jsx": {
+    "icon-stroke": 2
+  },
+  "shared/lib/canvasSize.js": {
+    "pointer-kind": 1
+  },
+  "shared/styles/app.css": {
+    "field-focus": 1,
+    "accent-color": 1
+  },
+  "shared/ui/Widgets.jsx": {
+    "touch-handler": 3
+  },
+  "shared/ui/altVariant.js": {
+    "pointer-kind": 2
+  },
+  "support/ReportProblem.jsx": {
+    "pointer-kind": 1
+  },
+  "support/problemReport.js": {
+    "pointer-kind": 1
+  },
+  "transfers/ImportExport.jsx": {
+    "icon-size": 1
+  },
+  "transfers/folderZip.js": {
+    "pointer-kind": 1
+  },
+  "transfers/importReview.css": {
+    "uppercase": 1
+  }
+}

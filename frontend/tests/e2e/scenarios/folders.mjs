@@ -35,7 +35,15 @@ export async function folderScenarios(env) {
     const page = await openPage(ctx, `${server.base}/?ws=${user.ws}`);
     try {
       await page.locator(".folderNewBtn", { hasText: "New folder" }).click();
-      await page.locator(".folderNewInput").fill("Empty one");
+      const field = page.locator(".folderNewInput");
+      await field.fill("Empty one");
+      // The Enter that confirms an input method's word is the input
+      // method's (composing, shared/lib/hotkeys.js): the field stays open
+      // with its name and no folder is made.
+      await field.dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true });
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+      assertEq(await field.inputValue(), "Empty one", "a composing Enter leaves the field as it was");
+      assertEq((await tree("folders")).filter((f) => f.content === "Empty one").length, 0, "a composing Enter makes no folder");
       await page.keyboard.press("Enter");
       await row(page, "Empty one").waitFor();
       assertEq((await tree("folders")).filter((f) => f.content === "Empty one").length, 1, "one folder block, empty");

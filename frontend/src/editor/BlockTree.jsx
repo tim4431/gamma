@@ -2,6 +2,7 @@
 // editing, [[refs]], link chips, image drop/paste), drag handles, and the tree.
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { textOf } from "../shared/lib/textOf";
+import { pickFiles } from "../shared/lib/pickFiles.js";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import { MergeChip } from "../collaboration/MergeResolver";
@@ -27,7 +28,7 @@ import { isTextBox } from "../markup/textBox.js";
 import { isPicture, pictureMarkdown } from "../markup/picture.js";
 import { PictureCard } from "../markup/PictureLayer";
 import { picturesDrag } from "../markup/pictureUpload.js";
-import { composing } from "../chat/enterKey.js";
+import { composing } from "../shared/lib/hotkeys.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
 import { CitationPill, GammaLinkCard, handleMarkdownCopy, useDockFolded } from "../shared/ui/Widgets";
@@ -1001,14 +1002,10 @@ const BlockRow = React.memo(function BlockRow({
       // upload appends to the value captured here, with "/image" removed.
       pickImage: () => {
         const base = value.slice(0, start) + value.slice(cursor);
-        const inp = document.createElement("input");
-        inp.type = "file";
-        inp.accept = "image/*";
-        inp.onchange = async () => {
-          const url = await uploadImage(inp.files?.[0]);
+        pickFiles({ accept: "image/*" }, async ([file]) => {
+          const url = await uploadImage(file);
           if (url) onChangeText(block.id, (base ? base + "\n" : "") + `![](${url})`);
-        };
-        inp.click();
+        });
       },
     }),
   });

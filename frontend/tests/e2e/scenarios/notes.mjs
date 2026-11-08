@@ -100,7 +100,18 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   await step("notes: New page, title, first block, reload persists (non-default workspace)", async () => {
     ctx = await alice2.context(browser);
     page = await openPage(ctx, `${server.base}/?ws=${second.id}`);
-    pageId = await newPageViaUi(page, "Reading list");
+    await page.waitForSelector(".folderNewBtn", { timeout: 15000 });
+    await page.click(".folderNewBtn");
+    await page.waitForSelector(".titleEdit");
+    await page.keyboard.type("Reading list");
+    // The Enter that confirms an input method's word is the input method's
+    // (composing, shared/lib/hotkeys.js): the title stays in its editor.
+    await page.locator(".titleEdit").dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true });
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+    assertEq(await page.locator(".titleEdit").inputValue(), "Reading list", "a composing Enter leaves the title being edited");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
+    pageId = new URL(page.url()).searchParams.get("block");
     assert(pageId, "URL names the page");
     await page.keyboard.type("first");
     await saved([{ content: "first", children: [] }], "the first block saved as an insert");

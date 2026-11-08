@@ -2708,7 +2708,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   background: none;
   border: none;
   border-radius: var(--radius-sm);
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -5915,7 +5915,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border-radius: var(--radius-sm);
   background: transparent;
   color: inherit;
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
   cursor: pointer;
 }
 .bibPaperRow:hover { background: var(--bg-hover); }
@@ -6226,7 +6226,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border-radius: var(--radius-sm);
   text-align: left;
   cursor: pointer;
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
 }
 .refPopupItem:hover { background: var(--bg-hover); }
 .refPopupItem.selected { background: var(--accent-bg); }
@@ -6349,7 +6349,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   text-align: left;
   cursor: pointer;
   color: var(--text-primary);
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
 }
 .slashMenuItem:hover { background: var(--bg-hover); }
 .slashMenuItem.selected { background: var(--accent-bg); }
@@ -6946,11 +6946,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-secondary);
   cursor: pointer;
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--dur-fast);
 }
 .blockInkCardWrap .inkReplayBtn:hover { color: var(--text-primary); }
-.blockInkCardWrap:hover .inkReplayBtn, .blockInkCardWrap .inkReplayBtn:is(:focus-visible, [aria-pressed="true"]) { opacity: 1; }
-@media (hover: none) { .blockInkCardWrap .inkReplayBtn { opacity: 1; } }
+.blockInkCardWrap:hover .inkReplayBtn, .blockInkCardWrap .inkReplayBtn:is(:focus-visible, [aria-pressed="true"]) { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .blockInkCardWrap .inkReplayBtn { opacity: 1; pointer-events: auto; } }
 /* The lasso selection: a dashed box the pointer drags to move. */
 .inkSelRect {
   fill: rgba(80, 140, 255, 0.06);

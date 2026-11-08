@@ -19,7 +19,7 @@ import { Field, PasswordInput, Row, Step, SubDialog } from "./SettingsKit";
 import { useSettingsRead } from "./settingsReads.js";
 import { ZOTERO_ACCOUNT, connectZoteroKey, disconnectZotero, startZoteroOAuth, zoteroKeyRefusal,
   zoteroOAuthStatus } from "../transfers/zoteroApi";
-import { composing } from "../chat/enterKey.js";
+import { composing } from "../shared/lib/hotkeys.js";
 import { BookIcon, ExternalLinkIcon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 

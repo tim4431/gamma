@@ -108,6 +108,7 @@ export default function ThreadPopover({ target, threads, kind = "note", me, owne
   return createPortal(
     <div
       ref={leaveRef}
+      // ui-allow owned-class: a portalled .popover placed from its anchor, with its own useLeave (ui-design.md, Motion)
       className="popover commentPopover"
       data-popover="thread"
       role="dialog"

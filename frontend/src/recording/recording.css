@@ -76,9 +76,9 @@
 .recordingCard.live { padding-left: 10px; }
 .recordingCard .recMeta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .recordingCard .recPlay { width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); border-radius: var(--radius-full); }
-.recordingCard .recMenuBtn { opacity: 0; }
-.recordingCard:hover .recMenuBtn, .recordingCard .recMenuBtn:focus-visible, .recordingCard .recMenuBtn[aria-expanded="true"] { opacity: 1; }
-@media (hover: none) { .recordingCard .recMenuBtn { opacity: 1; } }
+.recordingCard .recMenuBtn { opacity: 0; pointer-events: none; }
+.recordingCard:hover .recMenuBtn, .recordingCard .recMenuBtn:focus-visible, .recordingCard .recMenuBtn[aria-expanded="true"] { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .recordingCard .recMenuBtn { opacity: 1; pointer-events: auto; } }
 .recordingMarker {
   display: inline-flex;
   align-items: center;
@@ -213,9 +213,10 @@
   color: var(--text-secondary);
   cursor: pointer;
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--dur-fast);
 }
-.blockRow:hover .replayGlyph, .replayGlyph:focus-visible { opacity: 1; }
+.blockRow:hover .replayGlyph, .replayGlyph:focus-visible { opacity: 1; pointer-events: auto; }
 .replayGlyph:hover { color: var(--text-primary); }
 @media (hover: none) { .replayGlyph { display: none; } }
 /* a text box not yet reached */

@@ -16,9 +16,9 @@
 import React, { useContext, useEffect, useRef, useState } from "react";
 import { ArrowUpIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
-import { chordLabel } from "../shared/lib/hotkeys.js";
+import { chordLabel, composing } from "../shared/lib/hotkeys.js";
 import { touchTyping } from "../shared/lib/pointer.js";
-import { composing, sendsOnShiftEnter } from "../chat/enterKey.js";
+import { sendsOnShiftEnter } from "../chat/enterKey.js";
 import { BlockCmEditor } from "../editor/BlockCmEditor";
 import { LatexAcPopup, MathLivePreview } from "../editor/LatexEditor";
 import { MentionContext, MentionMenuPopup } from "../editor/MentionMenu";
