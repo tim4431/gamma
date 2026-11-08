@@ -444,7 +444,7 @@ run by `backend/tests/test_shared_fixtures.py` (the slugs by
 `test_publish.py`) and the matching node tests. Add a case there when a rule
 changes; whichever side drifts fails.
 
-The frontend has **no linter** and no component tests. Its pure modules have
+The frontend has **no linter** and few component tests. Its pure modules have
 `node --test` tests (`npm test` from `frontend/`, the files in
 `frontend/tests/*.test.mjs`): `blockOps` (diff/apply), `collabSession` (the
 page session's transport logic over fakes — ordering, reconciliation,
@@ -453,14 +453,20 @@ retries, presence, the caret throttle), `sessionState`, `settings`
 above), `mdMarks` (the formatting hotkeys' toggle), `logseqPdfModel` (tree
 ops), `blockHistory` (the undo classifier), `menuAim` (the safe-triangle
 geometry), `themes` (the design tokens: the desktop copy, the pre-paint's
-theme lists, every theme resolving, the contrast ratchet) and
+theme lists, every theme resolving, the contrast ratchet),
 `designTokens` (the raw-value ratchet on the stylesheets, and no
-`(pointer: coarse)` rule sizing a control but the text box's handle).
+`(pointer: coarse)` rule sizing a control but the text box's handle), and
+`inert` (no string given to the `inert` prop in `src`, and React writing
+the attribute for true and removing it for false).
 Both ratchets are described in [ui-design.md](ui-design.md#ratchets). A
 module is testable there when its relative imports carry the `.js`
 extension (node resolves nothing else). Modules that import React can still be imported for their
-pure exports. Actual React rendering and
-interactions are exercised by the browser suite below, plus one standalone
+pure exports. A few tests render React itself. The markdown ones
+(`callouts`, `noteSanitize`, `diagramMarkdown`, `remarkPaperLinks`,
+`textBoxShown`) render to static markup, and `leave` and `inert` mount a
+React root in jsdom. Node runs React's development build, so StrictMode's
+double ref attach shows there, as it does in `npm run dev`. Other React
+rendering and interactions are exercised by the browser suite below, plus one standalone
 browser regression: `npm run e2e:latex` bundles the block
 editor with esbuild over an in-memory fixture ([latex_editing.md](latex_editing.md)).
 
@@ -1553,6 +1559,20 @@ Bash, `gradlew.bat` from PowerShell. What each test covers:
   registered again, its `order` changed, makes the group read its saved
   layout, and a splitter moves the panels by its index among the
   splitters, past any pinned at no size.
+- React stays on 19.2 (`~19.2.9` in `frontend/package.json`), so a
+  dependency refresh takes its patches but not 19.3. 19.3 adds about 7 KB
+  of Brotli to the entry chunk, which every first screen loads, for view
+  transitions and Fragment refs, which Gamma does not use. Moving to it is
+  a decision, not a refresh ([research/react-19.md](../research/react-19.md)).
+- `inert` is a boolean prop: `inert={!!folded}`. React 19 reads the empty
+  string as false, so `inert=""` makes nothing inert, and it says so only
+  in development. `tests/inert.test.mjs` fails on a string given to it.
+  `npm run dev` runs StrictMode, which in React 19 attaches each callback
+  ref twice as an element mounts (the element, null, the element again).
+  A ref that does work on attach or detach must allow for that, as
+  `useTextScale`, `useWheelPan`, `useLeave` and the comment margin's card
+  refs do. The browser suite drives the production build, which never
+  does this.
 - Timestamps are UTC ISO strings with `Z` (`page_now()`); keep the format.
   `db.format_stamp` writes a datetime in it and `db.parse_stamp` reads one
   back (None when unreadable — whether that means expired, due or now is

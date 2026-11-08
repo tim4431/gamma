@@ -114,7 +114,10 @@ depth and its place among its siblings (`place`, `siblings`: what the
 editing bar's move and indent buttons read from the tree's order). A new
 row prop must follow that rule or every row renders again. No browser
 profile has measured this yet
-([research/performance.md](../research/performance.md)).
+([research/performance.md](../research/performance.md)). The React Compiler
+was tried on this code and compiles none of `LibraryApp`, `BlockRow` or
+`BlockTree` ([research/react-19.md](../research/react-19.md)), so hand
+memoization stays the rule until the state owners below exist.
 
 The goal is a small composition root with explicit state owners and commands.
 Extraction should remove coupled responsibilities, not merely move long

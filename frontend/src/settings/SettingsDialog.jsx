@@ -1320,7 +1320,7 @@ export default function SettingsDialog({
             </div>
             <button className="uiClose uiCloseLg" onClick={() => guard(onClose)} aria-label={t("Close settings")}><XIcon size={16} /></button>
           </div>
-          <div className="settingsBody" inert={pending ? "" : undefined}>
+          <div className="settingsBody" inert={!!pending}>
             <nav className="settingsSidebar" aria-label={t("Settings categories")}>
               {available("account") ? (
                 <NavAccountCard name={users.me} usedBytes={users.quotaInfo?.used_bytes} quotaMb={users.quotaInfo?.quota_mb}

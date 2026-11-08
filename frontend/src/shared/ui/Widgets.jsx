@@ -83,7 +83,7 @@ const useDockFolded = () => useContext(DockFolded);
 
 function DockWindow({ title, guide, onGrip, onFold, onClose, headerContent, collapsed, children }) {
   return (
-    <div className={`dockWindow${collapsed ? " dockWindowFolded" : ""}`} inert={collapsed ? "" : undefined}>
+    <div className={`dockWindow${collapsed ? " dockWindowFolded" : ""}`} inert={!!collapsed}>
       {collapsed ? null : (
         <DockHeader title={title} guide={guide} onGrip={onGrip} onFold={onFold} onClose={onClose} headerContent={headerContent} />
       )}

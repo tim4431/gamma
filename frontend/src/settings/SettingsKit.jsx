@@ -312,11 +312,11 @@ export function SubDialog({ title, onClose, children, draft, guard = null, class
             else if (!event.shiftKey && (document.activeElement === last || document.activeElement === ref.current)) { event.preventDefault(); first?.focus(); }
           }
         }}>
-        {closeButton ? <div className="settingsDialogHeader" inert={asking ? "" : undefined}>
+        {closeButton ? <div className="settingsDialogHeader" inert={!!asking}>
           <div className="reportModalTitle">{title}</div>
           <button type="button" className="uiClose uiCloseLg" onClick={close} aria-label={t("Close {title}", { title: title })} title={t("Close")}><XIcon size={16} /></button>
         </div> : <div className="reportModalTitle">{title}</div>}
-        <div className="settingsDialogContent" inert={asking ? "" : undefined}>{children}</div>
+        <div className="settingsDialogContent" inert={!!asking}>{children}</div>
         {asking ? <div className="settingsUnsaved" role="alertdialog" aria-label={ask.label || ask.question}>
           <span>{ask.question}</span>
           <span className="settingsUnsavedBtns">

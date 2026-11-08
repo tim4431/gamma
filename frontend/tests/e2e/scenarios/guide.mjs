@@ -8,7 +8,7 @@ import { ANCHORS, anchorsForView } from "../../../src/guide/anchors.js";
 import { selectPdfText, waitForPdf } from "./pdf.mjs";
 import { ABSTRACT_PASSAGE } from "../../../src/guide/previewHighlight.js";
 import { readFileSync } from "node:fs";
-import { Account } from "../harness.mjs";
+import { Account, live } from "../harness.mjs";
 
 export async function guideScenarios(env) {
   const { server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;
@@ -238,7 +238,10 @@ export async function guideScenarios(env) {
       await page.waitForSelector('[data-guide-offer="first-run"] .guideCard.welcomeDeck', { timeout: 15000 });
       for (let i = 1; i < 9; i++) await page.keyboard.press("ArrowRight");
       await page.getByRole("button", { name: "Open the Welcome page", exact: true }).click();
-      await until(async () => await page.locator(".guideCard").count() === 0);
+      // The page hands the load back to the contextual tours, and its PDF
+      // may offer one as it opens (windows, on page.opened): only the deck
+      // is waited out, not every card.
+      await until(async () => await page.locator(live(".guideCard.welcomeDeck")).count() === 0, { what: "the deck goes" });
       await until(() => new URL(page.url()).searchParams.has("block"), { what: "a page opens" });
       const { block } = await arrival.api(`/api/blocks/${new URL(page.url()).searchParams.get("block")}/subtree`);
       assertEq(block.properties?.seeded, "welcome", "the seeded Welcome page");
