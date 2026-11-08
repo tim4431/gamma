@@ -99,9 +99,18 @@ than 1 GB free or the account's finished files take 10 GB (507, "download
 them and remove them in Background tasks first"). Files are not metered
 against the account's storage quota.
 
+What a run needs that its params cannot hold is kept with the job:
+`jobs.start(kept={name: bytes})` writes `jobs/<id>/kept/<name>` before the
+row goes in, and `jobs.kept(id, name)` reads it back. It stays for as long
+as the job is listed, however the job ended: a failure, a stop and
+`recover` take only what the run wrote. Removing the job, clearing it and
+the sweep take it with the row. A translated annotated-PDF export keeps
+the viewer's layout this way, so it can be started again
+([translation.md](translation.md#exporting-the-translation)).
+
 **Ending.** A finished job is kept 24 hours (`RETENTION_S`). The sweep
 (`jobs.sweep`, every 10 minutes from the app lifespan) removes it with its
-file, job directories no row names and uploads no job took. At startup
+file and what it kept, job directories no row names and uploads no job took. At startup
 `jobs.recover` fails the jobs a stopped process left queued or running
 ("interrupted: the server restarted while this ran"). A process only
 recovers rows another process stamped (`instance`), so a second app
@@ -262,7 +271,9 @@ runs first, oldest on top; then what ended, newest on top) and the tray
 badge. `taskKinds.js` gives each kind its icon, title, detail line and row
 actions, where a click opens it (`open`) and how to start it again
 (`retry`: the same route and body; an export that carried the viewer's
-translation has none, since its params cannot hold it).
+translation names its job as `translation_of`, since its params cannot
+hold the layout and the server keeps it with the job,
+[translation.md](translation.md#exporting-the-translation)).
 
 `TasksTray.jsx` holds the button, the panel and its rows:
 

@@ -10,6 +10,7 @@ as a folder's pages are. The same builders serve the downloads
 and the background job the web app starts (``POST /api/jobs/export``)."""
 
 import base64
+import gzip
 import json
 import mimetypes
 import os
@@ -1766,8 +1767,33 @@ class ExportJob(BaseModel):
     comments: bool = False      # an annotated PDF's open comment threads beside its pages
     notes_at: str = "beside"    # where an annotated PDF's notes go (NOTES_AT)
     sub_pages: bool = False     # a page's: the pages inside it too (a folder's pages always bring theirs)
-    # a page's annotated PDF: the translation the viewer shows of its PDF
+    # a page's annotated PDF: the translation the viewer shows of its PDF …
     translation: ExportTranslation | None = None
+    # … or the one an earlier export of that page kept (its job's id): its retry
+    translation_of: str = ""
+
+
+# The layout a translated export was sent, kept with its job (jobs.kept) so
+# Background tasks can start it again.
+KEPT_TRANSLATION = "translation.json.gz"
+
+
+def _kept_translation(request: Request, ws: str, page_id: str, job_id: str) -> ExportTranslation:
+    """The translation an earlier annotated-PDF export of this page was
+    sent, kept with its job: one of this account's, in this workspace. 404
+    once it is not (the job was removed, or ran before exports kept it)."""
+    job = jobs.get(job_id)
+    data = None
+    if (job is not None and job["kind"] == "export" and job["owner"] == request.state.user_id
+            and job["workspace"] == ws and job["params"].get("page_id") == page_id):
+        data = jobs.kept(job_id, KEPT_TRANSLATION)
+    try:
+        if data is not None:
+            return ExportTranslation.model_validate_json(gzip.decompress(data))
+    except (OSError, ValueError):  # a damaged file (pydantic's ValidationError is a ValueError)
+        pass
+    raise HTTPException(status_code=404, detail=(
+        "that export's translation is no longer kept — export the page again from the viewer"))
 
 
 @router.post("/jobs/export")
@@ -1783,7 +1809,11 @@ def start_export_job(payload: ExportJob, request: Request):
     shows of the page's PDF, which is written in place of the original text
     of that page's PDF (not of the pages inside it); its params name the
     language as ``translation`` ("" without one); 400 for one with a folder
-    or another format, 413 past ``_translation_bounds``. A page whose
+    or another format, 413 past ``_translation_bounds``. The job keeps the
+    translation for as long as it is listed (``KEPT_TRANSLATION``), so
+    ``translation_of``, that job's id in place of ``translation``, starts
+    the same export again (Background tasks' retry; 404 once it is gone,
+    ``_kept_translation``). A page whose
     translation cannot be written is left out like any page whose annotated
     PDF fails (``_translated``)."""
     user = require_user(request)
@@ -1792,9 +1822,13 @@ def start_export_job(payload: ExportJob, request: Request):
     if mode not in _BUILDERS:
         raise HTTPException(status_code=400, detail=f"unknown export mode: {mode}")
     folder, page_id, translation = payload.folder, payload.page_id, payload.translation
-    if translation is not None:
-        if folder or mode != "annotated-pdf":
+    if translation is not None or payload.translation_of:
+        if folder or not page_id or mode != "annotated-pdf":
             raise HTTPException(status_code=400, detail="a translation goes only with a page's annotated PDF")
+        if translation is not None and payload.translation_of:
+            raise HTTPException(status_code=400, detail="send a translation or name the export it came from, not both")
+        if translation is None:
+            translation = _kept_translation(request, ws, page_id, payload.translation_of)
         _translation_bounds(translation)
     with connect_pages_db(ws) as conn:
         if folder:
@@ -1826,8 +1860,10 @@ def start_export_job(payload: ExportJob, request: Request):
         job.set_artifact(name, media_type)
         return builder.summary()
 
+    kept = {KEPT_TRANSLATION: gzip.compress(translation.model_dump_json().encode(), 6)} \
+        if translation is not None else None
     return jobs.start("export", owner=request.state.user_id, ws=ws, run=run, artifact=True, title=f"Export of {title}",
-                      params={"page_id": page_id if not folder else "", "folder": folder, "name": title,
+                      kept=kept, params={"page_id": page_id if not folder else "", "folder": folder, "name": title,
                               "mode": mode, "pdf": payload.pdf, "highlights": payload.highlights,
                               "notes": payload.notes, "comments": payload.comments,
                               "notes_at": payload.notes_at, "sub_pages": payload.sub_pages and not folder,

@@ -146,11 +146,13 @@ test("starting the same work again names the route and the body the first start 
   assert.deepEqual(retryOf(job({ kind: "relocate-highlights", params: { page_id: "p1", title: "Paper", doc_id: "d1" } })),
     ["relocate-highlights", { page_id: "p1" }], "Try again places the page's highlights in the file it carries now");
   assert.deepEqual(retryOf(job({ kind: "db-check", state: "failed" })), ["db-check", {}]);
-  assert.equal(retryOf(job({ params: { ...exported, mode: "annotated-pdf", translation: "zh-CN" } })), null,
-    "an export that wrote the viewer's translation has none: its params keep no translation");
-  assert.deepEqual(retryOf(job({ params: { ...exported, mode: "annotated-pdf", translation: "", sub_pages: false } }))?.[0], "export");
-  assert.deepEqual(taskActions(job({ state: "failed", params: { mode: "annotated-pdf", translation: "zh-CN" } })), ["dismiss"],
-    "the tray offers no retry for it");
+  assert.deepEqual(retryOf(job({ id: "j1", params: { ...exported, mode: "annotated-pdf", translation: "zh-CN", sub_pages: false } })),
+    ["export", { ...exported, mode: "annotated-pdf", sub_pages: false, translation_of: "j1" }],
+    "an export that wrote the viewer's translation names its job, which keeps the translation it was sent");
+  assert.deepEqual(retryOf(job({ params: { ...exported, mode: "annotated-pdf", translation: "", sub_pages: false } })),
+    ["export", { ...exported, mode: "annotated-pdf", sub_pages: false }], "one without names none");
+  assert.deepEqual(taskActions(job({ id: "j1", state: "failed", params: { mode: "annotated-pdf", translation: "zh-CN" } })),
+    ["retry", "dismiss"], "the tray offers it Start again");
   assert.equal(retryOf(job({ kind: "workspace-delete", params: { ws: "w1", name: "Lab" } })), null);
   assert.equal(retryOf(job({ kind: "indexing" })), null);
   assert.equal(retryOf({ local: true, kind: "download" }), null);
@@ -162,10 +164,10 @@ test("a failed export's dialog offers the job again, or for a translated one the
   assert.equal(exportAgain(job({ state: "failed", params }), "p2"), "retry", "its params start it again, whatever page is open");
   const translated = job({ state: "failed", params: { ...params, translation: "zh-CN" } });
   assert.equal(exportAgain(translated, "p1"), "setup", "its page is open: the setup exports it again from the viewer");
-  assert.equal(exportAgain(translated, "p2"), "", "another page is open: the setup would export that one, so Close alone");
-  assert.equal(exportAgain(translated, ""), "");
+  assert.equal(exportAgain(translated, "p2"), "retry",
+    "another page is open: the setup would export that one, so the job again with the translation it kept");
+  assert.equal(exportAgain(translated, ""), "retry");
   assert.equal(exportAgain(job({ state: "cancelled", params: { ...params, translation: "zh-CN" } }), "p1"), "setup");
-  assert.equal(exportAgain(job({ state: "failed", params: { ...params, page_id: "", translation: "zh-CN" } }), ""), "");
 });
 
 test("a highlights run the PDF's next replacement took over is no news", () => {

@@ -141,8 +141,5 @@ subset and no hidden text.
   for copying. Writing it invisibly needs a font with math coverage.
 - Justified text and the paper's own typeface, where the overlay and the
   file both use a plain serif.
-- Retry of a translated export from Background tasks: a job's params
-  cannot hold the layout, so a translated export offers none, and the
-  dialog exports again from the viewer.
 - Translations in a folder's export, which would need the viewer's layout
   of every paper in it.

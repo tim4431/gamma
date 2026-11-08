@@ -362,6 +362,56 @@ def test_removing_a_job_and_clearing_the_finished_ones(alice):
     _finished(running["id"])
 
 
+def test_what_a_job_keeps_stays_for_as_long_as_it_is_listed(alice):
+    """``start(kept=...)``: what a run needs that its params cannot hold (a
+    translated export's layout) outlives the run however it ended, the
+    interrupted one included, so the work can be started again, and goes
+    with the job's row."""
+    from gamma import jobs
+    from gamma.db import connect_users_db
+
+    def failing(job):
+        assert jobs.kept(job._live.id, "layout.json") == b"the layout"
+        job.artifact_path.write_bytes(b"half")
+        raise ValueError("no")
+
+    failed = _finished(_start("jb_alice", failing, artifact=True, kept={"layout.json": b"the layout"})["id"])
+    assert failed["state"] == "failed"
+    assert jobs.kept(failed["id"], "layout.json") == b"the layout"
+    assert sorted(p.name for p in (jobs.root() / failed["id"]).iterdir()) == ["kept"]  # its half-written file went
+    assert jobs.kept(failed["id"], "other.json") is None and jobs.kept(failed["id"], "../kept/layout.json") is None
+    assert jobs.kept("0" * 24, "layout.json") is None and jobs.kept("not an id", "layout.json") is None
+
+    def run(job):
+        job.artifact_path.write_bytes(b"x")
+        job.set_artifact("x.bin")
+
+    done = _finished(_start("jb_alice", run, artifact=True, kept={"layout.json": b"kept too"})["id"])
+    assert done["state"] == "done" and jobs.kept(done["id"], "layout.json") == b"kept too"
+    assert alice.get(f"/api/jobs/{done['id']}/download").content == b"x"
+    assert alice.delete(f"/api/jobs/{done['id']}").json() == {"ok": True}
+    assert jobs.kept(done["id"], "layout.json") is None and not (jobs.root() / done["id"]).exists()
+    with pytest.raises(ValueError):
+        _start("jb_alice", run, kept={"../escape": b"x"})
+
+    # a restart fails a run the stopped process left, and keeps what it kept
+    gate = Gate()
+    left = _start("jb_alice", gate, kept={"layout.json": b"interrupted"})
+    assert gate.started.wait(10)
+    (jobs.root() / left["id"] / "artifact.part").write_bytes(b"half")
+    with connect_users_db() as conn:
+        conn.execute("UPDATE jobs SET instance = 'gone' WHERE id = ?", (left["id"],))
+        conn.commit()
+    assert jobs.recover() == 1
+    assert jobs.get(left["id"])["error"] == jobs.INTERRUPTED
+    assert not (jobs.root() / left["id"] / "artifact.part").exists()
+    assert jobs.kept(left["id"], "layout.json") == b"interrupted"
+    gate.release()
+    _finished(left["id"])
+    assert alice.post("/api/jobs/clear").json()["removed"] >= 2
+    assert jobs.kept(failed["id"], "layout.json") is None and not (jobs.root() / failed["id"]).exists()
+
+
 def test_a_job_that_writes_files_needs_room(alice, monkeypatch):
     from gamma import jobs
 

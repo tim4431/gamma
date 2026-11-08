@@ -18,7 +18,10 @@ JSON value). It reports through ``job.progress(...)``, which raises
 job can stop; ``stoppable=False`` marks the point after which it no longer
 can (a restore swapping the databases). A job that produces a file writes
 it to ``job.artifact_path`` and names the download with
-``job.set_artifact``. An exception fails the job with its message.
+``job.set_artifact``. An exception fails the job with its message. What a
+run needs that its params cannot hold (a translated export's layout) is
+``kept`` with the job (``start(kept=...)``, ``kept(id, name)``) for as long
+as the job is listed, however it ended, so the job can be started again.
 
 One server process runs the jobs (the app is one uvicorn process, like the
 page sockets). An account runs at most ``MAX_RUNNING_PER_ACCOUNT`` jobs at
@@ -61,6 +64,8 @@ INSTANCE = secrets.token_hex(8)  # this server process, stamped on the jobs it r
 INTERRUPTED = "interrupted: the server restarted while this ran — start it again"
 
 _ID_RE = re.compile(r"^[0-9a-f]{24}$")
+KEPT_DIR = "kept"                # <id>/kept/: what start(kept=...) holds for the job's life
+_KEPT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _COLUMNS = ("id", "owner", "workspace_id", "kind", "key", "title", "params", "state", "progress", "result",
             "error", "artifact_name", "artifact_type", "artifact_size", "downloaded_at", "instance",
             "created_at", "started_at", "finished_at")
@@ -92,6 +97,36 @@ def _dir(job_id: str) -> Path:
     if not _ID_RE.match(job_id or ""):
         raise ValueError(f"not a job id: {job_id!r}")
     return root() / job_id
+
+
+def _clear_run_files(job_id: str) -> None:
+    """Remove what a run wrote in the job's directory (its file, whole or
+    in part), leaving what the job keeps (``KEPT_DIR``)."""
+    d = _dir(job_id)
+    if not d.is_dir():
+        return
+    for entry in d.iterdir():
+        if entry.name == KEPT_DIR:
+            continue
+        if entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+        else:
+            entry.unlink(missing_ok=True)
+    try:
+        d.rmdir()  # nothing kept: no directory left behind
+    except OSError:
+        pass
+
+
+def kept(job_id: str, name: str) -> bytes | None:
+    """What ``start(kept=...)`` kept under ``name`` for this job, or None
+    (no such job any more, or nothing kept under that name)."""
+    if not _KEPT_NAME_RE.match(name or ""):
+        return None
+    try:
+        return (_dir(job_id) / KEPT_DIR / name).read_bytes()
+    except (ValueError, OSError):
+        return None
 
 
 def incoming_path(suffix: str = ".zip") -> Path:
@@ -263,7 +298,7 @@ def for_account(owner: str, ws: str = "") -> list[dict]:
 # --- starting and running -------------------------------------------------------------
 
 def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: dict | None = None,
-          key: str = "", artifact: bool = False, ended=None) -> dict:
+          key: str = "", artifact: bool = False, ended=None, kept: dict[str, bytes] | None = None) -> dict:
     """Queue ``run(job)`` as a job of ``kind`` for ``owner`` (an account's
     id, or ``WORKSPACE`` for a workspace's own work) and return it. ``key``: work
     already queued or running for the same owner, kind and key raises
@@ -272,7 +307,10 @@ def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: 
     when the account already has ``MAX_ACTIVE_PER_ACCOUNT`` jobs going.
     ``ended(state)``: called once a run that started has ended, however it
     ended, when the job already reads as ended (``get``, ``latest``), so
-    work it wakes never finds it still running."""
+    work it wakes never finds it still running. ``kept``: files (name to
+    bytes) the job holds for as long as it is listed, whatever its state —
+    what a run needs that ``params`` cannot hold, read back with
+    ``kept(id, name)`` by the run or by a later start of the same work."""
     with _lock:
         if key:
             for other in _live.values():
@@ -287,6 +325,15 @@ def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: 
         row = {"id": secrets.token_hex(12), "owner": owner, "workspace_id": ws or "", "kind": kind,
                "key": key, "title": title[:300], "params": json.dumps(params or {}), "state": "queued",
                "progress": "{}", "instance": INSTANCE, "created_at": page_now()}
+        if kept:
+            if bad := [name for name in kept if not _KEPT_NAME_RE.match(name)]:
+                raise ValueError(f"not a kept file's name: {bad[0]!r}")
+            # before the row, so a listed job always has them (a row that
+            # fails to go in leaves an orphan directory sweep removes)
+            d = _dir(row["id"]) / KEPT_DIR
+            d.mkdir(parents=True, exist_ok=True)
+            for name, data in kept.items():
+                (d / name).write_bytes(data)
         with connect_users_db() as conn:
             conn.execute(f"INSERT INTO jobs ({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})",
                          tuple(row.values()))
@@ -370,7 +417,7 @@ def _work(live: _Live) -> None:
         if state != "done":
             result = encoded = None
             artifact = {}
-            shutil.rmtree(root() / live.id, ignore_errors=True)
+            _clear_run_files(live.id)
         # The row first, then out of the live set: a read in between still
         # sees the job running, never ended without its result or its file.
         try:
@@ -478,7 +525,7 @@ def recover() -> int:
                          [(INTERRUPTED, page_now(), i) for i in ids])
         conn.commit()
     for job_id in ids:
-        shutil.rmtree(_dir(job_id), ignore_errors=True)
+        _clear_run_files(job_id)  # what it keeps stays: it can be started again
     if ids:
         log.warning(f"[jobs] {len(ids)} job(s) were interrupted by the last shutdown")
     return len(ids)

@@ -336,9 +336,9 @@ function ExportJobStep({ job, folder, folderName, pageId, subPages, fetchJob, on
   const reviewed = hasReviewStep(format) || Boolean(params.sub_pages)
     || (params.page_id === pageId && offersSubPages({ folder, subPages }));
   const total = reviewed ? 3 : 2;
-  // A job that cannot be started again from its params (one that wrote the
-  // translation the viewer showed, which they do not keep) is exported again
-  // from the setup, which reads the viewer afresh, while its page is open.
+  // Started again from its params, or for one that wrote the translation the
+  // viewer showed, from the setup, which reads the viewer afresh, while its
+  // page is open (exportAgain).
   const again = exportAgain(job, pageId);
   return <SubDialog title={folder ? t("Export “{folder}”", { folder: folderName }) : t("Export")} onClose={onClose} className="transferModal">
     <nav className="transferProgress" aria-label={t("Step {step} of {total}", { step: total, total })}>
@@ -390,8 +390,7 @@ function ExportJobStep({ job, folder, folderName, pageId, subPages, fetchJob, on
           : NEXT_STEP[format?.id] ? <p className="reportModalHint">{t(NEXT_STEP[format.id])}</p> : null}
       </> : null}
       {job.state === "failed" ? <p role="alert" className="importWarning">{t(job.error)}</p> : null}
-      {job.state === "cancelled" ? <p className="reportModalHint">{again ? t("Nothing was saved. Start it again to export.")
-        : t("Nothing was saved. Open its page to export it again.")}</p> : null}
+      {job.state === "cancelled" ? <p className="reportModalHint">{t("Nothing was saved. Start it again to export.")}</p> : null}
     </div>
     <div className="reportModalBtns transferFooter">
       {isActive(job) && job.stoppable ? <button type="button" className="uiBtn" onClick={onStop}>{t("Stop")}</button> : null}

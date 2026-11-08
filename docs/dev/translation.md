@@ -1745,10 +1745,19 @@ session's first translation to finish says so on the pill, with **Export…**.
   Such an export always goes through the job, even with every switch off. A
   share view translates nothing and sends none.
 - **Retry**: the job's params name the language (`translation`) but cannot
-  hold the layout, so a translated export offers no Retry in Background
-  tasks. In the dialog, a failed or stopped one offers "Export again…" while
-  its page is open (`taskKinds.exportAgain`), which goes back to the setup
-  and reads the viewer afresh.
+  hold the layout, so the server keeps the translation it was sent with the
+  job (`translation.json.gz`, `jobs.start(kept=...)`) for as long as the job
+  is listed, a failed, stopped or interrupted one too, until it is removed
+  from Background tasks or swept a day after it ended. Start again sends
+  `translation_of`, the job's id, in place of `translation`
+  (`taskKinds.js`), and the new job writes the same layout and keeps it in
+  turn; the server takes it only from the account's own export of the same
+  page in the same workspace, and answers 404 once it is gone. It writes
+  what the viewer showed when the first export started, so a PDF replaced
+  since fails it again. In the dialog, a failed or stopped one offers
+  "Export again…" instead while its page is open (`taskKinds.exportAgain`),
+  which goes back to the setup and reads the viewer afresh, and Start again
+  otherwise.
 
 `gamma/pdf_translated.py` writes it into the page's stored PDF before the
 annotations go on (`routers/export.py` `_translated`). When the page's PDF

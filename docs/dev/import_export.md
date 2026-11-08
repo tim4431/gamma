@@ -2346,8 +2346,9 @@ Import → Gamma export, BibTeX's beside-your-.tex, Notability's open-it-there,
 Notion's Settings → Import → ZIP. A failed or
 stopped export offers Start again, with the job's params (`sub_pages`,
 `comments` and `notes_at` included); one that wrote the viewer's
-translation, which its params cannot hold, offers Export again… instead,
-back to the setup, while its page is open, and Close alone otherwise
+translation offers Export again… instead, back to the setup, while its
+page is open, and otherwise Start again with the translation the server
+kept with the job
 ([translation.md](translation.md#exporting-the-translation)). A share view has no background tasks:
 its Export downloads through the endpoints below, with the same mode and
 flags as query parameters (`exportQuery`, `sub_pages=1` for the pages

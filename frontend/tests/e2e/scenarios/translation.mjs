@@ -458,6 +458,49 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assertNoProblems(page);
   });
 
+  await step("translation: a translated export that failed starts again from Background tasks with the translation the server kept", async () => {
+    // The first job is sent another file's doc_id, so it fails as one would
+    // whose PDF was replaced meanwhile; the server keeps the layout it was
+    // sent, and the tray's Start again names the job instead of sending it.
+    await page.route("**/api/jobs/export", async (route) => {
+      const body = route.request().postDataJSON();
+      await route.continue({ postData: JSON.stringify({ ...body, translation: { ...body.translation, doc_id: "0".repeat(64) } }) });
+    }, { times: 1 });
+    await page.click("button[aria-label='View']");
+    await page.locator(".menuPopover .ctxMenuItem", { hasText: "Export…" }).click();
+    const dialog = page.getByRole("dialog", { name: "Export", exact: true });
+    await dialog.waitFor();
+    await dialog.getByRole("button", { name: "Annotated PDF", exact: true }).click();
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    const answered = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/jobs/export" && r.request().method() === "POST");
+    await dialog.getByRole("button", { name: "Export", exact: true }).click();
+    const first = await (await answered).json();
+    assertEq(first.params.translation, requests[0].lang, "its params name the language alone");
+    await dialog.getByRole("heading", { name: "Export failed", exact: true }).waitFor();
+    assert(/changed after it was translated/.test(await dialog.getByRole("alert").innerText()), "it failed on the file");
+    // its page is open: the dialog goes back to the setup, which reads the viewer afresh
+    await dialog.getByRole("button", { name: "Export again…", exact: true }).waitFor();
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await dialog.waitFor({ state: "detached" });
+
+    await page.click("button[aria-label='Background tasks']");
+    const row = page.locator(".taskRow.failed").first();
+    const sent = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/jobs/export" && r.method() === "POST");
+    const again = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/jobs/export" && r.request().method() === "POST");
+    await row.getByRole("button", { name: /^Start .+ again$/ }).click();
+    const body = (await sent).postDataJSON();
+    assertEq(body.translation_of, first.id, "Start again names the failed job");
+    assert(!("translation" in body), `and sends no layout: ${JSON.stringify(body)}`);
+    const second = await (await again).json();
+    assert(second.id && second.id !== first.id, JSON.stringify(second));
+    // the layout it writes is the kept one, another file's: it fails the same way
+    await until(async () => /changed after it was translated/.test(
+      await page.evaluate(async (id) => (await (await fetch(`/api/jobs/${id}`)).json()).error || "", second.id)),
+    { what: "the retried job failing on the kept layout's file" });
+    await page.keyboard.press("Escape");
+    assertNoProblems(page);
+  });
+
   await step("translation: a drag across the columns' translated paragraphs selects and copies them in reading order", async () => {
     // The left column's first paragraph, its second, then the right column:
     // the right column's block comes before the second paragraph by index.

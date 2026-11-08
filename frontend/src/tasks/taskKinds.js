@@ -21,11 +21,11 @@ export const TASK_KINDS = {
     title: ({ params }) => t("Export “{name}” as {format}", {
       name: named(params.name), format: t(exportFormatOf(params.mode)?.label || params.mode || "") }),
     // An annotated PDF that wrote the viewer's translation (params name its
-    // language) has none: its params keep no translation to write again,
-    // and the export dialog exports it again from what the viewer shows.
-    retry: ({ params }) => (params.translation ? null : ["export", { page_id: params.page_id || "", folder: params.folder || "",
+    // language) names its job: the server keeps the translation it was sent
+    // with the job for as long as the job is listed.
+    retry: ({ id, params }) => ["export", { page_id: params.page_id || "", folder: params.folder || "",
       mode: params.mode, pdf: params.pdf, highlights: params.highlights, notes: params.notes, comments: params.comments,
-      notes_at: params.notes_at, sub_pages: Boolean(params.sub_pages) }]),
+      notes_at: params.notes_at, sub_pages: Boolean(params.sub_pages), ...(params.translation ? { translation_of: id } : {}) }],
   },
   "workspace-export": {
     icon: "download",
@@ -227,15 +227,16 @@ export function retryOf(task) {
 }
 
 // What the export dialog offers beside Close once its job failed or was
-// stopped: "retry", the same job again from its params; for one that cannot
-// be (an annotated PDF that wrote the viewer's translation) "setup", the
-// dialog's setup again, where Export reads the viewer afresh, but only while
-// the job's page is the one open (`pageId`): the setup exports the open page,
-// and a row of Background tasks reopens a job whatever page is open. Else "".
+// stopped: "retry", the same job again from its params. An annotated PDF
+// that wrote the viewer's translation, while its page is the one open
+// (`pageId`), gets "setup" instead, the dialog's setup again, where Export
+// reads the viewer afresh (the translation may have changed since, or the
+// PDF, which fails the kept one); with another page open the setup would
+// export that one, so it is retried with the translation it was sent.
 export function exportAgain(job, pageId) {
-  if (retryOf(job)) return "retry";
   const page = job?.params?.page_id || "";
-  return page && !job.params.folder && page === pageId ? "setup" : "";
+  if (job?.params?.translation && page && !job.params.folder && page === pageId) return "setup";
+  return retryOf(job) ? "retry" : "";
 }
 
 // Whether a relocate-highlights run was taken over by a newer one for the

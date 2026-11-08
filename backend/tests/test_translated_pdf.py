@@ -818,3 +818,51 @@ def test_what_a_translated_export_refuses(user, paper, monkeypatch):
             m.setattr(export, cap, value)
             r = _start(user, page_id=paper["id"], mode="annotated-pdf", translation=sent)
             assert r.status_code == 413 and r.json()["detail"].startswith("a translation holds at most"), (cap, r.text)
+
+
+def test_a_translated_export_starts_again_with_the_translation_it_kept(user, paper):
+    """Background tasks' retry names the job (``translation_of``): the
+    server kept the translation it was sent for as long as the job is
+    listed, a failed or retried one too, and writes it again."""
+    first = _finished(user, page_id=paper["id"], mode="annotated-pdf", highlights=True, notes=False,
+                      translation=_translation(paper["doc_id"], paper["data"], text="Wieder übersetzt"))
+    again = _finished(user, page_id=paper["id"], mode="annotated-pdf", highlights=True, notes=False,
+                      translation_of=first["id"])
+    text = _text(_file(user, again)).replace("\n", " ")
+    assert "Wieder übersetzt" in text and "Alpha" not in text
+    assert again["params"]["translation"] == "de"
+    # the retry keeps it in turn, so it starts again too
+    third = _finished(user, page_id=paper["id"], mode="annotated-pdf", highlights=False, notes=False,
+                      translation_of=again["id"])
+    assert "Wieder übersetzt" in _text(_file(user, third)).replace("\n", " ")
+    # a failed one keeps it, and its retry fails the same way
+    failed = _finished(user, page_id=paper["id"], mode="annotated-pdf", highlights=True, notes=False,
+                       translation=_translation("0" * 64, paper["data"]))
+    retried = _finished(user, page_id=paper["id"], mode="annotated-pdf", translation_of=failed["id"])
+    assert retried["state"] == "failed" and "changed after it was translated" in retried["error"]
+
+
+def test_what_a_translated_exports_retry_refuses(user, paper):
+    first = _finished(user, page_id=paper["id"], mode="annotated-pdf", highlights=True, notes=False,
+                      translation=_translation(paper["doc_id"], paper["data"]))
+    plain = _finished(user, page_id=paper["id"], mode="annotated-pdf", highlights=True, notes=False)
+    other, _ = _pdf_page(user, "Another paper", _paper())
+    make_user("tpdf_other", "tpdf-other-pw")
+    stranger = login("tpdf_other", "tpdf-other-pw")
+    for who, body, status in [
+        (user, {"page_id": paper["id"], "mode": "annotated-pdf", "translation_of": first["id"],
+                "translation": _translation(paper["doc_id"], paper["data"])}, 400),     # both
+        (user, {"page_id": paper["id"], "mode": "readable", "translation_of": first["id"]}, 400),
+        (user, {"folder": "anything", "mode": "annotated-pdf", "translation_of": first["id"]}, 400),
+        (user, {"page_id": paper["id"], "mode": "annotated-pdf", "translation_of": plain["id"]}, 404),  # kept none
+        (user, {"page_id": other["id"], "mode": "annotated-pdf", "translation_of": first["id"]}, 404),  # another page
+        (user, {"page_id": paper["id"], "mode": "annotated-pdf", "translation_of": "0" * 24}, 404),
+        (user, {"page_id": paper["id"], "mode": "annotated-pdf", "translation_of": "../x"}, 404),
+        (stranger, {"page_id": paper["id"], "mode": "annotated-pdf", "translation_of": first["id"]}, 404),
+    ]:
+        r = _start(who, **body)
+        assert r.status_code == status, (body, r.text)
+    # removed from Background tasks: the translation goes with it
+    assert user.delete(f"/api/jobs/{first['id']}").status_code == 200
+    r = _start(user, page_id=paper["id"], mode="annotated-pdf", translation_of=first["id"])
+    assert r.status_code == 404 and "no longer kept" in r.json()["detail"]
