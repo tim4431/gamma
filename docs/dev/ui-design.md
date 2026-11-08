@@ -417,7 +417,7 @@ browser zooming the page would not work from an `onWheel` prop.
 device reports in pixels. Firefox's line-mode deltas are converted first.
 The scale compounds on the module's own `live` value, not on the committed
 scale, which is a frame or two behind. The dispatch is coalesced to one per
-frame, because every commit re-renders every page. A viewer pushes its
+frame, because every commit re-lays-out every page. A viewer pushes its
 committed scale back in with `sync()`. That is ignored while a dispatch is
 in flight: the events that arrived since are already in `live`, and
 overwriting it dropped them (a 6-notch train zoomed about 3 notches' worth).
@@ -437,6 +437,39 @@ Each viewer supplies only the two commits, since anchoring depends on its
 layout. The PDF's re-bases scroll and lets its zoom-anchor effect re-place
 the point (`pdf/PdfViewer.jsx`). The notebook's names the sheet and the
 fraction of it to hold ([notebooks.md](notebooks.md)).
+
+**How the committed scale reaches the content.** A commit renders the
+viewer, never its pages or sheets:
+
+- The viewer writes the scale as `--viewer-scale` (`SCALE_VAR` in
+  `viewerZoom.js`) on its content layer, `.pdfZoomLayer` or `.nbColumn`.
+- `registerScaleVar` (`viewerZoom.js`, run as the first viewer installs
+  its gestures) registers it with `CSS.registerProperty` as a `<number>`
+  that does not inherit. An inherited custom property restyles every
+  element under the layer each time it changes, every text-layer span and
+  ink path, which costs more than the renders it saves.
+- What sizes with the zoom picks the variable up with
+  `--viewer-scale: inherit`: a page box, a sheet, a built text layer, a
+  translation layer. Anything else that reads it gets 1, silently.
+- Each of those carries an inline style written by script: React's `style`
+  or the text layer's build. WebKit's matched-properties cache gives an
+  element with no inline style, or only one parsed from markup, the value
+  it was first styled with, so its `inherit` never follows the layer.
+  Chromium and Firefox follow in every case. `registerScaleVar` first
+  checks that an `inherit` written that way follows its parent, and leaves
+  the variable inheriting where it does not, or where the browser has no
+  `CSS.registerProperty`: slower per frame, and the same picture.
+- A box is `scaledPx(w)`, `calc(var(--viewer-scale) * wpx)`. A text layer
+  is `scale(var(--viewer-scale))`.
+- Everything placed on a page is a percentage of its box: highlights, note
+  badges, link boxes, find marks, the review ghost, a pending area.
+- No page or sheet takes the scale as a prop. The PDF's pages in
+  comment-margin mode are the exception: the card column's offset is
+  worked out in px.
+- Code inside a page that needs the scale as a number reads the viewer's
+  `pdf/pageScale.js`. `get()` is the live value, which the raster reads.
+  `rest()` is the value once the zoom has stopped for `ZOOM_SETTLE_MS`,
+  at which the text layer is re-measured and a translation laid out.
 
 ### Fullscreen on touch devices
 

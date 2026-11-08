@@ -87,7 +87,7 @@ function longPage() {
   return { runs };
 }
 
-export async function translationScenarios({ server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage }) {
+export async function translationScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }) {
   if (!wanted("translation")) return;
   let page, pageId, docId, stubbornDoc;
   const requests = [];
@@ -248,6 +248,88 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     const copied = await page.locator('[data-page="1"] .pdfTransText', { hasText: "译:The collective" })
       .evaluate((el) => el.textContent);
     assert(copied.includes("Ω"), copied);
+    assertNoProblems(page);
+  });
+
+  // The overlay is laid out at the zoom the page settled at and stretched
+  // to the page box in between (pdf/TransOverlay.jsx TransLayer): a wheel
+  // train refits none of its paragraphs, and a rest lays them out once.
+  await step("translation: a shown translation zooms with its page: stretched to the box while the wheel turns, laid out again once it rests, its masks on the original lines and its formulas drawn", async () => {
+    const one = page.locator('[data-page="1"]');
+    // Page 1's box; its layer; the paragraph that starts with the collective
+    // Rabi frequency, on screen and as laid out (offsetWidth: no transform);
+    // its first mask; the original first line's span; a formula's ink.
+    const look = () => one.evaluate((wrap) => {
+      const r = (el) => { const b = el.getBoundingClientRect(); return { left: b.left, top: b.top, width: b.width, height: b.height }; };
+      const para = [...wrap.querySelectorAll(".pdfTransPara")].find((el) => el.textContent.includes("The collective"));
+      const span = [...wrap.querySelectorAll(".textLayer span")].find((el) => el.textContent.startsWith("The collective"));
+      const math = wrap.querySelector(".pdfTransMath:not(.bare) > canvas");
+      let ink = 0;
+      if (math?.width) {
+        const px = math.getContext("2d").getImageData(0, 0, math.width, math.height).data;
+        for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 128 && px[i] + px[i + 1] + px[i + 2] < 384) ink += 1;
+      }
+      return { box: r(wrap), layer: r(wrap.querySelector(".pdfTransLayer")), para: r(para), laidOut: para.offsetWidth,
+        mask: r(para.querySelector(".pdfTransMask")), span: r(span), ink };
+    });
+    const sameBox = (a, b) => ["left", "top", "width", "height"].every((k) => Math.abs(a[k] - b[k]) <= 1);
+    // The paragraph's middle and its width less the 1.5 px mask pad, as
+    // fractions of the page box: what a zoom keeps.
+    const share = (g) => ({ cx: (g.para.left + g.para.width / 2 - g.box.left) / g.box.width, cy: (g.para.top + g.para.height / 2 - g.box.top) / g.box.height,
+      w: (g.para.width - 3) / g.box.width });
+    const settled = (g, first, when) => {
+      assert(sameBox(g.layer, g.box), `${when}: the layer is the page box: ${JSON.stringify(g.layer)} on ${JSON.stringify(g.box)}`);
+      const a = share(first), b = share(g);
+      assert(["cx", "cy", "w"].every((k) => Math.abs(a[k] - b[k]) < 0.001), `${when}: the paragraph keeps its place on the page: ${JSON.stringify(a)} -> ${JSON.stringify(b)}`);
+      assert(Math.abs(g.laidOut - g.para.width) <= 1, `${when}: laid out at the zoom it shows, not stretched: ${g.laidOut} for ${g.para.width.toFixed(1)}`);
+      const s = g.span, m = g.mask, mid = s.top + s.height / 2;
+      assert(s.left >= m.left - 2 && s.left + s.width <= m.left + m.width + 2 && mid >= m.top && mid <= m.top + m.height,
+        `${when}: the original line lies under its mask: ${JSON.stringify(s)} in ${JSON.stringify(m)}`);
+      assert(g.ink >= 4, `${when}: the formula's crop shows its glyph: ${g.ink} dark pixels`);
+    };
+    const first = await look();
+    settled(first, first, "before the zoom");
+    // One press of the zoom button.
+    await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await until(async () => Math.abs((await look()).box.width - first.box.width) > 1, { what: "the page grows" });
+    settled(await until(async () => { const g = await look(); return g.ink >= 4 && Math.abs(g.laidOut - g.para.width) <= 1 ? g : false; },
+      { what: "the paragraphs laid out again and the formula redrawn" }), first, "after the button");
+    // A short Ctrl+wheel train, each frame read as it shows: the layer
+    // stays the page box, the scroll area what the pages need, and the
+    // paragraph keeps the layout it had.
+    const atRest = await look();
+    await one.evaluate((wrap) => {
+      const viewer = wrap.closest(".pdfViewer");
+      const para = [...wrap.querySelectorAll(".pdfTransPara")].find((el) => el.textContent.includes("The collective"));
+      const frames = window.__transFrames = [];
+      window.__transStop = false;
+      const read = () => {
+        const b = wrap.getBoundingClientRect(), l = wrap.querySelector(".pdfTransLayer").getBoundingClientRect();
+        const widest = Math.max(...[...viewer.querySelectorAll(".pdfPageWrap")].map((w) => w.getBoundingClientRect().width));
+        frames.push({ box: { left: b.left, top: b.top, width: b.width, height: b.height }, layer: { left: l.left, top: l.top, width: l.width, height: l.height },
+          scrollW: viewer.scrollWidth, room: Math.max(viewer.clientWidth, Math.ceil(widest)), laidOut: para.offsetWidth });
+        if (!window.__transStop) requestAnimationFrame(read);
+      };
+      requestAnimationFrame(read);
+    });
+    const view = await page.locator(".pdfViewer").boundingBox();
+    await page.mouse.move(Math.round(view.x + view.width * 0.4), Math.round(view.y + 200));
+    await page.keyboard.down("Control");
+    for (let i = 0; i < 6; i++) { await page.mouse.wheel(0, -25); await sleep(40); }
+    await page.keyboard.up("Control");
+    await sleep(40); // still inside the zoom's settle (ZOOM_SETTLE_MS, 150 ms)
+    const frames = await page.evaluate(() => { window.__transStop = true; return window.__transFrames; });
+    const grew = frames.filter((f) => f.box.width > atRest.box.width + 1);
+    assert(grew.length >= 2, `the wheel zoomed the page over several frames: ${grew.length} of ${frames.length}`);
+    const off = frames.find((f) => !sameBox(f.layer, f.box));
+    assert(!off, `the layer is the page box in every frame: ${JSON.stringify(off)}`);
+    const wide = frames.find((f) => f.scrollW > f.room + 1);
+    assert(!wide, `the scroll area is what the pages need: ${JSON.stringify(wide)}`);
+    assert(frames.every((f) => f.laidOut === atRest.laidOut), `no paragraph is laid out again while the wheel turns: ${[...new Set(frames.map((f) => f.laidOut))]}`);
+    settled(await until(async () => { const g = await look(); return g.ink >= 4 && Math.abs(g.laidOut - g.para.width) <= 1 ? g : false; },
+      { what: "the paragraphs laid out again at rest" }), first, "after the wheel");
+    await page.getByRole("button", { name: "Fit to width", exact: true }).click();
+    await until(async () => Math.abs((await look()).box.width - first.box.width) < 1, { what: "back to the page's width" });
     assertNoProblems(page);
   });
 

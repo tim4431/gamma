@@ -5579,6 +5579,16 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfZoomLayer {
   transform-origin: 0 0;
 }
+/* The committed zoom (shared/lib/viewerZoom.js SCALE_VAR), which the viewer
+   writes on the layer and the page boxes size with (pdf/PdfViewer.jsx), so
+   a zoom re-lays-out the pages without rendering them. registerScaleVar
+   makes it a number that does not inherit, so a zoom restyles only what
+   picks it up here, with `inherit`: a page box and its translation, a built
+   text layer (inline, from its build), a notebook's sheet
+   (notebook/notebook.css). Anything else that reads it gets 1, once it is
+   registered. Each of them carries a style React or the build writes,
+   which WebKit needs to see the new value (viewerZoom.js says why). */
+.pdfZoomLayer > .pdfPageWrap, .pdfPageWrap > .pdfTransLayer { --viewer-scale: inherit; }
 
 /* The page's bitmaps (pdf/pageRaster.js): a canvas over the whole page and,
    at high zoom, a second one over the part in view, which the raster places
@@ -5678,12 +5688,16 @@ a.shareBrand:hover { background: var(--bg-hover); }
    The layer sits between the canvas and the text layer: each block is an
    opaque box in the page's background color, refilled with the translation.
    pointer-events none — selection/highlighting always work on the original
-   text layer above; its ::selection background stays visible over the mask. */
+   text layer above; its ::selection background stays visible over the mask.
+   Its size is inline: the page at the zoom it was laid out at, stretched to
+   the page box from its top-left corner (pdf/TransOverlay.jsx TransLayer). */
 .pdfTransLayer {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
   z-index: 1;
   pointer-events: none;
+  transform-origin: 0 0;
 }
 .pdfTransPara {
   position: absolute;

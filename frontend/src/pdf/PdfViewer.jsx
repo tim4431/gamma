@@ -16,11 +16,12 @@ import { armedClasses, usePageTools } from "../markup/PageTools";
 import { inkPenDown } from "../ink/InkLayer";
 import { ZoomWindow } from "../ink/ZoomWindow.jsx";
 import { revealDelta } from "../ink/zoomWindow.js";
-import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, forgetPixels, installPageRaster, keepPixels, showsKept, takePixels } from "./pageRaster.js";
+import { KEEP_MARGIN, RENDER_MARGIN, cropPage, forgetPixels, installPageRaster, keepPixels, showsKept, takePixels } from "./pageRaster.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
 import { selectionParagraphs } from "./pdfTranslate";
 import * as translateState from "./translateState.js";
-import { TransPara, TransPending } from "./TransOverlay.jsx";
+import { TransLayer } from "./TransOverlay.jsx";
+import { createPageScale } from "./pageScale.js";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions, typicalPageIndex } from "./pdfSource";
 import { normalizeChars } from "../shared/lib/textnorm";
 import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
@@ -48,7 +49,7 @@ import { placeFloating, useFloatingPosition } from "../shared/ui/placement.js";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
-import { installViewerZoom } from "../shared/lib/viewerZoom.js";
+import { SCALE_VAR, installViewerZoom, scaledPx } from "../shared/lib/viewerZoom.js";
 import { installSmoothWheel } from "../shared/lib/smoothWheel.js";
 // The engine: pdf.js (the legacy build, not the default one: it ships the
 // core-js polyfills the modern build assumes — Promise.withResolvers is
@@ -912,6 +913,12 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const numericScale = parseFloat(pdfScaleValue);
   const isFitWidth = isNaN(numericScale);
   const scale = isFitWidth ? fitWidthScale : numericScale;
+  // The scale for the code inside a page that needs it as a number (the
+  // raster, the text layer, the translation): the pages take none as a prop,
+  // they size with SCALE_VAR on the zoom layer. Set after the anchor effect
+  // below, so what it starts sees the anchored scroll.
+  const [pageScale] = useState(() => createPageScale(scale));
+  useEffect(() => () => pageScale.dispose(), [pageScale]);
   // A zoom from elsewhere (the buttons, fit-width, a new document) is what the
   // next gesture compounds on; sync() ignores it while a dispatch is in flight.
   useEffect(() => { viewerZoomRef.current?.sync(scale); }, [scale]);
@@ -1278,6 +1285,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     anchorRafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(anchorRafRef.current);
   }, [scale]);
+  useLayoutEffect(() => { pageScale.set(scale); }, [scale, pageScale]);
 
   // Pre-compute every page's natural height. The values feed both the jump
   // math and the per-page placeholder height below — having every page's
@@ -1814,8 +1822,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         // a scroll or zoom, when re-measuring the page would no longer agree
         // with these viewport-space selection rects.
         const pageRect = pageEl.getBoundingClientRect();
-        const pageW = parseFloat(pageEl.style.width) || pageEl.offsetWidth || 1;
-        const pageH = parseFloat(pageEl.style.height) || pageEl.offsetHeight || 1;
+        const pageW = pageRect.width || pageEl.offsetWidth || 1;
+        const pageH = pageRect.height || pageEl.offsetHeight || 1;
         const rect = { top: r.top, left: r.left, width: r.width, bottom: r.bottom };
         const snap = {
           text, rect, point: nearRelease(point, rect), lineRects, pageNumber,
@@ -2028,13 +2036,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           if (selPopup && (!at || Math.abs(el.scrollLeft - at[0]) >= 1 || Math.abs(el.scrollTop - at[1]) >= 1)) setSelPopup(null);
         }}>
       {/* pdfZoomLayer: the pinch preview's transform target — spans the full
-          scroll content so transform-origin 0 0 coincides with content (0,0) */}
-      <div ref={zoomLayerRef} className="pdfZoomLayer">
+          scroll content so transform-origin 0 0 coincides with content (0,0).
+          It carries the committed zoom (SCALE_VAR), which the page boxes
+          size with, so a zoom re-lays-out the pages without rendering them. */}
+      <div ref={zoomLayerRef} className="pdfZoomLayer" style={{ [SCALE_VAR]: String(scale) }}>
       <CommentMarginContext.Provider value={commentMargin}>
       <MarginStackContext.Provider value={marginStack}>
       {Array.from({ length: numPages }, (_, i) => (
-        <PdfPage key={`${docSeq}-${i + 1}`} pageNumber={i + 1} pdfDoc={pdfDoc} scale={scale}
-          marginLeft={withMargin ? pageMargin(i + 1) : null} pageTop={pageTops[i] || 0}
+        <PdfPage key={`${docSeq}-${i + 1}`} pageNumber={i + 1} pdfDoc={pdfDoc} zoom={pageScale}
+          baseWidth={pageWidths[i] || 0} baseHeight={pageHeights[i] || 0}
+          marginLeft={withMargin ? pageMargin(i + 1) : null} pageTop={pageTops[i] || 0} marginScale={withMargin ? scale : 0}
           activeHl={targetPage === i + 1 ? activeHl : null}
           highlights={hlsByPage.get(i + 1) || EMPTY_MARKS} onJump={stableCbs.onJump}
           // what a highlight, a link highlight or an outside link does on a
@@ -2051,8 +2062,6 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           areaMode={canAnnotate ? !!areaMode : false} areaKey={areaKey}
           onAreaSelected={canAnnotate ? onAreaSelected : undefined} onPenPress={onPenPress} onPenSelect={onPenSelect}
           pendingArea={selPopup?.kind === "area" && selPopup.pageNumber === i + 1 ? selPopup : null}
-          reservedHeight={pageHeights[i] ? pageHeights[i] * scale : null}
-          reservedWidth={pageWidths[i] ? pageWidths[i] * scale : null}
           findMarks={marksByPage.get(i + 1) || EMPTY_MARKS}
           trans={transMap.get(i + 1) || null}
           transKey={translateKey}
@@ -2240,9 +2249,12 @@ function NoteBadge({ hlId, text, hasNote = true, threads = 0, style, onClick, on
 // marginLeft: the page's left edge beside its comment margin, or null for
 // none (centred, with the badge and the popover); pageTop: the page's top,
 // px from the first page's top, where its margin's column goes on from the
-// pages above; activeHl: the highlight
-// whose card is the active one, drawn stronger.
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, onPenPress, onPenSelect, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, toolArmed, marks, marginLeft = null, pageTop = 0, activeHl = null }) {
+// pages above; marginScale: the zoom, beside a margin only (0 otherwise:
+// a page outside margin mode takes no scale, so a zoom does not render it);
+// activeHl: the highlight whose card is the active one, drawn stronger.
+// zoom: the viewer's pageScale store; baseWidth × baseHeight: the page's
+// size at scale 1 as the viewer knows it, until pdf.js measures it.
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, baseWidth = 0, baseHeight = 0, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, onPenPress, onPenSelect, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, toolArmed, marks, marginLeft = null, pageTop = 0, marginScale = 0, activeHl = null }) {
   const wrapRef = useRef(null);
   const baseRef = useRef(null);
   const detailRef = useRef(null);
@@ -2272,8 +2284,13 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const ghostDrawn = overlays && !!reviewGhost;
   useEffect(() => { if (ghostDrawn) onReview?.drawn?.(); }, [ghostDrawn, reviewGhost, onReview]);
   const [links, setLinks] = useState([]); // link annotations, rects at scale 1
-  const scaleRef = useRef(scale);
-  scaleRef.current = scale;
+  // The settled zoom (pdf/pageScale.js), heard inside the look-ahead only:
+  // there the text layer is re-measured at it and a translation laid out at
+  // it, once the zoom stops. A live change is no new snapshot, so a wheel
+  // train does not render the page at all. Away from the view nothing here
+  // needs it; the page reads it afresh when it comes back.
+  const restOf = useCallback((fn) => (renderVisible ? zoom.subscribe(fn) : () => {}), [zoom, renderVisible]);
+  const rest = useSyncExternalStore(restOf, zoom.rest);
   const onPaintedRef = useRef(onPainted);
   onPaintedRef.current = onPainted;
   // Translation entry for this page (from the viewer's engine) — display
@@ -2331,9 +2348,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     let cancelled = false;
     pdfDoc.getPage(pageNumber).then((p) => {
       if (cancelled) return;
-      // Base (scale-1) size — render multiplies by the CURRENT scale, so the
-      // page box resizes in the same commit as a zoom change instead of
-      // keeping its old size until the async redraw completes.
+      // Base (scale-1) size — the box is that at the layer's zoom, so it
+      // resizes in the same frame as a zoom change instead of keeping its
+      // old size until the async redraw completes.
       const vpBase = p.getViewport({ scale: 1 });
       setPageSize({ width: vpBase.width, height: vpBase.height });
       setLoaded({ doc: pdfDoc, page: p });
@@ -2357,8 +2374,10 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       return;
     }
     if (!renderVisible) return; // kept: holds what it has, nothing new is drawn
-    rasterRef.current.show(page, {
-      scale,
+    // At the live zoom, heard from the store: a zoom does not render the
+    // page, and the raster keeps its own settle.
+    const draw = () => rasterRef.current.show(page, {
+      scale: zoom.get(),
       // DISABLE keeps embedded markup annotations (e.g. highlights burned in
       // by a Gamma export, or SumatraPDF/Acrobat ones) out of the canvas so
       // they don't stack under Gamma's own overlay after an import. Link
@@ -2366,16 +2385,27 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       annotationMode: hideEmbeddedAnnots ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE,
       pinned: !!forceRender,
     });
-  }, [page, scale, renderVisible, kept, hideEmbeddedAnnots, forceRender]);
+    draw();
+    return zoom.subscribe(draw);
+  }, [page, zoom, renderVisible, kept, hideEmbeddedAnnots, forceRender]);
 
   // The text layer and the link boxes: built once per page, after its first
   // pixels, and kept when the page scrolls away or the zoom changes. The
-  // layer is laid out at scale 1 and scaled by CSS (its size and transform
-  // in the JSX below), so a zoom has nothing to rebuild. Only a page far
-  // from the view drops it (`far`), to be built again after its next paint.
+  // layer is laid out at scale 1 (pdf.js sizes it, under --scale-factor 1)
+  // and scaled by CSS: once built it takes the zoom (SCALE_VAR), so a zoom
+  // has nothing to rebuild or render. Inline, so it also overrides
+  // pdf_viewer.css's rotation transforms. Until then it is pdf.js's inset 0
+  // and fills the box, and 300 empty layers restyle nothing on a zoom. Only
+  // a page far from the view drops it (`far`), to be built again after its
+  // next paint; nothing else writes its size or transform.
   useEffect(() => {
     if (far) {
-      if (textRef.current) textRef.current.innerHTML = "";
+      const textL = textRef.current;
+      if (textL) {
+        textL.innerHTML = "";
+        for (const key of ["width", "height", "transform", SCALE_VAR]) textL.style.removeProperty(key);
+        textL.removeAttribute("data-main-rotation");
+      }
       setTextReady(null);
       setPaintedPage(null);
       return;
@@ -2401,15 +2431,17 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         // highlights, selections and search marks with it. An empty lang
         // resolves differently on a canvas and on an element, so "en".
         textL.lang = tc.lang || "en";
-        const measuredAt = scaleRef.current;
+        const measuredAt = zoom.get();
         layer = new pdfjsLib.TextLayer({ textContentSource: tc, container: textL, viewport: page.getViewport({ scale: measuredAt }) });
+        textL.style.setProperty(SCALE_VAR, "inherit");
+        textL.style.transform = `scale(var(${SCALE_VAR}))`;
         await layer.render();
         if (cancelled) return;
         textScaleRef.current = measuredAt;
         setTextReady({ page, layer, runs: citationRuns(tc.items, layer.textDivs) });
 
         // Link annotations (in-PDF references + external URLs), stored at
-        // scale 1 and multiplied in JSX.
+        // scale 1 and placed in JSX as fractions of the box.
         const annots = await page.getAnnotations();
         if (cancelled) return;
         setLinks(annots
@@ -2429,27 +2461,31 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     return () => { cancelled = true; rested(); layer?.cancel(); };
   }, [page, paintedPage, far]);
 
-  // Once a zoom settles the spans are re-measured at the new size, which is
-  // what pdf.js's own viewer does in place of a rebuild: the selection, the
-  // spans and the citation runs all survive.
+  // Once a zoom settles (`rest`) the spans are re-measured at the new size,
+  // which is what pdf.js's own viewer does in place of a rebuild: the
+  // selection, the spans and the citation runs all survive. Not while a zoom
+  // still runs (a layer built mid-train measured at the live scale): the
+  // settled value is on its way, and with it this effect.
   useEffect(() => {
     const layer = textReady?.page === page ? textReady.layer : null;
-    if (!layer || !renderVisible || textScaleRef.current === scale) return;
-    const timer = setTimeout(() => {
-      layer.update({ viewport: page.getViewport({ scale }) });
-      textScaleRef.current = scale;
-    }, ZOOM_SETTLE_MS);
-    return () => clearTimeout(timer);
-  }, [page, scale, renderVisible, textReady]);
+    if (!layer || !renderVisible || textScaleRef.current === rest || rest !== zoom.get()) return;
+    layer.update({ viewport: page.getViewport({ scale: rest }) });
+    textScaleRef.current = rest;
+  }, [page, zoom, rest, renderVisible, textReady]);
 
-  // The box the page occupies: pdf.js's measure once it has rendered, else
-  // the reserved size from the manifest skeleton (exact too), else nothing
-  // yet. Overlays scale into it, so highlights and ink are placed right on a
-  // skeleton page as well.
-  const curW = pageSize ? pageSize.width * scale : (reservedWidth || 1);
-  const curH = pageSize ? pageSize.height * scale : (reservedHeight || 1);
-  const baseW = pageSize ? pageSize.width : (reservedWidth ? reservedWidth / scale : undefined);
-  const baseH = pageSize ? pageSize.height : (reservedHeight ? reservedHeight / scale : undefined);
+  // The page at scale 1: pdf.js's measure once it has loaded, else the
+  // viewer's (from the manifest skeleton, exact too, or measured), else
+  // nothing yet. The box is that at the layer's zoom (SCALE_VAR), and the
+  // overlays are fractions of the box, so a zoom resizes and places them
+  // all without a render, on a skeleton page as well.
+  const baseW = pageSize ? pageSize.width : (baseWidth > 0 ? baseWidth : undefined);
+  const baseH = pageSize ? pageSize.height : (baseHeight > 0 ? baseHeight : undefined);
+  const pctX = (v, of = baseW) => `${(v / (of || 1)) * 100}%`;
+  const pctY = (v, of = baseH) => `${(v / (of || 1)) * 100}%`;
+  // A translation is laid out at the settled zoom while the page is inside
+  // the look-ahead, and keeps its last layout, stretched, outside it.
+  const transAtRef = useRef(rest);
+  if (renderVisible) transAtRef.current = rest;
 
   // Rectangle drag (screenshot-style area note): a mouse drag with the area
   // key held alone (Ctrl, ⌘ on a Mac, by default: areaKey), or any drag
@@ -2557,12 +2593,13 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
 
   return (
     <div ref={wrapRef} data-page={pageNumber} data-guide="pdf.page" className={"pdfPageWrap" + (transActive ? " transShown" : "")}
+      data-base-w={baseW || undefined}
       onPointerDown={(e) => { if (e.pointerType !== "pen") beginAreaDrag(e); }}
       style={{
         margin: marginLeft != null ? `0 0 ${PAGE_GAP}px ${marginLeft}px` : `0 auto ${PAGE_GAP}px`, position: "relative", background: "#fff",
-        width: pageSize || reservedWidth ? curW : undefined,
-        height: pageSize || reservedHeight ? curH : undefined,
-        minHeight: pageSize || reservedHeight ? undefined : 200,
+        width: baseW ? scaledPx(baseW) : undefined,
+        height: baseH ? scaledPx(baseH) : undefined,
+        minHeight: baseH ? undefined : 200,
       }}>
       {/* The page's bitmaps, drawn by the raster: the whole page and, at high
           zoom, a sharp one over the part in view. Both are sized in percent
@@ -2573,71 +2610,18 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         <canvas ref={baseRef} />
         <canvas ref={detailRef} className="pdfDetailCanvas" />
       </div>
-      {/* Translated view: masks + refills sit between the canvas and the text
-          layer, so selecting the (invisible) original text still paints its
-          selection highlight on top of the overlay. pointer-events: none —
-          highlighting, links and search always act on the original. */}
+      {/* Translated view (TransOverlay.jsx): between the canvas and the text
+          layer, laid out at transAtRef's zoom and stretched to the box. */}
       {transActive || transWorking ? (
-        <div className="pdfTransLayer">
-          {(() => {
-            // Results by block index: text, null (came back untranslated:
-            // the original shows), "" (its words went to the part before
-            // it: masked, nothing written), or missing (not landed yet).
-            return transEntry.paras.map((p, i) => {
-              if (!p.translate) return null;
-              const final = transEntry.texts[i];
-              const partial = final ? null : transEntry.partial?.[i];
-              const text = final === "" ? "" : final || partial;
-              const pad = 1.5;
-              const lns = p.lines || [];
-              const box = {
-                left: p.x1 * scale - pad, top: p.y1 * scale - pad,
-                width: (p.x2 - p.x1) * scale + 2 * pad, height: (p.y2 - p.y1) * scale + 2 * pad,
-              };
-              const lines = lns.map((l, j) => {
-                // Fill the inter-line leading too: the original's line
-                // pitch exceeds the glyph-box height, and slivers of the
-                // original text otherwise peek through between masks.
-                const next = lns[j + 1];
-                const bottom = next && next.y1 - l.y2 < p.size * 1.2 ? next.y1 : l.y2;
-                return {
-                  left: (l.x1 - p.x1) * scale, top: (l.y1 - p.y1) * scale,
-                  width: (l.x2 - l.x1) * scale + 2 * pad,
-                  height: (bottom - l.y1) * scale + 2 * pad,
-                };
-              });
-              if (text !== "" && !text) {
-                // Nothing to show yet: the original stays visible, washed
-                // while its translation is queued or in flight (not once
-                // this job could not translate it).
-                if (final === undefined && transWorking && (transEntry.busy?.has(i)
-                    || (transEntry.queued && !transEntry.failed?.has(i)))) {
-                  return (
-                    <div key={i} className="pdfTransPara" style={box}>
-                      <TransPending lines={lines} busy={transEntry.busy?.has(i)} />
-                    </div>
-                  );
-                }
-                return null;
-              }
-              return (
-                // Keyed by its final text too: a translation asked again
-                // (now with the paper's brief) fades in like a new one.
-                <TransPara key={final ? `${i}:${final}` : i} box={box} lines={lines} baseSize={p.size * scale} text={text}
-                  streaming={!final && final !== ""} block={p} page={pageNumber} scale={scale}
-                  spanOf={transSpan} basePaints={basePaints} />
-              );
-            });
-          })()}
-        </div>
+        <TransLayer entry={transEntry} working={transWorking} page={pageNumber} baseW={baseW} baseH={baseH}
+          at={transAtRef.current} spanOf={transSpan} basePaints={basePaints} />
       ) : null}
       {/* No text selection on a read-only page, nor while a tool is armed: the tool takes the pointer. */}
-      {/* The page at scale 1, scaled up to the page box. Sized here and not
-          only when the text is built: the layer otherwise fills the box
-          (pdf_viewer.css, inset: 0) and the transform would scale an empty
-          one past it, widening the scroll area. */}
+      {/* The page at scale 1, scaled up to the page box. Its size and
+          transform are the build's (above), never written here: an empty
+          layer fills the box (pdf_viewer.css, inset: 0), and a built one is
+          pdf.js's size under scale(SCALE_VAR). */}
       <div ref={textRef} className="textLayer" data-guide="pdf.textLayer" style={{
-        ...(baseW && baseH ? { width: baseW, height: baseH, transform: `scale(${scale})` } : null),
         userSelect: readOnly || toolArmed ? "none" : "text", WebkitUserSelect: readOnly || toolArmed ? "none" : "text",
       }} />
       <PdfCitationOverlay citation={citation} wrapRef={wrapRef}
@@ -2648,10 +2632,10 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
           className="pdfLinkBox"
           title={l.url || t("Jump to reference")}
           style={{
-            left: l.left * scale,
-            top: l.top * scale,
-            width: Math.max(4, l.w * scale),
-            height: Math.max(4, l.h * scale),
+            left: pctX(l.left),
+            top: pctY(l.top),
+            width: `max(4px, ${pctX(l.w)})`,
+            height: `max(4px, ${pctY(l.h)})`,
           }}
           onClick={(e) => {
             // A viewer told nothing of outside links (a tab group's read
@@ -2676,10 +2660,10 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
             position: "absolute",
             zIndex: 3,
             pointerEvents: "none",
-            left: m.rect.x1 * scale,
-            top: m.rect.y1 * scale,
-            width: Math.max(2, (m.rect.x2 - m.rect.x1) * scale),
-            height: Math.max(2, (m.rect.y2 - m.rect.y1) * scale),
+            left: pctX(m.rect.x1),
+            top: pctY(m.rect.y1),
+            width: `max(2px, ${pctX(m.rect.x2 - m.rect.x1)})`,
+            height: `max(2px, ${pctY(m.rect.y2 - m.rect.y1)})`,
             background: m.active ? "rgba(255, 140, 0, 0.45)" : "rgba(255, 220, 0, 0.30)",
             outline: m.active ? "2px solid rgba(255, 120, 0, 0.9)" : "none",
             borderRadius: 2,
@@ -2744,9 +2728,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
             className={[flashId === h.id ? "pdfHlFlash" : "", lost ? "pdfHlLost" : ""].filter(Boolean).join(" ") || undefined}
             style={{
             position: "absolute", zIndex: 2, cursor: "pointer",
-            left: r.x1 * curW / storedW, top: r.y1 * curH / storedH,
-            width: Math.max(1, (r.x2 - r.x1) * curW / storedW),
-            height: Math.max(1, (r.y2 - r.y1) * curH / storedH),
+            left: pctX(r.x1, storedW), top: pctY(r.y1, storedH),
+            width: `max(1px, ${pctX(r.x2 - r.x1, storedW)})`,
+            height: `max(1px, ${pctY(r.y2 - r.y1, storedH)})`,
             mixBlendMode: "multiply",
             "--hl": color,
             "--hl-dark": darkPageColor(color),
@@ -2798,8 +2782,8 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
               text={h.note?.trim() || ""} hasNote={!!h.hasNote} threads={carded ? 0 : h.threadCount || 0}
               onThread={(badge) => onHighlightThread?.(h.id, badge)}
               style={{
-                left: r.x2 * curW / storedW + 2,
-                top: r.y1 * curH / storedH - 8,
+                left: `calc(${pctX(r.x2, storedW)} + 2px)`,
+                top: `calc(${pctY(r.y1, storedH)} - 8px)`,
               }}
               onClick={(e) => { if (!onHighlightJump) return; e.stopPropagation(); onHighlightJump(h.id, e.ctrlKey || e.metaKey); }}
               onContextMenu={openMenu}
@@ -2813,13 +2797,13 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
           over a faint wash, taking no pointer (app.css .pdfHlGhost). */}
       {overlays && reviewGhost ? reviewGhost.rects.map((r, i) => (
         <div key={`ghost-${i}`} className="pdfHlGhost" data-review-ghost={reviewGhost.id} aria-hidden="true" style={{
-          left: r.x1 * curW / reviewGhost.width, top: r.y1 * curH / reviewGhost.height,
-          width: Math.max(1, (r.x2 - r.x1) * curW / reviewGhost.width),
-          height: Math.max(1, (r.y2 - r.y1) * curH / reviewGhost.height),
+          left: pctX(r.x1, reviewGhost.width), top: pctY(r.y1, reviewGhost.height),
+          width: `max(1px, ${pctX(r.x2 - r.x1, reviewGhost.width)})`,
+          height: `max(1px, ${pctY(r.y2 - r.y1, reviewGhost.height)})`,
           "--hl": reviewGhost.color, "--hl-dark": darkPageColor(reviewGhost.color), "--hl-dark-line": darkPageLine(reviewGhost.color),
         }} />
       )) : null}
-      {overlays && marginLeft != null ? <CommentMarginSlot pageNumber={pageNumber} highlights={highlights} pageH={curH} pageTop={pageTop} /> : null}
+      {overlays && marginLeft != null ? <CommentMarginSlot pageNumber={pageNumber} highlights={highlights} pageH={(baseH || 0) * marginScale} pageTop={pageTop} /> : null}
       {/* Over the highlights, note badges and link boxes: text boxes, then ink (app.css). */}
       <MarkupLayers surface={pageNumber} wrapRef={wrapRef} width={baseW} height={baseH} marks={marks} active={renderVisible}
         onPenDrag={readOnly ? undefined : penDrag} />
@@ -2833,10 +2817,10 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
           (scaled — the popup survives zoom changes). */}
       {pendingArea ? (
         <div className="pdfAreaMarquee" style={{
-          left: pendingArea.rect.x1 * curW / pendingArea.width,
-          top: pendingArea.rect.y1 * curH / pendingArea.height,
-          width: (pendingArea.rect.x2 - pendingArea.rect.x1) * curW / pendingArea.width,
-          height: (pendingArea.rect.y2 - pendingArea.rect.y1) * curH / pendingArea.height,
+          left: pctX(pendingArea.rect.x1, pendingArea.width),
+          top: pctY(pendingArea.rect.y1, pendingArea.height),
+          width: pctX(pendingArea.rect.x2 - pendingArea.rect.x1, pendingArea.width),
+          height: pctY(pendingArea.rect.y2 - pendingArea.rect.y1, pendingArea.height),
         }} />
       ) : null}
     </div>

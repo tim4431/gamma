@@ -173,6 +173,10 @@ What they showed:
 - With every core busy, p95s grew 2 to 3x, so the budgets are about 5x an
   idle p95 and CI only reports them.
 
+Later (November 2026): the scale reaches the pages as a CSS variable on
+the zoom layer, so a zoom frame re-renders no page
+([pdf-zoom-frames.md](pdf-zoom-frames.md)).
+
 ## Left open
 
 - **App's own render per keystroke.** The rows no longer re-render, but
@@ -180,8 +184,6 @@ What they showed:
   highlights, the diff and the history's classification) and the chat
   dock. Moving that state out of App is the state-owner work of
   [dev/frontend-refactor.md](../dev/frontend-refactor.md).
-- **The scale as a CSS variable** on the zoom layer, so a zoom frame
-  re-renders no page.
 - **The annotated-PDF export as a job** answered with a `FileResponse`,
   instead of PyPDF2's clone and the whole result in the request.
 - **The startup walk and the upload GC over every workspace**, and each

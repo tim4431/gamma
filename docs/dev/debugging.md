@@ -1127,7 +1127,10 @@ The scenarios live in `tests/e2e/scenarios/`:
   citation marker as tokens, the page and the section; the reply fills both
   columns' boxes, and a formula comes back as a crop of the page inside the
   translated line (against a mocked `/api/ai/translate` and
-  `/api/ai/translate/brief`). Then the first chunk landing while the brief
+  `/api/ai/translate/brief`). A shown translation is zoomed with the button
+  and the wheel: stretched to the page box while the wheel turns, laid out
+  again once it rests, its masks on the original lines and its formulas
+  drawn. Then the first chunk landing while the brief
   is made, and the job running on after leaving the PDF to 100% in its
   background-tasks row, asking again for the chunk that went without the
   brief. Also a busy account's refusal waited out and a paragraph left in the
@@ -1412,7 +1415,9 @@ The scenarios live in `tests/e2e/scenarios/`:
   A flyout sits inside its parent, and a menu a control opens is named by
   it. `--group touch`.
 - `pdfTouch.mjs`: 400% rendering under an emulated canvas limit, distant-page
-  release/repaint, live ink, native touch swipes ([pdf_loading.md](pdf_loading.md)).
+  release/repaint, live ink, native touch swipes, and a Ctrl+wheel train that
+  renders no page until it rests, counted through a stand-in React DevTools
+  hook ([pdf_loading.md](pdf_loading.md)).
   `--only "pdf touch"`.
 - `pdfload.mjs`: PDF loading, in a non-default workspace — the timing probe
   (a 300-page, 20 MB document opened cold at an emulated 20 Mbps, the
