@@ -295,6 +295,17 @@ All state is SQLite + files on disk under a data directory (env
     in them, so no block reader skips them; a backup and a Gamma export
     carry them, a page deleted for good takes its own with it, and a
     comment write touches no page;
+  - `translation_terms` — the workspace's glossary for the PDF translated
+    view ([translation.md](translation.md) "The glossary"): per target
+    language (`lang`), one translation (`target`) per source term
+    (`source`, compared without case: the primary key is `(lang, source)`
+    with `source` in `COLLATE NOCASE`), with who set it (`by`, an account
+    id) and when (`at`). What people write, so here and not in data.db: a
+    backup and a replace carry it with no code of their own; a merge, a
+    Gamma page export and a mirror do not, since the glossary belongs to no
+    page and another workspace's terms would change how this one's papers
+    translate. Its writes touch no page and go in neither log. From
+    `db.PAGES_SCHEMA` as the file opens (no workspace step);
   - `workspace_prefs` — each account's prefs that name the workspace's
     pages, per `(user_id, key)`: open tabs (`open-tabs`), recents
     (`recent-views`), reading positions (`read-pos`), every key but the
@@ -333,8 +344,8 @@ All state is SQLite + files on disk under a data directory (env
   VACUUM may give its rows new rowids, which the notes index keys on (no
   code does; keep it that way).
 - `workspaces/<id>/data.db` — what the workspace can lose and rebuild: the
-  file may be deleted, and everything in it comes back on demand. Nothing a
-  person wrote lives here. It holds `page_snaps` (the recents-card cover
+  file may be deleted, and everything in it comes back on demand, free but
+  for the kept translations. Nothing a person wrote lives here. It holds `page_snaps` (the recents-card cover
   thumbnails, synced via `/api/page-snaps` — too big for the prefs KV;
   captured again as a PDF is read), the viewer's per-document manifests
   `pdf_docs` (byte size, page count, page sizes — `gamma/pdf_meta.py`,
@@ -349,7 +360,8 @@ All state is SQLite + files on disk under a data directory (env
   paper's rows are deleted by rowid instead of a scan of the whole FTS
   table. The index is built on demand (a search starts the workspace's
   indexing job), a few hundred PDF pages per transaction; the rows of
-  papers no block carries are purged when a page or a PDF goes
+  papers no block carries, by `doc_id` or by a duplicated page's upload
+  address, are purged when a page or a PDF goes
   (`pdf_index.purge_unused`). Derived data: no migration step — the
   tables are `CREATE ... IF NOT EXISTS`, the index's from
   `pdf_index.SCHEMA` (a new `pdf_fts_rows` takes over the rows already

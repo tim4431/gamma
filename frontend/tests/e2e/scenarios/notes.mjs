@@ -932,6 +932,14 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
         assert(at.add.left >= at.pane + 6, `${id}: clear of the sash's margin: ${JSON.stringify(at)}`);
         if (at.guide != null) assert(at.add.left > at.guide + 1, `${id}: clear of the guide line: ${JSON.stringify(at)}`);
       }
+      // Both handles are icons, 18 px in any font: two ⋮ glyphs were 34 px
+      // wide on Linux, and the ⋮⋮ grew and pushed the + out of the pane.
+      const before = await handlesOf("rnext");
+      const wide = await p2.addStyleTag({ content: ".rowHandles { font: 600 40px monospace; letter-spacing: 12px; }" });
+      const after = await handlesOf("rnext");
+      await wide.evaluate((el) => el.remove());
+      assert(Math.abs(after.drag.right - after.drag.left - 18) < 0.5 && Math.abs(after.add.left - before.add.left) < 0.5,
+        `the handles keep their width in any font: ${JSON.stringify({ before, after })}`);
       const order = async () => (await alice2.api(`/api/blocks/${src.id}/subtree`)).block.children.map((b) => b.id);
       const wrap = p2.locator('.sortableBlockWrap[data-block-id="rnext"]');
       const add = wrap.locator(".addHandle");

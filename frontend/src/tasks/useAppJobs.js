@@ -4,7 +4,7 @@
 // one, and what to say when a job ends that no window shows. One instance,
 // in App.jsx, over its `useTasks` store and the state the dialogs keep
 // there; `onJobFinished` is what the store's `onFinished` calls.
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { API, fmtBytes, getCurrentWorkspace, withWorkspace } from "../shared/lib/utils";
 import { t } from "../shared/i18n/i18n.js";
 import { exportJobBody, exportQuery } from "../transfers/transferFormats";
@@ -20,8 +20,8 @@ export function useAppJobs({
   // the import review dialog
   importReview, setImportReview,
   // what an export is of, and the share view's synchronous downloads;
-  // exportTranslation() is the translation the viewer shows over the page's
-  // PDF, for its annotated PDF to write (App.jsx), or null
+  // exportTranslation() resolves to the translation the viewer shows over the
+  // page's PDF, for its annotated PDF to write (App.jsx), or null
   pageId, shareMode, exportRawPdf, downloadExport, exportTranslation = () => null,
   // the open workspace: what a finished restore / import there refreshes
   workspaceId, refreshQuota, fetchHomeBlocks,
@@ -29,6 +29,12 @@ export function useAppJobs({
   refreshSession,
 }) {
   const exportStartingRef = useRef(false); // a second press while the first start is answered starts nothing
+  // An export being started, for the dialog's Export button to show busy
+  // meanwhile (reading the translation shown can take a moment).
+  const [exportStarting, setExportStarting] = useState(false);
+  // The dialog closed while its export was being started: nothing starts,
+  // or the job that did goes on in Background tasks with its file offered.
+  const exportLeftRef = useRef(false);
 
   // Export a workspace as a backup zip, or every personal workspace at once
   // (`body`: {ws, uploads} or {all, uploads}): a background job
@@ -73,35 +79,46 @@ export function useAppJobs({
   // original text (`translation`, read as Export is pressed), which only
   // the job does. A share view has no background tasks, and no translated
   // view: it downloads the same export through the download endpoints.
+  // While it starts, the dialog's Export is busy and a second press starts
+  // nothing; a dialog closed meanwhile starts nothing either.
   async function runExport(o) {
     if (!exportFolder && !pageId) { setExportOpen(false); setStatus(t("Open a page first to export it.")); return; }
-    const translation = !exportFolder && !shareMode && o.format === "pdf" ? exportTranslation() : null;
-    if (!exportFolder && o.format === "pdf" && !translation && !o.highlights && !o.notes && !o.comments && !o.subPages) {
-      setExportOpen(false);
-      await exportRawPdf();
-      return;
-    }
-    const body = exportJobBody(o, { pageId, folder: exportFolder || "" });
-    if (shareMode) {
-      setExportOpen(false);
-      const query = exportQuery(body);
-      await downloadExport(exportFolder
-        ? `/folders/${encodeURIComponent(exportFolder)}/export?${query}` : `/pages/${pageId}/export?${query}`, "export");
-      return;
-    }
     if (exportStartingRef.current) return;
     exportStartingRef.current = true;
+    exportLeftRef.current = false;
+    setExportStarting(true);
     try {
-      const job = await tasks.start("export", translation ? { ...body, translation } : body, { download: "auto", dialog: "export" });
-      setExportJobId(job.id);
-    } catch (err) {
-      setStatus(t("Export failed: {message}", { message: err.message }));
+      const translation = !exportFolder && !shareMode && o.format === "pdf" ? await exportTranslation() : null;
+      if (exportLeftRef.current) return;
+      if (!exportFolder && o.format === "pdf" && !translation && !o.highlights && !o.notes && !o.comments && !o.subPages) {
+        setExportOpen(false);
+        await exportRawPdf();
+        return;
+      }
+      const body = exportJobBody(o, { pageId, folder: exportFolder || "" });
+      if (shareMode) {
+        setExportOpen(false);
+        const query = exportQuery(body);
+        await downloadExport(exportFolder
+          ? `/folders/${encodeURIComponent(exportFolder)}/export?${query}` : `/pages/${pageId}/export?${query}`, "export");
+        return;
+      }
+      try {
+        const job = await tasks.start("export", translation ? { ...body, translation } : body, { download: "auto", dialog: "export" });
+        if (exportLeftRef.current) tasks.setDownload(job.id, "offer");
+        else setExportJobId(job.id);
+      } catch (err) {
+        setStatus(t("Export failed: {message}", { message: err.message }));
+      }
     } finally {
       exportStartingRef.current = false;
+      setExportStarting(false);
     }
   }
-  // Closing the export dialog leaves its job first (leaveExportJob).
+  // Closing the export dialog leaves its job first (leaveExportJob), or the
+  // one being started.
   function closeExport() {
+    exportLeftRef.current = true;
     leaveExportJob();
     setExportOpen(false);
   }
@@ -302,5 +319,5 @@ export function useAppJobs({
     }
   }
 
-  return { startWorkspaceExport, runBackupImport, runExport, closeExport, leaveExportJob, openTask, retryTask, onJobFinished };
+  return { startWorkspaceExport, runBackupImport, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask, onJobFinished };
 }

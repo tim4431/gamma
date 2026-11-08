@@ -230,8 +230,10 @@ GAMMA_DATA_DIR/
                            page shares and account preferences
   workspaces/<id>/
     pages.db               blocks, the op and change logs, AI chats, notes index,
+                           the translation glossary,
                            each account's tabs, recents and reading positions
-    data.db                derived only: PDF text index, PDF manifests, covers
+    data.db                derived only: PDF text index, PDF manifests, covers,
+                           kept translations (a model makes those again, for tokens)
     uploads/               PDFs, images and other attachments
 ```
 
@@ -239,8 +241,9 @@ Workspace IDs are random and stable. Renaming an account or workspace changes
 database rows without moving files. Schema upgrades run through the
 [versioned migration system](migrations.md).
 
-Workspace members share chats and cover snapshots as well as pages. Like
-pages, only editors and owners change them (a viewer's chat and covers stay
+Workspace members share chats, cover snapshots, kept translations and the
+translation glossary as well as pages. Like pages, only editors and owners
+change them (a viewer's chat and covers stay
 in its browser tab). AI keys, provider choice and the preference profile
 (appearance, reading, library and chat settings, [settings.md](settings.md))
 belong to the account. Open tabs, recents, reading positions and saved
@@ -453,7 +456,11 @@ over the live file, under connections that applied them already).
   (`_merge_trees`), and an added page is filed under the workspace's ids
   for them ([import_export.md](import_export.md) "Gamma-to-Gamma export").
   A folder's export comes back with `folder`, the workspace's id for that
-  folder, which a folder imported by its share link reloads into.
+  folder, which a folder imported by its share link reloads into. The
+  translation glossary (`translation_terms`) is not merged: it belongs to
+  no page, and the backup's terms would change how the workspace's own
+  papers translate (a replace brings the backup's, as it brings every
+  table).
 - **Pages in Recently deleted** count as lacking. A merge (and the reviewed
   Gamma import, which plans such a page as "create") removes the trashed
   copy's rows and brings the backup's version back live under the same ids.

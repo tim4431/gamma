@@ -3,8 +3,9 @@
 // (shared/lib/hotkeys.js) with a ctx of handles it refreshes every render;
 // the command palette (Ctrl+Shift+P) lists the same entries, and Settings →
 // Keyboard rebinds them. Only the long-standing keys, Ctrl+Shift+P, F2,
-// Delete and Ctrl+, have defaults; the rest are palette entries until the
-// account gives them a chord.
+// Delete, Ctrl+, and Ctrl+Shift+O (the translation shown or hidden) have
+// defaults; the rest are palette entries until the account gives them a
+// chord.
 // ctx: { shareMode, homeMode, hasPage, hasPdf, readOnly, commentsOn (the
 // page shows comments: not a publication, readable), homePick (the one
 // page selected on the home library), homePicks (how many), organize (the
@@ -18,7 +19,10 @@
 // "Copy, cut and paste"): inkOpen (the markup strip is open), inkTool (a
 // tool other than the hand is armed), inkSelected (the lasso holds a
 // selection), inkClip (the handwriting clipboard holds strokes), inkCopy(),
-// inkCut(), inkPaste(), inkDuplicate(), inkSelectAll() }.
+// inkCut(), inkPaste(), inkDuplicate(), inkSelectAll(), and translation (the
+// PDF's translated view, docs/dev/translation.md "The button"; null where the
+// translate button does not apply): {pages, shown, running, current,
+// docDone, as the viewer reports them, toggle(), page(), document()} }.
 import { t } from "../shared/i18n/i18n.js";
 import { isTextField } from "../shared/lib/hotkeys.js";
 
@@ -150,6 +154,16 @@ export const APP_COMMANDS = [
   cmd("ink.selectAll", t("Select all handwriting on this page"), GROUP_HANDWRITING, "Mod-a", inkRun((c) => c.inkSelectAll()),
     { edits: true, when: (c) => !!c.inkOpen && !!c.inkTool }),
 
+  // The translated view (docs/dev/translation.md "The button"), as the
+  // translate button and its menu have it. Showing the translation of a paper
+  // with none translates the page being read, as the button's click does;
+  // while a job runs, the rows that start one wait for it.
+  cmd("pdf.toggleTranslation", t("Show or hide the translation"), GROUP_PDF, "Mod-Shift-o", (c) => { c.translation.toggle(); },
+    { when: (c) => !!c.translation && (c.translation.pages > 0 || !c.translation.running) }),
+  cmd("pdf.translatePage", t("Translate this page"), GROUP_PDF, null, (c) => { c.translation.page(); },
+    { when: (c) => !!c.translation && !c.translation.running && !c.translation.current }),
+  cmd("pdf.translateDocument", t("Translate whole document"), GROUP_PDF, null, (c) => { c.translation.document(); },
+    { when: (c) => !!c.translation && !c.translation.running && !c.translation.docDone }),
   // Mod, not Ctrl: a Mac's Ctrl+click is the right click, so it boxes with ⌘.
   held("pdf.areaDrag", t("Hold to box a region of the PDF"), "Mod"),
   held("pdf.peekOriginal", t("Hold to see the original of a translated page"), "Alt"),

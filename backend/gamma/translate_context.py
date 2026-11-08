@@ -43,7 +43,7 @@ BREAK = "{br}"
 # a rule (or in the brief appended after it) is just text.
 _RULES = """\
 You translate text extracted from an academic paper into {lang}.
-The user message ends with the texts to translate as numbered segments, one per line: <s1>…</s1>, <s2>…</s2> and so on, each one paragraph, heading, caption or list item. The lines above them, when present, are context only, never translated or repeated in the reply: "Section" is the heading the texts sit under, and "Before" and "After" are the paper's text just before and after them.
+The user message ends with the texts to translate as numbered segments, one per line: <s1>…</s1>, <s2>…</s2> and so on, each one paragraph, heading, caption or list item. The lines above them, when present, are context only, never translated or repeated in the reply: "Section" is the heading the texts sit under, "Before" and "After" are the paper's text just before and after them, and "Terms" gives the reader's own rendering of terms these texts use, as "term → rendering" pairs separated by semicolons.
 Reply with ONLY the translated segments: the same numbers in the same order, each as <sN>its translation</sN> on a line of its own, and nothing else: no code fences, no commentary. Never merge two segments into one or split one into two.
 Rules:
 - A segment containing {br} is ONE paragraph that a column or page break cut at that point. Translate it as one paragraph and keep every {br}, as many as the segment has, each at the sentence or clause boundary closest to where it was.
@@ -51,6 +51,7 @@ Rules:
 - Tokens such as {v1} and {v2} stand for formulas, citation markers and URLs, which the reader sees exactly as printed in the paper. Keep each token exactly once and unchanged, where the grammar of {lang} puts it; never translate, renumber, merge, split or drop one, and never write the formula out instead.
 - Keep any other math, LaTeX, numbers, units, symbols, variable names and citation markers like [12] exactly as written.
 - Use one rendering per term throughout, following the paper's brief below when there is one; keep acronyms and the names of methods, software and datasets as written.
+- Render each term the Terms line lists exactly as it says, in every form the term takes; where it and the paper's brief differ, the Terms line wins.
 - Render references such as "Fig. 2", "Eq. (3)", "Table I" and "Sec. II" the way papers in {lang} write them, the same way every time.
 - Keep the register of an academic paper; translate headings as headings.
 - Return a segment's text unchanged when it is already in {lang} or is only math, code or tokens."""
@@ -131,12 +132,16 @@ CONTEXT_CHARS = 1500
 SECTION_CHARS = 200
 
 
-def user_turn(texts: list, before: str = "", after: str = "", section: str = "") -> list:
+def user_turn(texts: list, before: str = "", after: str = "", section: str = "", terms: str = "") -> list:
     """The translation call's messages: one user turn in plain text, the
     context a line each, a blank line, then the texts as numbered segments,
     one per line. The context is cut to size here: the end of ``before``
-    and the start of ``after`` are the parts next to the texts. Text that
-    reads as a segment's tag goes out masked (``_mask``)."""
+    and the start of ``after`` are the parts next to the texts. ``terms``:
+    the glossary's terms these texts use, rendered ("a → b; c → d",
+    translate_terms.Glossary.line), the last line of the context. Text that
+    reads as a segment's tag goes out masked (``_mask``), a term's too, and
+    every line is one line, so neither a paper nor a term can open a
+    segment or a line of its own."""
     lines = []
     section = " ".join((section or "").split())[:SECTION_CHARS]
     if section:
@@ -147,6 +152,9 @@ def user_turn(texts: list, before: str = "", after: str = "", section: str = "")
     after = " ".join((after or "").split())[:CONTEXT_CHARS]
     if after:
         lines.append(f"After (context only, not to translate): {_mask(after)}")
+    terms = " ".join((terms or "").split())
+    if terms:
+        lines.append(f"Terms: {_mask(terms)}")
     if lines:
         lines.append("")
     lines += [f"<s{k}>{_mask(text)}</s{k}>" for k, text in enumerate(texts, 1)]
@@ -262,7 +270,6 @@ def partial_segments(text: str) -> dict:
 
 # How much of the paper the brief reads, and of a client's `head`.
 BRIEF_TEXT_CHARS = 8000
-HEAD_MAX_CHARS = 12000
 _OUTLINE_ENTRIES = 40
 # Bookmarks that aren't sections (some PDFs bookmark every figure).
 _CAPTION_RE = re.compile(r"(?i)(?:fig(?:ure)?|tab(?:le)?|eq(?:uation)?)\.?\s*\S*\d")
@@ -271,8 +278,9 @@ _CAPTION_RE = re.compile(r"(?i)(?:fig(?:ure)?|tab(?:le)?|eq(?:uation)?)\.?\s*\S*
 @dataclass
 class Paper:
     """The paper behind a translation request. ``source`` names it for the
-    caches: the stored file (``doc:<id>``) or the client's opening text
-    (``head:<hash>``). ``doc_id`` is the stored file's id ("" without one):
+    caches: the stored file (``doc:<id>``), a page without one
+    (``page:<id>``) or the client's opening text (``head:<hash>``).
+    ``doc_id`` is the stored file's id ("" without one):
     only such a paper keeps its translations and brief. Reading it is
     ``material()``: only the request that makes the brief opens the file."""
     source: str
@@ -342,7 +350,7 @@ def paper_of(ws: str, page_id: str, head: str = "") -> Paper | None:
                 except ValueError:
                     found = None
                 path = str(found) if found else ""
-    head = (head or "")[:HEAD_MAX_CHARS]
+    head = (head or "")[:BRIEF_TEXT_CHARS]
     if path:
         source = f"doc:{doc_id}"
     elif found_page:

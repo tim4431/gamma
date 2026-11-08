@@ -186,6 +186,329 @@ def test_the_files_annotations_stay_as_they_were_at_every_turn(rotation):
     assert len(before) == 3 and after == before
 
 
+def _one_line_block(page, parts, **setting):
+    return {"lines": [_line_box(page, "Alpha line two")], "size": 10, "parts": parts, **setting}
+
+
+def _spans(data):
+    """The output page's spans as ``(text, x0, x1, size, font)``."""
+    page = _mupdf().open(stream=data, filetype="pdf")[0]
+    return [(s["text"], s["bbox"][0], s["bbox"][2], s["size"], s["font"])
+            for b in page.get_text("dict")["blocks"] for ln in b.get("lines", []) for s in ln["spans"]]
+
+
+def test_a_one_line_block_takes_the_room_the_viewer_gave_it():
+    pymupdf = _mupdf()
+    data = _paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    x0, y0, x1, y1 = _line_box(src, "Alpha line two")
+    long = "Eine viel laengere Zeile als das Original"
+    tight = _spans(_write(data, [{"page": 1, "blocks": [_one_line_block(src, [long])]}], "de"))
+    roomy = _spans(_write(data, [{"page": 1, "blocks": [_one_line_block(src, [long], box=[x0, y0, x0 + 300, y1])]}], "de"))
+    size = next(s for t, _, _, s, _ in tight if t.startswith("Eine"))
+    (_, left, right, grown, _), = [s for s in roomy if s[0].startswith("Eine")]
+    assert grown == pytest.approx(10, abs=0.2) and size < grown / 1.5, "it needs no shrinking in the room"
+    assert left == pytest.approx(x0, abs=2) and right > x1 + 50
+
+
+def test_a_centred_block_is_centred_in_its_room():
+    pymupdf = _mupdf()
+    data = _paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    x0, y0, x1, y1 = _line_box(src, "Alpha line two")
+    block = _one_line_block(src, ["Mitte"], box=[x0, y0, x0 + 200, y1], centred=True)
+    (_, left, right, _, _), = [s for s in _spans(_write(data, [{"page": 1, "blocks": [block]}], "de")) if s[0] == "Mitte"]
+    assert (left + right) / 2 == pytest.approx(x0 + 100, abs=2)
+
+
+def test_bold_and_italic_go_in_the_type_and_cjk_has_no_italic():
+    pymupdf = _mupdf()
+    data = _paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+
+    def font(lang, text, **setting):
+        out = _write(data, [{"page": 1, "blocks": [_one_line_block(src, [text], **setting)]}], lang)
+        return next(f for t, _, _, _, f in _spans(out) if t.startswith(text[0]))
+
+    assert "Bold" not in font("de", "Xyz") and "Italic" not in font("de", "Xyz")
+    assert "Bold" in font("de", "Xyz", bold=True)
+    assert "Italic" in font("de", "Xyz", italic=True)
+    assert "Italic" not in font("zh-CN", "译文", italic=True)
+
+
+def test_a_block_takes_the_overlays_leading():
+    """gamma/pdf_translated._leading against the cases of transBlock.test.mjs."""
+    from gamma.pdf_translated import _leading
+
+    def lines(*tops):
+        return [(0, y, 100, y + 9) for y in tops]
+
+    assert _leading({"size": 10, "lines": lines(0, 11.8, 23.6, 35.4)}, "de") == pytest.approx(1.18)
+    assert _leading({"size": 10, "lines": lines(0, 11.8, 30, 41.8)}, "de") == pytest.approx(1.18), "the median step"
+    assert _leading({"size": 10, "lines": lines(0, 10, 20)}, "ru") == 1.12
+    assert _leading({"size": 10, "lines": lines(0, 20, 40)}, "en") == 1.3
+    assert _leading({"size": 10, "lines": lines(0)}, "de") == 1.15
+    for lang in ("zh-CN", "zh-TW", "ja", "ko"):
+        assert _leading({"size": 10, "lines": lines(0, 11.8)}, lang) == 1.28
+
+
+def test_the_lines_go_at_that_leading():
+    pymupdf = _mupdf()
+    data = _paper()
+
+    def pitches(lines, lang):
+        words = "译文每行都一样" * 60 if lang == "zh-CN" else " ".join(["Worte"] * 60)
+        block = {"lines": lines, "size": 10, "parts": [words]}
+        page = pymupdf.open(stream=_write(data, [{"page": 1, "blocks": [block]}], lang), filetype="pdf")[0]
+        spans = [s for b in page.get_text("dict")["blocks"] for ln in b.get("lines", []) for s in ln["spans"]
+                 if "Worte" in s["text"] or "译" in s["text"]]
+        bases = sorted({round(s["origin"][1], 1) for s in spans})
+        return (bases[1] - bases[0]) / spans[0]["size"]
+
+    tight = [[40, y, 260, y + 9] for y in (60, 70, 80, 90)]
+    wide = [[40, y, 260, y + 9] for y in (60, 73, 86, 99)]
+    assert pitches(tight, "de") == pytest.approx(1.12, abs=0.02)
+    assert pitches(wide, "de") == pytest.approx(1.3, abs=0.02)
+    assert pitches(tight, "zh-CN") == pytest.approx(1.28, abs=0.02)
+
+
+def test_an_openers_indent_goes_with_its_first_line():
+    pymupdf = _mupdf()
+    data = _paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    lines = [_line_box(src, "Alpha line one"), [40, 74, 260, 84]]
+    words = " ".join(["Worte"] * 12)
+
+    def rows(**setting):
+        out = _write(data, [{"page": 1, "blocks": [{"lines": lines, "size": 10, "parts": [words], **setting}]}], "de")
+        page = pymupdf.open(stream=out, filetype="pdf")[0]
+        return [ln["bbox"][0] for b in page.get_text("dict")["blocks"] for ln in b.get("lines", [])
+                if ln["spans"][0]["text"].startswith("Worte")]
+
+    flat, indented = rows(), rows(indent=12)
+    assert flat[0] == pytest.approx(flat[1], abs=0.1)
+    assert indented[0] - indented[1] > 8 and indented[1] == pytest.approx(flat[1], abs=0.1)
+
+
+def test_a_mask_stops_at_the_next_lines_top_or_at_its_own_bottom():
+    """gamma/pdf_translated._masks against the overlay's blockBoxes."""
+    from gamma.pdf_translated import PAD, _masks
+
+    def bottoms(*lines):
+        return [m[3] - PAD for m in _masks({"size": 10, "lines": list(lines)})]
+
+    assert bottoms((0, 0, 100, 9), (0, 12, 100, 21)) == [12, 21], "the leading is covered"
+    assert bottoms((0, 0, 100, 15), (0, 12, 60, 21)) == [15, 21], "glyph boxes that overlap keep the line's own bottom"
+    assert bottoms((0, 0, 100, 9), (0, 40, 100, 49)) == [9, 49], "a gap of more than a line is no leading"
+
+
+def _panel_paper(rotation=0, fill=(0.93, 0.87, 0.74), ink=(0, 0, 0.8)):
+    """A page with a tinted panel under the Alpha paragraph, and a heading in
+    ``ink`` on plain paper. As ``_paper``, drawn under its text."""
+    pymupdf = _mupdf()
+
+    def paint(page, put):
+        page.draw_rect(pymupdf.Rect(30, 48, 270, 92) * page.derotation_matrix, color=None, fill=fill, overlay=False)
+        at = pymupdf.Point(40, 160) * page.derotation_matrix
+        page.insert_text(at, "Heading in colour", fontname="hebo", fontsize=14, rotate=rotation, color=ink)
+
+    return _paper(rotation, extra=paint)
+
+
+def _colours(data, rect, zoom=4, page=0):
+    """The share of each colour in a part of the display frame of a page."""
+    from collections import Counter
+
+    pymupdf = _mupdf()
+    pixmap = pymupdf.open(stream=data, filetype="pdf")[page].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=rect, alpha=False)
+    s = pixmap.samples
+    return Counter(zip(s[0::3], s[1::3], s[2::3]))
+
+
+def _heading_block(page):
+    return {"lines": [_line_box(page, "Heading in colour")], "size": 14, "parts": ["Farbe"]}
+
+
+def _span_colour(data, starts):
+    page = _mupdf().open(stream=data, filetype="pdf")[0]
+    return next(s["color"] for b in page.get_text("dict")["blocks"] for ln in b.get("lines", []) for s in ln["spans"]
+                if s["text"].startswith(starts))
+
+
+@pytest.mark.parametrize("rotation", [0, 90])
+def test_a_mask_takes_the_ground_it_stands_on_and_nothing_the_viewer_sent(rotation):
+    """A page exported may never have been shown: the block carries no colour."""
+    pymupdf = _mupdf()
+    data = _panel_paper(rotation)
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    assert {"lines", "size", "parts"} == set(_alpha_block(src, []))
+    out = _write(data, [{"page": 1, "blocks": [_alpha_block(src, ["Kurz"])]}], "de")
+    panel = pymupdf.Rect(32, 50, 268, 90)
+    (ground, n), = _colours(data, pymupdf.Rect(32, 50, 36, 52)).most_common(1)
+    found = _colours(out, panel)
+    assert found.most_common(1)[0][0] == ground
+    assert found[(255, 255, 255)] == 0, "no white slab"
+    near = [c for c in found if c != ground and max(abs(a - b) for a, b in zip(c, ground)) < 12]
+    assert sum(found[c] for c in near) < sum(found.values()) * 0.01, "and no second ground"
+
+
+def test_a_coloured_ink_goes_with_its_words_and_the_usual_one_stays():
+    pymupdf = _mupdf()
+    data = _panel_paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    blocks = [_heading_block(src), _alpha_block(src, ["Absatz"])]
+    out = _write(data, [{"page": 1, "blocks": blocks}], "de")
+    assert _span_colour(out, "Farbe") == 0x0000cc
+    assert _span_colour(out, "Absatz") == 0x1c1c1c
+
+
+def test_white_ink_on_a_dark_band_stays_white():
+    pymupdf = _mupdf()
+    data = _panel_paper(fill=(0.05, 0.1, 0.3), ink=(0, 0, 0))
+
+    def white(page, put):
+        page.draw_rect(pymupdf.Rect(30, 140, 270, 170), color=None, fill=(0.05, 0.1, 0.3), overlay=True)
+        page.insert_text(pymupdf.Point(40, 160), "White on a band of colour", fontname="hebo", fontsize=14, color=(1, 1, 1))
+
+    doc = pymupdf.open(stream=data, filetype="pdf")
+    white(doc[0], None)
+    data = doc.tobytes()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    block = {"lines": [_line_box(src, "White on a band")], "size": 14, "parts": ["Weiss"]}
+    assert _span_colour(_write(data, [{"page": 1, "blocks": [block]}], "de"), "Weiss") == 0xffffff
+
+
+def test_text_over_a_gradient_takes_paper_not_its_own_colour_for_ground():
+    """A gradient's many colours leave the text's own the commonest: that is no
+    ground, or the mask would be black under black words."""
+    pymupdf = _mupdf()
+
+    def gradient(page, put):
+        for k in range(100):
+            v = k / 99
+            page.draw_rect(pymupdf.Rect(30 + 2.4 * k, 48, 32.4 + 2.4 * k, 92), color=None, fill=(v, 1 - v, 0.5),
+                           overlay=False)
+
+    data = _paper(extra=gradient)
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    out = pymupdf.open(stream=_write(data, [{"page": 1, "blocks": [_alpha_block(src, ["Kurz"])]}], "de"), filetype="pdf")
+    fills = [d.get("fill") for d in out[0].get_drawings() if d.get("fill") in ((1.0, 1.0, 1.0), (0.0, 0.0, 0.0))]
+    assert (1.0, 1.0, 1.0) in fills and (0.0, 0.0, 0.0) not in fills
+    assert _span_colour(out.tobytes(), "Kurz") == 0x1c1c1c
+
+
+def test_a_band_no_taller_than_its_line_is_its_ground_though_paper_rings_it():
+    """White on a band inside its line's box, as hard.pdf p3's banner: the ring
+    above and below is paper, and with the white text it outvotes the band."""
+    pymupdf = _mupdf()
+    green = (0.2, 0.6, 0.3)
+
+    def band(page, put):
+        page.insert_text(pymupdf.Point(40, 160), "White on a tight band of green", fontname="hebo", fontsize=11, color=(1, 1, 1))
+
+    doc = pymupdf.open(stream=_paper(extra=band), filetype="pdf")
+    line = pymupdf.Rect(_line_box(doc[0], "White on a tight band"))
+    doc[0].draw_rect(pymupdf.Rect(0, line.y0 + 0.5, 300, line.y1 - 0.5), color=None, fill=green, overlay=False)
+    data = doc.tobytes()
+    block = {"lines": [list(line)], "size": 11, "parts": ["Weiss"]}
+    out = _write(data, [{"page": 1, "blocks": [block]}], "de")
+    assert _span_colour(out, "Weiss") == 0xffffff
+    fills = [d.get("fill") for d in pymupdf.open(stream=out, filetype="pdf")[0].get_drawings()]
+    assert (1.0, 1.0, 1.0) not in fills, "no white stripe over the band"
+
+
+def test_an_ink_too_faint_to_read_on_its_ground_is_no_ink():
+    """Yellow on paper ties black for farthest from white, and outweighs it."""
+    pymupdf = _mupdf()
+    data = _panel_paper(ink=(1, 0.83, 0))
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    assert _span_colour(_write(data, [{"page": 1, "blocks": [_heading_block(src)]}], "de"), "Farbe") == 0x1c1c1c
+
+
+def test_a_block_stops_where_the_next_one_starts_inside_its_box():
+    pymupdf = _mupdf()
+    data = _paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    long = " ".join(f"word{n}" for n in range(30))
+    one = pymupdf.Rect(_line_box(src, "Alpha line one"))
+    foot = one.y1 + 2
+    block = {**_alpha_block(src, [long]), "foot": foot}
+    page = pymupdf.open(stream=_write(data, [{"page": 1, "blocks": [block]}]), filetype="pdf")[0]
+    spans = [(b, y) for t, b, _, _, y in _shown(page) if "word" in t]
+    assert spans and all(y < foot - 0.75 for _, y in spans), "every baseline above the next block's text"
+
+
+def test_a_highlight_annotation_is_no_ground():
+    pymupdf = _mupdf()
+    doc = pymupdf.open(stream=_paper(), filetype="pdf")
+    page = doc[0]
+    for box in (_line_box(page, "Alpha line one"), _line_box(page, "Alpha line two")):
+        annot = page.add_highlight_annot(pymupdf.Rect(box))
+        annot.set_colors(stroke=(1, 1, 0))
+        annot.update()
+    data = doc.tobytes()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    out = pymupdf.open(stream=_write(data, [{"page": 1, "blocks": [_alpha_block(src, ["Kurz"])]}], "de"), filetype="pdf")[0]
+    assert any(d.get("fill") == (1.0, 1.0, 1.0) for d in out.get_drawings())
+
+
+def test_the_sample_leaves_mupdfs_smoothing_as_it_was_and_a_big_page_coarser():
+    pymupdf = _mupdf()
+    from gamma import pdf_translated
+
+    data = _panel_paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    pymupdf.TOOLS.set_aa_level(4)
+    try:
+        _write(data, [{"page": 1, "blocks": [_alpha_block(src, ["Kurz"])]}], "de")
+        assert pymupdf.TOOLS.show_aa_level()["graphics"] == 4
+    finally:
+        pymupdf.TOOLS.set_aa_level(8)
+
+    doc = pymupdf.open()
+    doc.new_page(width=5000, height=5000)
+    sample = pdf_translated._Sample(doc[0], pdf_translated._Frame(doc[0]), pymupdf)
+    assert sample.width * sample.height <= pdf_translated.SAMPLE_PIXELS * 1.01
+    assert sample.scale == pytest.approx(sample.width / 5000, rel=0.01)
+
+
+def test_a_pages_default_colour_spaces_outlive_the_redaction():
+    """MuPDF's rewritten page keeps only the resources its content names, so
+    a page's /DefaultCMYK, which ``k`` reads through, went, and with it the
+    colour of every CMYK fill on the page."""
+    pymupdf = _mupdf()
+    doc = pymupdf.open(stream=_paper(), filetype="pdf")
+    page = doc[0]
+    space = doc.get_new_xref()
+    doc.update_object(space, "[/CalRGB << /WhitePoint [0.95 1 1.09] /Gamma [2.2 2.2 2.2] >>]")
+    resources = int(doc.xref_get_key(page.xref, "Resources")[1].split()[0])
+    doc.xref_set_key(resources, "ColorSpace", f"<< /DefaultRGB {space} 0 R >>")
+    data = doc.tobytes()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    assert src.parent.xref_get_key(src.xref, "Resources/ColorSpace/DefaultRGB")[0] == "xref"
+    out = pymupdf.open(stream=_write(data, [{"page": 1, "blocks": [_alpha_block(src, ["Kurz"])]}], "de"), filetype="pdf")
+    kind, value = out.xref_get_key(out[0].xref, "Resources/ColorSpace/DefaultRGB")
+    assert kind == "xref"
+    assert "CalRGB" in out.xref_object(int(value.split()[0]))
+
+
+def test_a_translation_past_the_floor_stays_whole_and_runs_out_of_its_box():
+    """As on screen, 5% is as small as it gets and nothing is cut."""
+    pymupdf = _mupdf()
+    from gamma import pdf_translated
+
+    assert pdf_translated.MIN_SCALE == 0.05
+    data = _paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    words = [f"wort{n}" for n in range(9000)]
+    block = {"lines": [_line_box(src, "Alpha line two")], "size": 10, "parts": [" ".join(words)]}
+    out = _write(data, [{"page": 1, "blocks": [block]}], "de")
+    page = pymupdf.open(stream=out, filetype="pdf")[0]
+    spans = [s for b in page.get_text("dict", clip=pymupdf.INFINITE_RECT())["blocks"] for ln in b.get("lines", []) for s in ln["spans"]
+             if "wort" in s["text"]]
+    assert {round(s["size"], 2) for s in spans} == {0.5}
+
+
 def test_a_long_translation_shrinks_until_it_fits_its_box():
     pymupdf = _mupdf()
     data = _paper()

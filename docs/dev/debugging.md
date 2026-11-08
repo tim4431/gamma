@@ -623,7 +623,11 @@ with it on. `arrived(locator)` waits until a surface has grown in before
 its box is read; `assertMenuFrom` does. `live(selector)` leaves out the
 copies of closed surfaces on their way out, for a count taken the moment
 a menu closes. Role-based locators skip those copies by themselves (they
-are `aria-hidden`).
+are `aria-hidden`). `settingsPane(page, name)` clicks a Settings sidebar
+button and waits for that pane's head: the pane before stays on screen
+until the new one's reads are in ([settings.md](settings.md#what-a-pane-reads)),
+and a locator taken in that moment can match there (the Server pane's
+shared workspaces have a Manage of their own).
 
 A git worktree has no `backend/venv` of its own, and the harness looks for
 the interpreter there, so run the suite in one with `GAMMA_E2E_PYTHON`
@@ -901,11 +905,12 @@ The scenarios live in `tests/e2e/scenarios/`:
   columns' boxes, and a formula comes back as a crop of the page inside the
   translated line (against a mocked `/api/ai/translate` and
   `/api/ai/translate/brief`). Then the first chunk landing while the brief
-  is made, and the job running on after leaving the PDF to 100% in its
-  background-tasks row, asking again for the chunk that went without the
+  is made, and the job running on after leaving the PDF until its
+  background-tasks row, named for the paper, says Done, asking again for the chunk that went without the
   brief. Also a busy account's refusal waited out and a paragraph left in the
   original until Try again; the keep switch, the kept line and Clear in
-  Settings; Forget this translation; and a viewer of the workspace offered
+  Settings; Forget this paper's translations, asked first; the translate
+  menu from a hidden button's ⋯ row and Ctrl+Shift+O; and a viewer of the workspace offered
   neither Forget nor Clear. What a change does
   to the requests on real papers is the translation bench's
   ([translation.md](translation.md) "The bench").

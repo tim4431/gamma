@@ -7,8 +7,15 @@ A highlight block can make a PDF region clickable through
 targets a particular highlight on the destination page, by its block id (a
 highlight's id is its block's, [api.md](api.md) "The highlight shape"):
 "Copy as reference point" on a highlight keeps that id for another paper's
-link dialog. The link dialog (`pdf/LinkDialog.jsx`, from a selection's link
-button or a highlight's "Link to page…" / "Change link…") is a page picker
+link dialog and copies the highlight's block link (`?block=<id>`). Pasted
+into a note or the chat, that link lands on the passage as the deep link
+does: App's `openBlockLink`, which every block link, `[[ref]]`, backlink and
+inbox item opens through, shows the block's row in the notes and, for a
+highlight or a note linked to one, scrolls the PDF to the passage and
+flashes it (`landOnBlock` on the open page, `openBlock`'s `block` on
+another, both through `pendingJumpRef`). The link dialog
+(`pdf/LinkDialog.jsx`, from a selection's link button or a highlight's
+"Link to page…" / "Change link…") is a page picker
 (`library/PagePicker.jsx`): its field takes a DOI, an arXiv id or a web
 address (`isLinkInput`; `normalizeLinkInput` makes it a URL), and "Link to …"
 leads the list while it reads as one, or else searches the pages as Ctrl+P

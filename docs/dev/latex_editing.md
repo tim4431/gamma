@@ -198,7 +198,11 @@ run that ends the name ranks before one in its middle (`\rm` lists
 Code-style fuzzy tail (`fuzzyMatch`): every typed letter must appear in
 order in the name, starting with its first letter, ranked by the gaps the
 match needed and then by name length (`\mcal` → `\mathcal`, `\bsym` →
-`\boldsymbol`, `\sbeq` → `\subseteq`). Ties keep catalog order. Each row
+`\boldsymbol`, `\sbeq` → `\subseteq`). Ties keep catalog order, with one
+exception: a command the typed letters begin moves up to just before the
+first match that extends it, so `\tex` offers `\text` before `\textstyle`
+and `\i` offers `\in` before `\int` (`headsFirst`). Environments never
+move (`aligned` stays before `align`, which needs display math). Each row
 marks the letters the typed ones matched (the "/" menu's `Matched`
 marks), so a row reached through a run or the fuzzy tail shows why it
 is there. Typed text is never rewritten on its

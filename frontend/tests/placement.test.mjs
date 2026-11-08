@@ -4,7 +4,7 @@
 // point a button's menu opens from (menuAnchor).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { growFrom, menuAnchor, placeFloating, surfaceSize } from "../src/shared/ui/placement.js";
+import { flyoutPlace, growFrom, menuAnchor, placeFloating, surfaceSize } from "../src/shared/ui/placement.js";
 
 const view = { width: 1000, height: 800 };
 const menu = { width: 200, height: 120 };
@@ -92,4 +92,24 @@ test("growFrom: the origin at the point a surface opens from", () => {
   assert.equal(growFrom(100, 100, { left: 100, top: 100 }), "0px 0px", "at its top-left corner");
   assert.equal(growFrom(500, 300, { left: 300, top: 300 }), "200px 0px", "by its right edge");
   assert.equal(growFrom(950, 750, { left: 792, top: 672 }), "158px 78px", "kept inside the window: still from the point");
+});
+
+test("a flyout opens beside its row, on the left with room there alone, and over its menu with room on neither side", () => {
+  const flyout = { width: 190, height: 363 };
+  const nudge = { nudge: -4 };
+  const row = (left, top, width = 250) => ({ left, right: left + width, top, width, height: 30 });
+  assert.deepEqual(flyoutPlace(row(100, 100), flyout, nudge, view), { left: 250, top: -4 }, "room on the right");
+  assert.deepEqual(flyoutPlace(row(700, 100), flyout, nudge, view), { left: -190, top: -4 }, "room on the left alone");
+  // A phone 390 wide: the translate menu's row at 58, room on neither side (the
+  // flyout ran to x 493 and cut the languages' names). Over the menu, under its
+  // row, inside the window.
+  const phone = { width: 390, height: 844 };
+  assert.deepEqual(flyoutPlace(row(58, 400, 242), flyout, nudge, phone), { left: 0, top: 30 });
+  assert.deepEqual(flyoutPlace(row(195, 100, 180), flyout, nudge, phone), { left: 192 - 195, top: 30 }, "shifted in from the right edge");
+  // The translate menu low on the phone, its row at 617: no room under it, so
+  // over it, never on the row, where the tap that opened it would land.
+  assert.deepEqual(flyoutPlace(row(58, 617, 242), flyout, nudge, phone), { left: 0, top: -363 });
+  assert.deepEqual(flyoutPlace(row(58, 300, 242), { width: 190, height: 700 }, nudge, phone), { left: 0, top: 844 - 8 - 700 - 300 },
+    "room on neither side of the row: kept inside the window");
+  assert.deepEqual(flyoutPlace(row(100, 700), flyout, nudge, view), { left: 250, top: 800 - 8 - 363 - 700 }, "slid up from the bottom");
 });

@@ -17,7 +17,7 @@
 // now, each {id, label, group, keyLabel, run} (docs/dev/hotkeys.md) —
 // filtered by the same matcher on the label and group, Enter runs the pick.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { FolderIcon, LabelIcon, PlusIcon, SearchIcon, TerminalIcon } from "../shared/ui/Icons";
 import { commandIcon } from "../app/commandIcons.jsx";
 import { chordLabel } from "../shared/lib/hotkeys.js";
@@ -46,7 +46,9 @@ export default function QuickOpen({
   const canSearch = !!onSearch;
   const canCreate = !!onCreate;
 
-  useEffect(() => { if (open) setQuery(prefix); }, [open, prefix]);
+  // The box keeps the last query while closed: the prefix replaces it before
+  // the open palette paints, or a key typed at once would be undone.
+  useLayoutEffect(() => { if (open) setQuery(prefix); }, [open, prefix]);
   // The command palette found (the guide's palette hint retires on it).
   useEffect(() => { if (open && commandMode) guideEvents.emit("commands.opened"); }, [open, commandMode]);
 

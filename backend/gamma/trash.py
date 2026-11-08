@@ -19,8 +19,10 @@ nothing here reaches them but through their page.
 """
 
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
+from . import pdf_index
 from .auth import actor_names
 from .blocks_store import TRASH, load_props, trashed_page, write_lock
 from .db import connect_pages_db, format_stamp, parse_stamp, workspace_ids, ws_dir
@@ -70,17 +72,18 @@ def list_trash(conn) -> list[dict]:
     return sorted(pages, key=lambda p: p["deleted_at"], reverse=True)
 
 
-def purge(ws: str, page_id: str, *, actor: str = "") -> dict | None:
-    """Delete one page of the trash for good (``ops.delete_page``); None
-    when ``page_id`` is not in it. The check and the delete hold one write
-    lock, so a restore in between never loses the page it restored."""
+def purge(ws: str, page_id: str, *, actor: str = "", sweep: bool = True) -> dict | None:
+    """Delete one page of the trash for good (``ops.delete_page``, ``sweep``
+    as there); None when ``page_id`` is not in it. The check and the delete
+    hold one write lock, so a restore in between never loses the page it
+    restored."""
     with connect_pages_db(ws) as conn:
         write_lock(conn)
         row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
         if not row or row[0] != TRASH:
             conn.rollback()
             return None
-        return delete_page(ws, conn, page_id, actor=actor)
+        return delete_page(ws, conn, page_id, actor=actor, sweep=sweep)
 
 
 def _trashed(ws: str) -> list[dict]:
@@ -88,9 +91,28 @@ def _trashed(ws: str) -> list[dict]:
         return list_trash(conn)
 
 
+@contextmanager
+def _swept_after(ws: str):
+    """A pass of deletions for good, each with ``sweep=False``: yields the
+    list the pass adds the ids it deleted to, and when that is not empty
+    purges data.db once at the end, also after a deletion that raised (the
+    pages before it are gone, and a later pass may delete nothing)."""
+    gone = []
+    try:
+        yield gone
+    finally:
+        if gone:
+            with connect_pages_db(ws) as conn:
+                pdf_index.purge_unused(ws, conn)
+
+
 def empty(ws: str, *, actor: str = "") -> list[str]:
     """Delete every page of the trash for good; their ids."""
-    return [p["id"] for p in _trashed(ws) if purge(ws, p["id"], actor=actor) is not None]
+    with _swept_after(ws) as gone:
+        for page in _trashed(ws):
+            if purge(ws, page["id"], actor=actor, sweep=False) is not None:
+                gone.append(page["id"])
+    return gone
 
 
 def purge_expired(ws: str, *, now: datetime | None = None) -> list[str]:
@@ -104,13 +126,14 @@ def _purge_expired(ws: str, now: datetime) -> tuple[list[str], datetime | None]:
     """``purge_expired`` with, from the same listing, when the earliest page
     still in the trash expires: None with the trash left empty; a page that
     could not be dated or purged is due at once (the next sweep tries again)."""
-    gone, expiries = [], []
-    for page in _trashed(ws):
-        at = parse_stamp(page["deleted_at"])
-        if (at is None or now >= at + timedelta(days=KEEP_DAYS)) and purge(ws, page["id"]) is not None:
-            gone.append(page["id"])
-        else:
-            expiries.append(at + timedelta(days=KEEP_DAYS) if at else datetime.min.replace(tzinfo=timezone.utc))
+    expiries = []
+    with _swept_after(ws) as gone:
+        for page in _trashed(ws):
+            at = parse_stamp(page["deleted_at"])
+            if (at is None or now >= at + timedelta(days=KEEP_DAYS)) and purge(ws, page["id"], sweep=False) is not None:
+                gone.append(page["id"])
+            else:
+                expiries.append(at + timedelta(days=KEEP_DAYS) if at else datetime.min.replace(tzinfo=timezone.utc))
     return gone, min(expiries, default=None)
 
 

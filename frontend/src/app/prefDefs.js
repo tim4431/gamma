@@ -252,7 +252,7 @@ export const PREFS = {
   // (shared/lib/smoothWheel.js). Touchpads are smooth either way.
   smoothWheel: flag("gamma-smooth-wheel", ACCOUNT, false),
 
-  // --- Translation (Settings → Translation) ---
+  // --- Translation (Settings → Language and Translation) ---
   // Selection translation: a translate button in the text-selection popup
   // (next to the highlight colors), and whether it translates as soon as
   // text is selected instead of on click.

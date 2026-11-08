@@ -55,6 +55,32 @@ export function placeFloating({ width, height }, { x, y, anchorRight = false, an
   return { left, top };
 }
 
+// Where a menu's flyout of `size` goes from its row (`row`, the row's rect in
+// the window), as {left, top} from the row's own corner: beside the row on its
+// right, else on its left when only that side has room, its first item level
+// with the row (`nudge`), slid up so that it ends inside the window. With room
+// on neither side (a phone's narrow window) it opens over its own menu, kept
+// inside the window: under its row, else over it, as a menu from a button
+// does, and never over the row itself while either side has room, since a
+// finger's tap that opened it would land on the row now there. Never above
+// the window's top.
+export function flyoutPlace(row, { width, height }, { nudge = 0 } = {},
+  view = { width: window.innerWidth, height: window.innerHeight }) {
+  const pad = VIEWPORT_PAD;
+  const fits = (top) => row.top + top >= pad && row.top + top + height <= view.height - pad;
+  let left = row.width, top = nudge;
+  if (row.right + width > view.width - pad) {
+    if (row.left - width >= pad) left = -width;
+    else {
+      left = Math.max(pad, Math.min(row.left, view.width - pad - width)) - row.left;
+      top = fits(row.height) || !fits(-height) ? row.height : -height;
+    }
+  }
+  if (row.top + top + height > view.height - pad) top = view.height - pad - height - row.top;
+  if (row.top + top < pad) top = pad - row.top;
+  return { left, top };
+}
+
 // Gap between a button and the menu it opens.
 const MENU_GAP = 4;
 

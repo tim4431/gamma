@@ -28,7 +28,7 @@
 // row goes, the workspace stays.
 import { spawn, execFileSync } from "node:child_process";
 import net from "node:net";
-import { Account, PYTHON, ROOT, Server, makePdf, wanted } from "../harness.mjs";
+import { Account, PYTHON, ROOT, Server, makePdf, settingsPane, wanted } from "../harness.mjs";
 import { closeEditor, row as blockRow } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { zoteroLines } from "./textBoxes.mjs";
@@ -105,12 +105,11 @@ export async function zoteroLinkScenarios(env) {
       await fakeApi(`${library}/items/${key}`, { method: "PATCH", body: fields, version });
     };
 
-    const settingsNav = (page, name) => page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name, exact: true });
     async function openSettings(page, pane) {
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
       await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
-      await settingsNav(page, pane).click();
+      await settingsPane(page, pane);
     }
     const button = (scope, name) => scope.getByRole("button", { name, exact: true });
     // the link dialog's Library menu

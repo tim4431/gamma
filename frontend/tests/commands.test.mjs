@@ -92,6 +92,24 @@ test("the PDF's held keys are lone modifiers that never dispatch", () => {
   }
 });
 
+test("the translation commands apply where the translate button does, and wait for a running job", () => {
+  const by = (id) => commandById(id);
+  const ids = ["pdf.toggleTranslation", "pdf.translatePage", "pdf.translateDocument"];
+  assert.deepEqual(ids.map((id) => by(id).keys), ["Mod-Shift-o", null, null], "one default key, the toggle's");
+  assert.ok(ids.every((id) => !by(id).held && by(id).palette !== false), "palette rows");
+  const tr = (over) => ({ translation: { pages: 0, shown: true, running: false, current: false, docDone: false, ...over } });
+  assert.deepEqual(ids.map((id) => by(id).when({ translation: null })), [false, false, false], "no PDF, a share view");
+  assert.deepEqual(ids.map((id) => by(id).when(tr())), [true, true, true], "nothing translated yet: the toggle translates the page");
+  assert.deepEqual(ids.map((id) => by(id).when(tr({ running: true }))), [false, false, false], "a job runs and nothing shows yet");
+  assert.deepEqual(ids.map((id) => by(id).when(tr({ running: true, pages: 2 }))), [true, false, false], "what landed can be hidden");
+  assert.equal(by("pdf.translatePage").when(tr({ pages: 1, current: true })), false, "the page is translated");
+  assert.equal(by("pdf.translateDocument").when(tr({ pages: 3, docDone: true })), false, "every page is translated");
+  const calls = [];
+  const ctx = { translation: { toggle: () => calls.push("toggle"), page: () => calls.push("page"), document: () => calls.push("document") } };
+  for (const id of ids) by(id).run(ctx);
+  assert.deepEqual(calls, ["toggle", "page", "document"]);
+});
+
 test("fixedKeys follows the Enter preference", () => {
   assert.deepEqual(fixedKeys(false)[0][0], ["Shift-Enter"]);
   assert.deepEqual(fixedKeys(true)[0][0], ["Enter"]);
