@@ -15,6 +15,7 @@ from ..blocks_store import (
     FOLDERS,
     IN_LIBRARY,
     LABELS,
+    MAX_SEARCH_PAGES,
     TREES,
     ancestor_chains,
     assert_block_in_scope,
@@ -52,6 +53,9 @@ router = APIRouter(prefix="/api", tags=["blocks"])
 # The Ctrl+F notes scan answers with what it found so far (``partial``)
 # once it has run this long.
 BLOCK_SEARCH_BUDGET_S = 2.0
+# The block kinds a notes search may keep to (``kinds``): every ``kind`` a
+# block of a page has (db.BLOCK_HOT_COLUMNS, blocks_store.block_kind).
+SEARCH_KINDS = frozenset({"page", "note", "highlight", "link", "picture", "text_box", "ink", "sheet", "recording"})
 
 
 class UBCreateRequest(StorableBody):
@@ -87,12 +91,27 @@ class UBPutChildrenRequest(StorableBody):
     blocks: list
 
 
+class NotesSearch(BaseModel):
+    """POST /block-search: the GET's q mode, with the pages the panel's
+    filters keep sent as their ids (``pages``: None for the whole library,
+    [] for none) and the block kinds ``in:`` keeps (``kinds``, [] for
+    all)."""
+    q: str = ""
+    limit: int = 10
+    case: bool = False
+    whole: bool = False
+    cursor: str = ""
+    pages: list[str] | None = None
+    kinds: list[str] = []
+
+
 def _scan_blocks(conn, pattern, runs: list[str], case: bool, limit: int,
                  reach: set | None = None, pages: set | None = None,
-                 after: tuple | None = None) -> tuple[list, bool, str | None]:
+                 after: tuple | None = None, kinds: list[str] | None = None) -> tuple[list, bool, str | None]:
     """The ``limit`` most recently edited blocks of the library (only ones
     in ``reach`` when a share token limits what is seen, only ones of the
-    ``pages`` when the search is scoped) whose
+    ``pages`` when the search is scoped, only ones of the ``kinds`` when
+    it names some) whose
     text the fuzzy ``pattern`` matches, as ``(rows, partial, cursor)``. Its
     separator-tolerant rules ("3000" hits "3,000-qubit") can't be SQL, but
     every match contains the query's literal ``runs``
@@ -118,6 +137,9 @@ def _scan_blocks(conn, pattern, runs: list[str], case: bool, limit: int,
     if pages is not None:
         where += " AND page_id IN (SELECT value FROM json_each(?))"
         args.append(json.dumps(list(pages)))
+    if kinds:
+        where += " AND kind IN (SELECT value FROM json_each(?))"
+        args.append(json.dumps(list(kinds)))
     if after is not None:
         where += " AND (updated_at, rowid) < (?, ?)"
         args.extend(after)
@@ -164,6 +186,54 @@ def _after(cursor: str) -> tuple | None:
     return at, int(rowid)
 
 
+def _notes_search(conn, reach: set | None, q: str, limit: int, case: bool, whole: bool,
+                  after: tuple | None, pages: set | None, kinds: list[str] | None = None) -> dict | tuple:
+    """The fuzzy notes search behind Ctrl+F and the [[ref]] popup, both
+    forms of /block-search: the ``limit`` newest matches of ``q`` inside
+    ``reach`` (a share token's blocks), the ``pages`` (None: every page)
+    and the ``kinds`` (None or []: every kind), from ``after`` on, as
+    ``(rows, partial, next)``; ``{"blocks": [], "error": "empty query"}``
+    when ``q`` holds nothing to search."""
+    pattern = fuzzy_pattern(q, case, whole)
+    if pattern is None:
+        return {"blocks": [], "error": "empty query"}
+    if pages is not None and not pages:
+        return [], False, None  # the filters reach no page
+    return _scan_blocks(conn, pattern, literal_runs(q, case), case, limit, reach, pages, after, kinds)
+
+
+def _blocks_answer(conn, rows, reach: set | None, limit: int | None, partial: bool = False,
+                   next_cursor: str | None = None):
+    """/block-search's answer for ``rows`` (``(id, content, kind)``): each
+    block with its page's title and ancestors, those out of ``reach``
+    dropped, at most ``limit``; ``partial`` and ``next`` when set."""
+    if reach is not None:
+        rows = [r for r in rows if r[0] in reach]
+    if limit is not None:
+        rows = rows[:limit]
+    tail = {}
+    if partial:
+        tail["partial"] = True
+    if next_cursor:
+        tail["next"] = next_cursor
+    if not rows:
+        return {"blocks": [], **tail}
+    ancestors_by_id, page_root_by_id = ancestor_chains(conn, [r[0] for r in rows])
+    results = []
+    for block_id, content, kind in rows:
+        block = {"id": block_id, "content": content, "kind": kind}
+        ancestors = ancestors_by_id.get(block_id)
+        if ancestors:
+            block["ancestors"] = ancestors
+            block["page_root_id"] = page_root_by_id.get(block_id, block_id)
+            block["page_title"] = ancestors[0]["content"]
+        else:
+            block["page_root_id"] = block_id
+            block["page_title"] = content
+        results.append(block)
+    return OrjsonResponse({"blocks": results, **tail})
+
+
 @router.get("/block-search")
 def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
                  case: int = 0, whole: int = 0, regex: int = 0, scope: str = "", cursor: str = ""):
@@ -171,15 +241,14 @@ def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
     notes search behind Ctrl+F and the [[ref]] popup (``case`` / ``whole``
     word). ``partial`` when the scan ran out of time. The search keeps to
     the pages inside every folder and label of ``scope`` (comma-separated
-    ids: the panel's filter chips), and an answer that stopped before the
-    end carries ``next``, the ``cursor`` that goes on from there. A pattern
-    of the caller's (``regex``) is refused: one catastrophic regex holds the
-    GIL, and with it the whole server. Sync def: the scan runs in the
-    threadpool."""
+    ids), and an answer that stopped before the end carries ``next``, the
+    ``cursor`` that goes on from there. The panel sends its searches as
+    the POST beside this one, with the page ids its filters keep. A
+    pattern of the caller's (``regex``) is refused: one catastrophic regex
+    holds the GIL, and with it the whole server. Sync def: the scan runs
+    in the threadpool."""
     if regex:
         raise HTTPException(status_code=400, detail="regex search is not supported")
-    results = []
-    partial, next_cursor = False, None
     after = _after(cursor)
     # Through a share token: the blocks it reaches, silently — a ref chip or
     # link title in the share view resolves when its target is shared, and
@@ -198,7 +267,8 @@ def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
                 f"SELECT id, content, kind FROM unified_blocks WHERE id IN ({placeholders}) AND {IN_LIBRARY}",
                 id_list,
             ).fetchall()
-        elif not q:
+            return _blocks_answer(conn, rows, reach, None)
+        if not q:
             # Empty query: recently edited blocks, so the [[ref]] popup (and
             # the "/link" slash command) can suggest something before the
             # user types a filter.
@@ -207,42 +277,39 @@ def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
                 "ORDER BY updated_at DESC" + (" LIMIT ?" if reach is None else ""),
                 (limit,) if reach is None else (),
             ).fetchall()
-        else:
-            pattern = fuzzy_pattern(q, bool(case), bool(whole))
-            if pattern is None:
-                return {"blocks": [], "error": "empty query"}
-            pages = pages_in_scope(conn, [s for s in scope.split(",") if s]) if scope else None
-            if pages == set():
-                rows = []  # the filter chips reach no page
-            else:
-                rows, partial, next_cursor = _scan_blocks(conn, pattern, literal_runs(q, bool(case)), bool(case),
-                                                          limit, reach, pages, after)
-        if reach is not None:
-            rows = [r for r in rows if r[0] in reach]
-        if not ids:
-            rows = rows[:limit]
-        tail = {}
-        if partial:
-            tail["partial"] = True
-        if next_cursor:
-            tail["next"] = next_cursor
-        if not rows:
-            return {"blocks": [], **tail}
+            return _blocks_answer(conn, rows, reach, limit)
+        pages = pages_in_scope(conn, [s for s in scope.split(",") if s]) if scope else None
+        found = _notes_search(conn, reach, q, limit, bool(case), bool(whole), after, pages)
+        if isinstance(found, dict):
+            return found
+        return _blocks_answer(conn, found[0], reach, limit, found[1], found[2])
 
-        ancestors_by_id, page_root_by_id = ancestor_chains(conn, [r[0] for r in rows])
 
-        for block_id, content, kind in rows:
-            block = {"id": block_id, "content": content, "kind": kind}
-            ancestors = ancestors_by_id.get(block_id)
-            if ancestors:
-                block["ancestors"] = ancestors
-                block["page_root_id"] = page_root_by_id.get(block_id, block_id)
-                block["page_title"] = ancestors[0]["content"]
-            else:
-                block["page_root_id"] = block_id
-                block["page_title"] = content
-            results.append(block)
-    return OrjsonResponse({"blocks": results, **tail})
+@router.post("/block-search")
+def block_search_post(payload: NotesSearch, request: Request):
+    """The Ctrl+F panel's notes group: GET /block-search's ``q`` mode with
+    the page ids its filters keep (``pages``, at most MAX_SEARCH_PAGES:
+    413 past it; [] finds nothing) and the block kinds ``in:`` keeps
+    (``kinds``, 400 for one no block has), in the body, since a URL cannot
+    carry a library's ids. It answers what the GET answers, a share token's
+    reach (``?share=``) included: ``pages`` only narrows what the token
+    reaches. A read, though a POST (hosted.POST_READS). Sync def: the scan
+    runs in the threadpool."""
+    bad = sorted(set(payload.kinds) - SEARCH_KINDS)
+    if bad:
+        raise HTTPException(status_code=400, detail=f"unknown kind: {', '.join(bad)}")
+    if payload.pages is not None and len(payload.pages) > MAX_SEARCH_PAGES:
+        raise HTTPException(status_code=413, detail=f"a search names at most {MAX_SEARCH_PAGES} pages")
+    after = _after(payload.cursor)
+    share = share_scope(request)
+    with connect_pages_db(resolve_ws(request)) as conn:
+        reach = share.block_ids(conn) if share is not None else None
+        pages = set(payload.pages) if payload.pages is not None else None
+        found = _notes_search(conn, reach, payload.q, payload.limit, payload.case, payload.whole, after, pages,
+                              payload.kinds)
+        if isinstance(found, dict):
+            return found
+        return _blocks_answer(conn, found[0], reach, payload.limit, found[1], found[2])
 
 
 # Route order matters: static-prefix routes must come before /{block_id}

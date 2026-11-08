@@ -186,7 +186,8 @@ export const RULES = [
   // the library's bulk actions: delete (a folder's pages too), file and label, move into a page, duplicate
   ["frontend/src/library/pageBatch.js", ["trash", "folders", "quick-open", "sub-pages", "files"]],
   ["frontend/src/library/**", ALL], // the home view every scenario opens on
-  ["frontend/src/search/**", ["notes-pdf-share", "quick-open"]],
+  // folders, sub-pages: the panel's filter chips and typed qualifiers
+  ["frontend/src/search/**", ["notes-pdf-share", "quick-open", "folders", "sub-pages"]],
   // cloud-sign-in: the people invited by e-mail and the requests to join
   ["frontend/src/sharing/**", ["notes-pdf-share", "publish", "collab", "cloud-sign-in"]],
   // the Zotero account and links' calls (Account & sync › Zotero, the link dialog)
@@ -260,7 +261,7 @@ export const RULES = [
   ["backend/gamma/routers/pdf.py", PDF_VIEW],
   ["backend/gamma/textnorm.py", ["notes-pdf-share", "quick-open"]],
   ["backend/gamma/block_index.py", ["notes-pdf-share", "quick-open"]],
-  ["backend/gamma/routers/search.py", ["notes-pdf-share", "quick-open"]],
+  ["backend/gamma/routers/search.py", ["notes-pdf-share", "quick-open", "folders", "sub-pages"]],
   ["backend/gamma/markdown_zip_import.py", [...EXPORTS, "sub-pages"]], // a Notion export's pages inside pages
   ["backend/gamma/markdown_zip_links.py", [...EXPORTS, "sub-pages"]], // a parent: is read as a link
   ["backend/gamma/notion_import.py", [...EXPORTS, "sub-pages"]],

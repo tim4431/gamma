@@ -2813,6 +2813,8 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 }
 .searchResults { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .searchHint { font-size: var(--fs-xs); color: var(--text-dim); padding: 8px 4px; }
+/* A qualifier searched as text, and why (search/searchFilters.js problems). */
+.searchHint.warn { color: var(--warn); padding: 4px 4px; }
 /* A group's "Show more" (library.css's load-more pill), tight to its rows. */
 .searchResults .loadMoreBtn { margin: 4px auto 6px; }
 .topbar .searchResult,
@@ -2922,7 +2924,18 @@ mark.searchMark {
   border-radius: var(--radius-xs);
   padding: 0 4px;
 }
-.searchSuggestName { display: inline-flex; align-items: center; gap: 5px; }
+.searchSuggestName { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+/* A qualifier row: its key before a value, and its line after it, muted. */
+.searchSuggestKey { color: var(--text-dim); }
+.searchSuggestDesc {
+  margin-left: 4px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.searchPopover .searchSuggestInert { cursor: default; }
+.searchPopover .searchSuggestInert:hover { background: none; }
 .searchSuggestName svg, .searchChip svg { flex-shrink: 0; opacity: 0.8; }
 .topbar .searchToggle,
 .searchToggle {

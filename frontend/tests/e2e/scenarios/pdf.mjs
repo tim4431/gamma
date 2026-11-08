@@ -3,7 +3,7 @@
 // row + persisted position), the library card, and the search panel hitting
 // PDF text on another page.
 import { execFileSync } from "node:child_process";
-import { closeEditor, tree, same, partialBlockSearch } from "./notes.mjs";
+import { blockSearchQuery, closeEditor, tree, same, partialBlockSearch } from "./notes.mjs";
 import { PYTHON, arrived, assert, assertEq, fakeAiModels, until } from "../harness.mjs";
 import { DEFAULT_PALETTE, darkPageColor, darkPageLine } from "../../../src/shared/model/palette.js";
 
@@ -696,7 +696,8 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await page.waitForSelector(".searchPopover .searchInput");
       const details = page.locator("button[aria-label='Toggle result details']");
       if (!/\bon\b/.test(await details.getAttribute("class"))) await details.click();
-      const answered = page.waitForResponse((r) => r.url().includes("/api/block-search?q=zebrafish"));
+      const answered = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/block-search"
+        && r.request().method() === "POST" && blockSearchQuery(r.request()) === "zebrafish");
       await page.fill(".searchPopover .searchInput", "zebrafish");
       await answered;
       const notice = page.locator(".searchPopover .searchHint", { hasText: "Stopped early — refine the search to see more." });

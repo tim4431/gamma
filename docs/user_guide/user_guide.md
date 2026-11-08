@@ -303,6 +303,22 @@ A page can live inside another page, as in Notion: the minutes of each group mee
 
 - **Ctrl+F** on a page, **Ctrl+Shift+F** anywhere: titles, notes, highlights and the full text of every PDF, at once. "3000" finds "3,000-qubit".
 - Type a folder or label name and press Tab for a **filter chip**.
+- Narrow with **qualifiers** beside the words. They work in the search popover (Ctrl+F on a page, Ctrl+Shift+F anywhere); typed in the home page's filter box or Ctrl+P, Enter hands them over to it. Spaces mean all of them, commas list alternatives (`year:2019,2021`), a leading `-` leaves out, and quotes hold a name with spaces (`label:"quantum optics"`). Start typing a key and the list under the box completes it with Tab.
+
+  | Type | To find |
+  |---|---|
+  | `label:toread` | pages with the label |
+  | `folder:Rydberg` | pages in the folder or below it (`Physics/Rydberg` for one of several) |
+  | `-label:read` | pages without the label |
+  | `is:pdf`, `is:pinned` | papers, pinned pages |
+  | `no:label`, `no:folder` | pages with no label, filed nowhere |
+  | `author:Lukin`, `venue:nature` | words in a paper's authors or journal |
+  | `year:>=2020` | papers from 2020 on (also `2020`, `<2015`, `2019..2021`) |
+  | `updated:>=@today-7d` | pages edited in the last week (also `created:`, `2025-03`, `@today`) |
+  | `in:highlights` | the words only in highlights (also `title`, `notes`, `links`, `pdf`) |
+  | `-in:pdf` | the words only in your own writing |
+
+  Words with a colon that are not qualifiers, like `arXiv:2301.12345` or `10:30`, are searched as text. So is a qualifier Gamma cannot apply, such as a label name that does not exist, and a line under the box says why.
 - **Ctrl+P** jumps to any page, folder or label by name. Shift+Enter creates a page with what you typed.
 
 ## Metadata and citations

@@ -68,12 +68,20 @@ async function startDrag(page, from, ontoText) {
   };
 }
 
+// The text a notes search asks for: a GET's ?q= (the [[ picker) or a
+// POST's body (the Ctrl+F panel); "" for a lookup by id.
+export function blockSearchQuery(request) {
+  if (request.method() === "POST") return request.postDataJSON()?.q || "";
+  return new URL(request.url()).searchParams.get("q") || "";
+}
+
 // Make every notes search (/api/block-search with a query) on `page` answer
 // as if the server's scan ran out of time: the real hits plus
 // `partial: true`. Returns the undo.
 export async function partialBlockSearch(page) {
-  const match = (url) => url.pathname.endsWith("/api/block-search") && !!url.searchParams.get("q");
+  const match = (url) => url.pathname.endsWith("/api/block-search");
   const handler = async (route) => {
+    if (!blockSearchQuery(route.request())) return route.fallback();
     const response = await route.fetch();
     await route.fulfill({ response, json: { ...(await response.json()), partial: true } });
   };

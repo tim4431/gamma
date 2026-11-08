@@ -743,9 +743,17 @@ def page_in_folder(conn, page_id: str, folder_id: str) -> bool:
         (folder_id, page_top(conn, page_id))).fetchone() is not None
 
 
+# The most page ids one search request may name (POST /block-search and
+# /pdf-search: the pages the Ctrl+F panel's filters keep), about 750 KB of
+# body; 413 past it.
+MAX_SEARCH_PAGES = 50_000
+
+
 def pages_in_scope(conn, scope: list[str]) -> set[str]:
     """The library's pages inside every folder and label of ``scope`` (block
-    ids, the search panel's filter chips): filed in the folder or below it
+    ids, the ``scope`` of GET /block-search and /pdf-search; the Ctrl+F
+    panel evaluates its chips in the browser and sends page ids): filed in
+    the folder or below it
     (``pages_in_folder``: a sub-page by its top), carrying the label (each
     page its own). An id that is neither reaches none."""
     pages = None

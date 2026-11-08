@@ -285,4 +285,89 @@ export async function folderScenarios(env) {
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  // Typed qualifiers (search/searchFilters.js) beside the chips: the
+  // listing's pages they keep go to the server by id, so the notes found
+  // are the folder's, or all but its, however many outrank them. A key
+  // typed is completed from the dropdown; a value Gamma cannot apply is
+  // searched as text under an amber line.
+  await step("folders: search qualifiers narrow on the server, and the dropdown completes them", async () => {
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?ws=${user.ws}`);
+    const hits = page.locator(".searchPopover .searchResult", { hasText: "narwhalscope" });
+    const chips = page.locator(".searchPopover .searchChip");
+    const rows = page.locator(".searchPopover .searchLabelSuggest [role='option']");
+    // The body of the panel's next notes search that `test` accepts.
+    const notesAsked = (test) => page.waitForResponse((r) => new URL(r.url()).pathname === "/api/block-search"
+      && r.request().method() === "POST" && test(r.request().postDataJSON() || {}));
+    try {
+      await page.click("button[aria-label='Search']");
+      const search = page.locator(".searchPopover .searchInput");
+      await search.waitFor();
+      await page.locator(".searchPopover .searchHint", { hasText: "Narrow with label: folder:" }).waitFor();
+
+      // Everything but Deep: the 20 newest loose notes, then the other 5 on
+      // a Show more that pages the same set.
+      let asked = notesAsked((b) => b.q === "narwhalscope" && Array.isArray(b.pages));
+      await search.fill("-folder:Deep narwhalscope");
+      const body = (await asked).request().postDataJSON();
+      assert(body.pages.length > 0, "the pages outside Deep go along");
+      await until(async () => (await hits.count()) === 20, { what: "the first page of loose notes" });
+      assertEq(await hits.filter({ hasText: "filed note" }).count(), 0, "none from Deep");
+      await page.locator(".searchPopover .searchSection", { hasText: "-folder:Deep" }).waitFor();
+      await page.locator(".searchPopover .loadMoreBtn", { hasText: "Show more" }).last().click();
+      await until(async () => (await hits.count()) === 25, { what: "the rest of the loose notes" });
+      assertEq(await hits.filter({ hasText: "filed note" }).count(), 0, "still none from Deep");
+
+      // Capitalised as an iPad's first word is, and never Tabbed: no chip.
+      await search.fill("Folder:deep narwhalscope");
+      await page.locator(".searchPopover .searchResult", { hasText: "narwhalscope filed note" }).waitFor();
+      await until(async () => (await hits.count()) === 1, { what: "only the folder's note" });
+      assertEq(await chips.count(), 0, "a typed qualifier makes no chip");
+
+      // in: keeps the block kinds: no highlight holds the word.
+      asked = notesAsked((b) => b.q === "narwhalscope" && b.kinds?.join() === "highlight");
+      await search.fill("in:highlights narwhalscope");
+      await asked;
+      await page.locator(".searchPopover .searchHint", { hasText: "No matches." }).waitFor();
+      assertEq(await hits.count(), 0, "no notes group");
+
+      // The dropdown: a key once three letters begin it, then its values;
+      // Tab completes the text and adds no chip.
+      await search.fill("fol");
+      await rows.filter({ hasText: "folder:" }).first().waitFor();
+      assertEq(await rows.first().getAttribute("aria-selected"), "true", "the first row is the one Tab takes");
+      await search.press("Tab");
+      assertEq(await search.inputValue(), "folder:");
+      await rows.filter({ hasText: "Alpha" }).first().waitFor(); // the folders, by path
+      await page.keyboard.type("de");
+      await until(async () => (await rows.count()) === 1, { what: "the one folder the value begins" });
+      await search.press("Tab");
+      assertEq(await search.inputValue(), "folder:Deep ", "completed, with a space after it");
+      assertEq(await chips.count(), 0, "a completed qualifier is text, not a chip");
+      await page.locator(".searchPopover .searchResult", { hasText: "Deep paper" }).waitFor();
+
+      // A clause already whole: Tab leaves the text and moves the caret past
+      // it at once, so the next keys typed at the end stay there.
+      await search.fill("folder:Deep x");
+      await search.press("End");
+      await search.press("ArrowLeft");
+      await search.press("ArrowLeft");
+      await until(async () => (await rows.count()) === 1, { what: "the folder the caret's value names" });
+      await search.press("Tab");
+      assertEq(await search.inputValue(), "folder:Deep x", "nothing to complete");
+      assertEq(await search.evaluate((el) => el.selectionStart), 12, "the caret after the clause's space");
+      await search.press("End");
+      await page.keyboard.type("yz");
+      assertEq(await search.inputValue(), "folder:Deep xyz", "typed where the caret was put");
+
+      // A name no label has is searched as text, and the line says so.
+      await search.fill("label:nosuch narwhalscope");
+      await page.locator(".searchPopover .searchHint.warn",
+        { hasText: "“label:nosuch” is searched as text: no label is named nosuch" }).waitFor();
+      await page.locator(".searchPopover .searchHint", { hasText: "No matches." }).waitFor();
+      assertEq(await hits.count(), 0, "a label that does not exist finds nothing");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

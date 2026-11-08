@@ -70,24 +70,32 @@ ACTIVE_DAYS = 7               # the window active_accounts counts
 STATUSES = ("active", "grace", "read_only", "stopped")
 READ_ONLY_MESSAGE = ("This server is read-only: its plan has lapsed. You can still sign in, read and export "
                      "your data.")
-# What a read-only server still takes besides GET/HEAD/OPTIONS: signing in
-# and out (the cloud sign-in's link and unlink too), the export jobs a
-# person leaves with their data through (the downloads themselves are
-# GETs: page and folder exports, workspace backups, server snapshots), the
-# file chips' page lookup (a read sent as a POST), marking notices seen and
-# Inbox items read or archived (the account's own bookkeeping), and
-# the admin's Sync now, by which a paid-up server comes back. An entry
-# ending in "/" is a prefix, any other the whole path.
+# What a read-only server still takes besides GET/HEAD/OPTIONS and the
+# POST_READS: signing in and out (the cloud sign-in's link and unlink
+# too), the export jobs a person leaves with their data through (the
+# downloads themselves are GETs: page and folder exports, workspace
+# backups, server snapshots), marking notices seen and Inbox items read or
+# archived (the account's own bookkeeping), and the admin's Sync now, by
+# which a paid-up server comes back. An entry ending in "/" is a prefix,
+# any other the whole path.
 READ_ONLY_ALLOWED = (
     "/api/login",
     "/api/logout",
     "/api/auth/cloud/",
     "/api/jobs/export",
     "/api/jobs/workspace-export",
-    "/api/pages/by-docs",
     "/api/notices/",
     "/api/inbox/",
     "/api/admin/hosted/sync",
+)
+# Reads sent as a POST, because their ids do not fit a URL: the file chips'
+# page lookup and the Ctrl+F panel's two searches, with the page ids its
+# filters keep. The gate treats them as reads: a read-only server lets
+# them through, and they move no last write. Whole paths.
+POST_READS = (
+    "/api/pages/by-docs",
+    "/api/block-search",
+    "/api/pdf-search",
 )
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -177,6 +185,11 @@ def read_only() -> str:
 
 def allowed_when_read_only(path: str) -> bool:
     return any(path.startswith(entry) if entry.endswith("/") else path == entry for entry in READ_ONLY_ALLOWED)
+
+
+def is_post_read(path: str) -> bool:
+    """Whether a POST to ``path`` is a read (``POST_READS``)."""
+    return path in POST_READS
 
 
 def policy() -> str:

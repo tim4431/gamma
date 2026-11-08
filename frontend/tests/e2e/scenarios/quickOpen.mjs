@@ -109,6 +109,39 @@ export async function quickOpenScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // Ctrl+P reads no qualifiers: a query holding one matches no page, so
+  // only the actions are listed, the search first, and Enter hands the
+  // text to the search popover, which reads it.
+  await step("quickopen: a qualifier query lists only the actions, and Enter searches it in the popover", async () => {
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?page=${papers["Cavity sensors"].id}&ws=${user.ws}`);
+    try {
+      await page.locator(".blockList").first().waitFor();
+      const dialog = page.getByRole("dialog", { name: "Open a page" });
+      const input = dialog.getByRole("textbox", { name: "Search pages by title or label" });
+      await page.keyboard.press("Control+p");
+      // "c" is in every title: the label alone narrows it.
+      await input.fill("label:horlogerie c");
+      const rows = dialog.getByRole("option");
+      await until(async () => (await rows.count()) === 2, { what: "the two actions alone" });
+      assertEq(await dialog.locator('[role="option"][data-action]').count(), 2, "both rows are actions");
+      assertEq(await rows.first().getAttribute("data-action"), "search", "the search comes first");
+      await page.keyboard.press("Enter");
+      const search = page.locator(".searchPopover .searchInput");
+      await search.waitFor();
+      await until(async () => (await search.inputValue()) === "label:horlogerie c", { what: "the popover opens with the text" });
+      const details = page.locator("button[aria-label='Toggle result details']");
+      if (!/\bon\b/.test(await details.getAttribute("class"))) await details.click();
+      await page.locator(".searchPopover .searchSection", { hasText: "label:horlogerie" }).waitFor();
+      const titles = page.locator(".searchPopover .searchResult .searchResultTitle");
+      await page.locator(".searchPopover .searchSection", { hasText: "Titles" }).waitFor();
+      await until(async () => !(await page.locator(".searchPopover .searchHint", { hasText: "Searching…" }).count()),
+        { what: "the search answered" });
+      assertEq([...new Set(await titles.allTextContents())].join(), "Atomic clocks", "only the labelled page");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("quickopen: Ctrl+Shift+P is the command palette; a pick runs", async () => {
     const ctx = await user.context(browser);
     const page = await openPage(ctx, `${server.base}/?page=${papers["Atomic clocks"].id}&ws=${user.ws}`);
