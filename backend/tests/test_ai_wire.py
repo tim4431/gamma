@@ -357,6 +357,32 @@ def test_build_messages_elides_old_results_over_budget():
     assert tool_turns[1]["content"].endswith(big)  # …newest kept in full (after the snapshot note)
 
 
+def test_build_messages_keeps_the_newest_plan_whole_after_a_long_run():
+    """A run that carries out an approved plan reads more than the replay
+    budget holds; the Continue after it still replays the whole plan, its
+    size taken from the budget first, and an older plan is elided as any
+    result is."""
+    checklist = "Proposed to the user; nothing is changed until they approve it:\n" + "\n".join(
+        f"{n}. [pending] " + "s" * 200 for n in range(1, 16))
+
+    def plan(call_id):
+        return {"kind": "plan", "tool": "update_plan", "id": call_id, "args": {"plan": "[…]"}, "result": checklist}
+
+    # 1,000 + 20 × 213 characters: under the budget alone, over what the plan leaves of it.
+    run = ([{"kind": "list", "tool": "list_pages", "args": {}, "result": "x" * 1000}]
+           + [{"kind": "rename", "tool": "rename_page", "args": {"page_id": f"p{n}", "title": "T"},
+               "result": "ok — renamed " + "y" * 200} for n in range(20)])
+    history = [{"role": "user", "text": "plan it"}, {"role": "ai", "text": "A first plan.", "actions": [plan("old")]},
+               {"role": "user", "text": "fewer folders"}, {"role": "ai", "text": "The plan.", "actions": [plan("new")]},
+               {"role": "user", "text": "Carry out the approved plan."}, {"role": "ai", "text": "", "actions": run}]
+    messages = build_messages(payload(history), "", with_tools=True)
+    tool_turns = [m for m in messages if m["role"] == "tool"]
+    assert "elided" in tool_turns[0]["content"]          # the plan the second one replaced
+    assert tool_turns[1]["content"].endswith(checklist)  # the approved plan, whole
+    assert "elided" in tool_turns[2]["content"]          # the run's oldest result, for the plan's room
+    assert not any("elided" in m["content"] for m in tool_turns[3:])
+
+
 def test_build_messages_replays_a_long_replys_newest_calls_and_counts_the_rest():
     """A reply that ran until the window was full (Unlimited rounds) made
     thousands of calls: the next message, Continue's, replays its newest

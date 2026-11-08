@@ -46,6 +46,11 @@ scope/permission lines are appended mechanically.  Renamed tools stay
 callable under their old name (``ai_context.DEPRECATED_TOOLS``) so saved
 chats replay.
 
+A planning turn (the chat's Plan switch) reads but changes nothing: every
+changing call is refused at dispatch, and the model proposes the change
+with update_plan, the one tool without a permission, armed beside any
+changing tool.
+
 Folders and labels are blocks of the ``folders`` and ``labels`` trees
 (``blocks_store``; a folder may be empty), and a page is filed by their ids
 (``properties.folders`` / ``properties.labels``). The model never sees the
@@ -3732,6 +3737,85 @@ def _run_delete_folder(conn, ws: str, scope: dict, args: dict):
 TREE_DELETES = frozenset({"delete_folder", "delete_label"})
 
 
+# --- planning first ------------------------------------------------------------
+# A planning turn (the chat's Plan switch, the request's ``planning``) reads
+# and looks things up but changes nothing: every changing call is refused at
+# dispatch (``held_for_plan``), whatever the permissions, while the specs
+# and the system prompt stay as every other turn has them, so the cached
+# prefix holds. The model proposes the change with update_plan (Codex's
+# schema) and the user approves it in a normal turn. The caps keep the
+# longest checklist (about 3.3k characters) under ``_DETAIL_CAP``, so the
+# saved result is whole, and the replay keeps the newest plan whole however
+# much was read since (``ai_context._elide_old_results``).
+
+PLAN_TOOL = "update_plan"
+PLAN_STATUSES = ("pending", "in_progress", "completed")
+MAX_PLAN_STEPS = 15
+_PLAN_STEP_MAX = 200
+# What a planning turn's message ends with (ai_context.build_messages
+# ``turn_note``): it travels with the message, never in the system prompt.
+PLANNING_TURN = (
+    "[Plan mode: this message is a planning turn. Read and look things up as much as the task "
+    "needs, but change nothing: every changing tool is refused in this turn, whatever the settings. "
+    "Work out the whole change, call update_plan once with one concrete step per change (every "
+    "status pending), then end your reply with a short summary of the plan. The user approves it "
+    "with Approve plan or asks for changes; for a request for changes, call update_plan again with "
+    "the revised plan. A question that needs no change is simply answered, without a plan.]")
+# What the model hears for a changing call in a planning turn.
+PLAN_HELD = ("error: this is a planning turn, so nothing was changed — add this change to the plan "
+             "with update_plan; it is made once the user approves the plan")
+
+
+def held_for_plan(scope: dict, name: str) -> bool:
+    """Whether a call is refused because its turn only plans: a changing
+    tool in a request that sent ``planning``."""
+    return bool(scope.get("planning")) and canonical_tool(name) in MUTATING_TOOLS
+
+
+def _run_update_plan(conn, ws: str, scope: dict, args: dict):
+    """Record the plan: ``plan`` is a list of ``{step, status}``, read
+    leniently (a step's whitespace collapsed and cut at ``_PLAN_STEP_MAX``,
+    an empty one dropped, an unknown status pending, only the first
+    in_progress kept), at most ``MAX_PLAN_STEPS``. In a planning turn every
+    step is pending and the plan is ``proposed``. The result is the
+    numbered checklist, under a head that stays true in any later turn
+    that replays it. ``explanation`` stays in the call's arguments, cut at
+    ``_ARG_CAP`` like any other."""
+    items = args.get("plan")
+    if not isinstance(items, list) or not items:
+        return "error: `plan` must be a non-empty list of {step, status} items", None
+    planning = bool(scope.get("planning"))
+    steps, working = [], False
+    for item in items:
+        if isinstance(item, str):
+            item = {"step": item}
+        if not isinstance(item, dict):
+            continue
+        text = " ".join(str(item.get("step") or "").split())[:_PLAN_STEP_MAX]
+        if not text:
+            continue
+        status = item.get("status") if item.get("status") in PLAN_STATUSES else "pending"
+        if planning or (status == "in_progress" and working):
+            status = "pending"
+        working = working or status == "in_progress"
+        steps.append({"step": text, "status": status})
+    if not steps:
+        return "error: `plan` must be a non-empty list of {step, status} items", None
+    left_out = len(steps) - MAX_PLAN_STEPS
+    steps = steps[:MAX_PLAN_STEPS]
+    done = sum(1 for s in steps if s["status"] == "completed")
+    head = ("Proposed to the user; nothing is changed until they approve it:" if planning
+            else f"Plan updated, {done} of {len(steps)} done:")
+    lines = [head, *(f"{n}. [{s['status']}] {s['step']}" for n, s in enumerate(steps, start=1))]
+    if left_out > 0:
+        lines.append(f"({left_out} more step{'s were' if left_out != 1 else ' was'} left out: "
+                     f"a plan holds at most {MAX_PLAN_STEPS})")
+    n = len(steps)
+    summary = f"Planned {n} step{'s' if n != 1 else ''}" if planning else f"Plan: {done} of {n} done"
+    return "\n".join(lines), {"kind": "plan", "summary": summary,
+                              "plan": {"steps": steps, **({"proposed": True} if planning else {})}}
+
+
 # --- registry ------------------------------------------------------------------
 # One entry per tool: wire spec, Settings permission key, the action kind its
 # chip carries, the scopes the tool exists in, whether it mutates the library,
@@ -4541,6 +4625,38 @@ TOOLS = [
             },
         },
     },
+    # No permission of its own: armed beside any changing tool (agent_tools).
+    {
+        "perm": "", "kind": "plan", "scopes": ("folder", "page"), "mutating": False, "run": _run_update_plan,
+        "spec": {
+            "name": PLAN_TOOL,
+            "description": (
+                "The plan for a change of several steps, shown to the user as a checklist. In a "
+                "planning turn, propose the change with it: one concrete step per change, every "
+                "status pending; nothing changes until the user approves the plan. While carrying "
+                "out a plan the user approved, you may mark steps completed (and the one under way "
+                "in_progress), always in the same turn as the next step's calls. Not for a "
+                "question or a single change."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "explanation": {"type": "string"},
+                    "plan": {
+                        "type": "array",
+                        "maxItems": MAX_PLAN_STEPS,
+                        "description": "the steps, in order",
+                        "items": {
+                            "type": "object",
+                            "properties": {"step": {"type": "string"},
+                                           "status": {"type": "string", "enum": list(PLAN_STATUSES)}},
+                            "required": ["step", "status"],
+                        },
+                    },
+                },
+                "required": ["plan"],
+            },
+        },
+    },
 ]
 
 _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
@@ -4560,10 +4676,11 @@ def mcp_tools() -> frozenset:
     (gamma/mcp_server.py): every reading tool that stays inside the library,
     so a new one is offered by rule — not the web tools (the assistant has
     its own web access), not the trash (``list_deleted``: its pages are out
-    of the reading tools' reach and restoring one is a change), and no
-    change tool. ``backend/tests/test_mcp.py`` pins the resulting names."""
+    of the reading tools' reach and restoring one is a change), no change
+    tool, and no tool without a permission (update_plan, which only goes
+    with the changes). ``backend/tests/test_mcp.py`` pins the resulting names."""
     return frozenset(t["spec"]["name"] for t in TOOLS
-                     if not t["mutating"] and t["perm"] not in ("web_search", "web_read")
+                     if t["perm"] and not t["mutating"] and t["perm"] not in ("web_search", "web_read")
                      and t["spec"]["name"] != "list_deleted")
 
 
@@ -4584,7 +4701,10 @@ def tool_permission(name: str) -> str:
 
 def _state_of(perms, tool: dict) -> str:
     """A tool's state in a request's permission map: its permission's value,
-    else the default for a reading or a changing tool."""
+    else the default for a reading or a changing tool. A tool without a
+    permission (update_plan) is allowed."""
+    if not tool["perm"]:
+        return "allow"
     return permission_state(perms, tool["perm"], tool["mutating"])
 
 
@@ -4597,6 +4717,8 @@ def tool_states(perms, *, granted=(), can_ask: bool = True) -> dict:
     show the card on) arms none of its asking tools."""
     states = {}
     for t in TOOLS:
+        if not t["perm"]:
+            continue
         state = _state_of(perms, t)
         if state == "ask" and t["perm"] in granted:
             state = "allow"
@@ -4619,7 +4741,8 @@ def agent_tools(scope_type: str, perms: dict | None = None, read_chars: int = 0,
     the window a call gets without asking (``read_default``, the scope's
     own when it sets one). A tool
     that ``needs`` something (a web engine) is armed only when ``has`` it
-    (``available(scope)``)."""
+    (``available(scope)``). update_plan, which has no permission, is armed
+    only beside a changing tool: a plan is of changes."""
     cap = _read_cap(read_chars)
     specs = []
     for t in TOOLS:
@@ -4636,6 +4759,8 @@ def agent_tools(scope_type: str, perms: dict | None = None, read_chars: int = 0,
             spec = {**spec, "description": spec["description"].format(
                 read_cap=cap, read_default=min(read_default or READ_CHARS_DEFAULT, cap))}
         specs.append(spec)
+    if not any(s["name"] in MUTATING_TOOLS for s in specs):
+        specs = [s for s in specs if s["name"] != PLAN_TOOL]
     return specs
 
 
@@ -4914,6 +5039,12 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
                 "can revert it: only for what the user asked to remove; patch a block to cut "
                 "part of it.")
         text += " Change only the notes the user asked you to change."
+    if PLAN_TOOL in names:
+        text += (
+            "\nPlans: when the user approves a plan you proposed with update_plan, carry it out in "
+            "order. Marking steps completed is optional; when you do, call update_plan in the same "
+            "turn as your next calls, never in a turn of its own. Stay within the plan, and say so "
+            "when a step must change.")
     if not any(n in MUTATING_TOOLS for n in names):
         text += " Making changes is not available here — suggest them instead of attempting them."
     return text
@@ -4979,7 +5110,10 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
     authenticates the workspace before invoking this layer. ``approved`` is
     the digest of the approval card the user allowed for this call
     (``ApprovalGate``): a call naming several pages runs only as that card
-    showed it.
+    showed it. In a planning turn (the scope's ``planning``) a changing
+    call is refused with ``PLAN_HELD``, its chip marked ``held`` and naming
+    the change by its card's ``title``, ``mode`` and ``count``; one that
+    could not change anything gets its preview's answer instead.
 
     Returns ``(result_text, action)`` — result_text goes back to the model;
     action is the ``{kind, summary, tool, args, result}`` UI event for EVERY
@@ -5005,6 +5139,20 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
     if name not in permitted:
         result = "error: tool not enabled — the user's permission settings do not allow it"
         return result, tool_action("error", f"{name} — blocked by permissions", name, args, result, error=True)
+    # A planning turn changes nothing: after the checks above, so a tool the
+    # user turned off is still refused as off. Its chip names the change as
+    # a declined call's does, from what the card would have shown (no card
+    # is shown). A call that could not change anything (a wrong id, nothing
+    # to do) gets the answer it would get under Ask, so no such step goes
+    # into the plan.
+    if held_for_plan(scope, name):
+        preview, answer = approval_preview(ws, scope, name, args)
+        if answer is not None:
+            return answer, settled_action(name, args, answer)
+        preview = preview or {}
+        return PLAN_HELD, tool_action("error", f"Held for the plan: {name}", name, args, PLAN_HELD,
+                                      error=True, held=True,
+                                      **{k: preview[k] for k in ("title", "mode", "count") if preview.get(k)})
     # Attaching a reference expands read access, never the editing scope.
     # The message's counters (saves, web searches, the works already listed)
     # live in one Tally the copy shares.

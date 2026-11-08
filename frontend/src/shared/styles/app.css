@@ -3841,6 +3841,25 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   background: var(--bg-surface);
 }
 .chatApprovalNote { margin-top: 6px; color: var(--text-secondary); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
+/* A reply's plan (PlanCard.jsx) has the approval card's look: its steps
+   are an ordered list of a glyph column (the number, a spinner, a check)
+   and the text. */
+.chatPlanSteps { display: grid; gap: 3px; margin: 8px 0 0; padding: 0; list-style: none; }
+.chatPlanSteps li { display: grid; grid-template-columns: 1.6em minmax(0, 1fr); gap: 6px; align-items: start; }
+.chatPlanMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5em;
+  color: var(--text-muted);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+.chatPlanMark.done { color: var(--ok); }
+.chatPlanDot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.chatPlanStep { min-width: 0; overflow-wrap: anywhere; }
+.chatPlanSteps li.done .chatPlanStep { color: var(--text-secondary); }
+.chatPlanBadge { display: inline-flex; gap: 0.3em; min-width: 0; font-weight: 400; }
 /* "Allowed in this chat" in the composer's toolbar: click to ask again. In a
    narrow chat its words give way first (down to the shield and the ×), so
    the send button keeps its place. */
@@ -3848,6 +3867,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatGrantChip svg { flex: none; }
 .chatGrantLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chatGrantChip:hover { color: var(--text-primary); border-color: var(--border-light); }
+/* The Plan switch beside the PDF one: in a narrow chat its word gives way
+   as the grant chip's does, so the send button keeps its place. */
+.chatPlanToggle { min-width: 0; overflow: hidden; }
+.chatPlanToggle svg { flex: none; }
+.chatPlanLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* A reply's papers (chat/ReplyPapers.jsx): one pill, opening to a checklist
    saved into the library together. */
 .chatPapersWrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 8px; min-width: 0; }
