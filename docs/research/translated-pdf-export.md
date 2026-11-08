@@ -140,7 +140,9 @@ formulas as pictures took 1.31 s for the whole write, 1.73 s once the lines
 were masked as well. The file went from 215,993 to 160,324 bytes, smaller
 because the fonts the redaction left unused leave it. It holds one CJK font
 subset and none of the original page's text (the formulas' own text came
-later, below).
+later, below). The writer now draws formulas as themselves, filtered down
+to their boxes, and keeps the picture for those it cannot
+([Formulas as themselves](#formulas-as-themselves)).
 
 ## The formula's text under its picture
 
@@ -244,11 +246,92 @@ pdf.js 4.4 and the fixture paper compiled with pdfLaTeX:
   font. How it works now:
   [dev/translation.md](../dev/translation.md#how-a-translation-is-set).
 
+## Formulas as themselves
+
+A picture at 600 dpi is sharp in print but not at every zoom, and it brings
+its own font for the hidden text. Drawing a formula as itself needs what
+the copy of a page per formula did, the formula alone, without its cost.
+Measured in November 2026 on PyMuPDF 1.28.2 and 1.27.2.3 (the iPad's
+build), with the fixture paper compiled by pdfLaTeX, LuaLaTeX and XeLaTeX,
+and 40 pages (201 to 240) of a 1,202-page physics textbook made with
+LuaTeX 1.17 (2 MB, its figures PDF forms). The layouts were stand-ins, as
+above: each page's own words as the translation, MuPDF's math spans (CMMI,
+CMSY, CMEX, MSAM, MSBM) as the formulas.
+
+- **MuPDF's content filter with a culler.** The sanitize filter
+  (`pdf_new_sanitize_filter`) asks a culler of every glyph, path, clip,
+  image and shading it meets, with its box in the page's content space (a
+  glyph's is the font's height, not its outline), and writes out what is
+  kept, the rest replaced by kerning in its `TJ`. PyMuPDF reaches it through
+  SWIG directors (`PdfSanitizeFilterOptions2.culler`,
+  `PdfFilterFactory2.filter`), on 1.28.2 and 1.27.2.3 alike. Its output
+  names the page's own resources, the same font objects, so a formula takes
+  no font of its own. A glyph is kept when its box's centre lies in the
+  formula's box, a painted path when it meets it, every clip.
+- **Its cost is the content it reads.** The fixture's first page (3,862
+  glyphs) took 14 ms through the filter with a Python culler; filtering it
+  once a formula took 11.6 ms a formula, 1.8 s for 154. Filtered once down
+  to what meets any formula's box and then that once a formula, the
+  fixture's 114 formulas took 0.69 ms each (0.08 s), the book's 3,424
+  0.86 ms each, against 0.28 and 0.18 ms for a picture. The pictures cost
+  more after that: inserting each, and the hidden text's font.
+- **Forms.** MuPDF keeps every form XObject a content draws, and the filter
+  copies one (`instance_forms`) through the filters its options list. A
+  chain built by hand left that list empty, so every formula near one of
+  the book's figures carried the figure's 144 KB form whole: 37 MB for the
+  40 pages. With the culler in a filter factory, the form's copy is filtered
+  as well, and the 40 pages came to 3.2 MB.
+- **A form of its own loses a space in pdf.js.** pdf.js 4.4 holds a space
+  between words until the next glyph and reads a form with a text state of
+  its own, so the space before every formula drawn as a form XObject was
+  lost: "interactionVij≪ Ω", "asγ eff∝N". Written into the sheet's own
+  stream, its resources renamed (the content read as tokens: a name in a
+  string, a dictionary or an array stays), pdf.js reads "interaction Vij ≪Ω
+  admit … γeff ∝ N 2Ω4/V 2" as it did the hidden text, and so do MuPDF and
+  pypdf, pypdf closer to the original than before.
+- **A dropped `Tm`.** MuPDF 1.28's filter writes `1 0 0 1 100 100 Tm (A)Tj
+  1 0 0 1 100 100 Tm (B)Tj` as `100 100 TD (A)Tj (B)Tj`: a `Tm` that
+  repeats the line's is dropped though text was shown since, so B moves by
+  A's width. 1.27 keeps both. The textbook places every run by `Tm`, and its
+  ħ is a bar over an h at one point, so the h and what follows it moved. The
+  writer compares every glyph the filtered content draws with what the page
+  drew in the box (to 0.05 pt) and draws a formula that differs as a
+  picture: 112 of the textbook's 3,424 on 1.28, none on 1.27.
+- **Overlapping boxes.** Two formulas' boxes can hold one glyph's centre (an
+  accent beside its letter); each glyph goes to the box it shares most with,
+  so none is drawn, or read, twice.
+- **What stays a picture**: a formula over an image or a shading (a scan
+  under its text layer, an equation set as an image), one with nothing drawn
+  in its box (a big operator whose glyph's centre lies outside MuPDF's span
+  box, the one XeLaTeX formula of 114), one past 32 KB of content (a
+  figure's paths through it), one whose glyphs moved.
+
+| | Formulas | As pictures | Write | File |
+|---|---|---|---|---|
+| fixture, pdfLaTeX | 114 | 0 | 0.20 s (0.43 s all pictures) | 165 KB (237 KB) |
+| fixture, LuaLaTeX | 114 | 0 | 0.20 s (0.41 s) | 152 KB (230 KB) |
+| fixture, XeLaTeX | 114 | 1 | 0.21 s (0.41 s) | 135 KB (216 KB) |
+| textbook, 40 pages | 3,424 | 112 | 8.9 s (12.7 s) | 3.2 MB (4.1 MB) |
+| fixture, pdfLaTeX, PyMuPDF 1.27 | 118 | 0 | 0.22 s (0.49 s) | 236 KB (359 KB) |
+| textbook, PyMuPDF 1.27 | 3,634 | 0 | 10.9 s (16.3 s) | 3.5 MB (4.7 MB) |
+
+A formula's content came to about 250 bytes on the fixture and 345 on the
+textbook, a picture to 870 to 890. The file keeps the paper's math fonts
+the formulas use (10 fonts on the fixture against 4) and drops Noto Sans
+Math when no formula is a picture, and still comes out smaller. Drawn at
+300 dpi against the pictures' output, 0.07% of the fixture's first page's
+pixels differ by more than a quarter of the range (0.001% of the second),
+at most 0.13% of a textbook page; where they differ, a picture took a
+piece of a neighbour's glyph its box overlapped, which the vector leaves to
+the formula it belongs to. How it works now:
+[dev/translation.md](../dev/translation.md#exporting-the-translation).
+
 ## Still open
 
-- Formulas as vector glyphs, which would need the isolation above without
-  its cost: MuPDF's content filter with a culler, or the formula's glyph
-  runs written again with the page's own font resources.
+- A formula whose glyph MuPDF 1.28's filter moves (an overstrike placed by
+  `Tm`) is a picture. A filter that keeps the `Tm`, as 1.27's does, or the
+  writer putting the dropped `Tm` back where the glyphs moved, would keep
+  those formulas vector too.
 - A block whose subset lacks a letter falls back to the serif whole. Mixing
   the paper's font with a matching face for the missing letters (a CM-like
   face for a TeX paper, Times for a Times one) would keep the look on more

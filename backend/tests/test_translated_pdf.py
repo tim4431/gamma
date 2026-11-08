@@ -783,14 +783,179 @@ def test_a_long_translation_shrinks_until_it_fits_its_box():
     assert max(sizes) < 10
 
 
-def test_a_formula_comes_back_as_a_picture_of_itself_on_the_baseline():
+@pytest.fixture
+def pictures(monkeypatch):
+    """Every formula drawn as a picture, as the writer draws one it cannot
+    draw as itself (``pdf_translated._vectors``)."""
+    from gamma import pdf_translated
+
+    monkeypatch.setattr(pdf_translated, "_vectors", lambda *args: {})
+
+
+def _beta_block(page, parts):
+    return {"lines": [_line_box(page, "Beta"), _line_box(page, "and more")], "size": 10, "parts": parts}
+
+
+def _in_line(page, starts="Vor", text="x"):
+    """The spans of ``text`` on the line of the span that starts with
+    ``starts``, the translation's: ``[(box, direction, font, baseline)]``.
+    The fixture's own "x" is in no line the blocks send, so it stays where
+    it was, off that line."""
+    spans = _shown(page)
+    (line,) = {round(base, 1) for t, *_, base in spans if t.startswith(starts)}
+    return [(box, direction, font, base) for t, box, direction, font, base in spans
+            if t.strip() == text and abs(base - line) < 0.5]
+
+
+def test_a_formula_comes_back_as_itself_in_the_papers_own_glyph_on_the_baseline():
     pymupdf = _mupdf()
     data = _paper()
     src = pymupdf.open(stream=data, filetype="pdf")[0]
     formula = _formula(src)
-    block = {"lines": [_line_box(src, "Beta"), _line_box(src, "and more")], "size": 10,
-             "parts": ["Vor ", formula, " und nach"]}
-    out = _write(data, [{"page": 1, "blocks": [block]}], "de")
+    out = _write(data, [{"page": 1, "blocks": [_beta_block(src, ["Vor ", formula, " und nach"])]}], "de")
+    page = pymupdf.open(stream=out, filetype="pdf")[0]
+    text = page.get_text("text")
+    assert "Beta" not in text and "Vor" in text and "und nach" in text
+    # no picture and no hidden text: the page's own glyph, in its own font,
+    # at its size (the block was not shrunk), on the translation's baseline
+    assert not page.get_images() and not _hidden(page)
+    (box, direction, font, base), = _in_line(page)
+    (vor,) = {base for t, *_, base in _shown(page) if t.startswith("Vor")}
+    x0, y0, x1, y1 = formula["box"]
+    assert font == "Times-Italic" and direction == (1.0, 0.0) and abs(base - vor) < 0.05
+    assert abs(box.width - (x1 - x0)) < 0.05 and abs(box.height - (y1 - y0)) < 0.05
+    # between the words around it
+    words = {t.strip(): b for t, b, *_ in _shown(page) if t.strip() in ("Vor", "und nach")}
+    assert words["Vor"].x1 <= box.x0 + 0.5 and box.x1 <= words["und nach"].x0 + 0.5
+
+
+def test_a_formula_drawn_as_itself_keeps_the_pages_black_not_the_translations_ink():
+    """The formula's content runs from a page's usual state, not from what
+    the sheet set before it: the translation's ink is the overlay's dark
+    grey, the formula's own black (it sets none)."""
+    pymupdf = _mupdf()
+    data = _paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    out = _write(data, [{"page": 1, "blocks": [_beta_block(src, ["Vor ", _formula(src), " und nach"])]}], "de")
+    page = pymupdf.open(stream=out, filetype="pdf")[0]
+    colours = {"".join(chr(c[0]) for c in span["chars"]).strip(): span["color"] for span in page.get_texttrace()}
+    assert max(colours["Vor"]) > 0.05 and max(colours["x"]) == 0
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_a_formula_drawn_as_itself_reads_in_its_place_at_every_turn(rotation):
+    from pypdf import PdfReader
+
+    pymupdf = _mupdf()
+    data = _paper(rotation=rotation)
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    out = _write(data, [{"page": 1, "blocks": [_beta_block(src, ["Vor ", _formula(src), " und nach"])]}], "de")
+    page = pymupdf.open(stream=out, filetype="pdf")[0]
+    # its glyph is its text, copied with the words around it, in their order
+    for got in (page.get_text("text"), PdfReader(io.BytesIO(out)).pages[0].extract_text()):
+        assert "Vor x und nach" in " ".join(got.split())
+    # upright on screen, as the words are
+    (_, direction, font, _), = _in_line(page)
+    (vor,) = {d for t, _, d, *_ in _shown(page) if t.startswith("Vor")}
+    assert font == "Times-Italic" and direction == vor
+    assert not page.get_images() and not _hidden(page)
+
+
+def test_no_original_text_rides_along_with_a_formula_even_behind_a_clip():
+    pymupdf = _mupdf()
+    data = _paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    out = _write(data, [{"page": 1, "blocks": [_beta_block(src, ["Vor ", _formula(src), " und nach"])]}], "de")
+    everything = _text(out, clip=False)
+    assert "Beta" not in everything and "speaks" not in everything
+    assert everything.count("Alpha line one") == 1 and everything.count("Kept paragraph") == 1
+
+
+def test_a_formula_takes_from_a_form_on_its_page_what_lies_in_its_box():
+    """A page whose content is a form XObject (a page placed in another, a
+    figure, an export exported again): MuPDF keeps every form a content
+    draws, so the formula's is filtered as its own copy, not taken whole."""
+    pymupdf = _mupdf()
+    doc = pymupdf.open()
+    doc.new_page(width=PAGE_W, height=PAGE_H).show_pdf_page(pymupdf.Rect(0, 0, PAGE_W, PAGE_H),
+                                                             pymupdf.open(stream=_paper(), filetype="pdf"), 0)
+    data = doc.tobytes()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    out = _write(data, [{"page": 1, "blocks": [_beta_block(src, ["Vor ", _formula(src), " und nach"])]}], "de")
+    everything = _text(out, clip=False)
+    assert "Vor x und nach" in " ".join(everything.split())
+    # the formula's "x" and the page's own: nothing else of the form twice
+    assert everything.count("x") == 2 and everything.count("Kept paragraph") == 1
+    page = pymupdf.open(stream=out, filetype="pdf")[0]
+    assert not page.get_images() and not _hidden(page)
+
+
+def test_a_formula_over_a_picture_of_its_page_is_a_picture():
+    """A scan under its text layer, an equation set as an image: what shows
+    in the box is a picture, so the formula is drawn as one, its text hidden
+    under it."""
+    pymupdf = _mupdf()
+
+    def scanned(page, _put):
+        grey = pymupdf.Pixmap(pymupdf.csGRAY, pymupdf.IRect(0, 0, 4, 4), False)
+        grey.clear_with(128)
+        page.insert_image(pymupdf.Rect(110, 108, 118, 124), pixmap=grey)
+
+    data = _paper(extra=scanned)
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    out = _write(data, [{"page": 1, "blocks": [_beta_block(src, ["Vor ", _formula(src), " und nach"])]}], "de")
+    page = pymupdf.open(stream=out, filetype="pdf")[0]
+    assert len(page.get_images()) == 2  # the page's own, and the formula's
+    assert [text for text, _ in _hidden(page)] == ["x"]
+    assert all(font != "Times-Italic" for _, _, font, _ in _in_line(page))
+
+
+def test_an_overstruck_glyph_is_drawn_where_the_page_drew_it():
+    """MuPDF 1.28's content filter drops a ``Tm`` that repeats the line's
+    after text was shown, so a glyph drawn over the one before it (an
+    accent, the bar of an ħ, where a producer places every run by ``Tm``, as
+    LuaTeX does) would move: the writer checks every glyph's place, and a
+    formula whose glyphs moved is a picture."""
+    pymupdf = _mupdf()
+
+    def overstruck(page, put):
+        put(200, 120, "h")  # its font, helv, among the page's resources
+        doc = page.parent
+        xref = page.get_contents()[-1]
+        doc.update_stream(xref, doc.xref_stream(xref)
+                          + b"\nBT /helv 10 Tf 1 0 0 1 200 280 Tm (h)Tj 1 0 0 1 200 280 Tm (-)Tj ET\n")
+
+    data = _paper(extra=overstruck)
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    boxes = [box for text, box, *_ in _shown(src) if box.x0 >= 199 and box.y1 > 110]
+    box = boxes[0]
+    for other in boxes[1:]:
+        box |= other
+    formula = {"page": 1, "box": list(box), "base": 120, "text": "ħ"}
+    out = _write(data, [{"page": 1, "blocks": [_beta_block(src, ["Vor ", formula, " und nach"])]}], "de")
+    page = pymupdf.open(stream=out, filetype="pdf")[0]
+    if page.get_images():
+        assert [text for text, _ in _hidden(page)] == ["ħ"]
+    else:  # a MuPDF that keeps the Tm: both glyphs at one point, as drawn
+        spans = _shown(page)
+        (line,) = {round(base, 1) for t, *_, base in spans if t.startswith("Vor")}
+        starts = [b.x0 for t, b, *_, base in spans if t in ("h", "-", "h-") and abs(base - line) < 0.5]
+        assert starts and max(starts) - min(starts) < 0.05
+
+
+def _hidden(page):
+    """The text a page writes but does not paint (render mode 3), and where:
+    ``[(text, box)]`` per span."""
+    return [("".join(chr(c[0]) for c in span["chars"]), _mupdf().Rect(span["bbox"]))
+            for span in page.get_texttrace() if span["type"] == 3]
+
+
+def test_a_formula_drawn_as_a_picture_comes_back_on_the_baseline(pictures):
+    pymupdf = _mupdf()
+    data = _paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    formula = _formula(src)
+    out = _write(data, [{"page": 1, "blocks": [_beta_block(src, ["Vor ", formula, " und nach"])]}], "de")
     page = pymupdf.open(stream=out, filetype="pdf")[0]
     text = page.get_text("text")
     assert "Beta" not in text and "Vor" in text and "und nach" in text
@@ -811,35 +976,14 @@ def test_a_formula_comes_back_as_a_picture_of_itself_on_the_baseline():
     assert min(shape.samples) == 0 and max(shape.samples) == 255
 
 
-def test_no_original_text_rides_along_with_a_formula_even_behind_a_clip():
-    pymupdf = _mupdf()
-    data = _paper()
-    src = pymupdf.open(stream=data, filetype="pdf")[0]
-    block = {"lines": [_line_box(src, "Beta"), _line_box(src, "and more")], "size": 10,
-             "parts": ["Vor ", _formula(src), " und nach"]}
-    out = _write(data, [{"page": 1, "blocks": [block]}], "de")
-    everything = _text(out, clip=False)
-    assert "Beta" not in everything and "speaks" not in everything
-    assert everything.count("Alpha line one") == 1 and everything.count("Kept paragraph") == 1
-
-
-def _hidden(page):
-    """The text a page writes but does not paint (render mode 3), and where:
-    ``[(text, box)]`` per span."""
-    return [("".join(chr(c[0]) for c in span["chars"]), _mupdf().Rect(span["bbox"]))
-            for span in page.get_texttrace() if span["type"] == 3]
-
-
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
-def test_a_formulas_text_lies_hidden_under_its_picture_where_it_reads(rotation):
+def test_a_formulas_text_lies_hidden_under_its_picture_where_it_reads(rotation, pictures):
     from pypdf import PdfReader
 
     pymupdf = _mupdf()
     data = _paper(rotation=rotation)
     src = pymupdf.open(stream=data, filetype="pdf")[0]
-    block = {"lines": [_line_box(src, "Beta"), _line_box(src, "and more")], "size": 10,
-             "parts": ["Vor ", _formula(src), " und nach"]}
-    out = _write(data, [{"page": 1, "blocks": [block]}], "de")
+    out = _write(data, [{"page": 1, "blocks": [_beta_block(src, ["Vor ", _formula(src), " und nach"])]}], "de")
     page = pymupdf.open(stream=out, filetype="pdf")[0]
     # copied with the words around it, in their order: the text stands where
     # the placeholder was drawn, not after the paragraph
@@ -854,15 +998,14 @@ def test_a_formulas_text_lies_hidden_under_its_picture_where_it_reads(rotation):
     assert len(page.get_images()) == 1
 
 
-def test_a_formulas_math_copies_as_itself_past_the_first_plane_too():
+def test_a_formulas_math_copies_as_itself_past_the_first_plane_too(pictures):
     from pypdf import PdfReader
 
     pymupdf = _mupdf()
     data = _paper()
     src = pymupdf.open(stream=data, filetype="pdf")[0]
     math = "∑ᵢ 𝑥ᵢ² ⊗ ℝ → 𝒜"  # Noto Sans Math's, and math italic and script past U+FFFF
-    block = {"lines": [_line_box(src, "Beta"), _line_box(src, "and more")], "size": 10,
-             "parts": ["Vor ", {**_formula(src), "text": math}, " und 𝑓 nach"]}
+    block = _beta_block(src, ["Vor ", {**_formula(src), "text": math}, " und 𝑓 nach"])
     out = _write(data, [{"page": 1, "blocks": [block]}], "de")
     page = pymupdf.open(stream=out, filetype="pdf")[0]
     assert "".join(text for text, _ in _hidden(page)) == math
@@ -871,24 +1014,22 @@ def test_a_formulas_math_copies_as_itself_past_the_first_plane_too():
     assert any("Noto Sans Math" in font[3] for font in page.get_fonts(full=True))
 
 
-def test_a_formulas_latin_letters_take_the_translations_face_not_a_third_one():
+def test_a_formulas_latin_letters_take_the_translations_face_not_a_third_one(pictures):
     pymupdf = _mupdf()
     data = _paper()
     src = pymupdf.open(stream=data, filetype="pdf")[0]
-    block = {"lines": [_line_box(src, "Beta"), _line_box(src, "and more")], "size": 10,
-             "parts": ["Vor ", {**_formula(src), "text": "µ·é × α"}, " und nach"]}
+    block = _beta_block(src, ["Vor ", {**_formula(src), "text": "µ·é × α"}, " und nach"])
     page = pymupdf.open(stream=_write(data, [{"page": 1, "blocks": [block]}], "de"), filetype="pdf")[0]
     assert "".join(text for text, _ in _hidden(page)) == "µ·é × α"
     faces = {font[3].split("+")[-1] for font in page.get_fonts(full=True)}
     assert faces == {"Charis SIL Regular", "Noto Sans Math Regular", "Helvetica", "Times-Italic"}, faces
 
 
-def test_a_formula_of_blanks_leaves_no_hidden_text():
+def test_a_formula_of_blanks_leaves_no_hidden_text(pictures):
     pymupdf = _mupdf()
     data = _paper()
     src = pymupdf.open(stream=data, filetype="pdf")[0]
-    block = {"lines": [_line_box(src, "Beta"), _line_box(src, "and more")], "size": 10,
-             "parts": ["Vor ", {**_formula(src), "text": " "}, " und nach"]}
+    block = _beta_block(src, ["Vor ", {**_formula(src), "text": " "}, " und nach"])
     page = pymupdf.open(stream=_write(data, [{"page": 1, "blocks": [block]}], "de"), filetype="pdf")[0]
     assert not _hidden(page) and len(page.get_images()) == 1
 
@@ -900,8 +1041,27 @@ def test_a_formula_from_another_page_is_drawn_from_that_page():
     block = _alpha_block(doc[0], ["joined ", _formula(doc[1], pn=2), " here"])
     out = _write(data, [{"page": 1, "blocks": [block]}])
     result = pymupdf.open(stream=out, filetype="pdf")
-    assert len(result[0].get_image_info()) == 1 and not result[1].get_image_info()
+    (_, _, font, _), = _in_line(result[0], "joined")
+    assert font == "Times-Italic" and not result[0].get_images()
+    assert "joined x here" in " ".join(result[0].get_text("text").split())
     assert "Beta speaks of" in result[1].get_text("text")  # page 2 itself untouched
+
+
+def test_a_formulas_content_names_its_resources_anew_and_nothing_else():
+    """``_renamed``: a resource an operator names takes its new name; the
+    same name in a string, a dictionary or an array stays as it is; a name
+    the formula's resources lack, or an inline image, gives up."""
+    from gamma.pdf_translated import _renamed
+
+    names = {("Font", "F1"): "Gv12", ("XObject", "Fm0"): "Gv13", ("Properties", "MC0"): "Gv14",
+             ("Pattern", "P0"): "Gv15", ("ColorSpace", "CS0"): "Gv16"}
+    content = (b"q BT/F1 9 Tf[(/F1 9 Tf\\) \\(x)-3(y)]TJ ET /Fm0 Do /Span<</ActualText(/F1)/F1 2>>BDC EMC"
+               b" /OC /MC0 BDC EMC /CS0 cs .5 /P0 scn [/F1] 0 d % /F1 9 Tf\n/F#31 8 Tf Q")
+    assert _renamed(content, names) == (
+        b"q BT/Gv12 9 Tf[(/F1 9 Tf\\) \\(x)-3(y)]TJ ET /Gv13 Do /Span<</ActualText(/F1)/F1 2>>BDC EMC"
+        b" /OC /Gv14 BDC EMC /Gv16 cs .5 /Gv15 scn [/F1] 0 d % /F1 9 Tf\n/Gv12 8 Tf Q")
+    assert _renamed(b"/F2 9 Tf", names) is None
+    assert _renamed(b"q BI /W 1 /H 1 /BPC 8 /CS /G ID \x00 EI Q", names) is None
 
 
 def test_a_formula_from_a_page_turned_otherwise_is_written_as_its_text():

@@ -25,7 +25,8 @@ first, and so is each paper of a folder's export that this browser left
 translated: its original lines redacted and the translation laid out in
 their place by MuPDF's `Story`, not by this engine, justified where the
 original is and in the paper's own embedded font when that font draws every
-letter (`gamma/pdf_translated.py`,
+letter, each formula in it drawn as itself, the page's own glyphs filtered
+down to its box, or as a picture where it cannot be (`gamma/pdf_translated.py`,
 [translation.md](translation.md#exporting-the-translation)). Everything
 below is written over that file.
 

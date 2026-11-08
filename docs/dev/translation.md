@@ -1874,9 +1874,44 @@ under `skipped`.
    the fixture's CMR10). A block whose letters the font lacks, which on a TeX
    paper translated out of English is most, keeps the serif whole.
 3. **Stamped.** The temporary page is shown over the page, turned with it,
-   and each formula goes on the baseline at its placeholder's place as a
-   picture of its box on the original page (`FORMULA_DPI`, 600; coarser
-   past `FORMULA_PIXELS`) on a clear ground, drawn before any page changed.
+   and each formula goes on the baseline at its placeholder's place,
+   stretched over the formula's box, as itself where it can be: what its
+   page draws in its box and nothing else, the page's own glyphs in the
+   page's own fonts, vector at any zoom (`_vectors`). MuPDF's content filter
+   (its sanitize filter, with a culler: `_culler`, `_filtered`) asks of
+   every glyph, path and picture the page draws whether to keep it; a glyph
+   is kept when the centre of its box lies in the formula's box (in the
+   box it shares most with, when two formulas' boxes overlap, so no glyph
+   is drawn twice), a painted path when it meets the box, every clip
+   always, and a form XObject the page draws is filtered with it as a copy
+   of its own, since MuPDF keeps every form a content draws (a figure's
+   would come whole). The page's content is filtered once down to what
+   meets any of its formulas' boxes, then that, much smaller, once a
+   formula (`_isolate`), before any page changed. The formula's content is
+   clipped to its box, starts from a page's usual state (`_USUAL_STATE`:
+   black, not the translation's ink the sheet set before it), and has its
+   resources renamed for their objects (`_renamed`, which reads the content
+   as tokens, so a name in a string stays). The sheet marks the
+   placeholder's place (`/Gq<n> Do`, `_formula_texts`) and, once shown on
+   the page, that mark becomes the formula's content and its resources join
+   the sheet's (`_inline`), in the sheet's own stream rather than a form of
+   its own: pdf.js starts a form's text afresh, so a space before the
+   formula was lost ("interactionVij"). So its glyphs are its text, read in
+   their place between the words around it, by MuPDF, pypdf and pdf.js as
+   by the hidden text below. A glyph is drawn where the page drew it, or
+   the formula is a picture: MuPDF 1.28's filter drops a `Tm` that repeats
+   the line's after text was shown (1.27's keeps it), so a glyph drawn over
+   the one before it (an accent, the bar of an ħ, where a producer places
+   every run by `Tm` as LuaTeX does) would move, and every formula's glyphs
+   are checked against the page's (`_drawn_alike`).
+   **A picture** stands in for a formula whose box holds a picture of its
+   page (a scan under its text layer, an equation set as an image), whose
+   box holds nothing drawn, whose content passes `FORMULA_BYTES` (32 KB,
+   a figure's paths running through it), whose glyphs moved, whose content
+   names a resource it cannot rename or holds an inline image, and every
+   formula of a page MuPDF cannot filter: its box on the original page
+   (`FORMULA_DPI`, 600; coarser past `FORMULA_PIXELS`) on a clear ground,
+   drawn before any page changed.
    Under each picture lies the formula's text, written but not painted
    (render mode 3), as the overlay keeps it under its crop: copying a
    sentence copies its formulas with it, in their place. The text goes where
@@ -1888,10 +1923,11 @@ under `skipped`.
    builds in (SIL Open Font License), for ASCII, Greek, operators, arrows
    and math alphanumerics, then Charis SIL, the translation's own, for the
    accented Latin and the Cyrillic it lacks (µ, ·, é), then MuPDF's
-   fallback. So a file takes one font more, subset: on a stand-in layout of
-   the fixture paper (its own words as the translation, its 120 math spans
-   as formulas) the file came to 226 KB against 169 KB without the text, in
-   the same 0.45 s. MuPDF writes a character past U+FFFF into a ToUnicode
+   fallback. So a file with a pictured formula takes one font more, subset:
+   on a stand-in layout of the fixture paper (its own words as the
+   translation, its 120 math spans as formulas) the file came to 226 KB
+   against 169 KB without the text, in the same 0.45 s. MuPDF writes a
+   character past U+FFFF into a ToUnicode
    map as its bare number, which readers garble (math italic 𝑥 came back as
    U+1D46), so every such entry of the temporary document becomes its UTF-16
    surrogate pair (`_surrogates`), the translation's own too. A formula
@@ -1900,9 +1936,13 @@ under `skipped`.
 
 The fonts the redaction left unused leave the file as it is written
 (`garbage=1`; merging duplicates as well would only add time under the
-lock, since the writer makes none). On the fixture paper (two pages, 154
-formulas) the write takes 1.7 s and the file comes out smaller than it went
-in.
+lock, since the writer makes none); a font only the formulas use stays for
+them. On a stand-in layout of the fixture paper (its own words as the
+translation, MuPDF's 114 math spans as the formulas) the write takes 0.2 s
+and the file 165 KB, against 0.43 s and 237 KB with every formula a
+picture; on 40 pages of a LuaTeX textbook (3424 formulas, 112 of them
+pictures for an overstruck glyph), 8.9 s and 3.2 MB against 12.7 s and
+4.1 MB ([research](../research/translated-pdf-export.md#formulas-as-themselves)).
 
 **Ground and ink.** A page exported may never have been shown, so the server
 reads them itself and the request carries none. `_Sample` draws the page once,
@@ -1951,13 +1991,18 @@ MuPDF's behaviour the writer depends on, each held by a test in
   at the place the widened gaps move it to.
 - The writer draws the empty placeholder as an opaque pixel stretched over
   its place, so the temporary pages' pictures are taken out before use (each
-  drawing replaced by its formula's hidden text).
+  drawing replaced by its formula's hidden text, or its mark).
 - MuPDF 1.28's PDF device writes ignored text in render mode 3 and 1.27's
   paints it, so the hidden text sets the mode itself; a test reads it back
   under the formula's picture, painted nowhere, at every turn of the page.
 - A vector crop of a formula (the page shown through a clip) carries the
   whole page's text, invisible but read by pdf.js and any reader that
-  ignores clips. That is why formulas are pictures.
+  ignores clips. That is why a formula is filtered down to its box.
+- The content filter takes out what a formula's box does not hold, a form's
+  content too, and its glyphs read in their place, at every turn of the page;
+  a page drawn inside a form gives up only what lies in the box.
+- MuPDF 1.28's filter drops a `Tm` that repeats the line's: an overstruck
+  glyph is drawn where the page drew it, or the formula is a picture.
 
 Why it is built this way, and the measurements:
 [research/translated-pdf-export.md](../research/translated-pdf-export.md).

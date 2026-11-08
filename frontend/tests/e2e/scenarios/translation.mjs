@@ -450,10 +450,13 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
       await dialog.waitFor({ state: "detached" });
       const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
       const doc = await pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(await file.path())), verbosity: 0 }).promise;
-      const first = await (await doc.getPage(1)).getTextContent();
+      const firstPage = await doc.getPage(1);
+      const first = await firstPage.getTextContent();
+      const { fnArray } = await firstPage.getOperatorList();
       await doc.destroy();
       // Without spaces: pdf.js splits the runs a line was set in.
-      return { summary, body, text: first.items.map((item) => item.str).join("").replace(/\s+/g, "") };
+      return { summary, body, text: first.items.map((item) => item.str).join("").replace(/\s+/g, ""),
+               pictures: fnArray.filter((fn) => fn === pdfjs.OPS.paintImageXObject).length };
     };
 
     const translated = await exportPdf();
@@ -476,6 +479,10 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assert(translated.text.includes("译:ThecollectiveRabifrequency"), `the file holds the translation: ${translated.text}`);
     assertEq(translated.text.split(opening).length - 1, 1, `the original lines are gone: ${translated.text}`);
     assert(translated.text.includes(`译:${opening}`), translated.text);
+    // The formula is the page's own glyph, drawn as itself (the page has no
+    // picture to draw it as one) and read in its place in the sentence.
+    assertEq(translated.pictures, 0, "the formula is drawn as itself, not as a picture");
+    assert(translated.text.includes("thefieldΩofthedrive"), `the formula reads in its place: ${translated.text}`);
 
     // Hidden: the original, and no word of a translation.
     await page.getByRole("button", { name: "Show original", exact: true }).click();
