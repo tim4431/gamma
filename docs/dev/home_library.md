@@ -798,9 +798,9 @@ nothing: no page changes.
 ## Recently deleted
 
 Deleting a page moves it to a 30-day trash instead of removing it. The
-page menu's Delete, the Del key, the page header's trash button and a
-folder's "Delete N pages too" all call `DELETE /api/blocks/{id}` on the
-page root, and the server moves the page there (`ops.trash_page`) with
+page header's trash button calls `DELETE /api/blocks/{id}` on the page
+root; the page menu's Delete, the Del key and a folder's "Delete N pages
+too" send their pages in bulk (below). Either way the server moves the page there (`ops.trash_page`) with
 the pages inside it ("Sub-pages" above). The confirmations say where it
 goes and for how long, and for a page with pages inside it how many go
 with it; one page is quoted by its title ("Move "Notes" and the 2 pages
@@ -810,10 +810,13 @@ button ask the same question, built by `deleteConfirm` in
 `library/libraryUtils.js`. Their tabs close too, and none is a place a closed tab goes
 back to. A selection holding a page and a page inside it sends the outer
 one only (`topmostPages`), so the cascade takes the rest rather than one
-going alone first. Many pages go as a batch (`library/pageBatch.js`, [tasks.md](tasks.md)
-"The web app"): they leave the library at once, a row of Background tasks
-counts them from ten on with Stop, and the status says how many went and
-what failed. The header's button closes the page's tab first, as its × does (back to the latest page still
+going alone first. Many pages go as a batch, 100 to a request of
+`POST /api/blocks/bulk` (`ops.trash_pages`: one transaction, each page
+checked and answered as its own DELETE would be; `library/pageBatch.js`,
+[tasks.md](tasks.md) "The web app"): they leave the library at once, a row
+of Background tasks counts them from ten on with Stop, and the status says
+how many went and what failed. Moving, pinning and filing many pages send
+their properties patches the same way. The header's button closes the page's tab first, as its × does (back to the latest page still
 open or library view in the tab history, App's `closeTab`), and then
 deletes. The `trashed` the page socket gets with the answer
 ([collab.md](collab.md)) is meant for other windows. If it reached the page

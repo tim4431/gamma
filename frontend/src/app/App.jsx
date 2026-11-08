@@ -258,7 +258,7 @@ import {
 } from "../library/libraryUtils";
 import { createLibraryMatcher } from "../library/librarySearch";
 import { prefetchTrash } from "../library/trashList";
-import { batchText, runBatch } from "../library/pageBatch.js";
+import { batchText, bulkOutcomes, runBatch, runBulk } from "../library/pageBatch.js";
 import { useComments } from "../comments/useComments";
 import { abandonedCommentHighlight, isOpen, shortCount, threadAnchor, threadLink } from "../comments/comments.js";
 import { preloadCommentMargin } from "../comments/marginSlot";
@@ -1113,15 +1113,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // File a page: `filing` sets its root's `folders` and/or `labels` — the
   // whole list of ids, from the ones the trees have (an empty list unfiles)
-  // — a `set` op through PUT /blocks/{id}.
+  // — a `set` op through PUT /blocks/{id} (`filingProps`, the patch).
+  const filingProps = (filing) => Object.fromEntries(Object.entries(filing).map(([key, ids]) => [key, ids.length ? ids : null]));
   async function filePage(pageId, filing) {
-    const props = Object.fromEntries(Object.entries(filing).map(([key, ids]) => [key, ids.length ? ids : null]));
     await apiJson(`${API}/blocks/${pageId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ properties: props }),
+      body: JSON.stringify({ properties: filingProps(filing) }),
     });
   }
+  // Many pages in one request (POST /blocks/bulk): `body` is `{trash: ids}`
+  // or `{patches: [{id, properties}]}`; resolves runBulk's outcomes.
+  async function sendBulk(body) {
+    const answer = await apiJson(`${API}/blocks/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return bulkOutcomes(answer.results);
+  }
+  // Pages patched in bulk: `patch(item)` is the properties patch of
+  // `idOf(item)`, as PUT /blocks/{id} takes it.
+  const patchPages = (items, idOf, patch, opts) => runBulk(items,
+    (chunk) => sendBulk({ patches: chunk.map((item) => ({ id: idOf(item), properties: patch(item) })) }), opts);
   // One batch on the folder or the label tree (`tree`: "folders" /
   // "labels"; POST /pages/{tree}/ops): a new folder or label, a rename, a
   // move or a reorder, a pin — none of it touches a page. The listing is
@@ -1416,7 +1430,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setHomeBlocks((prev) => prev.filter((b) => !gone.has(b.id)));
     clearSelection();
     try {
-      const result = await runBatch(tops, (id) => apiJson(`${API}/blocks/${id}`, { method: "DELETE" }),
+      const result = await runBulk(tops, (chunk) => sendBulk({ trash: chunk }),
         { name: t("Delete {n} pages", { n: tops.length }), tasks });
       const went = new Set([...result.done, ...pageDescendants(pageBlocks, result.done)]);
       updateTabs((prev) => prev.filter((tab) => !went.has(tab.id)));
@@ -1524,17 +1538,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // Where pages sit among pages: `place(id)` is the patch for each, a `set`
-  // of `parent_page` on its root through PUT /blocks/{id} (a page id puts
+  // of `parent_page` on its root patched in bulk (patchPages; a page id puts
   // it inside that page, and the server drops its own folders; null takes
   // it out). `name` is the batch's row, `done(n)` what n moved pages say.
   // The listing and the open page's family are read again after.
   async function placePages(ids, place, name, done) {
     clearSelection();
-    const result = await runBatch(ids, (id) => apiJson(`${API}/blocks/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ properties: place(id) }),
-    }), { name, tasks });
+    const result = await patchPages(ids, (id) => id, place, { name, tasks });
     await fetchHomeBlocks();
     rereadFamily();
     batchStatus(done(result.done.length), result, ids.length);
@@ -1601,11 +1611,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // so it syncs across devices; null unpins, which drops the key.
   async function setPagesPinned(ids, pinned) {
     const stamp = pinned ? new Date().toISOString() : null;
-    const result = await runBatch(ids, (id) => apiJson(`${API}/blocks/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ properties: { pinned: stamp } }),
-    }), { name: pinned ? t("Pin {n} pages", { n: ids.length }) : t("Unpin {n} pages", { n: ids.length }), tasks });
+    const result = await patchPages(ids, (id) => id, () => ({ pinned: stamp }),
+      { name: pinned ? t("Pin {n} pages", { n: ids.length }) : t("Unpin {n} pages", { n: ids.length }), tasks });
     await fetchHomeBlocks();
     batchStatus("", result, ids.length);
   }
@@ -1625,7 +1632,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return patch ? [[id, patch]] : [];
     });
     clearSelection();
-    const result = await runBatch(patches, ([id, patch]) => filePage(id, patch), { name: name(patches.length), tasks });
+    const result = await patchPages(patches, ([id]) => id, ([, patch]) => filingProps(patch), { name: name(patches.length), tasks });
     await fetchHomeBlocks();
     batchStatus(done(result.done.length), result, patches.length);
   }

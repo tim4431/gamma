@@ -88,10 +88,16 @@ single request was slow, so no proxy cut them, but:
   and a folder deleted "with its pages" stayed, half emptied, since the
   folder itself went only after the loop.
 
-The real cost is the N round trips, so the better fix is one request
-that applies them all on the server (`ops.apply_batches` already does
-that for a folder delete). Until then a row of Background tasks that
-counts, stops and reports failures honestly is the cheap fix.
+The real cost is the N round trips. A row of Background tasks that
+counts, stops and reports failures honestly came first; then one request
+for many pages: `POST /blocks/bulk` trashes a set of pages
+(`ops.trash_pages`) or applies a set of properties patches
+(`ops.apply_each`, `apply_batches` one batch at a time in a savepoint of
+one transaction), each page checked and answered as its own request was,
+and the app sends 100 pages a request (`pageBatch.runBulk`): 1,000 pages
+are ten round trips, with the row and Stop between them. A duplicate
+still goes page by page (each one reads its page whole and writes it
+again).
 
 ## Found on the way
 
@@ -239,13 +245,11 @@ rounds, shown where they are followed.
 
 In the order they matter:
 
-1. One request for the library's bulk actions (trash many pages, apply
-   many page patches), on `ops.apply_batches`.
-2. A share view's export of a big shared folder (the share host sits
+1. A share view's export of a big shared folder (the share host sits
    behind Cloudflare and the share view has no jobs).
-3. A workspace being deleted taking no more changes (above), which needs
+2. A workspace being deleted taking no more changes (above), which needs
    the web app to learn a lost write right mid-session.
-4. Smaller: a folder link's round shows no progress while it sends PDFs
+3. Smaller: a folder link's round shows no progress while it sends PDFs
    back, nor within one large PDF it fetches; a publish that only
    changes the audience still runs a full round; unlinking Zotero clears
    marks page by page; the health table's and the backup list's scans

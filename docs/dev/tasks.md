@@ -339,11 +339,13 @@ too, since a close drops it.
 
 The library's actions over many pages (delete, delete a folder with its
 pages, move into a page or to the library, pin, add or remove a label or
-a folder, duplicate) send one request per page, so a big selection takes
-as long as its round trips. `library/pageBatch.js` `runBatch` runs them,
-up to four at once (duplicates one at a time). From ten pages on it is a
-row of Background tasks (local kind `batch`), "12 of 340 pages", patched
-once per visible percent, and its Stop takes no new pages. The pages a
+a folder) go to the server 100 pages a request (`POST /blocks/bulk`,
+[api.md](api.md); `library/pageBatch.js` `runBulk`), which trashes or
+patches them in one transaction and answers each page's outcome. A
+duplicate has no bulk form and sends a request a page, one at a time
+(`runBatch`). From ten pages on either is a row of Background tasks
+(local kind `batch`), "12 of 340 pages", patched once per visible percent
+(at most once a request), and its Stop takes no new request. The pages a
 delete takes leave the library at once and stay out of the listings read
 meanwhile; the read after the batch brings back any that stayed. The
 closing status says what went, where a Stop left it and what failed with
@@ -352,9 +354,7 @@ deleted with its pages goes only once every one of them went, without a
 Stop. The batch lives in the tab: a reload or a closed tab ends it part
 way. It does not ask before the tab goes, since the app's own reloads (a
 workspace switch, a restore, a deleted workspace) would ask too, and the
-desktop app would cancel them without a word. One request for the whole
-action on the server is still open
-([research/long-operations.md](../research/long-operations.md)).
+desktop app would cancel them without a word.
 
 A share view has no background tasks. Its exports download directly
 through the synchronous endpoints, and its "Add to my library" hands the
@@ -394,7 +394,8 @@ by link").
   final copy itself and the delete holds.
 - Frontend: `tests/tasks.test.mjs` covers the model and kinds,
   `tests/transferFormats.test.mjs` the export job's body and
-  `tests/pageBatch.test.mjs` the library's page batches.
+  `tests/pageBatch.test.mjs` the library's page batches; `test_bulk_pages.py` their
+  endpoint, `POST /blocks/bulk`.
 - Browser: the transfers group covers a folder's annotated PDFs closed
   mid-way, reopened from the tray and downloaded, plus every export
   dialog's finished step, and an import review closed while the server
@@ -402,4 +403,4 @@ by link").
   that downloads itself and a merged backup that reloads the library. The
   files group covers an upload stopped from the tray. The settings group
   also deletes a workspace through its job and runs the database check
-  as one; the trash group deletes twelve selected pages as a batch.
+  as one; the trash group deletes twelve selected pages as a batch, in one request.

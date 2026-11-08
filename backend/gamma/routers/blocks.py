@@ -43,8 +43,8 @@ from .. import cloud_auth, comments, trash, upload_gc
 from ..db import connect_pages_db, page_now
 from ..json_response import OrjsonResponse
 from ..markdown_export import build_tree
-from ..ops import (MAX_CONTENT, OpError, StorableBody, commit_ops, delete_page, latest_seq, move_across_pages,
-                   note_reload, trash_page)
+from ..ops import (MAX_CONTENT, OpError, StorableBody, after_commits, apply_each, commit_ops, delete_page, delete_pages,
+                   latest_seq, move_across_pages, note_reload, trash_page, trash_pages)
 from ..storage import upload_refs
 from ..textnorm import fuzzy_pattern, literal_runs
 
@@ -72,6 +72,22 @@ class UBUpdateRequest(StorableBody):
     properties: dict | None = None
     base_properties: dict | None = None  # the values `properties` was computed from (an ink merge, ops.py)
     base_ids: list[str] | None = None    # an ink merge: the base file's stroke ids as the client loaded it
+
+
+class BulkPatch(BaseModel):
+    id: str
+    properties: dict
+
+
+class BulkRequest(StorableBody):
+    """POST /blocks/bulk: the pages to move to Recently deleted (``trash``)
+    or the properties patches to apply (``patches``), one of them."""
+    trash: list[str] | None = None
+    patches: list[BulkPatch] | None = None
+
+
+# The most pages one POST /blocks/bulk takes (the app sends library/pageBatch.js CHUNK at a time).
+MAX_BULK = 1000
 
 
 class UBReorderRequest(BaseModel):
@@ -666,6 +682,77 @@ def ub_delete_block(block_id: str, request: Request):
             return {"ok": True, "id": block_id, "trashed": trash.named([entry])[0]}
     _ops(ws, page_id, [{"op": "delete", "id": block_id}], request, scope)
     return {"ok": True, "id": block_id}
+
+
+def _refused(block_id: str, status: int, detail: str) -> dict:
+    return {"id": block_id, "ok": False, "status": status, "detail": detail}
+
+
+@router.post("/blocks/bulk")
+def ub_bulk(payload: BulkRequest, request: Request):
+    """The library's bulk actions in one request: ``DELETE /blocks/{id}`` of
+    many pages (``trash``) or ``PUT /blocks/{id}``'s properties patch of
+    many blocks (``patches``), in one transaction, each page checked and
+    answered as its own request would be, and one refused leaving the
+    others to go. → ``{results: [{id, ok: true, …} | {id, ok: false,
+    status, detail}]}``, in the order asked: a trashed page carries
+    ``trashed`` (its entry), a patch ``seq``, ``updated_at`` and the
+    ``properties`` applied. Workspace editors, never through a share link
+    (a share editor may neither delete a page nor change a page root's
+    properties). 400 unless exactly one of the two is given, 413 past
+    ``MAX_BULK``."""
+    ws = require_ws_writer(request)
+    if share_scope(request) is not None:
+        raise HTTPException(status_code=403, detail="not accessible via this share link")
+    if (payload.trash is None) == (payload.patches is None):
+        raise HTTPException(status_code=400, detail="give trash or patches")
+    asked = payload.trash if payload.trash is not None else [p.id for p in payload.patches]
+    if len(asked) > MAX_BULK:
+        raise HTTPException(status_code=413, detail=f"too many pages in one request (>{MAX_BULK})")
+    actor = actor_of(request)
+    out: dict[int, dict] = {}
+    with connect_pages_db(ws) as conn:
+        roots = [page_root_id(conn, block_id) for block_id in asked]
+        if payload.trash is not None:
+            # DELETE /blocks/{id} of a page root; a block inside a page is no bulk trash
+            for i, (block_id, root) in enumerate(zip(asked, roots)):
+                if not root:
+                    out[i] = _refused(block_id, 404, "block not found")
+                elif root != block_id:
+                    out[i] = _refused(block_id, 400, "not a page")
+            todo = [i for i in range(len(asked)) if i not in out]
+            ids = [asked[i] for i in todo]
+            if cloud_auth.settings()["share_host"]:  # a share host's pages go for good, as one DELETE's
+                done = [_refused(block_id, r.status, r.detail) if isinstance(r, OpError)
+                        else {"id": block_id, "ok": True}
+                        for block_id, r in zip(ids, delete_pages(ws, conn, ids, actor=actor))]
+            else:
+                entries = trash_pages(ws, conn, ids, actor=actor)
+                shown = trash.named([e for e in entries if not isinstance(e, OpError)])
+                done = []
+                for block_id, entry in zip(ids, entries):
+                    done.append(_refused(block_id, entry.status, entry.detail) if isinstance(entry, OpError)
+                                else {"id": block_id, "ok": True, "trashed": shown.pop(0)})
+            out.update(zip(todo, done))
+        else:
+            for i, (patch, root) in enumerate(zip(payload.patches, roots)):
+                if not root:
+                    out[i] = _refused(patch.id, 404, "block not found")
+            todo = [i for i in range(len(asked)) if i not in out]
+            batches = [(roots[i], [{"op": "set", "id": asked[i], "props": payload.patches[i].properties}])
+                       for i in todo]
+            try:
+                results = apply_each(conn, batches, actor=actor)
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+            after_commits(ws, conn, [r for r in results if not isinstance(r, OpError)])
+            for i, r in zip(todo, results):
+                out[i] = (_refused(asked[i], r.status, r.detail) if isinstance(r, OpError)
+                          else {"id": asked[i], "ok": True, "updated_at": r["at"], "seq": r["seq"],
+                                "properties": r["ops"][0].get("props", payload.patches[i].properties)})
+    return {"results": [out[i] for i in range(len(asked))]}
 
 
 def _tree_rows(blocks: list, parent_id: str, now: str) -> list[dict]:

@@ -884,6 +884,28 @@ def apply_batches(conn, batches: list[tuple[str, list[dict]]], *, actor: str, cl
     return results
 
 
+def apply_each(conn, batches: list[tuple[str, list[dict]]], *, actor: str,
+               client: str = "") -> list[dict | OpError]:
+    """``apply_batches`` for batches that stand or fall one by one, in the
+    caller's transaction: each runs in a savepoint of it, and one refused
+    (``OpError``) is undone alone and answered in its place, while the
+    others stand. The library's bulk patches (``POST /blocks/bulk``): a
+    page someone else just trashed fails, the rest of the selection goes
+    with one commit. Takes the write lock; the caller commits and hands
+    the results (the dicts) to ``after_commits``."""
+    write_lock(conn)
+    out: list[dict | OpError] = []
+    for page_id, ops in batches:
+        conn.execute("SAVEPOINT apply_each")
+        try:
+            out += apply_batches(conn, [(page_id, ops)], actor=actor, client=client)
+        except OpError as e:
+            conn.execute("ROLLBACK TO apply_each")
+            out.append(e)
+        conn.execute("RELEASE apply_each")
+    return out
+
+
 def _checked(ops: list[dict]) -> list[dict]:
     if not ops:
         raise OpError(400, "no ops")
@@ -1080,6 +1102,48 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "", sw
     except BaseException:
         conn.rollback()
         raise
+    return _purged(ws, conn, pages, rows, client=client, sweep=sweep)
+
+
+def delete_pages(ws: str, conn, page_ids: list[str], *, actor: str, client: str = "") -> list[dict | OpError]:
+    """``delete_page`` for many library pages in one transaction committed
+    here, in order (a share host's bulk delete, ``POST /blocks/bulk``):
+    each page goes with its live descendants and the rows of Recently
+    deleted that went with it, as there. One that is no longer a library
+    page when its turn comes (gone with a page before it, or asked twice)
+    is answered ``OpError(404)`` and writes nothing, while the others go.
+    The upload check, data.db's purge and the rooms' reloads run once
+    after the one commit. Returns each page's ``{deleted_ids,
+    dropped_uploads}`` (the pages it took) or its refusal."""
+    write_lock(conn)
+    out: list[dict | OpError] = []
+    pages: list[str] = []
+    rows: list = []
+    try:
+        for page_id in page_ids:
+            row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+            if not row or row[0] != "root":
+                out.append(OpError(404, "block not found"))
+                continue
+            took = [page_id, *page_descendants(conn, page_id), *_went_with(conn, page_id)]
+            purged = [r for page in took for r in _purge(conn, page, actor)]
+            out.append({"deleted_ids": [r[0] for r in purged], "dropped_uploads": sorted(subtree_refs(purged))})
+            pages += took
+            rows += purged
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    if pages:
+        _purged(ws, conn, pages, rows, client=client, sweep=True)
+    return out
+
+
+def _purged(ws: str, conn, pages: list[str], rows: list, *, client: str, sweep: bool) -> dict:
+    """What follows the commit of deletions for good: the upload names the
+    deleted ``rows`` held go to the orphan check, data.db is purged
+    (``sweep``), and each page's room reloads and the commit listeners are
+    told. Returns ``{deleted_ids, dropped_uploads}``."""
     deleted_ids = [r[0] for r in rows]
     dropped = sorted(subtree_refs(rows))
     upload_gc.schedule(ws, dropped)
@@ -1139,26 +1203,62 @@ def trash_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> 
     copies. ``restore_page`` brings them back, ``delete_page`` removes them
     for good. Commits; returns the page's trash entry. OpError(404) unless
     ``page_id`` is a page, 409 when a block holds the reserved id."""
+    return trash_pages(ws, conn, [page_id], actor=actor, client=client, each=False)[0]
+
+
+def trash_pages(ws: str, conn, page_ids: list[str], *, actor: str, client: str = "",
+                each: bool = True) -> list[dict | OpError]:
+    """``trash_page`` for many pages in one transaction committed here, in
+    order (the library's bulk trash, ``POST /blocks/bulk``): each page goes
+    in a savepoint of it, and one refused (``OpError``: no page any more,
+    or gone with a page before it) is answered in its place while the
+    others go. The rooms hear ``trashed`` and the commit listeners are told
+    after the one commit. ``each`` False raises the first refusal instead,
+    nothing written (``trash_page``). Returns each page's trash entry or
+    its refusal."""
     write_lock(conn)
+    out: list[dict | OpError] = []
+    gone: list[str] = []
     try:
-        row = conn.execute("SELECT parent_id, content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-        if not row or row[0] != "root":
-            raise OpError(404, "page not found")
-        if not ensure_reserved(conn, TRASH):
-            raise OpError(409, f"a block holds the reserved id {TRASH!r}")
-        went = page_descendants(conn, page_id)  # read first: once the page is gone they read as library pages
-        stamps = {"deleted_at": page_now(), "deleted_by": actor}
-        props = _to_trash(conn, page_id, stamps, actor)
-        for sub in went:
-            _to_trash(conn, sub, {**stamps, "deleted_with": page_id}, actor)
+        for page_id in page_ids:
+            if each:
+                conn.execute("SAVEPOINT trash_pages")
+            try:
+                entry, went = _trash(conn, page_id, actor)
+                gone += [page_id, *went]
+            except OpError as e:
+                if not each:
+                    raise
+                conn.execute("ROLLBACK TO trash_pages")
+                entry = e
+            if each:
+                conn.execute("RELEASE trash_pages")
+            out.append(entry)
         conn.commit()
     except BaseException:
         conn.rollback()
         raise
-    for page in (page_id, *went):
+    for page in gone:
         collab.publish(ws, page, {"t": "trashed"})
         notify_commit(ws, client, page)
-    return trashed_page(conn, page_id, row[1], props)
+    return out
+
+
+def _trash(conn, page_id: str, actor: str) -> tuple[dict, list[str]]:
+    """``trash_page``'s move of a page and the pages inside it, in the
+    caller's transaction. Returns its trash entry and the pages that went
+    with it."""
+    row = conn.execute("SELECT parent_id, content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    if not row or row[0] != "root":
+        raise OpError(404, "page not found")
+    if not ensure_reserved(conn, TRASH):
+        raise OpError(409, f"a block holds the reserved id {TRASH!r}")
+    went = page_descendants(conn, page_id)  # read first: once the page is gone they read as library pages
+    stamps = {"deleted_at": page_now(), "deleted_by": actor}
+    props = _to_trash(conn, page_id, stamps, actor)
+    for sub in went:
+        _to_trash(conn, sub, {**stamps, "deleted_with": page_id}, actor)
+    return trashed_page(conn, page_id, row[1], props), went
 
 
 def _to_trash(conn, page_id: str, stamps: dict, actor: str) -> str:

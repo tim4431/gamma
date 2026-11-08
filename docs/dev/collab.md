@@ -108,7 +108,9 @@ or a label is the one change that reaches pages, so it has its own
 endpoint: `DELETE /folders/{id}` / `DELETE /labels/{id}`
 (`routers/folders.py` over `ops.delete_tree`, [api.md](api.md) "Folders
 and labels"). One transaction runs the subtree's `delete` on the tree and
-one `set` per page that carried an id of it (`ops.apply_batches`). The tree's `delete` op
+one `set` per page that carried an id of it (`ops.apply_batches`; `ops.apply_each` runs
+batches that stand or fall one by one, each in a savepoint of one transaction, for the
+library's bulk patches, `POST /blocks/bulk`). The tree's `delete` op
 itself files the folder chats into the library chat's history and
 `ops.after_commit` stops the folder's shares, so a folder deleted by a
 plain tree batch (a mirror round or the iPad relaying one) is cleaned up
@@ -210,7 +212,8 @@ users.db, never content: the reminders' done marks
 ([comments.md](comments.md) "The inbox"). Pages themselves are not blocks of any page: creating one is
 `blocks_store.create_page` (a plain insert). Deleting one is `ops.trash_page`,
 which moves the page, with the pages inside it, under the reserved `trash`
-block for 30 days
+block for 30 days (`ops.trash_pages` many in one transaction, each in a
+savepoint of it, so a page that is gone already is refused alone)
 ([home_library.md](home_library.md) "Recently deleted"; a share host
 deletes for good at once). A batch on a page
 there is refused like one on a deleted page (404), and a block it holds is
