@@ -1,6 +1,6 @@
 # Pull-request check: the fast half of what a merge to main would build,
 # so a broken main (whose merge publishes the Docker image) is caught on
-# the PR instead. Backend tests, frontend unit tests + build, the desktop
+# the PR instead. Backend tests, frontend lint, unit tests + build, the desktop
 # shell's unit tests, the browser suite against an isolated backend, the
 # extension's tests and zip, the mobile apps' pins resolved; no installers.
 # The account server (cloud/) is checked by cloud.yml and the website
@@ -110,6 +110,7 @@ jobs:
       - working-directory: frontend
         run: |
           npm ci
+          npm run lint
           npm test
           npm run build
       # the desktop shell's unit tests: its pure modules (desktop/lib/) and

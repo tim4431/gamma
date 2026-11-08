@@ -70,7 +70,7 @@ instead, and the merge waits.
    # backend/ — check: backend (~1.5 min)
    venv/Scripts/python.exe -m pytest tests -q -n auto --dist loadfile
    # frontend/ — check: frontend
-   npm test
+   npm run lint && npm test
    # repository root — check: branding, frontend (desktop), extension
    node tools/branding/build.mjs --check && node --test tools/branding/check.test.mjs
    node --test desktop/test/*.test.js
@@ -113,7 +113,7 @@ instead, and the merge waits.
 
 5. **Wait for the checks**: `gh pr checks <n> --watch` (`check`: the
    mobile pins, the backend suite on the apps' Python 3.13 and pins
-   (`backend-mobile`), backend pytest, frontend unit tests + build, the desktop
+   (`backend-mobile`), backend pytest, frontend lint, unit tests + build, the desktop
    shell's unit tests, the browser suite in two shards, extension zip;
    ~5 min, skipped for a PR that only touches the account server or the
    website; `ipad`: the iPad app on a simulator, ~40 min, and `android`:

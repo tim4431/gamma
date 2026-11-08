@@ -4439,7 +4439,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, [blocks, focusedId, focusedBlockId, noteSel]);
   const aiMarkTimersRef = useRef(new Map());
   const aiMarkSeqRef = useRef(0);
-  const autosaveTimerRef = useRef(null);
   // Trees that did not come from an edit here: "load" (fetched from the
   // server — it becomes the collab base as is) or "remote" (another client's
   // ops applied — the base already has them, so the diff sends only our own

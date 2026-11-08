@@ -993,7 +993,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         // A newer socket batch may have arrived while this snapshot of the
         // log was being fetched. Recover that gap too.
         if (s.pending.size && !s.reloading) queueMicrotask(() => catchUp());
-      } catch (err) {
+      } catch {
         if (st.session === s) o().onReload?.(page);
       } finally {
         s.catchingUp = null;

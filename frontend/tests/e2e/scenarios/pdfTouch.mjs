@@ -104,7 +104,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     assert(r.shown && r.detailRatio >= 1.95, `detail is sharp at DPR 2: ${r.detail} for ${r.detailRatio.toFixed(3)} px/px`);
     assert(pixels(r.base) > CAP * 0.95, `base keeps the capped resolution in detail mode: ${r.base}`);
     assert(withinCap(await holdings()), "bounded backing size");
-    assertEq(await page.evaluate(() => oversizedCanvases.length), 0);
+    assertEq(await page.evaluate(() => window.oversizedCanvases.length), 0);
     const note = `base ${r.base.join("x")}, detail ${r.detail.join("x")}`;
     // Scrolled on by more than a viewport within the page, the detail follows.
     const before = r.at;
@@ -134,7 +134,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
       assert(withinCap(await holdings()), "bounded backing size after navigation");
       from = pn;
     }
-    assertEq(await page.evaluate(() => oversizedCanvases.length), 0);
+    assertEq(await page.evaluate(() => window.oversizedCanvases.length), 0);
     if (flags.keep) await page.screenshot({ path: `${server.dir}/pdf-touch-400.png` });
     assertNoProblems(page);
     return note;
@@ -180,7 +180,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     const r = await raster(1);
     assert(pixels(r.base) > CAP * 0.95, `base keeps the capped resolution: ${r.base}`);
     assert(withinCap(await holdings()), "bounded backing size");
-    assertEq(await page.evaluate(() => oversizedCanvases.length), 0);
+    assertEq(await page.evaluate(() => window.oversizedCanvases.length), 0);
     await page.getByRole("button", { name: "Zoom in", exact: true }).click();
     await sleep(300);
     assert(Math.abs(await boxWidth() - 4896) < 1, "800% is the limit");
@@ -202,7 +202,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     await page.mouse.up();
     await page.waitForSelector('[data-page="1"] .inkLayer path');
     assertEq(await page.locator('[data-page="1"] .inkCanvas').evaluate((c) => c.width * c.height), 0);
-    assertEq(await page.evaluate(() => oversizedCanvases.length), 0);
+    assertEq(await page.evaluate(() => window.oversizedCanvases.length), 0);
     await page.getByRole("button", { name: "Hand", exact: true }).click();
     assertNoProblems(page);
   });
@@ -237,14 +237,14 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     await drag(-20, -220);
     await until(async () => await page.locator(".pdfViewer").evaluate((el) => el.scrollTop) > 400, { what: "native vertical swipe scrolls" });
     await sleep(900);
-    let writes = await page.evaluate(() => scrollCorrections);
+    let writes = await page.evaluate(() => window.scrollCorrections);
     assert(writes.every((w) => !w.touching) && writes.length <= 1, "no offset writes during touch; at most one correction after settling");
     const before = await page.locator(".pdfViewer").evaluate((el) => el.scrollLeft);
     await page.evaluate(() => { window.scrollCorrections = []; });
     await drag(-160, -90);
     await until(async () => await page.locator(".pdfViewer").evaluate((el) => el.scrollLeft) > before + 70);
     await sleep(700);
-    assertEq(await page.evaluate(() => scrollCorrections.length), 0, "diagonal pan is not pulled back");
+    assertEq(await page.evaluate(() => window.scrollCorrections.length), 0, "diagonal pan is not pulled back");
     assertNoProblems(page);
   });
   // The other half of shared/lib/viewerZoom.js: the notebook's side of it is

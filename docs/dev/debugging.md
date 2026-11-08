@@ -282,6 +282,19 @@ them only after further relevant changes or when a failure needs investigation.
   files, omit `-n auto` to avoid starting a worker per CPU.
 - Frontend pure-module changes: invoke `node --test` with the relevant test
   files directly. `npm test` always includes the full module suite.
+- Any frontend change: run `npm run lint` from `frontend/`. It reads the
+  whole tree in under a second ([Frontend lint](#frontend-lint)).
+- A change to `frontend/package-lock.json`: the brand ledger,
+  `design/brand/generated.json`, hashes the lockfile as part of the rendering
+  toolchain, so any dependency change fails check.yml's `branding` job until
+  the ledger records the new hash. From the repository root, run
+  `node tools/branding/build.mjs` to record it (its requirements are in
+  [tools/branding](../../tools/branding/README.md)), then
+  `node tools/branding/build.mjs --check` to verify it. While Playwright's
+  version stays the same, that hash is the only line that should move. If the
+  run also re-renders images, because this machine's system fonts differ from
+  the last renderer's, restore them with `git checkout` and keep only the
+  ledger's lockfile line ([design/brand](../../design/brand/README.md)).
 - UI behavior changes: build once after the final frontend edit so the suite
   sees current code, then `npm run e2e -- --changed`, which runs the groups
   the working tree's changes select (see [the browser suite](#browser-end-to-end-suite);
@@ -444,7 +457,7 @@ run by `backend/tests/test_shared_fixtures.py` (the slugs by
 `test_publish.py`) and the matching node tests. Add a case there when a rule
 changes; whichever side drifts fails.
 
-The frontend has **no linter** and few component tests. Its pure modules have
+The frontend has few component tests (its lint is [below](#frontend-lint)). Its pure modules have
 `node --test` tests (`npm test` from `frontend/`, the files in
 `frontend/tests/*.test.mjs`): `blockOps` (diff/apply), `collabSession` (the
 page session's transport logic over fakes — ordering, reconciliation,
@@ -505,6 +518,70 @@ A process with no step finished for 15 minutes ends with status 1 (not under
 `--headed`). Workers leave when their parent is gone, and a backend reads a
 stdin pipe only the process that started it holds, so killing a run takes its
 workers, backends and browsers with it.
+
+### Frontend lint
+
+```bash
+cd frontend
+npm run lint    # Biome over src/, tests/, tools/ and vite.config.js, under a second
+```
+
+`npm run lint` runs `biome lint --error-on-warnings` with
+`frontend/biome.json`. It reads the scripts, the stylesheets and the i18n
+catalogs, so a duplicate CSS property or JSON key fails it too. Every
+diagnostic fails the run, and check.yml runs it before the unit tests.
+Biome is pinned to one exact version in package.json, because a release can
+change what a rule reports. An upgrade is a change of its own, made with a
+lint run.
+
+Only rules that find bugs are on. There is no formatter and no style rule.
+The config takes Biome's recommended `correctness` and `suspicious` rules
+and adds four that those presets leave out:
+- `useHookAtTopLevel`: a hook after an early return or inside a condition.
+  That is how a blocked share link once crashed to a blank page.
+- `noUndeclaredVariables`: a name that is not imported or declared.
+- `useJsxKeyInIterable`: a mapped element without a `key`.
+- `noNestedComponentDefinitions`: a component defined inside another one,
+  which remounts on every render.
+
+`noUnusedVariables` is raised to an error. These recommended rules are off,
+each for a reason:
+- `noUnusedImports`: 34 files still carry an unused `import React` from
+  the classic JSX runtime. The rule can go on once they are removed by hand.
+- `noUnusedFunctionParameters`: a callback names its positional parameters
+  to reach the ones after them.
+- `useExhaustiveDependencies`: the partial dependency lists are deliberate,
+  and the old `eslint-disable` comments mark them. The config names it off,
+  so a change of preset or a Biome upgrade cannot turn it on.
+- `noAssignInExpressions`: `exec` loops and parenthesised lazy
+  initialisation are written that way on purpose.
+- `noShadowRestrictedNames`: key handlers are called `escape`.
+- `noThenProperty`: openBlock's `then:` option and settingsReads.js's
+  `then:` steps are never awaited.
+- `noPrototypeBuiltins`: it flags the safe
+  `Object.prototype.hasOwnProperty.call` form too.
+- `noGlobalIsNan`: `isNaN(date)` is meant. The `Number.isNaN` fix is always
+  false for a Date.
+- `noApproximativeNumericConstant`: a test writes an A4 page's aspect as
+  1.414 on purpose.
+- `useParseIntRadix`: `parseInt` reads decimal data attributes, which need
+  no radix.
+
+`useIterableCallbackReturn` runs with `checkForEach: false`. It checks that
+a `map` or `filter` callback returns a value. It does not check that a
+`forEach` arrow returns nothing.
+
+A diagnostic is fixed by hand, never with `biome lint --write` (its
+unused-import fix once took a file's header comment with it). Where the code
+is right as it is:
+- Suppress the one line with `// biome-ignore lint/<group>/<rule>: <reason>`
+  above it (in CSS, `/* biome-ignore … */`). A suppression that no longer
+  suppresses anything fails the lint too.
+- Prefix a binding that must stay unread with `_`. It is not reported.
+- `x ||= v` on a variable read nowhere else is reported unused. Write
+  `if (!x) x = v`.
+- A page global read inside a scenario's `page.evaluate` is written
+  `window.x`, since the lint knows only the ES, browser and Node globals.
 
 ### Browser end-to-end suite
 

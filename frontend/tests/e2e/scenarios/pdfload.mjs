@@ -313,7 +313,7 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
   });
 
   await step("pdf load: two large documents alternate through the parsed-document cache without mixing", async () => {
-    const B = await bigDoc("Second book", (n) => [`Second book page ${n}`, "Alpha beta gamma delta"]);
+    await bigDoc("Second book", (n) => [`Second book page ${n}`, "Alpha beta gamma delta"]);
     // Open a paper from the library and check that the page the viewer lands
     // on (A comes back at its restored page 150) shows THAT book's text.
     const open = async (re, book) => {

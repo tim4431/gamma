@@ -296,9 +296,11 @@ const NEXT_STEP = {
 };
 // The reasons the server gives for a page an export left out
 // (routers/export.py), listed so the catalogs translate them.
+// biome-ignore lint/correctness/noUnusedVariables: kept for the catalogs; nothing reads it at run time
 const SKIP_REASONS = [T("page has no PDF"), T("PDF not stored on the server"),
   T("page has no paper metadata"), T("the PDF has no pages"), T("the page's PDF changed after it was translated")];
 // And the refusals a BibTeX export job fails with (its failed step shows them).
+// biome-ignore lint/correctness/noUnusedVariables: kept for the catalogs; nothing reads it at run time
 const EXPORT_REFUSALS = [T("none of these pages has paper metadata to cite"),
   T("this page has no paper metadata to cite")];
 

@@ -680,7 +680,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await page.click("button[aria-label='Toggle result details']");
     const hit = page.locator("button.searchResult", { hasText: "p. 2" }).first();
     try { await hit.waitFor({ timeout: 10000 }); }
-    catch (e) { throw new Error(`no "p. 2" hit; popover showed: ${JSON.stringify(await page.textContent(".searchPopover"))}`); }
+    catch { throw new Error(`no "p. 2" hit; popover showed: ${JSON.stringify(await page.textContent(".searchPopover"))}`); }
     await hit.click();
     await page.waitForSelector('[data-page="2"] .pdfFindMark', { timeout: 15000 });
     await page.keyboard.press("Escape");

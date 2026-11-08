@@ -237,6 +237,7 @@ body {
   flex-direction: column;
   height: 100vh;
   /* mobile browsers: exclude the collapsing URL bar so nothing hides behind it */
+  /* biome-ignore lint/suspicious/noDuplicateProperties: 100vh holds the root's height where dvh is unknown */
   height: 100dvh;
 }
 
@@ -2383,7 +2384,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 /* --- modern topbar bits --- */
 .addPopover { min-width: 300px; }
 .shareCrumbs { display: flex; align-items: center; gap: 2px; white-space: nowrap; }
-.shareCrumbs .crumbBtn { font-family: inherit; font-weight: inherit; line-height: inherit; font-weight: 500; color: var(--text-secondary); }
+.shareCrumbs .crumbBtn { font-family: inherit; line-height: inherit; font-weight: 500; color: var(--text-secondary); }
 .shareCrumbs .crumbSep { padding: 0 3px; }
 .readOnlyTitle {
   flex: 1;

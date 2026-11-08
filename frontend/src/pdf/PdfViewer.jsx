@@ -1331,7 +1331,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         try {
           const page = await pdfDoc.getPage(i + 1);
           heights[i] = page.getViewport({ scale: 1 }).height;
-        } catch (e) {
+        } catch {
           heights[i] = FALLBACK_H;
         }
       }

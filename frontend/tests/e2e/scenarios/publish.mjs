@@ -17,7 +17,7 @@ import { Account, Server, wanted, live } from "../harness.mjs";
 import { FakeCloud } from "../fakeCloud.mjs";
 
 export async function publishScenarios(env) {
-  const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
+  const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("publish")) return;
   const cloud = new FakeCloud();
   await cloud.start();

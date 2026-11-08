@@ -128,6 +128,6 @@ test("passages that went short say what was sent, and why", () => {
     { kind: "note", n: 1, of: 1, kept: 2_000, total: 2_500 },
     { kind: "block", n: 1, of: 2, kept: 2_000, total: 7_000 }] });
   assert.equal(many.short, `3 passages shortened: ${n(8_000)} of ${n(18_500)} characters sent`);
-  assert.match(many.long, new RegExp(`^PDF passage 2: first ${n(4_000)} of ${n(9_000)} characters\. Selected note text: .* Attached block: `));
+  assert.match(many.long, new RegExp(`^PDF passage 2: first ${n(4_000)} of ${n(9_000)} characters\\. Selected note text: .* Attached block: `));
   assert.match(many.long, /model's window couldn't hold all of it/);
 });

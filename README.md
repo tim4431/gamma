@@ -217,9 +217,11 @@ python -m pytest tests -q
 
 In-process API tests against a throwaway data dir — auth, the block tree, metadata/BibTeX, PDF-annotation import, full-text search, sync, and export.
 
-Frontend checks, from `frontend/`: `npm test` for module tests, `npm run build`
-for the production bundle, and `npm run e2e` for the browser suite against an
-isolated backend (requires backend dependencies and Playwright Chromium).
+Frontend checks, from `frontend/`: `npm run lint` for the Biome lint
+([docs/dev/debugging.md](docs/dev/debugging.md#frontend-lint)), `npm test` for
+module tests, `npm run build` for the production bundle, and `npm run e2e` for
+the browser suite against an isolated backend (requires backend dependencies
+and Playwright Chromium).
 
 **Production without Docker** — build the frontend and let the backend serve it:
 

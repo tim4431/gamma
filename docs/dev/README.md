@@ -50,7 +50,8 @@ an area, and update its documentation with the code.
   protocol-specific behavior belongs in `gamma/ai_protocols/`, and model
   listings/context windows come from the live catalog. See [AI](ai.md).
 - **Validation:** test the affected modules and their direct consumers;
-  browser behavior needs the relevant end-to-end scenarios. Documentation
+  browser behavior needs the relevant end-to-end scenarios. A frontend change
+  passes `npm run lint` ([Frontend lint](debugging.md#frontend-lint)). Documentation
   changes need diff and link checks, not application builds. Broaden coverage
   when shared contracts or uncertain impact warrant it. See the
   [test selection policy](debugging.md#local-changes-test-the-affected-modules).

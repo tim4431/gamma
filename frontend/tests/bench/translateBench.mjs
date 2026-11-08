@@ -131,6 +131,7 @@ function plan(pages) {
 
 // Characters only a formula writes, left in the text: Greek, arrows,
 // operators, math alphanumerics, private-use glyphs and combining marks.
+// biome-ignore lint/suspicious/noMisleadingCharacterClass: U+0300-U+036F is a range of lone combining marks
 const MATHISH = /[\u0370-\u03ff\u1f00-\u1fff\u2190-\u21ff\u2200-\u22ff\u2a00-\u2aff\u27c0-\u27ef\u2980-\u29ff\ue000-\uf8ff\u0300-\u036f]|[\u{1d400}-\u{1d7ff}]/gu;
 // A single letter or accent glued to a formula token: a symbol font's glyph
 // extracted as a Latin letter (Computer Modern's ⟨ ⟩ | come out as h i j) or

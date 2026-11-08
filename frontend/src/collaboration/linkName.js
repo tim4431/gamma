@@ -22,6 +22,7 @@ export function randomLinkName() {
 // Same cleaning as the server: control characters out, whitespace collapsed,
 // capped. Empty when nothing is left, so callers can keep the old name.
 export function cleanLinkName(raw) {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: strips the C0 controls and DEL, as the server does
   return String(raw || "").replace(/[\x00-\x1f\x7f]/g, "").replace(/\s+/g, " ").trim().slice(0, LINK_NAME_MAX).trim();
 }
 

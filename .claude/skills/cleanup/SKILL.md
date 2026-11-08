@@ -233,7 +233,7 @@ report as proposals with a one-line reason.
 cd backend && venv/Scripts/python.exe -m pytest tests -q
 # when frontend/src changed (node is fnm-managed, not on the tool-shell PATH):
 export PATH="$HOME/AppData/Roaming/fnm/aliases/default:$PATH"
-cd frontend && npm run build
+cd frontend && npm run lint && npm run build
 ```
 
 Two vector-math tests fail under the conda `python`; use the venv one.

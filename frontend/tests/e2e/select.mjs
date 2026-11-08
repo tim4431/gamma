@@ -362,6 +362,7 @@ const regexCache = new Map();
 function globRegex(glob) {
   if (!regexCache.has(glob)) {
     const re = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: NUL holds the place of ** while * is rewritten
       .replace(/\*\*\/?/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*");
     regexCache.set(glob, new RegExp(`^${re}$`));
   }
