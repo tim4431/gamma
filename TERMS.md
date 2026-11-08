@@ -1,6 +1,6 @@
 # Gamma Cloud terms
 
-_Last updated: 2026-10-05._
+_Last updated: 2026-11-08._
 
 These terms cover Gamma Cloud: the account at
 [account.gammapdf.com](https://account.gammapdf.com) and the paid plans
@@ -19,6 +19,9 @@ your data is handled is described in the [privacy policy](PRIVACY.md).
   stays active until the end of the period you have paid for.
 - Your library is yours. You can export all of it at any time, including
   after a plan ends.
+- **Do not share content that harms others** (the list is under "What
+  you may not share"). Anyone can report a comment, a shared page or an AI
+  reply from its menu in the app.
 
 ## Your account
 
@@ -97,6 +100,40 @@ backups, and fixing a fault when you ask us to) or as the law requires.
 You are responsible for what you store and share. Do not use the service
 to store or distribute material that is illegal or that you have no right
 to share, to attack or overload the service, or to resell it.
+
+## What you may not share
+
+Content you share with other people, on our servers or through a Gamma
+app, includes comments, pages and folders shared by link or with named
+people, pages you publish, and what you write into a page others edit
+with you. It must not be:
+
+- harassment, bullying, threats, or hate against people for who they
+  are, such as their race, ethnicity, religion, disability, gender,
+  sexual orientation or nationality;
+- sexual content involving minors, of any kind, or sexual content shared
+  with people who did not ask for it;
+- violence, or content that encourages violence, self-harm or terrorism;
+- spam, scams, malware, or content made to deceive people;
+- illegal content, or material you have no right to share, such as
+  someone else's copyrighted work;
+- someone's private information (an address, a phone number, documents)
+  shared without their consent.
+
+The AI chat in Gamma writes with the provider and the account you choose.
+What it writes is yours to use as these rules allow: do not share its
+output where you could not share the same text yourself.
+
+## Reporting content and people
+
+Every comment, shared or published page, and AI reply in the Gamma apps
+has a **Report** action in its menu. A report goes to the people who run
+that Gamma server, and, when the server uses Gamma Cloud, to us as well,
+with what was reported, why, and who wrote it. We review the reports that
+reach us and may remove the content, stop a share or a published page,
+or suspend the account that posted it. On a server someone else runs,
+its admin decides what happens on it. You can also write to
+<support@gammapdf.com>.
 
 We may suspend an account or a server that breaks these rules or endangers
 the service. A suspended server is read-only, so its owner can still export

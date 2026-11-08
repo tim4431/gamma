@@ -25,8 +25,8 @@ marks the authorize URL of a sign-in the app started (``APP_PARAM``),
 included, and those pages show the brand without its links, send a new
 account back to the sign-in rather than to the Overview, and drop their
 links to the Overview, Devices, the plans and the download page. Their
-privacy policy line (``_terms``) still links to gammapdf.com, whose
-header links its pricing, as the app's own link to the policy does.
+terms and privacy policy line (``_terms``) still links to gammapdf.com,
+whose header links its pricing, as the app's own link to the policy does.
 """
 
 import contextvars
@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlencode, urlsplit
 
 from . import (accounts, config, entrance, invitations, pages_billing, pages_fleet, pages_machines, pages_overview,
-               settings)
+               pages_reports, settings)
 from .providers import NAMES
 
 SITE = "https://gammapdf.com"
@@ -372,7 +372,11 @@ def _to_register(next_url: str = "/") -> str:
 
 
 def _terms() -> str:
-    return f"<p class=terms>By continuing you agree to the <a href='{SITE}/privacy/'>privacy policy</a>.</p>"
+    """The line under every sign-in and sign-up form: continuing accepts
+    the terms (TERMS.md, which say what may not be shared and that it can
+    be reported) and the privacy policy."""
+    return (f"<p class=terms>By continuing you agree to the <a href='{SITE}/terms/'>terms</a> and the "
+            f"<a href='{SITE}/privacy/'>privacy policy</a>.</p>")
 
 
 def _invite_field(value: str = "", email: str = "") -> str:
@@ -931,7 +935,8 @@ def admin_page(account: dict) -> str:
         "<div class=tabs><button class=on data-tab=overview>Overview</button><button data-tab=accounts>Accounts</button>"
         "<button data-tab=invites>Invites</button>"
         "<button data-tab=clients>Clients</button><button data-tab=machines>Machines</button><button data-tab=servers>Servers</button>"
-        "<button data-tab=billing>Billing</button><button data-tab=settings>Settings</button>"
+        "<button data-tab=billing>Billing</button><button data-tab=reports>Reports</button>"
+        "<button data-tab=settings>Settings</button>"
         "<button data-tab=audit>Audit log</button></div>"
         + pages_overview.ADMIN_TAB
         + "<div id=tab-accounts hidden><div class=toolbar><input id=q placeholder='Search username, e-mail or id' autocomplete=off><span class=spacer></span><span class=empty id=count></span></div>"
@@ -953,6 +958,7 @@ def admin_page(account: dict) -> str:
         "<button type=submit class='btn btn--primary btn--sm'>Create</button><div class=msg></div></form><div id=secret hidden class=secretbox></div></div></div>"
         "<div class=section><div class='body tbl'><table><thead><tr><th>Client id</th><th>Name</th><th>Kind</th><th>Callback</th><th></th></tr></thead><tbody id=clients></tbody></table></div></div></div>"
         + pages_fleet.SHARED_STYLE + pages_machines.ADMIN_TAB + pages_fleet.ADMIN_TAB + pages_billing.ADMIN_TAB
+        + pages_reports.ADMIN_TAB
         + _settings_tab()
         + "<div id=tab-audit hidden><div class=section><div class='body tbl'><table><thead><tr><th>When</th><th>Event</th><th>Account</th><th>Actor</th><th>Detail</th></tr></thead><tbody id=audit></tbody></table></div></div></div>")
     consts = (f"const PLANS = {_js(list(config.PLANS))}, PUBLIC_URL = {_js(config.PUBLIC_URL)}, "
@@ -962,7 +968,7 @@ let offset = 0, query = '';
 // The tabs. The hash names the open one, so /admin#servers opens Servers: a click sets it (through the history, since a
 // scroll to the table whose id is the tab's name would follow), and the back button and a link to #name follow it.
 // #machines/<host id> opens the Machines tab on that machine, and selects it when the tab is open already.
-const TABS = ['overview','accounts','invites','clients','machines','servers','billing','settings','audit'];
+const TABS = ['overview','accounts','invites','clients','machines','servers','billing','reports','settings','audit'];
 let tabNow = '', accountsLoaded = false;
 function showTab(hash, again){
   const cut = hash.indexOf('/'), sub = cut < 0 ? '' : hash.slice(cut + 1);
@@ -1068,6 +1074,7 @@ async function load(tab, sub){
   if (tab === 'clients') { const d = await api('/api/admin/clients', undefined, 'GET'); document.getElementById('clients').innerHTML = d.clients.map(c => '<tr><td class=mono>' + esc(c.client_id) + '</td><td>' + esc(c.name) + '</td><td>' + esc(c.kind) + (c.owner_account_id ? '<br><span class=mono>' + esc(c.owner_account_id) + '</span>' : '') + '</td><td class=mono>' + esc(JSON.parse(c.redirect_uris).join(' ')) + '</td><td><button class="btn btn--sm" data-delcli="' + esc(c.client_id) + '">Delete</button></td></tr>').join('') || '<tr><td colspan=5 class=empty>No clients. Local Gammas need none.</td></tr>'; }
   if (tab === 'servers') await loadServers();
   if (tab === 'billing') await loadBilling();
+  if (tab === 'reports') await loadReports();
   if (tab === 'settings') {
     const [s, c] = await Promise.all([api('/api/admin/settings', undefined, 'GET'), api('/api/admin/config', undefined, 'GET')]);
     showSettings(s); showConfig(c);
@@ -1125,12 +1132,13 @@ function showConfig(c){
 }
 const tm = document.getElementById('testmail'), tmMsg = document.getElementById('testmailmsg');
 tm.onclick = () => act(tm, async () => { const d = await api('/api/admin/test-mail', {}); say(tmMsg, d.detail); tm.disabled = false; }, tmMsg);
-""" + pages_fleet.SHARED_JS + pages_machines.ADMIN_JS + pages_fleet.ADMIN_JS + pages_billing.ADMIN_JS \
+""" + pages_fleet.SHARED_JS + pages_machines.ADMIN_JS + pages_fleet.ADMIN_JS + pages_billing.ADMIN_JS + pages_reports.admin_js() \
         + pages_overview.ADMIN_JS + """
 showTab(location.hash.slice(1), true);   // after every tab's script, whose entry it may call
 """
     return app("Admin", "What needs attention, accounts, invites, the clients of hosted servers, the machines and "
-               "every container on them, the hosted servers, billing, the settings and the plans on sale, the "
+               "every container on them, the hosted servers, billing, the reports Gamma servers forwarded, the "
+               "settings and the plans on sale, the "
                "configuration, and what happened.", account, "admin", inner, script)
 
 

@@ -152,6 +152,42 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
+  await step("chat navigation: a reply's Report sends its text and model to the server without leaving the chat", async () => {
+    await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [
+      { role: "user", text: "Say something about this paper" },
+      { role: "ai", text: "An answer someone finds offensive.", model: "fake-model" },
+    ] } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${pdf.id}`);
+    try {
+      await until(async () => (await page.locator(".chatPanel").innerText()).includes("An answer someone finds offensive."),
+        { what: "the reply shows" });
+      assertEq(await page.locator(".chatMsgReport").count(), 1, "Report on the reply, none on the question");
+      // the actions show while the pointer is over the reply
+      await page.locator(".chatBubbleRow", { hasText: "An answer someone finds offensive." }).hover();
+      await page.getByRole("button", { name: "Report this reply", exact: true }).click();
+      const dialog = page.locator(".reportModal.reportContent");
+      await dialog.waitFor();
+      const quote = await dialog.locator(".reportQuote").textContent();
+      assert(quote.includes("An answer someone finds offensive.") && quote.includes("Written by fake-model"), quote);
+      await dialog.getByLabel("Harmful or dangerous").check();
+      const posted = page.waitForRequest((r) => r.url().endsWith("/api/reports") && r.method() === "POST");
+      await dialog.getByRole("button", { name: "Send report", exact: true }).click();
+      await page.getByRole("status").filter({ hasText: "Report sent." }).waitFor();
+      await dialog.waitFor({ state: "detached" });
+      const body = (await posted).postDataJSON();
+      assertEq(`${body.kind} ${body.reason} ${body.model}`, "ai harmful fake-model", "what the report says");
+      assertEq(body.content, "An answer someone finds offensive.", "the reply's text");
+      assert(await page.locator(".chatPanel").isVisible(), "the chat is still there");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/chats/${pdf.id}`, { method: "PUT", body: { messages: [] } });
+    }
+  });
+
   await step("chat navigation: Alt over New chat arms Discard, Alt+click discards the conversation; a plain click keeps it in History", async () => {
     const own = await alice.api("/api/pages", { method: "POST", body: { title: "Discarded chat" } });
     const historyCount = async () => (await alice.api(`/api/chat-history?bucket=${own.id}`)).sessions.length;

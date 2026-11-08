@@ -28,6 +28,8 @@
   python manage.py servers                        the hosted servers
   python manage.py provision <username>           host an account on a hosted plan by hand
   python manage.py jobs [--state S]               the fleet's job queue, newest first
+  python manage.py reports [--state open]         the reports Gamma servers forwarded, newest first
+  python manage.py resolve-report <id> [--reopen] resolve a report, or open it again
 """
 
 import argparse
@@ -35,7 +37,7 @@ import getpass
 import sys
 from contextlib import closing
 
-from gammacloud import accounts, config, db, fleet, hosted, oidc, settings
+from gammacloud import accounts, alerts, config, db, fleet, hosted, oidc, reports, settings
 from gammacloud.accounts import Problem, make_invite
 
 
@@ -186,6 +188,27 @@ def cmd_invites(args):
         plan = r["plan"] + (f" for {r['grant_days']}d" if r["grant_days"] else "")
         print(f"{r['code']:<14} used={r['used']}/{r['uses_total']:<5} plan={plan:<12} {r['state']:<7} "
               f"expires={(r['expires_at'] or 'never')[:10]:<10} {r['note']}")
+
+
+def cmd_reports(args):
+    with closing(db.connect()) as conn:
+        rows = reports.listing(conn, args.state)
+    for r in rows:
+        who = r["account_username"] or r["reporter"] or "anonymous"
+        print(f"{r['id']:<22} {r['created_at'][:16]} {r['state']:<8} {r['kind']:<7} {r['reason']:<10} "
+              f"{r['server_url'] or '-'} by {who}: {(r['details'] or r['content'])[:80]!r}")
+
+
+def cmd_resolve_report(args):
+    with closing(db.connect()) as conn:
+        try:
+            reports.set_state(conn, args.id, "open" if args.reopen else "resolved", "cli")
+        except LookupError:
+            sys.exit("no such report")
+        due = alerts.sync(conn)
+        conn.commit()
+    alerts.notify(due)
+    print("reopened" if args.reopen else "resolved")
 
 
 def cmd_create_client(args):
@@ -399,6 +422,10 @@ def main(argv=None):
     sub.add_parser("rotate-key").set_defaults(fn=cmd_rotate_key)
     st = sub.add_parser("settings"); st.add_argument("key", nargs="?", choices=tuple(settings.DEFAULTS))
     st.add_argument("value", nargs="?", default=""); st.set_defaults(fn=cmd_settings)
+    rp = sub.add_parser("reports"); rp.add_argument("--state", default="open", choices=(*reports.STATES, "all"))
+    rp.set_defaults(fn=cmd_reports)
+    rr = sub.add_parser("resolve-report"); rr.add_argument("id"); rr.add_argument("--reopen", action="store_true")
+    rr.set_defaults(fn=cmd_resolve_report)
     _billing_commands(sub)
     _fleet_commands(sub)
     args = p.parse_args(argv)

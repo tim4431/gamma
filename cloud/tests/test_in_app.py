@@ -3,7 +3,7 @@ authorize URL carries ``gamma_app=1``, ``/authorize`` keeps it in the
 ``gc_app`` cookie, and the auth pages after it drop their links to where
 a plan is bought — no top bar to gammapdf.com and the Overview, a new
 account sent back to the sign-in, no Devices, plans or download links —
-all but the privacy policy's, which is still open."""
+all but the terms' and the privacy policy's, which are still open."""
 
 import re
 from urllib.parse import urlencode
@@ -17,6 +17,7 @@ from gammacloud import config, mail, pages
 SITE_LINK = f"href='{pages.SITE}'"
 HOME_LINK = "href='/'"
 PRIVACY = f"{pages.SITE}/privacy/"
+TERMS = f"{pages.SITE}/terms/"
 
 
 def site_links(page):
@@ -58,9 +59,9 @@ def test_the_apps_sign_in_and_sign_up_pages_drop_their_portal_links(client):
     for path in ("/login", register_link, "/reset", "/authorize/resume?request_id=gone"):
         page = client.get(path).text
         assert "class=authtop" in page and SITE_LINK not in page and HOME_LINK not in page, path
-    # the one gammapdf.com link left: the privacy policy, whose site header links Pricing (still open)
+    # the gammapdf.com links left: the terms and the privacy policy, whose site header links Pricing (still open)
     for path in ("/authorize/resume?" + urlencode({"request_id": rid}), "/login", register_link, "/reset"):
-        assert site_links(client.get(path).text) <= {PRIVACY}, path
+        assert site_links(client.get(path).text) <= {PRIVACY, TERMS}, path
     assert "This sign-in request expired" in client.get("/authorize/resume?request_id=gone").text
     # a new account comes back to the sign-in, whose verify notice has no way to the Overview
     r = client.post("/api/register", json={"email": "alice@example.org", "username": "alice",

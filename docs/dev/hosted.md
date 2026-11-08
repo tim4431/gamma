@@ -827,12 +827,13 @@ last before it is mailed.
 | `container_down:<host id>:<name>` | a container of the host's own and Gamma's (not a hosted server's, which has `down:`, nor a `-prev` a failed update kept, nor one that is not Gamma's: "A machine's containers") whose `restart_policy` is `always` or `unless-stopped` is reported `restarting`, `exited` or `dead`, or `unhealthy`: "gamma-account-share-1 on vps-1 is restarting". It resolves when it runs again | 10 min |
 | `billing:<event id>` | a webhook event of the last 7 days recorded as `mismatch` or `unknown` | 0 |
 | `signup:unguarded` | registration is open with the anti-bot check off | 0 |
+| `report:<report id>` | a report a Gamma server forwarded is open, one of the newest 50 (`reports.alert_rows`; [cloud.md](cloud.md) "Reports"): "Report of a comment on lab.example.org: spam or a scam". Resolving or deleting it on the Reports tab ends it | 0 |
 
 A server's alerts and a failed job of a server link to `#servers`. A
 host's (`host_stale`, `host_full`, `container_down`) and a failed job with
 no server (a container's, an orphan's removal) link to the machine on the
-Machines tab, `#machines/<host id>`. The last two link to `#billing` and
-`#settings`. A settle of 10 minutes covers two heartbeats, so one bad
+Machines tab, `#machines/<host id>`. `billing` and `signup` link to
+`#billing` and `#settings`, a report to `#reports`. A settle of 10 minutes covers two heartbeats, so one bad
 report is not a mail.
 
 `sync(conn)` brings the `alerts` table to what `collect` finds, inside

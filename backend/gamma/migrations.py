@@ -1836,6 +1836,44 @@ def _v48_deleted_with(ws: str, pages: sqlite3.Connection, data) -> None:
         block_columns(pages)
 
 
+# users.db ``content_reports`` and its state index as schema version 49
+# shaped them, frozen: step 49 creates them from these.
+_V49_CONTENT_REPORTS = [
+    """CREATE TABLE IF NOT EXISTS content_reports (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        details TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        author TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        workspace_id TEXT NOT NULL DEFAULT '',
+        page_id TEXT NOT NULL DEFAULT '',
+        comment_id TEXT NOT NULL DEFAULT '',
+        link TEXT NOT NULL DEFAULT '',
+        reporter_id TEXT NOT NULL DEFAULT '',
+        reporter TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL,
+        resolved_at TEXT NOT NULL DEFAULT '',
+        resolved_by TEXT NOT NULL DEFAULT '',
+        sent_at TEXT NOT NULL DEFAULT '',
+        send_error TEXT NOT NULL DEFAULT ''
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_content_reports_state ON content_reports(state, created_at)",
+]
+
+
+def _v49_content_reports(conn: sqlite3.Connection) -> None:
+    """users.db gains ``content_reports`` (reports of comments, pages and AI
+    replies, gamma/reports.py) and its state index, from the step's frozen
+    statements. Re-runnable: both are ``IF NOT EXISTS``. No workspace is
+    touched."""
+    for stmt in _V49_CONTENT_REPORTS:
+        conn.execute(stmt)
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1859,6 +1897,7 @@ STEPS = [
     (43, "email_invites", _v43_email_invites),
     (45, "zotero_links", _v45_zotero_links),
     (46, "folder_links_push", _v46_folder_links_push),
+    (49, "content_reports", _v49_content_reports),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

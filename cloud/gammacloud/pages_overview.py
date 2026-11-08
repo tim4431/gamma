@@ -23,7 +23,8 @@ ADMIN_JS = r"""
 const loadOverview = (() => {
 const {plural, since, tile, ORDER} = fleetUI;
 const TAB = document.getElementById('tab-overview'), $ = id => document.getElementById(id);
-const LINKS = {'#machines': 'Machines', '#servers': 'Servers', '#billing': 'Billing', '#settings': 'Settings'};   // by the tab, before any '/'
+const LINKS = {'#machines': 'Machines', '#servers': 'Servers', '#billing': 'Billing', '#reports': 'Reports',
+               '#settings': 'Settings'};   // by the tab, before any '/'
 let timer = 0, gen = 0;
 
 const warn = (n, word) => n ? ' · <span class="pill pill--warn">' + n + ' ' + word + '</span>' : '';

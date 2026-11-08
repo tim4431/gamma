@@ -44,7 +44,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 48
+SCHEMA_VERSION = 49
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -414,6 +414,37 @@ USERS_SCHEMA = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_email_invites_target "
     "ON email_invites(kind, workspace_id, share_token, email_norm)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_email_invites_link ON email_invites(link_id)",
+    # A report of a comment, a page or an AI reply that someone made from its
+    # menu (gamma/reports.py): kind comment / page / ai, the reason, the
+    # reporter's words, the text reported and who wrote it (a comment's
+    # author, a share's maker, the AI model), the page's title, where it is
+    # (workspace, page, comment), a public link when it has one, and the
+    # reporter (an account id and its name; '' for a link visitor). Kept for
+    # this server's admins (state open / resolved); on a server with Gamma
+    # Cloud sign-in, also forwarded to the account server: sent_at once it
+    # took it, send_error the last failure (the hourly round tries again).
+    """CREATE TABLE IF NOT EXISTS content_reports (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        details TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        author TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        workspace_id TEXT NOT NULL DEFAULT '',
+        page_id TEXT NOT NULL DEFAULT '',
+        comment_id TEXT NOT NULL DEFAULT '',
+        link TEXT NOT NULL DEFAULT '',
+        reporter_id TEXT NOT NULL DEFAULT '',
+        reporter TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL,
+        resolved_at TEXT NOT NULL DEFAULT '',
+        resolved_by TEXT NOT NULL DEFAULT '',
+        sent_at TEXT NOT NULL DEFAULT '',
+        send_error TEXT NOT NULL DEFAULT ''
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_content_reports_state ON content_reports(state, created_at)",
     # Small JSON values that follow the ACCOUNT (docs/dev/settings.md):
     # workspace_id '' = account-wide (the profile, the AI provider entries:
     # USER_PREF_KEYS). The prefs per account AND workspace (open tabs,

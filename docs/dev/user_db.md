@@ -74,6 +74,16 @@ All state is SQLite + files on disk under a data directory (env
     `mailed_at` and `expires_at`; one per target and address, gone once
     the mailed link is used, after 14 days, or with their workspace or
     share ([cloud_accounts.md](cloud_accounts.md) "Invitations by e-mail");
+  - `content_reports` — reports of a comment, a page or an AI reply
+    (gamma/reports.py, [api.md](api.md) "Reports"): `kind`, `reason`, the
+    reporter's `details`, the text reported (`content`) and its `author`
+    (a comment's, a share's maker, the AI model), the page's `title`,
+    `workspace_id`, `page_id`, `comment_id`, a published page's `link`,
+    `reporter_id` and `reporter` (`''` for a visitor without an account),
+    `state` open/resolved with `resolved_at` and `resolved_by`, and, on a
+    server with Gamma Cloud sign-in, `sent_at` once the account server took
+    it and `send_error` its last failure; indexed on `(state,
+    created_at)`, gone 180 days after it was made (migration step 49);
   - `user_prefs` — small JSON values per `(user_id, workspace_id, key)`,
     under workspace `''`: the account-wide keys (`db.USER_PREF_KEYS`: the
     preference `profile` and its sync base `profile-base`, the active AI

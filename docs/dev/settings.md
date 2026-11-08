@@ -233,6 +233,7 @@ and integration tokens get an empty list. The sources:
 | `cloud-link` | everyone | Account | info | cloud sign-in works here (on, and not waiting for Connect) and the account has no Gamma Cloud identity (`cloud_auth.status_of`); not on the share host. The Account pane's Gamma Cloud row says what linking gives and links it | constant: seen once |
 | `cloud-setup` | admins | Server | info | cloud sign-in is off, or on but the server still has to be connected (`cloud_auth.needs_connect`); Server → Sign-in turns it on | `off` / `connect`, so each state is seen once |
 | `join-requests` | admins | Server | info | Gamma Cloud accounts ask to join this server (`join_requests.waiting`: the waiting requests, [cloud_accounts.md](cloud_accounts.md) "Requests to join"); Server → Sign-in lists them | when the newest waiting one was made: a new request brings it back, a decided one does not |
+| `reports` | admins | Server | info | open reports someone other than this admin made here (`reports.waiting`; [api.md](api.md) "Reports"); Server → Reports lists them | the newest open one: a new report brings it back, a resolved one does not |
 | `free-translate` | everyone who met the failures | Translation | warn | Microsoft's free translation service failed `FREE_ALERT_AFTER` (3) times in a row, in memory (`translate_engines.free_failing`); one success ends it, and the Microsoft row names the error | the streak's start time |
 | `hosted` | admins (grace), everyone (read-only) | Server for admins, Account for members | warn / error | a hosted container's cached plan answer (`hosted.limits`, from memory) is in `grace` (admins only; names `grace_until`) or read-only (everyone) — [cloud_accounts.md](cloud_accounts.md) "Hosted containers" | the status and since when it holds (`status_since`), so each episode is seen once |
 | `storage` | everyone | Account | warn / error | personal storage past 90 % of the quota / full; only computed for an account under a quota, and the upload walk is remembered ten minutes (`notices.forget_usage`) | `90` / `full` |
@@ -822,6 +823,17 @@ only on confirmation; the saved address immediately configures assistant
 sign-in and the MCP host allowlist and persists in the server `settings`
 table. An existing `GAMMA_PUBLIC_URL` environment override is shown
 read-only.
+
+**Reports** (Server, `SettingsReports.jsx` `ContentReports`, `GET
+/api/admin/reports`), under Sign-in: a Row with how many are open (its
+hover says whether this server sends each one on to Gamma Cloud) and an
+Open / Resolved switch, then one row per report: the reason with a tag for
+what it is (Comment, Page, AI reply), the text reported, quoted, the
+reporter's own words, and a line with who wrote it and on which page, who
+reported it (a visitor without an account named so) and when, and, on a
+server that forwards them, whether Gamma Cloud has it yet. Resolve (or
+Reopen) and Delete, which asks first, are icon buttons
+([api.md](api.md) "Reports").
 
 **Sign-in** (Server, `SettingsCloudSignIn.jsx` `CloudSignInSettings`) has
 three rows. The account server's address (empty = off, an on/off `uiTag`).

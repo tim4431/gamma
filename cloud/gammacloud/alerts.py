@@ -20,7 +20,7 @@ back.
 import threading
 from contextlib import closing
 
-from . import config, db, fleet, mail, settings
+from . import config, db, fleet, mail, reports, settings
 from .log import log
 
 SETTLE = 10 * 60          # what a problem that may clear by itself waits before it is mailed
@@ -130,13 +130,16 @@ def _hosts(hosts: list[dict]) -> list[dict]:
 def collect(conn) -> list[dict]:
     """The problems that exist now, each ``{key, kind, text, link,
     settle}``: ``link`` is the Admin tab that shows it, ``settle`` the
-    seconds it must persist before it is mailed. A handful of reads."""
+    seconds it must persist before it is mailed. A handful of reads. An
+    open report is one too (``reports.alert_rows``), mailed at once."""
     hosts = fleet.hosts(conn)
     out = _jobs(conn) + _servers(conn, {h["id"]: h.get("public_ip") or "" for h in hosts}) + _hosts(hosts)
     for r in conn.execute("SELECT id, type FROM billing_events WHERE outcome IN ('mismatch', 'unknown') "
                           "AND received_at >= ?", (db.after(-EVENT_DAYS * 86400),)).fetchall():
         out.append(_alert(f"billing:{r['id']}", f"Stripe event {r['type']} could not be matched to an account",
                           "#billing"))
+    # a report someone made on a Gamma server, until the operator resolves it
+    out += [_alert(f"report:{r['id']}", reports.summary(r), "#reports") for r in reports.alert_rows(conn)]
     if settings.unguarded_registration():
         out.append(_alert("signup:unguarded", "Registration is open and the anti-bot check is off", "#settings"))
     return out

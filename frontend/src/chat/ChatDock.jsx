@@ -51,7 +51,8 @@ import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor, modelLabel, providerModels, speedFor } from "./modelPrefs";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
-import { ListOrderedIcon } from "../shared/ui/Icons";
+import { FlagIcon, ListOrderedIcon } from "../shared/ui/Icons";
+import { openReport } from "../support/reportContent.js";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import ListMotion from "../shared/ui/ListMotion";
@@ -2278,6 +2279,14 @@ export default function ChatDock({
                       onClick={() => copyChatMessage(i, m.text)}>
                       <IconSwap swap={copiedMsgIdx === i} from={<CopyIcon size={14} />} to={<CheckIcon size={14} />} />
                     </button>
+                    {!isUser && m.text && !(m.error && m.errorKind) ? (
+                      // Report: offensive or harmful output, to the people who run the server and Gamma's developer
+                      <button type="button" className="chatMsgActionBtn chatMsgReport" title={t("Report this reply")}
+                        aria-label={t("Report this reply")}
+                        onClick={() => openReport({ kind: "ai", text: m.text, model: m.model || "" })}>
+                        <FlagIcon size={14} />
+                      </button>
+                    ) : null}
                     {!readOnly && isUser && !busyHere ? (
                       <button type="button" className="chatMsgActionBtn" title={t("Edit and re-send (removes later messages)")}
                         onClick={() => setEditingMsg({ idx: i, text: m.text })}>

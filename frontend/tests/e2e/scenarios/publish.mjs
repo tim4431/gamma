@@ -12,7 +12,8 @@
 // access, Sync now, the header pill and Settings' Publishing row, Unpublish,
 // Settings' Stop publishing all, a page published with the pages inside it
 // (counted before, the page inside read as published with it, Leave out
-// keeping it off the share host), and the free plan's cap of five pages.
+// keeping it off the share host), a visitor's report of the published page
+// sent on to Gamma Cloud, and the free plan's cap of five pages.
 import { Account, Server, wanted, live } from "../harness.mjs";
 import { FakeCloud } from "../fakeCloud.mjs";
 
@@ -121,6 +122,32 @@ export async function publishScenarios(env) {
       } finally { await anon.close(); }
       assertNoProblems(page);
       return pretty;
+    });
+
+    await step("publish: a visitor reports the published page from its View menu; the share host sends it on to Gamma Cloud", async () => {
+      const pretty = `http://pubber-pages.localhost:${host.port}/published-paper-${paper.id}`;
+      const anon = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+      try {
+        const shared = await openPage(anon, pretty);
+        await shared.waitForSelector(".readOnlyTitle", { timeout: 15000 });
+        await shared.getByRole("button", { name: "View", exact: true }).click();
+        await shared.getByRole("menuitem", { name: "Report this page…", exact: true }).click();
+        const dialog = shared.locator(".reportModal.reportContent");
+        await dialog.waitFor();
+        assert((await dialog.locator(".reportQuote").textContent()).includes("Published paper"), "the dialog quotes the title");
+        await dialog.getByLabel("Spam, a scam or misleading").check();
+        await dialog.locator("textarea").fill("Ads for a casino");
+        await dialog.getByRole("button", { name: "Send report", exact: true }).click();
+        await shared.getByRole("status").filter({ hasText: "Report sent." }).waitFor();
+        await dialog.waitFor({ state: "detached" });
+        await until(async () => cloud.filed.some((r) => r.details === "Ads for a casino"), { what: "Gamma Cloud has it", timeout: 15000 });
+        const sent = cloud.filed.find((r) => r.details === "Ads for a casino");
+        assertEq(`${sent.kind} ${sent.reason} ${sent.title} ${sent.author} ${sent.page_id}`,
+          `page spam Published paper pubber ${paper.id}`, "the page, as the share host read it");
+        assertEq(sent.link, pretty, "the published address the visitor was on");
+        assertEq(`${sent.reporter}|${sent.by}`, "|", "a visitor without an account, sent unsigned");
+        assertNoProblems(shared);
+      } finally { await anon.close(); }
     });
 
     await step("publish: the cloud share's access, Sync now, the header pill and Settings' Publishing row", async () => {

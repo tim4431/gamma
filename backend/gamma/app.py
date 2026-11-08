@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from . import backup_schedule, cloud_auth, cloud_sync, comments, config, db_maintenance, email_invites, guests, hosted
-from . import inbox, jobs, migrations, offsite, sync_engine, trash, upload_gc, version, workspaces, ws_backup
+from . import inbox, jobs, migrations, offsite, reports, sync_engine, trash, upload_gc, version, workspaces, ws_backup
 from . import zotero_stream
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
@@ -54,6 +54,7 @@ from .routers import (
     publish,
     publisher_sessions,
     recordings,
+    reports as reports_router,
     search,
     shares,
     sync,
@@ -359,6 +360,7 @@ def create_app() -> FastAPI:
                 every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"), \
                 every(comments.SWEEP_INTERVAL_S, comments.sweep, "[comments] sweep failed"), \
                 every(email_invites.SWEEP_INTERVAL_S, email_invites.sweep, "[invites] sweep failed"), \
+                every(reports.SWEEP_INTERVAL_S, reports.tick, "[reports] round failed"), \
                 every(inbox.SWEEP_INTERVAL_S, inbox.sweep, "[inbox] sweep failed"), \
                 every(ws_backup.STALE_TEMP_S, ws_backup.sweep_stale_temp, "[backups] temp sweep failed"), \
                 every(jobs.SWEEP_INTERVAL_S, jobs.sweep, "[jobs] sweep failed"), \
@@ -445,6 +447,7 @@ def create_app() -> FastAPI:
     app.include_router(folders.router)
     app.include_router(collab.router)
     app.include_router(comments_router.router)
+    app.include_router(reports_router.router)
     app.include_router(sync.router)
     app.include_router(mirrors.router)
     app.include_router(folder_links_api.router)

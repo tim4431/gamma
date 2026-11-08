@@ -86,8 +86,10 @@ import {
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
   PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, SplitRowsIcon, OnePaneIcon,
-  StopIcon, GlobeIcon, ChevronRightIcon,
+  StopIcon, GlobeIcon, ChevronRightIcon, FlagIcon,
 } from "../shared/ui/Icons";
+import ReportContentHost from "../support/ReportContentHost";
+import { openReport as openContentReport } from "../support/reportContent.js";
 
 
 import {
@@ -11862,6 +11864,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             title={t("Download the PDF file exactly as stored — no highlights or notes")}>{t("Download PDF")}</MenuItem>
         ),
       ],
+      [
+        // A shared or published page someone else made: Report
+        // (support/reportContent.js), to the people who run this server.
+        shareMode && focusedBlockId && !homeMode && !(shareInfo?.owner && shareInfo.viewer === shareInfo.owner) && (
+          <MenuItem key="report" icon={FlagIcon} data-report="page"
+            title={t("Tell the people who run this server about this page")}
+            onClick={() => {
+              setOpenPopover(null);
+              openContentReport({ kind: "page", pageId: focusedBlockId, title: pageTitle,
+                link: publicPage ? window.location.href : "" });
+            }}>{t("Report this page…")}</MenuItem>
+        ),
+      ],
     );
   };
   const renderOverflowMenu = (menuReadOnly) => (
@@ -13816,6 +13831,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         diagnostics={{ statusBarVisible, setStatusBarVisible, sysLog, setStatus, debugLog, setDebugLog,
           openReport: () => { setSettingsOpen(null); setReportOpen(true); } }}
       /></LazyBoundary> : null}
+      <ReportContentHost setStatus={setStatus} />
       {reportOpen ? (
         <LazyBoundary>
         <ReportProblem onClose={() => setReportOpen(false)} setStatus={setStatus}

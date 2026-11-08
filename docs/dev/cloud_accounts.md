@@ -160,6 +160,7 @@ the signing keys and every token hash.
 | `zotero_requests` | a Zotero connection while the browser is at zotero.org: the request token's hash, its secret sealed with a key derived from the token, the Gamma server's address, its state and PKCE challenge (9 min, single use; step 14) |
 | `zotero_codes` | a person's approval at zotero.org waiting for its Gamma server: the one-time code's hash, the request token, its secret and Zotero's verifier sealed with a key derived from the code, the server's address, the PKCE challenge (5 min, single use; step 14). No key exists yet: Zotero makes it when the server redeems the code |
 | `server_invitations` | an e-mail invitation a Gamma server asked this server to send: the hash of the mailed link's token, the server's address (`server_url`) and name, its own id for the invitation (`invite_id`; one row per server and id), the sign-in client it came through (`client_id`), the kind (`server` / `workspace` / `page` / `folder`), what it is to (`what`), the path there to land on (`next`), the address as typed and its inbox (`email_canon`), the inviter, the invite code minted for it ('' for none), `created_at`, `expires_at` (14 days on) and `accepted_at` (step 13) |
+| `reports` | a report of a comment, a page or an AI reply a Gamma server forwarded ([cloud.md](cloud.md) "Reports"): the server's own id for it (`report_id`; one row per server and id, so a retry stores nothing twice), the server's address and name, `kind` (`comment` / `page` / `ai`), `reason`, the reporter's words (`details`), the text reported and who wrote it (`content`, `author`), the page's `title`, `page_id`, `comment_id`, a published page's `link`, the reporter as the server names them (`reporter`), the reporter's account when the server sent their token (`account_id`) and the sign-in client the call proved (`client_id`), the caller's address, `state` (`open` / `resolved`), `resolved_at` and `resolved_by` (step 15) |
 | `oauth_requests` | a sign-in in progress on the authorize page (10 min) |
 | `oauth_codes` | authorization codes (2 min, single use) and what the exchange issued (`grant_id`, `access_hash`), so a replay revokes exactly that |
 | `grants` | one per device: the rotating refresh token's hash, 90 days from the last rotation, `revoked_at`, the client's `device_id` and `device_name` (a new sign-in with the same `device_id` replaces the grant) |
@@ -192,6 +193,14 @@ header's **Sign in** and the `/login`, `/account`, `/signup` short links
 ([sites/README.md](../../sites/README.md)).
 
 ## Registration and the portal
+
+Every sign-in and sign-up page ends with one line under its form
+(`pages._terms`): "By continuing you agree to the terms and the privacy
+policy", linking gammapdf.com/terms/ ([TERMS.md](../../TERMS.md), which
+says what may not be stored or shared and that it can be reported) and
+gammapdf.com/privacy/. Creating an account, by password or through
+Google or GitHub, is continuing, so the terms are accepted before anyone
+can share anything; no separate record of it is kept.
 
 `routers/accounts.py` is the JSON API under `/api`; `routers/portal.py`
 serves the pages from `pages.py`: small server-rendered shells whose
@@ -477,6 +486,7 @@ passes.
 | GET | `/api/lookup/username?u=` | any access token | `{sub, username}`; 404 otherwise |
 | POST | `/api/invitations` | any access token | body `{email, server_url, server_name, kind, what, invite_id, next}` → `{ok, expires_at}` |
 | POST | `/api/invitations/cancel` | any access token | body `{server_url, invite_id}` → `{ok, removed}` |
+| POST | `/api/reports` | the reporter's access token, the server's client id and secret (Basic), or none | body `{report_id, server_url, server_name, kind, reason, details, content, author, title, page_id, comment_id, link, reporter}` → 201 `{ok, id}` ([cloud.md](cloud.md) "Reports") |
 
 **The preference profile** is one JSON value per key: at most 64 KB
 serialized (413 past it), 20 keys per account (a 21st is a 400), keys of
@@ -868,8 +878,8 @@ error page has no *Back* to the Overview. The account's own pages (the
 app shell) are unchanged. Two ways still reach a plan: the reset page
 carries no request, so *Forgot password?* then *Back to sign in*, or the
 mailed reset link, ends signed in on the Overview; and the sign-in,
-register and sign-up pages' *privacy policy* line links to
-gammapdf.com/privacy/, whose site header links *Pricing*, as the
+register and sign-up pages' terms line links to gammapdf.com/terms/
+and gammapdf.com/privacy/, whose site header links *Pricing*, as the
 privacy policy the app itself opens does. Closing that needs a
 gammapdf.com page without the header, for the app's links and this one
 alike.
@@ -1159,7 +1169,9 @@ is what its `authorize_url` asks for.
 `create-account`, `set-password`, `set-admin`, `set-plan`, `verify`,
 `delete-account`, `restore-account`, `purge-account`, `purge-deleted`, `invite`, `invites`, `create-client`,
 `client-redirect` (one more redirect URI for a client, for a server with a
-second address), `clients`, `delete-client`, `rotate-key`, `settings`, billing's
+second address), `clients`, `delete-client`, `rotate-key`, `settings`,
+`reports` (`--state open|resolved|all`) and `resolve-report <id>
+[--reopen]`, billing's
 `subscriptions` and `billing-sync` ([billing.md](billing.md)), and the
 fleet's `hosts`, `add-host`, `servers`, `provision`, `jobs`
 ([hosted.md](hosted.md) "Admin"). Every command but `setup` and
@@ -1173,7 +1185,10 @@ patch accounts (plan, the day the grant ends, admin, verified), resend a
 verify mail, delete, restore, purge; invites (`GET`, `POST` with
 `expires_days` and `grant_days`, `GET /invites/{code}` with the accounts
 that registered with it, `PATCH /invites/{code}` `{disabled}`, audited as
-`invite.disable` / `invite.enable`, `DELETE`); `GET`/`PATCH /settings`
+`invite.disable` / `invite.enable`, `DELETE`); the reports Gamma servers
+forwarded (`GET /reports?state=open|resolved|all` → `{reports, open}`,
+`PATCH /reports/{id}` `{state}`, audited as `report.resolve` /
+`report.reopen`, `DELETE`, audited as `report.delete`); `GET`/`PATCH /settings`
 (`settings.admin_view` / `settings.update`, plus `plans`, a row per paid
 plan `{plan, on_sale, sellable, reason}`); `GET /config` and `POST
 /test-mail` ("Running"); OIDC clients; the audit log;
@@ -1270,13 +1285,21 @@ and the CLI call the same functions.
   the server list (normalization, loopback, the client's own origin, the
   Overview), the build and schema a server reports, the username lookup
   and its limits, deletion, the step-4 and step-8 upgrades, and the share host's address in `/api/me` and discovery.
+- `test_reports.py`: the reports Gamma servers forward — an unsigned one
+  kept as sent, a retry stored once, the fields checked and cut (a link
+  that is not http(s) dropped), the reporter's token and the server's
+  client secret recorded and a bad one refused, the desktop client proving
+  nothing, the per-IP limit of unsigned calls, the alert mailed once, the
+  Admin list, resolve, reopen and delete with their audit, the CLI, the
+  purge of old resolved reports, a purged account's reports kept without
+  it, the terms on the sign-up page, the step-15 upgrade.
 - `test_in_app.py`: a native app's sign-in — the mark kept in the cookie
   and cleared by a sign-in no app started, the top bar without links on
   the sign-in, register, reset and error pages, a new account sent back
   to the sign-in (its verify mail sent or not), the verify notice's
   resend going back to the sign-in, the verify notice, verify link page,
   confirm card and no-library page without their portal links, the
-  privacy policy as their one gammapdf.com link, and the same pages with them in a browser of
+  terms and the privacy policy as their only gammapdf.com links, and the same pages with them in a browser of
   its own.
 - `test_entrance.py`: the entrance — where the authorize step sends a
   signed-in person when the shared server asks, the sign-ins that skip the

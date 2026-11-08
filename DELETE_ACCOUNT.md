@@ -1,6 +1,6 @@
 # Deleting your Gamma Cloud account
 
-_Last updated: 2026-11-04._
+_Last updated: 2026-11-08._
 
 This page is for people who use **Gamma PDF**, the app published on
 Google Play by **Gamma PDF**, or another Gamma app (the desktop app for
@@ -76,7 +76,9 @@ cancelled subscription stays cancelled.
 **What is kept.** The account server's audit log keeps its entries for the
 account (sign-ins and password reset requests with the IP address they came
 from, plan changes, the deletion itself), and the list of payment events
-Stripe sent about it keeps each event's id, type and date. Stripe keeps
+Stripe sent about it keeps each event's id, type and date. A report you
+made of a comment, a page or an AI reply stays until it is resolved and
+for 180 days after, without your account once it is removed. Stripe keeps
 its own records of payments under its privacy policy. The
 [privacy policy](PRIVACY.md#gamma-cloud) lists everything the account
 server holds.

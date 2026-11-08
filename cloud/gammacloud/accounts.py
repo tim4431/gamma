@@ -684,10 +684,12 @@ def purge(conn, account_id: str, actor: str = "system") -> None:
     subscription copy goes too: only a deleted account is purged, and the
     deletion already cancelled the subscription at Stripe
     (``billing.cancel_for_deletion``); ``billing_events`` keeps the id. So
-    do the e-mail invitations it sent (``invitations.purge_account``)."""
-    from . import hosted, invitations  # imported here: both import this module
+    do the e-mail invitations it sent (``invitations.purge_account``). The
+    reports it made stay, without it (``reports.purge_account``)."""
+    from . import hosted, invitations, reports  # imported here: they import this module
     hosted.purge_account(conn, account_id, actor)
     invitations.purge_account(conn, account_id)
+    reports.purge_account(conn, account_id)
     for table in ("subscriptions", "identities", "portal_sessions", "email_tokens", "grants", "access_tokens",
                   "prefs", "servers_linked"):
         conn.execute(f"DELETE FROM {table} WHERE account_id = ?", (account_id,))

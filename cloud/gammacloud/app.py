@@ -11,7 +11,8 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import accounts, alerts, billing, config, db, hosted, identities, invitations, oidc, pages, sessions, settings, zotero
+from . import (accounts, alerts, billing, config, db, hosted, identities, invitations, oidc, pages, reports,
+               sessions, settings, zotero)
 from .accounts import Problem
 from .log import log
 from .routers import accounts as accounts_router
@@ -24,6 +25,7 @@ from .routers import external as external_router
 from .routers import oidc as oidc_router
 from .routers import portal as portal_router
 from .routers import profile as profile_router
+from .routers import reports as reports_router
 from .routers import zotero as zotero_router
 
 
@@ -34,6 +36,7 @@ def purge() -> None:
         identities.purge_expired(conn)
         invitations.purge_expired(conn)
         zotero.purge_expired(conn)
+        reports.purge(conn)
         conn.commit()
     with closing(db.connect()) as conn:
         # grants that ended and accounts past their grace period, before the
@@ -168,6 +171,7 @@ def create_app() -> FastAPI:
     app.include_router(oidc_router.router)
     app.include_router(accounts_router.router)
     app.include_router(profile_router.router)
+    app.include_router(reports_router.router)
     app.include_router(admin_router.router)
     app.include_router(external_router.router)
     app.include_router(connect_router.router)

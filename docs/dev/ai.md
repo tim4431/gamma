@@ -987,7 +987,15 @@ a press keeps an on-screen keyboard up.
   on-screen keyboard (`autoFocus={!touchTyping()}`).
 - **Message tools.** A message's Copy and Edit, and a code block's Copy, come
   up with the message where a pointer hovers (taking no press while hidden)
-  and are always there where none does.
+  and are always there where none does. A reply with text has **Report this
+  reply** beside its Copy (`.chatMsgReport`): the report dialog
+  (`support/ReportContentDialog.jsx`) takes a reason and the reader's words
+  and posts the reply's text and model to `POST /api/reports`, which keeps
+  it for the server's admins and, where the server signs in with Gamma
+  Cloud, sends it on to Gamma's developer, without the reader leaving the
+  chat ([api.md](api.md) "Reports", [cloud.md](cloud.md) "Reports"). A
+  share link's visitor reading a saved conversation may report its
+  replies too.
 - **Pictures.** A paste or the [+] menu's "Add photos & files"
   stores the picture at once (`POST /api/ai/pictures`, sized for the
   model) and attaches it by URL. "Attach what I see", offered with a paper

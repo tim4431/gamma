@@ -199,6 +199,12 @@ What the code does with data, which the answers follow:
   after the system's question, for the server shown.
 - **Report a problem** opens GitHub's issue form, prefilled; the person
   submits it there or not.
+- **Report** on a comment, a shared or published page or an AI reply sends
+  what is reported (its text, its author or model, the page's title), the
+  reason, the person's words and their username on that server to the
+  server; on a server with Gamma Cloud sign-in, This device's included,
+  the server sends it on to the account server, with the person's Gamma
+  Cloud account when they linked one. The person starts each.
 
 The answers, read as the research note reads Play's definitions
 ("collection" is data leaving the device, even to a server the person
@@ -216,7 +222,7 @@ chose; transfers the person starts are not sharing):
 | Files and docs | Yes (to the server the person uses) | No | Yes | App functionality |
 | Photos | Yes (pictures placed on pages) | No | Yes | App functionality |
 | Audio: Voice or sound recordings | Yes (recordings, dictation) | No | Yes | App functionality |
-| App activity: Other user-generated content | Yes (notes, highlights, handwriting, comments, chats) | No | Yes | App functionality |
+| App activity: Other user-generated content | Yes (notes, highlights, handwriting, comments, chats, reports) | No | Yes | App functionality |
 | Location, Financial info, Health and fitness, Messages (SMS, e-mail), Contacts, Calendar, Web browsing, Installed apps, App info and performance, Device or other IDs | No | No | | |
 
 Comments go to other people on the same server; they are counted above as
@@ -239,8 +245,9 @@ The IARC questionnaire, in the category for utility and productivity apps:
   The developer runs no public space of its own in the app; the demo
   server's guest workspaces are private and deleted after a few hours.
 - **No location sharing, no purchases in the app.**
-- The AI chat produces text with the person's own provider and key.
-  Whether Play's AI-generated content policy applies to it is open
+- The AI chat produces text with the person's own provider and key. Each
+  reply can be reported from inside the app; whether Play's AI-generated
+  content policy applies to it is open
   ([Before the first review](#before-the-first-review)).
 
 ## Sign-in details
@@ -317,8 +324,8 @@ register in the research note and Google's pages. Settled in the app:
   ([cloud_accounts.md "From a native app"](../docs/dev/cloud_accounts.md#the-oidc-provider)).
   Still linking *Pricing*: the header of the gammapdf.com pages the app
   opens (the privacy policy, the deletion steps, the docs), and of the
-  privacy policy the account server's sign-in and sign-up pages link to
-  under their form.
+  terms and the privacy policy the account server's sign-in and sign-up
+  pages link to under their form.
 - **Account deletion.** Play counts a Gamma Cloud account as one the app
   lets the person create, because the sign-in's browser reaches the
   account server's sign-up: account creation includes the case where
@@ -347,27 +354,44 @@ register in the research note and Google's pages. Settled in the app:
   assume
   ([docs/dev/android.md "Publishing on Google Play"](../docs/dev/android.md#publishing-on-google-play)).
 
-Open, not decided:
-
 - **AI-generated content.** Play asks apps that generate content with AI
   to let users report or flag offensive output "without needing to exit
   the app" ([AI-generated content](https://support.google.com/googleplay/android-developer/answer/13985936)).
-  The app's *Report a problem* opens GitHub's issue form, which leaves
-  the app. Whether the policy covers Gamma's chat is unclear: its
-  examples in scope are chatbots whose chat is "a central feature of the
-  app", and "productivity apps that use AI to improve an existing
-  feature" are out of scope for now
-  ([its FAQ](https://support.google.com/googleplay/android-developer/answer/14094294)),
-  while Gamma's chat is optional, off until the person adds their own
-  provider, and free-form. What would meet the policy, if it applies, is
-  a report control on AI replies that reaches the developer from inside
-  the app.
+  Every AI reply in the chat has *Report this reply*: a dialog in the app
+  takes a reason and the person's words and sends the reply's text and
+  model to the server, which keeps it for its admins and, with Gamma
+  Cloud sign-in on (This device's server has it), sends it on to the
+  developer's account server, which mails the developer
+  ([docs/dev/cloud.md "Reports"](../docs/dev/cloud.md#reports)).
 - **User-generated content.** Shared pages, comments, live editing and
   public links show one person's content to others. Where Play's policy
   applies, it asks for terms accepted before people post, a definition
   of objectionable content, and reporting and blocking inside the app
   ([user-generated content](https://support.google.com/googleplay/android-developer/answer/9876937)).
-  Whether review treats Gamma's sharing so is unconfirmed.
+  The Gamma Cloud sign-in and sign-up pages say that continuing accepts
+  the [terms](../TERMS.md#what-you-may-not-share), which define what may
+  not be shared and how it is reported. A comment's menu and the share
+  view's View menu, which a published page opens in, have *Report*,
+  which reaches the server's admins and, on a server with Gamma Cloud
+  sign-in, the developer; a report names the author, so it reports the
+  person as well.
+
+Open, not decided:
+
+- **Whether those policies apply.** For the AI policy, its examples in
+  scope are chatbots whose chat is "a central feature of the app", and
+  "productivity apps that use AI to improve an existing feature" are out
+  of scope for now
+  ([its FAQ](https://support.google.com/googleplay/android-developer/answer/14094294)),
+  while Gamma's chat is optional, off until the person adds their own
+  provider, and free-form. Whether review treats Gamma's sharing as
+  user-generated content is unconfirmed.
+- **Blocking.** There is no way for one person to block another. Sharing
+  is by link or with named people on the same server, so nobody can reach
+  someone who did not share with them; if review asks for blocking, it is
+  still to be built.
+- **A report on a server without Gamma Cloud** reaches only that server's
+  admins, not the developer: a server the person added themselves.
 
 ## The closed test
 

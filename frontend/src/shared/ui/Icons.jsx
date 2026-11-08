@@ -185,6 +185,10 @@ export const BanIcon = (p) => (
 export const AlertCircleIcon = (p) => (
   <Icon {...p}><path d="M12 8v5" /><path d="M12 16.5h.01" /><circle cx="12" cy="12" r="9" /></Icon>
 );
+// Report: a flag on its pole (a comment's, a shared page's, an AI reply's Report).
+export const FlagIcon = (p) => (
+  <Icon {...p}><path d="M4 22V4" /><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1" /></Icon>
+);
 export const ActivityIcon = (p) => (
   <Icon {...p}><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" /></Icon>
 );
