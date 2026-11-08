@@ -190,7 +190,8 @@ A **thread card** (`Layout.thread`) is its comments oldest first, each as
 the viewer's margin draws it: the author's avatar (their initial on their
 colour), their name, the day, and the comment under them past the avatar.
 The colour is `person_color`, the app's `personColor` with the same eight
-colours, held to it by `test_person_colours_match_the_app`. The replies
+colours (`test_person_colours_match_the_app`), picking the same one for a
+name (`tests/shared/personcolor.json`). The replies
 step in to the first comment's text, as the viewer draws them, so a thread
 reads as one comment and its answers. A deleted root reads "Comment
 deleted". A thread card has no colour bar, as in the viewer.

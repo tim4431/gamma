@@ -45,7 +45,7 @@ gets the same answer ("Ops" below).
 | op | fields | notes |
 |---|---|---|
 | `set` | `id`, `content?`, `base?`, `props?`, `base_props?` | `content` replaces the text; with `base` (the text it was edited from) it is merged into a block changed meanwhile ("same-block merge" below); `props` is a PATCH (`{key: value \| null}`, null deletes), so unrelated properties never conflict; `base_props` holds the values the patch was computed from — an ink group's new `ink_url` whose base is not the stored one is merged into the stored drawing by stroke ([handwriting.md](handwriting.md) "Two writers, one group"), a text box's `text_box` into the stored box key by key and a picture's `picture` into the stored picture ("same-box merge" below), other keys stay last-writer-wins |
-| `insert` | `id`, `parent`, `position?`, `content`, `props` | the client mints id and position (fractional-indexing, same library both sides); a position colliding with a sibling is re-keyed and the applied op echoes the final key; re-inserting an id the page already has (a retry, a rescue) leaves the block as it is, so nobody's newer edit or move is undone, and echoes it |
+| `insert` | `id`, `parent`, `position?`, `content`, `props` | the client mints id and position (fractional-indexing, the same algorithm on both sides, npm's and PyPI's, held to the same keys by `tests/shared/fractionalkeys.json`); a position no client could mint, the empty one and one with a character outside the base-62 alphabet included, is a 400 (`ops.order_key_error`); a position colliding with a sibling is re-keyed and the applied op echoes the final key; re-inserting an id the page already has (a retry, a rescue) leaves the block as it is, so nobody's newer edit or move is undone, and echoes it |
 | `move` | `id`, `parent`, `position?` | cycle-checked (400), collision-re-keyed |
 | `delete` | `id` | the subtree; an unknown id is a no-op (a retry) |
 | `merge` | `id`, `into`, `marker?`, `base?` | block `id` joined to the end of `into`: both texts as they are when the op arrives, `id`'s without a leading `marker` (its list or heading marker), its children as they are then in reading order (in its place when `into` is its parent, else last under `into`), `id` gone. Refused with conflict `missing`, `moved` or `cycle` when either block is gone, in another page, or `into` is inside `id`, and then nothing of it happens. Applied, it logs and fans out as the moves, the `set` and the `delete` it came to, so the log, a catch-up and a mirror's round see no new op. A join past `MAX_CONTENT` is 413 like a `set`. `base` is the text `into` had in the writer's tab, which the server never reads: a rescue sends it ("a block joined to another" below). Not on the folder and label trees (400), never with the page root (403) |
@@ -560,10 +560,15 @@ the room keeps the account's id beside it (never sent) for `revalidate`.
 The server hands out no colour: a person's colour is one of the eight
 `--peer-N`, from their name (`collaboration/personColor.js`), so they look
 the same in the page's presence, chips and carets as beside their comments,
-mentions and Inbox items. Two people on a page may share a colour.
+mentions and Inbox items. Two people on a page may share a colour. The
+notes PDF's comment cards pick the same one (`pdf_cards.person_color`,
+both held to `tests/shared/personcolor.json`).
 A share-link visitor without an account has `user: ""` and `name` = their
 display name (`?name=`, else `Anonymous`); their op batches carry
-`actor: "link:<name>"`. A rename in the share view reconnects the socket
+`actor: "link:<name>"`. The server cleans the name (`auth.link_name`:
+control characters out, whitespace collapsed, at most 40 code points), and
+the share view shows it cleaned alike (`cleanLinkName`, both held to
+`tests/shared/linkname.json`). A rename in the share view reconnects the socket
 (`usePageCollab`'s `reconnect`) so presence picks up the new name.
 
 ## The client (`src/collaboration/collabSession.js`, `src/collaboration/usePageCollab.js`, `src/shared/model/blockOps.js`)

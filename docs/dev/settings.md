@@ -335,7 +335,8 @@ Preferences:
   (`shared/ui/paletteContext.js`): the selection popup and a highlight's
   recolour menu store the swatch at its alpha (a highlight's
   `properties.color` is `#rrggbbaa`, [api.md](api.md) "The highlight
-  shape"), a pen or highlighter preset takes the swatch's alpha as its
+  shape"; the alpha byte rounds half up on both sides, `palette.js` and
+  the server's `gamma/colors.py` held to `tests/shared/colors.json`), a pen or highlighter preset takes the swatch's alpha as its
   own `opacity` ([handwriting.md](handwriting.md)), a text box takes the
   hex alone. A changed swatch is what the pickers offer from then on;
   stored highlights and strokes keep the colour they have. The first

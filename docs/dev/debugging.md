@@ -442,8 +442,8 @@ runs 8 seeds by default: `ZOTERO_FUZZ_SEEDS=2000 ZOTERO_FUZZ_STEPS=100`
 runs more, and `ZOTERO_FUZZ_TRACE=<key>` follows one object round by round.
 
 Rules the frontend mirrors — search normalization (`gamma/textnorm.py` ↔
-`frontend/src/shared/lib/textnorm.js`), published pages' slugs
-(`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`), text boxes
+`frontend/src/shared/lib/textnorm.js`), published pages' slugs and page
+hosts (`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`), text boxes
 (`gamma/text_box.py` ↔ `frontend/src/markup/textBox.js`,
 `tests/shared/textbox.json`, [text_boxes.md](text_boxes.md)), pictures
 (`gamma/picture.py` ↔ `frontend/src/markup/picture.js`: the normalizer,
@@ -453,9 +453,40 @@ handwriting (`gamma/ink.py` ↔ `frontend/src/ink/ink.js` and
 `ink/grain.js`: the codec, dashes, merge, the calligraphy nib and the
 pencil's grain, [handwriting.md](handwriting.md)) — are pinned by ONE
 set of cases both sides read: `tests/shared/*.json` at the repository root,
-run by `backend/tests/test_shared_fixtures.py` (the slugs by
-`test_publish.py`) and the matching node tests. Add a case there when a rule
-changes; whichever side drifts fails.
+run by `backend/tests/test_shared_fixtures.py` and the matching node tests.
+So are a block's kind (`blockkind.json`: the `kind` column and
+`blocks_store.block_kind` ↔ `editor/blockProps.js`), item types
+(`itemtypes.json`: `gamma/item_types.py` ↔ `shared/lib/itemTypes.js`),
+colours (`colors.json`: `gamma/colors.py` ↔ `shared/model/palette.js`),
+share-link names (`linkname.json`: `auth.link_name` ↔
+`collaboration/linkName.js`), person colours (`personcolor.json`:
+`pdf_cards.person_color` ↔ `collaboration/personColor.js`), the chat's
+passage budget (`passages.json`: `ai_context.fair_shares` ↔
+`chat/passageBudget.js`), what a page carries (`attachment.json`:
+`blocks_store.page_attachment` ↔ `library/libraryUtils.js`), sibling keys
+(`fractionalkeys.json`: the npm and PyPI fractional-indexing libraries) and
+pasted math (`pastemath.json`: `gamma/paste_math.py` ↔
+`editor/pasteMath.js`). The kinds are run against the column by
+`test_block_columns.py`, the pasted math by `test_paste_math.py` and the
+slugs by `test_publish.py`. Add a case there when a rule changes; whichever
+side drifts fails. `test_every_fixture_is_read_by_both_suites` fails a
+fixture that no node test or no pytest module reads, except those in its
+`ONE_SIDED` table: the mirror's tree rules and the text merge, which only
+the server runs, and the held pen shape, which the server never draws. It
+counts a name only as a string a test opens (closed by a quote), so a
+comment that still names a fixture after its reader went does not hide the
+gap.
+
+A twin drifts where the two languages differ, so a new fixture should try
+those inputs. JS `.length` and `slice` count UTF-16 units where Python
+counts code points (an emoji, a math letter such as U+1D465). `Math.round`
+takes a half up where Python's `round` takes the even one (`ink.js_round`,
+`text_box._round`). JS `\s` and `trim()` take U+FEFF and leave U+0085, and
+Python's `\s` and `strip()` the reverse. A JS object literal answers its
+prototype's keys (`"constructor"`), where a Python dict does not. And a
+library on each side may check its inputs differently: neither
+fractional-indexing checks a key's characters, so `fractionalkeys.json`'s
+`foreign` keys are the ones the server refuses itself.
 
 The frontend has few component tests (its lint is [below](#frontend-lint)). Its pure modules have
 `node --test` tests (`npm test` from `frontend/`, the files in

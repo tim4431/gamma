@@ -339,7 +339,8 @@ export function formatFullDate(iso) {
 // raw properties. Null for a page that is only blocks. `url` is where the
 // file is fetched from: the stored source_url, else the stored copy by
 // hash — a page stores no source_url that is its own doc_id's
-// (gamma/blocks_store.py page_attachment, the twin).
+// (gamma/blocks_store.py page_attachment, the twin; tests/shared/
+// attachment.json holds both to the same answers).
 export function pageAttachment(block) {
   const p = block?.properties || {};
   if (!p.doc_id && !p.source_url) return null;

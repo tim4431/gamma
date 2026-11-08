@@ -84,8 +84,8 @@ def load_props(text) -> dict:
 
 def block_kind(parent_id, page_id, props: dict) -> str | None:
     """The block's ``kind``, by the rule of the generated column
-    (db.BLOCK_HOT_COLUMNS: the SQL and this must agree, which
-    tests/test_block_columns.py checks): NULL on the reserved rows,
+    (db.BLOCK_HOT_COLUMNS: the SQL, this and the client's blockKind agree
+    on tests/shared/blockkind.json's cases): NULL on the reserved rows,
     ``page`` under root or the trash, ``folder`` / ``label`` in the trees,
     else by the properties — ``ink`` (an ``ink_url`` key, whatever its
     value: ``highlights.is_ink``), ``text_box`` / ``picture`` / ``sheet``
@@ -440,7 +440,8 @@ def page_attachment(props: dict | None) -> dict | None:
     everywhere. Lookups BY attachment (``by-doc``, the search index, the
     PDF export) key on ``doc_id`` directly; they are about the file, not
     the page. Mirrored by ``pageAttachment()`` in
-    frontend/src/library/libraryUtils.js."""
+    frontend/src/library/libraryUtils.js; tests/shared/attachment.json
+    holds the two to the same answers."""
     props = props or {}
     doc_id = str(props.get("doc_id") or "")
     url = str(props.get("source_url") or "")
@@ -457,7 +458,8 @@ def attachment_file(attachment: dict | None) -> str:
     from another address alone, never stored). The attachment's ``id``
     stays ``""`` for such a page: this is for code that reads the file,
     not for gating or lookups by attachment. Mirrored by
-    ``attachmentFile()`` in frontend/src/library/libraryUtils.js."""
+    ``attachmentFile()`` in frontend/src/library/libraryUtils.js (the same
+    fixture)."""
     if not attachment:
         return ""
     return attachment["id"] or pdf_url_doc_id(attachment["url"])

@@ -19,11 +19,18 @@ export function randomLinkName() {
   return `${pick(ADJECTIVES)} ${pick(ANIMALS)}`;
 }
 
-// Same cleaning as the server: control characters out, whitespace collapsed,
-// capped. Empty when nothing is left, so callers can keep the old name.
+// What Python counts as whitespace once the control characters are gone
+// (str.isspace): JS's \s adds U+FEFF and lacks U+0085.
+const SPACES = /[ \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/g;
+
+// The server's cleaning (gamma/auth.py link_name; tests/shared/linkname.json
+// holds both to the same answers): control characters out, whitespace
+// collapsed, capped at LINK_NAME_MAX code points, so an emoji is never cut
+// in half. Empty when nothing is left, so callers can keep the old name.
 export function cleanLinkName(raw) {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: strips the C0 controls and DEL, as the server does
-  return String(raw || "").replace(/[\x00-\x1f\x7f]/g, "").replace(/\s+/g, " ").trim().slice(0, LINK_NAME_MAX).trim();
+  const text = String(raw || "").replace(/[\x00-\x1f\x7f]/g, "").replace(SPACES, " ").replace(/^ | $/g, "");
+  return Array.from(text).slice(0, LINK_NAME_MAX).join("").replace(/ $/, "");
 }
 
 export function saveLinkName(name) {

@@ -7,6 +7,7 @@ autouse ``_page_ids_kept`` checks every written workspace against the
 parent walk as well; here each writer is checked by name."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -196,39 +197,11 @@ def test_the_listing_carries_page_summaries(owner):
 
 # The dict's ``kind`` is computed in Python from the parsed properties
 # (blocks_store.block_kind) while the generated column stays for the
-# filters: both must say the same for every shape a row can have.
-_KIND_SHAPES = [
-    ({}, "note"),
-    ({"ink_url": "/api/uploads/x.gamma-ink"}, "ink"),
-    ({"ink_url": None}, "ink"),                       # the key alone makes it ink, as json_type does
-    ({"ink_url": "", "pdf_position": {"pageNumber": 1}}, "ink"),   # not stored yet: ink, no highlight
-    ({"text_box": {"x": 1}}, "text_box"),
-    ({"text_box": "no"}, "note"),
-    ({"sheet": {}}, "sheet"),
-    ({"recording": {}}, "recording"),
-    ({"recording": []}, "note"),
-    ({"sheet": {}, "recording": {}}, "sheet"),
-    ({"recording": {"segments": []}, "link_url": "u"}, "recording"),
-    ({"link_url": "https://example.org"}, "link"),
-    ({"link_url": ""}, "note"),
-    ({"link_url": None}, "note"),
-    ({"link_page_id": "p1"}, "link"),
-    ({"link_page_id": "", "link_url": ""}, "note"),
-    ({"link_url": 0}, "link"),                        # a number is not the empty string
-    ({"pdf_position": {"pageNumber": 1}}, "highlight"),
-    ({"pdf_position": "1"}, "note"),
-    ({"text_box": {}, "pdf_position": {}}, "text_box"),   # the first rule wins, in the column's order
-    ({"picture": {"url": "/api/uploads/3f2a9c.png"}}, "picture"),
-    ({"picture": {}}, "picture"),                      # an object, whatever it holds (gamma/picture.py is_picture)
-    ({"picture": []}, "note"),
-    ({"picture": "/api/uploads/3f2a9c.png"}, "note"),
-    ({"picture": None, "pdf_position": {}}, "highlight"),
-    ({"ink_url": "", "picture": {}}, "ink"),
-    ({"text_box": {}, "picture": {}}, "text_box"),
-    ({"picture": {}, "sheet": {}, "recording": {}}, "picture"),
-    ({"picture": {}, "link_url": "u", "pdf_position": {}}, "picture"),
-    ({"link_url": "u", "pdf_position": {}}, "link"),
-]
+# filters: both must say the same for every shape a row can have, and so
+# must the client's blockKind (frontend/tests/blockProps.test.mjs), which
+# reads the same cases: tests/shared/blockkind.json.
+_KINDS = json.loads((Path(__file__).resolve().parents[2] / "tests" / "shared" / "blockkind.json").read_text(encoding="utf-8"))
+_KIND_SHAPES = [(case["props"], case["kind"]) for case in _KINDS["props"]]
 
 
 def test_the_python_kind_agrees_with_the_generated_column(owner):
@@ -253,8 +226,8 @@ def test_the_python_kind_agrees_with_the_generated_column(owner):
         conn.commit()
     assert block_kind(None, "", {}) is None
     assert not is_ink(None) and not is_ink([]) and not is_ink("ink_url")
-    assert block_kind("root", "p", {}) == "page" and block_kind("trash", "p", {}) == "page"
-    assert block_kind("f1", "folders", {}) == "folder" and block_kind("labels", "labels", {}) == "label"
+    for case in _KINDS["tree"]:
+        assert block_kind(case["parent_id"], case["page_id"], case["props"]) == case["kind"], case["note"]
     for n, (props, expected) in enumerate(_KIND_SHAPES):
         assert owner.get(f"/api/blocks/bcKind{n}").json()["kind"] == expected
     _no_drift()

@@ -27,7 +27,7 @@ import {
   areaPicturesNote, canContinueAfterLimit, continueAfterLimitPrompt, coverageNote, limitNote, shortenedNote, trimmedNote,
   truncatedNote,
 } from "./coverage.js";
-import { keptNote, keptTitle, passageShares } from "./passageBudget.js";
+import { charCount, keptNote, keptTitle, passageShares } from "./passageBudget.js";
 import { recencySections } from "../library/PageOption";
 import { rankLibraryPages } from "../library/librarySearch";
 import { filedIn, pageAttachment, topPageOf } from "../library/libraryUtils";
@@ -647,8 +647,8 @@ export default function ChatDock({
   // A chip whose passage won't go whole says what it keeps.
   const quotedShares = passageShares([...pdfSelections, cursorChip?.sel,
     ...(chatNotes || []).filter((n) => n.kind === "note")], chatContextChars);
-  const keptOf = (p) => keptNote(quotedShares.get(p), p.text.length);
-  const keptHint = (p) => keptTitle(quotedShares.get(p), p.text.length, chatContextChars);
+  const keptOf = (p) => keptNote(quotedShares.get(p), charCount(p.text));
+  const keptHint = (p) => keptTitle(quotedShares.get(p), charCount(p.text), chatContextChars);
   // Empty-state intro and input placeholder for an agent-enabled home chat.
   const agentScopeName = organizeFolder ? t("this folder") : t("your library");
   const agentIntro = organizeFolder == null || !toolsEnabled ? null

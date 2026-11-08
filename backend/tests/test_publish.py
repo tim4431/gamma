@@ -492,13 +492,13 @@ def test_slug(case):
     assert publish.slug(case["input"]) == case["output"]
 
 
+@pytest.mark.parametrize("case", SLUGS["page_host"], ids=[c["note"] for c in SLUGS["page_host"]])
+def test_a_page_host_names_its_user(case):
+    assert publish.page_host_user(case["pattern"], case["host"]) == case["user"]
+
+
 def test_the_page_host_pattern(monkeypatch):
     pattern = "{username}-pages.gammapdf.com"
-    assert publish.page_host_user(pattern, "tim-pages.gammapdf.com") == "tim"
-    assert publish.page_host_user(pattern, "Tim-Pages.GammaPDF.com:8443") == "tim"
-    assert publish.page_host_user(pattern, "a-pages-pages.gammapdf.com") == "a-pages"
-    for other in ("api.gammapdf.com", "x.tim-pages.gammapdf.com", "-pages.gammapdf.com", "tim-pages.gammapdf.com.evil"):
-        assert publish.page_host_user(pattern, other) == "", other
     assert publish.public_url("https://share.gammapdf.com", pattern, "Tim", "Élan vital", "p-1") \
         == "https://tim-pages.gammapdf.com/elan-vital-p-1"
     assert publish.public_url("http://127.0.0.1:9001", pattern, "tim", "量子", "abc") \

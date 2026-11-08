@@ -1250,19 +1250,17 @@ def test_render_notes_refuses_an_unknown_place():
 
 
 def test_person_colours_match_the_app():
-    """A comment's avatar takes its author's colour as the app picks it
-    (frontend/tests/personColor.test.mjs pins the same names), from the
-    same eight colours (--peer-0 … --peer-7 in app.css)."""
+    """A comment's avatar takes its author's colour from the app's eight
+    (--peer-0 … --peer-7 in app.css); which one a name picks is
+    tests/shared/personcolor.json's, which personColor.js reads too
+    (test_shared_fixtures.py)."""
     import re
     from pathlib import Path
 
-    from gamma.pdf_cards import PEOPLE, person_color
+    from gamma.pdf_cards import PEOPLE
 
     css = (Path(__file__).resolve().parents[2] / "frontend/src/shared/styles/app.css").read_text(encoding="utf-8")
     assert tuple(re.findall(r"--peer-\d: (#[0-9a-f]{6})", css)) == PEOPLE
-    rgb = {value: tuple(int(value[i:i + 2], 16) / 255 for i in (1, 3, 5)) for value in PEOPLE}
-    for name, index in (("tim-2", 5), ("Tim", 0), ("alice", 0), ("Anonymous", 5), ("张三", 1)):
-        assert person_color(name) == rgb[PEOPLE[index]], name
 
 
 def _comment_on(guest, page_id, block_id, body):

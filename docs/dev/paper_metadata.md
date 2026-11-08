@@ -120,7 +120,8 @@ rules). The quirks as observed live:
 
 **Item type.** `meta.kind` names what the record describes, under the names
 Zotero gives its item types (`gamma/item_types.py`, mirrored for the
-interface in `frontend/src/shared/lib/itemTypes.js`): `journalArticle`,
+interface in `frontend/src/shared/lib/itemTypes.js`, both held to
+`tests/shared/itemtypes.json`): `journalArticle`,
 `conferencePaper`, `preprint`, `bookSection`, `book`, `thesis`, `report`,
 `presentation`, `document`. Zotero's item types are CSL's types under
 another spelling, the vocabulary reference managers and citation styles

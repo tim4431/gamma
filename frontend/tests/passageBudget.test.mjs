@@ -1,27 +1,27 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { MAX_CHAT_PASSAGES, fairShares, keptNote, keptTitle, passageShares } from "../src/chat/passageBudget.js";
+import { MAX_CHAT_PASSAGES, charCount, fairShares, keptNote, keptTitle, passageShares } from "../src/chat/passageBudget.js";
 
 const n = (v) => v.toLocaleString();
 
-// The same cases as backend/tests/test_ai_passages.py: the composer and
-// the server must cut a passage at the same character.
-const CASES = [
-  [[100, 200], 1000, [100, 200]], // everything fits
-  [[31_400], 12_000, [12_000]], // one passage: its first 12,000
-  [[500, 40_000, 30_000], 60_000, [500, 29_750, 29_750]], // the short one keeps all; the rest share
-  [[100, 100], 151, [75, 76]], // a tie: the remainder goes to the later one
-  [[10, 20], 0, [0, 0]],
-  [[], 60_000, []],
-];
+// The server's cases too (gamma/ai_context.py fair_shares, quoted_shares;
+// backend/tests/test_shared_fixtures.py): the composer's chip and the server
+// must cut a passage at the same character.
+const SHARED = JSON.parse(readFileSync(new URL("../../tests/shared/passages.json", import.meta.url), "utf8"));
 
-test("a shared budget keeps short passages whole and splits the rest evenly", () => {
-  for (const [sizes, budget, want] of CASES) assert.deepEqual(fairShares(sizes, budget), want, `${sizes} in ${budget}`);
-  // Never more than the budget, never more than a passage has.
-  const shares = fairShares([7, 9_000, 3, 120_000, 45_000], 60_000);
-  assert.ok(shares.reduce((a, b) => a + b, 0) <= 60_000);
-  assert.deepEqual(shares.slice(0, 3), [7, 9_000, 3]);
-  assert.equal(shares[3], shares[4]);
+test("a shared budget keeps short passages whole and splits the rest evenly (the shared cases)", () => {
+  for (const c of SHARED.shares) assert.deepEqual(fairShares(c.sizes, c.budget), c.shares, c.note);
+  for (const c of SHARED.shares) assert.ok(c.shares.reduce((a, b) => a + b, 0) <= c.budget, `${c.note}: never more than the budget`);
+});
+
+test("a passage is measured in characters as the server counts them (the shared cases)", () => {
+  for (const c of SHARED.texts) {
+    const passages = c.texts.map((text) => ({ text, page: 1 }));
+    const shares = passageShares(passages, c.budget);
+    assert.deepEqual(passages.map((p) => shares.get(p)), c.kept, c.note);
+    assert.deepEqual(c.texts.map(charCount), c.total, c.note);
+  }
 });
 
 test("each chip's passage maps to what the message keeps of it", () => {

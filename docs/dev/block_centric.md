@@ -40,7 +40,8 @@ code keeps them apart (decided 2026-09-13, see *Files and documents* below):
   highlights, metadata, the PDF search index, AI context and `by-doc` dedup
   all key on it. Code reads it through ONE helper on each side —
   `page_attachment(props)` (backend) / `pageAttachment(block)` (frontend)
-  returning `{kind: "pdf", id, url, name} | null`. Nothing else may read
+  returning `{kind: "pdf", id, url, name} | null`, held to the same answers
+  by `tests/shared/attachment.json`. Nothing else may read
   `doc_id`/`source_url` off a page directly to decide *what the page is*.
   Code that reads the file itself takes the stored file the attachment
   shows from `attachment_file(attachment)` / `attachmentFile(attachment)`:

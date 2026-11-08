@@ -384,10 +384,11 @@ alpha (0.65) when made in the viewer, an annotation's own `/C` and
 `/GammaAlpha`, else `/CA`, when imported from a PDF — never a palette slot, so every member of a
 workspace and every export sees the same colour whatever palette their
 account keeps ([settings.md](settings.md) "Colors"). `gamma/colors.py`
-(the frontend's `shared/model/palette.js`) reads the older `rgba(…)`
+(the frontend's `shared/model/palette.js`, both held to
+`tests/shared/colors.json`) reads the older `rgba(…)`
 and `#rrggbb` spellings too, which an older server or export can still
 send; workspace step 37 respells stored ones. Tests: `tests/test_highlight_shape.py` (the shape, its writers, the derived
-URL), `test_block_columns.py` (the kinds), `test_migrations.py` and
+URL), `test_block_columns.py` (the kinds, `tests/shared/blockkind.json`), `test_migrations.py` and
 `test_restore_consistency.py` (step 30 and an older backup),
 `test_colors.py` (the colour spellings, the Logseq names, step 37), the browser
 suite's `pdf.mjs` (a highlight made from a selection, its stored colour,

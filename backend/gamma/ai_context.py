@@ -133,7 +133,8 @@ def fair_shares(sizes: list[int], budget: int) -> list[int]:
     share keeps all of it, and what it leaves goes to the rest, again split
     evenly. Nothing is dropped, and one long item can't starve the others.
     The chat's composer computes the same (chat/passageBudget.js
-    ``fairShares``), so a chip says beforehand what the server keeps."""
+    ``fairShares``, held to it by tests/shared/passages.json), so a chip
+    says beforehand what the server keeps."""
     shares = [0] * len(sizes)
     left = max(0, budget)
     order = sorted(range(len(sizes)), key=lambda i: sizes[i])
@@ -152,7 +153,9 @@ def passage_budget(payload) -> int:
 def quoted_shares(payload, budget: int | None = None) -> tuple[list[int], list[int]]:
     """How many characters of each selected PDF passage and of each selected
     note text the question quotes: one budget shared by all of them, in the
-    order the request lists them (PDF passages, then note selections)."""
+    order the request lists them (PDF passages, then note selections).
+    Characters are code points, as the composer counts them too
+    (passageBudget.js ``charCount``)."""
     passages, notes = request_selections(payload), request_note_selections(payload)
     shares = fair_shares([len(p["text"]) for p in passages] + [len(s["text"]) for s in notes],
                          budget or passage_budget(payload))

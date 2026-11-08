@@ -93,7 +93,8 @@ Other editors (a text box, a comment, an embed) convert in
 previews show it so (`joinBlockText`, `AiGhostRow`). `dollarMath`'s `keep`
 is the text the AI read. The pairs and dollar spans that text holds in its
 prose stay as written. `tests/shared/pastemath.json` holds the cases both
-suites check.
+suites check: `dollar` the conversion, `paste` the caret positions where a
+paste stays as copied.
 
 Where code is, the keys, a paste, the editor's marks and formulas and the chat
 read one way: `shared/lib/mdCode.js` (`codeFences`, `codeSpans`, `codeTest`,

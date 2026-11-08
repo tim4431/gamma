@@ -940,9 +940,9 @@ another budget of the same size the same way (`notes_focus_section`,
 more than it.
 
 The user is told before sending. The composer applies the same rule to
-the chips (`chat/passageBudget.js`, `fairShares` to the character, with
-cases shared between `tests/passageBudget.test.mjs` and
-`tests/test_ai_passages.py`), and a chip whose passage won't go whole says
+the chips (`chat/passageBudget.js`, `fairShares` to the character, a
+character being a code point on both sides, with the cases in
+`tests/shared/passages.json`), and a chip whose passage won't go whole says
 "first 12,000 of 31,400 characters" in the warning colour, with the reason
 and the setting in its hover text. After sending, the stream's
 `{"shortened": {items, budget, asked}}` line (after `{"trimmed"}`) lists
