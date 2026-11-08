@@ -416,7 +416,10 @@ The AI agent's tests are split by area — `test_ai_tools_registry.py`
 and `test_ai_agent_loop.py` (`/api/ai/chat` with a faked provider) — over the
 fixtures in `tests/ai_fixtures.py`. Its `org` fixture creates one account
 per test module (the module's name is in the username), so the files never
-see each other's pages or provider entries.
+see each other's pages or provider entries. conftest's autouse
+`_no_tool_checks` stubs the check of whether a model calls tools, so a chat
+there makes no check call; `test_ai_tool_check.py` puts the real one back
+([ai.md](ai.md#models-that-cant-call-tools)).
 
 The Zotero link's tests ([zotero_sync.md](zotero_sync.md#tests)) never
 reach zotero.org: they run against an in-memory Zotero,

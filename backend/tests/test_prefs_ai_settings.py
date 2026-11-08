@@ -465,6 +465,94 @@ def test_probe_uses_configured_test_model(alice, monkeypatch):
     assert alice.put(f"/api/ai/providers/{pid}", json={"test_model": "x" * 101}).status_code == 400
 
 
+def _check_turn(events):
+    """A fake routers.ai._open_ai for Check again: one streamed Anthropic
+    turn of ``events``; ``.seen`` keeps each call's keyword arguments."""
+    from ai_fixtures import FakeResp
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        fake_open.seen.append({"model": entry["model"], **kw})
+        return FakeResp(events)
+    fake_open.seen = []
+    return fake_open
+
+
+TOOL_CALL = [{"type": "content_block_start", "content_block": {"type": "tool_use", "id": "c1", "name": "report_ok"}},
+             {"type": "content_block_stop"},
+             {"type": "message_delta", "delta": {"stop_reason": "tool_use"}}]
+TEXT_ONLY = [{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}},
+             {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}]
+
+
+def test_check_again_checks_a_picked_model_for_tools(alice, monkeypatch):
+    # Test with tools_model runs the tool check for that model instead of the
+    # plain probe, stores its verdict and returns it; a plain Test and the
+    # login check stay the plain probe, with no tool.
+    import gamma.routers.ai as ai_mod
+
+    monkeypatch.setattr(ai_mod, "_call_ai", lambda *a, **kw: pytest.fail("Check again ran the plain probe"))
+    fake = _check_turn(TOOL_CALL)
+    monkeypatch.setattr(ai_mod, "_open_ai", fake)
+    pid = alice.get("/api/ai/settings").json()["providers"][0]["id"]
+    body = alice.post(f"/api/ai/providers/{pid}/test",
+                      json={"model": "claude-meta", "tools_model": "claude-solo"}).json()
+    assert body["ok"] is True and body["model"] == "claude-solo" and body["tools"]["ok"] is True
+    [seen] = fake.seen
+    assert seen["model"] == "claude-solo" and seen["tools"] == [ai_mod.TOOL_CHECK] and seen["stream"] is True
+    assert alice.get("/api/ai/models").json()["models"][0]["tools"] is True
+    monkeypatch.setattr(ai_mod, "_open_ai", _check_turn(TEXT_ONLY))
+    body = alice.post(f"/api/ai/providers/{pid}/test", json={"tools_model": "claude-solo"}).json()
+    assert body["tools"]["ok"] is False and "answered in text" in body["tools"]["reason"]
+    check = alice.get("/api/ai/settings").json()["providers"][0]["tool_checks"]["claude-solo"]
+    assert check == body["tools"]
+    # Only a picked model is checked.
+    assert alice.post(f"/api/ai/providers/{pid}/test", json={"tools_model": "claude-other"}).status_code == 400
+
+    monkeypatch.setattr(ai_mod, "_open_ai", lambda *a, **kw: pytest.fail("a plain probe sent a tool"))
+    sent = []
+    monkeypatch.setattr(ai_mod, "_call_ai", lambda *a, **kw: sent.append(kw) or "ok")
+    assert alice.post(f"/api/ai/providers/{pid}/test").json()["ok"] is True
+    assert alice.post("/api/ai/health", json={"provider_id": pid, "mode": "test"}).json()["ok"] is True
+    assert len(sent) == 2 and not any("tools" in kw for kw in sent)
+
+
+def test_an_edit_drops_the_tool_checks_it_could_change(alice, monkeypatch):
+    # A new key, base URL or protocol may be another server: its verdicts
+    # go. A models edit keeps the picked models' only; a name or test model
+    # edit keeps them.
+    import gamma.routers.ai as ai_mod
+
+    monkeypatch.setattr(ai_mod, "_open_ai", _check_turn(TOOL_CALL))
+    entry = alice.get("/api/ai/settings").json()["providers"][0]
+    pid = entry["id"]
+
+    def checked():
+        body = alice.post(f"/api/ai/providers/{pid}/test", json={"tools_model": "claude-solo"}).json()
+        assert body["tools"]["ok"] is True, body
+
+    def checks(**edit):
+        r = alice.put(f"/api/ai/providers/{pid}", json=edit)
+        assert r.status_code == 200, r.text
+        return r.json()["providers"][0]["tool_checks"]
+
+    checked()
+    assert list(checks(name="Renamed again", test_model="claude-cheap")) == ["claude-solo"]
+    assert list(checks(api_key="sk-ant-api03-test-key-12345678")) == ["claude-solo"]  # the same key
+    assert list(checks(models="claude-solo, claude-two")) == ["claude-solo"]
+    assert checks(models="claude-two") == {}
+    assert checks(models="claude-solo") == {}  # pruned, not hidden
+    checked()
+    assert checks(api_key="sk-ant-api03-test-key-87654321") == {}
+    checked()
+    assert checks(base_url="https://example.com/v1y") == {}
+    checked()
+    assert checks(protocol="openai") == {}
+    r = alice.put(f"/api/ai/providers/{pid}", json={
+        "protocol": entry["protocol"], "name": entry["name"], "api_key": "sk-ant-api03-test-key-12345678",
+        "base_url": entry["base_url"], "test_model": ""})
+    assert r.status_code == 200, r.text
+
+
 # --- upstream error summarization ---------------------------------------------
 
 def _http_error(code, body, reason="err"):

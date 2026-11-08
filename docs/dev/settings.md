@@ -533,7 +533,11 @@ AI:
   custom endpoint and its API format; [ai.md](ai.md#other-services)), the key with the
   provider's placeholder, a "Get a key at …" link and the live check, then
   the models with the name and test model under More options; its button is
-  Connect, and the new connection is tested once saved; the server's shared entries follow the account's own as read-only
+  Connect, and the new connection is tested once saved; each model tag on a
+  row shows whether the model calls tools on that connection (a check, a ban
+  with the reason and date on hover, or nothing before its first chat with
+  tools), and a click on the tag checks it again ([ai.md](ai.md#models-that-cant-call-tools));
+  the server's shared entries follow the account's own as read-only
   rows tagged "Shared by this server", selectable as the active key but
   without Test / Manage / delete; with no key picked, or the picked one
   removed, the first connection that offers models is the active one, here

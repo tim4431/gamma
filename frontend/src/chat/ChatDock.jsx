@@ -25,7 +25,7 @@ import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import {
   areaPicturesNote, canContinueAfterLimit, continueAfterLimitPrompt, coverageNote, limitNote, shortenedNote, trimmedNote,
-  truncatedNote,
+  toolsOffNote, truncatedNote,
 } from "./coverage.js";
 import { charCount, keptNote, keptTitle, passageShares } from "./passageBudget.js";
 import { recencySections } from "../library/PageOption";
@@ -47,8 +47,8 @@ import { AgentToolPicker, changePermission, chatKindName, permissionLabel } from
 import { aiServiceTiles } from "../settings/providerEditor.js";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
-import { effortFor, providerModels, speedFor } from "./modelPrefs";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, BotIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
+import { effortFor, modelLabel, providerModels, speedFor } from "./modelPrefs";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import ListMotion from "../shared/ui/ListMotion";
@@ -108,8 +108,9 @@ function relAge(iso) {
 // reply: the oldest messages left out of a conversation the model can't
 // hold any more, the selected passages and attached blocks that went short,
 // a reply cut off at the output limit, and a reply a tool limit or the
-// window stopped (chat/coverage.js).
-function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated, limit }) {
+// window stopped (chat/coverage.js). A reply whose model can't call tools
+// says it went without them (`toolsOff`, `model` its model's name).
+function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated, limit, toolsOff, model }) {
   const [open, setOpen] = useState(-1); // the pill whose explanation is unfolded
   const [shown, setShown] = useState(-1); // the explanation under them, kept while it folds away
   const notes = (items || []).flatMap((c) => {
@@ -133,6 +134,7 @@ function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated,
     }
     return out;
   });
+  if (toolsOff) notes.push(toolsOffNote(toolsOff, model));
   for (const extra of [trimmedNote(trimmed), shortenedNote(shortened), truncatedNote(truncated), limitNote(limit)]) if (extra) notes.push(extra);
   if (!notes.length) return null;
   // Pills like the agent's steps: a click unfolds the explanation under them.
@@ -472,6 +474,12 @@ export default function ChatDock({
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus, askConfirm,
+  // A model that can't call tools on its connection (its registry row's
+  // `tools` false): checkModelTools(model) checks it again (App's
+  // testAiProvider with the model, resolving to its result), and
+  // refreshAiModels reads /api/ai/models again, when a reply brings a
+  // verdict the registry didn't have.
+  checkModelTools, refreshAiModels,
   // Home/folder view: the folder being viewed (its id; "" = library root) —
   // enables the folder-agent tools; null in the paper view. agentPerms is the
   // Settings per-chat-kind permission map ({folder, pdf, notes} → {list,
@@ -688,6 +696,32 @@ export default function ChatDock({
   // Connections); the first key's when none is selected or the selected one is gone.
   const headerModels = providerModels(aiInfo?.models, aiProvider);
   const headerModel = headerModels.find((m) => m.id === chatModel) || headerModels[0] || null;
+  // The model can't call tools on its connection: its chats go without them,
+  // which the composer's No tools chip says (a click checks it again, on an
+  // own connection or by an administrator), and the agent's intro and
+  // placeholder give way to the plain chat's.
+  const noTools = headerModel?.tools === false;
+  const canCheckTools = !!checkModelTools && (!headerModel?.shared || isAdmin);
+  const [checkingTools, setCheckingTools] = useState(false);
+  const noToolsHint = noTools ? (canCheckTools
+    ? t("{model} can't call tools on this connection ({reason}), so its chats answer without them. Click to check again.",
+      { model: headerModel.model, reason: headerModel.tools_reason || "" })
+    : t("{model} can't call tools on this connection ({reason}), so its chats answer without them. An administrator can check it again in Settings → Server.",
+      { model: headerModel.model, reason: headerModel.tools_reason || "" })) : "";
+  async function checkTools() {
+    const m = headerModel;
+    if (!canCheckTools) { setStatus(noToolsHint); return; }
+    setCheckingTools(true);
+    try {
+      const r = await checkModelTools(m);
+      setStatus(!r?.tools ? t("Couldn't check {model}: {headline}", { model: m.model,
+        headline: failureCopy(r?.kind, { provider: m.provider_name }).headline })
+        : r.tools.ok ? t("{model} can use tools", { model: m.model })
+        : t("{model} still can't use tools: {reason}", { model: m.model, reason: r.tools.reason }));
+    } finally {
+      setCheckingTools(false);
+    }
+  }
   const modelInfo = useModelInfo(!aiOff && aiInfo ? headerModel?.id : "");
   // The context ring: the latest reply's size against the model's window.
   const ctxUsed = contextUsed(chatMessages);
@@ -1383,6 +1417,7 @@ export default function ChatDock({
       ...(answered ? { model: answered.name, ...(answered.effort ? { effort: answered.effort } : {}),
         ...(answered.speed ? { speed: answered.speed } : {}),
         ...(answered.tools ? { tools: true } : {}) } : {}),
+      ...(answered?.tools_off ? { toolsOff: answered.tools_off } : {}),
       ...(usage ? { usage } : {}),
       ...(lastRound ? { context_tokens: (lastRound.input || 0) + (lastRound.output || 0) } : {}),
       ...(trimmed ? { trimmed } : {}),
@@ -1445,6 +1480,11 @@ export default function ChatDock({
             coverage = ev.context;
           } else if (ev.model) {
             answered = ev.model;
+            // The first chat with tools found the model can't call them: the
+            // chip and the menu label say so from now on.
+            if (ev.model.tools_off && (aiInfo?.models || []).find((x) => x.id === ev.model.id)?.tools !== false) {
+              refreshAiModels?.();
+            }
           } else if (ev.trimmed) {
             trimmed = ev.trimmed;
           } else if (ev.shortened) {
@@ -2037,7 +2077,7 @@ export default function ChatDock({
           : setupCard && !loadError ? setupCard : (
             <div className="chatEmpty">
               {loadError || (readOnly ? t("No saved conversation for this page.")
-                : focusedBlockId ? t("Ask AI about this page…") : agentIntro || t("Ask AI anything, or generate a report from your pages…"))}
+                : focusedBlockId ? t("Ask AI about this page…") : (!noTools && agentIntro) || t("Ask AI anything, or generate a report from your pages…"))}
             </div>
           )}
         {/* A message sent or answered rises into place; a conversation
@@ -2100,9 +2140,10 @@ export default function ChatDock({
                         ))}
                       </div>
                     ) : null}
-                    {!isUser && (m.context?.length || m.trimmed || m.shortened || m.truncated || m.limit) ? (
+                    {!isUser && (m.context?.length || m.trimmed || m.shortened || m.truncated || m.limit || m.toolsOff) ? (
                       <ContextCoverage items={m.context} actions={m.actions} tools={!!m.tools}
-                        trimmed={m.trimmed} shortened={m.shortened} truncated={m.truncated} limit={m.limit} />
+                        trimmed={m.trimmed} shortened={m.shortened} truncated={m.truncated} limit={m.limit}
+                        toolsOff={m.toolsOff} model={m.model} />
                     ) : null}
                     {/* The reply's one status pill, from the start of the turn; a
                         reply that ends without a step folds it away. */}
@@ -2349,7 +2390,7 @@ export default function ChatDock({
             : chatNotes?.length ? (chatNotes[0].kind === "block" ? t("Ask about the attached block…")
               : chatNotes[0].kind === "ink" ? t("Ask about the selected handwriting…") : t("Ask about the selected note…"))
             : cursorChip?.sel ? t("Ask about the selection…") : cursorChip ? t("Ask about this block…") : chatDocs.length ? tn("Ask about {n} attached page…", "Ask about {n} attached pages…", chatDocs.length)
-            : agentAsk || t("Ask…")
+            : (!noTools && agentAsk) || t("Ask…")
           ) + t(" (@ paper)")}
         />
         <div className="chatComposerBar">
@@ -2431,6 +2472,14 @@ export default function ChatDock({
               <ShieldIcon size={14} /><span className="chatGrantLabel">{t("Allowed in this chat")}</span><XIcon size={12} />
             </button>
           ) : null}
+          {noTools && !aiOff && toolsEnabled && agentPayload(chatMessages).agent_scope ? (
+            <button type="button" className="chatAttachToggle chatGrantChip" disabled={checkingTools}
+              onClick={checkTools} title={noToolsHint}
+              aria-label={canCheckTools ? t("No tools on {model}. Check again", { model: headerModel.model })
+                : t("No tools on {model}", { model: headerModel.model })}>
+              <BanIcon size={14} /><span className="chatGrantLabel">{checkingTools ? t("Checking…") : t("No tools")}</span>
+            </button>
+          ) : null}
           {!aiOff && headerModels.length ? (
             <span className="chatModelChip" data-guide="chat.model">
               <MenuSelect
@@ -2443,7 +2492,7 @@ export default function ChatDock({
                   <span className="chatModelName">{[headerModel.model, effort].filter(Boolean).join(" · ")}</span>
                   <SpeedGlyph speed={speed} />
                 </>}
-                options={headerModels.map((m) => [m.id, m.model])}
+                options={headerModels.map((m) => [m.id, modelLabel(m)])}
                 sections={[
                   ...(effortLevels.length ? [{
                     label: t("Reasoning effort"),

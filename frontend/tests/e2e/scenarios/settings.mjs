@@ -579,6 +579,48 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: a model tag says whether the model calls tools, and a click checks it again", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // The verdicts and the check's answer are faked; the backend's are
+      // test_ai_tool_check.py's.
+      const reason = "upstream 404: No endpoints found that support tool use";
+      let listReads = 0;
+      await page.route("**/api/ai/settings", async (route) => {
+        listReads++;
+        const response = await route.fetch();
+        const json = await response.json();
+        const own = json.providers.find((p) => p.name === "Test connection");
+        own.tool_checks = { "test-model-a": { ok: false, reason, at: "2026-11-01T09:30:00.000000Z" },
+          "test-model-b": { ok: true, reason: "", at: "2026-11-01T09:30:00.000000Z" } };
+        await route.fulfill({ response, json });
+      });
+      let posted = null;
+      await page.route("**/api/ai/providers/*/test", async (route) => {
+        posted = route.request().postDataJSON();
+        await route.fulfill({ json: { ok: true, model: "test-model-a", latency_ms: 900,
+          tools: { ok: false, reason: "answered in text instead of calling the check tool: “ok”", at: "2026-11-06T09:30:00.000000Z" } } });
+      });
+      await openSettings(page);
+      await nav(page, "Connections").click();
+      const conn = page.locator(".settingsPane .aiProvRow").filter({ hasText: "Test connection" });
+      const tag = conn.getByRole("button", { name: "test-model-a", exact: true });
+      await tag.waitFor();
+      const title = await tag.getAttribute("title");
+      assert(title.startsWith(`No tools: ${reason} · checked `) && title.endsWith("Click to check again."), title);
+      assert((await conn.getByRole("button", { name: "test-model-b", exact: true }).getAttribute("title")).startsWith("Uses tools · checked "));
+      const reads = listReads;
+      await tag.click();
+      const result = conn.locator(".aiProvDesc").filter({ hasText: "can't use tools" });
+      await result.waitFor();
+      assertEq(await result.innerText(), "✗ test-model-a can't use tools");
+      assert((await result.getAttribute("title")).startsWith("answered in text"));
+      assertEq(posted.tools_model, "test-model-a", "the tag checks its own model");
+      await until(() => listReads > reads, { what: "the list read again" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: a pasted ChatGPT sign-in address connects at once, a device code is offered", async () => {
     const { ctx, page } = await setup();
     try {

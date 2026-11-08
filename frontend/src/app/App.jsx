@@ -3327,15 +3327,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Probe one entry with a tiny real completion — the honest answer to "will
   // my chats work", surfacing an expired ChatGPT sign-in as a readable error
-  // here instead of a 502 mid-conversation.
-  async function testAiProvider(p) {
+  // here instead of a 502 mid-conversation. With `toolsModel` (one of its
+  // picked models) it checks whether that model calls tools instead (a
+  // model tag in Settings, the chat's No tools chip), and the lists that
+  // show the verdict are read again. Resolves to the result.
+  async function testAiProvider(p, toolsModel = "") {
     setAiKeyTests((t) => ({ ...t, [p.id]: { busy: true } }));
     let result;
     try {
       result = await apiJson(`${API}/ai/providers/${p.id}/test`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: probeModelFor(p.id) }),
+        body: JSON.stringify({ model: probeModelFor(p.id), ...(toolsModel ? { tools_model: toolsModel } : {}) }),
       });
     } catch (err) {
       result = { ok: false, error: err.message };
@@ -3343,6 +3346,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setAiKeyTests((t) => ({ ...t, [p.id]: result }));
     // A passing test clears this provider's login-check warning strip.
     if (result.ok) setAiHealth((h) => (h?.provider_id === p.id ? null : h));
+    if (result.tools) {
+      refreshAiModels();
+      // Not loadAiKeys, which would clear the other rows' results.
+      if (aiKeysInfo) apiJson(`${API}/ai/settings`).then(setAiKeysInfo).catch(() => {});
+    }
+    return result;
   }
   async function queryAiProviderUsage(p) {
     setAiKeyUsage((u) => ({ ...u, [p.id]: { busy: true } }));
@@ -11536,6 +11545,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           focusSignal={chatFocusSignal}
           openSettings={openSettingsPane}
           isAdmin={!!authUser?.is_admin}
+          checkModelTools={(m) => testAiProvider({ id: m.provider }, m.model)} refreshAiModels={refreshAiModels}
           aiHealth={aiHealth} dismissAiHealth={() => setAiHealth(null)}
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus} askConfirm={setConfirmBox}

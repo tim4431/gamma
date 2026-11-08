@@ -225,6 +225,7 @@ On the home page or in a folder, the chat can act on your library: list, read an
 - A reply stops after 32 tool rounds or 200 changes (Settings → AI → Tool usage → Tool limits), or when the conversation is too long for the model; **Continue** under it carries on, as it does under a reply cut off at the output limit. With **Unlimited rounds** it runs until it is done or you press Stop, in its chat or in Background tasks; longer jobs cost more tokens. On a shared AI connection without a daily allowance the usual limits stay, unless you are an administrator.
 - Settings → AI → Tool usage sets each permission below to Allow, Ask or Off, for folder, PDF and notes chats separately, with presets from *Read library* to *Allow all*. Reading is allowed by default; anything that changes your library asks.
 - A journal that blocks the server shows a card: open the page in your browser and Gamma Connector sends the PDF back.
+- Some models can't call tools on some connections (a local model without tool support, a route that refuses them). Gamma checks a model the first time a chat with tools uses it; one that fails answers as a plain chat. The message box then says **No tools**, with the reason on hover, and a click checks the model again once its server is fixed. Settings → AI → Connections marks each model the same way.
 
 ### What the chat's tools can do
 

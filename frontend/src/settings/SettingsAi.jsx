@@ -11,6 +11,7 @@ import { API, apiJson } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { failureCopy, fixLabel } from "../chat/chatErrors";
+import { modelLabel } from "../chat/modelPrefs";
 import { ModelPicker } from "./ModelPicker";
 import { UsageChart } from "./UsageChart.jsx";
 import { AccountPicker, Section, SubDialog, Step, Field, CopyField, Empty, IconChoices, PercentMeter, Row, PasswordInput, UnitInput } from "./SettingsKit";
@@ -18,9 +19,9 @@ import { SECTION_PREFS } from "./sectionPrefs.js";
 import { useAccounts } from "./SettingsWorkspace";
 import { useSettingsRead } from "./settingsReads.js";
 import { accessSummary, aiServiceTiles, modelList, onThisMachine, serviceGroups, signInAddress, useProviderEditor } from "./providerEditor.js";
-import { ActivityIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, UsersIcon, XIcon } from "../shared/ui/Icons";
+import { ActivityIcon, BanIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, UsersIcon, XIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
-import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
+import { T, fmtDate, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
 // Spoken languages for dictation, by native name. The pick "" follows the
 // display language, "auto" leaves the language to the model.
@@ -68,15 +69,38 @@ function ProviderUsage({ usage }) {
   );
 }
 
+// A connection's model tag, with what the check of whether it calls tools
+// found (`check`, the entry's tool_checks entry): it does (✓), it can't (⊘,
+// the reason on hover), or nothing yet. With `onCheck` the tag is a button
+// that checks it again (Test with the model); inside the row's radio
+// <label> its click must not pick the row.
+function ModelTag({ model, check, onCheck, busy }) {
+  const date = check?.at ? fmtDate(check.at, { dateStyle: "medium" }) : "";
+  const status = !check ? t("Tools not checked yet: the first chat with tools checks them")
+    : check.ok ? t("Uses tools · checked {date}", { date })
+    : t("No tools: {reason} · checked {date}", { reason: check.reason, date });
+  const glyph = !check ? null : check.ok ? <CheckIcon size={14} /> : <BanIcon size={14} />;
+  if (!onCheck) return <span className="categoryTag aiModelTag" title={status}>{glyph}{model}</span>;
+  return (
+    <button type="button" className="categoryTag aiModelTag" disabled={busy}
+      title={check ? t("{status}. Click to check again.", { status }) : t("{status}. Click to check it now.", { status })}
+      onClick={(event) => { event.preventDefault(); onCheck(model); }}>
+      {glyph}{model}
+    </button>
+  );
+}
+
 // One connection of a provider list: avatar, name (plus "in use" and the
 // shared tag), the credential line, its models, the last Test result and
 // the usage windows, then the caller's buttons. `radio` is the active-key
 // picker of the account's own list; `onFix` opens the entry's editor from
-// a failed test. A failed test reads as the chat's error card does for its
-// kind (chat/chatErrors.js), the provider's own words on hover. Only a row
-// with a radio is a <label>: without one, the label's control would be its
-// first button, and a click anywhere on the row would press it (Test).
-function ProviderRow({ provider, protocol, oauth, active = false, radio = null, test, usage, onFix, access = null, children }) {
+// a failed test; `onCheckModel(model)` checks a model for tools from its
+// tag. A failed test reads as the chat's error card does for its kind
+// (chat/chatErrors.js), the provider's own words on hover; a tool check's
+// says whether the model can use tools. Only a row with a radio is a
+// <label>: without one, the label's control would be its first button, and
+// a click anywhere on the row would press it (Test).
+function ProviderRow({ provider, protocol, oauth, active = false, radio = null, test, usage, onFix, onCheckModel = null, access = null, children }) {
   const Frame = radio ? "label" : "div";
   const models = modelList(provider.models);
   const failed = test && !test.busy && !test.ok && test.kind
@@ -107,7 +131,10 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
         <span className="aiProvDesc aiProvModels">
           <span className="aiProvModelsLabel">{t("Models")}</span>
           {models.length
-            ? models.map((model) => <span className="categoryTag" key={model}>{model}</span>)
+            ? models.map((model) => (
+              <ModelTag key={model} model={model} check={provider.tool_checks?.[model]} onCheck={onCheckModel}
+                busy={test?.busy} />
+            ))
             : <span className="aiKeysError">{onFix ? t("none picked — edit to choose") : t("none picked")}</span>}
         </span>
         {access ? (
@@ -118,11 +145,14 @@ function ProviderRow({ provider, protocol, oauth, active = false, radio = null, 
         ) : null}
         {test ? (
           <span
-            className={`aiProvDesc ${test.busy ? "" : test.ok ? "aiTestOk" : "aiKeysError"}`}
-            title={!test.busy && !test.ok ? test.error : undefined}
+            className={`aiProvDesc ${test.busy ? "" : test.ok && test.tools?.ok !== false ? "aiTestOk" : "aiKeysError"}`}
+            title={!test.busy && !test.ok ? test.error : test.tools?.ok === false ? test.tools.reason : undefined}
           >
             {test.busy
-              ? t("Testing…") : test.ok
+              ? t("Testing…") : test.ok && test.tools
+                ? test.tools.ok ? t("✓ {model} uses tools · {seconds}s", { model: test.model, seconds: (test.latency_ms / 1000).toFixed(1) })
+                  : t("✗ {model} can't use tools", { model: test.model })
+              : test.ok
                 ? `✓ working · ${test.model} · ${(test.latency_ms / 1000).toFixed(1)}s`
                 : failed ? (
                   <>
@@ -168,15 +198,22 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
   const [usage, setUsage] = React.useState({});
   const editor = useProviderEditor({ info, setInfo, base, shared: true, onSaved: () => setStatus?.(t("Shared AI provider saved.")),
     onConnected: (entry) => test(entry) });
-  async function test(p) {
+  // `toolsModel`: check that model for tools instead (its tag), then read
+  // the list again for the verdict.
+  async function test(p, toolsModel = "") {
     setTests((prev) => ({ ...prev, [p.id]: { busy: true } }));
     let result;
     try {
-      result = await apiJson(`${API}/ai/providers/${encodeURIComponent(p.id)}/test`, { method: "POST" });
+      result = await apiJson(`${API}/ai/providers/${encodeURIComponent(p.id)}/test`, toolsModel ? {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tools_model: toolsModel }),
+      } : { method: "POST" });
     } catch (err) {
       result = { ok: false, error: err.message };
     }
     setTests((prev) => ({ ...prev, [p.id]: result }));
+    if (result.tools) {
+      try { setInfo(await apiJson(base)); } catch (err) { setLoadError(err.message); }
+    }
   }
   // A shared sign-in's subscription windows (the account list's Usage).
   async function queryUsage(p) {
@@ -230,7 +267,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
         return (
           <ProviderRow key={provider.id} provider={{ ...provider, shared: false }} oauth={oauth} access={provider.access}
             protocol={editor.aiProtocolOf(provider.protocol)} test={el} usage={usage[provider.id]}
-            onFix={() => editor.startEdit(provider)}>
+            onFix={() => editor.startEdit(provider)} onCheckModel={(model) => test(provider, model)}>
             <button className="uiBtn sm" disabled={el?.busy}
               title={t("Send a tiny AI request through this connection to check it still works; the tokens count on your account")}
               onClick={() => test(provider)}>{t("Test")}</button>
@@ -764,6 +801,7 @@ export function AiSettings({ value, confirm, setStatus }) {
               <ProviderRow key={provider.id} provider={provider} active={active}
                 protocol={value.aiProtocolOf(provider.protocol)} oauth={value.isOauthProto(provider.protocol)}
                 test={test} usage={usage} onFix={own ? () => value.startEdit(provider) : null}
+                onCheckModel={own ? (model) => value.testAiProvider(provider, model) : null}
                 radio={providers.length > 1 ? (
                   <input
                     type="radio"
@@ -833,7 +871,7 @@ export function AiSettings({ value, confirm, setStatus }) {
         {(value.aiModels || []).length ? <Row icon={SparklesIcon} label={t("Default chat model")}
           hint={t("Also used by citations and generated titles")}>
           <MenuSelect label={t("Default chat model")} value={value.chatModel} onChange={value.setChatModel}
-            options={(value.aiModels || []).map((model) => [model.id, model.model])} />
+            options={(value.aiModels || []).map((model) => [model.id, modelLabel(model)])} />
         </Row> : <p className="setNotice">{t("Pick models on the connection (Manage) to choose one here.")}</p>}
         <Row icon={PaperIcon} label={t("Metadata model")}
           hint={t("Used when identifiers do not settle which paper the PDF is")}

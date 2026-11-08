@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { effortFor, providerModels, speedFor } from "../src/chat/modelPrefs.js";
+import { effortFor, modelLabel, providerModels, speedFor } from "../src/chat/modelPrefs.js";
 
 test("the model list is one connection's: the picked one, else the first", () => {
   const models = [
@@ -14,6 +14,14 @@ test("the model list is one connection's: the picked one, else the first", () =>
   assert.deepEqual(ids(""), ["a:x", "a:y"]);
   assert.deepEqual(ids("removed"), ["a:x", "a:y"]);
   assert.deepEqual(providerModels(undefined, "a"), []);
+});
+
+test("a model that can't call tools says so in the model menus", () => {
+  assert.equal(modelLabel({ model: "gemma3", tools: false, tools_reason: "upstream 400: no tools" }), "gemma3 · no tools");
+  // Checked and calling them, or not checked yet: the name alone.
+  assert.equal(modelLabel({ model: "gemma3", tools: true }), "gemma3");
+  assert.equal(modelLabel({ model: "gemma3", tools: null }), "gemma3");
+  assert.equal(modelLabel({ model: "gemma3" }), "gemma3");
 });
 
 test("a level the model takes is sent as it is", () => {

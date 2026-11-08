@@ -59,6 +59,16 @@ def _quick_approvals(monkeypatch):
     monkeypatch.setattr(ai_permissions, "APPROVAL_TIMEOUT", 3.0)
 
 
+@pytest.fixture(autouse=True)
+def _no_tool_checks(monkeypatch):
+    """A chat with tools runs as if its model had passed the check whether
+    it calls them (routers/ai.py _checked_tools), so the tests that fake
+    the provider and count its calls see no check call, and nothing is
+    stored. test_ai_tool_check.py puts the real gate back."""
+    from gamma.routers import ai
+    monkeypatch.setattr(ai, "_checked_tools", lambda *args, **kwargs: "")
+
+
 def page_id_drift(conn):
     """The blocks whose stored ``page_id`` is not where their parent links
     lead, ``[(id, stored, walked)]`` — empty when every writer kept it. The

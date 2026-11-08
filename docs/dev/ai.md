@@ -48,9 +48,13 @@ probes an entry with a tiny live completion for the settings list's Test button
 so an expired ChatGPT grant is re-tried immediately. The probe's model:
 the entry's optional `test_model` (editable in the form's Models step), else
 the `model` sent with the request (the client passes its effective metadata
-model — the cheap utility model), else the entry's first model. A failed probe
-carries the failure's `kind` (see "Chat endpoint"; `no_model` when the entry
-has none picked) and an `auth` flag on 401/403, so the row renders the chat
+model — the cheap utility model), else the entry's first model. With
+`tools_model`, one of the entry's picked models (a 400 otherwise), the probe
+is instead the check of whether that model calls tools, and the result
+carries the stored verdict as `tools` ("Models that can't call tools"
+below). A failed probe carries the failure's `kind` (see "Chat endpoint";
+`no_model` when the entry has none picked) and an `auth` flag on 401/403, so
+the row renders the chat
 error card's headline and fix ("OpenAI rejected the API key — Update key"),
 the upstream body only on hover. For a ChatGPT sign-in a 401 first renews the
 token once, so `auth` means OpenAI refused the grant or the renewed token was
@@ -629,7 +633,7 @@ figure, and advice that depends on whether the reply had tools
 (`chat/coverage.js`); "PDF file not accepted — sent as text" when the file
 was requested but the provider took text instead, and "PDF too large to
 attach" or "PDF file unavailable" when `native_skipped` says it never went.
-Four more pills per
+Five more pills per
 reply: "Earlier messages left out: N" (the stream's `{"trimmed": {turns}}`
 line, see "Fitting the window"), "PDF passage shortened: first 12,000 of
 31,400 characters sent" (`{"shortened"}`, see "Selected PDF passages"),
@@ -643,8 +647,10 @@ it; the agent loop stops there rather than run a half-written tool call;
 callback, which the PDF translation reads ([translation.md](translation.md)),
 and `Protocol.stop_reason` reads a whole reply's),
 and "Stopped at the tool-round limit", "Stopped at the change limit" or
-"Stopped: the conversation is full" (`{"limit"}`, see "The tool loop").
-That pill and the output-limit one offer Continue.
+"Stopped: the conversation is full" (`{"limit"}`, see "The tool loop"),
+and "Answered without tools" (`tools_off` on the `{"model"}` line,
+`toolsOffNote`, see "Models that can't call tools").
+The limit pill and the output-limit one offer Continue.
 `/api/ai/models` marks each model `native_pdf`, its protocol's flag. Every
 protocol takes PDFs today, the ChatGPT sign-in included
 ([research note](../research/chatgpt-pdf-input.md)). The composer's
@@ -803,8 +809,10 @@ translated view asks for the model's lowest level unless Settings →
 Translation names one ([translation.md](translation.md) "The server").
 
 Every reply names what answered it: the stream's `{"model": {id, name,
-effort, speed}}` line (after `{context}`) is saved on the reply as `model`,
-`effort` and `speed`, and the reply's foot shows "gpt-5.5 · high" before the
+effort, speed, tools}}` line (after `{context}`) is saved on the reply as
+`model`, `effort` and `speed`. A chat whose model can't call tools carries
+`tools_off` there too, the reason, saved as `toolsOff` ("Models that can't
+call tools"). The reply's foot shows "gpt-5.5 · high" before the
 token line, with the speed as its glyph (`SPEED_ICONS` in `chat/ChatDock.jsx`
 — a bolt for `fast`, a clock for `flex`, nothing for the usual routing; the
 tooltip names the tier, since the glyph carries no text). The line comes a
@@ -1374,6 +1382,96 @@ A call that changes several pages counts each one ([ai_tools.md](ai_tools.md)
 "Several pages in one call"). The user may lift both (Unlimited rounds),
 except on a shared AI connection without a daily allowance, unless the
 user is an administrator.
+
+### Models that can't call tools
+
+Assistant tools are on by default and reading is allowed, so almost every
+chat carries tool specs, whatever its model. Some endpoints refuse them: an
+OpenRouter model with no tool-capable route (a 404), an Ollama model whose
+template has no tools, a vLLM server started without a tool parser (400s).
+Whether a (connection, model) takes tools only a live call can tell, so the
+server checks each one once and remembers the verdict.
+
+The check (`_check_tools` in `routers/ai.py`) is one streamed turn that asks
+the model to call a trivial tool, `report_ok` (`TOOL_CHECK`,
+`TOOL_CHECK_PROMPT`), over the wire the chat itself would use: Responses on
+OpenAI's own endpoint and the Codex backend, Messages on Anthropic, Chat
+Completions elsewhere. It ends in one of three ways:
+
+- **Calls tools**: any parsed tool call, whatever its name.
+- **No tools**: the provider refuses the request because of the tool (a 4xx
+  other than 401, 403, 408, 413, 429 or a too-long prompt, `_tool_refusal`)
+  and the same turn without the tool goes through; the reason is the
+  provider's own words. Or the model finishes with text only; the reason is
+  "answered in text instead of calling the check tool: “…”", quoting its
+  first 80 characters, which shows a call written as text when that is what
+  happened.
+- **No verdict**: anything else. A key or quota problem, the shared
+  allowance, the network, a 5xx, an empty reply, a reply cut off at the
+  token cap (thinking a local server streams as text ends so), or the
+  deadline. Nothing is stored and the chat keeps its tools.
+
+`_checked_tools` runs the check in `ai_chat` right after the tools are armed,
+before the reply opens, for a model whose registry row has no verdict yet. It
+runs under a lock per model (per account for an own entry, per entry for a
+shared one) and reads the stored verdict again inside it, so two first
+messages run one check. The check has `TOOL_CHECK_DEADLINE` (30 s) in all.
+The clock is read on every line the provider sends, keep-alives that carry
+no event included (an SSE comment such as OpenRouter's while it queues,
+Anthropic's `ping`), and the socket timeout covers silence. A check
+without a verdict is not repeated for `TOOL_CHECK_RETRY_S` (10 minutes); the
+tools stay on meanwhile. A refusal of the account's own before any call
+(`CallRefused`: its allowance used up, too many calls open) is no verdict
+too, but starts no wait, since a shared entry's other accounts would wait it
+out as well; the chat's own call is then refused the same way. A storage
+error while the verdict is read or saved never stops the chat: a failed
+read is no verdict, and a failed save is logged and the fresh verdict still
+applies to this chat. Its tokens count as a `test` in token usage. A
+request made with an integration token never checks: it applies a stored
+verdict only, since a token never writes the account's provider settings.
+The context export (`/api/ai/chat/context`) applies a stored verdict the
+same way and never checks.
+
+A chat whose model has a "no tools" verdict is exactly a plain chat: no
+tool specs, no replayed tool calls, the plain system prompt. Its
+`{"model"}` line says `tools: false` and `tools_off: <reason>`, and the reply
+shows an "Answered without tools" pill (`toolsOffNote` in
+`chat/coverage.js`). A chat refused the way a tool is refused although the
+model has a "calls tools" verdict (a server restarted without its tool
+parser) forgets that verdict (`_forget_tools`), so the next message checks
+again. That one message still fails with the usual error card.
+
+The verdicts live on the provider entry as `tool_checks: {model: {ok,
+reason, at}}` (`ai_settings.save_tool_check`). An own entry keeps them in the
+account's `ai-settings` pref, which never syncs. A shared entry keeps them in
+the server's `ai_providers` config, so one check covers every account the
+entry admits, and only an administrator can check it again. A save is a
+compare-and-set: the entry must still pick the model and still have the
+protocol, base URL and key the check went through. A new key, base URL or
+protocol drops the entry's verdicts, and a models edit keeps the picked
+models' only. The registry rows of `/api/ai/models` carry `tools` (true,
+false, or null when not checked yet) and `tools_reason`; the masked entries
+of `/api/ai/settings` and `/api/admin/ai-providers` carry `tool_checks`.
+
+In the chat, a model with a "no tools" verdict shows a **No tools** chip
+before the model chip while the chat would use tools, with the reason on
+hover. A click checks it again: Test with `tools_model`, on an own
+connection or by an administrator; anyone else is told an administrator can
+check it in Settings → Server. The model menus read "model · no tools"
+(`modelLabel` in `chat/modelPrefs.js`), and the agent's intro and
+placeholder give way to the plain chat's. A reply that brings a verdict the
+registry didn't have reads `/api/ai/models` again, so the chip shows at once.
+In Settings → AI › Connections (and Settings → Server's shared rows), each
+model tag carries a check (calls tools), a ban (no tools, with the reason and
+date) or nothing (not checked yet), and a click on the tag checks that model
+again; the list is read again after it.
+
+Tests: `backend/tests/test_ai_tool_check.py`. Every other backend test runs
+with conftest's autouse `_no_tool_checks`, which makes the gate answer as if
+the model had passed, so the tests that count `_open_ai` calls see no check.
+A test of the gate puts the real `_checked_tools` back with monkeypatch and
+clears `_tool_check_locks` and `_tool_check_retry`, as that file's
+`_real_gate` fixture does.
 
 ### Asking before a call (approvals)
 

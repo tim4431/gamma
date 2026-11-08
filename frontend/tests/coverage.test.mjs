@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   areaPicturesNote, canContinueAfterLimit, continueAfterLimitPrompt, coverageNote, formatSpans, limitNote, readSpans,
-  shortenedNote, trimmedNote, truncatedNote, unseenSpans,
+  shortenedNote, toolsOffNote, trimmedNote, truncatedNote, unseenSpans,
 } from "../src/chat/coverage.js";
 
 const reads = [
@@ -130,4 +130,14 @@ test("passages that went short say what was sent, and why", () => {
   assert.equal(many.short, `3 passages shortened: ${n(8_000)} of ${n(18_500)} characters sent`);
   assert.match(many.long, new RegExp(`^PDF passage 2: first ${n(4_000)} of ${n(9_000)} characters\\. Selected note text: .* Attached block: `));
   assert.match(many.long, /model's window couldn't hold all of it/);
+});
+
+test("a reply that went without tools names its model and the reason", () => {
+  assert.equal(toolsOffNote("", "gemma3"), null);
+  assert.equal(toolsOffNote(undefined, "gemma3"), null);
+  const note = toolsOffNote("upstream 404: No endpoints found that support tool use", "gemma3");
+  assert.equal(note.short, "Answered without tools");
+  assert.equal(note.refused, true);
+  assert.ok(note.long.startsWith("gemma3 can't call tools on this connection (upstream 404: No endpoints found that support tool use)"));
+  assert.ok(toolsOffNote("answered in text", "").long.startsWith("This model can't call tools"));
 });

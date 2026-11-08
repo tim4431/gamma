@@ -66,9 +66,11 @@ from ..ai_settings import (
     MAX_MODELS_LEN,
     MAX_NAME_LEN,
     MAX_PROVIDERS,
+    MAX_TOOL_REASON,
     ai_runtime,
     clear_refresh_backoff,
     entry_models,
+    forget_tool_check,
     is_oauth_protocol as _is_oauth_protocol,
     is_server_id,
     load_provider_entries,
@@ -82,14 +84,16 @@ from ..ai_settings import (
     renew_rejected,
     require_ai_runtime,
     resolve_model as _resolve_model,
+    save_tool_check,
     server_entries_for,
     shared_allowance,
+    stored_tool_check,
     transcriber_for,
     update_entry,
     update_provider_entries,
 )
-from ..auth import (actor_of, can_write, link_ratelimit, require_personal_user_id, require_user_id, require_ws,
-                    require_ws_writer)
+from ..auth import (actor_of, can_write, is_token, link_ratelimit, require_personal_user_id, require_user_id,
+                    require_ws, require_ws_writer)
 from ..blocks_store import PATH_SEP, folder_path, page_root_id
 from ..db import connect_data_db, connect_pages_db, page_now
 from ..logbuf import log
@@ -693,13 +697,18 @@ def _probe_model(entry: dict, fallback: str = "") -> str:
             or next(iter(entry_models(entry)), ""))
 
 
-def _probe_entry(user_id: str, entry: dict, fallback_model: str = "", retry: bool = True) -> dict:
+def _probe_entry(user_id: str, entry: dict, fallback_model: str = "", retry: bool = True,
+                 tools_model: str = "") -> dict:
     """One tiny live completion through a saved entry — answers "does this
     credential still work" without waiting for a real chat to 502. The result
     is in-body ({ok, model, latency_ms} / {ok: False, error, auth, kind});
     `auth` marks a broken credential (expired sign-in / rejected key), and
     `kind` is ai_client.failure_kind, or ``no_model`` for an entry with no
-    model picked — the UI words the failure by its kind."""
+    model picked — the UI words the failure by its kind. With
+    ``tools_model`` (one of the entry's picked models) it checks whether
+    that model calls tools instead (_check_tools, "Check again"), stores
+    the verdict and returns it as ``tools`` ({ok, reason, at}); no verdict
+    is the usual in-body failure."""
     provider_id = entry.get("id")
     # An explicit probe is an explicit retry: drop the refresh backoff so a
     # ChatGPT entry re-attempts its token refresh now instead of reusing a
@@ -709,29 +718,205 @@ def _probe_entry(user_id: str, entry: dict, fallback_model: str = "", retry: boo
     rt = ai_runtime(user_id)
     if provider_id not in rt["providers"]:
         return _no_credential(entry)
-    model = _probe_model(entry, fallback_model)
+    model = tools_model or _probe_model(entry, fallback_model)
     if not model:
         return {"ok": False, "model": "", "auth": False, "kind": "no_model",
                 "error": "no model picked — edit the connection and choose one"}
     started = time.time()
+    probe_entry = {"provider": provider_id, "model": model}
+    row = {**probe_entry, "id": f"{provider_id}:{model}"}  # the registry row _check_tools takes
+    verdict = None
     try:
         # Generous cap: reasoning models burn invisible tokens even on "ok".
-        probe_entry = {"provider": provider_id, "model": model}
-        # rt's own conf: _call_ai reads a renewed token from rt.
-        _renewing(user_id, provider_id, rt["providers"][provider_id], lambda conf: _call_ai(
-            [{"role": "user", "content": 'Reply with the single word "ok".'}],
-            "", probe_entry, rt, max_tokens=2048, timeout=45,
-            on_usage=ai_usage.recorder("test", probe_entry, rt)))
+        # rt's own conf: the call reads a renewed token from rt.
+        if tools_model:
+            verdict = _renewing(user_id, provider_id, rt["providers"][provider_id], lambda conf: _check_tools(
+                rt, row, ai_usage.recorder("test", probe_entry, rt), TOOL_CHECK_TEST_DEADLINE))
+        else:
+            _renewing(user_id, provider_id, rt["providers"][provider_id], lambda conf: _call_ai(
+                [{"role": "user", "content": 'Reply with the single word "ok".'}],
+                "", probe_entry, rt, max_tokens=2048, timeout=45,
+                on_usage=ai_usage.recorder("test", probe_entry, rt)))
     except chatgpt_oauth.RefreshUnavailable:
         return {**_RENEWAL_UNREACHABLE, "model": model}
     except Exception as e:
         auth = isinstance(e, UpstreamError) and e.status in (401, 403)
         return {"ok": False, "model": model, "error": str(e), "auth": auth, "kind": failure_kind(e)}
-    return {"ok": True, "model": model, "latency_ms": int((time.time() - started) * 1000)}
+    result = {"ok": True, "model": model, "latency_ms": int((time.time() - started) * 1000)}
+    if verdict is not None:
+        _tool_check_retry.pop(_tool_check_key(user_id, row["id"]), None)
+        stored = save_tool_check(user_id, provider_id, model, verdict, rt["providers"][provider_id])
+        result["tools"] = stored or {"reason": "", **verdict}
+    return result
+
+
+# --- Whether a model calls tools ---------------------------------------------
+# (docs/dev/ai.md, "Models that can't call tools") A chat with tools checks a (connection, model) once, before its first
+# reply: one streamed turn asking the model to call a trivial tool, over the
+# wire the chat would use. Any parsed tool call passes. A provider that
+# refuses the request for the tool (the same turn without it goes through),
+# or a model that answers in text, fails: its chats then go without tools.
+# Anything else (the key, a quota, the network, an empty reply, one cut off
+# at the cap, the deadline) is no verdict: nothing is stored, the chat
+# keeps its tools, and that model is not checked again for
+# TOOL_CHECK_RETRY_S. The verdicts live on the entries (ai_settings
+# tool_checks); Check again is Test's ``tools_model``.
+TOOL_CHECK = {
+    "name": "report_ok",
+    "description": "Report that this connection check went through.",
+    "parameters": {"type": "object", "properties": {"status": {"type": "string"}}, "required": ["status"]},
+}
+TOOL_CHECK_PROMPT = 'This is a connection check. Call the report_ok tool with status "ok"; do not reply in text.'
+TOOL_CHECK_DEADLINE = 30  # seconds, before a chat's first reply
+TOOL_CHECK_TEST_DEADLINE = 45  # Check again: as long as Test's own probe may take
+TOOL_CHECK_RETRY_S = 600
+_TOOL_CHECK_QUOTE = 80  # characters of a text reply the verdict quotes
+_NO_REASON = "it did not call the check tool"  # a stored "no tools" without a reason
+# One check at a time per model: a shared entry's by its registry id (every
+# account's chats read the same verdict), an own one's per account; and when
+# a check that got no verdict lets the next one run (time.monotonic()).
+_tool_check_locks: dict = {}
+_tool_check_retry: dict = {}
+_tool_check_guard = threading.Lock()
+
+
+def _tool_check_key(user_id: str, model_id: str):
+    return model_id if is_server_id(model_id) else (user_id, model_id)
+
+
+def _tool_check_lock(key) -> threading.Lock:
+    with _tool_check_guard:
+        return _tool_check_locks.setdefault(key, threading.Lock())
+
+
+def _tool_refusal(error: Exception) -> bool:
+    """Whether a provider error refuses the request itself, as a request
+    carrying a tool spec may be refused: a 4xx that is not about the key,
+    the rate, a timeout or the size."""
+    return (isinstance(error, UpstreamError) and 400 <= error.status < 500
+            and error.status not in (401, 403, 408, 413, 429) and failure_kind(error) != "too_long")
+
+
+def _check_turn(rt: dict, entry: dict, tools, wire: str, on_usage, ends: float) -> dict:
+    """One streamed turn of the check, read to its end: {called, text,
+    stop}. Raises TimeoutError once time.monotonic() passes ``ends``
+    before a tool call came. The clock is read on every line the provider
+    sends, keep-alives too (an SSE comment, Anthropic's ping), which yield
+    no event; the socket timeout covers silence."""
+    resp = _open_ai([{"role": "user", "content": TOOL_CHECK_PROMPT}], "", entry, rt, max_tokens=2048,
+                    timeout=max(1.0, ends - time.monotonic()), stream=True, tools=tools)
+    turn = {"called": False, "text": "", "stop": ""}
+
+    def lines():
+        for raw in resp:
+            if time.monotonic() > ends:
+                if turn["called"]:
+                    return
+                raise TimeoutError("the check took too long")
+            yield raw
+    try:
+        for kind, data in _sse_events(lines(), wire):
+            if kind == "tool":
+                turn["called"] = True
+            elif kind == "text":
+                turn["text"] += data
+            elif kind == "usage":
+                on_usage(data)
+            elif kind == "stop":
+                turn["stop"] = data
+    finally:
+        resp.close()
+    return turn
+
+
+def _check_tools(rt: dict, entry: dict, on_usage, deadline: float) -> dict:
+    """Whether the model of ``entry`` (a registry row) calls tools on its
+    connection: {"ok": True}, or {"ok": False, "reason"}, the provider's
+    words when it refused the tool, the start of the reply when the model
+    answered in text. Raises when there is no verdict, ``deadline``
+    seconds on included."""
+    ends = time.monotonic() + deadline
+    try:
+        turn = _check_turn(rt, entry, [TOOL_CHECK], _wire_protocol(rt, entry, [TOOL_CHECK]), on_usage, ends)
+    except UpstreamError as e:
+        if not _tool_refusal(e):
+            raise
+        # The same turn without the tool: a provider that answers it refused
+        # the tool, not the request (a model it doesn't know refuses both).
+        _check_turn(rt, entry, None, _protocol(rt, entry), on_usage, ends)
+        return {"ok": False, "reason": str(e)[:MAX_TOOL_REASON]}
+    if turn["called"]:
+        return {"ok": True}
+    if truncated_stop(turn["stop"]):
+        # Thinking that ran into the cap (a local server streams it as text).
+        raise RuntimeError(f"the reply was cut off ({turn['stop']}) before it called the check tool")
+    quote = " ".join(turn["text"].split())
+    if len(quote) > _TOOL_CHECK_QUOTE:
+        quote = quote[:_TOOL_CHECK_QUOTE - 1] + "…"
+    return {"ok": False, "reason": f"answered in text instead of calling the check tool: “{quote}”"}
+
+
+def _checked_tools(user_id: str, rt: dict, entry: dict, live: bool) -> str:
+    """Why a chat's tools are left out on the model of ``entry`` (its
+    registry row), "" when they go: the verdict on the row, else, for a
+    request that may check (``live``: not an integration token, which only
+    applies a stored one), the check run now under the model's lock and
+    stored. No verdict leaves the tools on, and so does a storage error: the
+    chat goes on either way. A refusal of this account's own (its allowance,
+    its calls open) is no verdict either, but starts no retry window, which
+    a shared entry's other accounts would wait out too: the chat's own call
+    is refused the same way."""
+    if entry.get("tools") is not None:
+        return "" if entry["tools"] else entry.get("tools_reason") or _NO_REASON
+    if not live:
+        return ""
+    key = _tool_check_key(user_id, entry["id"])
+    with _tool_check_lock(key):
+        try:
+            # Another chat may have checked it while this one waited.
+            verdict = stored_tool_check(user_id, entry["provider"], entry["model"])
+            if verdict is None:
+                if time.monotonic() < _tool_check_retry.get(key, 0):
+                    return ""
+                verdict = _check_tools(rt, entry, ai_usage.recorder("test", entry, rt), TOOL_CHECK_DEADLINE)
+                fresh = True
+            else:
+                fresh = False
+        except CallRefused as e:
+            log.info(f"[ai_chat] {entry['model']} not checked for tools ({e.detail}): they stay on")
+            return ""
+        except Exception as e:
+            log.info(f"[ai_chat] no verdict on whether {entry['model']} calls tools ({e}): they stay on, "
+                     f"checked again in {TOOL_CHECK_RETRY_S // 60} min")
+            _tool_check_retry[key] = time.monotonic() + TOOL_CHECK_RETRY_S
+            return ""
+        if fresh:
+            try:
+                save_tool_check(user_id, entry["provider"], entry["model"], verdict,
+                                rt["providers"][entry["provider"]])
+            except Exception as e:  # the chat goes on with the verdict it has
+                log.warning(f"[ai_chat] couldn't store the tool check of {entry['model']}: {e}")
+            if not verdict["ok"]:
+                log.info(f"[ai_chat] {entry['model']} on {entry['provider']} answers without tools: "
+                         f"{verdict['reason']}")
+    return "" if verdict["ok"] else verdict.get("reason") or _NO_REASON
+
+
+def _forget_tools(user_id: str, entry: dict) -> None:
+    """A chat with tools that the provider refused the way a tool is
+    refused: a stored 'calls tools' may be stale (a server restarted
+    without its tool parser), so it goes, and the next chat checks again."""
+    _tool_check_retry.pop(_tool_check_key(user_id, entry["id"]), None)
+    try:
+        if forget_tool_check(user_id, entry["provider"], entry["model"]):
+            log.info(f"[ai_chat] {entry['model']} refused a chat with tools: checked again on the next one")
+    except Exception as e:  # the failure being answered matters more
+        log.warning(f"[ai_chat] couldn't forget the tool check of {entry['model']}: {e}")
 
 
 class AIProviderTestRequest(BaseModel):
     model: str = ""  # client's preferred probe model (its effective metadata model)
+    tools_model: str = ""  # a picked model to check for tool calls instead ("Check again")
 
 
 # Sync def: the probe call runs in the threadpool.
@@ -745,7 +930,10 @@ def ai_provider_test(provider_id: str, request: Request, payload: AIProviderTest
     entry = _saved_entry(request, user_id, provider_id)
     if not entry:
         raise HTTPException(status_code=404, detail="provider not found")
-    return _probe_entry(user_id, entry, payload.model if payload else "")
+    tools_model = (payload.tools_model if payload else "").strip()
+    if tools_model and tools_model not in entry_models(entry):
+        raise HTTPException(status_code=400, detail="that model is not picked on this connection")
+    return _probe_entry(user_id, entry, payload.model if payload else "", tools_model=tools_model)
 
 
 # Sync def: this read-only account call runs in FastAPI's threadpool.
@@ -1550,6 +1738,8 @@ def ai_chat_context(payload: AIChatContextRequest, request: Request):
     # As the live chat sees it: a streamed chat, whose asking tools are armed.
     scope = _chat_scope(request, ws, user_id, payload, rt, entry, can_ask=True)
     tools = _chat_tools(payload, scope)
+    if tools and entry and entry.get("tools") is False:
+        tools = None  # the model answers without them (_checked_tools); never checked here
     _, messages, system, coverage, pictures = _chat_prompt(ws, payload, scope, tools, allow_native=False)
     text = context_markdown(payload.title, system, messages, tools, coverage, pictures)
     return Response(text, media_type="text/markdown; charset=utf-8")
@@ -1614,6 +1804,12 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         cache_key=cache_key + ("" if call_tools is None else ":helper"))
 
     tools = _chat_tools(payload, scope)
+    # A model that can't call tools on its connection answers as a plain
+    # chat. An integration token's request only applies a stored verdict.
+    live = not is_token(request)
+    tools_off = _checked_tools(user_id, rt, entry, live) if tools else ""
+    if tools_off:
+        tools = None
     # tools may reroute openai → /v1/responses, so the wire is settled once;
     # a helper's turn carries tools too, so it goes over the same one.
     proto = _wire_protocol(rt, entry, tools) if tools else None
@@ -1644,6 +1840,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
     # the one the provider says it served (_served_speed).
     answered = {"id": entry["id"], "name": entry["model"], "effort": effort,
                 "speed": _sent_speed(speed, rt, entry, tools), "tools": bool(tools)}
+    if tools_off:
+        answered["tools_off"] = tools_off
 
     # What one picture costs on the wire this call goes over, for the
     # window estimate (every picture is normalized to one size first).
@@ -1855,5 +2053,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
     except HTTPException:
         raise
     except Exception as e:
+        if tools and live and _tool_refusal(e):
+            _forget_tools(user_id, entry)
         log.warning(f"[ai_chat] API error: {e}")
         return _failure_response(502, f"AI call failed: {e}", _failure_info(e, rt, entry))

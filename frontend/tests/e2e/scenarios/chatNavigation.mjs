@@ -860,6 +860,86 @@ export async function chatNavigationScenarios(env) {
     } finally { await pick(""); }
   });
 
+  // A model that can't call tools on its connection (gamma/routers/ai.py
+  // _checked_tools): the reply that found it out says it went without them,
+  // the registry is read again so the composer's No tools chip and the menu's
+  // "· no tools" show at once, and the chip checks the model again (Test with
+  // tools_model), after which they go.
+  await step("chat navigation: a model that can't call tools says so, and its chip checks it again", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const reason = "upstream 404: No endpoints found that support tool use";
+    let registry = FAKE_AI_MODELS;
+    let reads = 0;
+    let checked = null;
+    const ctx = await alice.context(browser);
+    await ctx.route("**/api/ai/models*", (route) => { reads++; return route.fulfill({ json: registry }); });
+    await ctx.route("**/api/metadata/cite", (route) => route.fulfill({ json: { citation: "" } }));
+    await ctx.route("**/api/ai/providers/*/test", async (route) => {
+      checked = { url: route.request().url(), body: route.request().postDataJSON() };
+      registry = FAKE_AI_MODELS;
+      await route.fulfill({ json: { ok: true, model: "model", latency_ms: 800,
+        tools: { ok: true, reason: "", at: "2026-11-06T10:00:00.000000Z" } } });
+    });
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (String(input).endsWith("/api/ai/chat")) {
+          window.chatBody = JSON.parse(init.body);
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = {
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      const chip = page.getByRole("button", { name: "No tools on model. Check again", exact: true });
+      assertEq(await chip.count(), 0, "a model not checked yet has no chip");
+      // The server checks the model before this reply, and it fails.
+      registry = { ...FAKE_AI_MODELS, models: [{ ...FAKE_AI_MODELS.models[0], tools: false, tools_reason: reason }] };
+      const before = reads;
+      await input.fill("Tidy up my library");
+      await input.press("Enter");
+      await page.waitForFunction(() => !!window.chatStream);
+      assertEq(await page.evaluate(() => window.chatBody.agent_scope), "folder", "the chat asked for tools");
+      await page.evaluate((reason) => {
+        window.chatStream.push({ model: { id: "demo:model", name: "model", effort: "", speed: "", tools: false, tools_off: reason } });
+        window.chatStream.push({ delta: "A plain answer." });
+        window.chatStream.finish();
+      }, reason);
+      const pill = page.locator(".chatBubbleRow.ai .chatPill").filter({ hasText: "Answered without tools" });
+      await pill.waitFor();
+      assert((await pill.getAttribute("title")).includes(reason), "the pill names the reason");
+      await until(() => reads > before, { what: "the registry read again" });
+      await chip.waitFor();
+      assert((await chip.getAttribute("title")).includes(reason), "the chip names the reason");
+      assert((await input.getAttribute("placeholder")).startsWith("Ask… "), "the plain chat's placeholder");
+      await page.locator(".chatModelChip .uiSelectBtn").click();
+      assertEq((await page.locator(".uiSelectMenu .ctxMenuItem").allInnerTexts())[0], "model · no tools");
+      await page.keyboard.press("Escape");
+      await chip.click();
+      await until(() => !!checked, { what: "the check posted" });
+      assert(checked.url.endsWith("/api/ai/providers/demo/test"), checked.url);
+      assertEq(checked.body.tools_model, "model");
+      await until(async () => (await chip.count()) === 0, { what: "the chip gone after the check" });
+      await page.getByRole("status").filter({ hasText: "model can use tools" }).waitFor();
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    }
+  });
+
   // A fetch_paper a publisher stopped (chat/FetchHandoffCards.jsx): the reply's
   // card opens the page through /go, follows the request on the server (the
   // Connector taking the tab shows), takes a PDF dropped on it — never the
