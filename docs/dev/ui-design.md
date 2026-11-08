@@ -1509,7 +1509,10 @@ gap between paragraphs is ordinary, and a copy across the row leaves it out
 box, keeps its word as something to click.
 
 The row gutter (`.rowHandles`) holds the add button and the drag/menu handle
-side by side, as in Notion: "+", then ⋮⋮, then the row. Both stay within the
+side by side, as in Notion: "+", then ⋮⋮, then the row. Both are 18 px icons
+(`PlusIcon`, `GripIcon`), never glyphs, whose width would be the font's: two
+⋮ are 34 px wide on Linux, and the gutter overflowed into the pane's edge and
+the sash. Both stay within the
 row's height, on its first line and level with its text at any text size, a
 heading's taller line included (`--row-line`); on a tall block that is its top.
 The gutter is 36 px wide and starts 6 px left of the row's box, so it stays

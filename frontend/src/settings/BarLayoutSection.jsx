@@ -17,6 +17,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { Section, Row, Segmented } from "./SettingsKit";
 import { useDragOrder } from "../shared/ui/useDragOrder.js";
+import { GripIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
 const everyItem = () => true;
@@ -71,7 +72,7 @@ export function BarLayoutSection({ bar, value, onChange, icons, title, scope, pr
             <div key={item.id} data-order-id={item.id}
               className={`barLayoutRow${mode === "hidden" ? " off" : ""}${drag?.id === item.id ? " lifted" : ""}`}>
               <button type="button" className="barLayoutGrip" aria-label={t("Move {label}", { label })}
-                title={t("Drag to reorder, or use the arrow keys")} {...sourceProps(item.id)} {...keyProps(item.id)}>⋮⋮</button>
+                title={t("Drag to reorder, or use the arrow keys")} {...sourceProps(item.id)} {...keyProps(item.id)}><GripIcon size={16} /></button>
               <Row icon={icons[item.id]} label={label} hint={t(item.hint)}>
                 <Segmented value={mode} onChange={(next) => onChange(bar.setMode(layout, item.id, next))}
                   options={item.modes.map((m) => [m, bar.modeLabel(item, m), null, bar.modeTip(item, m)])} />

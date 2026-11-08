@@ -3,6 +3,7 @@ without uploads), download as a zip, delete — admin only, names validated."""
 
 import io
 import json
+import os
 import zipfile
 
 import pytest
@@ -49,6 +50,22 @@ def test_create_list_download_delete(admin, plain):
     assert admin.delete(f"/api/admin/backups/{b['name']}").status_code == 200
     assert admin.delete(f"/api/admin/backups/{b['name']}").status_code == 404
     assert admin.delete(f"/api/admin/backups/{small['name']}").status_code == 200
+
+
+def test_a_file_dated_before_1980_still_downloads(admin, plain):
+    # A zip cannot say 1970 (a copy that kept a zeroed clock): such a file goes
+    # in dated 1980 rather than ending the download.
+    from gamma.backups import backup_path
+    plain.post("/api/uploads", files={"file": ("old.pdf", b"%PDF-1.4 an old clock", "application/pdf")})
+    b = admin.post("/api/admin/backups", json={"label": "old.clock", "uploads": True}).json()
+    for f in backup_path(b["name"]).rglob("*"):
+        if f.is_file():
+            os.utime(f, (0, 0))
+    z = admin.get(f"/api/admin/backups/{b['name']}/download")
+    assert z.status_code == 200
+    entries = zipfile.ZipFile(io.BytesIO(z.content)).infolist()
+    assert entries and all(e.date_time[0] == 1980 for e in entries)
+    assert admin.delete(f"/api/admin/backups/{b['name']}").status_code == 200
 
 
 def test_bad_names_and_labels(admin):

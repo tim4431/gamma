@@ -238,7 +238,8 @@ export async function guideScenarios(env) {
       await page.waitForSelector('[data-guide-offer="first-run"] .guideCard.welcomeDeck', { timeout: 15000 });
       for (let i = 1; i < 9; i++) await page.keyboard.press("ArrowRight");
       await page.getByRole("button", { name: "Open the Welcome page", exact: true }).click();
-      await until(async () => await page.locator(".guideCard").count() === 0);
+      // the deck goes; the PDF it opens may offer a tour of its own (suggestTours), so not every card
+      await until(async () => await page.locator('[data-guide-offer="first-run"]').count() === 0, { what: "the welcome deck closed" });
       await until(() => new URL(page.url()).searchParams.has("block"), { what: "a page opens" });
       const { block } = await arrival.api(`/api/blocks/${new URL(page.url()).searchParams.get("block")}/subtree`);
       assertEq(block.properties?.seeded, "welcome", "the seeded Welcome page");
