@@ -140,16 +140,6 @@ export function exportJobBody(payload, { pageId = "", folder = "" } = {}) {
     : body;
 }
 
-// The same export as the download endpoints' query, `/pages/{id}/export?…`
-// or `/folders/{id}/export?…` (a share view, which has no background tasks,
-// downloads through them): a job body's mode and flags, each 0 or 1.
-export function exportQuery(body) {
-  const flag = (value) => (value ? 1 : 0);
-  return new URLSearchParams({ mode: body.mode, pdf: flag(body.pdf), highlights: flag(body.highlights), notes: flag(body.notes),
-    ...(body.notes_at ? { comments: flag(body.comments), notes_at: body.notes_at } : {}),
-    ...(body.sub_pages ? { sub_pages: 1 } : {}) }).toString();
-}
-
 // Whether a page's export offers the "Include pages inside" switch:
 // `subPages`, the number of pages inside it at any depth, is not 0. A
 // folder's export has no such switch.

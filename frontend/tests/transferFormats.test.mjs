@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bibliographyPreviewUrl, bibliographyUrl, exportFormatOf, exportJobBody, exportQuery, exportSummary, hasReviewStep,
+import { bibliographyPreviewUrl, bibliographyUrl, exportFormatOf, exportJobBody, exportSummary, hasReviewStep,
   importSource, notionFiles, offersSubPages, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
 
 const allOff = Object.freeze({ highlights: false, notes: false, bundle: false });
@@ -260,11 +260,10 @@ test("a page with pages inside it offers Include pages inside on every format's 
   assert.equal(offersSubPages({ folder: null, subPages: 0 }), false);
 });
 
-test("the pages inside travel in the job's body, the share view's query and the summary", () => {
+test("the pages inside travel in the job's body and the summary", () => {
   const on = resolveExport({ format: "notability", subPages: true }, { ...paper, subPages: 2 });
   const body = exportJobBody(on.payload, { pageId: "p1" });
   assert.deepEqual(body, { page_id: "p1", sub_pages: true, mode: "notability", pdf: true, highlights: false, notes: true });
-  assert.equal(exportQuery(body), "mode=notability&pdf=1&highlights=0&notes=1&sub_pages=1");
   assert.match(exportSummary(on), /^This page as a Notability note: .* The 2 pages inside it are exported with it\.$/);
   // a page share's view counts only the pages right inside: the words name no number
   const direct = resolveExport({ format: "notability", subPages: true }, { ...paper, subPages: 1, subPagesDirect: true });
@@ -277,11 +276,9 @@ test("the pages inside travel in the job's body, the share view's query and the 
     "This paper's citation entry as a .bib file, under its citation key.");
   const off = resolveExport({ format: "notability", subPages: false }, { ...paper, subPages: 2 });
   assert.doesNotMatch(exportSummary(off), /inside it/);
-  assert.equal(exportQuery(exportJobBody(off.payload, { pageId: "p1" })), "mode=notability&pdf=1&highlights=0&notes=1");
+  assert.equal(exportJobBody(off.payload, { pageId: "p1" }).sub_pages, false);
   // a folder's body names no such flag: its pages always bring theirs
   assert.equal("sub_pages" in exportJobBody(on.payload, { folder: "Reading" }), false);
-  assert.equal(exportQuery({ mode: "annotated-pdf", pdf: false, highlights: true, notes: false, comments: true, notes_at: "page" }),
-    "mode=annotated-pdf&pdf=0&highlights=1&notes=0&comments=1&notes_at=page");
   // the bibliography link refreshes the same export
   assert.equal(bibliographyUrl("/api", { pageId: "p1", share: "tok", subPages: true }),
     "/api/pages/p1/export?mode=bibtex&sub_pages=1&share=tok");

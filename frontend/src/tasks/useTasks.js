@@ -14,11 +14,18 @@
 // (newer than the last render's). A finished job whose file was asked for
 // with download: "auto" is downloaded here first. A pane that shows what a
 // job changes hears its end through useJobEnd.
+//
+// `follow`: the share view's store, which lists no jobs (a share's jobs are
+// reached by their id alone, routers/jobs.py): it reads again each of the
+// share's jobs this tab started while it waits or runs (taskModel's
+// `followed`), and nothing else. One the share no longer reaches (stopped,
+// changed, the job gone) ends there as failed (`afterFollow`).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtBytes, makeId } from "../shared/lib/utils";
 import { t } from "../shared/i18n/i18n.js";
 import { cancelJob, clearJobs, dismissJob, downloadJob, getJob, listJobs, startJob, uploadJob } from "./tasksApi";
-import { addLocalRow, isActive, isFinished, localRow, mergeTasks, newlyFinished, trayBadge } from "./taskModel.js";
+import { addLocalRow, afterFollow, followed, isActive, isFinished, localRow, mergeTasks, newlyFinished, trayBadge }
+  from "./taskModel.js";
 import { quietKinds } from "./taskKinds.js";
 import { guideEvents } from "../guide/events.js";
 
@@ -34,7 +41,7 @@ function sameListing(a, b) {
   return true;
 }
 
-export function useTasks({ enabled, onFinished }) {
+export function useTasks({ enabled, onFinished, follow = false }) {
   const [jobs, setJobs] = useState([]);
   const [local, setLocal] = useState([]);
   const [watching, setWatching] = useState(0);
@@ -91,10 +98,24 @@ export function useTasks({ enabled, onFinished }) {
     if (!enabled) return;
     const seq = ++listingSeq.current;
     try {
+      if (follow) {
+        const active = jobsRef.current.filter(followed);
+        if (!active.length) return;
+        // apiJson's 401 says only that: what it means here is said instead
+        const lost = (error) => (error?.status === 401
+          ? { status: 401, message: t("This share link no longer lets you in.") } : error);
+        const reads = new Map(await Promise.all(active.map((job) => getJob(job.id)
+          .then((answer) => ({ job: answer }), (error) => ({ error: lost(error) }))
+          .then((read) => [job.id, read]))));
+        if (seq === listingSeq.current) {
+          take(jobsRef.current.map((job) => (reads.has(job.id) ? afterFollow(job, reads.get(job.id)) : job)));
+        }
+        return;
+      }
       const { jobs: list } = await listJobs();
       if (seq === listingSeq.current) take(list || []); // a slower, older answer never undoes a newer one
     } catch { /* the next round asks again */ }
-  }, [enabled, take]);
+  }, [enabled, follow, take]);
 
   // A job the server just answered with (started, stopped): known at once,
   // before the next listing — a quick job may end before it.
@@ -106,7 +127,7 @@ export function useTasks({ enabled, onFinished }) {
     return job;
   }, [take, wake]);
 
-  const fast = jobs.some(isActive) || watching > 0;
+  const fast = jobs.some(follow ? followed : isActive) || watching > 0;
   useEffect(() => {
     if (!enabled) {
       jobsRef.current = [];

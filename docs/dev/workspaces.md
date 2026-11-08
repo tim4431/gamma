@@ -276,6 +276,7 @@ Keep identity and data location separate in endpoint code:
 | `require_ws_writer(request)` | Write through an edit share, otherwise workspace editor access |
 | `require_commenter(request, page_id)` | Write a comment on the page: any member (viewers too), or a signed-in account a share admits, view or edit, within the share's pages; never a link visitor or a read-scope token ([comments.md](comments.md) "Who may comment") |
 | `share_scope(request)` | The `ShareScope` (one page and the pages inside it, or the pages filed in one folder and the pages inside those) a share-enabled endpoint must enforce |
+| `share_job_owner(request)` | The owner of a share view's jobs, `share:<token>`, for any visitor the share admits (the share view's export, [tasks.md](tasks.md#a-share-views-exports)); "" without a share token |
 
 Without a share token, selection is `?ws=` first, then `X-Gamma-Workspace`,
 then the account's default. An inaccessible explicit workspace is refused;

@@ -2198,8 +2198,10 @@ and the `/export-pdf` route):
 
 Logseq and Gamma write a ref as stored, and BibTeX reads page properties
 alone, so they read no block outside the pages exported to begin with.
-`POST /api/jobs/export` takes no share: it works in the signed-in account's
-own workspace.
+`POST /api/jobs/export?share=`, the share view's export, is held to the
+share the same way (`opts["share"]`), and the job is the share's own
+([tasks.md](tasks.md#a-share-views-exports)); without a `?share=` it works
+in the signed-in account's own workspace.
 
 Folder and label names are not held back this way. The formats but Gamma's
 still write the folder's whole path (the download's name, a `.bib`'s header)
@@ -2243,8 +2245,8 @@ invite-only ones work too. Two entry points:
   there is still a paper.
 - The share view's topbar: a signed-in non-guest viewer gets "Add to my
   library" on a page and on a folder share's listing (not on a page host,
-  which serves no library). A share view has no workspace and no background
-  tasks of its own, so it does not import: `addShareToLibrary` puts the link
+  which serves no library). A share view has no workspace of its own and
+  lists no background tasks, so it does not import: `addShareToLibrary` puts the link
   for what it shows (the open page, or the folder browsed) in
   `sessionStorage` (`gamma-import-share`) and goes to the library, whose
   boot takes it and imports there, with the tray and the reload of the "+"
@@ -2349,10 +2351,11 @@ stopped export offers Start again, with the job's params (`sub_pages`,
 translation offers Export again… instead, back to the setup, while its
 page is open, and otherwise Start again with the translation the server
 kept with the job
-([translation.md](translation.md#exporting-the-translation)). A share view has no background tasks:
-its Export downloads through the endpoints below, with the same mode and
-flags as query parameters (`exportQuery`, `sub_pages=1` for the pages
-inside).
+([translation.md](translation.md#exporting-the-translation)). A share view's
+Export starts the same job under its share token and follows it the same
+way, with no tray: a window closed meanwhile has its file offered in the
+pill once it is ready, and the step says so
+([tasks.md](tasks.md#a-share-views-exports)).
 
 The switches mean, per endpoint:
 `/pages/{id}/export?mode=readable&highlights=&notes=&pdf=` (Markdown,
@@ -2737,7 +2740,7 @@ changes a row and no block code:
   pipeline, which recurses a level at a time, is left out (about 250 levels);
   a link to it from another page is left pointing at no file, and an export
   with no page left fails with the reason. Warnings reach a job's result only:
-  the download routes (the share view's, scripts') answer the file alone.
+  the download routes (scripts', an import by link) answer the file alone.
 
 Read straight back into Gamma the zip is **Plain**, having no ids: `Paper/` is a
 folder and not sub-pages, a plain block with children is a bullet, and what

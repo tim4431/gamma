@@ -206,12 +206,13 @@ function BibtexSteps({ url, folder }) {
 // `translated`: {pages, language, counting} while the viewer shows the page's
 // PDF translated, which an annotated PDF of it writes (resolveExport), else
 // null. `busy`: the export cannot start yet (the translation is still being
-// read, or the last press is starting it).
-export function ExportDialog({ job, fetchJob, onDownload, onStop, onRetry, onLeaveJob, ...setup }) {
+// read, or the last press is starting it). `shareView`: a share view's
+// export, whose job has no row in Background tasks (useTasks' `follow`).
+export function ExportDialog({ job, fetchJob, onDownload, onStop, onRetry, onLeaveJob, shareView = false, ...setup }) {
   const [resume, setResume] = React.useState(0);
   if (job) {
     return <ExportJobStep job={job} folder={setup.folder} folderName={setup.folderName} pageId={setup.pageId} subPages={setup.subPages}
-      fetchJob={fetchJob} onClose={setup.onCancel}
+      shareView={shareView} fetchJob={fetchJob} onClose={setup.onCancel}
       onDownload={onDownload} onStop={onStop} onRetry={onRetry}
       onBack={(step) => { setResume(step); onLeaveJob(); }} />;
   }
@@ -314,8 +315,9 @@ const EXPORT_HEADINGS = { queued: T("Exporting…"), running: T("Exporting…"),
 // The export dialog's last step: the export job (tasks/useTasks.js) as it
 // runs and once it ended — the file to download, the pages left out, what
 // to do next. The dialog can close any time: the job goes on in Background
-// tasks, where the row opens this step again.
-function ExportJobStep({ job, folder, folderName, pageId, subPages, fetchJob, onClose, onDownload, onStop, onRetry, onBack }) {
+// tasks, where the row opens this step again. A share view's goes on with no
+// row, and the tab offers its file once it is ready (useAppJobs).
+function ExportJobStep({ job, folder, folderName, pageId, subPages, shareView, fetchJob, onClose, onDownload, onStop, onRetry, onBack }) {
   const [full, setFull] = React.useState(null); // the ended job with its result
   const head = React.useRef(null);
   const ended = isFinished(job);
@@ -358,7 +360,9 @@ function ExportJobStep({ job, folder, folderName, pageId, subPages, fetchJob, on
       <p className="reportModalHint">{taskTitle(job)}</p>
       {isActive(job) ? <>
         <TaskProgress task={job} label={t("Export progress")} />
-        <p className="reportModalHint">{t("You can close this window: the export goes on in Background tasks, and its file waits there.")}</p>
+        <p className="reportModalHint">{shareView
+          ? t("You can close this window: the export goes on, and this tab offers its file once it is ready.")
+          : t("You can close this window: the export goes on in Background tasks, and its file waits there.")}</p>
       </> : null}
       {job.state === "done" ? <>
         <div className="transferFile">

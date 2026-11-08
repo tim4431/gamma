@@ -27,9 +27,10 @@ One server process runs the jobs (the app is one uvicorn process, like the
 page sockets). An account runs at most ``MAX_RUNNING_PER_ACCOUNT`` jobs at
 once and the server ``MAX_RUNNING``; the rest wait queued, oldest first. A
 workspace's own work (owner ``WORKSPACE``, the indexer) runs outside those
-limits. A finished job is kept ``RETENTION_S``, then ``sweep`` removes it
-with its file, and the files of one account are capped together
-(``ARTIFACT_CAP``). At startup, the jobs a stopped process left queued or
+limits. A share view's exports are owned by the share (``share_owner``),
+which stands for an account in every limit. A finished job is kept
+``RETENTION_S``, then ``sweep`` removes it with its file, and the files of
+one account are capped together (``ARTIFACT_CAP``). At startup, the jobs a stopped process left queued or
 running are failed as interrupted (``recover``).
 """
 
@@ -51,6 +52,7 @@ from .logbuf import log
 
 ACTIVE = ("queued", "running")
 WORKSPACE = ""                   # the owner of a workspace's own work (the search indexer)
+SHARE_OWNER = "share:"           # + a share token: the owner of the exports a share view starts
 MAX_RUNNING = 4                  # account jobs running at once on the server
 MAX_RUNNING_PER_ACCOUNT = 2      # one account's; the others wait queued
 MAX_ACTIVE_PER_ACCOUNT = 20      # queued + running: past it, starting another is refused
@@ -71,6 +73,13 @@ _COLUMNS = ("id", "owner", "workspace_id", "kind", "key", "title", "params", "st
             "created_at", "started_at", "finished_at")
 _SELECT = f"SELECT {', '.join(_COLUMNS)} FROM jobs"
 _FINISHED_SQL = "('done', 'failed', 'cancelled')"
+
+
+def share_owner(token: str) -> str:
+    """The owner of the jobs a share view starts under ``token``
+    (``auth.share_job_owner``): the share counts as one account in the
+    limits and the 10 GB of files, whoever of its visitors starts them."""
+    return SHARE_OWNER + token
 
 
 class Cancelled(BaseException):
@@ -547,11 +556,26 @@ def recover() -> int:
     return len(ids)
 
 
+def _forget_stopped_shares() -> None:
+    """The jobs of a share that no longer exists (stopped, its page or
+    folder deleted, its workspace gone) stop and go with their files, as a
+    deleted account's do. Its visitors could not reach them any more."""
+    with connect_users_db() as conn:
+        owners = [r[0] for r in conn.execute(
+            "SELECT DISTINCT owner FROM jobs WHERE substr(owner, 1, ?) = ? "
+            "AND substr(owner, ?) NOT IN (SELECT token FROM shares)",
+            (len(SHARE_OWNER), SHARE_OWNER, len(SHARE_OWNER) + 1))]
+    for owner in owners:
+        forget_account(owner)
+
+
 def sweep(now: float | None = None) -> int:
     """Remove the jobs that finished more than ``RETENTION_S`` ago with
-    their files, job directories no row names, and uploads no job took.
-    Returns how many jobs went."""
+    their files, the jobs of shares that are gone, job directories no row
+    names, and uploads no job took. Returns how many finished jobs went
+    for their age."""
     now = time.time() if now is None else now
+    _forget_stopped_shares()
     cutoff = format_stamp(datetime.fromtimestamp(now - RETENTION_S, timezone.utc))
     ids = _drop(f"state IN {_FINISHED_SQL} AND finished_at != '' AND finished_at < ?", (cutoff,))
     with connect_users_db() as conn:
@@ -573,7 +597,8 @@ def sweep(now: float | None = None) -> int:
 
 
 def forget_account(user_id: str) -> None:
-    """An account is deleted: its jobs stop and go, with their files."""
+    """An account is deleted (or a share, ``share_owner``): its jobs stop
+    and go, with their files."""
     with _lock:
         for live in list(_live.values()):
             if live.owner != user_id:

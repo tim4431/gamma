@@ -6,7 +6,7 @@ or the annotated PDFs themselves. Most builders produce a zip; a bare .md (nothi
 .bib, the notes PDF and one page's annotated PDF are single files. A page's
 export takes the pages inside it too when asked (``sub_pages``), laid out
 as a folder's pages are. The same builders serve the downloads
-(``/pages/{id}/export``, ``/folders/{id}/export``: the share view, scripts)
+(``/pages/{id}/export``, ``/folders/{id}/export``: an import by link, scripts)
 and the background job the web app starts (``POST /api/jobs/export``)."""
 
 import base64
@@ -31,7 +31,8 @@ from starlette.background import BackgroundTask
 from .. import bibtex as bibtex_mod
 from .. import ink as inkmod
 from .. import comments, jobs, notability_export, notebook, notion_export, pdf_text, pdf_translated
-from ..auth import require_user, require_ws, resolve_ws, share_scope
+from ..auth import (link_ratelimit, require_user, require_ws, resolve_ws, share_job_owner, share_lookup,
+                    share_scope)
 from ..blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, PATH_SEP, TREES, assert_block_in_scope, block_to_dict,
     existing_in, fetch_subtree, filing, folder_path, folder_subtree_ids, page_root_id, pages_in_folder,
@@ -1633,10 +1634,11 @@ def export_folder(folder_id: str, request: Request, mode: str = "readable", pdf:
     subfolders become collections), ``bibtex`` (one .bib with every paper's
     citation entry), ``notion`` (a zip for Notion's importer: subfolders as
     directories) or ``gamma`` (a scoped account backup any Gamma imports
-    via /api/import-data?mode=merge). The web app exports through a job
-    instead (``POST /api/jobs/export``); this is the share view's and the
-    scripts' download — with a folder share token, a ``mode=bibtex`` URL is
-    the stable bibliography link a LaTeX editor refreshes from. 404 for an
+    via /api/import-data?mode=merge). The web app, a share view's too,
+    exports through a job instead (``POST /api/jobs/export``); this is
+    another Gamma's import by link and the scripts' download — with a
+    folder share token, a ``mode=bibtex`` URL is the stable bibliography
+    link a LaTeX editor refreshes from. 404 for an
     id that is no folder or a folder without pages, 403 for a folder outside
     the request's share."""
     scope = share_scope(request)
@@ -1773,6 +1775,10 @@ class ExportJob(BaseModel):
     translation_of: str = ""
 
 
+# The exports a link visitor (no account) may start through a share in five
+# minutes, per IP; a share's own limits are an account's (jobs.share_owner).
+LINK_EXPORTS_PER_5_MIN = 30
+
 # The layout a translated export was sent, kept with its job (jobs.kept) so
 # Background tasks can start it again.
 KEPT_TRANSLATION = "translation.json.gz"
@@ -1815,13 +1821,28 @@ def start_export_job(payload: ExportJob, request: Request):
     the same export again (Background tasks' retry; 404 once it is gone,
     ``_kept_translation``). A page whose
     translation cannot be written is left out like any page whose annotated
-    PDF fails (``_translated``)."""
-    user = require_user(request)
-    ws = require_ws(request)
+    PDF fails (``_translated``).
+
+    With ``?share=`` it is a share view's export: of what the share reaches
+    (403 outside it), held to the share as its downloads are (``opts["share"]``),
+    and the share's job (``auth.share_job_owner``), which any visitor the
+    share admits starts and follows by its id, the downloads' proxy cut
+    gone. It takes no translation (400); a link visitor starts at most
+    ``LINK_EXPORTS_PER_5_MIN``. The run checks again that the share stands
+    and still reaches the page or folder."""
+    scope = share_scope(request)
+    token = request.query_params.get("share") or ""
+    if scope is None:
+        user, ws, owner = require_user(request), require_ws(request), request.state.user_id
+    else:
+        owner, ws, user = share_job_owner(request), resolve_ws(request), request.state.user or ""
+        link_ratelimit(request, "export", LINK_EXPORTS_PER_5_MIN, 300)
     mode = payload.mode
     if mode not in _BUILDERS:
         raise HTTPException(status_code=400, detail=f"unknown export mode: {mode}")
     folder, page_id, translation = payload.folder, payload.page_id, payload.translation
+    if scope is not None and (translation is not None or payload.translation_of):
+        raise HTTPException(status_code=400, detail="a share view's export carries no translation")
     if translation is not None or payload.translation_of:
         if folder or not page_id or mode != "annotated-pdf":
             raise HTTPException(status_code=400, detail="a translation goes only with a page's annotated PDF")
@@ -1832,11 +1853,12 @@ def start_export_job(payload: ExportJob, request: Request):
         _translation_bounds(translation)
     with connect_pages_db(ws) as conn:
         if folder:
-            path = _export_folder(conn, folder)
+            path = _export_folder(conn, folder, scope)
             if not pages_in_folder(conn, folder):
                 raise HTTPException(status_code=404, detail="no pages in that folder")
             title, base = PATH_SEP.join(path), _folder_base(path)
         elif page_id:
+            assert_block_in_scope(conn, page_id, scope)
             row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
             if row is None or page_root_id(conn, page_id) is None:  # none, or in Recently deleted
                 raise HTTPException(status_code=404, detail="page not found")
@@ -1844,12 +1866,19 @@ def start_export_job(payload: ExportJob, request: Request):
         else:
             raise HTTPException(status_code=400, detail="name a page or a folder to export")
     opts = _export_opts(payload.pdf, payload.highlights, payload.notes, folder_scope=folder or None, author=user,
-                        comments=payload.comments, notes_at=payload.notes_at)
+                        comments=payload.comments, notes_at=payload.notes_at, share=scope)
     if translation is not None:
         opts["translation"] = (page_id, translation)
 
     def run(job):
+        if scope is not None and share_lookup(token) is None:
+            raise HTTPException(status_code=410, detail="the share link was stopped")
         with connect_pages_db(ws) as conn:
+            if scope is not None:  # moved out of the shared folder meanwhile, say
+                if folder and not scope.allows_folder(conn, folder):
+                    raise HTTPException(status_code=403, detail="not accessible via this share link")
+                if not folder:
+                    assert_block_in_scope(conn, page_id, scope)
             ids = pages_in_folder(conn, folder) if folder else _page_ids(conn, page_id, payload.sub_pages)
             if not ids:
                 raise HTTPException(status_code=404, detail="the folder holds no pages any more")
@@ -1862,7 +1891,7 @@ def start_export_job(payload: ExportJob, request: Request):
 
     kept = {KEPT_TRANSLATION: gzip.compress(translation.model_dump_json().encode(), 6)} \
         if translation is not None else None
-    return jobs.start("export", owner=request.state.user_id, ws=ws, run=run, artifact=True, title=f"Export of {title}",
+    return jobs.start("export", owner=owner, ws=ws, run=run, artifact=True, title=f"Export of {title}",
                       kept=kept, params={"page_id": page_id if not folder else "", "folder": folder, "name": title,
                               "mode": mode, "pdf": payload.pdf, "highlights": payload.highlights,
                               "notes": payload.notes, "comments": payload.comments,

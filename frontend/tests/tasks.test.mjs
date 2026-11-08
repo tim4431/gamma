@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addLocalRow, fmtElapsed, isActive, LOCAL_LIMIT, localRow, mergeTasks, newlyFinished, progressFraction,
-  sortTasks, trayBadge } from "../src/tasks/taskModel.js";
+import { addLocalRow, afterFollow, followed, fmtElapsed, isActive, LOCAL_LIMIT, localRow, mergeTasks, newlyFinished,
+  progressFraction, sortTasks, trayBadge } from "../src/tasks/taskModel.js";
 import { canOpen, exportAgain, kindOf, progressCounts, progressText, quietKinds, relocationSummary, relocationSuperseded, retryOf,
   taskActions, taskInfo, taskTime, taskTitle } from "../src/tasks/taskKinds.js";
 
@@ -213,4 +213,30 @@ test("a click opens the export and import dialogs again, or where the work is ma
   assert.equal(canOpen(job({ kind: "workspace-export" })), false);
   assert.equal(canOpen(job({ kind: "workspace-delete" })), false, "the workspace's Settings row shows it");
   assert.equal(canOpen({ local: true, kind: "download" }), false);
+});
+
+test("a share view follows only the share's own jobs that wait or run", () => {
+  assert.equal(followed(job({ id: "a", owner: "share:tok" })), true);
+  assert.equal(followed(job({ id: "b", owner: "share:tok", state: "queued" })), true);
+  assert.equal(followed(job({ id: "c", owner: "share:tok", state: "done" })), false, "over");
+  assert.equal(followed(job({ id: "d", owner: "u-visitor", kind: "transcribe" })), false, "the visitor's own job");
+  assert.equal(followed(job({ id: "e" })), false, "no owner");
+});
+
+test("a follow round: the answer, the job failed when the share refuses it or it is gone, else the row kept", () => {
+  const row = job({ id: "j", owner: "share:tok" });
+  const answer = { ...row, state: "done" };
+  assert.equal(afterFollow(row, { job: answer }), answer);
+  const now = Date.UTC(2026, 8, 29, 13, 0);
+  for (const status of [401, 403, 404]) {
+    const out = afterFollow(row, { error: { status, message: `why ${status}` } }, now);
+    assert.equal(out.state, "failed", `${status}`);
+    assert.equal(out.error, `why ${status}`);
+    assert.equal(out.stoppable, false);
+    assert.equal(out.finished_at, new Date(now).toISOString());
+    assert.deepEqual(newlyFinished([row], [out]).map((j) => j.id), ["j"], "it settles");
+  }
+  for (const error of [{ status: 500, message: "boom" }, new Error("Failed to fetch"), {}]) {
+    assert.equal(afterFollow(row, { error }), row, "offline or a 5xx: asked again next round");
+  }
 });

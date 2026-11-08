@@ -2799,8 +2799,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // this tab's own work — a PDF loading, an upload, an AI lookup — in one
   // list; the tray in the topbar shows it. A local row is
   // {kind, name, state, info, fraction (0..1 when the work can measure
-  // itself), cancel (a function when it can be stopped)}.
-  const tasks = useTasks({ enabled: !!authUser?.user && !shareMode, onFinished: (job, started, jobs) => onJobFinished(job, started, jobs) });
+  // itself), cancel (a function when it can be stopped)}. A share view
+  // lists no jobs: it follows the exports it starts under its token, the
+  // share's (`follow`), whoever the visitor is.
+  const tasks = useTasks({ enabled: shareMode || !!authUser?.user, follow: shareMode,
+    onFinished: (job, started, jobs) => onJobFinished(job, started, jobs) });
   const { addLocal: addTask, updateLocal: updateTask } = tasks;
   // The search indexer of the open workspace runs (Settings shows it).
   const indexing = tasks.jobs.some((job) => job.kind === "indexing" && job.workspace === workspace?.id && isActive(job));
@@ -3207,7 +3210,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const { startWorkspaceExport, runBackupImport, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask, onJobFinished } = useAppJobs({
     tasks, postPill, setStatus, setOpenPopover, setSettingsOpen,
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
-    pageId: focusedBlock?.id, shareMode, exportRawPdf, downloadExport, exportTranslation,
+    pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation,
     workspaceId: workspace?.id, refreshQuota, fetchHomeBlocks, refreshSession: checkSession,
   });
   const [exportOpts, setExportOpts] = usePersistedState(
@@ -13352,6 +13355,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           translated={exportFolder ? null : exportTranslated()}
           // the translation shown being read, or the export started
           busy={exportSeeding || exportStarting}
+          shareView={shareMode}
           onCancel={closeExport}
           onExport={runExport}
           onLeaveJob={leaveExportJob}

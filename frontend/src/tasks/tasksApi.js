@@ -1,6 +1,8 @@
 // The Background tasks API (routers/jobs.py): the account's jobs, and the
-// POST /api/jobs/<route> that each kind of work starts with.
-import { API, apiJson } from "../shared/lib/utils";
+// POST /api/jobs/<route> that each kind of work starts with. In a share view
+// every call carries the share token (apiJson, withShare), and the jobs are
+// the share's.
+import { API, apiJson, withShare } from "../shared/lib/utils";
 import { uploadFile } from "../shared/lib/uploadParts";
 import { saveUrl } from "../shared/lib/saveFile.js";
 
@@ -23,5 +25,6 @@ export const clearJobs = () => apiJson(`${API}/jobs/clear`, { method: "POST" });
 // A plain link: the browser's own download manager fetches the file (and
 // shows its progress), however big it is; under an app that takes saves,
 // the app fetches it (shared/lib/saveFile.js). The server counts the file
-// fetched once it is (jobs.mark_downloaded), so this asks once.
-export const downloadJob = (task) => saveUrl(`${job(task.id)}/download`, task.artifact?.name || "");
+// fetched once it is (jobs.mark_downloaded), so this asks once. A share
+// view's job is the share's, so its link carries the share token.
+export const downloadJob = (task) => saveUrl(withShare(`${job(task.id)}/download`), task.artifact?.name || "");

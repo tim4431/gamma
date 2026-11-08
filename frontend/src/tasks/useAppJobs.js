@@ -7,7 +7,7 @@
 import { useRef, useState } from "react";
 import { API, fmtBytes, getCurrentWorkspace, withWorkspace } from "../shared/lib/utils";
 import { t } from "../shared/i18n/i18n.js";
-import { exportJobBody, exportQuery } from "../transfers/transferFormats";
+import { exportJobBody } from "../transfers/transferFormats";
 import { importSummary } from "../transfers/importReview";
 import { guideEvents } from "../guide/events.js";
 import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle } from "./taskKinds.js";
@@ -19,10 +19,10 @@ export function useAppJobs({
   exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder,
   // the import review dialog
   importReview, setImportReview,
-  // what an export is of, and the share view's synchronous downloads;
-  // exportTranslation() resolves to the translation the viewer shows over the
-  // page's PDF, for its annotated PDF to write (App.jsx), or null
-  pageId, shareMode, exportRawPdf, downloadExport, exportTranslation = () => null,
+  // what an export is of; exportTranslation() resolves to the translation
+  // the viewer shows over the page's PDF, for its annotated PDF to write
+  // (App.jsx), or null
+  pageId, shareMode, exportRawPdf, exportTranslation = () => null,
   // the open workspace: what a finished restore / import there refreshes
   workspaceId, refreshQuota, fetchHomeBlocks,
   // the session read again: the workspaces a finished delete leaves
@@ -77,8 +77,10 @@ export function useAppJobs({
   // exist behind the proxy), unless the viewer shows it translated: a
   // page's annotated PDF writes the translation shown in place of the
   // original text (`translation`, read as Export is pressed), which only
-  // the job does. A share view has no background tasks, and no translated
-  // view: it downloads the same export through the download endpoints.
+  // the job does. A share view, which has no translated view, starts the
+  // same job under its share token, the share's own (routers/export.py), and
+  // follows it alone (useTasks' `follow`): a big folder's export outlives a
+  // proxy's cut there too.
   // While it starts, the dialog's Export is busy and a second press starts
   // nothing; a dialog closed meanwhile starts nothing either.
   async function runExport(o) {
@@ -96,13 +98,6 @@ export function useAppJobs({
         return;
       }
       const body = exportJobBody(o, { pageId, folder: exportFolder || "" });
-      if (shareMode) {
-        setExportOpen(false);
-        const query = exportQuery(body);
-        await downloadExport(exportFolder
-          ? `/folders/${encodeURIComponent(exportFolder)}/export?${query}` : `/pages/${pageId}/export?${query}`, "export");
-        return;
-      }
       try {
         const job = await tasks.start("export", translation ? { ...body, translation } : body, { download: "auto", dialog: "export" });
         if (exportLeftRef.current) tasks.setDownload(job.id, "offer");

@@ -5,7 +5,8 @@
 // the page, and a folder share (the folder view's link button; the listing a
 // visitor browses; the folder copied into another library by the listing's
 // Add to my library and by its link pasted into another Gamma's +, which
-// is a second server), and what a visitor's export holds. A page inside a
+// is a second server), a visitor's export of the folder as the share's job,
+// and what a visitor's export holds. A page inside a
 // shared page names the link that opens it, a move into a shared page asks
 // first, and an edit link's visitor makes a page inside the shared page.
 import { execFileSync } from "node:child_process";
@@ -147,6 +148,78 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     assertNoProblems(o);
     await octx.close();
     await alice.api(`/api/share-settings/folder/${sharedlab}`, { method: "DELETE" });
+  });
+
+  await step("folder share: a visitor's export of the folder runs as the share's job, which goes with the share", async () => {
+    for (const title of ["Exported folder paper A", "Exported folder paper B"]) {
+      const paper = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } });
+      await alice.file(paper.id, { folders: ["exportlab"] });
+    }
+    const exportlab = await alice.folder("exportlab");
+    const { token } = await alice.api(`/api/share/folder/${exportlab}`, { method: "POST", body: { audience: "anyone" } });
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const v = await openPage(ctx, `${server.base}/?share=${token}`);
+    await v.locator(".fileRow", { hasText: "Exported folder paper A" }).waitFor({ timeout: 15000 });
+    const started = v.waitForResponse((r) => r.url().includes("/api/jobs/export") && r.request().method() === "POST");
+    const view = v.locator('[data-popover="menu"] > button');
+    await (await view.count() ? view : v.locator('[data-guide="header.account"]')).click();
+    await v.getByRole("menuitem", { name: "Export…", exact: true }).click();
+    const dialog = v.getByRole("dialog", { name: /^Export “exportlab”/ });
+    await dialog.getByRole("button", { name: "Markdown", exact: true }).click();
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    const download = v.waitForEvent("download");
+    await dialog.getByRole("button", { name: "Export", exact: true }).click();
+    const job = await (await started).json();
+    assertEq(job.owner, `share:${token}`, "the share's job");
+    // the dialog follows it to its end and the file comes by itself, through the share
+    await dialog.getByRole("heading", { name: "Export ready" }).waitFor();
+    await dialog.getByText("2 pages exported.").waitFor();
+    assert((await download).url().includes(`/api/jobs/${job.id}/download?share=`), "the job's file, through the share token");
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    await dialog.waitFor({ state: "detached" });
+    assertNoProblems(v);
+    await ctx.close();
+    // no one reaches it but through the share; stopped, the share takes its jobs along
+    assertEq((await fetch(`${server.base}/api/jobs/${job.id}`)).status, 401, "not without the share");
+    assertEq((await fetch(`${server.base}/api/jobs/${job.id}?share=${token}`)).status, 200, "through the share");
+    await alice.api(`/api/share-settings/folder/${exportlab}`, { method: "DELETE" });
+    assertEq((await fetch(`${server.base}/api/jobs/${job.id}/download?share=${token}`)).status, 401, "gone with the share");
+  });
+
+  await step("folder share: an export whose share is stopped while it runs ends as failed, and the tab stops asking", async () => {
+    const paper = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Stopped export paper" } });
+    await alice.file(paper.id, { folders: ["stoplab"] });
+    const stoplab = await alice.folder("stoplab");
+    const { token } = await alice.api(`/api/share/folder/${stoplab}`, { method: "POST", body: { audience: "anyone" } });
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const v = await openPage(ctx, `${server.base}/?share=${token}`);
+    await v.locator(".fileRow", { hasText: "Stopped export paper" }).waitFor({ timeout: 15000 });
+    // the job's reads wait until the share is stopped, then reach the server: 401
+    let reads = 0, release;
+    const stopped = new Promise((resolve) => { release = resolve; });
+    await v.route(/\/api\/jobs\/[0-9a-f]+\?share=/, async (route) => {
+      reads += 1;
+      await stopped;
+      await route.continue();
+    });
+    const started = v.waitForResponse((r) => r.url().includes("/api/jobs/export") && r.request().method() === "POST");
+    const view = v.locator('[data-popover="menu"] > button');
+    await (await view.count() ? view : v.locator('[data-guide="header.account"]')).click();
+    await v.getByRole("menuitem", { name: "Export…", exact: true }).click();
+    const dialog = v.getByRole("dialog", { name: /^Export “stoplab”/ });
+    await dialog.getByRole("button", { name: "Markdown", exact: true }).click();
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await dialog.getByRole("button", { name: "Export", exact: true }).click();
+    assertEq((await (await started).json()).owner, `share:${token}`, "the share's job");
+    await until(() => reads > 0, { what: "the dialog asks after its job" });
+    await alice.api(`/api/share-settings/folder/${stoplab}`, { method: "DELETE" });
+    release();
+    await dialog.getByRole("heading", { name: "Export failed" }).waitFor();
+    await dialog.getByRole("alert").getByText("This share link no longer lets you in.").waitFor();
+    const asked = reads;
+    await sleep(4000); // more than two of the fast polls' rounds
+    assertEq(reads, asked, "a job the share no longer reaches is not asked after again");
+    await ctx.close();
   });
 
   await step("folder share: Add to my library, and the link pasted into another Gamma's +, copy the folder to the top level", async () => {
@@ -487,12 +560,18 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
     const page = await openPage(ctx, `${server.base}/?share=${visitorToken}`);
     await page.locator(".blockRow", { hasText: "Openword" }).waitFor();
+    // the share view exports through the share's job, never the one-request download
+    const exports = [];
+    page.on("request", (r) => { if (/\/api\/(jobs\/export|pages\/[^/]+\/export)\b/.test(r.url())) exports.push(`${r.method()} ${r.url()}`); });
     for (const format of ["Markdown", "Obsidian", "Notion"]) {
       const dialog = await openDialog(page, "Export");
       await dialog.getByRole("button", { name: format, exact: true }).click();
       await dialog.getByRole("button", { name: "Next", exact: true }).click();
       const download = page.waitForEvent("download");
       await dialog.getByRole("button", { name: "Export", exact: true }).click();
+      await dialog.getByRole("heading", { name: "Export ready" }).waitFor();
+      await dialog.getByRole("button", { name: "Done", exact: true }).click();
+      await dialog.waitFor({ state: "detached" });
       // A page with no file to bundle comes as one .md, a vault and a Notion export as a zip.
       const held = execFileSync(python, ["-c", `
 import json, sys, zipfile
@@ -506,6 +585,9 @@ else:
       assert(held.includes("Openword"), `${format}: the shared page is in the export`);
       for (const word of ["TOPSECRETWORD", "Hiddentitleword", pictureName]) assert(!held.includes(word), `${format}: nothing names ${word}`);
     }
+    assertEq(exports.length, 3, `one job per export (${exports})`);
+    assert(exports.every((r) => r.startsWith("POST ") && r.includes(`share=${encodeURIComponent(visitorToken)}`)),
+      `each started as the share's job (${exports})`);
     assertNoProblems(page);
     await ctx.close();
   });

@@ -337,7 +337,7 @@ async function apiJson(url, options = {}, { keepalive } = {}) {
     if (!SHARE_VIEW) {
       window.dispatchEvent(new CustomEvent("gamma-auth-expired"));
     }
-    throw new Error("401 Unauthorized");
+    throw Object.assign(new Error("401 Unauthorized"), { status: 401 });
   }
   if (!r.ok) throw await apiError(r);
   return r.json();

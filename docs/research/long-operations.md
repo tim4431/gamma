@@ -241,14 +241,34 @@ reads *Syncing 30 / 120*
 Neither is a job, so neither is in the tasks tray: they stay recurring
 rounds, shown where they are followed.
 
+A share view's export is a job too (2026-11-08). The share host sits behind
+Cloudflare, and a big shared folder's export ran in the one GET of
+`/folders/{id}/export`, so the proxy's cut came before the zip did. The
+share view now starts the same `export` job under its token (`POST
+/api/jobs/export?share=`), held to the share as the downloads are. The
+job's owner is the share (`share:<token>`), not the visitor, who may have
+no account: the share counts as one account in the limits and the 10 GB
+of files, link visitors start at most 30 in five minutes per IP, and the
+job is reached by its id through that share alone, by any visitor the
+share admits. No listing shows it, so visitors of one link do not see
+each other's exports, and the share view follows only the jobs its tab
+started. A run checks that the share still stands, and the sweep takes
+the jobs of a share that is gone
+([dev/tasks.md](../dev/tasks.md#a-share-views-exports)). The GET routes
+stay, for scripts, the fixed bibliography link and another Gamma's import
+by link, which fetches a whole shared folder as one Gamma export in one
+request and can still be cut on a big one.
+
 ## Still open
 
 In the order they matter:
 
-1. A share view's export of a big shared folder (the share host sits
-   behind Cloudflare and the share view has no jobs).
-2. A workspace being deleted taking no more changes (above), which needs
+1. A workspace being deleted taking no more changes (above), which needs
    the web app to learn a lost write right mid-session.
+2. Another Gamma importing a big shared folder by its link: one GET of
+   the folder's Gamma export, which a proxy can cut (above). The share
+   job is there to use, but the importing tab would have to follow a job
+   on the other server across origins.
 3. Smaller: a folder link's round shows no progress while it sends PDFs
    back, nor within one large PDF it fetches; a publish that only
    changes the audience still runs a full round; unlinking Zotero clears

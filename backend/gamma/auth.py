@@ -33,6 +33,7 @@ from . import guests, publisher_sessions
 from .blocks_store import (folder_subtree_ids, page_ancestors, page_descendants, page_in_folder, page_root_id,
                            pages_in_folder)
 from .db import account_names, connect_pages_db, connect_users_db, parse_stamp, share_token_workspace
+from .jobs import share_owner
 from .logbuf import log
 
 SESSION_COOKIE = "session"
@@ -744,6 +745,22 @@ def share_scope(request: Request) -> ShareScope | None:
     if not grant:
         raise _share_denied(request)
     return grant[1]
+
+
+def share_job_owner(request: Request) -> str:
+    """Who owns the jobs of a ``?share=`` request: the share itself
+    (``jobs.share_owner``), for any visitor it admits — so a share view
+    starts an export as a job and follows it by its id, signed in or not
+    (docs/dev/tasks.md "A share view's exports"). 401/403 as
+    ``share_scope`` for a share that does not admit this visitor, 403 for
+    an integration token (jobs are a session's). "" without a ``?share=``."""
+    token = request.query_params.get("share") or ""
+    if not token:
+        return ""
+    share_scope(request)
+    if is_token(request):
+        raise HTTPException(403, TOKEN_REFUSAL)
+    return share_owner(token)
 
 
 def share_via(request: Request) -> str:

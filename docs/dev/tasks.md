@@ -32,8 +32,9 @@ store, the pure model, the kind registry, the tray).
 
 A job is a row of `users.db`'s `jobs` table ([migrations.md](migrations.md)
 step 24) and, while it is queued or running, a worker thread in this
-process. The row holds the kind, the owner (the account that started it, or
-`""` for a workspace's own work), the workspace, an English title, the
+process. The row holds the kind, the owner (the account that started it,
+`""` for a workspace's own work, or `share:<token>` for a share view's
+export, below), the workspace, an English title, the
 parameters (JSON, what a window needs to show the job again), the state
 (`queued`, `running`, `done`, `failed`, `cancelled`), the last progress, the
 result (JSON), the error, and the file the job produced. A running job's
@@ -112,7 +113,7 @@ the viewer's layout this way, so it can be started again
 
 **Ending.** A finished job is kept 24 hours (`RETENTION_S`). The sweep
 (`jobs.sweep`, every 10 minutes from the app lifespan) removes it with its
-file and what it kept, job directories no row names and uploads no job took. At startup
+file and what it kept, the jobs of a share that no longer exists, job directories no row names and uploads no job took. At startup
 `jobs.recover` fails the jobs a stopped process left queued or running
 ("interrupted: the server restarted while this ran"). A process only
 recovers rows another process stamped (`instance`), so a second app
@@ -124,7 +125,8 @@ with it (`workspaces.delete_account`).
 ## The API (`routers/jobs.py`)
 
 Only a session account uses jobs (integration tokens get 403, like every
-account-level endpoint). The one exception: a token's `PUT
+account-level endpoint), and a share view for its exports (below). The one
+exception for a token: a token's `PUT
 /pages/{id}/attachment` that replaces a page's PDF starts its account's
 `relocate-highlights` run, as a session's does, and the account's sessions
 see it in Background tasks while the token cannot read it. A job is its
@@ -158,7 +160,7 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 
 | Kind | Route | Started from | Result, file |
 |---|---|---|---|
-| `export` | `export` (`routers/export.py`) | the Export dialog, for a page or a folder | the file; `{pages, skipped}` |
+| `export` | `export` (`routers/export.py`) | the Export dialog, for a page or a folder, a share view's too | the file; `{pages, skipped}` |
 | `import-preview` | `import-preview` (`routers/imports.py`, an uploaded file; `import-preview/parts` for one in parts; one per review) | the import dialog, once the file is chosen | `{review_id, pages, warnings}`, the counts; the review itself is kept with the staged upload (`GET /import/review/{id}`) |
 | `import` | `import` (`routers/imports.py`) | the import review's Import to library | the import report |
 | `workspace-export` | `workspace-export` (`routers/ws_backups.py`) | Settings → Workspaces → Data → Export…, Export all | the zip |
@@ -215,8 +217,8 @@ whose row goes. The import job (`import`) holds the staged review's claim
 while it reads the upload and removes the upload when it ends, however it
 ends. Asking again for the same review answers the job already started,
 for either kind (an import 409 with another selection). The indexer keeps one row per
-workspace (`jobs.prune`). Synchronous endpoints serve scripts, the share
-view and the MCP export: `/api/export`, `/export-all`, `/import-data`,
+workspace (`jobs.prune`). Synchronous endpoints serve scripts, another
+Gamma's import by link and the MCP export: `/api/export`, `/export-all`, `/import-data`,
 `/import/review` (the review answered in the request),
 `/pages/{id}/export`, `/folders/{id}/export`, the snapshot endpoints,
 `DELETE /workspaces/{id}`, `DELETE /admin/users/{name}` and
@@ -369,11 +371,44 @@ way. It does not ask before the tab goes, since the app's own reloads (a
 workspace switch, a restore, a deleted workspace) would ask too, and the
 desktop app would cancel them without a word.
 
-A share view has no background tasks. Its exports download directly
-through the synchronous endpoints, and its "Add to my library" hands the
-link to the visitor's own library, which imports it
-([import_export.md](import_export.md) "Importing a shared page or folder
-by link").
+## A share view's exports
+
+A share view's Export runs the same `export` job, started under the
+share token (`POST /api/jobs/export?share=`), so a big shared folder's
+export is not cut by a proxy in front of the share host. The job is the
+share's: its owner is `share:<token>` (`jobs.share_owner`,
+`auth.share_job_owner`), the same for every visitor, signed in or not, so
+the share counts as one account in the limits (two running, twenty
+waiting or running, 10 GB of files). A link visitor starts at most 30 in
+five minutes per IP. The export reaches only what the share does (403
+outside it) and is held to it as the share's downloads are
+([import_export.md](import_export.md#gamma-to-gamma-export)); it takes no
+translation. As it runs it checks again that the share stands ("the share
+link was stopped") and still reaches the page or folder.
+
+No listing shows such a job. Whoever holds its id reads, stops, removes and
+downloads it through `/api/jobs/{id}…?share=<token>`, any visitor the
+share admits, and nobody does without that share: the workspace's own
+members get 404 for it, and a share stopped or changed to keep the
+visitor out answers 401 or 403. The sweep stops and removes the jobs of a
+share that is gone.
+
+The share view's store follows only the share's jobs its tab started
+(`useTasks({follow: true})`: `GET /api/jobs/{id}` for each one waiting or
+running whose owner is `share:<token>`, taskModel's `followed`, never the
+listing), and it has no tray. A job of the visitor's own account that the
+share view adopted (a recording's transcript) is not followed: the share
+does not reach it. A read the share refuses (401: stopped or keeping the
+visitor out; 403) or that finds no job (404) ends the job there as failed
+with why (`afterFollow`), so the dialog says so and the tab stops asking;
+any other failed read (offline, a 5xx) is asked again next round. The Export dialog
+follows the job as in the library; closed meanwhile, its file is offered
+in the pill once it is ready. A reload loses the job to the tab: the share
+view keeps no row to open it again.
+
+Its "Add to my library" hands the link to the visitor's own library,
+which imports it ([import_export.md](import_export.md) "Importing a shared
+page or folder by link").
 
 ## Adding a kind
 
@@ -395,7 +430,9 @@ by link").
 - Backend: `test_jobs.py` covers the registry and the API: lifecycle,
   progress, stop, failure, limits, visibility, files, sweep, recovery and
   the account lifecycle. `test_export_jobs.py` covers every export format
-  as a job and the annotated-PDF folder zip; `test_backup_jobs.py` the
+  as a job and the annotated-PDF folder zip, `test_share_export.py` a
+  share view's (every format held to the share, the job the share's own,
+  checked as it runs and gone with the share); `test_backup_jobs.py` the
   snapshots, restores and server backups. The import job and the
   review's (kept for its dialog, in parts, stopped, refused, a Gamma
   export unpacking no PDF) are tested in `test_import_review.py`, the metadata batch in `test_metadata_batch.py`
@@ -405,7 +442,7 @@ by link").
   check at the point of no return, two admins deleting each other), the database
   check and the streamed snapshot download; `test_backup_safety.py` the
   final copy itself and the delete holds.
-- Frontend: `tests/tasks.test.mjs` covers the model and kinds,
+- Frontend: `tests/tasks.test.mjs` covers the model and kinds (the share view's follow rounds too),
   `tests/transferFormats.test.mjs` the export job's body and
   `tests/pageBatch.test.mjs` the library's page batches; `test_bulk_pages.py` their
   endpoint, `POST /blocks/bulk`.
@@ -417,3 +454,7 @@ by link").
   files group covers an upload stopped from the tray. The settings group
   also deletes a workspace through its job and runs the database check
   as one; the trash group deletes twelve selected pages as a batch, in one request.
+  The notes-pdf-share group exports a shared page and a shared folder from
+  the share view as the share's jobs, the folder's gone with its share,
+  and one whose share is stopped while it runs ends as failed in the
+  dialog, the tab asking no more.
