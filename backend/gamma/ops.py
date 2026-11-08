@@ -627,10 +627,14 @@ def _merged(merges: dict, block_id: str, base: str, content: str, stored: str, c
     the writer read it, the writer's edit is applied as a patch on the
     current text (gamma/textmerge.py). An edit that is already the text —
     the same change made twice, a retried batch — has nothing to merge:
-    patching it in again would double it. The diffs are kept in ``merges``
-    by their texts, so a merge ``_premerge`` computed before the write lock
-    is not computed again under it."""
-    if len(base) > MAX_CONTENT or stored in (base, content) or base == content:
+    patching it in again would double it. An edit that took its text back
+    to its base (a word typed and deleted again within one save) changes
+    nothing: the text stored now stands, never the older text it was made
+    from (textmerge.merge keeps it), with the writer's cursor remapped into
+    it like any merge's. The diffs are kept in ``merges`` by their texts,
+    so a merge ``_premerge`` computed before the write lock is not computed
+    again under it."""
+    if len(base) > MAX_CONTENT or stored in (base, content):
         return content
     merged, _clean = _memo(merges, textmerge.merge, base, content, stored)
     if cursor and cursor.get("block") == block_id and merged != content:

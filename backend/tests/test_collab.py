@@ -652,6 +652,18 @@ def test_set_with_base_merges_concurrent_edits(guest):
     assert r.status_code == 200
     assert r.json()["ops"] == [{"op": "set", "id": blk["id"], "content": "hello brave world!"}]  # merged text echoed, no base
     assert _tree(guest, page["id"])[0]["content"] == "hello brave world!"
+    # a set whose text is its own base changes nothing (a word typed and
+    # deleted again within one save), even from an older base: the text
+    # stored since stands (the crowd soak, tests/e2e/collabSoak.mjs), and
+    # stored since stands, the writer's caret moved into it
+    with guest.websocket_connect(f"/api/ws/page/{page['id']}?client=w") as w:
+        w.receive_json()
+        r = guest.post(f"/api/pages/{page['id']}/ops", json={
+            "client": "c", "ops": [{"op": "set", "id": blk["id"], "content": "hello world", "base": "hello world"}],
+            "cursor": {"block": blk["id"], "anchor": 11, "head": 11}})
+        assert r.status_code == 200 and r.json()["ops"] == [{"op": "set", "id": blk["id"], "content": "hello brave world!"}]
+        assert recv(w, "ops")["cursor"] == {"block": blk["id"], "anchor": 18, "head": 18}
+    assert _tree(guest, page["id"])[0]["content"] == "hello brave world!"
     # a base equal to the current text, or no base at all: plain replace
     assert _ops(guest, page["id"], [{"op": "set", "id": blk["id"], "content": "fresh", "base": "hello brave world!"}]).status_code == 200
     assert _tree(guest, page["id"])[0]["content"] == "fresh"

@@ -37,6 +37,7 @@ export const GROUPS = [
   { id: "zotero-link", files: ["zotero-link.mjs"], s: 27 },
   { id: "pdf-load", files: ["pdfload.mjs"], s: 25 },
   { id: "publish", files: ["publish.mjs"], s: 25 },
+  { id: "collab-soak", files: ["collabSoak.mjs"], s: 24 },
   { id: "pdf-touch", files: ["pdfTouch.mjs"], s: 23 },
   { id: "files", files: ["files.mjs"], s: 22 },
   { id: "cloud-sign-in", files: ["cloudSignIn.mjs"], s: 20 },
@@ -233,7 +234,8 @@ export const RULES = [
   ["backend/gamma/routers/folder_links.py", []],
   // the clones' engine and the clock the Zotero link's rounds run on (sync_clock.py), its conflicts and log tables (sync_engine.py)
   ["backend/gamma/sync_*.py", ["mirror", "publish", "zotero-link"]],
-  ["backend/gamma/textmerge.py", ["mirror"]],
+  // the same-block merge: a mirror's sync, two tabs typing in one block, the soak's crowd
+  ["backend/gamma/textmerge.py", ["mirror", "collab", "collab-soak"]],
   ["backend/gamma/routers/sync.py", ["mirror", "publish"]],
   ["backend/gamma/routers/mirrors.py", ["mirror", "publish"]],
   ["backend/gamma/cloud_*.py", ["cloud-sign-in", "publish"]],

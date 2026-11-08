@@ -35,6 +35,7 @@ import { diagramScenarios } from "./scenarios/diagrams.mjs";
 import { pdfScenarios } from "./scenarios/pdf.mjs";
 import { fileScenarios } from "./scenarios/files.mjs";
 import { collabScenarios } from "./scenarios/collab.mjs";
+import { collabSoakScenarios } from "./scenarios/collabSoak.mjs";
 import { shareScenarios } from "./scenarios/share.mjs";
 import { settingsScenarios } from "./scenarios/settings.mjs";
 import { mcpScenarios } from "./scenarios/mcp.mjs";
@@ -108,6 +109,7 @@ const RUNNERS = {
   "translation": translationScenarios,
   "inbox": inboxScenarios,
   "collab": collabScenarios,
+  "collab-soak": collabSoakScenarios,
   "mirror": mirrorScenarios,
   "zotero-link": zoteroLinkScenarios,
   "transfers": transferScenarios,

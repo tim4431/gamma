@@ -773,9 +773,19 @@ focus, and `peers` / `me` as React state. The session owns:
   spans both survive, and so do insertions at the same or neighbouring
   offsets, the one stored first coming first — two people typing at one
   caret keep both people's keystrokes (text typed in front of a word the
-  other replaced stays in front of the replacement). Only a span of ours that replaces
+  other replaced stays in front of the replacement). An insertion or a
+  deletion beside text it repeats has more than one reading: `cool `
+  typed in front of `cat` is also `ool c` typed after its `c`. Each side's
+  is read at a word boundary where it can be, and one that still cuts into
+  the other side's change at the nearest offset where it cuts into none of
+  it, so a word typed beside a word the other deleted stays whole (read
+  the other way, `the cat sat` with `cool ` typed and `cat ` deleted made
+  `the ool csat`). Only a span of ours that replaces
   characters the stored change also replaced is dropped; the stored text
-  stands for it. Typing merges by characters. A revert of the agent's edit
+  stands for it. A set whose text is its base (a word typed and deleted
+  again within one save) changes nothing: the text stored since stands,
+  never the older text the edit started from, and the writer's caret is
+  moved into it as after any merge. Typing merges by characters. A revert of the agent's edit
   merges by words and phrases (`semantic=True`, [ai_tools.md](ai_tools.md)
   "Reverting a note change"), so two rewrites of one sentence clash as
   wholes instead of interleaving. The echoed op carries the merged text and the
@@ -1140,7 +1150,9 @@ running ([debugging.md](debugging.md#browser-end-to-end-suite)).
   hunks keeping two rewrites of one phrase apart, different spans,
   insertions at one caret keeping both (through the op endpoint too), an
   insertion in front of a replaced word, an insertion inside the other
-  side's deleted span, a span both replaced.
+  side's deleted span, an insertion or a deletion beside text it repeats
+  never turned around into the other side's change (cases the crowd soak
+  found among them), a span both replaced.
 - `frontend/tests/blockOps.test.mjs`: `node --test tests/blockOps.test.mjs`
   from `frontend/` (pure diff/apply round-trips, and which remote moves
   displace the open editor's row).
@@ -1217,6 +1229,28 @@ running ([debugging.md](debugging.md#browser-end-to-end-suite)).
   ([debugging.md](debugging.md#browser-end-to-end-suite)). It types in a
   note, closes the tab at once and asserts that the server got the typing,
   also with no `pagehide` listener of the app running (`--stop pagehide`).
+- A crowd: `node tests/e2e/collabSoak.mjs` from `frontend/`, and its short
+  run, the `collab-soak` group (`npm run e2e -- --group collab-soak`; the
+  engine is `tests/e2e/scenarios/collabSoak.mjs`). Each tab is
+  `createCollabSession` itself over Node's fetch and WebSocket, with
+  App.jsx's side of the contract around it: a refetch laid under the
+  unsaved edits (`overlay`) with `reloadFailed` and a retry, a remote batch
+  applied and committed at once. So every batch, retry, catch-up, refetch
+  and caret is the production code's. The tabs type 8-character tokens
+  (half of them into each page's first block), delete words, take their
+  own oldest token out again, set a color, add and delete notes of their
+  own and move shared blocks, through socket drops and network outages
+  with `--faults`. When they stop, every edit must be saved and every tab
+  must show the server's tree. A token lost or kept after its delete is
+  replayed through `textmerge.merge` from the batch that lost it: a
+  `clash` (a span both changed, the stored text stands) and a `rewrite`
+  (words replaced in one save where the other typed) are the merge's
+  rules, anything else fails the run. So does a token there twice, a shared
+  block gone, a deleted note back, an op log past `KEEP_OPS` +
+  `PRUNE_EVERY`, a 5xx, or a traceback in the server's log. It also
+  measures: the ack, the fan-out from a POST to each peer's socket, the
+  time until a peer shows a token, the server's memory, CPU and database
+  sizes, and the op log's rows ([debugging.md](debugging.md#browser-end-to-end-suite)).
 
 ## Limits and next steps
 
@@ -1244,6 +1278,14 @@ running ([debugging.md](debugging.md#browser-end-to-end-suite)).
 - Same-block simultaneous typing merges by span (three-way merge above); a set whose content already is the block's text (the same edit sent twice, a retried batch, a clone pushing what it already pulled) merges nothing — merging it in again would double the change;
   two people replacing the *same* characters within one save window still
   resolve by server order for that span (insertions at one spot keep both).
+  One save that types a word right beside a word it deletes makes one
+  replaced span, and the other's delete of a word overlapping it drops the
+  span whole, the typed word with it: the crowd soak sees this 17 to 19
+  times in a 300 s run of 20 tabs, about once in 450 tokens, most of them
+  in the one block per page that half the typing goes to. A word replaced by another in one
+  save (select, type over) merges by characters: the letters the two words
+  share stay put, so a word the other typed in front of it at that moment
+  can land between them (the soak's `rewrite`).
   If character-exact convergence ever matters, the upgrade path is
   CodeMirror's collab rebase on just the open block; not a CRDT.
 - Undo's text rebase takes each side's change as one span: two edits of

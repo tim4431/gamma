@@ -702,6 +702,33 @@ cookie
 A step that times a close passes `{lastLook: false}` to `page.close` or
 `context.close`, which skips the screenshot the harness takes first.
 
+`node tests/e2e/collabSoak.mjs` is the crowd soak for real-time
+collaboration ([collab.md](collab.md#testing)), a script apart from the
+browser. It needs no build: its server serves the API alone
+(`new Server({ static: false })`). Twenty tabs, each the app's page
+session over Node's fetch and WebSocket, type into 5 pages of a shared
+workspace for 120 s, then go quiet until every tab shows the server's
+tree. `--clients N`, `--accounts N` (default one per tab), `--pages N`,
+`--seconds N`, `--seed N` and `--keep-live N` (the tokens a tab keeps
+before it takes its oldest out again, so the pages stop growing) size the
+run. `--faults` drops a socket every 4 s and takes a tab's network away
+for 4 s every 6 s. It prints a row per 30 s window (batches/s; the ack,
+the fan-out to each peer's socket and the time until a peer shows a token
+at p50/p95/p99; the server's memory, pages.db + WAL; the driver's
+event-loop delay) and the totals, and exits 1 on any failure. `--strict`
+also fails a run whose server memory or pages.db grows in its last third,
+or whose fan-out p99 in a window passes max(3 × the first full window's,
+50 ms); it needs a run of some 300 s to mean anything. `--json out.json`
+writes the report. A failed run keeps the temp dir with `forensic.json`:
+the report, and for each token lost its batch's base, ours, the stored
+text before it, what was stored and the merge. `--sabotage` sends one set
+without a base mid-run, which the run must fail on by its batch id (the
+oracle's own check). The `collab-soak` group is a 20 s run of 5 tabs as
+alice and bob on 2 pages with faults on seed 1, which checks correctness
+only. It takes about 25 s and runs in CI's e2e shards like any other
+group. On one seed the tabs do the same things each run; only the
+server's timing varies.
+
 `frontend/tests/e2e/run.mjs` starts an ISOLATED backend (the project venv's
 python — or the interpreter `GAMMA_E2E_PYTHON` names — over a fresh
 `GAMMA_DATA_DIR` under the OS temp dir, on a free port, serving a copy of

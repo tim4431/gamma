@@ -80,11 +80,14 @@ export function sweepRuns() {
 }
 
 // `env` adds to the backend's environment (a second Gamma started as another
-// kind of server, e.g. the publish scenario's share host).
+// kind of server, e.g. the publish scenario's share host). `static: false`
+// serves the API alone, without a copy of frontend/dist (a script that
+// drives no browser, tests/e2e/collabSoak.mjs, needs no build).
 export class Server {
-  constructor({ env = {} } = {}) {
+  constructor({ env = {}, static: serveApp = true } = {}) {
     servers.push(this);
     this.env = env;
+    this.serveApp = serveApp;
     this.dir = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-"));
     this.dataDir = path.join(this.dir, "data");
     this.logPath = path.join(this.dir, "server.log");
@@ -106,19 +109,19 @@ export class Server {
     return stdout;
   }
   async start() {
-    if (!fs.existsSync(path.join(DIST, "index.html"))) throw new Error("frontend/dist is missing: run `npm run build` first");
+    if (this.serveApp && !fs.existsSync(path.join(DIST, "index.html"))) throw new Error("frontend/dist is missing: run `npm run build` first");
     if (path.isAbsolute(PYTHON) && !fs.existsSync(PYTHON)) throw new Error(`backend venv python not found at ${PYTHON}`);
     fs.mkdirSync(this.dataDir, { recursive: true });
     // Serve a copy of the build: an `npm run build` elsewhere during a run
     // replaces dist/ and would otherwise 500 every page load until it ends.
     const dist = path.join(this.dir, "dist");
-    fs.cpSync(DIST, dist, { recursive: true });
+    if (this.serveApp) fs.cpSync(DIST, dist, { recursive: true });
     await this.manage("setup");
     this.port = await freePort();
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-c", SERVE, String(this.port)], {
       cwd: BACKEND, stdio: ["pipe", log, log],
-      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
+      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...(this.serveApp ? { GAMMA_STATIC_DIR: dist } : {}), TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {
