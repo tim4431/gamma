@@ -706,7 +706,9 @@ signed in to the same server works the same way.
   to it, the shown page reports its own DOI. Chromium never prerenders in a
   tab Playwright is attached to (`PrerenderingDisabledByDevTools`), so this
   test launches Playwright's Chromium itself. It uses DevTools only on the
-  extension's worker and popup.
+  extension's worker and popup, and waits for the worker's `chrome` before
+  calling it: a worker just started is listed a moment before Chrome gives it
+  the extension API.
 - `node extension/tests/workspaces.e2e.mjs` — full Chromium against a fake
   server whose `/api/session` lists three libraries (one read-only): both
   pickers offer the two writable ones, picking one stores it and refills

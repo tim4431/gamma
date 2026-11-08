@@ -153,10 +153,22 @@ writing the exact address asked for; a newer load starting before this load's ow
 `did-start-navigation` passes for this one; and a page landing more than a minute
 after a false alarm gets that alarm as its error.
 
+## The prerender test's `chrome is not defined`
+
+`extension/tests/prerender.e2e.mjs` failed with `chrome is not defined`, on
+`dev` as it stood before the one switch too, so headless was not the cause. It
+starts Chromium itself and attaches to the extension's worker over DevTools as
+soon as `Target.getTargets` lists it. On 7 November 2026, on Linux with
+Playwright's Chromium 1243, the worker is listed, and `Runtime.evaluate` runs
+in it with the right `self.location`, about 100 ms before Chrome installs the
+extension API there: the first evaluation saw `typeof chrome` as
+`"undefined"`, the next one, 125 ms later, as `"object"`. The other extension
+tests reach the worker through Playwright's `serviceWorker` handle and have not
+failed this way. The test now waits until `chrome.runtime.id` is there before
+its first call into the worker, and passed 5 runs of 5 headless after that.
+
 ## Still open
 
-- `extension/tests/prerender.e2e.mjs` fails with `chrome is not defined`, on
-  `dev` as it stood before the one switch too.
 - `shell.openPath` behind the launcher's *Open data folder* and
   `shell.showItemInFolder` behind *Show server log* and *Show log file* have no
   test guard, unlike the helpers beside them. No step reaches them.
