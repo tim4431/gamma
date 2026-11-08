@@ -284,8 +284,9 @@ runs first, oldest on top; then what ended, newest on top) and the tray
 badge. `taskKinds.js` gives each kind its icon, title, detail line and row
 actions, where a click opens it (`open`) and how to start it again
 (`retry`: the same route and body; an export that carried the viewer's
-translation names its job as `translation_of`, since its params cannot
-hold the layout and the server keeps it with the job,
+translation, or a folder's that carried its papers', names its job as
+`translation_of`, since its params cannot hold the layout and the server
+keeps it with the job,
 [translation.md](translation.md#exporting-the-translation)).
 
 `TasksTray.jsx` holds the button, the panel and its rows:

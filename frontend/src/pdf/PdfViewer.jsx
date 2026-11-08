@@ -512,6 +512,17 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
   }
 }
 
+// A document opened with no viewer, for work that reads its text (a folder's
+// translated export, pdf/folderTranslation.js): its bytes as the viewer gets
+// them (the caches above, else one GET), parsed by the shared worker. It
+// goes in no cache of documents; the caller destroys it.
+export async function openPdfDocument(url) {
+  const lib = await loadPdfEngine();
+  const data = await fetchPdfData(url, null, () => false);
+  if (!data) throw new Error("the PDF could not be read");
+  return lib.getDocument(openParams({ data: data.slice(0), disableAutoFetch: true, disableRange: true })).promise;
+}
+
 // Handwriting, text boxes and the other page marks (markup/MarkupLayers.jsx):
 // `marks` maps a page number to what its layers draw (App's useMarks); the
 // tools and their handlers come from PageToolsContext (markup/PageTools.jsx).

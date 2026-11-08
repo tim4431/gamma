@@ -2100,6 +2100,9 @@ and the pages inside it, with no PDF at all fails with the reason. A page
 exported while the viewer shows its translation carries it, and its PDF
 (not those of the pages inside it) is written translated before the
 annotations go on ([translation.md](translation.md#exporting-the-translation)).
+A folder's export carries the translations of its papers this browser left
+translated, read in the browser with no viewer, each written into its own
+PDF ([translation.md](translation.md#a-folders-export)).
 
 The single-page exports are also plain functions, for callers without a
 request: `page_builder` (one page through a mode's builder, what
@@ -2285,7 +2288,8 @@ note and a comment card in a column beside the paper, or the note on it.
 While the open page shows its translation, the Annotated PDF's summary says
 that the translation replaces the original text, in which language and on
 how many pages; there is no switch for it (hiding the translation exports
-the original). Gamma and Notability have fixed contents, and a
+the original). A folder's says how many of its papers go translated, once
+they are read as the dialog opens. Gamma and Notability have fixed contents, and a
 PDF without a stored copy can only be the original file, so these export
 straight from step one, Gamma and Notability unless the page has pages
 inside it (below). Logseq

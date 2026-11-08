@@ -21,8 +21,9 @@ export function useAppJobs({
   importReview, setImportReview,
   // what an export is of; exportTranslation() resolves to the translation
   // the viewer shows over the page's PDF, for its annotated PDF to write
-  // (App.jsx), or null
-  pageId, shareMode, exportRawPdf, exportTranslation = () => null,
+  // (App.jsx), or null; exportFolderTranslations(folder) to those of the
+  // folder's papers (pdf/folderTranslation.js), or []
+  pageId, shareMode, exportRawPdf, exportTranslation = () => null, exportFolderTranslations = () => [],
   // the open workspace: what a finished restore / import there refreshes
   workspaceId, refreshQuota, fetchHomeBlocks,
   // the session read again: the workspaces a finished delete leaves
@@ -77,7 +78,8 @@ export function useAppJobs({
   // exist behind the proxy), unless the viewer shows it translated: a
   // page's annotated PDF writes the translation shown in place of the
   // original text (`translation`, read as Export is pressed), which only
-  // the job does. A share view, which has no translated view, starts the
+  // the job does; a folder's annotated PDF those of its papers this browser
+  // left translated (`translations`). A share view, which has no translated view, starts the
   // same job under its share token, the share's own (routers/export.py), and
   // follows it alone (useTasks' `follow`): a big folder's export outlives a
   // proxy's cut there too.
@@ -91,6 +93,7 @@ export function useAppJobs({
     setExportStarting(true);
     try {
       const translation = !exportFolder && !shareMode && o.format === "pdf" ? await exportTranslation() : null;
+      const translations = exportFolder && !shareMode && o.format === "pdf" ? await exportFolderTranslations(exportFolder) : [];
       if (exportLeftRef.current) return;
       if (!exportFolder && o.format === "pdf" && !translation && !o.highlights && !o.notes && !o.comments && !o.subPages) {
         setExportOpen(false);
@@ -99,7 +102,8 @@ export function useAppJobs({
       }
       const body = exportJobBody(o, { pageId, folder: exportFolder || "" });
       try {
-        const job = await tasks.start("export", translation ? { ...body, translation } : body, { download: "auto", dialog: "export" });
+        const sent = translation ? { ...body, translation } : translations.length ? { ...body, translations } : body;
+        const job = await tasks.start("export", sent, { download: "auto", dialog: "export" });
         if (exportLeftRef.current) tasks.setDownload(job.id, "offer");
         else setExportJobId(job.id);
       } catch (err) {

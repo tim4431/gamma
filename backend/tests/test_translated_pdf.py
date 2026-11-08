@@ -5,14 +5,15 @@ fit, upright on a turned page, a formula comes back as a picture of itself
 on the baseline, the original text stays out of the file even behind a
 clip, and one subset font serves every page. Then the export job that
 carries it (POST /api/jobs/export with ``translation``): the annotated PDF
-of the page with its translation, and what it refuses."""
+of the page with its translation, and what it refuses; and a folder's, with
+``translations``, each paper's into its own PDF."""
 
 import io
 import zipfile
 
 import pytest
 
-from conftest import login, make_page, make_user
+from conftest import login, make_folder, make_page, make_user
 
 PAGE_W, PAGE_H = 300, 400
 
@@ -853,7 +854,7 @@ def test_what_a_translated_exports_retry_refuses(user, paper):
         (user, {"page_id": paper["id"], "mode": "annotated-pdf", "translation_of": first["id"],
                 "translation": _translation(paper["doc_id"], paper["data"])}, 400),     # both
         (user, {"page_id": paper["id"], "mode": "readable", "translation_of": first["id"]}, 400),
-        (user, {"folder": "anything", "mode": "annotated-pdf", "translation_of": first["id"]}, 400),
+        (user, {"folder": "anything", "mode": "annotated-pdf", "translation_of": first["id"]}, 404),  # a page's export
         (user, {"page_id": paper["id"], "mode": "annotated-pdf", "translation_of": plain["id"]}, 404),  # kept none
         (user, {"page_id": other["id"], "mode": "annotated-pdf", "translation_of": first["id"]}, 404),  # another page
         (user, {"page_id": paper["id"], "mode": "annotated-pdf", "translation_of": "0" * 24}, 404),
@@ -892,3 +893,106 @@ def test_a_translated_exports_retry_is_its_own_accounts_only(client):
     r = _start(peer, page_id=page["id"], mode="annotated-pdf", translation_of=first["id"])
     assert r.status_code == 404 and "no longer kept" in r.json()["detail"]
     assert _finished(owner, page_id=page["id"], mode="annotated-pdf", translation_of=first["id"])["state"] == "done"
+
+
+# --- A folder's export -------------------------------------------------------
+
+def _folder_of_papers(c, name):
+    """A folder of two papers and a third in a subfolder:
+    ``(folder id, [{id, doc_id, data, title}])``."""
+    folder = make_folder(c, name)
+    sub = make_folder(c, f"{name}/Sub")
+    papers = []
+    for title, where in ((f"{name} one", folder), (f"{name} two", folder), (f"{name} three", sub)):
+        data = _paper(extra=lambda page, put, title=title: put(40, 380, title))
+        page, doc_id = _pdf_page(c, title, data, folders=[where])
+        papers.append({"id": page["id"], "doc_id": doc_id, "data": data, "title": title})
+    return folder, papers
+
+
+def _paper_translation(paper, text):
+    return {"page_id": paper["id"], **_translation(paper["doc_id"], paper["data"], text=text)}
+
+
+def _zip_texts(data):
+    z = zipfile.ZipFile(io.BytesIO(data))
+    return {name.rsplit("/", 1)[-1][:-4]: _text(z.read(name)).replace("\n", " ") for name in z.namelist()}
+
+
+def test_a_folders_annotated_pdfs_carry_the_translations_of_its_papers(user):
+    """Each paper's translation goes into its own PDF, a paper without one
+    goes in the original, and one for a page the folder does not hold is
+    passed by."""
+    folder, (one, two, three) = _folder_of_papers(user, "Translated folder")
+    outside_data = _paper()
+    outside, outside_doc = _pdf_page(user, "Not in the folder", outside_data)
+    job = _finished(user, folder=folder, mode="annotated-pdf", highlights=True, notes=False, translations=[
+        _paper_translation(one, "Erstes Papier übersetzt"), _paper_translation(three, "Drittes Papier übersetzt"),
+        {"page_id": outside["id"], **_translation(outside_doc, outside_data, text="Nicht im Ordner")}])
+    texts = _zip_texts(_file(user, job))
+    assert set(texts) == {one["title"], two["title"], three["title"]}
+    assert "Erstes Papier übersetzt" in texts[one["title"]] and "Alpha" not in texts[one["title"]]
+    assert "Drittes Papier übersetzt" in texts[three["title"]] and "Alpha" not in texts[three["title"]]
+    assert "Alpha line one" in texts[two["title"]]
+    assert not any("Nicht im Ordner" in t for t in texts.values())
+    assert job["params"]["translation"] == "de" and job["params"]["folder"] == folder
+    plain = _finished(user, folder=folder, mode="annotated-pdf", highlights=True, notes=False)
+    assert plain["params"]["translation"] == ""
+    assert all("Alpha line one" in t for t in _zip_texts(_file(user, plain)).values())
+
+
+def test_a_folders_paper_whose_pdf_changed_is_left_out_and_the_rest_go(user):
+    folder, (one, two, _) = _folder_of_papers(user, "Changed folder")
+    job = _finished(user, folder=folder, mode="annotated-pdf", highlights=False, notes=False, translations=[
+        {**_paper_translation(one, "Veraltet"), "doc_id": "0" * 64}, _paper_translation(two, "Zweites übersetzt")])
+    assert job["state"] == "done", job["error"]
+    texts = _zip_texts(_file(user, job))
+    assert one["title"] not in texts and "Zweites übersetzt" in texts[two["title"]]
+    assert any(s["reason"] == "the page's PDF changed after it was translated" for s in job["result"]["skipped"])
+
+
+def test_a_translated_folder_export_starts_again_with_the_translations_it_kept(user):
+    folder, (one, two, _) = _folder_of_papers(user, "Retried folder")
+    first = _finished(user, folder=folder, mode="annotated-pdf", highlights=True, notes=False, translations=[
+        _paper_translation(one, "Wieder das erste"), _paper_translation(two, "Wieder das zweite")])
+    again = _finished(user, folder=folder, mode="annotated-pdf", highlights=True, notes=False,
+                      translation_of=first["id"])
+    texts = _zip_texts(_file(user, again))
+    assert "Wieder das erste" in texts[one["title"]] and "Wieder das zweite" in texts[two["title"]]
+    assert again["params"]["translation"] == "de"
+    other_folder, _ = _folder_of_papers(user, "Another folder")
+    page_job = _finished(user, page_id=one["id"], mode="annotated-pdf", highlights=False, notes=False,
+                         translation=_translation(one["doc_id"], one["data"]))
+    for body, status in [
+        ({"folder": other_folder, "mode": "annotated-pdf", "translation_of": first["id"]}, 404),   # another folder
+        ({"page_id": one["id"], "mode": "annotated-pdf", "translation_of": first["id"]}, 404),     # a page
+        ({"folder": folder, "mode": "annotated-pdf", "translation_of": page_job["id"]}, 404),      # a page's export
+        ({"folder": folder, "mode": "readable", "translation_of": first["id"]}, 400),
+    ]:
+        r = _start(user, **body)
+        assert r.status_code == status, (body, r.text)
+    r = _start(user, folder=folder, mode="annotated-pdf", translation_of=page_job["id"])
+    assert "export the folder again" in r.json()["detail"]
+
+
+def test_what_a_translated_folder_export_refuses(user, paper, monkeypatch):
+    folder, (one, two, _) = _folder_of_papers(user, "Refusing folder")
+    sent = [_paper_translation(one, "Eins"), _paper_translation(two, "Zwei")]
+    for body, status in [
+        ({"folder": folder, "mode": "notes-pdf", "translations": sent}, 400),                   # another format
+        ({"page_id": paper["id"], "mode": "annotated-pdf", "translations": sent}, 400),         # a page
+        ({"folder": folder, "mode": "annotated-pdf", "translations": sent,
+          "translation": _translation(one["doc_id"], one["data"])}, 400),                         # a page's too
+        ({"folder": folder, "mode": "annotated-pdf", "translations": sent, "translation_of": "0" * 24}, 400),
+        ({"folder": folder, "mode": "annotated-pdf", "translations": [{**sent[0], "page_id": ""}]}, 422),
+    ]:
+        r = _start(user, **body)
+        assert r.status_code == status, (body, r.text)
+    from gamma.routers import export
+
+    # each paper's one block holds "Eins" or "Zwei": four characters, eight together
+    with monkeypatch.context() as m:
+        m.setattr(export, "TRANSLATION_CHARS_MAX", 7)
+        assert _start(user, folder=folder, mode="annotated-pdf", translations=sent[:1]).status_code == 200
+        r = _start(user, folder=folder, mode="annotated-pdf", translations=sent)
+        assert r.status_code == 413 and r.json()["detail"].startswith("a translation holds at most"), r.text

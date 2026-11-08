@@ -696,6 +696,63 @@ test("a paper's kept translation comes back with no model call, in one lookup, a
   assert.equal(translateState.entries("/uploads/never-kept.pdf").size, 0);
 });
 
+test("a paper read with no viewer comes back as the store seeds it, every page, and the store keeps nothing of it", async () => {
+  const rows = await keptAfter({ pages: [1, 2] });
+  const stored = "/uploads/detached-stored.pdf";
+  await seed(stored, { lookup: lookupOf(rows).lookup });
+  const before = translateState.statuses().length;
+  let told = 0;
+  const off = translateState.subscribe(() => { told += 1; });
+  const k = lookupOf(rows);
+  const { view, span } = await translateState.seedDetached({ doc: pdfDoc(), key: "zh-CN|model", lookup: k.lookup });
+  off();
+  assert.equal(told, 0, "no one is told");
+  assert.equal(translateState.statuses().length, before, "the store holds no new document");
+  assert.equal(view.shown, true);
+  assert.deepEqual([...view.entries.keys()].sort(), [1, 2], "every page of the document");
+  for (const pn of [1, 2]) {
+    const e = view.entries.get(pn), s = translateState.entries(stored).get(pn);
+    assert.deepEqual({ key: e.key, done: e.done, texts: e.texts }, shownOf(stored, pn), `page ${pn} as the store seeds it`);
+    s.paras.forEach((p, i) => (p.spans || []).forEach((sp, j) => {
+      assert.deepEqual(span(pn, i, j + 1), translateState.span(stored, pn, i, j + 1));
+    }));
+  }
+  // Another key finds nothing; a stopped read uses nothing.
+  assert.equal((await translateState.seedDetached({ doc: pdfDoc(), key: "", lookup: k.lookup })).view.entries.size, 0);
+  const ctl = new AbortController();
+  ctl.abort();
+  const stopped = await translateState.seedDetached({ doc: pdfDoc(), key: "zh-CN|model", lookup: k.lookup, signal: ctl.signal });
+  assert.equal(stopped.view.entries.size, 0);
+  assert.equal(stopped.view.shown, false);
+});
+
+test("a folder's paper is laid out with no viewer as the viewer's export lays it out, its document destroyed after", async () => {
+  const { paperLayout } = await import("../src/pdf/folderTranslation.js");
+  const { exportLayout } = await import("../src/pdf/translateExport.js");
+  const rows = await keptAfter({ pages: [1, 2] });
+  const stored = "/uploads/folder-paper-stored.pdf";
+  await seed(stored, { lookup: lookupOf(rows).lookup });
+  const doc = pdfDoc();
+  let destroyed = 0, opened = "";
+  doc.destroy = async () => { destroyed += 1; };
+  const asked = [];
+  const layout = await paperLayout({
+    url: "/api/uploads/abc.pdf", pageId: "page-9", key: "zh-CN|model",
+    open: async (url) => { opened = url; return doc; },
+    lookup: async ({ pageId, texts }) => { asked.push(pageId); return lookupOf(rows).lookup(texts); },
+  });
+  assert.equal(opened, "/api/uploads/abc.pdf");
+  assert.ok(asked.length && asked.every((p) => p === "page-9"), "the lookups name the paper's page");
+  assert.equal(destroyed, 1);
+  const viewer = exportLayout(translateState.snapshot(stored), "zh-CN|model", (pn, i, k) => translateState.span(stored, pn, i, k));
+  assert.deepEqual(layout, { lang: "zh-CN", ...viewer }, "what the viewer's export sends");
+  // Nothing kept under the key: null, and the document still destroyed.
+  const none = await paperLayout({ url: "/x.pdf", pageId: "p", key: "zh-CN|model", open: async () => doc,
+    lookup: async ({ texts }) => texts.map(() => null) });
+  assert.equal(none, null);
+  assert.equal(destroyed, 2);
+});
+
 test("a paragraph a page break cut is looked up joined and split, and either fills both pages", async () => {
   const url = "/uploads/forms.pdf";
   const paras = new Map(PAPER.pages.map(({ pn, runs }) => { const b = segmentPage(runs); markShape(b); return [pn, b]; }));

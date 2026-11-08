@@ -29,6 +29,15 @@ screen. The cost is a second layout engine: the overlay fits text with the
 browser's fonts, the file with MuPDF's, so line breaks and sizes differ a
 little between the two.
 
+A folder's export, whose papers no viewer shows, runs the viewer's code in
+the browser with no viewer: pdf.js reads each paper the browser left
+translated, its pages are seeded from the kept translations and laid out as
+a page's export lays them out, and the layouts go with the job
+([dev/translation.md](../dev/translation.md#a-folders-export)). Doing it
+on the server instead would have needed a second segmenter, in Python, that
+splits and hashes paragraphs exactly as the viewer does, or Node beside the
+server.
+
 ## The original text: masked or taken out
 
 Masks over the original lines, as the overlay draws them, would keep the
@@ -141,5 +150,3 @@ subset and no hidden text.
   for copying. Writing it invisibly needs a font with math coverage.
 - Justified text and the paper's own typeface, where the overlay and the
   file both use a plain serif.
-- Translations in a folder's export, which would need the viewer's layout
-  of every paper in it.

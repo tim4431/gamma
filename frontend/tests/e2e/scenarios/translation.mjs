@@ -1612,6 +1612,46 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assertNoProblems(page);
   });
 
+  await step("translation: a folder's annotated PDF carries the translation of the paper this browser left translated, read with no viewer", async () => {
+    const folder = "Translated reading";
+    const folderId = await alice.folder(folder);
+    await alice.file(keptPaper.id, { folders: [folder] });
+    const up = await alice.upload("/api/uploads", makePdf([longPage("Plain")]), "plain.pdf", "application/pdf");
+    const plain = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Plain", source_url: up.source_url } });
+    await alice.file(plain.id, { folders: [folder] });
+    const asked = requests.length, looked = lookups.length;
+    // The folder's view: no PDF open, so the paper is read with no viewer.
+    await page.goto(`${server.base}/?folder=${folderId}&ws=${alice.ws}`);
+    await page.waitForSelector(".folderNewBtn");
+    const view = page.locator('[data-popover="menu"] > button');
+    await (await view.count() ? view : page.locator('[data-guide="header.account"]')).click();
+    await page.getByRole("menuitem", { name: "Export…", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: `Export “${folder}”`, exact: true });
+    await dialog.getByRole("button", { name: "Annotated PDF", exact: true }).click();
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await dialog.getByText(/replaces the original text of 1 paper, which this browser left showing it/).waitFor();
+    const sent = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/jobs/export" && r.method() === "POST");
+    const download = page.waitForEvent("download", { timeout: 30000 });
+    await dialog.getByRole("button", { name: "Export", exact: true }).click();
+    const body = (await sent).postDataJSON();
+    await download;
+    await dialog.getByRole("heading", { name: "Export ready", exact: true }).waitFor();
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    await dialog.waitFor({ state: "detached" });
+    assertEq(body.folder, folderId);
+    assertEq((body.translations || []).map((t) => t.page_id).join(), keptPaper.id, "the kept paper alone goes translated");
+    const [kept] = body.translations;
+    assertEq(kept.pages.map((p) => p.page).join(), "1,2,3,4,5", "every page of it");
+    assert(kept.pages[4].blocks.flatMap((b) => b.parts).some((p) => typeof p === "string" && p.startsWith("译:Farthest one says")));
+    assert(lookups.slice(looked).every((l) => l.page_id === keptPaper.id), "only the kept paper is looked up");
+    assert(lookups.length > looked, "it is looked up");
+    assertEq(requests.length, asked, "no request to translate");
+    // Back to the paper for the steps after.
+    await keptPaper.open();
+    await shownAgain("Kept");
+    assertNoProblems(page);
+  });
+
   await step("translation: a paper left in the original stays so after a reload, and nothing is looked up", async () => {
     await page.getByRole("button", { name: "Show original", exact: true }).click();
     await page.locator('[data-page="1"] .pdfTransLayer').waitFor({ state: "detached" });

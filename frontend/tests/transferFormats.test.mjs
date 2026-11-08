@@ -327,3 +327,23 @@ test("while the pages a paper keeps are read in, the summary names no number of 
     + " To export the original, show it first with the translate button.");
   assert.doesNotMatch(exportSummary(resolved), /\b2 pages\b/);
 });
+
+test("a folder's annotated PDF says how many of its papers go translated, and names no number while they are read", () => {
+  const folder = "Reading";
+  const translated = { papers: 2, language: "中文（简体）" };
+  const on = resolveExport({ format: "pdf", highlights: true, notes: false, comments: false }, { folder, translated });
+  assert.equal(exportSummary(on, folder), "Every paper's PDF in one .zip, with highlight annotations, its subfolders as folders."
+    + " Pages without a PDF are left out. The translation into 中文（简体） replaces the original text of 2 papers,"
+    + " which this browser left showing it. To export a paper's original, show it first with the translate button.");
+  const off = resolveExport({ format: "pdf", ...allOff }, { folder, translated: { ...translated, papers: 1 } });
+  assert.match(exportSummary(off, folder), /^Every paper's PDF in one \.zip with nothing else added, .* replaces the original text of 1 paper,/);
+  const counting = resolveExport({ format: "pdf", highlights: true, notes: false }, { folder, translated: { ...translated, counting: true } });
+  assert.match(exportSummary(counting, folder), /of the papers this browser left showing it, which are being counted\./);
+  assert.doesNotMatch(exportSummary(counting, folder), /\b2 papers\b/);
+  // none, or a page's count: nothing said, and the folder's file as stored
+  for (const t of [null, { ...translated, papers: 0 }, { pages: 3, language: "x" }]) {
+    const resolved = resolveExport({ format: "pdf", ...allOff }, { folder, translated: t });
+    assert.equal(resolved.translated, null);
+    assert.match(exportSummary(resolved, folder), /exactly as stored/);
+  }
+});

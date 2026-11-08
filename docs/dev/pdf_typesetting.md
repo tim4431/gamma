@@ -21,8 +21,9 @@ upload → image-XObject registry.
 ## Annotated-PDF export
 
 A page exported while the viewer shows its translation is translated
-first: its original lines redacted and the translation laid out in their
-place (`gamma/pdf_translated.py`,
+first, and so is each paper of a folder's export that this browser left
+translated: its original lines redacted and the translation laid out in
+their place (`gamma/pdf_translated.py`,
 [translation.md](translation.md#exporting-the-translation)). Everything
 below is written over that file.
 

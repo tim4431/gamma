@@ -25,7 +25,7 @@ from typing import Annotated, Union
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 from starlette.background import BackgroundTask
 
 from .. import bibtex as bibtex_mod
@@ -1082,15 +1082,15 @@ class _AnnotatedPdfBuilder(_Builder):
         self.single_name = ""
 
     def add_page(self, n, rows, page):
-        # The translation shown in the viewer is the exported page's own,
-        # not that of a page inside it (``start_export_job``).
-        translated_page, translation = self.opts.get("translation") or ("", None)
+        # The translations go by page: a page's export carries its own, not
+        # that of a page inside it, and a folder's those of its papers the
+        # browser laid out (``start_export_job``).
+        translation = (self.opts.get("translations") or {}).get(page["id"])
         try:
             data, filename, _, _ = annotated_page_pdf(
                 self.ws, [block_to_dict(r) for r in rows], page["id"], highlights=self.opts["highlights"],
                 notes=self.opts["notes"], comments=self.opts["comments"], notes_at=self.opts["notes_at"],
-                author=self.opts.get("author", ""), reach=self.reach,
-                translation=translation if page["id"] == translated_page else None)
+                author=self.opts.get("author", ""), reach=self.reach, translation=translation)
         except HTTPException as e:
             self.skip(page, str(e.detail))
             return
@@ -1743,10 +1743,24 @@ class ExportTranslation(_Finite):
         return lang
 
 
-def _translation_bounds(translation: ExportTranslation) -> None:
-    """413 for a translation past the totals above, in one sentence (a
-    model validator's 422 would echo the whole translation back)."""
-    blocks = [block for page in translation.pages for block in page.blocks]
+class PaperTranslation(ExportTranslation):
+    """One paper's translation in a folder's annotated-PDF export, and the
+    page whose PDF it is written into (frontend/src/pdf/folderTranslation.js
+    lays it out in the browser, with no viewer)."""
+    page_id: str = Field(min_length=1, max_length=128)
+
+
+# The papers a folder's export may carry a translation for: the browser's
+# memory of the papers it left translated holds 300 (translateRecall.RECALL_MAX).
+TRANSLATED_PAPERS_MAX = 1_000
+_PAPER_TRANSLATIONS = TypeAdapter(list[PaperTranslation])
+
+
+def _translation_bounds(translations: list[ExportTranslation]) -> None:
+    """413 for translations past the totals above, a folder's papers all
+    together, in one sentence (a model validator's 422 would echo the whole
+    translation back)."""
+    blocks = [block for translation in translations for page in translation.pages for block in page.blocks]
     parts = [part for block in blocks for part in block.parts]
     formulas = [part for part in parts if not isinstance(part, str)]
     lines = sum(len(block.lines) for block in blocks)
@@ -1771,7 +1785,10 @@ class ExportJob(BaseModel):
     sub_pages: bool = False     # a page's: the pages inside it too (a folder's pages always bring theirs)
     # a page's annotated PDF: the translation the viewer shows of its PDF …
     translation: ExportTranslation | None = None
-    # … or the one an earlier export of that page kept (its job's id): its retry
+    # … a folder's: those of its papers this browser left translated …
+    translations: list[PaperTranslation] = Field(default_factory=list, max_length=TRANSLATED_PAPERS_MAX)
+    # … or the ones an earlier export of that page or folder kept (its job's
+    # id): its retry
     translation_of: str = ""
 
 
@@ -1780,25 +1797,33 @@ class ExportJob(BaseModel):
 LINK_EXPORTS_PER_5_MIN = 30
 
 # The layout a translated export was sent, kept with its job (jobs.kept) so
-# Background tasks can start it again.
+# Background tasks can start it again: a page's one translation, or the list
+# of a folder's papers'.
 KEPT_TRANSLATION = "translation.json.gz"
+KEPT_TRANSLATIONS = "translations.json.gz"
 
 
-def _kept_translation(request: Request, ws: str, page_id: str, job_id: str) -> ExportTranslation:
-    """The translation an earlier annotated-PDF export of this page was
-    sent, kept with its job: one of this account's, in this workspace. 404
-    once it is not (the job was removed, or ran before exports kept it)."""
+def _kept_translations(request: Request, ws: str, page_id: str, folder: str, job_id: str) -> dict:
+    """The translations an earlier annotated-PDF export of this page or
+    folder was sent, kept with its job, by the page each goes into: one of
+    this account's exports, in this workspace, of the same page or folder.
+    404 once they are not (the job was removed, or ran before exports kept
+    them)."""
     job = jobs.get(job_id)
     data = None
     if (job is not None and job["kind"] == "export" and job["owner"] == request.state.user_id
-            and job["workspace"] == ws and job["params"].get("page_id") == page_id):
-        data = jobs.kept(job_id, KEPT_TRANSLATION)
+            and job["workspace"] == ws and (job["params"].get("page_id") or "") == page_id
+            and (job["params"].get("folder") or "") == folder):
+        data = jobs.kept(job_id, KEPT_TRANSLATIONS if folder else KEPT_TRANSLATION)
     try:
+        if data is not None and folder:
+            return {t.page_id: t for t in _PAPER_TRANSLATIONS.validate_json(gzip.decompress(data))}
         if data is not None:
-            return ExportTranslation.model_validate_json(gzip.decompress(data))
+            return {page_id: ExportTranslation.model_validate_json(gzip.decompress(data))}
     except (OSError, ValueError):  # a damaged file (pydantic's ValidationError is a ValueError)
         pass
     raise HTTPException(status_code=404, detail=(
+        "that export's translation is no longer kept — export the folder again" if folder else
         "that export's translation is no longer kept — export the page again from the viewer"))
 
 
@@ -1813,15 +1838,19 @@ def start_export_job(payload: ExportJob, request: Request):
     out (an annotated-PDF export skips pages without a PDF). A page's
     annotated PDF may carry ``translation``, the translated view the viewer
     shows of the page's PDF, which is written in place of the original text
-    of that page's PDF (not of the pages inside it); its params name the
-    language as ``translation`` ("" without one); 400 for one with a folder
-    or another format, 413 past ``_translation_bounds``. The job keeps the
-    translation for as long as it is listed (``KEPT_TRANSLATION``), so
-    ``translation_of``, that job's id in place of ``translation``, starts
-    the same export again (Background tasks' retry; 404 once it is gone,
-    ``_kept_translation``). A page whose
-    translation cannot be written is left out like any page whose annotated
-    PDF fails (``_translated``).
+    of that page's PDF (not of the pages inside it); a folder's annotated
+    PDF ``translations``, one per paper by its ``page_id``, each written into
+    that page's PDF as the folder's export reaches it (one for a page the
+    folder no longer holds is passed by). The params name the language as
+    ``translation`` ("" without one); 400 for ``translation`` with a folder,
+    ``translations`` without one, or either with another format; 413 past
+    ``_translation_bounds`` (a folder's papers together). The job keeps
+    them for as long as it is listed (``KEPT_TRANSLATION``,
+    ``KEPT_TRANSLATIONS``), so ``translation_of``, that job's id in their
+    place, starts the same export again (Background tasks' retry; 404 once
+    they are gone, ``_kept_translations``). A page whose translation cannot
+    be written is left out like any page whose annotated PDF fails
+    (``_translated``).
 
     With ``?share=`` it is a share view's export: of what the share reaches
     (403 outside it), held to the share as its downloads are (``opts["share"]``),
@@ -1840,17 +1869,22 @@ def start_export_job(payload: ExportJob, request: Request):
     mode = payload.mode
     if mode not in _BUILDERS:
         raise HTTPException(status_code=400, detail=f"unknown export mode: {mode}")
-    folder, page_id, translation = payload.folder, payload.page_id, payload.translation
-    if scope is not None and (translation is not None or payload.translation_of):
+    folder, page_id = payload.folder, payload.page_id
+    # page id → the translation written into its PDF
+    translations = {page_id: payload.translation} if payload.translation is not None else {}
+    translations.update((t.page_id, t) for t in payload.translations)
+    if scope is not None and (translations or payload.translation_of):
         raise HTTPException(status_code=400, detail="a share view's export carries no translation")
-    if translation is not None or payload.translation_of:
-        if folder or not page_id or mode != "annotated-pdf":
-            raise HTTPException(status_code=400, detail="a translation goes only with a page's annotated PDF")
-        if translation is not None and payload.translation_of:
+    if translations or payload.translation_of:
+        if mode != "annotated-pdf" or (payload.translation is not None and (folder or not page_id)) \
+                or (payload.translations and not folder) or not (folder or page_id):
+            raise HTTPException(status_code=400, detail=(
+                "a translation goes only with a page's annotated PDF, and translations with a folder's"))
+        if translations and payload.translation_of:
             raise HTTPException(status_code=400, detail="send a translation or name the export it came from, not both")
-        if translation is None:
-            translation = _kept_translation(request, ws, page_id, payload.translation_of)
-        _translation_bounds(translation)
+        if not translations:
+            translations = _kept_translations(request, ws, "" if folder else page_id, folder, payload.translation_of)
+        _translation_bounds(list(translations.values()))
     with connect_pages_db(ws) as conn:
         if folder:
             path = _export_folder(conn, folder, scope)
@@ -1867,8 +1901,8 @@ def start_export_job(payload: ExportJob, request: Request):
             raise HTTPException(status_code=400, detail="name a page or a folder to export")
     opts = _export_opts(payload.pdf, payload.highlights, payload.notes, folder_scope=folder or None, author=user,
                         comments=payload.comments, notes_at=payload.notes_at, share=scope)
-    if translation is not None:
-        opts["translation"] = (page_id, translation)
+    if translations:
+        opts["translations"] = translations
 
     def run(job):
         if scope is not None and share_lookup(token) is None:
@@ -1889,11 +1923,16 @@ def start_export_job(payload: ExportJob, request: Request):
         job.set_artifact(name, media_type)
         return builder.summary()
 
-    kept = {KEPT_TRANSLATION: gzip.compress(translation.model_dump_json().encode(), 6)} \
-        if translation is not None else None
+    kept = None
+    if translations and folder:
+        kept = {KEPT_TRANSLATIONS: gzip.compress(_PAPER_TRANSLATIONS.dump_json(list(translations.values())), 6)}
+    elif translations:
+        kept = {KEPT_TRANSLATION: gzip.compress(translations[page_id].model_dump_json().encode(), 6)}
+    # one language: every paper's is the settings' (translateRecall.openKey)
+    lang = next(iter(translations.values())).lang if translations else ""
     return jobs.start("export", owner=owner, ws=ws, run=run, artifact=True, title=f"Export of {title}",
                       kept=kept, params={"page_id": page_id if not folder else "", "folder": folder, "name": title,
                               "mode": mode, "pdf": payload.pdf, "highlights": payload.highlights,
                               "notes": payload.notes, "comments": payload.comments,
                               "notes_at": payload.notes_at, "sub_pages": payload.sub_pages and not folder,
-                              "translation": translation.lang if translation is not None else ""})
+                              "translation": lang})

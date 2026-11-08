@@ -1736,9 +1736,9 @@ session's first translation to finish says so on the pill, with **Export…**.
   stops, the same as on screen; a centred block sends no `indent`. Every field
   with a `?` may be absent: an older client calls a newer server. The leading comes from
   `lines`, and ground and ink from the file itself, so no colour is sent. App sends it (`exportTranslation`,
-  through `tasks/useAppJobs.js` `runExport`) for a page's annotated PDF
-  alone, and only when the PDF the viewer translated is the file the job
-  reads (`translateExport.exportFile`): the page's upload, or the proxy
+  through `tasks/useAppJobs.js` `runExport`) for a page's annotated PDF (a
+  folder's carries `translations`, "A folder's export" below), and only
+  when the PDF the viewer translated is the file the job reads (`translateExport.exportFile`): the page's upload, or the proxy
   reading the page's own link, whose saved copy has the page's `doc_id`. A
   duplicated page names no `doc_id` and exports the file it shows; a link
   page whose copy was not kept fails its annotated PDF, translated or not.
@@ -1752,7 +1752,8 @@ session's first translation to finish says so on the pill, with **Export…**.
   `translation_of`, the job's id, in place of `translation`
   (`taskKinds.js`), and the new job writes the same layout and keeps it in
   turn; the server takes it only from the account's own export of the same
-  page in the same workspace, and answers 404 once it is gone. Kept layouts
+  page (or folder: `translations.json.gz`) in the same workspace, and answers
+  404 once it is gone. Kept layouts
   count against the account's 10 GB of finished files ([tasks.md](tasks.md)),
   so a translated export, even one that fails at once, gets 507 past it. It writes
   what the viewer showed when the first export started, so a PDF replaced
@@ -1861,6 +1862,55 @@ MuPDF's behaviour the writer depends on, each held by a test in
 
 Why it is built this way, and the measurements:
 [research/translated-pdf-export.md](../research/translated-pdf-export.md).
+
+### A folder's export
+
+Export → Annotated PDF of a folder writes each of its papers as it would
+open: translated where this browser left it showing its translation ("A
+paper opened again"), the original otherwise. No viewer shows those papers,
+so the browser reads them itself (`pdf/folderTranslation.js`), with the
+viewer's own code and no viewer:
+
+- **Which papers** (`folderPapers`): the pages filed in the folder or below
+  it, a page inside another filed where its top is (the server's
+  `pages_in_folder` rule), that show a stored PDF (`doc_id`; a duplicated
+  page or a link page without its copy has no file to write into), and of
+  those the ones whose file the memory holds under a key naming the
+  settings' language and model (`translateRecall.openKey`, App's
+  `folderKeyOf`). The paper open in the viewer goes as the viewer shows it
+  (`exportTranslation`, so Show original there exports its original).
+- **Each paper** (`paperLayout`): its PDF opened with pdf.js and no viewer
+  (`PdfViewer.openPdfDocument`: the viewer's byte caches, else one GET, the
+  shared worker), every page seeded from the kept translations through the
+  lookup under that key, with no model call (`translateState.seedDetached`:
+  `seedPages`' work on a state of its own, which the store does not keep and
+  no one is told of, so the documents the reader has open stay in it), and
+  laid out by `exportLayout`, as a page's export lays it out. The document
+  is destroyed after. One paper at a time (`folderTranslations`); a paper
+  whose PDF or lookup fails, or where nothing was found, goes in the
+  original.
+- **The dialog** (`pdf/useFolderTranslations.js`) reads them as it opens on
+  the folder's annotated PDF: its summary says the translation replaces the
+  original text of the papers this browser left showing it, "which are being
+  counted", with its Export busy, then how many papers
+  (`transferFormats.exportSummary`). Export takes that read; closing the
+  dialog, or another format, stops it.
+- **The request** carries `translations: [{page_id, doc_id, lang, pages}]`,
+  each as `translation` is, in place of `translation` (400 with a page, 400
+  for both). The server writes each into its page's PDF as the folder's
+  export reaches it (`_AnnotatedPdfBuilder.add_page`, by page id); one for a
+  page the folder no longer holds is passed by, and a paper whose PDF was
+  replaced is left out with its reason like any page that fails, the rest
+  going out. The caps above hold for all of them together (a folder is one
+  book), so the browser leaves out, in the original, a paper that would take
+  the whole past them (`TRANSLATION_BOUNDS`) rather than have the export
+  refused. The job's params name the language; Start again sends
+  `translation_of` as for a page, and the server keeps the list as
+  `translations.json.gz`.
+
+What the workspace does not keep stays out: a translation made by a viewer
+or with Keep translations off is never looked up, so such a paper goes in
+the original unless it is the one open.
 
 ## Machine-translation services
 

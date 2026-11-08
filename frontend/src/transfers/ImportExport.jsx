@@ -204,8 +204,9 @@ function BibtexSteps({ url, folder }) {
 // `onLeaveJob` lets the last step's breadcrumb walk back into the setup: the
 // job itself goes on in Background tasks, as closing the window would leave it.
 // `translated`: {pages, language, counting} while the viewer shows the page's
-// PDF translated, which an annotated PDF of it writes (resolveExport), else
-// null. `busy`: the export cannot start yet (the translation is still being
+// PDF translated, which an annotated PDF of it writes (resolveExport), and
+// for a folder {papers, language, counting}, its papers that go translated;
+// else null. `busy`: the export cannot start yet (the translation is still being
 // read, or the last press is starting it). `shareView`: a share view's
 // export, whose job has no row in Background tasks (useTasks' `follow`).
 export function ExportDialog({ job, fetchJob, onDownload, onStop, onRetry, onLeaveJob, shareView = false, ...setup }) {

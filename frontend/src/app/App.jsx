@@ -4,13 +4,15 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { TabGroups } from "../workspace/TabGroups";
 import PagePane, { keepPaneTree } from "../workspace/PagePane";
 import { activate as activateGroupIn, activeGroup, groupById, groupOf, groupsOf, isSingle, joinAll, moveTab, normalizeLayout, reconcile as reconcileGroups, removeGroup, removeTab, reorderGroup, resizeSplit, singleLayout, splitGroup, tabOrder } from "../workspace/tabLayout.js";
-import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
+import PdfViewer, { openPdfDocument, preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { penSelecting } from "../pdf/penSelect.js";
 import { addTerm, briefRequest, chunkRequest, endTranslations, forgetTranslation, lookupRequest, useTranslateJobs } from "./translateClient.js";
-import { createRecall, modelOfKey, openKey } from "../pdf/translateRecall.js";
+import { createRecall, langOfKey, modelOfKey, openKey } from "../pdf/translateRecall.js";
 import { scopeOf, snapshot as translateSnapshot, span as translateSpan } from "../pdf/translateState.js";
 import { exportFile, exportLayout, exportPages } from "../pdf/translateExport.js";
+import { folderPapers, paperLayout } from "../pdf/folderTranslation.js";
+import { useFolderTranslations } from "../pdf/useFolderTranslations.js";
 import { docIdOf } from "../pdf/pdfSource";
 import { discardApplied, discardOutcome, discardStep, discardUndone, noteSummary, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
 import { basePixels } from "../pdf/pageRaster";
@@ -3217,7 +3219,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const { startWorkspaceExport, runBackupImport, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask, onJobFinished } = useAppJobs({
     tasks, postPill, setStatus, setOpenPopover, setSettingsOpen,
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
-    pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation,
+    pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation, exportFolderTranslations,
     workspaceId: workspace?.id, refreshQuota, fetchHomeBlocks, refreshSession: checkSession,
   });
   const [exportOpts, setExportOpts] = usePersistedState(
@@ -8113,6 +8115,28 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       .finally(() => { if (live) setExportSeeding(false); });
     return () => { live = false; setExportSeeding(false); };
   }, [exportsPdf, pdfUrl, paperKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A folder's annotated PDF writes each paper as it would open
+  // (pdf/folderTranslation.js): translated where this browser left it showing
+  // its translation (translateRecall.openKey under the settings' key), read
+  // with no viewer from the kept translations; the paper open in the viewer
+  // as the viewer shows it (exportTranslation). Read as the dialog opens on
+  // it (pdf/useFolderTranslations.js), so the dialog counts the papers and
+  // its Export waits meanwhile. Never in a share view.
+  const folderKeyOf = (doc) => openKey(translateRecall?.keyOf(doc), translateKey, { noChatModel: translateNoChatModel });
+  const openHere = ({ page_id, doc_id }) => page_id === focusedBlockId && translatedFile() === doc_id;
+  const folderTrans = useFolderTranslations({
+    folder: exportOpen && exportOpts.format === "pdf" && !shareMode && translateRecall ? exportFolder : null,
+    key: translateKey,
+    papersOf: (folder) => folderPapers(pageBlocks, libTree, folder).filter((p) => openHere(p) || folderKeyOf(p.doc_id)),
+    layoutOf: async (paper, signal) => {
+      if (openHere(paper)) return exportTranslation();
+      const key = folderKeyOf(paper.doc_id);
+      return key && paperLayout({ url: `${API}/uploads/${paper.doc_id}.pdf`, pageId: paper.page_id, key, open: openPdfDocument,
+        signal, lookup: lookupRequest({ lang: langOfKey(key), model: modelOfKey(key) }) });
+    },
+  });
+  function exportFolderTranslations(folder) { return shareMode ? Promise.resolve([]) : folderTrans.translations(folder); }
+  const folderTranslated = () => (folderTrans.translated && { ...folderTrans.translated, language: translateLangLabel || translateLang });
   // The Export dialog, preset to a format (transfers/transferFormats.js).
   function exportAs(format) {
     setExportFolder(null);
@@ -13364,9 +13388,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           subPages={exportFolder ? 0
             : Math.max(pageDescendants(pageBlocks, [focusedBlock?.id || ""]).length, openFamily.subPages.length)}
           subPagesDirect={!pageBlocks.some((page) => page.id === focusedBlock?.id)}
-          translated={exportFolder ? null : exportTranslated()}
-          // the translation shown being read, or the export started
-          busy={exportSeeding || exportStarting}
+          translated={exportFolder ? folderTranslated() : exportTranslated()}
+          // the translation shown being read (a folder's papers'), or the export started
+          busy={exportSeeding || exportStarting || !!folderTranslated()?.counting}
           shareView={shareMode}
           onCancel={closeExport}
           onExport={runExport}
