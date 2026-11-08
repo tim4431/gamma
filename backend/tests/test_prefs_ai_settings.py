@@ -63,7 +63,7 @@ def test_profile_is_one_account_wide_object(alice):
     from conftest import account_of, workspace_of
     assert "profile" in db.USER_PREF_KEYS
     me = account_of("prefs_alice")
-    profile = {"theme": "sepia", "enterNewNote": True, "agentPerms": {"pdf": {"block_edit": False}}}
+    profile = {"theme": "sepia", "enterNewBlock": True, "agentPerms": {"pdf": {"block_edit": False}}}
     r = alice.put("/api/prefs/profile", json={"value": profile}, headers={"X-Gamma-Workspace": workspace_of("prefs_alice")})
     assert r.status_code == 200 and r.json()["updated_at"]
     body = alice.get("/api/prefs/profile", headers={"X-Gamma-Workspace": "some-other-workspace"}).json()
@@ -85,9 +85,9 @@ def test_profile_patch_sets_only_the_named_entries(alice):
     me = account_of("prefs_alice")
     db.set_profile(me, {"theme": "dark", "language": "en"})
     before = db.get_profile(me)[1]
-    r = alice.patch("/api/prefs/profile", json={"set": {"language": "zh", "enterNewNote": True}})
+    r = alice.patch("/api/prefs/profile", json={"set": {"language": "zh", "enterNewBlock": True}})
     assert r.status_code == 200
-    assert r.json()["value"] == {"theme": "dark", "language": "zh", "enterNewNote": True}
+    assert r.json()["value"] == {"theme": "dark", "language": "zh", "enterNewBlock": True}
     assert r.json()["updated_at"] > before
     assert db.get_profile(me) == (r.json()["value"], r.json()["updated_at"])
     assert alice.patch("/api/prefs/profile", json={"set": {"chatSystem": "x" * (70 * 1024)}}).status_code == 413
@@ -157,9 +157,9 @@ def test_session_carries_the_theme_and_language_the_first_screen_needs(alice, gu
     from gamma import db
     from conftest import account_of
     me = account_of("prefs_alice")
-    db.set_profile(me, {"theme": "gamma-dark", "language": "zh", "enterNewNote": True})
+    db.set_profile(me, {"theme": "gamma-dark", "language": "zh", "enterNewBlock": True})
     assert alice.get("/api/session").json()["profile"] == {"theme": "gamma-dark", "language": "zh"}
-    db.set_profile(me, {"enterNewNote": True})
+    db.set_profile(me, {"enterNewBlock": True})
     assert alice.get("/api/session").json()["profile"] == {}
     # a guest's preferences stay in its browser
     assert "profile" not in guest.get("/api/session").json()
@@ -212,6 +212,34 @@ def test_workspace_prefs_are_kept_in_their_workspace(alice):
 
 
 # --- AI provider entries (GUI key management) ---------------------------------
+
+def test_only_gamma_variables_move_a_protocol_default_url():
+    """``config.AI_BASE_URLS`` reads ``GAMMA_AI_<PROTOCOL>_BASE_URL`` (and,
+    for the anthropic slot, ``GAMMA_AI_BASE_URL`` after it, the name older
+    .env files use) only: an ``ANTHROPIC_BASE_URL`` a developer's shell or
+    a proxy tool exports (the desktop app hands its environment to the
+    server) leaves the Anthropic default as it is. (Subprocess: config
+    reads them at import.)"""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    def anthropic_default(**env):
+        base = {k: v for k, v in os.environ.items() if not k.endswith("BASE_URL")}
+        return subprocess.run([sys.executable, "-c", "from gamma import config; print(config.AI_BASE_URLS['anthropic'])"],
+                              capture_output=True, text=True, check=True, env={**base, **env},
+                              cwd=str(Path(__file__).resolve().parent.parent)).stdout.strip()
+
+    assert anthropic_default(ANTHROPIC_BASE_URL="http://127.0.0.1:9/proxy") == "https://api.anthropic.com"
+    assert anthropic_default(GAMMA_AI_ANTHROPIC_BASE_URL="https://api.deepseek.com/anthropic/") \
+        == "https://api.deepseek.com/anthropic"
+    assert anthropic_default(ANTHROPIC_BASE_URL="http://127.0.0.1:9/proxy",
+                             GAMMA_AI_BASE_URL="https://api.deepseek.com/anthropic") \
+        == "https://api.deepseek.com/anthropic"
+    assert anthropic_default(GAMMA_AI_BASE_URL="https://older.example",
+                             GAMMA_AI_ANTHROPIC_BASE_URL="https://newer.example") == "https://newer.example"
+
 
 def test_guest_cannot_store_keys(guest):
     r = guest.get("/api/ai/settings")

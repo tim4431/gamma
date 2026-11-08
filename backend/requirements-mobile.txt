@@ -33,7 +33,7 @@ bcrypt==5.0.0
 # only some cores: 2.13.4 needs pydantic-core 2.46.4, which it has (the
 # server's 2.13.2 needs 2.46.2, and 2.14.x needs 2.50.x, which it has not).
 pydantic==2.13.4
-PyPDF2==3.0.1
+pypdf==6.21.4
 # Flet's newest mobile build; the server pins 1.28.2. The iOS wheel carries
 # MuPDF as two dylibs beside the extension modules, which the iPad app's
 # post-build step turns into frameworks of their own (ipad/project.yml,

@@ -36,7 +36,7 @@ def _offline_model_facts(monkeypatch):
 
 
 def ask(**fields):
-    return SimpleNamespace(**{"prompt": "summarize this", "selection": "", "selections": [],
+    return SimpleNamespace(**{"prompt": "summarize this", "selections": [],
                               "note_selections": [], **fields})
 
 

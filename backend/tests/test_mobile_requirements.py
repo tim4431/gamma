@@ -17,10 +17,9 @@ REPO = Path(__file__).resolve().parents[2]
 SERVER = REPO / "backend" / "requirements.txt"
 MOBILE = REPO / "backend" / "requirements-mobile.txt"
 
-# Package → why the apps go without it. The server must still run without
-# each (its imports are guarded). Empty since the PDF reader moved from
-# pypdfium2, which had no iOS wheel, to PyMuPDF, which Flet's index builds
-# for iOS and Android.
+# Package → why the apps go without it, for one with no mobile wheel; the
+# server in the apps must then run without it. Empty: every package the
+# server names has iOS and Android builds.
 EXCLUDED = {}
 
 

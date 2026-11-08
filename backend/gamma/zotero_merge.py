@@ -54,7 +54,7 @@ from .colors import parse_color
 from .db import parse_stamp
 from .note_markup import LITERAL_SPANS
 from .zotero_import import _ARXIV_ID, _work_title
-from .zotero_notes import block_text, note_html, note_tree, title_text
+from .zotero_notes import _BULLET_RE, _ORDERED_RE, block_text, note_html, note_tree, title_text
 from .zotero_web import parse_item_uri
 
 # The projection key whose members merge one by one as fields of their own
@@ -541,6 +541,7 @@ _LITERALS_RE = re.compile(LITERAL_SPANS)
 # Gamma). Searched with code and math spans taken out, where they are text.
 _GAMMA_ONLY_RE = re.compile(r"!?\[\[[^\]\n]+\]\]|!\[[^\]\n]*\]\(")
 _ORDERED_MARK_RE = re.compile(r"(?m)^([ \t]*\d{1,9})\)")
+_OLD_MARKER = "\\- "  # a bullet's marker as a pull reads it from a note holding it as text
 # Properties that make a block Zotero's or Gamma's own whatever its kind: an
 # annotation, the import's Attachments heading and its chips.
 _KEPT_PROPS = ("zotero_annotation", "imported_annot", "zotero_attachments", "zotero_attachment")
@@ -555,8 +556,9 @@ def _kind(node: dict) -> str:
 
 def _canon(text: str) -> str:
     """Text as compared for survival: its plain words (``title_text``),
-    numbered-item marks in one spelling, whitespace dropped."""
-    return "".join(title_text(_ORDERED_MARK_RE.sub(r"\1.", text)).split())
+    numbered-item marks in one spelling, a bullet's marker (the note holds it
+    as the list item) and whitespace dropped."""
+    return "".join(title_text(_BULLET_RE.sub("", _ORDERED_MARK_RE.sub(r"\1.", text))).split())
 
 
 def _gamma_only(text: str) -> bool:
@@ -603,7 +605,9 @@ class Region(NamedTuple):
     Gamma-notes region), whose content is its title and is never set.
     ``unsettable``: represented blocks whose own text a pull may not
     overwrite (a root whose text the note cannot carry: its pulled changes
-    come out as ``lossy`` edits)."""
+    come out as ``lossy`` edits). ``bullets``: represented blocks that are
+    bullets, whose marker the note holds as the list item and a pull puts
+    back."""
     blocks: list
     kept: frozenset
     parent: dict
@@ -614,6 +618,7 @@ class Region(NamedTuple):
     root_parent: str
     root_fixed: bool
     unsettable: frozenset
+    bullets: frozenset
 
 
 def _region_tree(tree):
@@ -683,7 +688,8 @@ def represented(tree, *, exclude=(), resolve_ref=None) -> Region:
     return Region(blocks=rendered, kept=frozenset(b for b in order if b not in rep), parent=parent,
                   children=children, tree=tree_out, html=note_html(tree_out, resolve_ref=resolve_ref),
                   root=root_id, root_parent=root.get("parent_id") or "", root_fixed=fixed,
-                  unsettable=frozenset(unsettable))
+                  unsettable=frozenset(unsettable),
+                  bullets=frozenset(bid for bid, _, _ in rendered if _BULLET_RE.match(block_text(nodes[bid]))))
 
 
 def _build(nodes, children, rep, root_id):
@@ -763,16 +769,27 @@ def _new_rows(new) -> list[tuple[int, str]]:
     return out or [(0, "")]
 
 
+def _with_marker(content: str, text: str) -> str:
+    """A bullet's pulled line as its block's text, ``text`` the line the block
+    reads back as: the marker back unless Zotero emptied or numbered it. A
+    note sent before bullets were list items holds the marker itself, escaped
+    (``_OLD_MARKER``), and this one stands for it."""
+    if content.startswith(_OLD_MARKER) and not text.startswith(_OLD_MARKER):
+        return f"- {content.removeprefix(_OLD_MARKER)}"
+    return f"- {content}" if content and not _ORDERED_RE.match(content) else content
+
+
 def note_edits(old: Region, new) -> list[dict]:
     """The edits that turn a note region's represented blocks into a pulled
     note: ``old`` is the region (``represented``), ``new`` the note's HTML, its
     ``note_tree`` or ``[(depth, content)]``. The two preorders are aligned on
     ``(depth, content)`` (``difflib.SequenceMatcher``, no autojunk): an equal
     block keeps its id, content, properties and comments; a replaced one is
-    paired in order and set (and moved when its parent changed); an added one
-    is inserted under its new parent; a removed one goes after its kept
-    children were lifted into its place. Kept blocks are never set or deleted,
-    only lifted.
+    paired in order and set, a bullet through ``_with_marker`` (and moved
+    when its parent changed); an added one is inserted under its
+    new parent, a bullet if it is the text of one removed here (a reorder in
+    Zotero reads as the two); a removed one goes after its kept children were
+    lifted into its place. Kept blocks are never set or deleted, only lifted.
 
     The edits, to apply in order: ``{"op": "set", "id", "content"}``;
     ``{"op": "insert", "id": "new:<n>", "parent", "after", "content"}`` (the
@@ -795,11 +812,14 @@ def note_edits(old: Region, new) -> list[dict]:
             bid, _, text = old.blocks[i1 + k]
             ids[j1 + k] = bid
             content = rows[j1 + k][1]
+            if bid in old.bullets:
+                text, content = f"- {text}", _with_marker(content, text)
             if content == text or (bid == old.root and old.root_fixed):
                 continue
-            op = "lossy" if bid in old.unsettable else "set"
-            edits.append({"op": op, "id": bid, "content": content})
+            edits.append({"op": "lossy" if bid in old.unsettable else "set", "id": bid, "content": content})
         removed += [old.blocks[i][0] for i in range(i1 + paired, i2)]
+    gone = old.bullets.intersection(removed)
+    moved = {text for bid, _, text in old.blocks if bid in gone}
     ids = [bid if bid is not None else f"new:{j}" for j, bid in enumerate(ids)]
     path, last_child = [ids[0]], {}
     for j in range(1, len(rows)):
@@ -810,7 +830,9 @@ def note_edits(old: Region, new) -> list[dict]:
         after = last_child.get(parent)
         last_child[parent] = node
         if node.startswith("new:"):
-            edits.append({"op": "insert", "id": node, "parent": parent, "after": after, "content": content})
+            bare = content.removeprefix(_OLD_MARKER)
+            edits.append({"op": "insert", "id": node, "parent": parent, "after": after,
+                          "content": f"- {bare}" if bare in moved else content})
         elif old.parent.get(node) != parent:
             edits.append({"op": "move", "id": node, "parent": parent, "after": after})
     return edits + _lifts(old, set(removed)) + _deletes(old, removed)

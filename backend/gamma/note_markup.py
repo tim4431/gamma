@@ -11,28 +11,19 @@ base-14 Symbol font, which every viewer has), ``^``/``_`` become genuinely
 raised/lowered runs, and structures collapse to inline forms
 (``\\frac{a}{b}`` → ``a/b``, ``\\sqrt x`` → ``√x``). Unknown commands fall back
 to their own name, which is what you want for ``\\sin``, ``\\log``, ``\\max``.
-It also keeps the one place that knows the legacy Logseq image width, and
-the inline grammar (``INLINE_RE``) that both ``pdf_document`` and the Zotero
-notes (``zotero_notes``) read a block's text with.
+It also keeps the inline grammar (``INLINE_RE``) that both ``pdf_document``
+and the Zotero notes (``zotero_notes``) read a block's text with, and the
+image-size syntax every backend reader of an image shares.
 """
 
 import re
+
+from .paste_math import map_prose
 
 SUP, SUB = 1, -1
 # A span is (kind, payload, level): TEXT carries a string, MATH the LaTeX source
 # of an inline expression that vector_text typesets.
 TEXT, MATH = "t", "m"
-
-# Image sizes are stored in the Obsidian dialect ``![alt|N](url)``. The legacy
-# Logseq ``![alt](url){:width N}`` suffix is normalized away by the one-time
-# normalization pass (gamma/normalize.py) and on export; this is the ONE place that
-# knows the old syntax.
-LEGACY_WIDTH_RE = re.compile(r"(!\[[^\]]*)(\]\([^)]+\))\{:width\s+(\d+)\}")
-
-
-def obsidian_image_sizes(md: str) -> str:
-    """``![a](u){:width N}`` → ``![a|N](u)`` (text without the suffix is returned unchanged)."""
-    return LEGACY_WIDTH_RE.sub(lambda m: f"{m.group(1)}|{m.group(3)}{m.group(2)}", md or "")
 
 # One pass over a paragraph of markdown. Order matters: ** before *, ![[ before [[,
 # \( math before a backslash escape (CommonMark's: a backslash before ASCII
@@ -73,6 +64,47 @@ INLINE_RE = re.compile(
     r"|(?P<url>" + BARE_URL + ")"
 )
 LINK_PARTS = re.compile(r"\[([^\]]*)\]\(\s*(" + LINK_TARGET + ")")
+
+# Image sizes. Gamma keeps an image's display width at the end of its alt,
+# as Obsidian does and the editor writes it: ``![alt|300](url)``
+# (``|300x200``: the height is ignored), ALT_SIZE_RE. Logseq writes it after
+# the image, ``![alt](url){:width 300}`` (WIDTH_SUFFIX). The Markdown and
+# Logseq imports and the Markdown exports rewrite that to the alt's size
+# (``obsidian_image_sizes``). Stored rows keep it: a paste, the API or a
+# mirror peer store text as sent, an earlier release's imports stored it
+# as written, and a restore rewrites it only on a copy stamped below
+# ``migrations.WS_VERSION_BASE`` (a backup from before the stamps, or a
+# scoped Gamma export; gamma/normalize.py), leaving a newer copy's rows
+# as they were. So every reader of an image takes both, through
+# ``alt_and_width``. The editor's twin is mdMarks.js scanImageSyntax.
+ALT_SIZE_RE = re.compile(r"(.*?)\|(\d+)(?:x\d+)?", re.S)
+WIDTH_SUFFIX = r"\{:width\s+(?P<lw>\d+)\}"
+_SIZED_AFTER_RE = re.compile(
+    r"!\[(?P<alt>[^\]\n]*)\]\((?P<src>[ \t]*" + LINK_TARGET + r"(?:[ \t][^)\n]*)?)\)" + WIDTH_SUFFIX)
+
+
+def alt_and_width(alt, width=None):
+    """An image's alt and display width (a string of digits, or None): the
+    size closing the alt taken off it, and a Logseq ``width`` read after
+    the image winning over it, as on screen."""
+    size = ALT_SIZE_RE.fullmatch(alt or "")
+    if size:
+        return size.group(1), width or size.group(2)
+    return alt, width
+
+
+def obsidian_image_sizes(md: str) -> str:
+    """``![a](u){:width N}`` → ``![a|N](u)``, outside code fences and code
+    spans; text without the suffix is returned unchanged."""
+    md = md or ""
+    if "{:width" not in md:
+        return md
+
+    def one(m):
+        alt, width = alt_and_width(m.group("alt"), m.group("lw"))
+        return f"![{alt}|{width}]({m.group('src')})"
+    return map_prose(md, lambda prose: _SIZED_AFTER_RE.sub(one, prose))
+
 
 # LaTeX command → unicode. Every value here is either WinAnsi- or Symbol-font
 # encodable (see pdf_typeset.font_of), so it can actually be drawn.

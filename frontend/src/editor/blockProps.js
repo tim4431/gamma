@@ -217,12 +217,7 @@ export const CATALOG = {
   zotero_attachments: { section: "zotero", type: "flag", label: T("Attachments heading"), hint: T("The heading Zotero's attachments are listed under.") },
   zotero_attachment: { section: "zotero", type: "mono", label: T("Zotero attachment"), hint: T("The Zotero attachment this block is linked to.") },
   zotero_rdf: { section: "zotero", type: "json", label: T("Zotero fields"), hint: T("Zotero fields Gamma has no place for, kept for export.") },
-  // old keys: a backup restore rewrites the first ones, nothing reads the last two but the agent's page header
-  highlight_id: { section: "technical", legacy: true, label: T("Highlight id"), hint: T("An old key: the block's id is its highlight's id now.") },
-  link_highlight_id: { section: "technical", legacy: true, label: T("Link highlight"), hint: T("An old key a backup restore rewrites.") },
-  sourceUrl: { section: "technical", legacy: true, label: T("Source address"), hint: T("An old key a backup restore rewrites.") },
-  folder: { section: "technical", legacy: true, label: T("Folder"), hint: T("An old key a backup restore rewrites.") },
-  category: { section: "technical", legacy: true, label: T("Category"), hint: T("An old key a backup restore rewrites.") },
+  // old keys a row may still carry: only the agent's page header reads summary, nothing reads guide_demo
   summary: { section: "technical", legacy: true, label: T("Summary"), hint: T("A page summary typed before July 2026; only the AI's page header reads it.") },
   guide_demo: { section: "technical", legacy: true, label: T("Tour marker"), hint: T("The first-run tour's old marker; nothing reads it.") },
 };

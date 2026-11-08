@@ -165,6 +165,35 @@ def test_edits_flow_both_ways_and_different_blocks_merge():
     assert local.client.get(f"/api/mirrors/{local.ws}/conflicts").json()["conflicts"] == []
 
 
+def test_a_merge_crosses_a_mirror_as_the_tree_it_leaves():
+    remote, local, _ = _pair()
+    page = remote.page("Shared")["id"]
+    key = None
+    for bid, text in (("b1", "one"), ("b2", "two"), ("b3", "three"), ("b4", "four")):
+        key = generate_key_between(key, None)
+        remote.insert(page, bid, text, position=key)
+    remote.insert(page, "kid", "under two", parent="b2")
+    _sync(local)
+    # made here, it reaches the remote with its child under the block it joined
+    local.ops(page, [{"op": "merge", "id": "b2", "into": "b1"}])
+    _sync(local)
+    assert remote.texts(page) == local.texts(page) == {"b1": "onetwo", "b3": "three", "b4": "four"}
+    assert [c["id"] for c in remote.tree(page)["children"][0]["children"]] == ["kid"]
+    assert [c["id"] for c in local.tree(page)["children"][0]["children"]] == ["kid"]
+    # made there, it comes back; neither log holds a merge, which it wrote out as a set and a delete
+    remote.ops(page, [{"op": "merge", "id": "b3", "into": "b1"}])
+    _sync(local)
+    assert remote.texts(page) == local.texts(page) == {"b1": "onetwothree", "b4": "four"}
+    for side in (remote, local):
+        batches = side.client.get(f"/api/pages/{page}/ops?since=0").json()["batches"]
+        assert "merge" not in {op["op"] for batch in batches for op in batch["ops"]}
+    # an edit that meets it in a round keeps its text, as an edit beats a delete
+    remote.ops(page, [{"op": "merge", "id": "b4", "into": "b1"}])
+    local.ops(page, [{"op": "set", "id": "b4", "content": "four!"}])
+    _sync(local)
+    assert remote.texts(page) == local.texts(page) == {"b1": "onetwothreefour", "b4": "four!"}
+
+
 def test_same_block_edits_merge_by_span_and_are_reported():
     remote, local, _ = _pair()
     page = remote.page("Same block")

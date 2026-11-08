@@ -1273,7 +1273,7 @@ Version 1 is handled in these places and nowhere else:
   converts the `/GammaInk` payload of an annotated PDF exported before
   the upgrade, then stores it. Exports write the v2 strokes verbatim into
   `/GammaInk`.
-- **Backup restore** runs the step like any other (migration rule 7), so
+- **Backup restore** runs the step like any other (migration rule 6), so
   a zip made before the upgrade comes back converted.
 - **The client** converts a v1 file it is served (a copy that has not
   run the step yet) as it loads it, so it renders: `ink.js` `loadedInk`,
@@ -4262,8 +4262,8 @@ reach.
       the zoom window").
     - *Handwriting settings…* is `SettingsIcon` and `onOpenSettings()`,
       which App wires to `openSettingsPane("handwriting")`. That is the
-      settings alias (`settings/settingsNavigation.js`) for the Reading &
-      editing pane, scrolled to the section's first row, *Reset presets*.
+      section entry point (`settings/settingsNavigation.js`) for the Reading
+      & editing pane, scrolled to the section's first row, *Reset presets*.
     - A preset's ⋯ (`ctlBtn`, `MoreIcon`, aria-label "Tool menu", title
       "Move, hide, reset or remove this tool", `aria-haspopup`,
       `aria-expanded`) lists these, each through `onChangeTools(list)` with

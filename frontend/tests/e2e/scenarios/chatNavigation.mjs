@@ -1408,14 +1408,14 @@ export async function chatNavigationScenarios(env) {
       const changes = page.locator(".chatChanges", { hasText: "Changed in your notes · 2" });
       await changes.waitFor();
       await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
-      assertEq(await changes.getByRole("button", { name: "Revert all" }).count(), 1, "two changes offer Revert all");
+      assertEq(await changes.getByRole("button", { name: "Revert…" }).count(), 1, "two changes offer Revert…");
       const rows = changes.locator(".chatChange");
       // A change nobody touched since goes back at once, on the open page too.
       await rows.nth(0).getByRole("button", { name: "Revert this change" }).click();
       await rows.nth(0).filter({ hasText: "Reverted" }).waitFor();
       assertEq(await noteText(one.id), "First draft");
       await page.locator(".blockRow", { hasText: "First draft" }).filter({ hasNotText: "improved" }).waitFor();
-      assertEq(await changes.getByRole("button", { name: "Revert all" }).count(), 0, "one change left: no Revert all");
+      assertEq(await changes.getByRole("button", { name: "Revert…" }).count(), 0, "one change left: no Revert…");
       // A reverted change redoes from the same row, and reverts again.
       await rows.nth(0).getByRole("button", { name: "Redo this change" }).click();
       await rows.nth(0).getByRole("button", { name: "Revert this change" }).waitFor();
@@ -1454,7 +1454,7 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
-  await step("chat navigation: deleting a folder always asks with two answers, and its row puts the folder back with its pages filed", async () => {
+  await step("chat navigation: deleting a folder asks by default with every answer, Allow once in red, and its row puts the folder back with its pages filed", async () => {
     const name = "E2E doomed folder";
     const folder = await alice.folder(name);
     const filed = await alice.api("/api/pages", { method: "POST", body: { title: "Doomed folder page" } });
@@ -1518,7 +1518,7 @@ export async function chatNavigationScenarios(env) {
       assertEq(sent.permissions.organize_delete, "ask", "deleting folders asks by default");
       assertEq(sent.permissions.organize, "ask");
 
-      // The card: Allow once, in red, and Don't allow — nothing that stops asking.
+      // The card: the four answers, Allow once in red.
       await push({ step: { id: "c-d1", tool: "delete_folder", args } });
       await push({ approval: { id: "d1", call_id: "c-d1", tool: "delete_folder", perm: "organize_delete", args, timeout: 600,
         preview: { title: name, diff: [["del", name]], subfolders: [], subfolder_count: 0, pages: ["Doomed folder page"],
@@ -1527,8 +1527,8 @@ export async function chatNavigationScenarios(env) {
       assert((await card.innerText()).includes("Approval needed · Delete folders and labels"), "the card names the permission");
       assertEq(await card.locator(".chatApprovalNote").innerText(), "1 page leaves it and stays in your library: Doomed folder page");
       assertEq((await card.locator("del").innerText()).trim(), name);
-      assertEq(await card.getByRole("button", { name: "Allow in this chat", exact: true }).count(), 0);
-      assertEq(await card.getByRole("button", { name: "Always allow", exact: true }).count(), 0);
+      assertEq(await card.getByRole("button", { name: "Allow in this chat", exact: true }).count(), 1);
+      assertEq(await card.getByRole("button", { name: "Always allow", exact: true }).count(), 1);
       assertEq(await card.getByRole("button", { name: "Don't allow", exact: true }).count(), 1);
       const once = card.getByRole("button", { name: "Allow once", exact: true });
       assert((await once.getAttribute("class")).split(" ").includes("danger"), "Allow once is the red button of a deletion");
@@ -1554,7 +1554,7 @@ export async function chatNavigationScenarios(env) {
       await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
       const row = changes.locator(".chatChange");
       assertEq(await row.locator(".chatChangeText").innerText(), `Deleted the folder ${name}; its 1 page stays in your library`);
-      assertEq(await page.getByRole("button", { name: "Revert all" }).count(), 0, "Revert all is the notes' only");
+      assertEq(await page.getByRole("button", { name: "Revert…" }).count(), 0, "one change: its row's button, no dialog");
       await until(async () => !(await listed.count()), { what: "the reply's change reloads the listing" });
 
       // Revert puts the folder back under its id and files its page again; redo deletes it again.
@@ -1579,6 +1579,77 @@ export async function chatNavigationScenarios(env) {
       await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
       await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
       if (!(await gone())) await alice.api(`/api/folders/${folder}`, { method: "DELETE" });
+    }
+  });
+
+  await step("chat navigation: Revert… takes back the ticked changes of several replies, newest first, library and notes alike, and stops at one that asks", async () => {
+    const notesPage = await alice.api("/api/pages", { method: "POST", body: { title: "Dialog page" } });
+    const note = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "Dialog draft" } });
+    const renamed = await alice.api("/api/pages", { method: "POST", body: { title: "Dialog before" } });
+    const doomed = await alice.api("/api/pages", { method: "POST", body: { title: "Dialog doomed" } });
+    // What the agent's calls wrote, and what their actions recorded; the user rewrote the note since.
+    await alice.api(`/api/blocks/${renamed.id}`, { method: "PUT", body: { content: "Dialog after" } });
+    await alice.api(`/api/blocks/${note.id}`, { method: "PUT", body: { content: "Dialog draft, improved by me" } });
+    await alice.api(`/api/blocks/${doomed.id}`, { method: "DELETE" });
+    const rename = { kind: "rename", tool: "rename_page", page_id: renamed.id, title: "Dialog before", from: "Dialog before",
+      to: "Dialog after", summary: "Renamed “Dialog before” → “Dialog after”",
+      revert: { pages: [[renamed.id, "title", "Dialog before", "Dialog after"]] } };
+    const edit = { kind: "edit", tool: "edit_block", mode: "replace", page_id: notesPage.id, block_id: note.id,
+      title: "Dialog page", summary: "Edited a note in “Dialog page”",
+      revert: { before: "Dialog draft", after: "Dialog draft, improved by AI" } };
+    const trashed = { kind: "delete", tool: "delete_page", page_id: doomed.id, title: "Dialog doomed", inside: 0,
+      summary: "Deleted “Dialog doomed”", revert: { trash: [doomed.id] } };
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [
+      { id: "dq1", role: "user", text: "Rename the draft" },
+      { id: "dr1", role: "ai", text: "Renamed it.", actions: [rename] },
+      { id: "dq2", role: "user", text: "Improve the note and delete the doomed page" },
+      { id: "dr2", role: "ai", text: "Done both.", actions: [edit, trashed] },
+    ] } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    const title = async (id) => (await alice.api(`/api/blocks/${id}`)).content;
+    try {
+      const latest = page.locator(".chatChanges", { hasText: "Moved Dialog doomed to Recently deleted" });
+      await latest.waitFor();
+      assertEq(await page.getByRole("button", { name: "Revert…" }).count(), 2, "each reply with a change offers it");
+      await latest.getByRole("button", { name: "Revert…" }).click();
+      const dialog = page.getByRole("dialog", { name: "Revert the AI's changes" });
+      await dialog.waitFor();
+      const boxes = dialog.locator(".revertDialogRow input[type=checkbox]");
+      assertEq(await boxes.count(), 3, "every change of the conversation is listed");
+      assertEq(JSON.stringify(await boxes.evaluateAll((list) => list.map((b) => b.checked))), JSON.stringify([true, true, false]),
+        "the reply it was opened from is ticked, newest first");
+      assert((await dialog.locator(".revertDialogGroup").first().innerText()).includes("Improve the note and delete the doomed page"),
+        "the changes are grouped under the message that asked for them");
+      if (flags.keep) await dialog.screenshot({ path: `${server.dir}/revert-dialog.png`, animations: "disabled" });
+      await dialog.getByLabel("Select all").check();
+      await dialog.getByRole("button", { name: "Revert 3 changes" }).click();
+      // The page deletion goes back first; the note the user rewrote stops the run and asks.
+      const ask = dialog.locator(".chatRevertAsk", { hasText: "The note was changed since." });
+      await ask.waitFor();
+      assertEq((await alice.api(`/api/blocks/${doomed.id}`)).content, "Dialog doomed", "the deleted page is back");
+      assertEq(await title(renamed.id), "Dialog after", "the run stopped before the older change");
+      assertEq(await ask.getByRole("button", { name: "Revert anyway" }).count(), 1);
+      await ask.getByRole("button", { name: "Skip it" }).click();
+      await dialog.getByRole("button", { name: "Revert 1 change" }).click();
+      await dialog.getByText("2 changes reverted").waitFor();
+      assertEq(await title(renamed.id), "Dialog before");
+      assertEq(await title(note.id), "Dialog draft, improved by me", "the skipped note keeps the user's words");
+      const saved = await until(async () => {
+        const chat = await alice.api("/api/chats/home");
+        const marks = chat.messages.filter((m) => m.role === "ai").flatMap((m) => m.actions.map((a) => !!a.reverted));
+        return JSON.stringify(marks) === JSON.stringify([true, false, true]);
+      }, { what: "the reverts are saved with their replies" });
+      assert(saved, "saved");
+      await dialog.getByRole("button", { name: "Done" }).click();
+      await until(async () => !(await dialog.count()), { what: "the dialog closes" });
+      assertEq(await latest.locator(".chatChange.reverted").count(), 1, "the reverted row is marked under its reply");
+      assertNoProblems(page, ["POST /api/ai/revert -> 409"]); // the note that asked, skipped above
+    } finally {
+      await ctx.close();
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     }
   });
 

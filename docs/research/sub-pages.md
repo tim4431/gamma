@@ -393,9 +393,10 @@ Shape C was built as designed above, with these differences.
   `parent:`, so the import pairs a directory with the page beside it: a
   directory whose name carries a Notion id, beside a note or a database
   CSV named exactly as it is, holds that page's sub-pages
-  (`markdown_zip_import.paired_page`) and makes no folder; a database's
-  rows become sub-pages of its table page. A front-matter `parent:` still
-  wins, a directory that pairs with nothing stays a folder, and vaults
+  (`NotionDialect.paired_page`, in `gamma/notion_import.py`) and makes no
+  folder; a database's rows become sub-pages of its table page. A
+  front-matter `parent:` still wins, a directory that pairs with nothing
+  stays a folder, and vaults
   and plain zips, which carry no Notion ids, are unchanged. A parent left
   out of the selection leaves the note filed by its directory; one
   imported before is named as the parent, and existing pages are not
@@ -471,7 +472,8 @@ finding sub-pages was among them and is fixed (home_library.md
 selection holding a page and a page inside it (they keep to the topmost
 pages, as Delete does), Move to folder hidden by one sub-page in a
 selection, the move dialogs matching titles only and Move block to page
-showing no path, and Recently deleted not saying a sub-page deleted on
+showing no path (both are Ctrl+P's palette now, `PagePicker`), and
+Recently deleted not saying a sub-page deleted on
 its own comes back inside its parent (home_library.md "Moving one" and
 "Recently deleted"). Also fixed that day: the `[[` picker and the
 editor's `@` menu now match a sub-page's path and every page's folders

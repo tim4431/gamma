@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from . import item_types
 from .bibtex import clean_key
 from .note_markup import LINK_PARTS
-from .zotero_notes import _elements, _href, note_tree, title_text
+from .zotero_notes import _href, block_elements, note_tree, title_text
 
 _RDF = "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
 _Z = "{http://www.zotero.org/namespaces/export#}"
@@ -363,7 +363,7 @@ def note_page(tree: dict) -> tuple[str, list]:
     block, the title its first line of text."""
     content, children = tree["content"], tree["children"]
     first, _, rest = content.partition("\n")
-    elements = _elements(content)
+    elements = block_elements(content)
     if (elements and elements[0][0] in ("heading", "para") and "![" not in first
             and not LINK_PARTS.search(first)):
         rest = rest.strip("\n")

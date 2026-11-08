@@ -183,7 +183,7 @@ def test_a_failed_opens_log_line_carries_its_own_warnings(monkeypatch, caplog):
         caplog.clear()
         with caplog.at_level(logging.WARNING, logger="gamma"):
             assert pdf_text.page_sizes(b"not a pdf at all") == []
-        lines = [r.message for r in caplog.records if "PyMuPDF open failed" in r.message]
+        lines = [r.message for r in caplog.records if "page sizes failed" in r.message]
         assert len(lines) == 1 and "; MuPDF: " in lines[0]
         return lines[0]
 
@@ -192,6 +192,22 @@ def test_a_failed_opens_log_line_carries_its_own_warnings(monkeypatch, caplog):
     first = failed_open_line()  # ... and not on the line
     assert first == failed_open_line()
     assert held == [True, True]
+
+
+def test_a_file_that_does_not_open_has_nothing_to_read_and_its_text_walk_raises():
+    """PyMuPDF is the one reader: a file it cannot open, one that needs a
+    password included, has no pages, sizes, title or outline, and the text
+    walk raises for its caller to report."""
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 72), "locked")
+    locked = doc.tobytes(encryption=pymupdf.PDF_ENCRYPT_AES_256, owner_pw="owner", user_pw="user")
+    for src, why in ((b"not a pdf at all", "; MuPDF: "), (locked, "needs a password")):
+        assert pdf_text.page_count(src) == 0
+        assert pdf_text.page_sizes(src) == []
+        assert pdf_text.outline(src) == []
+        assert pdf_text.title_guess(src) == ""
+        with pytest.raises(ValueError, match=why):
+            pdf_text.extract_pages(src)
 
 
 def test_overlapping_walks_read_their_own_documents():
@@ -218,9 +234,7 @@ def test_a_cjk_font_the_file_does_not_embed_renders_and_reads(monkeypatch):
     font the file names but does not embed — Adobe's STSong-Light through
     the UniGB-UCS2-H CMap, the usual shape of a Chinese PDF made without
     embedding — is drawn, and read as its characters, on any server, with
-    no system font to find. (pdfium drew such a page from the system's
-    fonts, which the Docker image had to install and an iPad does not
-    offer.)"""
+    no system font to find (an iPad offers none)."""
     text = "中文测试"
     font = (b"<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H"
             b" /DescendantFonts [<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light"

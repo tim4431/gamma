@@ -24,8 +24,7 @@ Store dimensions and layouts while loading geometry from the canonical
 sources: the Microsoft Store art in `desktop/assets/` and the Chrome Web
 Store promo tile and marquee in `extension/store/` (opaque, as that store
 requires), and the Google Play feature graphic in `android/store/` (opaque
-too). The desktop's `npm run store-art` remains an alias for the unified
-generation.
+too). The desktop's `npm run store-art` runs `build.mjs`.
 
 An `outputs.json` entry of kind `png` renders the mark at `size` pixels
 square. `bleed` (in the mark's 32-unit grid) insets it on a full-bleed plate,

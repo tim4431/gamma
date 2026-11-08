@@ -1,7 +1,8 @@
-"""Startup stays SDK-free; simultaneous first MCP calls share one transport;
-the app lifespan starts the background rounds and the walk over the
-workspaces behind on their migration steps, which the startup pass leaves
-alone; HTTPS is verified with certifi's CAs where OpenSSL finds none."""
+"""Startup stays SDK-free and leaves PyMuPDF and ziamath to their first
+use; simultaneous first MCP calls share one transport; the app lifespan
+starts the background rounds and the walk over the workspaces behind on
+their migration steps, which the startup pass leaves alone; HTTPS is
+verified with certifi's CAs where OpenSSL finds none."""
 
 import os
 import ssl
@@ -28,6 +29,8 @@ with TestClient(app, base_url='http://localhost') as client:
     assert not any(name == 'mcp' or name.startswith('mcp.') for name in sys.modules)
     # boto3 is imported only for the off-site copies' bucket (gamma/s3.py)
     assert not any(name in ('boto3', 'botocore') or name.startswith(('boto3.', 'botocore.')) for name in sys.modules)
+    # PyMuPDF at the first PDF read (gamma/pdf_text.py), ziamath at the first formula typeset (gamma/vector_text.py)
+    assert not any(name in ('pymupdf', 'ziamath') or name.startswith(('pymupdf.', 'ziamath.')) for name in sys.modules)
 """
     result = subprocess.run(
         [sys.executable, "-c", code],

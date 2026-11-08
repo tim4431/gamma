@@ -10,7 +10,7 @@ import {
   MAX_PAGE_DEPTH, PAGE_PATH_SEP, deleteConfirm, libraryTree, pageAncestors, pageBlocksOf, pageDescendants, pagePathLabel,
   pagePlaceLabel, pagesIntoPage, topPageOf, topmostPages,
 } from "../src/library/libraryUtils.js";
-import { movePageRows, rankLibraryPages } from "../src/library/librarySearch.js";
+import { rankLibraryPages } from "../src/library/librarySearch.js";
 import { mentionRows } from "../src/editor/mentions.js";
 
 const page = (id, content, parent = "", extra = {}) => ({ id, content, _parentPage: parent, ...extra });
@@ -107,22 +107,11 @@ test("where a page is, its own title last: how Recently deleted names a sub-page
   assert.equal(pagePlaceLabel(map, "todo"), "Project › Untitled");
 });
 
-test("the move dialogs match a title, then a path, and keep the listing's order on ties", () => {
-  const map = byId(PAGES);
-  const rows = PAGES.map((p) => ({ ...p, _path: pagePathLabel(map, p.id) }));
-  const ids = (query, limit) => movePageRows(rows, query, limit).map((p) => p.id);
-  assert.deepEqual(ids(""), PAGES.map((p) => p.id), "no query lists every page in order");
-  assert.deepEqual(ids("", 2), ["proj", "notes"]);
-  assert.equal(ids("project")[0], "proj", "the title hit first");
-  assert.deepEqual(ids("project").slice(1).sort(), ["notes", "todo", "week"], "then the pages whose path names it");
-  assert.deepEqual(ids("notes"), ["notes", "week"]);
-  assert.deepEqual(ids("week"), ["week"]);
-  // two sub-pages of one name sort by where they are
+test("two sub-pages of one name sort by where they are: a term on the path picks one", () => {
   const twins = [page("p1", "Alpha"), page("p2", "Beta"), page("n1", "Notes", "p1"), page("n2", "Notes", "p2")];
-  const tmap = byId(twins);
-  const trows = twins.map((p) => ({ ...p, _path: pagePathLabel(tmap, p.id) }));
-  assert.deepEqual(movePageRows(trows, "notes beta").map((p) => p.id), ["n2"], "a term on the path picks one");
-  assert.deepEqual(movePageRows(trows, "rdng").map((p) => p.id), [], "nothing matched");
+  const ids = (query) => rankLibraryPages(twins, libraryTree(), query).map((r) => r.page.id);
+  assert.deepEqual(ids("notes beta"), ["n2"]);
+  assert.deepEqual(ids("rdng"), [], "nothing matched");
 });
 
 test("a delete's confirmation counts the pages inside and quotes one page by its title", () => {
@@ -156,6 +145,9 @@ test("Ctrl+P and the chat's pickers: a sub-page's row carries its path, and the 
   const pathOf = (id) => rows.find((r) => r.page.id === id).path;
   assert.equal(pathOf("week"), "Project › Notes");
   assert.equal(pathOf("lone"), "");
+  const moving = rankLibraryPages(pages, tree, "", { exclude: new Set(["proj"]) });
+  assert.equal(moving.find((r) => r.page.id === "week").path, "Project › Notes", "an excluded page still names the pages inside it");
+  assert.ok(!moving.some((r) => r.page.id === "proj"));
   const hits = rankLibraryPages(pages, tree, "project");
   assert.equal(hits[0].page.id, "proj", "the title hit first");
   assert.deepEqual(hits.slice(1).map((r) => r.page.id).sort(), ["notes", "todo", "week"], "then the pages inside it");

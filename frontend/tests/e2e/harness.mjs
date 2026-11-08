@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { chromium, firefox, webkit } from "playwright";
 import headed from "../../../tools/headed.cjs";
+import { WEBKIT_TOUCH_NOTE, cancelledLoad, clickAfterCancelledTap, touchPoints } from "./webkit.mjs";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const BACKEND = path.join(ROOT, "backend");
@@ -60,6 +61,24 @@ const servers = [];
 // copies: those variables are dropped, and a scenario sets its own.
 const baseEnv = () => Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GAMMA_(S3_|OFFSITE)/.test(key)));
 
+// uvicorn on a port, gone with this process however that ends: stdin is a pipe
+// only this process holds, so the backend of a killed run reads its end and
+// exits rather than stay up for good, holding its port and its folder.
+const SERVE = "import os, sys, threading, uvicorn; "
+  + "threading.Thread(target=lambda: (sys.stdin.read(), os._exit(0)), daemon=True).start(); "
+  + "uvicorn.run('app:app', host='127.0.0.1', port=int(sys.argv[1]))";
+
+// A failed run's folder is kept to be read; a killed run could not remove its own.
+const KEPT_FOR = 3 * 24 * 60 * 60 * 1000;
+
+export function sweepRuns() {
+  for (const name of fs.readdirSync(os.tmpdir())) {
+    if (!name.startsWith("gamma-e2e-")) continue;
+    const dir = path.join(os.tmpdir(), name);
+    try { if (Date.now() - fs.statSync(dir).mtimeMs > KEPT_FOR) fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+}
+
 // `env` adds to the backend's environment (a second Gamma started as another
 // kind of server, e.g. the publish scenario's share host).
 export class Server {
@@ -69,6 +88,10 @@ export class Server {
     this.dir = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-"));
     this.dataDir = path.join(this.dir, "data");
     this.logPath = path.join(this.dir, "server.log");
+    // The backend's own temp files (an import review's staged upload, an
+    // export) go here too, so stop() takes them with the rest.
+    this.tmpDir = path.join(this.dir, "tmp");
+    fs.mkdirSync(this.tmpDir);
     this.port = 0;
     this.proc = null;
   }
@@ -78,7 +101,7 @@ export class Server {
   // 5 s keep-alive, and the next request would go down a socket it had closed.
   async manage(...args) {
     const { stdout } = await execFileAsync(PYTHON, ["manage.py", ...args], {
-      cwd: BACKEND, env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...this.env }, encoding: "utf8",
+      cwd: BACKEND, env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, TMPDIR: this.tmpDir, ...this.env }, encoding: "utf8",
     });
     return stdout;
   }
@@ -93,9 +116,9 @@ export class Server {
     await this.manage("setup");
     this.port = await freePort();
     const log = fs.openSync(this.logPath, "a");
-    this.proc = spawn(PYTHON, ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", String(this.port)], {
-      cwd: BACKEND, stdio: ["ignore", log, log],
-      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
+    this.proc = spawn(PYTHON, ["-c", SERVE, String(this.port)], {
+      cwd: BACKEND, stdio: ["pipe", log, log],
+      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {
@@ -112,10 +135,12 @@ export class Server {
       else this.proc.kill("SIGTERM");
       await sleep(300);
     }
-    // The temp dir survives on --keep and after any failure (its
-    // failures/ folder holds the screenshots and log tails).
-    if (flags.keep || results.some((r) => !r.ok)) console.log(`kept: ${this.dir}`);
-    else { try { fs.rmSync(this.dir, { recursive: true, force: true }); } catch {} }
+    // The temp dir survives on --keep and after any failure (its failures/
+    // folder holds the screenshots and log tails), a failure's without the
+    // copy of the build, which says nothing about it.
+    const failed = results.some((r) => !r.ok);
+    if (flags.keep || failed) console.log(`kept: ${this.dir}`);
+    if (!flags.keep) { try { fs.rmSync(failed ? path.join(this.dir, "dist") : this.dir, { recursive: true, force: true }); } catch {} }
   }
 }
 
@@ -216,7 +241,10 @@ export class Account {
 // default.
 export async function launchBrowser({ scrollbars = false } = {}) {
   const headless = { headless: !flags.headed };
-  if (process.env.GAMMA_E2E_BROWSER === "webkit") return english(await webkit.launch(headless));
+  if (process.env.GAMMA_E2E_BROWSER === "webkit") {
+    console.log(`  ${WEBKIT_TOUCH_NOTE}`);
+    return english(await webkit.launch(headless));
+  }
   if (process.env.GAMMA_E2E_BROWSER === "firefox") return english(await firefox.launch(headless));
   const opts = scrollbars ? { ...headless, ignoreDefaultArgs: ["--hide-scrollbars"] } : headless;
   try {
@@ -235,10 +263,12 @@ export async function launchBrowser({ scrollbars = false } = {}) {
 // English unless a scenario asks for another locale. Tours offered by
 // themselves (docs/dev/onboarding.md) would cover what other scenarios
 // click, so every context turns "Suggest tours" off unless it passes
-// `suggestTours: true`.
+// `suggestTours: true`. A touch context in WebKit gets what Playwright's
+// WebKit leaves out of a touch screen (webkit.mjs), or with
+// `bareWebkitTap: true` Playwright's tap as it is.
 function english(browser) {
   const newContext = browser.newContext.bind(browser);
-  browser.newContext = async ({ suggestTours = false, ...options } = {}) => {
+  browser.newContext = async ({ suggestTours = false, bareWebkitTap = false, ...options } = {}) => {
     const ctx = await newContext({ locale: "en-US", ...options });
     await ctx.addInitScript((on) => { try { localStorage.setItem("gamma-suggest-tours", on ? "1" : "0"); } catch {} }, suggestTours);
     // A context without touch is a mouse machine whatever the host says:
@@ -248,6 +278,10 @@ function english(browser) {
     // controls and guide steps. A hasTouch context keeps Playwright's own
     // emulation.
     if (!options.hasTouch) await ctx.addInitScript(() => { Object.defineProperty(Navigator.prototype, "maxTouchPoints", { get: () => 0, configurable: true }); });
+    else if (browser.browserType().name() === "webkit") {
+      await ctx.addInitScript(touchPoints);
+      if (!bareWebkitTap) await ctx.addInitScript(clickAfterCancelledTap);
+    }
     const close = ctx.close.bind(ctx);
     ctx.close = async ({ lastLook: look = true, ...options } = {}) => {
       if (look) for (const page of ctx.pages()) await lastLook(page);
@@ -303,7 +337,9 @@ export async function openPage(ctx, url) {
   page.on("console", (m) => {
     if (m.type() === "error" && !/Failed to load resource/.test(m.text())) page.problems.push(`console: ${m.text().slice(0, 200)}`);
   });
-  page.on("pageerror", (e) => page.problems.push(`pageerror: ${String(e).slice(0, 200)}`));
+  page.on("pageerror", (e) => {
+    if (!cancelledLoad(String(e), page.url())) page.problems.push(`pageerror: ${String(e).slice(0, 200)}`);
+  });
   if (url) await page.goto(url);
   return page;
 }

@@ -46,6 +46,20 @@ class SharedPluginTest(unittest.TestCase):
                 self.assertEqual((target / relative).read_bytes(),
                                  (extracted / "gamma-marketplace" / relative).read_bytes())
 
+    def test_github_repo_goes_into_the_install_instructions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = build(Path(tmp) / "gamma-marketplace", "example/gamma-plugins")
+            self.assertIn("example/gamma-plugins", (target / "README.md").read_text(encoding="utf-8"))
+
+    def test_existing_output_and_invalid_repo_are_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(ValueError):
+                build(root)
+            with self.assertRaises(ValueError):
+                build(root / "new", "https://example.com/repo")
+            self.assertFalse((root / "new").exists())
+
     def test_manifest_drift_fails_before_creating_output(self):
         read_text = Path.read_text
 

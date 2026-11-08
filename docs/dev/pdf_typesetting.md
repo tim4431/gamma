@@ -26,10 +26,11 @@ place (`gamma/pdf_translated.py`,
 [translation.md](translation.md#exporting-the-translation)). Everything
 below is written over that file.
 
-Both the annotation and visible-note writers read through `ExportPdfReader`.
-PyPDF2 reads a dangling indirect reference as `None` and its writer then
-fails with an empty `AssertionError`; `ExportPdfReader` substitutes a
-`NullObject`. The stored original is unchanged.
+Both the annotation and visible-note writers copy the file with pypdf, which
+writes a dangling indirect reference (arXiv's PDFs have them) as a null,
+except an entry of a page's `/Annots` array that points to a missing object:
+pypdf's copy fails on that one, and so does the export. The stored original
+is unchanged.
 
 `/api/pages/{id}/export-pdf`: highlights become standard `/Highlight` (or
 `/Square` for area notes) annotations with the note text in the popup
@@ -57,7 +58,8 @@ the viewer stores positions in (scaled by the position's `width` /
 pdf.js, pdfium and MuPDF show a page, or the media box when the two do not
 meet. `pdf_notes` places its cards in the same frame. A popup's text
 (`highlight_note_text`) is the highlight's own note and the notes under it,
-as an indented bullet list (`popup_text` of `highlight_note_blocks`).
+as an indented list, a bullet each unless a note is a list item with its own
+marker (`popup_text` of `highlight_note_blocks`; Zotero's comment is the same).
 A text box or a picture on a PDF page among them is left out with the
 notes under it, since it is written as its own `/FreeText` or `/Stamp`.
 One under a sheet stays a line, a picture as its `![caption](url)` line:
@@ -120,6 +122,16 @@ picture deleted here leaves its original, since nothing records the
 deletion. The boxes and pictures are written with either switch on:
 `highlights=0&notes=1` keeps them with the painted notes, and only both
 off (the stored file) leaves them out.
+
+A damaged PDF, or one a tool rewrote carelessly, can hold an `/Annots` entry
+that leads to no dictionary (a null, a reference to an object the file has
+lost) or an annotation whose `/A` is no action. A viewer passes over both,
+but `PdfWriter.append` and `add_page` raise on them, so every copy of a
+stored PDF's pages goes through `pdf_export.copy_pdf` or `copyable`, and
+every read of a page's annotations through `page_annotations`. Such an entry
+leaves the copy, and an annotation with a bad `/A` stays without it. The
+annotated PDF, the notes PDF, the agent's page, the strip and a note app's
+composed PDF all take this path.
 
 A page with sheets of paper and no PDF has none to annotate:
 `annotated_pdf` writes `notebook.notebook_pdf` instead. Each sheet is a PDF page of its paper's
@@ -277,9 +289,9 @@ Type 3 fonts and the pictures. `_stamp` adds it to a copy of the page's
 resources as `/GmNotes` (numbered past a name the page already has) and
 makes the page's contents a shared `q` stream, the streams the page had,
 then `Q` and the form's `Do`. The page's own streams are never parsed or
-rewritten. PyPDF2's `merge_page`, which an earlier writer used, parses
-every content stream into operators and writes it back uncompressed, which
-for a whole book is slow and swells the file. The pages without cards
+rewritten: pypdf's `merge_page` would parse every content stream into
+operators and write it back uncompressed, which for a whole book is slow and
+swells the file. The pages without cards
 share one form per geometry, holding only the strip, and a page that gets
 neither a strip nor a card is left as it is. The `/UserUnit` is left out of
 the layout, as Gamma's viewer, pdf.js and pdfium leave it out.
@@ -336,7 +348,7 @@ Known upstream limit: ziamath 0.13 stretches `\left(…\right)` around a
 `\sum`/`\int` with a runaway MATH-assembly (hundreds of extender parts, a
 parenthesis ~2000 pt tall); `_pieces` refuses an assembly of more than
 `MAX_ASSEMBLY_PARTS`, so such an expression takes the text fallback instead
-of a page-tall bracket. When ziamath is missing or chokes,
+of a page-tall bracket. When ziamath chokes,
 `note_markup.latex_spans` falls back to a unicode approximation
 (`\frac{a}{b}` → `a/b`, unknown commands keep their name so `\sin` works) —
 tests cover both fallbacks.
@@ -362,7 +374,7 @@ past its bounds) is logged with the reason and drawn as its alt text, or
 pictures. A picture placed on a page that can't be embedded is
 left out of the page, and the notes PDF names it in a grey line. A
 palette's `/Indexed` lookup must be a `ByteStringObject`: as a text string
-PyPDF2 re-encodes it to UTF-16 and the picture comes out one flat colour.
+pypdf writes it as UTF-16 and the picture comes out one flat colour.
 
 **A picture is drawn as the browser shows it.** `browser_orientation` is
 the EXIF orientation Chromium and Firefox apply:
@@ -395,9 +407,9 @@ has the formats). The PDF is untrusted, so nothing is read from it without
 a bound:
 
 - `stream_data` inflates a `/FlateDecode` by hand, never past the size the
-  image needs. PyPDF2's `get_data` inflates a stream whole however large it
-  grows, and keeps the result on the object for as long as the reader
-  lives; `image_file` never calls it on an image stream.
+  image needs. pypdf's `get_data` inflates a stream whole, up to its 75 MB
+  cap however small the image, and keeps the result on the object for as
+  long as the reader lives; `image_file` never calls it on an image stream.
 - Each image is opened only as the format its filter names, and refused
   when its header's size is not its `/Width` and `/Height`, before
   anything is decoded.
@@ -422,16 +434,16 @@ asks for the descriptor that way; PDF 2.0 no longer does). The map lists the
 characters drawn with the font — `draw_spans` records them, `finalize_cid`
 writes the map — one `bfchar` each, never a `bfrange` over the whole plane:
 the spec forbids a range that carries its destination's last byte past 255,
-and PyPDF2 expands every code of a range into a table entry, 63,000 for each
-page that names the font. With the two, MuPDF and pdfium read its text even
-where no viewer font draws it. pdf.js does not unless it is given its CMap
-files: the text is encoded through `UniGB-UCS2-H`, which pdf.js must load
-(`cMapUrl`) before the font loads at all, and without it the font fails and
-the characters are neither drawn nor extracted. Gamma's own viewer passes no
+and a reader such as pypdf expands every code of a range into a table entry,
+63,000 for each page that names the font. With the two, MuPDF, pdfium and
+pypdf read its text even where no viewer font draws it. pdf.js does not
+unless it is given its CMap files: the text is encoded through
+`UniGB-UCS2-H`, which pdf.js must load (`cMapUrl`) before the font loads at
+all, and without it the font fails and the characters are neither drawn nor
+extracted. Gamma's own viewer passes no
 `cMapUrl`, so there the fallback's CJK is simply absent, from the text layer
 and search too — the cure is an outline font on the server, not a viewer
-change. PyPDF2 3.0.1 does not read it either: it has no `UniGB-UCS2-H`
-encoding.
+change.
 Deliberately no reportlab dependency; Pillow only decodes pictures (above).
 A content stream must be an indirect object or the file is unreadable. The
 document writer's page streams, the notes' forms and every glyph program

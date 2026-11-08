@@ -192,6 +192,20 @@ function cachePdf(url, buf) {
 // DOC_CACHE_MAX until the last job reading it ends.
 const DOC_CACHE = new Map(); // url -> {doc, heights, widths}, insertion order = LRU
 const DOC_CACHE_MAX = 2;
+// The documents mounted viewers are asked for, url -> how many: pages side
+// by side (docs/dev/tab_groups.md) put a viewer in each group. Eviction
+// passes them over, so DOC_CACHE_MAX bounds the documents no viewer shows.
+// Letting one go only unpins it: the viewer still shows it until its next
+// document is in, and the next document remembered trims the cache.
+const DOC_SHOWN = new Map();
+function showDoc(url) {
+  DOC_SHOWN.set(url, (DOC_SHOWN.get(url) || 0) + 1);
+  return () => {
+    const n = (DOC_SHOWN.get(url) || 1) - 1;
+    if (n > 0) DOC_SHOWN.set(url, n);
+    else DOC_SHOWN.delete(url);
+  };
+}
 // The in-document search's page texts, by parsed document (PdfViewer's
 // search effect): freed with the document when DOC_CACHE lets it go.
 const SEARCH_TEXT = new WeakMap();
@@ -218,7 +232,7 @@ function trimDocs() {
   const newest = [...DOC_CACHE.keys()].at(-1);
   for (const [victim, { doc }] of DOC_CACHE) {
     if (DOC_CACHE.size <= DOC_CACHE_MAX) break;
-    if (victim === newest || translateState.pinned(victim)) continue;
+    if (victim === newest || translateState.pinned(victim) || DOC_SHOWN.has(victim)) continue;
     DOC_CACHE.delete(victim);
     forgetPixels(doc);
     // Its pages may still be mounted mid-swap — destroying now would spam
@@ -1021,6 +1035,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     commitDoc(url, live.doc, live.heights, live.widths, true);
   }, [url]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => (url ? showDoc(url) : undefined), [url]);
   useEffect(() => {
     if (!url) return;
     let cancelled = false, failed = false;
@@ -2020,9 +2035,13 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         <PdfPage key={`${docSeq}-${i + 1}`} pageNumber={i + 1} pdfDoc={pdfDoc} scale={scale}
           marginLeft={withMargin ? pageMargin(i + 1) : null} pageTop={pageTops[i] || 0}
           activeHl={targetPage === i + 1 ? activeHl : null}
-          highlights={hlsByPage.get(i + 1) || EMPTY_MARKS} onJump={stableCbs.onJump} onHighlightJump={stableCbs.onHighlightJump}
+          highlights={hlsByPage.get(i + 1) || EMPTY_MARKS} onJump={stableCbs.onJump}
+          // what a highlight, a link highlight or an outside link does on a
+          // press, only when this viewer was told: else none, and the press
+          // goes on to the page (a tab group's view, PagePane)
+          onHighlightJump={onHighlightJump ? stableCbs.onHighlightJump : undefined}
           flashId={flashHighlightId && hlsByPage.get(i + 1)?.some((h) => h.id === flashHighlightId) ? flashHighlightId : null}
-          onLinkHighlight={stableCbs.onLinkHighlight} onHighlightContext={stableCbs.onHighlightContext}
+          onLinkHighlight={onLinkHighlight ? stableCbs.onLinkHighlight : undefined} onHighlightContext={stableCbs.onHighlightContext}
           onHighlightThread={stableCbs.onHighlightThread} onReview={review}
           reviewGhost={reviewGhost?.pageNumber === i + 1 ? reviewGhost : null}
           citation={displayedUrl === url && activeCitation?.page === i + 1 ? activeCitation : null}
@@ -2039,7 +2058,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           transShown={transShown}
           transSpan={transSpan}
           onInternalLink={goToDestStable}
-          onExternalLink={stableCbs.onExternalLink}
+          onExternalLink={onExternalLink ? stableCbs.onExternalLink : undefined}
           onLinkContext={stableCbs.onLinkContext}
           onPainted={onPagePainted}
           toolArmed={!!ink.tool || text.armed}
@@ -2634,8 +2653,11 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
             height: Math.max(4, l.h * scale),
           }}
           onClick={(e) => {
+            // A viewer told nothing of outside links (a tab group's read
+            // view) lets the press through to the page it is over.
+            if (l.url && !onExternalLink) return;
             e.stopPropagation();
-            if (l.url) onExternalLink?.(l.url);
+            if (l.url) onExternalLink(l.url);
             else onInternalLink?.(l.dest);
           }}
           {...menuPress(l.url ? (e) => {
@@ -2748,6 +2770,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
             : reviewable ? undefined : h.note || ""}
             {...(reviewable ? { onMouseEnter: () => onReview.hover(h.id, true), onMouseLeave: () => onReview.hover(h.id, false) } : null)}
             onClick={function (e) {
+              // A viewer with nothing to do with a highlight (a tab group's
+              // read view) lets the press through to the page it is over.
+              if (!reviewable && !(isLink ? onLinkHighlight : onHighlightJump)) return;
               e.stopPropagation();
               // a tap (no hover on touch) opens its card instead; a second tap acts
               if (reviewable && onReview.tap(h.id)) return;
@@ -2775,7 +2800,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
                 left: r.x2 * curW / storedW + 2,
                 top: r.y1 * curH / storedH - 8,
               }}
-              onClick={(e) => { e.stopPropagation(); onHighlightJump?.(h.id, e.ctrlKey || e.metaKey); }}
+              onClick={(e) => { if (!onHighlightJump) return; e.stopPropagation(); onHighlightJump(h.id, e.ctrlKey || e.metaKey); }}
               onContextMenu={openMenu}
             />
           );

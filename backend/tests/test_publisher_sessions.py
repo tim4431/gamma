@@ -244,14 +244,14 @@ def test_ai_fetch_cookie_permission_bypasses_private_cache_without_disconnecting
 
     seen.clear()
     routes[AI_PDF] = (200, {"Content-Type": "text/html"}, b"<p>Public abstract.</p>")
-    action = ai_fetch(alice, stream=stream, permissions={"publisher_cookies": False})
+    action = ai_fetch(alice, stream=stream, permissions={"publisher_cookies": "off"})
     assert action["kind"] == "fetch" and "Public abstract." in action["result"]
     assert AI_TEXT not in action["result"]
     assert seen and all(cookie is None for _, cookie in seen)
     assert alice.get("/api/publisher-sessions").json()["sessions"]
 
     seen.clear()
-    assert AI_TEXT in ai_fetch(alice, stream=stream, permissions={"publisher_cookies": True})["result"]
+    assert AI_TEXT in ai_fetch(alice, stream=stream, permissions={"publisher_cookies": "allow"})["result"]
     assert seen == []  # the account's authenticated cache is still available
 
 

@@ -9,6 +9,7 @@ launcher, and desktop release workflows use these locations.
 | `backend/tests/` | Backend tests using temporary data directories |
 | `frontend/tests/` | `node --test` tests of the pure modules; `e2e/` the Playwright browser suite (`npm run e2e`, [debugging.md](debugging.md)) |
 | `tests/shared/` | JSON cases for rules mirrored between backend and frontend (search normalization, published pages' slugs, the ink and text merges, text boxes, notebook paper, the mirror's tree rules), read by both test suites (the mirror's tree rules and the text merge by the backend's alone) |
+| `tests/testrun.py` | What a pytest run does about its temp files and its stalls, shared by the server's and the account server's suites ([debugging.md](debugging.md#what-a-run-leaves-behind)). |
 | `frontend/src/` | React code grouped by function (`editor/`, `pdf/`, `settings/`, etc.), orchestration in `app/`, reused code/assets in `shared/`; [source map](../../frontend/src/README.md) |
 | `frontend/public/` | Files copied as-is into the frontend build |
 | `cloud/` | The Gamma Cloud account server (`gammacloud` package, `manage.py`, `tests/`, its own Dockerfile and requirements); imports nothing from `backend/` ([cloud_accounts.md](cloud_accounts.md)) |
@@ -133,7 +134,7 @@ to `assets`. This lets the packager discover `assets/appx/` and the app icon.
 Its application file list includes `assets/icon.png` for the Electron window;
 Store artwork and signing inputs do not need to ship inside the application.
 
-`npm run store-art` delegates to the unified `tools/branding/build.mjs` generator,
+`npm run store-art` runs the unified `tools/branding/build.mjs` generator,
 which refreshes all brand outputs, including `desktop/assets/store/` and
 `desktop/assets/appx/`. It uses the frontend's locked Playwright/Chromium, Python 3,
 and the hero's system font stack; generation works offline. See the

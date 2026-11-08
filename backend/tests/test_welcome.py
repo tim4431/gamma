@@ -75,7 +75,7 @@ def test_a_new_account_starts_with_the_welcome_page_and_its_pdf():
     # the notes are welcome.md's outline, written as one op batch by the account
     notes = _notes(ws, page["id"])
     assert "## Your first five minutes" in notes and "## Practice on this PDF" in notes
-    assert any(n.startswith("**Add a paper**") for n in notes)
+    assert any(n.startswith("- **Add a paper**") for n in notes)  # its list, kept a list
     assert not any("Guest workspace" in n for n in notes)
     with connect_pages_db(ws) as conn:
         batches = conn.execute("SELECT actor, ops FROM page_ops WHERE page_id = ?", (page["id"],)).fetchall()

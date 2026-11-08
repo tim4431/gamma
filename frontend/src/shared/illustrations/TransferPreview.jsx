@@ -55,17 +55,24 @@ function Paper({ original = false, highlights, notes, comments = false, notesAt 
   return beside ? <div className="transferSpread">{paper}</div> : paper;
 }
 
-export function ExportPreview({ format, highlights, notes, bundle, comments, notesAt }) {
+// `filesRow`: {title, hint}, a format's own files row (Notion's, whose zip
+// holds what its switches leave).
+export function ExportPreview({ format, highlights, notes, bundle, comments, notesAt, filesRow }) {
   const files = format !== "pdf" && format !== "notespdf";
   const metadataOnly = format === "zotero" && !bundle;
+  // What the files row says.
+  const [filesTitle, filesHint] = filesRow ? [filesRow.title, filesRow.hint]
+    : bundle ? [t("Files included"), t("PDFs and images travel with the export")]
+      : metadataOnly ? [t("PDF files not included"), t("Metadata, collections and notes only")]
+        : [t("Files stay as links"), t("Links point back to this server")];
   return <figure className="transferPreview" aria-label={t("Export preview")}>
     <figcaption>{t("Example")} {format === "pdf" ? t("PDF page") : files ? "export" : t("page layout")}</figcaption>
     <Paper original={format === "pdf"} highlights={highlights} notes={notes} comments={comments} notesAt={notesAt} />
     {format === "gamma" ? <div className="transferPreviewExtra">{t("Metadata, page structure and AI chats included")}</div> : null}
     {files ? <div className="transferFiles" data-preview={bundle ? "bundled-files" : "linked-files"}>
       <PaperclipIcon size={14} />
-      <div><strong>{bundle ? t("Files included") : metadataOnly ? t("PDF files not included") : t("Files stay as links")}</strong>
-        <span>{bundle ? t("PDFs and images travel with the export") : metadataOnly ? t("Metadata, collections and notes only") : t("Links point back to this server")}</span></div>
+      <div><strong>{filesTitle}</strong>
+        <span>{filesHint}</span></div>
     </div> : null}
   </figure>;
 }

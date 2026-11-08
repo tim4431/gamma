@@ -20,11 +20,11 @@ import { chordLabel } from "../shared/lib/hotkeys.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { composing, sendsOnShiftEnter } from "../chat/enterKey.js";
 import { BlockCmEditor } from "../editor/BlockCmEditor";
-import { findMathAtCursor, LatexAcPopup, MathLivePreview } from "../editor/LatexEditor";
+import { LatexAcPopup, MathLivePreview } from "../editor/LatexEditor";
 import { MentionContext, MentionMenuPopup } from "../editor/MentionMenu";
 import { RefPickerPopup } from "../editor/RefPicker";
 import { SlashMenuPopup } from "../editor/SlashMenu";
-import { fenceInnerAt } from "../editor/fences.js";
+import { codeBreak } from "../editor/blockCommands.js";
 import { enterPlan } from "../editor/mdLines.js";
 import { NO_LABELS } from "../editor/refLabels.js";
 import { useMathUi } from "../editor/useMathUi.js";
@@ -150,10 +150,13 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
     if (e.key !== "Enter" || !ta) return;
     if (sendsOnShiftEnter(e)) { e.preventDefault(); submit(); return; }
     // A line break: a list or quote continues (mdLines.enterPlan), as in a
-    // note, but not inside a code fence or $$…$$; otherwise the editor's own.
+    // note, but not inside a code fence or $$…$$, where only a quote's marks
+    // go on; otherwise the editor's own.
     const at = ta.selectionStart;
-    const block = !!fenceInnerAt(ta.value, at) || !!findMathAtCursor(ta.value, at)?.display;
-    const plan = !block && at === ta.selectionEnd ? enterPlan(ta.value, at) : null;
+    const code = codeBreak(ta.value, at, ta.selectionEnd);
+    const plan = code === "\n" ? null
+      : code ? { from: at, to: ta.selectionEnd, insert: code, pos: at + code.length }
+      : at === ta.selectionEnd ? enterPlan(ta.value, at) : null;
     if (plan) {
       e.preventDefault();
       ta.view?.dispatch({

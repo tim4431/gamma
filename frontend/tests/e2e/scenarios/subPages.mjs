@@ -12,9 +12,10 @@ import { openDialog } from "./transfers.mjs";
 // is; Quick open finds it with its path; "Move to library" and "Move into
 // page…" take it out and put one in, keeping to the topmost pages of a
 // selection, Move to folder files a selection's library pages and says what
-// it left out, and the move dialogs match and show a path; deleting the
-// parent takes the pages inside along and Restore brings the tree back,
-// from Recently deleted, a
+// it left out, Move to page… offers a block the open page's pages inside
+// first, and the move pickers match and show a path; deleting the parent
+// takes the pages inside along and Restore brings the tree back, from
+// Recently deleted, a
 // link's missing-page notice (which then opens the linked page) or the
 // open page's own notice; a page share of the parent reaches the pages
 // inside, one of the child reaches nothing above. A label on a page inside
@@ -57,6 +58,10 @@ export async function subPageScenarios(env) {
   const panel = (page) => page.locator(".subPagesPanel");
   const panelRows = (page) => panel(page).locator(".subPageRow:not(.subPageNew)");
   const crumbs = (page) => page.locator(".pageCrumbs .crumbBtn");
+  // a page picker's rows (library/PagePicker.jsx) as "title path": the
+  // page's title, then the pages a page inside is in
+  const optionTexts = (dialog) => dialog.getByRole("option").evaluateAll((els) => els.map((el) =>
+    [el.querySelector("strong"), el.querySelector("small")].filter(Boolean).map((n) => n.innerText.trim()).join(" ")));
   let childOne = "", childTwo = "";
 
   await step("sub-pages: /page in a filed page makes a page inside it, kept out of the library; the panel lists it and its crumbs lead back", async () => {
@@ -162,14 +167,13 @@ export async function subPageScenarios(env) {
       await fileRow(page, "Child two").waitFor();
       await fileRow(page, "Loose page").click({ button: "right" });
       await page.locator(".ctxMenuItem", { hasText: "Move into page…" }).click();
-      const dialog = page.locator(".confirmModal", { hasText: "Move into page" });
+      const dialog = page.getByRole("dialog", { name: "Move into page" });
       await dialog.waitFor();
-      await dialog.locator("input[data-find]").fill("Family");
+      await dialog.getByRole("textbox").fill("Family");
       // the page by its title, then the page inside it by its path
-      const offered = dialog.locator(".moveBlockList .ctxMenuItem");
-      await until(async () => (await offered.allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()).join("|")
-        === "Family top|Child one Family top", { what: "the dialog matches the title and the path" });
-      await offered.first().click();
+      await until(async () => (await optionTexts(dialog)).join("|") === "Family top|Child one Family top",
+        { what: "the picker matches the title and the path" });
+      await dialog.getByRole("option").filter({ has: page.locator("strong", { hasText: /^Family top$/ }) }).click();
       await fileRow(page, "Loose page").waitFor({ state: "detached" });
       const stored = await props(loose.id);
       assertEq(stored.parent_page, top.id, "inside the picked page");
@@ -177,6 +181,34 @@ export async function subPageScenarios(env) {
       assertEq(titles((await family(top.id)).sub_pages), "Loose page|Child one", "the target lists it");
       await page.goto(at(top.id));
       await until(async () => (await panelRows(page).allInnerTexts()).join("|") === "Loose page|Child one", { what: "the target's panel lists it" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("sub-pages: Move to page… offers the open page's pages inside first, each naming where it is, and a block moves into one", async () => {
+    await user.api(`/api/pages/${top.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "submove1", parent: top.id, position: "a8", content: "Goes inside" }] } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, at(top.id));
+    try {
+      const wrap = page.locator(".sortableBlockWrap", { hasText: "Goes inside" }).first();
+      await wrap.hover();
+      await wrap.locator(".dragHandle").click();
+      await page.locator(".ctxMenuItem", { hasText: "Move to page…" }).click();
+      const dialog = page.getByRole("dialog", { name: "Move block to page" });
+      await dialog.waitFor();
+      const names = () => dialog.locator('[role="option"] strong').allInnerTexts();
+      await until(async () => (await names()).slice(0, 2).sort().join("|") === "Child one|Loose page", { what: "the open page's pages inside lead" });
+      assertEq(await dialog.locator(".quickOpenSection").first().innerText(), "Inside this page");
+      assert(!(await names()).includes("Family top"), "the open page is no target");
+      await dialog.getByRole("textbox").fill("child one");
+      const option = dialog.getByRole("option").filter({ has: page.locator("strong", { hasText: /^Child one$/ }) });
+      await until(async () => (await dialog.getByRole("option").count()) === 1, { what: "the query narrows to the page" });
+      assertEq(await option.locator("small").innerText(), "Family top", "a page inside names the page it is in");
+      await page.keyboard.press("Enter");
+      await until(async () => (await user.api(`/api/blocks/${childOne}/subtree`)).block.children.some((b) => b.content === "Goes inside"),
+        { what: "the block moved into the page inside" });
+      await until(async () => (await page.locator(".sortableBlockWrap", { hasText: "Goes inside" }).count()) === 0, { what: "and left the open page" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -538,11 +570,11 @@ export async function subPageScenarios(env) {
       // Move into page…: the page inside goes along inside its page
       await pickBoth();
       await page.locator(".ctxMenuItem", { hasText: "Move into page…" }).click();
-      const dialog = page.locator(".confirmModal", { hasText: "Move into page" });
+      const dialog = page.getByRole("dialog", { name: "Move into page" });
       await dialog.waitFor();
       assert((await dialog.innerText()).includes("The page goes inside the one you pick"), `one page moves: ${await dialog.innerText()}`);
-      await dialog.locator("input[data-find]").fill("Sel target");
-      await dialog.locator(".moveBlockList .ctxMenuItem", { hasText: "Sel target" }).click();
+      await dialog.getByRole("textbox").fill("Sel target");
+      await dialog.getByRole("option").filter({ has: page.locator("strong", { hasText: /^Sel target$/ }) }).click();
       await until(async () => (await props(outer.id)).parent_page === target.id, { what: "the page inside the target" });
       assertEq((await props(inner.id)).parent_page, outer.id, "the page inside it stays inside it");
       assertEq(await parentsOf([outer.id, inner.id]), `${target.id}|${outer.id}`, "the listing reads the tree");
@@ -557,7 +589,7 @@ export async function subPageScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  // Two pages inside two pages, both called "Twin": the move dialogs name
+  // Two pages inside two pages, both called "Twin": the move pickers name
   // each by its path and match on it, as Ctrl+P does.
   await step("sub-pages: Move block to page and Move into page… name a page inside by its path and match on it", async () => {
     const alpha = await user.api("/api/pages", { method: "POST", body: { title: "Twin home Alpha" } });
@@ -569,36 +601,33 @@ export async function subPageScenarios(env) {
       { op: "insert", id: "twinmove", parent: src.id, position: "a0", content: "a block for a twin" }] } });
     const ctx = await user.context(browser);
     const page = await openPage(ctx, at(src.id));
-    const items = page.locator(".moveBlockList .ctxMenuItem");
     try {
       const wrap = page.locator(".sortableBlockWrap", { hasText: "a block for a twin" }).first();
       await wrap.waitFor({ timeout: 15000 });
       await wrap.hover();
       await wrap.locator(".dragHandle").click();
       await page.locator(".ctxMenuItem", { hasText: "Move to page…" }).click();
-      const dialog = page.locator(".confirmModal", { hasText: "Move block to page" });
+      const dialog = page.getByRole("dialog", { name: "Move block to page" });
       await dialog.waitFor();
-      await dialog.locator("input[data-find]").fill("Twin");
-      const twins = items.filter({ hasText: /^Twin\s*Twin home/ });
-      await until(async () => (await twins.count()) === 2, { what: "both twins listed" });
-      const texts = (await twins.allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()).sort();
-      assertEq(texts.join("|"), "Twin Twin home Alpha|Twin Twin home Beta", "each twin names the page it is in");
-      await dialog.locator("input[data-find]").fill("twin beta");
-      await until(async () => (await items.count()) === 2, { what: "the path narrows the twins" });
-      assertEq((await items.allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()).join("|"),
-        "Twin home Beta|Twin Twin home Beta", "the parent by its title, then the twin inside it by its path");
-      await items.nth(1).click();
+      await dialog.getByRole("textbox").fill("Twin");
+      const twins = async () => (await optionTexts(dialog)).filter((text) => /^Twin Twin home/.test(text)).sort();
+      await until(async () => (await twins()).length === 2, { what: "both twins listed" });
+      assertEq((await twins()).join("|"), "Twin Twin home Alpha|Twin Twin home Beta", "each twin names the page it is in");
+      await dialog.getByRole("textbox").fill("twin beta");
+      await until(async () => (await optionTexts(dialog)).join("|") === "Twin home Beta|Twin Twin home Beta",
+        { what: "the parent by its title, then the twin inside it by its path" });
+      await dialog.getByRole("option").nth(1).click();
       await until(async () => (await user.api(`/api/blocks/${twinB.id}/subtree`)).block.children.some((b) => b.content === "a block for a twin"),
         { what: "the block moved into the twin picked" });
 
       // Move into page… matches the path the same way
       await page.locator(".tabStrip .tab", { hasText: "Twin source" }).first().click({ button: "right" });
       await page.locator(".ctxMenuItem", { hasText: "Move into page…" }).click();
-      const into = page.locator(".confirmModal", { hasText: "Move into page" });
+      const into = page.getByRole("dialog", { name: "Move into page" });
       await into.waitFor();
-      await into.locator("input[data-find]").fill("twin alpha");
-      await until(async () => (await items.allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()).join("|")
-        === "Twin home Alpha|Twin Twin home Alpha", { what: "the twin inside Alpha by its path" });
+      await into.getByRole("textbox").fill("twin alpha");
+      await until(async () => (await optionTexts(into)).join("|") === "Twin home Alpha|Twin Twin home Alpha",
+        { what: "the twin inside Alpha by its path" });
       await page.keyboard.press("Escape");
       assertNoProblems(page);
     } finally { await ctx.close(); }
@@ -683,11 +712,11 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
     try {
       await page.locator(".fileList").waitFor({ timeout: 15000 });
       const dialog = await openDialog(page, "Import");
-      await choice(dialog, "Markdown notes").click();
+      await choice(dialog, "Notion pages").click();
       const chooser = page.waitForEvent("filechooser");
-      await choice(dialog, "Choose file…").click();
+      await choice(dialog, "Choose .zip…").click();
       await (await chooser).setFiles(zip);
-      const review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      const review = page.getByRole("dialog", { name: "Review Notion import", exact: true });
       const target = review.getByRole("region", { name: "Library after import", exact: true });
       await target.getByText("Notion bottom", { exact: true }).waitFor({ timeout: 15000 });
       assert((await review.innerText()).includes("Library / Notion dest"), "the import goes to the open folder");

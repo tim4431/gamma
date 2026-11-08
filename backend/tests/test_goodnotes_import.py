@@ -155,7 +155,7 @@ def test_a_notebook_on_one_pdf_keeps_it(accounts):
 
 
 def test_a_mixed_notebook_is_one_composed_pdf(accounts):
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     owner, ws = accounts["gni_other"], workspace_of("gni_other")
     n = gx.Notebook("Mixed notebook", seed=7)

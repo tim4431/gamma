@@ -49,7 +49,7 @@ from urllib.parse import unquote_to_bytes
 from xml.etree import ElementTree
 
 from PIL import Image, UnidentifiedImageError
-from PyPDF2.generic import (
+from pypdf.generic import (
     ArrayObject,
     ByteStringObject,
     DecodedStreamObject,
@@ -481,8 +481,8 @@ def svg_pdf(data: bytes) -> bytes:
     browser shows it (``picture.svg_size``, set in the copy MuPDF reads,
     ``picture.svg_sized``), in points as many as its pixels. ValueError
     for a file that is no SVG, one past the bounds (``_check_svg``) or one
-    MuPDF cannot read, with MuPDF's warnings; ImportError without PyMuPDF.
-    Holds the PyMuPDF lock for the open and the conversion."""
+    MuPDF cannot read, with MuPDF's warnings. Holds the PyMuPDF lock for the
+    open and the conversion."""
     sized = svg_sized(data)
     if sized is None:
         raise ValueError("not an SVG")
@@ -516,7 +516,7 @@ def svg_xobject(writer, path):
     copied into ``writer``, over the unit square an image fills (its
     /Matrix maps its /BBox there). ``/GammaSVG`` holds the file itself, for
     the import to read back (``image_file``). Never raises."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     try:
         if (size := path.stat().st_size) > MAX_SVG_BYTES:
@@ -528,7 +528,7 @@ def svg_xobject(writer, path):
         source, content = DecodedStreamObject(), DecodedStreamObject()
         source.set_data(data)
         content.set_data(drawn.get_data() if drawn is not None else b"")
-        form = content.flate_encode()  # a stream's own keys go after: flate_encode keeps none
+        form = content.flate_encode()
         form.update({
             NameObject("/Type"): NameObject("/XObject"),
             NameObject("/Subtype"): NameObject("/Form"),
@@ -541,8 +541,6 @@ def svg_xobject(writer, path):
         })
         width, height = svg_size(data)
         return form, width, height
-    except ImportError:
-        log.info(f"[pdf-image] cannot draw {path.name}: PyMuPDF is not installed")
     except Exception as e:
         log.warning(f"[pdf-image] could not draw the SVG {path.name}: {e}")
     return None
@@ -635,10 +633,10 @@ def stream_data(stream, limit: int) -> bytes:
     """A PDF stream's data with a /FlateDecode at the front of its filters
     undone, ``limit`` bytes of it at most; an image codec after that (DCT,
     JPX) stays for Pillow, and any other filter is a ValueError. Inflated
-    here and never past ``limit``: PyPDF2's ``get_data`` inflates a stream
-    whole however large it grows (a few kB can hold gigabytes of zeros), by
-    a byte at a time when it is cut short, and keeps the result on the
-    object for as long as the reader lives."""
+    here and never past ``limit``: pypdf's ``get_data`` inflates a stream
+    whole up to its 75 MB cap, however small the image (a few kB can hold
+    gigabytes of zeros), and keeps the result on the object for as long as
+    the reader lives."""
     filters, data = _filters(stream), stream._data
     if filters[:1] and filters[0] in _FLATE:
         data, filters = zlib.decompressobj().decompress(data, max(1, limit)), filters[1:]
@@ -673,7 +671,7 @@ def _space_mode(space):
     if kind == "/ICCBased" and len(space) > 1:
         profile = space[1].get_object()
         n = profile.get("/N")
-        if n is None:  # the profile's alternate space says as much (PyPDF2's writer can drop /N)
+        if n is None:  # some writers drop /N, PyPDF2 among them: the alternate space says as much
             return _space_mode(profile.get("/Alternate", NameObject("/DeviceRGB")))
         return _ICC_MODES.get(int(n)), None
     if kind in ("/Indexed", "/I") and len(space) > 3:
@@ -696,9 +694,7 @@ def _as_png(stream) -> bytes | None:
     """A Flate image with PNG row filters (``/Predictor`` 10 to 15) as the
     PNG file it was made from, its compressed rows as they are: the
     inverse of the verbatim path, with nothing decoded. None for any other
-    image, or one PNG has no colour type for (CMYK, 16-bit colour). PyPDF2
-    cannot be asked for such an image's samples: it undoes the row filters
-    as though every pixel were one byte."""
+    image, or one PNG has no colour type for (CMYK, 16-bit colour)."""
     parms = stream.get("/DecodeParms")
     parms = parms.get_object() if hasattr(parms, "get_object") else parms
     if _filters(stream) not in (["/FlateDecode"], ["/Fl"]) or not hasattr(parms, "get") \

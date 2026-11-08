@@ -2,6 +2,8 @@
 
 React + Vite SPA. Talks same-origin `/api/*`; in dev Vite proxies to `:9001`.
 
+The oldest browsers it runs in are Safari 16.4, Chrome and Edge 111 and Firefox 121: its CSS uses `color-mix()` and `:has()`, and its *Full screen* button the unprefixed Fullscreen API (a browser without it gets the app's own full screen). The desktop app's Electron, the iPad app's WebKit and an up-to-date Android System WebView are all past that.
+
 ```bash
 npm install
 npm run dev      # :5173

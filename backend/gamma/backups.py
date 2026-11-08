@@ -73,13 +73,10 @@ def snapshot_db(src: Path, dst: Path) -> str:
 
 
 def _upload_dirs() -> list[Path]:
-    dirs = []
-    for root in (config.LEGACY_USERS_DIR, config.WORKSPACES_DIR):
-        if root.is_dir():
-            for d in sorted(root.iterdir()):
-                if (d / "uploads").is_dir() and not d.name.startswith("."):
-                    dirs.append(d / "uploads")
-    return dirs
+    root = config.WORKSPACES_DIR
+    if not root.is_dir():
+        return []
+    return [d / "uploads" for d in sorted(root.iterdir()) if (d / "uploads").is_dir() and not d.name.startswith(".")]
 
 
 def _claim_name(label: str) -> tuple[Path, Path]:

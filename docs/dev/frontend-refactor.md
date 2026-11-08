@@ -15,8 +15,9 @@ owners in `ink/` that App composes (the `ink/` row below,
 [handwriting.md](handwriting.md) "Client"). The tabs' arrangement into
 groups side by side is `workspace/`'s, a pure model and the frames that
 draw it ([tab_groups.md](tab_groups.md)); App still holds the one open
-page, so one group is live and the others show read views, and the page
-session's extraction below is what makes every group a workbench.
+page, so one group is live and the others show views of their pages
+drawn as the live page would draw them, and the page session's
+extraction below is what makes every group a workbench.
 Everything from "Goal and current constraints" on is open work, but for
 those rows.
 

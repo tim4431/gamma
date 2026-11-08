@@ -1,4 +1,5 @@
-"""Central configuration. Everything tunable comes from environment variables."""
+"""The data directory's layout and most of the server's environment settings;
+a few modules read their own GAMMA_* variable beside the code that uses it."""
 
 import os
 from pathlib import Path
@@ -12,12 +13,6 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = Path(os.environ.get("GAMMA_DATA_DIR", "") or _REPO_ROOT / "data")
 USERS_DB = DATA_DIR / "users.db"
 WORKSPACES_DIR = DATA_DIR / "workspaces"
-# The pre-workspace layout (users/<username>/...). The upgrade that moved
-# it into WORKSPACES_DIR left in place only the directories of no account,
-# for the admin to look through; nothing writes there, but the integrity
-# checks (gamma/integrity.py) and the server snapshots (gamma/backups.py)
-# still cover what is left.
-LEGACY_USERS_DIR = DATA_DIR / "users"
 # Snapshots and backup state: the migration runner's pre-upgrade copies
 # (gamma/backups.py), workspace snapshots and their scheduled tasks
 # (gamma/ws_backup.py, gamma/backup_schedule.py), the off-site copies'
@@ -218,13 +213,14 @@ def offsite_env() -> dict:
 # gamma/ai_settings.ai_runtime(); the protocols themselves are the adapters in
 # gamma/ai_protocols/. The env can only override each protocol's default base
 # URL (shown as the placeholder in the GUI and used when an entry leaves it
-# blank). Legacy GAMMA_AI_BASE_URL / ANTHROPIC_BASE_URL alias the anthropic
-# slot.
-
-_legacy_url = os.environ.get("GAMMA_AI_BASE_URL", "") or os.environ.get("ANTHROPIC_BASE_URL", "")
+# blank). Only GAMMA_ variables count: an ANTHROPIC_BASE_URL a developer's
+# shell exports reaches the desktop app's server and is not read. The
+# anthropic slot also reads GAMMA_AI_BASE_URL, the name older .env files
+# use for it, when GAMMA_AI_ANTHROPIC_BASE_URL is unset.
 
 AI_BASE_URLS = {
-    "anthropic": (os.environ.get("GAMMA_AI_ANTHROPIC_BASE_URL", "") or _legacy_url
+    "anthropic": (os.environ.get("GAMMA_AI_ANTHROPIC_BASE_URL", "")
+                  or os.environ.get("GAMMA_AI_BASE_URL", "")
                   or "https://api.anthropic.com").rstrip("/"),
     "openai": (os.environ.get("GAMMA_AI_OPENAI_BASE_URL", "")
                or "https://api.openai.com").rstrip("/"),

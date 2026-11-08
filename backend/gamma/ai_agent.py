@@ -54,7 +54,7 @@ from .ai_client import UpstreamError, failure_kind, partial_json_object
 from .ai_context import canonical_tool, elide_live_results
 from .ai_protocols.base import reasoning_text, truncated_stop
 from .ai_tools import (CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, MAX_TOOL_ROUNDS, MUTATING_TOOLS,
-                       approval_preview, ensure_tally, find_selection, listed_pages, run_agent_tool,
+                       TREE_DELETES, approval_preview, ensure_tally, find_selection, listed_pages, run_agent_tool,
                        settled_action, skipped_fetch, tool_action, tool_permission, unanswered_fetch)
 from .logbuf import log
 
@@ -609,12 +609,11 @@ class ApprovalGate:
     (``gamma/ai_permissions.py``).
 
     Once runs the call; for the chat or always also allow that permission's
-    later calls of this reply (not an ask-only permission's, whose every
-    call asks); a decline, or no answer, leaves the call
+    later calls of this reply; a decline, or no answer, leaves the call
     unmade and tells the model why — with what to do instead when the user
     said it. A call that could not change anything is answered from its own
-    plan without asking anybody. An ask-only deletion runs only on the
-    folder or label its card showed. A call naming several pages runs only
+    plan without asking anybody. A folder's or label's deletion
+    (``TREE_DELETES``) runs only on the folder or label its card showed. A call naming several pages runs only
     as its card showed it (its ``digest``; ai_tools.BATCH_CHANGED
     otherwise).
     """
@@ -646,10 +645,10 @@ class ApprovalGate:
             decision, note = ai_permissions.wait_for(approval_id, self.stopped)
         if decision == "stopped":
             return None
-        if decision in ("chat", "always") and tool_permission(name) not in ai_permissions.ASK_ONLY:
+        if decision in ("chat", "always"):
             self.scope["permissions"][tool_permission(name)] = "allow"
         if decision in ai_permissions.ALLOWING:
-            if tool_permission(name) in ai_permissions.ASK_ONLY:
+            if name in TREE_DELETES:
                 # A deletion goes only on the folder or label its card showed
                 # (``block_id``): while the card waited, the path or name it
                 # was called with may have come to name another one.

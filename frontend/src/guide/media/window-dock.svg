@@ -34,13 +34,9 @@
     <path class="m-glyph" d="M234 15h.01M237 15h.01M234 18h.01M237 18h.01M234 21h.01M237 21h.01" />
     <rect class="m-line" x="242" y="16" width="24" height="4" rx="2" />
     <path class="m-rule" d="M228 26H310" />
-    <circle class="m-line-dim" cx="236" cy="36" r="1.6" />
     <rect class="m-line-dim" x="241" y="34.25" width="58" height="3.5" rx="1.75" />
-    <circle class="m-line-dim" cx="236" cy="48" r="1.6" />
     <rect class="m-line-dim" x="241" y="46.25" width="50" height="3.5" rx="1.75" />
-    <circle class="m-line-dim" cx="236" cy="60" r="1.6" />
     <rect class="m-line-dim" x="241" y="58.25" width="60" height="3.5" rx="1.75" />
-    <circle class="m-line-dim" cx="236" cy="72" r="1.6" />
     <rect class="m-line-dim" x="241" y="70.25" width="44" height="3.5" rx="1.75" />
   </g>
   <g class="m-leave" style="--m-at: 0.5">
@@ -81,19 +77,12 @@
     <path class="m-glyph" d="M234 15h.01M237 15h.01M234 18h.01M237 18h.01M234 21h.01M237 21h.01" />
     <rect class="m-line" x="242" y="16" width="24" height="4" rx="2" />
     <path class="m-rule" d="M228 26H310" />
-    <circle class="m-line-dim" cx="236" cy="36" r="1.6" />
     <rect class="m-line-dim" x="241" y="34.25" width="58" height="3.5" rx="1.75" />
-    <circle class="m-line-dim" cx="236" cy="48" r="1.6" />
     <rect class="m-line-dim" x="241" y="46.25" width="50" height="3.5" rx="1.75" />
-    <circle class="m-line-dim" cx="236" cy="60" r="1.6" />
     <rect class="m-line-dim" x="241" y="58.25" width="60" height="3.5" rx="1.75" />
-    <circle class="m-line-dim" cx="236" cy="72" r="1.6" />
     <rect class="m-line-dim" x="241" y="70.25" width="44" height="3.5" rx="1.75" />
-    <circle class="m-line-dim" cx="236" cy="84" r="1.6" />
     <rect class="m-line-dim" x="241" y="82.25" width="54" height="3.5" rx="1.75" />
-    <circle class="m-line-dim" cx="236" cy="96" r="1.6" />
     <rect class="m-line-dim" x="241" y="94.25" width="60" height="3.5" rx="1.75" />
-    <circle class="m-line-dim" cx="236" cy="108" r="1.6" />
     <rect class="m-line-dim" x="241" y="106.25" width="38" height="3.5" rx="1.75" />
   </g>
   <g class="m-light" style="--m-at: 0.5">

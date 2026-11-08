@@ -1358,9 +1358,10 @@ its parent is, it is a note block with text, it carries none of the
 annotation or attachment properties, its text holds nothing note HTML
 cannot carry (a `[[reference]]`, an embed, a picture of Gamma's: code and
 math spans aside), and it reads back the same through
-`note_tree(note_html(…))`. Every other block is **kept**, with its
-subtree: never rendered into the note, never set, deleted or moved by a
-pull, only lifted out of the way. A highlight nested under a note, a
+`note_tree(note_html(…))`, a bullet's marker aside. Every other block is
+**kept**, with its subtree: never rendered into the note, never set,
+deleted or moved by a pull, only lifted out of the way. A highlight nested
+under a note, a
 reference, a picture of Gamma's, a drawing stay where they are whatever
 Zotero does to the note. The root is always represented; a root whose own
 text cannot be carried is **unsettable**: a pulled change to it becomes a
@@ -1374,6 +1375,18 @@ inverse for every tree `note_tree` returns, so a note sent and read back is
 the note it was. A Zotero note's paragraphs therefore come back as list
 items once Gamma sends the note.
 
+A bullet block (`- a`, `_BULLET_RE`) is a list item with its marker taken
+off, as a numbered block's number is, and a bullet root is the list's first
+item. The note reads back `a`, so `Region.bullets` holds which blocks wear
+the marker: `_canon` compares without it, an unchanged pull is equal on the
+read-back text, and `note_edits` puts `- ` back on a `set` or a lossy row of
+such a block, unless Zotero emptied or numbered it, and on an inserted line
+that holds the text of a bullet it removes, as a reorder in Zotero reads. A
+pulled line starting `\- ` is such a block's marker in a note sent before
+bullets were list items, and stands for it, unless the block's own text
+starts so. A to-do (`- [ ] a`) is no bullet: Zotero has no such item, so it
+goes as the literal text of a list item.
+
 ### Pull and push
 
 The note row's bases are `{note: hash}` of Zotero's HTML and of the
@@ -1386,7 +1399,8 @@ region's HTML as Gamma would send it (`note_hash`). `Blocks._note` decides:
   keeps its id, content, properties and comment threads; replaced ones are
   paired in order and set (and moved when their parent changed); an added
   one is inserted under its new parent; a removed one goes after its kept
-  children are lifted into its place. `zotero_local.note_ops` turns the
+  children are lifted into its place. A set keeps a bullet's marker
+  ([Regions](#regions)). `zotero_local.note_ops` turns the
   edits into ops under the write lock, so positions see the page as it is.
 - **Gamma changed it**: a PATCH of the note's HTML. The "Notes from Gamma"
   note goes only once the page has been still for `NOTES_QUIET_S` (60 s;
@@ -2596,10 +2610,21 @@ holds every reading only a Zotero link has, pure so node tests it.
 - **A PDF removed here** sends nothing: Zotero's attachment stays, and the
   page shows its card again (`kept_out`), the file coming only when asked.
 - **Note shapes.** A Zotero note's paragraphs come back as list items once
-  Gamma sends the note (`note_html`'s shape). A lossy note whose first line
-  is deleted here is rooted again on its next line, and the lines lifted
-  out go with the page's own notes, so they also stand in "Notes from
-  Gamma" beside the lossy note Zotero still holds.
+  Gamma sends the note (`note_html`'s shape). A `<ul>` item comes in as plain
+  text, not as `- a`, so a line Zotero adds to a list is a paragraph here;
+  only a block that was a bullet stays one. A to-do goes as text, and a
+  changed pull of one comes back escaped, without its box. Only a block's
+  first `- ` is a marker: a list held in one block goes as one item with its
+  other lines literal. A note sent before bullets were list items holds a
+  literal `- a`, and goes once more, as a list, the next time its page
+  syncs. Its region's hash changed with the shape, so until then it reads as
+  changed here though nobody did: a Zotero edit waiting then is a
+  `zotero_note` row (Gamma's goes), a Zotero trash brings the note back with
+  a `zotero_deleted_edited` row, and a lossy note, which is never sent, keeps
+  its dash and holds a `zotero_lossy` row. A lossy note whose first line is
+  deleted here is rooted again on its next line, and the lines lifted out go
+  with the page's own notes, so they also stand in "Notes from Gamma" beside
+  the lossy note Zotero still holds.
 - **Lossy mappings** are kept apart, not carried: a turned text annotation
   stands upright here; a text box's Markdown goes as plain text, so bold,
   lists, code and math draw here and can move a line break, a `~~~` fence

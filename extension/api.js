@@ -228,11 +228,6 @@ export function originPattern(origin) {
   return origin ? origin + "/*" : "";
 }
 
-export async function hasServerPermission(origin) {
-  if (!origin) return false;
-  return chrome.permissions.contains({ origins: [originPattern(origin)] });
-}
-
 async function readError(res) {
   let message = `${res.status} ${res.statusText}`;
   let detail = false;

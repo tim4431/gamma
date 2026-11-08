@@ -44,7 +44,7 @@ def test_readable_export_is_bare_md(guest):
 
 def test_readable_export_writes_image_sizes_obsidian_style():
     page = {"id": "p", "content": "Sized images", "properties": {}, "children": [
-        {"id": "im1", "content": "legacy: ![cap](/api/uploads/ab12.png){:width 240}",
+        {"id": "im1", "content": "logseq: ![cap](/api/uploads/ab12.png){:width 240}",
          "properties": {}, "children": []},
         {"id": "im2", "content": "already new: ![cap2|180](/api/uploads/cd34.png)",
          "properties": {}, "children": []},
@@ -248,7 +248,7 @@ def test_a_folder_export_names_the_folder_by_id(guest):
 
 
 def _blank_pdf_bytes():
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
     w = PdfWriter()
     w.add_blank_page(width=612, height=792)
     buf = io.BytesIO()

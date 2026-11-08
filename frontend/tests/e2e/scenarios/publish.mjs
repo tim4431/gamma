@@ -240,9 +240,9 @@ export async function publishScenarios(env) {
     await step("publish: a first settings sync asks Fetch from cloud or Push to cloud; Sync now merges", async () => {
       await server.manage("create-user", "syncer", "syncer-pw");
       const syncer = await new Account(server, "syncer", "syncer-pw").login();
-      await syncer.api("/api/prefs/profile", { method: "PUT", body: { value: { theme: "sepia", enterNewNote: false } } });
+      await syncer.api("/api/prefs/profile", { method: "PUT", body: { value: { theme: "sepia", enterNewBlock: false } } });
       const cloudCopy = "sub-syncer /api/me/prefs/profile";
-      cloud.prefs.set(cloudCopy, { value: { theme: "system", enterNewNote: true }, updated_at: new Date().toISOString() });
+      cloud.prefs.set(cloudCopy, { value: { theme: "system", enterNewBlock: true }, updated_at: new Date().toISOString() });
       cloud.person("sub-syncer", "syncer");
       const sctx = await syncer.context(browser);
       try {
@@ -266,7 +266,7 @@ export async function publishScenarios(env) {
           { timeout: 15000, what: "the row reads synced after the fetch" });
         const fetched = (await syncer.api("/api/prefs/profile")).value;
         assertEq(fetched.theme, "system", "the cloud's theme replaced this server's");
-        assertEq(fetched.enterNewNote, true, "the cloud's setting replaced this server's");
+        assertEq(fetched.enterNewBlock, true, "the cloud's setting replaced this server's");
         assertEq(cloud.prefs.get(cloudCopy).value.theme, "system", "the cloud's copy is untouched");
         // synced: Sync now merges — a change made on the cloud arrives, and the open tab shows it
         cloud.prefs.set(cloudCopy, { value: { ...cloud.prefs.get(cloudCopy).value, theme: "gray" }, updated_at: new Date().toISOString() });

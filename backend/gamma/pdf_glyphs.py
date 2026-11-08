@@ -24,7 +24,7 @@ them before every glyph is known, and ``finalize()`` fills them in once the
 drawing is done, before the writer serialises.
 """
 
-from PyPDF2.generic import (
+from pypdf.generic import (
     ArrayObject,
     DecodedStreamObject,
     DictionaryObject,

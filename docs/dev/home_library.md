@@ -275,21 +275,20 @@ folder chips, and its cover previews its first notes as any page's does
 ("The card" below); a page with pages inside it says how many.
 
 **In the pickers.** A sub-page matches on its title, then, as weaker
-hits, its top's folders, its own labels and its path, so typing
-a parent's title lists the pages inside it after the title hits. Quick
-open and the chat's `@` and `+` pickers rank through `rankLibraryPages`
-(over the listing's rows, `topPageOf` for the folders); their rows show
-the path, Quick open's and the `@` picker's on their second line, the `+`
-picker's after the title, and a sub-page's row shows its label chips
-only. The `[[` picker and the editor's `@` menu rank through
-`rankRefPages` (editor/refLists.js) over App's page blocks, folder and
-label chips by name; the `[[` picker's meta reads "kind · path" and the
-`@` menu's page row the path, each else the page's first folder. The
-move dialogs (Move into page…, Move block to page, "Moving one" below)
-match the title, then the path (`movePageRows`), and show the path after
-the title, so two sub-pages of one name read apart. The Ctrl+F search
-panel names a hit's page "Parent › Child", the pages above it muted and
-shrinking first.
+hits, its top's folders, its own labels and its path, so typing a
+parent's title lists the pages inside it after the title hits, and two
+sub-pages of one name read apart. Quick open, the page pickers (Move to
+page, Move into page, the link dialog; `PagePicker`, "Moving one" below)
+and the chat's `@` and `+` pickers rank through `rankLibraryPages` (over
+the listing's rows, `topPageOf` for the folders); their rows show the
+path, Quick open's, the page pickers' and the `@` picker's on their
+second line, the `+` picker's after the title, and a sub-page's row shows
+its label chips only. The `[[` picker and the editor's `@` menu rank
+through `rankRefPages` (editor/refLists.js) over App's page blocks,
+folder and label chips by name; the `[[` picker's meta reads "kind ·
+path" and the `@` menu's page row the path, each else the page's first
+folder. The Ctrl+F search panel names a hit's page "Parent › Child", the
+pages above it muted and shrinking first.
 
 **Reaching one.** Three ways, none of them a page tree in a sidebar:
 
@@ -338,8 +337,8 @@ a selection (`topmostPages` in libraryUtils.js): a page picked with a page
 inside it moves alone, the other staying inside it.
 
 - **Move into page…** (the home page menu, for one page or a selection,
-  and a tab's menu) opens the Move to page dialog as "Move into page": a
-  filter over every page but the moved ones and the pages inside them,
+  and a tab's menu) opens the move picker (`PagePicker`, below) as "Move
+  into page…" over every page but the moved ones and the pages inside them,
   where they cannot go, a sub-page's row showing its path. A pick puts each
   page inside the one picked, and the server drops their folders. "Moved N
   pages into “Title”."
@@ -367,6 +366,16 @@ inside it moves alone, the other staying inside it.
   panel carries its one page: the library's selection is let go. A
   target shows the drop as a folder does (`.dragOver`), and a drop of
   sub-pages on a folder stays refused ("Filing by the top" above).
+
+A block's **Move to page…** (its handle menu and the palette; an image,
+table or diagram's "Another page…") goes to a sub-page as to any page
+([collab.md](collab.md) "Ops": `/blocks/{id}/reorder` with the target as
+`parent_id`). Its picker and Move into page's are one: `PagePicker`
+(`library/PagePicker.jsx`), quick open's look, keys and rows over the
+listing App holds, read again behind it as it opens. A sub-page's row names
+the pages it is in; a block's or an object's picker leaves out the open
+page and lists the open page's own sub-pages first, under "Inside this
+page" (`rankLibraryPages`' `first`), before the recent pages.
 
 **Shares.** A page share reaches the shared page and every page inside it
 (`ShareScope.allows_page`: one whose ancestors hold the shared page), and a
@@ -839,8 +848,9 @@ directly, the page's live descendants with it. Endpoints:
 [api.md](api.md) "Recently deleted". Editors and owners
 trash and restore; a viewer and a share link cannot. A folder chat's agent
 can list the pages that were filed under its folder and restore them on
-request (`list_deleted`, `restore_page`, [ai_tools.md](ai_tools.md)); it
-cannot trash or delete a page. A trashed page's files
+request (`list_deleted`, `restore_page`, [ai_tools.md](ai_tools.md)), and
+move pages there on request (`delete_page`, `ops.trash_page`); it never
+deletes a page for good. A trashed page's files
 stay referenced, so they count against the storage quota until the page is
 deleted for good. Then the orphan check takes over
 ([user_db.md](user_db.md) "Stored files").

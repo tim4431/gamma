@@ -71,7 +71,7 @@ There are three parts:
 | `Pencil/HeldShape.swift` | A shape from the web's answer to `hold`: its outline, its refit as the pen moves, and the rule that drops it (`ShapeHold`), held to `tests/shared/inkhold.json`; also `mod`, the web's fold into [0, m), which the live nib and the samples' roll use too |
 | `Pencil/RulerSnap.swift` | The ruler's edge a claimed stroke runs along (the claim's `snap`): every point projected onto the edge, the live line between the two outermost projections, as the web's `ink/ruler.js` commits it |
 | `Pencil/PencilGestures.swift` | The double tap and the squeeze, with its phases, forwarded with the system's preferred action; where the Pencil hovered for each, for its tick |
-| `Pencil/PencilHaptics.swift` | The web's `haptic`, each kind as Apple's feedback for its event (a held shape's path completion, a pen lasso's selection change, a gesture's light impact: `HapticFeel`), in an Apple Pencil Pro from iPadOS 17.5 |
+| `Pencil/PencilHaptics.swift` | The web's `haptic`, each kind as Apple's feedback for its event (a held shape's path completion, a pen lasso's selection change, a gesture's light impact: `HapticFeel`), in an Apple Pencil Pro |
 | `../backend/gamma_mobile.py` | The server's entry on the device, shared with the Android app: output to the log, then uvicorn on `127.0.0.1` at `GAMMA_PORT` under a supervisor the app can ask to run it again |
 | `../backend/requirements-mobile.txt` | The server's dependencies as the iPad and the Android app install them |
 | `python/OpenSSL.xcprivacy` | OpenSSL's privacy manifest, put beside the standard library's `_ssl` and `_hashlib` (below) |
@@ -102,7 +102,7 @@ Pick an iPad simulator or your iPad, set your development team under
 Signing & Capabilities, and run. The bundle id, `net.blitzbuild.gamma`, is
 the App Store record's, of team `A436A36DDC`: a device build signed by
 another team needs a bundle id of its own there. The project targets
-iPadOS 17 and iPad only. The simulator wheels are arm64, so the
+iPadOS 17.5 and iPad only. The simulator wheels are arm64, so the
 simulator needs an Apple Silicon Mac. A build for more than one
 architecture (a Release build for the simulator) needs
 `ONLY_ACTIVE_ARCH=YES`, because `install_python` copies one

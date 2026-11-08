@@ -1,16 +1,24 @@
 """Normalization of old data shapes inside a workspace's databases.
 
 A backup restored through ``/api/import-data`` can be as old as the first
-release, and one taken before the workspace stamps (``pages.db``'s
-``user_version``, gamma/migrations.py) says nothing of its age, so the
-restore runs these idempotent steps on each imported file
-(``ws_backup._normalize_copies``). ``normalize_pages_db``'s block-content
-rewrites (``PAGES_STEPS``) run there only: a library this release can
-upgrade went through them in a migration step of an earlier release, one
-of those below ``migrations.MIN_UPGRADABLE``. A new content-shape rewrite
+release, and one without a workspace stamp (``pages.db``'s
+``user_version``, gamma/migrations.py: taken before the stamps came, or a
+scoped Gamma export) says nothing of its age, so the restore runs these
+idempotent steps on each imported file stamped below
+``migrations.WS_VERSION_BASE`` (``ws_backup._normalize_copies``); a copy
+stamped at the base or above has had the table shapes and went through
+the content rewrites once. ``normalize_pages_db``'s block-content rewrites
+(``PAGES_STEPS``) run there only: a library this release can upgrade went
+through them in a migration step of an earlier release, one of those
+below ``migrations.MIN_UPGRADABLE``. That pass leaves one shape behind:
+the Logseq image size ``{:width N}`` (``image_width``) still arrives
+through a paste, the API or a mirror peer, and an earlier release's
+Logseq and Markdown imports stored it as written, so rows written since,
+and copies stamped at the base or above, can hold it, and its readers
+stay (gamma/note_markup.py, "Image sizes"). A new content-shape rewrite
 is a function here that a numbered step's workspace part calls
-(``migrations.WORKSPACE_STEPS``): that part upgrades each library once,
-and a restore runs it on a copy stamped below the step
+(``migrations.WORKSPACE_STEPS``): that part upgrades each
+library once, and a restore runs it on a copy stamped below the step
 (docs/dev/migrations.md "Writing a step"). Every step SQL-filters
 (``LIKE``) for the old shape before it parses a row and writes only the
 rows it changes; ``updated_at`` moves only on rows actually rewritten.
@@ -21,13 +29,13 @@ The table shapes are the migration steps' business, except where a restored
 backup needs them as well: ``block_columns`` (step 26), ``page_changes``
 (step 27), ``pages_db_chats`` and ``block_fts`` (step 28),
 ``folder_blocks`` (step 29), ``highlight_shape`` (step 30) and
-``page_ops_batch_id`` (step 33) run in their step and on restore (those
-before the schema statements on a copy stamped below the base), in the
-order ``ws_backup._normalize_copies`` gives (docs/dev/migrations.md
-"Writing a step"). From step 34 on a step's workspace part is its own
-restore normalizer (migrations.WORKSPACE_STEPS). Nothing adds a column or
-fills a table on connect. The pages.db connections given to these steps
-have ``db.register_functions``.
+``page_ops_batch_id`` (step 33) run in their step and on the restore of
+a copy stamped below the base (``block_fts`` on every copy), in the order
+``ws_backup._normalize_copies`` gives (docs/dev/migrations.md "Writing a
+step"). From step 34 on a step's workspace part is its own restore
+normalizer (migrations.WORKSPACE_STEPS). Nothing adds a column or fills a
+table on connect. The pages.db connections given to these steps have
+``db.register_functions``.
 """
 
 import base64
@@ -45,7 +53,7 @@ from .block_index import rebuild
 from .blocks_store import BLOCK_COLUMNS, FOLDERS, LABELS, TRASH, TREES, ensure_reserved, touch_page
 from .db import BLOCK_HOT_COLUMNS, BLOCK_HOT_INDEXES, CHATS_SCHEMA, PAGES_SCHEMA, page_now
 from .highlights import from_scaled
-from .note_markup import LEGACY_WIDTH_RE, obsidian_image_sizes
+from .note_markup import obsidian_image_sizes
 from .picture import is_picture
 from .storage import display_filename, pdf_url
 from .text_box import is_text_box
@@ -383,16 +391,17 @@ def highlight_shape(conn: sqlite3.Connection) -> bool:
     goes; a highlight (a ``highlight_id``) with no position but a
     ``pdf_page`` gets its page alone as one. ``highlight_id`` goes, and
     ``pdf_page`` everywhere but on a text box or a picture (their only
-    page; every backup restore runs this, so a picture of today's shape
-    must come through it). A link region's ``link_highlight_id`` becomes
-    ``link_block_id``, the block that had that highlight id on the page it
-    links to, and a note's ``linked_highlight_id`` names the block that had
-    it on the note's own page (a block of that id there stays named); one
-    no block there had is dropped. A ``source_url`` that is the row's
-    ``doc_id``'s stored copy goes (blocks_store.page_attachment derives
-    it). What a row becomes depends on the file's rows alone, so
-    two copies of a page upgraded apart agree. A file with nothing of the
-    old shape is left as it is. Returns whether it changed the file."""
+    page; a restore runs this on a scoped Gamma export, which carries no
+    stamp, so a picture of today's shape must come through it). A link
+    region's ``link_highlight_id`` becomes ``link_block_id``, the block
+    that had that highlight id on the page it links to, and a note's
+    ``linked_highlight_id`` names the block that had it on the note's own
+    page (a block of that id there stays named); one no block there had is
+    dropped. A ``source_url`` that is the row's ``doc_id``'s stored copy
+    goes (blocks_store.page_attachment derives it). What a row becomes
+    depends on the file's rows alone, so two copies of a page upgraded
+    apart agree. A file with nothing of the old shape is left as it is.
+    Returns whether it changed the file."""
     rows = [(block_id, page_id, doc_id, props) for block_id, page_id, doc_id, props in (
         (r[0], r[1], r[2], _load_props(r[3])) for r in conn.execute(
             f"SELECT id, page_id, doc_id, properties FROM unified_blocks WHERE {_SHAPE_FILTER} ORDER BY id"))
@@ -461,14 +470,15 @@ def normalize_pages_db(conn: sqlite3.Connection) -> dict:
                      (json.dumps(props), now, block_id))
         counts["source_url_key"] += 1
 
-    # (2) Legacy Logseq image size ``![a](u){:width N}`` → Obsidian ``![a|N](u)``.
+    # (2) Logseq image size ``![a](u){:width N}`` → Obsidian ``![a|N](u)``.
     for block_id, content in conn.execute(
             "SELECT id, content FROM unified_blocks WHERE content LIKE '%{:width%'"
     ).fetchall():
-        if not LEGACY_WIDTH_RE.search(content or ""):
+        sized = obsidian_image_sizes(content)
+        if sized == (content or ""):  # the suffix only in code, or after no image
             continue
         conn.execute("UPDATE unified_blocks SET content = ?, updated_at = ? WHERE id = ?",
-                     (obsidian_image_sizes(content), now, block_id))
+                     (sized, now, block_id))
         counts["image_width"] += 1
 
     # (3) Pages still titled "PDF Notes - <name>" without an auto_title marker.

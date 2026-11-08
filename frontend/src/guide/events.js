@@ -17,7 +17,7 @@ export const EVENTS = [
   "palette.opened",   // the Ctrl+P page palette opened
   "commands.opened",  // the palette turned command palette (Ctrl+Shift+P, or > typed)
   "highlight.created", // {id, kind: "text" | "area"}
-  "block.created",    // a new note: Shift+Enter (or Enter, as Settings has it) or the + under a handle
+  "block.created",    // a new note: Enter (or Shift+Enter, as Settings has it) or the + beside a handle
   "block.indented",
   "note.lineBreak",   // Enter broke a line in a note with text, where Enter is not the new-note key
   "slash.opened",     // the / command menu came up
@@ -54,7 +54,7 @@ export const EVENTS = [
   "search.results",   // {pdf}: a search's answers all came; pdf — some are text inside PDFs
   "search.filtered",  // {kind: folder | label}: a filter chip was made in the search box
   "comment.created",  // {reply}: a comment was stored; reply — in a thread that was there
-  "import.finished",  // {source}: this tab's import finished (transferFormats' IMPORT_SOURCES id)
+  "import.finished",  // {source}: this tab's import finished (the server's name for it, importApi.js FORMATS' endpoint)
   "page.fileReplaced", // {id}: the open page's PDF was replaced from elsewhere (a followed file, another tab)
   "zotero.connected", // the Zotero account is connected: just now, or seen so by the link dialog
   "zotero.linked",    // {workspace}: a Zotero library was linked (the app then opens its workspace)

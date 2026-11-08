@@ -366,9 +366,15 @@ the window out of another.
 
 One `BaseWindow`, two `WebContentsView`s. The **shell bar** is the
 frameless window's title bar (OS controls overlaid on Windows/Linux, traffic
-lights inset on macOS). On Windows and Linux the bar keeps its right 146 px
-free for those controls: the `titlebar-area` env() values reach only a
-window's own page, never a view like the bar. The logo opens the launcher, which lists every
+lights inset on macOS). On Windows the bar keeps its right 146 px free for
+those controls, which fits Windows' three 46 px buttons. On Linux the
+overlay follows the desktop's own title-bar layout, GTK's decoration layout,
+mirrored in a right-to-left UI: `lib/windowControls.js` reads it (GNOME's
+`button-layout` setting, else GTK 3's `settings.ini`) when the window opens
+and on each focus, `barState().wco` names the ends that hold a button
+(`left`, `right`, `both` or `none`), and the bar keeps 146 px free at each
+of them and moves its menu past a left-hand one. The `titlebar-area` env()
+values reach only a window's own page, never a view like the bar. The logo opens the launcher, which lists every
 server (also `Ctrl/Cmd+Shift+L`). Then the switcher: click the name → dropdown of
 the open server's Gamma workspaces (check on the current one, role or
 *personal* per row, the clone chips), then every server (running /
@@ -388,17 +394,21 @@ local server's address, data dir / URL, *last opened* badge) with open /
 rename / copy address / credentials / data folder / server log / remove
 actions, then Settings: the *reopen last server at
 launch* switch, the *Local server storage* row, the *Updates* row (status
-line + check / download / restart button), and the dev-mode server
-overrides.
+line + check / download / restart button), and, in a dev run only, the
+server overrides (*Advanced: run local servers from a source checkout*); a
+packaged build runs its bundled server and nothing else.
 When a server will not open, the launcher shows a **failure panel** instead
 of a raw message: one sentence naming the cause, with the underlying line
 (the server's log line, or Chromium's `ERR_…`) underneath. Below it sits the
-button that would fix it: *Check for updates* when the data is newer than
-the app, *Open data folder* when the files are the problem, *Try again*, and
+button that would fix it: *Open data folder* when the files are the problem,
+*Use http:// instead* for a refused `https://` address, *Try again*, and
 *Show log file* for a local server. The run's output is folded away under
 *Server output*. `lib/startup.js` does the matching: a sidecar that died
 during startup from the lines it printed, a URL that would not load from
-Chromium's error. Anything else falls back to the plain message. The storage
+Chromium's error. Anything else falls back to the plain message. A data
+directory the server cannot upgrade is no startup failure: the server stays
+up and the window shows its guidance page
+([docs/dev/desktop.md](../../docs/dev/desktop.md)). The storage
 row shows the folder new local servers are created in. *Change…* opens a
 folder picker and *Use default* appears once a custom folder is set. Either
 one leads to a dialog with *Only new servers* and, when local servers exist
@@ -605,9 +615,10 @@ run over one data directory. A `closed` event clears the shell's state
 only for its own window, never for one made since.
 
 **Start at login** (`settings.openAtLogin`) registers the OS login item
-with `--hidden`, so a login start makes no window and goes straight to the
-tray (`applyLoginItem`; macOS reports a hidden start itself through
-`wasOpenedAsHidden`). On Windows and macOS that is `app.setLoginItemSettings`;
+with `--hidden`, so a login start with the background on makes no window
+and goes straight to the tray (`applyLoginItem`; macOS passes a login item
+no arguments and reports the login start itself through
+`wasOpenedAtLogin`). On Windows and macOS that is `app.setLoginItemSettings`;
 on Linux an autostart entry under `~/.config/autostart`. Packaged builds
 only, and nothing under the test harness. The Mac App Store build has no
 login item (a sandboxed app needs a login helper of its own, which it does
@@ -691,9 +702,10 @@ the Mac App Store build's is in its container,
   and `settings` (`openLastOnLaunch`, `lastTheme`, `dataRoot`, `background`
   and `openAtLogin` (the tray, above), `folderHost` (the local server that
   keeps folders and files of remote servers), the dev-mode
-  `pythonPath`/`backendDir`/`staticDir` overrides). Local admin credentials
-  are stored in plaintext here — same trust level as the SQLite files next
-  to it; acceptable for a per-OS-user desktop app. The Mac App Store build
+  `pythonPath`/`backendDir`/`staticDir` overrides, which a packaged build
+  ignores). Local admin credentials are stored in plaintext here — same
+  trust level as the SQLite files next to it; acceptable for a per-OS-user
+  desktop app. The Mac App Store build
   also keeps `access` here: the folders and followed files outside its
   sandbox the user picked, as security-scoped bookmarks
   (`lib/folderAccess.js`). An older profile's
@@ -765,14 +777,17 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
 - `lib/sidecar.js` — local server lifecycle: the port (`pickPort`, "A local
   server's address"; `test/sidecar.test.js`), spawn, health poll
   (`/api/health`, 60 s budget for frozen cold starts), the running server
-  handed back to a second start (`stillUp`), log capture,
-  tree-kill on Windows. Backend resolution order: explicit settings
-  (pythonPath/backendDir) → bundled frozen server (packaged app) →
-  repo auto-detect (`backend/venv` + `frontend/dist`, dev mode).
+  handed back to a second start (`stillUp`), log capture, `stopAll` at
+  quit (the servers still starting too, so none is left running),
+  tree-kill on Windows. Which backend runs (`resolveBackend`, tested there
+  too): in a packaged app only the bundled frozen server; in a dev run the
+  settings' pythonPath/backendDir/staticDir, else the repo's `backend/venv`
+  and `frontend/dist`.
 - `lib/startup.js` — why a sidecar would not start: the per-run tail of its
   log (the file is appended to across runs) and a rule table turning the
   server's last words into one sentence, the matched line, and the `action`
-  the launcher offers as a button.
+  the launcher offers as a button; also the wording for a URL that would not
+  load. No Electron, unit tested by `test/startup.test.js`.
 - `lib/updater.js` — the electron-updater wrapper described above.
 - `lib/shellSecurity.js` — which page in which view the `gammaShell` bridge
   and the privileged IPC handlers trust: the bundled bar and launcher in
@@ -810,6 +825,10 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
 - `lib/microphone.js` — the pages' permission requests: all granted, the
   microphone on macOS once the system allows it ("The microphone"); no
   Electron, unit tested by `test/microphone.test.js`.
+- `lib/windowControls.js` — on Linux, the ends of the shell bar the window
+  controls take, from the desktop's title-bar layout and the UI's text
+  direction (the shell bar, above); no Electron, unit tested by
+  `test/windowControls.test.js`.
 - `electron-builder.cjs` — the packaging config (targets, extra resources,
   secret-gated signing, the update feed's `publish` block, the PDF
   registration per target). `assets/installer.nsh` — the NSIS installer's
@@ -833,15 +852,18 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   looks for CAs under the build machine's python.org framework, so the
   server verifies HTTPS with certifi's instead ([api.md](../../docs/dev/api.md)).
   Handles conda-based interpreters by adding `<base>/Library/bin` to the
-  DLL search path.
+  DLL search path. PyInstaller and pyinstaller-hooks-contrib are pinned in
+  its `PYINSTALLER`, which it installs into the running Python when the
+  installed versions differ, on the release runners and by hand alike.
 - `assets/icon.png` — app icon (1024 px, the favicon mark, from the brand
   generator; electron-builder derives ico/icns and the Linux icon set, and
   App Store Connect wants the icns's 1024 px image). `assets/entitlements.mac.plist` —
   hardened-runtime entitlements for signed mac builds, the microphone
   among them ("The microphone").
 - `assets/appx/` and `assets/store/` — tracked Store package/listing images;
-  `scripts/store-art.js` regenerates them. The packager's build-resources
-  directory is `assets/`; `build/` holds generated PyInstaller intermediates.
+  `npm run store-art` regenerates them (`tools/branding/build.mjs`). The
+  packager's build-resources directory is `assets/`; `build/` holds
+  generated PyInstaller intermediates.
 - `test/main.test.js` — `main.js` under plain Node, Electron replaced by a
   stand-in and the local servers by fakes (the `GAMMA_SHELL_TEST` hook):
   the launch record a keeping reading writes, a resume made during a

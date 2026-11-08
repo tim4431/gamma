@@ -122,7 +122,11 @@ test("progress survives reload, separates accounts, and tolerates broken browser
   const reload = createGuideProgress(storage);
   assert.equal(reload.read(aiTour, "alice").state, "dismissed");
   assert.equal(reload.read(aiTour, "bob"), null);
-  assert.equal(guideProgressKey(TOURS["first-run"], "alice"), "gamma-guide:first-run");
+  // the first-run tour too: one account finishing it leaves it for the next one in this browser
+  assert.equal(guideProgressKey(TOURS["first-run"], "alice"), "gamma-guide:alice:first-run");
+  progress.write(TOURS["first-run"], "alice", { state: "done" });
+  assert.equal(reload.read(TOURS["first-run"], "alice").state, "done");
+  assert.equal(reload.read(TOURS["first-run"], "bob"), null);
   values.set(guideProgressKey(aiTour, "bob"), "{broken");
   assert.equal(reload.read(aiTour, "bob"), null);
   const blocked = createGuideProgress(() => { throw new Error("Storage unavailable"); });
@@ -222,6 +226,18 @@ test("every data-guide attribute in the source is registered", () => {
   }
   for (const id of used) assert.ok(ANCHORS[id], `data-guide="${id}" is not in guide/anchors.js`); // DockWindow passes it as guide="…"
   for (const id of Object.keys(ANCHORS)) assert.ok(used.has(id), `anchor ${id} is registered but no element carries it`);
+});
+
+// A row of notes is a bar on its own: plain text has no dot in the app, so a
+// drawing of one has none either. The MCP clip's dot is a terminal's tool call.
+test("a clip's note rows draw no dot", () => {
+  const dir = new URL("../src/guide/media/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  const dot = /<circle class="m-line(?:-dim)?" cx="[\d.]+" cy="([\d.]+)" r="[\d.]+" \/>\s*<rect class="m-line(?:-dim)?" x="[\d.]+" y="([\d.]+)" width="[\d.]+" height="([\d.]+)"/g;
+  for (const name of readdirSync(dir).filter((n) => n.endsWith(".svg") && n !== "assistants-mcp.svg")) {
+    for (const [, cy, y, h] of readFileSync(join(dir, name), "utf8").matchAll(dot)) {
+      assert.ok(Math.abs(Number(y) + Number(h) / 2 - Number(cy)) > 0.5, `guide/media/${name}: a dot at y ${cy} beside its row`);
+    }
+  }
 });
 
 test("a step's drawing is a registered id with a file, and every drawing is used", () => {
@@ -545,8 +561,8 @@ test("the October hints come after their moment and retire when the feature is f
   assert.equal(offered("new-chat", at("chat.archived", { discard: true })), false, "the Alt+click user knows already");
   assert.equal(offered("pdf-switch", at("chat.sent", { pdf: true })), true);
   assert.equal(offered("pdf-switch", at("chat.sent", { pdf: false })), false, "text only: nothing to say");
-  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewNote: false }), true);
-  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewNote: true }), false, "Enter already makes notes here");
+  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewBlock: false }), true);
+  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewBlock: true }), false, "Enter already makes notes here");
   assert.equal(retiresOffer(TOURS["new-note-key"], at("block.created")), true);
   assert.equal(offered("objects", at("object.selected", { kind: "image" }), { touch: true }), false, "a long press there, not a right-click");
   const palette = TOURS["command-palette"];
@@ -579,7 +595,7 @@ test("the highlights and notes tours come once the user has made several", () =>
   const notes = TOURS.notes;
   assert.equal(canOffer(notes, { facts: { ...facts, notebookView: false, touch: false }, progress: null, event: at("block.created"), seen: 8 }), true);
   assert.equal(canOffer(notes, { facts: { ...facts, notebookView: false, touch: true }, progress: null, event: at("block.created"), seen: 8 }), false,
-    "a finger neither drags the handle nor has a + under it");
+    "a finger neither drags the handle nor has a + beside it");
   assert.deepEqual(notes.steps.find((s) => s.id === "notes-add").scene.at(-1), { click: "notes.addBelow", key: "Alt" });
 });
 
@@ -741,9 +757,10 @@ test("the finish card lists only what the run made", () => {
 // the app marks data-guide-recent ("recent") — the table the user just made,
 // not the page's first — else the first. One inside inert content (a folded
 // dock window's body) is never one.
-test("a repeated anchor picks the newest, the marked, or the first element, never an inert one", () => {
+test("a repeated anchor picks the newest, the marked, or the first element, never an inert one nor a tab group's view of a page", () => {
   for (const id of ["notes.table", "notes.tableAdd", "notes.tableCorner"]) assert.equal(ANCHORS[id].pick, "recent", id);
-  const el = (marked = false, inert = false) => ({ closest: (sel) => ((marked && sel === "[data-guide-recent]") || (inert && sel === "[inert]") ? {} : null) });
+  const el = (marked = false, inert = false, view = false) => ({ closest: (sel) => ((marked && sel === "[data-guide-recent]") || (inert && sel === "[inert]")
+    || (view && sel === "[data-read-view]") ? {} : null) });
   const saved = globalThis.document;
   const dom = (...els) => { globalThis.document = { querySelectorAll: () => els }; };
   try {
@@ -763,6 +780,12 @@ test("a repeated anchor picks the newest, the marked, or the first element, neve
     assert.equal(anchorElement("header.home"), old);
     dom(folded);
     assert.equal(anchorElement("chat.citation"), null);
+    // the same anchors in a view of another page (workspace/PagePane.jsx)
+    const shown = el(false, false, true), markedShown = el(true, false, true);
+    dom(shown, old);
+    assert.equal(anchorElement("header.home"), old, "the open page's, not the view's");
+    dom(markedShown, old);
+    assert.equal(anchorElement("notes.tableAdd"), old, "the marked one is in a view");
   } finally { globalThis.document = saved; }
 });
 

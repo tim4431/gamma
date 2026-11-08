@@ -222,11 +222,13 @@ export function insertLink(text, from, to, url = "") {
 
 export const isUrl = (s) => /^https?:\/\/\S+$/i.test((s || "").trim());
 
-// Images: `![alt](url)`, sized Obsidian-style (`![alt|300](url)`) or with the
-// legacy Logseq `{:width N}` suffix. `![[embeds]]` can't match — their "alt"
+// Images: `![alt](url)`, sized Obsidian-style (`![alt|300](url)`, what edits
+// write) or with Logseq's `{:width N}` after it (the imports rewrite that to
+// the first, a paste keeps it). `![[embeds]]` can't match — their "alt"
 // holds an unclosed "[" and no "(". Every occurrence in text, in order:
 // [{from, to, alt, url, width}] with from/to including the whole construct;
-// callers that must skip code/math spans filter the result.
+// callers that must skip code/math spans filter the result. The one reader
+// of both sizes here; the server's twin is gamma/note_markup.py's.
 const IMG_RE = /!\[([^\]\n]*)\]\(([^)\n]+)\)(\{:width\s+(\d+)\})?/g;
 const ALT_WIDTH_RE = /^(.*?)\|(\d+)(?:x\d+)?$/;
 export function scanImageSyntax(text) {
@@ -241,6 +243,19 @@ export function scanImageSyntax(text) {
     out.push({ from: m.index, to: m.index + m[0].length, alt, url: m[2], width });
   }
   return out;
+}
+
+// The rendered view's sized images: each image of `text` with a width as
+// the <img> that shows it so wide; one without stays markdown. Read with
+// scanImageSyntax, so the view shows the images the tools count.
+export function sizedImagesHtml(text) {
+  let out = "", at = 0;
+  for (const im of scanImageSyntax(text)) {
+    if (im.width == null) continue;
+    out += `${text.slice(at, im.from)}<img src="${im.url}" alt="${im.alt}" width="${im.width}" />`;
+    at = im.to;
+  }
+  return out + text.slice(at);
 }
 
 // Blank lines the rendered view keeps. Markdown folds any run of blank lines

@@ -34,7 +34,7 @@ document.
 import weakref
 from collections import namedtuple
 
-from PyPDF2.generic import (
+from pypdf.generic import (
     ArrayObject,
     DecodedStreamObject,
     DictionaryObject,
@@ -216,9 +216,9 @@ def _cid_cmap(codes) -> bytes:
     back from the file, not from a GB1-to-Unicode table of its own. The map
     lists the characters drawn, not the plane as two bfrange rows: a bfrange
     may not carry its destination's last byte past 255 (ISO 32000-1 9.10.3),
-    and PyPDF2 expands every code of a range into a dict entry — 63,000 of
-    them, 100 ms, for each page that names the font — where bfchar blocks
-    cost it nothing to read."""
+    and a reader such as pypdf expands every code of a range into a dict
+    entry — 63,000 of them for each page that names the font — where bfchar
+    blocks cost it nothing to read."""
     body = [b"/CIDInit /ProcSet findresource begin", b"12 dict begin", b"begincmap",
             b"/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def",
             b"/CMapName /Adobe-Identity-UCS def", b"/CMapType 2 def",

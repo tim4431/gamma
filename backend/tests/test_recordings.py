@@ -245,7 +245,7 @@ def test_the_obsidian_export_embeds_the_audio(owner):
 
 def test_the_pdf_exports_take_a_recording(owner):
     import pymupdf
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
 
     page, rec_id, _ = _recording(owner, "Typeset")
     r = owner.get(f"/api/pages/{page}/export", params={"mode": "notes-pdf"})

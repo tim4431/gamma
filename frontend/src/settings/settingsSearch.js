@@ -163,8 +163,8 @@ export const SETTINGS_SEARCH = entries;
 // A native host's flags as the pen section reads them, its rows and their
 // search entries alike: `apple` in the iPad app, `stylus` under any other
 // host, and a gesture's own flag where the host forwards that gesture
-// (pencilGestures; an iPad build older than the flag forwards both). Null
-// for no host.
+// (pencilGestures; a host without the list, the iPad app, forwards both).
+// Null for no host.
 export function hostCaps(host) {
   if (!host) return null;
   const gestures = Array.isArray(host.pencilGestures) ? host.pencilGestures : ["tap", "squeeze"];

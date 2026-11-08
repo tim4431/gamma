@@ -62,7 +62,7 @@ def _agent_chat(c, monkeypatch, page_id):
         return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "done"}}])
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
     r = c.post("/api/ai/chat", json={"prompt": "rename it", "agent_scope": "folder", "folder": "",
-                                     "permissions": {"rename": True}, "stream": False})
+                                     "permissions": {"rename": "allow"}, "stream": False})
     assert r.status_code == 200, r.text
     return armed[0]
 

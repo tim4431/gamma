@@ -2,7 +2,8 @@
 // main.js startBackgroundHosts): the clones' hosts, the folder host and the
 // servers that hold a Zotero link that is not detached (setZoteroHost, as
 // refreshKeeping last read their links), or every local server in
-// background mode. `npm test` in desktop/.
+// background mode; and an old profile's registry file, renamed once at init.
+// `npm test` in desktop/.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -81,4 +82,50 @@ test('a removed server no longer starts at launch', () => {
   registry.remove(s.clone.id);
   assert.deepEqual(names(registry.launchHosts()), ['Folder host']);
   assert.deepEqual(registry.load().mirrors, [], 'the removed host\'s clone map goes with it');
+});
+
+// A profile from before servers had that name keeps its list: init() copies
+// workspaces.json to servers.json once, the list under `servers`.
+function profile(files) {
+  const own = fs.mkdtempSync(path.join(os.tmpdir(), 'gamma-registry-'));
+  for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(own, name), JSON.stringify(body));
+  registry.init(own);
+  return own;
+}
+const legacy = {
+  settings: { lastTheme: 'light' },
+  workspaces: [{ id: 'a1', name: 'Lab', type: 'local', dataDir: '/data/workspaces/a1', adminUser: 'admin', adminPassword: 'pw' }],
+  lastOpened: 'a1',
+  windowBounds: { x: 1, y: 2, width: 900, height: 700 },
+};
+
+test('an old profile\'s workspaces.json becomes servers.json, its list under `servers`, and stays in place', () => {
+  const own = profile({ 'workspaces.json': legacy });
+  try {
+    const written = JSON.parse(fs.readFileSync(path.join(own, 'servers.json'), 'utf8'));
+    assert.deepEqual(written.servers, legacy.workspaces);
+    assert.equal('workspaces' in written, false, 'the old key is not carried over');
+    assert.deepEqual(written.windowBounds, legacy.windowBounds);
+    assert.equal(registry.getLastOpened().name, 'Lab');
+    assert.equal(registry.getSettings().lastTheme, 'light');
+    assert(fs.existsSync(path.join(own, 'workspaces.json')), 'the legacy file is kept');
+  } finally {
+    registry.init(dir);
+    fs.rmSync(own, { recursive: true, force: true });
+  }
+});
+
+test('a servers.json is never replaced by a legacy file, and one without `servers` lists none', () => {
+  const own = profile({
+    'servers.json': { servers: [{ id: 'b2', name: 'Kept', type: 'remote', url: 'http://nas.lan:9001' }] },
+    'workspaces.json': legacy,
+  });
+  try {
+    assert.deepEqual(names(registry.load().servers), ['Kept']);
+    fs.writeFileSync(path.join(own, 'servers.json'), JSON.stringify({ workspaces: legacy.workspaces }));
+    assert.deepEqual(registry.load().servers, []);
+  } finally {
+    registry.init(dir);
+    fs.rmSync(own, { recursive: true, force: true });
+  }
 });

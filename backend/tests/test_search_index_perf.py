@@ -103,3 +103,27 @@ def test_an_index_written_before_the_side_table_is_taken_over(owner):
         assert pdf_index.doc_pages(conn, "sipdoc20", 10) == [(1, "old one"), (2, "old two")]
         pdf_index.store_doc(conn, "sipdoc20", [(1, "new one")])
     assert _pdf_rows(ws, "sipdoc20") == [(1, "new one")]
+
+
+def test_an_index_older_than_its_version_column_gains_it_once(owner):
+    """An index from before pdf_fts_docs had ``ver`` (so from before
+    pdf_fts_rows too): the transaction that takes its rows over adds the
+    column, 0, so the next search extracts the paper again. A current index
+    is never altered."""
+    ws = workspace_of(USER)
+    with _data(ws) as conn:
+        for table in ("pdf_fts_rows", "pdf_fts_docs", "pdf_fts"):
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
+        conn.execute("CREATE VIRTUAL TABLE pdf_fts USING fts5(doc_id UNINDEXED, page UNINDEXED, content)")
+        conn.execute("CREATE TABLE pdf_fts_docs (doc_id TEXT PRIMARY KEY, indexed_at TEXT NOT NULL, pages INTEGER)")
+        conn.execute("INSERT INTO pdf_fts VALUES ('sipdoc21', 1, 'old one')")
+        conn.execute("INSERT INTO pdf_fts_docs VALUES ('sipdoc21', '2026-07-01T00:00:00.000000Z', 1)")
+        conn.commit()
+        assert pdf_index.doc_chars(conn) == {"sipdoc21": len("old one")}
+        assert conn.execute("SELECT doc_id, ver, pages FROM pdf_fts_docs").fetchall() == [("sipdoc21", 0, 1)]
+        assert conn.execute("SELECT doc_id FROM pdf_fts_rows").fetchall() == [("sipdoc21",)]
+        assert pdf_index.pdf_missing(conn, ["sipdoc21"]) == ["sipdoc21"]
+        seen: list[str] = []
+        conn.set_trace_callback(seen.append)
+        pdf_index.ensure_schema(conn)
+        assert not _ours(seen, r"ALTER|INSERT")

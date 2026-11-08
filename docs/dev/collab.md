@@ -48,6 +48,7 @@ gets the same answer ("Ops" below).
 | `insert` | `id`, `parent`, `position?`, `content`, `props` | the client mints id and position (fractional-indexing, same library both sides); a position colliding with a sibling is re-keyed and the applied op echoes the final key; re-inserting an id the page already has (a retry, a rescue) leaves the block as it is, so nobody's newer edit or move is undone, and echoes it |
 | `move` | `id`, `parent`, `position?` | cycle-checked (400), collision-re-keyed |
 | `delete` | `id` | the subtree; an unknown id is a no-op (a retry) |
+| `merge` | `id`, `into`, `marker?`, `base?` | block `id` joined to the end of `into`: both texts as they are when the op arrives, `id`'s without a leading `marker` (its list or heading marker), its children as they are then in reading order (in its place when `into` is its parent, else last under `into`), `id` gone. Refused with conflict `missing`, `moved` or `cycle` when either block is gone, in another page, or `into` is inside `id`, and then nothing of it happens. Applied, it logs and fans out as the moves, the `set` and the `delete` it came to, so the log, a catch-up and a mirror's round see no new op. A join past `MAX_CONTENT` is 413 like a `set`. `base` is the text `into` had in the writer's tab, which the server never reads: a rescue sends it ("a block joined to another" below). Not on the folder and label trees (400), never with the page root (403) |
 
 Rules: every touched block and every insert parent must be inside the page
 (403 otherwise, 404 unknown), judged by its stored `page_id`. An insert
@@ -613,6 +614,47 @@ focus, and `peers` / `me` as React state. The session owns:
   with edits unsaved keeps its session. Back on it, `commit` resumes that
   session (its queue and retries go on, its acks land on the new visit's
   tree) instead of starting one beside it.
+- **a block joined to another**: Backspace at a block's start, the redo of
+  one and the undo of a split read in a transition as a block removed while
+  another took its text, less a list or heading marker, at its end.
+  `blockOps.withMerges` folds that diff, the moves of the block's children
+  included, into one `merge`, read off the transition like everything else
+  here. It came as a `set` and a `delete`, which lost text in two ways: the
+  `set` refused (the block above is gone) and the `delete` sent alone, or
+  both accepted and one person's `delete` taking the block the other's join
+  had just filled. Block deletes do not reach Recently deleted, so neither
+  had a way back. Now two merges compose: `one`, `two`, `three` end as
+  `onetwothree` when the lower one lands first, and as `onetwo`, `three`
+  when the upper one does, the refused merge keeping its block. A target
+  that only the merge needs is not rescued: whoever took it meant it to go.
+  One with this tab's text on it or under it (a `set` of its text before or
+  after the merge, a new note under it, in the batch or the queue) is, and
+  the merge goes on behind the rescue. The base already holds the join, so
+  `rescue` sends the target as it was before the first of those ops wrote
+  to it (`unjoined`: the first op's `base`, which is why a merge carries
+  one), and they come to the same text without adding the block's twice.
+  The same holds for a target inside a block being rescued. The block the
+  other person removed comes back with its text, so where they had merged
+  it elsewhere that text stands twice: a duplicate, never a loss. A merge
+  counts as a text write of its target (`inflight`, the ack's landing of what the server
+  stored), keeps later sets of the target behind it (`pushOp`), and
+  `applyOps` lays one still unsent over a fetched tree as the server will.
+  The ack of a merge that moved a block this tab doesn't hold refetches the
+  page: a child someone else's merge had just given the block, or one they
+  made there, is what it would otherwise never show.
+  The limits: a text set landing after its block was merged away is refused
+  like any set on a deleted block (rescued or told, "a refused batch" below),
+  and so is typing in a target whose delete reached this tab first, since
+  the base no longer has it to rescue;
+  a plain `delete` of a block someone just joined text into takes that text;
+  an empty block above, which a merge removes instead of joining, goes as a
+  plain `delete`, and so does a block holding only a marker (`- `), whose
+  join changes no text and so leaves no `set` to read the target from, and a
+  join this tab holds back as too long to save;
+  a mirror's round compares trees, so two offline copies do
+  not get this; and undoing a merge that raced carries the other person's
+  tail into the undo snapshot as well as into the restored block, a
+  duplicate rather than a loss.
 - **per-page save state**: each page keeps its own queue, positions, pending
   content counts and retries. Navigating while a save is in progress does not
   retarget its queued edits or let its response change the next page's state.
@@ -638,8 +680,8 @@ focus, and `peers` / `me` as React state. The session owns:
   - a `conflict` (the page changed under the batch) drops the op at `index`
     and, unless it was a cycle, every op of the batch and of the queue
     behind it on the vanished block: its own ops, inserts under it (and
-    what goes under those) and moves into it — at once, not one op per
-    round trip. The rest goes out again at once as a new batch (text edits
+    what goes under those) and moves and merges into it — at once, not one
+    op per round trip. The rest goes out again at once as a new batch (text edits
     keep the base they were typed from, so the server merges them), and the
     page is refetched once, since the screen still shows the refused
     change. Dropped text or new notes are never dropped silently: a
@@ -869,7 +911,9 @@ focus, and `peers` / `me` as React state. The session owns:
 known id under another parent, or out of order — the longest increasing run
 of existing keys stays, the rest are re-keyed), sets (content / property
 patches), and deletes of the top-most removed subtrees last (a block that
-escaped a deleted parent is moved out first). `applyOps` is idempotent and
+escaped a deleted parent is moved out first). `withMerges` then folds a
+join into a `merge`, for the session only: the undo history plans its
+restores on the plain diff. `applyOps` is idempotent and
 keeps siblings sorted by key. The tree is the document only: the block
 whose editor is open and the viewer's own folding live beside it in App's
 `view` (`{editingId, folds}`, `shared/model/blockModel.js` — `withEditing`,

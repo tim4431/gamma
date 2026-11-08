@@ -79,7 +79,7 @@ recording.py       audio recordings: the recording block's rules, its label and 
 block_index.py     the notes index (block_fts in pages.db, kept by triggers): its queries
 pdf_index.py       the PDF text index (pdf_fts in data.db): schema, writes, queries
 pdf_meta.py        a PDF's manifest for the viewer: bytes, page count, page sizes (data.db)
-pdf_text.py        PDF reading through PyMuPDF (PyPDF2 the fallback for text and sizes): text, glyphs, labels, a page as pixels (page_raster, page_rasters)
+pdf_text.py        PDF reading through PyMuPDF: text, glyphs, labels, a page as pixels (page_raster, page_rasters)
 textnorm.py        search text normalization and fuzzy matching (both indexes, block search)
 
 # Jobs, notices and diagnostics
@@ -141,7 +141,7 @@ pdf_cards.py       one card: a highlight's notes or a comment thread, typeset fr
 pdf_free_space.py  where a PDF page is empty, and the nearest free spot for a card there
 pdf_document.py    a note page typeset as a fresh PDF ("Notes as PDF")
 pdf_typeset.py     the typesetting engine both PDF writers draw with (+ pdf_glyphs, vector_text, pdf_image)
-note_markup.py     the span shape the writers draw, and LaTeX approximated as text when it cannot be typeset
+note_markup.py     the span shape the writers draw, LaTeX approximated as text when it cannot be typeset, and image sizes
 
 # HTTP plumbing and assembly
 net_guard.py       outbound-fetch safety: no internal, loopback or metadata hosts, no non-HTTP schemes

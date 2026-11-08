@@ -44,12 +44,12 @@ def test_a_permission_left_out_allows_reading_and_asks_before_a_change():
     assert permission_state({}, "read", False) == "allow"
     assert permission_state({}, "rename", True) == "ask"
     assert permission_state(None, "block_edit", True) == "ask"
-    # What tabs sent before Ask existed: on and off.
-    assert permission_state({"rename": True}, "rename", True) == "allow"
-    assert permission_state({"read": False}, "read", False) == "off"
     for state in ("allow", "ask", "off"):
         assert permission_state({"read": state}, "read", False) == state
-    assert permission_state({"rename": "sometimes"}, "rename", True) == "ask"
+    # Anything that is no state takes the default.
+    for value in ("sometimes", True, False, 1, None):
+        assert permission_state({"rename": value}, "rename", True) == "ask", value
+        assert permission_state({"read": value}, "read", False) == "allow", value
 
 
 def test_asking_tools_are_armed_and_tools_that_are_off_are_not():
@@ -70,8 +70,7 @@ def test_the_prompt_names_the_tools_that_ask():
     asking = agent_system(scope, tool_states({**ALLOW_ALL, "rename": "ask"}))
     assert "ask the user first" in asking and "rename_page before" not in asking  # no names: they would change
     assert "never ask for permission in your reply first" in asking
-    assert "ask the user first" not in agent_system(scope, tool_states({**ALLOW_ALL, "organize_delete": "off"}))
-    assert "ask the user first" in agent_system(scope, tool_states(ALLOW_ALL))  # deletions ask under Allow
+    assert "ask the user first" not in agent_system(scope, tool_states(ALLOW_ALL))  # deletions too run under Allow
     # "Allow in this chat" leaves the prompt as it was, for the prompt cache —
     # even when it allowed the only tool that asked.
     granted = agent_system({**scope, "granted": ["rename"]},
@@ -79,16 +78,16 @@ def test_the_prompt_names_the_tools_that_ask():
     assert granted == asking
 
 
-def test_deleting_folders_and_labels_can_only_ask_or_be_off():
-    for value in ("allow", True, None):
-        perms = {} if value is None else {"organize_delete": value}
-        assert permission_state(perms, "organize_delete", True) == "ask", value
-    assert permission_state({"organize_delete": "off"}, "organize_delete", True) == "off"
-    # "Allow in this chat" grants it nothing; a reply that cannot ask arms it off.
-    assert tool_states({"organize_delete": "allow"}, granted=["organize_delete"])["organize_delete"] == "ask"
-    assert tool_states({"organize_delete": "allow"}, can_ask=False)["organize_delete"] == "off"
-    # Organizing is a change like any other.
-    assert permission_state({"organize": "allow"}, "organize", True) == "allow"
+def test_deleting_is_a_change_like_any_other():
+    """The deletions ask by default and take every state the user sets:
+    each records what its revert needs, so the user decides whether it asks."""
+    for key in ("organize_delete", "delete", "organize"):
+        assert permission_state({}, key, True) == "ask"
+        for value in ("allow", "ask", "off"):
+            assert permission_state({key: value}, key, True) == value, (key, value)
+        # "Allow in this chat" allows it; a reply that cannot ask arms an asking one off.
+        assert tool_states({key: "ask"}, granted=[key])[key] == "allow"
+        assert tool_states({key: "ask"}, can_ask=False)[key] == "off"
 
 
 def test_every_change_tool_previews_its_approval():
@@ -392,23 +391,25 @@ def test_allowing_for_the_chat_stops_asking_for_that_permission(org, monkeypatch
     assert [props(c, ids[k])["content"] for k in ("a", "b")] == ["Chat title one", "Chat title two"]
 
 
-def test_a_deletion_asks_every_time_whatever_the_card_answered(org, monkeypatch):
-    """Deleting a folder or a label is ask-only: an Allow the request sends,
-    a grant of the conversation and a card's "chat" / "always" answer each
-    leave the next deletion asking."""
+def test_a_deletion_asks_as_the_user_set_it(org, monkeypatch):
+    """Deleting a folder or a label asks by default, and "Allow in this
+    chat" on its card stops asking for the next one; under Allow it runs
+    without a card."""
     c, ids = org
-    make_label(c, "Ask only one")
-    make_label(c, "Ask only two")
-    _agent(monkeypatch, ("t1", "delete_label", {"label": "Ask only one"}),
-           ("t2", "delete_label", {"label": "Ask only two"}))
-    asked = _answers(monkeypatch, ids["user"], "chat", "always")
-    lines, actions = _chat(c, permissions={"organize_delete": "allow"}, granted=["organize_delete"])
-    assert len(asked) == 2
-    assert _kinds(lines) == ["step", "approval", "action", "step", "approval", "action"]
-    cards = [line["approval"] for line in lines if "approval" in line]
-    assert [card["perm"] for card in cards] == ["organize_delete", "organize_delete"]
-    assert [a["approval"] for a in actions] == ["chat", "always"]
-    assert not {"Ask only one", "Ask only two"} & set(label_names(c).values())
+    for name in ("Asked one", "Asked two", "Allowed one"):
+        make_label(c, name)
+    _agent(monkeypatch, ("t1", "delete_label", {"label": "Asked one"}),
+           ("t2", "delete_label", {"label": "Asked two"}))
+    asked = _answers(monkeypatch, ids["user"], "chat")
+    lines, actions = _chat(c, permissions={"organize_delete": "ask"})
+    assert len(asked) == 1
+    assert _kinds(lines) == ["step", "approval", "action", "step", "action"]
+    assert next(line["approval"] for line in lines if "approval" in line)["perm"] == "organize_delete"
+    assert [a.get("approval") for a in actions] == ["chat", None]
+    _agent(monkeypatch, ("t1", "delete_label", {"label": "Allowed one"}))
+    lines, actions = _chat(c, permissions={"organize_delete": "allow"})
+    assert "approval" not in _kinds(lines) and not actions[0].get("error")
+    assert not {"Asked one", "Asked two", "Allowed one"} & set(label_names(c).values())
 
 
 def test_a_deletion_goes_only_on_the_folder_its_card_showed(org, monkeypatch):

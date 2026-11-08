@@ -77,7 +77,7 @@ def _pdf_page(c, title):
     """A page carrying a stored two-page PDF, with one highlight (its note
     under it) and an image block; the highlight's id is ``<page id>-hl``."""
     import io
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
 
     w = PdfWriter()
     for _ in range(2):
@@ -201,7 +201,7 @@ def test_cite_and_view_ink(client, connection):
 def test_export_page_formats(client, connection):
     import base64
     import io
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     c, ws, item = connection
     paper = _pdf_page(c, "Exported paper")

@@ -22,7 +22,7 @@ Watchtower (the `update-demo-server`, `update-share-host` and
 
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
-| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the mobile apps' pins resolved, backend pytest, frontend unit tests + build and the desktop shell's unit tests, the browser suite (two shards on two runners, 3 workers each), extension unit tests + zip (~5 min) |
+| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the mobile apps' pins resolved, the backend suite on the apps' Python 3.13 and pins (`backend-mobile`), backend pytest, frontend unit tests + build and the desktop shell's unit tests, the browser suite (two shards on two runners, 3 workers each), extension unit tests + zip (~5 min) |
 | `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files, the Android APK (when signed), the browser extension's `gamma-connector-<version>.zip` and the AI plugins → GitHub Release `v<version>`; after it, the MSIX to the Microsoft Store and the Android bundle to Google Play's internal track when their secrets exist; a Docker tag `<version>`; from `main`, an empty commit on `main` with the next `ipad-test-release-NNN` marker (TestFlight) |
 | `chrome-store` | `chrome-store.yml` | dispatched by the desktop release (from `main`, not a pre-release) when the `CWS_*` variables exist; daily at 09:17 UTC for a release the store skipped; manual dispatch with a tag | the release's Connector zip uploaded to the Chrome Web Store and submitted for review (API V2) |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
@@ -422,13 +422,17 @@ store item that only the dashboard can create:
 
 ## `check.yml`
 
-Six parallel Ubuntu jobs on every PR to `main`: brand asset consistency,
+Seven parallel Ubuntu jobs on every PR to `main`: brand asset consistency,
 the mobile apps' pins (`bash tools/check_mobile_pins.sh` under Python
 3.13: every pin of `backend/requirements-mobile.txt`, which the iPad and
 Android share, resolves to wheels for the iPad's device and simulator and
 for Android's arm64 and x86_64, so a pin that stops resolving fails here
 and not in `ipad.yml`'s macOS run or `android.yml`, which a backend-only PR
 starts neither of),
+the backend suite under the apps' Python and pins (`backend-mobile`:
+Python 3.13 with `requirements-mobile.txt` + `requirements-dev.txt`, run as
+the 3.12 job below is, so a server change that breaks only in the apps
+fails on the PR),
 backend pytest (Python 3.12, `requirements.txt` + `requirements-dev.txt`,
 `-n auto` over pytest-xdist; the job is capped at 20 minutes and a single
 test at 300 s, after which it fails with every thread's stack instead of
@@ -562,8 +566,8 @@ The public demo and the share host run `main`'s `:latest`, like the NAS: a
 Watchtower in each compose project polls GHCR every hour (the example's
 six, shortened) and recreates the container when a merge has published a
 new image, as in `docker-compose.yml.example`. The two on the VPS each
-have a scope (`demo`, `share`), since an unscoped one updates every
-labelled container and stops every other Watchtower on the host. The
+have a scope (`demo`, `share`), since two unscoped ones would both update
+every labelled container and each would remove the other. The
 `update-demo-server`, `update-share-host` and `update-server` skills do the
 same pull at once ([cloud/deploy/demo/README.md](../../cloud/deploy/demo/README.md),
 [cloud/deploy/README.md](../../cloud/deploy/README.md) "The free share

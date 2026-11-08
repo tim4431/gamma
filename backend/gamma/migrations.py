@@ -66,7 +66,7 @@ from pathlib import Path
 from . import backups, config
 from .blocks_store import FOLDERS, folder_by_path
 from .colors import normalize_color
-from .db import (BUSY_TIMEOUT_S, SCHEMA_VERSION, USER_PREF_KEYS, USERS_SCHEMA, WORKSPACE_PREFS_SCHEMA, WS_VERSION_BASE,
+from .db import (BUSY_TIMEOUT_S, SCHEMA_VERSION, USERS_SCHEMA, WORKSPACE_PREFS_SCHEMA, WS_VERSION_BASE,
                  connect_pages_db, new_account_id, page_now, register_functions, safe_ws_id, users_db_version,
                  workspace_ids, workspace_version, ws_dir)
 from .logbuf import log
@@ -590,13 +590,11 @@ def warming():
 # --- steps --------------------------------------------------------------------
 # A global step (STEPS) gets an open users.db connection (autocommit off)
 # and must leave the database consistent when it returns; the runner stamps
-# the version. From version 34 on it keeps the previous release able to
-# read users.db (columns and tables are added; a rename or a drop waits a
-# release), and it never touches a workspace's files: that is a workspace
-# step (WORKSPACE_STEPS), ``fn(ws, pages, data)`` on one workspace's
-# pages.db and data.db connections (data None when there is no data.db; ws
-# '' on a backup's copy), inside the runner's transaction (it does not
-# commit). A workspace step is also what a restored backup goes through,
+# the version. From version 34 on it never touches a workspace's files:
+# that is a workspace step (WORKSPACE_STEPS), ``fn(ws, pages, data)`` on
+# one workspace's pages.db and data.db connections (data None when there
+# is no data.db; ws '' on a backup's copy), inside the runner's
+# transaction (it does not commit). A workspace step is also what a restored backup goes through,
 # so it is re-runnable and finds a table it changes missing on an old copy
 # (the schema statements, applied after it, create that one).
 
@@ -1381,26 +1379,33 @@ def _v33_page_ops_batch_id(conn: sqlite3.Connection) -> None:
     _each_pages_db("33 (page_ops_batch_id)", page_ops_batch_id, schema=())
 
 
+# The account-wide pref keys step 34 leaves in users.db (db.USER_PREF_KEYS
+# when it was frozen, so a key added to or dropped from that set later
+# leaves the step as it is).
+_V34_ACCOUNT_WIDE = ("ai-provider", "ai-settings", "notices-seen", "profile", "profile-base", "reminders-done",
+                     "search-services", "translate-engines", "zotero-account")
+
+
 def _v34_workspace_prefs(ws: str, pages: sqlite3.Connection, data) -> None:
     """The prefs that name a workspace's pages (open tabs, recents, reading
-    positions: every key but ``db.USER_PREF_KEYS``) move into the workspace.
-    Its pages.db gains ``workspace_prefs`` (db.WORKSPACE_PREFS_SCHEMA), and
-    the rows users.db ``user_prefs`` holds under the workspace's id are
-    copied in through a read connection of the step's own; a row the
-    workspace has at the same or a later time is kept, so a second run
-    changes nothing and never undoes a later write. A backup's copy (``ws``
-    '') has nothing to copy: its table starts empty. users.db is not
-    written: the release before reads its rows there."""
+    positions: every key but the account-wide ones, ``_V34_ACCOUNT_WIDE``)
+    move into the workspace. Its pages.db gains ``workspace_prefs``
+    (db.WORKSPACE_PREFS_SCHEMA), and the rows users.db ``user_prefs`` holds
+    under the workspace's id are copied in through a read connection of the
+    step's own; a row the workspace has at the same or a later time is kept,
+    so a second run changes nothing and never undoes a later write. A
+    backup's copy (``ws`` '') has nothing to copy: its table starts empty.
+    users.db is not written: the rows stay where a rerun, or a workspace
+    still behind the step, reads them."""
     pages.execute(WORKSPACE_PREFS_SCHEMA)
     if not ws or not config.USERS_DB.is_file():
         return
     with closing(sqlite3.connect(str(config.USERS_DB), timeout=BUSY_TIMEOUT_S)) as users:
         if not users.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_prefs'").fetchone():
             return
-        account_wide = sorted(USER_PREF_KEYS)
         rows = users.execute(
             "SELECT user_id, key, value, updated_at FROM user_prefs WHERE workspace_id = ? "
-            f"AND key NOT IN ({', '.join('?' * len(account_wide))})", (ws, *account_wide)).fetchall()
+            f"AND key NOT IN ({', '.join('?' * len(_V34_ACCOUNT_WIDE))})", (ws, *_V34_ACCOUNT_WIDE)).fetchall()
     pages.executemany(
         "INSERT INTO workspace_prefs (user_id, key, value, updated_at) VALUES (?, ?, ?, ?) "
         "ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at "
@@ -1556,8 +1561,8 @@ def _v39_reminders_done(conn: sqlite3.Connection) -> None:
     ``reminders-done`` pref, one JSON object ``{key: when}`` that kept the
     latest 500. Each account's pref becomes its rows, under workspace ''
     (the account's next listing of its reminders places them). Re-runnable:
-    a row there already is kept. The pref rows stay for the release before
-    (rule 6). No workspace is touched."""
+    a row there already is kept. The pref rows are left as they are;
+    nothing reads them after the step. No workspace is touched."""
     conn.execute(_V39_REMINDERS_DONE)
     # keyed by account id since step 25; the tests' v24 copies stamped later are not, and hold none
     if "user_id" in _columns(conn, "user_prefs"):
@@ -1836,7 +1841,6 @@ STEPS = [
     (33, "page_ops_batch_id", _v33_page_ops_batch_id),
     (35, "folder_links", _v35_folder_links),
     (36, "folder_links_remote", _v36_folder_links_remote),
-    # Next release: a global step deletes the user_prefs rows of the reminders-done key (39 kept them).
     (39, "reminders_done", _v39_reminders_done),
     (40, "comments_inbox", _v40_comments_inbox),
     (42, "cloud_invitations", _v42_cloud_invitations),
@@ -1849,7 +1853,6 @@ STEPS = [
 # fn(ws, pages, data)), in order; a step with a global part too has its
 # entry in STEPS under the same version and name.
 WORKSPACE_STEPS = [
-    # Next release: a global step deletes the users.db user_prefs rows whose workspace_id is not '' (34 kept them).
     (34, "workspace_prefs", _v34_workspace_prefs),
     (37, "highlight_colors", _v37_highlight_colors),
     (38, "recording_kind", _v38_recording_kind),

@@ -11,9 +11,7 @@
   <path class="m-glyph" d="M16 15h.01M19 15h.01M16 18h.01M19 18h.01M16 21h.01M19 21h.01" />
   <rect class="m-line" x="24" y="16" width="26" height="4" rx="2" />
   <path class="m-rule" d="M10 26H310" />
-  <circle class="m-line-dim" cx="20" cy="37" r="1.6" />
   <rect class="m-line-dim" x="25" y="35.25" width="150" height="3.5" rx="1.75" />
-  <circle class="m-line-dim" cx="20" cy="49" r="1.6" />
   <rect class="m-line-dim" x="25" y="47.25" width="110" height="3.5" rx="1.75" />
 
   <!-- the table: a header and two rows; the column + on its right -->
@@ -43,9 +41,7 @@
   <g class="m-move" style="--m-at: 0.2; --m-dx: 0; --m-dy: -16">
     <rect class="m-chip" x="40" y="127" width="240" height="10" rx="3" />
     <path class="m-glyph" d="M157 132h6M160 129v6" />
-    <circle class="m-line-dim" cx="20" cy="153" r="1.6" />
     <rect class="m-line-dim" x="25" y="151.25" width="140" height="3.5" rx="1.75" />
-    <circle class="m-line-dim" cx="20" cy="165" r="1.6" />
     <rect class="m-line-dim" x="25" y="163.25" width="96" height="3.5" rx="1.75" />
   </g>
 

@@ -7,15 +7,13 @@
 // also stops asking for this permission in this conversation. Always allow
 // also sets the permission to Allow for this kind of chat in Settings.
 // Don't allow opens a line for what to do instead (optional) and leaves the
-// call unmade; the assistant gets that line with the decline. A permission
-// that only asks (Delete folders and labels) offers Allow once (in red) and
-// Don't allow only. The buttons never take the focus by themselves, so a
-// keystroke meant for the message box can't answer.
+// call unmade; the assistant gets that line with the decline. A deletion's
+// Allow once is the red one. The buttons never take the focus by
+// themselves, so a keystroke meant for the message box can't answer.
 import React, { useEffect, useState } from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { ShieldIcon } from "../shared/ui/Icons";
-import { ALLOWING, approvalTitle, batchNotes, deletionNotes } from "./approvals.js";
-import { asksOnly } from "./chatSettings.js";
+import { ALLOWING, approvalTitle, batchNotes, deletionNotes, isDeletion } from "./approvals.js";
 import { pictureSrc } from "./pictureSrc.js";
 import { permissionIcon, permissionLabel } from "../settings/AssistantTools";
 import { guideEvents } from "../guide/events.js";
@@ -70,12 +68,9 @@ export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide })
   const [note, setNote] = useState("");
   const permission = permissionLabel(approval.perm);
   const Icon = permissionIcon(approval.perm);
-  const askOnly = asksOnly(approval.perm);
   // The card is up: the hint that explains the four answers may show
-  // beside it (guide/tours/hints.js). It goes again with the card. An
-  // ask-only card has two answers, so it raises no hint.
-  useEffect(() => { if (!askOnly) guideEvents.emit("approval.shown", { tool: approval.tool }); },
-    [approval.id, approval.tool, askOnly]);
+  // beside it (guide/tours/hints.js). It goes again with the card.
+  useEffect(() => { guideEvents.emit("approval.shown", { tool: approval.tool }); }, [approval.id, approval.tool]);
   const decide = async (decision, said = "") => {
     if (sent) return;
     setSent(decision);
@@ -110,17 +105,15 @@ export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide })
         </form>
       ) : (
         <div className="chatApprovalActions">
-          <button type="button" className={`uiBtn sm primary${askOnly ? " danger" : ""}`} onClick={() => decide("once")}>{t("Allow once")}</button>
-          {askOnly ? null : <>
-            <button type="button" className="uiBtn sm" onClick={() => decide("chat")}
-              title={t("Don't ask again for “{permission}” in this conversation", { permission })}>
-              {t("Allow in this chat")}
-            </button>
-            <button type="button" className="uiBtn sm" onClick={() => decide("always")}
-              title={t("Set “{permission}” to Allow for all chats of this kind ({kind}). You can change it in Settings → AI → Tool usage.", { permission, kind: kindLabel })}>
-              {t("Always allow")}
-            </button>
-          </>}
+          <button type="button" className={`uiBtn sm primary${isDeletion(approval.tool) ? " danger" : ""}`} onClick={() => decide("once")}>{t("Allow once")}</button>
+          <button type="button" className="uiBtn sm" onClick={() => decide("chat")}
+            title={t("Don't ask again for “{permission}” in this conversation", { permission })}>
+            {t("Allow in this chat")}
+          </button>
+          <button type="button" className="uiBtn sm" onClick={() => decide("always")}
+            title={t("Set “{permission}” to Allow for all chats of this kind ({kind}). You can change it in Settings → AI → Tool usage.", { permission, kind: kindLabel })}>
+            {t("Always allow")}
+          </button>
           <span className="chatApprovalSpacer" />
           <button type="button" className="uiBtn sm ghost" onClick={() => setDeclining(true)}>{t("Don't allow")}</button>
         </div>

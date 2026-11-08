@@ -102,7 +102,7 @@ export const ANCHORS = {
   "notes.ink": { view: "ink", pick: "last", description: "A handwriting block in the notes: its caption and the drawing" },
   "notes.highlight": { view: "highlighted page", pick: "recent", description: "A highlight's card in the notes, the one made last if any; a click jumps to it in the PDF" },
   "notes.handle": { view: "notes", pick: "last", description: "A note's ⋮⋮ handle: drag to move or nest it, click for its menu (shown on hover)" },
-  "notes.addBelow": { view: "notes", pick: "last", description: "The + under a note's handle: a new note below (Alt+click: above)" },
+  "notes.addBelow": { view: "notes", pick: "last", description: "The + beside a note's handle: a new note below (Alt+click: above)" },
   "notes.object": { view: "selected object", description: "The picture, table or diagram the user just selected in the notes" },
   "notes.table": { view: "table", pick: "recent", description: "An editable table in the notes" },
   "notes.tableAdd": { view: "table", pick: "recent", description: "The strip under a table that adds a row" },
@@ -165,7 +165,9 @@ export const ATTR = "data-guide";
 
 export function anchorElement(id) {
   if (!id) return null;
-  const all = [...document.querySelectorAll(`[${ATTR}="${id}"]`)].filter((el) => !el.closest("[inert]"));
+  // a tab group's view of a page (workspace/PagePane.jsx) draws the page
+  // with its anchors, but the tour shows the open page's
+  const all = [...document.querySelectorAll(`[${ATTR}="${id}"]`)].filter((el) => !el.closest("[inert]") && !el.closest("[data-read-view]"));
   const pick = ANCHORS[id]?.pick;
   if (pick === "last") return all[all.length - 1] || null;
   if (pick === "recent") return all.find((el) => el.closest(`[${ATTR}-recent]`)) || all[0] || null;

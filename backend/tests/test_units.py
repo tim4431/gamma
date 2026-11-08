@@ -103,8 +103,8 @@ def test_parse_files_validates():
 
 
 def test_extract_pdf_annotations_resolves_indirects():
-    from PyPDF2 import PdfWriter, PdfReader
-    from PyPDF2.generic import (ArrayObject, DictionaryObject, FloatObject,
+    from pypdf import PdfWriter, PdfReader
+    from pypdf.generic import (ArrayObject, DictionaryObject, FloatObject,
                                 NameObject, TextStringObject)
     from gamma.routers.imports import _extract_pdf_annotations
 
@@ -265,19 +265,16 @@ def test_text_unreliable_flags_formulas_not_prose():
     assert text_unreliable("   ")
 
 
-def test_request_selections_reads_both_shapes():
+def test_request_selections_keep_usable_passages_and_positions():
     from types import SimpleNamespace
     from gamma.ai_context import request_selections
 
-    old = SimpleNamespace(selection="first passage\n\n---\n\nsecond passage", selections=[])
-    assert [p["text"] for p in request_selections(old)] == ["first passage", "second passage"]
-    assert all(p["page"] == 0 and p["box"] is None for p in request_selections(old))
-    new = SimpleNamespace(selection="ignored", selections=[
+    payload = SimpleNamespace(selections=[
         {"text": " a passage ", "page": 3, "box": [0.1, 0.2, 0.9, 0.3]},
         {"text": "bad box", "page": 2, "box": [0.5, 0.5, 0.4, 0.6]},
         {"text": "no page", "page": "7", "box": [0.1, 0.1, 0.2, 0.2]},
         {"text": ""}, "not a dict"])
-    assert request_selections(new) == [
+    assert request_selections(payload) == [
         {"text": "a passage", "page": 3, "box": (0.1, 0.2, 0.9, 0.3)},
         {"text": "bad box", "page": 2, "box": None},
         {"text": "no page", "page": 0, "box": None}]
@@ -287,7 +284,7 @@ def test_final_prompt_labels_passages():
     from types import SimpleNamespace
     from gamma.ai_context import final_prompt
 
-    payload = SimpleNamespace(prompt="explain", selection="", note_selections=[],
+    payload = SimpleNamespace(prompt="explain", note_selections=[],
                               selections=[{"text": "H = ∑ ω", "page": 4, "box": [0, 0, 1, 1]}])
     assert "Selected passage (PDF page 4):" in final_prompt(payload)
     text = final_prompt(payload, [{"page": 4, "section": "Methods › Noise", "found": False, "crop": True}])

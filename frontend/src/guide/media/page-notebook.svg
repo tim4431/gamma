@@ -6,15 +6,12 @@
 
   <!-- the notes view: a first block, the sheet, the blocks after it -->
   <rect class="m-card" x="16" y="18" width="136" height="164" rx="10" />
-  <circle class="m-line" cx="31" cy="37" r="2.2" />
   <rect class="m-line" x="40" y="34" width="80" height="6" rx="3" />
   <rect class="m-card" x="40" y="52" width="72" height="86.25" rx="3" />
   <path class="m-rule" d="M49 74.5H103M49 89.5H103M49 104.5H103M49 119.5H103" />
   <path class="m-ink m-draw" pathLength="1" style="--m-at: 0.04" d="M52 73.38c1.5-5.25 4.5-5.25 4.88 0c0.38-5.25 4.5-5.25 4.88 0c0.6 2.25 2.63 2.25 3.75-0.38c1.2-2.63 1.88-9-0.22-9c-1.95 0-1.5 6.75 1.2 9.3c1.8 1.5 4.13-0.15 4.72-2.7c0.45-1.95 3.75-2.25 3.9 0.15c0.15 2.25-3.45 3.15-4.05 0.75c-0.22-1.05 2.55-0.75 4.2 1.5c1.5 1.8 4.2-0.45 4.95-2.55c0.68-1.95 3.15-1.8 3 0.3c-0.15 1.8-2.7 2.55-2.85 1.05c-0.15-1.5 3-1.2 4.65 1.2c1.65 2.4 4.5 0.75 5.7-1.05" />
   <rect class="m-link m-light" style="--m-at: 0.4" x="36.5" y="48.5" width="79" height="93.25" rx="6" />
-  <circle class="m-line-dim" cx="31" cy="155" r="2.2" />
   <rect class="m-line-dim" x="40" y="152" width="92" height="6" rx="3" />
-  <circle class="m-line-dim" cx="31" cy="169" r="2.2" />
   <rect class="m-line-dim" x="40" y="166" width="62" height="6" rx="3" />
 
   <!-- the notebook view: the sheets fill the viewer, the next one below -->

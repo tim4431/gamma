@@ -8,7 +8,7 @@
 // A chord two commands answer to is flagged on both rows. Under the
 // commands, the keys the outliner owns outright (Enter, Tab, …), read-only,
 // led by the one choice among them: whether Enter makes a new note or a new
-// line (the account's `enterNewNote`; Shift+Enter makes the other).
+// line (the account's `enterNewBlock`; Shift+Enter makes the other).
 import React from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { CornerDownLeftIcon, KeyboardIcon, XIcon } from "../shared/ui/Icons";
@@ -19,7 +19,7 @@ import { FIXED_KEY_ICONS, commandIcon } from "../app/commandIcons.jsx";
 import { chordLabel, conflicts, effectiveKeys } from "../shared/lib/hotkeys.js";
 
 export function KeyboardSettings({ value }) {
-  const { keybindings, setKeybindings, enterNewNote, setEnterNewNote } = value;
+  const { keybindings, setKeybindings, enterNewBlock, setEnterNewBlock } = value;
   const [filter, setFilter] = React.useState("");
   const bindings = keybindings || {};
   const clashes = conflicts(ALL_COMMANDS, bindings);
@@ -32,7 +32,7 @@ export function KeyboardSettings({ value }) {
     || cmd.label.toLowerCase().includes(q)
     || cmd.group.toLowerCase().includes(q)
     || effectiveKeys(cmd, bindings).some((k) => chordLabel(k).toLowerCase().includes(q));
-  const fixed = fixedKeys(enterNewNote).filter(([chords, what]) => !q
+  const fixed = fixedKeys(enterNewBlock).filter(([chords, what]) => !q
     || what.toLowerCase().includes(q) || chords.some((c) => chordLabel(c).toLowerCase().includes(q)));
   const enterRow = !q || `${t("Enter makes")} ${t("New note")} ${t("New line")} enter`.toLowerCase().includes(q);
 
@@ -91,9 +91,9 @@ export function KeyboardSettings({ value }) {
         <Section title={t("Built in")} scope="account" prefs={SECTION_PREFS.keyboard["Built in"]}>
           {enterRow ? (
             <Row icon={CornerDownLeftIcon} label={t("Enter makes")}
-              hint={enterNewNote ? t("Shift+Enter inserts a new line") : t("Shift+Enter creates a new note")}>
-              <Segmented value={enterNewNote ? "note" : "line"}
-                onChange={(choice) => setEnterNewNote(choice === "note")}
+              hint={enterNewBlock ? t("Shift+Enter inserts a new line") : t("Shift+Enter creates a new note")}>
+              <Segmented value={enterNewBlock ? "note" : "line"}
+                onChange={(choice) => setEnterNewBlock(choice === "note")}
                 options={[["note", t("New note")], ["line", t("New line")]]} />
             </Row>
           ) : null}

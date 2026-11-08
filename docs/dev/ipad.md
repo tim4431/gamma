@@ -186,9 +186,8 @@ smoothing; `pencil`, the Pencil brush's width from the tilt;
 `nib`; and `snap`, a stroke along the ruler's edge. A look a shell does
 not list is drawn as the plain line, and the page claims the stroke all
 the same: the committed stroke is the web's either way. `pencilRoll`
-says the `stroke` and `hold` samples carry the Pencil's barrel roll
-(iPadOS 17.5 and later), so a calligraphy preset's nib can follow it and
-its *Lock angle* pill shows.
+says the `stroke` and `hold` samples carry the Pencil's barrel roll, so a
+calligraphy preset's nib can follow it and its *Lock angle* pill shows.
 
 The web half is one module, `frontend/src/shared/lib/host.js`:
 `nativeHost()` (the object or null, read once), `postToHost(msg)` (a
@@ -682,12 +681,12 @@ the palm there is the page's `onTouch`. An ended touch stays in the
 that spot within that time is the page's own.
 
 **Gestures.** `PencilGestures` (`UIPencilInteraction`) forwards the double
-tap as `pencil`, and on iPadOS 17.5 and later the squeeze in its phases:
-`squeeze` `began` when it starts, `pencil` with `phase: "ended"` when it
-ends, or `squeeze` `cancelled` in its place when the system cancels it
-(the repeating `changed` is not sent), each with the system's preferred
-action. A squeeze in a phase the page does not know (a later shell's
-`changed`, a `squeeze` without a phase) does nothing. `ink/usePencil.js`
+tap as `pencil`, and the squeeze in its phases: `squeeze` `began` when it
+starts, `pencil` with `phase: "ended"` when it ends, or `squeeze`
+`cancelled` in its place when the system cancels it (the repeating
+`changed` is not sent), each with the system's preferred action. A
+squeeze in a phase the page does not know (a later shell's `changed`, a
+`squeeze` without a phase) does nothing. `ink/usePencil.js`
 applies `ink/pencilActions.js` with this browser's
 choice for each gesture, *Double tap* and *Squeeze* (`inkPencilTap`,
 `inkPencilSqueeze`, in Settings → Reading & editing → Apple Pencil, which
@@ -717,12 +716,12 @@ held squeeze is never lost. Each tool switch a gesture makes posts
 `haptic` `tool`, a pen lasso that selects posts `select` at its lift,
 and a hold that snaps posts `snap` (under `haptics`, with *Haptics* on:
 `ink/usePencil.js` `hostHaptic` checks both, and the shell plays what it is
-sent). On iPadOS 17.5 and later the shell plays each kind as Apple's
-feedback for its event (`PencilHaptics`, as `HapticFeel` picks it). The
-sources are Apple's "Playing haptic feedback in your app" and the WWDC24
-session "Squeeze the most out of Apple Pencil". Each feedback has one
-generator made for the web view (`init(view:)`, the impact's
-`init(style:view:)`), kept, and plays at `at` when there is one:
+sent). The shell plays each kind as Apple's feedback for its event
+(`PencilHaptics`, as `HapticFeel` picks it). The sources are Apple's
+"Playing haptic feedback in your app" and the WWDC24 session "Squeeze the
+most out of Apple Pencil". Each feedback has one generator made for the
+web view (`init(view:)`, the impact's `init(style:view:)`), kept, and
+plays at `at` when there is one:
 
 | Kind | Feedback | Apple's use |
 |---|---|---|
@@ -740,9 +739,8 @@ the Pencil was too far off to hover). The system goes by the place to
 play the feedback in an Apple Pencil Pro (device checks 16 and 21).
 Without a place, `select` and `tool` play their generator's call that
 takes none (`selectionChanged()`, `impactOccurred()`), and so does
-`snap`, as the light impact, since its canvas feedback needs one. Before
-17.5 every kind is the plain light impact. An iPad itself has no motor:
-only an Apple Pencil Pro plays these.
+`snap`, as the light impact, since its canvas feedback needs one. An iPad
+itself has no motor: only an Apple Pencil Pro plays these.
 
 ### Gamma Cloud
 
@@ -828,7 +826,7 @@ before a reload waits until a page can take it. The web half is
    `.zip`, as the picker sends them, and a `.goodnotes` the GoodNotes
    import's the same way. A `.zip` opens the Import dialog with the file
    already chosen. It asks which export it is, offering the sources that
-   read an archive (Zotero, Markdown, Notability, GoodNotes, Gamma), and
+   read an archive (Zotero, Markdown, Notability, GoodNotes, Notion, Gamma), and
    goes on to that source's review with no picker.
    An image becomes a picture where the Picture button puts one: the
    surface in view, else the sheet among the notes that shows the most of
@@ -969,14 +967,9 @@ highlight's quote (`gamma/pdf_text.py`), page and region pictures for the
 AI's `view_pdf_page` and `view_ink` and for MCP, the annotated-PDF
 export's notes placed in the page's free space (`pdf_free_space.py`), the
 Logseq export's area-highlight pictures, and MuPDF's built-in fonts for a
-page whose fonts are not embedded. Before it, with pypdfium2 left out for
-want of an iOS wheel, each of those fell back
-([research/pypdfium2-ios.md](../research/pypdfium2-ios.md)). The imports
-stay guarded all the same, inside the functions that need them: a server
-without PyMuPDF starts, reads text and page sizes through PyPDF2, renders
-nothing, imports highlights without quotes and puts the notes in the
-margins, and the import's 70 ms and 30 MB are paid at the first PDF read,
-not at the start. The start test ([Tests](#tests)) is what catches a
+page whose fonts are not embedded. PyMuPDF is imported inside the
+functions that need it, so its 70 ms and 30 MB are paid at the first PDF
+read, not at the start. The start test ([Tests](#tests)) is what catches a
 bundle whose frameworks do not load.
 
 #### Where the data lives
@@ -1264,12 +1257,11 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   silently afterwards and the test signs in again on its next run. Then
   it waits up to three minutes for `/api/health`, signs in as that
   account, uploads a one-page PDF it builds, creates the page for it and
-  reads the document back: the manifest (`/api/pdf-info`, one
-  page of 612 × 792 points) and
-  a page picture (`/api/ai/page-image`, an `image/*` body). The picture
-  is the proof that PyMuPDF's frameworks load and render: a server
-  without PyMuPDF starts and counts pages all the same (`pdf_text` falls
-  back to PyPDF2) but answers 404 there. It is CI's one check that the
+  reads the document back: the manifest (`/api/pdf-info`, one page of
+  612 × 792 points) and a page picture (`/api/ai/page-image`, an
+  `image/*` body). Both come from PyMuPDF, which the server imports at
+  its first PDF read (`/api/health` proves only the start), so they are
+  the proof that PyMuPDF's frameworks load and render. It is CI's one check that the
   bundle runs: a wrong layout, a broken framework conversion, a missing
   wheel or an import error fails here instead of on an iPad, and a call
   that does not answer as expected fails with the server's log tail. It
@@ -1599,6 +1591,15 @@ Only an iPad can show these, and none has been run yet:
     have to draw it from the range's rects
     ([research/pen-logic.md](../research/pen-logic.md)). *Only Draw with
     Apple Pencil* and Scribble on and off.
+37. The editing bar's taps. New block and Line break must run their
+    command and keep the keyboard up, and Return on the on-screen keyboard
+    must make a block, during composition too. The bar cancels `pointerdown`
+    and runs from the click, which WebKit's iOS test requires but only a
+    device can show: under Playwright's WebKit the suite sends that click
+    itself ([debugging.md](debugging.md#webkit-and-firefox)). Also check that
+    the keyboard stays up through the focus change of a New block tap, that
+    the bar sits on the real keyboard, and that a finger's sideways pan of
+    the bar's tools works (`touch-action: pan-x`).
 
 ### Not built yet
 
@@ -1727,15 +1728,17 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
 
 ### The editing bar
 
-The notes take Tab, Shift+Enter and Ctrl chords for their structure and
-formatting. The iPad's on-screen keyboard has no Tab or Ctrl, and no
-dependable Shift+Return ([research/touch.md](../research/touch.md)). So
-while a note's editor is open on a touch screen, a bar sits on top of the
-keyboard (`editor/EditBar.jsx`):
+The notes take Tab, Enter, Shift+Enter and Ctrl chords for their structure
+and formatting. The iPad's on-screen keyboard has no Tab or Ctrl, and no
+dependable Shift+Return ([research/touch.md](../research/touch.md)), so by
+default its Return can only make a new block. So while a note's editor is
+open on a touch screen, a bar sits on top of the keyboard
+(`editor/EditBar.jsx`):
 
 **Insert** (the `/` menu) · Outdent · Indent · Move up · Move down · New
-block · Bold · Italic · Underline · Inline code · Strikethrough · Link ·
-Inline equation · Next math argument · Undo · Redo … **Done**
+block · Line break · Bold · Italic · Underline · Inline code ·
+Strikethrough · Link · Inline equation · Next math argument · Undo · Redo
+… **Done**
 
 The iPad app shows this same bar, since it is the web app.
 
@@ -1743,9 +1746,9 @@ The iPad app shows this same bar, since it is the web app.
   ([hotkeys.md](hotkeys.md)), run with the context the row's keydown
   dispatches with (`commandContext` in `BlockTree.jsx`). So a button does
   what the same command does from a key or the palette.
-  - Four of them exist for the bar and have no default chord:
-    `block.insertMenu`, `block.newBelow`, `block.math` and
-    `block.nextSlot` (each is described in [hotkeys.md](hotkeys.md)).
+  - Five of them exist for the bar and have no default chord:
+    `block.insertMenu`, `block.newBelow`, `block.lineBreak`, `block.math`
+    and `block.nextSlot` (each is described in [hotkeys.md](hotkeys.md)).
   - Undo and Redo are the page's block history (App's `undoBlocks`), as
     Ctrl+Z.
   - A button whose command's `when` fails is greyed out: Outdent at the
@@ -1800,7 +1803,12 @@ The iPad app shows this same bar, since it is the web app.
     panel and under the editor's own popups.
   - The room it takes at the visual viewport's bottom (`editBarSpace()`)
     is the editor's bottom scroll margin, so the caret scrolls into view
-    above it. Caret-anchored popups (the slash menu, the math preview,
+    above it. An editor a key opens scrolls as it mounts, since focus
+    scrolls nothing, and a caret placed from outside
+    (`setSelectionRange`) replaces that scroll's target, or a row taller
+    than the pane would scroll to its end. A row must not overflow its own
+    box downward or to the right: that makes it a scroller to CodeMirror,
+    which clips that margin to the row. Caret-anchored popups (the slash menu, the math preview,
     `useCaretAnchored`) leave that room free.
   - On a narrow screen the tools scroll sideways and Done stays at the end.
 - **The keyboard stays up.** iPadOS keeps it while focus stays in the
@@ -1870,15 +1878,19 @@ the panes scroll.
   applies inside math or a code fence), where Move up / down, Indent and
   Outdent apply (their `when`), Next math argument's hop and where it
   applies, and the bar's four commands starting unbound.
+- `frontend/tests/webkitHarness.test.mjs`: what the suite adds under
+  WebKit ([debugging.md](debugging.md#webkit-and-firefox)), the click after a
+  tap Playwright's WebKit drops, and the cancelled loads it lets pass.
 - `tests/e2e/scenarios/touch.mjs` (`npm run e2e -- --only touch`), by
-  finger on an emulated tablet: Inline code and Strikethrough wrap a
+  finger on an emulated tablet: a button that cancels its `pointerdown`, the
+  bar's press, is clicked once with no mouse events; Inline code and Strikethrough wrap a
   selection, Next math argument shows only in a math argument and hops to
   the next, the typing aids are on in prose and off in math, a tapped
   picture's toolbar ⋯ opens the object menu, and a highlight made with
   Notes folded shows no bar until they open, its note's editor then
   focused under the bar.
 - `tests/e2e/scenarios/ipad.mjs` (`npm run e2e -- --only ipad`), in
-  Chromium touch contexts:
+  touch contexts, Chromium's and with `GAMMA_E2E_BROWSER=webkit` WebKit's:
   - Tablet-sized: the manifest parses with `standalone` display, and every
     icon it and the `apple-touch-icon` link name is a real PNG.
     `theme-color` matches what sits under the status bar (the library with
@@ -1901,15 +1913,16 @@ the panes scroll.
     - A stand-in visual viewport plays the keyboard. The bar lands on it
       when its event comes before the move, stays on it when the view
       scrolls, and finds it back on the next tap when it returns with no
-      event. Through a pan that goes on for 40 frames it never shows, and
-      it shows where the pan stops.
+      event. Through a pan that goes on for 40 frames it steps aside within
+      6 frames and stays out of sight, and it shows where the pan stops.
     - Indent, Outdent and Move down change the saved tree, and after each
       the same block's editor still has the focus.
     - Landscape, the bar stays in sight every frame from one editor to the
-      next: Shift+Enter, Tab and Shift+Tab, the bar's New block, Indent and
+      next: Enter, Tab and Shift+Tab, the bar's New block, Indent and
       Outdent, another note tapped; its Indent and Outdent follow the open
       block.
-    - New block focuses a new empty block.
+    - New block focuses a new empty block; Line break stays in the block,
+      the caret on a new line.
     - Bold wraps the selection; Undo and Redo take it back and put it
       back, and so do the keyboard's `historyUndo` / `historyRedo` input
       events.

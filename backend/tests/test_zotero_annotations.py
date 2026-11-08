@@ -303,6 +303,14 @@ def test_comment_carries_the_nested_notes_as_the_popup_text():
     assert za.comment_out("", nested[1:2]) == "- child <b>one</b>"
 
 
+def test_a_list_block_in_a_comment_keeps_its_one_marker_as_the_popup_does():
+    nested = [(1, "- item", "c1"), (2, "1. number", "c2"), (1, "- [ ] todo", "c3"), (1, "plain", "c4")]
+    suffix = "- item\n  1. number\n- [ ] todo\n- plain"
+    assert za.comment_out("own", nested) == f"own\n{suffix}"
+    assert popup_text([(0, "own"), *[(d, md) for d, md, _ in nested]]) == f"own\n{suffix}"
+    assert za.comment_parts(f"changed\n{suffix}", nested) == ("changed", suffix)
+
+
 def test_comment_parts_splits_off_the_nested_notes_gamma_holds():
     nested = [(1, "child", "c1"), (2, "grand **child**", "c2")]
     suffix = "- child\n  - grand <b>child</b>"

@@ -37,7 +37,7 @@ def _image(c, tag: bytes) -> str:
 
 
 def _pdf() -> bytes:
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
     w = PdfWriter()
     w.add_blank_page(width=200, height=200)
     buf = io.BytesIO()

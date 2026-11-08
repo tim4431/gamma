@@ -42,11 +42,20 @@ ssh -o ConnectTimeout=10 -o BatchMode=yes Tim@100.100.10.237 "cd /mnt/TimNAS2/Co
 
 From the output: the account server is the `gamma-cloud` image
 (`gamma-account-account-1`), the share host is `gamma-account-share-1`, the
-demo is `gamma-demo`, the NAS is `gamma`. The `containrrr/watchtower`
-containers beside the demo, the share host (`gamma-share-watchtower`, in
-the account project) and the NAS are not deployments; one missing means
-that project's compose file predates it, which the deploy-file step of
-its skill brings (`update-account-server` for the share host's). A share
+demo is `gamma-demo`, the NAS is `gamma`. The Watchtower containers
+beside the demo, the share host (`gamma-share-watchtower`, in the account
+project) and the NAS are not deployments; name one that is missing in the
+plan, since that project then stops following `main` by itself
+(with the user's agreement, `docker compose up -d --no-deps watchtower`
+in its folder starts it alone again, whether or not anything there needs
+a deploy; the share host's is in `/root/Container/gamma-account/`). Name
+one still on the archived `containrrr/watchtower` image too. The account
+and demo projects get `nickfedor/watchtower:1` with their `compose.yml`
+(their skills compare it, the demo's against `main`, so after a merge), but
+no deploy copies the NAS's `docker-compose.yml`: with the user's agreement,
+change its `image:` line by hand and take out the `DOCKER_API_VERSION` pin
+only the archived image needs, then
+`docker compose up -d --no-deps watchtower` in its folder. A share
 host whose image is a `sha-` tag runs a rollback pin
 (`compose.override.yml`): name it in the plan.
 

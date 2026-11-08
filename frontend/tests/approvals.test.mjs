@@ -49,8 +49,14 @@ test("folder and label cards say what goes", () => {
     chats: 2, chat_folders: ["A / B"], chat_folder_count: 1 }), [
     "Its 3 subfolders go with it: A / B, and 2 more",
     "1 page leaves it and stays in your library: P",
-    "2 AI chats of A / B move to the library chat's history and stay there if you revert.",
+    "2 AI chats of A / B move to the library chat's history; a revert brings them back.",
   ]);
+  assert.equal(card("delete_page", { title: "Draft" }), "Move “Draft” to Recently deleted");
+  assert.equal(card("delete_page", { title: "Draft", count: 3 }), "Move 3 pages to Recently deleted");
+  assert.deepEqual(deletionNotes("delete_page", { inside: 2, count: 3, days: 30 }), [
+    "2 pages inside go too.", "Recently deleted keeps them for 30 days, and you can revert it from the reply."]);
+  assert.deepEqual(deletionNotes("delete_page", { inside: 0, days: 30 }),
+    ["Recently deleted keeps it for 30 days, and you can revert it from the reply."]);
   assert.deepEqual(deletionNotes("delete_folder", { page_count: 0 }), ["No pages are filed in it."]);
   assert.deepEqual(deletionNotes("delete_label", { pages: ["P", "Q"], page_count: 2 }),
     ["The label comes off 2 pages; no page is deleted: P, Q"]);

@@ -1,9 +1,15 @@
 // The structure of a note's lines (editor/mdLines.js): what the line-break
-// Enter continues, where a paste's lines go, what the "/" menu's line
-// commands make of a line, and Toggle quote.
+// Enter continues, what the new-block key and Backspace do to a block, where
+// a paste's lines go, what the "/" menu's line commands make of a line, and
+// Toggle quote.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { enterPlan, parseLine, pastePlacements, quoteMarksAt, retypeLine, toggleQuotePlan } from "../src/editor/mdLines.js";
+import {
+  backspacePlan, enterPlan, isWholeLine, newBlockPlan, parseLine, pastePlacements, quoteMarksAt, retypeLine, toggleQuotePlan, withoutFirstMarker,
+} from "../src/editor/mdLines.js";
+import { codeBreak, splitPlan } from "../src/editor/blockCommands.js";
+import { codePaste, fenceInnerAt } from "../src/editor/fences.js";
+import { sourceCopied } from "../src/editor/sourceCopy.js";
 import { TEXT_INSERTS } from "../src/editor/slashInserts.js";
 
 // The text after a plan, with "|" for the caret (a selection "«…»").
@@ -32,6 +38,340 @@ const toggle = (withSel) => {
     ? out.slice(0, anchor) + "|" + out.slice(anchor)
     : out.slice(0, anchor) + "«" + out.slice(anchor, head) + "»" + out.slice(head);
 };
+
+// A press of the new-block key on "|" (or over a selection «…»), as text:
+// "this ⏎ new", the caret's "|" where it lands; "new ↥ this" for a block made
+// above, the caret staying; "this ▪" when no block is made.
+const newBlock = (withCaret, plan = newBlockPlan) => {
+  const selected = !withCaret.includes("|");
+  const from = selected ? withCaret.indexOf("«") : withCaret.indexOf("|");
+  const to = selected ? withCaret.indexOf("»") - 1 : from;
+  const p = plan(withCaret.replace(/[|«»]/g, ""), from, to);
+  const at = (s, n) => s.slice(0, n) + "|" + s.slice(n);
+  if (p.stay) return `${at(p.keep, p.caret)} ▪`;
+  if (p.above) return `${p.next.trimEnd()} ↥ ${at(p.keep, from)}`;
+  return `${p.keep} ⏎ ${at(p.next, p.caret)}`;
+};
+
+test("the new-block key splits a paragraph at the caret", () => {
+  assert.equal(newBlock("plain|"), "plain ⏎ |");
+  assert.equal(newBlock("ab|cd"), "ab ⏎ |cd");
+  assert.equal(newBlock("|"), " ⏎ |", "an empty note makes an empty one");
+});
+
+test("the new-block key before a block's text makes the new block above and stays", () => {
+  assert.equal(newBlock("|abcd"), " ↥ |abcd");
+  assert.equal(newBlock("- |ab"), "- ↥ - |ab");
+  assert.equal(newBlock("- [x] |ab"), "- [ ] ↥ - [x] |ab", "the box above is an open one");
+  assert.equal(newBlock("2. |ab"), "2. ↥ 2. |ab", "a number is typed text and does not count back");
+  assert.equal(newBlock("> - |ab"), "> - ↥ > - |ab");
+  assert.equal(newBlock("|- ab"), " ↥ |- ab", "before the marker, the block above is plain");
+  assert.equal(newBlock("> |ab"), " ↥ > |ab", "a quote is no list: what comes above it is plain");
+  assert.equal(newBlock("# |ab"), " ↥ # |ab");
+  assert.equal(newBlock("|```\ncode\n```"), " ↥ |```\ncode\n```", "code can get a block above it");
+  assert.equal(newBlock("|---"), " ↥ |---");
+});
+
+test("the new-block key continues a list", () => {
+  assert.equal(newBlock("- ab|"), "- ab ⏎ - |");
+  assert.equal(newBlock("- ab|cd"), "- ab ⏎ - |cd");
+  assert.equal(newBlock("3. ab|"), "3. ab ⏎ 4. |");
+  assert.equal(newBlock("3) ab|cd"), "3) ab ⏎ 4) |cd");
+  assert.equal(newBlock("- [x] ab|"), "- [x] ab ⏎ - [ ] |");
+  assert.equal(newBlock("- [ ] a|b"), "- [ ] a ⏎ - [ ] |b");
+  assert.equal(newBlock("> - ab|"), "> - ab ⏎ > - |", "a list in a quote stays in it");
+  assert.equal(newBlock("- a\n  - b|"), "- a\n  - b ⏎ - |", "a block has no indentation of its own");
+});
+
+test("the new-block key on an empty item that is the whole block ends the innermost thing", () => {
+  assert.equal(newBlock("- |"), "| ▪");
+  assert.equal(newBlock("- [ ] |"), "| ▪");
+  assert.equal(newBlock("- [x] |"), "| ▪");
+  assert.equal(newBlock("1. |"), "| ▪");
+  assert.equal(newBlock("> - |"), "> | ▪", "the list goes, the quote stays");
+  assert.equal(newBlock("> > |"), "> | ▪", "one quote level goes");
+  assert.equal(newBlock("> |"), "| ▪");
+  assert.equal(newBlock("|- "), " ↥ |- ", "before the marker nothing ends");
+  assert.equal(newBlock("> [!note] |"), "> [!note]  ⏎ |", "a callout with no title yet is no empty item");
+});
+
+test("the new-block key on an empty item with lines around it drops the line and splits there", () => {
+  assert.equal(newBlock("- a\n- |"), "- a ⏎ |");
+  assert.equal(newBlock("- a\n- [ ] |"), "- a ⏎ |");
+  assert.equal(newBlock("1. a\n2. |"), "1. a ⏎ |");
+  assert.equal(newBlock("> - a\n> - |"), "> - a ⏎ |");
+  assert.equal(newBlock("> a\n> |"), "> a ⏎ |");
+  assert.equal(newBlock("- a\n- |\n- b"), "- a ⏎ - |b");
+  assert.equal(newBlock("- |\n- b"), " ⏎ - |b");
+});
+
+test("the new-block key: a heading's text goes on plain, a quote's in its marks", () => {
+  assert.equal(newBlock("# a|b"), "# a ⏎ |b");
+  assert.equal(newBlock("# ab|"), "# ab ⏎ |");
+  assert.equal(newBlock("> ab|"), "> ab ⏎ |");
+  assert.equal(newBlock("> [!tip] t|"), "> [!tip] t ⏎ |");
+  assert.equal(newBlock("> a|b"), "> a ⏎ > |b");
+  assert.equal(newBlock("> > a|b"), "> > a ⏎ > > |b");
+  assert.equal(newBlock("> [!tip] a|b"), "> [!tip] a ⏎ > |b");
+});
+
+test("the new-block key in a block of several lines takes the lines after the caret along", () => {
+  assert.equal(newBlock("a\nb|\nc"), "a\nb ⏎ |c");
+  assert.equal(newBlock("a|b\nc"), "a ⏎ |b\nc");
+  assert.equal(newBlock("- a|\n- b"), "- a ⏎ - |b", "its own marker");
+  assert.equal(newBlock("- a|b\n- c"), "- a ⏎ - |b\n- c");
+  assert.equal(newBlock("> a|\n> b"), "> a ⏎ > |b");
+  assert.equal(newBlock("a\n|b"), "a ⏎ |b", "at a line's start");
+  assert.equal(newBlock("a\n- |b"), "a ⏎ - |b", "at an item's");
+  assert.equal(newBlock("a\n|"), "a ⏎ |", "an empty last line goes");
+  assert.equal(newBlock("a|\n\nb"), "a ⏎ |b", "the blank lines at the cut go");
+  assert.equal(newBlock("a\n|\nb"), "a ⏎ |b");
+});
+
+test("the new-block key leaves a table line, a divider or a delimiter whole", () => {
+  // (A table has bars of its own: these give the caret as a number.)
+  assert.deepEqual(newBlockPlan("| a | b |", 4), { keep: "| a | b |", next: "", caret: 0 });
+  assert.deepEqual(newBlockPlan("| a | b |", 9), { keep: "| a | b |", next: "", caret: 0 });
+  assert.deepEqual(newBlockPlan("x\n| a |\n| c |", 5), { keep: "x\n| a |\n| c |", next: "", caret: 0 });
+  assert.deepEqual(newBlockPlan("> | a |", 5), { keep: "> | a |", next: "", caret: 0 });
+  assert.equal(newBlock("---|"), "--- ⏎ |");
+  assert.equal(newBlock("--|-"), "--- ⏎ |");
+  assert.equal(newBlock("***|"), "*** ⏎ |");
+  assert.equal(newBlock("> ---|"), "> --- ⏎ |");
+  assert.equal(newBlock("``|`\ncode\n```"), "```\ncode\n``` ⏎ |");
+});
+
+test("a selection goes first, then the rules apply at its start", () => {
+  assert.equal(newBlock("a«bc»d"), "a ⏎ |d");
+  assert.equal(newBlock("«ab»cd"), " ↥ |cd");
+  assert.equal(newBlock("«abcd»"), " ⏎ |");
+  assert.equal(newBlock("- «ab»"), "| ▪", "what is left is an empty item");
+  assert.equal(newBlock("- a«b\n- c»d"), "- a ⏎ - |d");
+});
+
+test("the new-block key never cuts a formula: the split moves past its closing $", () => {
+  const split = (withCaret) => newBlock(withCaret, splitPlan);
+  assert.equal(split("$x^2|$"), "$x^2$ ⏎ |");
+  assert.equal(split("$|x$"), "$x$ ⏎ |");
+  assert.equal(split("see $a|b$ here"), "see $ab$ ⏎ |here", "the space that led the rest goes");
+  assert.equal(split("$a|$  \t b"), "$a$ ⏎ |b");
+  assert.equal(split("$a|$   "), "$a$ ⏎ |", "only spaces follow");
+  assert.equal(split("$a|$ $b$"), "$a$ ⏎ |$b$", "the next formula goes on whole");
+  assert.equal(split("$a$ and $b|$ c"), "$a$ and $b$ ⏎ |c", "the formula the caret is in");
+  assert.equal(split("$x|$\nmore"), "$x$ ⏎ |more");
+  assert.equal(split("one\n$x|$ b\nmore"), "one\n$x$ ⏎ |b\nmore");
+});
+
+test("a stray $ on another line takes no formula apart", () => {
+  const split = (withCaret) => newBlock(withCaret, splitPlan);
+  assert.equal(split("- costs $5\n- $x|$ more"), "- costs $5\n- $x$ ⏎ - |more");
+  assert.equal(split("costs $5\nsee $x^2|$"), "costs $5\nsee $x^2$ ⏎ |");
+  assert.equal(split("$x\n$y|$"), "$x\n$y$ ⏎ |");
+  assert.equal(split("costs $5\n\nsee $a|b$ c"), "costs $5\n\nsee $ab$ ⏎ |c");
+  assert.equal(split("$x|$\ncosts $5"), "$x$ ⏎ |costs $5", "and one below");
+  assert.equal(split("costs $5\nsee |this"), "costs $5\nsee  ⏎ |this", "no formula on the caret's line");
+});
+
+test("the states an auto-paired closer waits in are a formula too", () => {
+  const split = (withCaret) => newBlock(withCaret, splitPlan);
+  assert.equal(split("see $|$ here"), "see $$ ⏎ |here", "an empty pair");
+  assert.equal(split("$ |$"), "$ $ ⏎ |", "only a space in it");
+  assert.equal(split("see $«x»$ here"), "see $$ ⏎ |here", "all of it selected");
+  assert.equal(split("$\\|$"), "$\\$ ⏎ |", "a \\command being started");
+  assert.equal(split("$a \\|$"), "$a \\$ ⏎ |");
+  assert.equal(split("see $a\\|$ here"), "see $a\\$ ⏎ |here");
+  assert.equal(split("$a\\|$b$"), "$a\\$b$ ⏎ |", "an escaped $ inside a closed formula");
+  assert.equal(split("$a$|$b$"), "$a$ ⏎ |$b$", "two touching formulas are no pair");
+  assert.equal(split("cost \\$5\\|$6"), "cost \\$5\\ ⏎ |$6", "a $ alone is no closer");
+});
+
+test("a list or a quote goes on past a formula", () => {
+  const split = (withCaret) => newBlock(withCaret, splitPlan);
+  assert.equal(split("- $x|$"), "- $x$ ⏎ - |");
+  assert.equal(split("- $a|b$ c"), "- $ab$ ⏎ - |c");
+  assert.equal(split("3. $x|$"), "3. $x$ ⏎ 4. |");
+  assert.equal(split("- [x] $x|$ c"), "- [x] $x$ ⏎ - [ ] |c");
+  assert.equal(split("> $a|b$ c"), "> $ab$ ⏎ > |c");
+  assert.equal(split("# $x|$"), "# $x$ ⏎ |");
+});
+
+test("a selection starting in a formula goes, then the split moves past what is left of it", () => {
+  const split = (withCaret) => newBlock(withCaret, splitPlan);
+  assert.equal(split("$a«b»c$ d"), "$ac$ ⏎ |d");
+  assert.equal(split("$a«bc»$"), "$a$ ⏎ |");
+  assert.equal(split("$a«b$ c»d"), "$a ⏎ |d", "the closer went with it");
+  assert.equal(split("a «b $c»d$"), "a  ⏎ |d$", "the selection started outside");
+});
+
+test("the new-block key splits at the caret where there is no formula to keep", () => {
+  const split = (withCaret) => newBlock(withCaret, splitPlan);
+  assert.equal(split("$x|"), "$x ⏎ |", "no closer");
+  assert.equal(split("$a|b"), "$a ⏎ |b");
+  assert.equal(split("- $x|"), "- $x ⏎ - |");
+  assert.equal(split("$a|\nb$"), "$a ⏎ |b$", "the closer on another line: inline math is one line");
+  assert.equal(split("cost \\$5| or \\$6"), "cost \\$5 ⏎ | or \\$6", "escaped dollars");
+  assert.equal(split("|$x$ b"), " ↥ |$x$ b", "before the formula");
+  assert.equal(split("$x$| b"), "$x$ ⏎ | b", "after it, the rest as anywhere else");
+  assert.equal(split("ab|cd"), "ab ⏎ |cd");
+  assert.equal(split("- ab|cd"), "- ab ⏎ - |cd");
+  assert.equal(split("`$5` an|d `$6` tail"), "`$5` an ⏎ |d `$6` tail", "dollars in code are no formula");
+  assert.equal(split("`a $x| y$ b` tail"), "`a $x ⏎ | y$ b` tail", "a code span is cut as any mark is");
+  assert.equal(split("`$` and $a|b$ c"), "`$` and $ab$ ⏎ |c", "a formula after code stays whole");
+  assert.equal(split("```a``` b|c"), "```a``` b ⏎ |c", "inline code at the line's start is no delimiter");
+  assert.equal(split("- $$a|$$ hello"), "- $$a$$ ⏎ - |hello", "nor is a one-line $$ formula in a list");
+  // (A table has bars of its own: the caret as a number.)
+  assert.deepEqual(splitPlan("| $a$ | b |", 4), { keep: "| $a$ | b |", next: "", caret: 0 }, "a table row stays uncut, its spaces too");
+});
+
+test("Backspace right after a list marker takes the marker, on any line", () => {
+  const press = (withCaret) => {
+    const pos = withCaret.indexOf("|");
+    const text = withCaret.replace("|", "");
+    const p = backspacePlan(text, pos);
+    if (!p) return null;
+    const out = text.slice(0, p.from) + text.slice(p.to);
+    return out.slice(0, p.pos) + "|" + out.slice(p.pos);
+  };
+  assert.equal(press("- |x"), "|x");
+  assert.equal(press("* |x"), "|x");
+  assert.equal(press("1. |x"), "|x");
+  assert.equal(press("12) |x"), "|x");
+  assert.equal(press("- [ ] |x"), "|x");
+  assert.equal(press("- [x] |x"), "|x");
+  assert.equal(press("- |"), "|");
+  assert.equal(press("> - |x"), "> |x", "the quote stays");
+  assert.equal(press("a\n- |x\nb"), "a\n|x\nb", "on any line");
+  assert.equal(press("  - |x"), "  |x");
+  assert.equal(press("- x|"), null);
+  assert.equal(press("-| x"), null);
+  assert.equal(press("|- x"), null);
+  assert.equal(press("# |x"), null, "a heading stays raw Markdown");
+  assert.equal(press("> |x"), null, "a quote too");
+  assert.equal(press("> [!tip] |x"), null, "and a callout");
+});
+
+test("the lines a merge will not join, and the first line it takes", () => {
+  for (const line of ["| a |", "> | a |", "---", "***", "___", "- - -", "```", "```py", "~~~", "~~~py", "> ~~~", "$$", "$$x$$",
+    "- ```", "1. ~~~py", "> - ```", "    ```", "- $$", "- $$ x"]) assert.ok(isWholeLine(line), line);
+  for (const line of ["plain", "- a", "# a", "> a", "--", "a | b", "$x$",
+    "```a``` b", "- [ ] ```", "# ```", "> [!note] ```", "- $$x$$", "- $$x$$ hello"]) assert.ok(!isWholeLine(line), line);
+  assert.equal(withoutFirstMarker("- a\n- b"), "a\n- b");
+  assert.equal(withoutFirstMarker("- [x] a"), "a");
+  assert.equal(withoutFirstMarker("3. a"), "a");
+  assert.equal(withoutFirstMarker("## a\nb"), "a\nb");
+  assert.equal(withoutFirstMarker("plain"), "plain");
+});
+
+// Where Enter is a line break: "|" marks the caret.
+const inCode = (withCaret) => {
+  const pos = withCaret.indexOf("|");
+  return !!fenceInnerAt(withCaret.slice(0, pos) + withCaret.slice(pos + 1), pos);
+};
+
+test("code is a fence of backticks or tildes, also in a quote or a callout", () => {
+  for (const text of [
+    "```py\nab|cd\n```", "~~~py\nab|cd\n~~~", "````\nab|cd\n````",
+    "> ```py\n> ab|cd\n> ```", ">```py\n>ab|cd\n>```", "> > ~~~\n> > ab|cd\n> > ~~~",
+    "> [!note] t\n> ```py\n> ab|cd\n> ```",
+    "```py|\nab\n```", "```\nab\n|```", "> ```py|\n> ab\n> ```", "> ```\n> ab\n> |```",
+    "```\nstill open|", "> ~~~\n> still open|", "~~~\n|",
+  ]) assert.ok(inCode(text), text);
+  for (const text of [
+    "|```\nab\n```", "```\nab\n```|", "``|`\nab\n```", "> ```\n> ab\n> ```|", "~~~\nab\n~~~\nafter|",
+    "plain|", "```a``` inline|", "~~ strike ~~|",
+  ]) assert.ok(!inCode(text), text);
+});
+
+test("code in a list or indented is code too, as the note renders it", () => {
+  for (const text of [
+    "- ```\n  ab|cd\n  ```", "1. ```\n   ab|cd\n   ```", "- item\n  ```\n  ab|cd\n  ```", "- a\n  - ```\n    ab|cd\n    ```",
+    "  ```\n  ab|cd\n  ```", "   ```\nab|cd\n   ```", "> - ```\n>   ab|cd\n>   ```", "- ```|\n  ab\n  ```", "- ```\n  ab\n  |```",
+    "```\nab\n  |```", "- ```\n  still open|",
+  ]) assert.ok(inCode(text), text);
+  for (const text of [
+    "- ```\n  ab\n  ```|", "- ```\n  ab\nafter|", "- ```\n  ab\n- next|", "```\nab\n  ```\nafter|", "> ```\n> ab\n>   ```\n> after|",
+    "- [ ] ```|", "    ```\n    ab|cd",
+  ]) assert.ok(!inCode(text), text);
+});
+
+test("a fence closes on its own mark, at least as long, at its own depth", () => {
+  assert.ok(inCode("```\n~~~\nab|\n```"), "tildes do not close backticks");
+  assert.ok(inCode("~~~\n```\nab|\n~~~"), "nor the other way round");
+  assert.ok(inCode("````\n```\nab|\n````"), "nor a shorter fence");
+  assert.ok(inCode("```\n``` py\nab|\n```"), "nor one with words after it");
+  assert.ok(!inCode("~~~~\nab\n~~~~~\nafter|"), "a longer one does");
+  assert.ok(inCode("```\n> ```\nab|\n```"), "a quoted fence closes no plain one");
+  assert.ok(inCode("> ```\n> > ```\n> ab|\n> ```"), "nor a deeper one a quoted one");
+  assert.ok(!inCode("> ```\n> code\nafter|"), "the quote's end ends its fence");
+  assert.ok(inCode("> ```\n> code\n```\nnew fence|"), "and the line after it starts afresh");
+});
+
+test("a line break in code keeps the fence's own marks", () => {
+  const brk = (withCaret) => {
+    const pos = withCaret.indexOf("|");
+    return codeBreak(withCaret.slice(0, pos) + withCaret.slice(pos + 1), pos);
+  };
+  assert.equal(brk("```\nab|\n```"), "\n");
+  assert.equal(brk("~~~\nab|\n~~~"), "\n");
+  assert.equal(brk("> ```\n> ab|\n> ```"), "\n> ");
+  assert.equal(brk("> > ~~~\n> > ab|\n> > ~~~"), "\n> > ");
+  assert.equal(brk("> [!note] t\n> ```\n> ab|\n> ```"), "\n> ");
+  assert.equal(brk("```\n> ab|\n```"), "\n", "a > in a plain fence is code");
+  assert.equal(brk("> ```\n> > ab|\n> ```"), "\n> ", "and the inner level in a quoted one");
+  assert.equal(brk("> $$\n> x|\n> $$"), "\n> ", "math keeps the line's marks");
+  assert.equal(brk("- ```\n  ab|\n  ```"), "\n  ", "a list item's indent");
+  assert.equal(brk("1. ```\n   ab|\n   ```"), "\n   ");
+  assert.equal(brk("> - ```\n>   ab|\n>   ```"), "\n>   ");
+  assert.equal(brk("  ```\n  ab|\n  ```"), "\n  ", "a fence's own indent");
+  assert.equal(brk("- ```|\n  ab\n  ```"), "\n  ", "on the opening line");
+  assert.equal(brk("- ```\n  ab\n  |```"), "\n  ", "and before the closing mark");
+  assert.equal(brk("- ```\n  ab\n|\n  ```"), "\n  ", "on a blank line");
+  assert.equal(brk("- ```\n|  ab\n  ```"), "  \n", "a caret before the marks: a blank code line above");
+  assert.equal(brk("- ```\n |  ab\n  ```"), " \n ", "among them");
+  assert.equal(brk("> ```\n|> ab\n> ```"), "> \n");
+  assert.equal(brk("> ```\n> | ab\n> ```"), "\n> ");
+  assert.equal(codeBreak("- ```\n  ab\n  ```", 6, 9), "  \n  ", "a selection from among them puts them back");
+  assert.equal(codeBreak("> ```\n> ab\n> ```", 6, 10), "> \n> ", "so a quote's fence stays whole");
+  assert.equal(brk("> ```\n> a\n|>\n> b\n> ```"), "> \n", "a bare > is the marks it holds");
+  assert.equal(brk("- $$\n  x|\n  $$"), "\n  ", "math in a list keeps its indent");
+  assert.equal(brk("- $$|\n  x\n  $$"), "\n  ");
+  assert.equal(brk("> - $$\n>   x|\n>   $$"), "\n>   ");
+  assert.equal(brk("- > $$\n  > x|\n  > $$"), "\n  > ", "behind any stack of marks");
+  assert.equal(brk("> see $$\n> x|\n> $$"), "\n> ", "opened after text");
+  assert.equal(brk("$$\n- x|\n$$"), "\n", "a dash in a formula is no list");
+  assert.equal(brk("use `$$` for disp|lay"), null, "a $$ in code is no math");
+  assert.equal(brk("plain|"), null);
+  assert.equal(brk("> quoted|"), null);
+});
+
+test("a paste of lines in code stays behind its marks, once", () => {
+  const paste = (withCaret, clip) => {
+    const pos = withCaret.indexOf("|");
+    return codePaste(withCaret.slice(0, pos) + withCaret.slice(pos + 1), pos, clip);
+  };
+  sourceCopied("");
+  assert.equal(paste("- ```\n  a|\n  ```", "x\n  y"), "x\n    y", "text from outside keeps its own indent");
+  assert.equal(paste("- ```\n  a|\n  ```", "xy\n"), "xy\n  ", "and the line break it ends with");
+  assert.equal(paste("> ```\n|> a\n> ```", "xy\n"), "> xy\n", "from before the marks, in front of the line");
+  assert.equal(paste("- $$\n  a|\n  $$", "x\ny"), "x\n  y", "in a formula too");
+  assert.equal(paste("- ```\n  a|\n  ```", "one line"), null, "a line goes in by itself");
+  assert.equal(paste("```\na|\n```", "x\ny"), null, "a plain fence takes it as it comes");
+  assert.equal(paste("plain|", "x\ny"), null);
+  sourceCopied("two\n  ", { marks: "  " });
+  assert.equal(paste("- ```\n  |two\n  ```", "two\n  "), "two\n  ", "a copy from behind the same marks holds them");
+  sourceCopied("> two\n", { marks: "> " });
+  assert.equal(paste("> ```\n|> one\n> ```", "> two\n"), "> two\n");
+  assert.equal(paste("> ```\n> one\n|> ```", "> two\n"), "> two\n", "before a closing mark too");
+  sourceCopied("a\nb");
+  assert.equal(paste("- ```\n  |x\n  ```", "a\nb"), "a\n  b", "one from outside the code gets them");
+  sourceCopied("");
+});
+
+test("the new-block key does not cut a tilde fence's delimiter", () => {
+  assert.deepEqual(newBlockPlan("~~~py\ncode\n~~~", 2), { keep: "~~~py\ncode\n~~~", next: "", caret: 0 });
+  assert.deepEqual(newBlockPlan("~~~py\ncode\n~~~", 15), { keep: "~~~py\ncode\n~~~", next: "", caret: 0 });
+  assert.deepEqual(newBlockPlan("> ~~~\n> code\n> ~~~", 19), { keep: "> ~~~\n> code\n> ~~~", next: "", caret: 0 });
+});
 
 test("Enter continues a quote, a list and both together", () => {
   assert.equal(enter("> one|"), "> one\n> |");
@@ -181,6 +521,14 @@ test("the / menu's line commands change what a line is and keep where it sits", 
   assert.equal(retype("> body", "callout", "> [!tip] T"), "> > [!note] body", "mid-quote, a new box one level in");
   assert.equal(retype("text", "callout"), "> [!note] text");
   assert.deepEqual(retypeLine("- milk", 4, "todo"), { line: "- [ ] milk", caret: 8 }, "the caret stays in the text");
+  assert.equal(retype("- item", "text"), "item", "/text takes the marker away");
+  assert.equal(retype("- [x] item", "text"), "item");
+  assert.equal(retype("1. item", "text"), "item");
+  assert.equal(retype("## item", "text"), "item");
+  assert.equal(retype("> - item", "text"), "> item", "the quote marks stay");
+  assert.equal(retype("> [!tip] title", "text"), "> title");
+  assert.equal(retype("plain", "text"), "plain");
+  assert.deepEqual(retypeLine("- milk", 4, "text"), { line: "milk", caret: 2 }, "the caret stays in the text");
 });
 
 test("the / menu runs them on the line of the typed command", () => {
@@ -188,6 +536,7 @@ test("the / menu runs them on the line of the typed command", () => {
   const ctx = (value, query) => ({ value, start: value.indexOf(query), cursor: value.indexOf(query) + query.length, setText: (v, a) => { out = [v, a]; } });
   TEXT_INSERTS.todo(ctx("> a\n> - item/todo\n> b", "/todo"));
   assert.deepEqual(out, ["> a\n> - [ ] item\n> b", 16]);
+  TEXT_INSERTS.text(ctx("> a\n> - item/text\n> b", "/text"));
   TEXT_INSERTS.callout(ctx("> a\n> > /callout", "/callout"));
   assert.deepEqual(out, ["> a\n> > [!note] ", 16]);
 });

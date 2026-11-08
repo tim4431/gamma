@@ -17,8 +17,6 @@ are not: an admin edits them on the Admin page and they live in cloud.db
   (``GAMMA_CLOUD_SMTP_HOST``, ``_PORT``, ``_USER``, ``_PASSWORD``,
   ``_STARTTLS``) / ``memory`` (tests). ``GAMMA_CLOUD_MAIL_FROM`` is the
   sender.
-- ``GAMMA_CLOUD_DESKTOP_CLIENT_ID`` — the one public OIDC client every local
-  Gamma sidecar is (default ``gamma-desktop``).
 - ``GAMMA_CLOUD_GOOGLE_CLIENT_ID`` + ``_SECRET``, ``GAMMA_CLOUD_GITHUB_CLIENT_ID``
   + ``_SECRET`` — sign in with Google / GitHub (``providers.py``); a provider
   is offered only when both of its values are set. Their callback URLs are
@@ -73,7 +71,9 @@ SMTP_STARTTLS = os.environ.get("GAMMA_CLOUD_SMTP_STARTTLS", "1") not in ("0", "f
 RETIRED_ENV = ("GAMMA_CLOUD_REGISTRATION", "GAMMA_CLOUD_TURNSTILE_SITEKEY",
                "GAMMA_CLOUD_TURNSTILE_SECRET", "GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS")
 
-DESKTOP_CLIENT_ID = os.environ.get("GAMMA_CLOUD_DESKTOP_CLIENT_ID", "") or "gamma-desktop"
+# The one public OIDC client every local Gamma sidecar is: Gamma's backend
+# sends this id (backend/gamma/cloud_auth.py DEFAULT_CLIENT_ID).
+DESKTOP_CLIENT_ID = "gamma-desktop"
 
 SHARE_HOST_URL = os.environ.get("GAMMA_CLOUD_SHARE_HOST_URL", "").strip().rstrip("/")
 APP_URL = os.environ.get("GAMMA_CLOUD_APP_URL", "").strip().rstrip("/") or SHARE_HOST_URL
@@ -272,7 +272,6 @@ def admin_view(schema_version: int) -> list[dict]:
             _switch("Google one tap", "GAMMA_CLOUD_GOOGLE_ONE_TAP", google and GOOGLE_ONE_TAP),
             _switch("GitHub", "GAMMA_CLOUD_GITHUB_CLIENT_ID + _SECRET", bool(GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET),
                     half if bool(GITHUB_CLIENT_ID) != bool(GITHUB_CLIENT_SECRET) else ""),
-            _value("Desktop client id", "GAMMA_CLOUD_DESKTOP_CLIENT_ID", DESKTOP_CLIENT_ID),
         ]},
         {"name": "Zotero", "items": [
             _switch("Connect for Gamma servers", "GAMMA_CLOUD_ZOTERO_CLIENT_KEY + _SECRET", zotero,
