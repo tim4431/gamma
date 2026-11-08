@@ -197,7 +197,9 @@ the folder is dropped.
 Under the test harness `GAMMA_SHELL_PICK_DIR` answers the directory
 picker and `GAMMA_SHELL_PICK_FILE` the file picker, the questions take
 their first answer, and a directory "opened" or a file "revealed" is only
-recorded (`openDirectory`, `revealFile`, like `openExternal`).
+recorded (`openDirectory`, `revealFile`, like `openExternal`). The
+launcher's *Open data folder*, *Show server log* and *Show log file* go
+through the same two helpers.
 
 In the Mac App Store build the pick is also the app's access to the
 directory or the file, kept as a bookmark (`lib/folderAccess.js`; at
@@ -641,6 +643,8 @@ alone ([the survey](../../docs/research/test-windows.md)):
   brings it back with `showInactive`, unfocused, and the background step
   that tests this puts it down again. The restore and focus a user gets run
   only under `--headed`. On Windows a step that leaves the window up fails.
+- A question's box (`ask`) takes its test answer and is only recorded, in
+  the hook's `asked`.
 - An error's message box is logged instead (`errorBox`), and an uncaught
   error exits 1 rather than waiting in Electron's own box. The scripts print
   those `[shell]` lines, which the Playwright driver would otherwise keep.
@@ -662,7 +666,9 @@ users get.
 15 s after launch and every 4 h, download in the background, then one
 attention-seeking control — the **Restart to update** pill in the shell bar
 (and the same action in the launcher's Updates row). *Help → Check for
-Updates…* is the only flow that answers with a dialog. The feed is the
+Updates…* is the only flow that answers with a dialog; under the test
+harness that dialog is only recorded (`ask`, the hook's `asked`) and takes
+its last button, *Later* or *OK*, which installs nothing. The feed is the
 GitHub Release (details and the signing caveat: [release.md](release.md)).
 
 State machine (`update` in the shell state): `idle` → `checking` →

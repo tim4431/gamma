@@ -992,7 +992,13 @@ async function main() {
       assert(/Not available in this build/.test(row), row);
       assert(await content.locator('#btnUpdate').isHidden(), 'no check button when unsupported');
       assert(await bar.locator('#btnUpdate').isHidden(), 'no update pill in the bar');
-      return `${u.status} (${u.error}), v${u.current}`;
+      // Help → Check for Updates…: its box is only recorded under test, with the answer that installs nothing.
+      const before = await hook(app, (s) => s.asked.length);
+      await app.evaluate(({ Menu }) => Menu.getApplicationMenu().getMenuItemById('check-updates').click());
+      const box = await waitFor(async () => (await hook(app, (s) => s.asked.slice()))[before], 'the update box', 10_000);
+      assert.equal(box, 'Updates are not available in this build. disabled');
+      assert.equal((await hook(app, (s) => s.update())).status, 'unsupported', 'nothing installed');
+      return `${u.status} (${u.error}), v${u.current}; the menu says: ${box}`;
     });
 
     await step('unreachable remote falls back to the launcher with the error', async () => {
@@ -1045,6 +1051,14 @@ async function main() {
       assert(/unable to open database file/.test(await content.textContent('#failDetail')), "the server's own line shown");
       assert(/Open data folder/.test(await content.textContent('#failActs .primary')), 'the fix is offered first');
       assert(await content.locator('#failLog').isHidden(), 'the raw log stays folded away');
+      // Its buttons reach the file manager, which the harness only records.
+      const where = await hook(app, (s, id) => ({ data: s.registry.get(id).dataDir, log: s.logPath(id) }), ids.alpha);
+      assert(fs.existsSync(where.log), 'the server has a log file');
+      const seen = await hook(app, (s) => s.externalOpens.length);
+      await content.click('#failActs .primary');
+      await content.locator('#failActs button', { hasText: 'Show log file' }).click();
+      await waitFor(async () => (await hook(app, (s) => s.externalOpens.slice())).slice(seen).length === 2, 'both recorded', 5_000);
+      assert.deepEqual((await hook(app, (s) => s.externalOpens.slice())).slice(seen), [where.data, where.log], 'the data folder, then the log');
       await content.click('#failClose');
       assert(await content.locator('#fail').isHidden(), 'dismissable');
       return d.summary;
@@ -1137,6 +1151,13 @@ async function main() {
       await alpha.locator('button[title="Copy address"]').click();
       await waitFor(async () => (await content.textContent('#status')).includes(`Copied ${urls.alpha}`), 'the copy reported', 5_000);
       assert.equal(await hook(app, (s) => s.copied()), urls.alpha, 'the address copied');
+      // The card's folder and log buttons go to the file manager, recorded only.
+      const where = await hook(app, (s, id) => ({ data: s.registry.get(id).dataDir, log: s.logPath(id) }), ids.alpha);
+      const seen = await hook(app, (s) => s.externalOpens.length);
+      await alpha.locator('button[title="Open data folder"]').click();
+      await alpha.locator('button[title="Show server log"]').click();
+      await waitFor(async () => (await hook(app, (s) => s.externalOpens.slice())).slice(seen).length === 2, 'both recorded', 5_000);
+      assert.deepEqual((await hook(app, (s) => s.externalOpens.slice())).slice(seen), [where.data, where.log], 'the data folder, then the log');
       await alpha.locator('button[title="Show credentials"]').click();
       assert((await content.textContent('#credsText')).includes(`server:   ${urls.alpha}`), 'the credentials name the address');
       await content.click('#dlgCreds .uiBtn.primary');

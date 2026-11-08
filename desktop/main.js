@@ -390,6 +390,9 @@ function openDirectory(p) {
   if (!process.env.GAMMA_SHELL_TEST) shell.openPath(hostPath(p));
 }
 
+// A local server's log, where lib/sidecar.js writes it.
+const logPath = (id) => path.join(app.getPath('userData'), 'logs', `${id}.log`);
+
 // A file shown in its directory in the system's file manager; under the
 // test harness only recorded, like openDirectory.
 function revealFile(p) {
@@ -884,9 +887,13 @@ function linkName(link) {
 }
 
 // The native question, or its answer under the test harness (the first
-// choice that writes nothing extra).
+// choice that writes nothing extra), the question then only recorded.
+const asked = [];
 async function ask(opts, testAnswer) {
-  if (process.env.GAMMA_SHELL_TEST) return testAnswer;
+  if (process.env.GAMMA_SHELL_TEST) {
+    asked.push(`${opts.message} ${opts.detail || ''}`.trim());
+    return testAnswer;
+  }
   const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
   return r.response;
 }
@@ -1746,7 +1753,7 @@ function fullState() {
       // Paths as the file manager can find them (hostPath, a Store install).
       dataDir: hostPath(ws.dataDir),
       sizeBytes: ws.type === 'local' ? registry.dirSize(ws.dataDir) : undefined,
-      logPath: ws.type === 'local' ? hostPath(path.join(app.getPath('userData'), 'logs', `${ws.id}.log`)) : undefined,
+      logPath: ws.type === 'local' ? hostPath(logPath(ws.id)) : undefined,
     })),
     settings: state.settings,
     lastOpened: state.lastOpened,
@@ -1878,8 +1885,9 @@ async function checkForUpdatesInteractive() {
   } else {
     opts.message = `You are on the latest version (${st.current}).`;
   }
-  const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
-  if (r.response === 0 && opts.buttons.length > 1) updater.install();
+  // Under the test harness the last button, Later or OK, which installs nothing.
+  const r = await ask(opts, opts.buttons.length - 1);
+  if (r === 0 && opts.buttons.length > 1) updater.install();
 }
 
 // ----------------------------------------------------------------- menu -----
@@ -1937,7 +1945,7 @@ function buildMenu() {
     {
       role: 'help',
       submenu: [
-        { label: 'Check for Updates…', click: () => checkForUpdatesInteractive().catch(() => {}) },
+        { id: 'check-updates', label: 'Check for Updates…', click: () => checkForUpdatesInteractive().catch(() => {}) },
         { label: 'Gamma on GitHub', click: () => openExternal('https://github.com/tim4431/Gamma') },
       ],
     },
@@ -2018,11 +2026,11 @@ function registerIpc() {
   ipcMain.handle('shell:reload', shellOnly(() => content && content.webContents.reload()));
   ipcMain.handle('shell:reveal-data', shellOnly((id) => {
     const ws = registry.get(id);
-    if (ws && ws.type === 'local') shell.openPath(hostPath(ws.dataDir));
+    if (ws && ws.type === 'local') openDirectory(ws.dataDir);
   }));
   ipcMain.handle('shell:reveal-log', shellOnly((id) => {
-    const p = path.join(app.getPath('userData'), 'logs', `${id}.log`);
-    if (fs.existsSync(p)) shell.showItemInFolder(hostPath(p));
+    const p = logPath(id);
+    if (fs.existsSync(p)) revealFile(p);
   }));
   // A running local server's address, for the Gamma Connector's options.
   ipcMain.handle('shell:copy-address', shellOnly((id) => {
@@ -2308,6 +2316,8 @@ if (process.env.GAMMA_SHELL_TEST) {
     theme: () => currentTheme(),
     externalOpens,
     errorBoxes,
+    asked,
+    logPath,
     copied: () => copied,
     update: () => updater.state(),
     remoteHealth,

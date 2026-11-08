@@ -30,7 +30,7 @@ fails too, on any system. Each item below names the e2e step that covers it
 | 1.5 | Relaunch → the last server reopens by itself, at the same address, data intact, chrome already in the persisted theme | auto: *relaunch reopens the last server with its data intact* |
 | 1.6 | *Reopen last server at launch* switched off → launcher at start | manual (toggle in the launcher, restart) |
 | 1.7 | Cold start of the frozen server stays well under the 60 s health budget on a slow disk | manual: watch the *Starting …* status; `logs/<id>.log` has the uvicorn banner |
-| 1.8 | A server that will not start explains itself on the launcher (cause, the server's own line, the fixing button, log folded away) | auto: *a server that will not start is explained, not dumped*; manual: open a server whose data folder Gamma cannot write (make it read-only). A data folder written by a newer Gamma is no startup failure: it opens on the server's guidance page in the window |
+| 1.8 | A server that will not start explains itself on the launcher (cause, the server's own line, the fixing button, log folded away); *Open data folder* and *Show log file* open the data folder and show the log in the file manager | auto: *a server that will not start is explained, not dumped* (the two buttons as recorded under the harness); manual: open a server whose data folder Gamma cannot write (make it read-only). A data folder written by a newer Gamma is no startup failure: it opens on the server's guidance page in the window |
 | 1.9 | A local server keeps its address: the bar menu shows `127.0.0.1:<port>` beside a running local server, its launcher card shows the address with *Copy address*, the credentials dialog names it, and a restart or relaunch comes back on the same port; a port another program took is given up for a new one, shown in the same places | auto: *the bar menu shows each running local server's address …*, *launcher lists sizes …*, *storage folder: …* and *relaunch …* assert the same origin; `npm test` (`test/sidecar.test.js`): the port another program holds, a new one from the dynamic range; manual: the Gamma Connector set to that address, signed in with the credentials, saves a paper into the server, and still does after a relaunch |
 
 ## 2. Switching (the reason the shell bar exists)
@@ -59,7 +59,7 @@ fails too, on any system. Each item below names the e2e step that covers it
 |---|---|---|
 | 3.1 | Layout: `users.db`, `workspaces/<id>/pages.db`, `workspaces/<id>/data.db`, `workspaces/<id>/uploads/` (one dir per Gamma workspace; an older data folder is upgraded at first start, snapshot under `backups/`, and one below the upgrade floor opens on the server's guidance page) | auto: *data dir has the standard GAMMA_DATA_DIR layout* |
 | 3.2 | An uploaded PDF lands in `uploads/` under its content-hash name, exactly once | auto: *upload a PDF + create a paper page with a math note* |
-| 3.3 | Launcher shows size on disk per local server + the *last opened* badge | auto: *launcher lists sizes, last-opened badge …* |
+| 3.3 | Launcher shows size on disk per local server + the *last opened* badge; the card's *Open data folder* and *Show server log* open the folder and show the log in the file manager | auto: *launcher lists sizes, last-opened badge …* (the two buttons as recorded under the harness); manual: the file manager really opens |
 | 3.4 | Remove → *keep files* leaves the folder; *delete everything* removes it (only under the default or the configured storage root) | auto (remove) + manual (check the folder) |
 | 3.5 | Two servers never share state (separate DBs, uploads, sessions) | auto: Beta starts empty; Alpha's page only appears after the import |
 | 3.6 | Storage limits still apply per server (Settings → Users in Gamma) | manual, Gamma's own feature |
@@ -112,7 +112,7 @@ fails too, on any system. Each item below names the e2e step that covers it
 
 | # | Check | How |
 |---|---|---|
-| 7.1 | Dev tree / test harness: updater reports `unsupported`, the launcher's Updates row says so, no pill in the bar | auto: *updater: disabled under test, state exposed through the shell* |
+| 7.1 | Dev tree / test harness: updater reports `unsupported`, the launcher's Updates row says so, no pill in the bar; *Help → Check for Updates…* says updates are not available | auto: *updater: disabled under test, state exposed through the shell* (the menu item clicked, its box recorded) |
 | 7.2 | Packaged app, no newer release: *Help → Check for Updates…* says *latest version*; the launcher row reads *Up to date* | manual |
 | 7.3 | Packaged app, offline: the row reads *Update check failed: …*, nothing else complains; *Try again* re-checks | manual |
 | 7.4 | Windows: install an older version, publish a newer release → within ~15 s of launch the bar shows *Restart to update* (row: *ready; installs when you restart*); clicking it quits, stops every sidecar, installs silently, and the relaunched app reports the new version | manual, needs a real release |
@@ -158,6 +158,7 @@ started after the app opened a folder can use it.
 | `npm run e2e` (dev tree, Windows 11, minimized) | 2026-11-05 | 35/35 passed |
 | `npm run e2e:packaged` (frozen bundle, Windows 11) | 2026-09-02 | 21/21 passed |
 | `npm run e2e` (dev tree, Ubuntu under `xvfb-run -a`, Electron 45) | 2026-11-06 | 35/35 passed with *background*'s minimized-window round trip left out: Xvfb has no window manager, so a window there never reads as minimized and the step fails at it |
+| `npm run e2e -- --headed` (dev tree, Ubuntu under `xvfb-run -a`, Electron 38.8.6) | 2026-11-07 | 35/35 passed. The same run minimized failed 32 of 35 at its clicks (Playwright waiting for the launcher's buttons to be visible), from the second step on |
 
 Manual items last looked at 2026-09-01 on Windows 11: 1.6, 2.4, 2.5, 6.2,
 6.4, 6.5 (screenshots of the bar + launcher in dark and light). Not yet

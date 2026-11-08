@@ -167,10 +167,14 @@ tests reach the worker through Playwright's `serviceWorker` handle and have not
 failed this way. The test now waits until `chrome.runtime.id` is there before
 its first call into the worker, and passed 5 runs of 5 headless after that.
 
-## Still open
+## Closed since
 
-- `shell.openPath` behind the launcher's *Open data folder* and
-  `shell.showItemInFolder` behind *Show server log* and *Show log file* have no
-  test guard, unlike the helpers beside them. No step reaches them.
-- The menu's *Check for updates* box is not guarded either, and no step reaches
-  it.
+- The launcher's *Open data folder*, *Show server log* and *Show log file*
+  called `shell.openPath` and `shell.showItemInFolder` directly, with no test
+  guard. They now go through `openDirectory` and `revealFile`, which only
+  record under the harness, and the steps *a server that will not start is
+  explained, not dumped* and *launcher lists sizes, …* press all three.
+- *Help → Check for Updates…* showed its box under the harness too. It now goes
+  through `ask`, which records the box and answers with its last button, and
+  the *updater* step clicks the menu item. Both passed in a full run on
+  Ubuntu under `xvfb-run -a` on 7 November 2026.
