@@ -22,6 +22,10 @@
      gesture math in shared/lib/viewerZoom.js assumes. */
   transform-origin: 0 0;
 }
+/* The column's zoom (shared/lib/viewerZoom.js SCALE_VAR, which app.css
+   explains), which a sheet sizes with. Only the viewer's sheets: the one a
+   note draws (NoteSheet.jsx) is sized in px. */
+.nbColumn > .nbSheet { --viewer-scale: inherit; }
 .nbSheet {
   position: relative;
   flex: none;

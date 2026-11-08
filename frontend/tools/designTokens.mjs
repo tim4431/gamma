@@ -3,7 +3,7 @@
 // ratchet in tests/designTokens.test.mjs.
 //
 //   node tools/designTokens.mjs              # totals per kind and per file
-//   node tools/designTokens.mjs --list z     # every offender of one kind (color, size, radius, shadow, z, duration, easing)
+//   node tools/designTokens.mjs --list z     # every offender of one kind (color, size, radius, shadow, z, duration, easing, family)
 //   node tools/designTokens.mjs --baseline   # rewrite tests/design-baseline.json
 //
 // What counts, per declaration, in every .css under src/ except tokens.css:
@@ -20,6 +20,8 @@
 //   easing    a transition/animation timing function that isn't a var(--ease-*):
 //             a bezier, steps() or any keyword; a colour or opacity fade leaves it
 //             out (the default ease). A loop of half a second or more keeps its own
+//   family    a font family that isn't var(--font-sans), var(--font-mono) or
+//             inherit, in font-family or the font shorthand
 //
 // A justified raw value carries a comment: `ds-allow: why` in a comment on
 // the declaration's line exempts that line, and `ds-allow-start: why` …
@@ -32,7 +34,7 @@ import { fileURLToPath } from "node:url";
 const FRONTEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = path.join(FRONTEND, "src");
 export const BASELINE = path.join(FRONTEND, "tests", "design-baseline.json");
-export const KINDS = ["color", "size", "radius", "shadow", "z", "duration", "easing"];
+export const KINDS = ["color", "size", "radius", "shadow", "z", "duration", "easing", "family"];
 const TOKENS = path.join("shared", "styles", "tokens.css");
 
 export function cssFiles(dir = SRC) {
@@ -48,6 +50,9 @@ export function cssFiles(dir = SRC) {
 }
 
 // Declarations with their line, and whether an allow comment covers them.
+// Each also carries its rule's `selector`, the preludes of the at-rules
+// around it (`media`, outermost first) and a `rule` number shared by the
+// declarations of one block (tools/uiConventions.mjs reads those).
 export function declarations(css) {
   const lines = css.split(/\r?\n/);
   const allowed = new Set();
@@ -60,25 +65,30 @@ export function declarations(css) {
   // Blank out comments, keeping line breaks so offsets map to lines.
   const text = css.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
   const lineAt = (i) => (text.slice(0, i).match(/\n/g) || []).length + 1;
-  const out = [];
-  let depth = 0, start = 0;
+  const out = [], open = [];
+  let start = 0, rules = 0;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
-    if (ch === "{") { depth++; start = i + 1; continue; }
+    if (ch === "{") { open.push({ prelude: text.slice(start, i).trim().replace(/\s+/g, " "), rule: rules++ }); start = i + 1; continue; }
     if (ch !== ";" && ch !== "}") continue;
     const d = text.slice(start, i);
-    const m = depth > 0 && d.match(/^(\s*)([-\w]+)\s*:\s*([\s\S]+?)\s*$/);
+    const m = open.length > 0 && d.match(/^(\s*)([-\w]+)\s*:\s*([\s\S]+?)\s*$/);
     if (m) {
-      const at = lineAt(start + m[1].length);
-      out.push({ prop: m[2].toLowerCase(), value: m[3].replace(/\s+/g, " "), line: at, allowed: allowed.has(at) });
+      const at = lineAt(start + m[1].length), block = open[open.length - 1];
+      out.push({
+        prop: m[2].toLowerCase(), value: m[3].replace(/\s+/g, " "), line: at, allowed: allowed.has(at),
+        selector: block.prelude, media: open.slice(0, -1).map((o) => o.prelude).filter((p) => p.startsWith("@")), rule: block.rule,
+      });
     }
-    if (ch === "}") depth = Math.max(0, depth - 1);
+    if (ch === "}") open.pop();
     start = i + 1;
   }
   return out;
 }
 
 const COLOR = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?)\(/gi;
+// A font family a component may name: one of the two stacks, or its parent's.
+const FAMILY = /^(?:var\(--font-(?:sans|mono)\)|inherit)$/;
 // A timing function written out: a function, or a keyword standing alone
 // (not part of an animation's name).
 const EASING = /\b(?:cubic-bezier|steps|linear)\(|(?<![\w-])(?:ease(?:-in|-out|-in-out)?|linear|step-start|step-end)(?![\w-])/g;
@@ -127,6 +137,12 @@ export function offences({ prop, value }) {
       if (times(item).some((ms) => ms >= 500)) continue;
       for (const _ of item.replace(/var\(--[\w-]+\)/g, " ").matchAll(EASING)) hits.push("easing");
     }
+  }
+  if (prop === "font-family" && !FAMILY.test(value.replace(/\s*!important$/, ""))) hits.push("family");
+  if (prop === "font") {
+    // the family is what follows the size and its "/ line-height"
+    const m = value.replace(/\s*!important$/, "").match(/(?:^|\s)(?:[\d.]+(?:px|pt|rem|em|%)|var\(--fs-[\w-]+\)|(?:x{1,2}-)?(?:small|large)|medium|smaller|larger)(?:\s*\/\s*\S+)?\s+(.+)$/);
+    if (m && !FAMILY.test(m[1].trim())) hits.push("family");
   }
   return hits;
 }

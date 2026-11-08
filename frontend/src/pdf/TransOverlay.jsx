@@ -7,6 +7,7 @@
 // pdf/transFit.js how large its text is set, pdf/transPaint.js in what colours.
 import React, { memo, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
+import { SCALE_VAR } from "../shared/lib/viewerZoom.js";
 import { basePixels } from "./pageRaster.js";
 import { REF_SCALE, blockBoxes, blockLanding, blockSetting, blockShow, cropBox, linesReached } from "./transBlock.js";
 import { langOfKey } from "./translateRecall.js";
@@ -16,12 +17,13 @@ import { pageReading } from "./transSelect.js";
 import { textParts } from "./translateReply.js";
 
 // The blocks of a page's `entry`, laid out at REF_SCALE on a layer of the page's
-// `width` by `height` in pt and carried to `scale` by one transform, as the text
-// layer is (pdf/PdfViewer.jsx), so that a zoom writes that transform and lays
-// nothing out. Promoting the layer (will-change) would blur it: it would be
-// rasterised at REF_SCALE. `working`: translation is still arriving for the
-// page. `page` is the page's number, `spanOf` looks up a token another block
-// owns, `basePaints` counts the page bitmap's paints.
+// `width` by `height` in pt and carried to the viewer's zoom by one transform
+// of the zoom layer's SCALE_VAR, as the text layer is (pdf/PdfViewer.jsx), so
+// a zoom neither renders nor lays out the layer. Promoting the layer
+// (will-change) would blur it: it would be rasterised at REF_SCALE.
+// `working`: translation is still arriving for the page. `page` is the
+// page's number, `spanOf` looks up a token another block owns, `basePaints`
+// counts the page bitmap's paints.
 //
 // Its body paragraphs share the page's cap, `--cap` on the layer, which their
 // font size reads. It is written here, after the paragraphs' own layout effects
@@ -50,7 +52,7 @@ import { textParts } from "./translateReply.js";
 // the page is selected (a read-only page, a tool armed), as on the text layer.
 // A paragraph a job could not translate has a mark beside its original, which
 // opens the paragraph's menu (`onMenu(i, x, y)`, at a point in the viewport).
-export function TransLayer({ entry, page, width, height, scale, working, spanOf, basePaints, still = false, onMenu = null }) {
+export function TransLayer({ entry, page, width, height, working, spanOf, basePaints, still = false, onMenu = null }) {
   const { paras, texts, left } = entry;
   const ref = useRef(null);
   const shown = useRef(null);
@@ -80,7 +82,7 @@ export function TransLayer({ entry, page, width, height, scale, working, spanOf,
   const bodyFit = pageCap(paras, body, texts);
   return (
     <div ref={ref} className={"pdfTransLayer" + (still ? " still" : "")} lang={lang || undefined} style={{
-      width: width * REF_SCALE, height: height * REF_SCALE, transform: `scale(${scale / REF_SCALE})`,
+      width: width * REF_SCALE, height: height * REF_SCALE, transform: `scale(calc(var(${SCALE_VAR}) / ${REF_SCALE}))`,
     }}>
       {order.map((i) => {
         const show = blockShow(entry, i, working);

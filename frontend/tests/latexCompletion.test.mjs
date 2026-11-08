@@ -59,7 +59,7 @@ test("a base typed alone finds the commands built on it, a whole ending first", 
   assert.ok(names("b").every((name) => name.startsWith("b")), "prefix matches still come first");
   assert.ok(names("del").indexOf("partial") < names("del").indexOf("models"), "the abbreviation before an inner run");
   assert.equal(names("mbb")[0], "mathbb", "no run, so the fuzzy tail answers");
-  // egin{… gets the same rule for environment names.
+  // \begin{… gets the same rule for environment names.
   assert.deepEqual(envCompletions("cases").map((c) => c.name), ["cases", "rcases", "dcases", "drcases"]);
   assert.ok(envCompletions("matrix").map((c) => c.name).includes("pmatrix"));
 });

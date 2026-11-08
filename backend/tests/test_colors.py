@@ -12,7 +12,11 @@ from gamma.logseq_import import map_color
 from gamma.pdf_export import DEFAULT_COLOR, parse_css_color
 
 
-def test_every_spelling_parses_and_the_stored_form_is_hex_with_alpha():
+def test_every_spelling_parses():
+    """parse_color's channels in 0..1; the stored form each spelling
+    becomes, the alphas and the nearest colour are
+    tests/shared/colors.json's, which palette.js reads too
+    (test_shared_fixtures.py)."""
     assert colors.parse_color("rgba(255, 226, 143, 0.65)") == (1.0, 226 / 255, 143 / 255, 0.65)
     assert colors.parse_color("rgb(1,2,3)") == (1 / 255, 2 / 255, 3 / 255, 1.0)
     assert colors.parse_color("#abc") == (170 / 255, 187 / 255, 204 / 255, 1.0)
@@ -21,18 +25,6 @@ def test_every_spelling_parses_and_the_stored_form_is_hex_with_alpha():
     assert colors.parse_color("rgba(300, 0, 0, 2)") == (1.0, 0.0, 0.0, 1.0)
     for bad in ("red", "", None, 3, "#ggg", "rgba(1, 2)", "hsl(1, 2%, 3%)"):
         assert colors.parse_color(bad) is None, bad
-
-    # the legacy palette strings keep hue and alpha; only the spelling changes
-    assert colors.normalize_color("rgba(255, 226, 143, 0.65)") == "#ffe28fa6"
-    assert colors.normalize_color("rgba(170, 235, 170, 0.65)") == "#aaebaaa6"
-    assert colors.normalize_color("#ffe28fa6") == "#ffe28fa6"
-    assert colors.normalize_color("#FFE28F") == "#ffe28fff"
-    assert colors.normalize_color("red") is None
-    assert colors.with_alpha("#ffe28f", 0.5) == "#ffe28f80"
-    assert colors.highlight_color(colors.WASH[0]) == colors.DEFAULT_HIGHLIGHT == "#ffe28fa6"
-    assert colors.nearest("#e11d48", ("#dc2626", "#1d4ed8")) == "#dc2626"
-    assert colors.nearest("#ffe28fa6", colors.WASH) == "#ffe28f"
-    assert colors.nearest("nope", colors.WASH) is None
 
 
 def test_the_export_and_ink_readers_take_both_spellings():

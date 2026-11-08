@@ -26,7 +26,8 @@ handwriting stroke history is separate ([handwriting.md](handwriting.md)).
 
 A page's editor sends small **operations** on blocks. The server applies each batch in one transaction, orders
 it (a per-page `seq`), logs it, and fans it out to everyone on the page over a
-websocket. Edits to different blocks or property keys can coexist, and two
+websocket. A tab whose socket can't connect reads the same log every 2 s
+instead ("The client" below, "without a socket"). Edits to different blocks or property keys can coexist, and two
 people typing in one block keep both edits unless they change the same
 characters (a three-way merge, below). Structural changes can conflict, such
 as editing a block someone else deletes. Presence helps people coordinate
@@ -45,7 +46,7 @@ gets the same answer ("Ops" below).
 | op | fields | notes |
 |---|---|---|
 | `set` | `id`, `content?`, `base?`, `props?`, `base_props?` | `content` replaces the text; with `base` (the text it was edited from) it is merged into a block changed meanwhile ("same-block merge" below); `props` is a PATCH (`{key: value \| null}`, null deletes), so unrelated properties never conflict; `base_props` holds the values the patch was computed from — an ink group's new `ink_url` whose base is not the stored one is merged into the stored drawing by stroke ([handwriting.md](handwriting.md) "Two writers, one group"), a text box's `text_box` into the stored box key by key and a picture's `picture` into the stored picture ("same-box merge" below), other keys stay last-writer-wins |
-| `insert` | `id`, `parent`, `position?`, `content`, `props` | the client mints id and position (fractional-indexing, same library both sides); a position colliding with a sibling is re-keyed and the applied op echoes the final key; re-inserting an id the page already has (a retry, a rescue) leaves the block as it is, so nobody's newer edit or move is undone, and echoes it |
+| `insert` | `id`, `parent`, `position?`, `content`, `props` | the client mints id and position (fractional-indexing, the same algorithm on both sides, npm's and PyPI's, held to the same keys by `tests/shared/fractionalkeys.json`); a position no client could mint, the empty one and one with a character outside the base-62 alphabet included, is a 400 (`ops.order_key_error`); a position colliding with a sibling is re-keyed and the applied op echoes the final key; re-inserting an id the page already has (a retry, a rescue) leaves the block as it is, so nobody's newer edit or move is undone, and echoes it |
 | `move` | `id`, `parent`, `position?` | cycle-checked (400), collision-re-keyed |
 | `delete` | `id` | the subtree; an unknown id is a no-op (a retry) |
 | `merge` | `id`, `into`, `marker?`, `base?` | block `id` joined to the end of `into`: both texts as they are when the op arrives, `id`'s without a leading `marker` (its list or heading marker), its children as they are then in reading order (in its place when `into` is its parent, else last under `into`), `id` gone. Refused with conflict `missing`, `moved` or `cycle` when either block is gone, in another page, or `into` is inside `id`, and then nothing of it happens. Applied, it logs and fans out as the moves, the `set` and the `delete` it came to, so the log, a catch-up and a mirror's round see no new op. A join past `MAX_CONTENT` is 413 like a `set`. `base` is the text `into` had in the writer's tab, which the server never reads: a rescue sends it ("a block joined to another" below). Not on the folder and label trees (400), never with the page root (403) |
@@ -274,7 +275,10 @@ from it and a gap is still told by the lowest seq left. A batch's id goes
 with its row, so a retry that arrives after its row was pruned is applied
 again ("Ops" above).
 
-`GET /api/pages/{id}/ops?since=` returns the batches after a seq. It answers
+`GET /api/pages/{id}/ops?since=` returns the batches after a seq, with the
+latest `seq` and the server's `build` (as the socket's hello carries it:
+the read is the whole live channel of a tab without a socket, and the
+handwriting fence compares the build). It answers
 410, and the client reloads the tree, in three cases: the log no longer
 reaches back; what follows is more than a catch-up should replay
 (`CATCHUP_MAX_BATCHES` 200, `CATCHUP_MAX_BYTES` 1 MB); or the log cannot
@@ -407,7 +411,11 @@ they admit the viewer, and with edit rights, is
 an anyone-with-the-link edit share admits a visitor without an account, who
 joins under the display name in `?name=`, [api.md](api.md) "Link
 visitors"). The rooms of the `folders` and `labels` trees admit members
-only. Anything else is closed with 4403 before accept. The handshake
+only. Anything else is refused before accept: the handler closes it with
+4403, which uvicorn answers as an HTTP 403 to the handshake, and a browser
+reports that as a close with 1006, like a dropped connection. So a refused
+tab tries again on its backoff; one that polls stops at its read's 401 or
+403 ("The client" below, "without a socket"). The handshake
 runs these reads (`_socket_access`) and the read of the log position in
 worker threads; the room itself only ever changes on the loop. Once the peer
 is in the room and has its hello (still the first message a socket gets),
@@ -416,6 +424,17 @@ and the join found no peer for `revalidate` to close, so this check closes
 it (4403), announcing its `leave`. A
 client gone at any point of the handshake (navigated away as the socket
 opened) is an ordinary close, never an ASGI error.
+
+The socket's path asked as plain HTTP (`GET /api/ws/page/{id}`, a sync
+def in `routers/collab.py`) answers 426 with `Upgrade: websocket`; without
+the route the SPA's catch-all answered it 200 with `index.html`. A request
+carrying `Sec-WebSocket-Key` is a browser's socket whose upgrade a proxy
+dropped. It logs one warning an hour at most, so Settings → Server shows
+it: "[collab] a page socket reached the server as plain HTTP: the proxy in
+front drops WebSocket upgrades; …", naming the fix (`README.md`, the
+reverse-proxy paragraph). The route reads nothing and checks no access,
+since its answer reveals nothing. Each attempt also leaves an `[http] GET
+/api/ws/page/… status=426` line.
 
 An authenticated peer also keeps the session that admitted it, never exposed
 in presence. `collab.live_sessions` rechecks that session before the hello,
@@ -560,10 +579,15 @@ the room keeps the account's id beside it (never sent) for `revalidate`.
 The server hands out no colour: a person's colour is one of the eight
 `--peer-N`, from their name (`collaboration/personColor.js`), so they look
 the same in the page's presence, chips and carets as beside their comments,
-mentions and Inbox items. Two people on a page may share a colour.
+mentions and Inbox items. Two people on a page may share a colour. The
+notes PDF's comment cards pick the same one (`pdf_cards.person_color`,
+both held to `tests/shared/personcolor.json`).
 A share-link visitor without an account has `user: ""` and `name` = their
 display name (`?name=`, else `Anonymous`); their op batches carry
-`actor: "link:<name>"`. A rename in the share view reconnects the socket
+`actor: "link:<name>"`. The server cleans the name (`auth.link_name`:
+control characters out, whitespace collapsed, at most 40 code points), and
+the share view shows it cleaned alike (`cleanLinkName`, both held to
+`tests/shared/linkname.json`). A rename in the share view reconnects the socket
 (`usePageCollab`'s `reconnect`) so presence picks up the new name.
 
 ## The client (`src/collaboration/collabSession.js`, `src/collaboration/usePageCollab.js`, `src/shared/model/blockOps.js`)
@@ -578,8 +602,9 @@ share- or workspace-qualified URL, `hide()` on `pagehide` and
 pagehide) with its claim on the page's keepalive room ("Keepalive" below),
 a `beforeunload`
 prompt while `hasPending()`, an
-immediate retry on the browser's `online` and on the window regaining
-focus, and `peers` / `me` as React state. The session owns:
+immediate retry on the browser's `online` (`retryNow({socket: true})`) and
+on the window regaining focus (`retryNow()`), the tab's visibility for the
+poll (`hidden`), and `peers` / `me` as React state. The session owns:
 
 - **the base tree**: what the server is known to hold from this tab's point of
   view. The block tree's transition effect calls
@@ -768,9 +793,19 @@ focus, and `peers` / `me` as React state. The session owns:
   spans both survive, and so do insertions at the same or neighbouring
   offsets, the one stored first coming first — two people typing at one
   caret keep both people's keystrokes (text typed in front of a word the
-  other replaced stays in front of the replacement). Only a span of ours that replaces
+  other replaced stays in front of the replacement). An insertion or a
+  deletion beside text it repeats has more than one reading: `cool `
+  typed in front of `cat` is also `ool c` typed after its `c`. Each side's
+  is read at a word boundary where it can be, and one that still cuts into
+  the other side's change at the nearest offset where it cuts into none of
+  it, so a word typed beside a word the other deleted stays whole (read
+  the other way, `the cat sat` with `cool ` typed and `cat ` deleted made
+  `the ool csat`). Only a span of ours that replaces
   characters the stored change also replaced is dropped; the stored text
-  stands for it. Typing merges by characters. A revert of the agent's edit
+  stands for it. A set whose text is its base (a word typed and deleted
+  again within one save) changes nothing: the text stored since stands,
+  never the older text the edit started from, and the writer's caret is
+  moved into it as after any merge. Typing merges by characters. A revert of the agent's edit
   merges by words and phrases (`semantic=True`, [ai_tools.md](ai_tools.md)
   "Reverting a note change"), so two rewrites of one sentence clash as
   wholes instead of interleaving. The echoed op carries the merged text and the
@@ -898,7 +933,10 @@ focus, and `peers` / `me` as React state. The session owns:
   After the ack a held-back caret move goes out standalone; a `hello`
   (reconnect) resends the current caret, since the server starts a joiner
   with none. A socket the server closed with 4403 (access revoked) is not
-  reopened. `sendInkLive(msg)` writes an `ink-live` chunk on the open
+  reopened. The socket reconnects at 1 s, doubling up to 15 s, and the
+  backoff starts over at a hello, not when the socket opens: a proxy that
+  lets the upgrade through and passes nothing would otherwise be asked
+  every second. `sendInkLive(msg)` writes an `ink-live` chunk on the open
   socket and drops it when the socket is down (never queued or retried:
   the committed stroke follows by HTTP). An incoming `ink-live` reaches
   App through the session's `onInkLive(msg)` ([handwriting.md](handwriting.md)
@@ -906,6 +944,61 @@ focus, and `peers` / `me` as React state. The session owns:
   (`ink/inkLive.js`). `ink/useInkLive.js` keeps only the wet strokes of
   the clients in `peers`, so a `leave` (or the socket closing, which
   empties `peers`) takes a peer's wet strokes with their cursor.
+- **without a socket** (`fallback`, which `usePageCollab` turns on): a
+  proxy that drops WebSocket upgrades, or a TLS-inspecting one, leaves a
+  page without its socket, and a reader would never see a change.
+  - **When.** An attempt fails when it ends without a hello: the socket
+    closes, or no hello comes within `SOCKET_HELLO_MS` (10 s) and the
+    session closes it. After `POLL_AFTER_FAILS` (2) failures in a row the session
+    polls `GET /pages/{id}/ops?since=<seq>` every `POLL_MS` (2 s). A
+    server restart or an offline spell starts it too: the poll then fails
+    like the socket, and the socket's own backoff usually comes back
+    first.
+  - **How.** A read runs in the catch-up's slot (`s.catchingUp`, never two
+    at once) and its answer goes through the ordered inbox (`takeLog`, as
+    a catch-up's). A tick skips a hidden tab, a page not loaded yet, a
+    reload on its way and a catch-up on its way. `pollRun`, bumped
+    whenever a run stops, lets a late answer be dropped.
+  - **What arrives.** Other people's edits, renames, reloads, cross-page
+    moves and the agent's edits, within about 2 s; a handwriting stroke
+    once it is saved. Every answer's `build` goes to `onBuild` for the
+    fence. `me.connected` is true while reads answer, with `me.via`
+    `"poll"` (a hello sets `"socket"`). App takes an agent's edit as
+    arriving by ops only over the socket. Over the poll it would land with
+    the next read, after App looked for the block to scroll to, so App
+    refetches the page as it does without either.
+  - **What does not.** No presence either way: the tab sees no one and
+    the others don't see it. No carets, no `ink-live`. Comments have no
+    log: a run's first answer refetches the threads (`onComments(null)`,
+    as a hello does) and so does every `POLL_COMMENTS_EVERY` (15th)
+    answer after it, about every 30 s. The Inbox relies on its own 30 s
+    poll ([comments.md](comments.md) "Live delivery").
+  - **Answers that are not batches.** A 410, or a `reload` in the log,
+    refetches the page, and nothing is read until its load commits (the
+    next read asks since the load's seq) or `reloadFailed`. A 404 (the page
+    went to Recently deleted, or is gone) refetches once per streak and
+    backs off; App's refetch learns where it went and parks the edits
+    (`gone`). A 200 while the page is parked means it is back: it is
+    refetched. A 401 or 403 is a refusal: the poll and the socket stop
+    (`disconnect`), and a 403 says "You no longer have access to this
+    page." Anything else backs off from `RETRY_MS` (3 s), doubling up to
+    `MAX_RETRY_MS` (a minute), turns `me.connected` false and puts the
+    socket back on its own backoff.
+  - **Back to the socket.** While reads answer, the socket is tried once a
+    minute (`SOCKET_PROBE_MS`), and at once on the browser's `online`
+    (`retryNow({socket: true})`). The window regaining focus reads at
+    once (`retryNow()`). A hello ends the polling. Its catch-up follows a
+    read still on its way (`catchUpTo`), so the switch misses nothing.
+  - **Across pages.** `polling` lasts until a hello. A page opened while
+    polling is read from its first tick, beside its socket's attempt.
+  - **What the server sees.** One read every 2 s per visible tab. An
+    empty one took 1.0 ms (median, p95 1.6 ms) in process through the
+    whole middleware in 2026-11, against 0.8 ms for `/api/health`. A
+    published page read by many visitors behind one blocking proxy costs
+    one read per 2 s each, uncapped. The console's access log leaves out the
+    answered ones (`logbuf._QuietPolls`, as for `GET /api/jobs`). A proxy
+    that drops the upgrade shows as the hourly `[collab]` warning and the
+    426 lines ("Rooms and the socket" above).
 
 `diffTrees(base, next, pageId, pos)` emits inserts (unknown ids), moves (a
 known id under another parent, or out of order — the longest increasing run
@@ -1115,6 +1208,11 @@ running ([debugging.md](debugging.md#browser-end-to-end-suite)).
   test opens its own page, and sequence numbers are asserted relative to
   the hello's (or the previous ack's) — never as absolute counts — so a
   step added to one test never renumbers the others.
+- `backend/tests/test_collab.py` also covers the catch-up's `build`, and
+  the socket's path asked as plain HTTP: 426, one warning an hour for a
+  browser's socket and none for any other GET, and the socket still
+  connecting on that path. The access log leaving out answered op-log
+  reads is in `backend/tests/test_admin_logs.py`.
 - `backend/tests/test_collab.py` also covers `publish_account`: every
   socket of one account, in two rooms and through a share link, and no
   other account's. The Inbox's nudge reaching the recipient's sockets only
@@ -1135,7 +1233,9 @@ running ([debugging.md](debugging.md#browser-end-to-end-suite)).
   hunks keeping two rewrites of one phrase apart, different spans,
   insertions at one caret keeping both (through the op endpoint too), an
   insertion in front of a replaced word, an insertion inside the other
-  side's deleted span, a span both replaced.
+  side's deleted span, an insertion or a deletion beside text it repeats
+  never turned around into the other side's change (cases the crowd soak
+  found among them), a span both replaced.
 - `frontend/tests/blockOps.test.mjs`: `node --test tests/blockOps.test.mjs`
   from `frontend/` (pure diff/apply round-trips, and which remote moves
   displace the open editor's row).
@@ -1162,6 +1262,19 @@ running ([debugging.md](debugging.md#browser-end-to-end-suite)).
   made after it queuing behind the batches it named, and going hidden
   (`hide(false)`) sending only the batch that goes next; browser behavior
   is covered separately below.
+- `frontend/tests/collabPoll.test.mjs`: the session without a socket,
+  over fakes on a clock of their own — nothing armed without `fallback`,
+  two attempts without a hello (closed, or silent past the deadline)
+  starting the poll, the backoff starting over at a hello rather than at
+  the open, answers in order with `me` connected over `"poll"` and the
+  build to the fence, a read-only tab, the threads on a run's first answer and every
+  15th, a waiting save sent, a hidden tab reading nothing, a 410 or a
+  `reload` waiting for the load, a 404 and the page coming back, 401 and
+  403 stopping both, the backoff of failed reads and the socket's return
+  to its own, the minute's probe (whose close leaves `me` connected) and
+  `retryNow`, a probe's hello ending the poll with its catch-up after the
+  read on its way (a poll's, or an ack's gap catch-up), and a page
+  switch.
 - `frontend/tests/keepalive.test.mjs`: the page's keepalive ledger
   ("Keepalive") — body bytes, each priority's room (never below 0, so a
   body-less request always fits), claims read lazily and once a task,
@@ -1201,7 +1314,10 @@ running ([debugging.md](debugging.md#browser-end-to-end-suite)).
   for its retry staying taken back on the server through a tab switch, a
   paste arriving as two batches leaving
   the idle tab silent, typing kept through Recently deleted and saved after
-  the restore, a
+  the restore, a third tab whose page socket is blocked
+  (`routeWebSocket`) reading the log every 2 s, getting alice's edit and
+  sending its own, unseen by alice, and taking the socket back on
+  `online` with no read after the hello, a
   highlight made by the other person; `share.mjs` covers the invited editor on a share link and
   the stranger typing through an anyone-with-the-link edit share under a
   renamed display name, `textBoxes.mjs` a text box one person moves
@@ -1212,6 +1328,28 @@ running ([debugging.md](debugging.md#browser-end-to-end-suite)).
   ([debugging.md](debugging.md#browser-end-to-end-suite)). It types in a
   note, closes the tab at once and asserts that the server got the typing,
   also with no `pagehide` listener of the app running (`--stop pagehide`).
+- A crowd: `node tests/e2e/collabSoak.mjs` from `frontend/`, and its short
+  run, the `collab-soak` group (`npm run e2e -- --group collab-soak`; the
+  engine is `tests/e2e/scenarios/collabSoak.mjs`). Each tab is
+  `createCollabSession` itself over Node's fetch and WebSocket, with
+  App.jsx's side of the contract around it: a refetch laid under the
+  unsaved edits (`overlay`) with `reloadFailed` and a retry, a remote batch
+  applied and committed at once. So every batch, retry, catch-up, refetch
+  and caret is the production code's. The tabs type 8-character tokens
+  (half of them into each page's first block), delete words, take their
+  own oldest token out again, set a color, add and delete notes of their
+  own and move shared blocks, through socket drops and network outages
+  with `--faults`. When they stop, every edit must be saved and every tab
+  must show the server's tree. A token lost or kept after its delete is
+  replayed through `textmerge.merge` from the batch that lost it: a
+  `clash` (a span both changed, the stored text stands) and a `rewrite`
+  (words replaced in one save where the other typed) are the merge's
+  rules, anything else fails the run. So does a token there twice, a shared
+  block gone, a deleted note back, an op log past `KEEP_OPS` +
+  `PRUNE_EVERY`, a 5xx, or a traceback in the server's log. It also
+  measures: the ack, the fan-out from a POST to each peer's socket, the
+  time until a peer shows a token, the server's memory, CPU and database
+  sizes, and the op log's rows ([debugging.md](debugging.md#browser-end-to-end-suite)).
 
 ## Limits and next steps
 
@@ -1239,15 +1377,39 @@ running ([debugging.md](debugging.md#browser-end-to-end-suite)).
 - Same-block simultaneous typing merges by span (three-way merge above); a set whose content already is the block's text (the same edit sent twice, a retried batch, a clone pushing what it already pulled) merges nothing — merging it in again would double the change;
   two people replacing the *same* characters within one save window still
   resolve by server order for that span (insertions at one spot keep both).
+  One save that types a word right beside a word it deletes makes one
+  replaced span, and the other's delete of a word overlapping it drops the
+  span whole, the typed word with it: the crowd soak sees this 17 to 19
+  times in a 300 s run of 20 tabs, about once in 450 tokens, most of them
+  in the one block per page that half the typing goes to. A word replaced by another in one
+  save (select, type over) merges by characters: the letters the two words
+  share stay put, so a word the other typed in front of it at that moment
+  can land between them (the soak's `rewrite`).
   If character-exact convergence ever matters, the upgrade path is
   CodeMirror's collab rebase on just the open block; not a CRDT.
 - Undo's text rebase takes each side's change as one span: two edits of
   ours far apart in one block with someone's edit between them count as
   overlapping, and that block's text is left as it is by the undo.
-- The socket needs a proxy that forwards websocket upgrades (Vite's dev proxy
-  has `ws: true`; a reverse proxy in front of the NAS must pass `Upgrade`).
-  uvicorn needs the `websockets` package (`requirements.txt`; the desktop
-  freeze collects it).
+- The socket needs a proxy that forwards websocket upgrades. Vite's dev
+  proxy has `ws: true`. nginx needs `proxy_http_version 1.1` and the
+  `Upgrade` and `Connection` headers on `/api/ws/`, and Synology's reverse
+  proxy its WebSocket custom header (`README.md`). Without them a tab polls
+  the log ("The client" above, "without a socket"): edits arrive within about 2 s,
+  without presence. The server says so once an hour. uvicorn needs the
+  `websockets` package (`requirements.txt`; the desktop freeze collects
+  it).
+- A polling tab is invisible to the others and sees no one. Read-only
+  presence could come with the read (the room's peers, read in the worker
+  thread as `publish_account` does). Being seen would take a POST for its
+  cursor and `ink-live`, about twice the server's work.
+- If polling tabs turn out common, or 2 s too slow, the upgrade path is a
+  held read: the server keeps `GET …/ops` open up to about 25 s until a
+  batch lands. It needs its access checked again after the hold, with
+  fresh reads (`collab.peer_access` and the session; `auth` caches the
+  share grant and the role on `request.state`), `publish_all` to wake the
+  held reads, no hold for bearer tokens, and proxy read timeouts above
+  the hold. While someone types it answers every flush, more often than
+  the 2 s poll asks.
 - Rooms are per process: a multi-worker deployment would need a shared bus.
 - A tab with no page open has no socket, so the Inbox polls there
   ([comments.md](comments.md) "Live delivery"). An account socket of its

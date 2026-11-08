@@ -6,9 +6,9 @@ launcher, and desktop release workflows use these locations.
 | Location | Owns |
 |---|---|
 | `backend/gamma/` | FastAPI application, routers, and backend logic |
-| `backend/tests/` | Backend tests using temporary data directories |
-| `frontend/tests/` | `node --test` tests of the pure modules; `e2e/` the Playwright browser suite (`npm run e2e`, [debugging.md](debugging.md)) |
-| `tests/shared/` | JSON cases for rules mirrored between backend and frontend (search normalization, published pages' slugs, the ink and text merges, text boxes, notebook paper, the mirror's tree rules), read by both test suites (the mirror's tree rules and the text merge by the backend's alone) |
+| `backend/tests/` | Backend tests using temporary data directories; `test_perf.py` the server's timing budgets, marked `perf` and run only with `-m perf` ([debugging.md](debugging.md#performance-budgets)) |
+| `frontend/tests/` | `node --test` tests of the pure modules; `e2e/` the Playwright browser suite (`npm run e2e`, [debugging.md](debugging.md)); `perf/` the timing budgets of the pure hot paths (`npm run test:perf`, [debugging.md](debugging.md#performance-budgets)); `bench/` scripts that time a change before and after, against another copy of the modules |
+| `tests/shared/` | JSON cases for rules mirrored between backend and frontend (search normalization, published pages' slugs and page hosts, the ink and text merges, text boxes, pictures, notebook paper, block kinds, item types, colours, share-link names, person colours, the chat's passage budget, what a page carries, sibling keys, pasted math, the mirror's tree rules), read by both test suites (the mirror's tree rules and the text merge by the backend's alone, the held pen shape by the node and native suites alone; `test_shared_fixtures.py` checks every other file has a reader on each side) |
 | `tests/testrun.py` | What a pytest run does about its temp files and its stalls, shared by the server's and the account server's suites ([debugging.md](debugging.md#what-a-run-leaves-behind)). |
 | `frontend/src/` | React code grouped by function (`editor/`, `pdf/`, `settings/`, etc.), orchestration in `app/`, reused code/assets in `shared/`; [source map](../../frontend/src/README.md) |
 | `frontend/public/` | Files copied as-is into the frontend build |

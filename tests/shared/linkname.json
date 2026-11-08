@@ -1,0 +1,21 @@
+{
+  "about": "A share-link visitor's display name, cleaned (docs/dev/collab.md 'Rooms and the socket'): gamma/auth.py link_name and frontend/src/collaboration/linkName.js cleanLinkName. Control characters (U+0000 to U+001F, U+007F) go first, then each run of whitespace becomes one space and the ends are trimmed, then the name is cut to 40 characters, counted as code points (an emoji is one), and trimmed again. Whitespace is Python's: U+0085 is one, U+FEFF is none. out is the cleaned name, '' when nothing is left (the server then names the visitor Anonymous, the client keeps the old name). Read by backend/tests/test_shared_fixtures.py and frontend/tests/linkName.test.mjs.",
+  "clean": [
+    {"note": "padding trimmed, runs of spaces one", "in": "  Curious   Otter ", "out": "Curious Otter"},
+    {"note": "controls go before whitespace collapses", "in": "a\tb\nc", "out": "abc"},
+    {"note": "a bell is dropped", "in": "\u0007bell", "out": "bell"},
+    {"note": "delete is dropped", "in": "del\u007f", "out": "del"},
+    {"note": "an ideographic space is one space", "in": "名字\u3000空格", "out": "名字 空格"},
+    {"note": "a no-break space is one space", "in": "a\u00a0b", "out": "a b"},
+    {"note": "a line separator is one space", "in": "a\u2028b", "out": "a b"},
+    {"note": "nothing", "in": "", "out": ""},
+    {"note": "spaces only leave nothing", "in": "   ", "out": ""},
+    {"note": "controls only leave nothing", "in": "\u0000\u001f", "out": ""},
+    {"note": "capped at 40 characters", "in": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+    {"note": "a cut ending in a space drops it", "in": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx y", "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+    {"note": "an astral character counts once", "in": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d\ude00", "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d\ude00"},
+    {"note": "the cap never splits a character", "in": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d\ude00", "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+    {"note": "a next-line character is whitespace, as the server reads it", "in": "a\u0085b", "out": "a b"},
+    {"note": "a byte order mark is no whitespace, as the server reads it", "in": "\ufeffTim", "out": "\ufeffTim"}
+  ]
+}

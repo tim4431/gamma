@@ -1,0 +1,39 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": {
+    "includes": ["src/**", "tests/**", "tools/**", "*.js"]
+  },
+  "formatter": { "enabled": false },
+  "assist": { "enabled": false },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "none",
+      "correctness": {
+        "preset": "recommended",
+        "noUndeclaredVariables": "error",
+        "useHookAtTopLevel": "error",
+        "useJsxKeyInIterable": "error",
+        "noNestedComponentDefinitions": "error",
+        "noUnusedVariables": "error",
+        "noUnusedImports": "off",
+        "noUnusedFunctionParameters": "off",
+        "useParseIntRadix": "off",
+        "useExhaustiveDependencies": "off"
+      },
+      "suspicious": {
+        "preset": "recommended",
+        "noAssignInExpressions": "off",
+        "noShadowRestrictedNames": "off",
+        "noThenProperty": "off",
+        "noPrototypeBuiltins": "off",
+        "noGlobalIsNan": "off",
+        "noApproximativeNumericConstant": "off",
+        "useIterableCallbackReturn": {
+          "level": "error",
+          "options": { "checkForEach": false }
+        }
+      }
+    }
+  }
+}

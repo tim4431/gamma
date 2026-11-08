@@ -335,7 +335,8 @@ Preferences:
   (`shared/ui/paletteContext.js`): the selection popup and a highlight's
   recolour menu store the swatch at its alpha (a highlight's
   `properties.color` is `#rrggbbaa`, [api.md](api.md) "The highlight
-  shape"), a pen or highlighter preset takes the swatch's alpha as its
+  shape"; the alpha byte rounds half up on both sides, `palette.js` and
+  the server's `gamma/colors.py` held to `tests/shared/colors.json`), a pen or highlighter preset takes the swatch's alpha as its
   own `opacity` ([handwriting.md](handwriting.md)), a text box takes the
   hex alone. A changed swatch is what the pickers offer from then on;
   stored highlights and strokes keep the colour they have. The first
@@ -558,7 +559,11 @@ AI:
   custom endpoint and its API format; [ai.md](ai.md#other-services)), the key with the
   provider's placeholder, a "Get a key at …" link and the live check, then
   the models with the name and test model under More options; its button is
-  Connect, and the new connection is tested once saved; the server's shared entries follow the account's own as read-only
+  Connect, and the new connection is tested once saved; each model tag on a
+  row shows whether the model calls tools on that connection (a check, a ban
+  with the reason and date on hover, or nothing before its first chat with
+  tools), and a click on the tag checks it again ([ai.md](ai.md#models-that-cant-call-tools));
+  the server's shared entries follow the account's own as read-only
   rows tagged "Shared by this server", selectable as the active key but
   without Test / Manage / delete; with no key picked, or the picked one
   removed, the first connection that offers models is the active one, here

@@ -104,7 +104,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     assert(r.shown && r.detailRatio >= 1.95, `detail is sharp at DPR 2: ${r.detail} for ${r.detailRatio.toFixed(3)} px/px`);
     assert(pixels(r.base) > CAP * 0.95, `base keeps the capped resolution in detail mode: ${r.base}`);
     assert(withinCap(await holdings()), "bounded backing size");
-    assertEq(await page.evaluate(() => oversizedCanvases.length), 0);
+    assertEq(await page.evaluate(() => window.oversizedCanvases.length), 0);
     const note = `base ${r.base.join("x")}, detail ${r.detail.join("x")}`;
     // Scrolled on by more than a viewport within the page, the detail follows.
     const before = r.at;
@@ -134,7 +134,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
       assert(withinCap(await holdings()), "bounded backing size after navigation");
       from = pn;
     }
-    assertEq(await page.evaluate(() => oversizedCanvases.length), 0);
+    assertEq(await page.evaluate(() => window.oversizedCanvases.length), 0);
     if (flags.keep) await page.screenshot({ path: `${server.dir}/pdf-touch-400.png` });
     assertNoProblems(page);
     return note;
@@ -180,7 +180,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     const r = await raster(1);
     assert(pixels(r.base) > CAP * 0.95, `base keeps the capped resolution: ${r.base}`);
     assert(withinCap(await holdings()), "bounded backing size");
-    assertEq(await page.evaluate(() => oversizedCanvases.length), 0);
+    assertEq(await page.evaluate(() => window.oversizedCanvases.length), 0);
     await page.getByRole("button", { name: "Zoom in", exact: true }).click();
     await sleep(300);
     assert(Math.abs(await boxWidth() - 4896) < 1, "800% is the limit");
@@ -202,7 +202,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     await page.mouse.up();
     await page.waitForSelector('[data-page="1"] .inkLayer path');
     assertEq(await page.locator('[data-page="1"] .inkCanvas').evaluate((c) => c.width * c.height), 0);
-    assertEq(await page.evaluate(() => oversizedCanvases.length), 0);
+    assertEq(await page.evaluate(() => window.oversizedCanvases.length), 0);
     await page.getByRole("button", { name: "Hand", exact: true }).click();
     assertNoProblems(page);
   });
@@ -237,14 +237,14 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     await drag(-20, -220);
     await until(async () => await page.locator(".pdfViewer").evaluate((el) => el.scrollTop) > 400, { what: "native vertical swipe scrolls" });
     await sleep(900);
-    let writes = await page.evaluate(() => scrollCorrections);
+    let writes = await page.evaluate(() => window.scrollCorrections);
     assert(writes.every((w) => !w.touching) && writes.length <= 1, "no offset writes during touch; at most one correction after settling");
     const before = await page.locator(".pdfViewer").evaluate((el) => el.scrollLeft);
     await page.evaluate(() => { window.scrollCorrections = []; });
     await drag(-160, -90);
     await until(async () => await page.locator(".pdfViewer").evaluate((el) => el.scrollLeft) > before + 70);
     await sleep(700);
-    assertEq(await page.evaluate(() => scrollCorrections.length), 0, "diagonal pan is not pulled back");
+    assertEq(await page.evaluate(() => window.scrollCorrections.length), 0, "diagonal pan is not pulled back");
     assertNoProblems(page);
   });
   // The other half of shared/lib/viewerZoom.js: the notebook's side of it is
@@ -335,6 +335,159 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     assert(stillUnder && stillUnder.page === under.page && Math.abs(stillUnder.fy - under.fy) < 0.03,
       `the point under the cursor is held: ${under.fy.toFixed(3)} -> ${stillUnder?.fy.toFixed(3)}`);
     assertNoProblems(page);
+  });
+
+  // React's DevTools hook, stood in for before the app loads (react-dom looks
+  // for it once, as it starts). After each commit it walks the fiber tree and
+  // logs which pages rendered (PdfPage: React.memo's fiber, tag 15, over a
+  // .pdfPageWrap, with new props or state) and whether the viewer did (its
+  // .pdfZoomLayer got new props). These are React internals: a counter that
+  // stops seeing them fails the positive controls below instead of passing.
+  const countRenders = (c) => c.addInitScript(() => {
+    const log = window.__renders = { injected: false, commits: [] };
+    const seen = new WeakMap();
+    const changed = (f) => {
+      const was = seen.get(f) || (f.alternate && seen.get(f.alternate));
+      seen.set(f, [f.memoizedProps, f.memoizedState]);
+      if (f.alternate) seen.delete(f.alternate);
+      return !was || was[0] !== f.memoizedProps || was[1] !== f.memoizedState;
+    };
+    window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+      supportsFiber: true, isDisabled: false, renderers: new Map(),
+      inject() { log.injected = true; return 1; },
+      onCommitFiberRoot(id, root) {
+        const commit = { t: performance.now(), viewer: false, pages: {} };
+        const stack = [root.current];
+        while (stack.length) {
+          const f = stack.pop();
+          if (f.tag === 5 && f.stateNode?.classList?.contains("pdfZoomLayer")) {
+            if (changed(f)) commit.viewer = true;
+          } else if (f.tag === 15 && f.child?.tag === 5 && f.child.stateNode?.classList?.contains("pdfPageWrap")) {
+            const pn = f.child.stateNode.dataset.page;
+            if (changed(f)) commit.pages[pn] = (commit.pages[pn] || 0) + 1;
+          }
+          if (f.sibling) stack.push(f.sibling);
+          if (f.child) stack.push(f.child);
+        }
+        log.commits.push(commit);
+      },
+      onCommitFiberUnmount() {}, onPostCommitFiberRoot() {}, checkDCE() {},
+    };
+  });
+  // The zoom reaches the pages as a CSS variable (shared/lib/viewerZoom.js
+  // SCALE_VAR), not a prop: a wheel train renders the viewer each frame and
+  // no page, which sizes, and places its overlays, in CSS alone. In its own
+  // desktop context, with the counter in before the app, in every engine.
+  await step("pdf touch: a Ctrl+wheel train resizes the pages without rendering them; they render once it rests, the highlight and its note where they belong", async () => {
+    const pdf = makePdf(Array.from({ length: 3 }, (_, p) => Array.from({ length: 24 }, (_, n) => `Page ${p + 1}, line ${n + 1}: a wheel zoom`)));
+    const up = await alice.upload("/api/uploads", pdf, "wheel-zoom.pdf", "application/pdf");
+    const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Wheel zoom", source_url: up.source_url } });
+    // A highlight with a note on page 1, in the 612 x 792 frame it was made in.
+    const at = { x1: 72, y1: 96, x2: 361.5, y2: 110.25 };
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: created.id, content: "A note to zoom with",
+      properties: { quote: "", color: "rgba(255, 229, 100, 0.55)", pdf_position: { pageNumber: 1, width: 612, height: 792, boundingRect: at, rects: [at] } } } });
+    const c = await alice.context(browser, { viewport: { width: 1280, height: 860 }, deviceScaleFactor: 1 });
+    await countRenders(c);
+    const p = await openPage(c, `${server.base}/?page=${created.id}&ws=${alice.ws}`);
+    try {
+      await waitForPdf(p);
+      const one = p.locator('[data-page="1"]');
+      await one.locator("div[data-hl-id]").waitFor();
+      await one.locator(".pdfNoteAnchor").waitFor();
+      // Page 1's box, its built text layer, its highlight, its note's
+      // anchor and its base canvas, on screen.
+      const geometry = () => one.evaluate((wrap) => {
+        const r = (el) => { const b = el.getBoundingClientRect(); return { left: b.left, top: b.top, width: b.width, height: b.height }; };
+        const base = wrap.querySelector(".pdfPageCanvas > canvas:not(.pdfDetailCanvas):not([data-spare])");
+        return { box: r(wrap), text: r(wrap.querySelector(".textLayer")), hl: r(wrap.querySelector("div[data-hl-id]")),
+          anchor: r(wrap.querySelector(".pdfNoteAnchor")), base: base.width };
+      });
+      // Where its stored position puts the highlight in the box as it is,
+      // and the badge 2 px past its end, 8 px above its top. A text layer
+      // that missed the zoom would stay at 100%.
+      const inPlace = (g, when) => {
+        const kx = g.box.width / 612, ky = g.box.height / 792;
+        const want = { left: g.box.left + at.x1 * kx, top: g.box.top + at.y1 * ky, width: (at.x2 - at.x1) * kx, height: (at.y2 - at.y1) * ky };
+        for (const key of Object.keys(want)) {
+          assert(Math.abs(g.hl[key] - want[key]) < 0.5, `${when}: the highlight's ${key} is ${g.hl[key].toFixed(2)}, its stored place ${want[key].toFixed(2)}`);
+        }
+        assert(Math.abs(g.anchor.left - (want.left + want.width + 2)) < 0.5 && Math.abs(g.anchor.top - (want.top - 8)) < 0.5,
+          `${when}: the note's badge stands at the passage's end: ${g.anchor.left.toFixed(2)},${g.anchor.top.toFixed(2)}`);
+        assert(Math.abs(g.text.width - g.box.width) < 1 && Math.abs(g.text.height - g.box.height) < 1,
+          `${when}: the text layer covers the page: ${g.text.width.toFixed(1)}x${g.text.height.toFixed(1)} on ${g.box.width.toFixed(1)}x${g.box.height.toFixed(1)}`);
+      };
+      await sleep(400); // past the load's own renders and paints
+      const before = await geometry();
+      inPlace(before, "before the zoom");
+      const pointAt = (vx, vy) => p.evaluate(([vx, vy]) => {
+        for (const node of document.querySelectorAll(".pdfPageWrap")) {
+          const r = node.getBoundingClientRect();
+          if (vy >= r.top && vy <= r.bottom) return { page: node.dataset.page, fx: (vx - r.left) / r.width, fy: (vy - r.top) / r.height };
+        }
+        return null;
+      }, [vx, vy]);
+      const view = await p.locator(".pdfViewer").boundingBox();
+      const top = Math.max(before.box.top, view.y), bottom = Math.min(before.box.top + before.box.height, view.y + view.height);
+      const cursor = [Math.round(before.box.left + before.box.width * 0.4), Math.round(top + (bottom - top) * 0.4)];
+      const under = await pointAt(...cursor);
+      // Style writes on the page's box, its text layer, its highlight and
+      // its note's anchor; and the wheel as delivered (an emulated device
+      // may scale the delta).
+      await p.evaluate(() => {
+        const wrap = document.querySelector('[data-page="1"]');
+        window.__writes = [];
+        const watch = new MutationObserver((list) => { for (const m of list) window.__writes.push({ t: performance.now(), on: m.target.className }); });
+        for (const el of [wrap, wrap.querySelector(".textLayer"), ...wrap.querySelectorAll("div[data-hl-id]"), wrap.querySelector(".pdfNoteAnchor")]) {
+          watch.observe(el, { attributes: true, attributeFilter: ["style"] });
+        }
+        window.__wheel = { dy: 0, first: 0, last: 0 };
+        wrap.closest(".pdfViewer").addEventListener("wheel", (e) => {
+          const w = window.__wheel;
+          w.dy += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+          w.last = performance.now();
+          w.first ||= w.last;
+        }, true);
+      });
+      // Twelve notches, each in a frame of its own and all well inside the
+      // zoom's settle (pdf/pageRaster.js ZOOM_SETTLE_MS, 150 ms).
+      await p.mouse.move(...cursor);
+      await p.keyboard.down("Control");
+      for (let i = 0; i < 12; i++) { await p.mouse.wheel(0, -25); await sleep(40); }
+      await p.keyboard.up("Control");
+      await sleep(1300);
+      const seen = await p.evaluate(() => {
+        const { dy, first, last } = window.__wheel, quiet = last + 100;
+        const { injected, commits } = window.__renders || { injected: false, commits: [] };
+        const renders = (list) => list.reduce((n, c) => n + (c.pages["1"] || 0), 0);
+        const train = commits.filter((c) => c.t >= first && c.t <= quiet), rest = commits.filter((c) => c.t > quiet && c.t <= last + 1100);
+        return { dy, injected, span: last - first, viewer: train.filter((c) => c.viewer).length, during: renders(train), after: renders(rest),
+          writes: window.__writes.filter((w) => w.t >= first && w.t <= quiet) };
+      });
+      // The counter is live: React found the hook, and the viewer rendered
+      // in most of the train's frames.
+      assert(seen.injected, "React found the stand-in DevTools hook");
+      assert(seen.viewer >= 6, `the viewer renders through the train: ${seen.viewer} times over ${seen.span.toFixed(0)} ms`);
+      assertEq(seen.during, 0, "page 1 does not render while the wheel turns");
+      assert(seen.after >= 1, `page 1 renders once the zoom rests: ${seen.after}`);
+      assertEq(seen.writes.length, 0, `no style is written on page 1's box, text layer, highlight or badge: ${JSON.stringify(seen.writes.slice(0, 4))}`);
+      const rate = Math.exp(-seen.dy * 0.0015); // WHEEL_RATE in shared/lib/viewerZoom.js
+      let after = await geometry();
+      assert(Math.abs(after.box.width / before.box.width - rate) < 0.01,
+        `the page grew by the notches' compounded rate: ${(after.box.width / before.box.width).toFixed(4)} vs ${rate.toFixed(4)} for ${seen.dy}px`);
+      // Drawn again at the new size, and at least as sharp as the screen.
+      after = await until(async () => {
+        const g = await geometry();
+        return g.base !== before.base && g.base / g.box.width >= 0.99 ? g : false;
+      }, { what: "the base canvas is redrawn at the new size" });
+      const held = await pointAt(...cursor);
+      assert(held && held.page === under.page && Math.abs(held.fx - under.fx) < 0.02 && Math.abs(held.fy - under.fy) < 0.02,
+        `the point under the cursor is held: ${JSON.stringify(under)} -> ${JSON.stringify(held)}`);
+      inPlace(after, "after the zoom");
+      assertNoProblems(p);
+      return `${seen.viewer} viewer renders, page 1: ${seen.during} during, ${seen.after} after`;
+    } finally {
+      await c.close();
+    }
   });
 
   await step("pdf touch: prefers native fullscreen and exits with the toggle or browser", async () => {

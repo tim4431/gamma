@@ -1,35 +1,13 @@
 """Item types (``meta.kind``) under Zotero's names: what every source maps
-onto, how records stored under the old kinds or none are read, and the
-warning rule that depends on them."""
+onto and the warning rule that depends on them. How records stored under
+the old kinds or none are read is tests/shared/itemtypes.json's, which the
+app's itemTypes.js reads too (test_shared_fixtures.py)."""
 
 from conftest import make_page
 from test_metadata_verify import _paper_page
 
 from gamma import item_types
 from gamma.routers import metadata
-
-
-def test_normalize_reads_zotero_names_and_the_old_kinds():
-    assert item_types.normalize("conferencePaper") == "conferencePaper"
-    assert item_types.normalize("BookSection") == "bookSection"   # an AI's casing
-    assert item_types.normalize("notes") == "document"
-    assert item_types.normalize("slides") == "presentation"
-    assert item_types.normalize("other") == "document"
-    assert item_types.normalize("book") == "book" and item_types.normalize("thesis") == "thesis"
-    # The old "paper" named any article: the record's shape decides.
-    assert item_types.normalize("paper") == ""
-    assert item_types.normalize("podcast") == "" and item_types.normalize(None) == ""
-
-
-def test_item_type_infers_what_a_record_names_none():
-    assert item_types.item_type({"publisher": "Wiley"}) == "book"
-    assert item_types.item_type({"arxiv_id": "1706.03762", "venue": "arXiv:1706.03762"}) == "preprint"
-    assert item_types.item_type({"arxiv_id": "1602.03837", "venue": "Phys. Rev. Lett."}) == "journalArticle"
-    assert item_types.item_type({"kind": "paper", "arxiv_id": "1706.03762"}) == "preprint"
-    # Unknown stays a journal article, so it keeps the paper's warning.
-    assert item_types.item_type({}) == "journalArticle"
-    assert item_types.item_type(None) == "journalArticle"
-    assert item_types.item_type({"kind": "report", "publisher": "Wiley"}) == "report"
 
 
 def test_registry_and_zotero_types_map_onto_item_types():

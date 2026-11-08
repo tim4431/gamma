@@ -9,7 +9,7 @@ import { Account, Server, settingsPane, wanted } from "../harness.mjs";
 import { FakeCloud } from "../fakeCloud.mjs";
 
 export async function cloudSignInScenarios(env) {
-  const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
+  const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("cloud sign-in")) return;
   await server.manage("create-user", "cloud-admin", "cloud-admin-pw");
   await server.manage("set-admin", "cloud-admin", "on");

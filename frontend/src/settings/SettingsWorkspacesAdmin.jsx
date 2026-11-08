@@ -16,6 +16,7 @@ import { MorphText } from "../shared/ui/MotionWidgets";
 import { TaskBlock } from "../tasks/TasksTray";
 import { useActiveJobs, useJobEnd } from "../tasks/useTasks";
 import { t, tn } from "../shared/i18n/i18n.js";
+import { composing } from "../shared/lib/hotkeys.js";
 
 export function WorkspacesAdmin({ value }) {
   const { me, workspaces: mine, switchWorkspace, refreshSession, tasks, setStatus, confirm, closeSettings } = value;
@@ -148,7 +149,7 @@ function NewWorkspaceDialog({ me, accounts, setStatus, onCreated, onClose }) {
           <input
             className="aiKeyInput" type="text" autoFocus value={form.name}
             onChange={(e) => set({ name: e.target.value })}
-            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && !composing(e)) submit(); }}
           />
         </Field>
         <Field label={t("Owner")} hint={t("Who manages it — you unless you pick someone")}>

@@ -336,7 +336,9 @@ def test_embedded_alpha_is_gamma_alpha_before_ca(guest):
     """A highlight's or area's alpha is Gamma's /GammaAlpha when it has
     one, which a Zotero copy writes in place of /CA, even beside a /CA
     another app added; else its /CA; else the 0.45 of an annotation with
-    neither, as Zotero's own are."""
+    neither, as Zotero's own are. An alpha of 0.3 is half way between two
+    bytes (76.5) and rounds up, as the app rounds it (tests/shared/
+    colors.json)."""
     quads = {"QuadPoints": (72, 732, 300, 732, 72, 716, 300, 716)}
     _, result, kids = _imported_annotations(guest, _with_annotations(
         _annot("/Highlight", (72, 716, 300, 732), C=(1, 0, 0), GammaAlpha=0.3, Contents="gamma alpha", **quads),
@@ -345,7 +347,7 @@ def test_embedded_alpha_is_gamma_alpha_before_ca(guest):
         _annot("/Highlight", (72, 516, 300, 532), C=(1, 1, 0), Contents="neither")))
     assert result["imported"] == 4
     assert {content: props["color"] for content, props in kids.items()} == {
-        "gamma alpha": "#ff00004c", "both": "#0000ff99", "ca only": "#00ff00cc", "neither": "#ffff0073"}
+        "gamma alpha": "#ff00004d", "both": "#0000ff99", "ca only": "#00ff00cc", "neither": "#ffff0073"}
 
 
 def test_a_gamma_zotero_copy_brings_its_colours_back(guest):

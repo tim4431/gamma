@@ -860,6 +860,86 @@ export async function chatNavigationScenarios(env) {
     } finally { await pick(""); }
   });
 
+  // A model that can't call tools on its connection (gamma/routers/ai.py
+  // _checked_tools): the reply that found it out says it went without them,
+  // the registry is read again so the composer's No tools chip and the menu's
+  // "· no tools" show at once, and the chip checks the model again (Test with
+  // tools_model), after which they go.
+  await step("chat navigation: a model that can't call tools says so, and its chip checks it again", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const reason = "upstream 404: No endpoints found that support tool use";
+    let registry = FAKE_AI_MODELS;
+    let reads = 0;
+    let checked = null;
+    const ctx = await alice.context(browser);
+    await ctx.route("**/api/ai/models*", (route) => { reads++; return route.fulfill({ json: registry }); });
+    await ctx.route("**/api/metadata/cite", (route) => route.fulfill({ json: { citation: "" } }));
+    await ctx.route("**/api/ai/providers/*/test", async (route) => {
+      checked = { url: route.request().url(), body: route.request().postDataJSON() };
+      registry = FAKE_AI_MODELS;
+      await route.fulfill({ json: { ok: true, model: "model", latency_ms: 800,
+        tools: { ok: true, reason: "", at: "2026-11-06T10:00:00.000000Z" } } });
+    });
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (String(input).endsWith("/api/ai/chat")) {
+          window.chatBody = JSON.parse(init.body);
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = {
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      const chip = page.getByRole("button", { name: "No tools on model. Check again", exact: true });
+      assertEq(await chip.count(), 0, "a model not checked yet has no chip");
+      // The server checks the model before this reply, and it fails.
+      registry = { ...FAKE_AI_MODELS, models: [{ ...FAKE_AI_MODELS.models[0], tools: false, tools_reason: reason }] };
+      const before = reads;
+      await input.fill("Tidy up my library");
+      await input.press("Enter");
+      await page.waitForFunction(() => !!window.chatStream);
+      assertEq(await page.evaluate(() => window.chatBody.agent_scope), "folder", "the chat asked for tools");
+      await page.evaluate((reason) => {
+        window.chatStream.push({ model: { id: "demo:model", name: "model", effort: "", speed: "", tools: false, tools_off: reason } });
+        window.chatStream.push({ delta: "A plain answer." });
+        window.chatStream.finish();
+      }, reason);
+      const pill = page.locator(".chatBubbleRow.ai .chatPill").filter({ hasText: "Answered without tools" });
+      await pill.waitFor();
+      assert((await pill.getAttribute("title")).includes(reason), "the pill names the reason");
+      await until(() => reads > before, { what: "the registry read again" });
+      await chip.waitFor();
+      assert((await chip.getAttribute("title")).includes(reason), "the chip names the reason");
+      assert((await input.getAttribute("placeholder")).startsWith("Ask… "), "the plain chat's placeholder");
+      await page.locator(".chatModelChip .uiSelectBtn").click();
+      assertEq((await page.locator(".uiSelectMenu .ctxMenuItem").allInnerTexts())[0], "model · no tools");
+      await page.keyboard.press("Escape");
+      await chip.click();
+      await until(() => !!checked, { what: "the check posted" });
+      assert(checked.url.endsWith("/api/ai/providers/demo/test"), checked.url);
+      assertEq(checked.body.tools_model, "model");
+      await until(async () => (await chip.count()) === 0, { what: "the chip gone after the check" });
+      await page.getByRole("status").filter({ hasText: "model can use tools" }).waitFor();
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    }
+  });
+
   // A fetch_paper a publisher stopped (chat/FetchHandoffCards.jsx): the reply's
   // card opens the page through /go, follows the request on the server (the
   // Connector taking the tab shows), takes a PDF dropped on it — never the
@@ -1348,6 +1428,184 @@ export async function chatNavigationScenarios(env) {
       await ctx.close();
       await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
       await alice.api(`/api/chats/${notesPage.id}`, { method: "PUT", body: { messages: [] } });
+    }
+  });
+
+  await step("chat navigation: a plan is proposed read-only, approved, tracked, continued and revised", async () => {
+    const { title: homeTitle } = await alice.api("/api/chats/home");
+    await alice.api("/api/chats/home", { method: "PUT", body: { title: "", messages: [] } });
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    // The defaults: reading is allowed, changes ask.
+    const { agentPerms: _perms, ...rest } = profile || {};
+    await alice.api("/api/prefs/profile", { method: "PUT", body: { value: rest } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatBodies = [];
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (String(input).endsWith("/api/ai/chat")) {
+          window.chatBodies.push(JSON.parse(init.body));
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = {
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    const chat = page.locator(".chatPanel");
+    const input = page.getByRole("combobox", { name: "Message AI" });
+    const toggle = page.locator(".chatComposer").getByRole("button", { name: "Plan", exact: true });
+    const pressed = async () => (await toggle.getAttribute("aria-pressed")) === "true";
+    const sent = (n) => until(() => page.evaluate((count) => window.chatBodies.length === count && !!window.chatStream, n),
+      { what: `message ${n} is sent` }).then(() => page.evaluate(() => window.chatBodies.at(-1)));
+    const push = (...events) => page.evaluate((list) => { for (const e of list) window.chatStream.push(e); }, events);
+    const finish = async () => {
+      await page.evaluate(() => { window.chatStream.finish(); window.chatStream = null; });
+      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()),
+        { what: "the reply ends" });
+    };
+    const steps = (...statuses) => statuses.map((status, i) => ({
+      step: ["Rename “cavity paper” to Ada2019", "File it in Physics"][i], status }));
+    const planned = (plan, summary) => ({ action: { kind: "plan", tool: "update_plan", summary, args: { plan: "[…]" },
+      result: "1. …", plan } });
+    const cards = chat.locator(".chatPlan");
+    const approve = chat.getByRole("button", { name: "Approve plan", exact: true });
+    const revise = chat.getByRole("button", { name: "Revise", exact: true });
+    try {
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+
+      // 1. Plan on: the message is a planning turn; a change the model tried
+      // is kept for the plan, and the plan waits for the user.
+      await toggle.waitFor();
+      assertEq(await pressed(), false, "Plan starts off");
+      await toggle.click();
+      assertEq(await pressed(), true, "the switch says it is on");
+      assert((await input.getAttribute("placeholder")).startsWith("Ask for a plan…"), "the box asks for a plan");
+      await input.fill("Tidy this folder");
+      await input.press("Enter");
+      const first = await sent(1);
+      assertEq(first.planning, true, "the request is a planning turn");
+      assertEq(first.permissions.rename, "ask", "the permissions are sent as they are");
+      await push({ step: { id: "c1", tool: "rename_page", args: {} } },
+        { action: { kind: "error", tool: "rename_page", summary: "Held for the plan: rename_page", error: true,
+          held: true, count: 2, args: { renames: "[…]" }, result: "error: this is a planning turn, so nothing was changed" } },
+        planned({ steps: steps("pending", "pending"), proposed: true }, "Planned 2 steps"),
+        { delta: "Here is the plan." });
+      await finish();
+      const proposed = cards.first();
+      await proposed.getByText("Awaiting your approval").waitFor();
+      assertEq(await proposed.locator(".chatPlanSteps li").count(), 2);
+      assert((await proposed.innerText()).includes("Rename “cavity paper” to Ada2019"), "the card lists the steps");
+      await approve.waitFor();
+      await revise.waitFor();
+      const pill = chat.locator(".chatSteps").first();
+      await pill.getByText("1 kept for the plan").waitFor();
+      assertEq(await chat.locator(".chatStepsFailed").count(), 0, "a change kept for the plan is not a failure");
+      await pill.click();
+      await chat.getByText("Kept for the plan: Rename 2 pages").waitFor();
+      await pill.click();
+      const saved = await until(async () => {
+        const stored = await alice.api("/api/chats/home");
+        return stored.messages?.length === 2 && !stored.messages[1].partial && stored;
+      }, { what: "the planning turn is saved" });
+      assertEq(saved.messages[0].planning, true, "the message is saved as a planning turn");
+      if (flags.keep) await proposed.screenshot({ path: `${server.dir}/plan-card.png`, animations: "disabled" });
+      // The buttons wait for an empty composer, as Continue does.
+      await input.fill("x");
+      await until(async () => (await approve.count()) === 0, { what: "a draft hides Approve plan" });
+      assertEq(await revise.count(), 0);
+      await input.fill("");
+      await approve.waitFor();
+
+      // 2. Approve turns Plan off and carries the plan out as a normal turn;
+      // the run's own card tracks it.
+      await approve.click();
+      const second = await sent(2);
+      assertEq(second.prompt, "Carry out the approved plan.");
+      assertEq(second.planning, undefined, "the approved run is no planning turn");
+      assertEq(await pressed(), false, "Approve turns Plan off");
+      await proposed.getByText("Approved").waitFor();
+      assertEq(await approve.count(), 0, "an approved plan offers nothing");
+      await push(planned({ steps: steps("completed", "in_progress") }, "Plan: 1 of 2 done"));
+      const run = cards.nth(1);
+      await run.getByText("1 of 2 done").waitFor();
+      await push(planned({ steps: steps("completed", "completed") }, "Plan: 2 of 2 done"),
+        { delta: "Renamed and filed it.\n\n*(stopped: tool-round limit reached)*" },
+        { limit: { kind: "rounds", rounds: 32, changes: 2 } });
+      await run.getByText("2 of 2 done").waitFor();
+      await finish();
+      assertEq(await run.locator(".chatPlanMark.done").count(), 2, "every step is marked done");
+      if (flags.keep) await chat.screenshot({ path: `${server.dir}/plan-run.png`, animations: "disabled" });
+      const approved = await until(async () => {
+        const stored = await alice.api("/api/chats/home");
+        return stored.messages?.length === 4 && !stored.messages[3].partial && stored;
+      }, { what: "the run is saved" });
+      assertEq(approved.messages[2].approvesPlan, true, "Approve's message says so");
+      assertEq(approved.messages[2].planning, undefined);
+
+      // 3. Continue on the run keeps its mode, whatever the switch says.
+      await toggle.click();
+      assertEq(await pressed(), true);
+      await chat.locator(".chatLimitActions").getByRole("button", { name: "Continue", exact: true }).click();
+      const third = await sent(3);
+      assertEq(third.prompt, "Please continue where you stopped.");
+      assertEq(third.planning, undefined, "a Continue of the approved run is no planning turn");
+      await push({ delta: "All done." });
+      await finish();
+
+      // 4. A new plan; Revise turns Plan on and goes to the message box.
+      await input.fill("Label them too");
+      await input.press("Enter");
+      assertEq((await sent(4)).planning, true, "with Plan on the next message plans");
+      await push(planned({ steps: steps("pending"), proposed: true }, "Planned 1 step"), { delta: "One step." });
+      await finish();
+      await cards.nth(2).getByText("Awaiting your approval").waitFor();
+      await toggle.click();
+      assertEq(await pressed(), false);
+      await revise.click();
+      assertEq(await pressed(), true, "Revise turns Plan on");
+      assert(await input.evaluate((el) => el === document.activeElement), "Revise goes to the message box");
+      const composer = page.locator(".chatComposer");
+      if (flags.keep) await composer.screenshot({ path: `${server.dir}/plan-composer.png`, animations: "disabled" });
+      // A narrow chat: the switch's word gives way and the send button stays inside the composer.
+      await composer.evaluate((el) => { el.style.width = "200px"; });
+      const narrow = await page.evaluate(() => {
+        const box = document.querySelector(".chatComposer").getBoundingClientRect();
+        const sendBtn = document.querySelector('.chatComposer button[aria-label="Send"]').getBoundingClientRect();
+        return sendBtn.right <= box.right;
+      });
+      if (flags.keep) await composer.screenshot({ path: `${server.dir}/plan-composer-narrow.png`, animations: "disabled" });
+      await composer.evaluate((el) => { el.style.width = ""; });
+      assert(narrow, "the send button stays inside a narrow composer");
+
+      // 5. A reload restores Plan from the last message; New chat turns it off.
+      await toggle.click();
+      assertEq(await pressed(), false);
+      await until(async () => {
+        const stored = await alice.api("/api/chats/home");
+        return stored.messages?.length === 8 && !stored.messages[7].partial;
+      }, { what: "the conversation is saved" });
+      await page.reload();
+      await input.waitFor();
+      await until(pressed, { what: "the reload shows Plan on: the last message planned" });
+      await cards.nth(2).getByText("Awaiting your approval").waitFor();
+      await cards.first().getByText("Approved").waitFor();
+      await page.getByRole("button", { name: "New chat", exact: true }).click();
+      await until(async () => !(await pressed()), { what: "New chat turns Plan off" });
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
+      await alice.api("/api/chats/home", { method: "PUT", body: { title: homeTitle || "", messages: [] } });
     }
   });
 

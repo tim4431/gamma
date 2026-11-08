@@ -1135,7 +1135,8 @@ Unpublishing deletes the copy there, which frees a slot.
 also has a pretty address on a hostname per account,
 `https://<username>-pages.gammapdf.com/<slug>-<page id>`.
 The slug (`publish.slug`, mirrored in `frontend/src/shared/lib/slug.js`,
-pinned by `tests/shared/slug.json`) is the title ASCII-folded (NFKD, marks
+pinned by `tests/shared/slug.json`, which pins the page-host match
+`page_host_user` / `pageHostUser` too) is the title ASCII-folded (NFKD, marks
 dropped), lowercased, runs of anything but `[a-z0-9]` turned into one `-`,
 trimmed, at most 60 characters; a title with nothing left (a CJK one) gives
 none and the path is just `/<id>`. It is decoration: routing uses only the

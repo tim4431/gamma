@@ -137,7 +137,7 @@ function longPage(opening = "Paragraph") {
   return { runs };
 }
 
-export async function translationScenarios({ server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage }) {
+export async function translationScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }) {
   if (!wanted("translation")) return;
   let page, pageId, docId, stubbornDoc;
   const requests = [];
@@ -336,7 +336,7 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assertNoProblems(page);
   });
 
-  await step("translation: the overlay carries its language and the page's face, and a zoom writes one transform and no font size", async () => {
+  await step("translation: the overlay carries its language and the page's face, and a zoom writes nothing on it and no font size", async () => {
     const layer = page.locator('[data-page="1"] .pdfTransLayer');
     assertEq(await layer.getAttribute("lang"), requests[0].lang, "the layer says what language it is in");
     const set = await page.locator('[data-page="1"] .pdfTransText').first().evaluate((el) => ({
@@ -344,26 +344,29 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     }));
     assert(/^"?Times New Roman/.test(set.family), `the page's face: ${set.family}`);
     assertEq(set.rendering, "geometricprecision");
-    const transform = () => layer.evaluate((el) => el.style.transform);
+    // The zoom reaches the layer through the zoom layer's --viewer-scale, so its
+    // own style never changes: read the scale it shows from its rendered size
+    // (laid out at REF_SCALE, 2).
+    const shown = () => layer.evaluate((el) => 2 * el.getBoundingClientRect().width / el.offsetWidth);
     const sizes = () => page.locator('[data-page="1"] .pdfTransText').evaluateAll((els) => els.map((el) => getComputedStyle(el).fontSize));
-    const before = await transform(), sizesBefore = await sizes();
+    const before = await shown(), sizesBefore = await sizes();
     await layer.evaluate((el) => {
       window.transWrites = [];
       window.transWatch = new MutationObserver((changes) => window.transWrites.push(...changes.map((c) => c.target.className)));
       window.transWatch.observe(el, { attributes: true, attributeFilter: ["style"], subtree: true });
     });
     await page.getByRole("button", { name: "Zoom in", exact: true }).click();
-    await until(async () => (await transform()) !== before, { what: "the layer carried to the new zoom" });
+    await until(async () => Math.abs((await shown()) - before) > 0.01, { what: "the layer carried to the new zoom" });
     await page.waitForTimeout(700); // the sharp redraw lands, and the crops are drawn from it
     const writes = await page.evaluate(() => { window.transWatch.disconnect(); return window.transWrites; });
-    assertEq(writes.join(), "pdfTransLayer", "one write, of the layer's transform");
+    assertEq(writes.join(), "", "no write on the layer or in it");
     assertEq((await sizes()).join(), sizesBefore.join(), "the text keeps the size it is laid out at");
     assertNoProblems(page);
   });
 
   await step("translation: at 60% no translated text is cut, and each block keeps the ratio it fitted at", async () => {
     const layer = page.locator('[data-page="1"] .pdfTransLayer');
-    const scale = () => layer.evaluate((el) => 2 * Number(el.style.transform.match(/scale\((.+)\)/)[1]));
+    const scale = () => layer.evaluate((el) => 2 * el.getBoundingClientRect().width / el.offsetWidth);
     const fits = () => page.locator('[data-page="1"] .pdfTransText').evaluateAll((els) => els.map((el) => el.style.getPropertyValue("--fit")));
     const fitsBefore = await fits();
     let steps = 0;

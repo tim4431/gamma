@@ -1,0 +1,37 @@
+{
+  "about": "What kind of work a paper record describes, under Zotero's names (docs/dev/paper_metadata.md 'Item type'): gamma/item_types.py and frontend/src/shared/lib/itemTypes.js. types is the list in the metadata popover's order, checkable the types a registry can confirm (AI metadata of one nothing tied to the PDF is flagged). normalize reads a stored or received kind, without regard to case: one of types, an old kind (notes, slides, other) mapped, else '' (the old paper too). item_type is the kind a record names, else what its fields imply. Read by backend/tests/test_shared_fixtures.py and frontend/tests/itemTypes.test.mjs.",
+  "types": ["journalArticle", "conferencePaper", "preprint", "bookSection", "book", "thesis", "report", "presentation", "document"],
+  "checkable": ["journalArticle", "conferencePaper", "preprint", "bookSection", "book"],
+  "normalize": [
+    {"note": "a Zotero name is itself", "in": "conferencePaper", "out": "conferencePaper"},
+    {"note": "an AI's casing", "in": "BookSection", "out": "bookSection"},
+    {"note": "padding is trimmed", "in": " Preprint ", "out": "preprint"},
+    {"note": "the old notes kind is a document", "in": "notes", "out": "document"},
+    {"note": "the old slides kind is a presentation", "in": "slides", "out": "presentation"},
+    {"note": "the old other kind is a document", "in": "other", "out": "document"},
+    {"note": "a book", "in": "book", "out": "book"},
+    {"note": "a thesis", "in": "thesis", "out": "thesis"},
+    {"note": "the old paper kind names none: the record's shape decides", "in": "paper", "out": ""},
+    {"note": "a kind outside the list names none", "in": "podcast", "out": ""},
+    {"note": "no kind", "in": null, "out": ""},
+    {"note": "an empty kind", "in": "", "out": ""},
+    {"note": "a prototype key names none", "in": "constructor", "out": ""},
+    {"note": "the prototype itself names none", "in": "__proto__", "out": ""},
+    {"note": "a method's name lowercased names none", "in": "toString", "out": ""}
+  ],
+  "item_type": [
+    {"note": "a publisher without a venue is a book", "meta": {"publisher": "Wiley"}, "type": "book"},
+    {"note": "a blank venue is none", "meta": {"publisher": "Wiley", "venue": "  "}, "type": "book"},
+    {"note": "an arXiv id with arXiv's venue is a preprint", "meta": {"arxiv_id": "1706.03762", "venue": "arXiv:1706.03762"}, "type": "preprint"},
+    {"note": "an arXiv id alone is a preprint", "meta": {"arxiv_id": "1706.03762"}, "type": "preprint"},
+    {"note": "an arXiv id with a published venue is a journal article", "meta": {"arxiv_id": "1602.03837", "venue": "Phys. Rev. Lett."}, "type": "journalArticle"},
+    {"note": "the old paper kind is read from the shape", "meta": {"kind": "paper", "arxiv_id": "1706.03762"}, "type": "preprint"},
+    {"note": "the old paper kind, published", "meta": {"kind": "paper", "arxiv_id": "1602.03837", "venue": "Phys. Rev. Lett."}, "type": "journalArticle"},
+    {"note": "a named kind wins over the shape", "meta": {"kind": "report", "publisher": "Wiley"}, "type": "report"},
+    {"note": "a thesis", "meta": {"kind": "thesis", "title": "T"}, "type": "thesis"},
+    {"note": "an arXiv id wins over a publisher", "meta": {"publisher": "MIT", "arxiv_id": "2101.00001"}, "type": "preprint"},
+    {"note": "unknown stays a journal article, so it keeps the paper's warning", "meta": {}, "type": "journalArticle"},
+    {"note": "no record at all", "meta": null, "type": "journalArticle"},
+    {"note": "a prototype key as the kind is no kind", "meta": {"kind": "constructor"}, "type": "journalArticle"}
+  ]
+}

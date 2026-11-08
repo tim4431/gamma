@@ -120,7 +120,6 @@ import {
   reviewUndone,
   placedToCheck,
   isHighlightBlock,
-  isLinkBlock,
   isPlainNote,
   makeNewBlock,
   mergeIntoAbove,
@@ -129,7 +128,7 @@ import {
   removeBlockKeepChildren,
   visibleNeighbor,
 } from "../shared/model/blockModel";
-import { chordLabel, dispatch as dispatchHotkey, effectiveKeys, isTextField } from "../shared/lib/hotkeys.js";
+import { chordLabel, composing, dispatch as dispatchHotkey, effectiveKeys, isTextField } from "../shared/lib/hotkeys.js";
 import { APP_COMMANDS, liveAppCommands } from "./appCommands.js";
 import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
 import { commandById, commandChord } from "./commands.js";
@@ -153,7 +152,8 @@ import { useMarks } from "../markup/MarkupLayers";
 import { MarkupToolbar } from "../markup/MarkupToolbar";
 import { PageToolsContext } from "../markup/PageTools";
 import { makeStableActions, useStableActions } from "../shared/lib/stableActions.js";
-import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
+import { keepIfSame, keepIfSameJson, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
+import { blocksById, pageHighlights, recordingList, sheetNumbersOf, stampedList } from "./treeDerived.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
 import { isPicture, normalizePicture, turnedBox } from "../markup/picture.js";
@@ -190,7 +190,7 @@ import * as recorderStore from "../recording/recorderStore.js";
 import { RecordingContext } from "../recording/RecordingContext.js";
 import { RecordingPill } from "../recording/RecordingPill";
 import { PlayerBar } from "../recording/PlayerBar";
-import { isRecordingBlock, recordingAt, normalizeRecording } from "../recording/recording.js";
+import { recordingAt, normalizeRecording } from "../recording/recording.js";
 import { usePageCollab } from "../collaboration/usePageCollab";
 import { retryableStatus } from "../collaboration/collabSession.js";
 import { applyOps, applyPatch, displacedRow } from "../shared/model/blockOps";
@@ -333,8 +333,10 @@ const NO_FAMILY = { page: "", ancestors: [], subPages: [] };
 // gives a tablet held upright the same shell: two docks squeezed into 820px
 // leave ~200px columns, while a full-width reader with full-screen Notes and
 // Chat fits; turning it to landscape brings the docks back (docs/dev/ipad.md).
+// ui-allow-start pointer-kind: the layout follows the screen (ui-design.md, Device questions)
 const PHONE_MQ = "(max-width: 700px), (pointer: coarse) and (max-height: 500px), "
   + "(pointer: coarse) and (orientation: portrait) and (max-width: 1024px)";
+// ui-allow-end
 // A browser that declares itself mobile gets the phone layout regardless of
 // the viewport numbers. "Request desktop site" flips this flag along with the
 // UA, so it stays the escape hatch back to the desktop docks. Android tablets
@@ -957,9 +959,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   const [inputUrl, setInputUrl] = useState(initialUrl); // current page's source URL (shown in page properties)
   const [addUrl, setAddUrl] = useState(""); // "+" popover: URL to open
-  // The "+" menu's file pickers: hidden inputs its Upload rows click.
-  const addFilesRef = useRef(null);
-  const addFolderRef = useRef(null);
   const [pdfUrl, setPdfUrl] = useState("");
   // A pasted citation URL on a cold load opens the paper at the passage.
   const [pdfCitation, setPdfCitation] = useState(() => {
@@ -3330,15 +3329,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Probe one entry with a tiny real completion — the honest answer to "will
   // my chats work", surfacing an expired ChatGPT sign-in as a readable error
-  // here instead of a 502 mid-conversation.
-  async function testAiProvider(p) {
+  // here instead of a 502 mid-conversation. With `toolsModel` (one of its
+  // picked models) it checks whether that model calls tools instead (a
+  // model tag in Settings, the chat's No tools chip), and the lists that
+  // show the verdict are read again. Resolves to the result.
+  async function testAiProvider(p, toolsModel = "") {
     setAiKeyTests((t) => ({ ...t, [p.id]: { busy: true } }));
     let result;
     try {
       result = await apiJson(`${API}/ai/providers/${p.id}/test`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: probeModelFor(p.id) }),
+        body: JSON.stringify({ model: probeModelFor(p.id), ...(toolsModel ? { tools_model: toolsModel } : {}) }),
       });
     } catch (err) {
       result = { ok: false, error: err.message };
@@ -3346,6 +3348,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setAiKeyTests((t) => ({ ...t, [p.id]: result }));
     // A passing test clears this provider's login-check warning strip.
     if (result.ok) setAiHealth((h) => (h?.provider_id === p.id ? null : h));
+    if (result.tools) {
+      refreshAiModels();
+      // Not loadAiKeys, which would clear the other rows' results.
+      if (aiKeysInfo) apiJson(`${API}/ai/settings`).then(setAiKeysInfo).catch(() => {});
+    }
+    return result;
   }
   async function queryAiProviderUsage(p) {
     setAiKeyUsage((u) => ({ ...u, [p.id]: { busy: true } }));
@@ -4468,7 +4476,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, [blocks, focusedId, focusedBlockId, noteSel]);
   const aiMarkTimersRef = useRef(new Map());
   const aiMarkSeqRef = useRef(0);
-  const autosaveTimerRef = useRef(null);
   // Trees that did not come from an edit here: "load" (fetched from the
   // server — it becomes the collab base as is) or "remote" (another client's
   // ops applied — the base already has them, so the diff sends only our own
@@ -5491,8 +5498,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     if (!BLOCK_TOOLS.includes(a.tool)) return;
     // The edit landed: drop its preview, mark the block, and show the real
-    // change. With the page socket up it arrives as ops like any other
-    // client's; otherwise refetch (the open editor survives the swap).
+    // change. With the page live over its socket it has already arrived as
+    // ops like any other client's; otherwise refetch (the open editor
+    // survives the swap). Over the op-log poll (me.via "poll") it would land
+    // only with the next read, after reveal() looked for the block.
     setAiLive((live) => (live && (live.tool === "create_block" || live.blockId === a.block_id) ? null : live));
     if (a.block_id) markAiBlock(a.block_id, a.kind === "create" ? "create" : a.kind === "move" ? "move" : "edit", 6000);
     const reveal = () => {
@@ -5502,7 +5511,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
       });
     };
-    if (collabRef.current.me.connected) { reveal(); return; }
+    const me = collabRef.current.me;
+    if (me.connected && me.via === "socket") { reveal(); return; }
     loadBlocksForBlock(focusedBlockId).then(reveal);
   }
   const agentEventRef = useRef(null);
@@ -6016,8 +6026,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // page via POST (attach) or PUT (replace) /pages/{id}/attachment — no new
   // page is created.
   const [attachUrl, setAttachUrl] = useState("");
-  const attachFileRef = useRef(null); // its "Upload a PDF…" row's hidden picker
-  const replaceFileRef = useRef(null); // the "Replace the PDF…" row's hidden picker
   // The metadata popover under its header button. Fixed positioning so it
   // floats above the window stack instead of being clipped by the notes
   // window / drawn under the chat below it.
@@ -8233,7 +8241,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   const treeBlocks = useMemo(() => flattenBlocks(blocks), [blocks]);
-  const treeById = useMemo(() => new Map(treeBlocks.map((b) => [b.id, b])), [treeBlocks]);
+  const treeById = useMemo(() => blocksById(treeBlocks), [treeBlocks]);
   // Every row's [[ref]] and Gamma-link labels, resolved once per tree
   // change (editor/refLabels.js); a row's entry keeps its identity while
   // its labels read the same, so a memoized row (BlockTree.jsx) does not
@@ -8275,7 +8283,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Kept by identity while the numbering is the same (nbSheets is derived
   // from the tree on every edit): a row prop of every block.
   const sheetNumbersPrev = useRef(new Map());
-  const sheetNumbers = useMemo(() => keepIfSame(sheetNumbersPrev, new Map(nbSheets.map((s) => [s.id, s.index + 1])), sameMap),
+  const sheetNumbers = useMemo(() => keepIfSame(sheetNumbersPrev, sheetNumbersOf(nbSheets), sameMap),
     [nbSheets]);
   nbSheetsRef.current = nbSheets;
   // The page tools every surface's layers read (markup/PageTools.jsx), and
@@ -8330,21 +8338,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // was written, each list kept while its contents are the same, so the
   // player's marks and the rows' glyphs re-render only for a real change.
   const prevRecRef = useRef({ json: "", value: [] });
-  const recordingBlocks = useMemo(() => {
-    const next = flattenBlocks(blocks).filter(isRecordingBlock).map((b) => ({ id: b.id, properties: b.properties }));
-    const json = JSON.stringify(next);
-    if (json === prevRecRef.current.json) return prevRecRef.current.value;
-    prevRecRef.current = { json, value: next };
-    return next;
-  }, [blocks]);
+  const recordingBlocks = useMemo(() => keepIfSameJson(prevRecRef, recordingList(blocks)), [blocks]);
   const prevStampedRef = useRef({ json: "", value: [] });
-  const stampedBlocks = useMemo(() => {
-    const next = flattenBlocks(blocks).filter((b) => Number.isFinite(b.properties?.t0)).map((b) => ({ id: b.id, t0: b.properties.t0 }));
-    const json = JSON.stringify(next);
-    if (json === prevStampedRef.current.json) return prevStampedRef.current.value;
-    prevStampedRef.current = { json, value: next };
-    return next;
-  }, [blocks]);
+  const stampedBlocks = useMemo(() => keepIfSameJson(prevStampedRef, stampedList(blocks)), [blocks]);
   // Only the id of the recording playing, so App never re-renders for a frame.
   const playingRecordingId = useSyncExternalStore(playback.subscribe, () => playback.now()?.scope.recording || null);
   const recordingNow = useSyncExternalStore(recorderStore.subscribe, recorderStore.coarseNow);
@@ -9388,21 +9384,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // content is identical keeps the viewer's per-page memo effective (otherwise
   // each keystroke re-rendered every PdfPage's overlays).
   const prevHighlightsRef = useRef({ json: "", value: [] });
-  const highlights = useMemo(() => {
-    const byId = new Map(treeBlocks.map((b) => [b.id, b]));
-    const next = blocksToHighlights(blocks).map((h) => {
-      const b = byId.get(h.id), p = b?.properties || {};
-      // its open comment threads: the note badge shows for them too
-      const threads = comments.countByBlock.get(h.id) || 0;
-      const out = threads ? { ...h, threadCount: threads } : h;
-      return isLinkBlock(b)
-        ? { ...out, linkTarget: { url: p.link_url || "", pageId: p.link_page_id || "", blockId: p.link_block_id || "" } } : out;
-    });
-    const json = JSON.stringify(next);
-    if (json === prevHighlightsRef.current.json) return prevHighlightsRef.current.value;
-    prevHighlightsRef.current = { json, value: next };
-    return next;
-  }, [blocks, treeBlocks, comments.countByBlock]);
+  const highlights = useMemo(() => keepIfSameJson(prevHighlightsRef, pageHighlights(blocks, treeBlocks, comments.countByBlock)),
+    [blocks, treeBlocks, comments.countByBlock]);
   // The page's highlights to review after its PDF was replaced, in document
   // order: the pending ones (drawn dashed until accepted or moved), the
   // Document menu's Accept all, and with the lost ones (hollow) the review
@@ -9990,6 +9973,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 onChange={(e) => setTitleDraft(e.target.value.replace(/\s*[\r\n]+\s*/g, " "))}
                 onBlur={() => { renameTitle(titleDraft); setTitleEditing(false); }}
                 onKeyDown={(e) => {
+                  if (composing(e)) return;
                   if (e.key === "Enter") {
                     // The first block's editor mounts and takes focus within this same
                     // key event (discrete-event flush), so the key's default insert would
@@ -10064,7 +10048,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           value={labelInput}
                           onChange={(e) => { setLabelSuggestionIdx(-1); setLabelInput(e.target.value); }}
                           onKeyDown={(e) => {
-                            if (e.nativeEvent.isComposing) return;
+                            if (composing(e)) return;
                             if (e.key === "ArrowDown") {
                               e.preventDefault();
                               if (suggestions.length > 0) {
@@ -10219,7 +10203,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         ) : null}
                         {!readOnly ? (
                           <>
-                            <MenuItem icon={UploadIcon} disabled={loading} onClick={() => replaceFileRef.current?.click()}
+                            <MenuItem icon={UploadIcon} disabled={loading}
+                              onClick={() => pickFiles({ accept: ".pdf,application/pdf" }, ([f]) => attachPdfToPage({ file: f, replace: true }))}
                               title={t("Upload a new version of this PDF: the notes and highlights stay, and each highlight moves to where its text is in the new file")}>
                               {t("Replace the PDF…")}
                             </MenuItem>
@@ -10239,13 +10224,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                 : t("Find each highlight's text in this file and move the highlight there; one matched roughly is drawn dashed, one whose text is gone hollow")}>
                               {t("Find highlights in this PDF")}
                             </MenuItem>
-                            <input
-                              ref={replaceFileRef}
-                              type="file"
-                              accept=".pdf,application/pdf"
-                              hidden
-                              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f, replace: true }); }}
-                            />
                             <MenuItem icon={ScissorsIcon} onClick={detachPdfFromPage}>{t("Detach the PDF…")}</MenuItem>
                           </>
                         ) : null}
@@ -10270,18 +10248,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             onChange={(e) => setAttachUrl(e.target.value)}
                             placeholder={t("PDF URL, arXiv id, or DOI — press Enter")}
                             onKeyDown={(e) => {
+                              if (composing(e)) return;
                               if (e.key === "Enter" && attachUrl.trim() && !loading) attachPdfToPage({ url: attachUrl.trim() });
                               else if (e.key === "Escape") setOpenPopover(null);
                             }}
                           />
-                          <MenuItem icon={UploadIcon} disabled={loading} onClick={() => attachFileRef.current?.click()}>{t("Upload a PDF…")}</MenuItem>
-                          <input
-                            ref={attachFileRef}
-                            type="file"
-                            accept=".pdf,application/pdf"
-                            hidden
-                            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
-                          />
+                          <MenuItem icon={UploadIcon} disabled={loading}
+                            onClick={() => pickFiles({ accept: ".pdf,application/pdf" }, ([f]) => attachPdfToPage({ file: f }))}>{t("Upload a PDF…")}</MenuItem>
                         </> : null}
                       </Popover>
                     ) : null}
@@ -10375,6 +10348,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                   value={metaDraft?.[key] ?? ""}
                                   onChange={(e) => setMetaDraft((d) => ({ ...(d || metadataToDraft(null)), [key]: e.target.value }))}
                                   onKeyDown={(e) => {
+                                    if (composing(e)) return;
                                     if (e.key !== "Enter") return;
                                     e.preventDefault();
                                     // Enter = Save (only when something actually changed)
@@ -10427,6 +10401,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                 value={citeKeyDraft}
                                 onChange={(e) => setCiteKeyDraft(e.target.value)}
                                 onKeyDown={(e) => {
+                                  if (composing(e)) return;
                                   if (e.key !== "Enter") return;
                                   e.preventDefault();
                                   if (metaDirty) saveMetaEdits();
@@ -10614,6 +10589,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       tip={t("{f}\nClick to select · double-click to open · drop a page or folder to move it in", { f: folderPath(libTree, f) })}
                       time={formatRelativeTime(folderMeta[f]?.updated)}
                       draggable
+                      // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                       onDoubleClick={() => openFolder(f)}
                     >
                       <button
@@ -10638,6 +10614,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       {...pageDropProps(b._pageId)}
                       checked={selecting && selectedPages.has(b._pageId)}
                       onClick={(e) => handlePageClick(b, e)}
+                      // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                       onDoubleClick={() => openPage(b._pageId)}
                       onMenu={openPageMenu(b._pageId, b.content)}
                     >
@@ -10804,6 +10781,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => setNewFolderName(e.target.value)}
                             onKeyDown={(e) => {
+                              if (composing(e)) return;
                               if (e.key === "Enter") { e.preventDefault(); commitNewFolder(); }
                               else if (e.key === "Escape") { setNewFolderOpen(false); setNewFolderName(""); }
                             }}
@@ -10839,6 +10817,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         labelMode={fileLabels}
                         checked={selecting && selectedLabels.has(l)}
                         onClick={(e) => handleLabelClick(l, e)}
+                        // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                         onDoubleClick={() => openLabel(l)}
                         onMenu={l === NO_LABEL ? undefined : openTagMenu("label", l)}
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(l); }}
@@ -10861,6 +10840,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             defaultValue={libTree.folders.get(f).name}
                             onClick={(e) => e.stopPropagation()}
                             onKeyDown={(e) => {
+                              if (composing(e)) return;
                               if (e.key === "Enter") renameFolder(f, e.currentTarget.value);
                               else if (e.key === "Escape") setFolderRenaming(null);
                             }}
@@ -10868,6 +10848,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           />
                         ) : null}
                         draggable={lib.organize && folderRenaming?.id !== f}
+                        // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                         onDoubleClick={() => { if (folderRenaming?.id !== f) openFolder(f); }}
                       />
                       ); }
@@ -10895,6 +10876,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               defaultValue={b.content}
                               onClick={(e) => e.stopPropagation()}
                               onKeyDown={(e) => {
+                                if (composing(e)) return;
                                 if (e.key === "Enter") commitPageRename(id, e.currentTarget.value);
                                 else if (e.key === "Escape") setHomeEditingId(null);
                               }}
@@ -10906,6 +10888,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           onDragStart={(e) => startPageDrag(e, id)}
                           {...pageDropProps(id)}
                           onClick={(e) => handlePageClick(b, e)}
+                          // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
                           onMenu={openPageMenu(id, b.content)}
                         >
@@ -10947,6 +10930,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           onChange={(e) => setNewFolderName(e.target.value)}
                           placeholder={t("Folder name…")}
                           onKeyDown={(e) => {
+                            if (composing(e)) return;
                             if (e.key === "Enter") { e.preventDefault(); commitNewFolder(); }
                             else if (e.key === "Escape") { setNewFolderOpen(false); setNewFolderName(""); }
                           }}
@@ -10977,6 +10961,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         data-motion-key={item.key}
                         className={`folderRow labelRow rowMenuHost ${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
                         onClick={(e) => handleLabelClick(l, e)}
+                        // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                         onDoubleClick={() => openLabel(l)}
                         {...menuPress(menu)}
                         onDragOver={(e) => { e.preventDefault(); setFolderDragOver(l); }}
@@ -10999,6 +10984,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         draggable={lib.organize && folderRenaming?.id !== f}
                         onDragStart={(e) => startFolderDrag(e, f)}
                         onClick={(e) => handleFolderClick(f, e)}
+                        // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                         onDoubleClick={() => { if (folderRenaming?.id !== f) openFolder(f); }}
                         {...menuPress(menu)}
                         onDragOver={(e) => dragOverFolder(e, f)}
@@ -11015,6 +11001,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => setFolderRenaming({ id: f, draft: e.target.value })}
                             onKeyDown={(e) => {
+                              if (composing(e)) return;
                               if (e.key === "Enter") renameFolder(f, folderRenaming.draft);
                               else if (e.key === "Escape") setFolderRenaming(null);
                             }}
@@ -11041,6 +11028,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           onDragStart={(e) => startPageDrag(e, id)}
                           {...pageDropProps(id)}
                           onClick={(e) => handlePageClick(b, e)}
+                          // ui-allow double-click: a tap opens where a click selects (ui-design.md, Device questions)
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
                           {...menuPress(menu)}
                           title={t("{content}\nClick to select · double-click to open", { content: b.content })}
@@ -11053,6 +11041,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               defaultValue={b.content}
                               onClick={(e) => e.stopPropagation()}
                               onKeyDown={(e) => {
+                                if (composing(e)) return;
                                 if (e.key === "Enter") commitPageRename(id, e.currentTarget.value);
                                 else if (e.key === "Escape") setHomeEditingId(null);
                               }}
@@ -11633,6 +11622,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           focusSignal={chatFocusSignal}
           openSettings={openSettingsPane}
           isAdmin={!!authUser?.is_admin}
+          checkModelTools={(m) => testAiProvider({ id: m.provider }, m.model)} refreshAiModels={refreshAiModels}
           aiHealth={aiHealth} dismissAiHealth={() => setAiHealth(null)}
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus} askConfirm={setConfirmBox}
@@ -11646,10 +11636,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {
-            // The AI edited note blocks server-side. With the page socket up
-            // they already arrived as ops; otherwise refetch the open page.
+            // The AI edited note blocks server-side. With the page live over
+            // its socket they already arrived as ops; otherwise (no socket, or
+            // only the op-log poll, which reads them up to 2 s later) refetch
+            // the open page.
             if (!focusedBlockId || !pageIds.includes(focusedBlockId)) return;
-            if (collabRef.current.me.connected) return;
+            const me = collabRef.current.me;
+            if (me.connected && me.via === "socket") return;
             loadBlocksForBlock(focusedBlockId);
           }}
         />
@@ -11949,6 +11942,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onChange={(e) => setAddUrl(e.target.value)}
               placeholder={t("Paste a URL, DOI or arXiv id")}
               onKeyDown={(e) => {
+                if (composing(e)) return;
                 if (e.key === "Enter" && addUrl.trim() && !loading) {
                   setOpenPopover(null);
                   // A share link from another Gamma (or this one) brings the
@@ -11965,27 +11959,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {t("A Gamma share link — Enter copies what it shares, a page or a whole folder, into your library.")}
               </div>
             ) : null}
-            <MenuItem icon={UploadIcon} disabled={loading} data-guide="add.upload" onClick={() => addFilesRef.current?.click()}>{t("Upload files…")}</MenuItem>
-            <MenuItem icon={FolderIcon} disabled={loading} onClick={() => addFolderRef.current?.click()}
+            <MenuItem icon={UploadIcon} disabled={loading} data-guide="add.upload"
+              onClick={() => pickFiles({ accept: PAGE_FILE_ACCEPT, multiple: true }, (files) => { setOpenPopover(null); uploadFiles([...files]); })}>{t("Upload files…")}</MenuItem>
+            <MenuItem icon={FolderIcon} disabled={loading}
+              onClick={() => pickFiles({ directory: true }, (files) => { setOpenPopover(null); uploadFiles([...files]); })}
               title={t("Import every PDF and Markdown note in a folder — subfolders become folders")}>{t("Upload folder…")}</MenuItem>
             <MenuItem icon={FilePlusIcon} data-guide="add.newPage" onClick={() => createPage()}>{t("New page")}</MenuItem>
             <MenuItem icon={NotebookIcon} data-guide="add.newNotebook" onClick={() => createNotebook()}
               title={t("A page of blank paper to write on, with pages added as you go")}>{t("New notebook")}</MenuItem>
-            <input
-              ref={addFilesRef}
-              type="file"
-              accept={PAGE_FILE_ACCEPT}
-              multiple
-              hidden
-              onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
-            />
-            <input
-              ref={addFolderRef}
-              type="file"
-              webkitdirectory=""
-              hidden
-              onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
-            />
           </Popover>
         ) : null}
       </span>
@@ -12825,6 +12806,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               maxLength={LINK_NAME_MAX}
               aria-label={t("Your name on this page")}
               onKeyDown={(e) => {
+                if (composing(e)) return;
                 if (e.key === "Enter") commitLinkName(e.currentTarget.value);
                 else if (e.key === "Escape") setRenamingLink(false);
               }}
@@ -13423,7 +13405,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onFocus={(e) => e.currentTarget.select()}
               onChange={(e) => setLabelRenaming((s) => ({ ...s, draft: e.target.value }))}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.nativeEvent.isComposing) renameLabel(labelRenaming.id, labelRenaming.draft);
+                if (composing(e)) return;
+                if (e.key === "Enter") renameLabel(labelRenaming.id, labelRenaming.draft);
                 else if (e.key === "Escape") setLabelRenaming(null);
               }}
             />
@@ -13942,7 +13925,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           aria-label={t("New label")}
                           onChange={(e) => setHomeMenuLabelDraft(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.nativeEvent.isComposing) return;
+                            if (composing(e)) return;
                             if (e.key === "Enter") { e.preventDefault(); commitNewLabel(); }
                             else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setHomeMenuLabelDraft(null); }
                           }}

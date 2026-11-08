@@ -18,6 +18,8 @@ the change come from one place ("Asking before a call" in
 [ai.md](ai.md#asking-before-a-call-approvals)). A permission is either
 reading or changing: its tools share the `mutating` flag, which also sets its
 default (reading allowed, changes ask; `ai_permissions.permission_state`).
+One tool has no permission: `update_plan`, the plan a planning turn
+proposes, armed whenever a changing tool is ("update_plan" below).
 A cursor block (`focus_block_id`), attached block chips (`context_blocks`),
 note selections and selected handwriting (`ink_selections`, a picture of
 the strokes with their block's id) reach the model with the message, so
@@ -87,7 +89,8 @@ The [MCP adapter](mcp.md) exposes a read-only subset of this same registry to
 external assistants. `agent_tools` filters definitions and `run_agent_tool`
 enforces the caller's allowlist at dispatch. Gamma chat passes its armed tool
 set. MCP passes `mcp_tools`: every reading tool that stays inside the
-library, without the web tools, the change tools or `list_deleted`. Its
+library, without the web tools, the change tools, `list_deleted` or
+`update_plan`. Its
 scope is read-only, and its `link_base` makes results carry absolute links
 to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
 [mcp.md](mcp.md) "Links in results").
@@ -125,6 +128,7 @@ to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
 | `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree) |
 | `delete_block` | Edit note blocks | folder + page | Delete a note block with everything under it; the user can revert |
 | `clip_region` | Edit note blocks | folder + page | Store a picture of a PDF region (with the handwriting on it, if asked) or of a handwriting block as an upload the notes can embed, and return its URL |
+| `update_plan` | none (armed beside a change) | folder + page | Propose a change of several steps as a checklist for the user to approve, or mark its steps while carrying it out |
 
 ### list_pages (folder only)
 
@@ -1460,6 +1464,46 @@ adds (`pictures` on the preview). The prompt says which URLs the model may
 embed: the ones in a picture's label line, `clip_region`'s result, and
 `read_block`'s text.
 
+### update_plan (both scopes)
+
+The plan of a change, shown to the user as a checklist under the reply
+([ai.md](ai.md) "Planning first"). It takes Codex's schema, which
+GPT-5.x and Codex models are trained on and which is close to Claude's
+TodoWrite: `{explanation?, plan: [{step, status}]}`, each status
+`pending`, `in_progress` or `completed` (`PLAN_STATUSES`). It has no
+permission of its own (`perm` is `""`): `agent_tools` arms it last, and
+only when a changing tool is armed, since a plan is of changes. So it is
+not offered where every change is Off, without `can_write`, to the
+`read_paper` helper or over MCP. `_state_of` reads it as allowed, and
+`tool_states` leaves it out of the permission map.
+
+`_run_update_plan` reads the list leniently: a step's whitespace is
+collapsed and cut at `_PLAN_STEP_MAX` (200) characters, an empty step is
+dropped, an unknown status is pending, and only the first `in_progress`
+is kept. A plan holds at most `MAX_PLAN_STEPS` (15); the result says how
+many more were left out. An empty or missing `plan` is an error. In a
+planning turn every status is pending and the action carries `plan:
+{steps, proposed: true}`, its summary "Planned 4 steps". In any other
+turn the statuses are kept and the summary reads "Plan: 2 of 4 done".
+`explanation` stays in the call's arguments, cut at `_ARG_CAP` on the
+chip.
+
+The result is the numbered checklist (`1. [pending] Rename the 37
+pages…`). A proposed plan's head reads "Proposed to the user; nothing is
+changed until they approve it:", which stays true in every later turn
+that replays it. The caps keep the longest checklist at about 3.3k
+characters, under `_DETAIL_CAP`, so the saved result is the whole plan.
+The replay keeps the newest plan's result whole under
+`TOOL_REPLAY_BUDGET`, its size taken first, so the Approve turn and a
+Continue after a long run both see every step. The request's history leaves out the
+action's `plan` (`forReplay`), since the result already carries it.
+
+When `update_plan` is armed, `agent_system` adds one line that stays the
+same on every turn: carry out an approved plan in order, mark steps in
+the same turn as the next calls and never in a turn of their own, and
+say so when a step must change. Its chip's icon is the numbered list
+(kind `plan`), and the steps pill reads it as "updated the plan".
+
 ## Guardrails
 
 Deliberately not offered under any permission:
@@ -1487,7 +1531,10 @@ Deliberately not offered under any permission:
 Tools whose permission is Off are not offered to the model, and the server
 additionally refuses to execute them if called. A tool whose permission is
 Ask is offered, but each call waits on an approval card and runs only once
-the user allows it. Output/argument sizes are capped
+the user allows it. In a planning turn (the chat's Plan switch) the server
+refuses every changing call that its permission would let through and
+that would change something, with `PLAN_HELD` and no card (`held_for_plan`; [ai.md](ai.md) "Planning
+first"). Output/argument sizes are capped
 (`_LIST_CAP` on listings; `_DETAIL_CAP` and `_ARG_CAP` cap the saved chip
 only — the model gets the full result, under the live budget
 `ai_context.LIVE_RESULT_BUDGET`), and the loop itself is bounded —
@@ -1500,8 +1547,8 @@ always a visible record of what the agent looked at and changed. One pill
 sums them up ("6 steps · listed, read 1 page · 1 failed") and expands to a
 line per call, its icon naming the action kind (`ACTION_ICONS` in
 `chat/AgentChanges.jsx`: list, book, search, eye, pen, quote, globe, download,
-file-plus, history, pencil, folder, plus, label). Each line expands to the
-arguments and the output the model got. Everything that changed is listed
+file-plus, history, pencil, folder, plus, label, numbered list). Each line
+expands to the arguments and the output the model got. Everything that changed is listed
 again under the pill: "Changed in your library" (renamed, filed, saved,
 deleted and restored pages; renamed, made, applied and deleted folders and labels) and
 "Changed in your notes" (edited, added and moved

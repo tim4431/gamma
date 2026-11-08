@@ -1,6 +1,7 @@
 // Pure library rules: the folder and label trees of the listing, then the
 // dates, attachments and links.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { generateKeyBetween } from "fractional-indexing";
 import {
@@ -184,21 +185,17 @@ test("isLinkInput tells a link from a search", () => {
   }
 });
 
-test("pageAttachment and defaultPageTitle", () => {
-  assert.equal(pageAttachment({ properties: {} }), null);
-  // the stored copy's URL is derived from doc_id; a source_url of its own wins
-  assert.deepEqual(pageAttachment({ properties: { doc_id: "d1", original_filename: "paper.pdf" } }),
-    { kind: "pdf", id: "d1", url: "/api/uploads/d1.pdf", name: "paper.pdf" });
-  assert.deepEqual(pageAttachment({ properties: { doc_id: "d1", source_url: "https://x.test/p.pdf" } }),
-    { kind: "pdf", id: "d1", url: "https://x.test/p.pdf", name: "" });
-  assert.deepEqual(pageAttachment({ properties: { source_url: "/api/uploads/d1.pdf" } }),
-    { kind: "pdf", id: "", url: "/api/uploads/d1.pdf", name: "" });
-  // the file it shows: its doc_id, else the stored upload a duplicated page's address serves, else none
-  assert.equal(attachmentFile(pageAttachment({ properties: { doc_id: "d1", source_url: "https://x.test/p.pdf" } })), "d1");
-  assert.equal(attachmentFile(pageAttachment({ properties: { source_url: "/api/uploads/d1.pdf" } })), "d1");
-  assert.equal(attachmentFile(pageAttachment({ properties: { source_url: "https://x.test/api/uploads/d1.pdf" } })), "");
-  assert.equal(attachmentFile(pageAttachment({ properties: { source_url: "/api/uploads/d1.png" } })), "");
-  assert.equal(attachmentFile(null), "");
+// What a page carries is gamma/blocks_store.py page_attachment's rule too:
+// tests/shared/attachment.json holds both to the same answers.
+const ATTACHMENTS = JSON.parse(readFileSync(new URL("../../tests/shared/attachment.json", import.meta.url), "utf8"));
+
+test("pageAttachment, attachmentFile and defaultPageTitle", () => {
+  for (const c of ATTACHMENTS.cases) {
+    const attachment = pageAttachment({ properties: c.properties });
+    assert.deepEqual(attachment, c.attachment, c.note);
+    assert.equal(attachmentFile(attachment), c.file, c.note);
+  }
+  assert.equal(pageAttachment({}), null);
   assert.equal(defaultPageTitle(null), "Untitled");
   assert.equal(defaultPageTitle({ name: "paper.pdf" }), "paper.pdf");
   assert.equal(defaultPageTitle({ url: "https://x.test/dir/a%20b.pdf" }), "a b.pdf");

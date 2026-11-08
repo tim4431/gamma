@@ -1,0 +1,27 @@
+{
+  "about": "Sibling positions (docs/dev/collab.md 'Ops'): the client mints them with fractional-indexing 3.4.0 (npm), the server with fractional_indexing 0.1.3 (PyPI), and gamma/ops.py checks the client's against its rules before it stores them. between gives n keys between a and b (null: an end), the same on both sides; invalid holds keys both refuse (the server's op answers 400); foreign holds keys with a character outside the base-62 alphabet, which neither library checks (npm's gives a key after them) but the server refuses with a 400, because its own next key beside one fails, and which the client never mints. Callers never pass a after b: 3.4.0 swaps them where 0.1.3 raises, and nothing here pins that. A lockfile update that changes an answer fails this on purpose. Read by backend/tests/test_shared_fixtures.py and frontend/tests/blockOps.test.mjs.",
+  "between": [
+    {"note": "the first key", "a": null, "b": null, "n": 1, "keys": ["a0"]},
+    {"note": "five keys in an empty list", "a": null, "b": null, "n": 5, "keys": ["a0", "a1", "a2", "a3", "a4"]},
+    {"note": "after the last", "a": "a0", "b": null, "n": 3, "keys": ["a1", "a2", "a3"]},
+    {"note": "before the first", "a": null, "b": "a0", "n": 3, "keys": ["Zx", "Zy", "Zz"]},
+    {"note": "between neighbours", "a": "a0", "b": "a1", "n": 3, "keys": ["a0G", "a0V", "a0l"]},
+    {"note": "between a key and its own extension", "a": "a0", "b": "a0V", "n": 2, "keys": ["a08", "a0G"]},
+    {"note": "past the last negative integer", "a": "Zz", "b": null, "n": 2, "keys": ["a0", "a1"]},
+    {"note": "past the last one-digit integer", "a": "az", "b": null, "n": 2, "keys": ["b00", "b01"]},
+    {"note": "ten in a narrow gap", "a": "a1", "b": "a2", "n": 10, "keys": ["a14", "a18", "a1G", "a1K", "a1O", "a1V", "a1Z", "a1d", "a1l", "a1t"]}
+  ],
+  "invalid": [
+    {"note": "an empty key", "key": ""},
+    {"note": "a head without its integer", "key": "a"},
+    {"note": "a trailing zero", "key": "a00"},
+    {"note": "an integer part too short", "key": "b0"},
+    {"note": "the smallest integer, which nothing is before", "key": "A00000000000000000000000000"},
+    {"note": "a head outside the alphabet", "key": "!0"}
+  ],
+  "foreign": [
+    {"note": "a space for the integer digit", "key": "a "},
+    {"note": "an accented integer digit", "key": "a\u00e9"},
+    {"note": "an accented fraction digit", "key": "a0\u00e9"}
+  ]
+}

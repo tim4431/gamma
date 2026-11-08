@@ -40,7 +40,7 @@ test("no offset writes during touch or momentum; one correction after scrollend"
   assert.deepEqual(corrections, [{ left: 300, behavior: "smooth" }]);
 });
 test("diagonal movement, deliberate turns, pinch, cancellation, and new input release alignment", (t) => {
-  const { el, corrections, send, vertical, doc } = fixture(t);
+  const { el, corrections, send, doc } = fixture(t);
   const cancelCases = [
     () => send("touchmove", [[170, 250]]),
     () => { send("touchmove", [[110, 200]]); send("touchmove", [[220, 190]]); },

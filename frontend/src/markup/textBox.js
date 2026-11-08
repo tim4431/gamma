@@ -75,6 +75,7 @@ export const padOf = (box) => (isZotero(box) ? 0 : PAD);
 // A blank line as gamma/pdf_document.py's chunks reads one: a line of
 // only the characters Python's str.strip() takes (a no-break or full-width
 // space too, which Markdown would show as text).
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the separators Python's str.strip() removes
 const BLANK = /^[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$/;
 // Where remark-gfm would make a bare URL a link: its scheme or www. Not in
 // a raw HTML tag, a link's destination or a link reference definition,

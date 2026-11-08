@@ -77,6 +77,27 @@ def test_results_equal_the_full_python_scan(owner, q, flags):
     assert [b["id"] for b in body["blocks"]] == _old_scan(q, bool(flags.get("case")), bool(flags.get("whole")))
 
 
+@pytest.mark.parametrize("q,flags", QUERIES)
+def test_the_post_answers_what_the_get_does(owner, q, flags):
+    """The Ctrl+F panel's POST runs the same scan: the same blocks, in the
+    same order, for every query."""
+    get = owner.get("/api/block-search", params={"q": q, "limit": 20, **flags}).json()
+    body = {"q": q, "limit": 20, "case": bool(flags.get("case")), "whole": bool(flags.get("whole"))}
+    r = owner.post("/api/block-search", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json() == get
+
+
+def test_no_post_field_is_a_pattern(owner):
+    """The POST's text fields are text: a pattern in ``q`` is escaped like
+    the GET's, and a ``regex`` field is no field of it."""
+    assert "regex" not in blocks_router.NotesSearch.model_fields
+    r = owner.post("/api/block-search", json={"q": "plaino|hilite", "regex": 1})
+    assert r.status_code == 200 and r.json()["blocks"] == []
+    r = owner.post("/api/block-search", json={"q": r"(\w+\s?)+#", "limit": 20})
+    assert [b["content"] for b in r.json()["blocks"]] == ["(\\w+\\s?)+# is not a pattern here"]
+
+
 def test_a_callers_pattern_is_refused(owner):
     r = owner.get("/api/block-search", params={"q": "plaino|hilite", "regex": 1})
     assert r.status_code == 400
@@ -150,6 +171,7 @@ def test_a_scan_cut_short_goes_on_from_its_cursor(owner, monkeypatch):
 
 def test_block_search_runs_in_the_threadpool():
     assert not inspect.iscoroutinefunction(blocks_router.block_search)
+    assert not inspect.iscoroutinefunction(blocks_router.block_search_post)
 
 
 def _ascii_fold(s):

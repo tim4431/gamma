@@ -37,6 +37,7 @@ export const GROUPS = [
   { id: "zotero-link", files: ["zotero-link.mjs"], s: 27 },
   { id: "pdf-load", files: ["pdfload.mjs"], s: 25 },
   { id: "publish", files: ["publish.mjs"], s: 25 },
+  { id: "collab-soak", files: ["collabSoak.mjs"], s: 24 },
   { id: "pdf-touch", files: ["pdfTouch.mjs"], s: 23 },
   { id: "files", files: ["files.mjs"], s: 22 },
   { id: "cloud-sign-in", files: ["cloudSignIn.mjs"], s: 20 },
@@ -185,7 +186,8 @@ export const RULES = [
   // the library's bulk actions: delete (a folder's pages too), file and label, move into a page, duplicate
   ["frontend/src/library/pageBatch.js", ["trash", "folders", "quick-open", "sub-pages", "files"]],
   ["frontend/src/library/**", ALL], // the home view every scenario opens on
-  ["frontend/src/search/**", ["notes-pdf-share", "quick-open"]],
+  // folders, sub-pages: the panel's filter chips and typed qualifiers
+  ["frontend/src/search/**", ["notes-pdf-share", "quick-open", "folders", "sub-pages"]],
   // cloud-sign-in: the people invited by e-mail and the requests to join
   ["frontend/src/sharing/**", ["notes-pdf-share", "publish", "collab", "cloud-sign-in"]],
   // the Zotero account and links' calls (Account & sync › Zotero, the link dialog)
@@ -233,7 +235,8 @@ export const RULES = [
   ["backend/gamma/routers/folder_links.py", []],
   // the clones' engine and the clock the Zotero link's rounds run on (sync_clock.py), its conflicts and log tables (sync_engine.py)
   ["backend/gamma/sync_*.py", ["mirror", "publish", "zotero-link"]],
-  ["backend/gamma/textmerge.py", ["mirror"]],
+  // the same-block merge: a mirror's sync, two tabs typing in one block, the soak's crowd
+  ["backend/gamma/textmerge.py", ["mirror", "collab", "collab-soak"]],
   ["backend/gamma/routers/sync.py", ["mirror", "publish"]],
   ["backend/gamma/routers/mirrors.py", ["mirror", "publish"]],
   ["backend/gamma/cloud_*.py", ["cloud-sign-in", "publish"]],
@@ -258,7 +261,7 @@ export const RULES = [
   ["backend/gamma/routers/pdf.py", PDF_VIEW],
   ["backend/gamma/textnorm.py", ["notes-pdf-share", "quick-open"]],
   ["backend/gamma/block_index.py", ["notes-pdf-share", "quick-open"]],
-  ["backend/gamma/routers/search.py", ["notes-pdf-share", "quick-open"]],
+  ["backend/gamma/routers/search.py", ["notes-pdf-share", "quick-open", "folders", "sub-pages"]],
   ["backend/gamma/markdown_zip_import.py", [...EXPORTS, "sub-pages"]], // a Notion export's pages inside pages
   ["backend/gamma/markdown_zip_links.py", [...EXPORTS, "sub-pages"]], // a parent: is read as a link
   ["backend/gamma/notion_import.py", [...EXPORTS, "sub-pages"]],
@@ -362,6 +365,7 @@ const regexCache = new Map();
 function globRegex(glob) {
   if (!regexCache.has(glob)) {
     const re = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: NUL holds the place of ** while * is rewritten
       .replace(/\*\*\/?/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*");
     regexCache.set(glob, new RegExp(`^${re}$`));
   }

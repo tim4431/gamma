@@ -3,7 +3,8 @@ import { AutoGrowTextarea } from "../shared/ui/Widgets";
 import PageOption, { recencySections } from "../library/PageOption";
 import { rankLibraryPages } from "../library/librarySearch";
 import { insertMention, mentionAt, MAX_CHAT_REFERENCES } from "./paperMentions";
-import { composing, sendsOnEnter } from "./enterKey.js";
+import { composing } from "../shared/lib/hotkeys.js";
+import { sendsOnEnter } from "./enterKey.js";
 import { t } from "../shared/i18n/i18n.js";
 
 // The chat composer, with the picker "@" opens over it: quick open's page

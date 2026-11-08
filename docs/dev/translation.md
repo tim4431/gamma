@@ -869,6 +869,15 @@ the read taking 19 to 30 ms there; it is not built. Deciding takes 4 ms a page,
 30 at worst. With the software canvas of headless Chromium the read is 1.3 and
 4.5 ms.
 
+A zoom does not lay the overlay out again on every frame. `TransLayer` is
+laid out at the zoom its page settled at, sized to the page at that zoom,
+and stretched to the page box by the ratio of the layer's zoom to it
+(`--viewer-scale`, [ui-design.md](ui-design.md#zoom-gestures-in-a-viewer)).
+A wheel train renders none of it, and once the zoom has stopped for
+`ZOOM_SETTLE_MS` the paragraphs fit their boxes again, once. That is only
+while the page is inside the look-ahead. A page away from the view keeps
+its last layout, stretched, until it comes back.
+
 ## What a request carries
 
 Geometry never leaves the client. `pdf/pdfTranslate.js` segments a page's
@@ -1239,7 +1248,9 @@ reach the model as text (the context around them, `before`, `after` and
   original's own neighbouring lines its box takes in shows at its edges. A
   citation or URL token is drawn as its text.
   - The raster's `onBase` callback (each base paint or prime) redraws the
-    crop after a zoom. A formula moved across a join into another page's
+    crop after a zoom. The crop takes no zoom: the bitmap covers the page
+    box, whose width at scale 1 the box carries as `data-base-w`, so it is
+    right in the middle of a zoom too. A formula moved across a join into another page's
     paragraph is drawn from its own page, whose box announces each paint (a
     `pdfbasepaint` event).
   - Until the page holds pixels the extracted text stands in

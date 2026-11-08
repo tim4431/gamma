@@ -139,7 +139,8 @@ reduced-motion rule of its own unless it wants a different still state.
 
 ### Ratchets
 
-Two node tests hold the tokens in place. Each may only get better.
+Three node tests hold the tokens and the conventions in place. Each may
+only get better.
 
 - **Contrast.** `node tools/themes.mjs` resolves tokens.css per theme the
   way a browser does. It prints text contrast for the pairs that matter:
@@ -153,11 +154,45 @@ Two node tests hold the tokens in place. Each may only get better.
   colour literal, a pixel font size, a corner radius over 2 px, an
   elevation shadow, a z-index above 9, a transition's time under half a
   second or its easing written out (a bezier or keyword: a fade leaves it
-  out, anything that moves takes an `--ease-*`). It
+  out, anything that moves takes an `--ease-*`), or a font family other than
+  `var(--font-sans)`, `var(--font-mono)` or `inherit`. It
   fails when a file holds more of one kind than `tests/design-baseline.json`
   records, and lists the new offenders. What is left is mostly the PDF
   page's own colours. After a cleanup,
   `node tools/designTokens.mjs --baseline` records the lower floor.
+- **Conventions.** `tests/uiConventions.test.mjs` scans every script and
+  stylesheet under `src/` (tokens.css aside) for code that goes round a
+  rule of this document:
+  - a native `<select>`, or an `<input type="color">` outside
+    `ColorPicker`;
+  - an `onContextMenu` or `onDoubleClick` past press.js, or a touch
+    handler;
+  - a `pointerType`, `maxTouchPoints` or pointer media query past
+    pointer.js;
+  - an `<input type="file">` past `pickFiles`;
+  - a text field's Enter that does not wait for `composing` (an input, a
+    textarea, a contentEditable, or a component named `…Input` or
+    `…Textarea` such as `AutoGrowTextarea` and `PasswordInput`), and a
+    username field that capitalizes or corrects;
+  - a text ×, an icon size off the scale, a `strokeWidth` on a sized icon;
+  - a class a shared component renders, written by hand (`ctxMenuItem`,
+    `popover`, `settingRow`…), and a `role="menu"` outside Menus.jsx;
+  - an inline z-index, font size, radius or font family, and an `onWheel`
+    that calls `preventDefault`;
+  - in a stylesheet, a hover reveal that still takes a tap,
+    `text-transform: uppercase`, `transition: all`, `font: inherit` on a
+    control, a `:focus` border and an `accent-color` off the root.
+
+  `tools/uiConventions.mjs` holds the rules, each with its fix and the
+  section of this document it comes from. The module a rule points to is
+  never counted, and the ink layer, where a pen draws and a finger scrolls,
+  reads the pointer itself. The test fails when a file holds more breaks
+  of a rule than `tests/ui-baseline.json` records, and lists them with the
+  fix. `node tools/uiConventions.mjs --list [rule]` prints every break.
+  After a fix, `node tools/uiConventions.mjs --baseline` records the lower
+  floor. Some rules are heuristics: an Enter passed down as a prop
+  (`onEnter`) or a CodeMirror keymap is not read, and a hover reveal is
+  paired only within one stylesheet.
 
 A value that is raw on purpose says why in a comment the scanner reads:
 `/* ds-allow: why */` on its line, or `ds-allow-start: why` …
@@ -166,6 +201,18 @@ collaborator colours, the transfer illustration, the custom-colour
 swatch's rainbow, a transition that follows the pointer. (The highlight and
 ink colours are not in a stylesheet at all: they come from the account's
 palette, `shared/model/palette.js`, as inline values.)
+
+A convention broken on purpose says why the same way, and names its rule:
+`ui-allow <rule>: why`. In a script the comment is a `//` line, a `/* */`
+inside a tag or a `{/* */}`; in a stylesheet, a `/* */`. It covers its own
+line, and the next line of code too when it stands alone on its line. A
+break inside a multi-line tag counts on every line of the tag, so a
+comment on any of them covers it. `ui-allow-start <rule>: why` …
+`ui-allow-end` covers a block. The test
+fails on an allow that names no rule, gives no reason or exempts nothing.
+Examples: the layout's `PHONE_MQ`, the library's double-click open (a tap
+opens where a click selects), the custom-colour swatch's native input, the
+model picker's listbox drawn as menu rows, and the two portalled popovers.
 
 ### The desktop shell and the extension
 
@@ -270,7 +317,9 @@ to `1.6 × 24 / size` (`iconStroke`), so a 14 and a 20 beside each other look
 equally heavy; a check mark is a touch heavier (`weight` 2). Pass
 `strokeWidth` only for an icon sized by CSS (`size={null}`). A close button
 is `uiClose` with an `XIcon` inside (14, inline with the title it closes;
-16 in `uiCloseLg`), never a text ×.
+16 in `uiCloseLg`), never a text ×. The conventions ratchet
+([Ratchets](#ratchets)) counts a size off this scale, a `strokeWidth` on a
+sized icon and a text ×.
 
 ### Section labels
 
@@ -280,7 +329,8 @@ handwriting strip's option-row captions) share
 one rule in app.css: sentence case, `--fs-xs`, weight 600, `--text-secondary`
 (dock titles a step up, `--fs-sm`), the Settings rail's look.
 Labels get no `text-transform: uppercase` or letter-spacing: the text keeps
-its own case, so only acronyms ("PDF") are capitals. A new label class joins
+its own case, so only acronyms ("PDF") are capitals. The conventions
+ratchet counts every `uppercase` left. A new label class joins
 that list and keeps only its layout in its own rule. The kind label on a card
 ("Page", "PDF") is the small muted version: `--fs-2xs`, weight 500,
 `--text-muted`; in the list it is a plain muted column.
@@ -372,7 +422,7 @@ browser zooming the page would not work from an `onWheel` prop.
 device reports in pixels. Firefox's line-mode deltas are converted first.
 The scale compounds on the module's own `live` value, not on the committed
 scale, which is a frame or two behind. The dispatch is coalesced to one per
-frame, because every commit re-renders every page. A viewer pushes its
+frame, because every commit re-lays-out every page. A viewer pushes its
 committed scale back in with `sync()`. That is ignored while a dispatch is
 in flight: the events that arrived since are already in `live`, and
 overwriting it dropped them (a 6-notch train zoomed about 3 notches' worth).
@@ -392,6 +442,41 @@ Each viewer supplies only the two commits, since anchoring depends on its
 layout. The PDF's re-bases scroll and lets its zoom-anchor effect re-place
 the point (`pdf/PdfViewer.jsx`). The notebook's names the sheet and the
 fraction of it to hold ([notebooks.md](notebooks.md)).
+
+**How the committed scale reaches the content.** A commit renders the
+viewer, never its pages or sheets:
+
+- The viewer writes the scale as `--viewer-scale` (`SCALE_VAR` in
+  `viewerZoom.js`) on its content layer, `.pdfZoomLayer` or `.nbColumn`.
+- `registerScaleVar` (`viewerZoom.js`, run as the first viewer installs
+  its gestures) registers it with `CSS.registerProperty` as a `<number>`
+  that does not inherit. An inherited custom property restyles every
+  element under the layer each time it changes, every text-layer span and
+  ink path, which costs more than the renders it saves.
+- What sizes with the zoom picks the variable up with
+  `--viewer-scale: inherit`: a page box, a sheet, a built text layer, a
+  translation layer. Anything else that reads it gets 1, silently.
+- Each of those carries an inline style written by script: React's `style`
+  or the text layer's build. WebKit's matched-properties cache gives an
+  element with no inline style, or only one parsed from markup, the value
+  it was first styled with, so its `inherit` never follows the layer.
+  Chromium and Firefox follow in every case. `registerScaleVar` first
+  checks that an `inherit` written that way follows its parent, and leaves
+  the variable inheriting where it does not, or where the browser has no
+  `CSS.registerProperty`: slower per frame, and the same picture.
+- A box is `scaledPx(w)`, `calc(var(--viewer-scale) * wpx)`. A text layer
+  is `scale(var(--viewer-scale))`.
+- Everything placed on a page is a percentage of its box: highlights, note
+  badges, link boxes, find marks, the review ghost, a pending area.
+- No page or sheet takes the scale as a prop. The PDF's pages in
+  comment-margin mode are the exception: the card column's offset is
+  worked out in px.
+- Code inside a page that needs the scale as a number reads the viewer's
+  `pdf/pageScale.js`. `get()` is the live value, which the raster reads.
+  `rest()` is the value once the zoom has stopped for `ZOOM_SETTLE_MS`,
+  at which the text layer is re-measured. The translation layer needs
+  neither: it is laid out once at its reference scale, and its one
+  transform reads `--viewer-scale` (`pdf/TransOverlay.jsx`).
 
 ### Fullscreen on touch devices
 
@@ -1002,8 +1087,11 @@ the layout, which follows the screen (`PHONE_MQ`,
 `shared/lib/pickFiles.js` opens the system file picker from code. iOS
 Safari may not open it for an `<input>` outside the document, or may drop
 that input before its `change`, so the input joins the page, hidden, for
-the pick and leaves after it. The backup restore, the imports and the
-markup strip's Picture button pick through it.
+the pick and leaves after it. Every pick goes through it: the Add
+popover's uploads, the empty library's, a page's PDF attach and replace,
+the backup restore, the imports, the chat's attachments and a hand-off
+card's PDF, the note's `/image` and the markup strip's Picture button. No
+`<input type="file">` of its own stays in the page.
 
 ### Sizes and reveals: CSS asks capability
 
@@ -1174,10 +1262,14 @@ own controls.
    too (the folder menu's Move to, Move up, Move down), or keys on its
    grip (a Settings bar list, `useDragOrder`'s `keyProps`).
 8. A text field's Enter handler returns early while an input method
-   composes (`composing` in `chat/enterKey.js`), and an `autoFocus` that
-   would raise an on-screen keyboard is `!touchTyping()`. A username or
-   account field turns capitalization and correction off.
+   composes (`if (composing(e)) return;`, `composing` in
+   `shared/lib/hotkeys.js`), and an `autoFocus` that would raise an
+   on-screen keyboard is `!touchTyping()`. A username or account field
+   turns capitalization and correction off.
 9. A file pick goes through `pickFiles`.
+
+The conventions ratchet ([Ratchets](#ratchets)) checks items 1, 3, 4, 5
+and 9, and item 8's Enter and username fields.
 
 ## Motion
 
@@ -1632,11 +1724,12 @@ editor's other popups.
 | `ink/ink.js`, `ink/finishStroke.js`, `ink/inkInput.js`, `ink/stabilizer.js`, `ink/shapes.js`, `ink/gestures.js`, `ink/fingerChords.js`, `ink/stripKeys.js`, `ink/pencilActions.js`, `ink/hostInk.js`, `ink/ruler.js`, `ink/shapeTool.js`, `ink/zoomWindow.js`, `ink/surfaceScale.js`, `ink/inkStore.js`, `ink/inkFlush.js`, `ink/inkJournal.js`, `ink/inkLive.js`, `ink/grain.js`, `ink/InkStylePicker.jsx`, `ink/ZoomWindow.jsx`, `ink/InkLayer.jsx` | handwriting ([handwriting.md](handwriting.md)): the stroke codec + geometry (pure), the finish pipeline and brush table (the only width laws), pointer sampling, Smoothing, the shape recogniser, scribble detection, finger chords, the strip's keys, the Pencil mapping, the iPad shell's side of a stroke, the ruler, the Shapes tool's drag, the zoom window's rules, a screen distance in a surface's points (Duplicate's offset), the files/drafts store, the flush plan, the drafts journal, the peers' wet strokes, the pencil grain, the Style picker, the zoom window's panel, and the page layer + selection menu (`.inkEditMenu`, placed by `useSelectionMenuAnchor`) + notes card + `ColorChoices`, the swatches and custom colour that a pen preset's row, a text box's style and the selection menu's Color and Fill rows share |
 | `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx`, `markup/PageTools.jsx` | the tool strip (`.pdfInkBar`: `ctlBtn`s and `colorBtn` swatches; the Text tool's `TypeIcon`), the one mount of a page surface's layers (text boxes, then ink), and the tools context they read, with `armedClasses` for a surface's armed-tool classes ([handwriting.md](handwriting.md)) |
 | `markup/TextBoxLayer.jsx`, `markup/useTextBoxes.js`, `markup/textBox.js`, `markup/markup.css` | text boxes ([text_boxes.md](text_boxes.md)): the boxes of a page (frame, width handle and band in screen pixels over a box sized in the page's points), the box menu (the handwriting menu's `inkEditMenu` rows: `TextSizeIcon`, `PaletteIcon`, `PaintBucketIcon`, then Duplicate, Show note, Delete), and `TextStyleChoices`, the size numbers, the pen palette through `ColorChoices`, and the four backgrounds ("none" a struck-out swatch, `.textNoBackground`) that the menu and the strip's Text row share; the notes row's `TypeIcon` marker (`.textBoxMarker`) |
-| `search/SearchPanel.jsx`, `search/snippets.js`, `library/librarySearch.js` | workspace search (Ctrl+F); `MarkedText`, the query's matches as `mark.searchMark` (quick open's rows and the `[[` picker's too), over the pure result text of `snippets.js`; the title scorer it shares with chat, and the library matcher (title + folder/label chips) shared by the home filter box and quick open |
+| `search/SearchPanel.jsx`, `search/snippets.js`, `search/queryParse.js`, `search/searchFilters.js`, `library/librarySearch.js` | workspace search (Ctrl+F); `MarkedText`, the query's matches as `mark.searchMark` (quick open's rows and the `[[` picker's too), over the pure result text of `snippets.js`; the typed qualifiers' grammar (`queryParse.js`) and table (`searchFilters.js`), whose dropdown is the shared `.categorySuggestions` list (role listbox, quick open's option props) placed by CSS under the input, and whose "searched as text" line is `.searchHint.warn`; the title scorer it shares with chat, and the library matcher (title + folder/label chips) shared by the home filter box and quick open |
 | `library/QuickOpen.jsx` | quick open (Ctrl+P): a `.reportOverlay` palette over the library ([home_library.md](home_library.md)) — no query: recents, open tabs, the rest; a query: pages, folders and labels in sections, then the search-everywhere and create-page actions; rows are the chat mention picker's `chatMentionOption`; a query starting with `>` (Ctrl+Shift+P) is the command palette over App's `paletteCommands()` ([hotkeys.md](hotkeys.md)) |
 | `library/PageOption.jsx` | a library page as a picker option, for quick open and the chat mention picker: kind glyph, marked title, authors and year, folder/label chips, then a check, "Current" or the time; also the Recent / Open tabs / Everything else headings (`recencySections`) |
 | `chat/PaperMentionInput.jsx`, `chat/paperMentions.js` | chat mention picker (quick open's page list over the composer), mention text edits and `MAX_CHAT_REFERENCES` (six attached pages plus the current page) |
 | `chat/ApprovalCard.jsx`, `chat/approvals.js` | the card a tool call waits on while the user decides ([ai.md](ai.md#asking-before-a-call-approvals)): the fetch handoff card's look (accent border and tint), a caption naming the permission, the change as a word diff (`del` on `--danger-bg`, `ins` on an `--ok` tint), **Allow once** as the one primary button, **Don't allow** ghost; the buttons never take the focus themselves. A card for a call naming several pages has a counted headline ("Rename 37 pages"), one diff line per page in the same scrolling box, and `.chatApprovalNote` lines for a folder or labels made first, the pages left out and the pages already so. A deletion's card (a `delete_*` tool) has the same four answers, its **Allow once** as `uiBtn sm primary danger`. A permission's state (Allow / Ask / Off) is a `MenuSelect` whose icon is tinted by state (`.agentPermState` in settings.css) |
+| `chat/PlanCard.jsx`, `chat/plan.js` | a reply's plan ([ai.md](ai.md#planning-first-plan-mode)): the approval card's look (`chatApproval chatPlan`, without its guide anchor or hint) with a caption badge through `MorphText` ("Awaiting your approval", "Approved", "2 of 4 done"), the steps an `ol.chatPlanSteps` under `ListMotion` of a glyph column (the number, a dot or `transferSpin` for the step under way, an `--ok` check) and the text; **Approve plan** `uiBtn sm primary` and **Revise** `uiBtn sm`, shown only while the plan is the last reply's and nothing streams. The composer's Plan switch is a `chatAttachToggle chatPdfToggle chatPlanToggle` with `aria-pressed`, its word giving way in a narrow dock as the grant chip's does |
 | `chat/AgentChanges.jsx`, `chat/aiRevert.js` | what an agent reply changed, under its steps pill ([ai_tools.md](ai_tools.md#reverting-a-note-change)): `.chatChanges` rows behind an accent rule, a note row, a deleted folder's or label's row, or pages renamed, moved, labelled, deleted or restored (one or many), ending in a frameless `ctlBtn` undo icon, "Revert…" a `uiBtn sm ghost` in the reply's first group's head, a reverted row muted with its "Reverted" tag and a redo icon in the same place; a call that changed several pages is one row whose muted "Show the pages" `<summary>` (a native `<details>`, `.chatChangeItems`) unfolds each page's one-page row in a box that scrolls past 16em; a row that stops shows its reason, the approval card's `WordDiff`, and **Revert anyway** (`uiBtn sm`) beside **Keep it** (ghost) — a stop that can't be forced (`gone`, the pages' `kept`) shows **Dismiss** alone; a revert or redo that left some pages as they are adds a `role="status"` note with **Dismiss** only |
 | `chat/RevertChanges.jsx` | the dialog that reverts several of a conversation's changes at once ([ai_tools.md](ai_tools.md#reverting-a-note-change)): a `.reportModal` with a `.confirmHead` (undo icon), "Select all" and the page picker's checkbox rows (`.docPickerItem` in a `.reportPageList`), one per change under a muted row per message that asked (each a checkbox for its changes, mixed when some are ticked), the change's sentence as its row reads without links; a reverted row muted with its "Reverted" tag; the row that stopped shows the reply row's question (`.chatRevertAsk`) with **Revert anyway** and **Skip it**; the footer counts what went back, then **Cancel** / **Done** and the primary **Revert N changes** |
 | `chat/chatErrors.js`, `chat/agentSteps.js`, `chat/chipText.js` | pure helpers of the chat panel: the error card's copy per failure kind (also the login check's strip), the agent's steps pill and change list, a context chip's plain-text preview ([ai.md](ai.md); its words through `search/snippets.js` `plainSnippet`, the one markdown-to-words rule) |

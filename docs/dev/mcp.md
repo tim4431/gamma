@@ -180,7 +180,8 @@ A new reading tool is offered without touching the adapter; `test_mcp.py`
 pins the names. The chat's other tools stay off: the web tools (`search_papers`,
 `fetch_paper`, …), because the assistant has its own web access;
 `list_deleted`, because Recently deleted is out of the reading tools' reach
-and restoring is a change; and every write tool, because the connection is
+and restoring is a change; `update_plan`, which has no permission and only
+goes with the changes; and every write tool, because the connection is
 read-only. The chat's tool permissions (Settings → AI → Tool usage) do not
 govern this connection: the token is its own grant, created and revoked in
 Integrations. `read_gamma_link` and `export_page` exist only here.

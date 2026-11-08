@@ -211,7 +211,9 @@ All state is SQLite + files on disk under a data directory (env
     [migrations.md](migrations.md)). The filters read the column (its
     index); the block dict computes the same rule in Python from the
     properties it has parsed anyway (`blocks_store.block_kind`, checked
-    against the column by `tests/test_block_columns.py`), so a tree read
+    against the column by `tests/test_block_columns.py` on the cases of
+    `tests/shared/blockkind.json`, which the client's `blockKind` reads
+    too), so a tree read
     selects the stored columns only. Block search reports the column's.
   - `idx_ub_updated` on `updated_at`: the newest-first readers (block
     search, the `[[` picker's suggestions, backlinks) walk it and stop at

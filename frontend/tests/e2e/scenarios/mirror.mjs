@@ -8,7 +8,7 @@
 import { Account, wanted } from "../harness.mjs";
 
 export async function mirrorScenarios(env) {
-  const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
+  const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("mirror")) return;
   await server.manage("create-user", "mirror-user", "mirror-pw");
   const user = await new Account(server, "mirror-user", "mirror-pw").login();

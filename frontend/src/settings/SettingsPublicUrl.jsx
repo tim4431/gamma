@@ -5,6 +5,7 @@ import { useSettingsRead } from "./settingsReads.js";
 import { LinkIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { t } from "../shared/i18n/i18n.js";
+import { composing } from "../shared/lib/hotkeys.js";
 
 // Settings → Server → Assistant connections: the address assistants reach
 // this server at, over /api/admin/settings (the pane's one read of it).
@@ -46,7 +47,7 @@ export function PublicUrlSettings({ setStatus }) {
         <input className="aiKeyInput" type="url" aria-label={t("Public server URL")} value={draft} spellCheck={false}
           disabled={!saved || managed || busy} placeholder="https://gamma.example.com"
           onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); save(); } }} />
+          onKeyDown={(event) => { if (event.key === "Enter" && !composing(event)) { event.preventDefault(); save(); } }} />
         {needsAction ? (
           <button className="uiBtn sm primary" disabled={busy} onClick={save}><MorphText>{busy ? t("Saving…") : t("Confirm")}</MorphText></button>
         ) : null}

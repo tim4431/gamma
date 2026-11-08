@@ -3,7 +3,7 @@
 // row + persisted position), the library card, and the search panel hitting
 // PDF text on another page.
 import { execFileSync } from "node:child_process";
-import { closeEditor, tree, same, partialBlockSearch } from "./notes.mjs";
+import { blockSearchQuery, closeEditor, tree, same, partialBlockSearch } from "./notes.mjs";
 import { PYTHON, arrived, assert, assertEq, fakeAiModels, until } from "../harness.mjs";
 import { DEFAULT_PALETTE, darkPageColor, darkPageLine } from "../../../src/shared/model/palette.js";
 
@@ -680,7 +680,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await page.click("button[aria-label='Toggle result details']");
     const hit = page.locator("button.searchResult", { hasText: "p. 2" }).first();
     try { await hit.waitFor({ timeout: 10000 }); }
-    catch (e) { throw new Error(`no "p. 2" hit; popover showed: ${JSON.stringify(await page.textContent(".searchPopover"))}`); }
+    catch { throw new Error(`no "p. 2" hit; popover showed: ${JSON.stringify(await page.textContent(".searchPopover"))}`); }
     await hit.click();
     await page.waitForSelector('[data-page="2"] .pdfFindMark', { timeout: 15000 });
     await page.keyboard.press("Escape");
@@ -696,7 +696,8 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await page.waitForSelector(".searchPopover .searchInput");
       const details = page.locator("button[aria-label='Toggle result details']");
       if (!/\bon\b/.test(await details.getAttribute("class"))) await details.click();
-      const answered = page.waitForResponse((r) => r.url().includes("/api/block-search?q=zebrafish"));
+      const answered = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/block-search"
+        && r.request().method() === "POST" && blockSearchQuery(r.request()) === "zebrafish");
       await page.fill(".searchPopover .searchInput", "zebrafish");
       await answered;
       const notice = page.locator(".searchPopover .searchHint", { hasText: "Stopped early — refine the search to see more." });
@@ -1000,7 +1001,10 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     try {
       // A picked file goes to POST /api/ai/pictures and comes back stored.
       const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
-      await page.locator('.chatComposer input[type="file"]').setInputFiles({ name: "figure.png", mimeType: "image/png", buffer: png });
+      await page.getByRole("button", { name: "Add attachments or chat context" }).click();
+      const chooser = page.waitForEvent("filechooser");
+      await page.locator(".chatPlusMenuItem", { hasText: "Add photos & files" }).click();
+      await (await chooser).setFiles({ name: "figure.png", mimeType: "image/png", buffer: png });
       const thumbs = page.locator('[data-guide="chat.imageContext"] img');
       await thumbs.first().waitFor();
       assert((await thumbs.first().getAttribute("src")).includes("/api/uploads/"), "the composer shows the stored picture");

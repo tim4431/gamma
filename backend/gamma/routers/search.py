@@ -21,7 +21,9 @@ highlight rects always agree with what's on screen.
 
 ``GET /api/search`` is the one endpoint over both indexes (hits carry
 ``source: "notes" | "pdf"``); ``/pdf-search`` is the PDF-only predecessor the
-frontend still uses.
+frontend still uses: the Ctrl+F panel sends it as a POST, with the page ids
+its filters keep in the body, and ``GET /pdf-search`` takes the folder and
+label ids of ``scope`` instead.
 """
 
 from fastapi import APIRouter, HTTPException, Request
@@ -31,7 +33,7 @@ from .. import block_index, jobs, pdf_index, pdf_meta
 from ..ai_context import pdf_path as _pdf_path
 from ..auth import require_ws
 from ..block_index import fts_query
-from ..blocks_store import pages_in_scope, root_pages, write_lock
+from ..blocks_store import MAX_SEARCH_PAGES, pages_in_scope, root_pages, write_lock
 from ..db import connect_data_db, connect_pages_db
 from ..json_response import OrjsonResponse
 from ..logbuf import log
@@ -169,17 +171,16 @@ def library_search(request: Request, q: str = "", limit: int = 20, scope: str = 
     return OrjsonResponse({"results": results, "indexing": len(missing)})
 
 
-@router.get("/pdf-search")
-def pdf_search(request: Request, q: str = "", limit: int = 20, scope: str = "", cursor: str = "",
-               exclude: str = ""):
-    """The Ctrl+F panel's PDF group: hits in the library's papers, or in the
-    pages inside every folder and label of ``scope`` (comma-separated ids,
-    as /block-search takes them), leaving out the page ``exclude`` (the open
-    paper: the panel finds its matches with pdf.js). At most
-    PDF_HITS_PER_PAPER of one paper's hits come before every other paper's
-    best ones (``search_pdf``'s ``per_doc``). ``next`` is the ``cursor`` of
-    the following page (the hits listed so far), there when more follow."""
-    ws = require_ws(request)
+def _pdf_hits(ws: str, q: str, limit: int, cursor: str, exclude: str, pages: set | None) -> dict:
+    """The Ctrl+F panel's PDF group, both forms of /pdf-search: hits in the
+    library's papers, or in the ``pages`` (page ids; None for every page),
+    leaving out the page ``exclude`` (the open paper: the panel finds its
+    matches with pdf.js). At most PDF_HITS_PER_PAPER of one paper's hits
+    come before every other paper's best ones (``search_pdf``'s
+    ``per_doc``). ``next`` is the ``cursor`` of the following page (the
+    hits listed so far), there when more follow; 400 for a cursor that is
+    no offset. ``indexing`` counts the papers of these pages not indexed
+    yet."""
     q = (q or "").strip()
     limit = max(1, min(int(limit or 20), 100))
     if cursor and not cursor.isdigit():
@@ -190,12 +191,10 @@ def pdf_search(request: Request, q: str = "", limit: int = 20, scope: str = "", 
 
     # Library papers: doc_id → page block (title + id to open)
     with connect_pages_db(ws) as conn:
-        pages = root_pages(conn)
-        if scope:
-            reach = pages_in_scope(conn, [s for s in scope.split(",") if s])
-            pages = {page_id: info for page_id, info in pages.items() if page_id in reach}
-        docs = {info["doc_id"]: {"block_id": page_id, "title": info["title"]}
-                for page_id, info in pages.items() if info["doc_id"] and page_id != exclude}
+        found = root_pages(conn)
+    docs = {info["doc_id"]: {"block_id": page_id, "title": info["title"]}
+            for page_id, info in found.items()
+            if info["doc_id"] and page_id != exclude and (pages is None or page_id in pages)}
     if not docs:
         return {"results": [], "indexing": 0}
 
@@ -209,3 +208,41 @@ def pdf_search(request: Request, q: str = "", limit: int = 20, scope: str = "", 
                for doc_id, page, snip in hits[:limit]]
     more = {"next": str(offset + limit)} if len(hits) > limit else {}
     return OrjsonResponse({"results": results, "indexing": len(missing), **more})
+
+
+@router.get("/pdf-search")
+def pdf_search(request: Request, q: str = "", limit: int = 20, scope: str = "", cursor: str = "",
+               exclude: str = ""):
+    """The PDF hits of ``_pdf_hits`` in the pages inside every folder and
+    label of ``scope`` (comma-separated ids, as GET /block-search takes
+    them), else in the whole library. Any member."""
+    ws = require_ws(request)
+    pages = None
+    if scope:
+        with connect_pages_db(ws) as conn:
+            pages = pages_in_scope(conn, [s for s in scope.split(",") if s])
+    return _pdf_hits(ws, q, limit, cursor, exclude, pages)
+
+
+class PdfSearch(BaseModel):
+    """POST /pdf-search: the GET's fields with the page ids the panel's
+    filters keep (``pages``: None for the whole library, [] for none) in
+    place of ``scope``."""
+    q: str = ""
+    limit: int = 20
+    cursor: str = ""
+    exclude: str = ""
+    pages: list[str] | None = None
+
+
+@router.post("/pdf-search")
+def pdf_search_post(payload: PdfSearch, request: Request):
+    """The Ctrl+F panel's PDF group (``_pdf_hits``) inside the ``pages`` of
+    the body (at most MAX_SEARCH_PAGES: 413 past it), since a URL cannot
+    carry a library's ids. Any member, as GET: a share token is no way in.
+    A read, though a POST (hosted.POST_READS)."""
+    ws = require_ws(request)
+    if payload.pages is not None and len(payload.pages) > MAX_SEARCH_PAGES:
+        raise HTTPException(status_code=413, detail=f"a search names at most {MAX_SEARCH_PAGES} pages")
+    pages = set(payload.pages) if payload.pages is not None else None
+    return _pdf_hits(ws, payload.q, payload.limit, payload.cursor, payload.exclude, pages)

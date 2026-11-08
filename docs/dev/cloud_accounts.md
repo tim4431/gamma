@@ -2028,10 +2028,10 @@ times only:
   written to learn them. Someone who only reads in a tab left open is not
   counted.
 - `last_write_at` is when the server last answered a POST, PUT, PATCH or
-  DELETE under `/api/` below 400 (a sign-in and a read sent as a POST
-  count too), null when there was none. It is kept in memory and
-  saved in the `settings` KV under `hosted_last_write` at each sync, so a
-  restart loses at most the writes since the last sync.
+  DELETE under `/api/` below 400 (a sign-in counts too, a read sent as a
+  POST does not: `hosted.POST_READS`), null when there was none. It is
+  kept in memory and saved in the `settings` KV under `hosted_last_write`
+  at each sync, so a restart loses at most the writes since the last sync.
 - `errors` counts the answers with a 5xx status (an uncaught exception, or
   a 502 or 503 the server chose) since the last successful sync. A
   successful sync takes off the ones it reported; a failed one leaves
@@ -2094,19 +2094,20 @@ is a policy like the others: the environment, the Sign-in pane and the
 admin API take it on any server.
 
 **Read-only.** While the cached answer says `read_only`, every POST, PUT,
-PATCH and DELETE under `/api/` is answered 423 with `{detail, read_only:
-true}`, `detail` being the account server's `message` or "This server is
-read-only: its plan has lapsed. You can still sign in, read and export your
-data." (`app.read_only_gate`, inside the session middleware so the refusal
-is logged). The rule is `hosted.read_only()` plus one documented tuple,
-`hosted.READ_ONLY_ALLOWED`, of what still goes through:
+PATCH and DELETE under `/api/` but the reads sent as a POST (below) is
+answered 423 with `{detail, read_only: true}`, `detail` being the account
+server's `message` or "This server is read-only: its plan has lapsed. You
+can still sign in, read and export your data." (`app.read_only_gate`,
+inside the session middleware so the refusal is logged). The rule is
+`hosted.read_only()` plus two documented tuples: `hosted.POST_READS`, the
+reads sent as a POST, and `hosted.READ_ONLY_ALLOWED`, the writes that
+still go through:
 
 - `/api/login`, `/api/logout` and everything under `/api/auth/cloud/`:
   signing in and out;
 - `/api/jobs/export` and `/api/jobs/workspace-export`: the export jobs
   (the downloads themselves are GETs, like the page and folder exports,
   the workspace backups and the server snapshots);
-- `/api/pages/by-docs`: a read the file chips send as a POST;
 - `/api/notices/…/seen`, so a seen notice stays seen;
 - everything under `/api/inbox/`: marking Inbox items read or archived
   is the account's own bookkeeping ([comments.md](comments.md) "The
@@ -2114,7 +2115,13 @@ is logged). The rule is `hosted.read_only()` plus one documented tuple,
 - `/api/admin/hosted/sync`, the admin's Sync now, which is how a paid-up
   server comes back without waiting for the hour.
 
-Reads are untouched. Collaboration needs nothing of its own: an op batch is
+Reads are untouched, and so are the reads sent as a POST because their ids
+do not fit a URL, `hosted.POST_READS`: `/api/pages/by-docs` (the file
+chips' page lookup) and `POST /api/block-search` and `/api/pdf-search` (the
+Ctrl+F panel's searches, with the page ids its filters keep). The gate
+treats them as reads, so they also move no `last_write_at`.
+
+Collaboration needs nothing of its own: an op batch is
 `POST /api/pages/{id}/ops`, which the editor answers with its "Save
 rejected" message and a reload, and the page socket carries only carets.
 The guest login is refused like any write, and the login page hides its

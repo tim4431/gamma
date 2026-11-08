@@ -48,9 +48,13 @@ probes an entry with a tiny live completion for the settings list's Test button
 so an expired ChatGPT grant is re-tried immediately. The probe's model:
 the entry's optional `test_model` (editable in the form's Models step), else
 the `model` sent with the request (the client passes its effective metadata
-model — the cheap utility model), else the entry's first model. A failed probe
-carries the failure's `kind` (see "Chat endpoint"; `no_model` when the entry
-has none picked) and an `auth` flag on 401/403, so the row renders the chat
+model — the cheap utility model), else the entry's first model. With
+`tools_model`, one of the entry's picked models (a 400 otherwise), the probe
+is instead the check of whether that model calls tools, and the result
+carries the stored verdict as `tools` ("Models that can't call tools"
+below). A failed probe carries the failure's `kind` (see "Chat endpoint";
+`no_model` when the entry has none picked) and an `auth` flag on 401/403, so
+the row renders the chat
 error card's headline and fix ("OpenAI rejected the API key — Update key"),
 the upstream body only on hover. For a ChatGPT sign-in a 401 first renews the
 token once, so `auth` means OpenAI refused the grant or the renewed token was
@@ -629,7 +633,7 @@ figure, and advice that depends on whether the reply had tools
 (`chat/coverage.js`); "PDF file not accepted — sent as text" when the file
 was requested but the provider took text instead, and "PDF too large to
 attach" or "PDF file unavailable" when `native_skipped` says it never went.
-Four more pills per
+Five more pills per
 reply: "Earlier messages left out: N" (the stream's `{"trimmed": {turns}}`
 line, see "Fitting the window"), "PDF passage shortened: first 12,000 of
 31,400 characters sent" (`{"shortened"}`, see "Selected PDF passages"),
@@ -643,8 +647,10 @@ it; the agent loop stops there rather than run a half-written tool call;
 callback, which the PDF translation reads ([translation.md](translation.md)),
 and `Protocol.stop_reason` reads a whole reply's),
 and "Stopped at the tool-round limit", "Stopped at the change limit" or
-"Stopped: the conversation is full" (`{"limit"}`, see "The tool loop").
-That pill and the output-limit one offer Continue.
+"Stopped: the conversation is full" (`{"limit"}`, see "The tool loop"),
+and "Answered without tools" (`tools_off` on the `{"model"}` line,
+`toolsOffNote`, see "Models that can't call tools").
+The limit pill and the output-limit one offer Continue.
 `/api/ai/models` marks each model `native_pdf`, its protocol's flag. Every
 protocol takes PDFs today, the ChatGPT sign-in included
 ([research note](../research/chatgpt-pdf-input.md)). The composer's
@@ -734,7 +740,9 @@ prefix, so a change in either costs the head and the history too. The system
 prompt therefore holds only what stays the same for a whole conversation
 (`agent_system`'s docstring is the rule). What a message points at in the
 notes (the cursor block, attached chips, note selections) goes with that
-message ("Pointing the chat at notes" below). The tools that ask are not
+message ("Pointing the chat at notes" below), and so does a planning turn's
+instruction ("Planning first" below): Plan on or off, the specs and the
+system prompt are the same. The tools that ask are not
 named, so a permission the conversation allows on an approval card changes
 nothing ("Asking before a call" below). The system prompt changes only when the model, the custom
 prompts, the tool permissions, the pages in context or their coverage
@@ -803,8 +811,10 @@ translated view asks for the model's lowest level unless Settings →
 Translation names one ([translation.md](translation.md) "The server").
 
 Every reply names what answered it: the stream's `{"model": {id, name,
-effort, speed}}` line (after `{context}`) is saved on the reply as `model`,
-`effort` and `speed`, and the reply's foot shows "gpt-5.5 · high" before the
+effort, speed, tools}}` line (after `{context}`) is saved on the reply as
+`model`, `effort` and `speed`. A chat whose model can't call tools carries
+`tools_off` there too, the reason, saved as `toolsOff` ("Models that can't
+call tools"). The reply's foot shows "gpt-5.5 · high" before the
 token line, with the speed as its glyph (`SPEED_ICONS` in `chat/ChatDock.jsx`
 — a bolt for `fast`, a clock for `flex`, nothing for the usual routing; the
 tooltip names the tier, since the glyph carries no text). The line comes a
@@ -940,9 +950,9 @@ another budget of the same size the same way (`notes_focus_section`,
 more than it.
 
 The user is told before sending. The composer applies the same rule to
-the chips (`chat/passageBudget.js`, `fairShares` to the character, with
-cases shared between `tests/passageBudget.test.mjs` and
-`tests/test_ai_passages.py`), and a chip whose passage won't go whole says
+the chips (`chat/passageBudget.js`, `fairShares` to the character, a
+character being a code point on both sides, with the cases in
+`tests/shared/passages.json`), and a chip whose passage won't go whole says
 "first 12,000 of 31,400 characters" in the warning colour, with the reason
 and the setting in its hover text. After sending, the stream's
 `{"shortened": {items, budget, asked}}` line (after `{"trimmed"}`) lists
@@ -955,8 +965,9 @@ model's window when the window fit shrank the budget (`budget` below
 ### The composer
 
 The composer is one rounded box: the context chips on top, the message at
-full width, then a toolbar of [+], the PDF switch, the model chip, the
-mic, and Send (or Stop while this bucket's reply streams). The box's
+full width, then a toolbar of [+], the PDF switch, the Plan switch
+("Planning first" below), the model chip, the mic, and Send (or Stop while
+this bucket's reply streams). The box's
 buttons never take the focus (the form cancels a button's `mousedown`), so
 a press keeps an on-screen keyboard up.
 
@@ -968,9 +979,9 @@ a press keeps an on-screen keyboard up.
   `sendsOnEnter` serves the composer and an edit-and-resend.
 - **Input methods.** An Enter that confirms a word an input method is still
   composing (Chinese, Japanese, Korean; `isComposing` or key code 229)
-  belongs to it: `composing(e)` keeps it from sending, committing or
-  closing in the composer, an edit, the history's rename and a hand-off
-  card's note.
+  belongs to it: `composing(e)` (`shared/lib/hotkeys.js`, which every text
+  field's Enter asks) keeps it from sending, committing or closing in the
+  composer, an edit, the history's rename and a hand-off card's note.
 - **Searches that raise no keyboard.** The history popover's search and the
   page picker's take the focus on open only where typing is not on an
   on-screen keyboard (`autoFocus={!touchTyping()}`).
@@ -1375,6 +1386,96 @@ A call that changes several pages counts each one ([ai_tools.md](ai_tools.md)
 except on a shared AI connection without a daily allowance, unless the
 user is an administrator.
 
+### Models that can't call tools
+
+Assistant tools are on by default and reading is allowed, so almost every
+chat carries tool specs, whatever its model. Some endpoints refuse them: an
+OpenRouter model with no tool-capable route (a 404), an Ollama model whose
+template has no tools, a vLLM server started without a tool parser (400s).
+Whether a (connection, model) takes tools only a live call can tell, so the
+server checks each one once and remembers the verdict.
+
+The check (`_check_tools` in `routers/ai.py`) is one streamed turn that asks
+the model to call a trivial tool, `report_ok` (`TOOL_CHECK`,
+`TOOL_CHECK_PROMPT`), over the wire the chat itself would use: Responses on
+OpenAI's own endpoint and the Codex backend, Messages on Anthropic, Chat
+Completions elsewhere. It ends in one of three ways:
+
+- **Calls tools**: any parsed tool call, whatever its name.
+- **No tools**: the provider refuses the request because of the tool (a 4xx
+  other than 401, 403, 408, 413, 429 or a too-long prompt, `_tool_refusal`)
+  and the same turn without the tool goes through; the reason is the
+  provider's own words. Or the model finishes with text only; the reason is
+  "answered in text instead of calling the check tool: “…”", quoting its
+  first 80 characters, which shows a call written as text when that is what
+  happened.
+- **No verdict**: anything else. A key or quota problem, the shared
+  allowance, the network, a 5xx, an empty reply, a reply cut off at the
+  token cap (thinking a local server streams as text ends so), or the
+  deadline. Nothing is stored and the chat keeps its tools.
+
+`_checked_tools` runs the check in `ai_chat` right after the tools are armed,
+before the reply opens, for a model whose registry row has no verdict yet. It
+runs under a lock per model (per account for an own entry, per entry for a
+shared one) and reads the stored verdict again inside it, so two first
+messages run one check. The check has `TOOL_CHECK_DEADLINE` (30 s) in all.
+The clock is read on every line the provider sends, keep-alives that carry
+no event included (an SSE comment such as OpenRouter's while it queues,
+Anthropic's `ping`), and the socket timeout covers silence. A check
+without a verdict is not repeated for `TOOL_CHECK_RETRY_S` (10 minutes); the
+tools stay on meanwhile. A refusal of the account's own before any call
+(`CallRefused`: its allowance used up, too many calls open) is no verdict
+too, but starts no wait, since a shared entry's other accounts would wait it
+out as well; the chat's own call is then refused the same way. A storage
+error while the verdict is read or saved never stops the chat: a failed
+read is no verdict, and a failed save is logged and the fresh verdict still
+applies to this chat. Its tokens count as a `test` in token usage. A
+request made with an integration token never checks: it applies a stored
+verdict only, since a token never writes the account's provider settings.
+The context export (`/api/ai/chat/context`) applies a stored verdict the
+same way and never checks.
+
+A chat whose model has a "no tools" verdict is exactly a plain chat: no
+tool specs, no replayed tool calls, the plain system prompt. Its
+`{"model"}` line says `tools: false` and `tools_off: <reason>`, and the reply
+shows an "Answered without tools" pill (`toolsOffNote` in
+`chat/coverage.js`). A chat refused the way a tool is refused although the
+model has a "calls tools" verdict (a server restarted without its tool
+parser) forgets that verdict (`_forget_tools`), so the next message checks
+again. That one message still fails with the usual error card.
+
+The verdicts live on the provider entry as `tool_checks: {model: {ok,
+reason, at}}` (`ai_settings.save_tool_check`). An own entry keeps them in the
+account's `ai-settings` pref, which never syncs. A shared entry keeps them in
+the server's `ai_providers` config, so one check covers every account the
+entry admits, and only an administrator can check it again. A save is a
+compare-and-set: the entry must still pick the model and still have the
+protocol, base URL and key the check went through. A new key, base URL or
+protocol drops the entry's verdicts, and a models edit keeps the picked
+models' only. The registry rows of `/api/ai/models` carry `tools` (true,
+false, or null when not checked yet) and `tools_reason`; the masked entries
+of `/api/ai/settings` and `/api/admin/ai-providers` carry `tool_checks`.
+
+In the chat, a model with a "no tools" verdict shows a **No tools** chip
+before the model chip while the chat would use tools, with the reason on
+hover. A click checks it again: Test with `tools_model`, on an own
+connection or by an administrator; anyone else is told an administrator can
+check it in Settings → Server. The model menus read "model · no tools"
+(`modelLabel` in `chat/modelPrefs.js`), and the agent's intro and
+placeholder give way to the plain chat's. A reply that brings a verdict the
+registry didn't have reads `/api/ai/models` again, so the chip shows at once.
+In Settings → AI › Connections (and Settings → Server's shared rows), each
+model tag carries a check (calls tools), a ban (no tools, with the reason and
+date) or nothing (not checked yet), and a click on the tag checks that model
+again; the list is read again after it.
+
+Tests: `backend/tests/test_ai_tool_check.py`. Every other backend test runs
+with conftest's autouse `_no_tool_checks`, which makes the gate answer as if
+the model had passed, so the tests that count `_open_ai` calls see no check.
+A test of the gate puts the real `_checked_tools` back with monkeypatch and
+clears `_tool_check_locks` and `_tool_check_retry`, as that file's
+`_real_gate` fixture does.
+
 ### Asking before a call (approvals)
 
 A call of a tool whose permission is Ask waits for the user
@@ -1482,6 +1583,98 @@ This guards the user's intent, not the workspace. The changing tools exist
 only where `auth.can_write` allows them, and the permission map and
 `granted` come from the user's own client.
 
+### Planning first (Plan mode)
+
+The composer's **Plan** switch makes the next message a planning turn. The
+agent reads, searches and looks things up as it likes, changes nothing, and
+ends with a plan of the change for the user to approve. Approving it runs
+the change as a normal turn, under the chat's own Allow, Ask and Off.
+
+The request carries `planning: true` (`AIChatRequest.planning`), and
+`_chat_scope` puts it on the tool scope. `run_agent_tool` refuses every
+changing call of such a turn (`ai_tools.held_for_plan`) with `PLAN_HELD`:
+nothing was changed, and the change goes into the plan. The refusal comes
+after the unknown-tool, `can_write` and permission checks, so a tool the
+user turned off is still refused as off. A call that could not change
+anything (a wrong id, a page out of scope, nothing to do) is not held: it
+gets the answer `approval_preview` gives it under Ask, so no step that
+cannot be made goes into the plan. `ApprovalGate.run` sends a held
+call straight to the dispatcher, so it shows no card and opens no approval.
+`AgentLoop._preview` streams no `progress` for it, so a held note edit is
+never typed into the notes. Reading tools set to Ask still ask. A held
+call's chip is an error chip with `held: true`. It names the change by the
+`title`, `mode` and `count` its card would have shown
+(`approval_preview`, worked out and never shown), as a declined chip does.
+
+The tool specs and the system prompt stay the same as on every other turn.
+A planning turn that offered only the reading tools would re-write the
+cached prefix twice per plan, once for the planning turn and once for the
+Approve turn after it ("Prompt caching" above). In a folder chat with no web
+engine or helper, 30 specs (27,639 characters, update_plan's 837 among
+them) and a 10,482-character agent prompt sit in front of the document
+head; leaving out the 15 changing tools would leave 15 specs (15,889
+characters). What the turn is told goes with
+the message instead: `ai_tools.PLANNING_TURN` ends the current user turn
+(`build_messages(turn_note=)`, after the picture lines), and only when
+update_plan is armed. It says to read freely, change nothing, call
+update_plan once with one step per change, and end with a short summary.
+A question that needs no change is answered without a plan.
+
+The plan is the `update_plan` tool, with Codex's schema (`{explanation?,
+plan: [{step, status}]}`,
+[ai_tools.md](ai_tools.md#update_plan-both-scopes)). It has no permission
+of its own and is armed whenever a changing tool is. In a planning turn
+every step is pending and the action carries `plan: {steps, proposed:
+true}`. The result heads the numbered checklist
+"Proposed to the user; nothing is changed until they approve it:", which
+stays true in the turns that replay it.
+
+In the client (`chat/plan.js` has the rules, `chat/PlanCard.jsx` the card):
+
+- **The switch** sits after the PDF switch (`chatAttachToggle chatPdfToggle
+  chatPlanToggle`, `aria-pressed`). It shows to an editor (`canSave`, not a
+  share view) with an AI connected, tools on and an agent scope, where this
+  kind of chat has a changing permission that is not Off. Plan's word gives
+  way in a narrow dock, as the grant chip's does. While it is on, the
+  message box's last placeholder reads "Ask for a plan…".
+- **The card.** A reply whose last update_plan ran shows its plan after
+  its text, in the approval card's look (`chatApproval chatPlan`, without
+  the `chat.approval` anchor and without `approval.shown`): numbered
+  steps, and a badge that reads "Awaiting your approval", "Approved" or
+  "2 of 4 done" (`planStatus`). A pending plan under the conversation's
+  last reply offers **Approve plan** (primary) and **Revise** while nothing
+  streams here and the composer is empty (`canActOnPlan`, Continue's rule
+  plus the editor's). A plan another message replaced goes quiet, and so
+  does a proposal whose reply failed: neither history sends a failed
+  reply, so the model would not see what Approve carries out, and the
+  reply offers Retry instead.
+- **Approve plan** turns Plan off and sends "Carry out the approved plan."
+  in the user's name, as a normal turn, so changes ask where the settings
+  say Ask and land in the reply's list with their revert. The planning
+  card then reads Approved. The turn replays the planning reply's
+  update_plan call and its result, the whole checklist
+  ([ai_tools.md](ai_tools.md#update_plan-both-scopes)), and so does every
+  later turn, a Continue after the run included: the replay keeps the
+  newest plan whole ("Replay across turns" below). When the model
+  marks steps with update_plan as it works, the run's reply draws its own
+  card with each step's state.
+- **Revise** turns Plan on and goes to the message box: the next message
+  plans again.
+- **The steps pill** counts held calls as "2 kept for the plan", apart
+  from failures, and a held chip reads "Kept for the plan: Rename 37
+  pages" (`heldSummary`).
+
+Which messages plan is one rule, `sentPlanning`: an explicit answer wins,
+then a resent message that planned plans again, then the switch, and
+nothing plans where the switch is not offered. Continue (after a limit)
+and the handoff card's Continue pass the mode of the conversation's last
+user message (`continuesPlanning`), so an approved run never resumes
+read-only and a planning turn never starts changing things. Approve and
+App's Transcribe asks send `planning: false`. A message sent as a planning
+turn is saved with `planning: true`, and Approve's with `approvesPlan:
+true`. The history sends neither to the server. A conversation loaded
+whose last user message planned shows Plan on, and New chat turns it off.
+
 ### The tool loop
 
 ```mermaid
@@ -1555,9 +1748,11 @@ reply, or one cut off at the output cap (`truncated`), is the
 conversation's last, nothing runs and the composer is empty,
 **Continue** sends "Please continue where you stopped." in the user's
 name (`canContinueAfterLimit`, as the handoff card's Continue). It is a
-new message, so budgets start fresh, and the stopped reply's calls are
-replayed compactly (arguments cut at `_ARG_CAP`, results under
-`TOOL_REPLAY_BUDGET`, and only the newest `REPLAY_CALLS`, below). So
+new message, so budgets start fresh, and it keeps the mode of the message
+it continues: a planning turn's Continue plans, an approved run's does not
+("Planning first" above). The stopped reply's calls are replayed compactly
+(arguments cut at `_ARG_CAP`, results under `TOOL_REPLAY_BUDGET`, and only
+the newest `REPLAY_CALLS`, below). So
 after the window stopped a reply, the task and the newest work still
 fit. Stop and errors offer no Continue.
 
@@ -1607,9 +1802,10 @@ naming a single page lifts that page's `page_id` / `title` into `args`;
 the label reads "Renaming 37 pages…".
 Once it ran, the call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
-list/read/view/search/rename/move/edit/create, plus `error` with `error: true` for
-failed/blocked calls) that the chat saves in the message. A change also says
-what changed: `rename_page` / `move_page` carry `title` (the page's title
+list/read/view/search/rename/move/edit/create, `plan` for update_plan, plus
+`error` with `error: true` for failed/blocked calls, and `held: true` too for
+a change a planning turn refused) that the chat saves in the message. A
+change also says what changed: `rename_page` / `move_page` carry `title` (the page's title
 before the call) and `from` / `to` (old and new title, old and new folder
 path, `""` = the library root), and the note tools their page's `title`.
 The folder and label tools carry `title` (the folder's path, the label's
@@ -1653,8 +1849,8 @@ that changed several; the loop puts what is left on the scope
 home-feed refresh (`onLibraryChange`), and
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
 reloads the open page's block tree when the AI touched it (`onNotesChange`;
-with the page's live socket up the tools' ops already arrived through it and
-the reload is skipped — [collab.md](collab.md)). A `view_pdf_page`,
+with the page's live socket up (`me.via` `"socket"`, not the op-log poll) the
+tools' ops already arrived through it and the reload is skipped — [collab.md](collab.md)). A `view_pdf_page`,
 `view_ink` or `view_image` result also carries its picture, and a
 `read_page` or `read_block` result the pictures of the area highlights it
 lists: the loop lifts them off the action into the tool message's `images`
@@ -1730,7 +1926,9 @@ pages changed since), undone except on that many pages
 (`_REVERTED_KEPT_NOTE`). A redo that left pages as they were keeps
 `kept` without the mark, and the note says it was redone except on those
 (`_REDONE_KEPT_NOTE`) ([ai_tools.md](ai_tools.md) "Reverting a note change"). Results share `TOOL_REPLAY_BUDGET` chars newest-first
-(older ones elided). A reply replays at most its newest `REPLAY_CALLS`
+(older ones elided). The newest update_plan result is kept whole, its size
+taken from the budget first: a run that carries out a plan reads more than
+the budget holds, and its Continue must still see every step. A reply replays at most its newest `REPLAY_CALLS`
 (200) calls. The older ones become one line in front of them, how many
 by tool (`_OMITTED_CALLS`): an Unlimited reply that filled the window
 made thousands, and replaying them all would fill the next message's

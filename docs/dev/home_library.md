@@ -227,10 +227,13 @@ filed where its top is, and `folders` it still carries (written past the
 op rule by an import, a raw write or a merged copy) count for nothing.
 `pages_in_folder` lists the library pages filed in the folder or below it,
 each followed by its descendants, `page_in_folder` asks the question of the
-page's top, and `pages_in_scope` tests a folder chip against the top and a
-label chip against the page itself. So a folder view, a folder share, the
-search scope, a folder export, a folder chat's agent and a folder link on
-disk reach a sub-page through its top without code of their own.
+page's top, and `pages_in_scope` (the `scope` of GET search) tests a
+folder id against the top and a label id against the page itself. So a
+folder view, a folder share, GET search's scope, a folder export, a folder
+chat's agent and a folder link on disk reach a sub-page through its top
+without code of their own. The Ctrl+F panel's chips and qualifiers are
+evaluated in the browser by the same rule (`search/searchFilters.js`,
+through `libraryUtils.topPageOf`), and it sends the page ids they keep.
 `root_pages` without a folder reaches every live page, sub-pages included
 (search, export, the agent, reindexing). `blocks_store.filed_folders` is
 a page's folders by this rule, which the connector's clip and lookup
@@ -597,7 +600,12 @@ on a second line (the Phone block at the end of `library.css`).
 
 Search chips (Tab autosuggest; Enter stays the search's own key) cover both kinds, named from the trees: a
 label chip keeps the pages carrying that label, a folder chip (its path)
-the pages filed in the folder or below it.
+the pages filed in the folder or below it. The search popover's typed
+qualifiers (`label:`, `folder:`, `-label:read`, `is:pdf`, `year:>=2020` …,
+[api.md](api.md) "Search matching and display") combine with the chips.
+The home filter box and Ctrl+P read no qualifiers: a query holding one
+matches nothing there, so Enter (or the search row) hands it to the
+popover, where it works.
 
 **Start your library.** A library with nothing of the user's in it yet
 shows `library/LibraryEmpty.jsx` at the root, in both views, instead of the

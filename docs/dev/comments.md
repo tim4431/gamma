@@ -356,6 +356,7 @@ like any other content.
 | Where the recipient's tab is | How it learns | Latency |
 |---|---|---|
 | a page open, in any workspace or share | `{t: "inbox"}` through `collab.publish_account` | under a second |
+| a page open without its socket (a proxy dropping WebSocket upgrades: the page reads its op log every 2 s, [collab.md](collab.md) "The client") | the 30 s poll of `GET /api/inbox/unread`; the page's threads are refetched on the first read and about every 30 s after | up to 30 s |
 | the home library or Settings | `GET /api/inbox/unread` every 30 s while visible, and on window focus | up to 30 s |
 | the Inbox panel open | the same poll every 5 s, plus the nudge | under 5 s |
 | a hidden tab | nothing until it shows again | on return |
@@ -523,8 +524,8 @@ popover.
 Left out: the outliner's keys, "Paste as", image and file upload, sheets,
 embeds, presence carets and object drags.
 
-**The composer's keys.** `sendsOnShiftEnter` and `composing`
-(`chat/enterKey.js`) decide Return. Enter breaks the line,
+**The composer's keys.** `sendsOnShiftEnter` (`chat/enterKey.js`) and
+`composing` (`shared/lib/hotkeys.js`) decide Return. Enter breaks the line as in a note,
 continuing a list or a quote (`mdLines.enterPlan`) outside a code fence or
 `$$…$$`. Shift+Enter and Ctrl/⌘+Enter send. On an on-screen keyboard
 Return breaks the line, Shift or not, and the button sends; Ctrl/⌘+Enter

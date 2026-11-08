@@ -1,0 +1,15 @@
+{
+  "about": "What a page carries (docs/dev/block_centric.md 'Stage 0'): gamma/blocks_store.py page_attachment and attachment_file, frontend/src/library/libraryUtils.js pageAttachment and attachmentFile. properties is the page's; attachment is {kind, id, url, name} when it has a doc_id or a source_url (url: the source_url, else the stored copy /api/uploads/<doc_id>.pdf), else null; file is the doc id of the file it shows: its id, else the stored upload its url is exactly, else ''. Read by backend/tests/test_shared_fixtures.py and frontend/tests/libraryUtils.test.mjs.",
+  "cases": [
+    {"note": "a page of blocks alone", "properties": {}, "attachment": null, "file": ""},
+    {"note": "empty fields are none", "properties": {"doc_id": "", "source_url": ""}, "attachment": null, "file": ""},
+    {"note": "the stored copy's address comes from the doc id", "properties": {"doc_id": "d1", "original_filename": "paper.pdf"}, "attachment": {"kind": "pdf", "id": "d1", "url": "/api/uploads/d1.pdf", "name": "paper.pdf"}, "file": "d1"},
+    {"note": "a source address of its own wins", "properties": {"doc_id": "d1", "source_url": "https://x.test/p.pdf"}, "attachment": {"kind": "pdf", "id": "d1", "url": "https://x.test/p.pdf", "name": ""}, "file": "d1"},
+    {"note": "a duplicated page: the stored upload by its address alone", "properties": {"source_url": "/api/uploads/d1.pdf"}, "attachment": {"kind": "pdf", "id": "", "url": "/api/uploads/d1.pdf", "name": ""}, "file": "d1"},
+    {"note": "another host's upload address is no stored file", "properties": {"source_url": "https://x.test/api/uploads/d1.pdf"}, "attachment": {"kind": "pdf", "id": "", "url": "https://x.test/api/uploads/d1.pdf", "name": ""}, "file": ""},
+    {"note": "an upload that is no PDF", "properties": {"source_url": "/api/uploads/d1.png"}, "attachment": {"kind": "pdf", "id": "", "url": "/api/uploads/d1.png", "name": ""}, "file": ""},
+    {"note": "a query makes it another address", "properties": {"source_url": "/api/uploads/d1.pdf?x=1"}, "attachment": {"kind": "pdf", "id": "", "url": "/api/uploads/d1.pdf?x=1", "name": ""}, "file": ""},
+    {"note": "a doc id of 128 characters", "properties": {"source_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf"}, "attachment": {"kind": "pdf", "id": "", "url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf", "name": ""}, "file": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"note": "a doc id of 129 characters is none", "properties": {"source_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf"}, "attachment": {"kind": "pdf", "id": "", "url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf", "name": ""}, "file": ""}
+  ]
+}

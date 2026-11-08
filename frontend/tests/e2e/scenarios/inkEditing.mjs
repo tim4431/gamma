@@ -42,7 +42,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await page.touchscreen.tap(p.x, p.y);
     try {
       await menu().waitFor({ timeout: 10000 });
-    } catch (e) {
+    } catch {
       const seen = await page.evaluate(([x, y, paths]) => {
         const el = document.elementFromPoint(x, y);
         return { at: [x, y], under: el ? `${el.tagName.toLowerCase()}.${[...el.classList].join(".")}` : null,

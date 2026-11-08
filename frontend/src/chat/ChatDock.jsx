@@ -15,19 +15,21 @@ import PaperMentionInput from "./PaperMentionInput";
 import FetchHandoffCards, { LiveHandoffCards } from "./FetchHandoffCards";
 import ReplyPapers from "./ReplyPapers";
 import ApprovalCard from "./ApprovalCard";
+import PlanCard from "./PlanCard";
 import AgentChanges, { ACTION_ICONS } from "./AgentChanges";
 import RevertChanges from "./RevertChanges";
 import { forReplay, markReverted, revertible } from "./aiRevert.js";
-import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, readGrants, waitsForPapers, withGrant,
+import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, heldSummary, readGrants, waitsForPapers, withGrant,
   withoutGrants, withoutPaperWait, writeGrants } from "./approvals.js";
+import { approvePlanPrompt, canActOnPlan, continuesPlanning, planStatus, replyPlan, sentPlanning } from "./plan.js";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import {
   areaPicturesNote, canContinueAfterLimit, continueAfterLimitPrompt, coverageNote, limitNote, shortenedNote, trimmedNote,
-  truncatedNote,
+  toolsOffNote, truncatedNote,
 } from "./coverage.js";
-import { keptNote, keptTitle, passageShares } from "./passageBudget.js";
+import { charCount, keptNote, keptTitle, passageShares } from "./passageBudget.js";
 import { recencySections } from "../library/PageOption";
 import { rankLibraryPages } from "../library/librarySearch";
 import { filedIn, pageAttachment, topPageOf } from "../library/libraryUtils";
@@ -35,7 +37,9 @@ import { ActionMenu, ContextMenu, MenuButton, MenuItem, MenuSelect } from "../sh
 import { backdropPress, menuPress } from "../shared/ui/press.js";
 import { useAltVariant } from "../shared/ui/altVariant.js";
 import { touchTyping } from "../shared/lib/pointer.js";
-import { composing, sendsOnEnter } from "./enterKey.js";
+import { pickFiles } from "../shared/lib/pickFiles.js";
+import { composing } from "../shared/lib/hotkeys.js";
+import { sendsOnEnter } from "./enterKey.js";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
 import { BLOCK_TOOLS, changePlace, chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
@@ -45,8 +49,9 @@ import { AgentToolPicker, changePermission, chatKindName, permissionLabel } from
 import { aiServiceTiles } from "../settings/providerEditor.js";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
-import { effortFor, providerModels, speedFor } from "./modelPrefs";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, BotIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
+import { effortFor, modelLabel, providerModels, speedFor } from "./modelPrefs";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
+import { ListOrderedIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import ListMotion from "../shared/ui/ListMotion";
@@ -106,8 +111,9 @@ function relAge(iso) {
 // reply: the oldest messages left out of a conversation the model can't
 // hold any more, the selected passages and attached blocks that went short,
 // a reply cut off at the output limit, and a reply a tool limit or the
-// window stopped (chat/coverage.js).
-function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated, limit }) {
+// window stopped (chat/coverage.js). A reply whose model can't call tools
+// says it went without them (`toolsOff`, `model` its model's name).
+function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated, limit, toolsOff, model }) {
   const [open, setOpen] = useState(-1); // the pill whose explanation is unfolded
   const [shown, setShown] = useState(-1); // the explanation under them, kept while it folds away
   const notes = (items || []).flatMap((c) => {
@@ -131,6 +137,7 @@ function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated,
     }
     return out;
   });
+  if (toolsOff) notes.push(toolsOffNote(toolsOff, model));
   for (const extra of [trimmedNote(trimmed), shortenedNote(shortened), truncatedNote(truncated), limitNote(limit)]) if (extra) notes.push(extra);
   if (!notes.length) return null;
   // Pills like the agent's steps: a click unfolds the explanation under them.
@@ -197,7 +204,7 @@ function ChatErrorCard({ message, compact, actions }) {
 // `still`: a reply loaded or read again, not this tab's own: its label
 // changes at once and is not read out.
 function AgentSteps({ actions, live, still, running, waiting, helpers = [], usage, text, open, onToggle, titleOf, children }) {
-  const { failed, declined } = splitActions(actions);
+  const { failed, declined, held } = splitActions(actions);
   const done = !live && actions.length > 0;
   const label = waiting === "paper" ? t("Waiting for the paper from your browser")
     : waiting ? t("Waiting for your approval")
@@ -223,6 +230,7 @@ function AgentSteps({ actions, live, still, running, waiting, helpers = [], usag
         {live ? <span aria-hidden="true"><UsageLine usage={usage} className="chatMsgUsage live" /></span> : null}
         {failed && done ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
         {declined && done ? <span className="chatStepsDeclined">{t("{n} not allowed", { n: declined })}</span> : null}
+        {held && done ? <span className="chatStepsDeclined">{t("{n} kept for the plan", { n: held })}</span> : null}
         {actions.length ? <Chevron open={open} dir="down" size={14} /> : null}
       </button>
       {live && helpers.length ? (
@@ -470,6 +478,12 @@ export default function ChatDock({
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus, askConfirm,
+  // A model that can't call tools on its connection (its registry row's
+  // `tools` false): checkModelTools(model) checks it again (App's
+  // testAiProvider with the model, resolving to its result), and
+  // refreshAiModels reads /api/ai/models again, when a reply brings a
+  // verdict the registry didn't have.
+  checkModelTools, refreshAiModels,
   // Home/folder view: the folder being viewed (its id; "" = library root) —
   // enables the folder-agent tools; null in the paper view. agentPerms is the
   // Settings per-chat-kind permission map ({folder, pdf, notes} → {list,
@@ -620,6 +634,13 @@ export default function ChatDock({
                         fetch_metadata: paperSave.fetchMetadata !== false } }
       : {};
   };
+  // Plan mode (chat/plan.js): with the switch on, a message is a planning
+  // turn — the assistant reads and proposes a plan, and changes nothing
+  // until the user approves it. Offered to an editor where this kind of
+  // chat can change something; kept per conversation, as the PDF switch is.
+  const [planMode, setPlanMode] = useState(false);
+  const canPlan = canSave && !readOnly && !aiOff && toolsEnabled && !!agentPayload([]).agent_scope
+    && toolsForKind(chatKind).some((key) => WRITE_TOOLS.includes(key) && perm(key));
   // "Skip, and don't wait in this chat": later blocked papers of this
   // conversation leave their card under the reply instead of holding it.
   const neverWaitHere = () =>
@@ -647,8 +668,8 @@ export default function ChatDock({
   // A chip whose passage won't go whole says what it keeps.
   const quotedShares = passageShares([...pdfSelections, cursorChip?.sel,
     ...(chatNotes || []).filter((n) => n.kind === "note")], chatContextChars);
-  const keptOf = (p) => keptNote(quotedShares.get(p), p.text.length);
-  const keptHint = (p) => keptTitle(quotedShares.get(p), p.text.length, chatContextChars);
+  const keptOf = (p) => keptNote(quotedShares.get(p), charCount(p.text));
+  const keptHint = (p) => keptTitle(quotedShares.get(p), charCount(p.text), chatContextChars);
   // Empty-state intro and input placeholder for an agent-enabled home chat.
   const agentScopeName = organizeFolder ? t("this folder") : t("your library");
   const agentIntro = organizeFolder == null || !toolsEnabled ? null
@@ -686,6 +707,32 @@ export default function ChatDock({
   // Connections); the first key's when none is selected or the selected one is gone.
   const headerModels = providerModels(aiInfo?.models, aiProvider);
   const headerModel = headerModels.find((m) => m.id === chatModel) || headerModels[0] || null;
+  // The model can't call tools on its connection: its chats go without them,
+  // which the composer's No tools chip says (a click checks it again, on an
+  // own connection or by an administrator), and the agent's intro and
+  // placeholder give way to the plain chat's.
+  const noTools = headerModel?.tools === false;
+  const canCheckTools = !!checkModelTools && (!headerModel?.shared || isAdmin);
+  const [checkingTools, setCheckingTools] = useState(false);
+  const noToolsHint = noTools ? (canCheckTools
+    ? t("{model} can't call tools on this connection ({reason}), so its chats answer without them. Click to check again.",
+      { model: headerModel.model, reason: headerModel.tools_reason || "" })
+    : t("{model} can't call tools on this connection ({reason}), so its chats answer without them. An administrator can check it again in Settings → Server.",
+      { model: headerModel.model, reason: headerModel.tools_reason || "" })) : "";
+  async function checkTools() {
+    const m = headerModel;
+    if (!canCheckTools) { setStatus(noToolsHint); return; }
+    setCheckingTools(true);
+    try {
+      const r = await checkModelTools(m);
+      setStatus(!r?.tools ? t("Couldn't check {model}: {headline}", { model: m.model,
+        headline: failureCopy(r?.kind, { provider: m.provider_name }).headline })
+        : r.tools.ok ? t("{model} can use tools", { model: m.model })
+        : t("{model} still can't use tools: {reason}", { model: m.model, reason: r.tools.reason }));
+    } finally {
+      setCheckingTools(false);
+    }
+  }
   const modelInfo = useModelInfo(!aiOff && aiInfo ? headerModel?.id : "");
   // The context ring: the latest reply's size against the model's window.
   const ctxUsed = contextUsed(chatMessages);
@@ -721,7 +768,6 @@ export default function ChatDock({
   const [chatFiles, setChatFiles] = useState([]); // uploaded PDFs ({name, data}) pending send
   const [docPicker, setDocPicker] = useState(false); // "Add pages" modal
   const [docPickerQuery, setDocPickerQuery] = useState("");
-  const fileInputRef = useRef(null);
   const chatScrollRef = useRef(null);
   // Ctrl+scroll over the transcript: session-only text size (useTextScale).
   const chatTextScale = useTextScale();
@@ -801,6 +847,7 @@ export default function ChatDock({
       : !!lastUser.pdfs?.length);
     attachPdfManualRef.current = false;
     setAttachPdf(carried && nativePdf);
+    setPlanMode(continuesPlanning(msgs)); // on while the last message asked for a plan
   }
 
   // The bucket whose stored conversation has been read (or failed to): an
@@ -870,6 +917,7 @@ export default function ChatDock({
         session.remember(key, data.messages || [], data.title || "");
         setChatMessages(data.messages || []);
         setChatTitle(data.title || "");
+        setPlanMode(continuesPlanning(data.messages || []));
         setHistoryRead("");
       }).catch(() => {});
     };
@@ -980,6 +1028,7 @@ export default function ChatDock({
     setChatTitle("");
     attachPdfManualRef.current = false;
     setAttachPdf(nativePdf); // new chat: the full PDF goes again (where the provider takes it)
+    setPlanMode(false);
     session.remember(chatKey, [], "");
     setHistoryRead("");
   }
@@ -1198,7 +1247,7 @@ export default function ChatDock({
 
   // The /api/ai/chat request for `text` after `prevMessages`, from what the
   // composer holds now — the send and the context export build the same one.
-  function chatRequest(text, prevMessages, { selectedDocs = chatDocs, includeNotes = chatIncludeNotes, attach = false, model = "", key = chatKey } = {}) {
+  function chatRequest(text, prevMessages, { selectedDocs = chatDocs, includeNotes = chatIncludeNotes, attach = false, model = "", key = chatKey, planning = false } = {}) {
     const { notes, cursorSel } = pendingNotes();
     const contextIds = [...new Set([focusedBlockId, ...selectedDocs].filter(Boolean))];
     return {
@@ -1243,6 +1292,8 @@ export default function ChatDock({
       context_char_limit: chatContextChars,
       multi_context_char_limit: multiContextChars,
       ...agentPayload(prevMessages),
+      // A planning turn: the server refuses every change in it (chat/plan.js).
+      ...(planning ? { planning: true } : {}),
     };
   }
 
@@ -1267,7 +1318,8 @@ export default function ChatDock({
   // turn with the pages' context, the draft as the last message — as Markdown.
   const exportContext = () => exportWith(() => downloadFetched(`${API}/ai/chat/context`, {
     method: "POST", headers: JSON_HEADERS,
-    body: JSON.stringify({ ...chatRequest(chatInput.trim(), chatMessages), title: activeTitle }),
+    body: JSON.stringify({ ...chatRequest(chatInput.trim(), chatMessages,
+      { planning: sentPlanning({ toggle: planMode, canPlan }) }), title: activeTitle }),
   }, `${fileBase} - context.md`), (message) => t("Couldn't export the chat context: {message}", { message }));
 
   // A conversation as a file to keep: the transcript as Markdown with every
@@ -1289,11 +1341,16 @@ export default function ChatDock({
 
   // Core chat send. baseMessages overrides the history (used when re-sending
   // an edited message: everything after the edited message is discarded,
-  // ChatGPT-style).
-  async function sendChat(rawText, { baseMessages, referenceMessage, model } = {}) {
+  // ChatGPT-style). `planning` says whether it is a planning turn (else the
+  // resent message's mode or the Plan switch decides, chat/plan.js
+  // sentPlanning); `approvesPlan` marks Approve plan's message.
+  async function sendChat(rawText, { baseMessages, referenceMessage, model, planning: asked, approvesPlan } = {}) {
     if (readOnly || aiOff) return;
     const text = (rawText || "").trim();
     if (!text || busyHere) return;
+    const planning = sentPlanning({ planning: asked, referenceMessage, toggle: planMode, canPlan });
+    // A retry of Approve plan's message approves the plan still.
+    const approves = !planning && (!!approvesPlan || (!!referenceMessage?.approvesPlan && text === referenceMessage.text));
     // pdf: the whole file goes with this message (the PDF switch's hint).
     guideEvents.emit("chat.sent", { pdf: !!(pdfInContext && attachPdf && nativePdf) });
     const selectedDocs = referenceMessage ? (referenceMessage.contextPages || []).map((p) => p.id) : chatDocs;
@@ -1339,6 +1396,9 @@ export default function ChatDock({
       // can tell whether this document was already sent in the conversation
       // (uploaded files aren't library docs — they contribute names only).
       ...(pdfNames.length ? { pdfs: pdfNames, pdfDocs: sendingPdf ? pdfPages.map((p) => p.id) : [] } : {}),
+      // How it was asked: a planning turn, or the approval of a plan.
+      ...(planning ? { planning: true } : {}),
+      ...(approves ? { approvesPlan: true } : {}),
     };
     const sendKey = chatKey; // reply belongs to THIS conversation, even if the user navigates away
     const showReply = (aiMsg, final) => {
@@ -1382,6 +1442,7 @@ export default function ChatDock({
       ...(answered ? { model: answered.name, ...(answered.effort ? { effort: answered.effort } : {}),
         ...(answered.speed ? { speed: answered.speed } : {}),
         ...(answered.tools ? { tools: true } : {}) } : {}),
+      ...(answered?.tools_off ? { toolsOff: answered.tools_off } : {}),
       ...(usage ? { usage } : {}),
       ...(lastRound ? { context_tokens: (lastRound.input || 0) + (lastRound.output || 0) } : {}),
       ...(trimmed ? { trimmed } : {}),
@@ -1400,7 +1461,7 @@ export default function ChatDock({
         // chatRequest reads this render's composer state — the clears above
         // only change it for the next render.
         body: JSON.stringify({
-          ...chatRequest(text, prevMessages, { selectedDocs, includeNotes, attach: sendingPdf, model, key: sendKey }),
+          ...chatRequest(text, prevMessages, { selectedDocs, includeNotes, attach: sendingPdf, model, key: sendKey, planning }),
           stream: true,
         }),
       });
@@ -1444,6 +1505,11 @@ export default function ChatDock({
             coverage = ev.context;
           } else if (ev.model) {
             answered = ev.model;
+            // The first chat with tools found the model can't call them: the
+            // chip and the menu label say so from now on.
+            if (ev.model.tools_off && (aiInfo?.models || []).find((x) => x.id === ev.model.id)?.tools !== false) {
+              refreshAiModels?.();
+            }
           } else if (ev.trimmed) {
             trimmed = ev.trimmed;
           } else if (ev.shortened) {
@@ -1519,7 +1585,7 @@ export default function ChatDock({
     kept.asked = askSignal.id;
     if (aiOff || readOnly) return;
     if (busyHere) setChatInput(askSignal.text);
-    else sendChatRef.current?.(askSignal.text);
+    else sendChatRef.current?.(askSignal.text, { planning: false }); // a command to carry out, never a plan
   }, [askSignal, aiInfo, aiOff, readOnly, busyHere, loadedFor, chatKey]);
 
   function sendChatMessage() {
@@ -1991,6 +2057,7 @@ export default function ChatDock({
             onChange={(e) => setChatFind(e.target.value)}
             placeholder={t("Find in chat…")}
             onKeyDown={(e) => {
+              if (composing(e)) return;
               if (e.key === "Enter") { e.preventDefault(); gotoChatFind(e.shiftKey ? chatFindIdx - 1 : chatFindIdx + 1); }
               else if (e.key === "Escape") { e.preventDefault(); setChatFindOpen(false); setChatFind(""); }
             }}
@@ -2035,7 +2102,7 @@ export default function ChatDock({
           : setupCard && !loadError ? setupCard : (
             <div className="chatEmpty">
               {loadError || (readOnly ? t("No saved conversation for this page.")
-                : focusedBlockId ? t("Ask AI about this page…") : agentIntro || t("Ask AI anything, or generate a report from your pages…"))}
+                : focusedBlockId ? t("Ask AI about this page…") : (!noTools && agentIntro) || t("Ask AI anything, or generate a report from your pages…"))}
             </div>
           )}
         {/* A message sent or answered rises into place; a conversation
@@ -2048,6 +2115,8 @@ export default function ChatDock({
             const isUser = m.role === "user";
             const isResponding = busyHere && !isUser && m.partial && i === visibleMessages.length - 1;
             const isFindHit = chatFindOpen && chatFind.trim() && chatFindMatches[chatFindIdx] === i;
+            const plan = isUser ? null : replyPlan(m.actions); // a plan proposed or worked through (PlanCard)
+            const planNow = plan ? planStatus(chatMessages, i) : "";
             if (editingMsg?.idx === i) {
               const resend = () => { const text = editingMsg.text; setEditingMsg(null); resendFrom(i, text); };
               return (
@@ -2098,9 +2167,10 @@ export default function ChatDock({
                         ))}
                       </div>
                     ) : null}
-                    {!isUser && (m.context?.length || m.trimmed || m.shortened || m.truncated || m.limit) ? (
+                    {!isUser && (m.context?.length || m.trimmed || m.shortened || m.truncated || m.limit || m.toolsOff) ? (
                       <ContextCoverage items={m.context} actions={m.actions} tools={!!m.tools}
-                        trimmed={m.trimmed} shortened={m.shortened} truncated={m.truncated} limit={m.limit} />
+                        trimmed={m.trimmed} shortened={m.shortened} truncated={m.truncated} limit={m.limit}
+                        toolsOff={m.toolsOff} model={m.model} />
                     ) : null}
                     {/* The reply's one status pill, from the start of the turn; a
                         reply that ends without a step folds it away. */}
@@ -2128,7 +2198,7 @@ export default function ChatDock({
                                   onClick={() => toggleAction(key)}
                                   title={open ? t("Hide tool output") : t("Show tool output")}>
                                   <Icon size={14} />
-                                  <span>{a.declined ? declinedSummary(a, pageTitleOf) : a.summary}</span>
+                                  <span>{a.declined ? declinedSummary(a, pageTitleOf) : a.held ? heldSummary(a, pageTitleOf) : a.summary}</span>
                                   {chipNote(a) ? <span className="chatToolActionNote">{chipNote(a)}</span> : null}
                                   <Chevron open={open} dir="down" size={10} />
                                 </button>
@@ -2157,6 +2227,13 @@ export default function ChatDock({
                     {isUser
                       ? <div className="chatUserText">{m.text}</div>
                       : m.text && !(m.error && m.errorKind) ? <ChatMarkdown text={m.text} copyBlocks /> : null}
+                    {plan ? (
+                      <PlanCard plan={plan} status={planNow} live={isResponding} still={fromLoad}
+                        canAct={canActOnPlan({ status: planNow, isLast: i === chatMessages.length - 1,
+                          idle: !busyHere && !composerHasDraft, readOnly: readOnly || aiOff, canPlan })}
+                        onApprove={() => { setPlanMode(false); sendChat(approvePlanPrompt(), { planning: false, approvesPlan: true }); }}
+                        onRevise={() => { setPlanMode(true); composerRef.current?.querySelector("textarea")?.focus(); }} />
+                    ) : null}
                     {isResponding && m.approval ? (
                       <ApprovalCard key={m.approval.id} approval={m.approval} kindLabel={chatKindLabel}
                         titleOf={pageTitleOf} onDecide={decideApproval} />
@@ -2168,7 +2245,7 @@ export default function ChatDock({
                     {!isUser && !isResponding && m.actions?.some((a) => a.handoff) ? (
                       <FetchHandoffCards actions={m.actions} isLast={i === chatMessages.length - 1}
                         busy={busyHere} draft={composerHasDraft} readOnly={readOnly || aiOff}
-                        autoOpen={fetchInBackground} onContinue={(text) => sendChat(text)} />
+                        autoOpen={fetchInBackground} onContinue={(text) => sendChat(text, { planning: continuesPlanning(chatMessages) })} />
                     ) : null}
                     {!isUser && !isResponding && canContinueAfterLimit({ limit: m.limit, truncated: m.truncated,
                       isLast: i === chatMessages.length - 1, idle: !busyHere && !composerHasDraft,
@@ -2176,7 +2253,7 @@ export default function ChatDock({
                       <div className="chatLimitActions">
                         <button type="button" className="uiBtn sm primary"
                           title={t("Carry on where the reply stopped, in a new message with a fresh budget")}
-                          onClick={() => sendChat(continueAfterLimitPrompt())}>{t("Continue")}</button>
+                          onClick={() => sendChat(continueAfterLimitPrompt(), { planning: continuesPlanning(chatMessages) })}>{t("Continue")}</button>
                       </div>
                     ) : null}
                     {!isUser && !isResponding && !readOnly && canSave && !m.error ? (
@@ -2220,7 +2297,8 @@ export default function ChatDock({
       {!readOnly ? (
       // One box: the context chips on top, the message at full
       // width, then a toolbar — [+], the PDF switch while a PDF is in
-      // context, the model chip (with reasoning effort), the mic when a
+      // context, the Plan switch where the chat can change something, the
+      // model chip (with reasoning effort), the mic when a
       // connection can transcribe, send / stop. While recording the text
       // and the toolbar give way to the waveform row. Its buttons never
       // take the focus, so a press keeps an on-screen keyboard up.
@@ -2347,7 +2425,7 @@ export default function ChatDock({
             : chatNotes?.length ? (chatNotes[0].kind === "block" ? t("Ask about the attached block…")
               : chatNotes[0].kind === "ink" ? t("Ask about the selected handwriting…") : t("Ask about the selected note…"))
             : cursorChip?.sel ? t("Ask about the selection…") : cursorChip ? t("Ask about this block…") : chatDocs.length ? tn("Ask about {n} attached page…", "Ask about {n} attached pages…", chatDocs.length)
-            : agentAsk || t("Ask…")
+            : planMode && canPlan ? t("Ask for a plan…") : (!noTools && agentAsk) || t("Ask…")
           ) + t(" (@ paper)")}
         />
         <div className="chatComposerBar">
@@ -2366,7 +2444,11 @@ export default function ChatDock({
             {openPopover === "chatdocs" ? (
               <Popover className="popUp chatPlusMenu">
                 <button type="button" className="chatPlusMenuItem"
-                  onClick={() => { setOpenPopover(null); fileInputRef.current?.click(); }}>
+                  onClick={() => {
+                    setOpenPopover(null);
+                    pickFiles({ accept: modelInfo?.images === false ? "application/pdf" : "image/*,application/pdf", multiple: true },
+                      (files) => addChatFiles([...files]));
+                  }}>
                   <span className="chatPlusMenuIcon">
                     <PaperclipIcon size={16} />
                   </span>
@@ -2394,14 +2476,6 @@ export default function ChatDock({
               </Popover>
             ) : null}
           </span>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept={modelInfo?.images === false ? "application/pdf" : "image/*,application/pdf"}
-            style={{ display: "none" }}
-            onChange={(e) => { addChatFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
-          />
           {pdfInContext && !aiOff ? <button
             type="button"
             className={`chatAttachToggle chatPdfToggle ${attachPdf ? "on" : ""}`}
@@ -2423,6 +2497,15 @@ export default function ChatDock({
               <AlertCircleIcon size={14} />
             </button>
           ) : null}
+          {canPlan ? (
+            <button type="button" className={`chatAttachToggle chatPdfToggle chatPlanToggle ${planMode ? "on" : ""}`}
+              aria-pressed={planMode} onClick={() => setPlanMode((on) => !on)}
+              title={planMode
+                ? t("Plan mode is on: the assistant reads and proposes a plan, and changes nothing until you approve it. Click to turn it off.")
+                : t("Plan first: the assistant reads and proposes a plan, and changes nothing until you approve it")}>
+              <ListOrderedIcon size={14} /><span className="chatPlanLabel">{t("Plan")}</span>
+            </button>
+          ) : null}
           <span className="chatComposerSpacer" />
           {grantedHere.length && !aiOff ? (
             <button type="button" className="chatAttachToggle chatGrantChip"
@@ -2431,6 +2514,14 @@ export default function ChatDock({
                 { list: grantedHere.map(permissionLabel).join(", ") })}
               aria-label={t("Allowed in this chat: {list}. Ask again", { list: grantedHere.map(permissionLabel).join(", ") })}>
               <ShieldIcon size={14} /><span className="chatGrantLabel">{t("Allowed in this chat")}</span><XIcon size={12} />
+            </button>
+          ) : null}
+          {noTools && !aiOff && toolsEnabled && agentPayload(chatMessages).agent_scope ? (
+            <button type="button" className="chatAttachToggle chatGrantChip" disabled={checkingTools}
+              onClick={checkTools} title={noToolsHint}
+              aria-label={canCheckTools ? t("No tools on {model}. Check again", { model: headerModel.model })
+                : t("No tools on {model}", { model: headerModel.model })}>
+              <BanIcon size={14} /><span className="chatGrantLabel">{checkingTools ? t("Checking…") : t("No tools")}</span>
             </button>
           ) : null}
           {!aiOff && headerModels.length ? (
@@ -2445,7 +2536,7 @@ export default function ChatDock({
                   <span className="chatModelName">{[headerModel.model, effort].filter(Boolean).join(" · ")}</span>
                   <SpeedGlyph speed={speed} />
                 </>}
-                options={headerModels.map((m) => [m.id, m.model])}
+                options={headerModels.map((m) => [m.id, modelLabel(m)])}
                 sections={[
                   ...(effortLevels.length ? [{
                     label: t("Reasoning effort"),

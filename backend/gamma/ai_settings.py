@@ -5,7 +5,7 @@ Users manage a LIST of provider entries (Settings → AI → Connections), each:
   {"id", "name", "protocol": a key of ai_protocols.PROTOCOLS, "api_key" (or
    "oauth" tokens for a sign-in protocol), "base_url": "" = protocol default,
    "models": "a, b" = comma list ("" = none offered yet), "test_model",
-   "created_at"}
+   "created_at", "tool_checks": whether each model calls tools on it}
 
 Entries live in users.db `user_prefs` under the account-wide reserved
 `ai-settings` key, which the generic /api/prefs endpoints refuse to serve: the
@@ -55,6 +55,7 @@ MAX_URL_LEN = 300
 MAX_MODELS_LEN = 1000
 MAX_NAME_LEN = 60
 MAX_PROVIDERS = 20
+MAX_TOOL_REASON = 200
 
 
 def _entries_of(value) -> list:
@@ -110,17 +111,22 @@ def apply_provider_fields(entry: dict, fields) -> None:
         key = str(fields.api_key).strip()
         if not key or len(key) > MAX_KEY_LEN or any(c.isspace() for c in key):
             raise HTTPException(status_code=400, detail="invalid API key")
+        if key != (entry.get("api_key") or "").strip():
+            entry.pop("tool_checks", None)  # another key may reach another deployment
         entry["api_key"] = key
     if fields.base_url is not None and not oauth_entry:
         url = str(fields.base_url).strip().rstrip("/")
         if (url and not re.match(r"^https?://", url)) or len(url) > MAX_URL_LEN:
             raise HTTPException(status_code=400, detail="base URL must start with http(s)://")
+        if url != (entry.get("base_url") or "").strip().rstrip("/"):
+            entry.pop("tool_checks", None)
         entry["base_url"] = url
     if fields.models is not None:
         models = str(fields.models).strip()
         if len(models) > MAX_MODELS_LEN:
             raise HTTPException(status_code=400, detail="model list too long")
         entry["models"] = models
+        _prune_tool_checks(entry)
     if fields.test_model is not None:
         test_model = str(fields.test_model).strip()
         if len(test_model) > 100:
@@ -155,6 +161,7 @@ def update_entry(entry: dict, fields) -> None:
                                 detail="a sign-in connection and an API-key connection can't be "
                                        "switched into each other — add a new connection instead")
         entry["protocol"] = fields.protocol
+        entry.pop("tool_checks", None)
     apply_provider_fields(entry, fields)
 
 
@@ -181,6 +188,8 @@ def mask_entry(entry: dict, hint: bool = True) -> dict:
         # The signed-in account's e-mail: like the key hint, not for someone
         # who sees a shared sign-in without being an admin.
         "account": (oauth.get("email") or "") if hint else "",
+        # Whether each picked model calls tools here: nothing secret.
+        "tool_checks": tool_checks(entry),
     }
 
 
@@ -463,6 +472,104 @@ def entry_models(entry: dict) -> list:
     return [m.strip() for m in (entry.get("models") or "").split(",") if m.strip()]
 
 
+# --- whether a model calls tools on its connection ----------------------------
+# A model's first chat with tools checks whether it calls them on this
+# connection (routers/ai.py _checked_tools, docs/dev/ai.md "Models that
+# can't call tools"). The verdict is kept on the entry as ``tool_checks``:
+# {model: {"ok": bool, "reason": the provider's words or the model's reply
+# when not, "at": stamp}}. An account's own entry keeps it in its
+# ai-settings pref, a shared entry in the server's config, so one check
+# covers every account the entry admits. A new key, base URL or protocol
+# drops an entry's verdicts, a models edit keeps the picked models' only.
+
+def tool_checks(entry: dict) -> dict:
+    """The stored verdicts of the entry's picked models, each as {ok, reason,
+    at} with a string reason and stamp even when the stored record left them
+    out (a hand edit, a restored config)."""
+    stored = entry.get("tool_checks") if isinstance(entry.get("tool_checks"), dict) else {}
+    picked = entry_models(entry)
+    return {m: {"ok": v["ok"], "reason": "" if v["ok"] else str(v.get("reason") or ""),
+                "at": str(v.get("at") or "")}
+            for m, v in stored.items()
+            if m in picked and isinstance(v, dict) and isinstance(v.get("ok"), bool)}
+
+
+def _prune_tool_checks(entry: dict) -> None:
+    if "tool_checks" in entry:
+        entry["tool_checks"] = tool_checks(entry)
+        if not entry["tool_checks"]:
+            entry.pop("tool_checks")
+
+
+def _stored_entries(user_id: str, provider_id: str) -> list:
+    return load_server_ai()["providers"] if is_server_id(provider_id) else load_provider_entries(user_id)
+
+
+def stored_tool_check(user_id: str, provider_id: str, model: str) -> dict | None:
+    """The verdict stored for ``model`` on the entry ``provider_id`` (the
+    account's own, or a ``server:`` one), read fresh; None when it has none."""
+    entry = next((e for e in _stored_entries(user_id, provider_id) if e.get("id") == provider_id), None)
+    return tool_checks(entry).get(model) if entry else None
+
+
+def _same_connection(entry: dict, conf: dict) -> bool:
+    """Whether a stored entry still is the connection the runtime conf
+    ``conf`` was built from: the same protocol, base URL and key (a
+    sign-in's token changes as it is renewed, so it is not compared)."""
+    proto = ai_protocols.PROTOCOLS.get(entry.get("protocol"))
+    if not proto or entry.get("protocol") != conf.get("protocol"):
+        return False
+    if ((entry.get("base_url") or "").strip() or proto.base_url).rstrip("/") != conf.get("base_url"):
+        return False
+    return proto.auth == "oauth" or (entry.get("api_key") or "").strip() == conf.get("api_key")
+
+
+def _edit_entries(user_id: str, provider_id: str, change) -> None:
+    """``change(entries)`` on the list that holds ``provider_id``, in one
+    transaction (the account's pref) or under the shared config's lock."""
+    if is_server_id(provider_id):
+        edit_server_ai(lambda config: change(config["providers"]))
+    else:
+        update_provider_entries(user_id, change)
+
+
+def save_tool_check(user_id: str, provider_id: str, model: str, verdict: dict, conf: dict) -> dict | None:
+    """Store a check's ``verdict`` ({ok, reason?}) for ``model`` on the entry
+    ``provider_id``, while the entry still picks the model and still is the
+    connection ``conf`` (the runtime conf the check went through) names: an
+    edit made during the check wins. Returns the stored verdict, None when
+    nothing was stored."""
+    record = {"ok": bool(verdict.get("ok")), "reason": "" if verdict.get("ok")
+              else str(verdict.get("reason") or "")[:MAX_TOOL_REASON], "at": page_now()}
+    stored = []
+
+    def put(entries):
+        entry = next((e for e in entries if e.get("id") == provider_id), None)
+        if entry and model in entry_models(entry) and _same_connection(entry, conf):
+            entry["tool_checks"] = {**tool_checks(entry), model: record}
+            stored.append(record)
+    _edit_entries(user_id, provider_id, put)
+    return stored[0] if stored else None
+
+
+def forget_tool_check(user_id: str, provider_id: str, model: str) -> bool:
+    """Forget that ``model`` calls tools on the entry ``provider_id`` (it
+    refused them since), so its next chat with tools checks again. Writes
+    nothing unless a passing verdict is stored; True when one was."""
+    stored = stored_tool_check(user_id, provider_id, model)
+    if not stored or not stored["ok"]:
+        return False
+
+    def drop(entries):
+        entry = next((e for e in entries if e.get("id") == provider_id), None)
+        checks = entry.get("tool_checks") if entry else None
+        if isinstance(checks, dict) and (checks.get(model) or {}).get("ok") is True:
+            checks.pop(model)
+            _prune_tool_checks(entry)
+    _edit_entries(user_id, provider_id, drop)
+    return True
+
+
 # A refused sign-in token refresh isn't retried for this long: ai_runtime
 # runs on every AI request, and retrying a dead grant each time would add a
 # full round trip to the identity provider to chat/metadata/model calls.
@@ -582,9 +689,10 @@ def ai_runtime(user_id: str) -> dict:
     (``shared_access``):
     {"providers": {id: {api_key, base_url, protocol, name}},
     "models": [{"id": "<pid>:<model>", "provider": pid, "provider_name",
-    "model", "native_pdf", "shared"}], "default": the first model — the
-    account's own when it has one, else the server's — or None,
-    "enabled": bool, "allowance": {"limit", "used", "exhausted"} or None}.
+    "model", "native_pdf", "shared", "tools", "tools_reason"?}], "default":
+    the first model — the account's own when it has one, else the
+    server's — or None, "enabled": bool, "allowance": {"limit", "used",
+    "exhausted"} or None}.
 
     ``allowance`` is None unless a shared entry made it into the runtime
     (limit 0 = unlimited). Under a limit every shared provider conf carries
@@ -628,15 +736,22 @@ def ai_runtime(user_id: str) -> dict:
                 continue
             conf["api_key"] = key
         providers[pid] = conf
+        checks = tool_checks(e)
         for model in entry_models(e):
             mid = f"{pid}:{model}"
             if mid not in [m["id"] for m in models]:
+                check = checks.get(model)
                 models.append({"id": mid, "provider": pid, "provider_name": name, "model": model,
                                # Whether the provider takes the PDF file itself
                                # (native document part); if not, the chat sends
                                # extracted text.
                                "native_pdf": proto.native_pdf,
-                               "shared": is_server_id(pid)})
+                               "shared": is_server_id(pid),
+                               # Whether it calls tools here: True, False (its
+                               # chats go without them, for ``tools_reason``),
+                               # None = not checked yet.
+                               "tools": check["ok"] if check else None,
+                               **({"tools_reason": check["reason"]} if check and not check["ok"] else {})})
     allowance = None
     shared_ids = [pid for pid in providers if is_server_id(pid)]
     if shared_ids:

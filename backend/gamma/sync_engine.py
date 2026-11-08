@@ -88,7 +88,7 @@ import urllib.request
 from . import migrations, pdf_meta, storage, sync_clock, textmerge, workspaces
 from . import ink as inkmod
 from cryptography.fernet import InvalidToken
-from fractional_indexing import FIError, generate_key_between, validate_order_key
+from fractional_indexing import generate_key_between
 
 from .auth import MIRROR_ACTOR
 from .blocks_store import (FOLDERS, LABELS, PARENT_PAGE, TRASH, TREES, create_page, fetch_subtree,
@@ -96,8 +96,8 @@ from .blocks_store import (FOLDERS, LABELS, PARENT_PAGE, TRASH, TREES, create_pa
                            with_sub_pages)
 from .db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
 from .logbuf import log
-from .ops import (MAX_OPS, PLACED_KEYS, SYNC_CLIENT, OpError, _went_with, commit_ops, latest_seq, props_patch,
-                  restore_inside, restore_page, trash_page, went_inside)
+from .ops import (MAX_OPS, PLACED_KEYS, SYNC_CLIENT, OpError, _went_with, commit_ops, latest_seq, order_key_error,
+                  props_patch, restore_inside, restore_page, trash_page, went_inside)
 from .picture import resend_picture
 from .publisher_sessions import seal, unseal
 from .routers.sync import changes as local_changes
@@ -1841,9 +1841,7 @@ def _pull_whole(ws: str, remote: Remote, page_id: str, remote_tree: dict, seq: i
 def _free_page_key(conn, key: str) -> str:
     """``key`` for a page made here when it is a valid key no page holds,
     else "" (last in the library)."""
-    try:
-        validate_order_key(key or "")
-    except FIError:
+    if order_key_error(key):
         return ""
     taken = conn.execute("SELECT 1 FROM unified_blocks WHERE parent_id = 'root' AND position = ?", (key,)).fetchone()
     return "" if taken else key

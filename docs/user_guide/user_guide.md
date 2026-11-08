@@ -226,10 +226,12 @@ DeepSeek, Kimi, Qwen, GLM, OpenRouter and the custom endpoint sit under the **Ot
 On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, rename them, file them into folders, move them to Recently deleted or bring them back, rename folders, make and apply labels, delete a folder or a label (never its pages), search the web for papers and save them, build BibTeX, and edit your notes. On a paper, the same chat reads, searches and edits that paper and its notes.
 
 - **It asks first.** A change shows as a card — many pages renamed, filed or labelled together show on one card that lists them all. **Allow once**, **Allow in this chat**, **Always allow**, or **Don't allow** (with a line on what to do instead). A deletion's **Allow once** is red.
+- **Plan first.** With **Plan** on in the composer, the chat reads and looks things up but changes nothing, and ends with a numbered plan of the change. **Approve plan** carries it out under your usual Allow, Ask and Off, so changes set to Ask still show their cards. **Revise** keeps Plan on so your next message asks for a different plan. A change it tried while planning shows as "Kept for the plan". The switch shows in chats that can change something, and a new chat starts with it off.
 - Everything it changed is listed under the reply. A note change, a rename, move or label change (one page or many at once), deleted or restored pages, or a deleted folder or label (its chats included), can be undone there; pages you changed since are left as they are. **Revert…** lists every change of the conversation with a checkbox, to take back the ones you tick, or all of them, at once.
 - A reply stops after 32 tool rounds or 200 changes (Settings → AI → Tool usage → Tool limits), or when the conversation is too long for the model; **Continue** under it carries on, as it does under a reply cut off at the output limit. With **Unlimited rounds** it runs until it is done or you press Stop, in its chat or in Background tasks; longer jobs cost more tokens. On a shared AI connection without a daily allowance the usual limits stay, unless you are an administrator.
 - Settings → AI → Tool usage sets each permission below to Allow, Ask or Off, for folder, PDF and notes chats separately, with presets from *Read library* to *Allow all*. Reading is allowed by default; anything that changes your library asks.
 - A journal that blocks the server shows a card: open the page in your browser and Gamma Connector sends the PDF back.
+- Some models can't call tools on some connections (a local model without tool support, a route that refuses them). Gamma checks a model the first time a chat with tools uses it; one that fails answers as a plain chat. The message box then says **No tools**, with the reason on hover, and a click checks the model again once its server is fixed. Settings → AI → Connections marks each model the same way.
 
 ### What the chat's tools can do
 
@@ -308,6 +310,22 @@ A page can live inside another page, as in Notion: the minutes of each group mee
 
 - **Ctrl+F** on a page, **Ctrl+Shift+F** anywhere: titles, notes, highlights and the full text of every PDF, at once. "3000" finds "3,000-qubit".
 - Type a folder or label name and press Tab for a **filter chip**.
+- Narrow with **qualifiers** beside the words. They work in the search popover (Ctrl+F on a page, Ctrl+Shift+F anywhere); typed in the home page's filter box or Ctrl+P, Enter hands them over to it. Spaces mean all of them, commas list alternatives (`year:2019,2021`), a leading `-` leaves out, and quotes hold a name with spaces (`label:"quantum optics"`). Start typing a key and the list under the box completes it with Tab.
+
+  | Type | To find |
+  |---|---|
+  | `label:toread` | pages with the label |
+  | `folder:Rydberg` | pages in the folder or below it (`Physics/Rydberg` for one of several) |
+  | `-label:read` | pages without the label |
+  | `is:pdf`, `is:pinned` | papers, pinned pages |
+  | `no:label`, `no:folder` | pages with no label, filed nowhere |
+  | `author:Lukin`, `venue:nature` | words in a paper's authors or journal |
+  | `year:>=2020` | papers from 2020 on (also `2020`, `<2015`, `2019..2021`) |
+  | `updated:>=@today-7d` | pages edited in the last week (also `created:`, `2025-03`, `@today`) |
+  | `in:highlights` | the words only in highlights (also `title`, `notes`, `links`, `pdf`) |
+  | `-in:pdf` | the words only in your own writing |
+
+  Words with a colon that are not qualifiers, like `arXiv:2301.12345` or `10:30`, are searched as text. So is a qualifier Gamma cannot apply, such as a label name that does not exist, and a line under the box says why.
 - **Ctrl+P** jumps to any page, folder or label by name. Shift+Enter creates a page with what you typed.
 
 ## Metadata and citations
@@ -343,7 +361,7 @@ A workspace is a separate library. The account menu lists yours and switches bet
 
 - **Personal** workspaces are yours alone; make more for separate projects.
 - **Shared** workspaces are created by an administrator, with **owners**, **editors** and **viewers**. An owner invites people from the workspace's **Manage** page: an account on this server or, where Gamma Cloud sign-in allows it, an e-mail address, which gets a link to join as an editor or a viewer.
-- Edits and cursors appear live; two people in the same block merge by span.
+- Edits and cursors appear live; two people in the same block merge by span. On a network that blocks live connections, others' edits still arrive within a couple of seconds, without cursors.
 - **Deleting** a workspace (its Manage page → Delete…) first keeps one final copy of it on the server, which an administrator can restore. For a big workspace that takes minutes: it runs in **Background tasks**, where you can stop it until the copy is written. Stopped, nothing is deleted.
 - Open tabs, pinned folders and reading positions follow your account across devices.
 

@@ -9,19 +9,12 @@ from types import SimpleNamespace
 import pytest
 
 from ai_fixtures import FakeResp, ai_provider, notes, org  # noqa: F401  (fixtures)
-from gamma.ai_context import (MAX_SELECTIONS, MIN_PASSAGE_BUDGET, fair_shares, final_prompt,
-                              notes_focus_section, passage_cuts, request_selections)
+from gamma.ai_context import (MAX_SELECTIONS, MIN_PASSAGE_BUDGET, final_prompt, notes_focus_section,
+                              passage_cuts, request_selections)
 
-# The same cases as frontend/tests/passageBudget.test.mjs: the composer's
-# chip and the server must cut a passage at the same character.
-CASES = [
-    ([100, 200], 1000, [100, 200]),  # everything fits
-    ([31_400], 12_000, [12_000]),  # one passage: its first 12,000
-    ([500, 40_000, 30_000], 60_000, [500, 29_750, 29_750]),  # the short one keeps all; the rest share
-    ([100, 100], 151, [75, 76]),  # a tie: the remainder goes to the later one
-    ([10, 20], 0, [0, 0]),
-    ([], 60_000, []),
-]
+# How the budget is shared (ai_context.fair_shares, quoted_shares) is
+# tests/shared/passages.json's, which the composer's chips read too
+# (test_shared_fixtures.py, frontend/tests/passageBudget.test.mjs).
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -38,13 +31,6 @@ def _offline_model_facts(monkeypatch):
 def ask(**fields):
     return SimpleNamespace(**{"prompt": "summarize this", "selections": [],
                               "note_selections": [], **fields})
-
-
-def test_a_shared_budget_keeps_short_passages_whole_and_splits_the_rest():
-    for sizes, budget, want in CASES:
-        assert fair_shares(sizes, budget) == want, (sizes, budget)
-    shares = fair_shares([7, 9_000, 3, 120_000, 45_000], 60_000)
-    assert sum(shares) <= 60_000 and shares[:3] == [7, 9_000, 3] and shares[3] == shares[4]
 
 
 def test_passages_arrive_whole_and_the_question_says_where_one_was_cut():

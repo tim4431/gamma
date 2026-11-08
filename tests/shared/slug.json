@@ -1,5 +1,5 @@
 {
-  "_": "Page slugs for published pages' public addresses, shared by backend/gamma/publish.py (slug) and frontend/src/shared/lib/slug.js (slugify). Read by backend/tests/test_publish.py and frontend/tests/slug.test.mjs.",
+  "_": "Page slugs for published pages' public addresses, and the username a page hostname names, shared by backend/gamma/publish.py (slug, page_host_user) and frontend/src/shared/lib/slug.js (slugify, pageHostUser). page_host patterns are lowercase, as config.page_host_pattern reads GAMMA_PAGE_HOST (pageHostUser lowercases its pattern, page_host_user does not); user is '' when the host is no page host. Read by backend/tests/test_publish.py and frontend/tests/slug.test.mjs.",
   "slug": [
     {
       "note": "plain words",
@@ -90,6 +90,80 @@
       "note": "Greek gives nothing",
       "input": "Αλφα Βήτα",
       "output": ""
+    }
+  ],
+  "page_host": [
+    {
+      "note": "a page host names its user",
+      "pattern": "{username}-pages.gammapdf.com",
+      "host": "tim-pages.gammapdf.com",
+      "user": "tim"
+    },
+    {
+      "note": "case and the default port do not count",
+      "pattern": "{username}-pages.gammapdf.com",
+      "host": "Tim-Pages.GammaPDF.com:443",
+      "user": "tim"
+    },
+    {
+      "note": "any port is dropped",
+      "pattern": "{username}-pages.gammapdf.com",
+      "host": "Tim-Pages.GammaPDF.com:8443",
+      "user": "tim"
+    },
+    {
+      "note": "a username may hold the pattern's own words",
+      "pattern": "{username}-pages.gammapdf.com",
+      "host": "a-pages-pages.gammapdf.com",
+      "user": "a-pages"
+    },
+    {
+      "note": "padding is trimmed",
+      "pattern": "{username}-pages.gammapdf.com",
+      "host": " tim-pages.gammapdf.com ",
+      "user": "tim"
+    },
+    {
+      "note": "another host of the domain is no page host",
+      "pattern": "{username}-pages.gammapdf.com",
+      "host": "api.gammapdf.com",
+      "user": ""
+    },
+    {
+      "note": "a subdomain of a page host is none",
+      "pattern": "{username}-pages.gammapdf.com",
+      "host": "x.tim-pages.gammapdf.com",
+      "user": ""
+    },
+    {
+      "note": "no username",
+      "pattern": "{username}-pages.gammapdf.com",
+      "host": "-pages.gammapdf.com",
+      "user": ""
+    },
+    {
+      "note": "the pattern inside a longer host is none",
+      "pattern": "{username}-pages.gammapdf.com",
+      "host": "tim-pages.gammapdf.com.evil",
+      "user": ""
+    },
+    {
+      "note": "a label over 63 characters is no hostname",
+      "pattern": "{username}-pages.gammapdf.com",
+      "host": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-pages.gammapdf.com",
+      "user": ""
+    },
+    {
+      "note": "no pattern, no page hosts",
+      "pattern": "",
+      "host": "tim-pages.gammapdf.com",
+      "user": ""
+    },
+    {
+      "note": "a pattern whose username is a label of its own",
+      "pattern": "{username}.pages.example.org",
+      "host": "tim.pages.example.org",
+      "user": "tim"
     }
   ]
 }

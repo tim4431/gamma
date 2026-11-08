@@ -195,3 +195,20 @@ test("a dialog opened as another closes keeps the dim: it is marked as taking th
   root.unmount();
   host.remove();
 });
+
+test("under StrictMode a dialog comes up as itself: its ref attached again is no arrival over its own leave", async () => {
+  // In development React 19 attaches a callback ref, detaches it and
+  // attaches it again as a surface mounts (npm run dev runs StrictMode).
+  const host = make("");
+  const root = createRoot(host);
+  function Dialog() {
+    const ref = useLeave("dialog");
+    return React.createElement("div", { ref, className: "overlay", style: { position: "fixed" } }, "Settings");
+  }
+  flushSync(() => root.render(React.createElement(React.StrictMode, null, React.createElement(Dialog))));
+  assert.equal(host.querySelector(".overlay").dataset.over, undefined, "nothing was there before it: the dim fades in");
+  await settle();
+  assert.equal(host.querySelectorAll("[data-leaving]").length, 0, "no copy of itself");
+  root.unmount();
+  host.remove();
+});

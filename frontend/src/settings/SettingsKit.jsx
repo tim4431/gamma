@@ -10,7 +10,7 @@
 import React from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
 import { AlertCircleIcon, CheckIcon, CloudCheckIcon, CopyIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon, XIcon } from "../shared/ui/Icons";
-import { bindable, chordFromEvent, heldFromEvent } from "../shared/lib/hotkeys.js";
+import { bindable, chordFromEvent, composing, heldFromEvent } from "../shared/lib/hotkeys.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
 import { UsageRing } from "../shared/ui/UsageRing.jsx";
 import { useInMenu } from "../shared/ui/Menus";
@@ -312,11 +312,11 @@ export function SubDialog({ title, onClose, children, draft, guard = null, class
             else if (!event.shiftKey && (document.activeElement === last || document.activeElement === ref.current)) { event.preventDefault(); first?.focus(); }
           }
         }}>
-        {closeButton ? <div className="settingsDialogHeader" inert={asking ? "" : undefined}>
+        {closeButton ? <div className="settingsDialogHeader" inert={!!asking}>
           <div className="reportModalTitle">{title}</div>
           <button type="button" className="uiClose uiCloseLg" onClick={close} aria-label={t("Close {title}", { title: title })} title={t("Close")}><XIcon size={16} /></button>
         </div> : <div className="reportModalTitle">{title}</div>}
-        <div className="settingsDialogContent" inert={asking ? "" : undefined}>{children}</div>
+        <div className="settingsDialogContent" inert={!!asking}>{children}</div>
         {asking ? <div className="settingsUnsaved" role="alertdialog" aria-label={ask.label || ask.question}>
           <span>{ask.question}</span>
           <span className="settingsUnsavedBtns">
@@ -681,6 +681,7 @@ export function AccountPicker({ accounts, exclude = [], value, onChange, placeho
     onChange(exact ? exact.username : "");
   }
   function onKeyDown(event) {
+    if (composing(event)) return;
     if (event.key === "ArrowDown") { event.preventDefault(); setCursor((c) => Math.min(c + 1, shown.length - 1)); }
     else if (event.key === "ArrowUp") { event.preventDefault(); setCursor((c) => Math.max(c - 1, 0)); }
     else if (event.key === "Enter" && shown[cursor] && shown[cursor].username !== value) { event.preventDefault(); pick(shown[cursor].username); }

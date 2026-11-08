@@ -1,16 +1,13 @@
 // The Return key in the chat's text fields and a comment's (chat/enterKey.js):
-// what an input method's Enter does, and when Enter sends.
+// what an input method's Enter does (composing, tests/hotkeys.test.mjs), and
+// when Enter sends.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { composing, sendsOnEnter, sendsOnShiftEnter } from "../src/chat/enterKey.js";
+import { sendsOnEnter, sendsOnShiftEnter } from "../src/chat/enterKey.js";
 
 const key = (k, extra = {}) => ({ key: k, shiftKey: false, ctrlKey: false, metaKey: false, keyCode: 13, nativeEvent: {}, ...extra });
 
-test("an Enter that confirms an input method's word is the input method's", () => {
-  assert.equal(composing(key("Enter", { nativeEvent: { isComposing: true } })), true);
-  assert.equal(composing(key("Enter", { keyCode: 229 })), true, "Safari's composing keydown");
-  assert.equal(composing({ key: "Enter", isComposing: true }), true, "a DOM event");
-  assert.equal(composing(key("Enter")), false);
+test("an Enter that confirms an input method's word never sends", () => {
   for (const onScreen of [false, true]) {
     assert.equal(sendsOnEnter(key("Enter", { nativeEvent: { isComposing: true } }), onScreen), false);
     assert.equal(sendsOnEnter(key("Enter", { keyCode: 229, metaKey: true }), onScreen), false);

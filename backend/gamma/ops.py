@@ -86,7 +86,7 @@ from datetime import timedelta
 from typing import Annotated, Literal, Union
 
 from fastapi import HTTPException
-from fractional_indexing import FIError, generate_key_between, validate_order_key
+from fractional_indexing import BASE_62_DIGITS, FIError, generate_key_between, validate_order_key
 from pydantic import BaseModel, Field, model_validator
 
 from . import collab, comments, inbox, mentions, pdf_index, textmerge, upload_gc
@@ -242,6 +242,26 @@ class OpsRequest(BaseModel):
     cursor: CursorState | None = None
 
 
+def order_key_error(key) -> str:
+    """Why ``key`` is no sibling position fractional-indexing could have
+    minted, "" when it is one (tests/shared/fractionalkeys.json holds the
+    client's library to the same keys). The library fails on an empty key
+    with an IndexError rather than its FIError, so an empty key, or one that
+    is no string, is answered before the library reads it. Neither library
+    checks a key's digits, and the server's next key beside one
+    outside the base-62 alphabet fails with a ValueError, so such a key is
+    refused here too."""
+    if not isinstance(key, str) or not key:
+        return "invalid order key: empty"
+    if any(ch not in BASE_62_DIGITS for ch in key):
+        return "invalid order key: a character outside the base-62 alphabet"
+    try:
+        validate_order_key(key)
+    except FIError as e:
+        return str(e)
+    return ""
+
+
 def props_patch(old: dict, new: dict) -> dict:
     """The ``set.props`` patch turning ``old`` into ``new`` (keys gone from
     ``new`` become null). Lets writers that compute a full property dict
@@ -340,11 +360,8 @@ class _Batch:
             raise OpError(403, f"{what} {block_id} is outside this page", conflict=MOVED)
 
     def free_position(self, parent: str, position: str | None, block_id: str) -> str:
-        if position is not None:
-            try:
-                validate_order_key(position)
-            except FIError as e:
-                raise OpError(400, f"invalid position: {e}")
+        if position is not None and (why := order_key_error(position)):
+            raise OpError(400, f"invalid position: {why}")
         return free_position(self.conn, parent, position, block_id)
 
     def check_parent(self, parent: str, block_id: str | None) -> None:
@@ -610,10 +627,14 @@ def _merged(merges: dict, block_id: str, base: str, content: str, stored: str, c
     the writer read it, the writer's edit is applied as a patch on the
     current text (gamma/textmerge.py). An edit that is already the text —
     the same change made twice, a retried batch — has nothing to merge:
-    patching it in again would double it. The diffs are kept in ``merges``
-    by their texts, so a merge ``_premerge`` computed before the write lock
-    is not computed again under it."""
-    if len(base) > MAX_CONTENT or stored in (base, content) or base == content:
+    patching it in again would double it. An edit that took its text back
+    to its base (a word typed and deleted again within one save) changes
+    nothing: the text stored now stands, never the older text it was made
+    from (textmerge.merge keeps it), with the writer's cursor remapped into
+    it like any merge's. The diffs are kept in ``merges`` by their texts,
+    so a merge ``_premerge`` computed before the write lock is not computed
+    again under it."""
+    if len(base) > MAX_CONTENT or stored in (base, content):
         return content
     merged, _clean = _memo(merges, textmerge.merge, base, content, stored)
     if cursor and cursor.get("block") == block_id and merged != content:

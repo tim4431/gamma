@@ -437,8 +437,14 @@
 .aiMoreOptions { margin-top: 6px; }
 .aiMoreOptions > summary { cursor: pointer; font-size: var(--fs-xs); color: var(--text-muted); }
 .aiMoreOptions[open] > summary { margin-bottom: 6px; }
-/* …and the same chips on the saved-provider rows. */
+/* …and the same chips on the saved-provider rows, each with what the tool
+   check found (a check or a ban glyph); a button where a click checks the
+   model again. */
 .aiProvModels { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.aiModelTag { gap: 3px; padding-right: 8px; }
+button.aiModelTag { border: none; font-family: inherit; cursor: pointer; }
+button.aiModelTag:hover:not(:disabled) { background: var(--bg-hover); }
+button.aiModelTag:disabled { cursor: default; }
 .aiUsage {
   display: grid;
   gap: 6px;
@@ -756,7 +762,7 @@
 .paletteGroupHead { display: flex; align-items: center; gap: 6px; }
 .paletteGroupName {
   flex: 1 1 auto; min-width: 0;
-  font: inherit; font-weight: 600; color: var(--text-primary);
+  font: inherit; font-weight: 600; color: var(--text-primary); /* ui-allow font-inherit: an input, which the control reset does not zoom */
   background: transparent; border: 1px solid transparent; border-radius: var(--radius-md);
   padding: 2px 6px; margin-left: -6px;
 }

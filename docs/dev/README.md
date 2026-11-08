@@ -39,21 +39,28 @@ an area, and update its documentation with the code.
   thread. Check-then-write operations need a write lock or a database
   constraint. See [debugging gotchas](debugging.md#gotchas-worth-knowing).
 - **Frontend conventions:** reuse the command catalogs, preference registry,
-  design tokens, and shared controls. Translate user-visible strings through
-  `t` / `tn` / `T` and update the catalogs in the same change. An issue found
-  on one device that may reach other UI (logic, display or arrangement) gets
-  one clean, unified solution in the shared layer, not a patch for that device
-  or surface. See [hotkeys](hotkeys.md), [settings](settings.md),
+  design tokens, and shared controls. New state goes into an owner module
+  beside its feature (a hook or a store), not into `app/App.jsx`.
+  `frontend/tests/appState.test.mjs` holds App's hooks and size to a
+  baseline ([New state](frontend-refactor.md#new-state)). Translate
+  user-visible strings through `t` / `tn` / `T` and update the catalogs in
+  the same change. An issue found on one device that may reach other UI
+  (logic, display or arrangement) gets one clean, unified solution in the
+  shared layer, not a patch for that device or surface. See
+  [hotkeys](hotkeys.md), [settings](settings.md),
   [UI design](ui-design.md), [i18n](i18n.md), and the
   [source map](../../frontend/src/README.md).
 - **AI providers:** build per-user configuration through `ai_runtime(user)`;
   protocol-specific behavior belongs in `gamma/ai_protocols/`, and model
   listings/context windows come from the live catalog. See [AI](ai.md).
 - **Validation:** test the affected modules and their direct consumers;
-  browser behavior needs the relevant end-to-end scenarios. Documentation
+  browser behavior needs the relevant end-to-end scenarios. A frontend change
+  passes `npm run lint` ([Frontend lint](debugging.md#frontend-lint)). Documentation
   changes need diff and link checks, not application builds. Broaden coverage
   when shared contracts or uncertain impact warrant it. See the
   [test selection policy](debugging.md#local-changes-test-the-affected-modules).
+  A change to a hot path runs the [timing budgets](debugging.md#performance-budgets)
+  before and after.
 
 ## Topic reference
 
@@ -62,7 +69,7 @@ These describe the implementation unless explicitly marked as plans.
 | Topic | Reference |
 |---|---|
 | Source layout, assets, and documentation conventions | [Repository](repository.md) |
-| Run commands, test selection, browser tests, and diagnostics | [Running, testing, and debugging](debugging.md) |
+| Run commands, test selection, browser tests, timing budgets, and diagnostics | [Running, testing, and debugging](debugging.md) |
 | CI, packaging, and release workflows | [GitHub Actions](github_actions.md) |
 | HTTP endpoints and authorization | [API](api.md) |
 | Search normalization, indexing, and result highlighting | [Search](api.md#search-searchpy-gammablock_indexpy-gammapdf_indexpy) |

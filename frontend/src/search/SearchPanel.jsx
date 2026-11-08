@@ -12,28 +12,54 @@
 // sorts through the same scorer), then the open paper (its notes, then its
 // PDF text with
 // highlighted, navigable matches), then other notes, reference links, and
-// finally content hits across the rest of the library. The filter chips go
-// to the server as the search's scope, and each group pages with a "Show
-// more" (search/searchPages.js). Opening a library hit
+// finally content hits across the rest of the library. Each group pages with
+// a "Show more" (search/searchPages.js).
+//
+// The box takes qualifiers beside its text (label:, folder:, is:pdf,
+// year:>=2020, -in:pdf …; the grammar is search/queryParse.js, what each
+// means search/searchFilters.js), and Tab makes a label or folder chip as
+// before. The chips and the page-level qualifiers are evaluated here on
+// the library listing; the pages they keep go to the server by id, so it
+// ranks and limits inside them. A qualifier it cannot apply is searched as
+// text, under an amber line that says why. Opening a library hit
 // keeps the search "pinned": once the paper renders, the query is re-found
 // with pdf.js and the match is highlighted and scrolled into view — positions
 // come from the same engine that draws the page, so they are always exact.
 
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { ChevronDownIcon, ChevronUpIcon, FileGlyph, FolderIcon, LabelIcon, SearchIcon, XIcon } from "../shared/ui/Icons";
+import {
+  BanIcon, BookIcon, CalendarIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, FileGlyph, FileIcon, FolderIcon, HistoryIcon,
+  LabelIcon, SearchIcon, TextSearchIcon, UserIcon, XIcon,
+} from "../shared/ui/Icons";
 import { Chevron, MorphText } from "../shared/ui/MotionWidgets";
 
 import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
 import { createTitleScorer } from "../library/librarySearch";
-import { PAGE_PATH_SEP, filedIn, filingChips, folderEntries, folderSubtree, pageAttachment, pagePathLabel, topPageOf } from "../library/libraryUtils";
+import { PAGE_PATH_SEP, filingChips, pageAttachment, pagePathLabel } from "../library/libraryUtils";
 import { markedParts, plainSnippet } from "./snippets";
 import { guideEvents } from "../guide/events.js";
-import { NOTES_PAGE, PDF_PAGE, TITLES_PAGE, appendNew, searchQuery } from "./searchPages";
+import { NOTES_PAGE, PDF_PAGE, TITLES_PAGE, appendNew, searchBody } from "./searchPages";
+import { tokenAt } from "./queryParse";
+import { QUALIFIERS, applySuggestion, pageSet, resolveFilters, suggest } from "./searchFilters";
+import { composing } from "../shared/lib/hotkeys.js";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { Popover } from "../shared/ui/Surfaces";
 
 export { buildSearchRegex, normalizeQuery };
+
+// The 14 px icon of a qualifier's row (searchFilters.QUALIFIERS `icon`).
+const QUALIFIER_ICONS = {
+  label: LabelIcon, folder: FolderIcon, file: FileIcon, ban: BanIcon, user: UserIcon, book: BookIcon,
+  calendar: CalendarIcon, clock: ClockIcon, history: HistoryIcon, search: TextSearchIcon,
+};
+// Every qualifier key, as the empty box's hint lists them, and the hint's
+// and the placeholder's examples: syntax, the same in every language.
+const KEY_LIST = "label: folder: is: no: author: venue: year: created: updated: in:"; // i18n-ignore: syntax
+const HINT_EXAMPLE = "-label:read year:>=2020 is:pdf,pinned"; // i18n-ignore: syntax
+const PLACEHOLDER_EXAMPLE = "label: is:pdf…"; // i18n-ignore: syntax
+// A POST of a search page's body (searchPages.searchBody).
+const postJson = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 // `text` with the query's matches marked (search/snippets.js markedParts):
 // a result row here, a row of the Ctrl+P palette (library/QuickOpen.jsx).
@@ -54,8 +80,11 @@ export default function SearchPanel({
   onFindMarks, detailsDefault, wakeTasks, initialQuery = "",
 }) {
   const [query, setQuery] = useState("");
+  const [caret, setCaret] = useState(0); // where the caret is in the box: the dropdown completes the token there
   const [labels, setLabels] = useState([]); // confirmed filter chips
   const [sugIdx, setSugIdx] = useState(0);
+  const inputRef = useRef(null);
+  const caretRef = useRef(null); // where to put the caret once a completed query renders
   const [noteHits, setNoteHits] = useState([]); // /api/block-search
   const [notesPartial, setNotesPartial] = useState(false); // its scan stopped at the server's time budget
   const [notesNext, setNotesNext] = useState(""); // its `next`: the cursor of the following page
@@ -63,8 +92,10 @@ export default function SearchPanel({
   const [libIndexing, setLibIndexing] = useState(0);
   const [libNext, setLibNext] = useState("");
   const [titlesShown, setTitlesShown] = useState(TITLES_PAGE);
+  const [filtersShown, setFiltersShown] = useState(TITLES_PAGE);
   const [moreBusy, setMoreBusy] = useState(""); // the group ("notes" / "lib") whose next page is coming
   const runRef = useRef(0); // the search run an answer belongs to: a later one drops it
+  const runPagesRef = useRef(null); // the page ids that run searched in: its "Show more" pages the same set
   const [pdfMatches, setPdfMatches] = useState([]); // pdf.js matches in the open document
   const [findIndex, setFindIndex] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -76,7 +107,19 @@ export default function SearchPanel({
   const [pinned, setPinned] = useState(false);
   const pendingFindRef = useRef(null); // {page, sinceNonce} — jump here once the target doc renders
 
-  const q = query.trim();
+  // The query read: its free text, the pages the chips and qualifiers keep,
+  // the groups and kinds `in:` keeps, what is searched as text and why
+  // (search/searchFilters.js). Dates are local, so a new day reads it again.
+  const pagesById = useMemo(() => new Map(homeBlocks.map((b) => [b.id, b])), [homeBlocks]);
+  const today = new Date().toDateString();
+  const filters = useMemo(() => resolveFilters(query, labels, { tree, pagesById, now: new Date() }),
+    [query, labels, tree, pagesById, today]); // eslint-disable-line react-hooks/exhaustive-deps
+  const q = filters.text;
+  const sources = filters.sources;
+  // The listing's pages the filters keep ({ids, key}; ids null without a
+  // filter): the search follows it, running again when membership changes.
+  const filterPages = useMemo(() => pageSet(homeBlocks, filters.pageTest), [homeBlocks, filters.pageTest]);
+  const scopeIds = useMemo(() => (filterPages.ids ? new Set(filterPages.ids) : null), [filterPages.ids]);
 
   useEffect(() => { if (open) setPinned(false); }, [open]);
   // Opened with a query from elsewhere (the home listing's filter box,
@@ -85,54 +128,72 @@ export default function SearchPanel({
   useLayoutEffect(() => {
     if (!open || !initialQuery) return;
     setQuery(initialQuery);
+    setCaret(initialQuery.length);
     setLabels([]);
     pendingFindRef.current = null;
   }, [open, initialQuery]);
-  useEffect(() => { setSugIdx(0); }, [query]);
-  useEffect(() => { setTitlesShown(TITLES_PAGE); }, [q, labels]);
+  useEffect(() => { setSugIdx(0); }, [query, caret]);
+  useEffect(() => { setTitlesShown(TITLES_PAGE); setFiltersShown(TITLES_PAGE); }, [q, filters.key]);
   useEffect(() => { setFindIndex(0); }, [pdfMatches]);
+  // A completed query puts the caret after what it added.
+  useLayoutEffect(() => {
+    const at = caretRef.current;
+    if (at == null || !inputRef.current) return;
+    caretRef.current = null;
+    inputRef.current.setSelectionRange(at, at);
+    setCaret(at);
+  }, [query]);
 
-  // ---- filter chips (a label = the pages carrying it, a folder = the pages
-  // filed in it or below), {kind, id, name} — a folder named by its path
-  const chipOptions = useMemo(() => [
-    ...[...tree.labels.values()].map((l) => ({ kind: "label", id: l.id, name: l.name })),
-    ...folderEntries(tree).map((f) => ({ kind: "folder", ...f })),
-  ].sort((a, b) => a.name.localeCompare(b.name)), [tree]);
-  const suggestions = useMemo(() => {
-    const qq = q.toLowerCase();
-    if (!qq) return [];
-    const picked = new Set(labels.map((l) => `${l.kind}:${l.id}`));
-    return chipOptions.filter((o) => !picked.has(`${o.kind}:${o.id}`) && o.name.toLowerCase().includes(qq)).slice(0, 6);
-  }, [q, chipOptions, labels]);
+  // ---- the dropdown under the box: label and folder names that Tab makes
+  // a chip of (a label = the pages carrying it, a folder = the pages filed
+  // in it or below it, {kind, id, name}), then qualifier keys and values
+  // that complete the text (searchFilters.suggest). An inert row (year:'s
+  // forms) is shown but not picked.
+  const suggestions = useMemo(() => suggest(query, caret, { tree, chips: labels }), [query, caret, tree, labels]);
+  const options = suggestions.filter((s) => !s.inert);
   function confirmLabel(opt) {
     setLabels((prev) => (prev.some((l) => l.kind === opt.kind && l.id === opt.id) ? prev : [...prev, opt]));
     setQuery("");
+    setCaret(0);
     guideEvents.emit("search.filtered", { kind: opt.kind });
   }
+  function applyRow(row) {
+    const done = applySuggestion(query, caret, row);
+    if (done.chip) { confirmLabel(done.chip); return; }
+    if (done.query === query) {
+      // Nothing to re-render (the clause was already whole): place the
+      // caret now, so no position waits for the next edit.
+      inputRef.current?.setSelectionRange(done.caret, done.caret);
+      setCaret(done.caret);
+      return;
+    }
+    caretRef.current = done.caret;
+    setQuery(done.query);
+    setPinned(false);
+    pendingFindRef.current = null;
+  }
+  // The clauses searched as text, but not the one the caret is in while
+  // the dropdown still offers it something.
+  const caretFrom = tokenAt(query, caret).from;
+  const problems = filters.problems.filter((p) => !(suggestions.length && p.from === caretFrom));
   const titleScoreOf = useMemo(() => createTitleScorer(q, { caseSensitive, wholeWord }),
     [q, caseSensitive, wholeWord, homeBlocks]);
-  const pagesById = useMemo(() => new Map(homeBlocks.map((b) => [b.id, b])), [homeBlocks]);
-  // The pages the chips name, as the server's scope has them
-  // (blocks_store.pages_in_scope): a label on the page itself, a folder by
-  // where its top is filed, so a sub-page is in its top's folder.
-  const labelMatches = useMemo(() => {
-    if (!labels.length) return [];
-    const below = new Map(labels.filter((c) => c.kind === "folder").map((c) => [c.id, folderSubtree(tree, c.id)]));
-    const members = homeBlocks.filter((b) => {
-      const pageLabels = filedIn(tree.labels, b.properties?.labels);
-      const pageFolders = filedIn(tree.folders, topPageOf(pagesById, b.id).properties?.folders);
-      return labels.every((c) => (c.kind === "folder"
-        ? pageFolders.some((id) => below.get(c.id).has(id)) : pageLabels.includes(c.id)));
-    });
-    // With a query typed, float its matches to the top of the folder/label
-    // listing; ties (and everything at score 0) keep library order.
+  // The pages the filters keep, the "Filters:" listing: a label on the
+  // page itself, a folder by where its top is filed (as the server's
+  // blocks_store.pages_in_scope has them), with a query typed its matches
+  // first; ties (and everything at score 0) keep library order.
+  const filterMatches = useMemo(() => {
+    if (!scopeIds) return [];
+    const members = homeBlocks.filter((b) => scopeIds.has(b.id));
     if (titleScoreOf) members.sort((a, b) => titleScoreOf(b) - titleScoreOf(a));
     return members;
-  }, [labels, homeBlocks, pagesById, titleScoreOf, tree]);
-  // With chips active, text results only count inside the matching pages.
-  const labelPageIds = useMemo(() => (
-    labels.length ? new Set(labelMatches.map((b) => b.id)) : null
-  ), [labels.length, labelMatches]);
+  }, [scopeIds, homeBlocks, titleScoreOf]);
+  // The typed clauses that keep pages, as the listing's header names them.
+  const pageClauses = filters.clauses.filter((c) => c.key !== "in");
+  // The groups searched: the notes request when in: keeps a block kind,
+  // the open PDF and the library's PDFs when it keeps pdf.
+  const wantNotes = filters.kinds === null || filters.kinds.length > 0;
+  const wantPdf = sources.has("pdf");
 
   // ---- find navigation in the open PDF
   function gotoFind(i, list = pdfMatches) {
@@ -154,22 +215,26 @@ export default function SearchPanel({
   useEffect(() => { onFindMarks(marks); }, [marks, onFindMarks]);
 
   // ---- the search itself (debounced; re-runs when a new document renders so
-  // pinned searches follow navigation). One page per group; the chips go
-  // along as the scope, so the server ranks and limits inside them.
-  const notesPage = (cursor) => apiJson(`${API}/block-search?${searchQuery(q, {
-    limit: NOTES_PAGE, chips: labels, cursor, case: caseSensitive ? 1 : 0, whole: wholeWord ? 1 : 0,
-  })}`);
+  // pinned searches follow navigation, and when the filters' pages change).
+  // One page per group, a POST with the page ids the filters keep, so the
+  // server ranks and limits inside them; the run keeps those ids, and its
+  // "Show more" pages the same set.
+  const notesPage = (cursor, pages) => apiJson(`${API}/block-search`, postJson(searchBody(q, {
+    limit: NOTES_PAGE, cursor, pages, kinds: filters.kinds, case: caseSensitive, whole: wholeWord,
+  })));
   // Full-text over every paper's PDF (server-side FTS index; normalized
   // word matching — the Aa/ab toggles only apply to notes and the open
   // document, whose matches pdf.js lists: the server leaves it out).
-  const libPage = (cursor) => apiJson(`${API}/pdf-search?${searchQuery(q, {
-    limit: PDF_PAGE, chips: labels, cursor, exclude: focusedBlockId || "",
-  })}`);
+  const libPage = (cursor, pages) => apiJson(`${API}/pdf-search`, postJson(searchBody(q, {
+    limit: PDF_PAGE, cursor, pages, exclude: focusedBlockId || "",
+  })));
   useEffect(() => {
     // A new run: the last one's answers (its next pages too) are dropped,
     // and its cursors go with them.
     const run = ++runRef.current;
     const current = () => runRef.current === run;
+    const pages = filterPages.ids;
+    runPagesRef.current = pages;
     setMoreBusy(""); setNotesNext(""); setLibNext("");
     if (!q || !(open || pinned)) {
       setNoteHits([]); setNotesPartial(false); setLibHits([]); setLibIndexing(0); setPdfMatches([]); setBusy(false);
@@ -180,10 +245,11 @@ export default function SearchPanel({
       let pdfText = 0; // hits inside PDFs, this one's or the library's, for the guide's search tour
       // `partial`: the server's scan ran out of time, so the notes found
       // are only some of them (the notes group says so).
-      const notesReq = notesPage("")
+      const none = Promise.resolve({});
+      const notesReq = (wantNotes ? notesPage("", pages) : none)
         .then((d) => { if (current()) { setNoteHits(d.blocks || []); setNotesPartial(!!d.partial); setNotesNext(d.next || ""); } })
         .catch(() => { if (current()) { setNoteHits([]); setNotesPartial(false); setNotesNext(""); } });
-      const libReq = libPage("")
+      const libReq = (wantPdf ? libPage("", pages) : none)
         .then((d) => {
           if (!current()) return;
           pdfText += (d.results || []).length;
@@ -197,7 +263,7 @@ export default function SearchPanel({
         })
         .catch(() => { if (current()) { setLibHits([]); setLibIndexing(0); setLibNext(""); } });
       let pdfReq = Promise.resolve();
-      const re = pdfSearchRef.current ? buildSearchRegex(q, { caseSensitive, wholeWord }) : null;
+      const re = wantPdf && pdfSearchRef.current ? buildSearchRegex(q, { caseSensitive, wholeWord }) : null;
       if (re) {
         pdfReq = pdfSearchRef.current(re).then(async (matches) => {
           if (matches.stale) return; // a query this effect moved past: the newer run answers
@@ -237,7 +303,7 @@ export default function SearchPanel({
       });
     }, 250);
     return () => clearTimeout(timer);
-  }, [q, open, pinned, caseSensitive, wholeWord, docNonce, labels]);
+  }, [q, filters.key, filterPages.key, open, pinned, caseSensitive, wholeWord, docNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // "Show more": the group's next page, after the hits it lists (dropped
   // when the search moved on meanwhile). The notes cursor of a scan cut
@@ -246,7 +312,7 @@ export default function SearchPanel({
     const run = runRef.current;
     const notes = group === "notes";
     setMoreBusy(group);
-    (notes ? notesPage(notesNext) : libPage(libNext))
+    (notes ? notesPage(notesNext, runPagesRef.current) : libPage(libNext, runPagesRef.current))
       .then((d) => {
         if (runRef.current !== run) return;
         if (notes) {
@@ -296,33 +362,37 @@ export default function SearchPanel({
 
   // ---- result grouping: titles → this page (notes, then its PDF text) →
   // other notes → reference links → other pages' PDF content
-  // The chips' pages: titles and the open PDF are kept to them here. The
-  // notes and library hits come scoped from the server; for them this only
-  // holds back a previous scope's hits until the new search answers.
-  const inScope = (pageId) => !labelPageIds || labelPageIds.has(pageId);
-  const allTitles = titleScoreOf
+  // The filters' pages: titles and the open PDF are kept to them here. The
+  // notes and library hits come kept to them from the server; for them this
+  // only holds back a previous filter's hits (and kinds, and groups) until
+  // the new search answers.
+  const inScope = (pageId) => !scopeIds || scopeIds.has(pageId);
+  const inKinds = (r) => !filters.kinds || filters.kinds.includes(r.kind);
+  const allTitles = titleScoreOf && sources.has("title")
     ? homeBlocks
       .filter((b) => inScope(b.id) && titleScoreOf(b) > 0)
       .sort((a, b) => titleScoreOf(b) - titleScoreOf(a))
     : [];
   const titleMatches = allTitles.slice(0, titlesShown);
   const titleIds = new Set(allTitles.map((b) => b.id)); // listed here (or by its "Show more"), not as a note
-  const scopedNotes = noteHits.filter((r) => inScope(r.page_root_id || r.id) && !(r.kind === "page" && titleIds.has(r.id)));
+  const scopedNotes = (wantNotes ? noteHits : [])
+    .filter((r) => inScope(r.page_root_id || r.id) && inKinds(r) && !(r.kind === "page" && titleIds.has(r.id)));
   const inPage = (r) => focusedBlockId && (r.page_root_id === focusedBlockId || r.id === focusedBlockId);
   const titlesExtra = scopedNotes.filter((r) => r.kind === "page"); // regex-mode / non-home pages
   const notesHere = scopedNotes.filter((r) => r.kind !== "page" && inPage(r));
   const notesElsewhere = scopedNotes.filter((r) => r.kind !== "page" && r.kind !== "link" && !inPage(r));
   const linkHits = scopedNotes.filter((r) => r.kind === "link" && !inPage(r));
-  const libElsewhere = libHits.filter((r) => r.block_id !== focusedBlockId && inScope(r.block_id));
-  const showPdfMatches = inScope(focusedBlockId);
+  const libElsewhere = (wantPdf ? libHits : []).filter((r) => r.block_id !== focusedBlockId && inScope(r.block_id));
+  const showPdfMatches = wantPdf && inScope(focusedBlockId);
+  const filtersListed = filterMatches.slice(0, filtersShown);
   // An incomplete notes scan is no "No matches.": the notes group says why.
   const anything = titleMatches.length || titlesExtra.length || notesHere.length || notesElsewhere.length
-    || linkHits.length || labelMatches.length || (showPdfMatches && pdfMatches.length) || libElsewhere.length
+    || linkHits.length || filterMatches.length || (showPdfMatches && pdfMatches.length) || libElsewhere.length
     || notesPartial || notesNext || libNext;
   // What the details list besides the open PDF's matches (the compact bar's
   // summary line).
   const listed = titleMatches.length + titlesExtra.length + notesHere.length + notesElsewhere.length
-    + linkHits.length + labelMatches.length + libElsewhere.length;
+    + linkHits.length + filterMatches.length + libElsewhere.length;
 
   // One switch for the whole detail area (all the result lists). Its default
   // comes from Settings → Search via the detailsDefault prop (App owns the
@@ -437,47 +507,80 @@ export default function SearchPanel({
               ))}
               <input
                 autoFocus
+                ref={inputRef}
                 className="searchInput"
                 data-guide="search.input"
                 value={query}
-                onChange={(e) => { setQuery(e.target.value); setPinned(false); pendingFindRef.current = null; }}
+                // A query is typed syntax as much as words: an iPad's first
+                // capital or a corrected word would turn label: into Label:
+                // or a name into another.
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                onChange={(e) => {
+                  caretRef.current = null; // a typed edit keeps its own caret
+                  setQuery(e.target.value);
+                  setCaret(e.target.selectionStart ?? e.target.value.length);
+                  setPinned(false);
+                  pendingFindRef.current = null;
+                }}
+                onSelect={(e) => setCaret(e.target.selectionStart ?? 0)}
                 onKeyDown={(e) => {
-                  // Only Tab turns the query into a label filter; Enter
-                  // stays the search's own key (next PDF match).
-                  if (e.key === "Tab" && !e.shiftKey && suggestions.length) {
+                  // The keys an input method is still composing with are its own.
+                  if (composing(e)) return;
+                  // Only Tab takes a row (a chip, or the completed text);
+                  // Enter stays the search's own key (next PDF match).
+                  if (e.key === "Tab" && !e.shiftKey && options.length) {
                     e.preventDefault();
-                    confirmLabel(suggestions[sugIdx] || suggestions[0]);
+                    applyRow(options[sugIdx] || options[0]);
                   } else if (e.key === "Enter" && pdfMatches.length) {
                     e.preventDefault();
                     gotoFind(findIndex + (e.shiftKey ? -1 : 1));
-                  } else if (e.key === "ArrowDown" && suggestions.length) {
+                  } else if (e.key === "ArrowDown" && options.length) {
                     e.preventDefault();
-                    setSugIdx((i) => (i + 1) % suggestions.length);
-                  } else if (e.key === "ArrowUp" && suggestions.length) {
+                    setSugIdx((i) => (i + 1) % options.length);
+                  } else if (e.key === "ArrowUp" && options.length) {
                     e.preventDefault();
-                    setSugIdx((i) => (i - 1 + suggestions.length) % suggestions.length);
+                    setSugIdx((i) => (i - 1 + options.length) % options.length);
                   } else if (e.key === "Backspace" && !query && labels.length) {
                     setLabels((prev) => prev.slice(0, -1));
                   }
                 }}
-                placeholder={labels.length ? t("Search within labeled pages…") : t("Search titles, notes, and PDF text — Tab adds a label filter")}
+                placeholder={labels.length ? t("Search within labeled pages…")
+                  : t("Search titles, notes, and PDF text — Tab adds a filter, or type {example}", { example: PLACEHOLDER_EXAMPLE })}
               />
               {suggestions.length ? (
-                <div className="categorySuggestions searchLabelSuggest">
-                  {suggestions.map((s, i) => (
-                    <button
-                      key={`${s.kind}:${s.id}`}
-                      className={`categorySuggestionItem${i === sugIdx ? " selected" : ""}`}
-                      onMouseDown={(e) => { e.preventDefault(); confirmLabel(s); }}
-                      onMouseEnter={() => setSugIdx(i)}
-                    >
+                <div className="categorySuggestions searchLabelSuggest" role="listbox" aria-label={t("Search filters")}>
+                  {suggestions.map((s) => {
+                    const Icon = QUALIFIER_ICONS[s.chip ? s.kind : s.icon || QUALIFIERS[s.key]?.icon] || SearchIcon;
+                    const name = s.chip ? s.name : s.kind === "key" ? `${s.key}:` : s.label || s.value;
+                    const head = (
                       <span className="searchSuggestName">
-                        {s.kind === "folder" ? <FolderIcon size={14} /> : <LabelIcon size={14} />}
-                        {s.name}
+                        <Icon size={14} />
+                        {s.kind === "value" || s.kind === "forms" ? <span className="searchSuggestKey">{s.key}:</span> : null}
+                        {s.kind === "forms" ? null : name}
+                        {s.desc ? <span className="searchSuggestDesc">{s.desc}</span> : null}
                       </span>
-                      <span className="searchSuggestHint">{t("Tab")}</span>
-                    </button>
-                  ))}
+                    );
+                    if (s.inert) {
+                      return <div key={`${s.kind}:${s.key}`} role="option" aria-disabled="true" aria-selected="false" className="categorySuggestionItem searchSuggestInert">{head}</div>;
+                    }
+                    const i = options.indexOf(s);
+                    return (
+                      <button
+                        key={s.chip ? `${s.kind}:${s.id}` : `${s.kind}:${s.key}:${s.value || ""}`}
+                        type="button" role="option" tabIndex={-1}
+                        aria-selected={i === sugIdx}
+                        className={`categorySuggestionItem${i === sugIdx ? " selected" : ""}`}
+                        onPointerDown={(e) => e.preventDefault()}
+                        onMouseEnter={() => setSugIdx(i)}
+                        onClick={() => applyRow(s)}
+                      >
+                        {head}
+                        <span className="searchSuggestHint">{t("Tab")}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               ) : null}
             </div>
@@ -496,6 +599,15 @@ export default function SearchPanel({
             <button className={`searchToggle ${wholeWord ? "on" : ""}`} onClick={() => setWholeWord((v) => !v)} title={t("Match whole word")}><u>ab</u></button>
           </div>
           <div className="searchResults" data-guide="search.results">
+            {problems.map((p) => (
+              <div key={`${p.from}:${p.raw}`} className="searchHint warn">
+                {t("“{token}” is searched as text: {reason}", { token: p.raw, reason: p.reason })}
+              </div>
+            ))}
+            {showDetails && !query.trim() && !labels.length ? (
+              <div className="searchHint">{t("Narrow with {keys} — a leading - leaves out, commas list alternatives: {example}", {
+                keys: KEY_LIST, example: HINT_EXAMPLE })}</div>
+            ) : null}
             {busy ? <div className="searchHint">{t("Searching…")}</div> : null}
             {!busy && q && !anything ? <div className="searchHint">{t("No matches.")}</div> : null}
             {/* The compact find bar still says what the details hold (the
@@ -512,12 +624,17 @@ export default function SearchPanel({
             {!showDetails && !busy && q && notesPartial ? <div className="searchHint">{t("Stopped early — refine the search to see more.")}</div> : null}
             {showDetails ? (
               <>
-                {labels.length ? (
+                {scopeIds ? (
                   <>
-                    <div className="searchSection">{t("Filters:")} {labels.map((c) => c.name).join(" + ")}</div>
-                    {labelMatches.length === 0 ? (
-                      <div className="searchHint">{t("No pages carry {which}.", { which: labels.length === 1 ? t("this label") : t("all these labels") })}</div>
-                    ) : labelMatches.map((b) => titleRow(b, filingLine(b)))}
+                    <div className="searchSection">
+                      {t("Filters:")} {[...labels.map((c) => c.name), ...pageClauses.map((c) => c.raw)].join(" + ")}
+                    </div>
+                    {filterMatches.length === 0 ? (
+                      <div className="searchHint">{pageClauses.length ? t("No pages match these filters.")
+                        : t("No pages carry {which}.", { which: labels.length === 1 ? t("this label") : t("all these labels") })}</div>
+                    ) : filtersListed.map((b) => titleRow(b, filingLine(b)))}
+                    {filterMatches.length > filtersListed.length
+                      ? moreButton("filters", () => setFiltersShown((n) => n + TITLES_PAGE)) : null}
                   </>
                 ) : null}
                 {titleMatches.length || titlesExtra.length ? section(t("Titles"), titleMatches.length + titlesExtra.length) : null}

@@ -8,7 +8,7 @@ import { ANCHORS, anchorsForView } from "../../../src/guide/anchors.js";
 import { selectPdfText, waitForPdf } from "./pdf.mjs";
 import { ABSTRACT_PASSAGE } from "../../../src/guide/previewHighlight.js";
 import { readFileSync } from "node:fs";
-import { Account } from "../harness.mjs";
+import { Account, live } from "../harness.mjs";
 
 export async function guideScenarios(env) {
   const { server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;

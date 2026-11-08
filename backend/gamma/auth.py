@@ -649,7 +649,10 @@ ANONYMOUS_NAME = "Anonymous"
 
 def link_name(raw) -> str:
     """A visitor's display name, cleaned: control characters dropped,
-    whitespace collapsed, capped at LINK_NAME_MAX; ``Anonymous`` when empty."""
+    whitespace collapsed, capped at LINK_NAME_MAX code points; ``Anonymous``
+    when empty. The share view cleans a name it shows alike
+    (collaboration/linkName.js ``cleanLinkName``; tests/shared/linkname.json
+    pins both)."""
     text = re.sub(r"[\x00-\x1f\x7f]", "", str(raw or ""))
     text = re.sub(r"\s+", " ", text).strip()[:LINK_NAME_MAX].strip()
     return text or ANONYMOUS_NAME

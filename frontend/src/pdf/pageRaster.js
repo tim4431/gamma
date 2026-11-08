@@ -271,7 +271,7 @@ function sharedFor(scroller) {
   const poke = () => { frame = 0; queue.poke(); };
   scroller.addEventListener("scroll", () => {
     samples.push([performance.now(), scroller.scrollTop]);
-    frame ||= requestAnimationFrame(poke);
+    if (!frame) frame = requestAnimationFrame(poke);
     // Once the scroll stops the speed reads zero, and what waited for that starts.
     clearTimeout(timer); timer = setTimeout(poke, MOTION_WINDOW_MS + 20);
   }, { passive: true });

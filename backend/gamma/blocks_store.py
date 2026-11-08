@@ -84,8 +84,8 @@ def load_props(text) -> dict:
 
 def block_kind(parent_id, page_id, props: dict) -> str | None:
     """The block's ``kind``, by the rule of the generated column
-    (db.BLOCK_HOT_COLUMNS: the SQL and this must agree, which
-    tests/test_block_columns.py checks): NULL on the reserved rows,
+    (db.BLOCK_HOT_COLUMNS: the SQL, this and the client's blockKind agree
+    on tests/shared/blockkind.json's cases): NULL on the reserved rows,
     ``page`` under root or the trash, ``folder`` / ``label`` in the trees,
     else by the properties — ``ink`` (an ``ink_url`` key, whatever its
     value: ``highlights.is_ink``), ``text_box`` / ``picture`` / ``sheet``
@@ -440,7 +440,8 @@ def page_attachment(props: dict | None) -> dict | None:
     everywhere. Lookups BY attachment (``by-doc``, the search index, the
     PDF export) key on ``doc_id`` directly; they are about the file, not
     the page. Mirrored by ``pageAttachment()`` in
-    frontend/src/library/libraryUtils.js."""
+    frontend/src/library/libraryUtils.js; tests/shared/attachment.json
+    holds the two to the same answers."""
     props = props or {}
     doc_id = str(props.get("doc_id") or "")
     url = str(props.get("source_url") or "")
@@ -457,7 +458,8 @@ def attachment_file(attachment: dict | None) -> str:
     from another address alone, never stored). The attachment's ``id``
     stays ``""`` for such a page: this is for code that reads the file,
     not for gating or lookups by attachment. Mirrored by
-    ``attachmentFile()`` in frontend/src/library/libraryUtils.js."""
+    ``attachmentFile()`` in frontend/src/library/libraryUtils.js (the same
+    fixture)."""
     if not attachment:
         return ""
     return attachment["id"] or pdf_url_doc_id(attachment["url"])
@@ -741,9 +743,17 @@ def page_in_folder(conn, page_id: str, folder_id: str) -> bool:
         (folder_id, page_top(conn, page_id))).fetchone() is not None
 
 
+# The most page ids one search request may name (POST /block-search and
+# /pdf-search: the pages the Ctrl+F panel's filters keep), about 750 KB of
+# body; 413 past it.
+MAX_SEARCH_PAGES = 50_000
+
+
 def pages_in_scope(conn, scope: list[str]) -> set[str]:
     """The library's pages inside every folder and label of ``scope`` (block
-    ids, the search panel's filter chips): filed in the folder or below it
+    ids, the ``scope`` of GET /block-search and /pdf-search; the Ctrl+F
+    panel evaluates its chips in the browser and sends page ids): filed in
+    the folder or below it
     (``pages_in_folder``: a sub-page by its top), carrying the label (each
     page its own). An id that is neither reaches none."""
     pages = None

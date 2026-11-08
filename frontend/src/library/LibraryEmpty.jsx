@@ -1,6 +1,6 @@
-import { useRef } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { PAGE_FILE_ACCEPT } from "../shared/lib/utils";
+import { pickFiles } from "../shared/lib/pickFiles.js";
 import { BrandMark } from "../shared/ui/BrandMark";
 import { DownloadIcon, FilePlusIcon, LinkIcon, UploadIcon } from "../shared/ui/Icons.jsx";
 
@@ -10,12 +10,11 @@ import { DownloadIcon, FilePlusIcon, LinkIcon, UploadIcon } from "../shared/ui/I
 // Add popover), uploads, a blank note page, the Import dialog; plus the first
 // tour. It goes away with the first page of the user's own.
 export default function LibraryEmpty({ onOpenLink, onUpload, onNewPage, onImport, onTour }) {
-  const fileRef = useRef(null);
   const cards = [
     { id: "link", icon: LinkIcon, primary: true, onClick: onOpenLink,
       title: t("Open a paper from a link"),
       text: t("Paste an arXiv link, a DOI or any PDF address — Gamma finds the PDF.") },
-    { id: "upload", icon: UploadIcon, onClick: () => fileRef.current?.click(),
+    { id: "upload", icon: UploadIcon, onClick: () => pickFiles({ accept: PAGE_FILE_ACCEPT, multiple: true }, (files) => onUpload([...files])),
       title: t("Upload PDFs"),
       text: t("Choose files, or drop them anywhere on this page.") },
     { id: "page", icon: FilePlusIcon, onClick: onNewPage,
@@ -45,14 +44,6 @@ export default function LibraryEmpty({ onOpenLink, onUpload, onNewPage, onImport
           </button>
         ))}
       </div>
-      <input
-        ref={fileRef}
-        type="file"
-        accept={PAGE_FILE_ACCEPT}
-        multiple
-        hidden
-        onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; if (files.length) onUpload(files); }}
-      />
       <div className="libEmptyFoot">
         {onTour ? (
           <button type="button" className="libEmptyTour" onClick={onTour}>

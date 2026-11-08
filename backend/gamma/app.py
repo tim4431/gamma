@@ -268,16 +268,17 @@ def _startup_maintenance():
 async def read_only_gate(request: Request, call_next):
     """A hosted server its plan made read-only (gamma/hosted.py): every
     state-changing /api request but ``hosted.READ_ONLY_ALLOWED`` is refused
-    with 423 and the reason. Inside the session middleware, so the refusal
-    is logged like any answer. Collaboration needs nothing of its own: an
-    op batch is a POST, and the page socket carries only carets. A hosted
-    server also notes every answer here for the sync's report
-    (``hosted.answered``: a 5xx, an accepted write); any other server only
-    passes the request on."""
+    with 423 and the reason; a read sent as a POST (``hosted.POST_READS``)
+    is no write. Inside the session middleware, so the refusal is logged
+    like any answer. Collaboration needs nothing of its own: an op batch is
+    a POST, and the page socket carries only carets. A hosted server also
+    notes every answer here for the sync's report (``hosted.answered``: a
+    5xx, an accepted write); any other server only passes the request on."""
     if not hosted.enabled():
         return await call_next(request)
-    write = request.method in hosted.WRITE_METHODS and request.url.path.startswith("/api/")
-    if write and not hosted.allowed_when_read_only(request.url.path):
+    path = request.url.path
+    write = request.method in hosted.WRITE_METHODS and path.startswith("/api/") and not hosted.is_post_read(path)
+    if write and not hosted.allowed_when_read_only(path):
         refusal = hosted.read_only()  # from memory: tick loaded it at startup
         if refusal:
             return JSONResponse({"detail": refusal, "read_only": True}, status_code=423)

@@ -133,7 +133,8 @@ def fair_shares(sizes: list[int], budget: int) -> list[int]:
     share keeps all of it, and what it leaves goes to the rest, again split
     evenly. Nothing is dropped, and one long item can't starve the others.
     The chat's composer computes the same (chat/passageBudget.js
-    ``fairShares``), so a chip says beforehand what the server keeps."""
+    ``fairShares``, held to it by tests/shared/passages.json), so a chip
+    says beforehand what the server keeps."""
     shares = [0] * len(sizes)
     left = max(0, budget)
     order = sorted(range(len(sizes)), key=lambda i: sizes[i])
@@ -152,7 +153,9 @@ def passage_budget(payload) -> int:
 def quoted_shares(payload, budget: int | None = None) -> tuple[list[int], list[int]]:
     """How many characters of each selected PDF passage and of each selected
     note text the question quotes: one budget shared by all of them, in the
-    order the request lists them (PDF passages, then note selections)."""
+    order the request lists them (PDF passages, then note selections).
+    Characters are code points, as the composer counts them too
+    (passageBudget.js ``charCount``)."""
     passages, notes = request_selections(payload), request_note_selections(payload)
     shares = fair_shares([len(p["text"]) for p in passages] + [len(s["text"]) for s in notes],
                          budget or passage_budget(payload))
@@ -595,15 +598,35 @@ def _omitted_calls(actions: list) -> str:
         f"{name} ×{count:,}" for name, count in counts.most_common()))
 
 
+def _newest_plan(history: list) -> tuple[int, int] | None:
+    """Where the newest replayed update_plan result is, ``(history_index,
+    action_index)``, or None."""
+    for i in range(len(history) - 1, -1, -1):
+        actions = _replayable(history[i])
+        for j in range(len(actions) - 1, _first_replayed(actions) - 1, -1):
+            if canonical_tool(actions[j]["tool"]) == "update_plan" and not actions[j].get("error"):
+                return i, j
+    return None
+
+
 def _elide_old_results(history: list) -> dict[int, set]:
     """Pick which replayed tool results keep their text: walk newest-first
-    under TOOL_REPLAY_BUDGET; everything older is elided. Returns
-    {history_index: {action_index, ...}} of the elided ones."""
+    under TOOL_REPLAY_BUDGET; everything older is elided. The newest plan
+    (update_plan's checklist, at most about 3.3k characters) is always kept
+    whole, its size taken from the budget first: the run that carries out
+    an approved plan, and a Continue after it, work from the whole plan
+    however much that run read. Returns {history_index: {action_index,
+    ...}} of the elided ones."""
     elided: dict[int, set] = {}
     budget = TOOL_REPLAY_BUDGET
+    plan = _newest_plan(history)
+    if plan:
+        budget -= len(str(_replayable(history[plan[0]])[plan[1]].get("result") or ""))
     for i in range(len(history) - 1, -1, -1):
         actions = _replayable(history[i])
         for j, action in reversed(list(enumerate(actions))[_first_replayed(actions):]):
+            if (i, j) == plan:
+                continue
             budget -= len(str(action.get("result") or ""))
             if budget < 0:
                 elided.setdefault(i, set()).add(j)
@@ -693,7 +716,8 @@ def prompt_tokens(messages: list, system: str = "", tools: list | None = None,
 def build_messages(payload, context: str, with_tools: bool = False,
                    located: list | None = None, message_context: str = "",
                    drop_turns: int = 0, picture_lines: str = "",
-                   files: list | None = None, quote_budget: int | None = None) -> list[dict]:
+                   files: list | None = None, quote_budget: int | None = None,
+                   turn_note: str = "") -> list[dict]:
     """Build common chat messages, injecting context once before a user turn.
 
     With ``with_tools`` (an agent chat), each saved reply's tool calls are
@@ -719,6 +743,10 @@ def build_messages(payload, context: str, with_tools: bool = False,
     of the conversation they sit at the same place in its head.
     ``quote_budget`` is what the question's quoted passages share (the
     request's ``passage_budget`` unless the window fit shrank it).
+    ``turn_note`` is an instruction for this message alone (a planning
+    turn's, ``ai_tools.PLANNING_TURN``): it ends the current user turn,
+    after the picture lines, like the selections it rides with the message
+    and never with a history turn.
     """
     history = [h for h in (payload.history or []) if not h.get("error")]
     if drop_turns > 0:
@@ -782,6 +810,8 @@ def build_messages(payload, context: str, with_tools: bool = False,
         content = f"{head}\n\nUser question: {content}"
     if picture_lines:
         content = f"{content}\n\n{picture_lines}"
+    if turn_note:
+        content = f"{content}\n\n{turn_note}"
     messages.append({"role": "user", "content": content,
                      **({"files": list(files)} if files and not context_used else {})})
     return messages
