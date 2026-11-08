@@ -1343,6 +1343,34 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await account.api(`/api/blocks/${citing.id}`, { method: "DELETE" });
   });
 
+  // "Copy as reference point" copies the highlight's block link
+  // (/?block=<id>). Opened from a note it lands on the passage as the deep
+  // link does, from the highlight's own page and from another: a click used
+  // to scroll only the notes, to the highlight's row.
+  await step("pdf: a highlight's copied reference link in a note lands on its passage, from its page and another", async () => {
+    const rect = { x1: 60, y1: 40, x2: 480, y2: 60 };
+    const target = await account.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: "",
+      properties: { quote: "Page two says hello world", color: "#ffe28fa6",
+        pdf_position: { pageNumber: 2, width: 612, height: 792, boundingRect: rect, rects: [rect] } } } });
+    const here = await account.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: `see [the passage](/?block=${target.id})` } });
+    const elsewhere = await account.api("/api/pages", { method: "POST", body: { title: "Reading notes" } });
+    await account.api("/api/blocks", { method: "POST", body: { parent_id: elsewhere.id, content: `from [the passage](/?block=${target.id})` } });
+    const flash = `[data-page="2"] [data-hl-id="${target.id}"].pdfHlFlash`;
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, `${server.base}/?page=${pageId}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      await p.locator(`.blockRowWrap[data-block-id="${here.id}"] a.gammaLinkCard`).click();
+      await p.waitForSelector(flash, { timeout: 8000 });
+      await p.goto(`${server.base}/?page=${elsewhere.id}&ws=${account.ws}`);
+      await p.locator(".blockRow a.gammaLinkCard", { hasText: "the passage" }).click();
+      await p.waitForSelector(flash, { timeout: 15000 });
+      assertNoProblems(p);
+      await p.close();
+    } finally { await c.close(); }
+    for (const id of [target.id, here.id, elsewhere.id]) await account.api(`/api/blocks/${id}`, { method: "DELETE" });
+  });
+
   // The link dialog (pdf/LinkDialog.jsx, a page picker): a page searched and
   // picked, a DOI typed ("Link to …" leads), and Change link… opening on the
   // link's address with Remove link under it.

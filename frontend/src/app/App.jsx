@@ -4146,7 +4146,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     window.addEventListener("gamma-auth-expired", onExpired);
     return () => window.removeEventListener("gamma-auth-expired", onExpired);
   }, []);
+  // A highlight (or a note linked to one) whose passage the PDF lands on
+  // once its page's document and highlights are up (the effect after
+  // `highlights`); a request on the open page bumps pdfJumpReq.
   const pendingJumpRef = useRef(null);
+  const [pdfJumpReq, setPdfJumpReq] = useState(0);
   // Phase B2a: drop indicator state
   const [dropTarget, setDropTarget] = useState(null); // { targetId, above, rect }
   const dragLeaveTimer = useRef(null);
@@ -4314,6 +4318,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // never folded away, the tree is as it was).
   const [blockScrollReq, setBlockScrollReq] = useState(0);
   const scrollToBlock = (id) => { pendingBlockScrollRef.current = id; setBlockScrollReq((n) => n + 1); };
+  // A jump to a block of the open page (a copied block link, a [[ref]], the
+  // sync popover's): its row in the notes and, a highlight's, its passage on
+  // the PDF, as openBlock's `block` lands one on another page.
+  const landOnBlock = (id) => {
+    scrollToBlock(id);
+    reveal(id);
+    pendingJumpRef.current = id;
+    setPdfJumpReq((n) => n + 1);
+  };
   // The AI agent's live footprint on the open page (handleAgentEvent):
   // aiMarks lights up the blocks it reads/edits (id → {kind, n}), aiLive is
   // the note edit it is still writing — streamed into the block (edit_block)
@@ -4533,7 +4546,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // a conflict on the page itself (a Zotero link's record) is on its header, not a row
     if (blockId && blockId === pageId) blockId = "";
     if (pageId && pageId !== focusedBlockId) { openPage(pageId, blockId); return; }
-    if (blockId) { scrollToBlock(blockId); reveal(blockId); }
+    if (blockId) landOnBlock(blockId);
   };
   useEffect(() => {
     const h = (e) => jumpToRef.current?.(e.detail?.page, e.detail?.block);
@@ -4991,8 +5004,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return null;
     }
     if (findBlock(blocks)) {
-      scrollToBlock(id);
-      reveal(id);
+      landOnBlock(id);
     } else {
       // block-ref click = link jump to another page, which Back returns from
       const rootId = pageId || refCache[id]?.page_root_id;
@@ -5082,7 +5094,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           const block = data.blocks?.[0];
           const rootId = block?.page_root_id;
           if (rootId && rootId !== initialBlockId) {
-            pendingJumpRef.current = initialBlockId; // highlight blocks also jump the PDF
             openBlock(rootId, { link: true, block: initialBlockId });
           } else {
             openBlock(initialBlockId, { link: true });
@@ -6255,7 +6266,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   async function openBlock(blockId, opts) {
     if (!blockId) return;
     if (shareMode) {
-      if (opts?.block) pendingBlockScrollRef.current = opts.block;
+      if (opts?.block) pendingBlockScrollRef.current = pendingJumpRef.current = opts.block;
       // Back records the jump once the page has opened: one the share does
       // not reach leaves the page on screen, and no entry to come back by.
       const from = opts?.pushNav && blockId !== focusedBlockId ? navEntry() : null;
@@ -6296,8 +6307,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const block = subtreeData.block;
       if (!block) throw new Error("Block not found");
       // What this open was asked to land on and then do; a jump or an
-      // action staged for an earlier page that never came is dropped.
+      // action staged for an earlier page that never came is dropped. A
+      // highlight to land on is its passage on the PDF too; an open without
+      // a block keeps the jump its caller staged (a link region's).
       pendingBlockScrollRef.current = opts?.block || null;
+      if (opts?.block) pendingJumpRef.current = opts.block;
       pendingPageActionRef.current = opts?.then ? { id: blockId, action: opts.then } : null;
       // A press on a view of the page (a tab group's), which made it live:
       // on a note, its editor opens with the caret where the press was.
@@ -9380,6 +9394,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         if (linked) scrollTarget = (highlights || []).find((x) => x.id === linked);
       }
       if (scrollTarget && scrollToRef.current) {
+        setPhonePanel(null); // the compact shell: the PDF, not a panel over it
         cancelCoarseRestoreRef.current();
         scrollToRef.current({ position: scrollTarget.position });
         triggerFlash(scrollTarget.id);
@@ -9387,7 +9402,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       pendingJumpRef.current = null;
     };
     setTimeout(attempt, 100);
-  }, [pdfHidden, highlights]);
+  }, [pdfHidden, highlights, pdfJumpReq]);
 
   // Jump to the last-read page when a document opens, the page the
   // account-synced per-paper map (read-pos pref) holds for it. Waits until
