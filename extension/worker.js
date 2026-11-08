@@ -804,6 +804,23 @@ async function savePaper({ tabId, candidate, folder, folder_path, make, labels, 
   }
 }
 
+// Undoing a save the popup just made: the page it created goes to Recently
+// deleted (DELETE /api/blocks/<page>, what the app's Delete sends), and the
+// tab stops reading as saved, so the popup offers the form again. Run here
+// rather than in the popup so closing it mid-way cannot leave the tab
+// showing a page that is gone. Only the page a save created is ever sent —
+// the popup offers Undo for no other (`last.existed`).
+async function undoSave({ tabId, blockId }) {
+  const settings = await getSettings();
+  const out = await api(`/blocks/${encodeURIComponent(blockId)}`,
+    { method: "DELETE", expectedOrigin: settings.server, workspace: currentWorkspace(settings) });
+  if (tabId != null) {
+    const st = await getTabState(tabId);
+    if (st.hit && st.hit.block_id === blockId) await setTabState(tabId, { hit: null, last: null, error: "", saving: "" });
+  }
+  return out;
+}
+
 async function clipSelection({ tabId, text, source_url, title }) {
   const settings = await getSettings();
   const st = tabId != null ? await getTabState(tabId) : {};
@@ -947,6 +964,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       case "save":
         return savePaper(msg);
+      case "undo-save":
+        return undoSave(msg);
       case "clip-selection": {
         let text = msg.text || "";
         if (!text && msg.tabId != null) {

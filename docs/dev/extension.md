@@ -17,7 +17,11 @@ install steps, unpacked included, in
    a page whose tags name no paper but whose text names one DOI: a news
    story, a page without tags). The popup shows the detected title, a
    folder and labels → **Save to Gamma** → *Open in Gamma*
-   (`/?block=<id>`). On a `?` page, *Save the web page instead* saves the
+   (`/?block=<id>`). The folder is typed as a path and **Tab**-completed,
+   subfolder by subfolder (below, "Completing a folder path"). A page where
+   nothing was detected shows the same folder and labels under its notice,
+   over *Save this URL anyway*: filing is the same work either way. On a
+   `?` page, *Save the web page instead* saves the
    story rather than the paper it names.
 2. **Save the PDF you are looking at.** The tab *is* a PDF, possibly behind
    an institutional login the server can't reach: the bytes are fetched with
@@ -34,7 +38,9 @@ install steps, unpacked included, in
 4. **Already in the library** — ✓ badge; the popup offers *Open in Gamma*
    and *Add to another folder…* instead of a duplicate save. A save that
    just finished shows the same block, with "Saved to your library" (plus
-   the server's note, in amber, when there was no PDF). The head already
+   the server's note, in amber, when there was no PDF), and *Undo this
+   save* beside the refile, which moves that page to Recently deleted and
+   brings the form back. The head already
    names the paper, so the notice doesn't repeat the title. When the
    library page's title differs from the paper the tab resolved to, the
    notice says "Already in your library as “…”", so a stale metadata record
@@ -95,7 +101,7 @@ helpers — never re-implement it in the extension.
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64, with the answer's status, type and size — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
 | `api.js` | settings (`chrome.storage.sync`: `server, servers, workspaces, defaultFolders, folder, labels, allowOa, saveCopy, autoRefreshSessions`), `api()` fetch wrapper (`credentials: "include"`, the chosen workspace as `X-Gamma-Workspace`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI`, the workspace and default folder, and the folder tree (`folderTree`, `namedKid`, `makeFolder`; below) |
 | `publisherSessions.js` | Publisher-host validation and the connection flow (checks the active tab and account, then sends a snapshot to Gamma with the browser's `navigator.userAgent`); the automatic-refresh rule (`shouldAutoRefresh`, `REFRESH_AFTER` / `RETRY_AFTER`) and the status text (`describeSession`) — pure, tested in `tests/` |
-| `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder and the labels are one control (`chipField`, `ui.js`): the app's `categoryTag` chip input over a ctxMenu of suggestions — typing filters them, arrow keys + Enter pick one, Enter commits what was typed, Backspace in an empty input removes the last chip, and text typed but not committed still counts at Save. Labels take any number (a comma commits one too) and suggest the library's labels holding the text. When there are some, *New label “…”* follows for text no label has, or with nothing typed *New label…*, a name input in place; alone, either would lie over Save, which takes typed text as it is. A new label is a chip like any, which the save makes by its name. The folder holds one, since a clip files into one folder (none is the library root). With nothing typed its menu is the tree (below, "The folder tree"); typed, it suggests every other folder whose path holds the typed names in order, each within one name of the path (`phys/c` finds *Physics / Clocks*), and a path no folder has as *New folder “…”*, sent as `folder_path`. A save remembers its folder (the worker, once it succeeds) but not its labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. *Clip selected text* and *Copy the save log* (whenever the tab has one) share one row of quiet links at the bottom, under the actions and any result; the log link copies the tab's last save log. `?tab=<id>` targets a specific tab when opened as a page (tests) |
+| `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder and the labels are one control (`chipField`, `ui.js`): the app's `categoryTag` chip input over a ctxMenu of suggestions — typing filters them, arrow keys + Enter pick one, Enter commits what was typed, Backspace in an empty input removes the last chip, and text typed but not committed still counts at Save. Labels take any number (a comma commits one too) and suggest the library's labels holding the text. When there are some, *New label “…”* follows for text no label has, or with nothing typed *New label…*, a name input in place; alone, either would lie over Save, which takes typed text as it is. A new label is a chip like any, which the save makes by its name. The folder holds one, since a clip files into one folder (none is the library root). With nothing typed its menu is the tree (below, "The folder tree"); typed, it suggests every other folder whose path holds the typed names in order, each within one name of the path (`phys/c` finds *Physics / Clocks*), those whose own name the last typed one begins first, and a path no folder has as *New folder “…”*, sent as `folder_path`. **Tab completes** what is being typed (below, "Completing a folder path"). A save remembers its folder (the worker, once it succeeds) but not its labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. The main view shows one of two halves: `#found`, the folder and labels (`#filing`) with the one action under them — *Save to Gamma*, or *Save this URL anyway* under the `#nothing` notice when no paper was detected, since a page with none files like any other — and `#existing`, the page once it is in the library, with *Open in Gamma* over a quiet row of *Add to another folder…* and *Undo this save* (below, "Undo"). *Clip selected text* and *Copy the save log* (whenever the tab has one) share one row of quiet links at the bottom, under the actions and any result; the log link copies the tab's last save log. `?tab=<id>` targets a specific tab when opened as a page (tests) |
 | `tokens.css`, `fonts/` | committed copies of the app's `shared/styles/tokens.css` and the Latin subset of Inter, like the desktop shell's ([ui-design.md](ui-design.md#the-desktop-shell-and-the-extension)): `npm run copy-tokens` in `frontend/` refreshes them, and `frontend/tests/themes.test.mjs` fails while a copy differs from its source |
 | `theme.js` | a classic script in the head of both pages, before the stylesheets: the app's pinned theme isn't knowable here, so it sets `data-theme` / `data-scheme` to Light or Dark from `prefers-color-scheme`, live |
 | `options.html/js` | server + host permission, account, saving defaults (the workspace picked from the signed-in account's libraries, the popup's folder field, whose choice is stored as it is made), *Copy recent saves* (the last five save logs) |
@@ -324,6 +330,31 @@ popup picks another library, even during a refill of its own, or a folder named
 there would be made in one it isn't showing. A save tells the field its folder
 landed, so a late answer to the field's own write says nothing, and a folder
 only the save made joins the tree.
+
+**Completing a folder path.** Typed, the field reads as a path and completes
+like a shell's or VS Code's. The matches are every folder whose path holds the
+typed names, the ones whose own name the last typed one begins first — that is
+the folder being named, rather than one merely holding the text above it, and
+so what Tab takes. **Tab** writes that folder out in full, and, when it holds
+subfolders, leaves the separator behind: the field then reads `Lab / Clocks /`,
+whose menu is what is inside that folder, so Tab after Tab walks down the tree.
+Nothing is committed by it — Enter still does that, and typed text left
+uncommitted still counts at Save. With an empty field, or with nothing left to
+write (the completion is already there), Tab leaves for the next field as it
+always has. `chipField` takes the rule as `complete(row)`, so the labels, which
+pass none, are unchanged. The app's page header field completes the same way
+over the library tree (`libraryUtils.folderMatches` / `folderCompletion`,
+[home_library.md](home_library.md) "Folders and labels").
+
+**Undo.** A save that *created* a page (`existed: false`) can be taken back
+from the popup: *Undo this save*, under *Open in Gamma*, sends `undo-save` to
+the worker, which moves that page to Recently deleted (`DELETE
+/api/blocks/<page>`, what the app's Delete sends) and clears the tab's `hit`,
+so the form comes back with its folder and labels still set. The worker runs
+it for the same reason it runs a save: the popup may close mid-way. A page
+the look-up *found* is never offered — it was the user's before this tab, and
+a second save into another folder only adds filing (`existed: true`), which
+Undo would be the wrong word for.
 
 Server side (`clip.py`, sync `def` — it downloads):
 
@@ -671,7 +702,10 @@ signed in to the same server works the same way.
   name input's op names its parent by id (one holding `/`, the second of two
   of a name) and a save files by the new id; a sibling's name makes nothing,
   and neither does Escape, an empty input, another row or the window's blur;
-  a composing Enter does nothing; Tab reaches the labels; leaving the input
+  a composing Enter does nothing; Tab with nothing typed reaches the labels,
+  and typed it completes — the first match written out in full, the menu then
+  listing what is inside it, the highlighted row next, and the field left when
+  there is nothing more to write; leaving the input
   commits; a chip's × cancels a name; a save waits for a held op, also with
   the popup closed, and sends no clip for a refused one, sending the same id
   again; an unread list, or one of bare paths, keeps the default; the options
@@ -697,7 +731,9 @@ signed in to the same server works the same way.
   title and saved with `doi_from_text`; another story saved as the web page
   instead (no DOI sent, the tab then reads as the page); a list of three
   DOIs names none and says so; a repository's thesis page with tags but no
-  PDF or DOI sends its record through *Save this URL anyway*; a publisher
+  PDF or DOI shows the folder and labels under its notice, files by them and
+  sends its record through *Save this URL anyway*, and *Undo this save*
+  deletes the page it made and brings that form back; a publisher
   page's record rides along with its own DOI, not one it cites.
 - `node extension/tests/prerender.e2e.mjs` — a fake paper page whose
   speculation rules prerender a "Warmup Page" with its own DOI. While the

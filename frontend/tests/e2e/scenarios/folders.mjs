@@ -215,16 +215,34 @@ export async function folderScenarios(env) {
       await until(async () => (await pageOf(paper.id)).properties.folders?.includes(beta), { what: "filed in the folder of that name" });
       assertEq((await tree("folders")).filter((f) => f.content.toLowerCase() === "beta").length, 1, "no folder was made");
 
-      // Tab completes a partial name to the first suggestion.
+      // Tab completes a folder path, as a shell or VS Code does: a partial
+      // name is written out in full, one holding subfolders keeps the
+      // separator so the next Tab walks into it, and Tab with nothing left
+      // to write files the page there.
       await field.click();
-      await page.locator('[data-guide="page.labelInput"]').fill("alph");
+      const input = page.locator('[data-guide="page.labelInput"]');
+      await input.fill("alph");
       await page.locator(".categorySuggestionItem", { hasText: /^Alpha$/ }).waitFor();
       await page.keyboard.press("Tab");
+      assertEq(await input.inputValue(), "Alpha / ", "written out in full, open for the subfolder");
+      await page.locator(".categorySuggestionItem", { hasText: "Alpha / Gamma" }).waitFor();
+      assertEq(await page.locator(".categorySuggestionItem").count(), 1, "and listing only what is inside Alpha");
+      await page.keyboard.press("Tab");
+      assertEq(await input.inputValue(), "Alpha / Gamma", "the subfolder, with nothing inside it to open");
+      await page.keyboard.press("Tab");
       // the field stays open for the next name: its chips are the editing ones
-      await page.locator(".categoryTagInputWrap .categoryTag.folderChip", { hasText: /^Alpha$/ }).waitFor();
-      assertEq(await page.locator('[data-guide="page.labelInput"]').inputValue(), "", "the input clears for the next name");
-      const alpha = await user.folder("Alpha");
-      await until(async () => (await pageOf(paper.id)).properties.folders?.includes(alpha), { what: "Tab filed it in Alpha" });
+      await page.locator(".categoryTagInputWrap .categoryTag.folderChip", { hasText: "Alpha / Gamma" }).waitFor();
+      assertEq(await input.inputValue(), "", "the input clears for the next name");
+      const gamma = await user.folder("Alpha/Gamma");
+      await until(async () => (await pageOf(paper.id)).properties.folders?.includes(gamma), { what: "Tab filed it in Alpha / Gamma" });
+
+      // A path no folder has makes one under the folder it names, not a top
+      // folder called "Beta / Nested one".
+      await input.fill("Beta / Nested one");
+      await page.locator(".categorySuggestionItem", { hasText: "New folder “Beta / Nested one”" }).click();
+      await page.locator(".categoryTagInputWrap .categoryTag.folderChip", { hasText: "Beta / Nested one" }).waitFor();
+      assert((await tree("folders")).find((f) => f.content === "Beta").children.some((f) => f.content === "Nested one"),
+        "the new folder is a child of Beta");
       await page.keyboard.press("Escape");
 
       // Search: a matching label is offered, but only Tab makes it a filter.

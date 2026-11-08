@@ -5,7 +5,8 @@ import { test } from "node:test";
 import { generateKeyBetween } from "fractional-indexing";
 import {
   NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
-  firstFolderPath, folderChain, folderEntries, folderNeighbour, folderPath, folderPosition, folderPositions, folderSubtree, folderTargets,
+  firstFolderPath, folderAtPath, folderChain, folderCompletion, folderEntries, folderInside, folderMatches,
+  folderNeighbour, folderPath, folderPathHolds, folderPathNames, folderPosition, folderPositions, folderSubtree, folderTargets,
   formatFullDate, formatRelativeTime, formatShortDate,
   attachmentFile, inFolder, isFreshLibrary, isLinkInput, labelName, libraryTree, normalizeLinkInput, pageAttachment,
   siblingFolders,
@@ -83,6 +84,60 @@ test("a filing keeps the ids that name a block; filing into a folder refines the
   assert.deepEqual(addToFolder(tree, ["phys", "bio"], "qec"), ["bio", "qec"], "physics gives way to its subfolder");
   assert.deepEqual(addToFolder(tree, ["gone"], "bio"), ["bio"], "the refiling drops a dangling id");
   assert.deepEqual(addToFolder(tree, [], "phys"), ["phys"]);
+});
+
+// A deeper tree for the typed paths below: Lab holds Clocks (holding
+// Lattice) and Ions, and two top folders are named alike but for their case.
+const deep = libraryTree({ folders: { children: [
+  { id: "lab", content: "Lab", position: k1, children: [
+    { id: "clocks", content: "Clocks", position: k1, children: [
+      { id: "lattice", content: "Lattice", position: k1, children: [] },
+    ] },
+    { id: "ions", content: "Ions", position: k2, children: [] },
+  ] },
+  { id: "slash", content: "a/b", position: k2, children: [] },
+] } });
+
+test("a typed folder path splits on \"/\", and a path holds a typed one name by name", () => {
+  assert.deepEqual(folderPathNames(" phys / c "), ["phys", "c"]);
+  assert.deepEqual(folderPathNames("2026"), ["2026"]);
+  assert.deepEqual(folderPathNames(" / / "), [], "blank names are dropped");
+  assert.ok(folderPathHolds(["Physics", "Clocks"], "phys/c"), "each name within consecutive names of the path");
+  assert.ok(folderPathHolds(["Physics", "Clocks"], "clo"), "one name, anywhere in the path");
+  assert.ok(folderPathHolds(["Physics", "Clocks"], "Physics / Clo"), "the separator as it reads");
+  assert.ok(!folderPathHolds(["Physics", "Clocks"], "c/phys"), "in order, not just present");
+  assert.ok(!folderPathHolds(["Physics"], "phys/c"), "more names than the path has");
+  assert.ok(folderPathHolds(["a/b"], "a/b"), "a name holding the separator is found by typing it whole");
+});
+
+test("folderAtPath takes the path as it reads first, else walks it name by name", () => {
+  assert.equal(folderAtPath(deep, "lab/clocks").id, "clocks", "ignoring case, like the server's named");
+  assert.equal(folderAtPath(deep, " Lab / Clocks / Lattice ").id, "lattice");
+  assert.equal(folderAtPath(deep, "Clocks"), null, "a path starts at the top");
+  assert.equal(folderAtPath(deep, "Lab/Gone"), null);
+  assert.equal(folderAtPath(deep, ""), null);
+  assert.equal(folderAtPath(deep, "a/b").id, "slash", "the folder actually called that, not a walk");
+  assert.equal(folderAtPath(libraryTree(listing), "Physics / QEC / codes, 2026").id, "qec");
+});
+
+test("a typed path ending in the separator opens that folder; Tab writes one out in full", () => {
+  assert.equal(folderInside(deep, "Lab /").id, "lab");
+  assert.equal(folderInside(deep, "lab/clocks/").id, "clocks");
+  assert.equal(folderInside(deep, "Lab / Ions / "), null, "nothing inside it to open");
+  assert.equal(folderInside(deep, "Lab"), null, "no separator: a name being typed");
+  assert.equal(folderCompletion(deep, "lab"), "Lab / ", "subfolders: Tab leaves it open for the next name");
+  assert.equal(folderCompletion(deep, "lattice"), "Lab / Clocks / Lattice");
+  assert.equal(folderCompletion(deep, "gone"), "");
+});
+
+test("folderMatches lists what is inside an opened folder, else every path that holds the text", () => {
+  const names = (text, skip) => folderMatches(deep, text, skip).map((f) => f.name);
+  assert.deepEqual(names("Lab /"), ["Lab / Clocks", "Lab / Ions"], "what is right inside it, in its order");
+  assert.deepEqual(names("Lab /", ["clocks"]), ["Lab / Ions"], "a folder already filed is left out");
+  assert.deepEqual(names("lab/c"), ["Lab / Clocks", "Lab / Clocks / Lattice"]);
+  assert.deepEqual(names("la"), ["Lab", "Lab / Clocks / Lattice", "Lab / Clocks", "Lab / Ions"],
+    "the folders the typed name begins come before those merely holding it");
+  assert.deepEqual(names("Gone"), []);
 });
 
 test("findNamed: exactly, else ignoring case", () => {

@@ -160,11 +160,26 @@ a folder or label the trees lack (deleted elsewhere, a stale link) goes
 back to the library's root (a share's folder).
 
 The page header's label field (`page.labels` / `page.labelInput`) files
-the open page by both. Its suggestions are the folders (by path, a folder
-icon) and labels whose names contain what is typed, then *New label "q"*
-and *New folder "q"* (a top-level folder) when no label, or no top-level
-folder, has that name. Enter on a suggestion picks it, and Tab picks the highlighted
-suggestion or else the first; Enter (or leaving
+the open page by both. What is typed reads as a **folder path**, split on
+"/" and matched name by name, so `phys/c` finds *Physics / Clocks*; a name
+may itself hold "/", so the path as it reads counts whole too. Its
+suggestions are the folders whose path holds the typed names — those whose
+own name the last typed one begins first — and the labels whose names
+contain it, then *New label "q"* and *New folder "q"* when no label, and no
+folder at that path, has it. A new folder goes at the path typed, its
+missing parents made with it (`ensureFolders`), so `Beta / Nested one` is a
+subfolder of *Beta*, never a top folder called that.
+
+Enter on a suggestion picks it. **Tab completes**, as a shell or VS Code
+does: the highlighted suggestion, else the first, written out in full, and,
+for a folder holding subfolders, ending in the separator — the field then
+reads `Alpha /`, whose suggestions are what is inside *Alpha*, so Tab after
+Tab walks down the tree. With nothing left to write Tab picks, as it always
+did, and a label (which has no path) is picked on the first Tab. The rules
+are pure, in `libraryUtils` (`folderPathNames`, `folderPathHolds`,
+`folderAtPath`, `folderInside`, `folderMatches`, `folderCompletion`); the
+Connector's folder field completes the same way over its own flat list
+([extension.md](extension.md) "Completing a folder path"). Enter (or leaving
 the field) with none picked takes the label of that name, else the folder
 whose path or name it is, else makes a new label. Each pick writes the
 page at once, a folder with the same refinement as dropping the page on

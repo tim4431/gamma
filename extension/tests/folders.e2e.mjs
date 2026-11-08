@@ -272,6 +272,34 @@ try {
   const focused = (page) => page.evaluate(() => document.activeElement?.id || document.activeElement?.className);
   const newChip = (page) => page.locator("#folder-box .categoryTag").getAttribute("title");
 
+  // Typed, the field completes a path the way a shell does: the matches put
+  // the folders the last typed name begins first, Tab writes that one out in
+  // full and, when it holds subfolders, leaves the separator behind, so the
+  // menu then lists what is inside and Tab after Tab walks down the tree.
+  // With nothing left to write, Tab goes on to the next field as ever.
+  await useDefault("t-papers");
+  clip = await popupSave("Papers", async (popup) => {
+    const typed = () => popup.locator("#folder").inputValue();
+    const highlighted = () => popup.locator("#folder-menu .selected .ctxMenuText").textContent();
+    await popup.locator("#folder").click();  // the pointer on the field, off the rows it would highlight
+    await popup.locator("#folder").fill("la");
+    assert.deepEqual(await menuTexts(popup, "#folder-menu"),
+      ["Lab", "Lab / Clocks / Lattice", "Lab / Clocks", "Lab / Ions", "New folder “la”"]);
+    await popup.locator("#folder").press("Tab");
+    assert.equal(await typed(), "Lab / ", "written out in full, open for the next name");
+    assert.deepEqual(await menuTexts(popup, "#folder-menu"), ["Lab / Clocks", "Lab / Ions"], "what is inside it");
+    await popup.locator("#folder").press("ArrowDown");
+    await popup.locator("#folder").press("ArrowDown");
+    assert.equal(await highlighted(), "Lab / Ions");
+    await popup.locator("#folder").press("Tab");
+    assert.equal(await typed(), "Lab / Ions", "the highlighted row, with nothing inside to open");
+    assert.deepEqual(await menuTexts(popup, "#folder-menu"), ["Lab / Ions"]);
+    await popup.locator("#folder").press("Tab");
+    assert.equal(await focused(popup), "labels", "nothing left to write: Tab goes on");
+    await popup.locator("#labels").press("Escape");
+  });
+  assert.equal(clip.folder, "t-ions", "typed and not committed counts, as ever");
+
   // Open above the chosen folder and no further; a chevron folds and picks nothing.
   await useDefault("t-lattice");
   let popup = await popupForm("Lab / Clocks / Lattice");
