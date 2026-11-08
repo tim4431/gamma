@@ -401,7 +401,7 @@ def test_the_sweeper_leaves_an_unchanged_workspace_alone_until_a_page_is_due(own
     deleted_at = datetime.fromisoformat(_trashed(owner)[page["id"]]["deleted_at"].replace("Z", "+00:00"))
     reads = []
     real = trash._trashed
-    monkeypatch.setattr(trash, "_trashed", lambda w: reads.append(w) or real(w))
+    monkeypatch.setattr(trash, "_trashed", lambda conn: reads.append(conn.ws) or real(conn))
     trash._due.clear()
     trash.sweep(now=deleted_at + timedelta(days=1))
     assert reads.count(ws) >= 1

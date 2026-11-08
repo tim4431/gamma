@@ -1824,6 +1824,18 @@ def _v47_parent_page(ws: str, pages: sqlite3.Connection, data) -> None:
         block_columns(pages)
 
 
+def _v48_deleted_with(ws: str, pages: sqlite3.Connection, data) -> None:
+    """``unified_blocks`` gains the generated ``deleted_with`` (the page a
+    page in Recently deleted went there with, its
+    ``properties.deleted_with``: ops.trash_page) and its partial index
+    ``idx_ub_deleted_with``, so the trash's reads of what went with a page
+    (``ops._went_with``) are indexed: ``block_columns`` adds the missing
+    column after the others, with the index, as step 47 does. Nothing is
+    stamped or touched: the column is derived (``DERIVED_STEPS``)."""
+    if _columns(pages, "unified_blocks"):
+        block_columns(pages)
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1859,9 +1871,10 @@ WORKSPACE_STEPS = [
     (41, "ink_v2", _v41_ink_v2),
     (44, "picture_kind", _v44_picture_kind),
     (47, "parent_page", _v47_parent_page),
+    (48, "deleted_with", _v48_deleted_with),
 ]
 
 # The workspace steps that only add a column SQLite derives from the rows
 # stored before them: two copies on either side of one hold the same data,
 # so they leave ``workspace_format`` as it is and a mirror keeps syncing.
-DERIVED_STEPS = {47}
+DERIVED_STEPS = {47, 48}

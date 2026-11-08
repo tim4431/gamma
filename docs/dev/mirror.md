@@ -353,6 +353,10 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
   passes them by. The format stays 44 and a pair keeps syncing while one
   side is not upgraded yet. That side lists sub-pages as library pages
   and carries their `parent_page` along untouched, as any property.
+- **Step 48** (`deleted_with`) does not move it either: it adds the
+  generated `deleted_with` column and its index the same way
+  (`DERIVED_STEPS`), and the stamp it reads is a property of rows in
+  Recently deleted, which no round sends.
 
 ## One round, one page (`sync_engine._sync_page`)
 
@@ -496,33 +500,62 @@ pins each rule.
   descendants with it (`_delete_here`). First the pages inside it that
   were edited here since their last round, never went there, or whose
   creation there is not confirmed are taken out of it here
-  (`_keep_edited_here`: `parent_page` cleared, the engine's own write),
-  with the pages inside them, so the cascade leaves them. Their own
-  turns then take them as a page deleted there but edited here: back
-  there whole (`page_restored`), as library pages. A force (`prune`) keeps
-  none. A page the cascade took finds itself gone here at its own turn,
-  its state still kept: `_delete_here` notes it `deleted here` and drops
-  the state without trashing it again.
+  (`_keep_edited_here`, the engine's own write), with the pages inside
+  them, so the cascade leaves them. A page taken out of a page this way,
+  here or there, loses its `parent_page` and is filed in the folders of
+  the deleted page's top (`ops.kept_out_of`, over the stored chain, live
+  or in Recently deleted), as Move to library files a page, rather than
+  landing unfiled. Their own turns then take them as a page deleted there
+  but edited here: back there whole (`page_restored`), as library pages
+  in those folders. A force (`prune`) keeps none. A page the cascade
+  took finds itself gone here at its own turn, its state still kept:
+  `_delete_here` notes it `deleted here` and drops the state without
+  trashing it again.
 - **Deleted here.** Before the deletion goes there, `_keep_edited_inside`
   reads the remote tree of each page that went to Recently deleted here
   with it (`deleted_with`) and has a base. One changed there since comes
   back here alone, as a page deleted here but edited there does
   (`page_restored_from_remote`, laid in whole by `_pull_whole`), with the
   pages that went with it from inside it (`ops.restore_inside`), still
-  inside it. Where its parent there is going too, its `parent_page` is
-  cleared there first, so the remote's cascade leaves it. Then the pages
-  inside the page there that this deletion is not for are taken out of it
-  there too (`spare_inside`): live here, or made or moved in there and
-  never here. `spare_inside` walks the remote's
+  inside it. Where its parent there is going too, it is taken out of it
+  there first (`kept_out_of`, filed where the deleted page's top is), so
+  the remote's cascade leaves it. Then the pages inside the page there
+  that this deletion is not for are taken out of it there too
+  (`spare_inside`): live here, or made or moved in there and never here.
+  `spare_inside` walks the remote's
   `GET /api/pages/{id}/family` level by level (a remote too old to answer
-  is left as it is) and drops the cleared `parent_page` from such a page's
-  base, so the next round reads the move as the engine's, not the
-  remote's. What is left goes with the page there, and each one's own
-  turn finds the remote's copy gone and drops its state. A page that
-  comes back this way is a library page on both sides (its parent stays
-  deleted); on a share host it is no longer inside a published page, so
-  the next round deletes it there as a page that left the publication
-  ("The page filter"), the page and its conflict row kept here.
+  is left as it is), filing such a page where the deleted page's top is
+  (`kept_out_of`), and lays the same patch on the page's base, so the
+  next round reads the move as the engine's, not the remote's: a page
+  live here sends where it is here, one made there comes here filed so.
+  What is left goes with the page there, and each one's own turn finds
+  the remote's copy gone and drops its state. A page that comes back this
+  way is a library page on both sides (its parent stays deleted), filed
+  where that page's top is. On a share host it stays published, on its
+  own (`_keep_published`: it joins the filter unless the reach still
+  carries it), rather than leaving as a page no longer inside a published
+  page ("The page filter"); its link there was the deleted page's, so
+  Publish again in its Share popover makes one of its own.
+- **Moved there into a page deleted here.** A page moved there into a
+  page this copy deleted takes the move at its own turn. When that turn
+  comes first (id order: the move is not stored here until then), the
+  page lands here inside a page in Recently deleted, and the deletion's
+  `spare_inside` takes it out there only. So once a two-way round has
+  worked its pages, `_settle_parents` takes each page of the mirror's
+  reach that is live here with a stored `parent_page` naming a page in
+  Recently deleted here, or deleted here for good (its change-log row
+  `deleted`, no row left), out of it (`kept_out_of`, the engine's own
+  write), and the next round sends what differs there; on a publication
+  the page stays published (`_keep_published`). It reads every such
+  page, not only the ones the round worked, so a page an earlier release
+  left inside a deleted page and nobody has touched since comes out on
+  the first round after the upgrade. A page or parent whose own turn
+  failed this round is left for the next one (its deletion may still be
+  undone), and
+  a parent this copy never held (a sub-page published without its
+  parent, one a mirror brings before its parent) is no deletion and is
+  left as it is. Nothing names the deleted page any more, so restoring
+  it does not take the page back inside.
 - **Went with its parent here, kept there.** A page in Recently deleted
   here because a page it was inside went there (`deleted_with`), while the
   remote still holds it (moved out of that page there, or restored on its
@@ -1279,11 +1312,14 @@ a re-publication, a revoked token exchanged again, and the refusals.
 `test_sub_pages_lifecycle.py` is the sub-pages' rounds: a deleted tree
 taken as a tree both ways (ids picked so that id order would trash a
 sub-page first), a sub-page edited on the side that did not delete its
-parent (here and there, nested ones staying nested), one moved out there
-or into the deleted page there, a page coming back alone with the pages
+parent (here and there, nested ones staying nested, each kept page filed
+where the deleted page's top was), one moved out there or into the deleted
+page there (its turn before the deletion's or after it), a parent this
+copy never held left alone, a page coming back alone with the pages
 inside it, a merged cycle that keeps syncing, and on the publishing side
 a publication carrying its sub-pages (one made later, one made after the
-reach was read, one trashed), a sub-page moved out of it (with a share
+reach was read, one trashed, one a share editor wrote in kept published
+on its own after its parent's deletion here), a sub-page moved out of it (with a share
 editor's text pulled first, and never by a receive-only copy),
 unpublishing a page with one published on its own inside it, and the
 plan's cap counting the pages inside a published page.
@@ -1362,8 +1398,3 @@ pages, folders and labels to send to Zotero
 - Every automated test runs both sides in one process (the backend suite's
   TestClient transport; the browser scenario clones a workspace of the same
   server). Two real servers are not exercised.
-- Sub-pages, what is left:
-  - A page moved into a page there whose turn comes before that page's
-    deletion here (a matter of id order) ends up a library page on both
-    sides with its text, its stored `parent_page` still naming the page in
-    Recently deleted: restoring that page puts it back inside.

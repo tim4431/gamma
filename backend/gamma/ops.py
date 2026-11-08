@@ -96,7 +96,7 @@ from .text_box import merge_text_box, normalize_text_box
 from .blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, MAX_PAGE_DEPTH, PARENT_PAGE, TRASH, TREES, block_to_dict, delete_subtree,
     ensure_reserved, fetch_subtree, filing, filing_ids, folder_inserts, free_position, is_op_page, label_inserts,
-    last_child_position, move_subtree_to_page, page_descendants, page_root_id, redundant_source_url, subtree_refs,
+    last_child_position, load_props, move_subtree_to_page, page_descendants, page_root_id, redundant_source_url, subtree_refs,
     touch_page, trashed_page, valid_block_id, valid_parent_value, write_lock)
 from .db import connect_pages_db, format_stamp, page_now, parse_stamp, ws_uploads_dir
 from .logbuf import log
@@ -732,6 +732,28 @@ def _stored_chain(conn, page_id: str) -> list[str]:
     return chain
 
 
+def kept_out_of(conn, parent: str) -> dict:
+    """The page-root patch that takes a page out of ``parent``, a page
+    deleted (here or on the other side of a mirror) while the page stays,
+    and files it where ``parent`` was filed: ``parent_page`` removed and
+    ``folders`` those of the top of the stored chain up from ``parent``
+    (``_stored_chain``: the last of its pages this copy has a row of, live
+    or in Recently deleted; None when that top is filed nowhere). A
+    ``parent`` this copy has no row of leaves the folders as they are. So
+    a page kept out of a deleted tree lands in the folders it was listed
+    under, as Move to library sends it, not loose in the library."""
+    patch: dict = {PARENT_PAGE: None}
+    top = None
+    for page in _stored_chain(conn, parent):
+        row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page,)).fetchone()
+        if not row:
+            break
+        top = row[0]
+    if top is not None:
+        patch[FOLDERS] = filing(load_props(top), FOLDERS) or None
+    return patch
+
+
 def _attachment_patch(patch: dict, props: dict) -> dict:
     """A page root's ``patch`` against its stored ``props``, a
     ``source_url`` that is the page's ``doc_id``'s stored copy removed
@@ -1021,7 +1043,8 @@ def ensure_filing(ws: str, conn, *, paths=(), labels=(), under: str = "",
     return folder_ids, label_ids
 
 
-def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "", sweep: bool = True) -> dict:
+def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "", sweep: bool = True,
+                went: list[str] | None = None) -> dict:
     """Delete a page for good with the pages inside it, in one transaction
     committed here. Each page goes the same way (``_purge``): its subtree
     (its notes index rows with it), its comments (``comments.purge``), its
@@ -1033,7 +1056,9 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "", sw
     went then). The pages inside it are, for a page still in the library
     (a share host's delete), its live descendants (``page_descendants``),
     and the rows of Recently deleted that went there with it
-    (``deleted_with``, ``trash_page``). Then the upload names the pages
+    (``deleted_with``, ``trash_page``; ``went``: those rows as a caller
+    deleting many pages read them for all at once, ``_went_with`` read
+    here otherwise). Then the upload names the pages
     held go to the orphan check, data.db's rows of papers no block carries
     any more are purged (``sweep`` False leaves that to a caller deleting
     many pages, which purges once after them: ``pdf_index.purge_unused``
@@ -1049,7 +1074,7 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "", sw
     commit listeners like a batch's."""
     write_lock(conn)
     try:
-        pages = [page_id, *page_descendants(conn, page_id), *_went_with(conn, page_id)]
+        pages = [page_id, *page_descendants(conn, page_id), *(_went_with(conn, page_id) if went is None else went)]
         rows = [row for page in pages for row in _purge(conn, page, actor)]
         conn.commit()
     except BaseException:
@@ -1083,14 +1108,18 @@ def _purge(conn, page_id: str, actor: str) -> list:
     return rows
 
 
+# ``_went_with``'s read, kept apart so its test plans this very statement
+WENT_WITH_SQL = "SELECT id FROM unified_blocks WHERE deleted_with = ? AND +parent_id = ? ORDER BY position, id"
+
+
 def _went_with(conn, page_id: str) -> list[str]:
     """The pages of Recently deleted that went there with ``page_id``
-    (stamped ``deleted_with`` by ``trash_page``), in their trash order. A
-    row whose text does not hold the id is passed by before its JSON is
-    read: Empty and the sweeper ask this of every page they delete."""
-    return [r[0] for r in conn.execute(
-        "SELECT id FROM unified_blocks WHERE parent_id = ? AND instr(properties, ?) > 0 "
-        "AND json_extract(properties, '$.deleted_with') = ? ORDER BY position, id", (TRASH, page_id, page_id))]
+    (stamped ``deleted_with`` by ``trash_page``), in their trash order: a
+    read of the generated column's partial index (``idx_ub_deleted_with``,
+    migration step 48), which holds those rows alone (``+parent_id`` keeps
+    the planner off ``idx_ub_parent``, which would walk the whole trash).
+    The statement is ``WENT_WITH_SQL``, whose plan the step's test reads."""
+    return [r[0] for r in conn.execute(WENT_WITH_SQL, (page_id, TRASH))]
 
 
 def trash_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> dict:

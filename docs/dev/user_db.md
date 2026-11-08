@@ -233,9 +233,16 @@ All state is SQLite + files on disk under a data directory (env
     and every live sub-page's parent (`page_parents`, which the library
     listing reads once) are indexed reads, and a library without
     sub-pages pays nothing for it.
+  - `deleted_with` — generated: `properties.deleted_with`, the page a page
+    in Recently deleted went there with (`ops.trash_page` stamps it on the
+    pages inside the page it trashes, [home_library.md](home_library.md#recently-deleted)),
+    NULL on every other row (migration step 48). Its partial index
+    `idx_ub_deleted_with` holds those rows alone, so "what went with P"
+    (`ops._went_with`: a restore, Delete permanently, the mirror) is an
+    indexed read, not a walk of the trash's properties.
 
   The op log and the mirror carry `properties` alone; nothing writes `kind`,
-  `doc_id` or `parent_page`. Next to it:
+  `doc_id`, `parent_page` or `deleted_with`. Next to it:
   - `page_ops` — the per-page operation log: one row per applied batch,
     `seq` counting up per page, with the client's name for the batch
     (`batch_id`, unique per page and client where it is set) and the

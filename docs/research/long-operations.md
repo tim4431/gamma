@@ -208,20 +208,27 @@ reads wrong in a way the checks miss, which is why the chunks keep the
 full pass's cadence instead of running back to back
 ([dev/user_db.md](../dev/user_db.md) "Stored files").
 
+Empty Recently deleted, and the 30-day sweeper with it, is one pass on
+one connection (2026-11-07): one read of the trash gives each entry with
+the pages that went with it (`trash._trashed`), so no entry reads the
+trash again, the `deleted_with` stamp is an indexed column for the reads
+that remain (migration step 48), and `purge_unused` runs once after the
+loop, as it already did. Each entry still commits on its own, so the
+write lock is let go between pages and a restore meanwhile is not lost
+([dev/home_library.md](../dev/home_library.md) "Recently deleted").
+
 ## Still open
 
 In the order they matter:
 
 1. One request for the library's bulk actions (trash many pages, apply
    many page patches), on `ops.apply_batches`.
-2. Empty Recently deleted: `purge_unused` once after the loop, one
-   connection, the `deleted_with` map read once.
-3. Progress for the off-site copies' first round and a folder link's
+2. Progress for the off-site copies' first round and a folder link's
    rounds (`say` is thrown away in `folder_links._folder_round`).
-4. A share view's export of a big shared folder (the share host sits
+3. A share view's export of a big shared folder (the share host sits
    behind Cloudflare and the share view has no jobs).
-5. A workspace being deleted taking no more changes (above), which needs
+4. A workspace being deleted taking no more changes (above), which needs
    the web app to learn a lost write right mid-session.
-6. Smaller: a publish that only changes the audience still runs a full
+5. Smaller: a publish that only changes the audience still runs a full
    round; unlinking Zotero clears marks page by page; the health table's
    and the backup list's scans (above).

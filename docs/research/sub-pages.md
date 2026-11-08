@@ -440,15 +440,6 @@ Shape C was built as designed above, with these differences.
   reaches the moved page's room only, never the parent's. A content-free
   nudge to the rooms of the page left and the page entered, as the
   comments' `{t: "comments"}` is, would make it live.
-- Pages edited on the other side inside a page deleted here come back as
-  unfiled library pages on both sides; on a share host they then leave as
-  pages no longer published (their text kept here). A page moved into a
-  page there whose turn comes before that page's deletion here keeps a
-  stored `parent_page` naming the deleted page.
-- Empty and the 30-day sweeper find a page's cascaded rows by reading the
-  trash for each page they delete (`ops._went_with`, with a cheap text
-  test first); an indexed `deleted_with` column would need a migration
-  step.
 - A share view now adds an in-app Back entry for each page it opens
   through the panel, the crumbs or a PDF link region, where before only a
   chip click did; whether that is wanted everywhere.
@@ -460,7 +451,14 @@ asked where a sub-page still does less than a library page. It confirmed
 the open items above still hold (drag and drop, MCP's `export_page`, the
 panel not following other clients, the 402 at the cap, a sub-page
 unpublished alone sent again, a kept page landing unfiled, the `[[`
-picker's path) and found these as well. The 402 at the cap (now a quiet
+picker's path) and found these as well. A kept page landing unfiled is
+fixed since, on 2026-11-07: a page a mirror keeps out of a deleted page
+is filed in the folders of that page's top, stays published on a share
+host, and a page moved there into a page deleted here comes out of it on
+both sides (`ops.kept_out_of`, `sync_engine._settle_parents`, mirror.md
+"Pages inside pages"); and Empty and the sweeper read what went with a
+page from one read of the trash, the column indexed (migration step 48,
+home_library.md "Recently deleted"). The 402 at the cap (now a quiet
 wait, `CapDeferred`) and the sub-page unpublished alone (now left out of
 its parent's publication) are fixed since, on 2026-11-07, with the
 sharing and publishing gaps below. The library's filter box not
