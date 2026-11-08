@@ -10,7 +10,9 @@
 // *.localhost name to the loopback itself, no DNS) opening in the share view
 // for anyone with the address kept, the synced state line, the cloud share's
 // access, Sync now, the header pill and Settings' Publishing row, Unpublish,
-// Settings' Stop publishing all, and the free plan's cap of five pages.
+// Settings' Stop publishing all, a page published with the pages inside it
+// (counted before, the page inside read as published with it, Leave out
+// keeping it off the share host), and the free plan's cap of five pages.
 import { Account, Server, wanted, live } from "../harness.mjs";
 import { FakeCloud } from "../fakeCloud.mjs";
 
@@ -197,6 +199,55 @@ export async function publishScenarios(env) {
       assertEq((await fetch(`${host.base}/api/share/${token}`)).status, 404, "the cloud link no longer opens");
       await page.keyboard.press("Escape");
       assertNoProblems(page);
+    });
+
+    await step("publish: the pages inside go along and count; a page inside reads as published with it, and Leave out keeps it off", async () => {
+      const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+      if (await settings.count()) {
+        await settings.getByRole("button", { name: "Close settings", exact: true }).click();
+        await settings.waitFor({ state: "detached" });
+      }
+      const tree = await user.api("/api/pages", { method: "POST", body: { title: "Tree paper" } });
+      const kid = await user.api("/api/pages", { method: "POST", body: { title: "Tree kid", parent_page: tree.id } });
+      await page.goto(`${server.base}/?page=${tree.id}&ws=${user.ws}`);
+      await openShare();
+      await popover().locator("[data-publish-inside]")
+        .getByText("The 1 page inside it goes along, and each page counts against your plan.", { exact: true }).waitFor({ timeout: 15000 });
+      await publishRow().getByRole("button", { name: "Publish", exact: true }).click();
+      await popover().locator('.setRow[data-setting="Cloud link"]').waitFor({ timeout: 30000 });
+      const token = new URL((await user.api(`/api/pages/${tree.id}/publish`)).url).searchParams.get("share");
+      assertEq((await fetch(`${host.base}/api/blocks/${kid.id}?share=${token}`)).status, 200, "the cloud link opens the page inside");
+      await page.keyboard.press("Escape");
+      await popover().waitFor({ state: "detached" });
+
+      // the page inside: the sync pill covers it, and the popover names the page it goes with
+      await page.goto(`${server.base}/?page=${kid.id}&ws=${user.ws}`);
+      await page.locator(".mirrorPill").waitFor({ timeout: 15000 });
+      await openShare();
+      await popover().locator("[data-publish-carried]")
+        .getByText("Published with “Tree paper”, the page it is inside.", { exact: true }).waitFor({ timeout: 15000 });
+      const carried = popover().locator('.setRow[data-setting="Cloud link"]');
+      assert((await carried.getByRole("button", { name: /Copy link|Copied/ }).getAttribute("title")).endsWith(`?page=${kid.id}`),
+        "its cloud link is the published page's, opened on it");
+      assertEq(await publishRow().count(), 0, "no Publish row for a page that is published with its parent");
+      await popover().locator(".publishState").waitFor();
+      // Settings counts every page there, as the plan does
+      assertEq((await user.api(`/api/mirrors/${user.ws}`)).published_pages.length, 2, "both pages in the publication");
+
+      // Leave out: off the share host, the parent still published, and the rounds after keep it off
+      await carried.getByRole("button", { name: "Leave out", exact: true }).click();
+      await popover().locator(".mirrorConfirm").getByRole("button", { name: "Leave out", exact: true }).click();
+      await popover().locator("[data-publish-left-out]")
+        .getByText("Left out of “Tree paper”, which is published. Publish puts it back, with a link of its own.", { exact: true })
+        .waitFor({ timeout: 20000 });
+      await user.api(`/api/mirrors/${user.ws}/sync?wait=1`, { method: "POST" });
+      assertEq((await fetch(`${host.base}/api/blocks/${kid.id}?share=${token}`)).status === 200, false, "the page inside is off the share host");
+      assertEq((await fetch(`${host.base}/api/blocks/${tree.id}?share=${token}`)).status, 200, "its parent stays published");
+      await page.keyboard.press("Escape");
+      await popover().waitFor({ state: "detached" });
+      assertNoProblems(page);
+      // (unpublished again, so the cap below counts from nothing)
+      await user.api(`/api/pages/${tree.id}/publish`, { method: "DELETE" });
     });
 
     await step("publish: the free plan publishes five pages; the popover counts them and refuses a sixth", async () => {

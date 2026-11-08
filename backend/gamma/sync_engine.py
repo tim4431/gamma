@@ -50,7 +50,9 @@ filed in its own folders, so both sides' blocks are kept.
 
 A mirror may carry a page filter (``page_filter``, a list of page ids; NULL
 = every page): a round then looks only at those pages, the sub-pages
-inside them here and the pages that travelled before (``_reach``), in both
+inside them here (less one unpublished on its own, ``LEFT_OUT``), the
+pages that travelled before (``_reach``) and a page made inside one of
+them there (``_made_there``), in both
 feeds, moves only their files, and a page outside it never travels either
 way — nor do the trees: a page's filing goes along as ids that name
 nothing there, which every read passes by. A page it reaches with no saved
@@ -156,6 +158,19 @@ class DrawingDeferred(PageDeferred):
     (``_deferred_files``): the rest of it landed and its base is saved, so
     it went through a link's or a force's policy and does not hold that
     policy back (``_round``); the next round pushes the drawing alone."""
+
+
+class CapDeferred(PageDeferred):
+    """A page the remote has no room for: a share host answered its
+    creation 402, its plan's cap reached (gamma/publish.py ``page_cap``).
+    Nothing of it landed, so it waits as a page never sent, round after
+    round, until a page there is unpublished or the plan grows; the round
+    keeps the remote's words in its status (``CAPPED``) rather than an
+    error."""
+
+    def __init__(self, page_id: str, detail: str):
+        super().__init__(f"{page_id}: no room on the remote: {detail}")
+        self.detail = detail
 
 
 class _OffOriginRedirect(urllib.request.HTTPRedirectHandler):
@@ -434,14 +449,15 @@ def whoami(remote: Remote) -> dict:
 _whoami_seen: dict[str, tuple[tuple, float, dict]] = {}  # ws -> ((url, remote ws, token), when, answer)
 
 
-def _round_whoami(ws: str, mirror: dict, remote: Remote) -> dict:
+def _round_whoami(ws: str, mirror: dict, remote: Remote, *, fresh: bool = False) -> dict:
     """``whoami`` for a round: the answer an earlier round got for the same
     link while it is younger than ``WHOAMI_TTL_S``, else a fresh one. A
     round that ends with any error forgets it (``_round``), so a revoked
-    token or a lowered role is seen by the next round."""
+    token or a lowered role is seen by the next round. ``fresh`` asks
+    anyway: a round about to delete pages there (``_drop_unreached``)."""
     key = (mirror["remote_url"], mirror["remote_ws"], mirror["token"])
     seen = _whoami_seen.get(ws)
-    if seen and seen[0] == key and time.monotonic() - seen[1] < WHOAMI_TTL_S:
+    if not fresh and seen and seen[0] == key and time.monotonic() - seen[1] < WHOAMI_TTL_S:
         return seen[2]
     me = whoami(remote)
     _whoami_seen[ws] = (key, time.monotonic(), me)
@@ -544,7 +560,11 @@ def filter_add(ws: str, page_id: str, *, adopt: str = "") -> dict:
     """Add a page to a filtered mirror's ``page_filter`` (a mirror without a
     filter already moves every page: unchanged). The next round finds it
     "new" and sends it over; ``adopt`` sets whose version a page both sides
-    hold without a base takes. Hold ``round_lock``."""
+    hold without a base takes. The page itself is no longer left out
+    (``LEFT_OUT``): published on its own, it goes, with the pages inside
+    it; a page left out inside it stays left out until it is published in
+    turn, and a republish or settings change of a page already in the
+    filter leaves the left-out pages alone. Hold ``round_lock``."""
     mirror = get_mirror(ws)
     if not mirror:
         raise ValueError("not a mirror")
@@ -552,6 +572,8 @@ def filter_add(ws: str, page_id: str, *, adopt: str = "") -> dict:
         raise ValueError("adopt must be theirs or mine")
     if mirror["page_filter"] is not None and page_id not in mirror["page_filter"]:
         _save(ws, page_filter=json.dumps(mirror["page_filter"] + [page_id]))
+    if page_id in left_out(mirror):
+        _set_left_out(ws, lambda left: [p for p in left if p != page_id])
     if adopt:
         _patch_status(ws, {"adopt": adopt})
     return get_mirror(ws)
@@ -559,19 +581,101 @@ def filter_add(ws: str, page_id: str, *, adopt: str = "") -> dict:
 
 def filter_remove(ws: str, page_ids) -> dict | None:
     """Drop pages from a filtered mirror's ``page_filter`` together with
-    their saved bases and retry entries: they stop travelling, the pages
-    stay where they are on both sides. An empty filter leaves the row (a
-    round of it asks nothing of the remote). Hold ``round_lock``."""
+    their saved bases, retry entries and cap deferrals: they stop
+    travelling, the pages stay where they are on both sides. An empty
+    filter leaves the row (a round of it asks nothing of the remote). Hold
+    ``round_lock``."""
     mirror = get_mirror(ws)
     if not mirror or mirror["page_filter"] is None:
         return mirror
     drop = set(page_ids)
     _save(ws, page_filter=json.dumps([p for p in mirror["page_filter"] if p not in drop]))
-    _patch_status(ws, lambda s: {**s, "retry": {k: v for k, v in (s.get("retry") or {}).items() if k not in drop}})
+
+    def forget(s):
+        s = {**s, "retry": {k: v for k, v in (s.get("retry") or {}).items() if k not in drop}}
+        capped = {k: v for k, v in (s.get(CAPPED) or {}).items() if k not in drop}
+        return {**{k: v for k, v in s.items() if k != CAPPED}, **({CAPPED: capped} if capped else {})}
+
+    _patch_status(ws, forget)
     with connect_pages_db(ws) as conn:
         for page_id in drop:
             _drop_state(conn, page_id)
     return get_mirror(ws)
+
+
+# A publication's pages left out of the page they are inside: unpublished on
+# their own while that page stays published, so its reach (``carried``)
+# passes them by, with the pages inside them. Kept in the mirror's status,
+# as the retry list is, and dropped once no page of the filter holds them
+# (``_prune_filter``) or when they are published on their own
+# (``filter_add``).
+LEFT_OUT = "left_out"
+# The pages the remote had no room for at the last round (its plan's cap, a
+# share host's 402 on the create): {page id: the remote's words}. They wait,
+# round after round, without being called an error (``CapDeferred``).
+CAPPED = "capped"
+
+
+def left_out(mirror: dict) -> list[str]:
+    """The pages a filtered mirror leaves out of the pages around them
+    (``LEFT_OUT``)."""
+    return [p for p in (mirror["status"].get(LEFT_OUT) or []) if isinstance(p, str)]
+
+
+def _set_left_out(ws: str, change) -> None:
+    """``change(left)`` becomes the mirror's left-out pages (the key goes
+    when none are left), and the reach is read again."""
+    def patch(s):
+        left = list(dict.fromkeys(change([p for p in (s.get(LEFT_OUT) or []) if isinstance(p, str)])))
+        return {**{k: v for k, v in s.items() if k != LEFT_OUT}, **({LEFT_OUT: left} if left else {})}
+
+    _patch_status(ws, patch)
+    _filters.pop(ws, None)
+
+
+def leave_out(ws: str, page_id: str) -> dict:
+    """Leave ``page_id`` out of the published page around it (unpublished
+    on its own while that page stays published): its reach no longer
+    sends it, nor the pages inside it. Hold ``round_lock``."""
+    _set_left_out(ws, lambda left: [*left, page_id])
+    return get_mirror(ws)
+
+
+def carried(conn, page_filter, left=()) -> list[str]:
+    """The live pages a filter sends: its own pages, each with the pages
+    inside it here (``with_sub_pages``), less a page left out of them
+    (``left``) and the pages inside that one, unless it is in the filter
+    itself."""
+    return with_sub_pages(conn, page_filter or [], skip=set(left))
+
+
+def published_pages(ws: str, mirror: dict) -> list[str]:
+    """The pages a publication puts on the share host (``carried``): what
+    the pill covers and Settings counts. [] for a mirror without a filter."""
+    if mirror["page_filter"] is None:
+        return []
+    with connect_pages_db(ws) as conn:
+        live = {r[0] for r in conn.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root' "
+                                           "AND id IN (SELECT value FROM json_each(?))",
+                                           (json.dumps(mirror["page_filter"]),))}
+        return carried(conn, [p for p in mirror["page_filter"] if p in live], left_out(mirror))
+
+
+def carrier_of(ws: str, mirror: dict, page_id: str) -> str:
+    """The page of a filtered mirror's filter whose publication sends
+    ``page_id`` (``published_pages``): the page itself when it is in the
+    filter, else the nearest page around it that is. "" when none does
+    (it is outside every published page, or left out of them) and for a
+    mirror without a filter."""
+    if mirror["page_filter"] is None:
+        return ""
+    if page_id in mirror["page_filter"]:
+        return page_id if page_id in published_pages(ws, mirror) else ""
+    if page_id not in published_pages(ws, mirror):
+        return ""
+    with connect_pages_db(ws) as conn:
+        chain = page_ancestors(conn, page_id)
+    return next((p for p in reversed(chain) if p in mirror["page_filter"]), "")
 
 
 def set_cadence(ws: str, *, poll_s: int | None = None, on_change: bool | None = None,
@@ -1756,10 +1860,17 @@ def _push_whole(ws: str, remote: Remote, page_id: str, local: dict, report: dict
     lost is not taken for a page the remote had (a link's adopt policy
     would replace this copy's page with it), and one that never landed is
     sent again. A drawing the remote refused defers the page like
-    ``_sync_page`` does (``_deferred_files``), so it goes next round."""
+    ``_sync_page`` does (``_deferred_files``), so it goes next round. A
+    create refused for want of room there (``CapDeferred``) drops the
+    state again: the page waits as one that never went."""
     with connect_pages_db(ws) as conn:
         _store_state(conn, page_id, UNKNOWN_SEQ, {page_id: local[page_id]}, {"create": True})
-    root = _create_remote_page(remote, page_id, local)
+    try:
+        root = _create_remote_page(remote, page_id, local)
+    except CapDeferred:
+        with connect_pages_db(ws) as conn:  # refused, so nothing landed: it waits as a page never sent
+            _drop_state(conn, page_id)
+        raise
     with connect_pages_db(ws) as conn:
         _save_state(conn, page_id, UNKNOWN_SEQ, {page_id: root})
     refused = _push_files(ws, remote, upload_refs(local.values(), held=False), report, page_id=page_id, blocks=local)
@@ -2232,6 +2343,8 @@ def _create_remote_page(remote: Remote, page_id: str, local: dict) -> dict:
     except RemoteError as e:
         if e.status == 409:
             raise PageDeferred(f"{page_id}: the page appeared on the remote meanwhile; reconciled next round") from e
+        if e.status == 402:
+            raise CapDeferred(page_id, e.detail or "the plan allows no more pages there") from e
         raise
     return {"parent": "root", "position": out.get("position") or "", "content": out.get("content", root["content"]),
             "props": dict(out.get("properties", root["props"]) or {})}
@@ -2326,11 +2439,12 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
     if mirror["mode"] == "off":
         return _links.answered(ws, mirror["status"])  # detached: nothing runs until it is linked again
     mirror = _start_force(ws, mirror)
+    stale = []
     if mirror["page_filter"] is not None:
-        mirror = {**mirror, "page_filter": _prune_filter(ws, mirror["page_filter"])}
+        mirror = _prune_filter(ws, mirror)
         if mirror["mode"] == "two-way":  # a receive-only copy never deletes there
-            _drop_unreached(ws, mirror, fetch)
-        if not mirror["page_filter"]:
+            stale = _unreached(ws, mirror)
+        if not mirror["page_filter"] and not stale:
             # a filter naming no page: nothing travels, the remote is not asked
             return _links.answered(ws, mirror["status"])
     remote = Remote(mirror["remote_url"], mirror["remote_ws"], mirror["token"], fetch)
@@ -2357,11 +2471,13 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
     report["progress"] = file_progress
     mode = mirror["mode"]
     try:
-        me = _round_whoami(ws, mirror, remote)
+        me = _round_whoami(ws, mirror, remote, fresh=bool(stale))
         role = me.get("role") if me else None
         if mode == "two-way" and (me.get("scope") != "write" or role == "viewer"):
             report["errors"].append("the token or your role on the remote is read-only: pulling only")
             mode = "pull"
+        if stale and mode == "two-way":  # asked after whoami: a token lowered to read-only deletes nothing there
+            _drop_unreached(ws, remote, stale, mirror)
         remote_pages, remote_deleted, remote_cursor = _feed_all(remote, mirror["remote_cursor"])
         if mode == "two-way" or (report["prune"] and (report["adopt"] or "theirs") == "theirs"):
             # (a force pull reads the local feed whatever the mode: pages only this copy has go)
@@ -2382,10 +2498,11 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
             todo[page_id] = {"seq": remote_pages.get(page_id) if there else then["seq"],
                              "remote_gone": page_id in remote_deleted if there else then["remote_gone"],
                              "local_gone": page_id in local_deleted if here else then["local_gone"]}
-        reach = None if mirror["page_filter"] is None else _reach(ws, mirror["page_filter"])
+        reach = None if mirror["page_filter"] is None else _reach(ws, mirror["page_filter"], left_out(mirror))
         if reach is not None:
+            reach |= _made_there(ws, remote, remote_pages, reach)
             todo = _filtered(ws, reach, todo, force=report["prune"])
-        failed, drawn = {}, set()
+        failed, drawn, capped = {}, set(), {}
         order = _round_order(ws, todo)
         for n, page_id in enumerate(order):
             flags = todo[page_id]
@@ -2404,7 +2521,11 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
                 failed[page_id] = flags  # next round, quietly
                 if isinstance(e, DrawingDeferred):
                     drawn.add(page_id)  # only its drawing waits: it went through the policy
-                log.info(f"[mirror] {ws}: {e}")
+                waiting = isinstance(e, CapDeferred) and page_id in (mirror["status"].get(CAPPED) or {})
+                if isinstance(e, CapDeferred):
+                    capped[page_id] = e.detail  # the status keeps it: no error, the notice tells of it
+                if not waiting:  # (a page still waiting for room was logged once, when it met the cap)
+                    log.info(f"[mirror] {ws}: {e}")
             except Exception as e:  # noqa: BLE001 — one page must not sink the round; it is retried next time
                 failed[page_id] = flags
                 report["errors"].append(f"{page_id}: {e}")
@@ -2423,7 +2544,7 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
         errors = report.pop("errors")
         patch = {**report, "running": False, "last_sync": page_now(), "mode": mode,
                  "remote_role": role, "remote_user": me.get("user") if me else None,
-                 "last_error": errors[0] if errors else "", "retry": failed}
+                 "last_error": errors[0] if errors else "", "retry": failed, **({CAPPED: capped} if capped else {})}
 
         def finish(current):
             current = {**current, **patch}
@@ -2436,7 +2557,7 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
                         current.pop(key, None)
             return current
 
-        status = _patch_status(ws, finish, drop=("progress", "version_gap"))
+        status = _patch_status(ws, finish, drop=("progress", "version_gap", CAPPED))
         if not errors:
             _clock.settle(ws, started)  # everything written before the round started went out with it
     except Exception as e:  # noqa: BLE001 — whatever happens, the running flag comes down
@@ -2457,43 +2578,58 @@ def _blank_report(adopt: str | None = None, prune: bool = False) -> dict:
             "errors": [], "adopt": adopt, "prune": prune}
 
 
-def _prune_filter(ws: str, page_filter: list[str]) -> list[str]:
-    """The filter without pages that are gone here and have no base (deleted
-    here and the deletion carried there, or never here): nothing of theirs
-    is left to move. Runs under the round lock."""
+def _prune_filter(ws: str, mirror: dict) -> dict:
+    """The mirror with its filter less the pages that are gone here and
+    have no base (deleted here and the deletion carried there, or never
+    here): nothing of theirs is left to move; and its left-out pages less
+    those no page of the filter holds any more (``LEFT_OUT``). Runs under
+    the round lock."""
+    page_filter = mirror["page_filter"]
     with connect_pages_db(ws) as conn:
         synced = {r[0] for r in conn.execute("SELECT page_id FROM sync_pages")}
         gone = [p for p in page_filter if p not in synced and not conn.execute(
             "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'", (p,)).fetchone()]
+        kept = [p for p in page_filter if p not in gone]
+        inside = set(with_sub_pages(conn, kept))
     if gone:
         filter_remove(ws, gone)
-    return [p for p in page_filter if p not in gone]
+    loose = [p for p in left_out(mirror) if p not in inside]
+    if loose:
+        _set_left_out(ws, lambda now: [p for p in now if p not in loose])
+    if loose:
+        return {**mirror, "page_filter": kept, "status": (get_mirror(ws) or mirror)["status"]}
+    return {**mirror, "page_filter": kept}
 
 
-def _drop_unreached(ws: str, mirror: dict, fetch) -> None:
+def _unreached(ws: str, mirror: dict) -> list[str]:
     """A filtered mirror's pages that travelled before (a saved base) and
     are in the library here but no longer reached by the filter
-    (``with_sub_pages``): a sub-page moved out of the published page, one
-    restored alone while that page is gone. Each one's copy there is
-    deleted, as an unpublish deletes the page's, and it stops travelling
-    (``filter_remove`` drops its base); the page here stays. What was
-    written there since its last round (a share editor's text) comes here
-    first, as a receive-only round of the page would bring it, and a page
-    still reached that is inside one there is taken out of it there
-    (``spare_inside``) so the deletion leaves it. A page whose writes
-    there could not be brought here keeps every one there for the next
-    round (the deletion of one there takes the pages inside it along).
-    Runs before a round reads the feeds, under the round lock, on a two-way
-    copy only; a remote that cannot be reached leaves them to the next
-    round."""
+    (``carried``): a sub-page moved out of the published page, one
+    restored alone while that page is gone. ``_drop_unreached`` deletes
+    their copies there."""
     with connect_pages_db(ws) as conn:
         synced = {r[0] for r in conn.execute(
             "SELECT s.page_id FROM sync_pages s JOIN unified_blocks b ON b.id = s.page_id WHERE b.parent_id = 'root'")}
-        reach = set(with_sub_pages(conn, mirror["page_filter"]))
-        stale = sorted(synced - reach)
-    if not stale:
-        return
-    remote = Remote(mirror["remote_url"], mirror["remote_ws"], mirror["token"], fetch)
+        return sorted(synced - set(carried(conn, mirror["page_filter"], left_out(mirror))))
+
+
+def _drop_unreached(ws: str, remote: Remote, stale: list[str], mirror: dict) -> None:
+    """The pages that left the publication (``_unreached``): each one's
+    copy there is deleted, as an unpublish deletes the page's, and it stops
+    travelling (``filter_remove`` drops its base); the page here stays.
+    What was written there since its last round (a share editor's text)
+    comes here first, as a receive-only round of the page would bring it,
+    and a page still reached that is inside one there is taken out of it
+    there (``spare_inside``) so the deletion leaves it. A page whose writes
+    there could not be brought here keeps every one there for the next
+    round (the deletion of one there takes the pages inside it along); one
+    whose copy there is gone already just stops travelling. Runs before a
+    round reads the feeds, under the round lock, once the round's
+    ``whoami`` has said this copy may write there (two-way, a write token,
+    no viewer); a remote that cannot be reached leaves them to the next
+    round."""
+    with connect_pages_db(ws) as conn:
+        reach = set(carried(conn, mirror["page_filter"], left_out(mirror)))
     report = _blank_report()
     for page_id in stale:
         try:
@@ -2514,12 +2650,38 @@ def _drop_unreached(ws: str, mirror: dict, fetch) -> None:
             spare_inside(ws, remote, page_id, lambda kid: kid in reach)
             remote.delete(f"/api/blocks/{page_id}")
         except RemoteError as e:
-            log.info(f"[mirror] {ws}: {page_id} is no longer published; its copy there stays for now ({e})")
-            continue
+            if e.status != 404:  # (a copy gone there already: nothing more to do)
+                log.info(f"[mirror] {ws}: {page_id} is no longer published; its copy there stays for now ({e})")
+                continue
         gone.append(page_id)
         log.info(f"[mirror] {ws}: {page_id} is no longer inside a published page; its copy there was deleted")
     if gone:
         filter_remove(ws, gone)
+
+
+def _made_there(ws: str, remote: Remote, remote_pages, reach: set[str]) -> set[str]:
+    """The pages the remote's feed lists that this copy never held (no row
+    here, no base) and that sit inside a page of the reach there: a page
+    made inside a published page through its edit share on the share host.
+    They join the reach, so they come here. One ``GET
+    /api/pages/{id}/family`` each, its ancestors there; a remote that does
+    not answer it (an older release) leaves the page out. Pages of the
+    account's other publications are listed in the same feed and cost the
+    same read each time they change."""
+    with connect_pages_db(ws) as conn:
+        unknown = [p for p in remote_pages if p not in reach and p not in TREES and not conn.execute(
+            "SELECT 1 FROM unified_blocks WHERE id = ?", (p,)).fetchone()
+            and not conn.execute("SELECT 1 FROM sync_pages WHERE page_id = ?", (p,)).fetchone()]
+    found = set()
+    for page_id in unknown:
+        try:
+            family = remote.get(f"/api/pages/{urllib.parse.quote(page_id, safe='')}/family") or {}
+        except RemoteError:
+            continue
+        if any(a.get("id") in reach for a in family.get("ancestors") or []):
+            found.add(page_id)
+            log.info(f"[mirror] {ws}: {page_id} was made there inside a page this copy moves; it comes here")
+    return found
 
 
 def _round_order(ws: str, todo) -> list[str]:
@@ -2544,17 +2706,17 @@ def _round_order(ws: str, todo) -> list[str]:
     return sorted(todo, key=lambda p: (p not in TREES, depth(p), p))
 
 
-def _reach(ws: str, page_filter: list[str]) -> set[str]:
+def _reach(ws: str, page_filter: list[str], left=()) -> set[str]:
     """The pages a filtered mirror moves: those of its filter, each with the
-    live pages inside it here (``with_sub_pages``: a publication of a page
-    carries its sub-pages), and every page with a saved base, which
-    travelled before — so a sub-page's deletion (with its parent or on its
-    own) goes the other way too. (A live page with a base the filter no
-    longer reaches was deleted there at the round's start:
-    ``_drop_unreached``.)"""
+    live pages inside it here (``carried``: a publication of a page carries
+    its sub-pages, but not one left out of it, ``left``), and every page
+    with a saved base, which travelled before — so a sub-page's deletion
+    (with its parent or on its own) goes the other way too. (A live page
+    with a base the filter no longer reaches was deleted there at the
+    round's start: ``_drop_unreached``.)"""
     with connect_pages_db(ws) as conn:
         synced = {r[0] for r in conn.execute("SELECT page_id FROM sync_pages")}
-        return set(with_sub_pages(conn, page_filter)) | synced
+        return set(carried(conn, page_filter, left)) | synced
 
 
 def _filtered(ws: str, reach: set[str], todo: dict, *, force: bool) -> dict:
@@ -2641,10 +2803,9 @@ def _filter_of(ws: str) -> frozenset | None:
     filter changes or a round ends, or a write to a page it leaves out
     finds that page inside one it holds (``_counts``)."""
     if ws not in _filters:
-        with connect_users_db() as conn:
-            row = conn.execute("SELECT page_filter FROM mirrors WHERE workspace_id = ?", (ws,)).fetchone()
-        ids = _parse_filter(row[0]) if row else None
-        _filters[ws] = None if ids is None else frozenset(_reach(ws, ids))
+        mirror = get_mirror(ws)
+        ids = mirror["page_filter"] if mirror else None
+        _filters[ws] = None if ids is None else frozenset(_reach(ws, ids, left_out(mirror)))
     return _filters[ws]
 
 
@@ -2653,12 +2814,18 @@ def _counts(ws: str, page_id: str) -> bool:
     unless the pages the mirror moves (``_filter_of``) leave that page
     out. A page left out that is inside one they hold (a sub-page made in a
     published page, a page moved into one, since the reach was read) counts,
-    and the reach is read again."""
+    and the reach is read again — unless a page left out of the
+    publication (``LEFT_OUT``) stands nearer to it than the pages they hold:
+    the reach passes it by (``carried``), so its writes ask for no round."""
     page_filter = _filter_of(ws)
     if page_filter is None or not page_id or page_id in page_filter:
         return True
+    mirror = get_mirror(ws)
+    left = set(left_out(mirror)) if mirror else set()
     with connect_pages_db(ws) as conn:
-        inside = any(p in page_filter for p in page_ancestors(conn, page_id))
+        chain = [page_id, *reversed(page_ancestors(conn, page_id))]
+    # nearest first: a page the mirror moves before a page left out
+    inside = next((p in page_filter for p in chain if p in page_filter or p in left), False)
     if inside:
         _filters.pop(ws, None)
     return inside

@@ -791,8 +791,10 @@ The scenarios live in `tests/e2e/scenarios/`:
   directory). The account links its identity through the real
   round trip from the share popover, publishes, opens the link on the share
   host anonymously, changes the cloud share's audience, syncs, checks the
-  pill and Settings' Publishing row, unpublishes, and stops publishing
-  from Settings. `--only publish`.
+  pill and Settings' Publishing row, unpublishes, stops publishing
+  from Settings, and publishes a page with a page inside it (the hint
+  counting it, the page inside read as published with its parent, Leave
+  out keeping it off the share host). `--only publish`.
 - `mirror.mjs`: Settings → Workspaces → Clones and Zotero links — the server clones one of
   its own workspaces through the dialog with a write token made via the
   API: Sync, the empty conflicts list, opening the clone, the sync pill's
@@ -1234,7 +1236,9 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
   image through the share token, no editor), an edit share, a folder share
   copied into another library by the listing's Add to my library and, on a
-  second server, by its link pasted into +.
+  second server, by its link pasted into +; a page inside a shared page
+  naming the link that opens it, a move into a shared page asking first,
+  and an edit link's visitor making a page inside the shared page.
 - `subPages.mjs` (group `sub-pages`; [home_library.md](home_library.md#sub-pages)):
   /page in a filed page makes a page inside it, kept out of the library and the folder's count, listed in the parent's "N pages
   inside" panel, its crumbs leading back; Quick open shows its path; "New

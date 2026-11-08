@@ -632,21 +632,24 @@ def sub_pages(conn, page_id: str) -> list[str]:
         (page_id,))]
 
 
-def with_sub_pages(conn, page_ids, parents: dict[str, str] | None = None) -> list[str]:
+def with_sub_pages(conn, page_ids, parents: dict[str, str] | None = None, *, skip=()) -> list[str]:
     """``page_ids``, each followed by its descendants — parents before
     children, siblings in library order — without repeats. ``parents`` is
-    a ``page_parents`` map already read."""
+    a ``page_parents`` map already read. A page of ``skip`` is passed by
+    with the pages inside it, unless it is one of ``page_ids`` (a page of
+    ``page_ids`` inside it still comes, with what is inside that one)."""
     if parents is None:
         parents = page_parents(conn)
     kids: dict[str, list[str]] = {}
     for page, parent in parents.items():
         kids.setdefault(parent, []).append(page)
+    roots = set(page_ids)
     out, seen = [], set()
     for page_id in page_ids:
         todo = [page_id]
         while todo:
             page = todo.pop()
-            if page not in seen:
+            if page not in seen and (page in roots or page not in skip):
                 seen.add(page)
                 out.append(page)
                 todo += reversed(kids.get(page, []))

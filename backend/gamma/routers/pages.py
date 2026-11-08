@@ -6,11 +6,12 @@ existing page, not the way pages come into being. (``POST
 /api/blocks/by-doc/{doc_id}`` is the lookup-or-create BY ATTACHMENT path for
 PDF ingest and the extension's dedup.)
 
-Every endpoint but ``by-docs`` (any member) and ``family`` (any member, or
-a share that reaches the page) needs an editor of the workspace
-(``require_ws(write=True)``): a share token never creates pages or changes a
+Every endpoint but ``by-docs`` (any member), ``family`` (any member, or
+a share that reaches the page) and ``POST /pages`` needs an editor of the
+workspace (``require_ws(write=True)``): a share token never changes a
 page's attachment (page properties stay the owner's, same rule as PUT
-/blocks/{id} under a share).
+/blocks/{id} under a share). ``POST /pages`` also takes an edit share's
+token, for a page inside a page the share reaches and nothing else.
 """
 
 import json
@@ -21,7 +22,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .. import highlight_relocate, jobs, pdf_index, publish, upload_gc
-from ..auth import actor_of, require_user_id, require_ws, resolve_ws, share_scope
+from ..auth import (actor_of, link_ratelimit, require_user_id, require_ws, require_ws_writer, resolve_ws,
+                    share_scope)
 from ..blocks_store import (
     BLOCK_COLUMNS,
     FOLDERS,
@@ -52,6 +54,7 @@ from .imports import originals_gone
 router = APIRouter(prefix="/api", tags=["pages"])
 
 ATTACHMENT_KEYS = ("doc_id", "source_url", "original_filename")
+SHARE_PAGES_PER_5_MIN = 30  # pages a link visitor may make through an edit share, per IP
 RELOCATE = "relocate-highlights"  # the job that places a replaced PDF's highlights (_start_relocation)
 NOT_STORED = "the PDF is not stored on the server"  # why no run places the highlights of a PDF shown from a URL alone
 # Why a page of a Zotero link takes no PDF from a person while the link brings Zotero's (its ``zotero_pdf``
@@ -117,8 +120,25 @@ def create_page_endpoint(payload: PageCreate, request: Request):
     ``page_root_props`` leaves it, live or not. On a share host, 402 with
     ``{detail, limit, used, plan}`` when the owner's plan allows no more
     pages in the workspace (the path a publishing mirror creates its pages
-    by; gamma/publish.py page_cap)."""
-    ws = require_ws(request, write=True)
+    by; gamma/publish.py page_cap).
+
+    Through an edit share's token (``?share=``, ``require_ws_writer``) it
+    makes a page inside a page the share reaches, and nothing else: a
+    ``parent_page`` the share reaches is required (403 otherwise), no
+    ``properties`` (403: a page's settings stay the owner's), ``folders``
+    are ignored as for any sub-page, and the page is written under the
+    share editor's name (``actor_of``). An ``id`` the link names must be
+    new to the workspace: one that names a page in Recently deleted is
+    refused (409) as any taken id, rather than giving way, since that page
+    need not be one the share reaches."""
+    ws = require_ws_writer(request)
+    scope = share_scope(request)
+    if scope is not None:
+        link_ratelimit(request, "pages", SHARE_PAGES_PER_5_MIN, 300)
+        if not payload.parent_page:
+            raise HTTPException(status_code=403, detail="through a share link a page is made inside a shared page only")
+        if payload.properties:
+            raise HTTPException(status_code=403, detail="share editors cannot set a page's properties")
     props = dict(payload.properties or {})
     if payload.parent_page:
         props[PARENT_PAGE] = payload.parent_page
@@ -132,12 +152,15 @@ def create_page_endpoint(payload: PageCreate, request: Request):
         # same page id over (a mirror's retry) get one page and a 409, and
         # the plan's cap counts every page created before this one.
         write_lock(conn)
-        taken = payload.id and conn.execute(
-            "SELECT parent_id FROM unified_blocks WHERE id = ?", (payload.id,)).fetchone()
-        if taken and taken[0] != TRASH:  # a page of that id in Recently deleted gives way (create_page)
-            raise HTTPException(status_code=409, detail="a block with that id exists")
+        if scope is not None and not scope.allows_page(conn, payload.parent_page):
+            raise HTTPException(status_code=403, detail="not accessible via this share link")
         if payload.parent_page and page_root_id(conn, payload.parent_page) != payload.parent_page:
             raise HTTPException(status_code=400, detail="parent_page names no page")
+        taken = payload.id and conn.execute(
+            "SELECT parent_id FROM unified_blocks WHERE id = ?", (payload.id,)).fetchone()
+        # a page of that id in Recently deleted gives way (create_page), but not to a share link
+        if taken and (taken[0] != TRASH or scope is not None):
+            raise HTTPException(status_code=409, detail="a block with that id exists")
         refusal = publish.cap_refusal(ws)  # only a new page counts
         if refusal:
             return JSONResponse(status_code=402, content=refusal)

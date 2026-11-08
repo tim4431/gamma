@@ -36,7 +36,7 @@ from urllib.parse import unquote, urlsplit
 
 from . import cloud_auth, config, integrations, ratelimit, sync_engine, workspaces
 from .auth import SHARE_AUDIENCES, SHARE_ROLES
-from .blocks_store import page_descendants, with_sub_pages
+from .blocks_store import page_ancestors, page_descendants, with_sub_pages
 from .cloud_auth import CloudAuthError
 from .db import connect_pages_db, connect_users_db
 from .logbuf import log
@@ -428,8 +428,19 @@ def _addresses(mirror: dict, ws: str, page_id: str, token: str) -> dict:
     return {"url": url, "public_url": pretty or url}
 
 
-def _cap_error(limit: dict, detail: str = "") -> PublishError:
-    return PublishError(409, detail or cap_message(limit["plan"], limit["max"]), {"limit": limit})
+def _cap_error(limit: dict, detail: str = "", going: int = 1) -> PublishError:
+    """The cap's refusal: the share host's words, ``limit`` and ``going``,
+    how many pages the publication would have put there (the page and the
+    pages inside it, which the Share popover says were counted)."""
+    return PublishError(409, detail or cap_message(limit["plan"], limit["max"]), {"limit": limit, "going": going})
+
+
+def _going(ws: str, mirror: dict, page_id: str) -> int:
+    """How many pages a publication of ``page_id`` puts on the share host:
+    the page and the pages inside it (``sync_engine.carried``), less a page
+    left out of it."""
+    with connect_pages_db(ws) as conn:
+        return len(sync_engine.carried(conn, [page_id], sync_engine.left_out(mirror)))
 
 
 def _check_cap(user_id: str, ws: str, page_id: str, host: str, server_name: str) -> None:
@@ -442,8 +453,7 @@ def _check_cap(user_id: str, ws: str, page_id: str, host: str, server_name: str)
     mirror = sync_engine.get_mirror(ws, with_token=True)
     if _synced(ws, page_id) or mirror["page_filter"] is None:
         return
-    with connect_pages_db(ws) as conn:
-        going = 1 + len(page_descendants(conn, page_id))
+    going = _going(ws, mirror, page_id)
     limit = _read_limit(_remote(mirror))
     if limit and limit["max"] is not None and limit["used"] + going > limit["max"]:
         try:
@@ -453,7 +463,7 @@ def _check_cap(user_id: str, ws: str, page_id: str, host: str, server_name: str)
             pass
     if limit and limit["max"] is not None and limit["used"] + going > limit["max"]:
         _drop(ws, page_id)
-        raise _cap_error(limit)
+        raise _cap_error(limit, going=going)
 
 
 def _drop(ws: str, page_id: str) -> None:
@@ -469,6 +479,7 @@ def _synced(ws: str, page_id: str) -> bool:
 def _mirror_view(mirror: dict) -> dict:
     ws = mirror["workspace_id"]
     return {"ws": ws, "status": mirror["status"], "page_filter": mirror["page_filter"],
+            "published_pages": sync_engine.published_pages(ws, mirror) if mirror["page_filter"] is not None else None,
             "mode": mirror["mode"], "detached": mirror["mode"] == "off",
             "conflicts_open": sync_engine.open_conflicts(ws),
             "pending_local": sync_engine.pending_local(mirror)}
@@ -495,18 +506,20 @@ def publish(user_id: str, ws: str, page_id: str, *, audience: str | None = None,
     host = share_host()
     _mirror_for(user_id, ws, page_id, host, server_name)
     _check_cap(user_id, ws, page_id, host, server_name)
+    going = _going(ws, sync_engine.get_mirror(ws), page_id)
     status = sync_engine.sync_workspace(ws)
     # A first push cut short leaves the bare page's base (so _synced holds) and the page on the retry list.
     if not _synced(ws, page_id) or page_id in (status.get("retry") or {}):
-        error = status.get("last_error") or ""
-        if error.startswith(f"{page_id}: 402: "):
-            # the cap reached between the check and the round: the share host's own words
+        capped = status.get(sync_engine.CAPPED) or {}
+        if page_id in capped:
+            # the cap reached between the check and the round (a 402 there): the share host's own words
             _drop(ws, page_id)
             mirror = sync_engine.get_mirror(ws, with_token=True)
             if mirror["page_filter"]:
-                sync_engine.sync_workspace(ws)  # a clean round, so the refusal does not stay the mirror's error
+                sync_engine.sync_workspace(ws)  # a clean round, so the page does not stay among those waiting
             limit = _read_limit(_remote(mirror)) or {"used": 0, "max": None, "plan": ""}
-            raise _cap_error(limit, error[len(f"{page_id}: 402: "):])
+            raise _cap_error(limit, capped[page_id], going)
+        error = status.get("last_error") or ""
         raise PublishError(502, f"The page did not reach the share host: {error or 'try again'}")
     mirror = sync_engine.get_mirror(ws, with_token=True)
     remote = _remote(mirror)
@@ -520,6 +533,17 @@ def publish(user_id: str, ws: str, page_id: str, *, audience: str | None = None,
     return {**_addresses(mirror, ws, page_id, share["token"]), "share": share, "mirror": _mirror_view(mirror)}
 
 
+def _unless_gone(call) -> None:
+    """``call()``, a deletion on the share host, where a 404 (nothing of
+    it there: a page that never got there, a share already stopped) is
+    the end wanted."""
+    try:
+        call()
+    except RemoteError as e:
+        if e.status != 404:
+            raise
+
+
 def unpublish(user_id: str, ws: str, page_id: str) -> dict:
     """Stop the share on the share host, delete the copy there and drop the
     page from the filter, under the round lock so no round sees the copy's
@@ -529,10 +553,17 @@ def unpublish(user_id: str, ws: str, page_id: str) -> dict:
     their bases here with its own — but a page inside it published on its
     own, and the pages inside that one, which stay published: they are
     taken out of it there first (``sync_engine.spare_inside``), and stay
-    inside it here. The pages here are untouched. Nothing changes here
-    when the share host cannot be reached (502)."""
+    inside it here. A page that goes there inside a published page (its
+    reach carries it, ``carrier_of``, or it is published on its own as
+    well) is left out of that page's publication (``sync_engine.leave_out``):
+    its copy there goes the same way and the page around it stays
+    published without it, until it is published again. The pages here are
+    untouched. Nothing changes here when the share host cannot be reached
+    (502)."""
     mirror = sync_engine.get_mirror(ws, with_token=True)
-    if not mirror or (mirror["page_filter"] is not None and page_id not in mirror["page_filter"]):
+    filtered = bool(mirror) and mirror["page_filter"] is not None
+    own = bool(mirror) and (not filtered or page_id in mirror["page_filter"])
+    if not mirror or not (own or sync_engine.carrier_of(ws, mirror, page_id)):
         raise PublishError(409, "This page is not published.")
     _check_owner(mirror, user_id)
     remote = _remote(mirror)
@@ -540,33 +571,53 @@ def unpublish(user_id: str, ws: str, page_id: str) -> dict:
         with connect_pages_db(ws) as conn:
             carried = page_descendants(conn, page_id)
             # published on their own: they and the pages inside them stay
-            own = [p for p in mirror["page_filter"] or [] if p in carried]
-            kept = set(with_sub_pages(conn, own))
+            inside = [p for p in mirror["page_filter"] or [] if p in carried]
+            kept = set(with_sub_pages(conn, inside))
         carried = [p for p in carried if p not in kept]
         try:
-            remote.request("DELETE", f"/api/share-settings/{page_id}")
-            if mirror["page_filter"] is not None:
+            if own:
+                _unless_gone(lambda: remote.request("DELETE", f"/api/share-settings/{page_id}"))
+            if filtered:
                 # a full mirror of the share host keeps the page on both sides: only the share stops
-                sync_engine.spare_inside(ws, remote, page_id, lambda kid: kid in own)
-                remote.delete(f"/api/blocks/{page_id}")
+                sync_engine.spare_inside(ws, remote, page_id, lambda kid: kid in inside)
+                _unless_gone(lambda: remote.delete(f"/api/blocks/{page_id}"))
         except RemoteError as e:
             raise PublishError(502, f"Cannot reach the share host: {e}") from e
         mirror = sync_engine.filter_remove(ws, [page_id, *carried]) or mirror
+        if filtered and page_id in sync_engine.published_pages(ws, mirror):
+            # still inside a published page: its reach would send it again
+            mirror = sync_engine.leave_out(ws, page_id)
     return {"published": False, "mirror": _mirror_view(mirror)}
+
+
+def _inside_link(addresses: dict, page_id: str) -> dict:
+    """A published page's addresses (``_addresses``) made to open
+    ``page_id``, a page inside it, as the share view's own address does:
+    ``&page=`` after the token link, ``?page=`` after the pretty one."""
+    url = f"{addresses['url']}&page={page_id}"
+    pretty = addresses["public_url"]
+    return {"url": url, "public_url": url if pretty == addresses["url"] else f"{pretty}?page={page_id}"}
 
 
 def state(user_id: str, ws: str, page_id: str) -> dict:
     """``{published, can_publish, reason?, url?, public_url?, share?,
-    status?, mirror?, limit?, error?}``: whether the page is published (in
-    the filter of the workspace's mirror of the share host), its live share
-    there and addresses, the mirror's raw status, and the person's page cap
-    there (``limit: {used, max, plan}``, read whenever a publishing token
+    status?, mirror?, limit?, error?, pages_inside, carried_by?,
+    left_out_of?}``: whether the page is published (in the filter of the
+    workspace's mirror of the share host), its live share there and
+    addresses, the mirror's raw status, and the person's page cap there
+    (``limit: {used, max, plan}``, read whenever a publishing token
     exists). ``can_publish`` / ``reason`` say whether the Publish action
-    would be refused before it is tried."""
+    would be refused before it is tried. ``pages_inside`` counts the pages
+    a publication of it would carry along (each counts against the plan).
+    A page that is not published itself but goes there inside one that is
+    names that page (``carried_by: {page_id, title}``, with the addresses
+    that open it there); one unpublished on its own inside a published
+    page names that page (``left_out_of``)."""
     _require_page(ws, page_id)
     out: dict = {"published": False, "can_publish": True}
     reason, host = "", ""
     mirror = sync_engine.get_mirror(ws, with_token=True)
+    out["pages_inside"] = _going(ws, mirror or {"status": {}}, page_id) - 1
     if publishing_blocked():
         reason = IS_SHARE_HOST
     elif _zotero_linked(ws):
@@ -594,6 +645,21 @@ def state(user_id: str, ws: str, page_id: str) -> dict:
     published = mirror["page_filter"] is None or page_id in mirror["page_filter"]
     out.update(status=mirror["status"], mirror=_mirror_view(mirror))
     if not published:
+        carrier = sync_engine.carrier_of(ws, mirror, page_id)
+        if carrier:
+            out["carried_by"] = {"page_id": carrier, "title": _title(ws, carrier)}
+            try:
+                share = _json(_remote(mirror), "GET", f"/api/share-settings/{carrier}")
+            except RemoteError:
+                share = {}
+            if share.get("token"):
+                out.update(_inside_link(_addresses(mirror, ws, carrier, share["token"]), page_id))
+        elif page_id in sync_engine.left_out(mirror):
+            with connect_pages_db(ws) as conn:
+                chain = page_ancestors(conn, page_id)
+            around = next((p for p in reversed(chain) if sync_engine.carrier_of(ws, mirror, p)), "")
+            if around:
+                out["left_out_of"] = {"page_id": around, "title": _title(ws, around)}
         return out
     try:
         share = _json(_remote(mirror), "GET", f"/api/share-settings/{page_id}")

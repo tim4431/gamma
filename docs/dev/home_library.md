@@ -389,9 +389,24 @@ the page `page=` names when the share reaches it, else the shared page. A
 page the share does not reach leaves the open page and the address as they
 are ("Could not open that page.") and adds no Back entry. The family read
 through a share leaves out the ancestors the share does not reach, so the
-shared page itself shows no crumbs. A publication carries the published
-page's sub-pages, and its share there reaches them ([mirror.md](mirror.md)
-"Publishing").
+shared page itself shows no crumbs. The Share popover says so on both
+ends: a shared page's summary counts the pages inside it (the settings'
+`pages_inside`), and a page another link opens from around it names that
+link under its Link row, shared itself or not (`via`,
+`sharing/shareReach.js` `viaLine`), so an Invited only setting no longer
+claims the link does nothing for anyone else. Move into page… and a page
+dropped on a page read the target's reach first (`GET
+/api/pages/{id}/reach`) and, when a link or a publication would reach the
+moved pages for the first time, ask before they move ("Move into a shared
+page?", `moveExposure`). An edit share's visitor makes pages inside the
+pages it reaches, from the Pages inside panel's New page inside and
+`/page` (`POST /api/pages` with the token). Add to my library on a page
+inside the shared page imports that page, the one the address names, with
+the pages inside it (`sub_pages=1`). A publication carries the published
+page's sub-pages, and its share there reaches them; a sub-page carried so
+reads as published with its parent in its own popover, under the sync
+pill and in Settings' count, and Leave out takes it off the share host
+while the parent stays published ([mirror.md](mirror.md) "Publishing").
 
 **Deleting** a page takes the pages inside it to Recently deleted, and its
 restore brings them back ("Recently deleted" below).
@@ -417,10 +432,14 @@ steps in like any page a row names
 
 Tests: `backend/tests/test_sub_pages.py` (the rule, the op, the endpoints,
 filing and shares), `test_sub_pages_lifecycle.py` (trash, restore, delete
-for good, the mirror and publishing), `test_sub_pages_ai.py`,
+for good, the mirror and publishing), `test_sub_pages_sharing.py` (the
+reach of shares and publications, a page made through an edit link, a
+sub-page left out of a publication or waiting for room on the plan),
+`test_sub_pages_ai.py`,
 `test_sub_pages_export.py`, `test_sub_pages_import.py` (a Notion export's
 tree), `frontend/tests/subPages.test.mjs` (the client
-helpers, the drop rule, App's page list and the pickers' matching), `refLists.test.mjs`
+helpers, the drop rule, App's page list and the pickers' matching), `shareReach.test.mjs`
+(the popover's line and the move's question), `refLists.test.mjs`
 (the `[[` picker's) and the browser suite's `sub-pages` group
 (`frontend/tests/e2e/scenarios/subPages.mjs`).
 

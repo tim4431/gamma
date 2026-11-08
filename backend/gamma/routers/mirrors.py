@@ -60,10 +60,14 @@ def _mine(request: Request, ws: str) -> dict:
 
 
 def _info(mirror: dict) -> dict:
-    """A mirror as the API shows it to its owner (who needs no owner id)."""
+    """A mirror as the API shows it to its owner (who needs no owner id);
+    a publication's ``published_pages`` are the pages it puts on the share
+    host, the pages inside its pages included (``sync_engine.published_pages``)."""
     info = workspaces.get(mirror["workspace_id"])
     count, newest = sync_engine.open_conflict_mark(mirror["workspace_id"])
     shown = {k: v for k, v in mirror.items() if k != "owner"}
+    if mirror["page_filter"] is not None:
+        shown["published_pages"] = sync_engine.published_pages(mirror["workspace_id"], mirror)
     return {**shown, "name": info["name"] if info else "",
             "conflicts_open": count, "conflicts_newest": newest,
             "pending_local": sync_engine.pending_local(mirror),

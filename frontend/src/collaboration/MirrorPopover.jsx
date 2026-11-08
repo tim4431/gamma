@@ -146,6 +146,11 @@ export function roundSummary(s) {
   return parts.join(t(", "));
 }
 
+// The pages a publication puts on the share host: its published pages and
+// the pages inside them (the server's `published_pages`; the filter alone
+// from a server before it).
+export const publishedPages = (info) => info?.published_pages || info?.page_filter || [];
+
 // A mirror with a page filter is a publication, not a clone.
 export function isPublication(info) {
   return Array.isArray(info?.page_filter);
@@ -665,10 +670,11 @@ export function MirrorPopover({ wsId, kind = "mirror", mirrorOf: listedAs, publi
   const pending = Boolean(editAt) || unsentEdits(info);
   const publication = zotero ? false : info ? isPublication(info) : listedAsPublication;
   // A clone syncs the whole workspace, so its pill is on every page; a
-  // publication syncs the pages in its filter, so its pill is on those
-  // pages only (and nowhere until the filter is known) — unless Settings →
-  // Appearance › Top bar › Sync pill says every page (`everyPage`).
-  const covers = !publication || everyPage || Boolean(pageId && info?.page_filter?.includes(pageId));
+  // publication syncs the pages it publishes, the pages inside them
+  // included, so its pill is on those pages only (and nowhere until they
+  // are known) — unless Settings → Appearance › Top bar › Sync pill says
+  // every page (`everyPage`).
+  const covers = !publication || everyPage || Boolean(pageId && info && publishedPages(info).includes(pageId));
   // With the pill off the bar (`button` false: the same setting hides it)
   // only its popover shows, opened from the account menu's row, on any page.
   const shown = button ? covers : open;
@@ -744,7 +750,7 @@ export function MirrorPopover({ wsId, kind = "mirror", mirrorOf: listedAs, publi
   const headTitle = zotero
     ? pull ? t("Receive only: Zotero's changes arrive here, yours stay here") : t("Two-way: your changes go to Zotero, Zotero's arrive here")
     : pull ? t("Receive only: the remote's changes arrive here, yours stay here") : t("Two-way: your changes go to the remote, the remote's arrive here");
-  const headHint = publication ? `${n(info?.page_filter?.length, "page")} · ${host}`
+  const headHint = publication ? `${n(publishedPages(info).length, "page")} · ${host}`
     : zotero ? (s.username ? t("Zotero · {user}", { user: s.username }) : t("Zotero"))
     : t("remote · {host}", { host }) + (s.remote_user ? ` · ${s.remote_user}` : "");
 

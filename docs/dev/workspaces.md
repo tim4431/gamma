@@ -281,11 +281,15 @@ own workspace and confines access to one page, or to the pages filed in one
 folder, each with the pages inside it, its sub-pages
 ([home_library.md](home_library.md) "Sub-pages"; [api.md](api.md)
 "Shares"). Workspace roles and the share's invites
-determine whether that person can view or edit them. The Share popover
+determine whether that person can view or edit them; an edit share also
+makes pages inside the pages it reaches (`POST /api/pages` with its token,
+through `require_ws_writer` and `share_scope`). The Share popover
 shows a shared workspace's members as one row under *Who has access* (the
 member count; for a public workspace, that anyone signed in can read too),
 since they open every page with their workspace role whatever the share
-says.
+says. It counts the pages inside a shared page in its summary, and on a
+page another link opens from around it (a page it is inside, a folder its
+top is filed in: the settings' `via`) names that link.
 
 Pass the workspace ID to data helpers such as `connect_pages_db` and
 `commit_ops`. The actor in the operation log is `auth.actor_of(request)`:

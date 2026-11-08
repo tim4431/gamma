@@ -195,11 +195,22 @@ A mirror may name the only pages that travel: `mirrors.page_filter`, a JSON
 list of page ids (NULL, what every mirror made by hand has, means every
 page; migration step 19). Only publishing makes such a mirror. What such a
 round moves is the filter's **reach** (`sync_engine._reach`): the listed
-pages, each with the pages inside it here (`blocks_store.with_sub_pages`:
-a publication of a page carries its sub-pages, at any depth), and every
-page with a saved base, which travelled before, so the deletion of a
-sub-page, with its parent or on its own, still goes there. With a filter
-a round:
+pages, each with the pages inside it here (`sync_engine.carried`, over
+`blocks_store.with_sub_pages`: a publication of a page carries its
+sub-pages, at any depth), less a page **left out** of it and the pages
+inside that one (`left_out` in the mirror's status: a sub-page unpublished
+on its own while the page around it stays published, `leave_out`), and
+every page with a saved base, which travelled before, so the deletion of a
+sub-page, with its parent or on its own, still goes there. A left-out page
+is listed until no page of the filter holds it any more (`_prune_filter`:
+moved out, or the page around it unpublished) or it is published again
+on its own (`filter_add`; a republish or a settings change of a page
+already published leaves the left-out pages alone, and a write to a
+left-out page asks for no round, `_counts`). The remote's feed adds to the reach a
+page this copy never held that sits there inside a page of the reach
+(`_made_there`, one `GET /api/pages/{id}/family` each there): a page made
+inside a published page through its edit share on the share host, which
+then comes here. With a filter a round:
 
 - takes from both change feeds, and from its retry list, only the pages
   of the reach, and fetches only their missing files (`missing_uploads(ws,
@@ -220,17 +231,28 @@ a round:
   at the start of a round): a page deleted here is deleted there by the
   normal rule first, then leaves the filter;
 - deletes there, on a two-way copy, the pages that **left the
-  publication** (`_drop_unreached`, right after `_prune_filter`): a page
-  with a saved base that is in the library here but no longer inside a
-  listed page, a sub-page moved out of the published page say. What was
+  publication** (`_unreached`, read right after `_prune_filter`;
+  `_drop_unreached`, once the round's `whoami` says this copy may still
+  write there, asked afresh rather than taken from the cache: a token
+  lowered to read-only deletes nothing): a page with a saved base that is
+  in the library here but no longer inside a listed page, a sub-page moved
+  out of the published page or left out of it say. What was
   written there since its last round (a share editor's text) is pulled
   here first, the page's own round in pull mode; while any of those pulls
   fails nothing is deleted that round, since a deletion there takes the
   pages inside the page along. Then a page of the reach that sits inside it
   there is taken out of it there (`spare_inside`), its copy there is
   deleted (`DELETE /api/blocks/{id}`, which a share host does for good),
-  and it leaves with its base (`filter_remove`); the page here stays. A
-  receive-only copy deletes nothing there and leaves such pages be;
+  and it leaves with its base (`filter_remove`; a copy gone there already
+  just leaves); the page here stays. A receive-only copy deletes nothing
+  there and leaves such pages be;
+- lets a page the remote has no room for wait (`CapDeferred`: a share
+  host's 402 on its creation, the plan's cap reached): nothing of it
+  landed, so it waits as a page never sent, on the retry list, round after
+  round, and the round's status names it under `capped` (`{page id: the
+  share host's words}`) rather than as an error; the engine logs it once,
+  when it first meets the cap. A page unpublished there, or a plan that
+  grows, lets it go at the next round;
 - asks nothing of the remote when the filter is empty.
 
 Local writes to pages outside the reach neither mark the copy dirty nor
@@ -852,10 +874,22 @@ mirror's own answer apart.
   - Not published, allowed: "Keep this page reachable while this computer
     is off." and a primary **Publish**. Where the plan caps publishing (the
     answer's `limit` has a `max`) the hint counts instead, "3 of 5 pages
-    published". While it runs the button is disabled and shows the
+    published". A page with pages inside it (the answer's `pages_inside`)
+    says under the row that they go along and each counts against the
+    plan. While it runs the button is disabled and shows the
     spinning refresh glyph. A refusal shows its `detail` under the row; the
     cap's refusal (a 409 carrying `limit`) adds an *Open account* button to
-    the issuer's portal, the Settings Account row's target.
+    the issuer's portal, the Settings Account row's target, and, when the
+    page had pages inside it, how many it counted (`going`: "This page and
+    the 2 pages inside it count as 3 published pages."). A page left out
+    of the published page around it (`left_out_of`) says so under the row:
+    Publish puts it back, with a link of its own.
+  - Inside a published page, not published itself (`carried_by`): the
+    *Cloud link* row holds that page's link opened on this one (`url` /
+    `public_url` with `page=`), *Copy link* and a danger *Leave out*,
+    confirmed inline, which is `DELETE /api/pages/{id}/publish`; a line
+    names the page it goes with, and the state line follows as for a
+    published page.
   - Not published, refused: the `reason` as the row's hint. When the reason
     is the sign-in one, *Link Gamma Cloud account* opens Settings → Account
     & sync, where the link flow runs.
@@ -877,13 +911,20 @@ mirror's own answer apart.
       shows under the row;
     - the cloud share's access as the local share draws it: the three
       audience tiles (their hints in the share host's terms) and the View /
-      Edit segmented as the section's action. A change is
+      Edit segmented as the section's action, its summary counting the
+      pages inside. A change is
       `POST /api/pages/{id}/publish {audience, role}`, shown at once and
-      put back when the server refuses.
+      put back when the server refuses;
+    - pages the plan has no room for (`status.capped`), named on a line
+      under the state line: this page's wait with the share host's words,
+      or how many pages inside published pages wait.
   - A viewer of the workspace sees the state and the link but no buttons.
 - **The header's sync pill** shows for a publication only on a published
   page. A clone syncs the whole workspace, so its pill is on every page; a
-  publication syncs the pages in its filter, so its pill is on those.
+  publication syncs the pages it publishes, so its pill is on those: the
+  mirror's `published_pages` (`sync_engine.published_pages`, the filter's
+  pages and the pages inside them, less those left out), which
+  `GET /api/mirrors` and the publish answers' `mirror` carry.
   Settings → Appearance › Top bar › Sync pill (*Synced pages* / *Every
   page* / *Hidden*) can put it on every page instead, or take it off the
   bar: the account menu's Sync status row then opens the same popover, on
@@ -898,7 +939,8 @@ mirror's own answer apart.
   in `SettingsMirrors.jsx`) lists publications under *Publishing*; the
   pill's gear link opens this pane for a publication and Workspaces for
   a clone. A row has the state avatar, the workspace's name with its tags,
-  *N published pages · host*, the status line, a *Conflicts* button when
+  *N published pages · host* (every page there, the pages inside the
+  published ones included, as the plan counts them), the status line, a *Conflicts* button when
   any wait, and a "more" menu with *Sync now* and a danger *Stop
   publishing all* (confirmed, then `DELETE /api/pages/{id}/publish?ws=`
   for every page in the filter). Open conflicts there raise the
@@ -1033,8 +1075,18 @@ the next round, edits made through an edit share come back, conflicts are
 the usual rows. The pages inside it go with it (the filter's reach, "The
 page filter"), keeping their `parent_page`, and its share there reaches
 them (`ShareScope.allows_page`), so the share link opens them too; a
-sub-page made in it later goes over at the next round, and one moved out
-of it is deleted there. `DELETE /api/pages/{id}/publish` stops the share
+sub-page made in it later goes over at the next round (one made inside it
+there, through an edit share, comes here: `_made_there`), and one moved
+out of it is deleted there. `GET /api/pages/{id}/publish` on such a page
+answers `carried_by: {page_id, title}` with the published page's link
+opened on it, and the mirror's `published_pages` lists it, so the sync
+pill covers it and Settings counts it. Unpublishing it (*Leave out* in its
+popover) deletes its copy there with the pages inside it, as an unpublish
+does, and leaves it out of the page around it (`sync_engine.leave_out`):
+the rounds after send it no more while it stays inside, its state answers
+`left_out_of`, and publishing it again puts it back with a share of its
+own. A page inside a published page that is published on its own as well
+is left out the same way when it is unpublished. `DELETE /api/pages/{id}/publish` stops the share
 there, deletes the copy there and drops the page and its base from the
 filter, all under the round lock (so no round reads the copy's deletion
 as the page's); the page here is untouched, and when the share host cannot
@@ -1065,11 +1117,14 @@ server is a share host; a self-hosted server never counts.
   published, is never refused.
 - **The publishing side.** `publish` reads `GET /api/publish/limit` on the
   share host before a page's first round there, and needs room there for
-  the page and the pages inside it, which go with it. A workspace too full is
-  exchanged once more first, so an upgrade counts at once. Still full, the
-  page leaves the filter again and the answer is 409 with the share host's
-  words and `limit: {used, max, plan}`. A 402 the round itself met (the
-  workspace filled up meanwhile) ends the same way. `GET
+  the page and the pages inside it, which go with it (less one left out). A
+  workspace too full is exchanged once more first, so an upgrade counts at
+  once. Still full, the page leaves the filter again and the answer is 409
+  with the share host's words, `limit: {used, max, plan}` and `going`, the
+  pages it would have put there. A 402 the round itself met (the workspace
+  filled up meanwhile; the round's `capped`) ends the same way. A sub-page
+  made later inside a page already published, once the workspace there is
+  full, waits without a round error (`CapDeferred`, "The page filter"). `GET
   /api/pages/{id}/publish` carries the same `limit` whenever the account
   holds a publishing token, read fresh on every call.
 
@@ -1230,7 +1285,14 @@ a publication carrying its sub-pages (one made later, one made after the
 reach was read, one trashed), a sub-page moved out of it (with a share
 editor's text pulled first, and never by a receive-only copy),
 unpublishing a page with one published on its own inside it, and the
-plan's cap counting the pages inside a published page. The browser scenario
+plan's cap counting the pages inside a published page.
+`test_sub_pages_sharing.py` is the sub-pages' reach: the share settings'
+`pages_inside` and `via` and `GET /pages/{id}/reach`, a page made through
+an edit share's link (here and on the share host, where the next round
+brings it here), a sub-page read as carried, left out and published again,
+one waiting for room on the plan without a round error, the cap's
+refusal counting the pages inside, and a round that deletes nothing there
+while its token is read-only. The browser scenario
 drives the row's Sync (asked without `?wait=1`, the clone read until its
 round is over), the popover's settings view, detach / link again and the merge chip;
 `publish.mjs` publishes end to end against a second Gamma started as the
@@ -1300,17 +1362,6 @@ pages, folders and labels to send to Zotero
   TestClient transport; the browser scenario clones a workspace of the same
   server). Two real servers are not exercised.
 - Sub-pages, what is left:
-  - Once the workspace on the share host is at the plan's cap, a sub-page
-    made later inside a published page is refused (402) on every round,
-    kept on the retry list with `last_error`, until a page is unpublished
-    or the plan grows. A 402 on a create is a round error, not a quiet
-    deferral.
-  - A sub-page unpublished on its own while its parent stays published is
-    deleted there and leaves the filter, and the next round sends it again
-    as part of the parent's publication, without a share of its own.
-  - Pages that left a publication are dropped before the round's
-    `whoami`, so a token lowered to read-only meanwhile still tries the
-    `DELETE`; the share host refuses it and nothing is deleted.
   - A page moved into a page there whose turn comes before that page's
     deletion here (a matter of id order) ends up a library page on both
     sides with its text, its stored `parent_page` still naming the page in

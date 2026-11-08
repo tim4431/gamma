@@ -441,11 +441,6 @@ Shape C was built as designed above, with these differences.
   reaches the moved page's room only, never the parent's. A content-free
   nudge to the rooms of the page left and the page entered, as the
   comments' `{t: "comments"}` is, would make it live.
-- On the share host, once the workspace there is at the plan's cap, a
-  sub-page made later inside a published page is refused on every round
-  (a 402, a round error rather than a quiet deferral).
-- A sub-page unpublished on its own while its parent stays published is
-  sent again with the parent's publication, without a share of its own.
 - Pages edited on the other side inside a page deleted here come back as
   unfiled library pages on both sides; on a share host they then leave as
   pages no longer published (their text kept here). A page moved into a
@@ -466,7 +461,10 @@ asked where a sub-page still does less than a library page. It confirmed
 the open items above still hold (drag and drop, MCP's `export_page`, the
 panel not following other clients, the 402 at the cap, a sub-page
 unpublished alone sent again, a kept page landing unfiled, the `[[`
-picker's path) and found these as well. The library's filter box not
+picker's path) and found these as well. The 402 at the cap (now a quiet
+wait, `CapDeferred`) and the sub-page unpublished alone (now left out of
+its parent's publication) are fixed since, on 2026-11-07, with the
+sharing and publishing gaps below. The library's filter box not
 finding sub-pages was among them and is fixed (home_library.md
 "Listing and counting"), and so are, on 2026-11-06, the moves of a
 selection holding a page and a page inside it (they keep to the topmost
@@ -488,30 +486,18 @@ no page taking a dropped page: a row has the page menu and drags, a page
 row, card, panel row or crumb takes a page inside, and Home takes one to
 the library (home_library.md "Reaching one" and "Moving one").
 
-Sharing and publishing:
-
-- The Share popover understates a page share's reach and hides a
-  sub-page's: on the parent it reads "this page, never other pages"; on a
-  sub-page under a shared parent it says "Not shared yet", and making the
-  sub-page "Invited only" claims the link does nothing for anyone else,
-  though the parent's link still opens it (`sharing/SharePopover.jsx`
-  role and summary texts; `GET /share-settings/{id}` names the page's own
-  share only).
-- Move into page… says nothing when the target is shared or published:
-  the moved page becomes editable through the target's edit link, and
-  goes to the share host at the next round.
-- Publish does not say the pages inside go along and count against the
-  plan, and the cap refusal does not say they were counted; a sub-page
-  carried by its parent's publication reads as not published (its
-  Publish row, no sync pill), and Settings counts one publication where
-  the plan counts every page.
-- Unpublishing a sub-page while its parent stays published does not take
-  it off the share host: the parent's reach sends it again.
-- Add to my library on a sub-page of a page share imports the shared page,
-  not the sub-page (`importSharedPage` takes the share's page first), and
-  never the pages inside (no `sub_pages=1`).
-- An edit share's collaborators cannot make a page inside the shared page:
-  `POST /api/pages` takes no share token.
+Sharing and publishing: every gap found here is fixed (2026-11-07). The
+Share popover counts the pages inside a shared page and names the link
+that opens a page from around it (`via`); Move into page… asks before it
+moves pages into a shared or published page (`GET /pages/{id}/reach`);
+Publish says the pages inside go along and count, the cap's refusal says
+how many it counted (`going`), a sub-page carried by its parent's
+publication reads as published with it (its popover, the sync pill,
+Settings' count of `published_pages`), and Leave out keeps it off the
+share host (`sync_engine.leave_out`); Add to my library takes the sub-page
+the address names, with the pages inside it; and an edit share's link
+makes pages inside the shared page (home_library.md "Shares", mirror.md
+"Publishing").
 
 Integrations and the agent:
 

@@ -1929,7 +1929,12 @@ after a plan ended.
 | `lite`, `plus`, `pro`, anything else | unlimited |
 
 The plan is the `plan` claim the share host stored for the identity at its
-last exchange or sign-in.
+last exchange or sign-in. Every page there counts, so a published page and
+each page inside it (which its publication carries) are one each: the
+Share popover says so before Publish and in the refusal (`going`), and a
+page made later inside a published page that finds the plan full waits on
+the publishing side without a round error until a page is unpublished or
+the plan grows ([mirror.md](mirror.md) "Publishing").
 
 **Page hosts.** `GAMMA_PAGE_HOST` is the hostname pattern of the
 per-account page hosts, with one `{username}` placeholder:

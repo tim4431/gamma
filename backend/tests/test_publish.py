@@ -299,7 +299,7 @@ def test_publish_end_to_end(publishing, monkeypatch):
     page, doc = pdf_page(local)
     insert(local, page["id"], "pb_n1", "my note")
     private = local.post("/api/pages", json={"title": "Not published"}).json()
-    assert local.get(f"/api/pages/{page['id']}/publish").json() == {"published": False, "can_publish": True}
+    assert local.get(f"/api/pages/{page['id']}/publish").json() == {"published": False, "can_publish": True, "pages_inside": 0}
 
     r = local.post(f"/api/pages/{page['id']}/publish")
     assert r.status_code == 200, r.text
@@ -429,7 +429,7 @@ def test_the_share_host_caps_published_pages_by_plan(publishing, monkeypatch):
     # the sixth: 409 here with the share host's words and the count; nothing moved, nothing left in the filter
     r = local.post(f"/api/pages/{pages[5]['id']}/publish")
     assert r.status_code == 409, r.text
-    assert r.json() == {"detail": CAP_DETAIL, "limit": {"used": 5, "max": 5, "plan": "free"}}
+    assert r.json() == {"detail": CAP_DETAIL, "limit": {"used": 5, "max": 5, "plan": "free"}, "going": 1}
     assert pages[5]["id"] not in sync_engine.get_mirror(local_ws)["page_filter"]
     assert pages[5]["id"] not in page_ids(host)
     # the count unreadable beforehand (a share host that fills up meanwhile): the round's 402 says the same

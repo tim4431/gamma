@@ -30,7 +30,7 @@ import {
   KeyIcon, LinkIcon, MoreIcon, PlusIcon, RefreshIcon, SettingsIcon, TrashIcon, UnlinkIcon, UploadIcon,
 } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
-import { clock, hostOf, isPublication, isPullOnly, mirrorState, n, roundSummary, versionGap } from "../collaboration/MirrorPopover";
+import { clock, hostOf, isPublication, isPullOnly, mirrorState, n, publishedPages, roundSummary, versionGap } from "../collaboration/MirrorPopover";
 import { ConflictCard, useConflicts } from "../collaboration/MergeResolver";
 import {
   LINK_ACTIONS, LINK_BASES, followSync, linkCandidates, linkKind, linkPath, pullByKey, reconnectOnly, roundAhead, unsentEdits,
@@ -531,7 +531,7 @@ export function PublishingSection({ mirrors, refresh, currentId, closeSettings, 
     const pages = m.page_filter || [];
     confirm({
       title: T("Stop publishing all"),
-      message: t("The {pages} of “{name}” leave Gamma Cloud: their cloud links stop working and the copies there are deleted. The pages here stay.", { pages: n(pages.length, "published page"), name: nameOf(m) }),
+      message: t("The {pages} of “{name}” leave Gamma Cloud: their cloud links stop working and the copies there are deleted. The pages here stay.", { pages: n(publishedPages(m).length, "published page"), name: nameOf(m) }),
       confirmLabel: t("Stop publishing"), danger: true,
       onConfirm: async () => {
         setBusy(true);
@@ -562,6 +562,8 @@ export function PublishingSection({ mirrors, refresh, currentId, closeSettings, 
     const s = m.status || {};
     const st = mirrorState(m);
     const pages = m.page_filter || [];
+    // every page there counts, the pages inside the published ones too, as the plan counts them
+    const count = publishedPages(m).length;
     const more = [
       { icon: RefreshIcon, label: T("Sync now"), disabled: s.running || m.detached || m.mode === "off",
         title: T("Send local edits and bring back edits made through the cloud links"), onClick: () => syncNow(m) },
@@ -582,7 +584,7 @@ export function PublishingSection({ mirrors, refresh, currentId, closeSettings, 
             {m.conflicts_open ? <span className="uiTag warn">{n(m.conflicts_open, "conflict")}</span> : null}
           </span>
           <span className="aiProvDesc" title={m.remote_url}>
-            {n(pages.length, "published page")} · {hostOf(m.remote_url)}
+            {n(count, "published page")} · {hostOf(m.remote_url)}
           </span>
           <span className="aiProvDesc">{mirrorStatusLine(m)}</span>
         </span>

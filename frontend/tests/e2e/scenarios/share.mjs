@@ -5,7 +5,9 @@
 // the page, and a folder share (the folder view's link button; the listing a
 // visitor browses; the folder copied into another library by the listing's
 // Add to my library and by its link pasted into another Gamma's +, which
-// is a second server), and what a visitor's export holds.
+// is a second server), and what a visitor's export holds. A page inside a
+// shared page names the link that opens it, a move into a shared page asks
+// first, and an edit link's visitor makes a page inside the shared page.
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { Account, ROOT, Server } from "../harness.mjs";
@@ -320,6 +322,63 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await ctx.close();
   });
 
+  await step("share: a page inside a shared page names the link that opens it; a move into one asks first; its edit link makes a page inside", async () => {
+    const top = await alice.api("/api/pages", { method: "POST", body: { title: "Reach top" } });
+    const kid = await alice.api("/api/pages", { method: "POST", body: { title: "Reach kid", parent_page: top.id } });
+    const loose = await alice.api("/api/pages", { method: "POST", body: { title: "Reach loose" } });
+    const { token } = await alice.api(`/api/share/${top.id}`, { method: "POST", body: { audience: "anyone", role: "edit" } });
+    const ctx = await alice.context(browser);
+    const vctx = await browser.newContext({ viewport: { width: 1280, height: 860 } }); // no session: the link alone
+    try {
+      // the page inside: not shared itself, and the popover says the parent's link opens it
+      const page = await openPage(ctx, `${server.base}/?page=${kid.id}&ws=${alice.ws}`);
+      const pop = page.locator(".sharePopover");
+      await page.click("button[aria-label='Share']");
+      await pop.locator("[data-share-via]")
+        .getByText("The link of “Reach top” opens this page too, as a page inside it: anyone with the link can edit it.").waitFor();
+      await pop.getByText("Not shared yet. Share makes a link you can send.").waitFor();
+      await page.keyboard.press("Escape");
+      await pop.waitFor({ state: "detached" });
+      // the shared page's own summary counts the page inside it
+      await page.goto(`${server.base}/?page=${top.id}&ws=${alice.ws}`);
+      await page.click("button[aria-label='Share']");
+      await pop.getByText("Anyone with the link can edit this page and the 1 page inside it.").waitFor();
+      assertEq(await pop.locator("[data-share-via]").count(), 0, "no other link opens the shared page");
+      await page.keyboard.press("Escape");
+      await pop.waitFor({ state: "detached" });
+
+      // Move into page… into the shared page says who will open the page before it moves
+      await page.goto(`${server.base}/?page=${loose.id}&ws=${alice.ws}`);
+      await page.locator(".tabStrip .tab", { hasText: "Reach loose" }).click({ button: "right" });
+      await page.locator(".ctxMenuItem", { hasText: "Move into page…" }).click();
+      const dialog = page.getByRole("dialog", { name: "Move into page" });
+      await dialog.getByRole("textbox").fill("Reach top");
+      await dialog.getByRole("option").filter({ has: page.locator("strong", { hasText: /^Reach top$/ }) }).click();
+      const confirm = page.locator(".confirmModal");
+      await confirm.getByText("Move into a shared page?", { exact: true }).waitFor();
+      await confirm.getByText("The link of “Reach top” opens it: anyone with the link can edit the page you move, too.").waitFor();
+      assertEq((await alice.api(`/api/blocks/${loose.id}`)).properties?.parent_page, undefined, "nothing moves before the confirm");
+      await confirm.getByRole("button", { name: "Move", exact: true }).click();
+      await until(async () => (await alice.api(`/api/blocks/${loose.id}`)).properties?.parent_page === top.id,
+        { what: "inside the shared page after the confirm" });
+      assertNoProblems(page);
+
+      // the edit link's visitor makes a page inside the shared page from its Pages inside panel
+      const v = await openPage(vctx, `${server.base}/?share=${token}`);
+      await v.waitForSelector(".readOnlyTitle", { timeout: 15000 });
+      await v.locator(".subPagesPanel .subPageNew", { hasText: "New page inside" }).click();
+      await until(() => v.url().includes("page="), { what: "the new page opens in the share view" });
+      await v.keyboard.type("Made through the link");
+      await v.keyboard.press("Enter");
+      await until(async () => (await alice.api(`/api/pages/${top.id}/family`)).sub_pages.some((p) => p.title === "Made through the link"),
+        { what: "the page inside the shared page, in alice's library" });
+      assertNoProblems(v);
+    } finally {
+      await vctx.close();
+      await ctx.close();
+    }
+  });
+
   await step("share: the command palette's Share this page… opens the open page's popover, not the last one shown", async () => {
     const shared = await alice.api("/api/pages", { method: "POST", body: { title: "Palette shared" } });
     const plain = await alice.api("/api/pages", { method: "POST", body: { title: "Palette plain" } });
@@ -459,10 +518,10 @@ else:
     await until(async () => (await page.textContent("body")).includes("Can edit"), { what: "edit badge" });
     await editRow(page, "figure");
     await page.keyboard.type(" edited by bob");
-    // A share's editor makes no page in the owner's library.
+    // A share's editor makes a page inside the shared page (the step above makes one).
     await page.keyboard.type(" /page");
     await page.waitForSelector(".slashMenu");
-    assertEq(await page.locator(".slashMenu .slashMenuItem", { hasText: "New page" }).count(), 0, "/page offers no new page in a share");
+    assertEq(await page.locator(".slashMenu .slashMenuItem", { hasText: "New page" }).count(), 1, "/page offers a new page inside in an edit share");
     for (let i = 0; i < 6; i++) await page.keyboard.press("Backspace");
     await closeEditor(page);
     await until(async () => JSON.stringify(await tree(account, pdfPageId)).includes("edited by bob"), { what: "bob's edit saved to alice's page" });

@@ -194,6 +194,7 @@ import { retryableStatus } from "../collaboration/collabSession.js";
 import { applyOps, applyPatch, displacedRow } from "../shared/model/blockOps";
 import { PresenceBar } from "../collaboration/Presence";
 import { ShareAccessPill } from "../sharing/ShareAccess";
+import { moveExposure, moveExposureMessage } from "../sharing/shareReach.js";
 import { BrandMark, Splash } from "../shared/ui/BrandMark";
 import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../collaboration/linkName";
 import { modelList, useProviderEditor } from "../settings/providerEditor.js";
@@ -241,6 +242,7 @@ import {
   pagesIntoPage,
   deleteConfirm,
   topPageOf,
+  pageAncestors,
   friendlyApiError,
   attachmentFile,
   pageAttachment,
@@ -1543,10 +1545,28 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function pickPageParent(picked) {
     pickMovePage({ pageIds: topmostPages(pageBlocks, picked) });
   }
-  function movePagesInto(ids, parent) {
+  // A page whose link, or whose publication, reaches the pages moved in for
+  // the first time asks first, saying who will open them (GET
+  // /pages/{id}/reach, sharing/shareReach.js); one that changes nothing
+  // about that moves at once. A reach that cannot be read does not stop it.
+  async function movePagesInto(ids, parent) {
     const title = parent.content || t("Untitled");
-    placePages(ids, () => ({ parent_page: parent.id }), t("Move {n} pages into “{title}”", { n: ids.length, title }),
+    const move = () => placePages(ids, () => ({ parent_page: parent.id }), t("Move {n} pages into “{title}”", { n: ids.length, title }),
       (n) => tn("Moved {n} page into “{title}”.", "Moved {n} pages into “{title}”.", n, { title }));
+    let reach = null;
+    try { reach = await apiJson(`${API}/pages/${encodeURIComponent(parent.id)}/reach`); } catch {}
+    // already reached: inside the share's or the publication's page, or filed in the shared folder
+    const within = (id, entry) => (entry.page_id
+      ? id === entry.page_id || pageAncestors(pagesById, id).some((a) => a.id === entry.page_id)
+      : (topPageOf(pagesById, id)?._folders || []).includes(entry.folder));
+    const message = moveExposureMessage(moveExposure(reach, ids, within), ids.length);
+    if (!message) { move(); return; }
+    setConfirmBox({
+      title: T("Move into a shared page?"),
+      message,
+      confirmLabel: t("Move"),
+      onConfirm: move,
+    });
   }
   // "Move to library": out of the page they are in, filed in their top's
   // folders, where they were listed until now. Only the topmost of `picked`
@@ -5894,16 +5914,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A page just made, opened Notion-style with its title ready to type;
   // Back returns to where it was made from.
   async function openNewPage(id) {
-    await fetchHomeBlocks();
+    if (!shareMode || sharedFolder) await fetchHomeBlocks(); // (a page share lists no library)
     await openBlock(id, { pushNav: true, focusTitle: true });
     setTitleDraft("");
     setTitleEditing(true);
   }
 
   // "New page inside": a blank page inside page `parentId`, opened like a
-  // New page; the parent's Pages inside lists it when you come back.
+  // New page; the parent's Pages inside lists it when you come back. An
+  // edit share's link makes one inside a page it opens (POST /pages takes
+  // its token).
   async function createSubPage(parentId) {
-    if (shareMode) return;
+    if (shareMode && readOnly) return;
     try {
       const created = await apiJson(`${API}/pages`, {
         method: "POST",
@@ -7228,7 +7250,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       markPublishing();
     } catch (err) {
       // the plan's cap carries its count: the section offers the account page with it
-      setPublishError(err.data?.limit ? { message: err.message, limit: err.data.limit } : err.message);
+      setPublishError(err.data?.limit ? { message: err.message, limit: err.data.limit, going: err.data.going || 1 } : err.message);
       if (patch) loadPublishState({ quiet: true }); // the tiles go back to what the share host holds
     } finally {
       setPublishBusy("");
@@ -7245,7 +7267,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         ...(prev || {}), page: pageId, published: false, url: undefined, share: undefined, mirror: out.mirror,
       }));
       // the last page unpublished: the publication is invisible again (no pill)
-      if (!(out.mirror?.page_filter || []).length) {
+      if (!(out.mirror?.published_pages || out.mirror?.page_filter || []).length) {
         setWorkspace((prev) => (prev?.publishing ? { ...prev, publishing: false } : prev));
       }
       window.dispatchEvent(new CustomEvent("gamma:mirror"));
@@ -7430,14 +7452,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       if (!r.ok) throw new Error(t("share link not found"));
       const info = await r.json();
-      const pageId = info.page_id || linkedPage;
+      // the page the link names (a page inside the shared page, or a page of a
+      // folder share) before the share's own page
+      const pageId = linkedPage || info.page_id;
       const folder = pageId ? "" : linkedFolder || info.folder || "";
       updateTask(tid, {
         name: (pageId ? t("Shared page from {host}", { host }) : t("Shared folder from {host}", { host })).slice(0, 60),
         info: t("downloading…"),
       });
+      // a page comes with the pages inside it, as the share opens them
       const what = pageId ? `pages/${encodeURIComponent(pageId)}` : `folders/${encodeURIComponent(folder)}`;
-      r = await fetch(`${origin}${API}/${what}/export?mode=gamma&share=${encodeURIComponent(token)}`, opts);
+      r = await fetch(`${origin}${API}/${what}/export?mode=gamma${pageId ? "&sub_pages=1" : ""}&share=${encodeURIComponent(token)}`, opts);
       if (!r.ok) {
         // the server's words say which refusal it is (a share read's error is readable cross-origin too)
         let detail = "";
@@ -9788,7 +9813,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // the panel carries its one page: the library's selection is let go.
   const subPagesPanel = !homeMode && focusedBlockId ? (
     <SubPagesPanel pages={openFamily.subPages} onOpen={openFamilyPage}
-      onNew={lib.organize ? () => createSubPage(focusedBlockId) : undefined}
+      onNew={lib.organize || (shareMode && !readOnly) ? () => createSubPage(focusedBlockId) : undefined}
       onMenu={shareMode ? undefined : (page) => openSubPageMenu(page.id, page.title)}
       rowProps={lib.organize ? (page) => ({
         draggable: true,
@@ -11011,8 +11036,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   sheetNumbers,
                   inlineSheets: !notebook,
                   onInsertSheet: readOnly ? undefined : insertSheetAt,
-                  // "/page": a share's editor makes no library page.
-                  onNewPage: readOnly || shareMode ? undefined : createLinkedPage,
+                  // "/page": a share's editor makes it inside the shared page too.
+                  onNewPage: readOnly ? undefined : createLinkedPage,
                   // The @ menu's "Invite…" shares the page (Notion's invite to a
                   // page); its "Remind me" wakes the reminders.
                   onInvite: readOnly || shareMode || authUser?.is_guest ? undefined : () => openPageShare(focusedBlockId),

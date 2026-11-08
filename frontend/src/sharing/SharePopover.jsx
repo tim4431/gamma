@@ -39,6 +39,12 @@
 // their request heads the list (the manager's view only) with Approve — a
 // pending invitation to view — and Decline.
 //
+// A page share's link opens the pages inside its page as well, so the
+// summaries count them (`pages_inside`), and a page another link opens from
+// around it (a page it is inside, a folder its top is filed in: the
+// settings' `via`) says so under its Link row (shareReach.viaLine), shared
+// itself or not.
+//
 // Gamma Cloud (PublishSection, docs/dev/mirror.md "Publishing"): on a server
 // with cloud sign-in, a page can also be published to the share host, so its
 // link works while this computer is off. Not published: one sentence and a
@@ -49,12 +55,19 @@
 // page host, the token link in the hover title — with Copy and Unpublish
 // (confirmed inline), the publication's state line (the sync pill's reading,
 // mirrorState) with a Sync-now button, and the cloud share's access as the
-// same tiles + View / Edit toggle. App owns the data
+// same tiles + View / Edit toggle. The pages inside a page go with its
+// publication and count against the plan, which the section says before and
+// in the cap's refusal (`going`); a page that goes there inside a published
+// page (`carried_by`) shows that page's link opened on it, the state line and
+// Leave out, and one left out (`left_out_of`) says so by its Publish button.
+// Pages the plan has no room for wait, named once on the state's line
+// (`status.capped`). App owns the data
 // (GET/POST/DELETE /api/pages/{id}/publish) and polls it while open.
 import React from "react";
 import { AccountPicker, Empty, IconChoices, PersonRow, Row, Section, Segmented } from "../settings/SettingsKit";
 import { EmailInviteButtons, looksLikeEmail, useAccounts } from "../settings/SettingsWorkspace";
 import { mirrorState } from "../collaboration/MirrorPopover";
+import { viaLine } from "./shareReach.js";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 import { nativeHost } from "../shared/lib/host.js";
 import {
@@ -67,8 +80,8 @@ import { IconSwap, MorphText, Reveal } from "../shared/ui/MotionWidgets";
 
 const ROLE_SEGMENTS = {
   page: [
-    ["view", t("View"), EyeIcon, t("Can read the page")],
-    ["edit", t("Edit"), PenIcon, t("Can edit this page's notes and highlights — never other pages or the page's settings")],
+    ["view", t("View"), EyeIcon, t("Can read the page and the pages inside it")],
+    ["edit", t("Edit"), PenIcon, t("Can edit the notes and highlights of this page and the pages inside it, and make pages inside it — never other pages or any page's settings")],
   ],
   folder: [
     ["view", t("View"), EyeIcon, t("Can read every page in the folder")],
@@ -111,20 +124,35 @@ const NEW_SHARE = { audience: "users", role: "view" };
 // The one sentence that says what the tiles + toggle add up to. The cloud
 // share (`cloud`) has no people list here: its invitations live on the
 // share host.
+// A page's link opens the pages inside it too (`pages_inside`), which the
+// sentence counts; one another link opens as well (`via`) is not said to
+// be closed to everyone else.
 function accessSummary(settings, kind, cloud = false) {
   const invited = (settings.users || []).length > 0;
+  const inside = kind === "page" ? settings.pages_inside || 0 : 0;
   const who = settings.audience === "anyone" ? t("Anyone with the link") : settings.audience === "users" ? t("Anyone signed in") : null;
   if (!who && cloud) return invited ? t("Only the people invited there can open it.") : t("Nobody can open it until you invite someone.");
   if (!who) {
-    return kind === "folder"
-      ? t("Only the people above can open this folder's pages; the link does nothing for anyone else.")
+    if (kind === "folder") return t("Only the people above can open this folder's pages; the link does nothing for anyone else.");
+    if (!cloud && settings.via?.length) return t("Only the people above can open it through this link; the other link above still opens it.");
+    return inside
+      ? tn("Only the people above can open this page and the {n} page inside it; the link does nothing for anyone else.",
+        "Only the people above can open this page and the {n} pages inside it; the link does nothing for anyone else.", inside)
       : t("Only the people above can open this page; the link does nothing for anyone else.");
   }
   const verb = settings.role === "edit" ? t("edit") : t("read");
   const access = invited ? t("; invited people keep their own access") : "";
-  return kind === "folder"
-    ? t("{who} can {verb} every page in this folder{access}.", { who, verb, access })
+  if (kind === "folder") return t("{who} can {verb} every page in this folder{access}.", { who, verb, access });
+  return inside
+    ? tn("{who} can {verb} this page and the {n} page inside it{access}.", "{who} can {verb} this page and the {n} pages inside it{access}.",
+      inside, { who, verb, access })
     : t("{who} can {verb} this page{access}.", { who, verb, access });
+}
+
+// Under the Link row: the other link that opens this page (shareReach.viaLine).
+function ViaLine({ via }) {
+  const line = viaLine(via);
+  return line ? <div className="settingsPaneHint shareVia" data-share-via="">{line}</div> : null;
 }
 
 // That sentence under the tiles, amber when the link is editable without
@@ -272,7 +300,9 @@ function ShareLinkRow({ url, copied, onCopy, invited, onStop }) {
 function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish, onUnpublish, onSync, onLink, accountUrl }) {
   const [confirming, setConfirming] = React.useState(false);
   const published = !!state?.published;
-  React.useEffect(() => { if (!published) setConfirming(false); }, [published]);
+  const carrier = !published ? state?.carried_by || null : null; // published inside that page
+  const onCloud = published || !!carrier;
+  React.useEffect(() => { if (!onCloud) setConfirming(false); }, [onCloud]);
   const share = state?.share;
   const mirror = state?.mirror;
   const st = mirror ? mirrorState(mirror, { busy: busy === "sync" }) : null;
@@ -284,6 +314,12 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   const errorLine = problem ? (
     <>
       <div className="settingsPaneHint aiKeysError" role="alert">{problem}</div>
+      {capped && error.going > 1 ? (
+        <div className="settingsPaneHint">
+          {tn("This page and the {n} page inside it count as {total} published pages.",
+            "This page and the {n} pages inside it count as {total} published pages.", error.going - 1, { total: error.going })}
+        </div>
+      ) : null}
       {capped && accountUrl && !nativeHost() ? (
         <div className="publishAccount">
           <a className="uiBtn sm" href={accountUrl} target="_blank" rel="noopener"
@@ -298,6 +334,74 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
   const limit = (capped ? error.limit : null) || state?.limit;
   const counted = limit && limit.max != null ? t("{used} of {max} pages published", { used: limit.used, max: limit.max }) : "";
   const link = state?.public_url || state?.url || "";
+  const inside = state?.pages_inside || 0;
+  // the publication's state line (the sync pill's reading) with Sync now
+  const stateLine = st ? (
+    <div className={`mirrorState ${st.tone} publishState`} data-state={st.state} title={st.title}>
+      <st.Icon size={14} />
+      <div className="mirrorStateBody">
+        <div className="mirrorStateLine">
+          <span>{st.text}</span>
+          <button type="button" className={`iconBtn sm ${running ? "mirrorSpin" : ""}`} disabled={running || !!busy || !!mirror?.detached}
+            onClick={onSync} aria-label={t("Sync now")}
+            title={running ? t("A round is running") : mirror?.detached ? t("Detached — reattach in the sync settings") : t("Sync now")}>
+            <RefreshIcon size={14} />
+          </button>
+        </div>
+        {st.state === "outdated" ? <div className="popoverHint">{st.title}</div> : null}
+      </div>
+    </div>
+  ) : null;
+  // pages the plan has no room for wait, round after round, without an error
+  const waiting = mirror?.status?.capped || {};
+  const waitCount = Object.keys(waiting).length;
+  const waitLine = waitCount ? (
+    <div className="settingsPaneHint publishWaiting" data-publish-waiting="">
+      {waiting[state?.page]
+        ? t("Waiting for room on your plan: {detail}", { detail: waiting[state.page] })
+        : tn("{n} page inside a published page waits for room on your plan.",
+          "{n} pages inside published pages wait for room on your plan.", waitCount)}
+    </div>
+  ) : null;
+
+  if (carrier) {
+    const holder = carrier.title || t("Untitled");
+    return (
+      <Section title={t("Gamma Cloud")}>
+        <Row icon={CloudIcon} label={t("Cloud link")} className="publishCarried"
+          hint={link || t("Published inside “{title}”", { title: holder })}
+          title={t("This page goes to Gamma Cloud inside “{title}”, which is published: its cloud link opens this page too, and edits sync both ways.", { title: holder })}>
+          <span className="shareLinkBtns">
+            {link ? <CopyLinkButton url={link} copied={copied} onCopy={onCopy} /> : null}
+            {canEdit ? (
+              <button type="button" className={`uiBtn sm iconSq danger ${confirming ? "on" : ""}`} disabled={!!busy}
+                onClick={() => setConfirming((v) => !v)} aria-label={t("Leave out")}
+                title={t("Leave out: this page and the pages inside it leave Gamma Cloud; “{title}” stays published without them.", { title: holder })}>
+                {spinning("unpublish") || <CloudOffIcon size={16} />}
+              </button>
+            ) : null}
+          </span>
+        </Row>
+        <div className="settingsPaneHint" data-publish-carried="">
+          {t("Published with “{title}”, the page it is inside.", { title: holder })}
+        </div>
+        {confirming ? (
+          <div className="mirrorConfirm">
+            <AlertCircleIcon size={14} />
+            <span>{t("Leave this page out? Its copy on Gamma Cloud is deleted with the pages inside it; “{title}” stays published without them, and this page stays here.", { title: holder })}</span>
+            <span className="mirrorConfirmBtns">
+              <button type="button" className="uiBtn sm primary danger" disabled={!!busy}
+                onClick={async () => { await onUnpublish(); setConfirming(false); }}>{t("Leave out")}</button>
+              <button type="button" className="uiBtn sm" disabled={!!busy} onClick={() => setConfirming(false)}>{t("Cancel")}</button>
+            </span>
+          </div>
+        ) : null}
+        {stateLine}
+        {waitLine}
+        {errorLine}
+      </Section>
+    );
+  }
 
   if (!published) {
     return (
@@ -315,6 +419,18 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
             </button>
           ) : null}
         </Row>
+        {state.left_out_of ? (
+          <div className="settingsPaneHint" data-publish-left-out="">
+            {t("Left out of “{title}”, which is published. Publish puts it back, with a link of its own.",
+              { title: state.left_out_of.title || t("Untitled") })}
+          </div>
+        ) : null}
+        {state.can_publish && inside ? (
+          <div className="settingsPaneHint" data-publish-inside="">
+            {tn("The {n} page inside it goes along, and each page counts against your plan.",
+              "The {n} pages inside it go along, and each page counts against your plan.", inside)}
+          </div>
+        ) : null}
         {errorLine}
       </Section>
     );
@@ -353,7 +469,9 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
       {confirming ? (
         <div className="mirrorConfirm">
           <AlertCircleIcon size={14} />
-          <span>{t("Unpublish? The cloud link stops working and the copy there is deleted; this page stays here.")}</span>
+          <span>{inside
+            ? t("Unpublish? The cloud link stops working and the copies there of this page and the pages inside it are deleted; they stay here.")
+            : t("Unpublish? The cloud link stops working and the copy there is deleted; this page stays here.")}</span>
           <span className="mirrorConfirmBtns">
             <button type="button" className="uiBtn sm primary danger" disabled={!!busy}
               onClick={async () => { await onUnpublish(); setConfirming(false); }}>{t("Unpublish")}</button>
@@ -361,22 +479,8 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
           </span>
         </div>
       ) : null}
-      {st ? (
-        <div className={`mirrorState ${st.tone} publishState`} data-state={st.state} title={st.title}>
-          <st.Icon size={14} />
-          <div className="mirrorStateBody">
-            <div className="mirrorStateLine">
-              <span>{st.text}</span>
-              <button type="button" className={`iconBtn sm ${running ? "mirrorSpin" : ""}`} disabled={running || !!busy || !!mirror?.detached}
-                onClick={onSync} aria-label={t("Sync now")}
-                title={running ? t("A round is running") : mirror?.detached ? t("Detached — reattach in the sync settings") : t("Sync now")}>
-                <RefreshIcon size={14} />
-              </button>
-            </div>
-            {st.state === "outdated" ? <div className="popoverHint">{st.title}</div> : null}
-          </div>
-        </div>
-      ) : null}
+      {stateLine}
+      {waitLine}
       {share ? (
         <>
           <IconChoices
@@ -386,7 +490,7 @@ function PublishSection({ state, busy, error, copied, onCopy, canEdit, onPublish
               onPublish(audiencePatch(audience));
             }}
           />
-          <AccessSummary settings={share} kind="page" cloud saving={busy === "update"} />
+          <AccessSummary settings={{ ...share, pages_inside: inside }} kind="page" cloud saving={busy === "update"} />
         </>
       ) : null}
       {errorLine}
@@ -463,6 +567,7 @@ export function SharePopover({
                 {errorLine}
               </>
             )}
+            {kind === "page" ? <ViaLine via={settings?.via} /> : null}
           </Section>
           {shared ? (
             <>
