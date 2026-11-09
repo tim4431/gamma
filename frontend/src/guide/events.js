@@ -7,6 +7,8 @@ export const EVENTS = [
   "window.moved",     // {id, side}: a window was dropped into a dock slot
   "window.closed",    // {id: chat | notes | pdf}: a window was closed with its ×
   "window.shown",     // {id}: a closed window was brought back (the View menu, a palette command)
+  "shellBar.hidden",  // a native app's own server bar was hidden by the shell itself (its chevron, or its key)
+  "shellBar.shown",   // that bar came back, from the View menu's row or the shell
   "popover.opened",   // {name} — a topbar popover opened: add, search, user, share, downloads
   "page.opened",      // {id, title}
   "home.opened",      // returned to the library
@@ -77,9 +79,12 @@ export const guideEvents = {
   },
 };
 
-// Does an emitted event satisfy a step's `advanceOn` (or a trigger)?
+// Does an emitted event satisfy a step's `advanceOn` (or a trigger)? A
+// matched value that is an array means "one of these", as a `requires` fact
+// does (guide/triggers.js): the menu holding the View rows is the View
+// menu's popover, or the account menu's on a phone.
 export function eventMatches(spec, name, payload) {
   if (!spec || spec.event !== name) return false;
   if (!spec.match) return true;
-  return Object.entries(spec.match).every(([k, v]) => payload?.[k] === v);
+  return Object.entries(spec.match).every(([k, v]) => (Array.isArray(v) ? v.includes(payload?.[k]) : payload?.[k] === v));
 }

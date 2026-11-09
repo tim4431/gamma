@@ -1,7 +1,7 @@
 # Onboarding: tours and contextual guides
 
 **Status: the engine, the two manual tours (first paper, AI chat), eighteen
-triggered tours, four setup guides, twenty-seven hints, the welcome deck,
+triggered tours, four setup guides, twenty-eight hints, the welcome deck,
 the clips on twenty-two tour steps, the welcome page with its sample PDF and
 the Sketchbook notebook are built. The first paper tour is also offered to
 every new library, as the welcome deck.** A Getting-started checklist is
@@ -186,9 +186,11 @@ the left, where the dock's own drop preview shows where Chat would land;
 kept. Phone layouts have no dock controls and do not list or offer this
 tour.
 
-**The PDF viewer** and **The notebook view** (`tours/viewer.js`) walk the
-viewer's left edge top to bottom: the PDF's table of contents (`optional`:
-only a PDF with an outline has it), then the tool column. Both viewers'
+**The PDF viewer** and **The notebook view** (`tours/viewer.js`) open on a
+card over the whole tool column — what these buttons are, before any one of
+them, with Next for the tools one by one and Dismiss beside it — and then
+walk the viewer's left edge top to bottom: the PDF's table of contents
+(`optional`: only a PDF with an outline has it), then the tool column. Both viewers'
 columns follow the account's one Viewer tools order, and a tour or hint on
 screen puts every tool on the column, hidden ones too
 ([settings.md](settings.md#bars-order-and-modes)). The zoom step's scene
@@ -198,9 +200,9 @@ default order: Translate (right-click for the
 whole paper; a selected passage is translated by itself) and, on a touch screen
 (`requires: {touch: true}`), the selection mode on a PDF; Paper and Notes
 view in the notebook view. So the
-tours are **siblings**: the zoom and pen steps are `shared`, the same step
-objects in both files, and a user who has finished one tour gets the other
-without them. After the PDF tour the notebook view's is two cards (Paper,
+tours are **siblings**: the column card and the zoom and pen steps are
+`shared`, the same step objects in both files, and a user who has finished
+one tour gets the other without them. After the PDF tour the notebook view's is two cards (Paper,
 Notes view). The other way round, the PDF's tour keeps only the outline
 and Translate. When the paper has neither, the tour is neither offered nor
 listed (a tour with nothing to show, below). "Finished" is the
@@ -242,8 +244,8 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles (a clip of a row sliding in and its handle coming up: `table-grow`), the corner handle (copy, move or delete the whole table), the others with a scene clicking it — on the table just made when the page has several, each card clear of the table |
 | Moving notes around | the eighth note made in a load (`block.created`, `count: 8`: Enter, or the + beside a handle); not on a touch screen, nor in the notebook view | the last note's ⋮⋮ (a scene carrying it down and to the right, where a nested note lands: a drag by `offset`), its menu (a scene clicking it), the + beside it (a scene clicking it, then Alt-clicking it). The handles show on hover and while pointed at (`[data-guide-active]`) |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something, with a scene writing on the page,) the drawing's note block and its caption, tap the pen again for its style (Pen, Ballpoint, Brush, Pencil or Calligraphy), line, Smoothing, colour and width, the eraser and the lasso on one card (a clip of the eraser rubbing out a stray stroke and the lasso carrying a word: `ink-lasso`; Ctrl+Z brings back what was erased), More at the strip's end for shapes and the ruler (a clip of Shapes picked and a box and an arrow drawn: `ink-shape`), then the Text tool (a scene clicking T, then the page); finishing re-arms the pen |
-| The PDF viewer | a PDF is opened (`page.opened`) with its viewer on screen (`viewerTools`), in a load whose offer Arrange windows did not take | the table of contents (if any), zoom and fit, the pen, Translate (if on), the selection mode on a touch screen; after The notebook view, only the outline and Translate |
-| The notebook view | the notebook view is open (`notebookView`, state) | zoom and fit, the pen, the paper, Notes view (a drawing of the one page behind both views); after The PDF viewer, the paper and Notes view |
+| The PDF viewer | a PDF is opened (`page.opened`) with its viewer on screen (`viewerTools`), in a load whose offer Arrange windows did not take | the tool column as a whole, the table of contents (if any), zoom and fit, the pen, Translate (if on), the selection mode on a touch screen; after The notebook view, only the outline and Translate |
+| The notebook view | the notebook view is open (`notebookView`, state) | the tool column as a whole, zoom and fit, the pen, the paper, Notes view (a drawing of the one page behind both views); after The PDF viewer, the paper and Notes view |
 | Pages to write on | a sheet of paper is made (`sheet.created`: a new notebook, **+**, `/note`, or writing low on the last sheet), in the notes view (`notebookView: false`: the notebook view has none of the steps' anchors) | (make one,) the sheet (a scene writing low on it while the next page's outline arrives under it), its pen, the notebook view (a drawing of the one page behind both views). The paper is the notebook view tour's to teach |
 | Background tasks | the account starts a job on the server (`job.started`, from the tasks store's `adopt`, so every kind counts); desktop only — the phone's tray row carries no anchor | the tray button (the job runs on the server and outlives the tab: a clip of the tab closed and opened again on the same job further on, `tasks-outlive`); a task's row with Clear finished, `optional`: a tour started from the menu may find no rows |
 | Organize your library | the library passes 20 pages (`growingLibrary`, state) — past the folders hint, which arrives at ten and only says how to move one page | a page card (a scene right-clicking it), the listing bar's filter box (a scene typing into it; Enter with no match searches inside notes and PDFs), Select (Ctrl+ or Shift+click too; a clip of three cards ticked and filed into a folder together, `library-select`), two centred cards on what each is for — labels help you find papers (words you'd search for, like a method or an author), then, with a drawing of one paper in several folders, folders group papers by topic, can hold other folders, and share a paper without copying it — the Labels view (the same model on screen), Recently viewed, Recently deleted; the last three are `optional`, so a label view or a library with nothing viewed passes over them |
@@ -260,6 +262,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | hint: command palette | the 3rd Ctrl+P of a load (`palette.opened`, `count: 3`), unless the command palette was found (`doneOn: commands.opened`, Ctrl+Shift+P or `>` typed); desktop | the palette's box: `>` or Ctrl+Shift+P runs any command, the unbound ones included |
 | hint: tabs | the 4th page of a load to get a tab (`tab.opened`, `count: 4`); desktop; a tab's menu answers it (`answeredBy: tab.menu`) | the tab strip: right-click pins a tab, or its page to the library |
 | hint: window closed | a window closed with its × (`window.closed {id: chat \| notes \| pdf}`); desktop — the phone's tabs bring its panels back — and retired if the user brings one back first (`doneOn: window.shown`, from the View rows and the palette's toggles); opening View answers it (`answeredBy`), so it never covers the menu's Windows rows | the View button: closed windows wait there |
+| hint: server bar | a native app's own bar was hidden by the shell itself (`shellBar.hidden`, from `app/useShellBar.js`: its chevron, ⌘⇧B on the iPad, Ctrl+Shift+B on Android — never the row, which the person found by using it, and never the shell's first answer, which only says how the bar already stands); retired if the bar comes back (`doneOn: shellBar.shown`, from the row or the shell); opening the menu answers it (`answeredBy: popover.opened {name: ["menu", "user"]}`) | the View button: the bar waits behind its **Server bar** row — More upright, where there is no View button (`phoneAnchor: "header.account"`) |
 | hint: New chat | the first New chat that kept a conversation (`chat.archived {discard: false}`); opening History answers it | History: where it went, and that Alt+click on + discards one instead |
 | hint: PDF switch | the first message sent with the whole PDF (`chat.sent {pdf: true}`) | the composer's PDF switch: figures count, toggle for text only |
 | hint: assistant changes | the first reply that changed the library or notes (`chat.changed`) | the reply's change list: each change with its own undo |
@@ -298,7 +301,9 @@ Rules the engine keeps (`useGuide.js`, `triggers.js`):
   Step-level `requires` filters steps when the tour starts, so two steps
   can be variants of one another (the sharing tour's access step for
   `shareAudience: "anyone"` and for the rest). A required value that is an
-  array means one of its values.
+  array means one of its values, and so does a value in a `match` (the menu
+  holding the View rows is `popover.opened {name: ["menu", "user"]}`: the
+  View menu, or More's on a phone).
 - **After the render.** An event is judged after the render it came with,
   so the facts include what the same action changed (`share.created` sees
   the new link). Only events some trigger listens for are queued.
@@ -891,7 +896,11 @@ Tour fields:
 Step fields:
 
 - `id`, `anchor` (null: a centred card; an anchorless hint sits in the
-  bottom-left corner), `title` (about six words) and `body` (at most one
+  bottom-left corner), `phoneAnchor` (the phone layout's own control for the
+  same thing, as `bodyTouch` words the copy for touch: the server bar's row
+  is in the View menu, whose button a phone — an iPad held upright among
+  them — has not got, so that card points at More there), `title` (about
+  six words) and `body` (at most one
   short sentence, only when the title cannot carry it; `bodyTouch` words it
   for a touch screen). Both take `**bold**`, `*italic*`, `` `code` `` and
   `{key:…}`.
@@ -933,6 +942,7 @@ where the thing happens:
 | `popover.opened` `{name}` | App, when a topbar popover opens |
 | `window.collapsed` `{id, collapsed}`, `window.moved` `{id, side}` | App: a window folded (its title double-clicked or double-tapped) or opened (a press on its folded header), and a window dropped into a dock slot (the Arrange windows tour) |
 | `window.closed` `{id}`, `window.shown` `{id}` | App: a window (`chat`, `notes`, `pdf`) closed with its × on the desktop, and a closed one brought back by the View menu's rows or the palette's Show or hide commands |
+| `shellBar.hidden`, `shellBar.shown` | `app/useShellBar.js`: a native app's own server bar hidden by the shell itself (its chevron or its key — not the View menu's row, which the page posts), and the bar back, from either |
 | `page.opened` `{id, title}`, `home.opened` | App's page open and `goHome` |
 | `tab.opened`, `tab.menu` | App's tab-strip sync, when the open page gets a tab of its own; a tab's right-click menu opening |
 | `nav.pushed`, `nav.back` | App's `pushNav` (a link jump recorded where you were) and `goBackNav` (the Back button or Alt+←) |
@@ -1226,6 +1236,8 @@ frontend/tests/e2e/scenarios/contextualGuide.mjs  Arrange windows (its scenes, t
                                                   and drag); the AI chat tour on the library, a paper,
                                                   a hidden PDF, a phone, and with no AI connected
 frontend/tests/e2e/scenarios/auth.mjs             demo mode: the guest lands and gets the first-run offer (sessionStorage)
+frontend/tests/e2e/scenarios/ipad.mjs             the server bar hint: the shell's own hide points at View,
+                                                  at More upright, and the menu answers the card
 frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made by /table or a paste,
                                                   not merely shown, pointed at the new one), sharing
                                                   (offered, and from the menu with and without a link),
@@ -1264,7 +1276,9 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   `Alt`, `Mod` or `Shift`) and no hint has a scene or a drawing; a
   surface is a registered anchor opened by the same path as the anchors in
   it; the October hints come after their moment and retire when the
-  feature is found; the highlights and notes tours wait for several; the
+  feature is found; the server bar hint comes on the shell's own hide,
+  retires when the bar comes back and is answered by either menu; the
+  highlights and notes tours wait for several; the
   Add, library and handwriting tours end where their new controls are.
 - `guide.mjs`: every `home` anchor without an `open` path is present once;
   the first tour runs end to end from the Tours menu (opening on the add
@@ -1291,7 +1305,7 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   the library's scene right-clicks a card; a hover-only control shows while pointed at;
   the tables tour points at the table just made and its cards keep clear of
   it; the PDF viewer tour is listed and walked on a PDF without a table of
-  contents, and after it the notebook view's offer is two cards that end
+  contents, from its card on the whole column, and after it the notebook view's offer is two cards that end
   as done when the user clicks Notes view; a hint keeps the editor's caret; a `creates` step or an optional step
   whose anchor is there or gone passes without a warning; the Add tour ends
   in the View menu on Import; the library tour's filter scene types nothing

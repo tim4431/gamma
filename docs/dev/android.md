@@ -174,7 +174,9 @@ ported; `PageView` is its `WebShell.swift`.
   over 200 ms while the content's top moves, at once when the system's
   animations are off (the iPad's Reduce Motion), and a faded bar is
   `GONE`, so the page takes every touch. When the person's choice
-  changes, the page hears `shellBar`.
+  changes, the page hears `shellBar`, and a hide the shell did itself has
+  the page's guide say once where the row is
+  ([onboarding.md](onboarding.md), the server bar hint).
 - **The theme.** The page's `theme` message paints the window and the
   WebView's background in its colour, and the colour and the theme's
   name are kept (`gamma.theme.background`, `gamma.theme.name`), so the

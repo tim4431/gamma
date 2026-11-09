@@ -217,6 +217,23 @@ export const windowClosed = {
     title: T("Closed windows wait in **View**: tick one to bring it back.") }],
 };
 
+// The native app's own server bar, hidden by the shell itself (its chevron,
+// or ⌘⇧B on the iPad and Ctrl+Shift+B on Android): nothing of the shell is
+// on screen then, so the way back is the View menu's Server bar row — the
+// More sheet's on a phone and on an iPad held upright, which the card points
+// at instead (`phoneAnchor`). Retired without showing if the bar comes back
+// by itself; opening that menu answers the card, which would otherwise cover
+// the row it names.
+export const shellBar = {
+  id: "shell-bar",
+  version: 1,
+  hint: true,
+  trigger: { event: "shellBar.hidden", doneOn: { event: "shellBar.shown" },
+    answeredBy: { event: "popover.opened", match: { name: ["menu", "user"] } } },
+  steps: [{ id: "shell-bar", anchor: "header.view", phoneAnchor: "header.account", placement: "bottom",
+    title: T("The server bar waits in this menu: **Server bar** brings it back.") }],
+};
+
 // The first New chat that kept a conversation: where it went, and the
 // Alt+click that throws one away instead. Opening History answers it.
 export const newChat = {
@@ -325,5 +342,5 @@ export const tabs = {
 };
 
 export default [mathKeys, blockRefs, quickOpen, back, conflicts, folders, install, approvals, exportPage,
-  cloneSync, connector, cloudAccount, windowClosed, newChat, pdfSwitch, assistantChanges, inkSelection,
+  cloneSync, connector, cloudAccount, windowClosed, shellBar, newChat, pdfSwitch, assistantChanges, inkSelection,
   newNoteKey, slashMenu, pasteAs, mentions, objects, paperDetails, bibLink, commandPalette, settings, tabs];

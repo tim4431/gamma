@@ -307,6 +307,10 @@ web view never gets any of it, and keeps loading server pages only
   - Three controls set `AppModel.barHidden`, kept in `UserDefaults`
     (`gamma.barHidden`): the bar's chevron (`hideBar`), ⌘⇧B, and the web
     app's View → *Server bar* (`shellBar`, [The host contract](#the-host-contract)).
+  - A hide by one of the first two leaves nothing of the shell on screen,
+    so the page's guide says once where the row is
+    ([onboarding.md](onboarding.md), the server bar hint); the row itself
+    needs no telling.
   - The bar still shows while it is needed (`AppModel.barNeeded`): while
     the launcher is up, which its mark closes, and while This iPad
     starts, which its status says. So a launch on This iPad shows the bar
