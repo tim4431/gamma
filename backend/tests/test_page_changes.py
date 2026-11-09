@@ -132,7 +132,7 @@ def test_every_writer_of_a_page_moves_it_in_the_change_log(writer, monkeypatch):
         "edn": ("hls.edn", EDN.encode(), "application/octet-stream"),
         "md": ("hls.md", MD.encode(), "text/markdown")}))["block_id"])
     path = _annotated_pdf(ws, "page-changes-annots.pdf", monkeypatch)
-    _moves(ws, lambda: imports.import_embedded_annotations(ws, zotero, path, False, actor=me) and zotero)
+    _moves(ws, lambda: imports.import_embedded_annotations(ws, zotero, path.name, path, False, actor=me) and zotero)
 
     # a backup restore: a replace moves every restored page — and the folder
     # and label trees, which it rewrites too — and deletes the ones it removes

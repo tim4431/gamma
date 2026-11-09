@@ -55,7 +55,7 @@ export const EVENTS = [
   "search.filtered",  // {kind: folder | label}: a filter chip was made in the search box
   "comment.created",  // {reply}: a comment was stored; reply — in a thread that was there
   "import.finished",  // {source}: this tab's import finished (the server's name for it, importApi.js FORMATS' endpoint)
-  "page.fileReplaced", // {id}: the open page's PDF was replaced from elsewhere (a followed file, another tab)
+  "page.fileReplaced", // {id}: the open page's PDF was replaced from elsewhere (a file pushed from disk, another tab)
   "zotero.connected", // the Zotero account is connected: just now, or seen so by the link dialog
   "zotero.linked",    // {workspace}: a Zotero library was linked (the app then opens its workspace)
   "mcp.connected",    // a new assistant connection showed in Settings → Integrations

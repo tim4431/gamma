@@ -28,7 +28,6 @@ from gamma import notability_export as nexp
 from gamma import notability_map as nmap
 from gamma import notability_write as nw
 from gamma import notebook, storage
-from gamma.db import ws_uploads_dir
 from gamma.notability_archive import parse_numbers
 from gamma.picture import is_picture, normalize_picture
 from gamma.text_box import normalize_text_box
@@ -146,17 +145,17 @@ def view(client, ws: str, pid: str) -> dict:
     strokes are grouped into files are not the page's content and are left
     out."""
     root = tree(client, pid)
-    uploads = ws_uploads_dir(ws)
+    stored = storage.files(ws)
 
     def digest(url: str) -> str:
-        return hashlib.sha256((uploads / url.rsplit("/", 1)[-1]).read_bytes()).hexdigest()
+        return hashlib.sha256(stored(url.rsplit("/", 1)[-1]).read_bytes()).hexdigest()
 
     def notes(nodes):
         return [{"content": n["content"], "children": notes(n.get("children") or [])} for n in nodes
                 if kind_of(n) == "note"]
 
     def surface_of(blocks):
-        files = [inkmod.read_upload(uploads, b["properties"]["ink_url"]) for b in blocks if b["kind"] == "ink"]
+        files = [inkmod.read_upload(stored, b["properties"]["ink_url"]) for b in blocks if b["kind"] == "ink"]
         strokes = [s for f in files for s in inkmod.in_draw_order(f.strokes)]
         out = {"strokes": [{k: v for k, v in inkmod.to_dict(s).items() if k not in ("id", "from")} for s in strokes],
                "boxes": [], "pictures": []}
@@ -175,7 +174,7 @@ def view(client, ws: str, pid: str) -> dict:
         by_page = {}
         for b in children:
             if b["kind"] == "ink":
-                page_no = inkmod.read_upload(uploads, b["properties"]["ink_url"]).space.page
+                page_no = inkmod.read_upload(stored, b["properties"]["ink_url"]).space.page
             elif kind_of(b) in ("text_box", "picture"):
                 page_no = b["properties"].get("pdf_page")
             else:
@@ -434,7 +433,7 @@ def test_a_pdf_page_comes_back_as_it_was_but_for_its_highlights(owner, ws):
     names = zipfile.ZipFile(io.BytesIO(data)).namelist()
     assert sum(1 for n in names if "/PDFs/" in n and n.endswith(".pdf")) == 1
     root = tree(owner, pid)
-    _draft, warnings = nexp.page_draft([{**root, "parent_id": "root"}, *flat(root)], pid, ws_uploads_dir(ws))
+    _draft, warnings = nexp.page_draft([{**root, "parent_id": "root"}, *flat(root)], pid, storage.files(ws))
     assert warnings == ["1 highlight is not in the note: Notability keeps no highlights on a PDF's text"]
 
 

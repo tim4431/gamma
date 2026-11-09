@@ -45,6 +45,7 @@ does not show comes in chunks of its own, through `lazySurface` and
 | PDF margin cards (comments) | beside a page with room and an open thread | nothing |
 | Comments window | with its dock window | the window's frame (`DockWindow`), body empty |
 | Inbox panel | while open | nothing |
+| A vault page's Edit the file (`vault/FileSourceDialog.jsx`) and an opened PDF's Add to library… (`vault/FolderPickerDialog.jsx`) | while open | nothing |
 | pdf.js and its worker | `loadPdfEngine()` in `pdf/PdfViewer.jsx`, awaited just before `getDocument` | the viewer's skeleton and status pill |
 
 Mermaid was already loaded this way (`shared/lib/mermaidRenderer.js`).
@@ -144,7 +145,8 @@ do: [the bundle note](../research/bundle.md#a-month-later-november-2026).
 Built, like the lazy boundaries. A feature's new state, and the effects
 that keep it, go into an owner module beside the feature, never into
 `app/App.jsx`. The owner is a `use…` hook, as the `ink/` owners,
-`comments/useComments.js` and `inbox/useInbox.js` are. State that must
+`comments/useComments.js`, `inbox/useInbox.js` and `vault/useVault.js` (a
+page's synced-vault standing, its banner and the two vault dialogs) are. State that must
 outlive a component, or be read outside React, is a store with listeners
 that components read through `useSyncExternalStore` (`pdf/translateState.js`,
 `recording/recorderStore.js`, `replay/playback.js`,
@@ -153,7 +155,8 @@ that components read through `useSyncExternalStore` (`pdf/translateState.js`,
 - **An owner is tested.** Its rules are a pure module with a node test,
   since the frontend has no component tests: `ink/stripState.js` under
   `useInkStrip.js`, `ink/inkSaver.js` under `useInkSave.js`,
-  `inbox/inboxText.js` under `useInbox.js`.
+  `inbox/inboxText.js` under `useInbox.js`, `vault/vaultState.js` under
+  `useVault.js`.
 - **An owner is narrow.** It takes the few inputs it reads and returns
   state and stable commands. A hook that takes App's variables wholesale
   moves code without giving it an owner.

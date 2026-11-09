@@ -30,7 +30,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from . import collab, join_requests, mentions, workspaces
-from .auth import (LINK_ACTOR_PREFIX, MIRROR_ACTOR, ZOTERO_ACTOR, ZOTERO_CLIENT, ShareScope, share_access,
+from .auth import (DISK_CLIENT, LINK_ACTOR_PREFIX, MIRROR_ACTOR, ZOTERO_ACTOR, ZOTERO_CLIENT, ShareScope, share_access,
                    share_lookup)
 from .blocks_store import new_block_id, page_ancestors
 from .db import account_names, connect_pages_db, connect_users_db, format_stamp, page_now
@@ -246,15 +246,17 @@ def from_ops(ws: str, result: dict, via: str = "") -> None:
     the writer came through. A batch an offline copy wrote (client
     ``sync``: the names were typed on the other server), a mirror's round,
     a Zotero link's writes (client or actor ``zotero``: typed in Zotero, or
-    a conflict's "theirs" taken from there) and a link visitor (no account
-    to name) write no item, though their moves and drops are followed; the
-    AI's batch is its chat owner's. Never raises."""
+    a conflict's "theirs" taken from there), a synced vault's (client
+    ``disk``: typed in a file, not by the account that made the vault) and
+    a link visitor (no account to name) write no item, though their moves
+    and drops are followed; the AI's batch is its chat owner's. Never
+    raises."""
     try:
         _follow(ws, result.get("mentions_moved") or [], result.get("mentions_dropped") or [])
     except Exception as e:  # noqa: BLE001
         log.warning(f"[inbox] the moved mentions of a batch in workspace {ws} were not followed: {e}")
     found, actor = result.get("mentions_added"), result.get("actor") or ""
-    if (not found or not actor or result.get("client") in (SYNC_CLIENT, ZOTERO_CLIENT)
+    if (not found or not actor or result.get("client") in (SYNC_CLIENT, ZOTERO_CLIENT, DISK_CLIENT)
             or actor in (MIRROR_ACTOR, ZOTERO_ACTOR) or actor.startswith(LINK_ACTOR_PREFIX)):
         return
     try:

@@ -360,10 +360,10 @@ class _Canvas:
     images and link boxes each page ends up needing. Every draw call
     paginates itself, so callers never track the page break."""
 
-    def __init__(self, writer: PdfWriter, uploads_dir=None, resolve_ref=None):
+    def __init__(self, writer: PdfWriter, stored=None, resolve_ref=None):
         self.writer = writer
-        self.uploads_dir = uploads_dir
-        self.images = XObjectStore(writer, uploads_dir)
+        self.stored = stored
+        self.images = XObjectStore(writer, stored)
         self.glyphs = GlyphFonts(writer)
         self.resolve_ref = resolve_ref   # [[id]] → {content, page_title} | None
         self.pages = []
@@ -511,7 +511,7 @@ class _Canvas:
         (never enlarged). False when the ink file is missing or unreadable —
         the caller falls back to text."""
         from . import ink as inkmod
-        ink_file = inkmod.read_upload(self.uploads_dir, ink_url)
+        ink_file = inkmod.read_upload(self.stored, ink_url)
         box = inkmod.bounding_box(ink_file) if ink_file else None
         if not box:
             return False
@@ -974,16 +974,17 @@ def _emit_page(cv: _Canvas, page: dict, highlights: bool, notes: bool):
         _emit_block(cv, child, 0, highlights, notes)
 
 
-def render_document(pages, uploads_dir=None, highlights: bool = True,
+def render_document(pages, stored=None, highlights: bool = True,
                     notes: bool = True, resolve_ref=None) -> bytes:
     """Page trees (``markdown_export.build_tree`` nodes) → a PDF document, one
     page starting on a fresh sheet. ``highlights``/``notes`` are the export
-    dialog's switches; ``uploads_dir`` is where ``/api/uploads/…`` refs are
-    read from (without it images degrade to their alt text); ``resolve_ref``
-    (block id → {content, page_title} | None) lets [[refs]] read as their
-    target's text and ``![[embeds]]`` render the synced block's content."""
+    dialog's switches; ``stored`` (``storage.files``) finds the files of
+    ``/api/uploads/…`` refs (without it images degrade to their alt text);
+    ``resolve_ref`` (block id → {content, page_title} | None) lets [[refs]]
+    read as their target's text and ``![[embeds]]`` render the synced
+    block's content."""
     writer = PdfWriter()
-    canvas = _Canvas(writer, uploads_dir, resolve_ref)
+    canvas = _Canvas(writer, stored, resolve_ref)
     for n, page in enumerate(pages):
         if n:
             canvas.page_break()

@@ -113,7 +113,7 @@ their subject is on screen: someone else on the page, a cited reply; so are
 Search button) and **Comments** (a thread, or the Inbox bell). The setup
 guides follow under their own heading, **Setup guides** (设置向导):
 **Zotero link**, **Notability, both ways** and **Connect an assistant**
-for any account but a guest, **Follow a LaTeX build** on a PDF page in the
+for any account but a guest, **Push a LaTeX build to a page** on a PDF page in the
 desktop app (below, "Setup guides"). Hints are never listed. `?guide=` URLs never start a tour, and the chat header has
 no guide button. In Chinese a tour is 教程.
 
@@ -453,7 +453,7 @@ sub-dialogs.
 | Zotero link | the welcome deck's Zotero card (**Set it up**), the Tours menu, or offered after a Zotero library import | **Link a Zotero library…** in Settings → Workspaces (the dialog opening, `dialog.opened {name: "zotero-link"}`, ticks it); connect the account in the dialog (`optional`: the dialog asks only when none is connected, and says when it is, `zotero.connected`); **Link** (a clip of the workspace filling while the sync pill counts: `zotero-link`; `zotero.linked`, emitted before the app opens the linked workspace with a reload); the sync pill (`optional`), from the corner card after the reload |
 | Connect an assistant | the deck's assistants card (**Connect one**), the Tours menu | Settings → Integrations › Connect an assistant (a clip of the command typed, the workspace allowed and a question answered: `assistant-connect`), ticked by `mcp.connected`: the pane reads its list again when the window gets the focus back, and a connection not there before is the event; then a centred card on asking with @Gamma; then Workspace access |
 | Notability, both ways | the deck's Notability card (**Show me how**), the Tours menu, or offered after a Notability import, which has ticked the import | the export in Notability (a drawing: `notability-export`); View → Import… → Notability notes, waiting through the review and the job (`import.finished {source: "notability"}`), its card in the corner while the dialogs are up; the handwriting comes in live; Export → Notability sends a page back |
-| Follow a LaTeX build | the Tours menu, on a PDF page in the desktop app (`desktop`, `hasPdf`, `editable`) | Follow a file on this computer… in the Document menu (`page.follow`, behind `page.document`; the app's own picker tells the page nothing, so the step only explains); the build run again (a clip of the new version arriving and the highlight moving down with its text: `tex-follow`), ticked by `page.fileReplaced` when the page's PDF is replaced from elsewhere; then the title bar's sync panel, which belongs to the desktop shell (`desktop/ui/bar.html`), on a centred card |
+| Push a LaTeX build to a page (id `tex-follow`, and its step ids, kept from when it said "follow": progress is stored by them) | the Tours menu, on a PDF page in the desktop app (`desktop`, `hasPdf`, `editable`) | Push from a file on this computer… in the Document menu (`page.pushFile`, behind `page.document`; the app's own picker makes a synced vault of one file and tells the page nothing, so the step only explains, [synced_vaults.md](synced_vaults.md#the-desktop-app)); the build run again (a clip of the new version arriving and the highlight moving down with its text: `tex-follow`), ticked by `page.fileReplaced` when the page's PDF is replaced from elsewhere; then the title bar's sync panel, which belongs to the desktop shell (`desktop/ui/bar.html`), on a centred card: pause it, sync it or remove the vault there |
 
 The welcome deck's three slides whose feature is set up elsewhere name
 their guide (`setup`) and the words of its way in (`go`); the deck shows the
@@ -968,7 +968,7 @@ where the thing happens:
 | `search.results` `{pdf}`, `search.filtered` `{kind}` | SearchPanel: a query's answers all came (`pdf`: some are text inside a PDF, this one's or the library's), and a folder or label made a chip (`confirmLabel`) |
 | `comment.created` `{reply}` | `comments/useComments.js`'s `add`, once the server stored it (`reply`: in a thread that was there) |
 | `import.finished` `{source}` | `tasks/useAppJobs.js`'s `onJobFinished`: an import this tab started finished (`source`: the server's name for it, `FORMATS`' `endpoint` in `transfers/importApi.js`, which is the card's id but for Markdown's and Notion's `markdown-zip` and `markdown-file`) |
-| `page.fileReplaced` `{id}` | App's remote op apply, when the open page's PDF changed from one file to another elsewhere (a followed file on disk, another tab) |
+| `page.fileReplaced` `{id}` | App's remote op apply, when the open page's PDF changed from one file to another elsewhere (a file pushed from disk, another tab) |
 | `zotero.connected` | ZoteroAccountRow's `connected`, and ZoteroLinkDialog whenever it shows the account connected |
 | `zotero.linked` `{workspace}` | SettingsMirrors' `submitLink`, before the app switches to the linked workspace |
 | `mcp.connected` | IntegrationSettings' `refresh`, when the list holds a connection the last read did not |

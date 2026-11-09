@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { generateKeyBetween } from "fractional-indexing";
 import {
-  NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
+  NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, duplicable, filedIn, findNamed, findPageForUrl,
   firstFolderPath, folderAtPath, folderChain, folderCompletion, folderEntries, folderInside, folderMatches,
   folderNeighbour, folderPath, folderPathHolds, folderPathNames, folderPosition, folderPositions, folderSubtree, folderTargets,
   formatFullDate, formatRelativeTime, formatShortDate,
@@ -28,6 +28,12 @@ const listing = {
     { id: "rev", content: "Review", position: k2, properties: {}, children: [] },
   ] },
 };
+
+test("a page reading a file on this computer is left out of what can be duplicated", () => {
+  const pages = new Map([["paper", { _linkedFile: false }], ["opened", { _linkedFile: true }]]);
+  assert.deepEqual(duplicable(["paper", "opened", "unlisted"], pages), ["paper", "unlisted"]);
+  assert.deepEqual(duplicable(["opened"], pages), []);
+});
 
 test("libraryTree reads the folders by nesting and order, the labels flat", () => {
   const tree = libraryTree(listing);

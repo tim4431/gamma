@@ -137,7 +137,9 @@ or parent is gone, 404), `moved` (it lives in another page now, 403
 "outside this page") or `cycle` (the move would make one, 400). A client can
 then tell a race from a malformed batch and drop just that op. The statuses
 match what a server without conflict codes answers, so an offline copy's
-engine can match on them against a server of any version.
+engine can match on them against a server of any version. A synced vault's
+plan adds `stale` (409, no `index`): the page's log moved past the seq the
+plan was made at, so the vault plans again from what the page holds now.
 
 Lone UTF-16 surrogates (half an emoji) in any string of a batch are stored
 as U+FFFD (`ops.storable`, also on the block create and update bodies).
@@ -183,11 +185,17 @@ short").
 `apply_ops(conn, page_id, ops, actor=, client=, share_scoped=, cursor=, batch_id=)` applies and
 commits; `after_commit(ws, conn, result)` does the derived-data work and
 publishes; `commit_ops(ws, page_id, ops, actor=)` is both on a fresh
-connection; `apply_batches(conn, [(page_id, ops), …], actor=, client=)`
+connection; `apply_batches(conn, [(page_id, ops), …], actor=, client=, batch_id=)`
 applies several pages' batches in the caller's transaction, each logged on
-its page (the caller commits, then `after_commit`s each); `after_commits(ws,
+its page, `batch_id` on the first (a synced vault's journal looks for it
+after a crash; the caller commits, then `after_commit`s each); `after_commits(ws,
 conn, results)` is that loop with the folder-share check run once for the
-lot (the AI page tools, a folder or label deletion, a revert); `ensure_filing(ws,
+lot (the AI page tools, a folder or label deletion, a revert);
+`commit_plan(ws, page_id, ops, actor=, client=, batch_id=, seq=)` is a synced
+vault's plan from another computer (`POST /pages/{id}/plan`): up to
+`MAX_PLAN_OPS` ops in one transaction, in `MAX_OPS` batches, refused whole
+with conflict `stale` (409) when the page's log moved past `seq`, and a
+`batch_id` the log holds answered from its row; `ensure_filing(ws,
 conn, paths=, labels=, under=, actor=, client=)` makes the folders and
 labels a writer files by name where they are missing (one committed batch
 per tree); `tree_deletion(conn, tree, id)` / `delete_tree(ws, conn, tree,
@@ -256,7 +264,10 @@ deleted's `deleted_by`); the log, the batches on the socket and the change
 feed carry it as stored. `client` the tab's id, `"ai"` (the agent's tools),
 `"sync"` (a mirror's round and the pushes it sends; its `parent_page`
 sets skip the cycle check, "Ops" above), `"zotero"` (a Zotero
-link's writes, [zotero_sync.md](zotero_sync.md#writing-to-gamma)), `"revert"` (the
+link's writes, [zotero_sync.md](zotero_sync.md#writing-to-gamma)), `"disk"`
+(`auth.DISK_CLIENT`: a synced vault's writes, actor the account that made
+the vault, which write no Inbox item and wake no hot round of the vault's
+own, [synced_vaults.md](synced_vaults.md#a-round)), `"revert"` (the
 user taking an agent change back from the chat, [ai_tools.md](ai_tools.md)
 "Reverting a note change") or `"meta"` (the
 paper-metadata worker's property writes — the one content write opening a
@@ -509,7 +520,12 @@ Messages:
   catching up. `inbox` (no fields): something new is in the account's Inbox;
   sent to every page socket of the recipient's account, whatever room it is
   in (`collab.publish_account`, below), and the tab refetches its Inbox
-  count. A client ignores a message type it does not know.
+  count. `vault` (no fields): a synced vault's round touched the page, so
+  the desktop app's page refetches its standing with this computer, as it
+  does on every `hello` after a reconnect (`onVault`)
+  (`GET /api/folder-links/page/{id}`,
+  [synced_vaults.md](synced_vaults.md#the-routes)). A client ignores a
+  message type it does not know.
 - client → server: `cursor {block, anchor, head}` (`anchor`/`head` = -1
   when no editor is open on that block) and `ink-live`. **Writes never
   travel over the socket**: they are `POST /api/pages/{id}/ops`, so auth

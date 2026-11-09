@@ -154,22 +154,59 @@ All state is SQLite + files on disk under a data directory (env
     `created_at`. A unique index on `(owner, library)`: an owner links a
     library once. The row goes with its workspace and its owner's account
     (migration step 45; [zotero_sync.md](zotero_sync.md#data));
-  - `folder_links` — what the desktop app's own server keeps in step with
-    this computer's disk, by `kind`: a folder kept as a directory
-    (`folder`: workspace, folder, a block id or `root`, the directory's
-    path, whether notes files are written, whether PDFs changed there go
-    back, `push`) or a page that follows one PDF file (`file`: workspace,
-    `page_id`, the file's path, `push` always 1, and in `state` what its
-    rounds know of the file). Both keep the change-log seq the last round
-    saw and its status, and for a folder or page on another Gamma server
-    that server's address, a token of it (Fernet-encrypted like the
-    mirrors') and the token's id ([folder_sync.md](folder_sync.md)
-    "Folders kept by the desktop app");
+  - `folder_links` — the synced vaults of the desktop app's own server, a
+    row each, the scope by `kind`: a folder and a directory (`folder`:
+    workspace, folder, a block id or `root`, the directory's path, whether
+    notes files are written) or one PDF pushed to a page (`file`:
+    workspace, `page_id`, the file's path). The direction is `pull`
+    (1: Gamma's changes reach the disk; 0 on a file vault, which Gamma
+    never writes) and `push` (0 off, 1 PDFs, 2 everything; 1 on a file
+    vault; the API's words `off`, `pdfs`, `everything`). `state` holds the
+    vault marker's id (`state.vault`) for a folder vault and what a file
+    vault's rounds know of its file. Each keeps the change-log seq the last
+    round saw and its status, and for a folder or page on another Gamma
+    server that server's address, a token of it (Fernet-encrypted like the
+    mirrors') and the token's id. What this computer knows of a vault's
+    files is in `vaults.db` (below), never here
+    ([synced_vaults.md](synced_vaults.md#what-lands-on-disk));
   - `jobs` — background jobs (exports, backups, restores, imports, the
     search indexer): owner (an account id, `''` for a workspace's own
     work), workspace, kind, parameters, state, last progress, result, error, the produced
     file's name, type and size, and the server process that runs it. Kept
     24 hours after they end ([tasks.md](tasks.md)).
+- `vaults.db` — global, and only on the desktop app's own server
+  (`config.folder_links_enabled`; `db.connect_vaults_db` makes it, and every
+  caller asks first): what this computer knows of its synced vaults and of
+  the PDFs read where they are ([synced_vaults.md](synced_vaults.md)). It
+  stays out of every workspace's files, so a workspace backup never carries
+  a path that a restored server could be made to read; a server backup and
+  the integrity check take it beside users.db, whose `folder_links` rows it
+  names. Its statements (`db.VAULTS_SCHEMA`) are `CREATE ... IF NOT EXISTS`,
+  applied as a connection opens and never migrated. A file id is text: it
+  can pass 63 bits. Tables:
+  - `linked_files` — PDFs read where they are, by `(ws, name, path)`: the
+    stored name a page reads them by (`<doc_id>.pdf`), the path, the size,
+    time and file id when last read, the page (`''` for a vault's picture),
+    the account that opened the file, whom a change of it is made as
+    (`actor`), and why the last
+    replacement placed no highlights (`relocation_error`). One name may
+    have several paths; a path has one page;
+  - `vault_files` — a vault's files as the last round left them, one row a
+    path (`link_id`, `path`; a trashed file's path is its trash path, with
+    `was` where it lived): the page, the `kind` (`notes`, `pdf` or
+    `picture`), the hash, size, time and file id and when they were read
+    (`read_at`, for the racy rule), a note's base `text`, its `nodes`
+    (`[{id, g, m?, a?}]` in document order, `a` the block's anchor) and
+    `gone` (the blocks the file dropped, `[{id, hash, anchor, props,
+    at}]`), the `title` and first
+    filing (`folder`) the base recorded, the page's change-log `seq` it is
+    level with, whether pull made the file (`ours`), when a scan first
+    missed it (`missing_since`), why it could not be written (`problem`)
+    and the journal `pending` (JSON `{token, ...}`)
+    ([synced_vaults.md](synced_vaults.md#a-round));
+  - `vault_dirs` — a vault's directories, their folders and file ids;
+  - `vault_history` — the bytes a write replaced, zlib-compressed, kept a
+    few days.
 - `jobs/` — the files background jobs produce (`<id>/artifact`, downloaded
   through `/api/jobs/{id}/download`) and the uploads they read
   (`incoming/`). Swept with their rows; not metered against any quota and
@@ -593,13 +630,28 @@ track of the ones nothing uses.
   PDF, the AI chat's re-download) and `storage.put_path` (a file spooled
   to `.partial/` under such a name: the proxy's cache, an off-site pull).
   `storage.find_upload_file` gives a stored file's path to read
-  (`pdf_text`'s MuPDF reads, the zip writers, the PDF exporters); code
-  written against a directory of files (the exporters, `ink.read_upload`,
-  the PDF writers) gets
-  `db.ws_uploads_dir(ws)`. The presence checks, the GC's listing and
+  (`pdf_text`'s MuPDF reads, the zip writers, the PDF exporters); a module
+  that reads stored files as it works (the exporters, `ink.read_upload`,
+  the PDF writers, a mirror's ink merge) is handed them as one callable,
+  `storage.files(ws)` (`name -> Path | None`), and builds no path of its
+  own. The presence checks, the GC's listing and
   purge, the quota, the backup zips and a workspace's deletion call the
-  store directly. A bucket only ever holds the files' off-site copies
+  store directly; only what works on the directory whole (a server backup,
+  the off-site copy, a migration) goes past it. A bucket only ever holds
+  the files' off-site copies
   ([debugging.md](debugging.md#off-site-copies-in-a-bucket)).
+- **Linked files.** On the desktop app's own server a name may instead be
+  a PDF read where it is on this computer (`vaults.db` `linked_files`,
+  [synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)).
+  `open_path`, and what reads through it, find one when its size and time
+  are as recorded; one whose stat moved reads as nothing and the read tells
+  `gamma/linked_files.py` (`storage.linked_moved`), whose worker hashes it
+  and replaces the page's PDF. `storage.readable` asks whether a name can
+  be read at all; `exists`, `size`, `stat`, `touch` and `list` stay
+  "stored here", which keeps a linked file out of the quota, the orphan
+  purge, backups, the off-site copy and a mirror. `storage.linked_stat` is
+  the one look at such a file: at most one stat a path a second, and a disk
+  that does not answer is offline for 30 seconds with no look at all.
 - **Written whole.** Every writer above goes through `put`, and `put`
   through `storage.write_atomic`. The bytes go to a temp file in
   `uploads/.partial/`, are flushed to disk and renamed over the name. A
@@ -687,7 +739,7 @@ track of the ones nothing uses.
   writes it for the file a page let go of when it was asked
   `keep_old_days` ([api.md](api.md) `PUT /pages/{page_id}/attachment`),
   which every PDF sent back from disk asks, for a day
-  ([folder_sync.md](folder_sync.md#sending-pdfs-back)). A file nothing
+  ([synced_vaults.md](synced_vaults.md#a-round)). A file nothing
   references then gets its `upload_orphans` record at once, past no upload
   grace (it was attached, not just uploaded). A file only highlights hold
   keeps its row for when the last of them goes, and then goes after its own

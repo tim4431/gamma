@@ -256,6 +256,12 @@ function resealed(s, kept) {
 //                                     the socket (re)joined or a poll run began or
 //                                     came round again (msg null): refetch the
 //                                     page's threads (comments/useComments.js)
+//       onVault()                     a synced vault's round touched the page
+//                                     ({t: "vault"}), or the socket (re)joined or
+//                                     a poll run began or came round again and a
+//                                     message may have been missed: refetch how
+//                                     it stands with this computer
+//                                     (vault/useVault.js)
 //     onRemoteOps also gets the base the ops were applied to (`before`, what
 //     the server held before them), for the undo history's text rebase.
 //   onPeers(peers), onMe(me) — presence changes (the hook's React state); me is
@@ -1145,16 +1151,19 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     // A page in Recently deleted answers 404: this one is back (restored).
     if (s.gone) { s.reloading = true; o().onReload?.(s.pageId); }
     takeLog(s, d);
-    // Comments have no op log: the threads are refetched as a run begins
-    // (a hello's refetch) and every POLL_COMMENTS_EVERY answers after.
+    // Comments and a vault's nudges have no op log: the threads and the
+    // page's standing with this computer are refetched as a run begins (a
+    // hello's refetch) and every POLL_COMMENTS_EVERY answers after.
     if (st.pollFresh) {
       st.pollFresh = false;
       st.pollAnswers = 0;
       o().onComments?.(null);
+      o().onVault?.();
       retrySaves(); // the server answers again: a save waiting goes now
     } else if (++st.pollAnswers >= POLL_COMMENTS_EVERY) {
       st.pollAnswers = 0;
       o().onComments?.(null);
+      o().onVault?.();
     }
     armPoll(POLL_MS);
   }
@@ -1293,8 +1302,9 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
             if (cursor.latest) { cursor.pending = cursor.latest; armCursor(); }
             // Connected again: a save waiting for its retry goes now.
             retrySaves();
-            // Comments written while the socket was away reach no nudge.
-            if (session.pageId === pageId) o().onComments?.(null);
+            // Comments written while the socket was away reach no nudge,
+            // nor does a vault's round that touched the page meanwhile.
+            if (session.pageId === pageId) { o().onComments?.(null); o().onVault?.(); }
             break;
           }
           case "join":
@@ -1325,6 +1335,9 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
             break;
           case "comments":
             o().onComments?.(msg);
+            break;
+          case "vault":
+            o().onVault?.();
             break;
           case "inbox":
             onInbox?.();

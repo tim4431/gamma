@@ -9,7 +9,8 @@
 // also offers sending Gamma's text anyway says so (`send`); a Zotero text
 // kind whose `result` is the row's own sentence, not a text, says so
 // (`says`); one whose Gamma side a receive-only link keeps here alone has
-// a sentence for that row too (`kept`, `keptHere`). Pure:
+// a sentence for that row too (`kept`, `keptHere`). A synced vault's kind,
+// whose sides are this file and Gamma, says so (`vault`). Pure:
 // tests/conflictKinds.test.mjs.
 import { T, t, tn } from "../shared/i18n/i18n.js";
 
@@ -34,6 +35,12 @@ export const MERGE_KIND = {
   zotero_deleted_edited: { short: T("Kept: edited after a delete"), long: T("One side deleted this while the other edited it; the edit won, so it was kept on both sides."), icon: "alert", zotero: true },
   zotero_locked: { short: T("Another member's annotation"), long: T("This annotation belongs to another member of the Zotero group, so Gamma sends nothing of your change to it; what became of it is below."), icon: "alert", zotero: true },
   zotero_rejected: { short: T("Change not synced"), long: T("Zotero did not accept this change, or Gamma could not apply Zotero's; why is below. It is tried again once it changes."), icon: "alert", zotero: true },
+  // A synced vault's (gamma/vault_sync.py, docs/research/vaults.md): the
+  // file and Gamma both changed a block since the last sync and their edits
+  // did not merge, so the file's text won and Gamma's is here to take back.
+  // Its sides are this file and Gamma (`vault`), each shown against the
+  // text before either edit.
+  file_won: { short: T("Changed in the file and in Gamma"), long: T("The file and Gamma both changed this block since the last sync; the file's text was kept, and Gamma's is here."), icon: "alert", textual: true, two: true, vault: true },
 };
 
 // The rows of a Zotero collection: their page is the folders tree
@@ -83,6 +90,12 @@ export function isTextual(conflict) {
 // A Zotero link's row: its sides are Gamma and Zotero.
 export function isZotero(conflict) {
   return Boolean(MERGE_KIND[conflict.kind]?.zotero) || String(conflict.kind || "").startsWith("zotero_");
+}
+
+// A synced vault's row: its sides are this file and Gamma, and it is read
+// and resolved under the vault's link (/api/folder-links/{id}/conflicts).
+export function isVaultConflict(conflict) {
+  return Boolean(MERGE_KIND[conflict?.kind]?.vault);
 }
 
 // What the remote's merge of a drawing did (an `ink_merged` row: `theirs`

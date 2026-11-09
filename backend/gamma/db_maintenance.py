@@ -31,9 +31,10 @@ _optimized_lock = threading.Lock()
 
 def tick() -> dict:
     """One round. Returns what it did: ``evicted`` (idle connections
-    closed), ``truncated`` and ``optimized`` (the databases, ``users.db`` or
-    ``<workspace>/<file>``). Logs one line when it truncated or optimized
-    anything; a round that only closed idle connections is not worth one."""
+    closed), ``truncated`` and ``optimized`` (the databases, ``users.db``,
+    ``vaults.db`` or ``<workspace>/<file>``). Logs one line when it truncated
+    or optimized anything; a round that only closed idle connections is not
+    worth one."""
     evicted = db.evict_idle()
     truncated = [_label(path, ws) for path, ws in _databases()
                  if _wal_size(path) > WAL_TRUNCATE_BYTES and truncate_wal(path)]
@@ -46,13 +47,14 @@ def tick() -> dict:
 
 
 def _databases() -> list[tuple[str, str]]:
-    """``(path, ws)`` of users.db and of every workspace's two databases."""
-    return [(str(db.USERS_DB), "")] + [(db.ws_db_path(ws, name), ws)
-                                       for ws in db.workspace_ids() for name in ("pages.db", "data.db")]
+    """``(path, ws)`` of users.db, of vaults.db (a file that may not exist,
+    which costs a failed stat) and of every workspace's two databases."""
+    return [(str(db.USERS_DB), ""), (str(db.VAULTS_DB), "")] + [
+        (db.ws_db_path(ws, name), ws) for ws in db.workspace_ids() for name in ("pages.db", "data.db")]
 
 
 def _label(path: str, ws: str) -> str:
-    return f"{ws}/{os.path.basename(path)}" if ws else "users.db"
+    return f"{ws}/{os.path.basename(path)}" if ws else os.path.basename(path)
 
 
 def _wal_size(path: str) -> int:
@@ -96,7 +98,7 @@ def _optimize(path: str, ws: str) -> bool:
         return False
     try:
         if not ws:
-            conn = db.connect_users_db()
+            conn = db.connect_vaults_db() if path == str(db.VAULTS_DB) else db.connect_users_db()
         elif os.path.basename(path) == "pages.db":
             conn = db.connect_pages_db(ws)
         else:

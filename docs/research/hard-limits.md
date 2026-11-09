@@ -99,7 +99,7 @@ Ranked by how likely a user meets them.
 | PDFs attached to a chat message | 15 MB each, 4 a message | `chat/ChatDock.jsx`, `ai_context.py` | A fifth is ignored without a word |
 | SVG and Mermaid fences | 50,000 characters; 500 Mermaid edges | `shared/lib/svgSanitize.js`, `shared/lib/mermaidRenderer.js` | An exported matplotlib or draw.io SVG is refused |
 | Sign-in and link-visitor rate limits | Per IP | `ratelimit.py` | Behind a proxy without `FORWARDED_ALLOW_IPS` every client shares one address |
-| Folders on disk (desktop) | 10 per workspace | `folder_links.py` | "A workspace keeps at most 10 folders on disk." |
+| Synced vaults (desktop) | 10 of folders and 50 of files per workspace | `folder_links.py` | "A workspace has at most 10 synced vaults of folders." |
 | The desktop's server start | 60 s | `desktop/lib/sidecar.js` | A long migration after an upgrade may pass it (not tested) |
 | The search index | The first 20k characters of a block or a PDF page | `db.py`, `routers/search.py` | The AI's and MCP's search miss later text (Ctrl+F reads it all) |
 | The Markdown zip report | The first 200 warnings | `markdown_zip_import.warn` | Later pages of a large vault lose their warnings and "missing" marks |

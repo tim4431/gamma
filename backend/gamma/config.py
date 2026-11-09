@@ -12,6 +12,11 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = Path(os.environ.get("GAMMA_DATA_DIR", "") or _REPO_ROOT / "data")
 USERS_DB = DATA_DIR / "users.db"
+# What this computer knows of its synced vaults and of the PDFs read where
+# they are (gamma/linked_files.py): only the desktop app's own server has it
+# (``folder_links_enabled``), and never in a workspace's files, so no backup of
+# a workspace carries a path.
+VAULTS_DB = DATA_DIR / "vaults.db"
 WORKSPACES_DIR = DATA_DIR / "workspaces"
 # Snapshots and backup state: the migration runner's pre-upgrade copies
 # (gamma/backups.py), workspace snapshots and their scheduled tasks
@@ -36,6 +41,14 @@ def folder_links_enabled() -> bool:
     server it runs as the user on the user's own computer. Read when asked,
     so a test can turn it on."""
     return _env_on("GAMMA_FOLDER_LINKS")
+
+
+def shell_secret() -> str:
+    """What the desktop app sends as ``X-Gamma-Shell`` on the routes that
+    take a path on this computer (routers/folder_links.py): a page of Gamma
+    never names a path, the shell's native dialog does. GAMMA_SHELL_SECRET,
+    made anew at each start of the app; empty (dev, tests) means no check."""
+    return os.environ.get("GAMMA_SHELL_SECRET", "")
 
 
 # Keep these reads lazy, as before: server settings and publisher sessions

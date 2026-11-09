@@ -257,7 +257,7 @@ function trimDocs() {
 // changes (upload names are content hashes; proxy-saved files are written
 // once), so serving from disk is safe.
 const DISK_CACHE_TTL_MS = 30 * 24 * 3600 * 1000; // one month
-const DISK_CACHE_MAX = 30; // papers kept on disk
+const DISK_CACHE_MAX = 30; // papers in the disk cache
 // ... and at most this many bytes of them together: thirty scanned books
 // would otherwise be gigabytes. The sizes live in a store of their own
 // ("meta"), so the eviction walk never loads a buffer.

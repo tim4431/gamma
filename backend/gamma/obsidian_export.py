@@ -41,7 +41,7 @@ from .blocks_store import (FOLDERS, LABELS, PATH_SEP, filing, folder_paths, fold
                            load_props, page_attachment, page_parents, top_of)
 from .highlights import is_highlight, is_link, page_of
 from .markdown_export import _BLOCK_REF_RE, _link_label, block_text, resolve_block_links
-from .markdown_import import _FENCE_LINE_RE, EMPTY_ITEM_RE, _fence_marks, shuts_code
+from .markdown_import import _FENCE_LINE_RE, EMPTY_ITEM_RE, LIST_BLOCK_RE, item_rest, yaml_list, yaml_text
 from .note_markup import obsidian_image_sizes
 from .notebook import is_sheet
 from .picture import is_picture, markdown_of, picture_page
@@ -55,27 +55,12 @@ _HEADING_RE = re.compile(r"^#{1,6}\s+\S")
 # Blocks whose anchor must sit on its own line after them (Obsidian's rule
 # for lists, quotes, callouts, tables and fences).
 _COMPOUND_RE = re.compile(r"^(```|~~~|>|\||\$\$|[-*+] |\d+[.)] )")
-# A block that is a list item as it stands (the importer's list marker).
-_LIST_BLOCK_RE = re.compile(r"[-*+] |\d{1,4}[.)] ")
 _MARKER_RE = re.compile(r"[^A-Za-z0-9-]")
 _RESERVED_NAME = re.compile(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])")
 # How a note's first line opens front matter (``markdown_import._FRONTMATTER_RE``).
 _OPENS_FRONT_MATTER_RE = re.compile(r"---[ \t]*\n")
 
 APP_JSON = json.dumps({"attachmentFolderPath": "attachments"}, indent=2) + "\n"
-
-
-def _code_closer(line, closer):
-    """What closes the fence or ``$$`` block open at a block's left edge after
-    ``line``, as the importer reads one: ``closer`` is that mark before it,
-    None outside one."""
-    if closer == "$$":
-        return None if "$$" in line else closer
-    if closer:
-        return None if shuts_code(line, closer, 0) else closer
-    if _FENCE_LINE_RE.match(line) and not line[0].isspace():
-        return _fence_marks(line)
-    return "$$" if line.startswith("$$") and "$$" not in line[2:] else None
 
 
 def vault_name(title: str) -> str:
@@ -168,19 +153,6 @@ def unique_name(used: set, directory: str, stem: str, ext: str) -> str:
 def anchor_marker(block_id: str) -> str:
     """A block id as an Obsidian block identifier (letters, digits, dashes)."""
     return _MARKER_RE.sub("-", block_id or "")
-
-
-def _yaml_text(value: str) -> str:
-    """A scalar for the front matter, quoted when YAML would misread it."""
-    v = str(value)
-    if re.search(r'[:#\[\]{}&*!|>\'"%@`,]|^\s|\s$', v) or v.lower() in ("true", "false", "null", "yes", "no") \
-            or re.match(r"^[\d.+-]", v) and not re.match(r"^\d{4}$", v):
-        return json.dumps(v, ensure_ascii=False)
-    return v
-
-
-def _yaml_list(key: str, items) -> list:
-    return [f"{key}:"] + [f"  - {_yaml_text(i)}" for i in items]
 
 
 class VaultContext:
@@ -324,28 +296,28 @@ def render_vault_page(page, ctx: VaultContext, tags=(), highlights=True, notes=T
     if ctx.id_key:
         fm.append(f"{ctx.id_key}: {page_id}")
     if vault_name(title) != title:
-        fm.append(f"title: {_yaml_text(title)}")
+        fm.append(f"title: {yaml_text(title)}")
     if parent := ctx.parents.get(page_id):
         fm.append(f'parent: "[[{ctx.link_text[parent]}]]"')
     if tags:
-        fm += _yaml_list("tags", dict.fromkeys(tags))
+        fm += yaml_list("tags", dict.fromkeys(tags))
     aliases = props.get("aliases")
     if isinstance(aliases, list) and aliases:
-        fm += _yaml_list("aliases", [str(a) for a in aliases if str(a).strip()])
+        fm += yaml_list("aliases", [str(a) for a in aliases if str(a).strip()])
     pdf_leaf = ctx.pdf_leaf(page_id)
     if pdf_leaf:
         fm.append(f'source: "[[{pdf_leaf}]]"')
     elif attachment := page_attachment(props):
-        fm.append(f"source: {_yaml_text(attachment['url'])}")
+        fm.append(f"source: {yaml_text(attachment['url'])}")
     meta = props.get("meta")
     if isinstance(meta, dict):
         if meta.get("doi"):
-            fm.append(f"doi: {_yaml_text(meta['doi'])}")
+            fm.append(f"doi: {yaml_text(meta['doi'])}")
         authors = meta.get("authors")
         if isinstance(authors, list) and authors:
-            fm += _yaml_list("authors", [str(a) for a in authors])
+            fm += yaml_list("authors", [str(a) for a in authors])
         elif authors:
-            fm += _yaml_list("authors", [a.strip() for a in str(authors).split(",") if a.strip()])
+            fm += yaml_list("authors", [a.strip() for a in str(authors).split(",") if a.strip()])
         if meta.get("year"):
             fm.append(f"year: {meta['year']}")
 
@@ -525,11 +497,8 @@ class _Renderer:
             if link := self._box_link(props, on_sheet):
                 lines.append(f"{pad}  {link}")
         elif content:
-            # A list block is its own item, with its one marker. Its next lines
-            # are laid out already: only text at its left edge moves under
-            # the marker, where it stays in the item, and a fence or $$ block
-            # at that edge moves whole, whatever its lines look like.
-            own = _LIST_BLOCK_RE.match(content)
+            # A list block is its own item, with its one marker.
+            own = LIST_BLOCK_RE.match(content)
             width = len(own.group()) if own else width
             under = " " * width
             clines = content.split("\n")
@@ -539,11 +508,7 @@ class _Renderer:
             lines.append(f"{pad}{'' if own else '- '}{clines[0]}" + (f" ^{marker}" if marker and not alone else ""))
             if alone:
                 lines.append(f"{pad}{under}^{marker}")
-            closer = None
-            for c in clines[1:]:
-                laid_out = own and not closer and (not c or c[0].isspace() or _LIST_BLOCK_RE.match(c))
-                lines.append(f"{pad}{c}" if laid_out else f"{pad}{under}{c}")
-                closer = _code_closer(c, closer)
+            lines += item_rest(clines[1:], own, pad, under)
             link = self._box_link(props, on_sheet)
             if link:
                 lines.append(f"{pad}{under}{link}")

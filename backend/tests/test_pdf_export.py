@@ -1392,7 +1392,7 @@ def test_export_pdf_highlights_switch(guest):
 def test_render_notes_draws_math_and_images(guest):
     """A note is markdown with LaTeX and image refs, not plain text: the card
     typesets the math and draws the picture, never the source."""
-    from gamma.db import ws_uploads_dir
+    from gamma import storage
     from gamma.pdf_notes import render_notes
 
     png = _blank_png(24, 16)
@@ -1403,7 +1403,7 @@ def test_render_notes_draws_math_and_images(guest):
     out, drawn = render_notes(_blank_pdf(), [{
         "position": _position(x1=120, y1=300, x2=420, y2=320),
         "blocks": [(0, f"weight $\\phi_j$ over $$\\frac{{\\sum_i x^2}}{{n}}$$\n![shot]({src})")],
-    }], uploads_dir=ws_uploads_dir(workspace_of(guest_name())))
+    }], stored=storage.files(workspace_of(guest_name())))
     assert drawn == 1
 
     text, kinds = _page_text(out), _object_kinds(out)

@@ -1874,6 +1874,18 @@ def _v49_content_reports(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _v50_folder_links_pull(conn: sqlite3.Connection) -> None:
+    """``folder_links`` gains ``pull``, whether Gamma's changes reach the
+    disk: on, what a folder link has always done, off on a file link, which
+    Gamma never writes. ``push`` keeps its column and may now say 2,
+    everything. Re-runnable: the column is added only where ``_columns()``
+    lacks it. No workspace is touched."""
+    if "pull" not in _columns(conn, "folder_links"):
+        conn.execute("ALTER TABLE folder_links ADD COLUMN pull INTEGER NOT NULL DEFAULT 1")
+    conn.execute("UPDATE folder_links SET pull = 0 WHERE kind = 'file'")
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1898,6 +1910,7 @@ STEPS = [
     (45, "zotero_links", _v45_zotero_links),
     (46, "folder_links_push", _v46_folder_links_push),
     (49, "content_reports", _v49_content_reports),
+    (50, "folder_links_pull", _v50_folder_links_pull),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

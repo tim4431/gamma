@@ -19,10 +19,13 @@ import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 // the iPad and Android apps) in `hostOnly(flags, entry)`, a flag or the list
 // of flags its row is shown under: the host's own, or those hostCaps
 // derives from them. One shown in every app takes `platform`, which every
-// host declares (Account & sync › Delete Gamma Cloud account).
+// host declares (Account & sync › Delete Gamma Cloud account). One only the
+// desktop app reads (Reading › PDFs › Add opened PDFs to the library) is
+// wrapped in `desktopOnly`.
 const e = (pane, label, section, hint, keywords, target) => ({ pane, label, section, hint, keywords, target: target || label });
 const admin = (entry) => ({ ...entry, admin: true });
 const hostOnly = (flags, entry) => ({ ...entry, host: [].concat(flags) });
+const desktopOnly = (entry) => ({ ...entry, desktop: true });
 const entries = [
   e("server", t("Public server URL"), t("Assistant connections"), t("The address assistants use to reach Gamma; HTTPS unless localhost"), "public address HTTPS remote proxy OAuth MCP assistant sign-in"),
   e("appearance", t("Theme"), null, t("System, light, dark and five more"), "dark light gamma amber gold sepia solarized gray system colors"),
@@ -50,6 +53,8 @@ const entries = [
   e("reading", t("Open-access fallback"), t("PDFs"), t("Fetch a free copy when a publisher blocks the PDF"), "download PDF publisher free library"),
   e("reading", t("Auto-fetch metadata"), t("PDFs"), t("Title, authors and BibTeX on first open"), "title authors BibTeX DOI library"),
   e("reading", t("Save external PDFs"), t("PDFs"), t("Keep a server copy of PDFs opened from a URL"), "download storage offline URL library"),
+  desktopOnly(e("reading", t("Add opened PDFs to the library"), t("PDFs"), t("In the desktop app, a PDF opened from this computer goes into the library"),
+    "desktop open with file computer disk opened files read in place store library")),
   e("reading", t("Apply a rough match from"), t("Replacing a PDF"), t("How alike a changed passage must read for its highlight to move"),
     "replace new version highlights relocate move rough fuzzy match threshold percent similarity dashed"),
   e("reading", t("Passages shorter than this must match exactly"), t("Replacing a PDF"), t("A shorter passage that changed is not moved"),
@@ -179,14 +184,15 @@ export function hostCaps(host) {
 // rest, each group in table order. An `admin` entry is offered only while
 // the Server pane is, which the dialog shows to admins alone; a `hostOnly`
 // one only under a native host (`host`: hostCaps of shared/lib/host.js
-// nativeHost()) that has every one of its flags.
-export function searchSettings(query, allowedPanes, { host = null } = {}) {
+// nativeHost()) that has every one of its flags; a `desktopOnly` one only in
+// the desktop app (`desktop`: IS_DESKTOP).
+export function searchSettings(query, allowedPanes, { host = null, desktop = false } = {}) {
   const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return [];
   const has = (text) => words.every((word) => text.toLocaleLowerCase().includes(word));
   const isAdmin = allowedPanes.includes("server");
   const found = entries.filter((entry) => allowedPanes.includes(entry.pane) && (!entry.admin || isAdmin)
-    && (!entry.host || entry.host.every((flag) => !!host?.[flag]))
+    && (!entry.host || entry.host.every((flag) => !!host?.[flag])) && (!entry.desktop || desktop)
     && has(`${entry.label} ${entry.keywords} ${entry.hint || ""} ${entry.section || ""}`));
   return [...found.filter((entry) => has(entry.label)), ...found.filter((entry) => !has(entry.label))];
 }

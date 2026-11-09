@@ -26,13 +26,21 @@ install `store`, in the Mac App Store build `mas`, which also sets
 [user_db.md](user_db.md) "Server dashboard and log"), `GAMMA_CLOUD_DEFAULT_ISSUER` (Gamma Cloud, so sign-in with
 it is on until the admin saves another account server or none,
 [cloud_accounts.md](cloud_accounts.md)), `GAMMA_FOLDER_LINKS` (this server keeps
-folders on disk, anywhere the user picks,
-[folder_sync.md](folder_sync.md) "Folders kept by the desktop app"); `/api/health` (a 200, or the 503 with
+synced vaults and reads PDFs where they are, anywhere the user picks,
+[synced_vaults.md](synced_vaults.md#the-desktop-app)), `GAMMA_SHELL_SECRET`
+(made anew at each start of the app: the routes that take a path on this
+computer answer only a request that carries it as `X-Gamma-Shell`, so a page
+of Gamma never names a path, [api.md](api.md) "Synced vaults and PDFs read
+where they are"); `/api/health` (a 200, or the 503 with
 `error: data_directory_not_upgradable` a server answers when it cannot
 upgrade its data directory — up either way, and the window then shows that
 server's guidance page, [migrations.md](migrations.md)); `/api/session` +
-`/api/login` for the silent first login; for a PDF opened with the app,
-the upload routes, `POST /api/blocks/by-doc/<hash>`, `POST
+`/api/login` for the silent first login; the `/api/folder-links` routes
+(the sync panel, the vault dialog, `POST /hint` when a window gets the
+focus); for a PDF opened with the app, `POST /api/folder-links/open` on a
+local server (read where it is, under *Opened files*), or with the
+`openAddsToLibrary` entry of the account's profile on, and in the Mac App
+Store build, the upload routes and `POST /api/blocks/by-doc/<hash>`; `POST
 /api/import/pdf-annotations`, the `embAnnots` entry of the account's
 profile and the `?ws=<id>&page=<id>` URL ([architecture.md](../../desktop/docs/architecture.md)
 "Opening PDF files"); and the `data-theme` attribute on `<html>` (the shell
@@ -40,7 +48,7 @@ mirrors it into its own chrome).
 
 The iPad and Android apps run the same sidecar model: the same backend
 inside the app, started with these variables except `GAMMA_FOLDER_LINKS`
-([ipad.md](ipad.md#the-local-server), [android.md](android.md)). They
+and `GAMMA_SHELL_SECRET` ([ipad.md](ipad.md#the-local-server), [android.md](android.md)). They
 also wear the shell's chrome: `desktop/ui/bar.html` and `launcher.html`
 are copied into each app and answered by a `gammaShell` of its own, in
 Swift and in Kotlin ([ipad.md](ipad.md#the-chrome)), so a change to

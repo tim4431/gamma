@@ -108,8 +108,9 @@ def create(label: str, uploads: bool = False, *, auto: bool = False, workspaces:
     ``auto`` marks the migration runner's snapshots, the only ones
     ``prune_backups`` removes. ``workspaces=False`` copies users.db alone
     (the runner's, when only workspace steps are pending: each workspace's
-    files come in with ``add_workspace``). ``progress`` (a background job's
-    report, gamma/jobs.py) hears each database and each file copied.
+    files come in with ``add_workspace``), with vaults.db where there is one,
+    whose rows name its links. ``progress`` (a background job's report,
+    gamma/jobs.py) hears each database and each file copied.
     Returns the backup's info dict; raises ValueError on a bad label and
     OSError when the copy cannot be written (nothing is left behind
     then)."""
@@ -123,7 +124,8 @@ def create(label: str, uploads: bool = False, *, auto: bool = False, workspaces:
     checks = {}
     try:
         files = []
-        databases = integrity.db_files() if workspaces else [f for f in (config.USERS_DB,) if f.exists()]
+        databases = integrity.db_files() if workspaces else [f for f in (config.USERS_DB, config.VAULTS_DB)
+                                                             if f.exists()]
         for n, src in enumerate(databases):
             rel = src.relative_to(config.DATA_DIR)
             progress(phase="databases", done=n, total=len(databases), unit="files", item=rel.as_posix())

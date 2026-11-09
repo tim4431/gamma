@@ -355,7 +355,15 @@ Preferences:
   pane at their sections.
 - **Reading & editing**: how papers and notes behave, one section per
   subject. **PDFs**: imported annotations (a Keep / Remove segmented choice),
-  open-access fallback, metadata auto-fetch and saving external PDFs.
+  open-access fallback, metadata auto-fetch and saving external PDFs, and
+  in the desktop app alone *Add opened PDFs to the library*
+  (`openAddsToLibrary`, account scope, off by default): off, a PDF the app
+  opens from this computer is read where it lies, under *Opened files*,
+  until Add to library… stores it; on, every PDF opened that way is stored
+  in the library at once. The shell reads it from the account's profile on
+  the server it opens the file on (`desktop/main.js` `addsToLibrary`;
+  [synced_vaults.md](synced_vaults.md#the-desktop-app)), so the row shows
+  only where `IS_DESKTOP`.
   **Replacing a PDF** (account scope, `SECTION_PREFS.reading["Replacing a
   PDF"]`): how the highlight run of a replaced PDF finds each highlight's
   text ([highlight_relocation.md](highlight_relocation.md#the-thresholds)).
@@ -893,7 +901,10 @@ a setting only a native host shows (Reading & editing › the pen section,
 Apple Pencil or Stylus, marked `hostOnly(flags, entry)`, a flag or a
 list), unless the host has every one of its flags as `hostCaps` reads
 them (the dialog passes `hostCaps(nativeHost())` as
-`searchSettings(query, panes, {host})`). A result is a
+`searchSettings(query, panes, {host, desktop})`). A setting only the
+desktop app reads (Reading & editing › PDFs › *Add opened PDFs to the
+library*, marked `desktopOnly(entry)`) is listed only with `desktop`
+(`IS_DESKTOP`). A result is a
 row-like button: the pane's icon, the label with the query marked, the
 hint, and "Pane › Section" on the right. Past six results they group under
 one caption per pane. Picking one opens the pane and focuses the matching

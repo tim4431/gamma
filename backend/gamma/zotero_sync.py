@@ -199,7 +199,8 @@ def create_link(owner: str, library: str, *, workspace_id: str = "", name: str =
     """Link ``library`` ("users/<id>" | "groups/<id>", one the account's key
     reads) to a new personal workspace of ``owner``'s named ``name``, or to
     ``workspace_id``, an existing one of the owner's that is neither a clone
-    nor publishes pages nor is linked (a publication whose last page was
+    nor publishes pages nor is linked nor has a synced vault that pushes
+    everything (gamma/folder_links.py) (a publication whose last page was
     unpublished counts as none, as for ``workspaces.update``, and is
     forgotten once the link is made, ``sync_engine.remove_mirror``, so the
     two never share the conflict and log tables): its pages and the
@@ -240,6 +241,11 @@ def create_link(owner: str, library: str, *, workspace_id: str = "", name: str =
                     raise ValueError("that workspace is a clone or publishes pages — forget that link first")
                 if conn.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ?", (workspace_id,)).fetchone():
                     raise ValueError("that workspace is linked to a Zotero library already")
+            from .folder_links import pushing_vault  # local: only a link to an existing workspace asks
+
+            if pushing_vault(workspace_id):
+                raise ValueError("that workspace has a synced vault that pushes everything from this computer: "
+                                 "let it push only PDFs, or only pull, first")
             emptied = mirror is not None
             status["adopt"] = adopt
             info = {"id": workspace_id}
@@ -443,7 +449,7 @@ def remove_link(ws: str) -> None:
         with connect_pages_db(ws) as conn:
             write_lock(conn)
             zr.clear(conn)
-            conn.execute("DELETE FROM sync_conflicts")
+            conn.execute(f"DELETE FROM sync_conflicts WHERE {sync_engine.NOT_VAULT}")   # a synced vault's stay its own
             conn.execute("DELETE FROM sync_log")
             live = [page for (page,) in conn.execute(
                 f"SELECT id FROM unified_blocks WHERE parent_id = 'root' AND id IN (SELECT CASE WHEN page_id = '' "
@@ -633,12 +639,13 @@ def resolve_conflict(ws: str, conflict_id: int, choice: str) -> dict | None:
     """``keep`` marks the row seen; ``mine`` / ``theirs`` first write that
     side through the kind's resolver (``RESOLVERS``), and a kind without
     one, or a row resolved already, is a ValueError for them. None when
-    there is no such row."""
+    there is no such row, and for a synced vault's (``VAULT_KINDS``), which
+    its own routes resolve."""
     if choice not in ("keep", "mine", "theirs"):
         raise ValueError("choice must be keep, mine or theirs")
     with connect_pages_db(ws) as conn:
         found = conn.execute("SELECT id, page_id, block_id, kind, mine, theirs, result, base, resolved "
-                             "FROM sync_conflicts WHERE id = ?", (conflict_id,)).fetchone()
+                             f"FROM sync_conflicts WHERE id = ? AND {sync_engine.NOT_VAULT}", (conflict_id,)).fetchone()
     if not found:
         return None
     row = dict(zip(("id", "page_id", "block_id", "kind", "mine", "theirs", "result", "base", "resolved"), found))

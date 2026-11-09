@@ -185,11 +185,11 @@ The off-site copies' Copy now (Settings → Backups, `POST
 /api/admin/offsite/run`) is not a job: it starts the server's own
 scheduled round early, one at a time, and the section's status line
 follows it, its progress included (`gamma/offsite.py`). Nor is Sync now
-of a clone, a publication, a Zotero link or a folder link: it answers at
+of a clone, a publication, a Zotero link or a synced vault: it answers at
 once and the surface that asked follows the round's own status to its end
 (`asked_at` until the round starts, then `running` with its `progress`),
 so no request waits out a long round ([mirror.md](mirror.md#rounds-and-cadence),
-[folder_sync.md](folder_sync.md)).
+[synced_vaults.md](synced_vaults.md#when-rounds-run)).
 
 A metadata batch looks its papers up one at a time; a paper nothing is found
 for counts as failed and the batch goes on. A stop lands between two

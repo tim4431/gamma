@@ -1,10 +1,10 @@
-"""Collaboration endpoints: the op batch write, the op-log catch-up read
-(also what a tab without a socket reads every 2 s), the per-page websocket
-(presence + fan-out) and the 426 its path answers a plain HTTP GET (a proxy
-that dropped the upgrade) — for the pages and for the pseudo-pages
-``folders`` / ``labels`` (the folder and label trees; members only). See
-gamma/ops.py for the op vocabulary and gamma/collab.py for the rooms;
-docs/dev/collab.md for the whole picture."""
+"""Collaboration endpoints: the op batch write, a synced vault's plan, the
+op-log catch-up read (also what a tab without a socket reads every 2 s),
+the per-page websocket (presence + fan-out) and the 426 its path answers a
+plain HTTP GET (a proxy that dropped the upgrade) — for the pages and for
+the pseudo-pages ``folders`` / ``labels`` (the folder and label trees;
+members only). See gamma/ops.py for the op vocabulary and gamma/collab.py
+for the rooms; docs/dev/collab.md for the whole picture."""
 
 import json
 import secrets
@@ -22,7 +22,7 @@ from ..blocks_store import is_op_page
 from ..db import connect_pages_db
 from ..json_response import OrjsonResponse
 from ..logbuf import log
-from ..ops import OpError, OpsRequest, commit_ops, latest_seq, ops_since
+from ..ops import OpError, OpsRequest, PlanRequest, commit_ops, commit_plan, latest_seq, ops_since
 
 router = APIRouter(prefix="/api", tags=["collab"])
 
@@ -78,10 +78,32 @@ def post_ops(page_id: str, payload: OpsRequest, request: Request):
     return out
 
 
+@router.post("/pages/{page_id}/plan")
+def post_plan(page_id: str, payload: PlanRequest, request: Request):
+    """A synced vault's plan for the page, from the desktop app of another
+    computer (gamma/vault_http.py): ``{client, batch, seq, ops}`` → ``{seq}``,
+    every op in one transaction or none, refused whole (409, ``conflict``
+    ``stale``) when the page's op log moved past ``seq``, the seq the plan
+    was made at (gamma/ops.py ``commit_plan``); a batch id the log holds
+    already is answered from it. A refused plan: ``{detail, conflict?,
+    index?}``. A workspace editor: no share link writes a plan."""
+    ws = require_ws_writer(request)
+    if share_scope(request) is not None:
+        raise HTTPException(status_code=403, detail="a share link cannot write a plan")
+    ops = [op.model_dump(exclude_unset=True) for op in payload.ops]
+    try:
+        result = commit_plan(ws, page_id, ops, actor=actor_of(request), client=payload.client[:32],
+                             batch_id=payload.batch[:64], seq=payload.seq)
+    except OpError as e:
+        body = {"detail": e.detail, **({"conflict": e.conflict, "index": e.index} if e.conflict else {})}
+        return JSONResponse(status_code=e.status, content=body)
+    return result
+
+
 @router.get("/pages/{page_id}/ops")
 def get_ops(page_id: str, request: Request, since: int = 0):
     """The page's op log after ``since``: ``{seq, batches: [{seq, actor,
-    client, at, ops}], build}``; 410 when the log was pruned past ``since``
+    client, at, ops, batch}], build}``; 410 when the log was pruned past ``since``
     or the batches after it are more than a catch-up carries
     (ops.CATCHUP_MAX_BATCHES / CATCHUP_MAX_BYTES) — reload the tree instead.
     A reconnecting client's catch-up, and every 2 s the whole live channel

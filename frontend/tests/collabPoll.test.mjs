@@ -51,7 +51,7 @@ function server() {
 function setup(t, { canWrite = true, fallback = true, srv = server() } = {}) {
   const h = {
     srv, calls: [], remote: [], reloads: [], status: [], notices: [], comments: [], builds: [], sockets: [],
-    timers: new Map(), now: 0, hidden: false, me: null, peers: [],
+    timers: new Map(), now: 0, hidden: false, me: null, peers: [], vault: 0,
   };
   let timerId = 0;
   const options = {
@@ -61,6 +61,7 @@ function setup(t, { canWrite = true, fallback = true, srv = server() } = {}) {
     onStatus: (text) => h.status.push(text),
     onSaveNotice: (text, kind) => h.notices.push([kind, text]),
     onComments: (msg) => h.comments.push(msg),
+    onVault: () => { h.vault += 1; },
     onBuild: (build) => h.builds.push(build),
   };
   h.session = createCollabSession({
@@ -216,7 +217,7 @@ test("a read-only session gets the edits too", async (t) => {
   assert.ok(h.calls.every((c) => c.method === "GET"), "and sends nothing");
 });
 
-test("a run's first answer refetches the threads and sends a waiting save; every POLL_COMMENTS_EVERY answers again; a hidden tab asks nothing", async (t) => {
+test("a run's first answer refetches the threads and the vault's standing and sends a waiting save; every POLL_COMMENTS_EVERY answers again; a hidden tab asks nothing", async (t) => {
   const h = setup(t);
   h.srv.fail = new Error("offline");
   h.edit([block("a", "mine"), { ...block("b"), position: "a1" }]);
@@ -225,11 +226,13 @@ test("a run's first answer refetches the threads and sends a waiting save; every
   h.srv.fail = null;
   await polling(h);
   assert.deepEqual(h.comments, [null], "the threads, as a hello would");
+  assert.equal(h.vault, 1, "and the vault's standing, as a hello would");
   assert.equal(h.session.hasPending(), false, "the waiting save went at once");
   for (let i = 0; i < POLL_COMMENTS_EVERY - 1; i++) await h.advance(POLL_MS);
   assert.deepEqual(h.comments, [null], `not before the ${POLL_COMMENTS_EVERY}th answer after`);
   await h.advance(POLL_MS);
   assert.deepEqual(h.comments, [null, null], "about every 30 s");
+  assert.equal(h.vault, 2, "the vault's standing with them");
   // hidden: nothing is asked, however long
   const asked = h.polls().length;
   h.hidden = true;

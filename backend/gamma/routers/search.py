@@ -38,6 +38,7 @@ from ..db import connect_data_db, connect_pages_db
 from ..json_response import OrjsonResponse
 from ..logbuf import log
 from ..pdf_text import extract_pages
+from ..storage import SPOOL_CHUNK, find_upload_file, is_linked
 from ..textnorm import normalize_text
 
 router = APIRouter(prefix="/api", tags=["search"])
@@ -54,13 +55,33 @@ def _extract_pages(path) -> list[str]:
     return extract_pages(str(path), cache=False)
 
 
+def _reads_through(ws: str, name: str) -> bool:
+    """Whether the file ``name`` can be read from end to end now, as the bytes
+    the name hashes: another program may hold a linked file, or it may have
+    moved on."""
+    path = find_upload_file(name, ws)
+    if not path:
+        return False
+    try:
+        with open(path, "rb") as f:
+            while f.read(SPOOL_CHUNK):
+                pass
+    except OSError:
+        return False
+    return find_upload_file(name, ws) == path
+
+
 def _index_doc(ws: str, doc_id: str):
     """Extract a PDF's text into the FTS index. A file that fails to read is
-    recorded with no text, so a broken file isn't re-parsed on every search.
-    A PyMuPDF that does not load (ImportError) records nothing: it is
-    raised, ending the indexing job with it, and the papers stay missing,
-    for a later search to index once the reader loads."""
-    rows = []
+    recorded with no text, so a broken file isn't re-parsed on every search,
+    but for a linked file out of reach (``_reads_through``): nothing is said
+    of its bytes then, so nothing is recorded and a later search tries
+    again. A linked file that reads and does not parse is recorded like a
+    stored one: its name is its bytes', which stay broken. A PyMuPDF that
+    does not load (ImportError) records nothing: it is raised, ending the
+    indexing job with it, and the papers stay missing, for a later search to
+    index once the reader loads."""
+    rows, read = [], False
     try:
         path = _pdf_path(ws, doc_id)
         if path:
@@ -69,10 +90,14 @@ def _index_doc(ws: str, doc_id: str):
                 text = normalize_text(raw)
                 if text:
                     rows.append((i, text[:_MAX_PAGE_CHARS]))
+            read = True
     except ImportError:
         raise
     except Exception as e:
         log.warning(f"[pdf-search] indexing {doc_id} failed: {e}")
+    name = f"{doc_id}.pdf"
+    if not read and is_linked(ws, name) and not _reads_through(ws, name):
+        return
     with connect_data_db(ws) as conn:
         pdf_index.store_doc(conn, doc_id, rows)
 
@@ -160,7 +185,7 @@ def library_search(request: Request, q: str = "", limit: int = 20, scope: str = 
     missing: list = []
     with connect_data_db(ws) as conn:
         if docs:
-            missing = pdf_index.pdf_missing(conn, docs)
+            missing = pdf_index.pdf_pending(ws, conn, docs)
             if missing:
                 _index_missing_async(ws, missing)
             for doc_id, page, snippet in pdf_index.search_pdf(conn, match, limit, docs):
@@ -199,7 +224,7 @@ def _pdf_hits(ws: str, q: str, limit: int, cursor: str, exclude: str, pages: set
         return {"results": [], "indexing": 0}
 
     with connect_data_db(ws) as conn:
-        missing = pdf_index.pdf_missing(conn, docs)  # never indexed or stale version
+        missing = pdf_index.pdf_pending(ws, conn, docs)  # never indexed or stale version
         if missing:
             _index_missing_async(ws, missing)
         hits = pdf_index.search_pdf(conn, fts_query(q), limit + 1, docs, offset, PDF_HITS_PER_PAPER)

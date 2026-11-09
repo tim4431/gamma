@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { KEPT_HERE_END, MERGE_KIND, conflictPlace, inkMergeLines, isTextual, isZotero, keptHere, kindOf, zoteroReason } from "../src/collaboration/conflictKinds.js";
+import { KEPT_HERE_END, MERGE_KIND, conflictPlace, inkMergeLines, isTextual, isVaultConflict, isZotero, keptHere, kindOf, zoteroReason } from "../src/collaboration/conflictKinds.js";
 
 // The Zotero link's kinds: the engine's literal CONFLICT_KINDS tuple, in
 // gamma/zotero_sync.py or whichever zotero_sync_*.py module it is split into.
@@ -26,18 +26,26 @@ test("every kind the sync engines record has a title and a sentence, and no othe
   const zotero = await zoteroKinds();
   assert.ok(zotero.length >= 8 && zotero.includes("zotero_field"), zotero.join(", "));
   for (const kind of zotero) recorded.add(kind);
+  // a synced vault's kinds: the engine's VAULT_KINDS tuple
+  const vaultTuple = engine.match(/^VAULT_KINDS\s*=\s*\(([^)]*)\)/m);
+  assert.ok(vaultTuple, "the sync engine declares the vaults' VAULT_KINDS tuple");
+  const vault = [...vaultTuple[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(vault.includes("file_won"), vault.join(", "));
+  for (const kind of vault) recorded.add(kind);
   for (const kind of recorded) assert.ok(MERGE_KIND[kind]?.short && MERGE_KIND[kind]?.long, `${kind} has its words`);
   assert.deepEqual(Object.keys(MERGE_KIND).filter((kind) => !recorded.has(kind)), []);
-  // a Zotero kind's sides are Gamma and Zotero, a clone's local and remote
+  // a Zotero kind's sides are Gamma and Zotero, a vault's this file and Gamma, a clone's local and remote
   for (const kind of Object.keys(MERGE_KIND)) assert.equal(isZotero({ kind }), zotero.includes(kind), kind);
+  for (const kind of Object.keys(MERGE_KIND)) assert.equal(isVaultConflict({ kind }), vault.includes(kind), kind);
 });
 
 test("only the text kinds offer a choice; a kind this build does not know shows its name", () => {
   assert.deepEqual(Object.keys(MERGE_KIND).filter((kind) => isTextual({ kind })),
-    ["merged", "diverged", "zotero_field", "zotero_note", "zotero_annotation", "zotero_file", "zotero_lossy"]);
-  // Zotero's texts are the two sides, with no merged one (Gamma's was kept); a lossy edit may be sent anyway
+    ["merged", "diverged", "zotero_field", "zotero_note", "zotero_annotation", "zotero_file", "zotero_lossy", "file_won"]);
+  // Zotero's texts are the two sides, with no merged one (Gamma's was kept); a lossy edit may be sent anyway;
+  // a vault's too (the file's was kept)
   assert.deepEqual(Object.keys(MERGE_KIND).filter((kind) => MERGE_KIND[kind].two),
-    ["zotero_field", "zotero_note", "zotero_annotation", "zotero_file", "zotero_lossy"]);
+    ["zotero_field", "zotero_note", "zotero_annotation", "zotero_file", "zotero_lossy", "file_won"]);
   assert.deepEqual(Object.keys(MERGE_KIND).filter((kind) => MERGE_KIND[kind].send), ["zotero_lossy"]);
   // a merged drawing is acknowledged: putting this clone's back whole would erase what remote drew meanwhile
   assert.equal(isTextual({ kind: "ink_merged" }), false);

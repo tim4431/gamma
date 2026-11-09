@@ -201,7 +201,7 @@ one was chosen are in [research/sub-pages.md](../research/sub-pages.md). A
 Recently deleted), whose properties carry `parent_page`, the id of the page
 it is inside. Nothing is stored on the parent, and everything keyed on a
 page (the op path, rooms, the op log and the change log, the notes index,
-shares, chats, tabs, recents, the mirror, backups, folder links, the
+shares, chats, tabs, recents, the mirror, backups, synced vaults, the
 Zotero link) treats a sub-page as the page it is. A page without the key
 is a **library page**. The generated column `parent_page` and its partial
 index ([user_db.md](user_db.md) "pages.db") make "the pages inside P" one
@@ -245,10 +245,10 @@ each followed by its descendants, `page_in_folder` asks the question of the
 page's top, and `pages_in_scope` (the `scope` of GET search) tests a
 folder id against the top and a label id against the page itself. So a
 folder view, a folder share, GET search's scope, a folder export, a folder
-chat's agent and a folder link on disk reach a sub-page through its top
-without code of their own. The Ctrl+F panel's chips and qualifiers are
-evaluated in the browser by the same rule (`search/searchFilters.js`,
-through `libraryUtils.topPageOf`), and it sends the page ids they keep.
+chat's agent and a synced vault reach a sub-page through its top without
+code of their own. The Ctrl+F panel's chips and qualifiers are evaluated
+in the browser by the same rule (`search/searchFilters.js`, through
+`libraryUtils.topPageOf`), and it sends the page ids they keep.
 `root_pages` without a folder reaches every live page, sub-pages included
 (search, export, the agent, reindexing). `blocks_store.filed_folders` is
 a page's folders by this rule, which the connector's clip and lookup
@@ -395,6 +395,24 @@ the pages it is in; a block's or an object's picker leaves out the open
 page and lists the open page's own sub-pages first, under "Inside this
 page" (`rankLibraryPages`' `first`), before the recent pages.
 
+**Opened files.** In the desktop app a PDF opened from this computer
+(*Open with*, `Server → Open a PDF…`) is read where it lies: a page inside
+the one page *Opened files* (`opened_files`), carrying `linked_file`, made
+on demand, newest first ([synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)).
+Being a sub-page keeps it out of the library's list. Such a page leaves
+*Opened files* only through **Add to library…**, which stores its bytes
+first (`POST /folder-links/opened/{id}/add`): the page menu and a tab's menu
+offer it in place of Move into page… and Move to library when every acted-on
+page is an opened PDF, and neither when some are (`vault/vaultState.js`
+`isOpenedPdf`, `addingToLibrary` in App); Move to folder ▸ is hidden too
+while any acted-on page is one, and a move into a page or out to the
+library that names one opens the dialog instead. Its dialog (`vault/FolderPickerDialog.jsx`) picks the
+workspace and the folder, and whether the file goes on pushing its new
+versions (a vault of one file). Duplicate leaves such pages out
+(`libraryUtils.duplicable`): a copy's address would stop answering when
+the file changes. The preference `openAddsToLibrary` stores every opened
+PDF at once instead ([settings.md](settings.md)).
+
 **Shares.** A page share reaches the shared page and every page inside it
 (`ShareScope.allows_page`: one whose ancestors hold the shared page), and a
 folder share the sub-pages of the pages filed there, through their top. The
@@ -445,10 +463,12 @@ top's folders ([import_export.md](import_export.md#gamma-to-gamma-export)).
 The connector's folder picker counts a sub-page's views and edits for its
 top's folders ([extension.md](extension.md)), and the MCP `export_page`
 takes the pages inside with `sub_pages` ([mcp.md](mcp.md#export-a-page)). The Markdown and Obsidian exports
-and a folder link on disk write a sub-page's file in a directory named for
+and the gamma-sync client write a sub-page's file in a directory named for
 its parent, with `parent:` in its front matter, which the Markdown zip
 import reads back ([import_export.md](import_export.md),
-[folder_sync.md](folder_sync.md)). That import also makes a Notion
+[synced_vaults.md](synced_vaults.md#the-client)); a synced vault reads a
+new note's `parent:` as the page it is inside
+([synced_vaults.md](synced_vaults.md#a-round)). That import also makes a Notion
 export's pages inside pages sub-pages, its database rows inside the
 table's page, and the review shows each under the page it goes inside
 ([import_export.md](import_export.md#markdown-zips-obsidian-vaults-notion-exports-gamma-exports-zipped-notes)).
@@ -754,7 +774,8 @@ page the panel is on:
 
 - A page: Open (Enter) · Rename (F2) | New page inside (one page) | Pin ·
   Add label ▸ · Move to folder ▸ (a library page among them) · Move into
-  page… · Move to library (a sub-page among the topmost) · Duplicate |
+  page… · Move to library (a sub-page among the topmost) · Add to library…
+  (opened PDFs, in place of the two moves) · Duplicate (not an opened PDF) |
   Copy link · Share… · Export… ·
   Ask AI about this page · Properties | Delete (Del). The three rows for
   pages inside pages are in "Sub-pages" above. Properties, for one page, opens the read-only
@@ -771,8 +792,10 @@ page the panel is on:
   open that a later one overtakes (a tab pressed before the page lands)
   drops its action with it.
 - A folder: Open | New page here · New subfolder | Move to ▸ · Move up ·
-  Move down | Rename · Pin · Share… · Export… · Keep on this computer…
-  (desktop app only, a folder filed once) · Properties (one folder) | Delete.
+  Move down | Rename · Pin · Share… · Export… · Sync with this computer…
+  (desktop app only, one folder, an editor: the app asks for a directory
+  and makes it a synced vault of the folder) · Properties (one folder) |
+  Delete.
 - A label: Open · Rename · Properties | Delete.
 - The folder's Move to ▸ lists the top level ("All files") and every
   folder the acted-on folders can go into: none of them, nor one below

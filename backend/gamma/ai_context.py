@@ -20,7 +20,7 @@ from .highlights import is_highlight, is_ink, page_of
 from .logbuf import log
 from .net_guard import guarded_urlopen
 from .notebook import is_sheet
-from .pdf_index import doc_pages, pdf_missing
+from .pdf_index import doc_pages, pdf_pending
 from .pdf_text import (MAX_PAGES, PAGE_LABEL_RE, PDF_EXTRACT_FAILED, extract_pages, extract_text,
                        extract_text_pages, outline, page_count, page_label, render_page)
 from .picture import is_picture, markdown_of, picture_page
@@ -988,7 +988,7 @@ def ensure_indexed(ws: str, doc_id: str) -> bool:
     from .routers.search import _index_missing_async
     try:
         with connect_data_db(ws) as connection:
-            missing = pdf_missing(connection, [doc_id])
+            missing = pdf_pending(ws, connection, [doc_id])
     except sqlite3.OperationalError as e:
         log.warning(f"[ai_context] index check for {doc_id} failed: {e}")
         return False

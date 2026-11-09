@@ -39,6 +39,9 @@ function socketUrl(pageId) {
 //   onComments(msg)           — a comment was written on the page, or the socket
 //                               (re)joined or the poll came round (null): refetch
 //                               its threads
+//   onVault()                 — a synced vault's round touched the page, or the socket
+//                               (re)joined or the poll came round: refetch its
+//                               standing (vault/useVault.js)
 // A `{t: "inbox"}` nudge (the account's inbox has news) becomes the window
 // event gamma:inbox, whatever page it arrived on.
 // Returns the session's commit/flush/hasPending/sendCursor/sendInkLive/overlay/

@@ -807,8 +807,9 @@ def test_folder_share_imports_into_another_gamma(bob, anon):
     assert sorted(folder_names(erin).values()) == [["xi-shared"], ["xi-shared", "sub"]]
     assert erin.get(f"/api/blocks/{deeper['id']}").json()["properties"]["folders"] == [sub]
     # pasted again: nothing new, the folder found by its id
-    assert _merge_zip(erin, zipped.content) == {**result, "pages_added": 0, "pages_skipped": 2, "chats_added": 0,
-                                                "comments_added": 0, "uploads_added": 0}
+    assert _merge_zip(erin, zipped.content) == {**result, "pages_added": 0, "added": [], "trees_added": [],
+                                                "pages_skipped": 2, "chats_added": 0, "comments_added": 0,
+                                                "uploads_added": 0}
 
     # an importer with a top-level folder of that name gets the pages in it
     make_user("fay_share", "faypw1234567")

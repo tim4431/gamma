@@ -1,6 +1,7 @@
 // Conflict resolution for a clone (docs/dev/mirror.md), in git's words:
-// local is this clone, remote is origin; and for a Zotero link
-// (docs/dev/zotero_sync.md), whose sides are Gamma and Zotero. One card —
+// local is this clone, remote is origin; for a Zotero link
+// (docs/dev/zotero_sync.md), whose sides are Gamma and Zotero; and for a
+// synced vault, whose sides are this file and Gamma. One card —
 // ConflictCard — serves every surface: the chip on a block row or on the
 // page's record (its popover walks the page's conflicts one by one), the
 // sync pill's list and Settings (Workspaces → Clones and Zotero links,
@@ -31,7 +32,7 @@ import {
   AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon,
   HardDriveIcon, MergeIcon, ServerIcon, TrashIcon, UploadIcon,
 } from "../shared/ui/Icons";
-import { conflictPlace, inkMergeLines, isTextual, isZotero, kindOf as conflictKind, zoteroReason } from "./conflictKinds.js";
+import { conflictPlace, inkMergeLines, isTextual, isVaultConflict, isZotero, kindOf as conflictKind, zoteroReason } from "./conflictKinds.js";
 import { Popover } from "../shared/ui/Surfaces";
 import { lcs, tokens, wordDiff } from "../shared/lib/wordDiff.js";
 
@@ -114,7 +115,17 @@ const SIDE_ZOTERO = {
   theirs: { label: T("Zotero"), hint: T("zotero.org"), Icon: BookIcon },
   result: SIDE.result,
 };
-const sidesOf = (conflict) => (isZotero(conflict) ? SIDE_ZOTERO : SIDE);
+// A synced vault's sides: the file on this computer, which won, and Gamma
+// (`mine` stays Gamma's text, as the API has it), each with what taking it
+// says (`take`, the radio's title; `apply`, the line beside Apply).
+const SIDE_VAULT = {
+  mine: { label: T("Gamma"), hint: T("this workspace"), Icon: ServerIcon,
+    take: T("Put Gamma's text back into the block"), apply: T("Puts Gamma's text back into the block; the next pull writes it to the file") },
+  theirs: { label: T("This file"), hint: T("on this computer"), Icon: HardDriveIcon,
+    take: T("Put the file's text into the block"), apply: T("Puts the file's text into the block") },
+  result: SIDE.result,
+};
+const sidesOf = (conflict) => (isVaultConflict(conflict) ? SIDE_VAULT : isZotero(conflict) ? SIDE_ZOTERO : SIDE);
 
 // Neighbouring tokens of one tag become one run, the whitespace between
 // two marked tokens included — a phrase reads as a phrase, not as words.
@@ -150,7 +161,7 @@ function Version({ side, sides = SIDE, parts, current, hint, group, selected, on
         {pickable ? (
           <input type="radio" className="mergePick" name={group} value={side} checked={selected === side} disabled={busy}
             onChange={() => onSelect(side)} aria-label={t(s.label)}
-            title={sides === SIDE_ZOTERO ? t("Take {side}'s version", { side: t(s.label) }) : t("Put the {side} text into the block", { side: t(s.label).toLowerCase() })} />
+            title={s.take ? t(s.take) : sides === SIDE_ZOTERO ? t("Take {side}'s version", { side: t(s.label) }) : t("Put the {side} text into the block", { side: t(s.label).toLowerCase() })} />
         ) : null}
         <span className={`mergeSide ${side}`} title={hint || t(s.hint)}><s.Icon size={14} />{t(s.label)}</span>
         <span className="popoverHint mergeSideHint">{hint || t(s.hint)}</span>
@@ -172,16 +183,19 @@ function Versions({ conflict, busy, onUse }) {
   const kind = conflictKind(c);
   const sides = sidesOf(c);
   const zotero = isZotero(c);
-  // Two texts and no merged one: a diverged block, or a Zotero difference,
-  // whose Gamma version is the one kept (unless the row says Zotero's).
+  const vault = Boolean(kind.vault);
+  // Two texts and no merged one: a diverged block, a Zotero difference,
+  // whose Gamma version is the one kept (unless the row says Zotero's), or
+  // a synced vault's, whose file won.
   const two = c.kind === "diverged" || Boolean(kind.two);
   const currentSide = !two ? "result"
     : zotero ? (c.result && c.result === c.theirs && c.result !== c.mine ? "theirs" : "mine")
     : c.result === c.mine ? "mine" : "theirs";
   const [selected, setSelected] = React.useState(currentSide);
   const group = React.useId();
-  // (a Zotero row's base is its projection, not a text both sides came from)
-  const base = !two && typeof c.base === "string" && c.base ? c.base : null;
+  // (a Zotero row's base is its projection, not a text both sides came from;
+  // a vault's is the text the file and Gamma last agreed on)
+  const base = (!two || vault) && typeof c.base === "string" && c.base ? c.base : null;
   const mineParts = base ? sideParts(base, c.mine, "mine") : onlyIn(c.mine, c.theirs, "mine");
   const theirsParts = base ? sideParts(base, c.theirs, "theirs") : onlyIn(c.theirs, c.mine, "theirs");
   const pick = { group, selected, onSelect: setSelected, busy, sides };
@@ -193,9 +207,10 @@ function Versions({ conflict, busy, onUse }) {
     <>
       {reason ? <div className="popoverHint mergeReason">{reason}</div> : null}
       <div className={`mergeVersions ${two ? "two" : "three"}`} data-guide="merge.versions">
-        <Version side="mine" parts={mineParts} current={currentSide === "mine"} hint={base || zotero ? t("changed here") : undefined} {...pick} />
+        <Version side="mine" parts={mineParts} current={currentSide === "mine"}
+          hint={vault ? t("changed in Gamma") : base || zotero ? t("changed here") : undefined} {...pick} />
         <Version side="theirs" parts={theirsParts} current={currentSide === "theirs"}
-          hint={base ? t("changed on origin") : zotero ? t("changed in Zotero") : undefined} {...pick} />
+          hint={vault ? t("changed in the file") : base ? t("changed on origin") : zotero ? t("changed in Zotero") : undefined} {...pick} />
         {two ? null : (
           <Version side="result" current {...pick}
             parts={base ? mergedParts(base, c.mine, c.theirs, c.result) : attribute(c.result, c.mine, c.theirs)} />
@@ -204,6 +219,7 @@ function Versions({ conflict, busy, onUse }) {
       <div className="mergeActions">
         <span className="popoverHint mergeActionsHint">
           {keeps ? t("Keeps the text as it is and marks the conflict resolved")
+            : sides[selected].apply ? t(sides[selected].apply)
             : zotero ? t("Takes {side}'s version, here and in Zotero", { side: sideWord })
             : t("Puts the {side} text into the block", { side: sideWord.toLowerCase() })}
         </span>
@@ -214,7 +230,8 @@ function Versions({ conflict, busy, onUse }) {
           </button>
         ) : null}
         <button type="button" className="uiBtn sm primary" disabled={busy} onClick={() => onUse(keeps ? "keep" : selected)}
-          title={keeps ? t("Mark resolved as it is") : zotero ? t("Write the chosen version; the next round sends it") : t("Write the chosen text; the next round pushes it")}>
+          title={keeps ? t("Mark resolved as it is") : vault ? t("Write the chosen text; the next pull writes it to the file")
+            : zotero ? t("Write the chosen version; the next round sends it") : t("Write the chosen text; the next round pushes it")}>
           <CheckIcon size={14} /> {t("Apply")}
         </button>
       </div>

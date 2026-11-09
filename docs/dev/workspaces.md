@@ -642,16 +642,23 @@ its state back with the pages ("Export and backups"). The design — what
 syncs, the round, merging, PDFs, notes, annotations, conflicts — is
 [zotero_sync.md](zotero_sync.md).
 
-## Folders on disk
+## Synced vaults
 
-The desktop app keeps a folder of a workspace as a directory on the
-computer it runs on: each paper's PDF beside a Markdown note of its
-highlights and notes, kept up to date, and when asked, the PDFs changed
-there sent back. A page can follow one PDF on that computer, each new
-version becoming its PDF. A folder's *Keep on this computer…*, a page's
-*Follow a file on this computer…* or the desktop app's sync panel starts
-them. The layout, the rounds, the links and the client that does the same
-without the app are [folder_sync.md](folder_sync.md).
+The desktop app keeps a folder of a workspace and a directory on the
+computer it runs on in step, a synced vault: each page a Markdown note
+beside its PDF, Gamma's changes pulled to the files and, as the vault's
+switches say, the PDFs or everything changed there pushed back, notes
+included. A vault of one file pushes a PDF on that computer to a page each
+time it changes, and a PDF opened from that computer is read where it lies,
+a page inside *Opened files*. A folder's *Sync with this computer…*, a
+page's *Push from a file on this computer…* or the desktop app's sync panel
+(*Add a synced vault…*) starts them. A vault's writes are its maker's, as
+op-log client `disk`, and its own conflicts (`file_won`) stay out of a
+clone's and a Zotero link's. A workspace that is a clone or has a Zotero
+link takes vaults that pull or push PDFs, never one that pushes everything,
+and a page a vault keeps is never published. The layout, the lens, the
+rounds, the rules, the routes and the client that does the same without the
+app are [synced_vaults.md](synced_vaults.md).
 
 ## Current limits
 

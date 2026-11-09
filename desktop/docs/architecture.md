@@ -127,198 +127,321 @@ shell which local servers to start at launch (`startBackgroundHosts`): a copy
 syncs only while its server runs, so those run for as long as the app does,
 whichever server the window shows.
 
-### Folders and files on this computer
+### Synced vaults
 
-A folder of any server's workspace can be kept as a directory anywhere on
-this computer: each paper's PDF beside a Markdown note of its highlights
-and notes, kept up to date by a local server, and when asked, the PDFs
-changed there sent back. A page can also follow one PDF file on this
-computer, a manuscript's build output say: each new version of the file
-becomes the page's PDF. Only the app's own local servers keep folders and
-files on disk ([docs/dev/folder_sync.md](../../docs/dev/folder_sync.md)
-"Folders kept by the desktop app"); a NAS only answers the reads, the
-uploads and the replacement. The shell adds the native pickers, the
-tokens, and the ways in: two for a folder, one for a file.
+A **synced vault** keeps something in Gamma and something on this computer
+in step: a folder and a directory (each page a Markdown note, each paper
+its PDF beside it), or a page and one PDF file. The words are git's, and
+the shell speaks them everywhere (`lib/keeping.js`): Gamma's server is the
+*remote*, the directory or the file is *local*, **pull** writes Gamma's
+changes to the disk, **push** brings the disk's into Gamma (*off*, *PDFs*
+or *everything*), and **sync** is push, then pull. Only the app's own local
+servers keep vaults (started with `GAMMA_FOLDER_LINKS=1`); the rounds, the
+marker, the status and the rules are theirs
+([docs/dev/synced_vaults.md](../../docs/dev/synced_vaults.md)). A NAS keeps
+none: it answers the reads, the ops and the uploads a vault of its folder
+sends it. The shell adds the native pickers, the dialog, the tokens, the
+word that lets a path through, and the ways in:
 
-**A folder's menu in Gamma's page.** In the desktop app a library
-folder's right-click menu has *Keep on this computer…*
-(`frontend/src/app/App.jsx`, shown when `IS_DESKTOP`). The page posts
-`{source: "gamma-app", type: "keep-folder-on-disk", ws, folder}` to its
-own origin, the way it greets the Connector extension. The page preload
-passes that on (`shell:keep-folder-from-page`) and exposes nothing. The
-shell takes it only from the content view's page of the open server, with
-plain ids, and only when no other action runs. Then it runs `keepFolder`,
-whose native picker is the user's say. A folder already kept opens its
-directory instead.
+| Where | What the user picks | Flow |
+|---|---|---|
+| a library folder's right-click *Sync with this computer…* (`frontend/src/app/App.jsx`) | a directory | `addFolderVault(ws, folder)` |
+| the sync panel's *Sync a folder of <workspace> with this computer…* (below, "The sync panel") | a folder, then a directory | `addFolderVault(ws, folder)` |
+| *Add a synced vault…* in the launcher's buttons and at the panel's end | a directory | `addDirectoryVault()` |
+| a page's Document menu, *Push from a file on this computer…* | a PDF | `addFileVault(ws, page)` |
 
-**The sync panel's chooser.** The panel under the bar's sync button
-(below, "Kept on this computer") ends with *Keep a folder of <workspace>
-on this computer…*. It opens the panel's second level, listing the open
-workspace's folders (`shell:folders` → `listFolders`: the open server's
-`GET /api/sync/folders` with the content session's cookies, and the links
-from `listLinks`). A folder already kept reads *on disk* and opens its
-directory on click (`shell:open-path`, only for a directory one of those
-links names). Any other asks for a directory on click (`shell:keep-folder`
-→ `keepFolder`). An empty directory is used as it is; any other gets a
-subdirectory named after the folder. Pausing, syncing and stopping a kept
-folder are the panel's rows, below.
+**A page's asks.** Gamma's page never names a path. It posts `{source:
+"gamma-app", type, ws, folder | page}` to its own origin, the way it greets
+the Connector extension, and the page preload passes the message on as it
+is (`PAGE_ASKS` in `preload.js`) and exposes nothing:
 
-**A page's Document menu in Gamma's page.** In the desktop app a page's
-Document menu has *Follow a file on this computer…* under *Replace the
-PDF…* (`frontend/src/app/App.jsx`, shown when `IS_DESKTOP`). The page
-posts `{source: "gamma-app", type: "follow-file-on-disk", ws, page}` to its
-own origin, and the page preload passes it on as
-`shell:follow-file-from-page`, under the folder message's guards. Then it
-runs `followFile(wsId, pageId)`:
+| Message | Channel | Runs |
+|---|---|---|
+| `keep-folder-on-disk {ws, folder}` (*Sync with this computer…*) | `shell:sync-folder-from-page` | `addFolderVault` |
+| `follow-file-on-disk {ws, page}` (*Push from a file on this computer…*) | `shell:push-file-from-page` | `addFileVault` |
+| `reveal-on-disk {ws, page}` (the vault chip's *Show in folder*) | `shell:reveal-from-page` | `revealOnDisk` |
+| `relocate-file {ws, page}` (the banner's *Locate…*) | `shell:relocate-from-page` | `relocateFile` |
+| `carry-to-server {ws, page}` (*Add to library…*'s *Another server…*) | `shell:carry-from-page` | `carryToServer` ("Opening PDF files") |
 
-1. It reads the page's title (`GET /api/blocks/<id>`) for the notices.
-2. A page that follows a file already gets a question instead: "“Title”
-   follows <path>", with *Reveal* (`revealFile`, the file shown in its
-   directory with `shell.showItemInFolder`), *Stop following* (`dropFile`)
-   and *Cancel*.
-3. Otherwise the native file picker (`pickFile`: one `.pdf`, from the
-   Documents folder) is the user's say. Then the link is made where a kept
-   folder's would be (below): `POST /api/folder-links {kind: "file", page,
-   path}`. On a remote server the shell first mints a write-scope token
-   there (a year, named after the page and the file), since each send
-   replaces the page's PDF; a link that fails to be made revokes it.
-4. The bar says "“Title” follows main.pdf: each new version is sent to
-   Gamma.", and the shell offers background mode while it is off.
+The first two keep the names they had before synced vaults, so that a
+desktop app released before them, which passes on only those, still
+forwards them from an updated server's page. `sync-folder-on-disk` and
+`push-file-on-disk` reach the same channels as spare names; no page sends
+them. The other three are new: an older app ignores them. The shell takes a message only from the content
+view's page of the open server (its frame's origin), with plain ids
+(`[\w-]{1,64}`), and only while nothing else runs: no action in the bar,
+no vault dialog up, no other ask (`fromPage`). It takes at most one a
+second (`PAGE_ASK_MS`), so a page asking in a loop opens no row of file
+manager windows. Each runs under `oneAsk`, as `shell:add-vault` and
+`shell:add-folder-vault` do: one flow that asks the user (a picker, a
+native question, the dialog) at a time, held from its first line until it
+settles, a second one dropped. A failure is an error box. The picker is
+the user's say, so a page can start nothing on its own. `revealOnDisk`
+answers only on a local server: a remote's page has no chip, and a page's
+ask never starts a server (`pageOnDisk` reads the host's links only while
+the host runs).
 
-**Sending PDFs back from a kept folder.** A folder's row in the sync panel
-has an upload arrow, a toggle (`push-on`, `push-off`) that runs `setPush`:
-`PATCH /api/folder-links/<id> {push}`. It is off until asked for, since
-people put annotated copies in a kept folder trusting that nothing goes
-back. On a remote folder, kept with a read token, turning it on first
-mints a write token on the remote with the window's session and hands it
-to the host with the `PATCH` (`token`, `token_id`). The host checks it and
-keeps it in place of the read token, which the shell then revokes; a
-token the host refuses is revoked instead, and so is one the link the
-host answers with does not hold. One change per folder runs at a time: a
-second click on the arrow while one runs is ignored, so a double click
-never mints two write tokens. Turning it off keeps the write token until
-the folder is dropped.
+**A folder's vault** (`addFolderVault`):
 
-Under the test harness `GAMMA_SHELL_PICK_DIR` answers the directory
-picker and `GAMMA_SHELL_PICK_FILE` the file picker, the questions take
-their first answer, and a directory "opened" or a file "revealed" is only
-recorded (`openDirectory`, `revealFile`, like `openExternal`). The
-launcher's *Open data folder*, *Show server log* and *Show log file* go
-through the same two helpers.
+1. It reads the workspace's folders (`GET /api/sync/folders`). A folder
+   that has a vault already opens its directory instead and says so.
+2. The native picker (`pickDirectory`) asks for the directory, which is the
+   vault as it is, empty or not; the dialog says what is in it first. The
+   window must still show the server the ask came from (`stillOn`): one
+   opened while the picker was up has its own session.
+3. The server that keeps the vault is the open one when it is local, and
+   the **host** for a remote server's folder (below). It previews the
+   directory (`POST /api/folder-links/preview`), which writes nothing and
+   answers what it found, the marker it holds, the folder's pages and any
+   refusal. For a remote folder the host cannot count the pages, so the
+   shell reads them from the remote (`GET /api/sync/folders/<id>`).
+4. The dialog (below) starts with Pull on, and Push off while the folder
+   has pages; an empty folder and a directory with notes or PDFs start
+   pushing everything (`firstPush`; never a remote's folder).
+5. On *Sync*: on a local server `POST /api/folder-links {folder, path,
+   notes, pull, push, adopt}` in the folder's workspace. `adopt` takes up
+   the marker of a vault no link holds any more, which the preview reported.
+   For a remote's folder the shell first mints a token there (`POST
+   /api/integrations/tokens`, a year, named after the folder), read scope
+   when the vault pushes nothing and write scope otherwise, and makes the
+   vault on the host with `remote_url`, `workspace`, `token` and
+   `token_id`; a vault that fails to be made revokes the token.
+
+**A directory's vault** (`addDirectoryVault`): the picked directory
+becomes a new folder named after it (`new_folder`), the dialog starting
+with Pull on and Push everything. It needs no open server. It lands
+(`vaultPlace`, `openFiles.readerPlace`) on the open local server, through
+the window's session, in the workspace the window shows when the account
+writes there, it is no clone and no one else sees it, or else in the
+account's own workspace there; otherwise on the host, started and signed
+into in its own session, in the account's personal workspace. A shared
+workspace takes a directory through its folder's *Sync with this
+computer…*, which names it.
+
+**A file's vault** (`addFileVault`) pushes, never pulls: each new version
+of the file becomes the page's PDF, as *Replace the PDF…* makes it, and the
+file is never written. A page that has one already asks instead (*Show in
+folder*, *Remove the vault…*, *Cancel*). Otherwise the picker (`pickPdf`)
+is the user's say, and the vault is `POST /api/folder-links {kind: "file",
+page, path}`, on the host with a write token minted on the remote for a
+remote's page. On a local server the one hint about vaults of one file
+comes first (`oneByOne`): when two or more vaults of one file of the
+workspace already sit in the picked file's directory, and a directory's
+vault there would land in that very workspace, it asks "3 files in
+D:\Papers are synced one by one. Sync the folder instead?" *Sync the
+folder…* runs `addDirectoryVault` on that directory with no picker, and
+the new vault takes the files' pages in; *Push this file only* goes on.
+
+Each flow ends with a notice in the bar, offers background mode while it
+is off (all of them sync only while Gamma runs), and reads the panel again.
+
+**The vault dialog** is a view of the sync panel in `ui/bar.html`, as the
+folder chooser is, not a native dialog (`askVault`, the shell state's
+`vaultAsk`). It shows *Local* (the path), *Remote* (server · workspace ·
+folder, or "a new folder “name”"), *Found* (the preview's notes, PDFs,
+pictures and untracked files, or an empty directory), the switch **Pull**,
+**Push** as *off / PDFs / everything* (*everything* shut for a remote's
+folder), one sentence saying what the first round does, and *Cancel* and
+*Sync*. The sentences are `keeping.firstRound`'s, made in `main.js` for
+each setting of the two switches before the dialog shows. One that is not
+`ok` says why and shuts *Sync*: both switches off, a remote's folder asked
+to push everything or not to pull, the preview's refusal, a folder with
+pages and a directory with files that would push everything into each
+other. `answerVault` takes only an answer whose sentence is `ok`. While the
+dialog is up the bar stays expanded on it (`setBarExpanded`), so a look at
+the page meanwhile does not hide it, and the window losing the focus leaves
+it. Closing the panel (Escape, a press outside it, the sync button) is
+*Cancel*, and so is the window going to the launcher or to another server
+(`cancelVaultAsk`): it was asked about what the window showed. A newer
+dialog cancels the one shown, and a state that still holds a dialog opens
+the panel on it again (`takeState`).
+
+**The shell's word.** The routes that take a path on this computer answer
+only a request that carries `X-Gamma-Shell` with the secret the sidecar
+was started with: `POST /api/folder-links`, `/preview`, `/<id>/relink`,
+`/open` and `/opened/<id>/locate`. The shell makes the secret at each start
+(`SHELL_SECRET`, 32 random bytes) and hands it to every local server as
+`GAMMA_SHELL_SECRET` (`lib/sidecar.js`), so a page of Gamma, which shares
+its server's origin and session, cannot name a path itself. `shellWord(origin)`
+gives the header only for the origin of a running local sidecar of the
+registry and throws for any other, so neither the word nor a path reaches
+a remote server, whatever the window opened while a picker was up. A flow
+records the server it was asked of when it starts and takes that server's
+origin from its sidecar (`localOrigin`), never from what the window shows
+by then.
+
+**A remote server's folder** needs no clone. The vault lives on the
+**host**, the first local server, which `ensureHost` makes, starts and
+signs into when needed (the clones' host too), and reads the folder over
+HTTP with the token: only that folder's files come down. From the shell it
+pulls, and pushes PDFs at most for now. The vaults of a remote workspace
+are the host's links with that origin and workspace (`listLinks`; the
+chooser lists only the folders'). `settings.folderHost` remembers the host
+so it starts at launch like the clones' hosts (`startBackgroundHosts`), and
+removing the host's last vault of a remote server clears it. Turning push
+on for such a vault, made with a read token, first mints a write token on
+the remote with the window's session and hands it to the host with the
+`PATCH` (`token`, `token_id`). The host checks it and keeps it in place of
+the read token, which the shell then revokes; a token the host refuses is
+revoked instead, and so is one the vault the host answers with does not
+hold. One change of push per vault runs at a time (`setPush`): a second
+click while one runs is ignored, so a double click never mints two write
+tokens. Turning push off keeps the write token until the vault is removed,
+which revokes it (`releaseRemote`, with the window's session, signed into
+the remote).
 
 In the Mac App Store build the pick is also the app's access to the
 directory or the file, kept as a bookmark (`lib/folderAccess.js`; at
 launch a directory is listed and a file checked for reading), and a server
-reaches only what the app held when it started. So `keepFolder` and
-`followFile` first start the server that is to read or write there again,
-on its port, when it started before the pick (`reachFolder`;
+reaches only what the app held when it started. So each flow that picks a
+path, *Locate…* included, first starts the server that is to read or write
+there again, on its port, when it started before the pick (`reachFolder`;
 [release.md](release.md#mac-app-store) "Folders outside the sandbox").
 
-Where the link lives depends on the server:
+Under the test harness `GAMMA_SHELL_PICK_DIR` answers the directory
+picker and `GAMMA_SHELL_PICK_FILE` the file picker. A native question
+takes the answer a test queued (`answers` on the test hook), else its
+first one, and is recorded with its detail (`asked`); a directory "opened"
+or a file "revealed" is only recorded (`openDirectory`, `revealFile`, like
+`openExternal`). The launcher's *Open data folder*, *Show server log* and
+*Show log file* go through the same two helpers.
 
-- On a **local** server it is that server's own link, made with `POST
-  /api/folder-links` and the full path. The sidecar keeps links because
-  the shell starts it with `GAMMA_FOLDER_LINKS=1`. The server reads the
-  workspace in-process.
-- On a **remote** server there is no clone. The shell mints a read-scope
-  integration token on the remote for that workspace (`POST
-  /api/integrations/tokens`, a year, named after the folder). It makes the
-  link on the **host**, the first local server, which `ensureHost` makes,
-  starts and signs into when needed (the clones' host too). The link names
-  the remote's origin, the workspace, the token and its id, and the host
-  reads the folder over HTTP with the client's own source. Only that
-  folder's files come down.
+The shell keeps nothing else about vaults: the rounds and the status are
+the server's, the host's for a remote's folder or page. The bar reports
+each action in its status line for a few seconds (`notice` in the shell
+state).
 
-The links of a remote workspace are the host's links with that origin
-and workspace, kept folders and followed files alike (`listLinks`; the
-folder chooser lists only the folders). *Stop* deletes the link on the
-host and revokes the token on the remote (`releaseRemote`: `revokeToken`,
-with the window's session, which is signed into the remote).
-`settings.folderHost` remembers the host so it starts at launch like the
-clones' hosts (`startBackgroundHosts`). *Stop* on the host's last remote
-link clears it.
+**The focus hint.** A window that gets the focus posts `POST
+/api/folder-links/hint` to each running local server (`hintServers`, at
+most every 10 s, `HINT_MS`, best effort): the server's tick runs at once in
+the background, so a vault looks at its disk when the user comes back from
+another app rather than at the next 30 s tick.
 
-The shell keeps nothing else about links; the rounds and the status are
-the server's, the host's for a remote folder or page. The bar reports each
-action in its status line for a few seconds (`notice` in the shell state).
-When a clone, a folder on disk or a followed file is made while
-background mode (below) is off, the shell offers it, since all of them
-sync only while Gamma runs.
-
-### Kept on this computer
+### The sync panel
 
 The **sync button** at the bar's right end sums up everything this
-computer keeps of Gamma: the clones, the Zotero links, the folders on disk
-and the files followed, of every running local server, whichever server
-the window shows. It reads *Synced*, *Syncing…*, *Conflicts*, *n
-problems*, *Waiting*, *Changes queued* and the like, with a matching icon
-and colour, and shows once a server is open or anything is kept; its
-tooltip counts them ("1 clone, 2 folders on disk and 1 file followed").
-Its **panel** lists four groups, *Clones*, *Zotero links*, *Folders on
-this computer* and *Files followed*, each row with its name over its
-state and where it is, a state dot, and its round action buttons, always
-shown (each named by its tooltip):
+computer keeps of Gamma: the clones, the Zotero links and the synced
+vaults of every running local server, whichever server the window shows.
+It reads *Synced*, *Syncing…*, *Conflicts*, *Held*, *n problems*, *Not
+synced yet*, *Starting…*, *Waiting*, *Changes queued* and the like, with a
+matching icon and colour, and shows once a server is open, anything is
+kept or the vault dialog is up; its tooltip counts them ("1 clone and 2
+synced vaults on this computer: synced"). Its **panel** lists three
+groups, *Clones*, *Zotero links* and *Synced vaults*, each row with its
+name over its state, a state dot, and its action buttons, always shown
+(each named by its tooltip). A vault's row adds its direction as two marks
+after its name (↓ pull, ↑ push with a small *PDF* when it pushes PDFs,
+dim while off; a vault of one file shows only ↑) and a second line, `path
+⇄ remote · folder`: `D:\Papers ⇄ NAS · Research / Papers`. Under the
+groups come *Add a synced vault…* and, while a workspace is open, *Sync a
+folder of <workspace> with this computer…*. That opens the panel's second
+level, the chooser: *Whole library* and every folder of the open workspace
+(`shell:folders` → `listFolders`: the open server's `GET /api/sync/folders`
+with the content session's cookies, and the vaults from `listLinks`). A
+folder that has a vault reads *synced* and opens its directory on click
+(`shell:open-path`, only for a directory one of those vaults names); any
+other asks for a directory (`shell:add-folder-vault` → `addFolderVault`).
 
 - A click on the row opens it: a clone or a Zotero link's workspace in the
-  window (`openServer`, then `openGammaWorkspace`), a folder's directory
-  (`openDirectory`), a file in its directory (`revealFile`).
+  window (`openServer`, then `openGammaWorkspace`), a vault's directory
+  (`openDirectory`) or its file in its directory (`revealFile`).
 - *pause* and *resume* swap with the item's state, and the panel stays
   open on the new one. For a clone they are `POST /api/mirrors/<ws>/detach`
   and `/relink` (the stored token; what both sides did meanwhile merges),
   so a paused clone reads *Detached*, as in Gamma's pill; for a Zotero
   link `POST /api/zotero/links/<ws>/detach` and `/relink`, the same way.
-  For a folder or a file they are `pauseFolder`,
-  `PATCH /api/folder-links/<id> {paused}`: the server's tick leaves a
-  paused link alone, and resuming runs a round.
+  For a vault they are `PATCH /api/folder-links/<id> {paused}`: the
+  server's tick leaves a paused vault alone, and resuming runs a round.
 - *sync* runs a round now, the panel staying open as for *pause*. For a
   clone that is `POST /api/mirrors/<ws>/sync` on its local server, for a
   Zotero link `POST /api/zotero/links/<ws>/sync`, shut while either is
-  detached.
-  For a folder it is `syncFolder`, which asks first whether to replace
-  the files the last round left alone that a forced round would replace
-  (the status's kept entries with `force`: files changed on disk, and
-  with sending back on the PDFs changed here and in Gamma), and reports
-  the round in the bar. A PDF a send could not deliver is no such file:
-  Gamma's copy did not change, so there is nothing to replace it with,
-  and the row counts it as *n not synced*, the reason in the tooltip. For a file it is
-  `sendFile`, and the bar says "main.pdf was sent to
-  Gamma.", "nothing new to send", why it is not sent yet, or the problem.
-  Both go through `roundOf`: `POST /api/folder-links/<id>/sync` answers
-  at once with the round's `running` set (the one it started, or one
-  already running), and the link is read every second until `running`
+  detached. For a vault it is *Sync now: push, then pull* (*Push now* for
+  a vault of one file), `POST /api/folder-links/<id>/sync?direction=both`,
+  whose outcome the bar says (`keeping.roundSaid`). Every round a vault's
+  action asks for goes through `roundOf` and `followRound`: the `POST`
+  answers at once with the round's `running` set (the one it started, or
+  one already running, after which the server runs the round asked for),
+  and the link is read every second until `running`
   comes down, however long the round takes (the server reads `running`
-  from the round's lock, so a mark a stopped server left never reads as
-  a round), and no request stays open for it.
-  A paused folder or file syncs too and stays paused.
-- A folder's upload arrow turns sending PDFs back on and off (`setPush`,
-  above), the panel staying open; it reads pressed while on.
-- *stop* (a folder) is `dropFolder`, which asks whether to keep the files
-  or take back what the sync wrote. *stop* (a file) is `dropFile`, which
-  asks nothing: the file is never touched.
+  from the round's lock, so a mark a stopped server left never reads as a
+  round), and no request stays open for it. A paused vault syncs too and
+  stays paused.
+- A folder's vault has a push switch: it turns pushing PDFs on and off
+  (`PATCH {push: "pdfs" | "off"}`), reading pressed while on. On a vault
+  that pushes everything it opens the vault's view instead, so one click
+  never drops it to off.
+- *more* (…) opens the vault's own view, the panel's second level.
 
-A folder whose round runs reads *Syncing 30 / 120*, the files written of
-those the round fetches (the status's `progress`, written as the round
-goes), its tooltip the PDFs' bytes and the file at hand, or *Syncing…*
-before the round has compared the folder with the directory.
-A folder that sends back reads *Up to date · 14:02 · sends back*, with
-*n sent* when its last round sent any. A folder's row adds *n changed
-here* for the files Sync can replace and *n not synced* for the other
-files its last round left alone. A followed file reads, worst first:
-*Sending…* (a round runs), *Paused · 14:02*, *Problem* (the reason as the
-tooltip), *Waiting for the file to finish* (a file still being written or
-not there, drawn as pending, never as an error), *Not sent yet* (no round
-yet), *Sent · 14:02*, or *Up to date · 14:02* when its rounds found the file
-Gamma's already. When the last send could not move the highlights, the
-tooltip says why.
+**A vault's own view** has a back row (*Synced vaults*), *Local*, *Remote*
+and *State* (the state's tooltip on it), and for a folder's vault the two
+switches as the dialog has them: a remote's folder keeps *Pull* on and
+*everything* shut (`keeping.REMOTE_RULE`, which `setPull` and `setPush`
+refuse too). Its actions, each through
+`shell:keeping-action` (kind, server, id, action, value: `VAULT_ACTIONS` in
+`main.js`):
 
-A detached clone or link or a paused folder or file never raises the
-button's summary; when everything is, it reads *Paused*. A Zotero link's
-PDFs that wait on something outside Gamma (a full storage, files Zotero
-does not serve) read *Waiting*, and its changes queued for a later round
-*Changes queued*: they only say so, ranked with a first sync not yet run,
-below anything that asks for a look. The panel ends with the chooser
-above. Conflicts and a clone's or link's cadence stay in Gamma's own sync
-pill, in the workspace.
+| Action | Shown | Does |
+|---|---|---|
+| *Sync now* (*Push now* for a file) | always | `POST …/sync?direction=both`, followed to its end |
+| *Pull now*, *Push now* | a folder's vault; shut while that switch is off | `…?direction=pull`, `…?direction=push` |
+| *Pause*, *Resume* | always | `PATCH {paused}` |
+| *Go on…* | a vault held by its guard | the question `keeping.goOnAsk`, then `…?confirm=1` |
+| *Locate…* (*Locate the file…*) | a stopped vault or one whose directory is not there; a file's vault always | the picker, then `POST …/relink {path}` with the shell's word; the directory's marker must be the vault's |
+| *Open the directory*, *Show in folder* | always | `openDirectory`, `revealFile` |
+| *Force pull…*, *Force push…* | a folder's vault | the page count from `GET …/removal`, a warning (`keeping.forceAsk`), then `…?force=pull` or `force=push` |
+| *Remove the vault…* | always | the counts from `GET …/removal`, the question `keeping.removalAsk`, then `DELETE …?files=keep` or `files=trash` |
+| the switches | a folder's vault | `PATCH {pull}`, `PATCH {push}` (`setPush`, above) |
+
+The changes and the rounds (*pause*, *resume*, *sync*, *Pull now*, *Push
+now* and the switches) leave the panel open on the new state
+(`STAYS_OPEN`); the others close it, since they ask first or open
+something. *Remove the vault…* offers *Remove, keep the files* and
+*Remove, move them to the trash* (the files the sync wrote go to
+`.gamma/trash`; files the user added or changed stay). A vault of one file,
+a vault whose directory is not there and a stopped one (its marker gone or
+another's) offer only *Remove the vault*, which touches nothing on disk.
+The pages stay in every case. A remote's vault then has its token revoked
+(`releaseRemote`).
+
+A folder's vault reads, worst first: *Syncing 30 / 120* while a round
+runs, the files push has taken and the pages pull has looked at, of those
+the round knows so far (the status's `progress`, written as the round goes),
+its tooltip the bytes of the PDFs it pushes and the file at hand, or
+*Syncing…* before the round has compared the folder with
+the directory or when its round says nothing of itself; *Paused · 14:02*;
+*Stopped* (its marker gone or another vault's: *Locate…* says where the
+directory is now); *Held · 12 of 20 files gone* (the guard against many
+files gone at once: nothing was pulled or pushed until *Go on…*);
+*Directory not there* (a disk unplugged, drawn as waiting, never as an
+error); *Sync problem*; *Not synced yet*; then *Up to date · 14:02*, with
+*n pushed*, *n conflicts*, *n changed here* (files a force pull replaces),
+*n not synced* (the other files its last round kept, and the names its
+scan refused: two that differ only by case, one Windows refuses, a link),
+*n in another vault* (pages filed in it that an older vault beside it
+keeps, `status.shared`) and *push turned off* (two folders kept before
+that pushed into each other: the newer one's push went off at its upgrade,
+`status.push_off`) when there are any. Its tooltip says which way it goes
+("Gamma's changes are pulled; nothing here is pushed.") and names the
+conflicts, the files kept or refused with why, why push went off, the
+pages the other vault keeps, when a folder kept before became a vault
+(`upgraded_at`) and the untracked files. A vault of one file reads *Pushing…*, *Paused · 14:02*,
+*Problem* (the reason as the tooltip), *Waiting for the file to finish* (a
+file still being written or not there, drawn as pending, never as an
+error), *Not pushed yet*, *Pushed · 14:02*, or *Up to date · 14:02* when its
+rounds found the file Gamma's already; when the last push could not move
+the highlights, the tooltip says why. `link.push` is a word (`off`,
+`pdfs`, `everything`), read with `keeping.pushWord`, never as a flag:
+`Boolean("off")` is true.
+
+A detached clone or link or a paused vault never raises the button's
+summary; when everything is, it reads *Paused*. A held vault ranks with
+the conflicts, as asking for a look. A Zotero link's PDFs that wait on
+something outside Gamma (a full storage, files Zotero does not serve) read
+*Waiting*, and its changes queued for a later round *Changes queued*: they
+only say so, ranked with a first sync not yet run, below anything that
+asks for a look. Conflicts and a clone's or link's cadence stay in Gamma's
+own sync pill, in the workspace; a vault's conflicts are on their blocks'
+merge chips.
 
 A Zotero link syncs only while its local server runs, so a server that
 holds one starts at launch, as the clones' hosts and the folder host do:
@@ -354,7 +477,7 @@ Gamma's sync pill reads them (`mirrorState` in
 the same states in the same order, so the two never disagree. Change both
 together. The result is the shell state's `keeping` (`{items, summary}`).
 The panel's rows act through `shell:keeping-action` (kind, server, id,
-action), so they need no open server.
+action, value), so they need no open server.
 
 Each local server is read in a cookie jar of its own
 (`session.fromPartition('keeping-<id>')`, in memory, signed in once per
@@ -390,8 +513,8 @@ server (also `Ctrl/Cmd+Shift+L`). Then the switcher: click the name → dropdown
 the open server's Gamma workspaces (check on the current one, role or
 *personal* per row, the clone chips), then every server (running /
 reachable dot, a running local one's address, check on the current one),
-then *All servers…* (the launcher again). At the right: the sync button and its panel (above, "Kept
-on this computer"), the update pill (only while an update is ready, see
+then *All servers…* (the launcher again). At the right: the sync button and its panel (above, "The sync
+panel"), the update pill (only while an update is ready, see
 below) and a reload button. One dropdown is open at a time. While one is,
 the bar view is temporarily enlarged over the content (its page is
 transparent outside the strip and the dropdown), which is how a 38 px view
@@ -545,8 +668,114 @@ its own to a second start's), reads a `file://` URL as its path, and keeps
 existing files ending in `.pdf`. A start that names a file never goes
 hidden into the tray.
 
-Each file is added as an upload in Gamma adds it, one at a time
-(`openPdfFiles` → `addPdf` in `main.js`), through the content session:
+*Server → Open a PDF…* asks for one with the native picker
+(`openPdfDialog`) and hands it over the same way.
+
+Each file is **read where it is**, one at a time (`openPdfFiles` →
+`readPdf` in `main.js`): a page of the app's own local server reads it in
+place, so nothing is copied, and the file is never sent to a remote server
+(at most its hash, step 2).
+A paper opened on a train does not go to the NAS.
+
+1. The window comes forward. With no server open, the host opens (the
+   first local server, made when there is none).
+2. The place (`openFiles.readerPlace`, from `GET /api/session`): on an open
+   local server, the workspace the window shows (`?ws=`, else the
+   account's default) when the account writes there and it is no clone.
+   Otherwise, a remote server open or no such workspace, a page of the
+   workspace the window shows that carries the file's bytes opens there
+   first, as an added file's page does (`openCarried`: the file hashed here,
+   `openFiles.docIdOf`, and only the hash asked, `GET
+   /api/blocks/by-doc/<hash>`, so a paper annotated on the NAS, in a clone
+   or in a workspace the account only reads opens its page); a remote's
+   session is not read for it, so a NAS out of reach still lets the file
+   be read here. No such page, the window moves to the host and the file
+   goes into the account's personal workspace there; signed out, a dialog
+   says to sign in. A workspace others see
+   (other members, or public) asks first, since every member could read the
+   file through the page while Gamma runs: *Open in <personal workspace>*,
+   the default, *Open in <workspace>* and *Cancel*.
+3. `POST /api/folder-links/open {path}` with the shell's word ("Synced
+   vaults"), on the server's own origin, answers `{workspace, page,
+   created, title}`. The server opens a file inside a synced vault as that
+   vault's page, bytes a page of the workspace stores as that page, and a
+   file opened before as its page again; anything else
+   is a new page inside the one page *Opened files* (a page inside a page
+   stays out of the library's list), titled with the file's stem, its PDF
+   read from the path (`linked_file`).
+4. For a new page the annotations another reader saved in the file become
+   Gamma's (`POST /api/import/pdf-annotations`, as below).
+5. The bar says where the file is read ("main is read from this computer,
+   under Opened files in Personal on Local."), every time, a page that was
+   there already too, and the window loads `<origin>/?ws=<id>&page=<id>`.
+
+The page shows *On this computer* in its header, and *Add to library…*
+stores the bytes and files the page where the user asks, in this workspace
+or another this account edits on the server, with *Keep pushing from the
+file* to make it a vault of one file (`POST
+/api/folder-links/opened/<id>/add`, the page's own). Its *Another server…*
+posts `carry-to-server`, and `carryToServer` adds the page to the library
+of another server of the registry (`carryPage`):
+
+1. It checks the page: it reads a file here that is there
+   (`GET /api/folder-links/page/<id>`'s `reader`), the window's account
+   opened that file (`reader.mine`), and it has a PDF. As with another
+   workspace of this server, carrying an opened PDF away is its opener's
+   alone: the file is on that account's computer, and another editor of the
+   workspace would take that account's page away with its notes and chat.
+2. It asks which server, before any server is started or reached: one
+   question, even with one other server, and an info box when the registry
+   holds no other. Then, when the account writes in several workspaces
+   there, which workspace (`openFiles.carryPlaces`: the personal one first,
+   no clone). A remote is read through the window's session, a local server
+   through its own, started when it is not running. The window must still
+   show the page's server (`stillOn`).
+3. It refuses when the target has the page's id, or a page of its PDF
+   (`GET /api/blocks/by-doc/<doc>`), live or in Recently deleted: a 404
+   that names `trashed` holds the page too, and the merge would replace
+   such a copy for good (`holds`).
+4. `GET /api/folder-links/opened/<id>/carried` gives the digest of what
+   the export takes (the page and the pages inside it, their blocks,
+   comments and chats) and those pages' ids; it refuses while a page inside
+   reads a file that is gone or changed. Each page inside is looked for on
+   the target as in step 3. Then `GET /api/pages/<id>/export?mode=gamma&sub_pages=1`
+   exports the page
+   with the pages inside it, the PDF's bytes taken from the file and the
+   link to the file left behind. The zip must hold `uploads/<doc>.pdf`
+   (`lib/zipNames.js`): a file gone or just changed is left out of an
+   export, and the carry stops. So does a page inside it whose PDF the
+   target has a page of, which the merge would skip. Nothing has been sent
+   to the target yet.
+5. `POST /api/import-data?mode=merge` on the target, which must add the
+   page, and add every page inside it (`pages_skipped` none); then `PUT
+   /api/blocks/<id> {properties: {parent_page: null}}` takes it out of the
+   *Opened files* it does not have there.
+6. Only then does the page here go: `POST
+   /api/folder-links/opened/<id>/carried {digest}` moves it to Recently
+   deleted here with the pages inside it, when the digest is still theirs,
+   as a carry to another workspace of the server moves it
+   (docs/dev/synced_vaults.md "To another server"). Their links to the file
+   go with it, so the file opened again is a new page, not this one back,
+   and the page restored comes back whole. Nothing is deleted for good. The
+   file stays as it is. The call goes to the page's server at its address
+   now, through the window's session, and again through that server's own
+   session on a 401 (the window signed in to another server on this
+   computer meanwhile, whose cookie a port does not tell apart); if it still
+   fails, the page is in both places and the message says to delete the one
+   here to keep only the copy there. The window opens the page on the
+   target.
+
+A page written on here since the digest (a note, a page inside it, a
+comment or a chat) gets 409: nothing here was deleted, the copy there
+stays, and the shell says the page is in both places now. A failure before
+that step leaves the page here as it was and says why. The shell's word
+goes on none of these calls.
+
+**Added instead.** When the account set *Add opened PDFs to the library*
+(`openAddsToLibrary` in `GET /api/prefs/profile` on the open server), and
+always in the Mac App Store build, whose servers reach only the folders the
+app held when they started, a file is added as an upload in Gamma adds it
+(`addPdf`), through the content session:
 
 1. The window comes forward. With no server open, the last one opens, else
    the first local server, made when there is none.
@@ -566,11 +795,13 @@ Each file is added as an upload in Gamma adds it, one at a time
 5. `POST /api/import/pdf-annotations` turns the annotations another reader
    saved in the file into Gamma's. They are stripped from the stored copy
    unless the account set *Embedded PDF annotations* to hide them
-   (`embAnnots` in `GET /api/prefs/profile`, the one preference name the
-   shell reads). A failure here leaves the page as it is.
+   (`embAnnots` in `GET /api/prefs/profile`; with `openAddsToLibrary`, the
+   only preference names the shell reads). A failure here leaves the page
+   as it is.
 6. The window loads `<origin>/?ws=<id>&page=<id>`.
 
-Under the test harness the question takes its first answer, and
+A PDF dropped on the window is Gamma's own upload, into the place the drop
+names. Under the test harness the question takes its first answer, and
 `openPdfFiles` is on the test hook.
 
 ### The microphone
@@ -599,12 +830,12 @@ the page and the system's own settings.
 Closing the last window quits the app (macOS keeps the dock process, as
 any Mac app) unless **Keep running in the background** is on. The setting
 is `settings.background`, turned on by the launcher's switch, the *Server*
-menu, the tray menu, or `offerBackground`, the offer made when a clone, a
-folder on disk or a followed file is first created. On, `window-all-closed` leaves the app
+menu, the tray menu, or `offerBackground`, the offer made when a clone or
+a synced vault is first created. On, `window-all-closed` leaves the app
 running with a tray icon (`ensureTray`: *Open Gamma*, the two switches,
 *Quit Gamma*). At launch `startBackgroundHosts` then starts every local
-server instead of only the hosts of clones, of remote folders and files and
-of Zotero links, so clones, Zotero links, folders on disk and followed files
+server instead of only the hosts of clones, of remote servers' synced
+vaults and of Zotero links, so clones, Zotero links and synced vaults
 keep syncing with no window. The tray's click or *Open Gamma* brings the
 window back where the user left off (`showWindow`). Turning the setting off
 from the tray with no window quits.
@@ -712,17 +943,18 @@ the Mac App Store build's is in its container,
 
 - `servers.json` — the registry: server list (a local server with its
   admin credentials, last `port`, and `zoteroHost` while it holds a Zotero
-  link that is not detached, "Kept on this computer"), `lastOpened`,
+  link that is not detached, "The sync panel"), `lastOpened`,
   `windowBounds`,
   and `settings` (`openLastOnLaunch`, `lastTheme`, `dataRoot`, `background`
   and `openAtLogin` (the tray, above), `folderHost` (the local server that
-  keeps folders and files of remote servers), the dev-mode
+  keeps the synced vaults of remote servers), the dev-mode
   `pythonPath`/`backendDir`/`staticDir` overrides, which a packaged build
   ignores). Local admin credentials are stored in plaintext here — same
   trust level as the SQLite files next to it; acceptable for a per-OS-user
   desktop app. The Mac App Store build
-  also keeps `access` here: the folders and followed files outside its
-  sandbox the user picked, as security-scoped bookmarks
+  also keeps `access` here: the vaults' directories and the files pages
+  are pushed from, outside its sandbox, that the user picked, as
+  security-scoped bookmarks
   (`lib/folderAccess.js`). An older profile's
   `workspaces.json` (the file's previous name) is copied over on first start
   and left in place.
@@ -763,14 +995,17 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   else — `target=_blank`, cross-origin redirects — opens in the system
   browser; a server's Gamma Cloud sign-in start is taken over, "Gamma Cloud
   sign-in"), the remote health probes, the `/api/session` read behind the
-  workspace switcher, the clone, folder-on-this-computer and
-  file-on-this-computer flows over the server's API, the tray and background mode, one app per profile and the
-  PDFs the system hands it ("Opening PDF files"), `--smoke` self-test,
+  workspace switcher, the clone and synced-vault flows over the server's
+  API with the vault dialog and the shell's word ("Synced vaults"), the
+  focus hint, the tray and background mode, one app per profile and the
+  PDFs the system hands it, read where they are or added, and an opened
+  PDF carried to another server ("Opening PDF files"), `--smoke` self-test,
   sidecar cleanup on quit, the `GAMMA_SHELL_TEST` hook the e2e suite drives.
 - `preload.js` — exposes the `gammaShell` IPC bridge **only in the main
   frame of the bundled launcher and bar URLs** supplied by the main process;
-  other local files receive no bridge. On server pages it exposes nothing and reports `data-theme`
-  changes.
+  other local files receive no bridge. On server pages it exposes nothing,
+  reports `data-theme` changes and passes on the page's asks about this
+  computer (`PAGE_ASKS`, "Synced vaults").
 - `ui/tokens.css` — a copy of Gamma's design tokens (see Theme);
   `ui/fonts/` — Inter, Latin subset, with its licence.
 - `ui/theme.css` — the Inter `@font-face`, Gamma's keyboard focus ring and
@@ -809,15 +1044,23 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   their own top-level frames (`trustedShellSender`, `isShellPage`); no
   Electron, unit tested by `test/main.test.js`.
 - `lib/keeping.js` — what this computer keeps, read as items and one
-  summary for the sync button ("Kept on this computer"); no Electron, unit
-  tested by `test/keeping.test.js` (`npm test`).
+  summary for the sync button ("The sync panel"), and what the shell says
+  about a vault: the dialog's sentences, the questions before a force, a
+  removal or going on, a round's outcome; no Electron, unit tested by
+  `test/keeping.test.js` (`npm test`).
 - `lib/cloudSignIn.js` — the loopback return of a Gamma Cloud sign-in: the
   listener, the verifier and its challenge, the tab's last page, the claim
   request ("Gamma Cloud sign-in"); no Electron, unit tested by
   `test/cloudSignIn.test.js`.
-- `lib/openFiles.js` — the PDFs a command line names and the workspace a
-  file goes into ("Opening PDF files"); no Electron, unit tested by
+- `lib/openFiles.js` — the PDFs a command line names, the workspace a file
+  goes into, added or read where it is (and a directory's vault with it),
+  and the workspaces of another server an opened PDF may be carried to
+  ("Opening PDF files"); no Electron, unit tested by
   `test/openFiles.test.js`.
+- `lib/zipNames.js` — the entry names of a zip, read from its central
+  directory: whether a page's Gamma export holds its PDF before it is
+  carried to another server ("Opening PDF files"); no Electron, unit tested
+  by `test/zipNames.test.js`.
 - `lib/loadPage.js` — `webContents.loadURL` without its false alarms. Its
   promise takes any `did-stop-loading` or `did-navigate-in-page` for the end of
   its load, and the load before it or the page being left can send those, since
@@ -832,8 +1075,8 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
 - `lib/hostPath.js` — a path as programs outside a Store package find it:
   the package's private copy of AppData ("Shell state"); no Electron, unit
   tested by `test/hostPath.test.js`.
-- `lib/folderAccess.js` — the Mac App Store build's folders and followed
-  files outside its sandbox: the bookmarks kept, the ones opened at
+- `lib/folderAccess.js` — the Mac App Store build's folders, vault
+  directories and pushed files outside its sandbox: the bookmarks kept, the ones opened at
   launch, and when a
   server must start again to reach one ([release.md](release.md#mac-app-store));
   no Electron, unit tested by `test/folderAccess.test.js`.
@@ -882,7 +1125,12 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
 - `test/main.test.js` — `main.js` under plain Node, Electron replaced by a
   stand-in and the local servers by fakes (the `GAMMA_SHELL_TEST` hook):
   the launch record a keeping reading writes, a resume made during a
-  reading, one start per server (`npm test`).
+  reading, one start per server, the requests each vault action sends, a
+  round followed to its end with no request held open, the shell's word on
+  the routes that take a path and on no other, a directory's vault made
+  with no server open, the dialog's answers, the focus hint's pace, the
+  hint about a third file, the carry to another server and its refusals
+  (`npm test`).
 - `test/e2e.js` — the Playwright-driven end-to-end suite (see
   [checklist.md](checklist.md)). `test/security.e2e.js` — the Electron
   boundary against a fake remote server, no backend ("Invariants").
@@ -903,11 +1151,15 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   `mas` in the Mac App Store build (which also sets `GAMMA_UPDATE_CHECK=off`),
   so it says who installs a newer one,
   `GAMMA_CLOUD_DEFAULT_ISSUER` = Gamma Cloud, the account server until the
-  admin saves another, `GAMMA_FOLDER_LINKS` = this server keeps folders and
-  files on disk, anywhere the user picks, since the sidecar runs as the user), `/api/health` and
+  admin saves another, `GAMMA_FOLDER_LINKS` = this server keeps synced
+  vaults and reads PDFs where they are, anywhere the user picks, since the
+  sidecar runs as the user, `GAMMA_SHELL_SECRET` = the shell's word for the
+  routes that take a path, "Synced vaults"), `/api/health` and
   `/api/session` (+ the `?ws=` and `?page=` URL parameters). No imports from `backend/`,
   no frontend patches. The one thing it reads off the page is the
-  `data-theme` attribute (read-only, via the preload).
+  `data-theme` attribute (read-only, via the preload); the page's asks
+  about this computer are passed on as messages the shell checks, and
+  none of them carries a path.
 - Server pages never get an IPC bridge; `gammaShell` exists only on the
   bundled launcher and bar in their top-level views. Every privileged
   handler checks the exact page URL, sender web contents and main frame

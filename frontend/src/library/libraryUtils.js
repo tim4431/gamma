@@ -272,10 +272,13 @@ export function pagesIntoPage(pages, ids, target) {
 // read them: {id, content ("Untitled" when empty), _pageId, _attachment,
 // _preview, _folders, _labels (ids the trees have), _folderChips,
 // _labelChips ({id, name}, filingChips), _createdAt, _updatedAt, _pinned,
-// _parentPage, _path, _subPages}. A page is filed by its top, so a
-// sub-page's folders are its top's (the server's blocks_store.filed_folders)
-// and its labels its own; `_path` is where it is (pagePathLabel, "" for a
-// library page) and `_subPages` how many pages are right inside it.
+// _parentPage, _path, _subPages, _linkedFile, _opened}. A page is filed by
+// its top, so a sub-page's folders are its top's (the server's
+// blocks_store.filed_folders) and its labels its own; `_path` is where it is
+// (pagePathLabel, "" for a library page) and `_subPages` how many pages are
+// right inside it. `_linkedFile`: the page reads its PDF from a file on this
+// computer (gamma/linked_files.py); `_opened`: it is *Opened files*, the page
+// those are inside (vault/vaultState.js isOpenedPdf).
 export function pageBlocksOf(rows, tree) {
   const byId = new Map(rows.map((b) => [b.id, b]));
   const chains = rows.map((b) => (b._parentPage ? pageAncestors(byId, b.id) : []));
@@ -304,6 +307,8 @@ export function pageBlocksOf(rows, tree) {
       _parentPage: b._parentPage || "",
       _path: chain.map((a) => a.title).join(PAGE_PATH_SEP),
       _subPages: inside.get(b.id) || 0,
+      _linkedFile: !!b.properties?.linked_file,
+      _opened: !!b.properties?.opened_files,
     };
   });
 }
@@ -432,6 +437,15 @@ export function pageAttachment(block) {
 export function attachmentFile(attachment) {
   if (!attachment) return "";
   return attachment.id || /^\/api\/uploads\/([0-9A-Za-z_-]{1,128})\.pdf$/.exec(attachment.url || "")?.[1] || "";
+}
+
+// The ids of a selection a copy can be made of (`pagesById`: the listing's
+// rows). A page reading its PDF from a file on this computer has no stored
+// bytes (gamma/linked_files.py): a copy's address would stop answering when the
+// file changes, and nothing would bring it back. Add to library makes it one
+// that can be copied.
+export function duplicable(ids, pagesById) {
+  return ids.filter((id) => !pagesById.get(id)?._linkedFile);
 }
 
 // What a card/row says a page is: the attachment kind, else just a page.

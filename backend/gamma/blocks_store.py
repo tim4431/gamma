@@ -50,6 +50,13 @@ IN_LIBRARY = "page_id IN (SELECT id FROM unified_blocks WHERE parent_id = 'root'
 
 BLOCK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # the shape of a block or page id
 
+# The page property of a page whose PDF stays at a path on this computer
+# (gamma/linked_files.py), where a stored copy would be: ``true``.
+LINKED_FILE = "linked_file"
+# A condition on a page's row for a lookup by attachment, which never finds
+# such a page: its bytes stand for no page of the library.
+NOT_LINKED = f"json_extract(properties, '$.{LINKED_FILE}') IS NULL"
+
 
 def valid_block_id(block_id) -> bool:
     """An id a client may give a new block or page: the id shape, and none
@@ -468,14 +475,18 @@ def attachment_file(attachment: dict | None) -> str:
 def page_for_doc(conn, doc_id: str, columns: str = "id"):
     """Lookup BY ATTACHMENT: the row (``columns`` of it) of the root page
     whose PDF attachment is ``doc_id``, or None. The one query for "which
-    page carries this PDF" — root pages only, a nested block never counts.
-    Should a workspace hold two (an older copy of the data), the oldest
-    answers, every time."""
+    page carries this PDF": root pages only, a nested block never counts,
+    and a page that reads its PDF where it is on this computer
+    (``NOT_LINKED``) does not count either: a library PDF added never finds
+    one, and the bytes it holds are no other page's to be refused. Should a
+    workspace hold two (an older copy of the data), the oldest answers,
+    every time."""
     if not doc_id:
         return None
     return conn.execute(
         f"SELECT {columns} FROM unified_blocks WHERE doc_id = ? AND parent_id = 'root' "
-        "ORDER BY created_at, id LIMIT 1", (doc_id,)).fetchone()
+        f"AND {NOT_LINKED} ORDER BY created_at, id LIMIT 1",
+        (doc_id,)).fetchone()
 
 
 def write_lock(conn) -> None:
@@ -917,15 +928,16 @@ def new_block_id() -> str:
     return secrets.token_urlsafe(9)
 
 
-def folder_inserts(conn, paths, under: str = "") -> tuple[list[dict], dict[tuple, str]]:
+def folder_inserts(conn, paths, under: str = "", kids=None) -> tuple[list[dict], dict[tuple, str]]:
     """What filing pages under ``paths`` (each a list of names, from the top
     or from the folder ``under``, "" = the top) needs: the ``insert`` ops for the
     ``FOLDERS`` pseudo-page that make every path exist — a folder already
     there is reused (the first of several siblings that share a name), a new
     one goes last among its siblings — and ``{tuple(names): folder id}`` for
     each path. Apply the ops (``ops.apply_ops``) before writing the ids on a
-    page."""
-    kids = tree_children(conn, FOLDERS)
+    page. ``kids``: the tree as ``tree_children`` reads it, from another
+    server's answer (gamma/vault_http.py), in place of ``conn``'s."""
+    kids = tree_children(conn, FOLDERS) if kids is None else kids
     ops, ids = [], {}
     for path in paths:
         path = [n.strip() for n in path if n and n.strip()]
@@ -944,11 +956,12 @@ def folder_inserts(conn, paths, under: str = "") -> tuple[list[dict], dict[tuple
     return ops, ids
 
 
-def label_inserts(conn, names) -> tuple[list[dict], dict[str, str]]:
+def label_inserts(conn, names, have=None) -> tuple[list[dict], dict[str, str]]:
     """``folder_inserts`` for labels: the ``insert`` ops for the ``LABELS``
     pseudo-page that make each name a label (an existing one reused) and
-    ``{name: label id}``."""
-    have = tree_children(conn, LABELS).get(LABELS, [])
+    ``{name: label id}``; ``have``, the labels as ``(id, name)``, in place of
+    ``conn``'s."""
+    have = list(tree_children(conn, LABELS).get(LABELS, []) if have is None else have)
     ops, ids = [], {}
     for name in names:
         name = name.strip()
@@ -1156,15 +1169,15 @@ def pages_for_docs(conn, hashes) -> dict:
     (``markdown_import`` — the upload's content digest, so a ``<hash>.md``
     chip finds its page). Hashes with no page are absent. Feeds the file
     chip's "Open page" / "Open as page" — one query per page render, never
-    one per chip. Two pages of one file: the oldest answers, as in
-    ``page_for_doc``."""
+    one per chip. As in ``page_for_doc``, a linked page does not count and
+    of two pages of one file the oldest answers."""
     wanted = {str(d) for d in hashes if d}
     if not wanted:
         return {}
     found = {}
     for page_id, title, doc_id, md in conn.execute(
             "SELECT id, content, doc_id, json_extract(properties, '$.markdown_import') FROM unified_blocks "
-            "WHERE parent_id = 'root' AND (doc_id IN (SELECT value FROM json_each(?1)) "
+            f"WHERE parent_id = 'root' AND {NOT_LINKED} AND (doc_id IN (SELECT value FROM json_each(?1)) "
             "OR json_extract(properties, '$.markdown_import') IN (SELECT value FROM json_each(?1))) "
             "ORDER BY created_at, id", (json.dumps(sorted(wanted)),)):
         for key in (doc_id, md):

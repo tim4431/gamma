@@ -31,6 +31,7 @@ from ..blocks_store import (
     BLOCK_COLUMNS,
     FOLDERS,
     LABELS,
+    NOT_LINKED,
     block_to_dict,
     create_page,
     existing_in,
@@ -98,7 +99,8 @@ def url_doc_id(source_url: str) -> str:
 def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict | None:
     """Lookup BY ATTACHMENT: the page whose PDF attachment is this paper, by
     DOI, arXiv id, or any of its URLs — only pages carrying a ``doc_id`` are
-    candidates (a clip dedups against files, not titles). Identifier matches
+    candidates (a clip dedups against files, not titles), and a page reading
+    its PDF from this computer is none (``NOT_LINKED``). Identifier matches
     come from the metadata cache (properties.meta), the identifiers the web
     page it was saved from carried in its tags (properties.web_meta, there
     before the lookup lands and after one that failed; never a DOI only
@@ -109,7 +111,7 @@ def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict
     urls = tuple(u for u in urls if u)
     url_ids = {url_doc_id(u) for u in urls}
     rows = conn.execute(
-        f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root'"
+        f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' AND {NOT_LINKED}"
     ).fetchall()
     for row in rows:
         props = json.loads(row[4] or "{}")

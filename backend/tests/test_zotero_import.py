@@ -332,6 +332,21 @@ def _imported_annotations(guest, pdf, page=None):
     return page, r.json(), {c["content"]: c["properties"] for c in kids if c["properties"].get("imported_annot")}
 
 
+def test_a_strip_stores_under_the_name_given_not_the_name_of_the_file_read(guest, tmp_path):
+    from conftest import workspace_of
+    from gamma import storage
+    from gamma.routers.imports import import_embedded_annotations
+
+    ws, pdf = workspace_of(guest_name()), _annotated_pdf(b"A name apart from its path")
+    up = guest.post("/api/uploads", files={"file": ("a.pdf", pdf, "application/pdf")}).json()
+    page = make_page(guest, "Read from elsewhere", {"doc_id": up["doc_id"], "source_url": up["source_url"]})
+    name, copy = f"{up['doc_id']}.pdf", tmp_path / "A paper.pdf"
+    copy.write_bytes(pdf)
+    assert import_embedded_annotations(ws, page["id"], name, copy, True)["stripped"] == 1
+    assert copy.read_bytes() == pdf and not storage.exists(ws, copy.name)
+    assert storage.open_path(ws, name).read_bytes() != pdf
+
+
 def test_embedded_alpha_is_gamma_alpha_before_ca(guest):
     """A highlight's or area's alpha is Gamma's /GammaAlpha when it has
     one, which a Zotero copy writes in place of /CA, even beside a /CA

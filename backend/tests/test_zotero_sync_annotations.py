@@ -1011,7 +1011,8 @@ def test_the_embedded_import_leaves_the_annotations_the_link_keeps(me, made, fak
     out = io.BytesIO()
     w.write(out)
     doc, _ = storage.store_pdf(ws, out.getvalue())
-    result = import_embedded_annotations(ws, page, storage.open_path(ws, f"{doc}.pdf"), False, actor=owner_id)
+    result = import_embedded_annotations(ws, page, f"{doc}.pdf", storage.open_path(ws, f"{doc}.pdf"), False,
+                                         actor=owner_id)
     assert result["imported"] == 1
     contents = [c for _, c in _kids(ws, page)]
     assert "not the link's" in contents and "kept by the link" not in contents
@@ -1047,7 +1048,8 @@ def test_the_embedded_import_of_a_workspace_without_a_link_ignores_rows_left_beh
         conn.commit()
     assert zotero_sync.get_link(ws) is None
     doc, _ = storage.store_pdf(ws, _pdf_with_keyed_annotation("LEFT2345", "from Zotero's export"))
-    result = import_embedded_annotations(ws, page, storage.open_path(ws, f"{doc}.pdf"), False, actor=owner_id)
+    result = import_embedded_annotations(ws, page, f"{doc}.pdf", storage.open_path(ws, f"{doc}.pdf"), False,
+                                         actor=owner_id)
     assert result["imported"] == 1
     assert "from Zotero's export" in [c for _, c in _kids(ws, page)]
 

@@ -4,27 +4,31 @@
 One file, Python 3.10 or newer, standard library only: copy it anywhere.
 It reads a Gamma server with an integration token (Settings → Integrations;
 read access is enough unless PDFs go back) and writes the folder's papers
-and notes to a directory of your choice, then keeps them up to date. Gamma
-to disk: what you change on disk is never overwritten (see the rules
-below), and goes back only when asked. A directory linked with
-``init --push`` sends a PDF you change in it to Gamma as its page's new
-file, and ``push`` does the same for one PDF anywhere on disk (a manuscript
-compiled again from its TeX); the page keeps its notes and highlights.
-Notes files never go back. The same rounds run inside the desktop app's
-own server for the folders and files it keeps on the PC
-(gamma/folder_links.py), which is why this file lives in the gamma package;
-it imports nothing from it.
+and notes to a directory of your choice, then keeps them up to date. The
+words are a synced vault's: Gamma is the remote, the directory is local;
+**pull** is Gamma to disk, **push** is disk to Gamma, **sync** is push,
+then pull. ``pull`` writes Gamma's changes, and what you change on disk is
+never overwritten (see the rules below). A directory linked with
+``init --push`` pushes the PDFs you change in it, each its page's new
+file, before each ``sync`` pulls; ``push`` does the same for one PDF
+anywhere on disk (a manuscript compiled again from its TeX). The page
+keeps its notes and highlights; notes files are never pushed. The desktop
+app keeps its synced vaults with an engine of its own
+(gamma/vault_sync.py), which pushes notes too; it takes this file's server
+client, ``Push`` and ``settled``, which is why this file lives in the gamma
+package. It imports nothing from it, and keeps its own state in the
+directory: the app's server keeps a vault's in its data directory.
 
     python gamma_sync.py folders --server https://gamma.example.com --token gamma_…
     python gamma_sync.py init  ~/Papers/Quantum --server https://gamma.example.com \\
                                --folder "Papers / Quantum" --token gamma_… --save-token
-    python gamma_sync.py sync  ~/Papers/Quantum             # once
-    python gamma_sync.py sync  ~/Papers/Quantum --watch 60  # and after every change
+    python gamma_sync.py pull  ~/Papers/Quantum             # Gamma's changes, once
+    python gamma_sync.py sync  ~/Papers/Quantum --watch 60  # push, then pull, and after every change
     python gamma_sync.py status ~/Papers/Quantum
     python gamma_sync.py push  build/main.pdf --page <page id> --server https://gamma.example.com \\
                                --token gamma_… --watch 5    # each new build becomes the page's PDF
 
-What lands on disk (docs/dev/folder_sync.md in the Gamma repository):
+What lands on disk (docs/dev/synced_vaults.md "The client" in the Gamma repository):
 
     <dest>/
       .gamma-sync.json          the link: server, folder, and what was written
@@ -37,12 +41,12 @@ What lands on disk (docs/dev/folder_sync.md in the Gamma repository):
 Rules: the client only ever writes, renames or removes files it wrote
 itself. A file it finds in the way, or one you changed on disk, is left
 alone and reported; ``--force`` replaces the changed ones. ``--full``
-writes every file again. A PDF goes back once it is whole (written a few
+writes every file again. A PDF is pushed once it is whole (written a few
 seconds ago, ending in ``%%EOF``) and only when its bytes are not Gamma's
 already; one changed both on disk and in Gamma is kept and reported, and
 ``--force`` takes Gamma's. A token comes from ``--token``, the
 ``GAMMA_TOKEN`` environment variable, or the link when ``init --save-token``
-kept it there; sending PDFs back takes a token that may write.
+kept it there; pushing takes a token that may write.
 """
 
 import argparse
@@ -68,6 +72,8 @@ EOF_TAIL = 1024             # a whole PDF has "%%EOF" within its last bytes
 KEEP_OLD_DAYS = 1           # how long the server keeps a file a push replaced, once nothing references it
 CHUNK = 1 << 20             # bytes read from disk at a time
 NOT_WHOLE = "not a whole PDF yet"   # ``settled``'s answer for a file at rest that does not end as a PDF ends
+WRITING = "still being written"     # ``settled``'s answer for a file written less than SETTLE_S ago
+NOT_THERE = "the file is not there"  # ``settled``'s, and a followed file's wait while it is gone
 default_open = None         # tests: (method, path, headers, body) → (status, headers, body stream)
 
 
@@ -79,6 +85,16 @@ class NotFound(SyncError):
     """A 404: the server has no such thing (a page that is gone, among others)."""
 
 
+class Denied(SyncError):
+    """A 401 or a 403: the token refused (expired, revoked, another server's),
+    or not allowed what it asked."""
+
+
+class Unreachable(SyncError):
+    """The server could not be reached, its answer broke off, or it was no
+    JSON (a sign-in or captive portal's page): nothing it said stands."""
+
+
 class Changed(SyncError):
     """A file that changed while it was read to be sent (``_parts``): a push
     lets it wait for the next pass rather than keep it."""
@@ -88,8 +104,8 @@ class Changed(SyncError):
 
 class Server:
     """A thin client of one Gamma server: JSON answers, file downloads, and
-    the two writes a push makes (a JSON body, a PDF upload), with the token
-    as a bearer header."""
+    the writes a push makes (a JSON body, an upload), with the token as a
+    bearer header."""
 
     def __init__(self, url, token, timeout=120):
         self.url = url.rstrip("/")
@@ -112,7 +128,7 @@ class Server:
         except urllib.error.HTTPError as e:
             return e.code, e.headers, e
         except (urllib.error.URLError, OSError, ValueError) as e:
-            raise SyncError(f"cannot reach {self.url}: {e}") from e
+            raise Unreachable(f"cannot reach {self.url}: {e}") from e
 
     def source(self, folder_id):
         """The folder's reads for a ``Round``."""
@@ -121,18 +137,21 @@ class Server:
     def _json(self, method, path, headers, body=None) -> dict:
         """The server's JSON answer. An answer cut short, or one that is no
         JSON (a sign-in or captive portal's page, answered with 200), is a
-        SyncError like a refusal, so a round reports it."""
-        status, _headers, resp = self.open_(method, path, headers, body)
-        try:
-            data = resp.read()
-        except http.client.HTTPException as e:   # IncompleteRead among others; not an OSError
-            raise SyncError(f"{path}: the answer broke off ({e!r})") from e
+        SyncError like a refusal (``Unreachable``), so a round reports it."""
+        status, data = self._send(method, path, headers, body)
         if not 200 <= status < 300:
-            raise (NotFound if status == 404 else SyncError)(_refusal(status, data, path))
+            raise {404: NotFound, 401: Denied, 403: Denied}.get(status, SyncError)(_refusal(status, data, path, self.token))
         try:
             return json.loads(data.decode("utf-8")) if data else {}
         except ValueError as e:
-            raise SyncError(f"{path}: the server did not answer JSON") from e
+            raise Unreachable(f"{path}: the server did not answer JSON") from e
+
+    def _send(self, method, path, headers, body=None) -> tuple[int, bytes]:
+        status, _headers, resp = self.open_(method, path, headers, body)
+        try:
+            return status, resp.read()
+        except http.client.HTTPException as e:   # IncompleteRead among others; not an OSError
+            raise Unreachable(f"{path}: the answer broke off ({e!r})") from e
 
     def get_json(self, path):
         return self._json("GET", path, self._headers())
@@ -143,19 +162,35 @@ class Server:
         return self._json(method, path, {**self._headers(), "Content-Type": "application/json",
                                          "Content-Length": str(len(body))}, body)
 
+    def ask(self, method, path, obj=None) -> tuple[int, bytes]:
+        """``method path``, with ``obj`` as a JSON body when given: ``(status,
+        the answer's bytes)`` whatever the status, for a caller that reads a
+        refusal's own body (the desktop app's synced vault of another server,
+        gamma/vault_http.py). ``Unreachable`` as for ``get_json``."""
+        headers, body = self._headers(), None
+        if obj is not None:
+            body = json.dumps(obj).encode("utf-8")
+            headers = {**headers, "Content-Type": "application/json", "Content-Length": str(len(body))}
+        return self._send(method, path, headers, body)
+
     def upload_pdf(self, path: Path) -> dict:
         """The PDF at ``path`` stored on the server (``POST /api/uploads``,
         one multipart part streamed from disk): ``{doc_id, ...}``. Bytes the
         server stores already are stored once."""
+        return self.upload(path, "/api/uploads", "application/pdf")
+
+    def upload(self, path: Path, route: str, content_type: str) -> dict:
+        """The file at ``path`` sent to ``route`` as its one multipart part
+        ``file``, streamed from disk: the server's JSON answer."""
         boundary = f"gamma-sync-{os.urandom(12).hex()}"
         name = path.name.replace('"', "%22").replace("\r", "%0D").replace("\n", "%0A")
         head = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\n'
-                "Content-Type: application/pdf\r\n\r\n").encode("utf-8")
+                f"Content-Type: {content_type}\r\n\r\n").encode("utf-8")
         tail = f"\r\n--{boundary}--\r\n".encode("ascii")
         size = path.stat().st_size
         headers = {**self._headers(), "Content-Type": f"multipart/form-data; boundary={boundary}",
                    "Content-Length": str(len(head) + size + len(tail))}
-        return self._json("POST", "/api/uploads", headers, _parts(head, path, size, tail))
+        return self._json("POST", route, headers, _parts(head, path, size, tail))
 
     def download(self, path, target: Path) -> None:
         """GET ``path`` into ``target``, written beside it and moved into
@@ -163,7 +198,7 @@ class Server:
         error, never a file."""
         status, headers, body = self.open_("GET", path, self._headers())
         if status != 200:
-            raise SyncError(_refusal(status, body.read(), path))
+            raise SyncError(_refusal(status, body.read(), path, self.token))
         length = headers.get("Content-Length")
         part = target.with_name(target.name + PART)
         size = 0
@@ -197,8 +232,7 @@ def _parts(head: bytes, path: Path, size: int, tail: bytes):
 
 class RemoteSource:
     """What a round reads of one folder, over HTTP: the manifest, the notes
-    files of some pages, a stored file. The server's own rounds read the
-    same three things in-process (gamma/folder_links.py ``LocalSource``)."""
+    files of some pages, a stored file (gamma/folder_sync.py serves them)."""
 
     def __init__(self, server: Server, folder_id: str):
         self.server = server
@@ -218,7 +252,8 @@ class RemoteSink:
     """Where a push writes, over HTTP with a token that may write: the
     file's bytes stored, a page's PDF replaced by them, and what the page
     shows now. The desktop app's own server writes the same three
-    in-process (gamma/folder_links.py ``LocalSink``)."""
+    in-process for the files it pushes (gamma/folder_links.py
+    ``LocalSink``)."""
 
     def __init__(self, server: Server):
         self.server = server
@@ -244,9 +279,20 @@ class RemoteSink:
                 "title": page.get("content") or ""}
 
 
-def _refusal(status, data, path):
+def scrubbed(detail, token: str):
+    """A server's ``detail`` with ``token``, the one it was sent, left out
+    (a server or a proxy that echoes the request's header): a string, or a
+    list or an object, written as JSON then, that holds it."""
+    if not token:
+        return detail
+    text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False, default=str)
+    return text.replace(token, "…") if token in text else detail
+
+
+def _refusal(status, data, path, token=""):
+    """What a refusal says, without ``token``, the one the request carried."""
     try:
-        detail = json.loads(data.decode("utf-8")).get("detail", "")
+        detail = scrubbed(json.loads(data.decode("utf-8")).get("detail", ""), token)
     except Exception:
         detail = ""
     if status == 401:
@@ -344,15 +390,17 @@ def doc_of(path: Path) -> str:
 
 def settled(path: Path) -> str:
     """"" when the file is whole and may be sent: written at least SETTLE_S
-    ago, open for reading (Windows refuses while its writer holds it), and
-    ending as a PDF ends, with "%%EOF" in its last EOF_TAIL bytes. Otherwise
-    why not yet; a compile writes its PDF over a second or more."""
+    ago (a time ahead of this clock, a share's whose clock runs ahead, counts
+    as long ago: the tests after it say whether it is whole), open for
+    reading (Windows refuses while its writer holds it), and ending as a PDF
+    ends, with "%%EOF" in its last EOF_TAIL bytes. Otherwise why not yet; a
+    compile writes its PDF over a second or more."""
     try:
         written = path.stat().st_mtime
     except OSError:
-        return "the file is not there"
-    if time.time() - written < SETTLE_S:
-        return "still being written"
+        return NOT_THERE
+    if 0 <= time.time() - written < SETTLE_S:
+        return WRITING
     try:
         with open(path, "rb") as f:
             f.seek(max(0, f.seek(0, os.SEEK_END) - EOF_TAIL))
@@ -427,7 +475,7 @@ class Push:
         before = _stat(file)
         if before is None:
             if self.mode == "file":
-                self._wait(key, "the file is not there")
+                self._wait(key, NOT_THERE)
             return
         if not modified(file, entry):
             return
@@ -496,10 +544,11 @@ class Push:
 
 class Round:
     """One pass: the folder's manifest against the link's state, and the
-    difference written to disk — renames first, then new and changed files,
+    difference pulled to disk — renames first, then new and changed files,
     then the attachments the notes need, then what is gone. A link that
-    sends PDFs back (its state's ``push``, and a ``sink`` to write through)
-    first sends the ones changed on disk (``Push``).
+    pushes PDFs (its state's ``push``, and a ``sink`` to write through: a
+    sync's, never a pull's) first pushes the ones changed on disk
+    (``Push``).
 
     ``progress``, when given, is called with what the round fetches as it
     goes, from the comparison on: ``{done, total, bytes: {done, total},
@@ -797,7 +846,7 @@ def cmd_init(args):
     where = _path_text(path) or "the whole library"
     print(f"Linked {dest} to {where} in {state['workspace_name'] or who['workspace']['id']} on {server.url}.")
     if args.push:
-        print("PDFs you change there go back to Gamma.")
+        print("sync pushes the PDFs you change there; pull never does.")
     print(f"Next: python {Path(sys.argv[0]).name} sync {dest}")
     return 0
 
@@ -818,10 +867,22 @@ def changed_since(server: Server, cursor: str) -> bool:
 
 
 def cmd_sync(args):
+    """Push, when the link pushes, then pull; with ``--watch``, again after
+    every change, on disk or in Gamma."""
+    return _rounds(args, push=True)
+
+
+def cmd_pull(args):
+    """Pull alone: Gamma's changes written, nothing pushed, whatever the link
+    says; with ``--watch``, again after every change in Gamma."""
+    return _rounds(args, push=False)
+
+
+def _rounds(args, *, push: bool):
     dest = Path(args.dest).expanduser().resolve()
     link = Link.load(dest)
     server = Server(link.state["server"], resolve_token(args, link.state))
-    sink = RemoteSink(server) if link.state.get("push") else None
+    sink = RemoteSink(server) if push and link.state.get("push") else None
     while True:
         try:
             counts = Round(link, server.source(link.state["folder"]), sink=sink, full=args.full, force=args.force,
@@ -855,7 +916,7 @@ def cmd_status(args):
     print(f"  folder:    {_path_text(st.get('folder_path') or []) or 'the whole library'} ({st['folder']})")
     print(f"  server:    {st['server']} ({st.get('workspace_name') or st.get('workspace')})")
     print(f"  notes:     {'on' if st.get('notes', True) else 'off'}")
-    print(f"  push:      {'on: PDFs changed here go back' if st.get('push') else 'off'}")
+    print(f"  push:      {'on: sync pushes the PDFs changed here' if st.get('push') else 'off'}")
     print(f"  last sync: {st.get('synced_at') or 'never'}")
     print(f"  files:     {kinds['pdf']} PDFs, {kinds['notes']} notes, {kinds['attachment']} attachments, "
           f"{len(st['dirs'])} folders")
@@ -949,18 +1010,20 @@ def main(argv=None) -> int:
     p.add_argument("--save-token", action="store_true", help=f"keep the token in {STATE} (readable by anyone with the directory)")
     p.add_argument("--no-notes", action="store_true", help="PDFs only, no notes files")
     p.add_argument("--push", action="store_true",
-                   help="send PDFs you change in the directory back to Gamma (a token that may write)")
+                   help="push the PDFs you change in the directory, at each sync (a token that may write)")
     p.set_defaults(run=cmd_init)
 
-    p = sub.add_parser("sync", help="bring the directory up to date")
-    p.add_argument("dest")
-    p.add_argument("--token")
-    p.add_argument("--watch", type=float, default=0, metavar="SECONDS",
-                   help="keep running: look for changes every SECONDS and sync when there are any")
-    p.add_argument("--full", action="store_true", help="write every file again, not only the changed ones")
-    p.add_argument("--force", action="store_true", help="replace files changed on disk")
-    p.add_argument("--dry-run", action="store_true", help="say what would be done, change nothing")
-    p.set_defaults(run=cmd_sync)
+    for name, run, what in (("pull", cmd_pull, "write Gamma's changes to the directory, push nothing"),
+                            ("sync", cmd_sync, "push the PDFs changed on disk (with init --push), then pull")):
+        p = sub.add_parser(name, help=what)
+        p.add_argument("dest")
+        p.add_argument("--token")
+        p.add_argument("--watch", type=float, default=0, metavar="SECONDS",
+                       help=f"keep running: look for changes every SECONDS and {name} when there are any")
+        p.add_argument("--full", action="store_true", help="write every file again, not only the changed ones")
+        p.add_argument("--force", action="store_true", help="replace files changed on disk with Gamma's")
+        p.add_argument("--dry-run", action="store_true", help="say what would be done, change nothing")
+        p.set_defaults(run=run)
 
     p = sub.add_parser("status", help="what the directory is linked to and holds")
     p.add_argument("dest")

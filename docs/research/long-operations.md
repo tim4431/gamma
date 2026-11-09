@@ -224,7 +224,7 @@ loop, as it already did. Each entry still commits on its own, so the
 write lock is let go between pages and a restore meanwhile is not lost
 ([dev/home_library.md](../dev/home_library.md) "Recently deleted").
 
-The off-site copies' rounds and a folder link's rounds report their
+The off-site copies' rounds and a synced vault's rounds report their
 progress as the other rounds do. An off-site round keeps it in memory for
 its status (`offsite._phase`): the databases looked at of all of them,
 then the files it sends and their bytes, boto3's upload callback moving
@@ -233,12 +233,16 @@ uploads now compare every workspace's files with its listing before the
 first is sent. Settings → Backups' status line reads "copying now… ·
 files 120 / 3,400 · 1.2 GB / 8.0 GB", read every 3 s while the round runs
 ([dev/debugging.md](../dev/debugging.md#off-site-copies-in-a-bucket)). A
-folder link's `Round` takes a `progress` callback in place of the `say`
+folder link's `Round` took a `progress` callback in place of the `say`
 the server threw away: the files fetched of those to fetch and the PDFs'
-bytes by the manifest's `pdf_size`. `_folder_round` writes it into the
-link's status at most once a second, and the desktop app's sync panel
+bytes by the manifest's `pdf_size`. Folder links have since become synced
+vaults, and a vault's round (`vault_sync.Round`) takes the same callback:
+the files push takes and then the pages pull looks at, and the bytes of
+the PDFs it pushes. `folder_links._progress_writer` writes it into the
+vault's status once the round has run a second and at most once a second
+after, so a quiet round writes nothing, and the desktop app's sync panel
 reads *Syncing 30 / 120*
-([dev/folder_sync.md](../dev/folder_sync.md) "A folder link's round").
+([dev/synced_vaults.md](../dev/synced_vaults.md#when-rounds-run)).
 Neither is a job, so neither is in the tasks tray: they stay recurring
 rounds, shown where they are followed.
 

@@ -3,11 +3,14 @@
 Thought through in October 2026, before the one-way sync was written. The
 question was how to keep files and folders in step between Gamma and
 people's own computers, and what to do about Gamma's folders not being a
-file tree. Status: **the one-way half, Gamma to disk, is built**. The
-desktop app keeps folders on the PC it runs on, and the same rounds run as
-a one-file client ([dev/folder_sync.md](../dev/folder_sync.md)). The way
-back is built for PDFs ([disk-to-gamma.md](disk-to-gamma.md)); for notes
-files it is the open item at the end.
+file tree. Status: **built**. The one-way half, Gamma to disk, came
+first, and the way back for PDFs after it ([disk-to-gamma.md](disk-to-gamma.md)).
+On 2026-11-07 the way back for notes files, the open item at the end, was
+built too, as synced vaults ([vaults.md](vaults.md)), by patches of the
+file rather than the render this note had, and the desktop app's folders
+became synced vaults on that engine. The mechanics, the one-file client's
+included, are in [dev/synced_vaults.md](../dev/synced_vaults.md); the
+client still pushes PDFs only.
 
 ## Why not rsync, Syncthing or a mount
 
@@ -103,7 +106,7 @@ client only ever touches files it wrote.
 
 - **The way back.** For PDFs it is built
   ([disk-to-gamma.md](disk-to-gamma.md),
-  [dev/folder_sync.md](../dev/folder_sync.md#sending-pdfs-back)): a kept
+  [dev/synced_vaults.md](../dev/synced_vaults.md)): a kept
   folder that sends changed PDFs back when asked, and a page that follows
   one file on disk, both through the replacement route. For notes files
   it is open. Disk to Gamma in full: a new PDF dropped in a directory
@@ -113,7 +116,11 @@ client only ever touches files it wrote.
   tree (`sync_tree.diff`) and applied through the normal op path with a
   base, so the server's three-way text merge handles concurrent edits and
   a real conflict surfaces in the existing merge chip. The client would be
-  a collaborator, not a replicator. Open choices before building it:
+  a collaborator, not a replicator. [vaults.md](vaults.md) takes this
+  further: the write side as patches of the file, and the kept folder,
+  the followed file and a person's own directory as one feature, the
+  synced vault, with a direction in git's words. Open choices
+  before building it:
   anchors on every block (lossless, visible in VS Code) or only on linked
   ones; what a delete on disk means (unfile from the folder, trash only
   when that was the page's only filing, is the recommendation); embedded

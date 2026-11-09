@@ -89,7 +89,7 @@ from fastapi import HTTPException
 from fractional_indexing import BASE_62_DIGITS, FIError, generate_key_between, validate_order_key
 from pydantic import BaseModel, Field, model_validator
 
-from . import collab, comments, inbox, mentions, pdf_index, textmerge, upload_gc
+from . import collab, comments, inbox, mentions, pdf_index, storage, textmerge, upload_gc
 from . import ink as inkmod
 from .picture import merge_picture, normalize_picture
 from .text_box import merge_text_box, normalize_text_box
@@ -98,12 +98,13 @@ from .blocks_store import (
     ensure_reserved, fetch_subtree, filing, filing_ids, folder_inserts, free_position, is_op_page, label_inserts,
     last_child_position, load_props, move_subtree_to_page, page_descendants, page_root_id, redundant_source_url, subtree_refs,
     touch_page, trashed_page, valid_block_id, valid_parent_value, write_lock)
-from .db import connect_pages_db, format_stamp, page_now, parse_stamp, ws_uploads_dir
+from .db import connect_pages_db, format_stamp, page_now, parse_stamp
 from .logbuf import log
 from .storage import content_digest, store_file, upload_refs
 
 SYNC_CLIENT = "sync"  # the mirror's own writes, here and on its remote (sync_engine.CLIENT reads it)
 MAX_OPS = 500
+MAX_PLAN_OPS = 50 * MAX_OPS   # a synced vault's plan, one transaction (``commit_plan``)
 MAX_CONTENT = 200_000
 # The log per page is bounded three ways — a set logs the block's whole
 # text, so typing in one long block would otherwise keep KEEP_OPS copies of
@@ -130,12 +131,13 @@ PLACED_KEYS = {"text_box": (normalize_text_box, merge_text_box), "picture": (nor
 MISSING = "missing"  # the block or the parent is gone
 MOVED = "moved"      # it lives in another page now
 CYCLE = "cycle"      # the move would put a block inside itself
+STALE = "stale"      # the page moved past the seq a plan was made at (``commit_plan``)
 
 
 class OpError(Exception):
     """A refused batch. ``missing``: the unknown block or parent id behind a
     404, so a client that holds that block can send it again as an insert.
-    ``conflict`` (MISSING / MOVED / CYCLE): refused because someone else
+    ``conflict`` (MISSING / MOVED / CYCLE / STALE): refused because someone else
     changed the page meanwhile, not because the batch is malformed;
     ``index`` is the refused op's place in the batch."""
 
@@ -260,6 +262,15 @@ def order_key_error(key) -> str:
     except FIError as e:
         return str(e)
     return ""
+
+
+class PlanRequest(BaseModel):
+    """A synced vault's plan (``commit_plan``): its ops, any number up to
+    ``MAX_PLAN_OPS``, made against the page at ``seq``."""
+    client: str = ""
+    batch: str = ""
+    seq: int
+    ops: list[Op] = Field(max_length=MAX_PLAN_OPS)
 
 
 def props_patch(old: dict, new: dict) -> dict:
@@ -454,16 +465,16 @@ class _Batch:
         new, base, now = patch.get("ink_url"), base_props.get("ink_url"), props.get("ink_url") or ""
         if not (isinstance(new, str) and new and isinstance(base, str)) or now in (base, new) or not self.ws:
             return patch
-        uploads = ws_uploads_dir(self.ws)
-        ours = inkmod.read_upload(uploads, new)
-        theirs = inkmod.read_upload(uploads, now) if now else None
+        stored = storage.files(self.ws)
+        ours = inkmod.read_upload(stored, new)
+        theirs = inkmod.read_upload(stored, now) if now else None
         if ours is None or (now and theirs is None):
             return patch
 
         def empty():
             return inkmod.InkFile(format=inkmod.FORMAT, version=inkmod.VERSION, space=ours.space, strokes=[])
 
-        base_file = inkmod.read_upload(uploads, base) if base else empty()
+        base_file = inkmod.read_upload(stored, base) if base else empty()
         ids = [i for i in base_ids if isinstance(i, str)] if isinstance(base_ids, list) else None
         try:
             result = inkmod.merge_ink(base_file, ours, theirs or empty(), ids)
@@ -478,7 +489,7 @@ class _Batch:
         else:
             data = inkmod.dumps(merged)
             name = f"{content_digest(data)}.ink"
-            if not (uploads / name).is_file():
+            if not stored(name):
                 try:
                     store_file(self.ws, data, ".ink")
                 except Exception as e:  # noqa: BLE001 — storage full: the writer's file as sent
@@ -865,22 +876,24 @@ def apply_ops(conn, page_id: str, ops: list[dict], *, actor: str, client: str = 
     return result
 
 
-def apply_batches(conn, batches: list[tuple[str, list[dict]]], *, actor: str, client: str = "") -> list[dict]:
+def apply_batches(conn, batches: list[tuple[str, list[dict]]], *, actor: str, client: str = "",
+                  batch_id: str = "") -> list[dict]:
     """Several batches, ``[(page_id, ops), …]`` — each its own page's, each
     logged on its page — in the caller's transaction: what one request
     changes across pages as one step (a folder deleted together with the
     ids it leaves on the pages filed in it). Takes the write lock; the
     caller commits, or rolls back and nothing is written, then hands each
     result to ``after_commit``. ``client`` names the writer on each
-    batch's log row, as ``apply_ops``'s does. Raises ``OpError`` as
-    ``apply_ops`` does."""
+    batch's log row, as ``apply_ops``'s does, and ``batch_id`` the first
+    batch's (a synced vault's journal looks for it after a crash). Raises
+    ``OpError`` as ``apply_ops`` does."""
     write_lock(conn)
     results = []
-    for page_id, ops in batches:
+    for k, (page_id, ops) in enumerate(batches):
         ops = _checked(ops)
         if not is_op_page(conn, page_id):
             raise OpError(404, "page not found")
-        results.append(_apply(conn, page_id, ops, actor=actor, client=client))
+        results.append(_apply(conn, page_id, ops, actor=actor, client=client, batch_id=batch_id if k == 0 else ""))
     return results
 
 
@@ -1048,6 +1061,40 @@ def commit_ops(ws: str, page_id: str, ops: list[dict], *, actor: str, client: st
         return after_commit(ws, conn, result, via=via)
 
 
+def commit_plan(ws: str, page_id: str, ops: list[dict], *, actor: str, client: str, batch_id: str, seq: int) -> dict:
+    """A synced vault's plan for a page from another computer
+    (gamma/vault_http.py): every op of it in one transaction, in
+    ``MAX_OPS`` batches each logged on the page, the first under
+    ``batch_id``, or none of them. Planned against the page as it stood at
+    ``seq`` (its op log's, ``latest_seq``), so a page written since is
+    refused whole, ``OpError`` 409 ``STALE``, and the vault plans again from
+    what it holds now: what someone typed in between, a child under a block
+    the file dropped among it, is never written over. A plan the log holds
+    already (a retry whose answer was lost) is answered from its row. →
+    ``{seq}``, the page's after the plan."""
+    if not ops:
+        raise OpError(400, "no ops")
+    chunks = [(page_id, ops[i:i + MAX_OPS]) for i in range(0, len(ops), MAX_OPS)]
+    with connect_pages_db(ws) as conn:
+        write_lock(conn)
+        try:
+            if not is_op_page(conn, page_id):
+                raise OpError(404, "page not found")
+            replay = _replayed(conn, page_id, client, batch_id) if batch_id else None
+            if replay:
+                conn.rollback()
+                return {"seq": replay["seq"] + len(chunks) - 1}
+            if latest_seq(conn, page_id) != seq:
+                raise OpError(409, "the page changed since the plan was made", conflict=STALE)
+            results = apply_batches(conn, chunks, actor=actor, client=client, batch_id=batch_id)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        after_commits(ws, conn, results)
+    return {"seq": results[-1]["seq"]}
+
+
 def ensure_filing(ws: str, conn, *, paths=(), labels=(), under: str = "",
                   actor: str, client: str = "") -> tuple[dict, dict]:
     """The folders at ``paths`` (lists of names, from the top or from the
@@ -1094,9 +1141,23 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "", sw
     writers here are the ones outside the op batches — every other block
     write goes through ``apply_ops``. ``client`` names the writer to the
     commit listeners like a batch's."""
+    write_lock(conn)  # the pages inside it are read under the lock that deletes them
+    went = _went_with(conn, page_id) if went is None else went
+    return purge_pages(ws, conn, [page_id, *page_descendants(conn, page_id), *went], actor=actor, client=client,
+                       sweep=sweep)
+
+
+def purge_pages(ws: str, conn, pages: list[str], *, actor: str, client: str = "", sweep: bool = True) -> dict:
+    """``delete_page`` for the pages ``pages`` and no other: a page inside
+    one of them that is not listed stays, and reads as a library page once
+    its parent is gone (blocks_store's sub-pages). What takes back out the
+    pages a merge of its own added, by the merge's list, where a page inside
+    one of them may have come another way and be written on there
+    (gamma/linked_files.py ``_carry``). In the caller's transaction when it
+    holds the write lock already (``write_lock``); commits. ``sweep`` as
+    ``delete_page``'s."""
     write_lock(conn)
     try:
-        pages = [page_id, *page_descendants(conn, page_id), *(_went_with(conn, page_id) if went is None else went)]
         rows = [row for page in pages for row in _purge(conn, page, actor)]
         conn.commit()
     except BaseException:
@@ -1490,7 +1551,9 @@ def ops_since(conn, page_id: str, since: int) -> tuple[list[dict], bool]:
     continue from ``since`` at all: it ends before it (the page's log was
     replaced — a backup restore — or restarted) or skips the batch right
     after it (a restore moved the page's seq forward). Either way the client
-    must reload the tree."""
+    must reload the tree. Each batch names its writer's ``batch`` ("" for
+    none): a synced vault of another server asks it whether a batch of its
+    landed (gamma/vault_http.py ``HttpRemote.landed``)."""
     low = conn.execute(
         "SELECT MIN(seq) FROM page_ops WHERE page_id = ?", (page_id,)).fetchone()[0]
     if low is not None and since < low - 1:
@@ -1498,13 +1561,14 @@ def ops_since(conn, page_id: str, since: int) -> tuple[list[dict], bool]:
     if since > latest_seq(conn, page_id):
         return [], True
     batches, size = [], 0
-    for seq, actor, client, at, ops in conn.execute(
-            "SELECT seq, actor, client, at, ops FROM page_ops WHERE page_id = ? AND seq > ? ORDER BY seq",
+    for seq, actor, client, at, ops, batch_id in conn.execute(
+            "SELECT seq, actor, client, at, ops, batch_id FROM page_ops WHERE page_id = ? AND seq > ? ORDER BY seq",
             (page_id, since)):
         if not batches and seq != since + 1:
             return [], True
         size += len(ops)
         if len(batches) >= CATCHUP_MAX_BATCHES or size > CATCHUP_MAX_BYTES:
             return [], True
-        batches.append({"seq": seq, "actor": actor, "client": client, "at": at, "ops": json.loads(ops)})
+        batches.append({"seq": seq, "actor": actor, "client": client, "at": at, "ops": json.loads(ops),
+                        "batch": batch_id or ""})
     return batches, False

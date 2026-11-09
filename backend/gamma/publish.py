@@ -34,7 +34,7 @@ import re
 import unicodedata
 from urllib.parse import unquote, urlsplit
 
-from . import cloud_auth, config, integrations, ratelimit, sync_engine, workspaces
+from . import cloud_auth, config, folder_links, integrations, ratelimit, sync_engine, workspaces
 from .auth import SHARE_AUDIENCES, SHARE_ROLES
 from .blocks_store import page_ancestors, page_descendants, with_sub_pages
 from .cloud_auth import CloudAuthError
@@ -47,6 +47,7 @@ MIRROR_NAME = "Gamma Cloud"
 SIGN_IN = "Sign in with Gamma Cloud to publish."
 IS_SHARE_HOST = "This server is a share host: share its pages directly."
 ZOTERO_LINKED = "This workspace is kept in step with a Zotero library, so it cannot publish pages."
+IN_VAULT = "This page is kept in step with files on this computer (a synced vault), so it cannot be published."
 EXCHANGE_PATH = "/api/auth/cloud/exchange"
 
 
@@ -280,6 +281,14 @@ def _zotero_linked(ws: str) -> bool:
     """Whether a Zotero link keeps ``ws`` (detached or not)."""
     with connect_users_db() as conn:
         return conn.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ?", (ws,)).fetchone() is not None
+
+
+def _in_vault(ws: str, page_id: str) -> bool:
+    """Whether a synced vault of this computer keeps the page
+    (gamma/folder_links.py): its files are the page's other side, which a
+    copy on the share host would not follow. Only the desktop app's own
+    server keeps vaults."""
+    return config.folder_links_enabled() and folder_links.vault_of_page(ws, page_id) is not None
 
 
 def _require_page(ws: str, page_id: str) -> None:
@@ -521,6 +530,8 @@ def publish(user_id: str, ws: str, page_id: str, *, audience: str | None = None,
     _require_page(ws, page_id)
     if _zotero_linked(ws):  # before any token is minted on the share host
         raise PublishError(409, ZOTERO_LINKED)
+    if _in_vault(ws, page_id):
+        raise PublishError(409, IN_VAULT)
     if not cloud_auth.settings()["enabled"] or not cloud_auth.grant_of(user_id)[1]:
         raise PublishError(409, SIGN_IN)
     host = share_host()
@@ -651,6 +662,8 @@ def state(user_id: str, ws: str, page_id: str) -> dict:
         reason = IS_SHARE_HOST
     elif _zotero_linked(ws):
         reason = ZOTERO_LINKED
+    elif _in_vault(ws, page_id):
+        reason = IN_VAULT
     elif not cloud_auth.settings()["enabled"] or not cloud_auth.grant_of(user_id)[1]:
         reason = SIGN_IN
     else:

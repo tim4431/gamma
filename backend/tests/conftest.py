@@ -19,7 +19,7 @@ os.environ["GAMMA_DATA_DIR"] = own_folder("gamma-test-")
 os.environ["GAMMA_SYNC_INTERVAL"] = "0"  # mirror rounds run only when a test asks
 for var in ("GAMMA_STATIC_DIR", "GAMMA_AI_ANTHROPIC_API_KEY", "GAMMA_AI_OPENAI_API_KEY",
             "GAMMA_AI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GAMMA_AI_MODELS", "GAMMA_AI_MODEL",
-            "GAMMA_ADMIN_USER", "GAMMA_ADMIN_PASSWORD"):
+            "GAMMA_ADMIN_USER", "GAMMA_ADMIN_PASSWORD", "GAMMA_FOLDER_LINKS", "GAMMA_SHELL_SECRET"):
     os.environ.pop(var, None)
 # Nor a developer's off-site bucket: a test server's startup round must never
 # copy into it (gamma/offsite.py reads these at every round). Nor a Zotero
@@ -381,9 +381,11 @@ def data_dir(tmp_path, monkeypatch):
 
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "USERS_DB", tmp_path / "users.db")
+    monkeypatch.setattr(config, "VAULTS_DB", tmp_path / "vaults.db")
     monkeypatch.setattr(config, "WORKSPACES_DIR", tmp_path / "workspaces")
     monkeypatch.setattr(config, "BACKUPS_DIR", tmp_path / "backups")
     monkeypatch.setattr(db_mod, "USERS_DB", tmp_path / "users.db")
+    monkeypatch.setattr(db_mod, "VAULTS_DB", tmp_path / "vaults.db")
     monkeypatch.setattr(db_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
     monkeypatch.setattr(seed_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
     monkeypatch.setattr(ws_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
@@ -411,6 +413,20 @@ def make_page(guest, title="Test page", properties=None):
         r = guest.put(f"/api/blocks/{block['id']}", json={"properties": properties})
         assert r.status_code == 200, r.text
     return block
+
+
+def files_in(folder):
+    """``storage.files`` over a test's own folder: ``name -> Path | None``,
+    for a renderer handed its files with no workspace behind them."""
+    from gamma import storage
+
+    def find(name):
+        try:
+            path = Path(folder) / storage.check_name(name)
+        except ValueError:
+            return None
+        return path if path.is_file() else None
+    return find
 
 
 def _tree_block(client, tree, names, params=None):

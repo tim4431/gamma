@@ -40,7 +40,17 @@ publication or a Zotero link, never two of these: `create_mirror` refuses
 a workspace a link keeps (detached included), publishing refuses it too
 ("Publishing" below), and a link refuses a workspace that has a
 `mirrors` row, but for a publication emptied of its pages, which it
-forgets once the link is made.
+forgets once the link is made. A synced vault of the desktop app
+([synced_vaults.md](synced_vaults.md#rules-that-keep-files-safe)) may sit in
+a clone or a linked workspace only as one that pulls or pushes PDFs: a
+full clone (`create_mirror` with no `page_filter`) and a Zotero link refuse
+a workspace a vault pushes everything into (`folder_links.pushing_vault`:
+"let it push only PDFs, or only pull, first"), and the vault refuses to push
+everything into a clone or a linked workspace (`check_vault`). Publishing
+refuses a page a vault keeps. The vault's conflicts share `sync_conflicts`
+as kind `file_won` (`sync_engine.VAULT_KINDS`): the mirror's and Zotero's
+reads, counts and deletes leave them out (`NOT_VAULT`), and the vault's own
+routes read and resolve them.
 
 ## The model in one paragraph
 
@@ -445,7 +455,9 @@ each):
 
 Every decision the engine takes on its own is a row of `sync_conflicts`
 (`merged`, `diverged`, `dropped`, `kept_local_edit`, `restored_remote_edit`,
-`page_restored`, `page_restored_from_remote`) with the texts involved. Two
+`page_restored`, `page_restored_from_remote`) with the texts involved
+(a synced vault's `file_won` rows sit in the same table and are none of
+the mirror's). Two
 kinds name drawings, by upload name. A `file` row is one the remote
 refused: `mine` the file, `theirs` the remote's reason. An `ink_merged`
 row is one the remote merged by stroke without keeping every change of
@@ -848,6 +860,10 @@ view, Settings.
   `inkMergeLines`), and `MergeResolver.jsx` maps the glyph names to icons.
 - `useConflicts(wsId)` loads a clone's open conflicts and posts a decision;
   the pill's review view and Settings share it.
+- A synced vault's row (`file_won`, `isVaultConflict`) has two sides,
+  **This file** (which won, `theirs`) and **Gamma** (`mine`), each shown
+  against the text both last agreed on, and Apply on Gamma's puts it back
+  into the block, which the next pull writes to the file (`SIDE_VAULT`).
 
 **The chip.** A block the sync merged or had to decide on carries a small
 chip at its row's right end; its popover is the card. App owns which chip is
@@ -856,7 +872,9 @@ the card's ‹ n / N › step through them, and a decision opens the next one
 down the page, so a page of conflicts is worked through in one pass. App
 reads the page's conflicts (`GET /api/mirrors/{ws}/conflicts?page=`) on
 open and on `gamma:mirror` / `gamma:mirror-changed` (no timer of its own:
-the pill's poll raises the latter); a decision
+the pill's poll raises the latter), and on a page a synced vault keeps its
+vault's too (`GET /api/folder-links/{id}/conflicts?page=`,
+`vaultConflictsPath`), resolved there; a decision
 is an ordinary edit the next round pushes. The lists in the pill and in
 Settings jump to the block (`gamma:jump`).
 
@@ -1350,12 +1368,20 @@ The iPad app keeps no copy of its own: it shows a server's web app, and
 the Gamma server it runs on the device keeps clones like any other
 ([ipad.md](ipad.md#offline-use-clones)).
 
-The folder sync ([folder_sync.md](folder_sync.md)) keeps no copy of the
-workspace either: it writes one folder's pages to a directory
-on a PC as files, from Gamma to disk, through
+A synced vault of the desktop app ([synced_vaults.md](synced_vaults.md))
+keeps no copy of the workspace either: it keeps one folder's pages and a
+directory on a PC in step as files. Gamma's changes are pulled to the files;
+what goes back, as its switch says, is the PDFs (each its page's new file
+through the replacement) or everything, a note's changes merged into its
+page with the file winning a clash, as client `disk`. A vault of another
+server reads it over HTTP with a token (`gamma/vault_http.py`: the change
+feed, the subtree and the op log) and writes a page's changes as one plan
+(`POST /api/pages/{id}/plan`), refused whole when the page moved meanwhile.
+The gamma-sync client ([synced_vaults.md](synced_vaults.md#the-client))
+writes a folder's pages from Gamma to disk through
 `GET /api/sync/folders/{id}` (the manifest) and `…/notes` beside the change
-feed. Only PDFs go back, each one as its page's new file through the
-replacement route, never as a merge.
+feed, and sends back only PDFs, each through the replacement route, never
+as a merge.
 
 A Zotero link reads the local change feed in-process
 (`routers.sync.changes`, from `zotero_state.local_cursor`) to find the
