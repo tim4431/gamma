@@ -271,3 +271,7 @@ Multi-stage build: a Node stage compiles the frontend, the final Python image ru
 
 Gamma is licensed under the [GNU Affero General Public License v3.0 only](LICENSE)
 (`AGPL-3.0-only`). Third-party components and assets retain their respective licenses.
+
+## Friends
+
+- [Perfect Pixel](https://github.com/theamusing/perfectPixel) — detects the real grid behind AI-generated pixel art and resamples it into clean, perfectly aligned pixels.
