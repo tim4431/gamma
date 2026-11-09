@@ -66,8 +66,14 @@ def new_token(nbytes: int = 32) -> str:
 
 def new_id() -> str:
     """Account and grant ids: 20 url-safe chars, random — an account id is
-    the stable OIDC ``sub`` and never changes when the username does."""
-    return secrets.token_urlsafe(15)
+    the stable OIDC ``sub`` and never changes when the username does. Never
+    a leading ``-``: an id is typed on the command line (``manage.py
+    resolve-report <id>``), where argparse reads one as a flag and refuses
+    the command. One in sixty-four of the alphabet's first characters is
+    that dash, so a token drawn again costs nothing."""
+    while (out := secrets.token_urlsafe(15)).startswith("-"):
+        pass
+    return out
 
 
 # One Google/GitHub sign-in in flight (``identities.py``): ``redirect`` while
