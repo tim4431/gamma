@@ -20,7 +20,7 @@ from . import zotero_stream
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
 from .compression import JsonGzip
-from .db import connect_data_db, connect_pages_db, connect_users_db, workspace_ids, ws_dir
+from .db import connect_data_db, connect_pages_db, connect_users_db, connect_vaults_db, workspace_ids, ws_dir
 from .logbuf import log, setup_logging
 from .mcp_lazy import LazyMCP
 from .mcp_oauth import router as mcp_oauth_router
@@ -239,7 +239,8 @@ def _blocked_app(guide: dict) -> FastAPI:
 
 def _startup_maintenance():
     """After the data directory is current: create users.db on a fresh
-    install, seed the first admin, then per workspace: apply the per-file
+    install (and vaults.db on the desktop app's own server, the one server
+    that keeps it), seed the first admin, then per workspace: apply the per-file
     schema statements (a restored backup gains page_ops, WAL, ...). A
     workspace behind on its own migration steps is skipped: the background
     walk the lifespan starts (``migrations.warming``) upgrades it, or the
@@ -248,6 +249,8 @@ def _startup_maintenance():
     reconciliation (gamma/upload_gc.py) runs in the background once the
     server is up, never here."""
     connect_users_db().close()
+    if config.folder_links_enabled():
+        connect_vaults_db().close()
     jobs.recover()
     ensure_admin_seed()
     for ws_id in workspace_ids():
@@ -364,6 +367,7 @@ def create_app() -> FastAPI:
                 every(db_maintenance.EVERY_S, db_maintenance.tick, "[db] maintenance failed"), \
                 every(offsite.wait_s, offsite.tick, "[offsite] round failed"), \
                 every(folder_links.TICK_S, folder_links.tick, "[folders] round failed"), \
+                every(folder_links.HOT_S, folder_links.hot_tick, "[folders] a page's round failed"), \
                 every(workspaces.LEFTOVERS_EVERY_S, workspaces.remove_leftovers,
                       "[workspaces] leftover sweep failed"), \
                 zotero_live():

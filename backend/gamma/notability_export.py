@@ -28,7 +28,6 @@ import uuid as uuidlib
 from collections import Counter
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
 
 from PIL import Image
 
@@ -159,8 +158,8 @@ class _Page:
     """One Gamma page on its way into a note: its blocks, the note's frames
     (the import's), and what is being written."""
 
-    def __init__(self, blocks: list[dict], page_id: str, uploads_dir: Path, resolve_ref=None):
-        self.blocks, self.page_id, self.uploads = blocks, page_id, Path(uploads_dir)
+    def __init__(self, blocks: list[dict], page_id: str, stored, resolve_ref=None):
+        self.blocks, self.page_id, self.stored = blocks, page_id, stored  # name -> its file (``storage.files``)
         self.resolve_ref = resolve_ref  # [[ref]] → the block it names (markdown_export.block_ref_resolver)
         self.by_id = {b["id"]: b for b in blocks}
         self.kids: dict[str, list[dict]] = {}
@@ -237,7 +236,7 @@ class _Page:
                 continue
             if kind == "ink":
                 surface = self._ink_surface(b, on_sheet, doc_id, len(surfaces))
-                ink = inkmod.read_upload(self.uploads, p.get("ink_url") or "")
+                ink = inkmod.read_upload(self.stored, p.get("ink_url") or "")
                 if ink is None:
                     self.left_out["missing"] += 1
                 elif surface is None:
@@ -290,10 +289,10 @@ class _Page:
         first page's width, so its points are document units."""
         from .db import safe_doc_id
         try:
-            path = self.uploads / f"{safe_doc_id(doc_id)}.pdf"
+            path = self.stored(f"{safe_doc_id(doc_id)}.pdf")
         except ValueError:
             raise ExportError("invalid document id") from None
-        if not path.is_file():
+        if path is None:
             raise ExportError("PDF not stored on the server")
         try:
             reader = ExportPdfReader(str(path), strict=False)
@@ -349,7 +348,7 @@ class _Page:
             return on_sheet.get(b["id"])
         if b["id"] in on_sheet:
             return None
-        ink = inkmod.read_upload(self.uploads, (b.get("properties") or {}).get("ink_url") or "")
+        ink = inkmod.read_upload(self.stored, (b.get("properties") or {}).get("ink_url") or "")
         if ink is None or ink.space.kind != "pdf-page" or not 1 <= (ink.space.page or 0) <= n_surfaces:
             return None
         return ink.space.page - 1
@@ -478,7 +477,9 @@ class _Page:
         of it, SVG_PNG_SIDE pixels on its longer side (``pdf_image.svg_png``),
         and False, counted ("picture svg"), when it cannot be drawn. Any
         other file goes under Images/ as it is."""
-        path = self.uploads / url.rsplit("/", 1)[-1]
+        path = self.stored(url.rsplit("/", 1)[-1])
+        if path is None:
+            return None
         try:
             data = path.read_bytes()
         except OSError:
@@ -557,8 +558,8 @@ class _Page:
         block = len({c["block"] for c in self.private["recordings"].values()})
         title = (b.get("content") or "").strip() or "Recording"
         for s in segments:
-            path = self.uploads / str(s["url"]).rsplit("/", 1)[-1]
-            if not path.is_file():
+            path = self.stored(str(s["url"]).rsplit("/", 1)[-1])
+            if path is None:
                 self.left_out["missing"] += 1
                 continue
             n = len(self.draft.recordings) + 1
@@ -789,19 +790,19 @@ def _stamp(value) -> datetime | None:
 
 # --- the entry point -------------------------------------------------------------------------
 
-def page_draft(blocks: list[dict], page_id: str, uploads_dir, resolve_ref=None) -> tuple[nw.Draft, list[str]]:
+def page_draft(blocks: list[dict], page_id: str, stored, resolve_ref=None) -> tuple[nw.Draft, list[str]]:
     """The note of a page (its blocks as ``block_to_dict`` gives them, the
     root among them) and the warnings for what it leaves out;
     ``resolve_ref`` reads a ``[[ref]]`` as the block it names.
     ExportError when the page cannot be a note."""
-    page = _Page(blocks, page_id, uploads_dir, resolve_ref)
+    page = _Page(blocks, page_id, stored, resolve_ref)
     draft = page.build()
     return draft, reasons(page.left_out, size=page.names.get("size", ""), pattern=page.names.get("pattern", ""))
 
 
-def write_page(blocks: list[dict], page_id: str, uploads_dir, out, resolve_ref=None) -> list[str]:
+def write_page(blocks: list[dict], page_id: str, stored, out, resolve_ref=None) -> list[str]:
     """``page_draft`` written as a .note into ``out`` (a path or a binary
     file); the warnings."""
-    draft, warnings = page_draft(blocks, page_id, uploads_dir, resolve_ref)
+    draft, warnings = page_draft(blocks, page_id, stored, resolve_ref)
     nw.write_note(draft, out)
     return warnings

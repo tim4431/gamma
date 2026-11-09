@@ -84,10 +84,11 @@ from .db import connect_data_db, connect_pages_db
 from .highlights import is_ink
 from .ops import (MAX_OPS, after_commit, after_commits, apply_batches, apply_ops, delete_tree, ensure_filing,
                   move_across_pages, tree_deletion)
+from .jobs import error_text
 from .logbuf import log
 from .notebook import is_sheet
 from .paste_math import dollar_math, paste_math
-from .pdf_index import pdf_missing, search_pdf
+from .pdf_index import pdf_pending, search_pdf
 from .pdf_text import RENDER_MAX_SIDE, image_part, render_page
 from .picture import caption_text, is_picture, normalize_picture
 from .storage import exists as _upload_exists, upload_refs
@@ -1973,7 +1974,7 @@ def _run_search_library(conn, ws: str, scope: dict, args: dict):
     missing: list = []
     with connect_data_db(ws) as database:
         if docs:
-            missing = pdf_missing(database, docs)
+            missing = pdf_pending(ws, database, docs)
             if missing:
                 _index_missing_async(ws, missing)
         lines = fts(database, query)
@@ -4893,7 +4894,7 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
             result, action = tool["run"](conn, ws, scope, args)
     except Exception as e:  # a tool failure must never kill the chat stream
         log.warning(f"[ai_tools] {name} failed: {e}")
-        result, action = f"error: {e}", None
+        result, action = f"error: {error_text(e)}", None
     # How long the call took, for its chip: a fetch that waited 20 s on a
     # publisher and one served from the cache read very differently.
     took = {"ms": int((time.monotonic() - started) * 1000)}

@@ -48,7 +48,7 @@ from pathlib import Path
 
 from . import comments, config, integrity, jobs, pdf_index, storage, upload_gc, zotero_remote
 from .backups import snapshot_db
-from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_LIBRARY, LABELS, PATH_SEP, TRASH, TREES,
+from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_LIBRARY, LABELS, NOT_LINKED, PATH_SEP, TRASH, TREES,
                            delete_subtree, existing_in, fetch_subtree, filing, folder_paths, last_child_position,
                            named, new_block_id, touch_page, tree_children, tree_parents, tree_rows, write_lock)
 from .db import (PAGES_SCHEMA, account_names, connect_pages_db, connect_users_db, copy_chats, page_now,
@@ -526,7 +526,8 @@ def _review_import(ws, tdir, upload_names):
         live_pages = {r[0]: (r[1], json.loads(r[2] or "{}"))
                       for r in live.execute(f"SELECT id, content, properties FROM unified_blocks WHERE {IN_LIBRARY}")}
         live_docs = dict(live.execute(
-            "SELECT doc_id, id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root'").fetchall())
+            f"SELECT doc_id, id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' AND {NOT_LINKED}"
+        ).fetchall())
         live_chats = {(table, key) for table, key, _, _ in live.execute(conversations)}
         live_paths = folder_paths(live)
     chats = {}  # bucket -> [((table, key), messages)], the backup's conversations
@@ -692,9 +693,14 @@ def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
     comes in whole: a block of it whose id is taken gets a fresh one
     (``_fresh_ids``). Each added page gets a ``reload`` at the top of its
     op log, which touches it live in the change log, so the change feed, a
-    clone and an old tab all see it. Chats merge the same way, in the same
-    transaction: every conversation the workspace lacks (a bucket's active
-    one, an archived one by its id) is added; ``chats_added`` counts them.
+    clone and an old tab all see it. ``pages_added`` counts the added pages
+    and ``added`` names them (a page keeps its id), and ``trees_added`` the
+    folders and labels the merge made for them, so a caller that takes its
+    pages back out deletes only those, never a page or a folder that came to
+    be there by another way (gamma/linked_files.py ``_carry``). Chats merge the
+    same way, in the same transaction: every conversation the workspace
+    lacks (a bucket's active one, an archived one by its id) is added;
+    ``chats_added`` counts them.
     The backup's folders and labels join the workspace's trees first
     (``_merge_trees``), and the pages it adds are filed under the
     workspace's ids for them (an id that is no folder or label of the
@@ -711,7 +717,7 @@ def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
     from . import ops
 
     pages_skipped = chats_added = comments_added = 0
-    added, untrashed, grew, mapping = [], [], [], {}
+    added, untrashed, grew, made, mapping = [], [], [], [], {}
     snap = tdir / "pages.db"
     if snap.exists():
         with closing(sqlite3.connect(str(snap))) as src, connect_pages_db(ws) as dst:
@@ -719,10 +725,10 @@ def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
             write_lock(dst)
             try:
                 taken = {r[0] for r in dst.execute("SELECT id FROM unified_blocks")}
-                mapping, grew = _merge_trees(src, dst, taken)
+                mapping, grew, made = _merge_trees(src, dst, taken)
                 in_trash = {r[0] for r in dst.execute("SELECT id FROM unified_blocks WHERE parent_id = ?", (TRASH,))}
                 live_docs = {r[0] for r in dst.execute(
-                    "SELECT doc_id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root'")}
+                    f"SELECT doc_id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' AND {NOT_LINKED}")}
                 new_roots = []
                 for row in src.execute("SELECT id, doc_id FROM unified_blocks WHERE parent_id = 'root' "
                                        "ORDER BY position ASC").fetchall():
@@ -762,12 +768,12 @@ def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
                 raise
     if added or grew:
         _announce(ws, added + grew)
-    return {"pages_added": len(added), "pages_skipped": pages_skipped, "chats_added": chats_added,
-            "comments_added": comments_added, "from_trash": len(untrashed),
+    return {"pages_added": len(added), "added": added, "trees_added": made, "pages_skipped": pages_skipped,
+            "chats_added": chats_added, "comments_added": comments_added, "from_trash": len(untrashed),
             **({"folder": mapping.get(folder, "")} if folder else {})}
 
 
-def _merge_trees(src, dst, taken: set) -> tuple[dict, list[str]]:
+def _merge_trees(src, dst, taken: set) -> tuple[dict, list[str], list[str]]:
     """The backup's folder and label trees into the workspace's, inside the
     merge's transaction: a block of the backup's tree is the workspace's
     block of that id when it has one there, else the one at the same place
@@ -775,10 +781,10 @@ def _merge_trees(src, dst, taken: set) -> tuple[dict, list[str]]:
     label of that name; ``blocks_store.named``), else it is added there,
     last among its siblings, under its own id unless the workspace uses it
     (``taken``, which learns the new ids). Returns ``({backup id: workspace
-    id}, the trees that gained blocks)``."""
+    id}, the trees that gained blocks, the blocks added)``."""
     from fractional_indexing import generate_key_between
 
-    mapping, grew = {}, []
+    mapping, grew, made = {}, [], []
     now = page_now()
     for tree in TREES:
         mine = {r[0] for r in dst.execute("SELECT id FROM unified_blocks WHERE page_id = ?", (tree,))}
@@ -800,9 +806,10 @@ def _merge_trees(src, dst, taken: set) -> tuple[dict, list[str]]:
             taken.add(new_id)
             kids.setdefault(at, []).append((new_id, name or ""))
             mapping[bid] = new_id
+            made.append(new_id)
             if tree not in grew:
                 grew.append(tree)
-    return mapping, grew
+    return mapping, grew, made
 
 
 def _refiled(dst, props_raw: str, mapping: dict) -> str:

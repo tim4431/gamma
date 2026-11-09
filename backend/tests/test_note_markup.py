@@ -133,9 +133,10 @@ def _drawn_over_blue(path, scale):
     from PyPDF2.generic import DecodedStreamObject, DictionaryObject, IndirectObject, NameObject
 
     from gamma.pdf_image import XObjectStore
+    from conftest import files_in
 
     writer = PdfWriter()
-    store = XObjectStore(writer, path.parent)
+    store = XObjectStore(writer, files_in(path.parent))
     name, w, h = store.resolve(f"/api/uploads/{path.name}")
     mask = store.refs[name].get_object().get("/SMask")
     assert mask is None or isinstance(mask, IndirectObject), "a stream is only valid as an indirect object"

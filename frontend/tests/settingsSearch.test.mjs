@@ -141,6 +141,17 @@ test("Delete Gamma Cloud account is the apps' alone, under any native host; the 
   }
 });
 
+test("Add opened PDFs to the library is found in the desktop app only, which alone reads it", () => {
+  const all = Object.keys(PANE_FILES);
+  const found = (opts) => searchSettings("opened PDFs library", all, opts).map((r) => r.label);
+  assert.ok(found({ desktop: true }).includes("Add opened PDFs to the library"));
+  for (const opts of [{}, { host: hostCaps(IPAD) }, { host: hostCaps(ANDROID) }]) {
+    assert.ok(!found(opts).includes("Add opened PDFs to the library"), opts.host?.platform || "a browser");
+  }
+  assert.match(source("SettingsDialog.jsx"), /\{IS_DESKTOP \? \(\s*<Toggle\s+icon=\{FolderPlusIcon\}\s+label=\{t\("Add opened PDFs to the library"\)\}/,
+    "and its row is drawn there only");
+});
+
 test("hostCaps: the platform's words and the gestures a host forwards", () => {
   assert.equal(hostCaps(null), null);
   const ipad = hostCaps(IPAD);

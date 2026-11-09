@@ -359,10 +359,13 @@ def _trees(conn, scope, rows) -> dict:
 
 # What the library listing carries of a page's properties: what the home
 # view's cards and filters, quick open, the chat and link pickers and the
-# DOI / arXiv link matching read (docs/dev/api.md "The library listing").
-# The rest — bibtex, ppt_cite, summary, the rest of meta, … — comes with the
-# page itself (GET /blocks/{id}).
-SUMMARY_PROPS = ("doc_id", "source_url", "original_filename", "folders", "labels", "pinned", "seeded")
+# DOI / arXiv link matching read (docs/dev/api.md "The library listing"),
+# and the marks of a PDF read where it is (linked_file) and of the page that
+# holds such PDFs (opened_files), which the page menus read. The rest —
+# bibtex, ppt_cite, summary, the rest of meta, … — comes with the page itself
+# (GET /blocks/{id}).
+SUMMARY_PROPS = ("doc_id", "source_url", "original_filename", "folders", "labels", "pinned", "seeded", "linked_file",
+                 "opened_files")
 SUMMARY_META = ("title", "authors", "year", "venue", "volume", "doi", "arxiv_id")
 SUMMARY_COLUMNS = ("id, position, content, created_at, updated_at, json_extract(properties, "
                    + ", ".join([f"'$.{k}'" for k in SUMMARY_PROPS] + [f"'$.meta.{k}'" for k in SUMMARY_META])

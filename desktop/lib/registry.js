@@ -57,11 +57,11 @@ const DEFAULTS = {
     // Folder new local servers are created in ('' = <userData>/workspaces).
     dataRoot: '',
     // Keep running in the tray when the window closes, so clones and
-    // folders on disk keep syncing; and start hidden at login.
+    // synced vaults keep syncing; and start hidden at login.
     background: false,
     openAtLogin: false,
-    // The local server that keeps folders of remote servers on this disk
-    // (main.js keepFolder): started at launch like the clones' hosts.
+    // The local server that keeps the synced vaults of remote servers on
+    // this disk (main.js addFolderVault): started at launch like the clones' hosts.
     folderHost: '',
   },
   servers: [],
@@ -369,7 +369,7 @@ function setZoteroHost(id, on) {
 }
 
 // The local servers to run for as long as the app does (main.js
-// startBackgroundHosts): the hosts of clones, of folders kept of remote
+// startBackgroundHosts): the hosts of clones, of synced vaults of remote
 // servers (`settings.folderHost`) and of Zotero links, which all sync only
 // while their server runs; in background mode, every local server.
 function launchHosts(state = load()) {

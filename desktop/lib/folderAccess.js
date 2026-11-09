@@ -5,8 +5,9 @@
 // (`securityScopedBookmarks`); `app.startAccessingSecurityScopedResource`
 // opens the same folder again on a later run. The bookmarks are kept in
 // the registry (`access`: { path, bookmark }), and every one is opened at
-// launch, before any local server starts. A PDF a page follows (main.js
-// followFile) is picked and kept the same way, a file in place of a folder.
+// launch, before any local server starts. The PDF a page is pushed from
+// (main.js addFileVault) is picked and kept the same way, a file in place
+// of a folder.
 //
 // The local servers are child processes that inherit the app's sandbox,
 // together with the folders the app holds open at the moment they start;
@@ -14,7 +15,7 @@
 // grant has a number (`since`), a running server remembers the number it
 // started at (`appInfo().access` → the sidecar's entry), and `grantedSince`
 // says when a server must start again to reach a folder: main.js
-// reachFolder, after the user picks where to keep a folder.
+// reachFolder, after the user picks a synced vault's directory.
 //
 // A bookmark that no longer opens (the folder moved or was deleted, the
 // disk is not connected) leaves its folder closed for this run and stays
@@ -46,7 +47,7 @@ function create({ load, save, start, container }) {
   }
 
   return {
-    // At launch: open every stored folder, and every followed file. A
+    // At launch: open every stored folder, and every file a page is pushed from. A
     // bookmark that resolves somewhere else (the folder moved) does not
     // open the stored path.
     restore() {

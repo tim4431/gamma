@@ -54,7 +54,11 @@ of these: `sync_engine.create_mirror` and `publish.publish` refuse a
 workspace with a `zotero_links` row (detached included), and
 `zotero_sync.create_link` refuses one with a `mirrors` row, but for the row
 of a publication whose last page was unpublished, which it forgets once
-the link is made ([Refusals](#refusals)).
+the link is made ([Refusals](#refusals)). A synced vault of the desktop app
+([synced_vaults.md](synced_vaults.md#rules-that-keep-files-safe)) shares a
+linked workspace only as one that pulls or pushes PDFs: the link refuses a
+workspace a vault pushes everything into, and the vault refuses to push
+everything into a linked one.
 
 ## Modules
 
@@ -288,7 +292,8 @@ priority, and a newer version starts its backoff over.
 
 `sync_log` and `sync_conflicts` are the mirror's tables
 ([Conflicts and the log](#conflicts-and-the-log)). `remove_link` empties
-all five.
+all five, but for a synced vault's `file_won` conflicts in `sync_conflicts`
+(`sync_engine.NOT_VAULT`), which are the vault's own.
 
 ### Properties the engine writes on pages and blocks
 
@@ -857,17 +862,17 @@ A folder with no live collection behind it stays where a page is filed
 when Zotero's collections are applied, and a collection Gamma has no row
 for stays in an item's collections when Gamma's are sent.
 
-**A trashed collection whose folder is shared or kept on disk** (a share
-link, or a desktop folder link, `_kept_folders`) stays here: deleting it
+**A trashed collection whose folder is shared or a synced vault's** (a share
+link, or a synced vault of the desktop app, `_kept_folders`) stays here: deleting it
 would end its share links and invitations for good, and a restore in
 Zotero could not bring them back. Its rows turn `trashed` with
 `detail.kept` (its subfolders' rows too, `collateral`), the folders and
 the pages' filing stay as they are, and a "kept here" log line says why.
 A Zotero restore makes the rows live again with the bases they kept, so
 what either side changed meanwhile is merged; emptying Zotero's trash
-removes an unchanged kept folder as any removal for good does. A restore
+removes an unchanged folder kept so as any removal for good does. A restore
 of a folder that was deleted gives it back its old block id when nothing
-holds it, so what names the folder by id (a desktop folder link, a
+holds it, so what names the folder by id (a synced vault, a
 reading position) finds it again.
 
 **Removed for good** (`collections_gone`, from `/deleted`): a folder
@@ -2355,7 +2360,9 @@ under one lock with the insert (two requests at once make one link):
   is refused the same way);
 - a `workspace_id` that is not a personal workspace the owner owns, one
   with a `mirrors` row (a clone, a workspace that publishes pages, either
-  detached included), or one linked already. The row a publication keeps
+  detached included), one linked already, or one a synced vault of this
+  server pushes everything into (`folder_links.pushing_vault`: "let it push
+  only PDFs, or only pull, first"). The row a publication keeps
   once its last page was unpublished (`page_filter` `'[]'`) is no bar, as
   for `workspaces.update`: once the link's row is written, `create_link`
   forgets that publication under its round lock
@@ -2567,7 +2574,7 @@ holds every reading only a Zotero link has, pure so node tests it.
   conflicts").
 - **The desktop bar** (`desktop/lib/keeping.js`, `desktop/main.js`
   `refreshKeeping`): each local server's links (`GET /api/zotero/links`)
-  are items of kind `zotero` beside its clones and folders on disk, read as
+  are items of kind `zotero` beside its clones and synced vaults, read as
   the pill reads them; pause detaches, resume reattaches, sync runs a round
   ([mirror.md](mirror.md#the-desktop-switcher)).
 
@@ -2666,7 +2673,7 @@ holds every reading only a Zotero link has, pure so node tests it.
   Zotero link that is not detached, as it does the clones' hosts and the
   folder host (`startBackgroundHosts`, `registry.launchHosts`), from what
   its last reading of each running server's links recorded
-  (`zoteroHost`, [architecture.md](../../desktop/docs/architecture.md#kept-on-this-computer)).
+  (`zoteroHost`, [architecture.md](../../desktop/docs/architecture.md#the-sync-panel)).
   It reads them as that server's seeded admin, so a link another account
   made there does not count, and a link made in Settings counts from the
   shell's next reading (3 s after launch, then every 15 s): a server quit

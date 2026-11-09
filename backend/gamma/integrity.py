@@ -89,9 +89,7 @@ def failures() -> dict:
 
 def db_files() -> list[Path]:
     """Every SQLite file of the data directory, whichever layout it is in."""
-    files = []
-    if config.USERS_DB.exists():
-        files.append(config.USERS_DB)
+    files = [f for f in (config.USERS_DB, config.VAULTS_DB) if f.exists()]
     for root in (config.LEGACY_USERS_DIR, config.WORKSPACES_DIR):
         if root.is_dir():
             for d in sorted(root.iterdir()):
@@ -104,8 +102,8 @@ def db_files() -> list[Path]:
 
 
 def check_all(progress=jobs.no_progress) -> dict:
-    """Quick-check users.db and every workspace's pages.db and data.db as
-    they are now (the admin's "Check databases"). Returns ``{ok,
+    """Quick-check users.db, vaults.db and every workspace's pages.db and
+    data.db as they are now (the admin's "Check databases"). Returns ``{ok,
     checked_at, files: [{file, workspace, name, result, ok}]}`` and records
     the results. ``progress`` (a background job's report, gamma/jobs.py)
     hears each file before it is read. A workspace deleted meanwhile, or

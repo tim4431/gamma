@@ -1,0 +1,1423 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- The illustrated walk-through of docs/research/vaults.md, in Simplified Chinese: the same page as the artifact made on 2026-11-06, with this skeleton added so it opens from disk. Everything is inline except Google Fonts, which it does without offline. -->
+<title>Gamma 同步仓库与原地阅读</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;700&display=swap">
+<style>
+/* Layout: one reading column (40em of CJK text) with figures allowed to 60rem; the Gamma side (the remote) is amber, the disk side (the local copy) slate blue, so every diagram reads "which side" by colour. */
+:root{
+  --bg:#f4f3ef; --surface:#ffffff; --sunk:#e9e7e0; --fg:#1e1e1c; --muted:#5e5b53; --line:#d6d2c7;
+  --gamma:#a26700; --gamma-fill:#e8a020; --gamma-soft:#fbeed0;
+  --disk:#2d5f96; --disk-soft:#dfe9f4;
+  --bad:#ad3f2b; --bad-soft:#f7e2dc; --good:#2c7a4c; --on-amber:#1e1e1c;
+  --font-display:"Noto Serif SC","Songti SC","SimSun",serif;
+  --font-body:"IBM Plex Sans","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-mono:"IBM Plex Mono","Noto Sans SC",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#1b1b19; --surface:#242422; --sunk:#2d2c29; --fg:#eeebe4; --muted:#a9a59a; --line:#3c3a35;
+    --gamma:#eaa83a; --gamma-fill:#e8a020; --gamma-soft:#392c13;
+    --disk:#8ab6e8; --disk-soft:#1c2a3a;
+    --bad:#f0907b; --bad-soft:#3a221c; --good:#82cf9f; --on-amber:#1e1e1c;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#1b1b19; --surface:#242422; --sunk:#2d2c29; --fg:#eeebe4; --muted:#a9a59a; --line:#3c3a35;
+  --gamma:#eaa83a; --gamma-fill:#e8a020; --gamma-soft:#392c13;
+  --disk:#8ab6e8; --disk-soft:#1c2a3a;
+  --bad:#f0907b; --bad-soft:#3a221c; --good:#82cf9f; --on-amber:#1e1e1c;
+  color-scheme:dark;
+}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:16px;line-height:1.75}
+.wrap{max-width:60rem;margin:0 auto;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.prose{max-width:40em}
+h1,h2{font-family:var(--font-display);font-weight:700;text-wrap:balance;line-height:1.3;margin:0}
+h1{font-size:clamp(2rem,6vw,2.9rem)}
+h2{font-size:clamp(1.45rem,3.6vw,1.85rem)}
+h3{font-size:1.1rem;font-weight:600;margin:0;line-height:1.5;text-wrap:balance}
+p{margin:0}
+code{font-family:var(--font-mono);font-size:.88em;background:var(--sunk);padding:.05em .35em;border-radius:4px;overflow-wrap:anywhere}
+a{color:var(--disk)}
+a:focus-visible,label:focus-visible{outline:2px solid var(--gamma);outline-offset:2px}
+.muted{color:var(--muted)}
+.eyebrow{font-size:.8rem;letter-spacing:.06em;color:var(--muted);text-transform:uppercase}
+.eyebrow code{text-transform:none;letter-spacing:0}
+
+/* header */
+header.top{padding-block:2.6rem 1.6rem;display:grid;gap:.8rem}
+.lede{font-size:1.12rem;color:var(--muted);max-width:36em}
+.status{background:var(--gamma-soft);border-block:1px solid var(--gamma)}
+.status .wrap{padding-block:1rem;display:flex;flex-wrap:wrap;gap:.6rem 1rem;align-items:baseline}
+.status-badge{font-weight:700;color:var(--on-amber);background:var(--gamma-fill);padding:.15rem .6rem;border-radius:4px;white-space:nowrap}
+.status p{flex:1 1 22rem;min-width:0}
+nav.toc{padding-block:1.2rem 0}
+nav.toc ol{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:.4rem .5rem}
+nav.toc a{display:inline-block;text-decoration:none;color:var(--fg);border:1px solid var(--line);border-radius:999px;padding:.15rem .7rem;font-size:.9rem;background:var(--surface)}
+nav.toc a:hover{border-color:var(--gamma)}
+
+/* sections */
+section.sec{padding-block:3rem 0;display:grid;gap:1.25rem}
+section.sec > .head{display:grid;gap:.35rem;border-top:1px solid var(--line);padding-top:1.6rem}
+.gist{font-size:1.08rem;line-height:1.85;max-width:40em}
+.sub{display:grid;gap:.9rem;margin-top:.6rem}
+figure{margin:0;display:grid;gap:.6rem}
+figcaption{font-size:.92rem;color:var(--muted);max-width:44em}
+.fig-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.fig-scroll svg{display:block;width:100%;height:auto}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:1rem 1.1rem}
+ul.list,ol.list{margin:0;padding-left:1.3em;display:grid;gap:.45rem}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr));gap:1rem}
+.two > *{min-width:0}
+.k{font-weight:600}
+.chip{display:inline-block;font-size:.78rem;line-height:1.5;padding:0 .5rem;border-radius:4px;border:1px solid currentColor;white-space:nowrap;vertical-align:.1em;font-weight:500}
+.chip.now{color:var(--good)}
+.chip.plan{color:var(--gamma)}
+
+/* the git glossary */
+.gitbox{border:1.5px solid var(--fg);border-radius:10px;background:var(--surface);padding:.9rem 1.1rem;display:grid;gap:.6rem;min-width:0}
+.gitbox dl{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:.4rem .9rem;font-size:.93rem}
+.gitbox dt{font-weight:600;white-space:nowrap}
+.gitbox dd{margin:0;min-width:0}
+.gitbox .none{font-size:.88rem;color:var(--muted);border-top:1px solid var(--line);padding-top:.55rem}
+.qbox{display:grid;gap:1rem}
+@media (min-width:760px){.gitbox dl{grid-template-columns:auto minmax(0,1fr) auto minmax(0,1fr);column-gap:1.1rem}}
+
+/* svg text and marks */
+svg text{font-family:var(--font-body);fill:var(--fg);font-size:13px}
+svg .t-h{font-size:15px;font-weight:600}
+svg .t-s{font-size:12px}
+svg .t-m{fill:var(--muted)}
+svg .t-c{text-anchor:middle}
+svg .t-mono{font-family:var(--font-mono)}
+svg .t-g{fill:var(--gamma)}
+svg .t-d{fill:var(--disk)}
+svg .t-b{fill:var(--bad)}
+svg .t-bold{font-weight:600}
+.bx-g{fill:var(--gamma-soft);stroke:var(--gamma);stroke-width:1.5}
+.bx-d{fill:var(--disk-soft);stroke:var(--disk);stroke-width:1.5}
+.bx-n{fill:var(--surface);stroke:var(--line);stroke-width:1.2}
+.bx-f{fill:var(--surface);stroke:var(--fg);stroke-width:1.5}
+.bx-bad{fill:var(--bad-soft);stroke:var(--bad);stroke-width:1.2;stroke-dasharray:5 4}
+.ch-g{fill:var(--surface);stroke:var(--gamma);stroke-width:1.3}
+.ch-d{fill:var(--surface);stroke:var(--disk);stroke-width:1.3}
+.frame{fill:none;stroke:var(--muted);stroke-width:1;stroke-dasharray:4 4}
+.ar{fill:none;stroke-width:2.2}
+.ar-g{stroke:var(--gamma)}
+.ar-d{stroke:var(--disk)}
+.ar-f{stroke:var(--fg);stroke-width:1.5}
+.ar-off{stroke:var(--muted);stroke-dasharray:5 5;stroke-width:1.6}
+.ar-dash{stroke-dasharray:7 5}
+.ln{fill:none;stroke:var(--muted);stroke-width:1.1;stroke-dasharray:3 4}
+.ln-g{fill:none;stroke:var(--gamma);stroke-width:1.6}
+.ah-g{fill:var(--gamma)} .ah-d{fill:var(--disk)} .ah-f{fill:var(--fg)} .ah-m{fill:var(--muted)}
+.ic-g{fill:var(--gamma)} .ic-d{fill:var(--disk)}
+.ic-o-g{fill:var(--surface);stroke:var(--gamma);stroke-width:1.2}
+.ic-o-d{fill:var(--surface);stroke:var(--disk);stroke-width:1.2}
+.x-off line{stroke:var(--bad);stroke-width:2.2}
+
+/* the direction switch: CSS-only radios, so it works with scripts off */
+.dir{display:grid;gap:1rem}
+.dir-in{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
+.seg{display:flex;flex-wrap:wrap;gap:.8rem 1.4rem}
+.seg-group{display:grid;gap:.35rem;min-width:0}
+.seg-cap{font-size:.8rem;color:var(--muted);letter-spacing:.04em}
+.seg-opts{display:flex;flex-wrap:wrap;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+.seg-opts label{padding:.4rem .8rem;cursor:pointer;font-size:.93rem;border-right:1px solid var(--line);user-select:none}
+.seg-opts label:last-child{border-right:0}
+.seg-opts label:hover{background:var(--sunk)}
+#d-kept:checked ~ .seg label[for="d-kept"],
+#d-vault:checked ~ .seg label[for="d-vault"],
+#d-ro:checked ~ .seg label[for="d-ro"],
+#d-follow:checked ~ .seg label[for="d-follow"],
+#d-open:checked ~ .seg label[for="d-open"]{background:var(--fg);color:var(--bg)}
+#d-kept:focus-visible ~ .seg label[for="d-kept"],
+#d-vault:focus-visible ~ .seg label[for="d-vault"],
+#d-ro:focus-visible ~ .seg label[for="d-ro"],
+#d-follow:focus-visible ~ .seg label[for="d-follow"],
+#d-open:focus-visible ~ .seg label[for="d-open"]{outline:2px solid var(--gamma);outline-offset:-2px}
+.st,.sg-folder,.sg-page{display:none}
+.dir-body{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:1.2rem;align-items:start}
+@media (max-width:760px){.dir-body{grid-template-columns:minmax(0,1fr)}}
+#d-kept:checked ~ .dir-body .dir-fig .st-kept,
+#d-vault:checked ~ .dir-body .dir-fig .st-vault,
+#d-ro:checked ~ .dir-body .dir-fig .st-ro,
+#d-follow:checked ~ .dir-body .dir-fig .st-follow,
+#d-open:checked ~ .dir-body .dir-fig .st-open,
+#d-kept:checked ~ .dir-body .dir-fig .sg-folder,
+#d-vault:checked ~ .dir-body .dir-fig .sg-folder,
+#d-ro:checked ~ .dir-body .dir-fig .sg-folder,
+#d-follow:checked ~ .dir-body .dir-fig .sg-page,
+#d-open:checked ~ .dir-body .dir-fig .sg-page{display:inline}
+.dir-note{font-size:.95rem;min-width:0}
+
+/* tables */
+.tbl-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.93rem;min-width:36rem}
+th,td{text-align:left;vertical-align:top;padding:.5rem .7rem;border-bottom:1px solid var(--line)}
+th{font-weight:600;color:var(--muted);font-size:.85rem;white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+td .cmd{display:block;font-size:.8rem;color:var(--muted)}
+td.nw{white-space:nowrap}
+
+/* the rule */
+.rule{font-family:var(--font-display);font-size:clamp(1.2rem,3vw,1.5rem);font-weight:600;line-height:1.6;margin:0;padding:1.1rem 1.3rem;border:1.5px solid var(--fg);border-radius:10px;background:var(--surface);max-width:34em}
+.ev{display:grid;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}
+.ev-h{padding:.6rem 1rem;font-weight:600;border-bottom:1px solid var(--line)}
+.ev-h.g{background:var(--gamma-soft)} .ev-h.d{background:var(--disk-soft)}
+.ev-row{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.4fr);gap:.8rem;padding:.6rem 1rem;border-bottom:1px solid var(--line);font-size:.94rem}
+.ev-row:last-child{border-bottom:0}
+.ev-row .when{font-weight:500}
+.ev-row .then::before{content:"→ ";color:var(--muted)}
+@media (max-width:520px){.ev-row{grid-template-columns:minmax(0,1fr);gap:.2rem}}
+
+/* flow chips (making a vault) */
+.flow{display:flex;flex-wrap:wrap;gap:.5rem;align-items:stretch;list-style:none;margin:0;padding:0}
+.flow li{flex:1 1 11rem;min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.6rem .8rem;font-size:.92rem;position:relative}
+.flow li b{display:block;font-weight:600;margin-bottom:.15rem}
+
+/* where everything lives */
+.where{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:1.2rem;align-items:start}
+@media (max-width:760px){.where{grid-template-columns:minmax(0,1fr)}}
+.tree{background:var(--disk-soft);border:1.5px solid var(--disk);border-radius:10px;padding:.9rem 1rem;display:grid;gap:.15rem}
+.tree-h{font-weight:600;color:var(--disk);margin-bottom:.3rem}
+.tr{display:grid;grid-template-columns:minmax(9.5rem,auto) minmax(0,1fr);gap:.8rem;align-items:baseline;font-size:.88rem}
+.tr .nm{font-family:var(--font-mono);white-space:pre;overflow-x:auto}
+.tr .nt{color:var(--muted);font-size:.84rem;min-width:0}
+.tr.mark .nm span{color:var(--gamma);font-weight:500}
+.mark-grp{display:grid;gap:.15rem;background:var(--gamma-soft);border:1.5px dashed var(--gamma);border-radius:6px;margin-inline:-.4rem;padding:.2rem .4rem}
+.db{position:relative;border:1.5px solid var(--gamma);background:var(--gamma-soft);border-radius:50% / 26px;padding:4.1rem 1.3rem 2rem}
+.db::before{content:"";position:absolute;left:-1.5px;right:-1.5px;top:-1.5px;height:52px;border:1.5px solid var(--gamma);border-radius:50%;box-sizing:border-box}
+.db-h{font-weight:600;color:var(--gamma);text-align:center;margin-bottom:.5rem}
+.db ul{margin:0;padding-left:1.1em;display:grid;gap:.3rem;font-size:.9rem}
+.why{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr));gap:.8rem}
+.why > div{min-width:0;padding:.7rem .9rem;border-radius:8px;border:1px solid var(--line);background:var(--surface);font-size:.92rem;display:grid;gap:.3rem}
+.why .w-h{font-weight:600}
+.why .d{border-top:3px solid var(--disk)} .why .m{border-top:3px dashed var(--gamma)} .why .g{border-top:3px solid var(--gamma)}
+
+/* laws */
+.laws{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,17rem),1fr));gap:1rem}
+.law{border:1.5px solid var(--fg);border-radius:10px;padding:.9rem 1.1rem;background:var(--surface);display:grid;gap:.35rem;min-width:0}
+.law .n{font-size:.8rem;color:var(--muted);letter-spacing:.05em}
+.law .t{font-family:var(--font-display);font-size:1.15rem;font-weight:700}
+
+/* spans and dress */
+.tile{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr) minmax(0,1.2fr);gap:1rem;align-items:start}
+@media (max-width:820px){.tile{grid-template-columns:minmax(0,1fr)}}
+.tile > div{min-width:0;display:grid;gap:.5rem}
+.mini-h{font-size:.85rem;color:var(--muted)}
+.code{font-family:var(--font-mono);font-size:.92rem;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.6rem .7rem;display:grid;gap:.25rem;overflow-x:auto}
+.cl{display:flex;align-items:center;gap:.6rem;white-space:pre;min-height:1.7em}
+.sp{display:inline-flex;border-radius:4px;overflow:hidden;outline:1px solid var(--disk)}
+.dr{background:var(--sunk);color:var(--muted);padding:0 .1em}
+.ct{background:var(--disk-soft);padding:0 .2em}
+.gp{color:var(--muted);font-family:var(--font-body);font-size:.82rem;border:1px dashed var(--line);border-radius:4px;padding:0 .4rem}
+.bl{font-family:var(--font-body);font-size:.75rem;font-weight:600;color:var(--disk);margin-left:auto}
+.chg{background:var(--gamma-fill);color:var(--on-amber);border-radius:2px}
+.btree{background:var(--gamma-soft);border:1.5px solid var(--gamma);border-radius:8px;padding:.6rem .8rem;font-size:.9rem}
+.btree ul{list-style:none;margin:0;padding-left:1.1rem;border-left:1px solid var(--gamma);display:grid;gap:.25rem}
+.btree > ul{border-left:0;padding-left:0}
+.btree li{min-width:0}
+.btree .b{font-family:var(--font-body);font-size:.72rem;font-weight:700;color:var(--on-amber);background:var(--gamma-fill);border-radius:3px;padding:0 .3rem;margin-right:.35rem}
+.legend{display:flex;flex-wrap:wrap;gap:.4rem 1rem;font-size:.85rem;color:var(--muted);align-items:center}
+.legend .sw{display:inline-block;width:1.4em;height:.9em;border-radius:3px;vertical-align:-.1em;margin-right:.3rem}
+
+/* two lanes of steps */
+.lanes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr));gap:1.2rem;align-items:start}
+.lane{border-radius:10px;border:1.5px solid var(--line);background:var(--surface);overflow:hidden;min-width:0}
+.lane-h{padding:.7rem 1rem;display:grid;gap:.1rem}
+.lane.g .lane-h{background:var(--gamma-soft);border-bottom:1.5px solid var(--gamma)}
+.lane.d .lane-h{background:var(--disk-soft);border-bottom:1.5px solid var(--disk)}
+.lane-h b{font-size:1.02rem}
+.lane-h span{font-size:.85rem;color:var(--muted)}
+ol.steps{list-style:none;counter-reset:s;margin:0;padding:.9rem 1rem 1rem;display:grid;gap:.75rem}
+ol.steps li{counter-increment:s;display:grid;grid-template-columns:1.8rem minmax(0,1fr);gap:.2rem .6rem;font-size:.93rem;position:relative}
+ol.steps li::before{content:counter(s);grid-row:1 / span 3;width:1.6rem;height:1.6rem;border-radius:50%;border:1.5px solid var(--fg);display:grid;place-items:center;font-size:.8rem;font-weight:600;font-family:var(--font-mono)}
+ol.steps li:not(:last-child)::after{content:"";position:absolute;left:.78rem;top:1.75rem;bottom:-.75rem;border-left:1.5px solid var(--line)}
+ol.steps li.check::before{border-style:dashed;border-color:var(--bad);color:var(--bad)}
+ol.steps .st-t{font-weight:600}
+ol.steps .fail{font-size:.86rem;color:var(--bad);background:var(--bad-soft);border-radius:5px;padding:.25rem .5rem}
+ol.steps .fail::before{content:"不通过 → ";font-weight:600}
+
+/* links table */
+.links{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1.6fr);gap:.6rem;align-items:center}
+@media (max-width:560px){.links{grid-template-columns:minmax(0,1fr)} .links .arrow{transform:rotate(90deg);justify-self:start}}
+.links > div{min-width:0}
+.links .side{border-radius:8px;padding:.6rem .8rem;font-size:.9rem;display:grid;gap:.3rem}
+.links .g{background:var(--gamma-soft);border:1px solid var(--gamma)}
+.links .d{background:var(--disk-soft);border:1px solid var(--disk)}
+.links .arrow{color:var(--muted);font-size:1.3rem}
+.links code{background:var(--surface)}
+
+/* callout sample */
+.callout-wrap{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:1rem;align-items:start}
+@media (max-width:760px){.callout-wrap{grid-template-columns:minmax(0,1fr)}}
+.callout-wrap > div{min-width:0}
+pre.md{font-family:var(--font-mono);font-size:.88rem;line-height:1.65;background:var(--surface);border:1.5px solid var(--disk);border-radius:8px;padding:.8rem 1rem;margin:0;overflow-x:auto}
+pre.md .c{color:var(--muted)}
+pre.md .q{color:var(--disk);font-weight:500}
+pre.md .a{color:var(--gamma);font-weight:500}
+.split{display:grid;gap:.6rem}
+.split .in{border:1px solid var(--disk);background:var(--disk-soft);border-radius:8px;padding:.6rem .8rem;font-size:.9rem}
+.split .out{border:1px solid var(--gamma);background:var(--gamma-soft);border-radius:8px;padding:.6rem .8rem;font-size:.9rem}
+.split .h{font-weight:600;margin-bottom:.2rem}
+
+/* decision chain */
+.chain{display:grid;gap:.5rem;list-style:none;margin:0;padding:0;counter-reset:q}
+.chain li{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1.2fr);gap:.4rem .8rem;align-items:center;counter-increment:q}
+@media (max-width:600px){.chain li{grid-template-columns:minmax(0,1fr)} .chain .yes{justify-self:start}}
+.chain .q{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.5rem .8rem;font-size:.93rem;min-width:0}
+.chain .q::before{content:counter(q) "　";font-family:var(--font-mono);color:var(--muted);font-weight:600}
+.chain .yes{font-size:.82rem;color:var(--muted);white-space:nowrap}
+.chain .r{border-radius:8px;padding:.5rem .8rem;font-size:.93rem;background:var(--sunk);min-width:0}
+.chain li.last .q{border-style:dashed}
+.chain li.last .r{background:var(--gamma-soft);border:1.5px solid var(--gamma)}
+.entry{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;font-size:.93rem}
+.entry .e{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:.15rem .6rem}
+
+.opened{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1rem;align-items:start}
+@media (max-width:760px){.opened{grid-template-columns:minmax(0,1fr)}}
+.opened > div{min-width:0}
+.ws{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:.8rem 1rem;display:grid;gap:.4rem;font-size:.92rem}
+.ws-h{font-weight:600}
+.ws .row{display:flex;flex-wrap:wrap;gap:.3rem .6rem;align-items:center}
+.ws .pg{border:1px solid var(--line);border-radius:5px;padding:0 .45rem;background:var(--bg)}
+.ws .of{border:1.5px solid var(--gamma);background:var(--gamma-soft);border-radius:8px;padding:.5rem .7rem;display:grid;gap:.35rem}
+.ws .of .kid{margin-left:1rem;display:flex;flex-wrap:wrap;gap:.3rem .6rem;align-items:center}
+.ws .note{font-size:.8rem;color:var(--muted)}
+.topbar{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:.45rem .7rem;font-size:.9rem}
+.topbar .pt{font-weight:600;margin-right:auto}
+.topbar .pill{border:1px solid var(--disk);color:var(--disk);border-radius:999px;padding:0 .55rem;font-size:.82rem}
+.topbar .btn{border:1px solid var(--fg);border-radius:6px;padding:.05rem .6rem;font-weight:500}
+.branches{display:grid;gap:.6rem;margin-top:.6rem}
+.branches > div{border-left:3px solid var(--gamma);padding:.2rem 0 .2rem .8rem;font-size:.92rem}
+.branches .h{font-weight:600}
+.topbar .pill.bad{border-color:var(--bad);color:var(--bad)}
+
+/* where the words show: small interface mocks */
+.mocks{display:grid;gap:.8rem}
+.mk-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,17rem),1fr));gap:.8rem}
+.mock{min-width:0;border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:.7rem .85rem;display:grid;gap:.4rem;align-content:start;font-size:.9rem}
+.mk-h{font-size:.8rem;color:var(--muted);letter-spacing:.03em}
+.mk-item{justify-self:start;border:1.5px solid var(--gamma);background:var(--gamma-soft);border-radius:6px;padding:.1rem .65rem;font-weight:600}
+.mk-was{font-size:.82rem;color:var(--muted)}
+.mk-note{font-size:.85rem}
+.mk-cli{justify-self:start;font-size:.85rem}
+.mk-cli b{color:var(--gamma)}
+.vrow{display:flex;flex-wrap:wrap;gap:.35rem .9rem;align-items:center;border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:.45rem .7rem}
+.vr-scope{font-weight:600;min-width:0;margin-right:auto}
+.vr-dir{display:flex;gap:.35rem}
+.vr-dir span{border:1px solid var(--disk);color:var(--disk);border-radius:999px;padding:0 .5rem;font-size:.8rem}
+.vr-state{font-size:.85rem;color:var(--good)}
+.vr-btns{display:flex;flex-wrap:wrap;gap:.35rem}
+.vr-btns span{border:1px solid var(--fg);border-radius:6px;padding:0 .55rem;font-size:.84rem;font-weight:500}
+
+/* a question with its answer */
+.qa{border:1.5px solid var(--fg);border-radius:10px;background:var(--surface);padding:1rem 1.1rem;display:grid;gap:.75rem;min-width:0}
+.qa-q{font-family:var(--font-display);font-size:1.15rem;font-weight:700}
+.qa-q::before{content:"问　";color:var(--gamma)}
+.qa-a{max-width:44em}
+.qa-cases{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr));gap:.9rem 1.2rem}
+.qa-cases > div{min-width:0;border-top:3px solid var(--disk);padding-top:.45rem;display:grid;gap:.25rem;align-content:start;font-size:.92rem}
+.qa-cases > div.m{border-top:3px dashed var(--gamma)}
+.dlg{display:block;margin-top:.35rem;border:1px solid var(--line);border-radius:6px;background:var(--bg);padding:.35rem .6rem;font-size:.88rem}
+.mdc{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.3rem}
+
+/* rules */
+.rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr));gap:.8rem;list-style:none;margin:0;padding:0;counter-reset:r}
+.rules li{counter-increment:r;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:.8rem 1rem;display:grid;grid-template-columns:2rem minmax(0,1fr);gap:.1rem .5rem;font-size:.93rem;min-width:0;align-content:start}
+.rules li::before{content:counter(r);grid-row:1 / span 2;font-family:var(--font-display);font-weight:700;font-size:1.5rem;line-height:1.1;color:var(--gamma)}
+.rules .rt{font-weight:600}
+
+/* layers and roadmap */
+.layers{display:grid;gap:.4rem}
+.layer{display:grid;grid-template-columns:3.2rem minmax(0,1fr) minmax(0,.7fr);gap:.8rem;align-items:center;border:1.5px solid var(--gamma);background:var(--gamma-soft);border-radius:8px;padding:.6rem .9rem;font-size:.92rem}
+.layer .id{font-family:var(--font-mono);font-weight:600;color:var(--gamma);font-size:1.05rem}
+.layer .by{color:var(--muted);font-size:.86rem}
+.layer:nth-child(1){margin-inline:2.4rem} .layer:nth-child(2){margin-inline:1.2rem}
+@media (max-width:600px){.layer{grid-template-columns:2.6rem minmax(0,1fr)} .layer .by{grid-column:2} .layer:nth-child(1),.layer:nth-child(2){margin-inline:0}}
+.road{list-style:none;margin:0;padding:0;display:grid;gap:0}
+.road li{display:grid;grid-template-columns:3rem minmax(0,1fr);gap:.2rem .9rem;position:relative;padding-bottom:1.1rem}
+.road li::before{content:attr(data-n);grid-row:1 / span 3;width:2.3rem;height:2.3rem;border-radius:50%;background:var(--surface);border:2px solid var(--fg);display:grid;place-items:center;font-family:var(--font-mono);font-weight:600;position:relative;z-index:1}
+.road li:not(:last-child)::after{content:"";position:absolute;left:1.13rem;top:2.3rem;bottom:0;border-left:2px solid var(--line)}
+.road .rh{font-weight:600;font-size:1.02rem}
+.road .rb{font-size:.93rem}
+.road .gate{font-size:.85rem;color:var(--bad);font-weight:500}
+.open-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr));gap:.6rem;list-style:none;margin:0;padding:0}
+.open-list li{border:1px dashed var(--muted);border-radius:8px;padding:.55rem .8rem;font-size:.92rem;background:var(--surface);min-width:0}
+.open-list li::before{content:"？ ";color:var(--gamma);font-weight:700}
+.not-list li::before{content:"✕ ";color:var(--bad)}
+.not-list li{border-style:solid;border-color:var(--line)}
+.gloss{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr));gap:.3rem 1.2rem;font-size:.9rem;margin:0}
+.gloss div{display:flex;gap:.6rem;justify-content:space-between;border-bottom:1px solid var(--line);padding:.25rem 0;min-width:0}
+.gloss dt{font-weight:500}
+.gloss dd{margin:0;color:var(--muted);font-family:var(--font-mono);font-size:.85rem;text-align:right}
+footer{padding-block:3rem 3rem;color:var(--muted);font-size:.88rem}
+@media (prefers-reduced-motion: reduce){*{scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+</style>
+
+</head>
+<body>
+<header class="wrap top">
+  <p class="eyebrow">Gamma 设计笔记 · 图解版 · 原文 <code>docs/research/vaults.md</code>（2026 年 11 月）</p>
+  <h1>同步仓库与原地阅读</h1>
+  <p class="lede">一个功能，同步仓库：Gamma 里的文件夹或页面与这台电脑上的目录或文件之间的一条关联，按设定的方向拉取、推送或两者都做；你自己的 Markdown 与 PDF 目录由此像 Obsidian 仓库（vault）那样在 Gamma 中双向编辑。以及在 PDF 所在之处直接阅读它，不必先加入文库。</p>
+</header>
+
+<div class="status" role="note">
+  <div class="wrap">
+    <span class="status-badge">计划 · 尚未构建</span>
+    <p><strong>本页所画的都还不是已发布的功能。</strong>笔记最初留下的五个问题，以及功能的名称、用语和今天两种关联的去向，已于 2026-11-06 决定（见“已决定”）；文末“待定”一节列出的仍未决定。今天已有的只有<strong>「保存到这台电脑…」</strong>和<strong>「跟随这台电脑上的文件…」</strong>（今后都只是同步仓库的设置，不再有自己的名字）、会上传文件的「打开方式」，以及一次性的仓库导入与导出；图中用 <span class="chip now">现有</span> 和 <span class="chip plan">计划</span> 区分。</p>
+  </div>
+</div>
+
+<nav class="wrap toc" aria-label="目录">
+  <ol>
+    <li><a href="#answer">问题与答案</a></li>
+    <li><a href="#direction">一个功能：同步仓库</a></li>
+    <li><a href="#rule">仓库的唯一规则</a></li>
+    <li><a href="#where">一切存放在哪里</a></li>
+    <li><a href="#markdown">是 Markdown 编辑器吗</a></li>
+    <li><a href="#notes">笔记双向：打补丁</a></li>
+    <li><a href="#pdfs">PDF 与批注</a></li>
+    <li><a href="#reader">原地阅读 PDF</a></li>
+    <li><a href="#safety">保护文件的八条规则</a></li>
+    <li><a href="#steps">分层与构建顺序</a></li>
+    <li><a href="#open">待定与不做</a></li>
+  </ol>
+</nav>
+
+<main class="wrap">
+
+<!-- 1 -->
+<section class="sec" id="answer">
+  <div class="head">
+    <p class="eyebrow">原文 · The answer in one paragraph / Decided</p>
+    <h2>问题与答案</h2>
+  </div>
+  <p class="gist">可以，条件只有一个：<strong>对你自己的目录，凡是文件能表达的，以本地文件为准；Gamma 写文件只对它上次读到的字节打补丁，绝不重新渲染整个页面。</strong>功能只有一个，<strong>同步仓库</strong>：Gamma 里的东西与这台电脑上的东西之间的一条关联，有范围（文件夹与目录，或页面与一个文件）和方向（拉取、推送或两者）。「保存到这台电脑」原是只拉取的仓库，「跟随文件」原是只有一个文件、只推送的仓库（下称单文件仓库），你自己的目录是两个方向都同步的仓库。从任何地方打开的 PDF 都在原处读取，你要求时才成为文库页面。</p>
+
+  <div class="qbox">
+    <div class="panel" style="display:grid;gap:.5rem;align-content:start">
+      <p class="k">笔记要回答三个问题</p>
+      <ol class="list">
+        <li>Gamma 能否像 Obsidian 对待仓库那样，双向处理一个本地的 Markdown 与 PDF 目录，而且永远不损坏文件？</li>
+        <li>能否读取任意一个 PDF 并就它聊天，而不把它加入文库？</li>
+        <li>文件装不下的东西，都放在哪里？</li>
+      </ol>
+    </div>
+    <div class="gitbox">
+      <p class="k">用 git 的话说，界面里也这样说</p>
+      <dl>
+        <dt>远端</dt><dd>Gamma 服务器和仓库所属的工作区；界面里写服务器的名字</dd>
+        <dt>本地</dt><dd>这台电脑上的目录或文件</dd>
+        <dt>拉取</dt><dd>Gamma 的改动写到磁盘</dd>
+        <dt>推送</dt><dd>磁盘的改动进入 Gamma；文件夹关联现有的 <code>push</code> 列就是这个意思</dd>
+        <dt>同步</dt><dd>先拉取再推送，开着哪个就做哪个</dd>
+        <dt>冲突</dt><dd>两边改了同一处字符：本地文件为准，远端的版本保留为冲突记录</dd>
+        <dt>未跟踪</dt><dd>目录里 Gamma 不读的文件</dd>
+        <dt>强制拉取、强制推送</dt><dd>说明数量、经你确认后，用这一侧替换另一侧的改动</dd>
+        <dt>移除仓库</dt><dd>关联去掉；文件保留或进回收站，页面保留</dd>
+        <dt>合并基准</dt><dd>关联为每个文件记下的上一次同步结果（文本、哈希、stat、文件 ID）</dd>
+        <dt><code>.gamma/</code></dt><dd>≈ <code>.git/</code> 的标记部分：只有标记和设置，索引和合并基准在 Gamma 的数据目录；只属于目录，从不属于文件</dd>
+        <dt>历史</dt><dd>≈ 本机保留的被替换字节</dd>
+      </dl>
+      <p class="none">界面里从不出现的 git 词：克隆（clone，在 Gamma 里已指另一台服务器上工作区的副本）、提交、分支、抓取、贮藏。唯一没有 git 对应物的：回收站（<code>.gamma/trash/</code>）。</p>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>已决定（2026-11-06）</h3>
+    <ol class="rules" style="counter-reset:r">
+      <li><span class="rt">仓库是一个文件夹，不是工作区</span><span>普通工作区里与某个目录绑定的一个文件夹；多个仓库就是同一文库里的多个文件夹。这是项目负责人的选择，与笔记最初的建议相反。随后确认：「保存到这台电脑」和「跟随文件」也符合同一模型，仓库不是第三种关联。</span></li>
+      <li><span class="rt">建立关联时在目录里写入 <code>.gamma/</code></span><span>仿照 Syncthing 的标记：一个隐藏目录，里面有一个文件；它不在，关联就停止。这个文件还带一个 ID，与 Resilio 的做法一样。</span></li>
+      <li><span class="rt">交给应用的 PDF 在原处读取</span><span>加入文库是第二步，需要明确要求。</span></li>
+      <li><span class="rt">PDF 的笔记放在它旁边，同名</span><span>除非仓库设置指定了笔记文件夹。Obsidian 在这里没有可循的规则；在别处、以 <code>source</code> 指向该 PDF 的笔记同样有效。</span></li>
+      <li><span class="rt">Markdown 无法表达的留在 Gamma 的数据库</span><span>高亮的矩形区域、手写、文本框。不用旁车文件（sidecar）。这是 Zotero 和 Sioyek 的选择。</span></li>
+      <li><span class="rt">一个功能，叫同步仓库</span><span>取代「保存到这台电脑…」和「跟随这台电脑上的文件…」。两者都成为设定了方向的同步仓库，都不再有自己的名字。</span></li>
+      <li><span class="rt">用 git 的词，界面里也用</span><span>Gamma 服务器永远是远端，这台电脑上的目录或文件是本地。拉取把 Gamma 的改动带到磁盘，推送把磁盘的改动送进 Gamma。副本的设置已经这样说。</span></li>
+      <li><span class="rt"><code>.gamma/</code> 属于目录，从不属于文件</span><span>单文件仓库旁边什么都不留；同一目录里有几个这样的文件，也什么都不留，对话框会提议改为同步整个目录。</span></li>
+    </ol>
+  </div>
+</section>
+
+<!-- 2 -->
+<section class="sec" id="direction">
+  <div class="head">
+    <p class="eyebrow">原文 · One feature: the synced vault</p>
+    <h2>一个功能：同步仓库</h2>
+  </div>
+  <p class="gist">Gamma 与这台电脑之间的每一条关联都是一个同步仓库：没有第三种，也不再是两种。仓库就是<strong>范围</strong>加<strong>方向</strong>。范围是文件夹 ↔ 目录，或页面 ↔ 一个文件；方向是<strong>拉取</strong>（Gamma → 磁盘）、<strong>推送</strong>（磁盘 → Gamma）或两者。今天的两个功能只留下旧名，它们是这个功能的两种设置。</p>
+
+  <div class="dir">
+    <input type="radio" name="dir" id="d-kept" class="dir-in">
+    <input type="radio" name="dir" id="d-vault" class="dir-in" checked>
+    <input type="radio" name="dir" id="d-ro" class="dir-in">
+    <input type="radio" name="dir" id="d-follow" class="dir-in">
+    <input type="radio" name="dir" id="d-open" class="dir-in">
+    <div class="seg">
+      <div class="seg-group">
+        <span class="seg-cap">范围：文件夹 ↔ 目录</span>
+        <div class="seg-opts">
+          <label for="d-kept">只拉取</label>
+          <label for="d-vault">拉取与推送</label>
+          <label for="d-ro">只推送</label>
+        </div>
+      </div>
+      <div class="seg-group">
+        <span class="seg-cap">范围：页面 ↔ 一个文件</span>
+        <div class="seg-opts">
+          <label for="d-follow">只推送：存入</label>
+          <label for="d-open">阅读器：原地读取</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="dir-body">
+      <figure class="dir-fig">
+        <div class="fig-scroll">
+          <svg viewBox="0 0 640 290" style="min-width:500px" role="img" aria-label="同步仓库的两个方向：拉取把 Gamma 的改动写到磁盘，推送把磁盘的改动送进 Gamma；所选设置决定哪条箭头有效，底下一行是这种设置原来的名字或开始的方式。">
+            <defs>
+              <marker id="sw-ah-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-g"/></marker>
+              <marker id="sw-ah-d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-d"/></marker>
+            </defs>
+            <text x="116" y="28" class="t-h t-c">Gamma（远端）</text>
+            <rect x="16" y="42" width="200" height="200" rx="12" class="bx-g"/>
+            <text x="524" y="28" class="t-h t-c">这台电脑的磁盘（本地）</text>
+            <rect x="424" y="42" width="200" height="200" rx="12" class="bx-d"/>
+            <text x="320" y="86" class="t-c t-g t-bold">拉取 pull</text>
+            <text x="320" y="182" class="t-c t-d t-bold">推送 push</text>
+
+            <g class="sg-folder">
+              <rect x="46" y="122" width="140" height="40" rx="6" class="ch-g"/>
+              <rect x="62" y="134" width="16" height="12" rx="2" class="ic-g"/>
+              <text x="128" y="147" class="t-c">文件夹</text>
+              <rect x="454" y="122" width="140" height="40" rx="6" class="ch-d"/>
+              <rect x="470" y="134" width="16" height="12" rx="2" class="ic-d"/>
+              <text x="536" y="147" class="t-c">目录</text>
+            </g>
+            <g class="sg-page">
+              <rect x="46" y="122" width="140" height="40" rx="6" class="ch-g"/>
+              <rect x="64" y="132" width="12" height="16" rx="1.5" class="ic-o-g"/>
+              <text x="128" y="147" class="t-c">页面</text>
+              <rect x="454" y="122" width="140" height="40" rx="6" class="ch-d"/>
+              <rect x="472" y="132" width="12" height="16" rx="1.5" class="ic-o-d"/>
+              <text x="536" y="147" class="t-c">PDF 文件</text>
+            </g>
+
+            <!-- pull only: was "Keep on this computer" -->
+            <g class="st st-kept">
+              <line x1="224" y1="100" x2="414" y2="100" class="ar ar-g" marker-end="url(#sw-ah-g)"/>
+              <text x="320" y="124" class="t-c t-g t-bold">开</text>
+              <line x1="416" y1="198" x2="226" y2="198" class="ar ar-d ar-dash" marker-end="url(#sw-ah-d)"/>
+              <text x="320" y="222" class="t-c">关（默认）</text>
+              <text x="320" y="240" class="t-c t-d">或：仅 PDF</text>
+              <text x="320" y="276" class="t-c t-m">旧名「保存到这台电脑…」，从有页面的文件夹开始</text>
+            </g>
+            <!-- both ways: a person's own directory -->
+            <g class="st st-vault">
+              <line x1="224" y1="100" x2="414" y2="100" class="ar ar-g" marker-end="url(#sw-ah-g)"/>
+              <text x="320" y="124" class="t-c t-g t-bold">开</text>
+              <line x1="416" y1="198" x2="226" y2="198" class="ar ar-d" marker-end="url(#sw-ah-d)"/>
+              <text x="320" y="222" class="t-c t-d t-bold">全部：笔记、PDF、</text>
+              <text x="320" y="240" class="t-c t-d t-bold">新文件、重命名、删除</text>
+              <text x="320" y="276" class="t-c t-m">你自己的目录：「添加同步仓库…」，从目录开始</text>
+            </g>
+            <!-- push only: the read-only vault of step 2 -->
+            <g class="st st-ro">
+              <line x1="224" y1="100" x2="414" y2="100" class="ar-off"/>
+              <g class="x-off"><line x1="312" y1="92" x2="328" y2="108"/><line x1="328" y1="92" x2="312" y2="108"/></g>
+              <text x="320" y="128" class="t-c t-b t-bold">关</text>
+              <line x1="416" y1="198" x2="226" y2="198" class="ar ar-d" marker-end="url(#sw-ah-d)"/>
+              <text x="320" y="222" class="t-c t-d t-bold">全部：笔记、PDF、</text>
+              <text x="320" y="240" class="t-c t-d t-bold">新文件、重命名、删除</text>
+              <text x="320" y="276" class="t-c t-m">第 2 步的只读仓库：只写 .gamma/，别的都不写</text>
+            </g>
+            <!-- one file, push only: was "Follow a file" -->
+            <g class="st st-follow">
+              <line x1="224" y1="100" x2="414" y2="100" class="ar-off"/>
+              <g class="x-off"><line x1="312" y1="92" x2="328" y2="108"/><line x1="328" y1="92" x2="312" y2="108"/></g>
+              <text x="320" y="128" class="t-c t-b t-bold">从不</text>
+              <line x1="416" y1="198" x2="226" y2="198" class="ar ar-d" marker-end="url(#sw-ah-d)"/>
+              <text x="320" y="222" class="t-c t-d t-bold">这个 PDF</text>
+              <text x="320" y="240" class="t-c">存入 Gamma</text>
+              <text x="320" y="276" class="t-c t-m">旧名「跟随这台电脑上的文件…」，单文件仓库</text>
+            </g>
+            <!-- the reader -->
+            <g class="st st-open">
+              <line x1="224" y1="100" x2="414" y2="100" class="ar-off"/>
+              <g class="x-off"><line x1="312" y1="92" x2="328" y2="108"/><line x1="328" y1="92" x2="312" y2="108"/></g>
+              <text x="320" y="128" class="t-c t-b t-bold">从不</text>
+              <line x1="416" y1="198" x2="226" y2="198" class="ar ar-d" marker-end="url(#sw-ah-d)"/>
+              <text x="320" y="222" class="t-c t-d t-bold">这个 PDF</text>
+              <text x="320" y="240" class="t-c">原地读取，字节不复制</text>
+              <text x="320" y="276" class="t-c t-m">「打开方式」：选了继续推送，才成为一行仓库</text>
+            </g>
+          </svg>
+        </div>
+        <figcaption>选一种设置，看拉取和推送哪条有效；底下一行是它原来的名字或开始的方式。</figcaption>
+      </figure>
+
+      <p class="dir-note">目录仓库有两个开关：拉取开或关；推送关、仅 PDF 或全部。旧名都只是这两个开关的设置，现有的 <code>push</code> 列本来就是这个意思。建立时总有一侧是空的：从有页面的文件夹和空目录开始，或从目录和新文件夹开始；此后只靠方向区分。单文件仓库只有推送一个开关，从不提供拉取：Gamma 绝不写它没放进去的 PDF。Syncthing 给文件夹的也是这三种方向：仅发送、仅接收、发送与接收。</p>
+    </div>
+  </div>
+
+  <div class="tbl-wrap panel" style="padding:.3rem .4rem">
+    <table>
+      <thead><tr><th style="min-width:11em">原来叫</th><th>范围</th><th>拉取（Gamma → 磁盘）</th><th>推送（磁盘 → Gamma）</th><th>怎样开始</th></tr></thead>
+      <tbody>
+        <tr><td>「保存到这台电脑…」<span class="cmd"><span class="chip now">现有</span></span></td><td class="nw">文件夹 ↔ 目录</td><td>开</td><td>关；或仅 PDF</td><td>一个文件夹，一个空目录</td></tr>
+        <tr><td>仓库<span class="cmd"><span class="chip plan">计划 · 第 3 步</span></span></td><td class="nw">文件夹 ↔ 目录</td><td>开</td><td>全部：笔记、PDF、新文件、重命名、删除</td><td>一个目录，一个新文件夹</td></tr>
+        <tr><td>只读仓库<span class="cmd"><span class="chip plan">计划 · 第 2 步</span></span></td><td class="nw">文件夹 ↔ 目录</td><td>关</td><td>全部</td><td>一个目录，一个新文件夹</td></tr>
+        <tr><td>「跟随这台电脑上的文件…」<span class="cmd"><span class="chip now">现有</span></span></td><td class="nw">页面 ↔ 一个文件</td><td>从不</td><td>这个 PDF，存入 Gamma</td><td>页面的「文档」菜单</td></tr>
+        <tr><td>打开的 PDF（阅读器）<span class="cmd"><span class="chip plan">计划 · 第 1 步</span></span></td><td class="nw">页面 ↔ 一个文件</td><td>从不</td><td>这个 PDF，原地读取</td><td>「打开方式」；添加到文库时选了继续推送，才成为一行仓库</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sub">
+    <h3>界面用语</h3>
+    <p class="prose">界面到处用同样几个词，也就是副本设置（<code>SettingsMirrors.jsx</code>）已经在用的：正在拉取、正在推送、强制拉取、强制推送、未推送的编辑。git 的其他词在这里没有意义，从不出现：克隆已指另一台服务器上工作区的副本，也没有什么会被提交、建分支、抓取或贮藏。中文用 git 自己的译法：拉取、推送、冲突；vault 用 Obsidian 自己的中文「仓库」（它的帮助里写「打开其他仓库」「新建仓库」），所以叫同步仓库，git 的中文也把 repository 叫仓库。</p>
+    <div class="tbl-wrap panel" style="padding:.3rem .4rem">
+      <table>
+        <thead><tr><th>词</th><th>意思</th><th>出现在</th></tr></thead>
+        <tbody>
+          <tr><td class="k">同步仓库、仓库</td><td>Gamma 与这台电脑之间的一条关联，有范围和方向</td><td>功能的名字：同步面板的分区、设置搜索、用户指南</td></tr>
+          <tr><td class="k">远端</td><td>仓库所属的 Gamma 服务器和工作区；总写服务器的名字，从不单写“远端”</td><td>仓库的那一行：<code>D:\Papers ⇄ NAS · Research / Papers</code></td></tr>
+          <tr><td class="k">本地</td><td>这台电脑上的目录或文件</td><td>同一行、对话框</td></tr>
+          <tr><td class="k">拉取</td><td>Gamma → 磁盘：页面成为文件，改名就移动文件，删除就把文件移进回收站</td><td>对话框的「拉取」开关、「立即拉取」、「正在拉取」、「已拉取 12 个文件」</td></tr>
+          <tr><td class="k">推送</td><td>磁盘 → Gamma：文件成为页面，或成为页面的新 PDF</td><td>开关「推送：关 / 仅 PDF / 全部」、「立即推送」、「正在推送」、「3 项待推送」</td></tr>
+          <tr><td class="k">同步</td><td>先拉取再推送，开着哪个就做哪个</td><td>「立即同步」、30 秒定时轮询、CLI 的 <code>sync</code></td></tr>
+          <tr><td class="k">已是最新</td><td>没有要拉取或推送的</td><td>行的状态，与副本一样</td></tr>
+          <tr><td class="k">冲突</td><td>上次同步之后，一个块或一个 PDF 两边都改了；文件为准，Gamma 一方保留</td><td>「1 个冲突」、块上的合并提示</td></tr>
+          <tr><td class="k">未跟踪</td><td>目录里 Gamma 不读的文件：不认识的类型、忽略列表里的</td><td>「未跟踪：4 个文件」，在仓库的状态里，从不在文库里</td></tr>
+          <tr><td class="k">强制拉取、强制推送</td><td>说明数量、经你确认后，用这一侧替换另一侧的改动</td><td>行的菜单，与副本的「强制拉取」「强制推送」在同一处</td></tr>
+          <tr><td class="k">移除仓库</td><td>关联去掉；文件保留或移进回收站，按你的选择；页面保留</td><td>行的菜单，带这两个选项</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <figure>
+      <div class="mocks">
+        <div class="mk-row">
+        <div class="mock">
+          <span class="mk-h">文件夹的菜单</span>
+          <span class="mk-item">与这台电脑同步…</span>
+          <span class="mk-was">取代「保存到这台电脑…」</span>
+          <span class="mk-note">对话框写明目录，显示两个开关（有页面的文件夹：拉取开、推送关），并说出第一轮要做什么：<span class="dlg">将 12 个页面拉取到 D:\Papers；写入 .gamma/，别无其他。</span></span>
+        </div>
+        <div class="mock">
+          <span class="mk-h">启动器、桌面栏、同步面板</span>
+          <span class="mk-item">添加同步仓库…</span>
+          <span class="mk-was">取代「保存一个文件夹…」</span>
+          <span class="mk-note">从目录开始的同一个对话框，也就是计划中的「打开这台电脑上的文件夹…」：推送开、拉取开，新建一个以目录命名的文件夹。</span>
+        </div>
+        <div class="mock">
+          <span class="mk-h">页面的「文档」菜单</span>
+          <span class="mk-item">从这台电脑上的文件推送…</span>
+          <span class="mk-was">取代「跟随这台电脑上的文件…」</span>
+          <span class="mk-note">新名字说出了旧名暗含的方向。</span>
+        </div>
+        </div>
+        <div class="mock">
+          <span class="mk-h">同步面板的一行：范围、远端、方向、状态</span>
+          <div class="vrow">
+            <span class="vr-scope"><code>D:\Papers</code> ⇄ NAS · Research / Papers</span>
+            <span class="vr-dir"><span>拉取</span><span>推送：全部</span></span>
+            <span class="vr-state">已是最新 · 未跟踪：4 个文件</span>
+          </div>
+          <div class="vr-btns"><span>立即同步</span><span>立即拉取</span><span>立即推送</span><span>暂停</span><span>强制…</span><span>移除仓库…</span></div>
+          <span class="mk-note">原来表示“把 PDF 送回”的上传箭头，变成推送开关：关 / 仅 PDF / 全部。</span>
+        </div>
+        <div class="mk-row">
+        <div class="mock">
+          <span class="mk-h">仓库里的页面：顶栏</span>
+          <div class="topbar"><span class="pt">Attention</span><span class="pill">已同步：D:\Papers\Attention.md</span></div>
+          <div class="topbar"><span class="pt">Attention</span><span class="pill bad">未写入磁盘：重新解析与页面不符</span></div>
+          <span class="mk-note">上次写入被拒时，说“未写入磁盘”和原因。</span>
+        </div>
+        <div class="mock">
+          <span class="mk-h">命令行 <code>gamma_sync.py</code></span>
+          <code class="mk-cli">init · sync · status · push · <b>pull</b></code>
+          <span class="mk-note">新增的 <code>pull</code> 是今天 <code>sync</code> 所做之事的名字；<code>sync</code> 为脚本保留。</span>
+        </div>
+        </div>
+      </div>
+      <figcaption>示意，不是界面截图；文字是计划中的中文界面用语，数字和原因只是例子。</figcaption>
+    </figure>
+  </div>
+
+  <div class="sub">
+    <h3>单文件仓库是最小单元</h3>
+    <figure>
+      <div class="fig-scroll">
+        <svg viewBox="0 0 700 250" style="min-width:560px" role="img" aria-label="目录仓库按规则为目录下的每个 PDF 生成一对“页面与它的 PDF”；手动建立的单文件仓库只用于规则覆盖不到的情况。">
+          <text x="14" y="20" class="t-s t-m">目录仓库：一条文件夹关联，按规则成对</text>
+          <rect x="10" y="30" width="400" height="208" rx="10" class="frame"/>
+          <text x="95" y="56" class="t-s t-c t-g t-bold">Gamma 文件夹</text>
+          <text x="325" y="56" class="t-s t-c t-d t-bold">目录</text>
+          <g>
+            <rect x="30" y="70" width="130" height="32" rx="6" class="ch-g"/><text x="95" y="91" class="t-c">论文 A</text>
+            <rect x="260" y="70" width="130" height="32" rx="6" class="ch-d"/><text x="325" y="91" class="t-c t-mono">A.pdf</text>
+            <line x1="160" y1="86" x2="260" y2="86" class="ln-g"/><text x="210" y="80" class="t-s t-c t-m">推送</text>
+          </g>
+          <g>
+            <rect x="30" y="122" width="130" height="32" rx="6" class="ch-g"/><text x="95" y="143" class="t-c">论文 B</text>
+            <rect x="260" y="122" width="130" height="32" rx="6" class="ch-d"/><text x="325" y="143" class="t-c t-mono">B.pdf</text>
+            <line x1="160" y1="138" x2="260" y2="138" class="ln-g"/><text x="210" y="132" class="t-s t-c t-m">推送</text>
+          </g>
+          <g>
+            <rect x="30" y="174" width="130" height="32" rx="6" class="ch-g"/><text x="95" y="195" class="t-c">论文 C</text>
+            <rect x="260" y="174" width="130" height="32" rx="6" class="ch-d"/><text x="325" y="195" class="t-c t-mono">C.pdf</text>
+            <line x1="160" y1="190" x2="260" y2="190" class="ln-g"/><text x="210" y="184" class="t-s t-c t-m">推送</text>
+          </g>
+          <text x="210" y="228" class="t-s t-c t-m">目录下每个 PDF 一对</text>
+
+          <text x="434" y="20" class="t-s t-m">手动建立的单文件仓库：规则覆盖不到时</text>
+          <rect x="430" y="30" width="260" height="208" rx="10" class="frame"/>
+          <rect x="446" y="122" width="96" height="32" rx="6" class="ch-g"/><text x="494" y="143" class="t-c">手稿页面</text>
+          <text x="494" y="174" class="t-s t-c t-m">归入任何位置</text>
+          <text x="562" y="64" class="t-s t-d t-mono t-bold">build/</text>
+          <rect x="562" y="76" width="112" height="28" rx="5" class="bx-n"/><text x="618" y="95" class="t-s t-c t-m">其他文件</text>
+          <rect x="562" y="124" width="112" height="28" rx="5" class="ch-d"/><text x="618" y="143" class="t-s t-c t-mono">main.pdf</text>
+          <rect x="562" y="172" width="112" height="28" rx="5" class="bx-n"/><text x="618" y="191" class="t-s t-c t-m">其他文件</text>
+          <line x1="542" y1="138" x2="562" y2="138" class="ln-g"/>
+          <text x="618" y="224" class="t-s t-c t-m">不是任何页面</text>
+        </svg>
+      </div>
+      <figcaption>目录仓库里的论文是跟随自己 PDF 的页面，按规则为目录下的每个 PDF 生成一个。手动建立的单文件仓库只留给规则覆盖不到的两种情况：文件所在的目录不打算整个当作仓库（比如构建目录里的输出文件）；页面所在的服务器读不到这块磁盘。它的页面可以归入任何位置，旁边的文件不是任何人的页面。</figcaption>
+    </figure>
+  </div>
+
+  <div class="qa">
+    <h3 class="qa-q">只同步一个文件，也有 <code>.gamma</code> 吗？</h3>
+    <p class="qa-a"><strong>没有。</strong><code>.gamma/</code> 属于目录，从不属于文件。标记回答的是目录才有的两个问题：这还是同一个目录吗（一个空着的挂载点不是一个被清空的仓库）；Gamma 可以在这里写吗。单文件仓库两个问题都没有：Gamma 从不在文件旁边写东西；文件不见了，只是页面的文件「缺失」，页面绝不因此被删除。</p>
+    <div class="qa-cases">
+      <div><b>一个文件：磁盘上什么都没有</b><span>关联存在 Gamma 的数据库里，像 Zotero 的关联文件：路径、哈希、大小和时间、文件 ID。它所在的目录不读，旁边的文件不是任何人的页面。</span></div>
+      <div><b>同一目录里几个文件：仍然什么都没有</b><span>每个都是自己的仓库，有自己的页面，归在各自的位置。再添加一个时，对话框只提示一句：<span class="dlg">D:\Papers 中已有 3 个文件逐个同步，改为同步整个文件夹？</span></span></div>
+      <div><b>目录成为仓库，就吸收里面的单文件仓库</b><span>每个页面保留它的 ID、笔记和批注，归入与文件所在目录对应的文件夹，原来的归入位置也保留；它自己的那一行去掉。反过来会被拒绝，因为仓库互不重叠：仓库目录里的文件已经是一个页面，「文档」菜单会打开它。</span></div>
+      <div class="m"><b>目录仓库总有标记，不论方向</b><span>只推送的仓库也写入 <code>.gamma/</code>，别无其他，并事先说明：分辨拔掉的盘和被清空的盘靠的就是它，而要回答这个问题的，正是推送的那一侧。Syncthing 在“仅接收”文件夹里也写 <code>.stfolder</code>，理由相同。</span></div>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="panel" style="display:grid;gap:.6rem;align-content:start">
+      <p class="k">今天的关联为此改变的</p>
+      <ul class="list">
+        <li><span class="k">渲染器。</span>能推送的仓库，需要解析器能把文件还原成同一棵树，所以笔记改由透镜的编码器写出，不再用 <code>render_vault_page</code>。Gamma 自己的文件按这种方言重写一次；磁盘上改过的照旧保留。</li>
+        <li><span class="k">状态文件。</span><code>.gamma-sync.json</code> 让位于 <code>.gamma/</code> 里的标记和数据目录里的合并基准；gamma-sync 客户端没有数据目录，保留自己的。</li>
+        <li><span class="k"><code>gamma_id</code>。</span>由合并基准说明一个路径是哪个页面；文件里有这一行仍会读取，但不再写入。</li>
+        <li><span class="k">单向命名。</span>标题仍决定文件名；开启推送后，文件名也决定页面标题。</li>
+        <li><span class="k">名字。</span>两个菜单项、面板的用词和指南的两节，按上面的用语重写；<code>folder_links</code> 还是那些行，<code>kind</code> 读作范围。</li>
+      </ul>
+    </div>
+    <div class="panel" style="display:grid;gap:.6rem;align-content:start">
+      <p class="k">有意保留的</p>
+      <ul class="list">
+        <li><span class="k">只拉取是一个承诺，不是要长大脱离的阶段。</span>人们把带批注的文件放进只拉取的文件夹，正是相信它们不会回到 Gamma。这样的仓库在磁盘上发现的改动会保留并报告，绝不推送；强制拉取会替换它，就像 Syncthing 的“仅发送”文件夹在“覆盖更改”之前不理会另一端。推送要明确开启，就像现在推送 PDF。</li>
+        <li><span class="k">通过 HTTP 推送全部内容以后再做。</span>今天 NAS 上的文件夹只靠读取就能拉取到 PC；推送笔记和新文件，需要带写令牌发送它们的操作（第 5 步）。</li>
+        <li><span class="k">存入还是原地读取，是存储的问题，不是仓库的问题：</span>服务器在这台电脑上、并在这里找到了文件，就原地读取；否则存入。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 3 -->
+<section class="sec" id="rule">
+  <div class="head">
+    <p class="eyebrow">原文 · A vault is a folder</p>
+    <h2>仓库的唯一规则</h2>
+  </div>
+  <p class="gist">仓库文件夹下的页面和仓库目录里的文件一一对应。磁盘上的新建、修改、移动和删除推送进 Gamma，Gamma 中的同类操作拉取到磁盘；身份就是路径，文件夹本身的规则一条不改。</p>
+  <p class="rule">归入仓库文件夹之下的页面，就是仓库目录中的一个文件；目录中的文件，就是归入该文件夹之下的页面。</p>
+  <p class="prose">归入照旧：多对多，只检查形状（<code>ops._filing_patch</code>），「移动到文件夹」仍是添加。页面的文件放在哪里，沿用「保存到这台电脑」今天已有的规则：页面在所关联文件夹之下的<strong>第一个</strong>归入位置。所以没有第二种文件夹，重新归入页面的任何路径也没有新的拒绝。</p>
+
+  <figure>
+    <div class="fig-scroll">
+      <svg viewBox="0 0 700 300" style="min-width:580px" role="img" aria-label="Gamma 中仓库文件夹下的树与磁盘上仓库目录的树一一对应：文件夹对目录，论文对 PDF 加同名笔记，笔记页面对 .md 文件；.gamma/ 是标记，不对应页面。">
+        <text x="130" y="26" class="t-h t-c t-g">Gamma（远端）：文件夹之下</text>
+        <rect x="10" y="38" width="240" height="252" rx="10" class="bx-g"/>
+        <text x="570" y="26" class="t-h t-c t-d">磁盘（本地）：目录之中</text>
+        <rect x="450" y="38" width="240" height="252" rx="10" class="bx-d"/>
+
+        <!-- left rows -->
+        <rect x="24" y="66" width="13" height="10" rx="2" class="ic-g"/><text x="44" y="76">文件夹「我的仓库」</text>
+        <rect x="40" y="102" width="13" height="10" rx="2" class="ic-g"/><text x="60" y="112">文件夹「光学」</text>
+        <rect x="58" y="136" width="10" height="13" rx="1.5" class="ic-o-g"/><text x="76" y="148">论文「A paper」</text>
+        <rect x="58" y="198" width="10" height="13" rx="1.5" class="ic-o-g"/><text x="76" y="210">页面「实验记录」</text>
+        <rect x="42" y="234" width="10" height="13" rx="1.5" class="ic-o-g"/><text x="60" y="246">页面「读书清单」</text>
+
+        <!-- right rows -->
+        <rect x="464" y="66" width="13" height="10" rx="2" class="ic-d"/><text x="484" y="76" class="t-mono">我的仓库/</text>
+        <rect x="480" y="102" width="13" height="10" rx="2" class="ic-d"/><text x="500" y="112" class="t-mono">光学/</text>
+        <rect x="498" y="134" width="10" height="13" rx="1.5" class="ic-o-d"/><text x="516" y="146" class="t-mono">A paper.pdf</text>
+        <rect x="498" y="160" width="10" height="13" rx="1.5" class="ic-o-d"/><text x="516" y="172" class="t-mono">A paper.md</text>
+        <rect x="498" y="198" width="10" height="13" rx="1.5" class="ic-o-d"/><text x="516" y="210" class="t-mono">实验记录.md</text>
+        <rect x="482" y="234" width="10" height="13" rx="1.5" class="ic-o-d"/><text x="500" y="246" class="t-mono">读书清单.md</text>
+        <text x="482" y="278" class="t-mono t-g t-bold">.gamma/</text>
+
+        <!-- correspondences -->
+        <line x1="254" y1="72" x2="446" y2="72" class="ln"/><text x="350" y="64" class="t-s t-c t-m">文件夹 ↔ 目录</text>
+        <line x1="254" y1="108" x2="446" y2="108" class="ln"/>
+        <path d="M254,144 L446,141 M254,144 L446,167" class="ln"/><text x="350" y="134" class="t-s t-c t-m">论文 ↔ PDF + 笔记文件</text>
+        <line x1="254" y1="206" x2="446" y2="206" class="ln"/><text x="350" y="198" class="t-s t-c t-m">笔记页面 ↔ .md</text>
+        <line x1="254" y1="242" x2="446" y2="242" class="ln"/>
+        <text x="350" y="278" class="t-s t-c t-g">标记，不对应任何页面</text>
+      </svg>
+    </div>
+    <figcaption>两侧是同一棵树。目录就是文件夹；<code>.md</code> 是笔记页面，<code>.pdf</code> 是论文，以文件名为标题。例子里的名字只是示意。</figcaption>
+  </figure>
+
+  <div class="two">
+    <div class="ev">
+      <div class="ev-h d">推送：磁盘上发生的</div>
+      <div class="ev-row"><span class="when">一个目录</span><span class="then">一个文件夹</span></div>
+      <div class="ev-row"><span class="when"><code>.md</code> / <code>.pdf</code></span><span class="then">笔记页面 / 论文，归入其目录对应的文件夹，以文件名为标题。这个标题不是自动标题（<code>auto_title</code>），元数据查询只填论文字段，绝不改文件名；“把文件重命名为论文标题”可以做成一条命令。</span></div>
+      <div class="ev-row"><span class="when">文件改了</span><span class="then">页面跟着改</span></div>
+      <div class="ev-row"><span class="when">文件移动了</span><span class="then">页面在仓库下的归入位置跟着变，其他归入位置不动</span></div>
+      <div class="ev-row"><span class="when">文件不见了</span><span class="then">页面进入「最近删除」</span></div>
+      <div class="ev-row"><span class="when">一个路径消失，另一个出现</span><span class="then">身份就是路径。新文件的文件 ID 或哈希相同，或 PDF 的 <code>/ID</code> 相同（被别的阅读器移动并保存过），就算移动；移动后又编辑过的笔记靠相似度判断。其余都算删除加新页面，删除的页面带着上面的一切等待三十天。</span></div>
+    </div>
+    <div class="ev">
+      <div class="ev-h g">拉取：Gamma 中发生的</div>
+      <div class="ev-row"><span class="when">在文件夹里新建或归入页面</span><span class="then">得到它的文件：笔记写成 <code>&lt;dir&gt;/&lt;Title&gt;.md</code>；原先存储的 PDF 复制到旁边，此后跟随</span></div>
+      <div class="ev-row"><span class="when">改标题</span><span class="then">文件改名</span></div>
+      <div class="ev-row"><span class="when">仓库下第一个归入位置变了</span><span class="then">文件移动</span></div>
+      <div class="ev-row"><span class="when">仓库内的文件夹改名或移动</span><span class="then">对应目录改名或移动</span></div>
+      <div class="ev-row"><span class="when">页面进入「最近删除」</span><span class="then">它的文件进入仓库回收站；恢复时文件移回原处</span></div>
+      <div class="ev-row"><span class="when">页面失去仓库下最后一个归入位置</span><span class="then">离开仓库：原地读取的 PDF 先存入，再把文件移进回收站，页面作为文库页面保留，上面的一切都在。在 Gamma 中删除文件夹照常取消其页面的归入，页面按这条离开；目录空了才删除。</span></div>
+    </div>
+  </div>
+  <p class="prose muted" style="font-size:.93rem">拉取得知 Gamma 中的改动，与其他同步的方式相同：先是 <code>ops.notify_commit</code>，再查 <code>page_changes</code> 中该文件夹下的页面和 <code>folders</code> 树。</p>
+
+  <div class="sub">
+    <h3>建立与移除</h3>
+    <ol class="flow">
+      <li><b>「添加同步仓库…」</b>在启动器、桌面栏（bar）和同步面板里，从目录开始（「打开这台电脑上的文件夹…」）</li>
+      <li><b>系统的选择器</b>选定目录</li>
+      <li><b>先扫描并说明</b>找到了什么、将写入什么（标记，别无其他），然后才动手</li>
+      <li><b>新建以目录命名的文件夹</b>放在打开的工作区（若它属于本地服务器、可以有仓库），否则放在主机的个人工作区</li>
+    </ol>
+    <p class="prose muted" style="font-size:.93rem">已关联的目录总是对应一个新的空文件夹：已有的文件夹和已有的目录不会合并。多个仓库就是同一文库的多个文件夹，无需切换：各仓库的标签页并排，一次搜索覆盖全部（也可限定到某个文件夹），一个仓库里的笔记可以提及另一个仓库或文库里的论文；在文件中，这种提及写成页面的 Gamma 绝对地址，再读取时仍是提及。</p>
+    <p class="prose"><span class="k">移除：</span>「移除仓库…」只问文件怎么办，保留还是移进回收站；从不问页面：页面留下，上面的一切都在。仓库原地读取的 PDF 先存入，免得有页面指向 Gamma 不再监视的路径；动手之前，那一行会说明涉及多少个、多大。不想要的页面，之后像任何页面一样删除。</p>
+  </div>
+
+  <div class="sub">
+    <h3>必须不同的四处，各只改一个地方</h3>
+    <ul class="list prose">
+      <li><span class="k">一份文档一个页面，在仓库里不成立：</span>两个目录里的同一个 PDF 是两个页面。PDF 为关联文件的页面不参与 <code>blocks_store.page_for_doc</code>，<code>replace_attachment</code> 也不因别的页面持有相同字节而拒绝（<code>HeldElsewhere</code>）。文库照旧：加入文库的 PDF 找到的是文库的页面，绝不是仓库的。</li>
+      <li><span class="k">副本或关联了 Zotero 的工作区里不能推送</span>，仓库页面也不发布。镜像只同步 <code>storage.exists</code> 在上传目录里找到的文件，副本会只带走页面、没有 PDF；Zotero 关联会把这个文件夹变成一个分类。只拉取的仓库今天两者都允许，它不往 Gamma 写任何东西。</li>
+      <li><span class="k">仓库互不重叠：</span>仓库目录不在另一个仓库的目录之内，也不包住一个；仓库文件夹不在另一个仓库之下。<code>root</code> 或上层文件夹上只拉取的仓库，不包含推送的仓库之下的页面（否则 <code>folder_sync.layout</code> 会把它们的笔记渲染进第二个目录）。归入两个仓库的页面属于第一个，第二个报告并放过它。目录仓库里的单文件仓库会被吸收，见上文“只同步一个文件”。</li>
+      <li><span class="k"><code>push</code> 今天只读作开或关</span>（<code>run_link</code>、<code>due</code>、<code>tick</code>、路由、<code>desktop/lib/keeping.js</code>）：各处都要学会第三个值（全部），以及关掉拉取、让 Gamma 停止写入的开关。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 4 -->
+<section class="sec" id="where">
+  <div class="head">
+    <p class="eyebrow">原文 · Where everything lives</p>
+    <h2>一切存放在哪里</h2>
+  </div>
+  <p class="gist">本地目录里只有你的文件，外加一个 <code>.gamma/</code>：它只相当于 <code>.git/</code> 里标出“这是一个仓库”的部分，放标记、设置和回收站；目录仓库不论方向都有它，单文件仓库没有。合并基准、历史，以及 Markdown 装不下的批注，都在 Gamma 的数据目录。</p>
+  <figure>
+    <div class="where">
+      <div class="tree">
+        <p class="tree-h">这台电脑上的仓库目录（本地）</p>
+        <div class="tr"><span class="nm">我的仓库/</span><span class="nt"></span></div>
+        <div class="mark-grp">
+          <div class="tr mark"><span class="nm">├─ <span>.gamma/</span></span><span class="nt">标记：隐藏目录，里面有一个文件</span></div>
+          <div class="tr mark"><span class="nm">│  ├─ <span>vault.json</span></span><span class="nt">仓库 ID、格式版本、两台电脑必须一致的设置（PDF 的笔记放哪里、忽略什么）</span></div>
+          <div class="tr mark"><span class="nm">│  └─ <span>trash/</span></span><span class="nt">已删除页面的文件，保留三十天</span></div>
+        </div>
+        <div class="tr"><span class="nm">├─ 光学/</span><span class="nt">目录即文件夹</span></div>
+        <div class="tr"><span class="nm">│  ├─ A paper.pdf</span><span class="nt">PDF 本身</span></div>
+        <div class="tr"><span class="nm">│  └─ A paper.md</span><span class="nt">笔记文本与结构；前置元数据里的 <code>tags</code>、<code>aliases</code> 和论文字段；仓库自己风格的链接；高亮写成链接到 PDF 页的 <code>[!quote]</code> 标注框，带 <code>^</code> 锚点</span></div>
+        <div class="tr"><span class="nm">└─ 读书清单.md</span><span class="nt">一个笔记页面</span></div>
+      </div>
+      <div class="db">
+        <p class="db-h">Gamma 的数据目录（远端）</p>
+        <ul>
+          <li>页面：带块 ID 的树、搜索索引</li>
+          <li>每条高亮的矩形区域、手写、文本框和图片</li>
+          <li>聊天、评论、标签页、阅读位置</li>
+          <li>关联对每个文件的合并基准：文本、哈希、stat、文件 ID</li>
+          <li>单文件仓库：路径、哈希、大小和时间、文件 ID</li>
+          <li>Gamma 写入时替换掉的字节，保留若干天</li>
+          <li>PDF 文本索引和封面</li>
+        </ul>
+      </div>
+    </div>
+    <figcaption>左边是本地目录（蓝），右边是 Gamma 自己的数据（琥珀色）。一轮同步运行时，<code>.gamma/</code> 里什么都不改。</figcaption>
+  </figure>
+  <div class="why">
+    <div class="d"><span class="w-h">为什么放在文件里</span><span>任何打开这个目录的工具都能读：Obsidian、智能体（agent）、git。</span></div>
+    <div class="m"><span class="w-h">为什么放在 <code>.gamma/</code></span><span>标记必须和文件在一起；回收站在同一个卷上，删除就只是一次重命名。</span></div>
+    <div class="g"><span class="w-h">为什么放在数据目录</span><span>这是 Gamma 自己的数据，用 Gamma 自己的合并和备份；或者是这台设备自己才知道的事。</span></div>
+  </div>
+  <ul class="list prose">
+    <li><span class="k">标记：</span><code>.gamma/</code> 隐藏、内含文件，清理工具不会动它（与 Syncthing 的标记一样）。找不到标记或 ID 不对，关联就停止并说明，绝不当成删除。需要 ID 是因为路径不够：目录移动或改名后，把关联重新指向它即可找回，Gamma 先确认是同一个仓库，再与已有页面对接；同一盘符下换了另一块盘会被拒绝。</li>
+    <li><span class="k">仓库的文件里没有 <code>gamma_id</code>，仓库里也没有数据库。</span></li>
+    <li><span class="k">块 ID 在第一次读取时生成</span>，由页面保存。只有文件外的东西依赖某个块（一条高亮、一个指向它的链接）时，它才在文件里得到 <code>^anchor</code>：这是 Obsidian 的习惯，也是仓库导出的规则。</li>
+    <li><span class="k">历史属于 Gamma：</span>写入替换掉的内容存在数据目录，就像 Obsidian 的文件恢复、Syncthing 的索引都随应用保存。除了回收站，仓库里什么都不累积。</li>
+  </ul>
+</section>
+
+<!-- 5 -->
+<section class="sec" id="markdown">
+  <div class="head">
+    <p class="eyebrow">原文 · Is Gamma a Markdown editor?</p>
+    <h2>Gamma 是 Obsidian 那样的 Markdown 编辑器吗？</h2>
+  </div>
+  <p class="gist">一半是。<strong>在一个块之内是，而且用的是 Obsidian 自己的引擎；作为一份文档不是：</strong>Obsidian 的笔记是一段文本，Gamma 的页面是一个大纲。所以仓库页面是透过大纲编辑的 Markdown 文件，大纲显示不了的，由「编辑文件」补上。</p>
+
+  <div class="two">
+    <div class="panel" style="display:grid;gap:.6rem;align-content:start">
+      <p class="k">在块之内：是</p>
+      <ul class="list" style="font-size:.95rem">
+        <li>块的内容就是原样的 Markdown 文本，别无其他：没有 HTML，没有富文本 JSON（<code>markdown_import.py</code> 的说明；<code>db.py</code> 里的 <code>unified_blocks</code> 表）。</li>
+        <li>编辑器是 CodeMirror 6，与 Obsidian 相同：正在编辑的块里有一个实例（<code>BlockCmEditor.jsx</code>），公式、引用和标记实时渲染，光标所在处显示源码，就像 Obsidian 的实时预览；其他块经 react-markdown 渲染（GFM、公式、标注框、KaTeX）。</li>
+        <li>这些都按 Markdown 输入，存进去还是 Markdown：<span class="mdc"><code>**粗体**</code><code>*斜体*</code><code>`代码`</code><code>==标记==</code><code>[链接](…)</code><code>[[wikilink]]</code><code>![[图.png|300]]</code><code>$…$</code><code>$$…$$</code><code>```围栏```</code><code>Mermaid</code><code>| 表格 |</code><code>- [ ] 任务</code><code>&gt; 引用</code><code>&gt; [!callout]</code></span></li>
+        <li>回车按 Obsidian 的方式延续列表、任务或引用（<code>mdLines.js</code>），<code>/</code> 命令改写一行的前缀。这些都不需要改。</li>
+      </ul>
+    </div>
+    <div class="panel" style="display:grid;gap:.6rem;align-content:start">
+      <p class="k">作为文档：不是</p>
+      <ul class="list" style="font-size:.95rem">
+        <li>Obsidian 的笔记是一段文本，结构就是文本所写的那样。</li>
+        <li>Gamma 的页面是大纲：一行行带父级和位置的块，每一行都画成一个项目符号（<code>BlockTree.jsx</code>）；标题只是文本以 <code>#</code> 开头的块。</li>
+        <li>文件要变成这个形状，得经过一个导入器，由它决定在哪里切开、怎样嵌套；这些决定两个方向都有损失，见下表。</li>
+        <li>透镜建成后，习惯 Obsidian 的人仍会注意到三点：每个段落前面都有一个项目符号；嵌在普通段落下面的块，在文件里变成列表；解析器不认识的（HTML 块、setext 标题、跨段落的脚注）是一个不透明块，按文本显示、按文本编辑，不渲染。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>今天读进来再写回去，会变成什么（2026-11-06 实测）</h3>
+    <div class="tbl-wrap panel" style="padding:.3rem .4rem">
+      <table>
+        <thead><tr><th>文件里</th><th>今天在 Gamma 中</th><th>写回来时</th></tr></thead>
+        <tbody>
+          <tr><td>标题后面的内容</td><td>标题的子块</td><td>成为子块，即使原来是同级（<code>test_obsidian_round_trip</code> 也这样写明）</td></tr>
+          <tr><td><code>-</code> 列表项</td><td>一个块；<code>-</code> 丢掉，<code>1.</code> 保留</td><td>没有子项时是一个段落，有子项时才是列表项（导出按深度决定，不看原来的记号）</td></tr>
+          <tr><td>一个列表项里的两段，或一个列表</td><td>拆成几个块</td><td>几个独立的项</td></tr>
+          <tr><td>段落之间的空行</td><td>块的边界</td><td>两个块</td></tr>
+          <tr><td><code>^anchor</code></td><td>去掉；块得到新 ID</td><td>只写在有东西链接的块上</td></tr>
+          <tr><td>前置元数据</td><td>读九个键，其余丢掉</td><td>九个键</td></tr>
+          <tr><td><code>%%注释%%</code>、标注框的 <code>+</code>/<code>-</code> 折叠标记</td><td>去掉</td><td>不再出现</td></tr>
+          <tr><td>GFM 表格</td><td>一个块，按单元格编辑</td><td>按标准版式重新排出</td></tr>
+          <tr><td>空块</td><td>一行</td><td>不再出现</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose" style="font-size:.95rem">这张表是下文往返校验的起点，也列出了透镜必须在块之外带着的东西：每个区段的外壳（标记、缩进、前后的空行）、锚点、前置元数据里不认识的键、注释。这些都不需要给块加新列，它们属于每个文件的合并基准。</p>
+  </div>
+
+  <div class="sub">
+    <h3>所以：仓库页面是透过大纲编辑的 Markdown 文件</h3>
+    <p class="prose">透镜建成后，Gamma 里的每一次编辑都是对文件逐字节准确的补丁，在别处编辑过的文件一块一块地到达。大纲显示不了的，由一个源码视图补上：</p>
+    <figure>
+      <ol class="flow">
+        <li><b>「编辑文件」</b>仓库页面上整个文件的 CodeMirror 视图，内容是合并基准的文本，就像 Obsidian 的源码模式</li>
+        <li><b>保存</b>走补丁的同一条写入路径，先重新解析核对</li>
+        <li><b>对照文件现状</b>文件仍是合并基准那一版才写</li>
+        <li><b>重命名到位</b>页面把它当作来自磁盘的改动重新读取</li>
+      </ol>
+      <figcaption>有了透镜，这个视图很便宜；<code>MdObject.jsx</code> 的「编辑 Markdown 源码」已经对单个对象这样做。大纲显示不了的在这里编辑，想对某个文件找回 Obsidian 手感的人也在这里得到。计划放在第 3 步；大纲本身的“文档视图”（没有项目符号，标题作为章节）是一个呈现上的选项，留待以后。</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- 6 -->
+<section class="sec" id="notes">
+  <div class="head">
+    <p class="eyebrow">原文 · Notes both ways: patch, never render</p>
+    <h2>笔记双向：打补丁，绝不重新渲染</h2>
+  </div>
+  <p class="gist"><strong>拉取</strong>像 <code>git pull</code>：远端的改动打成补丁，应用到本地文件，只动改过的块的字节。<strong>推送</strong>像 <code>git push</code>：带着合并基准提交，远端做三方合并。两边改了同一处字符就是冲突：本地文件为准，远端的版本保留为冲突记录。</p>
+
+  <div class="panel prose" style="display:grid;gap:.5rem;max-width:none">
+    <p class="k">为什么不能沿用现在的笔记文件</p>
+    <p style="font-size:.95rem">今天的笔记文件是渲染出来的，读取它的是导入器。<code>obsidian_export.render_vault_page</code> 会把大纲压平；<code>markdown_import.md_to_blocks</code> 会去掉每行首尾的空白、丢掉项目符号、把制表符换成四个空格、去掉标注框的折叠标记、截掉代码围栏里的行尾空格，没有哪个块记得自己的项目符号或缩进。读一个文件再写出去，得不到原来的文件。做导入这没问题；在这对函数上建同步，会重写它碰过的每一个文件。</p>
+    <p style="font-size:.95rem" class="muted">双向同步需要的零件倒是都在：带 <code>base</code> 的 <code>set</code> 会三方合并（<code>textmerge.merge</code>）；<code>ops.notify_commit</code> 通知监听者页面变了，<code>page_changes</code> 每页一行记录最新的 seq；磁盘关联已有存储、定时轮询和面板；PDF 变了，高亮会重新定位。</p>
+  </div>
+
+  <div class="sub">
+    <h3>良态透镜（well-behaved lens）的两条定律</h3>
+    <div class="laws">
+      <div class="law"><span class="n">第一条</span><span class="t">读了再写，什么都不变</span><span>Gamma 没编辑过的文件绝不写入；对一个块的编辑只改变这个块的字节。</span></div>
+      <div class="law"><span class="n">第二条</span><span class="t">写了再读，还是同一棵树</span><span>否则 Gamma 自己的写入会在下次读取时被当成改动，两边互相追逐。</span></div>
+    </div>
+    <p class="prose">渲染器要满足第一条，就得对所有写过的文件都完美无缺；打补丁则天然满足。</p>
+  </div>
+
+  <div class="sub">
+    <h3>区段（span）与外壳（dress）</h3>
+    <figure>
+      <div class="tile">
+        <div>
+          <p class="mini-h">本地文件 <code>方法.md</code>，读入时</p>
+          <div class="code" role="img" aria-label="文件被切成区段和间隙；每个列表项的缩进和项目符号是外壳，其余是内容。">
+            <div class="cl"><span class="sp"><span class="ct"># 方法</span></span><span class="bl">A</span></div>
+            <div class="cl"><span class="gp">空行：间隙</span></div>
+            <div class="cl"><span class="sp"><span class="dr">-·</span><span class="ct">先校准激光</span></span><span class="bl">B</span></div>
+            <div class="cl"><span class="sp"><span class="dr">··*·</span><span class="ct">记录温度</span></span><span class="bl">C</span></div>
+            <div class="cl"><span class="sp"><span class="dr">····</span><span class="ct">和湿度</span></span><span class="bl">C</span></div>
+            <div class="cl"><span class="sp"><span class="dr">-·</span><span class="ct">再测光谱</span></span><span class="bl">D</span></div>
+          </div>
+        </div>
+        <div>
+          <p class="mini-h">Gamma 中的块树</p>
+          <div class="btree">
+            <ul>
+              <li><span class="b">A</span>标题「# 方法」
+                <ul>
+                  <li><span class="b">B</span>先校准激光
+                    <ul><li><span class="b">C</span>记录温度 ↵ 和湿度</li></ul>
+                  </li>
+                  <li><span class="b">D</span>再测光谱</li>
+                </ul>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div>
+          <p class="mini-h">在 Gamma 中改了块 C，拉取后的本地文件</p>
+          <div class="code" role="img" aria-label="只有块 C 内容中新增的几个字节变化，项目符号、缩进和其他块原样不动。">
+            <div class="cl"><span># 方法</span></div>
+            <div class="cl"><span> </span></div>
+            <div class="cl"><span>- 先校准激光</span></div>
+            <div class="cl"><span>  * 记录温度<span class="chg">、气压</span></span></div>
+            <div class="cl"><span>    和湿度</span></div>
+            <div class="cl"><span>- 再测光谱</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--disk-soft);outline:1px solid var(--disk)"></span>区段中的内容</span>
+        <span><span class="sw" style="background:var(--sunk)"></span>外壳：缩进与项目符号（· 表示一个空格）</span>
+        <span><span class="sw" style="background:var(--gamma-fill)"></span>唯一变化的字节</span>
+      </div>
+      <figcaption>解析器把文件变成块，并记下每个块的区段，即它来自的确切字符；区段和区段之间的间隙恰好铺满整个文件。块的内容是区段去掉外壳：列表项的缩进和标记、续行的缩进。标题保留它的 <code>#</code>。层级照旧：标题统领其后的内容，列表项统领子项，所以仓库页面看起来和任何页面一样。拉取时 <code>set</code> 把新内容套进旧外壳，文件原来用的 <code>*</code> 和缩进不变。示例内容为示意。</figcaption>
+    </figure>
+    <ul class="list prose" style="font-size:.95rem">
+      <li>解析器不认识的东西（setext 标题、HTML 块、缩进代码、引用定义）成为一个不透明块，内容就是它的区段。</li>
+      <li>前置元数据只读 Gamma 认识的键，按行打补丁，未知的键原样保留。</li>
+      <li>编码、字节顺序标记（BOM）、换行符和末尾换行都属于文件，保持不变。</li>
+      <li>不是 UTF-8 或超出导入器限制的文件，会成为不能编辑的页面，并注明原因。</li>
+    </ul>
+  </div>
+
+  <div class="sub">
+    <h3>链接：远端与本地唯一写法不同的地方</h3>
+    <div class="links">
+      <div class="side g"><span class="k">Gamma 中存储</span><span><code>[[page id]]</code>，以及上传文件的地址</span></div>
+      <div class="arrow" aria-hidden="true">⇄</div>
+      <div class="side d"><span class="k">本地文件中的写法</span><span><code>[[Title]]</code>、<code>[[dir/Title|alias]]</code>、<code>[text](path.md)</code>、<code>![[fig.png|300]]</code></span></div>
+    </div>
+    <ul class="list prose" style="font-size:.95rem">
+      <li>合并基准按块记住每个链接原来的写法；编辑没动到链接，拉取时就按原样写出。</li>
+      <li>Gamma 的提及没有显示文字，所以别名在 Gamma 里显示为页面标题，在文件里保持不变。</li>
+      <li>新链接沿用仓库的习惯：仓库有 Obsidian 设置时照它来（wikilink 还是 Markdown 链接，最短路径还是相对路径，附件文件夹）；具体键名要对照真实仓库核实。</li>
+      <li>重命名一条笔记在 Gamma 里什么都不会断，因为 Gamma 按 ID 链接；其他文件里还是旧名字，Gamma 会提出改写它们并给出数量，与 Obsidian 一样。</li>
+    </ul>
+  </div>
+
+  <div class="sub">
+    <h3>拉取与推送，各五步</h3>
+    <div class="lanes">
+      <div class="lane g">
+        <div class="lane-h"><b>拉取：Gamma 中的改动 → 本地文件</b><span>像 <code>git pull</code>：远端的改动打成补丁应用到本地文件；提交后片刻进行</span></div>
+        <ol class="steps">
+          <li><span class="st-t">求差</span><span><code>sync_tree.diff(合并基准的树, 页面树)</code> 得出操作。</span></li>
+          <li><span class="st-t">把每个操作变成对合并基准文本的一处编辑</span><span><code>set</code> 用旧外壳套住新内容替换区段；<code>insert</code> 在前一个兄弟的子树之后加一个区段，外壳仿照最近的兄弟，没有就仿照文件（项目符号、缩进单位）；<code>move</code> 剪切并粘贴子树的区段，按新深度缩进；<code>delete</code> 剪掉区段和一个间隙。</span></li>
+          <li class="check"><span class="st-t">检查：解析结果还是页面的树吗？</span><span>解析器或编码器出错，变成一次看得见的等待，绝不变成损坏的文件。</span><span class="fail">什么都不写；页面显示“未写入磁盘”及原因，编辑留在 Gamma 里。</span></li>
+          <li class="check"><span class="st-t">检查：本地文件还是合并基准那一版吗？</span><span>先比大小和时间，再比哈希。</span><span class="fail">先把磁盘上的改动推送进来，再从头写。</span></li>
+          <li><span class="st-t">原子替换</span><span>写进目标旁边的临时文件，再重命名覆盖（<code>storage.write_atomic</code>，带 Windows 重试；扫描认得临时文件名并跳过）。被替换的字节进入历史；新的合并基准记下文本、哈希和 stat，扫描认得自己的写入，不会产生回声。</span></li>
+        </ol>
+      </div>
+      <div class="lane d">
+        <div class="lane-h"><b>推送：本地文件的改动 → Gamma</b><span>像 <code>git push</code>：带着合并基准提交，远端做三方合并；扫描发现后进行</span></div>
+        <ol class="steps">
+          <li><span class="st-t">等文件稳定</span><span>与推送的 PDF 一样。读完再 stat 一次，读的期间变过就等下一次扫描；哈希与合并基准相同，只刷新 stat。</span></li>
+          <li><span class="st-t">把新块与合并基准的块配对</span><span>先按锚点，再按顺序找内容完全相同的块，配对之间剩下的两两视为编辑；其余是插入和删除。</span></li>
+          <li><span class="st-t">得出目标树</span><span>配对上的块，加上页面中没有区段的块（手写、纸张、文本框），后者留在原处。</span></li>
+          <li><span class="st-t">三方合并</span><span><code>sync_tree.diff(合并基准, 目标)</code> 以客户端 <code>disk</code> 的身份走正常的操作路径，每个 <code>set</code> 带上 <code>base</code>。合并基准之后在 Gamma 里输入的文字会合并进来，打开着的编辑器看到改动像协作者的一样到达。</span></li>
+          <li><span class="st-t">更新合并基准</span><span>文件和得到的树成为新的合并基准。页面若仍与文件不同，接着运行左边的拉取。</span></li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>冲突：本地文件为准</h3>
+    <figure>
+      <div class="fig-scroll">
+        <svg viewBox="0 0 700 220" style="min-width:560px" role="img" aria-label="合并基准的文本在远端和本地被分别改动；块采用本地文件的文本，远端的文本保留为冲突记录并进入历史。">
+          <defs>
+            <marker id="cf-ah-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-f"/></marker>
+            <marker id="cf-ah-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-g"/></marker>
+            <marker id="cf-ah-d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-d"/></marker>
+          </defs>
+          <rect x="10" y="86" width="140" height="50" rx="8" class="bx-n"/>
+          <text x="80" y="106" class="t-s t-c t-m">合并基准</text>
+          <text x="80" y="126" class="t-c">再测光谱</text>
+
+          <rect x="236" y="20" width="170" height="50" rx="8" class="bx-g"/>
+          <text x="321" y="40" class="t-s t-c t-m">远端（Gamma）改成</text>
+          <text x="321" y="60" class="t-c">再测吸收光谱</text>
+          <rect x="236" y="152" width="170" height="50" rx="8" class="bx-d"/>
+          <text x="321" y="172" class="t-s t-c t-m">本地文件改成</text>
+          <text x="321" y="192" class="t-c">再测发射光谱</text>
+
+          <path d="M150,104 C190,90 200,50 234,46" class="ar ar-g" marker-end="url(#cf-ah-g)"/>
+          <path d="M150,118 C190,132 200,172 234,176" class="ar ar-d" marker-end="url(#cf-ah-d)"/>
+
+          <rect x="500" y="152" width="190" height="50" rx="8" class="bx-f"/>
+          <text x="595" y="172" class="t-s t-c t-m">块采用本地文件的文本</text>
+          <text x="595" y="192" class="t-c t-bold">再测发射光谱</text>
+          <line x1="406" y1="177" x2="497" y2="177" class="ar ar-f" marker-end="url(#cf-ah-f)"/>
+          <text x="452" y="168" class="t-s t-c">本地为准</text>
+
+          <rect x="500" y="20" width="190" height="50" rx="8" class="bx-bad"/>
+          <text x="595" y="40" class="t-s t-c t-b">冲突记录 + 历史</text>
+          <text x="595" y="60" class="t-c">再测吸收光谱</text>
+          <line x1="406" y1="45" x2="497" y2="45" class="ar ar-g ar-dash" marker-end="url(#cf-ah-g)"/>
+          <text x="452" y="36" class="t-s t-c t-g">保留</text>
+        </svg>
+      </div>
+      <figcaption>远端的文本保留为一条冲突记录，用现有的合并提示显示，并进入历史；仓库里不写任何冲突文件。Obsidian 对同一情况的静默合并，正是其用户反映丢字的原因；这里按块合并、有真实的合并基准，输掉的一方仍然在。</figcaption>
+    </figure>
+  </div>
+
+  <div class="sub">
+    <h3>Markdown 装不下的</h3>
+    <ul class="list prose" style="font-size:.95rem">
+      <li>Gamma 是大纲工具，文件是文档。嵌在非标题块下面的块，在 Markdown 里只能是列表，所以这样的编辑会让两个块在文件里都变成列表项。</li>
+      <li>顶层的一个块里含空行，再读取时成了两个块。</li>
+      <li>这两种情况都在一轮之内平息：Gamma 接受文件的形状。手写、纸张和文本框永远不进入 Markdown。</li>
+    </ul>
+  </div>
+
+  <div class="sub">
+    <h3>闸门：开启写入之前的往返校验</h3>
+    <figure>
+      <div class="fig-scroll">
+        <svg viewBox="0 0 700 180" style="min-width:560px" role="img" aria-label="只推送的阶段对仓库中每个文件解析、不做编辑、与原文件逐字节比较；不一致的文件数在真实仓库上为零，才开启写入路径。">
+          <defs>
+            <marker id="gt-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-f"/></marker>
+          </defs>
+          <rect x="10" y="26" width="112" height="44" rx="8" class="bx-d"/><text x="66" y="53" class="t-c">每个文件</text>
+          <rect x="150" y="26" width="96" height="44" rx="8" class="bx-n"/><text x="198" y="53" class="t-c">解析</text>
+          <rect x="274" y="26" width="112" height="44" rx="8" class="bx-n"/><text x="330" y="53" class="t-c">不做任何编辑</text>
+          <rect x="414" y="26" width="132" height="44" rx="8" class="bx-n"/><text x="480" y="53" class="t-c">与原文件逐字节比</text>
+          <path d="M630,18 L686,48 L630,78 L574,48 Z" class="bx-bad" style="stroke-dasharray:none"/>
+          <text x="630" y="45" class="t-s t-c t-b t-bold">不一致</text>
+          <text x="630" y="61" class="t-s t-c t-b t-bold">= 0 ?</text>
+          <line x1="122" y1="48" x2="147" y2="48" class="ar ar-f" marker-end="url(#gt-ah)"/>
+          <line x1="246" y1="48" x2="271" y2="48" class="ar ar-f" marker-end="url(#gt-ah)"/>
+          <line x1="386" y1="48" x2="411" y2="48" class="ar ar-f" marker-end="url(#gt-ah)"/>
+          <line x1="546" y1="48" x2="571" y2="48" class="ar ar-f" marker-end="url(#gt-ah)"/>
+          <line x1="630" y1="78" x2="630" y2="119" class="ar ar-f" marker-end="url(#gt-ah)"/>
+          <text x="638" y="104" class="t-s">是</text>
+          <rect x="540" y="122" width="150" height="44" rx="8" class="bx-g"/><text x="615" y="149" class="t-c t-bold">开启写入（第 3 步）</text>
+          <text x="10" y="112" class="t-s t-m">随第 2 步只推送的阶段发布，什么都不写。</text>
+          <text x="10" y="134" class="t-s t-m">在真实仓库上验证：一个 Obsidian 仓库、一个代码库的 docs/。</text>
+          <text x="10" y="156" class="t-s t-m">此后同一检查作为语料留在测试里。</text>
+        </svg>
+      </div>
+      <figcaption>推送一侧先发布；不能逐字节还原的文件数在真实仓库上为零，写入路径才会开启。起点是上一节“读进来再写回去”的那张表。</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- 7 -->
+<section class="sec" id="pdfs">
+  <div class="head">
+    <p class="eyebrow">原文 · PDFs and their annotations in a vault</p>
+    <h2>PDF 与批注</h2>
+  </div>
+  <p class="gist">PDF 只推送：Gamma 绝不写它没放进去的 PDF。一条高亮在笔记文件里写成带页码的引文，其他工具也能读；矩形区域、手写和文本框留在 Gamma 的数据库。</p>
+  <figure>
+    <div class="fig-scroll">
+      <svg viewBox="0 0 700 250" style="min-width:580px" role="img" aria-label="PDF 只推送进 Gamma；高亮的引用、页码、批注和锚点写进笔记文件；矩形区域、手写、文本框和图片留在 Gamma 的数据库。">
+        <defs>
+          <marker id="pd-ah-d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-d"/></marker>
+          <marker id="pd-ah-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-g"/></marker>
+        </defs>
+        <text x="100" y="24" class="t-h t-c t-d">仓库目录</text>
+        <rect x="10" y="36" width="180" height="200" rx="10" class="bx-d"/>
+        <rect x="24" y="62" width="152" height="40" rx="6" class="ch-d"/><text x="100" y="87" class="t-c t-mono">A paper.pdf</text>
+        <rect x="24" y="168" width="152" height="40" rx="6" class="ch-d"/><text x="100" y="193" class="t-c t-mono">A paper.md</text>
+        <text x="100" y="224" class="t-s t-c t-m">笔记文件，在 PDF 旁边</text>
+
+        <text x="365" y="24" class="t-h t-c t-g">Gamma</text>
+        <rect x="300" y="62" width="130" height="146" rx="10" class="bx-g"/>
+        <text x="365" y="120" class="t-c t-bold">论文页面</text>
+        <text x="365" y="142" class="t-s t-c t-m">PDF + 笔记</text>
+
+        <line x1="176" y1="82" x2="298" y2="82" class="ar ar-d" marker-end="url(#pd-ah-d)"/>
+        <text x="244" y="74" class="t-s t-c t-d">只推送</text>
+        <line x1="298" y1="188" x2="178" y2="188" class="ar ar-g" marker-start="url(#pd-ah-g)" marker-end="url(#pd-ah-g)"/>
+        <text x="244" y="180" class="t-s t-c t-g">引用 · 页码</text>
+        <text x="244" y="206" class="t-s t-c t-g">批注 · ^ 锚点</text>
+
+        <text x="590" y="24" class="t-h t-c t-g">Gamma 数据库</text>
+        <path d="M490,52 a100,14 0 0,1 200,0 v170 a100,14 0 0,1 -200,0 z" class="bx-g"/>
+        <path d="M490,52 a100,14 0 0,0 200,0" class="ln-g"/>
+        <text x="590" y="102" class="t-c">高亮的矩形区域</text>
+        <text x="590" y="130" class="t-c">手写</text>
+        <text x="590" y="158" class="t-c">文本框</text>
+        <text x="590" y="186" class="t-c">页面上的图片</text>
+        <line x1="430" y1="135" x2="488" y2="135" class="ar ar-g" marker-end="url(#pd-ah-g)"/>
+        <text x="459" y="127" class="t-s t-c t-g">其余一切</text>
+      </svg>
+    </div>
+    <figcaption>仓库里发现的 PDF 是关联文件（L0）。从文库来、带已存文件的页面保留它，并在笔记旁边得到一份复制出来的 PDF，此后跟随。无论哪种，此后 PDF 都只推送（磁盘 → Gamma）：Gamma 绝不写它没放进去的 PDF；在 Gamma 中手动替换的 PDF 一直有效，直到文件再变。</figcaption>
+  </figure>
+
+  <div class="callout-wrap">
+    <div class="split">
+      <p class="k">哪个是这篇论文的笔记文件</p>
+      <ol class="list" style="font-size:.95rem">
+        <li>前置元数据以 <code>source</code> 指向这个 PDF 的 <code>.md</code>，不论它在哪里（仓库导入器现在就读这个字段）；</li>
+        <li>否则，PDF 旁边与它同名的那个；</li>
+        <li>都没有：第一次写入笔记或高亮时创建，放在 PDF 旁边，或仓库设置指定的笔记文件夹。只读过的 PDF 什么都不创建。</li>
+      </ol>
+      <div class="in"><p class="h">写进笔记文件</p><p>一条 <code>&gt; [!quote]</code> 标注框：标题链接到 PDF 的那一页，引用的原文，下面是用户自己的批注，以及说明这是哪条高亮的 <code>^</code> 锚点。这是其他工具能读的部分：一段带页码的引文，经得起任何变化的锚点。</p></div>
+      <div class="out"><p class="h">不写进文件</p><p>高亮的矩形区域；Obsidian 的 <code>selection=</code> 数字也不写，它们索引的是某一个渲染器的文本层，已经坏过一次。</p></div>
+    </div>
+    <div>
+      <p class="mini-h"><code>A paper.md</code>（示意，仓库导出现有的方言）</p>
+<pre class="md"><span class="c">---</span>
+<span class="c">source: "[[A paper.pdf]]"</span>
+<span class="c">---</span>
+<span class="q">&gt; [!quote] [[A paper.pdf#page=3|p. 3]]</span>
+<span class="q">&gt; 被高亮的那句原文……</span>
+<span class="a">^h3a</span>
+
+我在这条高亮下写的批注。</pre>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="panel" style="display:grid;gap:.6rem;align-content:start">
+      <p class="k">为什么其余的留在数据库（决定 5）</p>
+      <ul class="list" style="font-size:.95rem">
+        <li>手写和文本框需要懂它们的合并。Gamma 有：按笔画、按键，在它的操作路径和镜像里。仓库里的旁车文件会把这些数据交给 Dropbox、Syncthing 或 git，它们只保留一个写入者的文件，丢掉另一个的。Zotero 正因为这个拿掉了“把批注存进文件”。</li>
+        <li>旁车文件每画一笔就要写一次，而且写在用户要求 Gamma 别打扰的目录里。</li>
+        <li>它会成为数据库之外的第二份事实，还得有自己的同步。</li>
+        <li>其他工具的用户丢掉的，是按路径索引的数据。这里数据挂在页面上，页面靠文件 ID、哈希和 <code>/ID</code> 跟随文件的移动，靠重新定位跟随新的字节。</li>
+      </ul>
+    </div>
+    <div class="panel" style="display:grid;gap:.6rem;align-content:start">
+      <p class="k">代价，以及如何弥补</p>
+      <ul class="list" style="font-size:.95rem">
+        <li>仓库复制到另一台电脑，带过去的是笔记和每条高亮的引文与页码，不包括手写和精确的矩形区域；重新定位引擎会按文字把高亮重新放上去，作为需要确认的粗略匹配。</li>
+        <li>Gamma 的备份包含页面，因而包含批注，但从不包含仓库的文件，那些由用户自己备份。</li>
+        <li>要把批注交给别的阅读器，仍然用导出带批注的 PDF，要求时才写。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 8 -->
+<section class="sec" id="reader">
+  <div class="head">
+    <p class="eyebrow">原文 · Reading a PDF where it is</p>
+    <h2>原地阅读 PDF</h2>
+  </div>
+  <p class="gist">打开一个 PDF 不再等于加入文库。它是只推送的最小单元：字节不复制，由这台电脑上的 Gamma 服务器原地读取，页面放在「已打开的文件」里；「添加到文库…」才把字节存入。</p>
+  <div class="entry"><span class="e">「打开方式」</span><span class="e">拖到窗口上</span><span class="e">「文件 → 打开」</span><span class="muted">按顺序判断：</span></div>
+  <ol class="chain">
+    <li><span class="q">文件在某个仓库里？</span><span class="yes">是 →</span><span class="r">打开该仓库的页面</span></li>
+    <li><span class="q">这个文件本身是一个单文件仓库？</span><span class="yes">是 →</span><span class="r">打开那个页面</span></li>
+    <li><span class="q">打开的工作区已有相同的字节？</span><span class="yes">是 →</span><span class="r">打开它的页面，与现在一样</span></li>
+    <li class="last"><span class="q">都不是</span><span class="yes">→</span><span class="r">作为关联文件在<strong>本地服务器</strong>上打开，绝不在其他电脑上的服务器上：火车上打开的论文不会被发到 NAS。放进打开的工作区（若它属于本地服务器且不是副本），否则放进主机的个人工作区；桌面栏会说明放在哪里。</span></li>
+  </ol>
+
+  <div class="opened">
+    <figure>
+      <div class="ws" role="img" aria-label="打开的 PDF 是「已打开的文件」这个页面里的页面，因此不在文库列表中，但搜索和 AI 照样能找到。">
+        <span class="ws-h">打开的工作区（本地服务器）</span>
+        <div class="row"><span class="note">文库列表：</span><span class="pg">论文 A</span><span class="pg">笔记 B</span><span class="note">……</span></div>
+        <div class="of">
+          <span class="k">「已打开的文件」<span class="note">一个页面</span></span>
+          <div class="kid"><span class="pg">某篇论文.pdf</span><span class="note">在这台电脑上</span></div>
+          <div class="kid"><span class="pg">另一篇.pdf</span><span class="note">在这台电脑上</span></div>
+          <span class="note">页面里的页面：不在文库列表里；搜索和 AI 照样找得到</span>
+        </div>
+      </div>
+      <figcaption>服务器会列出所有根页面，“不列出”只存在于客户端，而且只有一种情况：页面里的页面（<code>App.jsx</code> 中的 <code>libraryPages</code>）。所以打开的 PDF 放在「已打开的文件」这一个页面里，这是两端已经共有的唯一一种“不列出”。另一种做法是加一个新标记，<code>root_pages</code>、搜索、选择器和导出都得各自遵守。</figcaption>
+    </figure>
+    <div style="display:grid;gap:.6rem">
+      <p class="mini-h">页面顶栏（topbar）</p>
+      <div class="topbar"><span class="pt">某篇论文.pdf</span><span class="pill">在这台电脑上</span><span class="btn">添加到文库…</span></div>
+      <div class="branches">
+        <div><p class="h">在同一个工作区</p><p>存入字节，把页面移出「已打开的文件」，归入你指定的位置。</p></div>
+        <div><p class="h">到另一个工作区或服务器</p><p>在那里存入字节，并把页面连同笔记、高亮和聊天一起带过去（Gamma 到 Gamma 的导出与导入）。</p></div>
+        <div><p class="h">☐ 继续从这个文件推送</p><p>页面成为一个单文件仓库，在同步面板里有一行。</p></div>
+      </div>
+    </div>
+  </div>
+  <ul class="list prose" style="font-size:.95rem">
+    <li>这是一个完整的页面：高亮、手写、笔记、聊天，都存在 Gamma 的数据里，文件旁边和文件里什么都不写。</li>
+    <li>「已打开的文件」按读过的时间列出，最新的在前。文件不见了就显示为缺失，可以重新定位或移除。没有任何标记和聊天的页面过一段时间会被忘掉。一个偏好设置可以保留旧行为，让每个打开的 PDF 都进文库。</li>
+    <li><span class="k">要知道的两点：</span>聊天使用本地服务器的 AI 设置，密钥配在 NAS 上的人，这里也得配一份。给别人看的评论需要页面在别人能访问的服务器上，手稿可以用「添加到文库…」加“继续从这个文件推送”做到。</li>
+  </ul>
+</section>
+
+<!-- 9 -->
+<section class="sec" id="safety">
+  <div class="head">
+    <p class="eyebrow">原文 · Rules that keep files safe</p>
+    <h2>保护文件的八条规则</h2>
+  </div>
+  <p class="gist">合起来是一句话：本地文件只为你在 Gamma 中做的事而写，写前核对，删除只进回收站；目录不见了当作离线，扫描才是事实。</p>
+  <ol class="rules">
+    <li><span class="rt">只写标记，先说再写</span><span>建立目录仓库只写 <code>.gamma/</code>，别无其他，并事先说明，不论它往哪个方向同步；单文件仓库和阅读器什么都不写。</span></li>
+    <li><span class="rt">只因 Gamma 中的操作而写</span><span>对该页面的编辑、重命名、归入，或事先说明要写什么的命令（改写链接，附数量）。笔记以补丁写入：重新解析核对、对照当前文件核对、用重命名放到位；被替换的内容保留若干天。</span></li>
+    <li><span class="rt">进回收站，三十天内不删</span><span>文件移到 <code>.gamma/trash/</code>，不满三十天绝不删除；磁盘上删除的文件，让它的页面进入「最近删除」。</span></li>
+    <li><span class="rt">不懂的不碰</span><span>点开头的目录、<code>node_modules</code> 和仓库的忽略列表不读；Windows 拒绝的名字、只差大小写的两个名字，报告而不改名。</span></li>
+    <li><span class="rt">冲突时保留文件</span><span>并记录 Gamma 一方。</span></li>
+    <li><span class="rt">根目录不见了是离线，不是空了</span><span>没有标记或标记属于另一个仓库，仓库就停止；一轮要移除很大比例的页面或文件时，暂停并询问（rclone、Unison 也这样）。单文件仓库的文件不见了，就是「缺失」，页面留下。</span></li>
+    <li><span class="rt">路径只由选择器给出</span><span>Gamma 的网页从不指定路径，由系统原生对话框指定，与今天一样。只有桌面应用自己的服务器绑定仓库、读取关联文件（<code>GAMMA_FOLDER_LINKS</code> 规则）；不碰数据目录里的任何东西，不跟随指向根目录之外的符号链接。</span></li>
+    <li><span class="rt">扫描才是事实，监视器只是提示</span><span>每个文件一次 stat 就能发现变化（推送 PDF 的循环已经这样做）：仓库有页面在窗口里打开时每隔几秒一次，窗口获得焦点时立刻一次，其余时候随 30 秒的定时轮询。原生监视器只把下一次扫描提前，漏掉一个事件只损失几秒。</span></li>
+  </ol>
+</section>
+
+<!-- 10 -->
+<section class="sec" id="steps">
+  <div class="head">
+    <p class="eyebrow">原文 · Three layers / What happens to what exists / In steps</p>
+    <h2>分层与构建顺序</h2>
+  </div>
+  <p class="gist">先做只读的部分：接缝、阅读器和新用语、只推送的仓库。往返校验通过后，第 3 步才开启补丁式拉取，让 Gamma 写你的笔记文件，并加上「编辑文件」；第 4 步把今天的仓库放到同样的行上，第 5 步让 NAS 上的文件夹推送全部内容。</p>
+  <div class="sub" style="margin-top:0">
+    <h3>三层：每层单独有用，每层在下一层之前构建并测试</h3>
+    <div class="layers">
+      <div class="layer"><span class="id">L2</span><span><span class="k">目录绑定</span>：一个被扫描的根目录。路径即身份，目录即文件夹，跟踪重命名和删除。</span><span class="by">使用者：目录仓库</span></div>
+      <div class="layer"><span class="id">L1</span><span><span class="k">笔记双向</span>：页面的块树通过补丁与一个 <code>.md</code> 保持一致。</span><span class="by">使用者：推送笔记的仓库；以后是只拉取的仓库的笔记文件</span></div>
+      <div class="layer"><span class="id">L0</span><span><span class="k">关联文件（linked file）</span>：页面的 PDF（或笔记中的图片）的字节留在这台电脑的某个路径上，Gamma 只读不写。</span><span class="by">使用者：阅读器、单文件仓库、目录仓库</span></div>
+    </div>
+    <p class="prose" style="font-size:.95rem">L0 的改动属于 <code>storage</code>：已存的 PDF 以哈希命名，下游一切都按这个名字索引（查看器的清单和缓存、文本索引、AI 的阅读、高亮的 <code>pdf_position.doc_id</code>）。一个命名上传的字节也可以位于数据目录外一个记录下来的路径，附带哈希时的大小和时间。读取先查 stat；文件变了就重新哈希，新哈希就是今天「跟随文件」所做的替换，连同重新定位。列出上传目录的东西永远看不到关联文件，这正是想要的：不计配额、不被清除、不进备份或异地拷贝。含关联页面的工作区备份里有它们的笔记和批注，没有它们的文件。</p>
+  </div>
+
+  <div class="sub">
+    <h3>构建顺序</h3>
+    <ol class="road">
+      <li data-n="0"><span class="rh">接缝（seam）</span><span class="rb">自己拼上传路径的读取方改走 <code>storage</code>：导出（<code>routers/export.py</code>）、<code>ink_view</code>、<code>ops</code>、镜像（<code>sync_engine</code>）、<code>zotero_local</code> 和一处导入。行为不变；不管之后做什么，这一步都值得做。</span></li>
+      <li data-n="1"><span class="rh">阅读器与用语</span><span class="rb">L0、「已打开的文件」、「添加到文库…」、「打开方式」的改变及其偏好设置。两个菜单项、面板和指南换上“界面用语”里的词，让改名一次落定，赶在任何新东西建到它下面之前。</span></li>
+      <li data-n="2"><span class="rh">只推送的仓库</span><span class="rb">标记、附摘要的扫描、经新解析器由 <code>.md</code> 生成的页面、原地读取的 PDF、磁盘上的改动实时到达。仓库页面的笔记暂不能在 Gamma 中编辑；高亮和聊天可用并留在 Gamma。往返校验对每个文件运行并报告。</span></li>
+      <li data-n="3"><span class="rh">笔记双向</span><span class="rb">补丁写入器（拉取）、历史、冲突；从 Gamma 创建、重命名、移动文件和把文件移进回收站；高亮写成标注框；改写链接的提议；「编辑文件」。</span><span class="gate">以第 2 步的往返校验为门槛</span></li>
+      <li data-n="4"><span class="rh">今天的仓库放到同样的行上</span><span class="rb">只拉取的仓库的笔记由编码器写出，状态移出目录，并可开启推送：笔记，以及放进去的 PDF 成为页面（<code>disk-to-gamma.md</code> 的第 3 步）。</span></li>
+      <li data-n="5"><span class="rh">NAS 文件夹推送全部内容</span><span class="rb">通过 HTTP。</span></li>
+    </ol>
+  </div>
+
+  <div class="sub">
+    <h3>现有功能的去向</h3>
+    <div class="tbl-wrap panel" style="padding:.3rem .4rem">
+      <table>
+        <tbody>
+          <tr><td class="k">「保存到这台电脑」的文件夹</td><td>保持承诺和位置：把文库放到磁盘上给智能体和其他应用使用，NAS 的文库也一样。成为只拉取的同步仓库，推送照原来的箭头，关或仅 PDF；<code>folder_links</code> 的行保留，<code>kind</code> 读作范围；升级后的第一轮在文件旁写入 <code>.gamma/</code>，并在面板里说明。本地服务器上的仓库之后可以开启全部推送，智能体对笔记文件的编辑由此进入 Gamma。</td></tr>
+          <tr><td class="k">「跟随」的文件</td><td>成为单文件仓库，也就是最小单元：手稿的构建结果由它送到他人评论的页面。磁盘上对它们什么都不变。</td></tr>
+          <tr><td class="k">两个名字</td><td>去掉：两个菜单项、面板的用词、指南的两节（见“界面用语”）。<code>gamma_sync.py</code> 保留它的命令，增加 <code>pull</code>。</td></tr>
+          <tr><td class="k">「打开方式」</td><td>变成阅读器。</td></tr>
+          <tr><td class="k">NAS</td><td>仓库的一轮同步按今天那一轮的源与汇来写，所以 NAS 上的文件夹以后也能推送：通过 HTTP 和写令牌推送，PDF 存在 NAS 上，因为 NAS 读不到这块磁盘。这是计划中通往 iPad 的路；副本里改为存入 PDF 的仓库是另一种可能，见“待定”。</td></tr>
+          <tr><td class="k">LaTeX</td><td>作为仓库打开的项目目录，会把 <code>build/main.pdf</code> 显示为一个随每次编译更新的页面，高亮随之移动。<code>.tex</code> 文件作为文件支撑的块是最简单的透镜（内容就是文件）；在桌面上，项目编译不需要物化的拷贝。</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- open -->
+<section class="sec" id="open">
+  <div class="head">
+    <p class="eyebrow">原文 · Still open / Not proposed</p>
+    <h2>待定与不做</h2>
+  </div>
+  <p class="gist">七个问题仍未决定；六种做法明确不提议，大多是把 Gamma 的数据写进本地目录或你的文件。</p>
+  <div class="sub" style="margin-top:0">
+    <h3>待定</h3>
+    <ul class="open-list">
+      <li>「已打开的文件」做成内含页面的页面，还是用它自己的标记。</li>
+      <li>一轮同步可以移除多大比例的页面或文件，超过就询问。</li>
+      <li>回收站用 <code>.gamma/trash/</code>，还是系统回收站（服务器不加依赖就够不着）。</li>
+      <li>仓库里的页面里的页面：只在前置元数据写有 <code>parent:</code> 时成立，与今天「保存到这台电脑」的写法一样。</li>
+      <li>既不是笔记、不是 PDF、也不是笔记里显示的图片的文件：起初不列出。</li>
+      <li>提及是否要有显示文字，好让别名在 Gamma 里也显示。</li>
+      <li>副本里的仓库是否改为存入 PDF 而不是原地读取，好让副本把它带到 NAS。</li>
+    </ul>
+  </div>
+  <div class="sub">
+    <h3>明确不提议</h3>
+    <ul class="open-list not-list">
+      <li>仓库里放数据库，理由与 Zotero 给出的一样。</li>
+      <li>普通文件夹以文件为准。它们保持原样，协作、副本和 iPad 都依赖这一点。</li>
+      <li>建立关联时往用户的文件里加 ID、前置元数据或重新排版。</li>
+      <li>把批注写进用户的 PDF，除非是明说如此的导出。</li>
+      <li>仓库里的批注文件。若有一天必须在两台之间没有 Gamma 服务器的电脑上携带手写，形状已经清楚：每个 PDF 一个文件，以其哈希为键，像 Sioyek 和 KOReader 那样。</li>
+      <li>关联了 Zotero 的工作区里的仓库；以及副本里仍原地读取 PDF 的仓库（见“待定”）。</li>
+    </ul>
+  </div>
+
+  <div class="sub">
+    <h3>本页用语</h3>
+    <dl class="gloss">
+      <div><dt>同步仓库</dt><dd>synced vault</dd></div>
+      <div><dt>仓库</dt><dd>vault</dd></div>
+      <div><dt>范围</dt><dd>scope</dd></div>
+      <div><dt>方向</dt><dd>direction</dd></div>
+      <div><dt>目录仓库</dt><dd>directory vault</dd></div>
+      <div><dt>单文件仓库</dt><dd>vault of one file</dd></div>
+      <div><dt>只读仓库</dt><dd>read-only vault</dd></div>
+      <div><dt>远端</dt><dd>remote</dd></div>
+      <div><dt>本地</dt><dd>local</dd></div>
+      <div><dt>拉取</dt><dd>pull</dd></div>
+      <div><dt>推送</dt><dd>push</dd></div>
+      <div><dt>同步</dt><dd>sync</dd></div>
+      <div><dt>已是最新</dt><dd>up to date</dd></div>
+      <div><dt>冲突</dt><dd>conflict</dd></div>
+      <div><dt>未跟踪</dt><dd>untracked</dd></div>
+      <div><dt>强制拉取</dt><dd>force pull</dd></div>
+      <div><dt>强制推送</dt><dd>force push</dd></div>
+      <div><dt>移除仓库</dt><dd>remove the vault</dd></div>
+      <div><dt>合并基准</dt><dd>merge base</dd></div>
+      <div><dt>缺失</dt><dd>missing</dd></div>
+      <div><dt>保存到这台电脑</dt><dd>Keep on this computer</dd></div>
+      <div><dt>跟随文件</dt><dd>Follow a file</dd></div>
+      <div><dt>打开的 PDF</dt><dd>opened PDF</dd></div>
+      <div><dt>已打开的文件</dt><dd>Opened files</dd></div>
+      <div><dt>关联</dt><dd>link</dd></div>
+      <div><dt>关联文件</dt><dd>linked file</dd></div>
+      <div><dt>目录绑定</dt><dd>directory binding</dd></div>
+      <div><dt>标记</dt><dd>marker</dd></div>
+      <div><dt>区段</dt><dd>span</dd></div>
+      <div><dt>外壳</dt><dd>dress</dd></div>
+      <div><dt>透镜</dt><dd>lens</dd></div>
+      <div><dt>往返校验</dt><dd>round-trip check</dd></div>
+      <div><dt>编辑文件</dt><dd>Edit the file</dd></div>
+      <div><dt>接缝</dt><dd>seam</dd></div>
+      <div><dt>副本</dt><dd>clone</dd></div>
+      <div><dt>手写</dt><dd>ink</dd></div>
+    </dl>
+  </div>
+</section>
+
+</main>
+
+<footer class="wrap">
+  <p>依据 Gamma 仓库内的设计笔记 <code>docs/research/vaults.md</code>（2026 年 11 月）整理，只转述笔记内容。笔记中对其他工具的调查与来源列表未收录。</p>
+</footer>
+
+</body>
+</html>

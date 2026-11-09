@@ -329,6 +329,17 @@ def test_a_bibliography_s_review_holds_only_the_share_s_pages(world, anon):
     assert HIDDEN_TITLE not in r.text and [e["title"] for e in r.json()["entries"]] == ["Open paper"]
 
 
+def test_an_upload_is_told_by_its_name_wherever_its_file_lies(tmp_path):
+    """The entry carries the name: a stored file read from outside the
+    uploads directory is filtered like any other, and only a file of the
+    export's own, which has no name, passes."""
+    builder = export_router._Builder("ws", "base", {"share": object()})
+    builder.readable = {"open.pdf"}
+    path = tmp_path / "A paper.pdf"
+    builder.files = [("open.pdf", path, "open.pdf"), ("private.pdf", path, "private.pdf"), ("own.pdf", path, "")]
+    assert builder._bundled()[1] == [("open.pdf", path), ("own.pdf", path)]
+
+
 def test_the_export_job_is_not_open_to_a_share(world, anon):
     """It works in the signed-in account's own workspace: a link visitor has
     none, and a stranger's names no page of the share."""

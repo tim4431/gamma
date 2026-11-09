@@ -167,8 +167,8 @@ export const linkGone = (w) => (w && (w.mirror_of || w.zotero_of || w.zotero_det
 
 // A Zotero link's log actions (its sync_log rows, the pill's log) in its
 // words, for t(). A clone's are MirrorPopover.jsx's ACTION_TEXT. "kept
-// here": Zotero trashed the collection of a folder that is shared or kept
-// on disk, so the folder stays (gamma/zotero_sync_folders.py).
+// here": Zotero trashed the collection of a folder that is shared or a
+// synced vault, so the folder stays (gamma/zotero_sync_folders.py).
 export const ZOTERO_LOG_ACTIONS = {
   "pulled": T("pulled from Zotero"),
   "pushed": T("pushed to Zotero"),
@@ -180,7 +180,7 @@ export const ZOTERO_LOG_ACTIONS = {
   "restored there": T("restored in Zotero (edited here after it was trashed there)"),
   "replaced here": T("Zotero's version replaced this one"),
   "replaced there": T("this version replaced Zotero's"),
-  "kept here": T("kept here — in Zotero's trash, but the folder is shared or kept on disk"),
+  "kept here": T("kept here — in Zotero's trash, but the folder is shared or a synced vault"),
 };
 
 // The name the server gives the personal library (zotero_web.libraries).

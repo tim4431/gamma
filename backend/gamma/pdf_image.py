@@ -573,8 +573,8 @@ class XObjectStore:
     up (and logged) once.
     """
 
-    def __init__(self, writer, uploads_dir):
-        self.writer, self.dir = writer, uploads_dir
+    def __init__(self, writer, stored):
+        self.writer, self.stored = writer, stored  # name -> its file (``storage.files``)
         self.by_src = {}        # src → (name, px_w, px_h) or None
         self.refs = {}          # name → indirect object
 
@@ -583,9 +583,9 @@ class XObjectStore:
             return self.by_src[src]
         info = None
         match = UPLOAD_RE.search(src or "")
-        if match and self.dir is not None:
-            path = self.dir / match.group(1)
-            if not path.is_file():
+        if match and self.stored is not None:
+            path = self.stored(match.group(1))
+            if path is None:
                 log.info(f"[pdf-image] missing upload: {match.group(1)}")
             elif built := (svg_xobject(self.writer, path) if path.suffix.lower() == ".svg" else image_xobject(path)):
                 stream, px_w, px_h = built

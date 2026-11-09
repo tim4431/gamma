@@ -272,6 +272,12 @@ test("newBlockKey says whether a block was made", () => {
   });
   assert.equal(key("- a"), true);
   assert.equal(key("- "), false, "an empty item only ends");
+  // a highlight's row on a page whose notes are locked takes no sibling (App passes none)
+  const highlight = { id: "h", properties: { pdf_position: { page: 1 } } };
+  assert.equal(newBlockKey({ block: highlight, row: {}, editor: null }), false);
+  let made = 0;
+  assert.equal(newBlockKey({ block: highlight, row: { onEnterSibling: () => { made += 1; } }, editor: null }), true);
+  assert.equal(made, 1);
 });
 
 test("visibleNeighbor walks the outliner as shown, folded subtrees skipped", () => {

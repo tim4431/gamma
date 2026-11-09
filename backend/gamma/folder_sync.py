@@ -1,11 +1,11 @@
-"""A folder of the workspace as a folder on disk (docs/dev/folder_sync.md).
+"""A folder of the workspace as a folder on disk (docs/dev/synced_vaults.md "The client").
 
-The server's half of the folder sync: the two reads a round of
-``gamma_sync.Round`` needs, Gamma to disk. The gamma-sync client
-(gamma/gamma_sync.py) and a server's links to another server ask for them
-over HTTP with a read-scope token (``/api/sync/folders*``); a server's links
-to its own workspaces call them in-process (gamma/folder_links.py
-``LocalSource``).
+The server's half of the gamma-sync client's folder sync: the two reads a
+round of ``gamma_sync.Round`` needs, Gamma to disk, which the client
+(gamma/gamma_sync.py) asks for over HTTP with a read-scope token
+(``/api/sync/folders*``). The desktop app's synced vaults pull through their
+own engine (gamma/vault_sync.py); a folder one of them kept before, with
+the layout below, is taken onto it (gamma/vault_upgrade.py).
 
 - The folder's **manifest** (``manifest``): its subfolders as directory
   paths and, per page, the paths its files take — the page's PDF and its

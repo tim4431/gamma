@@ -37,6 +37,8 @@ function socketUrl(pageId) {
 //   onBuild(build)            — the server's build, from the socket's hello
 //   onComments(msg)           — a comment was written on the page, or the socket
 //                               (re)joined (null): refetch its threads
+//   onVault()                 — a synced vault's round touched the page, or the socket
+//                               (re)joined: refetch its standing (vault/useVault.js)
 // A `{t: "inbox"}` nudge (the account's inbox has news) becomes the window
 // event gamma:inbox, whatever page it arrived on.
 // Returns the session's commit/flush/hasPending/sendCursor/sendInkLive/overlay/

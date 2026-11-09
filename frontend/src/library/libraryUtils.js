@@ -282,6 +282,15 @@ export function attachmentFile(attachment) {
   return attachment.id || /^\/api\/uploads\/([0-9A-Za-z_-]{1,128})\.pdf$/.exec(attachment.url || "")?.[1] || "";
 }
 
+// The ids of a selection a copy can be made of (`pagesById`: the listing's
+// rows). A page reading its PDF from a file on this computer has no stored
+// bytes (gamma/linked_files.py): a copy's address would stop answering when the
+// file changes, and nothing would bring it back. Add to library makes it one
+// that can be copied.
+export function duplicable(ids, pagesById) {
+  return ids.filter((id) => !pagesById.get(id)?._linkedFile);
+}
+
 // What a card/row says a page is: the attachment kind, else just a page.
 export function pageKindLabel(attachment) {
   return attachment ? "PDF" : t("Page");

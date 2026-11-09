@@ -1,9 +1,10 @@
-"""PDFs that change on disk sent back to Gamma (gamma/gamma_sync.py ``Push``,
-gamma/folder_links.py, PUT /pages/{id}/attachment's ``keep_old_days``): a
-kept folder that pushes, a page that follows a file, on this server and on
-another one read with a token, and the rules that keep a push safe — only
-whole files, only bytes Gamma does not show, never over a change made in
-Gamma meanwhile, and the file on disk never touched."""
+"""PDFs that change on disk pushed to Gamma (gamma/gamma_sync.py ``Push``,
+gamma/vault_sync.py, gamma/folder_links.py, PUT /pages/{id}/attachment's
+``keep_old_days``): a vault that pushes its PDFs, a page that follows a file,
+on this server and on another one read with a token, and the rules that keep
+a push safe — only whole files, only bytes Gamma does not show, the disk
+winning, a vault that does not push keeping and reporting what changed, and
+the file on disk never touched."""
 
 import io
 import json
@@ -16,11 +17,11 @@ import pymupdf
 import pytest
 
 from conftest import account_of, login, make_folder, make_page, make_user, workspace_of
-from gamma import config, folder_links, gamma_sync, upload_gc
+from gamma import config, folder_links, gamma_sync, upload_gc, vault_store
 from gamma.integrations import create_token
 from test_folder_links import _create, _sync, disk, over_http  # noqa: F401 — the disk and over_http fixtures
 
-BOTH = "changed here and in Gamma; --force takes Gamma's"
+KEPT = "changed on this computer and not pushed; a force pull replaces it"
 
 
 @pytest.fixture(scope="module")
@@ -69,24 +70,25 @@ def _props(c, page_id) -> dict:
     return c.get(f"/api/blocks/{page_id}").json()["properties"]
 
 
-def _entry(dest, path) -> dict:
-    return json.loads((dest / ".gamma-sync.json").read_text(encoding="utf-8"))["files"][path]
+def _row(link_id, path) -> dict:
+    return vault_store.files(link_id)[path]
 
 
-def _due(link_id) -> bool:
+def _due(link_id) -> str:
     return folder_links.due(folder_links.get_link(link_id))
 
 
-def _kept_paper(c, disk, name, *, push=True):
-    """A folder ``name`` holding one paper, kept on disk (sending PDFs back
-    with ``push``) after its first round: ``(link, page id, the paper's
-    file, its doc_id)``."""
+def _kept_paper(c, disk, name, *, push="pdfs"):
+    """A folder ``name`` holding one paper, a vault on disk (pushing its PDFs
+    unless ``push`` says otherwise) after its first round, which pulled the
+    PDF (a paper with no notes has no notes file): ``(link, page id, the
+    paper's file, its doc_id)``."""
     folder = make_folder(c, name)
     doc = _upload(c, _pdf(f"{name} v1"))
     page = make_page(c, f"{name} paper", {"doc_id": doc, "original_filename": "v1.pdf", "folders": [folder]})
     link = _create(c, folder=folder, path=str(disk / name), push=push)
     status = _sync(c, link["id"])
-    assert status["counts"]["added"] == 2 and status["counts"]["sent"] == 0, status
+    assert status["counts"]["added"] == 1 and status["counts"]["sent"] == 0, status
     return link, page["id"], disk / name / f"{name} paper.pdf", doc
 
 
@@ -230,78 +232,66 @@ def test_an_answer_that_is_no_json_is_a_sync_error(tmp_path):
     assert push.kept == [("main.pdf", "/api/blocks/p: the server did not answer JSON")]
 
 
-# --- a kept folder that sends PDFs back -----------------------------------------
+# --- a vault that pushes its PDFs ------------------------------------------------
 
-def test_a_pdf_changed_in_a_kept_folder_is_sent_and_the_pull_leaves_it(owner, disk, retained):
+def test_a_pdf_changed_in_a_vault_is_pushed_and_the_pull_leaves_it(owner, disk, retained):
     link, page_id, paper, v1 = _kept_paper(owner, disk, "DP sent")
-    assert link["push"] is True
-    assert json.loads((disk / "DP sent" / ".gamma-sync.json").read_text(encoding="utf-8"))["push"] is True
-    assert _due(link["id"]) is False
+    assert link["push"] == "pdfs" and not (disk / "DP sent" / gamma_sync.STATE).exists()
+    assert _due(link["id"]) == "both"                                  # a vault's scan is the truth: every tick
 
     _write(paper, _pdf("DP sent v2, annotated elsewhere"))
-    assert _due(link["id"]) is True                                     # the PDF moved on disk
     status = _sync(owner, link["id"])
     assert status["counts"]["sent"] == 1 and status["counts"]["kept"] == 0 and status["last_error"] == ""
     props = _props(owner, page_id)
-    assert props["doc_id"] == gamma_sync.doc_of(paper) != v1
-    assert props["original_filename"] == "v1.pdf"                       # the kept name is a title, not a file name
+    assert props["doc_id"] == gamma_sync.doc_of(paper) != v1 and props["linked_file"] is True   # read where it is
     assert retained == [(workspace_of("dp_owner"), f"{v1}.pdf", 86400)]  # the build before lives a day
-    entry = _entry(disk / "DP sent", "DP sent paper.pdf")
-    assert entry["doc"] == props["doc_id"] and "seen" not in entry
-    assert _due(link["id"]) is False
+    row = _row(link["id"], "DP sent paper.pdf")
+    assert row["hash"] == props["doc_id"] and row["ours"] == 0          # the disk's bytes now
 
-    # the next pull leaves the sent file alone
+    # the next round leaves the pushed file alone
     status = _sync(owner, link["id"])
-    assert status["counts"]["kept"] == 0 and status["counts"]["sent"] == 0
-    assert _entry(disk / "DP sent", "DP sent paper.pdf") == entry
-    assert gamma_sync.doc_of(paper) == props["doc_id"]
+    assert status["counts"]["kept"] == 0 and status["counts"]["sent"] == 0 and status["counts"]["updated"] == 0
+    assert _row(link["id"], "DP sent paper.pdf")["hash"] == row["hash"] and gamma_sync.doc_of(paper) == props["doc_id"]
 
 
-def test_the_same_bytes_touched_send_nothing(owner, disk, retained):
+def test_the_same_bytes_touched_push_nothing(owner, disk, retained):
     link, page_id, paper, v1 = _kept_paper(owner, disk, "DP touched")
     _age(paper, 60)
-    assert _due(link["id"]) is True
     status = _sync(owner, link["id"])
-    assert status["counts"]["sent"] == 0 and status["counts"]["kept"] == 0
+    assert status["counts"]["sent"] == 0 and status["counts"]["kept"] == 0 and status["counts"]["read"] == 1
     assert _props(owner, page_id)["doc_id"] == v1 and retained == []
-    assert _entry(disk / "DP touched", "DP touched paper.pdf")["mtime"] == round(paper.stat().st_mtime, 3)
-    assert _due(link["id"]) is False
+    assert _row(link["id"], "DP touched paper.pdf")["mtime_ns"] == paper.stat().st_mtime_ns
+    assert _sync(owner, link["id"])["counts"]["read"] == 0               # its stat taken: not read again
 
 
-def test_a_pdf_changed_here_and_in_gamma_is_kept_until_a_forced_sync_takes_gamma_s(owner, disk, retained):
+def test_a_pdf_changed_here_and_in_gamma_is_the_disk_s(owner, disk, retained):
     link, page_id, paper, v1 = _kept_paper(owner, disk, "DP both")
-    v3_bytes = _pdf("DP both v3, replaced in Gamma")
-    v3 = _upload(owner, v3_bytes)
+    v3 = _upload(owner, _pdf("DP both v3, replaced in Gamma"))
     assert owner.put(f"/api/pages/{page_id}/attachment", json={"doc_id": v3}).status_code == 200
     mine = _pdf("DP both v4, changed on disk")
     _write(paper, mine)
-
     status = _sync(owner, link["id"])
-    assert status["counts"]["sent"] == 0 and status["kept"] == [{"path": "DP both paper.pdf", "why": BOTH, "force": True}]
-    assert _props(owner, page_id)["doc_id"] == v3 and paper.read_bytes() == mine
-    assert _due(link["id"]) is False                                    # not tried again until the file moves
-    _age(paper, 30)
-    assert _due(link["id"]) is True
-
-    status = _sync(owner, link["id"], force=1)
-    assert status["counts"]["kept"] == 0 and paper.read_bytes() == v3_bytes
-    assert _props(owner, page_id)["doc_id"] == v3
-    assert "seen" not in _entry(disk / "DP both", "DP both paper.pdf") and _due(link["id"]) is False
+    assert status["counts"]["sent"] == 1 and status["kept"] == []
+    assert _props(owner, page_id)["doc_id"] == gamma_sync.doc_of(paper) and paper.read_bytes() == mine
 
 
-def test_without_push_a_changed_pdf_stays_on_disk_as_before(owner, disk, retained):
-    link, page_id, paper, v1 = _kept_paper(owner, disk, "DP off", push=False)
-    assert link["push"] is False
+def test_without_push_a_changed_pdf_stays_on_disk_and_is_reported(owner, disk, retained):
+    link, page_id, paper, v1 = _kept_paper(owner, disk, "DP off", push="off")
+    assert link["push"] == "off"
     mine = _pdf("DP off, mine")
     _write(paper, mine)
-    assert _due(link["id"]) is False                                    # the disk is not looked at
-    assert _sync(owner, link["id"])["counts"]["sent"] == 0
+    status = _sync(owner, link["id"])
+    assert status["counts"]["sent"] == 0 and status["counts"]["read"] == 0   # a PDF changed is not read
     assert _props(owner, page_id)["doc_id"] == v1
-    v2 = _upload(owner, _pdf("DP off v2"))
+    v2_bytes = _pdf("DP off v2")
+    v2 = _upload(owner, v2_bytes)
     owner.put(f"/api/pages/{page_id}/attachment", json={"doc_id": v2}).raise_for_status()
     status = _sync(owner, link["id"])
-    assert status["kept"] == [{"path": "DP off paper.pdf", "why": "changed on disk; --force replaces it", "force": True}]
-    assert paper.read_bytes() == mine and retained == []
+    assert status["kept"] == [{"path": "DP off paper.pdf", "why": KEPT, "force": True}]
+    assert paper.read_bytes() == mine and retained == [] and _props(owner, page_id)["doc_id"] == v2
+    status = _sync(owner, link["id"], force="pull")                       # Gamma's written over it
+    assert status["kept"] == [] and paper.read_bytes() == v2_bytes
+    assert _sync(owner, link["id"])["kept"] == []
 
 
 def test_a_pdf_still_being_written_waits_for_a_later_round(owner, disk, retained):
@@ -310,30 +300,26 @@ def test_a_pdf_still_being_written_waits_for_a_later_round(owner, disk, retained
     _age(paper)
     status = _sync(owner, link["id"])
     assert status["counts"]["waiting"] == 1 and status["counts"]["sent"] == 0 and status["last_error"] == ""
-    assert _due(link["id"]) is False                                    # at rest and no whole PDF: not every tick
     paper.write_bytes(_pdf("DP waits v2, the whole build"))              # whole, but written a moment ago
     status = _sync(owner, link["id"])
     assert status["counts"]["waiting"] == 1 and _props(owner, page_id)["doc_id"] == v1
-    assert _due(link["id"]) is True                                     # waiting is asked again at every tick
     _age(paper)
     folder_links.tick()
     assert _props(owner, page_id)["doc_id"] == gamma_sync.doc_of(paper)
     assert folder_links.get_link(link["id"])["status"]["counts"]["sent"] == 1
 
 
-def test_bytes_another_page_carries_are_kept_with_the_server_s_reason(owner, disk, retained):
+def test_bytes_another_page_carries_are_the_page_s_all_the_same(owner, disk, retained):
+    """A vault's file is what the disk holds: bytes another page carries are no
+    refusal (``_held_elsewhere`` waives it for a page that reads its file in
+    place)."""
     link, page_id, paper, v1 = _kept_paper(owner, disk, "DP taken")
     other_bytes = _pdf("DP taken, another paper")
     make_page(owner, "DP another paper", {"doc_id": _upload(owner, other_bytes)})
     _write(paper, other_bytes)
     status = _sync(owner, link["id"])
-    assert status["counts"]["sent"] == 0
-    # not sent: Gamma's file did not change, so a forced round has nothing to replace
-    assert status["kept"] == [{"path": "DP taken paper.pdf", "why": "attachment belongs to another page", "force": False}]
-    assert _props(owner, page_id)["doc_id"] == v1 and _due(link["id"]) is False
-    status = _sync(owner, link["id"], force=1)
-    assert status["kept"] == [{"path": "DP taken paper.pdf", "why": "attachment belongs to another page", "force": False}]
-    assert paper.read_bytes() == other_bytes
+    assert status["counts"]["sent"] == 1 and status["kept"] == []
+    assert _props(owner, page_id)["doc_id"] == gamma_sync.doc_of(paper)
 
 
 # --- a page that follows a file ---------------------------------------------------
@@ -346,7 +332,8 @@ def test_a_page_follows_a_file_on_this_computer(owner, disk, retained, monkeypat
 
     link = _create(owner, kind="file", page=page["id"], path=str(build))
     assert link["kind"] == "file" and link["page_id"] == page["id"] and link["folder_id"] == ""
-    assert link["title"] == "DP draft" and link["push"] is True and link["dest"] == str(build.resolve())
+    assert link["title"] == "DP draft" and link["push"] == "pdfs" and link["pull"] is False
+    assert link["dest"] == str(build.resolve())
     assert "state" not in link and "token" not in link
     listed = [l for l in owner.get("/api/folder-links").json()["links"] if l["id"] == link["id"]]
     assert listed[0]["title"] == "DP draft" and "state" not in listed[0]
@@ -358,14 +345,14 @@ def test_a_page_follows_a_file_on_this_computer(owner, disk, retained, monkeypat
     assert props["doc_id"] == gamma_sync.doc_of(build) and props["original_filename"] == "draft.pdf"
     assert retained == [(workspace_of("dp_owner"), f"{v1}.pdf", 86400)]
     assert not (build.parent / ".gamma-sync.json").exists()           # no state file: the row holds it
-    assert _due(link["id"]) is False
+    assert _due(link["id"]) == ""
 
     # the next build is sent at the next tick
     _write(build, _pdf("DP draft v3"), age=5)
-    assert _due(link["id"]) is True
+    assert _due(link["id"]) == "both"
     folder_links.tick()
     assert _props(owner, page["id"])["doc_id"] == gamma_sync.doc_of(build)
-    assert _due(link["id"]) is False
+    assert _due(link["id"]) == ""
 
     # a file that is gone waits for it, without a failure
     v3 = build.read_bytes()
@@ -373,33 +360,33 @@ def test_a_page_follows_a_file_on_this_computer(owner, disk, retained, monkeypat
     status = _sync(owner, link["id"])
     assert status["waiting"] == "the file is not there" and status["last_error"] == "" and status["last_sent"]
     _write(build, v3)                                                  # back, as Gamma has it: nothing to send
-    assert _due(link["id"]) is True
+    assert _due(link["id"]) == "both"
     status = _sync(owner, link["id"])
     assert status["counts"] == {"sent": 0, "waiting": 0, "kept": 0} and status["waiting"] == ""
 
     # notes and push are a folder's
     assert owner.patch(f"/api/folder-links/{link['id']}", json={"notes": False}).status_code == 400
-    assert owner.patch(f"/api/folder-links/{link['id']}", json={"push": False}).status_code == 400
+    assert owner.patch(f"/api/folder-links/{link['id']}", json={"push": "off"}).status_code == 400
 
     # paused, the tick leaves it alone; resumed, a round runs
     r = owner.patch(f"/api/folder-links/{link['id']}", json={"paused": True})
     assert r.status_code == 200 and r.json()["status"]["paused_at"]
     _write(build, _pdf("DP draft v4"), age=20)
-    assert _due(link["id"]) is False
+    assert _due(link["id"]) == ""
     started = []
     monkeypatch.setattr(folder_links, "run_in_background", lambda link_id, **kw: started.append(link_id))
     assert owner.patch(f"/api/folder-links/{link['id']}", json={"paused": False}).status_code == 200
-    assert started == [link["id"]] and _due(link["id"]) is True
+    assert started == [link["id"]] and _due(link["id"]) == "both"
 
     # a page that is gone fails the link, which waits before it tries again
     owner.delete(f"/api/blocks/{page['id']}").raise_for_status()
-    status = _sync(owner, link["id"], force=1)
+    status = _sync(owner, link["id"], force="pull")
     assert status["last_error"] == "the page is no longer in Gamma" and status["failed_at"]
-    assert _due(link["id"]) is False
+    assert _due(link["id"]) == ""
 
     # removing the link never touches the file
     kept = build.read_bytes()
-    owner.delete(f"/api/folder-links/{link['id']}", params={"remove_files": 1}).raise_for_status()
+    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
     assert build.read_bytes() == kept
     assert folder_links.get_link(link["id"]) is None
 
@@ -428,7 +415,7 @@ def test_a_followed_file_must_be_a_pdf_that_is_there_outside_the_data_directory(
     # (FINE.pdf is that file only where names ignore case: Windows, not CI's Linux)
     for name in ("fine.pdf", "FINE.pdf") if (disk / "FINE.pdf").is_file() else ("fine.pdf",):
         r = owner.post("/api/folder-links", json={"kind": "file", "page": page["id"], "path": str(disk / name)})
-        assert r.status_code == 400 and "Another link" in r.json()["detail"], name
+        assert r.status_code == 400 and "already pushed to another page" in r.json()["detail"], name
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
@@ -458,12 +445,12 @@ def test_files_and_folders_are_counted_apart(owner, disk, monkeypatch):
     _write(disk / "two.pdf", _pdf("DP two"))
     first = _create(owner, kind="file", page=page["id"], path=str(disk / "one.pdf"))
     r = owner.post("/api/folder-links", json={"kind": "file", "page": page["id"], "path": str(disk / "two.pdf")})
-    assert r.status_code == 400 and "files on disk" in r.json()["detail"]
+    assert r.status_code == 400 and "synced vaults of files" in r.json()["detail"]
     folder = _create(owner, folder=make_folder(owner, "DP limits"), path=str(disk / "Limits"))   # a folder still fits
     r = owner.post("/api/folder-links", json={"folder": make_folder(owner, "DP limits"), "path": str(disk / "Limits 2")})
-    assert r.status_code == 400 and "folders on disk" in r.json()["detail"]
+    assert r.status_code == 400 and "synced vaults of folders" in r.json()["detail"]
     for l in (first, folder):
-        owner.delete(f"/api/folder-links/{l['id']}", params={"remove_files": 1}).raise_for_status()
+        owner.delete(f"/api/folder-links/{l['id']}", params={"files": "trash"}).raise_for_status()
 
 
 def test_a_push_stops_once_the_account_may_no_longer_edit(owner, disk, retained, monkeypatch):
@@ -481,31 +468,27 @@ def test_a_push_stops_once_the_account_may_no_longer_edit(owner, disk, retained,
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
-def test_turning_push_on_leaves_the_state_file_to_the_rounds(owner, disk, retained):
-    link, page_id, paper, v1 = _kept_paper(owner, disk, "DP toggled", push=False)
-    state = disk / "DP toggled" / ".gamma-sync.json"
-    before = state.read_bytes()
+def test_turning_push_on_is_not_held_up_by_a_round_and_the_next_round_reads_it(owner, disk, retained):
+    link, page_id, paper, v1 = _kept_paper(owner, disk, "DP toggled", push="off")
     lock = folder_links._lock(link["id"])
     done = []
-    with lock:                                                          # a round is running, and saves its files map
-        t = threading.Thread(target=lambda: done.append(folder_links.set_push(link["id"], True)))
+    with lock:                                                          # a round is running
+        t = threading.Thread(target=lambda: done.append(folder_links.set_push(link["id"], "pdfs")))
         t.start()
         t.join(10)
-        assert done and done[0]["push"] is True                         # not held up by the round
-    assert state.read_bytes() == before                                 # nothing for the round's save to overwrite
+        assert done and done[0]["push"] == folder_links.PUSH_PDFS       # only the row changes
     _write(paper, _pdf("DP toggled v2"))
-    assert _due(link["id"]) is True
     status = _sync(owner, link["id"])
-    assert status["counts"]["sent"] == 1 and json.loads(state.read_text(encoding="utf-8"))["push"] is True
+    assert status["counts"]["sent"] == 1 and _props(owner, page_id)["doc_id"] == gamma_sync.doc_of(paper)
 
 
 def test_a_round_that_fails_in_an_unexpected_way_says_so(owner, disk, monkeypatch):
-    link, page_id, paper, v1 = _kept_paper(owner, disk, "DP unexpected", push=False)
+    link, page_id, paper, v1 = _kept_paper(owner, disk, "DP unexpected", push="off")
 
     def broken(*args, **kw):
         raise RuntimeError("something nobody planned for")
 
-    monkeypatch.setattr(folder_links, "_folder_round", broken)
+    monkeypatch.setattr(folder_links, "_vault_round", broken)
     status = folder_links.run_link(link["id"])
     assert status["running"] is False and "something nobody planned for" in status["last_error"]
     assert folder_links.get_link(link["id"])["status"]["running"] is False
@@ -549,21 +532,21 @@ def test_a_file_or_a_folder_on_another_server_sends_with_a_token_that_may_write(
     assert retained == [(ws, f"{v1}.pdf", 86400)]
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
-    # a folder read with a read token sends nothing back until push is on with a token that may write
+    # a vault of a folder there read with a read token pushes nothing until push is on with a token that may write
     folder = make_folder(owner, "DP far folder")
     f1 = _upload(owner, _pdf("DP far folder v1"))
     paper = make_page(owner, "DP far paper", {"doc_id": f1, "folders": [folder]})
     kept = _create(owner, folder=folder, path=str(disk / "Far folder"), remote_url=over_http, token=read["token"],
                    token_id=read["id"])
-    assert _sync(owner, kept["id"])["counts"]["added"] == 2
+    assert _sync(owner, kept["id"])["counts"]["added"] == 1                # its PDF, read there
     r = owner.post("/api/folder-links", json={"folder": folder, "path": str(disk / "Far 2"), "remote_url": over_http,
-                                              "token": read["token"], "push": True})
+                                              "token": read["token"], "push": "pdfs"})
     assert r.status_code == 400 and "may write" in r.json()["detail"]
-    r = owner.patch(f"/api/folder-links/{kept['id']}", json={"push": True})
+    r = owner.patch(f"/api/folder-links/{kept['id']}", json={"push": "pdfs"})
     assert r.status_code == 400 and "may write" in r.json()["detail"]
     other = create_token(account_of("dp_owner"), ws, "dp-write-2", 1, scope="write")
-    r = owner.patch(f"/api/folder-links/{kept['id']}", json={"push": True, "token": other["token"], "token_id": other["id"]})
-    assert r.status_code == 200 and r.json()["push"] is True and r.json()["token_id"] == other["id"]
+    r = owner.patch(f"/api/folder-links/{kept['id']}", json={"push": "pdfs", "token": other["token"], "token_id": other["id"]})
+    assert r.status_code == 200 and r.json()["push"] == "pdfs" and r.json()["token_id"] == other["id"]
     assert folder_links.get_link(kept["id"], with_token=True)["token"] == other["token"]   # swapped in for the read one
 
     target = disk / "Far folder" / "DP far paper.pdf"
@@ -571,6 +554,6 @@ def test_a_file_or_a_folder_on_another_server_sends_with_a_token_that_may_write(
     status = _sync(owner, kept["id"])
     assert status["counts"]["sent"] == 1 and status["counts"]["kept"] == 0
     assert _props(owner, paper["id"])["doc_id"] == gamma_sync.doc_of(target)
-    r = owner.patch(f"/api/folder-links/{kept['id']}", json={"push": False})
-    assert r.status_code == 200 and r.json()["push"] is False
-    owner.delete(f"/api/folder-links/{kept['id']}", params={"remove_files": 1}).raise_for_status()
+    r = owner.patch(f"/api/folder-links/{kept['id']}", json={"push": "off"})
+    assert r.status_code == 200 and r.json()["push"] == "off"
+    owner.delete(f"/api/folder-links/{kept['id']}", params={"files": "trash"}).raise_for_status()

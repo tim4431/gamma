@@ -408,8 +408,9 @@ item and `scanMathSpans` leaves it raw.
 Gamma's readable export writes every block as a `- ` bullet, so `x` is `- x`
 and the list block `- x` is `- - x`, and there the marker says only "a block".
 `markdown_import.readable_outline` knows such a file by the one shape that
-writer has: a front-matter `title` and no `gamma_id` (the folder sync's, whose
-bullets are lists), then the H1, BibTeX if any, and only `- `
+writer has: a front-matter `title` and no `gamma_id` (the line the gamma-sync
+client writes, and a folder the desktop app kept before synced vaults; their
+bullets are lists, and a synced vault writes no such line), then the H1, BibTeX if any, and only `- `
 lines at the start of a line, so every branch of the writer keeps a block's next
 lines under its bullet (`_bullet`). `md_to_blocks(..., outline=True)` then reads each
 `- ` as a separator, which gives the blocks back as they were, from old zips
@@ -428,6 +429,19 @@ goes either way. What each caller passes:
 
 Pages imported before markers were kept read as indented paragraphs. The
 markers are gone, so nothing repairs them.
+
+`md_to_blocks(..., spans=True)` is the same parser for a synced vault's lens
+(`gamma/md_lens.py`, [synced_vaults.md](synced_vaults.md#the-lens)), which
+writes a file back by patching its own lines. Every block also carries the
+lines it came from (`Span`: the source lines, the raw indentation and
+marker, the block's class), and a few rules change so that a block's own
+lines are one run: a paragraph under an item ends before what follows it is
+read, a line that would go on an item with children is one more child, a
+`$$` at the left edge after a blank line is out of any item, only spaces and
+tabs are whitespace, a line of code keeps its trailing whitespace, and after
+a blank line at the top, with no list open, what stands four columns in is
+one `verbatim` block of raw lines. Without `spans` the parser reads as it
+always has, byte for byte: every importer above passes none.
 
 An empty list block is its marker and a space (`- `, `1. `), and the readable
 and vault exports keep that space (`markdown_export.block_text`), which is what
@@ -2094,6 +2108,15 @@ other library sources, then merges the selected pages (`restore_zip` merge
 with a selection) as the import job; guests can't import. A Gamma export is
 a complete copy, so the Export dialog has no switches for it.
 
+A page that reads its PDF where it is on this computer (`linked_file`,
+[synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)) travels as
+bytes: the file is read through `storage.files` into `uploads/` like a
+stored one, and the copy's pages lose the `linked_file` mark, so where the
+export lands the page is an ordinary one with no path to read from. The
+same export (`page_gamma_zip`, with the page's properties patched first) is
+how *Add to library…* takes an opened PDF to another workspace of the server
+with everything on it.
+
 Through a share token (`?share=`: another Gamma importing a shared page or
 folder by its link, below) the export carries only what the share shows
 (`_GammaBuilder._shared_trees`):
@@ -2567,8 +2590,9 @@ one page.
   `attachments/<Title>.pdf` (shared by pages of one document); the Bundle
   switch off leaves server links instead.
 
-The folder sync ([folder_sync.md](folder_sync.md)) writes the same dialect
-with the PDF beside the note. It shares `unique_name`, `name_files`,
+The gamma-sync client ([synced_vaults.md](synced_vaults.md#the-client)) writes
+the same dialect with the PDF beside the note, and a page's `gamma_id` in its
+front matter. It shares `unique_name`, `name_files`,
 `link_texts` and `VaultContext.place_pages`/`place_pdf` with this export and the
 annotated-PDF folder export. `vault_name` appends `_` to a Windows device
 name (`CON` → `CON_`).
@@ -2579,6 +2603,28 @@ labels, the quoted `source` into the paper, `parent` into the page it is
 inside) — `test_obsidian.py` has the round trip, and
 `test_sub_pages_export.py` the nested layouts of every format, with and
 without `sub_pages`, and their round trips.
+
+A synced vault writes a highlight in a dialect of its own, on purpose
+(`gamma/vault_links.py`, [synced_vaults.md](synced_vaults.md#links-and-highlights)):
+the whole highlight is one callout, the person's note inside it, so that the
+lens reads it back as one block, and its anchor stands on its own line after
+it, Obsidian's rule for a quote:
+
+```
+> [!quote] [[Paper.pdf#page=3|p. 3]]
+> the quoted text
+>
+> the person's note, every line
+
+^a1b2c3
+```
+
+The export above puts the note after the callout as a paragraph. A
+vault reads a callout as a highlight by its first line alone (`> [!quote`,
+any case, folded or not), and a callout that links the page's own PDF and is
+no highlight Gamma knows becomes one with its quote and page and no
+rectangles, which the relocation run then places
+([highlight_relocation.md](highlight_relocation.md)).
 
 ## Notion export
 

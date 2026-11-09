@@ -15,15 +15,14 @@ from PIL import Image
 
 import goodnotes_fixtures as gx
 from ai_fixtures import folder, notes, org  # noqa: F401  (fixtures)
-from conftest import guest_name, workspace_of
+from conftest import files_in, guest_name, workspace_of
 from test_notability_export import flat
 from test_picture_pdf import (QUADRANTS, WHITE, _entry, _imported, _near, _pic, _placed, _raster, _screen,
                               _stamps, _stored, _upload_image)
 from test_text_box import CROP, _kids, _pdf, _put_children, _upload_pdf
 
-from gamma import note_app_import, notability_export, pdf_image, picture
+from gamma import note_app_import, notability_export, pdf_image, picture, storage
 from gamma.ai_tools import run_agent_tool
-from gamma.db import ws_uploads_dir
 from gamma.pdf_export import annotate_pdf
 
 SVG_HEAD = b'<svg xmlns="http://www.w3.org/2000/svg"'
@@ -129,7 +128,7 @@ def test_the_stamp_draws_an_svg_as_vector_content_as_the_screen_does(tmp_path, r
     (/GammaSVG), and no image: it is vectors."""
     uploads, url = _stored(tmp_path, QUADS, ext="svg")
     pic = _pic(url, x=150, y=120, w=200, h=120, angle=angle, flip_h=flip_h, crop={"x": 0.25, "y": 0, "w": 0.75, "h": 1})
-    out, written = annotate_pdf(_pdf(rotation, CROP), [], uploads_dir=uploads, pictures=[_entry(pic)])
+    out, written = annotate_pdf(_pdf(rotation, CROP), [], stored=files_in(uploads), pictures=[_entry(pic)])
     assert written == 1
     [stamp] = _stamps(out)
     [drawn] = stamp["/AP"]["/N"].get_object()["/Resources"]["/XObject"].values()
@@ -154,7 +153,7 @@ def test_a_stretched_svg_is_stretched_as_the_screen_draws_it(tmp_path):
     stretches: no paper at either end."""
     uploads, url = _stored(tmp_path, QUADS, ext="svg")
     pic = _pic(url, x=100, y=100, w=400, h=100)
-    pixel = _raster(annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(pic)])[0])
+    pixel = _raster(annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(pic)])[0])
     assert _near(pixel(110, 120), QUADRANTS["TL"]) and _near(pixel(490, 180), QUADRANTS["BR"])
 
 
@@ -164,7 +163,7 @@ def test_export_then_import_brings_the_svg_back(tmp_path):
     its crop, turn and flips with it."""
     uploads, url = _stored(tmp_path, QUADS, ext="svg")
     pic = _pic(url, angle=30, flip_v=True, crop={"x": 0.1, "y": 0.2, "w": 0.6, "h": 0.5})
-    out, _ = annotate_pdf(_pdf(90, CROP), [], uploads_dir=uploads, pictures=[_entry(pic, "a *plot*")])
+    out, _ = annotate_pdf(_pdf(90, CROP), [], stored=files_in(uploads), pictures=[_entry(pic, "a *plot*")])
     [found] = _imported(out)
     assert (found["kind"], found["content"], found["original"]) == ("picture", "a *plot*", url)
     assert found["file"] == (QUADS, ".svg") and found["picture"]["url"].endswith(".svg")
@@ -182,7 +181,7 @@ def test_an_svg_drawing_text_and_a_picture_still_comes_back(tmp_path):
     data = (SVG_HEAD + b' width="40" height="20"><image width="40" height="20" href="data:image/png;base64,'
             + base64.b64encode(red.getvalue()) + b'"/><text x="2" y="15" font-size="10">Hi</text></svg>')
     uploads, url = _stored(tmp_path, data, ext="svg")
-    out, _ = annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(_pic(url))])
+    out, _ = annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url))])
     assert _near(_raster(out)(250, 70), (255, 0, 0))
     [found] = _imported(out)
     assert found["file"] == (data, ".svg")
@@ -224,7 +223,7 @@ def test_an_svg_past_its_bounds_is_left_out_before_mupdf_sees_it(tmp_path, monke
         with pytest.raises(ValueError, match=reason):
             pdf_image.svg_pdf(data)
         uploads, url = _stored(tmp_path, data, ext="svg", stem=what)
-        assert annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(_pic(url))])[1] == 0, what
+        assert annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url))])[1] == 0, what
     pdf_image.svg_pdf(_uses(12))                                      # 4,096 squares draw
 
 
@@ -291,7 +290,7 @@ def test_an_svg_picture_goes_into_a_note_as_a_png(guest):
     assert guest.get(f"/api/pages/{page['id']}/export", params={"mode": "notability"}).status_code == 200
     root = guest.get(f"/api/blocks/{page['id']}/subtree").json()["block"]
     draft, warnings = notability_export.page_draft([{**root, "parent_id": "root"}, *flat(root)], page["id"],
-                                                   ws_uploads_dir(workspace_of(guest_name())))
+                                                   storage.files(workspace_of(guest_name())))
     assert warnings == ["1 SVG picture could not be drawn for the note and is left out"]
     [written] = draft.media
     shown = Image.open(io.BytesIO(draft.files[written.image])).convert("RGB")
@@ -315,7 +314,7 @@ def test_a_box_holding_an_svg_goes_into_a_note_as_a_png(guest):
          "properties": {"pdf_page": 1, "text_box": {**box, "y": 300 + 100 * i}}} for i, src in enumerate((url, bad))])
     root = guest.get(f"/api/blocks/{page['id']}/subtree").json()["block"]
     draft, warnings = notability_export.page_draft([{**root, "parent_id": "root"}, *flat(root)], page["id"],
-                                                   ws_uploads_dir(workspace_of(guest_name())))
+                                                   storage.files(workspace_of(guest_name())))
     assert warnings == ["1 SVG picture could not be drawn for the note and is left out"]
     written, text = draft.media
     side = notability_export.SVG_PNG_SIDE

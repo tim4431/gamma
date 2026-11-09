@@ -16,7 +16,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 
-from . import pdf_meta, translate_store
+from . import pdf_meta, storage, translate_store
 from .db import connect_data_db, page_now
 from .logbuf import log
 from .textnorm import INDEX_VERSION
@@ -162,6 +162,16 @@ def pdf_missing(data_conn: sqlite3.Connection, doc_ids) -> list[str]:
     current = {r[0] for r in data_conn.execute(
         "SELECT doc_id FROM pdf_fts_docs WHERE ver = ?", (INDEX_VERSION,))}
     return [d for d in doc_ids if d not in current]
+
+
+def pdf_pending(ws: str, data_conn: sqlite3.Connection, doc_ids) -> list[str]:
+    """``pdf_missing`` for a search, which starts the indexer on them and
+    reports how many are pending. A linked file that cannot be read now
+    (gamma/linked_files.py) is left out: no run could index it, so one would
+    start on every search and the count would never come down. It is back
+    when it is within reach again, or under a new name."""
+    return [d for d in pdf_missing(data_conn, doc_ids)
+            if storage.readable(ws, f"{d}.pdf") or not storage.is_linked(ws, f"{d}.pdf")]
 
 
 def search_pdf(data_conn: sqlite3.Connection, match: str, limit: int,

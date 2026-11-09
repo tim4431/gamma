@@ -1,5 +1,5 @@
-"""Collaboration endpoints: the op batch write, the op-log catch-up read,
-and the per-page websocket (presence + fan-out) — for the pages and for the
+"""Collaboration endpoints: the op batch write, a synced vault's plan, the
+op-log catch-up read, and the per-page websocket (presence + fan-out) — for the pages and for the
 pseudo-pages ``folders`` / ``labels`` (the folder and label trees; members
 only). See gamma/ops.py for the op vocabulary and gamma/collab.py for the
 rooms; docs/dev/collab.md for the whole picture."""
@@ -18,7 +18,7 @@ from ..auth import (ANONYMOUS_NAME, SESSION_COOKIE, actor_of, is_link_visitor, l
 from ..blocks_store import is_op_page
 from ..db import connect_pages_db
 from ..json_response import OrjsonResponse
-from ..ops import OpError, OpsRequest, commit_ops, latest_seq, ops_since
+from ..ops import OpError, OpsRequest, PlanRequest, commit_ops, commit_plan, latest_seq, ops_since
 
 router = APIRouter(prefix="/api", tags=["collab"])
 
@@ -72,6 +72,28 @@ def post_ops(page_id: str, payload: OpsRequest, request: Request):
     if "ink_conflicts" in result:  # each ink merge's {clean, lost_ours, returned} by block (handwriting.md "Two writers")
         out["ink_conflicts"] = result["ink_conflicts"]
     return out
+
+
+@router.post("/pages/{page_id}/plan")
+def post_plan(page_id: str, payload: PlanRequest, request: Request):
+    """A synced vault's plan for the page, from the desktop app of another
+    computer (gamma/vault_http.py): ``{client, batch, seq, ops}`` → ``{seq}``,
+    every op in one transaction or none, refused whole (409, ``conflict``
+    ``stale``) when the page's op log moved past ``seq``, the seq the plan
+    was made at (gamma/ops.py ``commit_plan``); a batch id the log holds
+    already is answered from it. A refused plan: ``{detail, conflict?,
+    index?}``. A workspace editor: no share link writes a plan."""
+    ws = require_ws_writer(request)
+    if share_scope(request) is not None:
+        raise HTTPException(status_code=403, detail="a share link cannot write a plan")
+    ops = [op.model_dump(exclude_unset=True) for op in payload.ops]
+    try:
+        result = commit_plan(ws, page_id, ops, actor=actor_of(request), client=payload.client[:32],
+                             batch_id=payload.batch[:64], seq=payload.seq)
+    except OpError as e:
+        body = {"detail": e.detail, **({"conflict": e.conflict, "index": e.index} if e.conflict else {})}
+        return JSONResponse(status_code=e.status, content=body)
+    return result
 
 
 @router.get("/pages/{page_id}/ops")

@@ -76,6 +76,7 @@ import { i18nScenarios } from "./scenarios/i18n.mjs";
 import { authScenarios } from "./scenarios/auth.mjs";
 import { zoteroLinkScenarios } from "./scenarios/zotero-link.mjs";
 import { blockPropertiesScenarios } from "./scenarios/blockProperties.mjs";
+import { vaultScenarios } from "./scenarios/vaults.mjs";
 import { GROUPS, changedFromGit, selectGroups, shardOf } from "./select.mjs";
 
 const RUNNERS = {
@@ -109,6 +110,7 @@ const RUNNERS = {
   "inbox": inboxScenarios,
   "collab": collabScenarios,
   "mirror": mirrorScenarios,
+  "vaults": vaultScenarios,
   "zotero-link": zoteroLinkScenarios,
   "transfers": transferScenarios,
   "mcp": mcpScenarios,

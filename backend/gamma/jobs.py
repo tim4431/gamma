@@ -330,18 +330,31 @@ def _pump() -> None:
         threading.Thread(target=_work, args=(live,), daemon=True, name=f"job-{live.kind}-{live.id[:6]}").start()
 
 
+def error_text(exc: Exception) -> str:
+    """An exception's text as it may be said to anyone but the log. What
+    fails on a file may have landed on a linked file (gamma/linked_files.py),
+    whose path is the person's own: an OSError that names its file says only
+    what went wrong, and an error of MuPDF, which puts the path in its
+    message, only its class."""
+    if isinstance(exc, OSError) and exc.filename:
+        return exc.strerror or type(exc).__name__
+    if type(exc).__module__.startswith("pymupdf"):
+        return type(exc).__name__
+    return str(exc)
+
+
 def _message(live: _Live, exc: Exception) -> str:
     """What a failed job says. An HTTPException's detail and the domain
     errors (ValueError: a bad backup, a refused task; OSError: a full disk)
-    are sentences for the person; anything else is a bug, logged with its
-    traceback."""
+    are sentences for the person (``error_text``); anything else is a bug,
+    logged with its traceback."""
     if isinstance(exc, HTTPException):
         text = str(exc.detail)
     elif isinstance(exc, (ValueError, OSError)):
-        text = str(exc) or type(exc).__name__
+        text = error_text(exc) or type(exc).__name__
     else:
         log.exception(f"[jobs] {live.kind} {live.id} failed")
-        return f"unexpected error ({type(exc).__name__}: {exc})"[:500]
+        return f"unexpected error ({type(exc).__name__}: {error_text(exc)})"[:500]
     log.warning(f"[jobs] {live.kind} {live.id} failed: {text}")
     return text[:500]
 

@@ -47,7 +47,7 @@ from .bibtex import build_entry, clean_key
 from .blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, TRASH, TREES, attachment_file, batch_page, block_to_dict,
                            existing_in, fetch_subtree, filing, insert_page_tree, label_names, load_props,
                            new_block_id, page_attachment, page_root_id, valid_block_id, write_lock)
-from .db import connect_pages_db, ws_uploads_dir
+from .db import connect_pages_db
 from .logbuf import log
 from .markdown_export import block_ref_resolver, build_tree
 from .notebook import is_sheet
@@ -563,7 +563,7 @@ def read_ink(ws: str, props: dict) -> inkmod.InkFile | None:
     """The ink file an ink block's ``ink_url`` names, parsed (``ink.read_upload``),
     or None when it names none that reads."""
     url = (props or {}).get("ink_url")
-    return inkmod.read_upload(ws_uploads_dir(ws), url) if isinstance(url, str) and url else None
+    return inkmod.read_upload(storage.files(ws), url) if isinstance(url, str) and url else None
 
 
 # --- positions ------------------------------------------------------------------------

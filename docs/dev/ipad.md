@@ -1065,8 +1065,11 @@ server is part of the app, which brings its updates, and raises no update
 notice ([settings.md](settings.md)); `GAMMA_UPDATE_CHECK=off`, so it asks
 GitHub nothing; and `CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1` ([The wheels](#the-wheels)).
 
-`GAMMA_FOLDER_LINKS` is not set: folders kept on disk are the desktop
-app's ([folder_sync.md](folder_sync.md#folders-kept-by-the-desktop-app)).
+`GAMMA_FOLDER_LINKS` is not set: synced vaults, and PDFs read where they
+are, are the desktop app's ([synced_vaults.md](synced_vaults.md#the-desktop-app)),
+so this server makes no `vaults.db` and answers the vault routes with 404.
+Neither is `GAMMA_SHELL_SECRET`. The iPad's own *Opened files* below are the
+system's files handed to the app, not the desktop app's page of that name.
 
 #### Starting, and the log
 

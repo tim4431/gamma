@@ -1287,7 +1287,8 @@ def metadata_status(request: Request):
             "title": (meta or {}).get("title") or content or "Untitled",
             "updated_at": updated_at,
             "doc_id": doc_id,
-            "has_file": bool(doc_id and _DOC_ID_OK.match(doc_id) and f"{doc_id}.pdf" in stored),
+            "has_file": bool(doc_id and _DOC_ID_OK.match(doc_id)
+                             and (f"{doc_id}.pdf" in stored or storage.readable(ws, f"{doc_id}.pdf"))),
             "has_meta": bool(meta),
             "meta_source": (meta or {}).get("source", ""),
             "meta_kind": (meta or {}).get("kind", ""),

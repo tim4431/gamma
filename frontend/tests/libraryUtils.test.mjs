@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { generateKeyBetween } from "fractional-indexing";
 import {
-  NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
+  NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, duplicable, filedIn, findNamed, findPageForUrl,
   firstFolderPath, folderChain, folderEntries, folderNeighbour, folderPath, folderPosition, folderPositions, folderSubtree, folderTargets,
   formatFullDate, formatRelativeTime, formatShortDate,
   attachmentFile, inFolder, isFreshLibrary, labelName, libraryTree, normalizeLinkInput, pageAttachment,
@@ -26,6 +26,12 @@ const listing = {
     { id: "rev", content: "Review", position: k2, properties: {}, children: [] },
   ] },
 };
+
+test("a page reading a file on this computer is left out of what can be duplicated", () => {
+  const pages = new Map([["paper", { _linkedFile: false }], ["opened", { _linkedFile: true }]]);
+  assert.deepEqual(duplicable(["paper", "opened", "unlisted"], pages), ["paper", "unlisted"]);
+  assert.deepEqual(duplicable(["opened"], pages), []);
+});
 
 test("libraryTree reads the folders by nesting and order, the labels flat", () => {
   const tree = libraryTree(listing);

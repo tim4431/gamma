@@ -11,7 +11,7 @@ the `child-pages` branch). How it works now is in
 [dev/migrations.md](../dev/migrations.md), the mirror's rounds in
 [dev/mirror.md](../dev/mirror.md#pages-inside-pages), the exports, the
 imports and the folder link in [dev/import_export.md](../dev/import_export.md)
-and [dev/folder_sync.md](../dev/folder_sync.md), the agent's tools in
+and [dev/synced_vaults.md](../dev/synced_vaults.md), the agent's tools in
 [dev/ai_tools.md](../dev/ai_tools.md), and the user's side in the
 [user guide](../user_guide/user_guide.md#pages-inside-pages). "As built"
 below lists where the build differs from this note. The mechanics before

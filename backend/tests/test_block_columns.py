@@ -176,8 +176,9 @@ def test_the_listing_carries_page_summaries(owner):
     filed = {"folders": [make_folder(owner, "bc/lab")], "labels": [make_label(owner, "read")]}
     page = _page(owner, "Summarized", {
         "doc_id": "a" * 24, "source_url": "/api/uploads/x.pdf", "original_filename": "x.pdf", **filed,
-        "pinned": True, "seeded": "welcome", "meta": meta, "bibtex": "@article{x}",
-        "ppt_cite": "Author 2024", "summary": "a summary", "auto_title": "x.pdf", "web_url": "https://x"})
+        "pinned": True, "seeded": "welcome", "linked_file": True, "opened_files": True, "meta": meta,
+        "bibtex": "@article{x}", "ppt_cite": "Author 2024", "summary": "a summary", "auto_title": "x.pdf",
+        "web_url": "https://x"})
     _ops(owner, page["id"], [{"op": "insert", "id": "bcPreview", "parent": page["id"], "content": "first note"}])
     entry = next(p for p in owner.get("/api/blocks/root/children").json()["children"] if p["id"] == page["id"])
     assert set(entry) == {"id", "content", "position", "created_at", "updated_at", "preview", "parent",
@@ -185,7 +186,7 @@ def test_the_listing_carries_page_summaries(owner):
     assert entry["preview"] == "first note" and entry["content"] == "Summarized" and entry["parent"] == ""
     assert entry["properties"] == {
         "doc_id": "a" * 24, "source_url": "/api/uploads/x.pdf", "original_filename": "x.pdf", **filed,
-        "pinned": True, "seeded": "welcome",
+        "pinned": True, "seeded": "welcome", "linked_file": True, "opened_files": True,
         "meta": {k: meta[k] for k in blocks_router.SUMMARY_META}}
     bare = _page(owner, "Bare")
     entry = next(p for p in owner.get("/api/blocks/root/children").json()["children"] if p["id"] == bare["id"])

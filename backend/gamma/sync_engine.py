@@ -91,7 +91,7 @@ from .auth import MIRROR_ACTOR
 from .blocks_store import (FOLDERS, LABELS, PARENT_PAGE, TRASH, TREES, create_page, fetch_subtree,
                            last_child_position, page_ancestors, page_descendants, page_parents, page_root_id,
                            with_sub_pages)
-from .db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
+from .db import connect_pages_db, connect_users_db, page_now
 from .logbuf import log
 from .ops import (MAX_OPS, PLACED_KEYS, SYNC_CLIENT, OpError, _went_with, commit_ops, latest_seq, props_patch,
                   restore_inside, restore_page, trash_page, went_inside)
@@ -108,6 +108,8 @@ CLIENT = SYNC_CLIENT       # the op-log client of every local write the engine m
 ACTOR = MIRROR_ACTOR       # ...and its actor (the remote's per-op authors are not carried over)
 MODES = ("two-way", "pull", "off")   # off = detached: the link (token, cursors, bases) is kept, no round runs
 ADOPT = ("theirs", "mine")           # whose version a never-reconciled page takes (a linked workspace, a force)
+VAULT_KINDS = ("file_won",)          # a synced vault's conflicts (gamma/vault_sync.py): its routes read them, a mirror's never
+NOT_VAULT = "kind NOT IN ('file_won')"   # VAULT_KINDS in SQL: what the mirror's and Zotero's reads and deletes keep to
 DEBOUNCE_S = 1.0                     # a local edit → a round once things have been quiet this long (the loop wakes for it)
 TICK_S = sync_clock.TICK_S           # the loop's clock (gamma/sync_clock.py)
 WHOAMI_TTL_S = 900                   # how long a round trusts the remote's last whoami (a failed round asks again)
@@ -481,7 +483,9 @@ def create_mirror(owner: str, remote_url: str, token: str, *, name: str = "", mo
     and forgotten): its pages that exist on both sides have no common base,
     so the first round adopts ``adopt``'s version of each and records what
     differed as ``diverged`` conflicts; a workspace a Zotero link keeps
-    (gamma/zotero_sync.py), detached or not, cannot be one. Talks to the
+    (gamma/zotero_sync.py), detached or not, cannot be one, nor, for a
+    full copy, one a synced vault pushes everything into
+    (gamma/folder_links.py). Talks to the
     remote first (``whoami``), so a bad URL or token fails before anything
     is created.
     ``page_filter`` limits the mirror to those pages (several filtered
@@ -507,6 +511,12 @@ def create_mirror(owner: str, remote_url: str, token: str, *, name: str = "", mo
             raise ValueError("that is not a workspace of yours")
         if get_mirror(workspace_id):
             raise ValueError("that workspace already mirrors something — detach or forget it first")
+        if page_filter is None:
+            from .folder_links import pushing_vault  # local: only a link to an existing workspace asks
+
+            if pushing_vault(workspace_id):
+                raise ValueError("that workspace has a synced vault that pushes everything from this computer: "
+                                 "let it push only PDFs, or only pull, first")
         with connect_users_db() as conn:  # (gamma/zotero_sync.py imports this module: plain SQL here)
             if conn.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ?", (workspace_id,)).fetchone():
                 raise ValueError("that workspace is kept in step with a Zotero library — remove that link first")
@@ -694,7 +704,7 @@ def remove_mirror(ws: str) -> None:
     _filters.pop(ws, None)
     with connect_pages_db(ws) as conn:
         conn.execute("DELETE FROM sync_pages")
-        conn.execute("DELETE FROM sync_conflicts")
+        conn.execute(f"DELETE FROM sync_conflicts WHERE {NOT_VAULT}")   # a synced vault's stay its own
         conn.execute("DELETE FROM sync_log")
         conn.commit()
 
@@ -876,53 +886,71 @@ def list_log(ws: str, limit: int = 50) -> list[dict]:
 
 
 def open_conflicts(ws: str) -> int:
+    """The open conflicts of the mirror or the Zotero link (a synced vault's
+    are its own: ``VAULT_KINDS``)."""
     with connect_pages_db(ws) as conn:
-        return conn.execute("SELECT COUNT(*) FROM sync_conflicts WHERE resolved = 0").fetchone()[0]
+        return conn.execute(f"SELECT COUNT(*) FROM sync_conflicts WHERE resolved = 0 AND {NOT_VAULT}").fetchone()[0]
 
 
 def open_conflict_mark(ws: str) -> tuple[int, int]:
     """``(count, newest id)`` of the open conflicts — the notice's
     fingerprint (gamma/notices.py): a new conflict changes it, resolving
-    some of the old ones does not bring the notice back."""
+    some of the old ones does not bring the notice back. A synced vault's
+    are not counted."""
     with connect_pages_db(ws) as conn:
         count, newest = conn.execute(
-            "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM sync_conflicts WHERE resolved = 0").fetchone()
+            f"SELECT COUNT(*), COALESCE(MAX(id), 0) FROM sync_conflicts WHERE resolved = 0 AND {NOT_VAULT}").fetchone()
     return int(count), int(newest)
 
 
-def list_conflicts(ws: str, *, resolved: bool = False, page_id: str = "") -> list[dict]:
+def _kinds_sql(kinds) -> tuple[str, list]:
+    """The condition on ``sync_conflicts.kind`` for ``kinds``: those kinds, or
+    with None every kind but a synced vault's."""
+    if kinds is None:
+        return NOT_VAULT, []
+    return f"kind IN ({', '.join('?' * len(kinds))})", list(kinds)
+
+
+def list_conflicts(ws: str, *, resolved: bool = False, page_id: str = "", kinds=None) -> list[dict]:
     """The decisions to look at (or the looked-at ones), newest first, one
-    page's only when ``page_id`` is given."""
+    page's only when ``page_id`` is given. ``kinds``: only those (a synced
+    vault reads ``VAULT_KINDS``); by default every kind but a vault's, which
+    is what the mirror's and Zotero's routes read."""
+    where, args = _kinds_sql(kinds)
     with connect_pages_db(ws) as conn:
         rows = conn.execute(
             "SELECT c.id, c.page_id, c.block_id, c.kind, c.mine, c.theirs, c.result, c.at, c.resolved, "
             "(SELECT content FROM unified_blocks WHERE id = c.page_id), c.base FROM sync_conflicts c "
-            "WHERE c.resolved = ? AND (? = '' OR c.page_id = ?) ORDER BY c.id DESC LIMIT 500",
-            (1 if resolved else 0, page_id, page_id)).fetchall()
+            f"WHERE c.resolved = ? AND (? = '' OR c.page_id = ?) AND c.{where} ORDER BY c.id DESC LIMIT 500",
+            (1 if resolved else 0, page_id, page_id, *args)).fetchall()
     return [dict(zip(("id", "page_id", "block_id", "kind", "mine", "theirs", "result", "at", "resolved",
                       "page_title", "base"), r)) for r in rows]
 
 
-def resolve_conflict(ws: str, conflict_id: int, choice: str) -> dict | None:
+def resolve_conflict(ws: str, conflict_id: int, choice: str, *, actor: str = ACTOR, kinds=None) -> dict | None:
     """``keep`` marks it seen; ``mine`` / ``theirs`` write that text into the
-    block (a normal local edit, pushed by the next round)."""
+    block (a normal local edit, pushed by the next round), as ``actor``: the
+    mirror's, or for a synced vault's ``file_won`` the account that made the
+    vault, whose next pull writes it to the file. ``kinds`` as for
+    ``list_conflicts``: a row of another kind is no row here (None)."""
     if choice not in ("keep", "mine", "theirs"):
         raise ValueError("choice must be keep, mine or theirs")
+    where, args = _kinds_sql(kinds)
     with connect_pages_db(ws) as conn:
-        row = conn.execute("SELECT page_id, block_id, kind, mine, theirs, result FROM sync_conflicts WHERE id = ?",
-                           (conflict_id,)).fetchone()
+        row = conn.execute(f"SELECT page_id, block_id, kind, mine, theirs, result FROM sync_conflicts WHERE id = ? AND {where}",
+                           (conflict_id, *args)).fetchone()
         if not row:
             return None
         page_id, block_id, kind, mine, theirs, result = row
         # the block's page now: it may have moved to another page since the conflict was recorded
-        home = page_root_id(conn, block_id) if choice != "keep" and kind in ("merged", "diverged") else None
+        home = page_root_id(conn, block_id) if choice != "keep" and kind in ("merged", "diverged", "file_won") else None
     if home:
         # written as an edit from the text the conflict recorded: whatever was
         # typed into the block since is merged over the chosen version, not lost
         op = {"op": "set", "id": block_id, "content": mine if choice == "mine" else theirs}
         if result:
             op["base"] = result
-        commit_ops(ws, home, [op], actor=ACTOR)  # an OpError leaves the conflict open
+        commit_ops(ws, home, [op], actor=actor)  # an OpError leaves the conflict open
     with connect_pages_db(ws) as conn:
         conn.execute("UPDATE sync_conflicts SET resolved = 1 WHERE id = ?", (conflict_id,))
         conn.commit()
@@ -1031,11 +1059,11 @@ def _push_bases(ws: str, remote: Remote, ops: list[dict], report: dict) -> None:
     copy's it could not apply. Only a file this copy reads as a drawing
     goes (not a version 1 base from before step 41), and one the remote
     refuses is let be: the push still carries ``base_ids``."""
-    uploads = ws_uploads_dir(ws)
+    stored = storage.files(ws)
     for op in ops:
         url = op["base_props"]["ink_url"] if _merges_ink(op) else ""
         name = _upload_name(url)
-        if not UPLOAD_NAME_RE.match(name) or inkmod.read_upload(uploads, url) is None \
+        if not UPLOAD_NAME_RE.match(name) or inkmod.read_upload(stored, url) is None \
                 or remote.head_ok(f"/api/uploads/{name}"):
             continue
         path = find_upload_file(name, ws)
@@ -1324,7 +1352,7 @@ def _with_base_ids(ws: str, ops: list[dict]) -> list[dict]:
     older release ignores the key."""
     out = []
     for op in ops:
-        base = inkmod.read_upload(ws_uploads_dir(ws), op["base_props"]["ink_url"]) if _merges_ink(op) else None
+        base = inkmod.read_upload(storage.files(ws), op["base_props"]["ink_url"]) if _merges_ink(op) else None
         out.append({**op, "base_ids": [s.id for s in base.strokes]} if base is not None else op)
     return out
 

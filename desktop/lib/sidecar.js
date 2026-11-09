@@ -163,9 +163,14 @@ async function start(ws, settings, appInfo, { avoid = [] } = {}) {
     GAMMA_DATA_DIR: ws.dataDir,
     GAMMA_VERSION: appInfo?.version || '',
     GAMMA_UPDATES: appInfo?.updates || '',
-    // This server keeps the folders on disk, anywhere the user picks: it
+    // This server keeps the synced vaults, anywhere the user picks: it
     // runs as the user, on the user's own machine.
     GAMMA_FOLDER_LINKS: '1',
+    // The shell's word, made anew at each start of the app (main.js
+    // SHELL_SECRET): the routes that take a path on this computer answer
+    // only a request that carries it as X-Gamma-Shell, so a page of Gamma
+    // never names a path itself. Empty: no check (the smoke run, tests).
+    GAMMA_SHELL_SECRET: appInfo?.shellSecret || '',
   };
   if (appInfo?.updates === 'mas') env.GAMMA_UPDATE_CHECK = 'off';
   // Fresh data dir: hand the server its first-admin credentials so the

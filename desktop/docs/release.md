@@ -338,24 +338,28 @@ upload checks.
 **Folders outside the sandbox.** A sandboxed app reads and writes its
 container, plus what the user picks in a native dialog until it quits. The
 folders the desktop app writes outside its container are the user's choice
-each time: the *Local server storage* folder and the folders kept on disk.
+each time: the *Local server storage* folder and the directories and files
+of synced vaults.
 The pickers ask for a security-scoped bookmark (`securityScopedBookmarks`),
 `lib/folderAccess.js` keeps it in the registry (`access`), and at launch,
 before any server starts, opens each one again
 (`app.startAccessingSecurityScopedResource`). The local servers inherit the
 app's sandbox, together with the folders the app holds at the moment they
 start. A folder picked while a server runs therefore reaches that server
-only once it starts again: after the user picks where to keep a folder,
-the server that is to write there starts again, on its port, when it
+only once it starts again: after the user picks a vault's directory or
+file, or locates one, the server that is to read or write there starts again, on its port, when it
 started before the pick (`reachFolder` in `main.js`). A bookmark that no
 longer opens (the folder moved or was deleted, its disk is not connected)
 leaves that folder closed for the run and stays stored. A local server
 whose data folder the app cannot open does not start; the launcher's
-failure card says why and offers *Choose folder…* (`shell:grant-folder`). A folder kept
-on disk there reports errors in the sync panel until it is kept again.
-Nothing else needs a grant: a PDF opened from the Finder is read by the
-app, which the open lets in; downloads go through the save dialog; the
-default storage is inside the container.
+failure card says why and offers *Choose folder…* (`shell:grant-folder`). A
+synced vault whose directory the app can no longer open reads as not there
+in the sync panel until *Locate…* picks it again. Nothing else needs a
+grant: a PDF opened from the Finder is uploaded by the app, which the open
+lets in (this build adds every opened PDF to the library rather than
+reading it where it is, since a server reaches only what the app held when
+it started); downloads go through the save dialog; the default storage is
+inside the container.
 
 **Versions.** App Store Connect counts its own: the marketing version
 (`CFBundleShortVersionString`) must be higher than the last one approved,

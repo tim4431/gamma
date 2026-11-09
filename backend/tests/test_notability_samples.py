@@ -25,7 +25,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageStat
 
 from conftest import make_user
 from gamma import ink, notability as nb, notability_import as ni, notability_map as nm, notability_ntb as ntb
-from gamma import notebook, picture
+from gamma import notebook, picture, storage
 from gamma.blocks_store import block_to_dict, fetch_subtree
 from gamma.db import connect_pages_db, ws_uploads_dir
 from gamma.import_zip import new_walk, walk_zip
@@ -183,7 +183,7 @@ def test_the_example_s_pictures_lie_where_notability_drew_them():
     paper = notebook.normalize_paper({"width": sheet["paper"]["width"], "height": sheet["paper"]["height"]})
 
     def render(pics: list[dict]) -> Image.Image:
-        pdf = notebook.notebook_pdf([(paper, [], [])], pictures=[pics], uploads_dir=ws_uploads_dir(ws))
+        pdf = notebook.notebook_pdf([(paper, [], [])], pictures=[pics], stored=storage.files(ws))
         pix = pymupdf.open(stream=pdf, filetype="pdf")[0].get_pixmap(matrix=pymupdf.Matrix(k, k), alpha=False)
         return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 

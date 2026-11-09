@@ -73,7 +73,7 @@ These describe the implementation unless explicitly marked as plans.
 | Block operations, page sockets, reconciliation, and undo | [Collaboration](collab.md) |
 | Offline workspace copies and sync conflicts | [Mirrors](mirror.md) |
 | A personal workspace kept in step with a Zotero library through Zotero's Web API: what syncs, the round, merging, PDFs, notes, annotations, conflicts, connecting the account | [Zotero link](zotero_sync.md) |
-| A folder of the workspace as a folder on disk, and a page that follows a PDF on disk: the layout, PDFs sent back, the desktop app's links, the gamma-sync client | [Folders and files on disk](folder_sync.md) |
+| A folder of the workspace and a directory on this computer kept in step, notes both ways, a PDF pushed to a page, and a PDF read where it is: what lands on disk, the lens, links and highlights, a round, conflicts, the rules, the desktop app, the routes, the gamma-sync client | [Synced vaults](synced_vaults.md) |
 | PDF transport, manifests, caching, and load timing | [PDF loading](pdf_loading.md) |
 | Ink format, input, editing, merging, and PDF ink import/export | [Handwriting](handwriting.md) |
 | The lasso selection's Convert menu: handwriting redrawn as clean shapes or turned into a text box by the chat's model, and copied or saved as SVG | [Handwriting and AI](handwriting_ai.md) |

@@ -1,0 +1,39 @@
+/* A page's standing with this computer (vault/VaultChip.jsx) and the
+   dialogs it opens (FolderPickerDialog.jsx, FileSourceDialog.jsx). */
+
+/* The chip among the page header's buttons: a ghost button with the file's
+   name, cut short; the card says the whole path. The header's button column
+   never shrinks (app.css .pageActionCol), so the chip is held to a few icons'
+   width, and a narrow page (a split tab group, a phone) keeps its title. (A
+   container query on the header would contain its layout, and with it the
+   popovers its buttons open.) */
+.vaultChip { max-width: 9em; min-width: 0; color: var(--text-secondary); }
+.vaultChip.warn { color: var(--warn); }
+.vaultChip > svg { flex-shrink: 0; }
+.vaultChipText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.vaultPopover { max-width: 360px; display: flex; flex-direction: column; gap: var(--space-2); }
+.vaultPath { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.vaultActions { display: flex; flex-direction: column; margin-top: var(--space-1); }
+
+/* Add to library…: the folder list (the move dialog's) and the switch under it. */
+.folderPickerKeep { margin-top: var(--space-3); }
+/* Another server's library: the hint beside its button, which wraps under it when narrow. */
+.folderPickerCarry { margin-top: var(--space-3); align-items: center; justify-content: space-between; }
+.folderPickerCarry .reportModalHint { flex: 1 1 14em; }
+
+/* Edit the file: the whole file in one editor, as tall as the window lets it be. */
+.fileSourceModal { width: min(820px, calc(100vw - 32px)); }
+.fileSourcePath { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.fileSourceEditor {
+  height: min(60vh, 560px); margin-top: var(--space-3); overflow: hidden;
+  border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--bg-field);
+}
+.fileSourceEditor .cm-editor { height: 100%; font-family: var(--font-mono); font-size: var(--fs-sm); }
+.fileSourceEditor .cm-editor.cm-focused { outline: none; }
+.fileSourceEditor .cm-scroller { font-family: var(--font-mono); line-height: var(--lh-ui); }
+/* The theme's text and caret, as .blockEditorCm's: CodeMirror's base theme
+   paints the caret black, unseen on a dark theme's field. */
+.fileSourceEditor .cm-content { padding: var(--space-3) 0; color: var(--text-primary); caret-color: var(--text-primary); }
+.fileSourceEditor .cm-line { padding: 0 var(--space-4); }
+.fileSourceMoved { margin-top: var(--space-3); color: var(--warn); }

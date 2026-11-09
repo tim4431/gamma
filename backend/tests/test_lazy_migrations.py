@@ -46,10 +46,11 @@ class Step:
 
 
 @pytest.fixture
-def step(data_dir, monkeypatch):
+def step(client, data_dir, monkeypatch):
     """users.db at the current version, then this build's step ``V``: the
     data directory is one version behind, and every workspace at the base
-    is behind on the step."""
+    is behind on the step. The session client comes first: its lifespan,
+    started inside a test, would open the test's workspaces on its own."""
     connect_users_db().close()
     step = Step()
     for module in (db, migrations, seed):
@@ -124,7 +125,7 @@ def test_the_startup_snapshot_leaves_the_workspaces_to_their_steps(step):
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         conn.execute("PRAGMA user_version = 32")
     result = migrations.ensure_current()
-    assert result["applied"] == ["page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox", "cloud_invitations", "email_invites", "zotero_links", "folder_links_push"]
+    assert result["applied"] == ["page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox", "cloud_invitations", "email_invites", "zotero_links", "folder_links_push", "folder_links_pull"]
     snap = backups.info(Path(result["backup"]).name)
     assert "workspaces/lzUntouched/pages.db" in snap["files"] and snap["workspaces"] is True
     assert stamp_of(pages_db("lzUntouched")) == 33  # stamped by the walk, still behind on step V

@@ -425,6 +425,34 @@ a link unsettled on purpose says so with `idle.skip(reason)`). The fuzz
 runs 8 seeds by default: `ZOTERO_FUZZ_SEEDS=2000 ZOTERO_FUZZ_STEPS=100`
 runs more, and `ZOTERO_FUZZ_TRACE=<key>` follows one object round by round.
 
+The synced vaults' tests ([synced_vaults.md](synced_vaults.md)) work on
+real directories in `tmp_path` and a real workspace; a test that makes a
+vault removes it with `DELETE …?files=keep`, since the links live in the
+worker's shared users.db. By module: `test_md_lens.py` (the lens block by
+block, each law on small files) and `test_md_lens_corpus.py`, the gate: the
+lens's laws through `shape` over every Markdown file of the repository, the
+Notion fixtures and the Obsidian-style corpus in `tests/vault_fixtures/`,
+with random edits, inserts, deletes and moves from a seeded `random.Random`
+(the fixtures are stored with LF; CRLF, a byte-order mark and a missing last
+newline are made from them as bytes). `test_vault_links.py` (links and
+highlights), `test_vault_merge.py` (the three-way merge), `test_vault_disk.py`
+(the scan, the marker, the writes), `test_vault_store.py` (vaults.db, the
+journal, tombstones, history), `test_vault_sync.py` (every step of push and
+pull, a kill at each point of the journal, the echo, a vault of 2,000
+notes), `test_vault_upgrade.py` (a folder kept before synced vaults taken
+onto the engine), `test_vault_http.py` (a vault of another server, over a
+TestClient standing in for it), `test_vault_routes.py` (the routes, the
+refusals, the hot loop, the page's own routes, the shell's secret) and
+`test_linked_files.py` (PDFs read where they are, and a server that keeps
+no links never making vaults.db); `test_folder_links.py` and
+`test_disk_push.py` keep the links' API and the PDFs pushed from disk. On
+the frontend, `vaultState.test.mjs` (a page's standing with this computer)
+and `notesLock.test.mjs` (what a vault that does not pull and pushes
+everything refuses); in
+`desktop/`, `keeping.test.js` (the sync panel's reading of a vault) and
+`zipNames.test.js` (what the shell looks for in the Gamma export that takes
+an opened PDF to another server's library).
+
 Rules the frontend mirrors — search normalization (`gamma/textnorm.py` ↔
 `frontend/src/shared/lib/textnorm.js`), published pages' slugs
 (`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`), text boxes
@@ -758,6 +786,16 @@ The scenarios live in `tests/e2e/scenarios/`:
   log and settings (cadence, detach, reattach), a same-block conflict
   resolved on its row chip, Remove origin ([mirror.md](mirror.md)).
   `--only mirror`.
+- `vaults.mjs`: synced vaults and PDFs read where they are, as a page of
+  the desktop app shows them ([synced_vaults.md](synced_vaults.md)). A
+  second Gamma keeps vaults (`GAMMA_FOLDER_LINKS=1`, no shell secret) and
+  the browser says it is the desktop app (an Electron user agent); real
+  temp directories are made vaults through the API. The page's chip and
+  card (Show in folder), Edit the file and its 409, a block changed in the
+  file and in Gamma resolved on its merge chip, the notes lock of a vault
+  that does not pull and pushes everything, a PDF opened through `/open` added to the library
+  from its tab menu, and the folder and Document menu items, whose
+  messages to the shell an init script records. `--group vaults`.
 - `zotero-link.mjs`: a Zotero link on the clone's surfaces. A second Gamma
   talks to the fake Zotero (`backend/tests/zotero_fake.py --port 0`, over
   HTTP, serving `zotero_fixtures.standard_library`) through

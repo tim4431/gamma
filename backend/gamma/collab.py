@@ -123,6 +123,22 @@ def room_for(ws: str, page_id: str) -> Room | None:
     return _rooms.get((ws, page_id))
 
 
+def open_pages() -> list[tuple[str, str]]:
+    """``(workspace, page id)`` of every page someone has open in a room now:
+    the pages a synced vault looks at often (gamma/folder_links.py
+    ``hot_tick``). The pseudo-pages' rooms are left out."""
+    from .blocks_store import TREES  # local: they import db / seed, which must not import rooms
+
+    return [key for key, room in list(_rooms.items()) if room.peers and key[1] not in TREES]
+
+
+def editing(ws: str, page_id: str) -> set[str]:
+    """The blocks of the page someone in its room is on (a focused row or an
+    open editor): what a writer that is no person leaves alone for now."""
+    room = _rooms.get((ws, page_id))
+    return {peer.block for peer in list(room.peers.values()) if peer.block} if room else set()
+
+
 def _schedule(coro) -> None:
     """Run a coroutine on the sockets' loop from anywhere."""
     if _loop is None or _loop.is_closed():
