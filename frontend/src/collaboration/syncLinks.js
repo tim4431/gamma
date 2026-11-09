@@ -6,7 +6,8 @@
 // The pill, its popover, the conflict cards and Settings' Clones and
 // Zotero links section serve both, asking this module which URL to call,
 // what the actions both surfaces offer are titled, when a round follows an
-// edit, which workspaces a new clone or link may go into, and, for a link,
+// edit, how Sync now follows its round, which workspaces a new clone or
+// link may go into, and, for a link,
 // what a force and "If a page differs" say, what its new workspace is
 // named, what its settings for sending PDFs and for its cadence say, what
 // its error, its progress and queue, its unsent edits, its log's actions,
@@ -141,9 +142,41 @@ export function onChangeHint(kind) {
 // "mirror": a mirror's rows carry no kind.
 export const linkKind = (x) => (x === "zotero" || x?.kind === "zotero" ? "zotero" : "mirror");
 
-// The API path of one link, below /api: `linkPath(info, ws, "/sync?wait=1")`.
+// The API path of one link, below /api: `linkPath(info, ws, "/sync")`.
 export const linkPath = (kindOrInfo, ws, path = "") =>
   `${LINK_BASES[linkKind(kindOrInfo)]}/${encodeURIComponent(ws)}${path}`;
+
+// Whether the round a Sync now asked for is still ahead in a link's info
+// or in Sync now's answer ({status}): asked for and not started
+// (`status.asked_at`, which a clone's and a Zotero link's round takes off
+// as it starts), or running. A folder link's Sync now answers with its
+// round's `running` already set. A detached link runs none.
+export const roundAhead = (info) => Boolean(info) && !info.detached && info.mode !== "off"
+  && Boolean(info.status?.running || info.status?.asked_at);
+
+// Sync now without a request held open for the round, which a proxy cuts
+// after 100 s of silence (a first fill takes minutes): `post()` asks for
+// the round and answers at once, `read()` reads the link again, every
+// `every` ms while the round is ahead (roundAhead). Answers the last
+// reading, the round's outcome once it is over. `alive()` false (the
+// surface closed) stops following with what was read last. A read the
+// network failed (no HTTP status) is tried again at the next turn; one
+// the server answered with an error (the link removed meanwhile) ends it
+// with that error.
+export async function followSync(post, read, { every = LINK_POLL_FAST_MS, alive = () => true,
+  sleep = (ms) => new Promise((done) => setTimeout(done, ms)) } = {}) {
+  let info = await post();
+  while (roundAhead(info) && alive()) {
+    await sleep(every);
+    if (!alive()) break;
+    try {
+      info = await read();
+    } catch (err) {
+      if (err?.status) throw err;
+    }
+  }
+  return info;
+}
 
 // The current workspace's link, from its /api/session row: "zotero" (a
 // Zotero link that is not off), "mirror" (a clone or a publication), or "".
@@ -167,8 +200,8 @@ export const linkGone = (w) => (w && (w.mirror_of || w.zotero_of || w.zotero_det
 
 // A Zotero link's log actions (its sync_log rows, the pill's log) in its
 // words, for t(). A clone's are MirrorPopover.jsx's ACTION_TEXT. "kept
-// here": Zotero trashed the collection of a folder that is shared or kept
-// on disk, so the folder stays (gamma/zotero_sync_folders.py).
+// here": Zotero trashed the collection of a folder that is shared or a
+// synced vault, so the folder stays (gamma/zotero_sync_folders.py).
 export const ZOTERO_LOG_ACTIONS = {
   "pulled": T("pulled from Zotero"),
   "pushed": T("pushed to Zotero"),
@@ -180,7 +213,7 @@ export const ZOTERO_LOG_ACTIONS = {
   "restored there": T("restored in Zotero (edited here after it was trashed there)"),
   "replaced here": T("Zotero's version replaced this one"),
   "replaced there": T("this version replaced Zotero's"),
-  "kept here": T("kept here — in Zotero's trash, but the folder is shared or kept on disk"),
+  "kept here": T("kept here — in Zotero's trash, but the folder is shared or a synced vault"),
 };
 
 // The name the server gives the personal library (zotero_web.libraries).

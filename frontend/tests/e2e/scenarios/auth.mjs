@@ -143,6 +143,17 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       await page.waitForSelector('[data-guide="add.urlInput"]:focus');
       await page.locator('[data-guide="header.add"]').click();
       await until(() => page.locator('[data-guide="add.urlInput"]').count().then((n) => n === 0));
+      // Uploads: the system picker for several files of a page's kinds, in
+      // the page while it is open (shared/lib/pickFiles.js); nothing picked
+      // leaves the library as it was.
+      const chooser = page.waitForEvent("filechooser");
+      await panel.getByRole("button", { name: /Upload PDFs/ }).click();
+      const picker = await chooser;
+      const input = await picker.element().evaluate((i) => ({ multiple: i.multiple, accept: i.accept, inPage: i.isConnected }));
+      assert(input.multiple && input.accept.includes(".pdf") && input.inPage, `the picker: ${JSON.stringify(input)}`);
+      await picker.setFiles([]);
+      await until(() => page.locator('input[type="file"]').count().then((n) => n === 0), { what: "the picker's input leaves the page" });
+      assertEq(await panel.count(), 1, "nothing picked, nothing added");
       // The Import dialog.
       await panel.getByRole("button", { name: /Import a library/ }).click();
       const dialog = page.getByRole("dialog", { name: "Import" });

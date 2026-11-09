@@ -4,9 +4,11 @@ Tokens are bound to an account and workspace. No library content is written
 until the import, which runs as a background job (``POST /api/jobs/import``,
 routers/imports.py): the job holds a filesystem claim while it reads the
 upload, keeps the report as its result and removes the upload once done.
-Cancelled and expired uploads are removed. The dialog that shows a review
-keeps it (``touch``), and one past its TTL that no upload has swept yet
-comes back.
+Cancelled and expired uploads are removed. The preview, a background job
+of its own (``POST /api/jobs/import-preview``), keeps the review it read
+beside the upload (``keep_review``), where a dialog that comes back reads
+it (``review``). The dialog that shows a review keeps it (``touch``), and
+one past its TTL that no upload has swept yet comes back.
 
 An upload arrives in one request (``create``) or, when it is larger than a
 proxy in front of the server lets one request carry, in parts
@@ -128,6 +130,28 @@ def update(token, user_id, ws, **meta):
         (path / "metadata.json").write_text(json.dumps({**metadata, **meta}), encoding="utf-8")
 
 
+def keep_review(token, user_id, ws, review, **meta):
+    """Keep what the preview found beside the upload (``review.json``), for
+    a dialog that comes back to it (``review``), and add ``meta`` to the
+    metadata as ``update`` does. Under the review's claim."""
+    with claim(token, user_id, ws) as (path, metadata):
+        part = path / "review.json.part"
+        part.write_text(json.dumps(review), encoding="utf-8")
+        part.replace(path / "review.json")
+        if meta:
+            (path / "metadata.json").write_text(json.dumps({**metadata, **meta}), encoding="utf-8")
+
+
+def review(token, user_id, ws):
+    """The review ``keep_review`` kept; reading it is activity (``touch``).
+    409 while its preview has not kept one yet."""
+    path, _ = touch(token, user_id, ws)
+    try:
+        return json.loads((path / "review.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise HTTPException(status_code=409, detail="this review is still being read") from None
+
+
 def get(token, user_id, ws, pending=False):
     """The review's directory and metadata; an upload still arriving in
     parts only with ``pending`` (409 otherwise)."""
@@ -186,6 +210,6 @@ def claim(token, user_id, ws, pending=False):
 def discard(token, user_id, ws):
     with claim(token, user_id, ws, pending=True) as (path, _):
         # Remove payload while claimed; the small token directory follows.
-        for name in ("upload", "metadata.json"):
+        for name in ("upload", "review.json", "metadata.json"):
             (path / name).unlink(missing_ok=True)
     _remove(path)

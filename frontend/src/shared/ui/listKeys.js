@@ -1,3 +1,5 @@
+import { composing } from "../lib/hotkeys.js";
+
 // ↑/↓ between a search box and the results listed under it (Settings'
 // search, the move-to-page filter, the chat's page picker): ↓ from the box
 // focuses the first result, ↑/↓ walk the results, ↑ from the first goes back
@@ -6,7 +8,7 @@
 // when the key was handled.
 export function stepList(event, box, items) {
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return false;
-  if (event.nativeEvent?.isComposing || event.altKey || event.ctrlKey || event.metaKey) return false;
+  if (composing(event) || event.altKey || event.ctrlKey || event.metaKey) return false;
   const down = event.key === "ArrowDown";
   const active = document.activeElement;
   const at = items.indexOf(active);

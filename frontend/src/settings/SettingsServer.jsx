@@ -1,7 +1,7 @@
 // Settings → Server (admins only): everything that is about the server
 // rather than one account — the dashboard (build, uptime, warnings, the
-// update check), on a hosted container the plan its limits come from
-// (HostedPlan), the storage defaults every account inherits, guests and
+// update check), the reports people made here (SettingsReports.jsx), on a
+// hosted container the plan its limits come from (HostedPlan), the storage defaults every account inherits, guests and
 // demo mode (SettingsGuests.jsx), the shared AI provider every account may
 // use (SettingsAi.jsx), the shared workspaces (SettingsWorkspacesAdmin.jsx),
 // the database check, whole-data-directory snapshots (SettingsBackups.jsx
@@ -20,6 +20,7 @@ import { PublicUrlSettings } from "./SettingsPublicUrl";
 import { CloudSignInSettings } from "./SettingsCloudSignIn";
 import { GuestSettings } from "./SettingsGuests";
 import { SharedAiProviderSettings } from "./SettingsAi";
+import { ContentReports } from "./SettingsReports";
 import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, CloudIcon, DatabaseIcon, ExternalLinkIcon, ServerIcon,
   UsersIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
@@ -41,6 +42,9 @@ export function ServerSettings({ value }) {
       </Section>
       <Section title={t("Sign-in")} action={signInAction}>
         <CloudSignInSettings setStatus={value.setStatus} action={setSignInAction} />
+      </Section>
+      <Section title={t("Reports")}>
+        <ContentReports setStatus={value.setStatus} confirm={value.confirm} />
       </Section>
       <HostedPlan setStatus={value.setStatus} onSynced={() => value.refreshQuota?.()} />
       <Section title={t("Storage defaults")}>

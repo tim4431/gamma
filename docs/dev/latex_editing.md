@@ -93,7 +93,8 @@ Other editors (a text box, a comment, an embed) convert in
 previews show it so (`joinBlockText`, `AiGhostRow`). `dollarMath`'s `keep`
 is the text the AI read. The pairs and dollar spans that text holds in its
 prose stay as written. `tests/shared/pastemath.json` holds the cases both
-suites check.
+suites check: `dollar` the conversion, `paste` the caret positions where a
+paste stays as copied.
 
 Where code is, the keys, a paste, the editor's marks and formulas and the chat
 read one way: `shared/lib/mdCode.js` (`codeFences`, `codeSpans`, `codeTest`,
@@ -198,7 +199,11 @@ run that ends the name ranks before one in its middle (`\rm` lists
 Code-style fuzzy tail (`fuzzyMatch`): every typed letter must appear in
 order in the name, starting with its first letter, ranked by the gaps the
 match needed and then by name length (`\mcal` → `\mathcal`, `\bsym` →
-`\boldsymbol`, `\sbeq` → `\subseteq`). Ties keep catalog order. Each row
+`\boldsymbol`, `\sbeq` → `\subseteq`). Ties keep catalog order, with one
+exception: a command the typed letters begin moves up to just before the
+first match that extends it, so `\tex` offers `\text` before `\textstyle`
+and `\i` offers `\in` before `\int` (`headsFirst`). Environments never
+move (`aligned` stays before `align`, which needs display math). Each row
 marks the letters the typed ones matched (the "/" menu's `Matched`
 marks), so a row reached through a run or the fuzzy tail shows why it
 is there. Typed text is never rewritten on its

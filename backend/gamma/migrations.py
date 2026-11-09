@@ -1824,6 +1824,68 @@ def _v47_parent_page(ws: str, pages: sqlite3.Connection, data) -> None:
         block_columns(pages)
 
 
+def _v48_deleted_with(ws: str, pages: sqlite3.Connection, data) -> None:
+    """``unified_blocks`` gains the generated ``deleted_with`` (the page a
+    page in Recently deleted went there with, its
+    ``properties.deleted_with``: ops.trash_page) and its partial index
+    ``idx_ub_deleted_with``, so the trash's reads of what went with a page
+    (``ops._went_with``) are indexed: ``block_columns`` adds the missing
+    column after the others, with the index, as step 47 does. Nothing is
+    stamped or touched: the column is derived (``DERIVED_STEPS``)."""
+    if _columns(pages, "unified_blocks"):
+        block_columns(pages)
+
+
+# users.db ``content_reports`` and its state index as schema version 49
+# shaped them, frozen: step 49 creates them from these.
+_V49_CONTENT_REPORTS = [
+    """CREATE TABLE IF NOT EXISTS content_reports (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        details TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        author TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        workspace_id TEXT NOT NULL DEFAULT '',
+        page_id TEXT NOT NULL DEFAULT '',
+        comment_id TEXT NOT NULL DEFAULT '',
+        link TEXT NOT NULL DEFAULT '',
+        reporter_id TEXT NOT NULL DEFAULT '',
+        reporter TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL,
+        resolved_at TEXT NOT NULL DEFAULT '',
+        resolved_by TEXT NOT NULL DEFAULT '',
+        sent_at TEXT NOT NULL DEFAULT '',
+        send_error TEXT NOT NULL DEFAULT ''
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_content_reports_state ON content_reports(state, created_at)",
+]
+
+
+def _v49_content_reports(conn: sqlite3.Connection) -> None:
+    """users.db gains ``content_reports`` (reports of comments, pages and AI
+    replies, gamma/reports.py) and its state index, from the step's frozen
+    statements. Re-runnable: both are ``IF NOT EXISTS``. No workspace is
+    touched."""
+    for stmt in _V49_CONTENT_REPORTS:
+        conn.execute(stmt)
+    conn.commit()
+
+
+def _v50_folder_links_pull(conn: sqlite3.Connection) -> None:
+    """``folder_links`` gains ``pull``, whether Gamma's changes reach the
+    disk: on, what a folder link has always done, off on a file link, which
+    Gamma never writes. ``push`` keeps its column and may now say 2,
+    everything. Re-runnable: the column is added only where ``_columns()``
+    lacks it. No workspace is touched."""
+    if "pull" not in _columns(conn, "folder_links"):
+        conn.execute("ALTER TABLE folder_links ADD COLUMN pull INTEGER NOT NULL DEFAULT 1")
+    conn.execute("UPDATE folder_links SET pull = 0 WHERE kind = 'file'")
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1847,6 +1909,8 @@ STEPS = [
     (43, "email_invites", _v43_email_invites),
     (45, "zotero_links", _v45_zotero_links),
     (46, "folder_links_push", _v46_folder_links_push),
+    (49, "content_reports", _v49_content_reports),
+    (50, "folder_links_pull", _v50_folder_links_pull),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,
@@ -1859,9 +1923,10 @@ WORKSPACE_STEPS = [
     (41, "ink_v2", _v41_ink_v2),
     (44, "picture_kind", _v44_picture_kind),
     (47, "parent_page", _v47_parent_page),
+    (48, "deleted_with", _v48_deleted_with),
 ]
 
 # The workspace steps that only add a column SQLite derives from the rows
 # stored before them: two copies on either side of one hold the same data,
 # so they leave ``workspace_format`` as it is and a mirror keeps syncing.
-DERIVED_STEPS = {47}
+DERIVED_STEPS = {47, 48}

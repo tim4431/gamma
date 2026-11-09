@@ -3,9 +3,10 @@
 // rows. The kind glyph, the title with the query's matches marked (exact
 // matches only; a typo-only match stays unmarked), under it the pages a
 // sub-page is in ("Top › Parent", the row's `path`) then authors and year, a
-// file row's folder/label chips, then a check when `checked`, "Current" on
-// the open page, or else the row's time. The picker passes the option
-// button's own props (selection, hover, click).
+// file row's folder/label chips (a sub-page's labels only: its path is
+// where it is, and folders it carries count for nothing), then a check
+// when `checked`, "Current" on the open page, or else the row's time. The
+// picker passes the option button's own props (selection, hover, click).
 import React from "react";
 import { CheckIcon, FileGlyph } from "../shared/ui/Icons";
 import { MarkedText } from "../search/SearchPanel";
@@ -21,11 +22,12 @@ export default function PageOption({ row: { page, time, path }, tree, query, cur
   const authors = (meta.authors || []).slice(0, 2).join(", ");
   const detail = [path, authors, meta.year].filter(Boolean).join(" · ");
   const title = page.content || t("Untitled");
+  const chips = filingChips(tree, page.properties);
   return (
     <button title={[title, detail].filter(Boolean).join("\n")} data-kind="page" {...props}>
       <FileGlyph isPdf={!!pageAttachment(page)} size={16} />
       <span><strong><MarkedText text={title} query={query} /></strong>{detail && <small>{detail}</small>}</span>
-      <CardLabels className="fileRowLabels" {...filingChips(tree, page.properties)} />
+      <CardLabels className="fileRowLabels" folders={path ? [] : chips.folders} labels={chips.labels} />
       {checked ? <CheckIcon size={14} />
         : page.id === currentPageId ? <em className="quickOpenTag">{t("Current")}</em>
         : time ? <em className="quickOpenTime">{formatRelativeTime(time)}</em> : null}

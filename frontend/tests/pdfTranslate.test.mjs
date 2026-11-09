@@ -34,6 +34,55 @@ test("textRuns maps items through the viewport and flags rotated text", () => {
   assert.equal(up.rotated, true);
 });
 
+test("a block set whole in a bold or italic face says so, nearly all its text by the characters", () => {
+  const set = (face, text = "Words of a heading set whole") => words(text, 72, 100).map((r) => ({ ...r, face }));
+  assert.deepEqual([segmentPage(set("CMBX12"))[0].bold, segmentPage(set("CMBX12"))[0].italic], [true, false]);
+  assert.deepEqual([segmentPage(set("CMTI10"))[0].bold, segmentPage(set("CMTI10"))[0].italic], [false, true]);
+  assert.deepEqual([segmentPage(set("CMR10"))[0].bold, segmentPage(set("CMR10"))[0].italic], [false, false]);
+  assert.equal(segmentPage(set(""))[0].bold, false, "a face without a name");
+
+  const leadIn = [...set("CMBX10", "Notes:"), ...words("the rest of the line runs on in its roman text", 110, 100).map((r) => ({ ...r, face: "CMR10" }))];
+  assert.equal(segmentPage(leadIn)[0].bold, false, "a bold lead-in");
+  const mostly = [...set("CMBX10", "A heading that runs on over all these bold words"), { ...run("x", 340, 100), face: "CMR10" }];
+  assert.equal(segmentPage(mostly)[0].bold, true, "one stray letter of another face");
+});
+
+test("a formula does not count against a bold block, nor a math italic for an italic one", () => {
+  const bold = (text, x) => words(text, x, 100).map((r) => ({ ...r, face: "CMBX12" }));
+  const formula = { ...run("Ωab", 200, 100), face: "CMMI10" };
+  assert.equal(segmentPage([...bold("Dephasing under", 72), formula])[0].bold, true);
+  const mathOnly = [{ ...run("Ωab", 72, 100), face: "CMMI10" }, { ...run("cdΩ", 110, 100), face: "CMMI10" }];
+  assert.equal(segmentPage(mathOnly)[0].italic, false);
+});
+
+test("a block names the font most of its text is in, when the file holds it and it is no Type 3", () => {
+  const roman = words("the roman text of a paragraph runs on", 72, 100).map((r) => ({ ...r, font: "g_d0_f2", face: "CMR10" }));
+  const emphasis = words("in italics", 250, 100).map((r) => ({ ...r, font: "g_d0_f3", face: "CMTI10" }));
+  const [p] = segmentPage([...roman, ...emphasis]);
+  assert.deepEqual([p.font, p.face], ["g_d0_f2", "CMR10"]);
+  const loose = roman.map((r) => ({ ...r, noFile: true }));
+  assert.equal(segmentPage(loose)[0].font, undefined, "drawn in a font of the machine's: not the paper's");
+  assert.equal(segmentPage(roman.map((r) => ({ ...r, type3: true })))[0].font, undefined, "a Type 3 font");
+  assert.equal(segmentPage(roman.map((r) => ({ ...r, face: "" })))[0].font, undefined, "a font without a name");
+  const fixture = blockWith(page(1), "Ensembles of neutral atoms");
+  assert.equal(fixture.face, "CMR10");
+});
+
+test("textRuns says which runs' fonts the file does not hold", () => {
+  const items = [{ str: "Hi", transform: [10, 0, 0, 10, 72, 700], width: 10, fontName: "g_d0_f1" },
+                 { str: "Ho", transform: [10, 0, 0, 10, 90, 700], width: 10, fontName: "g_d0_f2" }];
+  const faces = new Map([["g_d0_f1", { name: "Helvetica", type3: false, noFile: true }], ["g_d0_f2", { name: "CMR10", type3: false, noFile: false }]]);
+  const [loose, held] = textRuns(items, [1, 0, 0, -1, 0, 800], { faces });
+  assert.deepEqual([loose.noFile, held.noFile], [true, undefined]);
+});
+
+test("a face changes a block's style, never what goes to the model", () => {
+  const set = (face) => words("Words of a heading set whole", 72, 100).map((r) => ({ ...r, face }));
+  const [plain] = segmentPage(set("CMR10")), [bold] = segmentPage(set("CMBX10"));
+  assert.equal(bold.src, plain.src);
+  assert.equal(bold.text, plain.text);
+});
+
 test("columns stay apart where the gutter runs, though the baselines differ", () => {
   // The fixture's page 1: "…collective Rabi frequency √N Ω grows with the
   // number" (left) shares a visual line with "state |G⟩ and the symmetric
@@ -44,6 +93,32 @@ test("columns stay apart where the gutter runs, though the baselines differ", ()
   for (const b of blocks.filter((x) => x.text.length > 200 && !x.text.startsWith("We study"))) {
     assert.ok(b.x2 < 306 || b.x1 > 310, `a body block crosses the gutter: ${b.text.slice(0, 60)}`);
   }
+});
+
+test("an inline formula that sorts onto the other column's line goes back into its sentence", () => {
+  // The right column sits 0.47 line heights below the left. Its formula, in a
+  // font with no metrics (the defaults' taller glyph box), sorts a little
+  // higher than its words, before their line exists, and within reach of
+  // the left column's line.
+  const text = { asc: 0.683, desc: -0.218 }, math = { asc: 0.8, desc: -0.25, font: "m" };
+  const dy = 4.7;
+  const runs = [
+    ...words("The atoms are loaded from a cloud into", 54, 100, text),
+    ...words("the tweezers and imaged after a time of", 54, 112, text),
+    ...words("flight that sets how far they spread out.", 54, 124, text),
+    ...words("We scan the probe across the narrow", 315, 100 + dy, text),
+    ...words("space resonance at fixed intensity", 315, 112 + dy, text),
+    run("I", 480, 112 + dy, math), run("≃", 488, 112 + dy, math), run("170", 496, 112 + dy, math), run("I", 514, 112 + dy, math),
+    ...words("Solid lines are", 522, 112 + dy, text),
+    ...words("guides to the eye for the data shown.", 315, 124 + dy, text),
+  ];
+  const blocks = segmentPage(runs);
+  const right = blockWith(blocks, "fixed intensity");
+  assert.ok(right && /intensity I ≃ 170 ?I Solid lines are guides/.test(right.text), right?.text);
+  assert.ok(!blockWith(blocks, "a time of").text.includes("170"), "the left column keeps its own words");
+  // Boxes of one column's lines may touch at a point; none lies over another.
+  const overlap = (a, b) => Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1) > 1 && Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1) > 1;
+  assert.ok(blocks.every((a, i) => blocks.every((b, j) => i === j || !overlap(a, b))), "no block lies over another");
 });
 
 test("a big operator joins the line it is drawn on, not the one its baseline sits on", () => {
@@ -73,6 +148,53 @@ test("sub- and superscripts stay in their line, before or after their glyph", ()
   const texts = segmentPage(runs).map((b) => b.text);
   assert.ok(texts.includes("1Institute for Test Physics 2Department of Optics"), texts.join(" | "));
   assert.ok(texts.includes("energy E2 xi"), texts.join(" | "));
+});
+
+test("an inline fraction folds into the formula on its line, not the lines above and below it", () => {
+  // σ = ½ √(1 + T) on a 10pt line: the numerator and the denominator stand
+  // clear of its glyphs, under the words of the line above and over those of
+  // the line below. TeX's radical hangs from a baseline at the line above's.
+  const math = (s, x, over = {}) => ({ ...run(s, x, 209.5, { w: 6, ...over }), face: "CMMI10" });
+  const line = [
+    ...words("Gaussian with", 54, 209.5),
+    math("σ", 120), math("=", 126, { w: 7.7 }),
+    run("1", 139.3, 205.5, { h: 7, w: 4 }), run("2", 139.3, 212.9, { h: 7, w: 4 }),
+    { ...run("√", 144.4, 201.2, { w: 8.3, asc: 0.75, desc: -0.25 }), face: "CMSY10" },
+    run("1 +", 152.7, 209.5, { w: 15 }), math("T", 169.9),
+    ...words("due to the position", 185, 209.5),
+  ];
+  const blocks = segmentPage([...words("the expanded state is a sheared and wide cloud", 54, 198), ...line, ...words("momentum correlation of the two", 54, 221)]);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].src, "the expanded state is a sheared and wide cloud Gaussian with {v1} due to the position momentum correlation of the two");
+  const [formula] = blocks[0].spans;
+  assert.ok(/σ/.test(formula.str) && /√/.test(formula.str) && /T/.test(formula.str), formula.str);
+  assert.ok(formula.y1 > 198, "the crop stays below the line above");
+  // A small label well clear of the line it stands beside is no part of it.
+  const beside = segmentPage([...words("the expanded state is a sheared cloud", 54, 198), ...words("in a wide trap", 54, 209.5), run("7", 170, 205.5, { h: 7, w: 4 })]);
+  assert.ok(!beside.some((b) => /trap ?7/.test(b.text)), beside.map((b) => b.text).join(" | "));
+});
+
+test("a run's own metrics stand for any radical but Computer Modern's", () => {
+  const runs = [...words("the upper line of the text", 54, 198), run("√", 100, 201.2, { w: 8 }), ...words("then the lower line", 110, 209.5)];
+  assert.ok(segmentPage(runs)[0].text.startsWith("the upper line"));
+  assert.ok(segmentPage(runs)[0].text.includes("√"), "it stands with the line its metrics put it on");
+});
+
+test("a display equation's number at the right margin stays apart from the paragraph below it", () => {
+  for (const number of ["(1)", "(12a)", "(A.7)", "(2.14)"]) {
+    const blocks = segmentPage([
+      ...words("the scale factor of the trap is set by the depth of it", 54, 100),
+      run(number, 290, 112, { w: 12 }),
+      ...words("provided the scale factor is held and so the wave packet", 54, 123),
+      ...words("stays where it is in the trap for all of the time.", 54, 134),
+    ]);
+    assert.deepEqual(blocks.map((b) => b.text), ["the scale factor of the trap is set by the depth of it", number,
+      "provided the scale factor is held and so the wave packet stays where it is in the trap for all of the time."]);
+    assert.equal(blocks[1].translate, false);
+  }
+  // A list's number at the left edge opens its item as before.
+  const item = segmentPage([run("(1)", 54, 100, { w: 12 }), ...words("provided the scale factor is held", 70, 100), ...words("and the wave packet stays in the trap.", 54, 111)]);
+  assert.deepEqual(item.map((b) => b.text), ["(1) provided the scale factor is held and the wave packet stays in the trap."]);
 });
 
 test("rotated text never joins the column it runs past", () => {
@@ -154,6 +276,18 @@ test("isTranslatable keeps prose and skips symbol soup", () => {
   assert.equal(isTranslatable("We consider N identical atoms."), true);
   assert.equal(isTranslatable("x y z p q"), false);
   assert.equal(isTranslatable("(1)"), false);
+});
+
+test("a formula's operator names are no words: what is left of an equation stays original", () => {
+  assert.equal(isTranslatable(" cos sin ;"), false);
+  assert.equal(isTranslatable("cos2 sin2 = 1"), false);
+  assert.equal(isTranslatable("arctan x + exp y"), false);
+  assert.equal(isTranslatable("log max min"), false);
+  // Fewer than four letters of words left: an equation with a word or two.
+  assert.equal(isTranslatable(" cos and sin"), false);
+  assert.equal(isTranslatable("The cost of the sine"), true, "a word that begins like one");
+  assert.equal(isTranslatable("min of the cost, in log scale"), true);
+  assert.equal(isTranslatable("Max Planck"), true, "names keep their capital");
 });
 
 test("an author line is a list of names with their marks; a name pair without marks or prose is not", () => {

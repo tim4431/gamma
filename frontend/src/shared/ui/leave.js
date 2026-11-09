@@ -22,15 +22,21 @@ export const LONGEST_MS = 1000;
 // another stands. One that takes another's place keeps the page as it
 // stood under them: a dialog opened as one closes keeps the dim (motion.css
 // [data-over]). Toasts stand side by side, so a toast takes no other's
-// place. `arrivals` counts each kind's arrivals, `pending` its leaves whose
-// copy goes in at the end of the commit, `leaving` its copies in the page.
+// place. A surface attached again before its own leave has gone through
+// (StrictMode attaching its ref a second time in development, a ref handed
+// over) has not arrived: it takes no place and is not marked over its own
+// leave, so a dialog's dim still comes in. `arrivals` counts each kind's
+// arrivals, `pending` its leaves whose copy goes in at the end of the
+// commit, `holding` the elements those leaves are for, `leaving` its
+// copies in the page.
 const SIDE_BY_SIDE = new Set(["toast"]);
 const arrivals = new Map();
 const pending = new Map();
+const holding = new WeakSet();
 const leaving = new Map();
 const add = (map, kind, n) => map.set(kind, (map.get(kind) || 0) + n);
 function arrive(kind, node) {
-  if (SIDE_BY_SIDE.has(kind)) return;
+  if (SIDE_BY_SIDE.has(kind) || holding.has(node)) return;
   if (pending.get(kind) || leaving.get(kind)?.size) node.dataset.over = "";
   add(arrivals, kind, 1);
   for (const copy of leaving.get(kind) || []) copy.remove();
@@ -130,8 +136,10 @@ export function leave(node, kind) {
   const at = standing(node);
   const inFlow = style.position === "static" || style.position === "relative";
   add(pending, kind, 1);
+  holding.add(node);
   queueMicrotask(() => {
     add(pending, kind, -1);
+    holding.delete(node);
     if (node.isConnected || !at.parent.isConnected || (arrivals.get(kind) || 0) !== arrived) return;
     if (inFlow) standBack(copy, at);
     else at.parent.insertBefore(copy, at.next?.parentNode === at.parent ? at.next : null);

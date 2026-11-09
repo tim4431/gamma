@@ -65,7 +65,7 @@ export const KINDS = {
 // key), text_box, picture, sheet, recording (an object there), link (a
 // link_url or link_page_id that is set), highlight (a pdf_position object),
 // note. The per-kind predicates each test one step; chained, they are the
-// server's rule (tests/test_block_columns.py pins the same cases).
+// server's rule (tests/shared/blockkind.json pins both).
 export function blockKind(b, { isPage = false, isFolder = false, isLabel = false } = {}) {
   if (isPage || b?.parent_id === "root" || b?.parent_id === "trash") return "page";
   if (isFolder || b?.page_id === "folders") return "folder";

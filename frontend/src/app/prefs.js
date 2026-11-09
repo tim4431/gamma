@@ -18,6 +18,7 @@ export function useAppPrefs() {
   const prefs = {};
   for (const name of PREF_NAMES) {
     const def = PREFS[name];
+    // biome-ignore lint/correctness/useHookAtTopLevel: PREF_NAMES is a constant, so the loop runs the same hooks in the same order every render
     const [value, setValue] = usePersistedState(def.key, def.default, def);
     prefs[name] = value;
     prefs[setterName(name)] = setValue;

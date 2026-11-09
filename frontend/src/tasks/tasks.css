@@ -34,7 +34,7 @@
   border: 0;
   background: none;
   color: inherit;
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
   text-align: left;
 }
 button.taskMain { cursor: pointer; border-radius: var(--radius-sm); }

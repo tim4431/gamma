@@ -23,6 +23,7 @@ import { t } from "../../shared/i18n/i18n.js";
 import { Popover } from "./Surfaces";
 import { Chevron, IconSwap, MorphText } from "./MotionWidgets";
 import ListMotion from "./ListMotion";
+import { composing } from "../lib/hotkeys.js";
 
 // Shared chrome for every dockable window: one grip (drag to move or
 // reorder, double press to fold), the close button right beside it, then
@@ -83,7 +84,7 @@ const useDockFolded = () => useContext(DockFolded);
 
 function DockWindow({ title, guide, onGrip, onFold, onClose, headerContent, collapsed, children }) {
   return (
-    <div className={`dockWindow${collapsed ? " dockWindowFolded" : ""}`} inert={collapsed ? "" : undefined}>
+    <div className={`dockWindow${collapsed ? " dockWindowFolded" : ""}`} inert={!!collapsed}>
       {collapsed ? null : (
         <DockHeader title={title} guide={guide} onGrip={onGrip} onFold={onFold} onClose={onClose} headerContent={headerContent} />
       )}
@@ -737,7 +738,7 @@ function OpenTabs({
                 aria-label={t("Find an open tab")}
                 onChange={(event) => { setFilter(event.target.value); setPick(0); }}
                 onKeyDown={(event) => {
-                  if (event.nativeEvent.isComposing) return;
+                  if (composing(event)) return;
                   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                     event.preventDefault();
                     const step = event.key === "ArrowDown" ? 1 : -1;

@@ -26,7 +26,8 @@ import {
   NEEDS_YOU, SETTLED, autoOpens, canContinue, connectorNote, continuePrompt, handoffHint, handoffState,
   openRoute, pollDelay, replyHandoffs, wallHeadline, watchNote,
 } from "./fetchHandoff.js";
-import { composing } from "./enterKey.js";
+import { composing } from "../shared/lib/hotkeys.js";
+import { pickFiles } from "../shared/lib/pickFiles.js";
 
 const requestUrl = (id) => `${API}/ai/handoffs/${encodeURIComponent(id)}`;
 // The desktop app opens links in the system browser, where a Connector may be.
@@ -88,7 +89,6 @@ function HandoffCard({ handoff, isLast, readOnly, autoOpen, onState, live = fals
   const [dragOver, setDragOver] = useState(false);
   const [skipping, setSkipping] = useState(false); // the "what instead?" line is open
   const [instead, setInstead] = useState("");
-  const fileRef = useRef(null);
   const autoTried = useRef(false);
   const [round, setRound] = useState(0);
   const state = handoffState(view, { opened });
@@ -262,7 +262,7 @@ function HandoffCard({ handoff, isLast, readOnly, autoOpen, onState, live = fals
             </button>
           )}
           <button type="button" className={`uiBtn sm${state === "opened" && !queued ? " primary" : ""}`} disabled={!!working}
-            onClick={() => fileRef.current?.click()} title={t("Choose the PDF you downloaded")}>
+            onClick={() => pickFiles({ accept: ".pdf,application/pdf" }, ([file]) => upload(file))} title={t("Choose the PDF you downloaded")}>
             <UploadIcon size={14} />{t("Upload PDF")}
           </button>
           {live ? (
@@ -272,8 +272,6 @@ function HandoffCard({ handoff, isLast, readOnly, autoOpen, onState, live = fals
             <button type="button" className="uiBtn sm ghost" disabled={!!working}
               onClick={() => dismiss()}>{t("Dismiss")}</button>
           )}
-          <input ref={fileRef} type="file" accept=".pdf,application/pdf" hidden
-            onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} />
         </div>
       ) : null}
     </div>

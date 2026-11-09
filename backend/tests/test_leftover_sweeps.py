@@ -50,6 +50,21 @@ def test_stale_snapshot_temp_files_are_swept():
     assert not fresh.exists() and kept.exists()
 
 
+def test_the_sweep_removes_final_copies_past_their_days():
+    """A deleted workspace's final copy goes after DELETED_KEEP_DAYS even
+    when no workspace is deleted after it."""
+    d = ws_backup.deleted_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    expired, recent = d / "lsw-expired-20200101-000000.zip", d / "lsw-recent-20200101-000000.zip"
+    for f in (expired, recent):
+        f.write_bytes(b"x")
+    _aged(expired, (ws_backup.DELETED_KEEP_DAYS + 1) * 86400)
+    _aged(recent, (ws_backup.DELETED_KEEP_DAYS - 1) * 86400)
+    ws_backup.sweep_stale_temp()
+    assert not expired.exists() and recent.exists()
+    recent.unlink()
+
+
 def test_a_deleted_workspace_waits_for_a_file_held_open(monkeypatch):
     make_user("lsw_del", "lswdelpw12")
     owner = login("lsw_del", "lswdelpw12")

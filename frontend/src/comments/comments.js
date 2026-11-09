@@ -209,6 +209,9 @@ export function resolveThread(threads, id, resolved, by, at) {
 // workspace's owner deletes anyone's). A tombstone is no one's to change.
 export const canEditComment = (comment, me) => !!me && !comment.deleted && comment.author === me;
 export const canDeleteComment = (comment, me, owner = false) => !comment.deleted && (owner || canEditComment(comment, me));
+// Report (support/reportContent.js): anyone's comment but one's own, a
+// link visitor's too; a tombstone has nothing left to report.
+export const canReportComment = (comment, me) => !comment.deleted && (!me || comment.author !== me);
 
 // A comment whose text was changed after it was written.
 export const isEdited = (comment) => !comment.deleted && !!comment.updated_at && comment.updated_at !== comment.created_at;

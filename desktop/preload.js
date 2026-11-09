@@ -5,11 +5,13 @@
 // - http(s) pages (a server's Gamma frontend) get NOTHING exposed. Two
 //   things happen there, both one way, page to shell: the page's
 //   `data-theme` attribute is reported so the shell chrome paints in the
-//   same theme, and a folder's "Keep on this computer…" or a page's "Follow
-//   a file on this computer…" request, which the page posts to itself
-//   (frontend/src/app/App.jsx), is passed on as it is. The shell checks it
-//   and asks the user for the directory or the file. Gamma stays a black
-//   box.
+//   same theme, and a page's requests about this computer, which the page
+//   posts to itself (frontend/src/app/App.jsx), are passed on as they are
+//   (PAGE_ASKS): a folder's "Sync with this computer…", a page's "Push
+//   from a file on this computer…", its file shown in its folder, its
+//   missing file located, an opened PDF carried to another server's
+//   library. The shell checks each and asks the user for the directory, the
+//   file or the server. Gamma stays a black box.
 
 const { contextBridge, ipcRenderer } = require('electron');
 
@@ -35,9 +37,12 @@ if (process.isMainFrame && shellPages.includes(pageUrl.href)) {
     openWorkspace: (id) => ipcRenderer.invoke('shell:open-workspace', id),
     keepOffline: (id) => ipcRenderer.invoke('shell:keep-offline', id),
     folders: (wsId) => ipcRenderer.invoke('shell:folders', wsId),
-    keepFolder: (wsId, folderId) => ipcRenderer.invoke('shell:keep-folder', wsId, folderId),
+    addFolderVault: (wsId, folderId) => ipcRenderer.invoke('shell:add-folder-vault', wsId, folderId),
+    addVault: () => ipcRenderer.invoke('shell:add-vault'),
+    // The vault dialog's answer: `{ pull, push }` to sync, null to cancel.
+    answerVault: (id, answer) => ipcRenderer.invoke('shell:answer-vault', id, answer),
     keeping: () => ipcRenderer.invoke('shell:keeping'),
-    keepingAction: (kind, serverId, id, action) => ipcRenderer.invoke('shell:keeping-action', kind, serverId, id, action),
+    keepingAction: (kind, serverId, id, action, value) => ipcRenderer.invoke('shell:keeping-action', kind, serverId, id, action, value),
     openPath: (wsId, p) => ipcRenderer.invoke('shell:open-path', wsId, p),
     openCopy: (id) => ipcRenderer.invoke('shell:open-copy', id),
     openOriginal: (id) => ipcRenderer.invoke('shell:open-original', id),
@@ -79,10 +84,22 @@ if (process.isMainFrame && shellPages.includes(pageUrl.href)) {
   };
   if (document.documentElement) start();
   else document.addEventListener('DOMContentLoaded', start, { once: true });
+  // Message type -> [channel, the id it names beside the workspace]. The
+  // names before synced vaults stay, for a page of an older server opened
+  // in this app.
+  const PAGE_ASKS = {
+    'sync-folder-on-disk': ['shell:sync-folder-from-page', 'folder'],
+    'keep-folder-on-disk': ['shell:sync-folder-from-page', 'folder'],
+    'push-file-on-disk': ['shell:push-file-from-page', 'page'],
+    'follow-file-on-disk': ['shell:push-file-from-page', 'page'],
+    'reveal-on-disk': ['shell:reveal-from-page', 'page'],
+    'relocate-file': ['shell:relocate-from-page', 'page'],
+    'carry-to-server': ['shell:carry-from-page', 'page'],
+  };
   window.addEventListener('message', (e) => {
     const d = e.data;
     if (e.source !== window || e.origin !== window.location.origin || !d || d.source !== 'gamma-app') return;
-    if (d.type === 'keep-folder-on-disk') ipcRenderer.send('shell:keep-folder-from-page', String(d.ws || ''), String(d.folder || ''));
-    else if (d.type === 'follow-file-on-disk') ipcRenderer.send('shell:follow-file-from-page', String(d.ws || ''), String(d.page || ''));
+    const ask = Object.prototype.hasOwnProperty.call(PAGE_ASKS, d.type) ? PAGE_ASKS[d.type] : null;
+    if (ask) ipcRenderer.send(ask[0], String(d.ws || ''), String(d[ask[1]] || ''));
   });
 }

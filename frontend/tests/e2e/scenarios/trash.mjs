@@ -3,7 +3,8 @@ import { Account, live, wanted } from "../harness.mjs";
 // Recently deleted (docs/dev/home_library.md "Recently deleted"): deleting a
 // page from the library moves it to the 30-day trash, the toolbar's trash
 // button lists it with Restore and Delete permanently, and a link to a page
-// in the trash says where it went and offers Restore.
+// in the trash says where it went and offers Restore. A page inside another
+// deleted on its own names the page Restore puts it back inside.
 export async function trashScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("trash")) return;
@@ -156,9 +157,40 @@ export async function trashScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // A page inside another, deleted on its own: its entry names the page a
+  // restore puts it back inside, by its path (the entry's `parent`).
+  await step("trash: a page inside another deleted on its own names its parent in Recently deleted, and Restore puts it back inside", async () => {
+    const binInside = await user.folder("bin/inside");
+    const top = await pageApi("Trash top", [binInside]);
+    const parent = await user.api("/api/pages", { method: "POST", body: { title: "Trash parent", parent_page: top.id } });
+    const child = await user.api("/api/pages", { method: "POST", body: { title: "Trash child", parent_page: parent.id } });
+    const { trashed: gone } = await user.api(`/api/blocks/${child.id}`, { method: "DELETE" });
+    assertEq(gone.parent, parent.id, "the delete's answer names the page it goes back inside");
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?ws=${user.ws}`);
+    try {
+      await page.locator(".fileList").waitFor({ timeout: 15000 });
+      await page.getByRole("button", { name: "Recently deleted", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Recently deleted" });
+      const entry = dialog.locator(`.aiProvRow[data-page="${child.id}"]`);
+      await entry.waitFor();
+      const text = await entry.textContent();
+      assert(text.includes("comes back inside “Trash top › Trash parent”"), `the entry names its parent by its path: ${text}`);
+      assert(text.includes("bin / inside"), `and its top's folder: ${text}`);
+      await entry.getByRole("button", { name: "Restore", exact: true }).click();
+      await entry.waitFor({ state: "detached" });
+      await until(async () => (await page.locator(".statusPill .pillText").allTextContents())
+        .some((said) => said.includes("Restored “Trash child” inside “Trash top › Trash parent”.")), { what: "the status says where it went" });
+      const { block } = await user.api(`/api/blocks/${child.id}/subtree`);
+      assertEq(block.properties.parent_page, parent.id, "back inside its parent");
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   // From ten pages on a bulk action is a row of Background tasks that
   // counts them (library/pageBatch.js); the status says how many went.
-  await step("trash: twelve selected pages deleted at once count in Background tasks, and the status says how many went", async () => {
+  await step("trash: twelve selected pages deleted at once go in one request, count in Background tasks, and the status says how many went", async () => {
     const binBatch = await user.folder("bin/batch");
     const batch = [];
     for (let i = 1; i <= 12; i++) batch.push(await pageApi(`Batch page ${i}`, [binBatch]));
@@ -172,10 +204,17 @@ export async function trashScenarios(env) {
       await rows.last().click({ button: "right" });
       await page.locator(".ctxMenuItem", { hasText: "Delete 12 pages" }).click();
       const confirm = page.locator(".confirmModal", { hasText: "Move these 12 pages to Recently deleted?" });
+      // the twelve go in one request (POST /blocks/bulk), none page by page
+      const sent = [];
+      page.on("request", (req) => {
+        const path = new URL(req.url()).pathname;
+        if (path.startsWith("/api/blocks/") && ["POST", "DELETE"].includes(req.method())) sent.push(`${req.method()} ${path}`);
+      });
       await confirm.getByRole("button", { name: "Delete", exact: true }).click();
       await until(async () => (await page.locator(".statusPill .pillText").allTextContents())
         .some((text) => text.includes("Moved 12 pages to Recently deleted.")), { what: "the status counts what went" });
       assertEq(await rows.count(), 0, "gone from the folder");
+      assertEq(sent.join(", "), "POST /api/blocks/bulk", "one request for the twelve");
       const inTrash = await trashed();
       assert(batch.every((p) => inTrash.includes(p.id)), "every page is in the trash");
 

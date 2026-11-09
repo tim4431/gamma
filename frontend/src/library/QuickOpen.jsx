@@ -6,21 +6,21 @@
 // each group under its heading with its time on the right. Typing ranks
 // pages, folders and labels through createLibraryMatcher — the home listing's
 // search: typo-tolerant, on the title or the folder/label chips (a sub-page
-// also on the pages it is in, its row's second line), title hits first — in
-// sections of their own with the matched characters marked, and ends with two
-// actions: search inside notes and PDFs for the query (Ctrl+Enter; the
-// workspace search opens with it) and create a page titled with it
-// (Shift+Enter). ↑↓ moves, Enter opens, Esc closes.
+// on its top's folders, and also on the pages it is in, its row's second
+// line), title hits first — in sections of their own with the matched
+// characters marked, and ends with two actions: search inside notes and PDFs
+// for the query (Ctrl+Enter; the workspace search opens with it) and create
+// a page titled with it (Shift+Enter). ↑↓ moves, Enter opens, Esc closes.
 //
 // A query starting with ">" is the command palette (Ctrl+Shift+P opens it
 // with the prefix typed): `commands()` — App's list of what applies right
 // now, each {id, label, group, keyLabel, run} (docs/dev/hotkeys.md) —
 // filtered by the same matcher on the label and group, Enter runs the pick.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { FolderIcon, LabelIcon, PlusIcon, SearchIcon, TerminalIcon } from "../shared/ui/Icons";
 import { commandIcon } from "../app/commandIcons.jsx";
-import { chordLabel } from "../shared/lib/hotkeys.js";
+import { chordLabel, composing } from "../shared/lib/hotkeys.js";
 import { MarkedText } from "../search/SearchPanel";
 import PageOption, { recencySections } from "./PageOption";
 import { createLibraryMatcher, rankLibraryPages } from "./librarySearch";
@@ -46,7 +46,9 @@ export default function QuickOpen({
   const canSearch = !!onSearch;
   const canCreate = !!onCreate;
 
-  useEffect(() => { if (open) setQuery(prefix); }, [open, prefix]);
+  // The box keeps the last query while closed: the prefix replaces it before
+  // the open palette paints, or a key typed at once would be undone.
+  useLayoutEffect(() => { if (open) setQuery(prefix); }, [open, prefix]);
   // The command palette found (the guide's palette hint retires on it).
   useEffect(() => { if (open && commandMode) guideEvents.emit("commands.opened"); }, [open, commandMode]);
 

@@ -46,6 +46,12 @@ test("only final texts are written: a block not landed or that came back as its 
   assert.equal(exportLayout(view([[1, entry([block(), block()], ["", null])]]), KEY), null);
 });
 
+test("a block shown in the original here is written translated, and a figure's text the reader asked for is written", () => {
+  const paras = [block(), block({ translate: false }), { ...block({ translate: false }), figure: true }];
+  const e = entry(paras, ["第一段", undefined, "图中文字"], { original: new Set([0]) });
+  assert.deepEqual(exportLayout(view([[1, e]]), KEY).pages[0].blocks.map((b) => b.parts), [["第一段"], ["图中文字"]]);
+});
+
 test("a formula token is the original's box on its page, from the block itself or another page's block", () => {
   const own = block({ spans: [math("x^2", 60.123, 101.456, 70.789, 109.994, 108.006), { kind: "text", str: "[12]" }] });
   const elsewhere = math("Ω", 400.5, 50.25, 410.75, 60.5, 58.333);
@@ -70,6 +76,38 @@ test("coordinates are rounded to two decimals and pages go in order", () => {
   assert.deepEqual(out.pages.map((p) => p.page), [2, 3, 12]);
   assert.deepEqual(out.pages[0].blocks[0].lines, [[54, 100.01, 300.33, 110.67], [54.1, 112.13, 280.56, 122]]);
   assert.equal(out.pages[0].blocks[0].size, 9.96);
+});
+
+test("a block goes as the overlay sets it: its room, centred, bold, italic, an opener's indent, and only what it has", () => {
+  const set = { ...block({ lines: [[100, 100, 150, 110]] }), room: { x1: 54.004, x2: 300.006 }, centred: true, bold: true, italic: true };
+  const hanging = { ...block(), indent: -12 };
+  const opener = { ...block(), indent: 9.962 };
+  const [first, plain, under, opens] = exportLayout(view([[1, entry([set, block(), hanging, opener], ["标题", "正文", "悬挂", "开头"])]]), KEY).pages[0].blocks;
+  assert.deepEqual(first.box, [54, 100, 300.01, 110]);
+  assert.deepEqual([first.centred, first.bold, first.italic], [true, true, true]);
+  assert.deepEqual(Object.keys(plain).sort(), ["lines", "parts", "size"]);
+  assert.deepEqual(Object.keys(under).sort(), ["lines", "parts", "size"], "a hanging indent has nowhere to go, as on screen");
+  assert.equal(opens.indent, 9.96);
+});
+
+test("a block justified in the original goes justified, and with the name of the face it is set in", () => {
+  const set = { ...block(), justified: true, font: "g_d0_f2", face: "CMR10" };
+  const [written] = exportLayout(view([[1, entry([set], ["正文"])]]), KEY).pages[0].blocks;
+  assert.equal(written.justified, true);
+  assert.equal(written.face, "CMR10", "its name, which the file knows it by, not pdf.js's id");
+  assert.equal(written.font, undefined);
+});
+
+test("a block's foot goes as on screen", () => {
+  const [written] = exportLayout(view([[1, entry([{ ...block(), foot: 120.123 }], ["正文"])]]), KEY).pages[0].blocks;
+  assert.equal(written.foot, 120.12);
+});
+
+test("a centred block goes with no indent, as on screen: its first line is only shorter", () => {
+  const centred = { ...block(), centred: true, indent: 10.5 };
+  const [written] = exportLayout(view([[1, entry([centred], ["标题"])]]), KEY).pages[0].blocks;
+  assert.equal(written.centred, true);
+  assert.equal(written.indent, undefined);
 });
 
 test("the dialog's count is the pages the export writes", () => {
@@ -126,5 +164,7 @@ test("a segmented page's formulas and citation markers go out as the segmenter f
     size: r(p.size),
     parts: ["公式 ", { page: 1, box: [r(f.x1), r(f.y1), r(f.x2), r(f.y2)], base: r(f.base), text: f.str },
       ` 与引用 ${p.spans[c - 1].str}`],
+    indent: r(p.indent),
+    face: "CMR10",
   }]);
 });

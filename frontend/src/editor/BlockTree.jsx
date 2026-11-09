@@ -2,6 +2,7 @@
 // editing, [[refs]], link chips, image drop/paste), drag handles, and the tree.
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { textOf } from "../shared/lib/textOf";
+import { pickFiles } from "../shared/lib/pickFiles.js";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import { MergeChip } from "../collaboration/MergeResolver";
@@ -27,7 +28,7 @@ import { isTextBox } from "../markup/textBox.js";
 import { isPicture, pictureMarkdown } from "../markup/picture.js";
 import { PictureCard } from "../markup/PictureLayer";
 import { picturesDrag } from "../markup/pictureUpload.js";
-import { composing } from "../chat/enterKey.js";
+import { composing } from "../shared/lib/hotkeys.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
 import { CitationPill, GammaLinkCard, handleMarkdownCopy, useDockFolded } from "../shared/ui/Widgets";
@@ -1001,14 +1002,10 @@ const BlockRow = React.memo(function BlockRow({
       // upload appends to the value captured here, with "/image" removed.
       pickImage: () => {
         const base = value.slice(0, start) + value.slice(cursor);
-        const inp = document.createElement("input");
-        inp.type = "file";
-        inp.accept = "image/*";
-        inp.onchange = async () => {
-          const url = await uploadImage(inp.files?.[0]);
+        pickFiles({ accept: "image/*" }, async ([file]) => {
+          const url = await uploadImage(file);
           if (url) onChangeText(block.id, (base ? base + "\n" : "") + `![](${url})`);
-        };
-        inp.click();
+        });
       },
     }),
   });
@@ -2108,7 +2105,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
               onClick={() => { setHandleMenu(null); rowProps.onAddSheetAfter(block.id); }}
             >{t("Add page below")}</MenuItem>
           ) : null}
-          {block.id !== "root" ? (
+          {block.id !== "root" && rowProps.onDuplicate ? (
             <MenuItem
               icon={CopyIcon}
               title={t("Insert a copy below (sub-blocks included; highlight anchors are not copied)")}
@@ -2215,10 +2212,16 @@ function AiGhostRow({ content, depth }) {
 // sibling the call names (at the end when it names none or an unknown one).
 // `onSheet`: a sheet holds these rows (notebook/notebook.js), which puts
 // a text box among them on it.
+// `notesLocked`: the page's notes are written elsewhere (a synced vault that
+// pushes everything and does not pull, vault/vaultState.js): a note's row is
+// drawn as read-only, with no editor, no handles and no drag, while a
+// highlight's row keeps its own, so a highlight is still made and its note
+// written. Unlike `readOnly`, which is the whole workspace's, nothing else of
+// the page is locked.
 // A fold of more blocks than this opens and shuts at once.
 const FOLD_MOVES_MOST = 60;
 
-function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = false, zoteroLock = "" }) {
+function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = false, zoteroLock = "", notesLocked = false }) {
   // Every row takes its own entry of the labels map, never the map itself
   // (a new one on every tree change would re-render each memoized row).
   // So too the comment counts: each row its own number, and whether its
@@ -2254,19 +2257,21 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
         const commentCount = commentCounts?.get(block.id) || 0;
         const commentOpen = !!commentOpenFor && commentOpenFor === block.id;
         const sheetNumber = rowProps.sheetNumbers ? rowProps.sheetNumbers.get(block.id) || 0
-          : depth === 0 && isSheet(block) ? ++sheets : 0; return (
+          : depth === 0 && isSheet(block) ? ++sheets : 0;
+        const locked = notesLocked && !isHighlightBlock(block); return (
         <React.Fragment key={block.id}>
           {/* place: the row's index among its siblings and their count. A
               memoized row renders again only for a changed prop, and what
               the editing bar may do (move down, indent) reads the tree's
               order: a block moved among its siblings, or one added or
               removed beside it, is the same block at another place. */}
-          {!readOnly ? (
+          {!readOnly && !locked ? (
             <SortableBlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} refLabels={refLabels}
               commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} zoteroLock={zoteroLock} {...rowRest} />
           ) : (
             <BlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} refLabels={refLabels}
-              commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} zoteroLock={zoteroLock} {...rowRest} />
+              commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} zoteroLock={zoteroLock} {...rowRest}
+              readOnly={rowRest.readOnly || locked} />
           )}
           {/* The children fold under their row: the person's own toggle
               moves (foldMoving), anything else that folds or opens them (a
@@ -2277,7 +2282,8 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
               still={foldMoving !== block.id || countBlocks(block.children, FOLD_MOVES_MOST) > FOLD_MOVES_MOST}>
               <div className="blockChildren" data-motion-key={`under:${block.id}`}>
                 <BlockTree blocks={block.children} readOnly={readOnly} rowProps={rowProps} depth={depth + 1} parentId={block.id}
-                  onSheet={onSheet || isSheet(block)} zoteroLock={block.properties?.zotero_readonly ? block.id : zoteroLock} />
+                  onSheet={onSheet || isSheet(block)} zoteroLock={block.properties?.zotero_readonly ? block.id : zoteroLock}
+                  notesLocked={notesLocked} />
               </div>
             </Collapse>
           ) : null}

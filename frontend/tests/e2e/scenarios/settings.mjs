@@ -579,6 +579,48 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("settings: a model tag says whether the model calls tools, and a click checks it again", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // The verdicts and the check's answer are faked; the backend's are
+      // test_ai_tool_check.py's.
+      const reason = "upstream 404: No endpoints found that support tool use";
+      let listReads = 0;
+      await page.route("**/api/ai/settings", async (route) => {
+        listReads++;
+        const response = await route.fetch();
+        const json = await response.json();
+        const own = json.providers.find((p) => p.name === "Test connection");
+        own.tool_checks = { "test-model-a": { ok: false, reason, at: "2026-11-01T09:30:00.000000Z" },
+          "test-model-b": { ok: true, reason: "", at: "2026-11-01T09:30:00.000000Z" } };
+        await route.fulfill({ response, json });
+      });
+      let posted = null;
+      await page.route("**/api/ai/providers/*/test", async (route) => {
+        posted = route.request().postDataJSON();
+        await route.fulfill({ json: { ok: true, model: "test-model-a", latency_ms: 900,
+          tools: { ok: false, reason: "answered in text instead of calling the check tool: “ok”", at: "2026-11-06T09:30:00.000000Z" } } });
+      });
+      await openSettings(page);
+      await nav(page, "Connections").click();
+      const conn = page.locator(".settingsPane .aiProvRow").filter({ hasText: "Test connection" });
+      const tag = conn.getByRole("button", { name: "test-model-a", exact: true });
+      await tag.waitFor();
+      const title = await tag.getAttribute("title");
+      assert(title.startsWith(`No tools: ${reason} · checked `) && title.endsWith("Click to check again."), title);
+      assert((await conn.getByRole("button", { name: "test-model-b", exact: true }).getAttribute("title")).startsWith("Uses tools · checked "));
+      const reads = listReads;
+      await tag.click();
+      const result = conn.locator(".aiProvDesc").filter({ hasText: "can't use tools" });
+      await result.waitFor();
+      assertEq(await result.innerText(), "✗ test-model-a can't use tools");
+      assert((await result.getAttribute("title")).startsWith("answered in text"));
+      assertEq(posted.tools_model, "test-model-a", "the tag checks its own model");
+      await until(() => listReads > reads, { what: "the list read again" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: a pasted ChatGPT sign-in address connects at once, a device code is offered", async () => {
     const { ctx, page } = await setup();
     try {
@@ -1627,6 +1669,9 @@ export async function settingsScenarios(env) {
       assert((await statusLine.innerText()).startsWith("copying now…"), `the status while copying: ${await statusLine.innerText()}`);
       await page.waitForResponse((r) => r.url().endsWith("/api/admin/offsite") && r.request().method() === "GET", { timeout: 10000 });
       assert(await copying.isDisabled(), "still disabled after a status poll");
+      // held on its first database copy: the line says how far the round is
+      await until(async () => /^copying now… · databases 0 \/ [1-9]\d*/.test(await statusLine.innerText()),
+        { what: "the round's progress in the status line" });
       release();
       await status.getByRole("button", { name: "Copy now", exact: true }).waitFor({ timeout: 15000 });
       await until(async () => (await statusLine.innerText()).includes("last round"), { what: "the finished round's line" });
@@ -1742,6 +1787,37 @@ export async function settingsScenarios(env) {
       await page.click("button[aria-label='Background tasks']");
       await page.locator(".taskRow", { hasText: "Delete “Doomed lab”" }).locator(".taskStatus.done").waitFor();
       assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // A workspace being deleted takes no more changes (docs/dev/workspaces.md
+  // "Deleting a workspace"): the server refuses an edit with a 423 that names
+  // it, and the tab turns read-only and says so on a pill that stays. The
+  // refusal is routed in, in the server's shape: a real delete's final copy
+  // of a small workspace is over before a step could type into it.
+  await step("settings: an edit refused because the workspace is being deleted turns the tab read-only", async () => {
+    const ws = (await user.api("/api/session")).default_workspace;
+    const doc = await user.api("/api/pages", { method: "POST", body: { title: "Frozen notes" } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: doc.id, content: "Written before the delete" } });
+    const { ctx, page } = await setup(undefined, (context) => context.route("**/api/pages/*/ops", (route) => (
+      route.request().method() !== "POST" ? route.fallback() : route.fulfill({
+        status: 423, headers: { "X-Gamma-Workspace-Deleting": ws },
+        json: { detail: "“Home” is being deleted and takes no more changes", error: "workspace_deleting", workspace: ws },
+      }))));
+    try {
+      await page.goto(`${server.base}/?block=${doc.id}&ws=${ws}`);
+      await editRow(page, "Written before the delete");
+      await page.keyboard.type(" and after");
+      await closeEditor(page);
+      await page.locator(".statusPill", { hasText: "This workspace is being deleted, so changes are no longer saved." })
+        .getByRole("button", { name: "Reload", exact: true }).waitFor();
+      // read-only now: the refused edit went from the screen, and a note opens no editor
+      await page.locator(".blockRow", { hasText: "Written before the delete and after" }).waitFor({ state: "detached" });
+      await page.locator(".blockRow", { hasText: "Written before the delete" }).first().locator(".blockBody").click();
+      await sleep(300);
+      assertEq(await page.locator(".blockEditorCm").count(), 0, "no editor opens in a workspace being deleted");
+      assert(same(await tree(user, doc.id), [{ content: "Written before the delete", children: [] }]), "nothing was saved");
+      assertNoProblems(page, [/\/ops -> 423$/, /status of 423/]);
     } finally { await ctx.close(); }
   });
 

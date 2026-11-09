@@ -140,6 +140,17 @@ def page_of(conn, comment_id: str) -> str:
     return _located(conn, comment_id)[13]
 
 
+def reported(conn, comment_id: str) -> dict:
+    """``{page_id, author, body}`` of a comment someone reports
+    (gamma/reports.py): its page now, its author's name and its text; 404
+    as for a hidden comment, and for one deleted."""
+    row = _located(conn, comment_id)
+    comment = _comment(row, _names([row[4]]))
+    if comment["deleted"]:
+        raise HTTPException(status_code=404, detail="comment not found")
+    return {"page_id": row[13], "author": comment["author"], "body": comment["body"]}
+
+
 # --- writing -----------------------------------------------------------------------
 
 def _clean_body(body) -> str:

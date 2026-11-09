@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bibliographyPreviewUrl, bibliographyUrl, exportFormatOf, exportJobBody, exportQuery, exportSummary, hasReviewStep,
+import { bibliographyPreviewUrl, bibliographyUrl, exportFormatOf, exportJobBody, exportSummary, hasReviewStep,
   importSource, notionFiles, offersSubPages, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
 
 const allOff = Object.freeze({ highlights: false, notes: false, bundle: false });
@@ -260,11 +260,10 @@ test("a page with pages inside it offers Include pages inside on every format's 
   assert.equal(offersSubPages({ folder: null, subPages: 0 }), false);
 });
 
-test("the pages inside travel in the job's body, the share view's query and the summary", () => {
+test("the pages inside travel in the job's body and the summary", () => {
   const on = resolveExport({ format: "notability", subPages: true }, { ...paper, subPages: 2 });
   const body = exportJobBody(on.payload, { pageId: "p1" });
   assert.deepEqual(body, { page_id: "p1", sub_pages: true, mode: "notability", pdf: true, highlights: false, notes: true });
-  assert.equal(exportQuery(body), "mode=notability&pdf=1&highlights=0&notes=1&sub_pages=1");
   assert.match(exportSummary(on), /^This page as a Notability note: .* The 2 pages inside it are exported with it\.$/);
   // a page share's view counts only the pages right inside: the words name no number
   const direct = resolveExport({ format: "notability", subPages: true }, { ...paper, subPages: 1, subPagesDirect: true });
@@ -277,11 +276,9 @@ test("the pages inside travel in the job's body, the share view's query and the 
     "This paper's citation entry as a .bib file, under its citation key.");
   const off = resolveExport({ format: "notability", subPages: false }, { ...paper, subPages: 2 });
   assert.doesNotMatch(exportSummary(off), /inside it/);
-  assert.equal(exportQuery(exportJobBody(off.payload, { pageId: "p1" })), "mode=notability&pdf=1&highlights=0&notes=1");
+  assert.equal(exportJobBody(off.payload, { pageId: "p1" }).sub_pages, false);
   // a folder's body names no such flag: its pages always bring theirs
   assert.equal("sub_pages" in exportJobBody(on.payload, { folder: "Reading" }), false);
-  assert.equal(exportQuery({ mode: "annotated-pdf", pdf: false, highlights: true, notes: false, comments: true, notes_at: "page" }),
-    "mode=annotated-pdf&pdf=0&highlights=1&notes=0&comments=1&notes_at=page");
   // the bibliography link refreshes the same export
   assert.equal(bibliographyUrl("/api", { pageId: "p1", share: "tok", subPages: true }),
     "/api/pages/p1/export?mode=bibtex&sub_pages=1&share=tok");
@@ -292,9 +289,10 @@ test("a page's annotated PDF says it writes the translation the viewer shows; no
   const translated = { pages: 3, language: "中文（简体）" };
   const all = resolveExport({ format: "pdf", highlights: true, notes: true, comments: false }, { ...paper, translated });
   assert.equal(exportSummary(all), "The PDF with highlight annotations and your notes in a column beside each page."
-    + " The translation into 中文（简体） shown on 3 pages of the PDF is written in place of their original text.");
+    + " The translation into 中文（简体） replaces the original text on 3 pages. To export the original, show it first with the translate button.");
   const one = resolveExport({ format: "pdf", highlights: false, notes: false, comments: false }, { ...paper, translated: { ...translated, pages: 1 } });
-  assert.equal(exportSummary(one), "The PDF as stored, with the translation into 中文（简体） shown on 1 page written in place of its original text. Nothing else is added.",
+  assert.equal(exportSummary(one), "The PDF as stored, with nothing else added. The translation into 中文（简体） replaces the original text on 1 page."
+    + " To export the original, show it first with the translate button.",
     "with every switch off it is no longer the file exactly as stored");
   // the switches, the payload and the job's body are those of the same export untranslated
   const plain = resolveExport({ format: "pdf", highlights: true, notes: true, comments: false }, paper);
@@ -304,7 +302,7 @@ test("a page's annotated PDF says it writes the translation the viewer shows; no
   assert.deepEqual(exportJobBody(all.payload, { pageId: "p1" }), exportJobBody(plain.payload, { pageId: "p1" }));
   // the pages inside come after it
   const inside = resolveExport({ format: "pdf", highlights: true, notes: false, subPages: true }, { ...paper, subPages: 2, translated });
-  assert.match(exportSummary(inside), /written in place of their original text\. The 2 pages inside it are exported with it\.$/);
+  assert.match(exportSummary(inside), /show it first with the translate button\. The 2 pages inside it are exported with it\.$/);
   // not for another format, a folder, a PDF the server does not store, or no page translated
   for (const [opts, context] of [
     [{ format: "notespdf", highlights: true, notes: true }, { ...paper, translated }],
@@ -319,4 +317,33 @@ test("a page's annotated PDF says it writes the translation the viewer shows; no
   }
   assert.equal(exportSummary(resolveExport({ format: "pdf", ...allOff }, { ...paper, translated: null })),
     "The PDF file exactly as stored, with nothing added.");
+});
+
+test("while the pages a paper keeps are read in, the summary names no number of pages", () => {
+  const counting = { pages: 2, language: "中文（简体）", counting: true };
+  const resolved = resolveExport({ format: "pdf", highlights: true, notes: false, comments: false }, { ...paper, translated: counting });
+  assert.equal(exportSummary(resolved), "The PDF with highlight annotations."
+    + " The translation into 中文（简体） replaces the original text on the pages it covers, which are being counted."
+    + " To export the original, show it first with the translate button.");
+  assert.doesNotMatch(exportSummary(resolved), /\b2 pages\b/);
+});
+
+test("a folder's annotated PDF says how many of its papers go translated, and names no number while they are read", () => {
+  const folder = "Reading";
+  const translated = { papers: 2, language: "中文（简体）" };
+  const on = resolveExport({ format: "pdf", highlights: true, notes: false, comments: false }, { folder, translated });
+  assert.equal(exportSummary(on, folder), "Every paper's PDF in one .zip, with highlight annotations, its subfolders as folders."
+    + " Pages without a PDF are left out. The translation into 中文（简体） replaces the original text of 2 papers,"
+    + " which this browser left showing it. To export a paper's original, show it first with the translate button.");
+  const off = resolveExport({ format: "pdf", ...allOff }, { folder, translated: { ...translated, papers: 1 } });
+  assert.match(exportSummary(off, folder), /^Every paper's PDF in one \.zip with nothing else added, .* replaces the original text of 1 paper,/);
+  const counting = resolveExport({ format: "pdf", highlights: true, notes: false }, { folder, translated: { ...translated, counting: true } });
+  assert.match(exportSummary(counting, folder), /of the papers this browser left showing it, which are being counted\./);
+  assert.doesNotMatch(exportSummary(counting, folder), /\b2 papers\b/);
+  // none, or a page's count: nothing said, and the folder's file as stored
+  for (const t of [null, { ...translated, papers: 0 }, { pages: 3, language: "x" }]) {
+    const resolved = resolveExport({ format: "pdf", ...allOff }, { folder, translated: t });
+    assert.equal(resolved.translated, null);
+    assert.match(exportSummary(resolved, folder), /exactly as stored/);
+  }
 });

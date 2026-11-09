@@ -86,7 +86,12 @@ block) uses `--bg-selected`.
 - **One monospace stack**, `--font-mono`: code, raw math, key caps, cron
   fields, workspace folders. Bare `code`/`pre`/`kbd`/`samp` get it from a
   zero-specificity rule.
-- A component rule never names a font family; it uses one of the two tokens.
+- **One page face**, `--font-page`: the translated PDF page, nothing else. A
+  Latin serif with lining figures first (Times New Roman), so digits read as
+  digits beside formulas cropped from the page, then the serif CJK faces,
+  which `:lang()` rules in `tokens.css` pick for Traditional Chinese, Japanese
+  and Korean. It is set in the system's fonts, not bundled.
+- A component rule never names a font family; it uses one of the three tokens.
 - Counts, times and page numbers use `font-variant-numeric: tabular-nums`
   (the grouped rule under `body` in app.css), so they keep their width as
   the digits change.
@@ -134,7 +139,8 @@ reduced-motion rule of its own unless it wants a different still state.
 
 ### Ratchets
 
-Two node tests hold the tokens in place. Each may only get better.
+Three node tests hold the tokens and the conventions in place. Each may
+only get better.
 
 - **Contrast.** `node tools/themes.mjs` resolves tokens.css per theme the
   way a browser does. It prints text contrast for the pairs that matter:
@@ -148,11 +154,45 @@ Two node tests hold the tokens in place. Each may only get better.
   colour literal, a pixel font size, a corner radius over 2 px, an
   elevation shadow, a z-index above 9, a transition's time under half a
   second or its easing written out (a bezier or keyword: a fade leaves it
-  out, anything that moves takes an `--ease-*`). It
+  out, anything that moves takes an `--ease-*`), or a font family other than
+  `var(--font-sans)`, `var(--font-mono)` or `inherit`. It
   fails when a file holds more of one kind than `tests/design-baseline.json`
   records, and lists the new offenders. What is left is mostly the PDF
   page's own colours. After a cleanup,
   `node tools/designTokens.mjs --baseline` records the lower floor.
+- **Conventions.** `tests/uiConventions.test.mjs` scans every script and
+  stylesheet under `src/` (tokens.css aside) for code that goes round a
+  rule of this document:
+  - a native `<select>`, or an `<input type="color">` outside
+    `ColorPicker`;
+  - an `onContextMenu` or `onDoubleClick` past press.js, or a touch
+    handler;
+  - a `pointerType`, `maxTouchPoints` or pointer media query past
+    pointer.js;
+  - an `<input type="file">` past `pickFiles`;
+  - a text field's Enter that does not wait for `composing` (an input, a
+    textarea, a contentEditable, or a component named `…Input` or
+    `…Textarea` such as `AutoGrowTextarea` and `PasswordInput`), and a
+    username field that capitalizes or corrects;
+  - a text ×, an icon size off the scale, a `strokeWidth` on a sized icon;
+  - a class a shared component renders, written by hand (`ctxMenuItem`,
+    `popover`, `settingRow`…), and a `role="menu"` outside Menus.jsx;
+  - an inline z-index, font size, radius or font family, and an `onWheel`
+    that calls `preventDefault`;
+  - in a stylesheet, a hover reveal that still takes a tap,
+    `text-transform: uppercase`, `transition: all`, `font: inherit` on a
+    control, a `:focus` border and an `accent-color` off the root.
+
+  `tools/uiConventions.mjs` holds the rules, each with its fix and the
+  section of this document it comes from. The module a rule points to is
+  never counted, and the ink layer, where a pen draws and a finger scrolls,
+  reads the pointer itself. The test fails when a file holds more breaks
+  of a rule than `tests/ui-baseline.json` records, and lists them with the
+  fix. `node tools/uiConventions.mjs --list [rule]` prints every break.
+  After a fix, `node tools/uiConventions.mjs --baseline` records the lower
+  floor. Some rules are heuristics: an Enter passed down as a prop
+  (`onEnter`) or a CodeMirror keymap is not read, and a hover reveal is
+  paired only within one stylesheet.
 
 A value that is raw on purpose says why in a comment the scanner reads:
 `/* ds-allow: why */` on its line, or `ds-allow-start: why` …
@@ -161,6 +201,18 @@ collaborator colours, the transfer illustration, the custom-colour
 swatch's rainbow, a transition that follows the pointer. (The highlight and
 ink colours are not in a stylesheet at all: they come from the account's
 palette, `shared/model/palette.js`, as inline values.)
+
+A convention broken on purpose says why the same way, and names its rule:
+`ui-allow <rule>: why`. In a script the comment is a `//` line, a `/* */`
+inside a tag or a `{/* */}`; in a stylesheet, a `/* */`. It covers its own
+line, and the next line of code too when it stands alone on its line. A
+break inside a multi-line tag counts on every line of the tag, so a
+comment on any of them covers it. `ui-allow-start <rule>: why` …
+`ui-allow-end` covers a block. The test
+fails on an allow that names no rule, gives no reason or exempts nothing.
+Examples: the layout's `PHONE_MQ`, the library's double-click open (a tap
+opens where a click selects), the custom-colour swatch's native input, the
+model picker's listbox drawn as menu rows, and the two portalled popovers.
 
 ### The desktop shell and the extension
 
@@ -265,7 +317,9 @@ to `1.6 × 24 / size` (`iconStroke`), so a 14 and a 20 beside each other look
 equally heavy; a check mark is a touch heavier (`weight` 2). Pass
 `strokeWidth` only for an icon sized by CSS (`size={null}`). A close button
 is `uiClose` with an `XIcon` inside (14, inline with the title it closes;
-16 in `uiCloseLg`), never a text ×.
+16 in `uiCloseLg`), never a text ×. The conventions ratchet
+([Ratchets](#ratchets)) counts a size off this scale, a `strokeWidth` on a
+sized icon and a text ×.
 
 ### Section labels
 
@@ -275,7 +329,8 @@ handwriting strip's option-row captions) share
 one rule in app.css: sentence case, `--fs-xs`, weight 600, `--text-secondary`
 (dock titles a step up, `--fs-sm`), the Settings rail's look.
 Labels get no `text-transform: uppercase` or letter-spacing: the text keeps
-its own case, so only acronyms ("PDF") are capitals. A new label class joins
+its own case, so only acronyms ("PDF") are capitals. The conventions
+ratchet counts every `uppercase` left. A new label class joins
 that list and keeps only its layout in its own rule. The kind label on a card
 ("Page", "PDF") is the small muted version: `--fs-2xs`, weight 500,
 `--text-muted`; in the list it is a plain muted column.
@@ -367,7 +422,7 @@ browser zooming the page would not work from an `onWheel` prop.
 device reports in pixels. Firefox's line-mode deltas are converted first.
 The scale compounds on the module's own `live` value, not on the committed
 scale, which is a frame or two behind. The dispatch is coalesced to one per
-frame, because every commit re-renders every page. A viewer pushes its
+frame, because every commit re-lays-out every page. A viewer pushes its
 committed scale back in with `sync()`. That is ignored while a dispatch is
 in flight: the events that arrived since are already in `live`, and
 overwriting it dropped them (a 6-notch train zoomed about 3 notches' worth).
@@ -387,6 +442,41 @@ Each viewer supplies only the two commits, since anchoring depends on its
 layout. The PDF's re-bases scroll and lets its zoom-anchor effect re-place
 the point (`pdf/PdfViewer.jsx`). The notebook's names the sheet and the
 fraction of it to hold ([notebooks.md](notebooks.md)).
+
+**How the committed scale reaches the content.** A commit renders the
+viewer, never its pages or sheets:
+
+- The viewer writes the scale as `--viewer-scale` (`SCALE_VAR` in
+  `viewerZoom.js`) on its content layer, `.pdfZoomLayer` or `.nbColumn`.
+- `registerScaleVar` (`viewerZoom.js`, run as the first viewer installs
+  its gestures) registers it with `CSS.registerProperty` as a `<number>`
+  that does not inherit. An inherited custom property restyles every
+  element under the layer each time it changes, every text-layer span and
+  ink path, which costs more than the renders it saves.
+- What sizes with the zoom picks the variable up with
+  `--viewer-scale: inherit`: a page box, a sheet, a built text layer, a
+  translation layer. Anything else that reads it gets 1, silently.
+- Each of those carries an inline style written by script: React's `style`
+  or the text layer's build. WebKit's matched-properties cache gives an
+  element with no inline style, or only one parsed from markup, the value
+  it was first styled with, so its `inherit` never follows the layer.
+  Chromium and Firefox follow in every case. `registerScaleVar` first
+  checks that an `inherit` written that way follows its parent, and leaves
+  the variable inheriting where it does not, or where the browser has no
+  `CSS.registerProperty`: slower per frame, and the same picture.
+- A box is `scaledPx(w)`, `calc(var(--viewer-scale) * wpx)`. A text layer
+  is `scale(var(--viewer-scale))`.
+- Everything placed on a page is a percentage of its box: highlights, note
+  badges, link boxes, find marks, the review ghost, a pending area.
+- No page or sheet takes the scale as a prop. The PDF's pages in
+  comment-margin mode are the exception: the card column's offset is
+  worked out in px.
+- Code inside a page that needs the scale as a number reads the viewer's
+  `pdf/pageScale.js`. `get()` is the live value, which the raster reads.
+  `rest()` is the value once the zoom has stopped for `ZOOM_SETTLE_MS`,
+  at which the text layer is re-measured. The translation layer needs
+  neither: it is laid out once at its reference scale, and its one
+  transform reads `--viewer-scale` (`pdf/TransOverlay.jsx`).
 
 ### Fullscreen on touch devices
 
@@ -422,7 +512,9 @@ click on a flyout's trigger opens it and never toggles it shut. A row that opens
 `SubMenuItem` — it renders its panel *inside* the parent menu's DOM (a
 portalled panel would sit outside the parent's outside-pointerdown test, and
 the parent would dismiss itself before a click on a flyout row could land),
-flips to the other side and clamps vertically when the viewport is tight.
+flips to the other side and clamps vertically when the viewport is tight,
+and with room on neither side (a phone's width) opens over its own menu,
+under its row and inside the window (`flyoutPlace` in placement.js).
 In the compact shell's More sheet a flyout opens inline under its row
 instead (`.phoneBottomBar .popover .ctxSubMenu`): beside it, the sheet's
 own scroll box would clip it. An open menu takes Escape first, on the
@@ -527,7 +619,10 @@ fails, with `disabledTitle` as its title then (the reason it does not
 apply). It runs the command with the context its key runs it with and
 then tells `onRun` (a menu that closes itself). Any other prop is the
 row's, and an id the catalog does not know renders nothing. The View menu's Undo, Redo, Go to page and
-Command palette are such rows: the way to them without a keyboard.
+Command palette are such rows: the way to them without a keyboard. So are
+the translate button's Translate this page, Translate whole document and
+its show-or-hide toggle, which `label` and `icon` name for what it does
+now (Show original, Show translation) while the key stays the command's.
 
 Submenus open on hover, and the hover-switching is guarded by
 [menuAim.js](../../frontend/src/shared/ui/menuAim.js): while a flyout is open, a
@@ -992,8 +1087,11 @@ the layout, which follows the screen (`PHONE_MQ`,
 `shared/lib/pickFiles.js` opens the system file picker from code. iOS
 Safari may not open it for an `<input>` outside the document, or may drop
 that input before its `change`, so the input joins the page, hidden, for
-the pick and leaves after it. The backup restore, the imports and the
-markup strip's Picture button pick through it.
+the pick and leaves after it. Every pick goes through it: the Add
+popover's uploads, the empty library's, a page's PDF attach and replace,
+the backup restore, the imports, the chat's attachments and a hand-off
+card's PDF, the note's `/image` and the markup strip's Picture button. No
+`<input type="file">` of its own stays in the page.
 
 ### Sizes and reveals: CSS asks capability
 
@@ -1036,8 +1134,10 @@ from it, and keeps its click and double-click from the row. Inside a
 `.rowMenuHost` it shows with its row (hover, `:focus-within`) where a
 pointer hovers, and always where none does (app.css). The library's list
 rows and cards, Select mode's selection, the chat history rows, the
-Properties popover's rows, and a picture's and a diagram's toolbar
-(`ObjectMenuButton` in `editor/MdObject.jsx`) carry one.
+Properties popover's rows, a picture's and a diagram's toolbar
+(`ObjectMenuButton` in `editor/MdObject.jsx`) and the PDF selection popup
+on a page that shows its translation (the paragraph's menu, round like the
+popup's other tools) carry one.
 
 ### Dock windows
 
@@ -1096,7 +1196,16 @@ own controls.
   (`viewer.selectMode`; the viewer tour's step for it requires the guide
   fact `touch`, [onboarding.md](onboarding.md)).
 - **Menus.** A highlight, its note badge, a link and the translate button
-  open their menus through `menuPress`.
+  open their menus through `menuPress`. A strip tool hidden in the ⋯ menu
+  keeps its menu: the Translate row opens the translate button's menu beside
+  itself rather than as a flyout, since that menu has a flyout of its own
+  (the language) and a menu's flyouts share one open state. A translated paragraph's menu
+  ([translation.md](translation.md#a-paragraphs-menu)) is the exception: a
+  hold on its text is the system's selection, so a mouse's right-click opens
+  it (one `onContextMenu` on the page, after the items' own), and a finger
+  or a pen reaches it through a visible way in, rule 1 under [Adding a
+  control](#adding-a-control): the selection popup's ⋯ (`MenuButton`), and
+  a failed paragraph's mark.
 - **A second finger** turns a one-finger gesture into a pinch: it cancels
   an area drag (`beginAreaDrag` takes the primary pointer only) as it
   cancels a finger's ink stroke ([handwriting.md](handwriting.md)).
@@ -1108,7 +1217,12 @@ own controls.
   the tip opens again where it is 350 ms after the scroll stops, as the
   system's own menu comes back. In the iPad app that menu is off over the
   PDF's text, since it opens where the tip does, and the tip carries Copy
-  in its place ([ipad.md](ipad.md#the-host-contract), `editMenu`).
+  in its place ([ipad.md](ipad.md#the-host-contract), `editMenu`). A
+  selection in a translation's text is the PDF's text too: a held finger or
+  a pen's drag selects it and the tip opens, for the original's blocks under
+  it ([translation.md](translation.md#selecting-translated-text)). No
+  `menuPress` sits on a translated paragraph: its hold is the selection's,
+  and the tip's ⋯ opens the paragraph's menu.
 - **When the tip shows.** A mouse selection released by its text waits
   for the mouse to move on (`MOVE_TO_SHOW`, 3 px, `pdf/selectionTip.js`),
   then opens where it was released: a double or triple click never has it
@@ -1148,10 +1262,14 @@ own controls.
    too (the folder menu's Move to, Move up, Move down), or keys on its
    grip (a Settings bar list, `useDragOrder`'s `keyProps`).
 8. A text field's Enter handler returns early while an input method
-   composes (`composing` in `chat/enterKey.js`), and an `autoFocus` that
-   would raise an on-screen keyboard is `!touchTyping()`. A username or
-   account field turns capitalization and correction off.
+   composes (`if (composing(e)) return;`, `composing` in
+   `shared/lib/hotkeys.js`), and an `autoFocus` that would raise an
+   on-screen keyboard is `!touchTyping()`. A username or account field
+   turns capitalization and correction off.
 9. A file pick goes through `pickFiles`.
+
+The conventions ratchet ([Ratchets](#ratchets)) checks items 1, 3, 4, 5
+and 9, and item 8's Enter and username fields.
 
 ## Motion
 
@@ -1591,7 +1709,7 @@ editor's other popups.
 | `settings/BackupTasks.jsx` | Settings → Backups' task table and its editor `SubDialog` (scope `Segmented`, workspace and weekday `ToggleGroup`s, frequency and retention `MenuSelect`s, the cron preview); each row's `ActionMenu` ([settings.md](settings.md)) |
 | `settings/SettingsCloudSignIn.jsx` | Settings → Server › Sign-in (the account server, the server client, the unknown-accounts policy) and the Account pane's Gamma Cloud row ([cloud_accounts.md](cloud_accounts.md)) |
 | `transfers/ImportExport.jsx`, `transfers/transferFormats.js`, `shared/illustrations/` | the Import/Export dialogs, their format/source rules (`resolveExport` / `resolveImport`) and the decorative previews ([import_export.md](import_export.md)) |
-| `transfers/ImportReviewDialog.jsx`, `transfers/ImportTree.jsx`, `transfers/importApi.js`, `transfers/importReview.js` | the import review: upload → review → import → summary in one `SubDialog` (filter `Segmented`, source and destination trees with checkboxes), the `/api/import/review` calls, and the pure selection/filter/tree helpers ([import_export.md](import_export.md)) |
+| `transfers/ImportReviewDialog.jsx`, `transfers/ImportTree.jsx`, `transfers/importApi.js`, `transfers/importReview.js` | the import review: upload → review → import → summary in one `SubDialog` (filter `Segmented`, source and destination trees with checkboxes), the `/api/jobs/import-preview` and `/api/import/review` calls, and the pure selection/filter/tree helpers ([import_export.md](import_export.md)) |
 | `shared/lib/xhrUpload.js` | the one multipart upload: progress, a processing callback, abort by function or `AbortSignal`, the workspace and tab-identity headers; behind `FileChip.postFile`, PDF uploads, backup restores and the import review |
 | `shared/lib/keepalive.js` | the page's one ledger of `fetch` `keepalive` requests: each sender asks it for room in the browser's 64 KiB of keepalive bodies by priority (the queued page edits, then the small recoverable requests, then handwriting), and a request that does not fit goes as a plain fetch ([collab.md](collab.md) "Keepalive") |
 | `pdf/noteAnchor.js` | where a highlight's note badge sits: the geometric last line of its rects, not the last stored rect |
@@ -1606,11 +1724,12 @@ editor's other popups.
 | `ink/ink.js`, `ink/finishStroke.js`, `ink/inkInput.js`, `ink/stabilizer.js`, `ink/shapes.js`, `ink/gestures.js`, `ink/fingerChords.js`, `ink/stripKeys.js`, `ink/pencilActions.js`, `ink/hostInk.js`, `ink/ruler.js`, `ink/shapeTool.js`, `ink/zoomWindow.js`, `ink/surfaceScale.js`, `ink/inkStore.js`, `ink/inkFlush.js`, `ink/inkJournal.js`, `ink/inkLive.js`, `ink/grain.js`, `ink/InkStylePicker.jsx`, `ink/ZoomWindow.jsx`, `ink/InkLayer.jsx` | handwriting ([handwriting.md](handwriting.md)): the stroke codec + geometry (pure), the finish pipeline and brush table (the only width laws), pointer sampling, Smoothing, the shape recogniser, scribble detection, finger chords, the strip's keys, the Pencil mapping, the iPad shell's side of a stroke, the ruler, the Shapes tool's drag, the zoom window's rules, a screen distance in a surface's points (Duplicate's offset), the files/drafts store, the flush plan, the drafts journal, the peers' wet strokes, the pencil grain, the Style picker, the zoom window's panel, and the page layer + selection menu (`.inkEditMenu`, placed by `useSelectionMenuAnchor`) + notes card + `ColorChoices`, the swatches and custom colour that a pen preset's row, a text box's style and the selection menu's Color and Fill rows share |
 | `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx`, `markup/PageTools.jsx` | the tool strip (`.pdfInkBar`: `ctlBtn`s and `colorBtn` swatches; the Text tool's `TypeIcon`), the one mount of a page surface's layers (text boxes, then ink), and the tools context they read, with `armedClasses` for a surface's armed-tool classes ([handwriting.md](handwriting.md)) |
 | `markup/TextBoxLayer.jsx`, `markup/useTextBoxes.js`, `markup/textBox.js`, `markup/markup.css` | text boxes ([text_boxes.md](text_boxes.md)): the boxes of a page (frame, width handle and band in screen pixels over a box sized in the page's points), the box menu (the handwriting menu's `inkEditMenu` rows: `TextSizeIcon`, `PaletteIcon`, `PaintBucketIcon`, then Duplicate, Show note, Delete), and `TextStyleChoices`, the size numbers, the pen palette through `ColorChoices`, and the four backgrounds ("none" a struck-out swatch, `.textNoBackground`) that the menu and the strip's Text row share; the notes row's `TypeIcon` marker (`.textBoxMarker`) |
-| `search/SearchPanel.jsx`, `search/snippets.js`, `library/librarySearch.js` | workspace search (Ctrl+F); `MarkedText`, the query's matches as `mark.searchMark` (quick open's rows and the `[[` picker's too), over the pure result text of `snippets.js`; the title scorer it shares with chat, and the library matcher (title + folder/label chips) shared by the home filter box and quick open |
+| `search/SearchPanel.jsx`, `search/snippets.js`, `search/queryParse.js`, `search/searchFilters.js`, `library/librarySearch.js` | workspace search (Ctrl+F); `MarkedText`, the query's matches as `mark.searchMark` (quick open's rows and the `[[` picker's too), over the pure result text of `snippets.js`; the typed qualifiers' grammar (`queryParse.js`) and table (`searchFilters.js`), whose dropdown is the shared `.categorySuggestions` list (role listbox, quick open's option props) placed by CSS under the input, and whose "searched as text" line is `.searchHint.warn`; the title scorer it shares with chat, and the library matcher (title + folder/label chips) shared by the home filter box and quick open |
 | `library/QuickOpen.jsx` | quick open (Ctrl+P): a `.reportOverlay` palette over the library ([home_library.md](home_library.md)) — no query: recents, open tabs, the rest; a query: pages, folders and labels in sections, then the search-everywhere and create-page actions; rows are the chat mention picker's `chatMentionOption`; a query starting with `>` (Ctrl+Shift+P) is the command palette over App's `paletteCommands()` ([hotkeys.md](hotkeys.md)) |
 | `library/PageOption.jsx` | a library page as a picker option, for quick open and the chat mention picker: kind glyph, marked title, authors and year, folder/label chips, then a check, "Current" or the time; also the Recent / Open tabs / Everything else headings (`recencySections`) |
 | `chat/PaperMentionInput.jsx`, `chat/paperMentions.js` | chat mention picker (quick open's page list over the composer), mention text edits and `MAX_CHAT_REFERENCES` (six attached pages plus the current page) |
 | `chat/ApprovalCard.jsx`, `chat/approvals.js` | the card a tool call waits on while the user decides ([ai.md](ai.md#asking-before-a-call-approvals)): the fetch handoff card's look (accent border and tint), a caption naming the permission, the change as a word diff (`del` on `--danger-bg`, `ins` on an `--ok` tint), **Allow once** as the one primary button, **Don't allow** ghost; the buttons never take the focus themselves. A card for a call naming several pages has a counted headline ("Rename 37 pages"), one diff line per page in the same scrolling box, and `.chatApprovalNote` lines for a folder or labels made first, the pages left out and the pages already so. A deletion's card (a `delete_*` tool) has the same four answers, its **Allow once** as `uiBtn sm primary danger`. A permission's state (Allow / Ask / Off) is a `MenuSelect` whose icon is tinted by state (`.agentPermState` in settings.css) |
+| `chat/PlanCard.jsx`, `chat/plan.js` | a reply's plan ([ai.md](ai.md#planning-first-plan-mode)): the approval card's look (`chatApproval chatPlan`, without its guide anchor or hint) with a caption badge through `MorphText` ("Awaiting your approval", "Approved", "2 of 4 done"), the steps an `ol.chatPlanSteps` under `ListMotion` of a glyph column (the number, a dot or `transferSpin` for the step under way, an `--ok` check) and the text; **Approve plan** `uiBtn sm primary` and **Revise** `uiBtn sm`, shown only while the plan is the last reply's and nothing streams. The composer's Plan switch is a `chatAttachToggle chatPdfToggle chatPlanToggle` with `aria-pressed`, its word giving way in a narrow dock as the grant chip's does |
 | `chat/AgentChanges.jsx`, `chat/aiRevert.js` | what an agent reply changed, under its steps pill ([ai_tools.md](ai_tools.md#reverting-a-note-change)): `.chatChanges` rows behind an accent rule, a note row, a deleted folder's or label's row, or pages renamed, moved, labelled, deleted or restored (one or many), ending in a frameless `ctlBtn` undo icon, "Revert…" a `uiBtn sm ghost` in the reply's first group's head, a reverted row muted with its "Reverted" tag and a redo icon in the same place; a call that changed several pages is one row whose muted "Show the pages" `<summary>` (a native `<details>`, `.chatChangeItems`) unfolds each page's one-page row in a box that scrolls past 16em; a row that stops shows its reason, the approval card's `WordDiff`, and **Revert anyway** (`uiBtn sm`) beside **Keep it** (ghost) — a stop that can't be forced (`gone`, the pages' `kept`) shows **Dismiss** alone; a revert or redo that left some pages as they are adds a `role="status"` note with **Dismiss** only |
 | `chat/RevertChanges.jsx` | the dialog that reverts several of a conversation's changes at once ([ai_tools.md](ai_tools.md#reverting-a-note-change)): a `.reportModal` with a `.confirmHead` (undo icon), "Select all" and the page picker's checkbox rows (`.docPickerItem` in a `.reportPageList`), one per change under a muted row per message that asked (each a checkbox for its changes, mixed when some are ticked), the change's sentence as its row reads without links; a reverted row muted with its "Reverted" tag; the row that stopped shows the reply row's question (`.chatRevertAsk`) with **Revert anyway** and **Skip it**; the footer counts what went back, then **Cancel** / **Done** and the primary **Revert N changes** |
 | `chat/chatErrors.js`, `chat/agentSteps.js`, `chat/chipText.js` | pure helpers of the chat panel: the error card's copy per failure kind (also the login check's strip), the agent's steps pill and change list, a context chip's plain-text preview ([ai.md](ai.md); its words through `search/snippets.js` `plainSnippet`, the one markdown-to-words rule) |
@@ -1629,13 +1748,13 @@ editor's other popups.
 | `editor/pasteMath.js`, `editor/sourceCopy.js` | pasted `\( \)` and `\[ \]` math as the `$` and `$$` a note renders (`dollarMath`, `pasteMath`; `tests/pasteMath.test.mjs` and `tests/shared/pastemath.json`, the cases `backend/gamma/paste_math.py` passes too), and the note source Gamma last copied, which a paste leaves as it is ([latex_editing.md](latex_editing.md)) |
 | `shared/lib/mdCode.js` | where Markdown source is code, the one reading a note's keys and paste, the editor's protected spans, inline-code mark and formulas and the chat's math share: `codeFences` (every fence as the renderer reads it, by a stack of the quotes, list items and footnotes around it, with `cont`, what a new line of its code starts with), `codeSpans` (CommonMark's backtick runs on a line, a two-backtick span with a backtick inside one span), `codeTest` (whether a position is code) and `mapProse` (a transform outside both); `paste_math._fences`, `_code_spans`, `_code_test` and `map_prose` are the backend's twins ([latex_editing.md](latex_editing.md)) |
 | `editor/slashCommands.js`, `editor/SlashMenu.jsx`, `editor/useSlashMenu.js` (their text-only insertions in `editor/slashInserts.js`) | the "/" command catalog and its matching (pure, `tests/slashCommands.test.mjs`): headings, to-do, lists, quote, callout, divider, equations, `/page` (a new library page, linked) and `/note` (a sheet of paper), table, code, mermaid, image, date, link, embed, highlight, and the `hidden` text/background color commands from `mdMarks.TEXT_COLORS` that show only when the query matches. The bare "/" list is the catalog in order under the `SLASH_GROUPS` titles (Text, Math, Insert, Link, Style); a typed query is one ranked list, by tier: the command's own name, a name it begins, a word of its label it begins, a keyword it begins, then a VS Code-style fuzzy match of the name or label (anchored on the first letter, jumping to word starts: `/cb` → Code block), like the `\command` completion's ([latex_editing.md](latex_editing.md)). A command that `needs` an ability (`newPage`, `sheet`, `image`, `embed`) is left out where the editor lacks it (`filterSlashCommands`' `can`: a share's editor makes no library page, a comment's field writes text only). `SlashMenuPopup` draws a row as an icon tile (`MENU_ICONS` by the item's `icon` key; the colors keep a tinted "A" `glyph`), the label over a one-line description, and the `/name` to type at the right, the matched letters marked with search's `mark.searchMark` in the name or the label, wherever they matched; a key-hint footer (Tab or Enter inserts). The same popup is the "Paste as" chooser shown after a URL paste (gamma block link → mention/synced block/URL, other URLs → URL/titled link), without names. `useSlashMenu.js` owns the menu's trigger (typed only, never inside math or a code fence), its keys and the run of a command, for a note row and a comment's field; BlockTree owns the "Paste as" chooser |
-| `editor/RefPicker.jsx`, `editor/refLists.js` | the `[[` link picker: a caret-anchored popup (the "/" menu's placement) with pages matched by title (`rankRefPages`, the library matcher) above note blocks from `/api/block-search`, each block one plain line under its page path (`refBlockText` / `refBlockPath`, search's `plainSnippet`); when that search stopped at the server's time budget (`partial`) the key-hint footer leads with a "stopped early" line; the typed text is marked with search's `MarkedText` and a page row says `pageKindLabel()` ("Page" / "PDF"), as Search, Quick Open and the library do. `pageByTitle` is the hand-typed rule: `[[title]]` closed by hand becomes `[[id]]` when exactly one page has that title, else it renders as a dashed `.unlinkedRef` chip; `refQueryAt`, `refInsertEdit` and `typedTitleLink` are the typed `[[query`, a picked row's edit and the hand-typed rule's edit. `editor/useRefPicker.js` owns the trigger, the block search, the keys and the insertion, for a note row and a comment's field |
-| `editor/mentions.js`, `editor/MentionMenu.jsx`, `editor/useMentionMenu.js`, `app/useReminders.js`, `app/ReminderAlerts.jsx` | the `@` menu and mentions ([mentions.md](mentions.md)): the pure syntax, date words, rows and chip text (`mentions.js`); the menu's trigger, keys and insertion for a note row and a comment's field (`useMentionMenu.js`); the popup on the `[[` picker's surface and rows (`refPopup mentionMenu`; Date, People with a `PersonAvatar` each, Link to page with the folder path as the meta line; a row's aside such as "(You)" muted in `.mentionAside`); the chip (`.mentionChip`, the ref chip's shape in the quiet fill, a reminder accent-coloured behind a masked alarm clock, red once due), drawn by the rendered view and the editor alike; the due reminders as `.reminderCard`s on the floating surface in the bottom right corner (Open a `uiBtn sm`, dismiss a `uiClose uiCloseSm`) |
+| `editor/RefPicker.jsx`, `editor/refLists.js` | the `[[` link picker: a caret-anchored popup (the "/" menu's placement) with pages matched by title, then by their folder and label chips and a sub-page's path (`rankRefPages`, the library matcher) above note blocks from `/api/block-search`, each block one plain line under its page path (`refBlockText` / `refBlockPath`, search's `plainSnippet`); when that search stopped at the server's time budget (`partial`) the key-hint footer leads with a "stopped early" line; the typed text is marked with search's `MarkedText` and a page row says `pageKindLabel()` ("Page" / "PDF"), as Search, Quick Open and the library do. `pageByTitle` is the hand-typed rule: `[[title]]` closed by hand becomes `[[id]]` when exactly one page has that title, else it renders as a dashed `.unlinkedRef` chip; `refQueryAt`, `refInsertEdit` and `typedTitleLink` are the typed `[[query`, a picked row's edit and the hand-typed rule's edit. `editor/useRefPicker.js` owns the trigger, the block search, the keys and the insertion, for a note row and a comment's field |
+| `editor/mentions.js`, `editor/MentionMenu.jsx`, `editor/useMentionMenu.js`, `app/useReminders.js`, `app/ReminderAlerts.jsx` | the `@` menu and mentions ([mentions.md](mentions.md)): the pure syntax, date words, rows and chip text (`mentions.js`); the menu's trigger, keys and insertion for a note row and a comment's field (`useMentionMenu.js`); the popup on the `[[` picker's surface and rows (`refPopup mentionMenu`; Date, People with a `PersonAvatar` each, Link to page with where the page is as the meta line (a sub-page's path, else its folder); a row's aside such as "(You)" muted in `.mentionAside`); the chip (`.mentionChip`, the ref chip's shape in the quiet fill, a reminder accent-coloured behind a masked alarm clock, red once due), drawn by the rendered view and the editor alike; the due reminders as `.reminderCard`s on the floating surface in the bottom right corner (Open a `uiBtn sm`, dismiss a `uiClose uiCloseSm`) |
 | `comments/ThreadPopover.jsx`, `comments/Thread.jsx`, `comments/CommentMargin.jsx`, `comments/CommentComposer.jsx`, `comments/CommentsPanel.jsx`, `comments/comments.css` | comments ([comments.md](comments.md) "In the app"): the row's `ctlBtn` control after the body (the open count in the accent, else revealed with the row like the ×), the thread popover (a portalled `.popover` placed by `useFloatingPosition` from its anchor, `PersonAvatar` + name + time over each comment rendered by `BlockMarkdown`, a `MenuButton` per comment, Resolve / Reopen as a `ctlBtn` icon on the first comment's author line), the composer (the note editor, `BlockCmEditor` with the `blockEditorCm` look in the comment's type, which grows to 40vh and then scrolls, inside a bordered `.commentBox` on the field surface that takes the focus ring while focused within; the chat's round `chatCircleBtn` send inside the box at the right, at `--ctl-icon-btn-xs` with a 12px arrow, on the text's line while it is one line and at its last line once it wraps; the note's `[[`, `@`, "/" and LaTeX popups over the popover), the PDF note badge's `.hasThread` accent, the PDF margin's cards (a `.commentCard` on `--bg-card` with a `--border` hairline, `--radius-md` and `--shadow-1`, lifted to `--shadow-2` while active, holding the popover's thread view), and the Comments dock window (an Open / Resolved `Segmented` in its header, a row per thread) |
 | `inbox/InboxButton.jsx`, `inbox/InboxPanel.jsx`, `inbox/inbox.css` | the Inbox ([comments.md](comments.md) "The Inbox"): the topbar bell, an `iconBtn` with an accent count badge (`.inboxBadge`, after `.navBackBadge`, "9+" past nine; inline as a More sheet row's `trailing`), and the header popover under it: a `popoverTitle` row with Mark all read as `uiBtn ghost sm`, an Unread / All / Archived `Segmented`, `popoverSection` day captions, and a row per item (`PersonAvatar`, the sentence in bold while unread with an accent dot, the snippet behind a left rule, muted meta, `ctlBtn` actions revealed on hover and focus) |
 | `editor/BacklinksPanel.jsx` | "Linked from N pages" under a page's notes: App's `/blocks/{id}/backlinks` list grouped by page, each linking block a three-line rendered snippet; a click opens its page at the block (`openBlockLink`, a link jump); the section is off until the account turns it on (`backlinksVisible`, Settings → Reading & editing › Notes — off, no backlinks are fetched), and its fold is the browser pref `backlinksCollapsed` |
-| `editor/SubPagesPanel.jsx` | "N pages inside" under a page's notes, above Linked from ([home_library.md](home_library.md#sub-pages)): the open page's sub-pages from `GET /pages/{id}/family`, a row each (a 14 px `FileGlyph`, the PDF one when the entry says `pdf`, and the title) that opens the page, and where the library may be changed a last "New page inside" row with a plus. It borrows the backlinks panel's head, caret, rows and box (`.subPagesPanel` joins `.backlinksPanel`'s rule), folds in `Collapse`, and its fold is the browser pref `subPagesCollapsed`; a page with no sub-pages shows nothing |
-| `editor/PageCrumbs.jsx` | the crumbs at the top of a sub-page's header (`nav.pageCrumbs`, "Pages this page is in"): a `crumbBtn` per page above it, top first, each opening that page, each followed by a `/` `crumbSep`, the title below; one muted `--fs-xs` line, long titles cut with an ellipsis (`library.css`); nothing for a library page |
+| `editor/SubPagesPanel.jsx` | "N pages inside" under a page's notes, above Linked from ([home_library.md](home_library.md#sub-pages)): the open page's sub-pages from `GET /pages/{id}/family`, a row each (a 14 px `FileGlyph`, the PDF one when the entry says `pdf`, and the title, a button that opens the page, then the row's `MenuButton` "⋯" outside a share view, shown with the row as a `.rowMenuHost`'s, the page menu also on a right-click or a held finger through `menuPress`), and where the library may be changed a last "New page inside" row with a plus; there a row drags a page and wears `.dragOver` (the accent's background and a 1 px ring) while a page dragged over it would go inside. It borrows the backlinks panel's head, caret, rows and box (`.subPagesPanel` joins `.backlinksPanel`'s rule), folds in `Collapse`, and its fold is the browser pref `subPagesCollapsed`; a page with no sub-pages shows nothing |
+| `editor/PageCrumbs.jsx` | the crumbs at the top of a sub-page's header (`nav.pageCrumbs`, "Pages this page is in"): a `crumbBtn` per page above it, top first, each opening that page, each followed by a `/` `crumbSep`, the title below; one muted `--fs-xs` line, long titles cut with an ellipsis (`library.css`), a crumb in the accent while a page dragged over it would go inside its page (`.dragOver`, as the folder path's crumbs); nothing for a library page |
 | `editor/BlockProperties.jsx`, `editor/blockProps.js`, `editor/blockProperties.css` | the Properties popover ([above](#the-properties-popover)): the surface, loaded on first use (head, status chips, Details / JSON, the row menu, placement, the server read), and the pure model it draws (`tests/blockProps.test.mjs`): a block's kind by the server's `block_kind` order (`blockKind`, `effectiveKind`), its sections of rows, one `CATALOG` entry per key of the [block properties catalog](../research/block-properties.md#the-catalog) and the rest under Other keys, the status chips, the key and SQL paths; the menus' Properties rows and `block.properties` / `app.pageProperties` use `BracesIcon` |
 | `editor/noteSanitize.js` | `rehypeNoteSanitize`, the sanitizer every rendered note goes through between `rehype-raw` and KaTeX ([One control set, everywhere](#one-control-set-everywhere)) |
 | `editor/callouts.js` | remark plugin for `> [!note] Title` callouts (type aliases → note/tip/warning/danger/important/quote; each type's colour is a `--callout-*` token); Obsidian's `[!note]-` / `+` fold flag makes a native `<details>` with the title as `<summary>` (chevron in app.css) |

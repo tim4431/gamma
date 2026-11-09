@@ -8,7 +8,7 @@
 import { Account, wanted } from "../harness.mjs";
 
 export async function mirrorScenarios(env) {
-  const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags } = env;
+  const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("mirror")) return;
   await server.manage("create-user", "mirror-user", "mirror-pw");
   const user = await new Account(server, "mirror-user", "mirror-pw").login();
@@ -39,10 +39,22 @@ export async function mirrorScenarios(env) {
       await row.waitFor();
       assert((await row.textContent()).includes("My clone"), "the row carries the chosen name");
 
-      // Sync runs a round inline; the status line then says when.
-      await row.getByRole("button", { name: "Sync", exact: true }).click();
+      // Sync asks for a round and is answered at once (no request held open for it, which a proxy cuts
+      // after 100 s); the row follows the round through the clone's status to its end, then says when.
+      const calls = [];
+      const seen = (r) => {
+        const u = new URL(r.url());
+        if (u.pathname.startsWith("/api/mirrors/")) calls.push(`${r.method()} ${u.pathname.replace(/^\/api\/mirrors\/[^/]+/, "")}${u.search}`);
+      };
+      page.on("request", seen);
+      const syncButton = row.getByRole("button", { name: "Sync", exact: true });
+      await syncButton.click();
       await until(() => row.locator(".aiProvDesc").last().textContent().then((t) => /up to date \d/.test(t)),
         { timeout: 20000, what: "the row reports a sync" });
+      await until(() => syncButton.isEnabled(), { timeout: 20000, what: "the row's Sync is free once its round is over" });
+      page.off("request", seen);
+      assertEq(calls[0], "POST /sync", "Sync now asks without ?wait=1");
+      assert(calls.slice(1).includes("GET "), `then reads the clone until its round is over (${calls.join(", ")})`);
       const mirrors = await user.api("/api/mirrors");
       assertEq(mirrors.mirrors.length, 1);
       const copy = mirrors.mirrors[0];

@@ -5,10 +5,11 @@ pasted in a later batch, a block moved to another page, a re-attached PDF.
 A batch hands over only the names it dropped (none while typing in a block
 that keeps its image); the full pass is one scan that knows every reference
 form; the purge deletes only what is still unreferenced and refuses a
-database that looks wrong."""
+database that looks wrong, and takes a backlog a cap at a time."""
 
 import io
 import json
+import logging
 import os
 import time
 from contextlib import closing
@@ -273,25 +274,81 @@ def test_purge_refuses_a_database_without_pages(gc):
     assert (ws_uploads_dir(ws) / name).is_file()
 
 
-def test_purge_refuses_too_many_files_at_once(ann, monkeypatch):
+def test_a_backlog_past_the_cap_goes_a_cap_at_a_time_the_longest_due_first(ann, monkeypatch, caplog):
+    """A big Empty makes hundreds of files due on one day. One purge takes
+    the cap's worth, the longest due first, and the next full pass the next
+    ones, until none are left — never refusing the lot pass after pass."""
     c, ws = ann
+    uploads = ws_uploads_dir(ws)
     page = _page(c, "many")
     _ops(c, page, [{"op": "insert", "id": "gcN", "parent": page, "content": "x"}])
     monkeypatch.setattr(upload_gc, "PURGE_MAX", 3)
-    names = [_image(c, f"many-{i}")[1] for i in range(4)]
+    names = [_image(c, f"many-{i}")[1] for i in range(7)]
+    for days, name in enumerate(names, start=31):  # the last the longest due
+        _age(ws, name, days)
+    oldest = names[::-1]
+    with caplog.at_level(logging.WARNING, logger="gamma"):
+        out = upload_gc.reconcile(ws)
+    assert out["purged"] == oldest[:3] and out["blocked"] == "" and out["left"] == 4
+    assert not any((uploads / n).exists() for n in oldest[:3])
+    assert all((uploads / n).is_file() for n in oldest[3:]) and set(oldest[3:]) <= set(_orphans(ws))
+    assert any("4 more due, left for the next pass (one purge deletes at most 3 of its" in r.message
+               for r in caplog.records)
+    out = upload_gc.reconcile(ws)  # the next pass
+    assert out["purged"] == oldest[3:6] and out["left"] == 1
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="gamma"):
+        out = upload_gc.reconcile(ws)
+    assert out["purged"] == oldest[6:] and out["left"] == 0 and out["blocked"] == ""
+    assert not any(r.name == "gamma" and "[uploads]" in r.message for r in caplog.records)  # caught up: no warning
+    assert not any((uploads / n).exists() for n in names) and not set(names) & set(_orphans(ws))
+    assert upload_gc.reconcile(ws)["purged"] == []
+
+
+def test_a_chunk_skips_a_file_redated_meanwhile_and_takes_the_next(ann, monkeypatch):
+    """The cap counts the files the purge deletes, not the ones it asks
+    about: a due file an upload re-dated since the listing is kept, and the
+    next due one fills its place."""
+    c, ws = ann
+    uploads = ws_uploads_dir(ws)
+    page = _page(c, "redated")
+    _ops(c, page, [{"op": "insert", "id": "gcR", "parent": page, "content": "x"}])
+    monkeypatch.setattr(upload_gc, "PURGE_MAX", 2)
+    names = [_image(c, f"redated-{i}")[1] for i in range(4)]
+    for days, name in zip((40, 39, 38, 37), names):
+        _age(ws, name, days)
+    real_stat = storage.stat
+
+    def stat(w, n):  # the same bytes uploaded again between the listing and the purge
+        st = real_stat(w, n)
+        return (st[0], time.time()) if n == names[0] else st
+
+    monkeypatch.setattr(storage, "stat", stat)
+    out = upload_gc.reconcile(ws)
+    assert out["purged"] == names[1:3] and out["left"] == 1
+    assert (uploads / names[0]).is_file() and (uploads / names[3]).is_file()
+
+
+def test_a_chunk_still_needs_a_database_that_reads_right(gc, monkeypatch):
+    """Past the cap or not, a pages.db that fails the checks loses nothing."""
+    make_user("gc_chunk_db", "pw")
+    c, ws = login("gc_chunk_db", "pw"), workspace_of("gc_chunk_db")
+    monkeypatch.setattr(upload_gc, "PURGE_MAX", 2)
+    names = [_image(c, f"chunk-db-{i}")[1] for i in range(4)]
     for name in names:
-        _age(ws, name, 31)
-    assert "more than one purge may delete" in upload_gc.reconcile(ws)["blocked"]
+        _age(ws, name, 40)
+    with closing(connect_pages_db(ws)) as conn:  # the library reads empty
+        conn.execute("DELETE FROM unified_blocks WHERE id != 'root'")
+        conn.commit()
+    out = upload_gc.reconcile(ws)
+    assert out["purged"] == [] and out["blocked"] == "its pages.db has no pages" and out["left"] == 4
     assert all((ws_uploads_dir(ws) / n).is_file() for n in names)
-    monkeypatch.setattr(upload_gc, "PURGE_MAX", 100)
-    upload_gc.reconcile(ws)
-    assert not any((ws_uploads_dir(ws) / n).exists() for n in names)
 
 
 def test_the_purge_dates_each_due_file_and_lists_nothing_under_the_write_lock(gc, monkeypatch):
     """Under the write lock the purge dates each due file on its own
     (``storage.stat``), never by listing the workspace while writers wait,
-    and asks no more once a refusal is certain."""
+    and asks no more once it has the cap's worth."""
     make_user("gc_dated", "pw")
     c, ws = login("gc_dated", "pw"), workspace_of("gc_dated")
     page = _page(c, "dated")
@@ -299,7 +356,6 @@ def test_the_purge_dates_each_due_file_and_lists_nothing_under_the_write_lock(gc
     names = sorted(_image(c, f"dated-{i}")[1] for i in range(5))
     for name in names:
         _age(ws, name, 31)
-    stored = len(storage.list(ws))
     lists, stats = [], []
     real_list, real_stat, real_purge = storage.list, storage.stat, upload_gc._purge
     monkeypatch.setattr(storage, "list", lambda w: lists.append(w) or real_list(w))
@@ -313,11 +369,11 @@ def test_the_purge_dates_each_due_file_and_lists_nothing_under_the_write_lock(gc
     monkeypatch.setattr(upload_gc, "_purge", purge)
     monkeypatch.setattr(upload_gc, "PURGE_MAX", 2)
     out = upload_gc.reconcile(ws)
-    assert out["purged"] == [] and out["blocked"].startswith(f"5 of its {stored} files at once")
-    assert lists == [] and len(stats) == 3  # past the cap at the third: the last two never asked
+    assert out["purged"] == names[:2] and out["left"] == 3  # aged in name order: the first due first
+    assert lists == [] and stats == names[:2]  # the cap's worth found: the last three never asked
     monkeypatch.setattr(upload_gc, "PURGE_MAX", 100)
-    assert upload_gc.reconcile(ws)["purged"] == names
-    assert lists == [] and sorted(stats) == names
+    assert upload_gc.reconcile(ws)["purged"] == names[2:]
+    assert lists == [] and sorted(stats) == names[2:]
     assert not any((ws_uploads_dir(ws) / n).exists() for n in names)
 
 
@@ -325,19 +381,27 @@ def test_purge_blocker_rules():
     class Conn:
         """A pages.db answering the blocker's questions as told."""
         def __init__(self, root=True, pages=True, check="ok"):
-            self.answers = {"id = 'root'": (1,) if root else None, "LIMIT 1": (1,) if pages else None,
-                            "quick_check": (check,)}
+            self.answers = {"LIMIT 1": (1,) if pages else None,  # before "id = 'root'", which parent_id's holds
+                            "id = 'root'": (1,) if root else None, "quick_check": (check,)}
 
         def execute(self, sql):
             answer = next(v for k, v in self.answers.items() if k in sql)
             return type("Cursor", (), {"fetchone": lambda self: answer})()
 
-    assert upload_gc.purge_blocker(Conn(), 1, 1) == ""
-    assert upload_gc.purge_blocker(Conn(check="row 7 missing from index"), 1, 50).startswith("its pages.db fails quick_check")
-    assert upload_gc.purge_blocker(Conn(), 10, 10) == ""             # up to PURGE_FLOOR at once, whatever the share
-    assert upload_gc.purge_blocker(Conn(), 11, 50) != ""             # over the floor and over 20 %
-    assert upload_gc.purge_blocker(Conn(), 11, 100) == ""
-    assert upload_gc.purge_blocker(Conn(), 101, 10_000) != ""        # never more than PURGE_MAX
+    assert upload_gc.purge_blocker(Conn()) == ""
+    assert upload_gc.purge_blocker(Conn(root=False)) == "its pages.db has no root row"
+    assert upload_gc.purge_blocker(Conn(pages=False)) == "its pages.db has no pages"
+    assert upload_gc.purge_blocker(Conn(check="row 7 missing from index")).startswith("its pages.db fails quick_check")
+
+
+def test_purge_cap_rules():
+    assert upload_gc.purge_cap(1) == 10          # up to PURGE_FLOOR at once, whatever the share
+    assert upload_gc.purge_cap(50) == 10         # a fifth of 50 is under the floor
+    assert upload_gc.purge_cap(55) == 11         # over the floor: a fifth
+    assert upload_gc.purge_cap(100) == 20
+    assert upload_gc.purge_cap(10_000) == 100    # never more than PURGE_MAX
+    for stored in range(0, 1000):  # a fifth rounded down, however the float rounds
+        assert upload_gc.purge_cap(stored) == min(100, max(10, stored // 5))
 
 
 def test_a_restored_database_starts_its_clocks_over(ann):

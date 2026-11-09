@@ -9,8 +9,8 @@ key, allowed scopes, mutating flag, and executor — so arming a chat is one
 filter (`agent_tools`), dispatch is one lookup (`run_agent_tool`), and the
 in-scope check (`_load_scoped_page`/`_scope_pages`: folder = the page is
 filed in the chat's folder or below it, `_reach` / `_filed_in` over
-`blocks_store.folder_subtree_ids`; page = id equality) is shared by every
-executor. A mutating entry also has a `preview`: what its approval card
+`blocks_store.folder_subtree_ids`; page = id equality, and for a reading
+tool the pages inside the page too) is shared by every executor. A mutating entry also has a `preview`: what its approval card
 shows when the user set its permission to Ask. Each changer has three
 parts: a `_plan_*` function checks a call and works out the change, the
 executor applies the plan, and the preview describes it. So the card and
@@ -18,6 +18,8 @@ the change come from one place ("Asking before a call" in
 [ai.md](ai.md#asking-before-a-call-approvals)). A permission is either
 reading or changing: its tools share the `mutating` flag, which also sets its
 default (reading allowed, changes ask; `ai_permissions.permission_state`).
+One tool has no permission: `update_plan`, the plan a planning turn
+proposes, armed whenever a changing tool is ("update_plan" below).
 A cursor block (`focus_block_id`), attached block chips (`context_blocks`),
 note selections and selected handwriting (`ink_selections`, a picture of
 the strokes with their block's id) reach the model with the message, so
@@ -66,7 +68,19 @@ as its top's (`_load_scoped_page` through `blocks_store.filed_folders`),
 so a folder chat reaches the pages inside the pages filed under its
 folder, `list_pages`' folder filter finds them there, and a page chat's
 `save_paper` files where the open page's top is. Its own stored
-`folders`, if any, are passed by. Labels stay per page.
+`folders`, if any, are passed by, and `read_page`'s properties line names
+its path and its top's folders, never them. Labels stay per page.
+
+A page chat reads the pages inside its page, at any depth, as attached
+context pages are read: `run_agent_tool` gives a reading tool's scope
+`inside`, and `_page_in_scope` then takes a page whose ancestors hold the
+chat's page (`blocks_store.page_ancestors`), `_scope_pages` the page's
+descendants (`page_descendants`), so `read_page`, `read_block`, the view
+tools, `read_chats`, `cite` and `search_library` reach them. A changing
+tool's scope has no `inside` (nor does an approval card's preview): the
+note editors still edit the chat's own page alone, and a page above it is
+out of reach. The prompt says so ("the read and search tools the pages
+inside it too").
 
 Pages in Recently deleted are out of the tools' reach, the MCP adapter's
 included: they are not under `root`, and `_load_scoped_page` and
@@ -87,7 +101,8 @@ The [MCP adapter](mcp.md) exposes a read-only subset of this same registry to
 external assistants. `agent_tools` filters definitions and `run_agent_tool`
 enforces the caller's allowlist at dispatch. Gamma chat passes its armed tool
 set. MCP passes `mcp_tools`: every reading tool that stays inside the
-library, without the web tools, the change tools or `list_deleted`. Its
+library, without the web tools, the change tools, `list_deleted` or
+`update_plan`. Its
 scope is read-only, and its `link_base` makes results carry absolute links
 to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
 [mcp.md](mcp.md) "Links in results").
@@ -125,6 +140,7 @@ to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
 | `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree) |
 | `delete_block` | Edit note blocks | folder + page | Delete a note block with everything under it; the user can revert |
 | `clip_region` | Edit note blocks | folder + page | Store a picture of a PDF region (with the handwriting on it, if asked) or of a handwriting block as an upload the notes can embed, and return its URL |
+| `update_plan` | none (armed beside a change) | folder + page | Propose a change of several steps as a checklist for the user to approve, or mark its steps while carrying it out |
 
 ### list_pages (folder only)
 
@@ -191,7 +207,10 @@ with `list_pages`.
 
 Returns a `page_report_section`: the page's title, where it sits among
 pages, a properties line
-(folders, labels, cached metadata, web source, attachment), an excerpt of the
+(folders, labels, cached metadata, web source, attachment; for a sub-page
+`path: "Top" › "Mid" › "Page"` and `folders (its top page's): …`, the
+folders it is filed in, `ai_context.page_properties_line` through
+`blocks_store.filed_folders`), an excerpt of the
 attachment's extracted text when the page carries a PDF, then the page's
 highlights and nested notes. A page without an attachment returns its notes —
 they are its content. `pdf_chars` sizes the excerpt per call, capped by the
@@ -212,7 +231,10 @@ line (`ai_context.page_family_lines`, so the chat's page context, MCP
 ancestors top first, and a page's `Pages inside (n): "Title" (page ID:
 <id>); …`, the pages right inside it in library order. That line names the
 first `SUB_PAGES_SHOWN` (50), then `… N more — list_pages(parent="<id>")
-lists them all`. Titles are cut to 120 characters, and an empty one reads
+lists them all`; in a page chat, which has no `list_pages`, `… N more,
+which this chat cannot list — search_library searches them all` (the
+`listing` argument; the chat's own page context says the same in a page
+chat). Titles are cut to 120 characters, and an empty one reads
 "Untitled". A library page with nothing inside it has neither line.
 
 An area highlight (a Ctrl+drag rectangle: a highlight block with
@@ -1055,8 +1077,8 @@ asked to go, or no folder was asked for, the answer is that it is already
 in the library inside page `<parent>` and nothing changed; any other
 folder is refused with `move_page`'s wording (move the outermost page),
 and the clip is never called.
-In a page chat the new page is outside the chat's reach, and the result
-says to read the paper with `fetch_paper`.
+In a page chat the new page is outside the chat's reach (its page and the
+pages inside it), and the result says to read the paper with `fetch_paper`.
 
 The approval card's preview has the paper's `title` (the one passed, else
 the library page's, else the source), the folder it goes `to` and the source
@@ -1106,15 +1128,23 @@ so the two tools have one each:
 
 - `list_deleted`, under **List pages**, lists such pages, the last deleted
   first: id, title, the folders a restore puts the page back in (the trash
-  entry's `folders` ids, read as paths), when and
+  entry's `folders` ids, read as paths), the page it goes back inside
+  (`| goes back inside page <id>`, the entry's `parent`: a sub-page deleted
+  on its own), how many pages went with it and come back with it (`| the 3
+  pages inside it come back with it`, `sub_pages`), when and
   by whom it was deleted, and when it goes for good (`trash.list_trash`).
-  `title_contains` filters by title. Its chip is a `list` one.
+  The header says so too. `title_contains` filters by title. Its chip is a
+  `list` one.
 - `restore_page`, under **Restore deleted pages** (`restore`, Ask by
   default), takes `page_ids` and runs `ops.restore_page`, the route's
   restore, for each; a page that fails is left out and named, and one that
   came back before the failure counts as restored. The page goes
   back under the library root in its folders, with its notes, highlights,
-  files and chats, and the pages that went with it come back inside it. `_plan_restore_one` finds a page that is not deleted
+  files and chats, and the pages that went with it come back inside it;
+  a sub-page deleted on its own goes back inside its parent. The result
+  says both: `… to inside page <id>, filed where that page is ("A")`, and
+  `…, with the N pages inside it` (a batch names each page that went back
+  inside one). `_plan_restore_one` finds a page that is not deleted
   (a no-op) or was filed outside the chat's folder (refused). Named alone,
   it is answered without a card; in a list, it is left out of the card.
 
@@ -1460,6 +1490,46 @@ adds (`pictures` on the preview). The prompt says which URLs the model may
 embed: the ones in a picture's label line, `clip_region`'s result, and
 `read_block`'s text.
 
+### update_plan (both scopes)
+
+The plan of a change, shown to the user as a checklist under the reply
+([ai.md](ai.md) "Planning first"). It takes Codex's schema, which
+GPT-5.x and Codex models are trained on and which is close to Claude's
+TodoWrite: `{explanation?, plan: [{step, status}]}`, each status
+`pending`, `in_progress` or `completed` (`PLAN_STATUSES`). It has no
+permission of its own (`perm` is `""`): `agent_tools` arms it last, and
+only when a changing tool is armed, since a plan is of changes. So it is
+not offered where every change is Off, without `can_write`, to the
+`read_paper` helper or over MCP. `_state_of` reads it as allowed, and
+`tool_states` leaves it out of the permission map.
+
+`_run_update_plan` reads the list leniently: a step's whitespace is
+collapsed and cut at `_PLAN_STEP_MAX` (200) characters, an empty step is
+dropped, an unknown status is pending, and only the first `in_progress`
+is kept. A plan holds at most `MAX_PLAN_STEPS` (15); the result says how
+many more were left out. An empty or missing `plan` is an error. In a
+planning turn every status is pending and the action carries `plan:
+{steps, proposed: true}`, its summary "Planned 4 steps". In any other
+turn the statuses are kept and the summary reads "Plan: 2 of 4 done".
+`explanation` stays in the call's arguments, cut at `_ARG_CAP` on the
+chip.
+
+The result is the numbered checklist (`1. [pending] Rename the 37
+pages…`). A proposed plan's head reads "Proposed to the user; nothing is
+changed until they approve it:", which stays true in every later turn
+that replays it. The caps keep the longest checklist at about 3.3k
+characters, under `_DETAIL_CAP`, so the saved result is the whole plan.
+The replay keeps the newest plan's result whole under
+`TOOL_REPLAY_BUDGET`, its size taken first, so the Approve turn and a
+Continue after a long run both see every step. The request's history leaves out the
+action's `plan` (`forReplay`), since the result already carries it.
+
+When `update_plan` is armed, `agent_system` adds one line that stays the
+same on every turn: carry out an approved plan in order, mark steps in
+the same turn as the next calls and never in a turn of their own, and
+say so when a step must change. Its chip's icon is the numbered list
+(kind `plan`), and the steps pill reads it as "updated the plan".
+
 ## Guardrails
 
 Deliberately not offered under any permission:
@@ -1487,7 +1557,10 @@ Deliberately not offered under any permission:
 Tools whose permission is Off are not offered to the model, and the server
 additionally refuses to execute them if called. A tool whose permission is
 Ask is offered, but each call waits on an approval card and runs only once
-the user allows it. Output/argument sizes are capped
+the user allows it. In a planning turn (the chat's Plan switch) the server
+refuses every changing call that its permission would let through and
+that would change something, with `PLAN_HELD` and no card (`held_for_plan`; [ai.md](ai.md) "Planning
+first"). Output/argument sizes are capped
 (`_LIST_CAP` on listings; `_DETAIL_CAP` and `_ARG_CAP` cap the saved chip
 only — the model gets the full result, under the live budget
 `ai_context.LIVE_RESULT_BUDGET`), and the loop itself is bounded —
@@ -1500,8 +1573,8 @@ always a visible record of what the agent looked at and changed. One pill
 sums them up ("6 steps · listed, read 1 page · 1 failed") and expands to a
 line per call, its icon naming the action kind (`ACTION_ICONS` in
 `chat/AgentChanges.jsx`: list, book, search, eye, pen, quote, globe, download,
-file-plus, history, pencil, folder, plus, label). Each line expands to the
-arguments and the output the model got. Everything that changed is listed
+file-plus, history, pencil, folder, plus, label, numbered list). Each line
+expands to the arguments and the output the model got. Everything that changed is listed
 again under the pill: "Changed in your library" (renamed, filed, saved,
 deleted and restored pages; renamed, made, applied and deleted folders and labels) and
 "Changed in your notes" (edited, added and moved

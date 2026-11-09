@@ -1,0 +1,15 @@
+{
+  "about": "A person's colour (docs/dev/collab.md 'What the user sees'): the index of one of the eight --peer-N colours (frontend app.css, gamma/pdf_cards.py PEOPLE), from their name: hash = hash * 31 + code point, kept to 32 bits, over the name's code points, modulo 8. gamma/pdf_cards.py person_color and frontend/src/collaboration/personColor.js. Read by backend/tests/test_shared_fixtures.py and frontend/tests/personColor.test.mjs.",
+  "names": [
+    {"note": "a username", "name": "tim-2", "index": 5},
+    {"note": "a display name", "name": "Tim", "index": 0},
+    {"note": "another", "name": "alice", "index": 0},
+    {"note": "the anonymous visitor", "name": "Anonymous", "index": 5},
+    {"note": "a CJK name", "name": "张三", "index": 1},
+    {"note": "no name", "name": "", "index": 0},
+    {"note": "a missing name is no name", "name": null, "index": 0},
+    {"note": "a share-link visitor's name", "name": "Curious Otter", "index": 0},
+    {"note": "an astral character is one code point", "name": "\ud835\udc65y", "index": 4},
+    {"note": "accented letters", "name": "Ünïcødé", "index": 7}
+  ]
+}

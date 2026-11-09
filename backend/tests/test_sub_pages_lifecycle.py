@@ -182,6 +182,31 @@ def test_a_page_trashed_on_its_own_goes_back_inside_a_live_parent_or_to_the_libr
         assert page_parent(conn, a) == "" and page_parent(conn, g) == a
 
 
+def test_a_page_trashed_on_its_own_names_the_page_its_restore_puts_it_inside(owner):
+    folder = make_folder(owner, "spl/named")
+    top = _page(owner, "Named top", folders=[folder])
+    a = _page(owner, "Named a", top)
+    g = _page(owner, "Named g", a)
+    # the delete's answer, the listing and a link's 404 name the live parent,
+    # the folders its top is filed in beside it
+    r = owner.delete(f"/api/blocks/{g}")
+    assert r.status_code == 200, r.text
+    assert (r.json()["trashed"]["parent"], r.json()["trashed"]["folders"]) == (a, [folder])
+    entry = _trashed(owner)[g]
+    assert (entry["parent"], entry["folders"]) == (a, [folder])
+    assert owner.get(f"/api/blocks/{g}").json()["trashed"]["parent"] == a
+    # a page deleted with its parent is the parent's entry, which goes back in the library
+    owner.delete(f"/api/blocks/{top}").raise_for_status()
+    listed = _trashed(owner)
+    assert listed[top]["parent"] == "" and a not in listed
+    # its parent gone too, the page alone comes back in the library: no parent named
+    assert listed[g]["parent"] == "" and listed[g]["folders"] == []
+    owner.post(f"/api/trash/{top}/restore").raise_for_status()
+    assert _trashed(owner)[g]["parent"] == a
+    owner.post(f"/api/trash/{g}/restore").raise_for_status()
+    assert _row(g)[1]["parent_page"] == a
+
+
 def _with_things(c, page_id):
     """A note, a comment, a chat and an op log on the page."""
     note = _child(c, page_id, "a note of its own")
@@ -226,6 +251,93 @@ def test_delete_permanently_empty_and_the_sweeper_take_the_tree(owner):
     swept = trash.purge_expired(_ws(), now=later)
     assert old[0] in swept and not set(old[1:]) & set(swept)
     assert all(_row(page) is None for page in old) and _gone(old[3], note)
+
+
+def test_empty_reads_the_trash_once_on_one_connection(owner, monkeypatch):
+    """Empty (and the sweeper, which walks the trash the same way) reads
+    what went with each page from its one read of the trash
+    (``trash._trashed``), never ``ops._went_with`` per page, and a page of
+    the tree restored alone since that read is passed by."""
+    trees = [_tree(owner, f"Once {n}") for n in range(3)]
+    for tree in trees:
+        owner.delete(f"/api/blocks/{tree[0]}").raise_for_status()
+    asked, reads, conns = [], [], set()
+    real_went, real_trashed, real_entry, real_purge = ops._went_with, trash._trashed, trash._purge_entry, \
+        trash.pdf_index.purge_unused
+    monkeypatch.setattr(ops, "_went_with", lambda conn, page: asked.append(page) or real_went(conn, page))
+
+    def entry(ws, conn, *args, **kw):
+        conns.add(id(conn))
+        return real_entry(ws, conn, *args, **kw)
+
+    def purge(ws, conn=None, *args, **kw):
+        conns.add(id(conn))
+        reads.append("purge")
+        return real_purge(ws, conn, *args, **kw)
+
+    monkeypatch.setattr(trash, "_purge_entry", entry)
+    monkeypatch.setattr(trash.pdf_index, "purge_unused", purge)
+
+    def trashed(conn):
+        out = real_trashed(conn)
+        reads.append("trash")
+        conns.add(id(conn))
+        with connect_pages_db(_ws()) as other:  # restored alone after the read: it stays
+            ops.restore_page(_ws(), other, trees[1][3], actor="t")
+        asked.clear()  # (the restore's own reads)
+        return out
+
+    monkeypatch.setattr(trash, "_trashed", trashed)
+    emptied = trash.empty(_ws())
+    assert {tree[0] for tree in trees} <= set(emptied) and asked == []
+    assert reads == ["trash", "purge"] and len(conns) == 1  # one read, one purge after, all on one connection
+    assert all(_row(page) is None for tree in trees for page in tree if page != trees[1][3])
+    assert _row(trees[1][3])[0] == "root"
+
+
+def test_step_48_indexes_what_went_with_a_page(data_dir):
+    """``deleted_with`` is a generated column with a partial index
+    (migration step 48): a workspace from before it gains both on its first
+    open, ``ops._went_with`` reads the index, and the step leaves the
+    workspace format as it is (a derived column)."""
+    import sqlite3
+    from contextlib import closing
+
+    from gamma import db, migrations, seed
+    from gamma.db import connect_users_db
+
+    connect_users_db().close()
+    seed.create_workspace_files("splOld48")
+    path = data_dir / "workspaces" / "splOld48" / "pages.db"
+    db.close_workspace_connections("splOld48")
+    with closing(sqlite3.connect(str(path))) as old:  # the file as release 47 left it
+        db.register_functions(old)
+        old.execute("DROP INDEX idx_ub_deleted_with")
+        old.execute("ALTER TABLE unified_blocks DROP COLUMN deleted_with")
+        old.execute("INSERT OR IGNORE INTO unified_blocks (id, parent_id, position, content, properties, created_at, "
+                    "updated_at, page_id) VALUES ('trash', NULL, 'a0', '', '{}', 't', 't', '')")
+        old.execute("INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, "
+                    "updated_at, page_id) VALUES ('splKid48', 'trash', 'a5', 'kid', "
+                    "'{\"deleted_with\": \"splTop48\"}', 't', 't', 'splKid48')")
+        old.execute("INSERT INTO page_changes (page_id, seq, kind, at, actor) "
+                    "SELECT 'splKid48', COALESCE(MAX(seq), 0) + 1, 'deleted', 't', '' FROM page_changes")
+        old.execute("PRAGMA user_version = 47")
+        old.commit()
+    try:
+        with connect_pages_db("splOld48") as cx:
+            assert cx.execute("PRAGMA user_version").fetchone()[0] == 48
+            assert ops._went_with(cx, "splTop48") == ["splKid48"]
+            plan = " ".join(str(r[-1]) for r in cx.execute(  # _went_with's own statement
+                f"EXPLAIN QUERY PLAN {ops.WENT_WITH_SQL}", ("splTop48", TRASH)))
+            assert "idx_ub_deleted_with" in plan, plan
+            ddl = cx.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0]
+            migrations._v48_deleted_with("splOld48", cx, None)  # re-runnable: nothing to do
+            assert cx.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0] == ddl
+    finally:
+        db.close_workspace_connections("splOld48")
+    migrations._v48_deleted_with("", sqlite3.connect(":memory:"), None)  # a copy without the table
+    assert (48, "deleted_with", migrations._v48_deleted_with) in migrations.WORKSPACE_STEPS
+    assert 48 in migrations.DERIVED_STEPS and migrations.workspace_format() == 44
 
 
 def test_deleting_a_live_page_for_good_takes_its_descendants(owner):
@@ -407,6 +519,8 @@ def test_copies_moving_two_pages_into_each_other_keep_syncing():
 def test_a_sub_page_edited_there_survives_its_parent_s_deletion_here():
     remote, local, _ = _pair()
     top, a, b = _remote_tree(remote, "ed")
+    folder = remote.folder("spl_edF", "ed folder")
+    _move_to(remote.client, top, {"folders": [folder]})
     _sync(local)
     remote.insert(a, "spl_ed1", "typed there")
     local.client.delete(f"/api/blocks/{top}").raise_for_status()  # a and b go with it here
@@ -416,6 +530,8 @@ def test_a_sub_page_edited_there_survives_its_parent_s_deletion_here():
     assert _row(top, remote.ws)[0] == TRASH
     assert _row(a, remote.ws)[0] == "root" and "parent_page" not in _row(a, remote.ws)[1]
     assert local.texts(a) == {"spl_ed1": "typed there"} and _row(a, local.ws)[0] == "root"
+    for side in (local, remote):  # filed where top was, not loose in the library
+        assert _row(a, side.ws)[1]["folders"] == [folder]
     for side in (local, remote):
         assert _row(b, side.ws)[0] == "root" and _row(b, side.ws)[1]["parent_page"] == a
     assert "page_restored_from_remote" in _conflicts(local, a)
@@ -443,7 +559,8 @@ def test_a_share_host_keeps_a_sub_page_a_share_editor_wrote_in(publishing):
     local, local_ws = linked(publishing, "spl_hed")
     host_ws = workspace_of("spl_hed")
     host = bound(login("spl_hed", "pw"), host_ws)
-    top = _page(local, "Host top")
+    folder = make_folder(local, "spl/hosted")
+    top = _page(local, "Host top", folders=[folder])
     kid = _page(local, "Host kid", top)
     assert local.post(f"/api/pages/{top}/publish").status_code == 200
     r = host.post(f"/api/pages/{kid}/ops", json={"client": "t", "ops": [
@@ -459,9 +576,14 @@ def test_a_share_host_keeps_a_sub_page_a_share_editor_wrote_in(publishing):
     with connect_pages_db(local_ws) as conn:
         assert conn.execute("SELECT kind FROM sync_conflicts WHERE page_id = ?", (kid,)).fetchall() == [
             ("page_restored_from_remote",)]
-    # inside no published page any more, it leaves the share host at the next round
+    # filed where its parent was, and published on its own: it stays on the share host
+    for ws in (local_ws, host_ws):
+        assert "parent_page" not in _row(kid, ws)[1] and _row(kid, ws)[1]["folders"] == [folder]
+    assert kid in sync_engine.get_mirror(local_ws)["page_filter"]
     _sync_ok(local_ws)
-    assert kid not in page_ids(host) and _row(kid, local_ws)[0] == "root"
+    assert kid in page_ids(host) and _row(kid, local_ws)[0] == "root"
+    assert sync_engine.get_mirror(local_ws)["page_filter"] == [kid]  # (the deleted page left it)
+    assert local.get(f"/api/pages/{kid}/publish").json()["published"]
 
 
 def test_a_sub_page_moved_out_of_a_published_page_leaves_the_share_host(publishing):
@@ -485,8 +607,12 @@ def test_a_sub_page_moved_out_of_a_published_page_leaves_the_share_host(publishi
 
 
 def _move(client, page, parent):
+    _move_to(client, page, {"parent_page": parent})
+
+
+def _move_to(client, page, props):
     r = client.post(f"/api/pages/{page}/ops", json={"client": "t", "ops": [
-        {"op": "set", "id": page, "props": {"parent_page": parent}}]})
+        {"op": "set", "id": page, "props": props}]})
     assert r.status_code == 200, r.text
 
 
@@ -494,6 +620,8 @@ def test_a_sub_page_edited_here_survives_its_parent_s_deletion_there():
     remote, local, _ = _pair()
     top, a, b = _remote_tree(remote, "eh")
     lone = _page(remote.client, "eh lone", id="aaehlone")
+    folder = remote.folder("spl_ehF", "eh folder")
+    _move_to(remote.client, top, {"folders": [folder]})
     _sync(local)
     local.insert(a, "spl_eh1", "typed here in a")
     local.insert(lone, "spl_eh2", "typed here in lone")
@@ -506,6 +634,7 @@ def test_a_sub_page_edited_here_survives_its_parent_s_deletion_there():
         assert _row(page, local.ws)[0] == "root" == _row(page, remote.ws)[0], page
         assert "page_restored" in _conflicts(local, page)
     assert "parent_page" not in _row(a, local.ws)[1] and "parent_page" not in _row(a, remote.ws)[1]
+    assert _row(a, local.ws)[1]["folders"] == [folder] == _row(a, remote.ws)[1]["folders"]
     assert remote.texts(a) == {"spl_eh1": "typed here in a"} == local.texts(a)
     assert _row(top, local.ws)[0] == TRASH and a not in _trashed(local.client)
     _sync(local)
@@ -527,6 +656,78 @@ def test_a_page_moved_into_one_there_survives_that_one_s_deletion_here():
     for page in (moved, made):  # neither went with top here: the deletion there leaves them
         assert _row(page, local.ws)[0] == "root" == _row(page, remote.ws)[0], page
     assert local.texts(moved) == {"spl_mi1": "typed there in the moved page"}
+
+
+def test_a_page_moved_into_one_there_before_its_turn_comes_out_of_it_on_both_sides():
+    """The moved page's id sorts before the page's, and here it is a library
+    page until its turn brings the move, so that turn comes first: the move
+    lands here inside a page in Recently deleted. The round's end takes it
+    out here too (``_settle_parents``), as the deletion's ``spare_inside``
+    did there, filed where that page was; nothing names the deleted page
+    any more, so its restore does not take the page back inside."""
+    remote, local, _ = _pair()
+    folder = remote.folder("spl_mbF", "mb folder")
+    top = _page(remote.client, "mb top", id="zzmb_top", folders=[folder])
+    moved = _page(remote.client, "mb moved", id="aamb_moved")
+    _sync(local)
+    _move(remote.client, moved, top)
+    remote.insert(moved, "spl_mb1", "typed there in the moved page")
+    local.client.delete(f"/api/blocks/{top}").raise_for_status()
+    _sync(local)
+    assert _row(moved, local.ws)[0] == "root" and "parent_page" not in _row(moved, local.ws)[1]
+    _sync(local)
+    assert _row(top, remote.ws)[0] == TRASH
+    for side in (local, remote):
+        parent_id, props = _row(moved, side.ws)
+        assert parent_id == "root" and "parent_page" not in props and props["folders"] == [folder], side.ws
+    assert local.texts(moved) == {"spl_mb1": "typed there in the moved page"} == remote.texts(moved)
+    local.client.post(f"/api/trash/{top}/restore").raise_for_status()
+    _sync(local)
+    for side in (local, remote):
+        assert "parent_page" not in _row(moved, side.ws)[1] and _row(top, side.ws)[0] == "root"
+
+
+def test_a_round_takes_a_page_an_earlier_round_left_inside_a_deleted_page_out_of_it():
+    """A page an earlier release left live here inside a page in Recently
+    deleted, and that nobody touches since, is in no round's work list; the
+    round's end still takes it out (``_settle_parents`` reads every such
+    page, not only the ones the round worked), filed where that page was,
+    so restoring the page later does not take it back inside."""
+    remote, local, _ = _pair()
+    folder = remote.folder("spl_lgF", "lg folder")
+    top = _page(remote.client, "lg top", folders=[folder])
+    kid = _page(remote.client, "lg kid")
+    _sync(local)
+    local.client.delete(f"/api/blocks/{top}").raise_for_status()
+    _sync(local)
+    assert _row(top, remote.ws)[0] == TRASH
+    with connect_pages_db(local.ws) as conn:  # as the old round left it: no change logged
+        conn.execute("UPDATE unified_blocks SET properties = json_set(properties, '$.parent_page', ?) WHERE id = ?",
+                     (top, kid))
+        conn.commit()
+    assert sync_engine._settle_parents(local.ws, {top}, {}) == []  # out of the reach: left
+    _sync(local)
+    parent_id, props = _row(kid, local.ws)
+    assert parent_id == "root" and "parent_page" not in props and props["folders"] == [folder]
+    _sync(local)
+    assert "parent_page" not in _row(kid, remote.ws)[1]
+    local.client.post(f"/api/trash/{top}/restore").raise_for_status()
+    _sync(local)
+    for side in (local, remote):
+        assert "parent_page" not in _row(kid, side.ws)[1] and _row(top, side.ws)[0] == "root", side.ws
+
+
+def test_a_round_leaves_a_parent_this_copy_never_held_alone():
+    """A stored parent naming a page this copy has no row of and never
+    deleted (a mirror may bring a sub-page before its parent) is no
+    deletion: the round's end leaves it as it is."""
+    remote, local, _ = _pair()
+    kid = _page(remote.client, "nh kid")
+    _move(remote.client, kid, "spl_nowhere1")
+    _sync(local)
+    _sync(local)
+    for side in (local, remote):
+        assert _row(kid, side.ws)[1]["parent_page"] == "spl_nowhere1"
 
 
 def test_a_page_coming_back_alone_brings_the_pages_inside_it():

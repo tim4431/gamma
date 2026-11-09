@@ -52,19 +52,23 @@ export function tipWaiter(open) {
 
 // The anchor for the popup's state (PdfViewer selPopup): an area at its
 // tip, a mouse selection at its release point, any other selection (touch,
-// keyboard) under its bounding rect.
+// a pen, keyboard) under its bounding rect: what is seen selected (`shown`,
+// a translation's reflowed text), else the rect it keeps (`rect`).
 export function tipAnchor(popup) {
   if (popup.kind === "area") return { top: popup.tip.top, bottom: popup.tip.top, left: popup.tip.left, gap: 0 };
   if (popup.point) return { top: popup.point.y, bottom: popup.point.y, left: popup.point.x - POINT_LEFT, gap: POINT_GAP };
-  return { top: popup.rect.top, bottom: popup.rect.bottom, left: popup.rect.left, gap: RECT_GAP };
+  const r = popup.shown || popup.rect;
+  return { top: r.top, bottom: r.bottom, left: r.left, gap: RECT_GAP };
 }
 
 // Whether the document's selection `sel` is a PDF page's text, the
 // selection the popup is offered for: a range that is not collapsed,
-// starting inside a `.textLayer`.
+// starting inside a `.textLayer`, or with an end in a translation's text
+// (`.pdfTransText`), which stands for the original's blocks under it.
 export function inTextLayer(sel) {
   if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
-  const node = sel.getRangeAt(0).startContainer;
-  const el = node?.nodeType === 3 ? node.parentElement : node;
-  return Boolean(el?.closest?.(".textLayer"));
+  const el = (node) => (node?.nodeType === 3 ? node.parentElement : node);
+  const start = el(sel.getRangeAt(0).startContainer);
+  return Boolean(start?.closest?.(".textLayer")
+    || el(sel.anchorNode)?.closest?.(".pdfTransText") || el(sel.focusNode)?.closest?.(".pdfTransText"));
 }

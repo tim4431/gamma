@@ -10,25 +10,30 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { createPortal } from "react-dom";
-import { CheckIcon, CopyIcon, LanguagesIcon, LinkIcon, LocateIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
+import { BookIcon, CheckIcon, ChevronRightIcon, CopyIcon, LanguagesIcon, LinkIcon, LocateIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
 import { inkPenDown } from "../ink/InkLayer";
 import { ZoomWindow } from "../ink/ZoomWindow.jsx";
 import { revealDelta } from "../ink/zoomWindow.js";
-import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, forgetPixels, installPageRaster, keepPixels, showsKept, takePixels } from "./pageRaster.js";
+import { KEEP_MARGIN, RENDER_MARGIN, cropPage, forgetPixels, installPageRaster, keepPixels, showsKept, takePixels } from "./pageRaster.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
-import { selectionParagraphs } from "./pdfTranslate";
+import { selectionParagraphs, textRuns } from "./pdfTranslate";
 import * as translateState from "./translateState.js";
-import { TransPara, TransPending } from "./TransOverlay.jsx";
+import { langOfKey, sameModel } from "./translateRecall.js";
+import { TransLayer } from "./TransOverlay.jsx";
+import { maskedBlocks, maskedRuns } from "./transBlock.js";
+import { blockAt, blocksQuote, hasMenu, highlightOn, linksOff, marksOver, menuBlockAt, onBlocks, pageReading, paragraphMenu, sameHighlight, selectionBlocks, unitsOnPage } from "./transSelect.js";
+import { createPageScale } from "./pageScale.js";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions, typicalPageIndex } from "./pdfSource";
 import { normalizeChars } from "../shared/lib/textnorm";
 import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
 import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
 import { Chevron, Collapse, IconSwap } from "../shared/ui/MotionWidgets";
 import { menuPress } from "../shared/ui/press.js";
+import { MenuButton } from "../shared/ui/Menus";
 import { lastPointer } from "../shared/lib/pointer.js";
-import { heldAlone, isHeldKey } from "../shared/lib/hotkeys.js";
+import { composing, heldAlone, isHeldKey } from "../shared/lib/hotkeys.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
@@ -46,9 +51,8 @@ import { pastLastPage, reviewList, waitingForAccept } from "./highlightReview.js
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { placeFloating, useFloatingPosition } from "../shared/ui/placement.js";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
-import { installViewerZoom } from "../shared/lib/viewerZoom.js";
+import { SCALE_VAR, installViewerZoom, scaledPx } from "../shared/lib/viewerZoom.js";
 import { installSmoothWheel } from "../shared/lib/smoothWheel.js";
 // The engine: pdf.js (the legacy build, not the default one: it ships the
 // core-js polyfills the modern build assumes — Promise.withResolvers is
@@ -103,6 +107,9 @@ const FALLBACK_H = 800, FALLBACK_W = 600;
 // A page's text layer is built once its scroller has sent no scroll event
 // for this long.
 const TEXT_REST_MS = 100;
+// A paper shown from its kept translations seeds the page being read once the
+// reader has stayed on it this long: a quick scroll past seeds nothing.
+const SEED_REST_MS = 300;
 
 // Calls `fn` once `el` has been still for `ms` (at once without an element);
 // the returned function calls it off.
@@ -250,7 +257,7 @@ function trimDocs() {
 // changes (upload names are content hashes; proxy-saved files are written
 // once), so serving from disk is safe.
 const DISK_CACHE_TTL_MS = 30 * 24 * 3600 * 1000; // one month
-const DISK_CACHE_MAX = 30; // papers kept on disk
+const DISK_CACHE_MAX = 30; // papers in the disk cache
 // ... and at most this many bytes of them together: thirty scanned books
 // would otherwise be gigabytes. The sizes live in a store of their own
 // ("meta"), so the eviction walk never loads a buffer.
@@ -505,6 +512,17 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
   }
 }
 
+// A document opened with no viewer, for work that reads its text (a folder's
+// translated export, pdf/folderTranslation.js): its bytes as the viewer gets
+// them (the caches above, else one GET), parsed by the shared worker. It
+// goes in no cache of documents; the caller destroys it.
+export async function openPdfDocument(url) {
+  const lib = await loadPdfEngine();
+  const data = await fetchPdfData(url, null, () => false);
+  if (!data) throw new Error("the PDF could not be read");
+  return lib.getDocument(openParams({ data: data.slice(0), disableAutoFetch: true, disableRange: true })).promise;
+}
+
 // Handwriting, text boxes and the other page marks (markup/MarkupLayers.jsx):
 // `marks` maps a page number to what its layers draw (App's useMarks); the
 // tools and their handlers come from PageToolsContext (markup/PageTools.jsx).
@@ -545,6 +563,12 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // onZoomChange(update) changes the window, `update(window) → next | null`.
 // areaKey / peekKey: the held keys (docs/dev/hotkeys.md "Held keys") that
 // make a mouse drag box an area and show a translated page's original.
+// onParagraphContext(menu) opens a translated paragraph's menu (docs/dev/
+// translation.md "A paragraph's menu"): a right-click on a block of a page
+// that shows its translation, the selection popup's ⋯ and a paragraph's
+// failed mark send what paragraphMenu (transSelect.js) says of it, with
+// {x, y, url, pn, i, unit, running, peek} (openParaMenu); its rows act
+// through translateCtlRef.
 // A highlight to review after its PDF was replaced (dashed, or hollow:
 // lost) has a review card (HighlightReview.jsx): onAcceptHighlight(id),
 // onPlaceHighlight(id) (a lost one's closest match applied),
@@ -567,7 +591,7 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // that one and opens its card (the Document menu's Review, `follow`; App
 // after a move started from the card, `done` what it did and scroll
 // false).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onPenSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateBrief, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", onHighlightAction, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onPenSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateSelection = null, onTranslateBrief, onTranslateLookup, translateRecall = null, translateKeeps = true, onAddTerm = null, translateCtlRef, onTranslateState, onParagraphContext, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", onHighlightAction, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -628,7 +652,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // parent state change recreates the handler closures. The wrappers always
   // dispatch to the latest handlers via the ref.
   const cbRef = useRef({});
-  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onPenSelection, onTranslate, onTranslateBrief, onTranslateState, onHighlightAction };
+  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onPenSelection, onTranslate, onTranslateSelection, onTranslateBrief, onTranslateLookup, onTranslateState, onHighlightAction, onParagraphContext };
   const stableCbs = useMemo(() => ({
     onJump: (...a) => cbRef.current.onJump?.(...a),
     onHighlightJump: (...a) => cbRef.current.onHighlightJump?.(...a),
@@ -640,22 +664,23 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   }), []);
 
   // The peek key (Alt by default) held while any page shows its translation
-  // = peek at the original: the overlays hide (CSS visibility, no
-  // re-render) until the key is released. The DOM check keeps the
+  // = peek at the original: the overlays hide (CSS visibility, through a
+  // class on the viewer: its pages are memoized and do not render for it)
+  // until the key is released. The DOM check keeps the
   // preventDefault (which stops a bare Alt from focusing the browser menu
   // bar) from firing when nothing is translated.
   const [transPeek, setTransPeek] = useState(false);
+  const transPeekRef = useRef(false);
+  transPeekRef.current = transPeek;
   useEffect(() => {
-    const anyTrans = () => !!viewerRef.current?.querySelector(".pdfTransLayer");
-    const kd = (e) => { if (isHeldKey(e, peekKey) && anyTrans()) { e.preventDefault(); setTransPeek(true); } };
-    const ku = (e) => { if (isHeldKey(e, peekKey) && anyTrans()) { e.preventDefault(); setTransPeek(false); } };
+    const { down, up } = translateState.peekKeys(peekKey, () => !!viewerRef.current?.querySelector(".pdfTransLayer"), setTransPeek);
     const off = () => setTransPeek(false);
-    window.addEventListener("keydown", kd);
-    window.addEventListener("keyup", ku);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
     window.addEventListener("blur", off);
     return () => {
-      window.removeEventListener("keydown", kd);
-      window.removeEventListener("keyup", ku);
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
       window.removeEventListener("blur", off);
       setTransPeek(false);
     };
@@ -912,6 +937,12 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const numericScale = parseFloat(pdfScaleValue);
   const isFitWidth = isNaN(numericScale);
   const scale = isFitWidth ? fitWidthScale : numericScale;
+  // The scale for the code inside a page that needs it as a number (the
+  // raster, the text layer, the translation): the pages take none as a prop,
+  // they size with SCALE_VAR on the zoom layer. Set after the anchor effect
+  // below, so what it starts sees the anchored scroll.
+  const [pageScale] = useState(() => createPageScale(scale));
+  useEffect(() => () => pageScale.dispose(), [pageScale]);
   // A zoom from elsewhere (the buttons, fit-width, a new document) is what the
   // next gesture compounds on; sync() ignores it while a dispatch is in flight.
   useEffect(() => { viewerZoomRef.current?.sync(scale); }, [scale]);
@@ -1278,6 +1309,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     anchorRafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(anchorRafRef.current);
   }, [scale]);
+  useLayoutEffect(() => { pageScale.set(scale); }, [scale, pageScale]);
 
   // Pre-compute every page's natural height. The values feed both the jump
   // math and the per-page placeholder height below — having every page's
@@ -1331,7 +1363,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         try {
           const page = await pdfDoc.getPage(i + 1);
           heights[i] = page.getViewport({ scale: 1 }).height;
-        } catch (e) {
+        } catch {
           heights[i] = FALLBACK_H;
         }
       }
@@ -1491,12 +1523,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const transUrlRef = useRef(transUrl);
   transUrlRef.current = transUrl;
   // transMap: pageNo -> {key, paras, texts, done, queued, busy, partial,
-  // failed}; transShown: show/hide, for ALL pages at once; transStatus: the
-  // job's (translateJob.js onStatus) — its progress, `reading` while a
-  // request waits for the server to read the paper for its brief, and at
-  // its end `error` or `untranslated`.
-  const { entries: transMap, shown: transShown, status: transStatus } =
-    useSyncExternalStore(translateState.subscribe, () => translateState.snapshot(transUrl));
+  // failed}; transShown: show/hide, for ALL pages at once; the view's
+  // `status` is the job's (translateJob.js onStatus).
+  const transView = useSyncExternalStore(translateState.subscribe, () => translateState.snapshot(transUrl));
+  const { entries: transMap, shown: transShown } = transView;
   useEffect(() => { translateState.touch(transUrl); }, [transUrl]);
   const translateKeyRef = useRef(translateKey);
   translateKeyRef.current = translateKey;
@@ -1507,36 +1537,76 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // (translateState.scopeOf).
   const translateScopeRef = useRef(translateScope);
   translateScopeRef.current = translateScope;
-  const translateParallelRef = useRef(3);
-  translateParallelRef.current = Math.min(TRANSLATE_PARALLEL_MAX, Math.max(1, translateParallel || 3));
+  const translateParallelRef = useRef(translateParallel);
+  translateParallelRef.current = translateParallel;
   const curPageRef = useRef(1);
   curPageRef.current = curPage;
   const numPagesRef = useRef(0);
   numPagesRef.current = numPages;
 
-  // Everything the host's button needs to know, pushed on every change.
-  // `pages` counts only pages with visible translated text under the CURRENT
-  // language/model key — entries from a previous key don't render, and
-  // counting them would leave the button a dead show/hide toggle after a
-  // settings switch instead of translating afresh. `current`: the page being
-  // read is fully translated under that key — the button toggles show/hide
-  // there, and translates this page anywhere else (a halted, half-done page
-  // counts as untranslated, so a click finishes it from the cache).
-  // `translated`: some page holds translated text under any key, which
-  // "Forget this translation" would drop. `url`: the document all this is
-  // about (the one on screen, which lags the `url` prop while the next one
-  // loads), so the host's controls that name a document name this one.
+  // What the host's button needs to know (translateState.buttonState), pushed
+  // when some of it changed: a streamed partial changes none of it, and the
+  // host re-renders on a push. `url`: the document all this is about (the one
+  // on screen, which lags the `url` prop while the next one loads), so the
+  // host's controls that name a document name this one.
+  const lastButtonRef = useRef(null);
   useEffect(() => {
-    let pages = 0, translated = false;
-    for (const e of transMap.values()) {
-      if (!e.texts.some(Boolean)) continue;
-      translated = true;
-      if (e.key === translateKey) pages += 1;
-    }
-    const cur = transMap.get(curPage);
-    const current = !!(cur && cur.key === translateKey && cur.done);
-    cbRef.current.onTranslateState?.({ ...transStatus, shown: transShown, pages, current, translated, url: transUrl });
-  }, [transStatus, transShown, transMap, translateKey, curPage, transUrl]);
+    const next = { ...translateState.buttonState(transView, translateKey, curPage, numPages), url: transUrl };
+    const last = lastButtonRef.current;
+    if (last && Object.keys(next).every((k) => next[k] === last[k])) return;
+    lastButtonRef.current = next;
+    cbRef.current.onTranslateState?.(next);
+  }, [transView, translateKey, curPage, numPages, transUrl]);
+
+  // The papers this browser last left showing their translation (the host's
+  // translateRecall, pdf/translateRecall.js), by the file the server keeps it
+  // under: a document whose translation shows under the key is remembered
+  // under it, one the reader shows in the original is let go. A document with
+  // nothing shown yet (opening, before its seed lands) changes nothing. Only
+  // a translation the workspace keeps can come back (`translateKeeps`: Keep
+  // translations is on and the account may write the workspace; a viewer's
+  // stays in its own memory, which the lookup never reads), so no other is
+  // remembered; Show original still lets an earlier one go.
+  const translateRecallRef = useRef(translateRecall);
+  translateRecallRef.current = translateRecall;
+  const transFile = translateState.scopeOf(transUrl, translateScope).file;
+  const transShowing = useMemo(() => transShown && translateState.buttonState(transView, translateKey, 0).pages > 0,
+    [transView, transShown, translateKey]);
+  useEffect(() => {
+    if (!translateRecall || !transFile) return;
+    if (transShowing) {
+      if (translateKeeps) translateRecall.remember(transFile, translateKey);
+    } else if (!transShown) translateRecall.forget(transFile);
+  }, [translateRecall, transFile, translateKey, transShowing, transShown, translateKeeps]);
+
+  // `pages` of the document on screen seeded from its kept translations
+  // (translateState.seedPages, POST /api/translations/lookup, no model call),
+  // only when this browser last left it showing its translation under the key
+  // the host gives now, or one naming the same model through another
+  // connection (translateRecall.sameModel): a paper never translated here asks
+  // nothing, and a colleague's translation of it is not shown uninvited. Not
+  // in a share view, nor for a page whose PDF the server keeps nothing of.
+  // Resolves once the seeds under way have ended.
+  function seedTrans(pages) {
+    const url = transUrlRef.current, key = translateKeyRef.current;
+    const doc = displayedDocRef.current;
+    const lookup = cbRef.current.onTranslateLookup;
+    const { pageId, file } = translateState.scopeOf(url, translateScopeRef.current);
+    if (!doc || !lookup || !cbRef.current.onTranslate || docUrlRef.current !== url || !pageId || !file
+      || !sameModel(translateRecallRef.current?.keyOf(file), key)) return Promise.resolve();
+    return translateState.seedPages(url, {
+      doc, key, pages, lookup: (texts, signal) => lookup({ pageId, texts }, signal),
+      near: (pn) => transUrlRef.current === url && Math.abs(pn - curPageRef.current) <= 2,
+    });
+  }
+  // The page being read and those beside it, as the reader moves; the rest
+  // only for an export (translateCtl.seedAll).
+  const transRunning = transView.status.running;
+  useEffect(() => {
+    if (!pdfDoc || transRunning) return;
+    const id = setTimeout(() => seedTrans([curPage, curPage + 1, curPage - 1]), SEED_REST_MS);
+    return () => clearTimeout(id);
+  }, [pdfDoc, transUrl, translateKey, transFile, curPage, transRunning, translateRecall]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A formula token's span on any page of the document: a token the model
   // moved across a page join points into the other page's block.
@@ -1549,19 +1619,37 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // so it can segment pages after the viewer has gone. Pages near the one
   // being read keep the decoded images their segmentation brought in; the
   // rest let them go. A document its last job lets go leaves the cache
-  // when the cache is past its size.
-  function runTransJob(pages, label) {
+  // when the cache is past its size. `references`: the job translates the
+  // reference lists too. `focus` ({pn, i}): the job asks for that block's
+  // paragraph alone, afresh (a paragraph's menu). The last job asked for on
+  // each document is kept, for "Try again" after it failed; `whole`: it was
+  // "Translate whole document", which asks again for every page not done.
+  const lastJobRef = useRef(new Map());
+  function runTransJob(pages, label, references = false, focus = null, whole = false) {
     const url = transUrlRef.current;
     const doc = displayedDocRef.current;
     const translate = cbRef.current.onTranslate;
     if (!doc || !translate || docUrlRef.current !== url) return;
+    lastJobRef.current.set(url, { pages, label, references, focus, whole });
     translateState.startJob(url, {
-      doc, pages, label, key: translateKeyRef.current, parallel: translateParallelRef.current, translate,
+      doc, pages, label, key: translateKeyRef.current, parallel: translateParallelRef.current, references, translate,
+      focus, fresh: !!focus,
       brief: cbRef.current.onTranslateBrief || null,
       scope: translateScopeRef.current,
       near: (pn) => transUrlRef.current === url && Math.abs(pn - curPageRef.current) <= 2,
       released: trimDocs,
     });
+  }
+
+  // The page being read paints first, then outward by distance (forward
+  // before backward at equal distance) — a whole-document job never keeps the
+  // reader waiting on page 1.
+  function nearestFirst(pages) {
+    const cur = curPageRef.current;
+    return pages.sort((a, b) =>
+      (Math.abs(a - cur) - Math.abs(b - cur))
+      || ((a < cur ? 1 : 0) - (b < cur ? 1 : 0))
+      || (a - b));
   }
 
   // Imperative surface for the host's toolbar button + its menu, on the
@@ -1576,34 +1664,94 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       translatePage: () => runTransJob([curPageRef.current], `p.${curPageRef.current}`),
       translateDoc: () => {
         const key = translateKeyRef.current;
-        const cur = curPageRef.current;
         const done = translateState.entries(transUrlRef.current);
         const pages = [];
         for (let p = 1; p <= numPagesRef.current; p++) {
           const e = done.get(p);
           if (!(e && e.done && e.key === key)) pages.push(p);
         }
-        // The page being read paints first, then outward by distance
-        // (forward before backward at equal distance) — a whole-document job
-        // never keeps the reader waiting on page 1.
-        pages.sort((a, b) =>
-          (Math.abs(a - cur) - Math.abs(b - cur))
-          || ((a < cur ? 1 : 0) - (b < cur ? 1 : 0))
-          || (a - b));
-        runTransJob(pages, "document");
+        runTransJob(nearestFirst(pages), "document", false, null, true);
+      },
+      // The pages whose reference lists stayed original, translated now.
+      translateReferences: () => {
+        const pages = translateState.pagesLeft(transUrlRef.current, translateKeyRef.current);
+        runTransJob(nearestFirst(pages), pages.length === 1 ? `p.${pages[0]}` : "document", true);
       },
       // The pages with paragraphs that jobs under the current language and
       // model could not translate (both pages of one that a page break
-      // cut): asked for again, nothing else.
+      // cut), and those the last job could not read: asked for again,
+      // nothing else.
       retryUntranslated: () => {
         const key = translateKeyRef.current;
-        const pages = [...translateState.entries(transUrlRef.current)]
-          .filter(([, e]) => e.key === key && e.failed?.size).map(([p]) => p).sort((a, b) => a - b);
-        runTransJob(pages, pages.length === 1 ? `p.${pages[0]}` : "document");
+        const { entries, status } = translateState.snapshot(transUrlRef.current);
+        const failed = [...entries].filter(([, e]) => e.key === key && e.failed?.size).map(([p]) => p);
+        const pages = [...new Set([...failed, ...(status.unread || [])])].sort((a, b) => a - b);
+        runTransJob(pages, pages.length === 1 ? `p.${pages[0]}` : "document", translateState.referencesFailed(transUrlRef.current, key));
       },
+      // The last job asked for on the document on screen, again: one that
+      // stopped, or a paragraph's that could not be translated: its pages,
+      // with its references and focus, where a page done already asks for
+      // nothing. "Translate whole document" asks again for every page not done.
+      rerun: () => {
+        const last = lastJobRef.current.get(transUrlRef.current);
+        if (!last) return;
+        if (last.whole) translateCtlRef.current?.translateDoc();
+        else runTransJob(last.pages, last.label, last.references, last.focus);
+      },
+      // A paragraph's menu (onParagraphContext), on the document `url` it was
+      // opened on: the paragraph of block `i` on page `pn` asked for again,
+      // alone and afresh (Translate again, Translate this paragraph), and its
+      // blocks (`unit`) shown in the original here or translated again.
+      translateUnit: (url, pn, i) => {
+        if (url === transUrlRef.current) runTransJob([pn], `p.${pn}`, false, { pn, i });
+      },
+      setOriginal: (url, unit, on) => {
+        if (url === transUrlRef.current) translateState.setOriginal(url, translateKeyRef.current, unit, on);
+      },
+      // Before an export of the document `url`: every page seeded, so a paper
+      // shown from its kept translations is written whole, not only where the
+      // reader went (seedTrans: nothing for a paper not shown so).
+      seedAll: (url) => (url === transUrlRef.current
+        ? seedTrans(Array.from({ length: numPagesRef.current }, (_, k) => k + 1)) : Promise.resolve()),
     };
     return () => { translateCtlRef.current = null; };
-  });
+  }, [translateCtlRef]);
+
+  // A translated paragraph's menu, for block `i` of page `pn`, at (`x`, `y`)
+  // in the viewport: what it says of the paragraph (transSelect.js
+  // paragraphMenu) goes to the host, with the paragraph's unit, whether a job
+  // runs (its rows that ask for one wait for it) and, when the selection lies
+  // in the paragraph, what of it Copy takes: the translation as selected, and
+  // the original of the blocks it stands for (or the original as selected,
+  // from the text layer). `peek`: the original is peeked at (Alt), so nothing
+  // is shown in the original by the menu. `highlight`: the id of a highlight
+  // on the paragraph, under the press (`at`, pt on the page) or else the
+  // first, whose rows the menu carries, since its rects over the translation
+  // take no pointer (PdfPage). Only a page that shows its translation under
+  // the viewer's key has one.
+  const openParaMenu = useCallback(({ pn, i, x, y, at = null }) => {
+    const url = transUrlRef.current, key = translateKeyRef.current;
+    const entry = translateState.entries(url).get(pn);
+    if (!entry || entry.key !== key || !hasMenu(entry.paras[i])) return;
+    const size = { width: pageWidthsRef.current[pn - 1] || FALLBACK_W, height: pageHeightsRef.current[pn - 1] || FALLBACK_H };
+    const highlight = highlightOn(hlsPrevRef.current.get(pn) || [], entry.paras, i, at?.x, at?.y, size);
+    const unit = translateState.unitOf(url, pn, i, key);
+    const entryOf = (q) => {
+      const e = translateState.entries(url).get(q);
+      return e?.key === key ? e : null;
+    };
+    const about = paragraphMenu(unit, entryOf, (q, b, k) => translateState.span(url, q, b, k), (q) => translateState.blocks(url, q));
+    const sel = window.getSelection();
+    const said = sel?.toString().trim();
+    const on = said ? selectionOnPage(sel, url, key) : null;
+    const selection = on && on.pn === pn && on.blocks.some((b) => unit.some((t) => t.pn === pn && t.i === b))
+      ? (on.translated ? { translation: said, source: blocksQuote(on.entry.paras, on.blocks).text } : { source: said })
+      : null;
+    cbRef.current.onParagraphContext?.({
+      ...about, x, y, url, pn, i, unit, running: !!translateState.snapshot(url).status.running, peek: transPeekRef.current,
+      translation: selection?.translation ?? about.translation, source: selection?.source ?? about.source, highlight,
+    });
+  }, []);
 
   // In-PDF link annotations: internal destinations jump within the document.
   async function goToDest(dest) {
@@ -1718,9 +1866,12 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
 
   // Dismiss the color popup when the user mouses down anywhere outside it
   // (without that, removing the textarea/Cancel leaves no way to back out).
+  // The primary button only: a right press keeps the selection for the menu
+  // its contextmenu opens.
   useEffect(() => {
     if (!selPopup) return;
     function onDown(e) {
+      if (e.button !== 0) return;
       const popup = document.querySelector(".plainTip");
       if (popup && popup.contains(e.target)) return;
       setSelPopup(null);
@@ -1757,8 +1908,17 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       else setSelPopup(tip);
     }
     function onMouseMove(e) { if (!e.buttons) waiter.move(e.clientX, e.clientY); }
-    function onMouseDown() { waiter.press(); }
+    // A right press opens a menu (the paragraph's, a highlight's, the
+    // browser's) and keeps the selection, whose Copy rows read it: the popup
+    // goes, and does not come back, since it would cover the menu's first rows
+    // (it lies above every menu) at a place the menu has made stale.
+    function onMouseDown(e) {
+      waiter.press();
+      if (e.button === 2 && !document.querySelector(".plainTip")?.contains(e.target)) setSelPopup(null);
+    }
+    // The primary button's release alone ends a selection.
     function onMouseUp(e) {
+      if (e.button !== 0) return;
       if (document.querySelector(".plainTip")?.contains(e.target)) return;
       const point = { x: e.clientX, y: e.clientY };
       setTimeout(() => syncSelPopup(point), 10);
@@ -1779,60 +1939,133 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       if (!sel || !sel.toString().trim()) { setSelPopup(keepArea); return; }
       const range = sel.getRangeAt(0);
       if (!range) { setSelPopup(keepArea); return; }
-      const node = range.startContainer;
-      const textEl = node?.nodeType === 3 ? node.parentElement?.closest?.(".textLayer") : node?.closest?.(".textLayer");
-      if (!textEl) return;
-      const pageEl = textEl.closest?.("[data-page]");
-      const pageNumber = pageEl ? parseInt(pageEl.dataset.page, 10) : null;
-      const text = sel.toString().trim();
-      if (text && pageNumber) {
-        const r = range.getBoundingClientRect();
-        // Per-line rects so multi-line highlights don't render as one big block.
-        // pdf.js text layer has many spans per line — getClientRects() returns one
-        // rect per span, so merge those that share a line into one rect per line.
-        const raw = Array.from(range.getClientRects())
-          .filter(cr => cr.width > 1 && cr.height > 1)
-          .map(cr => ({ top: cr.top, left: cr.left, right: cr.right, bottom: cr.bottom }))
-          .sort((a, b) => a.top - b.top || a.left - b.left);
-        const lineRects = [];
-        for (const cr of raw) {
-          const last = lineRects[lineRects.length - 1];
-          if (last) {
-            const overlap = Math.min(last.bottom, cr.bottom) - Math.max(last.top, cr.top);
-            const minH = Math.min(last.bottom - last.top, cr.bottom - cr.top);
-            if (overlap >= minH * 0.5) {
-              last.left = Math.min(last.left, cr.left);
-              last.right = Math.max(last.right, cr.right);
-              last.top = Math.min(last.top, cr.top);
-              last.bottom = Math.max(last.bottom, cr.bottom);
-              continue;
-            }
-          }
-          lineRects.push({ ...cr });
-        }
-        // Snapshot the page's offset/size NOW: the confirm click may come after
-        // a scroll or zoom, when re-measuring the page would no longer agree
-        // with these viewport-space selection rects.
-        const pageRect = pageEl.getBoundingClientRect();
-        const pageW = parseFloat(pageEl.style.width) || pageEl.offsetWidth || 1;
-        const pageH = parseFloat(pageEl.style.height) || pageEl.offsetHeight || 1;
-        const rect = { top: r.top, left: r.left, width: r.width, bottom: r.bottom };
-        const snap = {
-          text, rect, point: nearRelease(point, rect), lineRects, pageNumber,
-          pageLeft: pageRect.left, pageTop: pageRect.top, pageW, pageH, scroll: viewerScroll(),
-        };
-        // The highlighter: a release of the mouse or the pen ends the
-        // selection, which is highlighted then; the highlight it made gets
-        // a bar of its own ("made": its colour, comment, link), shown as
-        // the popup would be. A tap after a finger's selection also sends a
-        // mouseup; that one still gets the popup.
-        if (released && highlighterRef.current && !moveModeRef.current && (!point || lastPointer() !== "touch")) {
-          const id = confirmRef.current(snap, "", null, { highlighter: true });
-          if (id && cbRef.current.onHighlightAction) showTip({ ...snap, kind: "made", id });
-          return;
-        }
-        showTip(snap);
+      // A selection with an end in translated text stands for the blocks it
+      // touches (transSelect.js); any other is the text layer's own.
+      const translated = inTranslation(sel.anchorNode) || inTranslation(sel.focusNode);
+      const found = translated ? translatedSelection(sel) : layerSelection(range, sel.toString().trim());
+      if (!found) { setSelPopup(keepArea); return; }
+      // Snapshot the page's offset/size NOW: the confirm click may come after
+      // a scroll or zoom, when re-measuring the page would no longer agree
+      // with these viewport-space selection rects.
+      const { pageEl, text, lineRects, copy = null } = found;
+      const pageNumber = parseInt(pageEl.dataset.page, 10);
+      const r = found.rect || (lineRects.length ? unionRect(lineRects) : null);
+      if (!text || !pageNumber || !r) return;
+      const pageRect = pageEl.getBoundingClientRect();
+      const pageW = pageRect.width || pageEl.offsetWidth || 1;
+      const pageH = pageRect.height || pageEl.offsetHeight || 1;
+      const rect = { top: r.top, left: r.left, width: r.width, bottom: r.bottom };
+      // What the reader sees selected, which the popup hangs from: over a
+      // translation the reflowed text's rects, not the original lines kept
+      // (the first part of a paragraph a column break cut lies in the other
+      // column).
+      const seen = found.shown ? { top: found.shown.top, left: found.shown.left, width: found.shown.width, bottom: found.shown.bottom } : rect;
+      // On a page that shows its translation, the paragraph whose menu the
+      // popup's ⋯ opens: the one the selection starts in (transSelect.js).
+      const on = found.on || (cbRef.current.onParagraphContext ? selectionOnPage(sel, transUrlRef.current, translateKeyRef.current) : null);
+      const para = on && [on.from, ...on.blocks].find((b) => b >= 0 && hasMenu(on.entry.paras[b]));
+      const snap = {
+        text, rect, point: nearRelease(point, seen), lineRects, pageNumber,
+        pageLeft: pageRect.left, pageTop: pageRect.top, pageW, pageH, scroll: viewerScroll(),
+        ...(found.shown ? { shown: seen } : null),
+        ...(translated ? { translated: true, copy } : null),
+        ...(para != null ? { para: { pn: on.pn, i: para } } : null),
+      };
+      // A selection in a translation stands for whole blocks, so one over a
+      // paragraph highlighted from it before is that highlight: its bar, as
+      // the highlighter's for a highlight it made, and no second one.
+      const had = found.same && !moveModeRef.current ? found.same : null;
+      if (had) {
+        if (released && highlighterRef.current) window.getSelection()?.removeAllRanges();
+        if (cbRef.current.onHighlightAction) showTip({ ...snap, kind: "made", id: had });
+        else if (released && highlighterRef.current) setSelPopup(null);
+        else showTip(snap);
+        return;
       }
+      // The highlighter: a release of the mouse or the pen ends the
+      // selection, which is highlighted then; the highlight it made gets
+      // a bar of its own ("made": its colour, comment, link), shown as
+      // the popup would be. A tap after a finger's selection also sends a
+      // mouseup; that one still gets the popup.
+      if (released && highlighterRef.current && !moveModeRef.current && (!point || lastPointer() !== "touch")) {
+        const id = confirmRef.current(snap, "", null, { highlighter: true });
+        if (id && cbRef.current.onHighlightAction) showTip({ ...snap, kind: "made", id });
+        return;
+      }
+      showTip(snap);
+    }
+    // A selection of the text layer's: {pageEl, text, lineRects, rect}, rects
+    // in viewport px, one per line. pdf.js's text layer has many spans per
+    // line and getClientRects() gives one rect per span, so those that share
+    // a line merge. A span standing down under a translation (.transMasked)
+    // is not selected, but the range still has its rects: they go, so a drag
+    // between two blocks left original over a translated one between them
+    // highlights those two alone.
+    function layerSelection(range, text) {
+      const node = range.startContainer;
+      const textEl = (node?.nodeType === 3 ? node.parentElement : node)?.closest?.(".textLayer");
+      const pageEl = textEl?.closest?.("[data-page]");
+      if (!pageEl) return null;
+      const masked = Array.from(textEl.querySelectorAll(".transMasked"))
+        .filter((s) => range.intersectsNode(s)).map((s) => s.getBoundingClientRect());
+      const under = (cr) => {
+        const x = (cr.left + cr.right) / 2, y = (cr.top + cr.bottom) / 2;
+        return masked.some((m) => x >= m.left && x <= m.right && y >= m.top && y <= m.bottom);
+      };
+      const raw = Array.from(range.getClientRects())
+        .filter(cr => cr.width > 1 && cr.height > 1 && !under(cr))
+        .map(cr => ({ top: cr.top, left: cr.left, right: cr.right, bottom: cr.bottom }))
+        .sort((a, b) => a.top - b.top || a.left - b.left);
+      const lineRects = [];
+      for (const cr of raw) {
+        const last = lineRects[lineRects.length - 1];
+        if (last) {
+          const overlap = Math.min(last.bottom, cr.bottom) - Math.max(last.top, cr.top);
+          const minH = Math.min(last.bottom - last.top, cr.bottom - cr.top);
+          if (overlap >= minH * 0.5) {
+            last.left = Math.min(last.left, cr.left);
+            last.right = Math.max(last.right, cr.right);
+            last.top = Math.min(last.top, cr.top);
+            last.bottom = Math.max(last.bottom, cr.bottom);
+            continue;
+          }
+        }
+        lineRects.push({ ...cr });
+      }
+      return { pageEl, text, lineRects, rect: masked.length ? null : range.getBoundingClientRect() };
+    }
+    // A selection with an end in translated text, on the page its anchor is
+    // on: the whole blocks from the block under one end to the block under
+    // the other (an end in the original's text, a block left original, is
+    // its block), with every part of a paragraph a column break cut
+    // (transSelect.js). Its rects are those blocks' ORIGINAL lines and its
+    // text their original text, so a highlight made from it lies where they
+    // are with the paper's own words, the translation hidden or not; the
+    // reflowed translation's rects would mean nothing then. `copy`: what was
+    // selected as it reads, the translation. An end on another page takes
+    // this page as far as its body text goes that way (selectionOnPage).
+    // `shown`: the rect round what is seen selected, which the popup hangs
+    // from. `same`: the id of a highlight on the page that lies on exactly
+    // these lines, made from such a selection before (transSelect.js
+    // sameHighlight).
+    function translatedSelection(sel) {
+      const on = selectionOnPage(sel, transUrlRef.current, translateKeyRef.current);
+      if (!on?.blocks.length) return null;
+      const { pageEl, pn, entry, blocks } = on;
+      const { rects, text } = blocksQuote(entry.paras, blocks);
+      const pageRect = pageEl.getBoundingClientRect();
+      const ptW = Number(pageEl.dataset.ptWidth) || 1;
+      const k = pageRect.width / ptW;
+      const lineRects = rects.map((q) => ({
+        left: pageRect.left + q.x1 * k, top: pageRect.top + q.y1 * k, right: pageRect.left + q.x2 * k, bottom: pageRect.top + q.y2 * k,
+      }));
+      const drawn = drawnRects(sel.getRangeAt(0));
+      const size = { width: ptW, height: pageRect.height / k };
+      return {
+        pageEl, text, lineRects, copy: sel.toString().trim(), on,
+        shown: drawn.length ? unionRect(drawn) : null,
+        same: sameHighlight(hlsPrevRef.current.get(pn) || [], rects, size),
+      };
     }
     // The iPad app's own edit menu (Copy, Look Up, Translate, …) opens where
     // the popup does and covers it: under a host that can turn it off
@@ -1979,6 +2212,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
             onFocus={(e) => { setPageInput(String(curPage)); e.target.select(); }}
             onChange={(e) => setPageInput(e.target.value.replace(/[^0-9]/g, ""))}
             onKeyDown={(e) => {
+              if (composing(e)) return;
               if (e.key === "Enter") {
                 jumpToPage(parseInt(pageInput, 10));
                 e.currentTarget.blur();
@@ -2027,13 +2261,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           if (selPopup && (!at || Math.abs(el.scrollLeft - at[0]) >= 1 || Math.abs(el.scrollTop - at[1]) >= 1)) setSelPopup(null);
         }}>
       {/* pdfZoomLayer: the pinch preview's transform target — spans the full
-          scroll content so transform-origin 0 0 coincides with content (0,0) */}
-      <div ref={zoomLayerRef} className="pdfZoomLayer">
+          scroll content so transform-origin 0 0 coincides with content (0,0).
+          It carries the committed zoom (SCALE_VAR), which the page boxes
+          size with, so a zoom re-lays-out the pages without rendering them. */}
+      <div ref={zoomLayerRef} className="pdfZoomLayer" style={{ [SCALE_VAR]: String(scale) }}>
       <CommentMarginContext.Provider value={commentMargin}>
       <MarginStackContext.Provider value={marginStack}>
       {Array.from({ length: numPages }, (_, i) => (
-        <PdfPage key={`${docSeq}-${i + 1}`} pageNumber={i + 1} pdfDoc={pdfDoc} scale={scale}
-          marginLeft={withMargin ? pageMargin(i + 1) : null} pageTop={pageTops[i] || 0}
+        <PdfPage key={`${docSeq}-${i + 1}`} pageNumber={i + 1} pdfDoc={pdfDoc} zoom={pageScale}
+          baseWidth={pageWidths[i] || 0} baseHeight={pageHeights[i] || 0}
+          marginLeft={withMargin ? pageMargin(i + 1) : null} pageTop={pageTops[i] || 0} marginScale={withMargin ? scale : 0}
           activeHl={targetPage === i + 1 ? activeHl : null}
           highlights={hlsByPage.get(i + 1) || EMPTY_MARKS} onJump={stableCbs.onJump}
           // what a highlight, a link highlight or an outside link does on a
@@ -2050,13 +2287,12 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           areaMode={canAnnotate ? !!areaMode : false} areaKey={areaKey}
           onAreaSelected={canAnnotate ? onAreaSelected : undefined} onPenPress={onPenPress} onPenSelect={onPenSelect}
           pendingArea={selPopup?.kind === "area" && selPopup.pageNumber === i + 1 ? selPopup : null}
-          reservedHeight={pageHeights[i] ? pageHeights[i] * scale : null}
-          reservedWidth={pageWidths[i] ? pageWidths[i] * scale : null}
           findMarks={marksByPage.get(i + 1) || EMPTY_MARKS}
           trans={transMap.get(i + 1) || null}
           transKey={translateKey}
           transShown={transShown}
           transSpan={transSpan}
+          onParaMenu={onParagraphContext && onTranslate ? openParaMenu : null}
           onInternalLink={goToDestStable}
           onExternalLink={onExternalLink ? stableCbs.onExternalLink : undefined}
           onLinkContext={stableCbs.onLinkContext}
@@ -2077,16 +2313,25 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
             onLink={made ? () => madeAction("link") : () => handleSelConfirm("", null, { link: true })}
             onComment={selComment ? (made ? () => madeAction("comment") : (color) => handleSelConfirm("", color, { comment: true })) : null}
             onMove={moveMode ? () => handleSelConfirm("", null) : null}
-            // the system's Copy, where the host turns its menu off for this popup
-            copy={nativeHost()?.editMenu && selPopup.kind !== "area" ? selPopup.text : null}
-            // a selection that places a moved highlight is not read, so not translated
-            translate={!moveMode && selTranslate && selPopup.kind !== "area" && selPopup.text && onTranslate ? {
-              text: selPopup.text, auto: selTranslate === "auto", langLabel: translateLangLabel,
+            // the system's Copy, where the host turns its menu off for this popup:
+            // what was selected, the translation's words over a translation
+            copy={nativeHost()?.editMenu && selPopup.kind !== "area" ? (selPopup.copy ?? selPopup.text) : null}
+            // the paragraph menu, on a page that shows its translation
+            menu={selPopup.para && !moveMode && onParagraphContext && onTranslate
+              ? (e) => openParaMenu({ ...selPopup.para, x: e.clientX, y: e.clientY }) : null}
+            // a selection that places a moved highlight is not read, so not
+            // translated; nor is one in a translation, which is translated already
+            translate={!moveMode && selTranslate && selPopup.kind !== "area" && !selPopup.translated && selPopup.text && onTranslate ? {
+              text: selPopup.text, auto: selTranslate === "auto", langLabel: translateLangLabel, lang: langOfKey(translateKey),
               // A quick one-off text: the paper's brief rides along when it is
               // made already, never waited for. The page is the selected
               // document's, none while the next one loads.
-              run: (texts, signal, onPartial) => cbRef.current.onTranslate?.(texts, signal, onPartial,
+              // The settings' own request: a paper shown under another key
+              // (App's paperKey) does not change what a selection asks.
+              run: (texts, signal, onPartial) => (cbRef.current.onTranslateSelection || cbRef.current.onTranslate)?.(texts, signal, onPartial,
                 { pageId: translateState.scopeOf(transUrlRef.current, translateScopeRef.current).pageId, waitBrief: false }),
+              // the workspace's glossary, for a writer of it
+              addTerm: onAddTerm,
             } : null} />
         </TipFrame>
       )}
@@ -2239,9 +2484,12 @@ function NoteBadge({ hlId, text, hasNote = true, threads = 0, style, onClick, on
 // marginLeft: the page's left edge beside its comment margin, or null for
 // none (centred, with the badge and the popover); pageTop: the page's top,
 // px from the first page's top, where its margin's column goes on from the
-// pages above; activeHl: the highlight
-// whose card is the active one, drawn stronger.
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, onPenPress, onPenSelect, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, toolArmed, marks, marginLeft = null, pageTop = 0, activeHl = null }) {
+// pages above; marginScale: the zoom, beside a margin only (0 otherwise:
+// a page outside margin mode takes no scale, so a zoom does not render it);
+// activeHl: the highlight whose card is the active one, drawn stronger.
+// zoom: the viewer's pageScale store; baseWidth × baseHeight: the page's
+// size at scale 1 as the viewer knows it, until pdf.js measures it.
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, baseWidth = 0, baseHeight = 0, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, onPenPress, onPenSelect, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, onParaMenu = null, toolArmed, marks, marginLeft = null, pageTop = 0, marginScale = 0, activeHl = null }) {
   const wrapRef = useRef(null);
   const baseRef = useRef(null);
   const detailRef = useRef(null);
@@ -2271,12 +2519,17 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const ghostDrawn = overlays && !!reviewGhost;
   useEffect(() => { if (ghostDrawn) onReview?.drawn?.(); }, [ghostDrawn, reviewGhost, onReview]);
   const [links, setLinks] = useState([]); // link annotations, rects at scale 1
-  const scaleRef = useRef(scale);
-  scaleRef.current = scale;
+  // The settled zoom (pdf/pageScale.js), heard inside the look-ahead only:
+  // there the text layer is re-measured at it and a translation laid out at
+  // it, once the zoom stops. A live change is no new snapshot, so a wheel
+  // train does not render the page at all. Away from the view nothing here
+  // needs it; the page reads it afresh when it comes back.
+  const restOf = useCallback((fn) => (renderVisible ? zoom.subscribe(fn) : () => {}), [zoom, renderVisible]);
+  const rest = useSyncExternalStore(restOf, zoom.rest);
   const onPaintedRef = useRef(onPainted);
   onPaintedRef.current = onPainted;
-  // Translation entry for this page (from the viewer's engine) — display
-  // only; the queue and all fetching live in PdfViewer.
+  // Translation entry for this page (from pdf/translateState.js) — display
+  // only; the queue and all fetching live in pdf/translateJob.js.
   const transEntry = trans && trans.key === transKey ? trans : null;
 
   // Farther out, up to KEEP_MARGIN, a page keeps the pixels it has (on a
@@ -2330,9 +2583,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     let cancelled = false;
     pdfDoc.getPage(pageNumber).then((p) => {
       if (cancelled) return;
-      // Base (scale-1) size — render multiplies by the CURRENT scale, so the
-      // page box resizes in the same commit as a zoom change instead of
-      // keeping its old size until the async redraw completes.
+      // Base (scale-1) size — the box is that at the layer's zoom, so it
+      // resizes in the same frame as a zoom change instead of keeping its
+      // old size until the async redraw completes.
       const vpBase = p.getViewport({ scale: 1 });
       setPageSize({ width: vpBase.width, height: vpBase.height });
       setLoaded({ doc: pdfDoc, page: p });
@@ -2356,8 +2609,10 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       return;
     }
     if (!renderVisible) return; // kept: holds what it has, nothing new is drawn
-    rasterRef.current.show(page, {
-      scale,
+    // At the live zoom, heard from the store: a zoom does not render the
+    // page, and the raster keeps its own settle.
+    const draw = () => rasterRef.current.show(page, {
+      scale: zoom.get(),
       // DISABLE keeps embedded markup annotations (e.g. highlights burned in
       // by a Gamma export, or SumatraPDF/Acrobat ones) out of the canvas so
       // they don't stack under Gamma's own overlay after an import. Link
@@ -2365,16 +2620,27 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       annotationMode: hideEmbeddedAnnots ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE,
       pinned: !!forceRender,
     });
-  }, [page, scale, renderVisible, kept, hideEmbeddedAnnots, forceRender]);
+    draw();
+    return zoom.subscribe(draw);
+  }, [page, zoom, renderVisible, kept, hideEmbeddedAnnots, forceRender]);
 
   // The text layer and the link boxes: built once per page, after its first
   // pixels, and kept when the page scrolls away or the zoom changes. The
-  // layer is laid out at scale 1 and scaled by CSS (its size and transform
-  // in the JSX below), so a zoom has nothing to rebuild. Only a page far
-  // from the view drops it (`far`), to be built again after its next paint.
+  // layer is laid out at scale 1 (pdf.js sizes it, under --scale-factor 1)
+  // and scaled by CSS: once built it takes the zoom (SCALE_VAR), so a zoom
+  // has nothing to rebuild or render. Inline, so it also overrides
+  // pdf_viewer.css's rotation transforms. Until then it is pdf.js's inset 0
+  // and fills the box, and 300 empty layers restyle nothing on a zoom. Only
+  // a page far from the view drops it (`far`), to be built again after its
+  // next paint; nothing else writes its size or transform.
   useEffect(() => {
     if (far) {
-      if (textRef.current) textRef.current.innerHTML = "";
+      const textL = textRef.current;
+      if (textL) {
+        textL.innerHTML = "";
+        for (const key of ["width", "height", "transform", SCALE_VAR]) textL.style.removeProperty(key);
+        textL.removeAttribute("data-main-rotation");
+      }
       setTextReady(null);
       setPaintedPage(null);
       return;
@@ -2400,15 +2666,18 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         // highlights, selections and search marks with it. An empty lang
         // resolves differently on a canvas and on an element, so "en".
         textL.lang = tc.lang || "en";
-        const measuredAt = scaleRef.current;
+        const measuredAt = zoom.get();
         layer = new pdfjsLib.TextLayer({ textContentSource: tc, container: textL, viewport: page.getViewport({ scale: measuredAt }) });
+        textL.style.setProperty(SCALE_VAR, "inherit");
+        textL.style.transform = `scale(var(${SCALE_VAR}))`;
         await layer.render();
         if (cancelled) return;
         textScaleRef.current = measuredAt;
-        setTextReady({ page, layer, runs: citationRuns(tc.items, layer.textDivs) });
+        setTextReady({ page, layer, runs: citationRuns(tc.items, layer.textDivs),
+          boxes: textRuns(tc.items.filter((it) => typeof it.str === "string"), vpBase.transform) });
 
         // Link annotations (in-PDF references + external URLs), stored at
-        // scale 1 and multiplied in JSX.
+        // scale 1 and placed in JSX as fractions of the box.
         const annots = await page.getAnnotations();
         if (cancelled) return;
         setLinks(annots
@@ -2428,27 +2697,27 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     return () => { cancelled = true; rested(); layer?.cancel(); };
   }, [page, paintedPage, far]);
 
-  // Once a zoom settles the spans are re-measured at the new size, which is
-  // what pdf.js's own viewer does in place of a rebuild: the selection, the
-  // spans and the citation runs all survive.
+  // Once a zoom settles (`rest`) the spans are re-measured at the new size,
+  // which is what pdf.js's own viewer does in place of a rebuild: the
+  // selection, the spans and the citation runs all survive. Not while a zoom
+  // still runs (a layer built mid-train measured at the live scale): the
+  // settled value is on its way, and with it this effect.
   useEffect(() => {
     const layer = textReady?.page === page ? textReady.layer : null;
-    if (!layer || !renderVisible || textScaleRef.current === scale) return;
-    const timer = setTimeout(() => {
-      layer.update({ viewport: page.getViewport({ scale }) });
-      textScaleRef.current = scale;
-    }, ZOOM_SETTLE_MS);
-    return () => clearTimeout(timer);
-  }, [page, scale, renderVisible, textReady]);
+    if (!layer || !renderVisible || textScaleRef.current === rest || rest !== zoom.get()) return;
+    layer.update({ viewport: page.getViewport({ scale: rest }) });
+    textScaleRef.current = rest;
+  }, [page, zoom, rest, renderVisible, textReady]);
 
-  // The box the page occupies: pdf.js's measure once it has rendered, else
-  // the reserved size from the manifest skeleton (exact too), else nothing
-  // yet. Overlays scale into it, so highlights and ink are placed right on a
-  // skeleton page as well.
-  const curW = pageSize ? pageSize.width * scale : (reservedWidth || 1);
-  const curH = pageSize ? pageSize.height * scale : (reservedHeight || 1);
-  const baseW = pageSize ? pageSize.width : (reservedWidth ? reservedWidth / scale : undefined);
-  const baseH = pageSize ? pageSize.height : (reservedHeight ? reservedHeight / scale : undefined);
+  // The page at scale 1: pdf.js's measure once it has loaded, else the
+  // viewer's (from the manifest skeleton, exact too, or measured), else
+  // nothing yet. The box is that at the layer's zoom (SCALE_VAR), and the
+  // overlays are fractions of the box, so a zoom resizes and places them
+  // all without a render, on a skeleton page as well.
+  const baseW = pageSize ? pageSize.width : (baseWidth > 0 ? baseWidth : undefined);
+  const baseH = pageSize ? pageSize.height : (baseHeight > 0 ? baseHeight : undefined);
+  const pctX = (v, of = baseW) => `${(v / (of || 1)) * 100}%`;
+  const pctY = (v, of = baseH) => `${(v / (of || 1)) * 100}%`;
 
   // Rectangle drag (screenshot-style area note): a mouse drag with the area
   // key held alone (Ctrl, ⌘ on a Mac, by default: areaKey), or any drag
@@ -2543,9 +2812,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     else onPenSelect(e);
   }
 
-  // Whether translated text is on screen: gates the overlay and flips the
-  // wrap class that makes the translation selectable instead of the
-  // (invisible) original.
+  // Whether translated text is on screen: gates the overlay.
   const transPartials = transEntry?.partial && Object.keys(transEntry.partial).length > 0;
   const transActive = transShown && !!transEntry && (transEntry.texts.some(Boolean) || !!transPartials);
   // Translation still arriving for this page: the overlay also renders the
@@ -2553,15 +2820,71 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   // text exists.
   const transWorking = transShown && !!transEntry && !transEntry.done
     && (transEntry.queued || transEntry.busy?.size > 0);
+  // A paragraph a job could not translate: the overlay marks it.
+  const transFailed = transShown && !!transEntry?.failed?.size;
+  // A translated paragraph's menu (PdfViewer's openParaMenu): one handler for
+  // the page, after a highlight's, a link's or a note's own menu (they call
+  // preventDefault) and only where the translation shows, for the block under
+  // the pointer, its overlay's (data-block) or, where the overlay draws
+  // nothing over it (waiting, failed, left original, shown in the original,
+  // peeked at), the block whose lines hold the point. A mouse's right-click
+  // only: a finger's hold is the system's selection, whose popup has a ⋯ for
+  // this (docs/dev/ui-design.md, "The PDF viewer"). Elsewhere the browser's
+  // own menu stays.
+  const onTransMenu = (e) => {
+    if (e.defaultPrevented || !onParaMenu || !transShown || !transEntry || toolArmed || areaMode) return;
+    if (lastPointer() !== "mouse" || e.target.closest?.(".textBox, .pagePicture")) return;
+    const el = e.target.closest?.("[data-block]");
+    const r = wrapRef.current.getBoundingClientRect();
+    const k = r.width / (baseW || 1);
+    const at = { x: (e.clientX - r.left) / k, y: (e.clientY - r.top) / k };
+    let i = el && wrapRef.current.contains(el) ? Number(el.dataset.block) : -1;
+    if (i < 0) i = menuBlockAt(transEntry, at.x, at.y);
+    if (i < 0) return;
+    e.preventDefault();
+    onParaMenu({ pn: pageNumber, i, x: e.clientX, y: e.clientY, at });
+  };
+  const onFailedMenu = useCallback((i, x, y) => onParaMenu?.({ pn: pageNumber, i, x, y }), [onParaMenu, pageNumber]);
+  // The original stands down only under what the overlay masks: where no
+  // translation is drawn (a reference list left original, text in a figure, a
+  // paragraph still waiting) it stays selectable. Per block, so text streaming
+  // into a block already masked touches no span.
+  // `masked` is the list as a string, a dependency that changes only with it.
+  const masked = transActive || transWorking ? maskedBlocks(transEntry).join() : "";
+  const maskedList = useMemo(() => (masked ? masked.split(",").map(Number) : []), [masked]);
+  useLayoutEffect(() => {
+    if (textReady?.page !== page) return;
+    const under = masked ? maskedRuns(textReady.boxes, transEntry.paras, maskedList) : null;
+    textReady.layer.textDivs.forEach((div, k) => div.classList.toggle("transMasked", !!under?.has(k)));
+  }, [masked, textReady, page]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Link boxes and find marks are the original's, where its words are. Over
+  // a translation those words have moved: a link box there would take a
+  // click or a drag's start meant for the translated text, so it goes (the
+  // citation marker in the translation is plain text), and a find hit there
+  // marks the paragraph that holds it (transSelect.js).
+  const maskedParas = transEntry?.paras;
+  const shownLinks = useMemo(() => (masked ? linksOff(links, maskedParas, maskedList) : links),
+    [links, masked, maskedList, maskedParas]);
+  const shownMarks = useMemo(() => (masked ? marksOver(findMarks, maskedParas, maskedList) : findMarks),
+    [findMarks, masked, maskedList, maskedParas]);
+  // Highlights stay where the original's words are, but a rect over a block
+  // with its translation drawn takes no pointer: it would take the right-click
+  // (the paragraph's menu, which carries the highlight's rows), the drag that
+  // selects the translation and the press of the pen. Elsewhere on the page it
+  // is a highlight as any.
+  const onTranslation = useMemo(() => (masked ? onBlocks(maskedParas, maskedList) : null),
+    [masked, maskedList, maskedParas]);
 
   return (
-    <div ref={wrapRef} data-page={pageNumber} data-guide="pdf.page" className={"pdfPageWrap" + (transActive ? " transShown" : "")}
+    <div ref={wrapRef} data-page={pageNumber} data-pt-width={baseW} data-guide="pdf.page" className="pdfPageWrap"
+      data-base-w={baseW || undefined}
       onPointerDown={(e) => { if (e.pointerType !== "pen") beginAreaDrag(e); }}
+      onContextMenu={onTransMenu}
       style={{
         margin: marginLeft != null ? `0 0 ${PAGE_GAP}px ${marginLeft}px` : `0 auto ${PAGE_GAP}px`, position: "relative", background: "#fff",
-        width: pageSize || reservedWidth ? curW : undefined,
-        height: pageSize || reservedHeight ? curH : undefined,
-        minHeight: pageSize || reservedHeight ? undefined : 200,
+        width: baseW ? scaledPx(baseW) : undefined,
+        height: baseH ? scaledPx(baseH) : undefined,
+        minHeight: baseH ? undefined : 200,
       }}>
       {/* The page's bitmaps, drawn by the raster: the whole page and, at high
           zoom, a sharp one over the part in view. Both are sized in percent
@@ -2572,85 +2895,40 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         <canvas ref={baseRef} />
         <canvas ref={detailRef} className="pdfDetailCanvas" />
       </div>
-      {/* Translated view: masks + refills sit between the canvas and the text
-          layer, so selecting the (invisible) original text still paints its
-          selection highlight on top of the overlay. pointer-events: none —
-          highlighting, links and search always act on the original. */}
-      {transActive || transWorking ? (
-        <div className="pdfTransLayer">
-          {(() => {
-            // Results by block index: text, null (came back untranslated:
-            // the original shows), "" (its words went to the part before
-            // it: masked, nothing written), or missing (not landed yet).
-            return transEntry.paras.map((p, i) => {
-              if (!p.translate) return null;
-              const final = transEntry.texts[i];
-              const partial = final ? null : transEntry.partial?.[i];
-              const text = final === "" ? "" : final || partial;
-              const pad = 1.5;
-              const lns = p.lines || [];
-              const box = {
-                left: p.x1 * scale - pad, top: p.y1 * scale - pad,
-                width: (p.x2 - p.x1) * scale + 2 * pad, height: (p.y2 - p.y1) * scale + 2 * pad,
-              };
-              const lines = lns.map((l, j) => {
-                // Fill the inter-line leading too: the original's line
-                // pitch exceeds the glyph-box height, and slivers of the
-                // original text otherwise peek through between masks.
-                const next = lns[j + 1];
-                const bottom = next && next.y1 - l.y2 < p.size * 1.2 ? next.y1 : l.y2;
-                return {
-                  left: (l.x1 - p.x1) * scale, top: (l.y1 - p.y1) * scale,
-                  width: (l.x2 - l.x1) * scale + 2 * pad,
-                  height: (bottom - l.y1) * scale + 2 * pad,
-                };
-              });
-              if (text !== "" && !text) {
-                // Nothing to show yet: the original stays visible, washed
-                // while its translation is queued or in flight (not once
-                // this job could not translate it).
-                if (final === undefined && transWorking && (transEntry.busy?.has(i)
-                    || (transEntry.queued && !transEntry.failed?.has(i)))) {
-                  return (
-                    <div key={i} className="pdfTransPara" style={box}>
-                      <TransPending lines={lines} busy={transEntry.busy?.has(i)} />
-                    </div>
-                  );
-                }
-                return null;
-              }
-              return (
-                // Keyed by its final text too: a translation asked again
-                // (now with the paper's brief) fades in like a new one.
-                <TransPara key={final ? `${i}:${final}` : i} box={box} lines={lines} baseSize={p.size * scale} text={text}
-                  streaming={!final && final !== ""} block={p} page={pageNumber} scale={scale}
-                  spanOf={transSpan} basePaints={basePaints} />
-              );
-            });
-          })()}
-        </div>
+      {/* Translated view: masks + refills, drawn inside the look-ahead as the
+          other overlays are, over the text layer (z-index 1 to its 0) and
+          under the highlights, find marks and link boxes. Its translated text
+          takes the pointer and the selection where it is drawn, and the text
+          layer's spans under the masks stand down (.transMasked, app.css);
+          elsewhere the layer lets the pointer through to the original. A
+          selection in it stands for the original's blocks (syncSelPopup).
+          Laid out at its own reference scale; one transform carries it to
+          the zoom layer's SCALE_VAR. */}
+      {overlays && (transActive || transWorking || transFailed) && baseW && baseH ? (
+        <TransLayer key={transEntry.key} entry={transEntry} page={pageNumber} width={baseW} height={baseH}
+          working={transWorking} spanOf={transSpan} basePaints={basePaints} still={readOnly || toolArmed}
+          onMenu={onParaMenu ? onFailedMenu : null} />
       ) : null}
       {/* No text selection on a read-only page, nor while a tool is armed: the tool takes the pointer. */}
-      {/* The page at scale 1, scaled up to the page box. Sized here and not
-          only when the text is built: the layer otherwise fills the box
-          (pdf_viewer.css, inset: 0) and the transform would scale an empty
-          one past it, widening the scroll area. */}
+      {/* The page at scale 1, scaled up to the page box. Its size and
+          transform are the build's (above), never written here: an empty
+          layer fills the box (pdf_viewer.css, inset: 0), and a built one is
+          pdf.js's size under scale(SCALE_VAR). */}
       <div ref={textRef} className="textLayer" data-guide="pdf.textLayer" style={{
-        ...(baseW && baseH ? { width: baseW, height: baseH, transform: `scale(${scale})` } : null),
         userSelect: readOnly || toolArmed ? "none" : "text", WebkitUserSelect: readOnly || toolArmed ? "none" : "text",
       }} />
       <PdfCitationOverlay citation={citation} wrapRef={wrapRef}
         ready={textReady?.page === page ? textReady : null} />
-      {overlays && links.map((l, i) => (
+      {overlays && shownLinks.map((l, i) => (
         <div
           key={`lnk-${i}`}
           className="pdfLinkBox"
           title={l.url || t("Jump to reference")}
           style={{
-            left: l.left * scale,
-            top: l.top * scale,
-            width: Math.max(4, l.w * scale),
-            height: Math.max(4, l.h * scale),
+            left: pctX(l.left),
+            top: pctY(l.top),
+            width: `max(4px, ${pctX(l.w)})`,
+            height: `max(4px, ${pctY(l.h)})`,
           }}
           onClick={(e) => {
             // A viewer told nothing of outside links (a tab group's read
@@ -2667,7 +2945,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
           } : null)}
         />
       ))}
-      {overlays && (findMarks || []).map((m, i) => (
+      {/* A hit in a translated paragraph marks the paragraph: an outline,
+          since a wash over a whole paragraph says nothing of where. */}
+      {overlays && (shownMarks || []).map((m, i) => (
         <div
           key={`find-${i}`}
           className="pdfFindMark"
@@ -2675,12 +2955,12 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
             position: "absolute",
             zIndex: 3,
             pointerEvents: "none",
-            left: m.rect.x1 * scale,
-            top: m.rect.y1 * scale,
-            width: Math.max(2, (m.rect.x2 - m.rect.x1) * scale),
-            height: Math.max(2, (m.rect.y2 - m.rect.y1) * scale),
-            background: m.active ? "rgba(255, 140, 0, 0.45)" : "rgba(255, 220, 0, 0.30)",
-            outline: m.active ? "2px solid rgba(255, 120, 0, 0.9)" : "none",
+            left: pctX(m.rect.x1),
+            top: pctY(m.rect.y1),
+            width: `max(2px, ${pctX(m.rect.x2 - m.rect.x1)})`,
+            height: `max(2px, ${pctY(m.rect.y2 - m.rect.y1)})`,
+            background: m.block ? "none" : m.active ? "rgba(255, 140, 0, 0.45)" : "rgba(255, 220, 0, 0.30)",
+            outline: m.active ? "2px solid rgba(255, 120, 0, 0.9)" : m.block ? "2px solid rgba(255, 200, 0, 0.8)" : "none",
             borderRadius: 2,
             mixBlendMode: "multiply",
           }}
@@ -2737,15 +3017,18 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         };
         const elements = [];
         for (const [ri, r] of rects.entries()) {
+          // over a translation drawn: the original's place, taking no pointer
+          const passive = !!onTranslation && !!baseW && !!baseH
+            && onTranslation(((r.x1 + r.x2) / 2) * baseW / storedW, ((r.y1 + r.y2) / 2) * baseH / storedH);
           elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id}
             data-guide={ri === 0 ? "pdf.highlight" : undefined}
             data-guide-recent={ri === 0 && recentHl === h.id ? "" : undefined}
             className={[flashId === h.id ? "pdfHlFlash" : "", lost ? "pdfHlLost" : ""].filter(Boolean).join(" ") || undefined}
             style={{
-            position: "absolute", zIndex: 2, cursor: "pointer",
-            left: r.x1 * curW / storedW, top: r.y1 * curH / storedH,
-            width: Math.max(1, (r.x2 - r.x1) * curW / storedW),
-            height: Math.max(1, (r.y2 - r.y1) * curH / storedH),
+            position: "absolute", zIndex: 2, ...(passive ? { pointerEvents: "none" } : { cursor: "pointer" }),
+            left: pctX(r.x1, storedW), top: pctY(r.y1, storedH),
+            width: `max(1px, ${pctX(r.x2 - r.x1, storedW)})`,
+            height: `max(1px, ${pctY(r.y2 - r.y1, storedH)})`,
             mixBlendMode: "multiply",
             "--hl": color,
             "--hl-dark": darkPageColor(color),
@@ -2797,8 +3080,8 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
               text={h.note?.trim() || ""} hasNote={!!h.hasNote} threads={carded ? 0 : h.threadCount || 0}
               onThread={(badge) => onHighlightThread?.(h.id, badge)}
               style={{
-                left: r.x2 * curW / storedW + 2,
-                top: r.y1 * curH / storedH - 8,
+                left: `calc(${pctX(r.x2, storedW)} + 2px)`,
+                top: `calc(${pctY(r.y1, storedH)} - 8px)`,
               }}
               onClick={(e) => { if (!onHighlightJump) return; e.stopPropagation(); onHighlightJump(h.id, e.ctrlKey || e.metaKey); }}
               onContextMenu={openMenu}
@@ -2812,13 +3095,13 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
           over a faint wash, taking no pointer (app.css .pdfHlGhost). */}
       {overlays && reviewGhost ? reviewGhost.rects.map((r, i) => (
         <div key={`ghost-${i}`} className="pdfHlGhost" data-review-ghost={reviewGhost.id} aria-hidden="true" style={{
-          left: r.x1 * curW / reviewGhost.width, top: r.y1 * curH / reviewGhost.height,
-          width: Math.max(1, (r.x2 - r.x1) * curW / reviewGhost.width),
-          height: Math.max(1, (r.y2 - r.y1) * curH / reviewGhost.height),
+          left: pctX(r.x1, reviewGhost.width), top: pctY(r.y1, reviewGhost.height),
+          width: `max(1px, ${pctX(r.x2 - r.x1, reviewGhost.width)})`,
+          height: `max(1px, ${pctY(r.y2 - r.y1, reviewGhost.height)})`,
           "--hl": reviewGhost.color, "--hl-dark": darkPageColor(reviewGhost.color), "--hl-dark-line": darkPageLine(reviewGhost.color),
         }} />
       )) : null}
-      {overlays && marginLeft != null ? <CommentMarginSlot pageNumber={pageNumber} highlights={highlights} pageH={curH} pageTop={pageTop} /> : null}
+      {overlays && marginLeft != null ? <CommentMarginSlot pageNumber={pageNumber} highlights={highlights} pageH={(baseH || 0) * marginScale} pageTop={pageTop} /> : null}
       {/* Over the highlights, note badges and link boxes: text boxes, then ink (app.css). */}
       <MarkupLayers surface={pageNumber} wrapRef={wrapRef} width={baseW} height={baseH} marks={marks} active={renderVisible}
         onPenDrag={readOnly ? undefined : penDrag} />
@@ -2832,10 +3115,10 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
           (scaled — the popup survives zoom changes). */}
       {pendingArea ? (
         <div className="pdfAreaMarquee" style={{
-          left: pendingArea.rect.x1 * curW / pendingArea.width,
-          top: pendingArea.rect.y1 * curH / pendingArea.height,
-          width: (pendingArea.rect.x2 - pendingArea.rect.x1) * curW / pendingArea.width,
-          height: (pendingArea.rect.y2 - pendingArea.rect.y1) * curH / pendingArea.height,
+          left: pctX(pendingArea.rect.x1, pendingArea.width),
+          top: pctY(pendingArea.rect.y1, pendingArea.height),
+          width: pctX(pendingArea.rect.x2 - pendingArea.rect.x1, pendingArea.width),
+          height: pctY(pendingArea.rect.y2 - pendingArea.rect.y1, pendingArea.height),
         }} />
       ) : null}
     </div>
@@ -2855,19 +3138,132 @@ function TipFrame({ anchor, children }) {
   return <div ref={ref} style={{ position: "fixed", zIndex: 9999, ...(pos || { top: below, left: anchor.left, visibility: "hidden" }) }}>{children}</div>;
 }
 
+// A DOM node's element: a text node's parent.
+const elementOf = (node) => (node?.nodeType === 3 ? node.parentElement : node);
+// Whether a selection's end lies in a page's translated text.
+const inTranslation = (node) => !!elementOf(node)?.closest?.(".pdfTransText");
+
+// The block under a selection's end (`node`, `offset`) on the page `pageEl`
+// whose blocks are `paras`: a translated paragraph's own (data-block), else
+// the block the original's text there lies in, found by where that character
+// is on the page (transSelect.js blockAt), -1 off every block. Null for an end
+// off this page.
+function endBlock(node, offset, pageEl, paras) {
+  const el = elementOf(node);
+  if (!el || !pageEl.contains(el)) return null;
+  const para = el.closest(".pdfTransPara");
+  if (para) return Number(para.dataset.block);
+  let box = null;
+  if (node.nodeType === 3 && node.length) {
+    const range = document.createRange();
+    const at = Math.min(offset, node.length - 1);
+    range.setStart(node, at);
+    range.setEnd(node, at + 1);
+    box = range.getBoundingClientRect();
+  }
+  if (!box?.width) box = (node.nodeType === 3 ? el : el.childNodes[offset] || el).getBoundingClientRect?.();
+  if (!box) return -1;
+  const page = pageEl.getBoundingClientRect();
+  const k = page.width / (Number(pageEl.dataset.ptWidth) || 1);
+  return blockAt(paras, (box.left + box.width / 2 - page.left) / k, (box.top + box.height / 2 - page.top) / k);
+}
+
+// Whether a selection runs forward, its focus after its anchor in the
+// document: the range starts at the anchor. Read from the range, since a node
+// that holds the other end (a page's scroller, with an offset) says nothing of
+// the way the drag went.
+function selectionForward(sel) {
+  if (sel.direction === "forward" || sel.direction === "backward") return sel.direction === "forward";
+  const range = sel.rangeCount ? sel.getRangeAt(0) : null;
+  return !range || (range.startContainer === sel.anchorNode && range.startOffset === sel.anchorOffset);
+}
+
+// The blocks a selection `sel` stands for on the page its anchor is on, when
+// that page shows the translation of the document at `url` under `key`
+// (transSelect.js selectionBlocks), or else on the page its focus is on when
+// that one does: {pageEl, pn, entry, blocks, from, translated}, `from` the
+// block under the end on that page (-1 off every block) and `translated`
+// whether an end lies in translated text; null when neither does. The other
+// end, on another page or off every page (the notes beside the PDF, the
+// viewer's margin), takes this page as far as its body text goes that way:
+// on a later page or after it in the document, to its end; else from its
+// start.
+function selectionOnPage(sel, url, key) {
+  const pageOf = (node) => elementOf(node)?.closest?.("[data-page]") || null;
+  const shown = (el) => {
+    const entry = el ? translateState.entries(url).get(parseInt(el.dataset.page, 10)) : null;
+    return entry && entry.key === key ? entry : null;
+  };
+  let here = [sel.anchorNode, sel.anchorOffset], there = [sel.focusNode, sel.focusOffset];
+  let forward = selectionForward(sel);
+  let pageEl = pageOf(here[0]), entry = shown(pageEl);
+  if (!entry) {
+    pageEl = pageOf(there[0]);
+    entry = shown(pageEl);
+    if (!entry) return null;
+    [here, there, forward] = [there, here, !forward];
+  }
+  const pn = parseInt(pageEl.dataset.page, 10);
+  const reading = pageReading(entry.paras);
+  const from = endBlock(here[0], here[1], pageEl, entry.paras) ?? -1;
+  let to = endBlock(there[0], there[1], pageEl, entry.paras);
+  if (to === null) {
+    const other = parseInt(pageOf(there[0])?.dataset.page, 10);
+    const later = Number.isFinite(other) ? other > pn : forward;
+    to = (later ? reading.flow[reading.flow.length - 1] : reading.flow[0]) ?? -1;
+  }
+  const units = unitsOnPage((q) => (q === pn ? entry.paras : translateState.blocks(url, q)), pn);
+  const blocks = selectionBlocks(entry, from, to, units, reading);
+  const translated = inTranslation(sel.anchorNode) || inTranslation(sel.focusNode);
+  return { pageEl, pn, entry, blocks, from, translated };
+}
+
+// The viewport rects of the text `range` selects as the reader sees it: of the
+// translation's text, and of the text layer's spans that do not stand down
+// under it (.transMasked). A range's own rects take in the boxes of the
+// elements it holds whole, a translated paragraph's masks among them, which
+// lie on the original's lines.
+function drawnRects(range) {
+  const root = range.commonAncestorContainer;
+  const out = [];
+  const take = (node) => {
+    const el = node.parentElement;
+    if (!el?.closest(".pdfTransText") && (!el?.closest(".textLayer") || el.closest(".transMasked"))) return;
+    const part = document.createRange();
+    part.setStart(node, node === range.startContainer ? range.startOffset : 0);
+    part.setEnd(node, node === range.endContainer ? range.endOffset : node.length);
+    for (const cr of part.getClientRects()) if (cr.width > 1 && cr.height > 1) out.push(cr);
+  };
+  if (root.nodeType === 3) take(root);
+  else {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) if (range.intersectsNode(n)) take(n);
+  }
+  return out;
+}
+
+// The rect round viewport rects ({left, top, right, bottom}), as a selection's
+// bounding rect is given.
+function unionRect(rects) {
+  const left = Math.min(...rects.map((q) => q.left)), right = Math.max(...rects.map((q) => q.right));
+  return { left, top: Math.min(...rects.map((q) => q.top)), width: right - left, bottom: Math.max(...rects.map((q) => q.bottom)) };
+}
+
 // Longest selection the popup translates (characters, after rejoining lines).
 const SEL_TRANSLATE_MAX = 5000;
 
 // Selection popup: highlight colors, the reference link and, when enabled
-// (Settings → Reading › Translation), the selection translator. `translate`:
-// {text, auto, langLabel, run(texts, signal, onPartial) → the server's reply
-// ({translations, failed}) | null} — run is the page translator's request, so
+// (Settings → Language and Translation), the selection translator. `translate`:
+// {text, auto, langLabel, lang, run(texts, signal, onPartial) → the server's reply
+// ({translations, failed}) | null, addTerm (SelTranslation) | null} — run is the page translator's request, so
 // the same model/engine, language and server cache apply. Auto starts it on
 // open; the button starts it, then folds/unfolds the result. `recolor`:
 // the selection is a highlight already (the highlighter's), which the
 // colours change. `copy`: the selection's text, for a Copy button (where
-// the host's own menu, which has one, is off).
-function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null, recolor = false }) {
+// the host's own menu, which has one, is off). `menu`: the opener of the
+// paragraph menu of a page that shows its translation, for the ⋯ that is a
+// finger's and a pen's way to it (MenuButton): their hold selects.
+function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null, menu = null, recolor = false }) {
   const palette = usePalette();
   const colors = pickerColors(palette, "highlight");
   const [copied, flashCopied] = useCopied(1200);
@@ -2896,6 +3292,13 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null
     return () => ctlRef.current?.abort();
   }, []);
   const keep = (e) => { e.preventDefault(); e.stopPropagation(); }; // keep the PDF selection
+  // A button acts on the mouse's press, which keeps the PDF selection, and on
+  // a click no press led to (`detail` 0: Enter or Space on it, an assistive
+  // technology's activation), as triggerPress does (shared/ui/press.js).
+  const act = (run) => ({
+    onMouseDown: (e) => { keep(e); run(); },
+    onClick: (e) => { if (!e.detail) run(); },
+  });
   const fold = () => setTrans((prev) => ({ ...prev, open: !prev.open }));
   if (onMove) {
     // A highlight waiting to be moved (App's move mode): this selection is
@@ -2903,7 +3306,7 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null
     return (
       <div className="plainTip">
         <div className="colorRow">
-          <button className="colorBtn linkTipBtn tipMoveBtn" type="button" onMouseDown={(e) => { keep(e); onMove(); }}
+          <button className="colorBtn linkTipBtn tipMoveBtn" type="button" {...act(onMove)}
             title={t("Move the highlight here")} aria-label={t("Move the highlight here")}>
             <LocateIcon size={14} />
           </button>
@@ -2920,14 +3323,14 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null
             className="colorBtn"
             data-guide="pdf.highlightColor"
             style={{ background: swatchCss(c) }}
-            onMouseDown={(e) => { keep(e); onConfirm("", c); }}
+            {...act(() => onConfirm("", c))}
             type="button"
             title={recolor ? t("Change to {color}", { color: t(colorName(c)) }) : t("Highlight in {color}", { color: t(colorName(c)) })}
             aria-label={recolor ? t("Change to {color}", { color: t(colorName(c)) }) : t("Highlight in {color}", { color: t(colorName(c)) })}
           />
         ))}
         {/* the colours, then the tools */}
-        {copy || onComment || onLink || translate ? <span className="tipDivider" aria-hidden="true" /> : null}
+        {copy || onComment || onLink || translate || menu ? <span className="tipDivider" aria-hidden="true" /> : null}
         {copy ? (
           <button
             className="colorBtn linkTipBtn"
@@ -2943,7 +3346,7 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null
         {onComment ? (
           <button
             className="colorBtn linkTipBtn"
-            onMouseDown={(e) => { keep(e); onComment(colors[0]); }}
+            {...act(() => onComment(colors[0]))}
             type="button"
             title={t("Comment on this passage")}
             aria-label={t("Comment on this passage")}
@@ -2954,9 +3357,10 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null
         {onLink ? (
           <button
             className="colorBtn linkTipBtn"
-            onMouseDown={(e) => { keep(e); onLink(); }}
+            {...act(onLink)}
             type="button"
             title={t("Link this reference to a paper (DOI / arXiv / existing PDF)")}
+            aria-label={t("Link this reference to a paper (DOI / arXiv / existing PDF)")}
           >
             <LinkIcon size={14} />
           </button>
@@ -2964,11 +3368,10 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null
         {translate ? (
           <button
             className={`colorBtn linkTipBtn ${trans ? "selected" : ""}`}
-            onMouseDown={(e) => {
-              keep(e);
+            {...act(() => {
               if (!trans || trans.status === "error") start();
               else fold();
-            }}
+            })}
             type="button"
             aria-label={t("Translate selection")}
             aria-expanded={!!trans?.open}
@@ -2977,19 +3380,26 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null
             <LanguagesIcon size={14} />
           </button>
         ) : null}
+        {menu ? <MenuButton open={menu} label={t("Paragraph actions")} className="colorBtn linkTipBtn" onMouseDown={keep} /> : null}
       </div>
-      {translate && trans ? <SelTranslation trans={trans} langLabel={translate.langLabel} tooLong={tooLong}
-        onToggle={fold} keep={keep} /> : null}
+      {translate && trans ? <SelTranslation trans={trans} lang={translate.lang} langLabel={translate.langLabel} tooLong={tooLong}
+        onToggle={fold} keep={keep} source={source} addTerm={translate.addTerm} /> : null}
     </div>
   );
 }
 
 // The popup's translation: a header that folds the result (with the target
-// language, a spinner while it arrives and a copy button), and the text —
-// selectable, typed in as it streams.
-function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
+// language, a spinner while it arrives, Add to glossary and a copy button),
+// and the text — selectable, typed in as it streams. `addTerm(lang, source,
+// target)`: the workspace's glossary takes a term (App, for a writer of the
+// workspace), offered once the translation is in, for a selection short
+// enough to be one; its form holds the selection and its translation, both
+// editable.
+function SelTranslation({ trans, lang, langLabel, tooLong, onToggle, keep, source = "", addTerm = null }) {
   const [copied, flashCopied] = useCopied(1200);
+  const [term, setTerm] = useState(null); // {source, target}
   const loading = trans.status === "loading";
+  const offerTerm = !!addTerm && trans.status === "done" && !!source && source.length <= GLOSSARY_TERM_MAX;
   return (
     <div className="selTrans">
       <div className="selTransHead">
@@ -3000,6 +3410,13 @@ function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
           <span className="selTransLang">{langLabel}</span>
           {loading ? <span className="pillSpin" aria-hidden="true" /> : null}
         </button>
+        {offerTerm ? (
+          <button type="button" className={`ctlBtn selTransCopy ${term ? "modeActive" : ""}`} title={t("Add to glossary")}
+            aria-label={t("Add to glossary")} aria-expanded={!!term} onMouseDown={keep}
+            onClick={() => setTerm(term ? null : { source, target: Array.from(trans.text.trim()).slice(0, GLOSSARY_TERM_MAX).join("") })}>
+            <BookIcon size={16} />
+          </button>
+        ) : null}
         {trans.status === "done" ? (
           <button type="button" className="ctlBtn selTransCopy" title={t("Copy translation")} aria-label={t("Copy translation")}
             onMouseDown={keep}
@@ -3013,15 +3430,66 @@ function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
           to the other side of the selection partway (docs/dev/ui-design.md,
           "Menus and popups open in place"). Only its chevron turns. */}
       {trans.open ? (
-        <div className={`selTransBody ${trans.status === "error" ? "error" : ""}`} aria-live="polite">
+        // Busy while it streams: a screen reader reads the translation once,
+        // when it is in, not each piece as it arrives.
+        <div className={`selTransBody ${trans.status === "error" ? "error" : ""}`} aria-live="polite" aria-busy={loading}
+          lang={trans.status !== "error" && trans.text ? lang : undefined}>
           {trans.status === "error"
             ? (tooLong ? t("Select less text to translate (up to {n} characters).", { n: SEL_TRANSLATE_MAX })
               : trans.reason ? t("Translation failed: {message}", { message: trans.reason })
-                : t("Translation failed — click the button to retry."))
+                : t("Translation failed. Press 文A above to try again."))
             : trans.text || (loading ? t("Translating…") : "")}
         </div>
       ) : null}
+      {term && offerTerm ? <GlossaryTermForm initial={term} lang={lang} addTerm={addTerm} onDone={() => setTerm(null)} /> : null}
     </div>
+  );
+}
+
+// A term's longest side the glossary keeps (translate_terms.TERM_MAX_CHARS).
+const GLOSSARY_TERM_MAX = 100;
+
+// Add to glossary, in the selection's translation: the term and its
+// translation, prefilled and editable, then Add. The fields take the focus
+// and the keys; the PDF's selection stays as the popup opened on it. Added,
+// the form says so and goes; the paragraphs on screen keep their words
+// until they are translated again.
+function GlossaryTermForm({ initial, lang, addTerm, onDone }) {
+  const [draft, setDraft] = useState(initial);
+  const [state, setState] = useState({ busy: false, done: false, error: "" });
+  const ready = draft.source.trim() && draft.target.trim();
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  function submit(e) {
+    e.preventDefault();
+    if (!ready || state.busy || state.done) return;
+    setState({ busy: true, done: false, error: "" });
+    Promise.resolve(addTerm(lang, draft.source, draft.target)).then(() => {
+      setState({ busy: false, done: true, error: "" });
+      timer.current = setTimeout(onDone, 1500);
+    }, (err) => setState({ busy: false, done: false, error: err?.message || t("Couldn't add the term") }));
+  }
+  const field = (key, label) => (
+    <input className="aiKeyInput" type="text" spellCheck={false} autoComplete="off" maxLength={GLOSSARY_TERM_MAX}
+      aria-label={label} placeholder={label} value={draft[key]} lang={key === "target" ? lang : undefined}
+      disabled={state.busy || state.done}
+      onChange={(event) => setDraft((prev) => ({ ...prev, [key]: event.target.value }))} />
+  );
+  return (
+    <form className="selTransTerm" onSubmit={submit}>
+      <div className="selTransTermPair">
+        {field("source", t("Term"))}
+        <ChevronRightIcon size={14} />
+        {field("target", t("Translation"))}
+      </div>
+      <div className="selTransTermBtns">
+        <span className={`selTransTermNote ${state.error ? "error" : ""}`} role="status">
+          {state.error || (state.done ? t("Added to the glossary") : t("For every translation in this workspace"))}
+        </span>
+        <button type="button" className="uiBtn sm" onClick={onDone}>{t("Cancel")}</button>
+        <button type="submit" className="uiBtn sm primary" disabled={!ready || state.busy || state.done}>{t("Add")}</button>
+      </div>
+    </form>
   );
 }
 

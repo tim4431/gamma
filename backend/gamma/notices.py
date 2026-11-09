@@ -32,8 +32,8 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field
 
-from . import (backup_schedule, cloud_auth, cloud_sync, hosted, integrity, join_requests, logbuf, server_settings,
-               sync_engine, translate_engines, version, zotero_sync)
+from . import (backup_schedule, cloud_auth, cloud_sync, hosted, integrity, join_requests, logbuf, reports,
+               server_settings, sync_engine, translate_engines, version, zotero_sync)
 from .db import NOTICES_SEEN_PREF_KEY, connect_users_db, get_pref, update_pref
 from .server_settings import MB
 
@@ -252,6 +252,17 @@ def join_requests_waiting(_user_id):
     return notice("join-requests", newest, "info", "server",
                   "{n} person asks to join this server" if count == 1 else "{n} people ask to join this server",
                   n=count)
+
+
+@source(admin_only=True)
+def reports_waiting(user_id):
+    """Reports someone else made here wait for review (gamma/reports.py;
+    info, seen once per newest report): Server → Reports lists them."""
+    count, newest = reports.waiting(user_id)
+    if not count:
+        return None
+    return notice("reports", newest, "info", "server",
+                  "{n} report waits for review" if count == 1 else "{n} reports wait for review", n=count)
 
 
 @source()

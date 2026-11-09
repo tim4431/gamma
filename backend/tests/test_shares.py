@@ -807,8 +807,9 @@ def test_folder_share_imports_into_another_gamma(bob, anon):
     assert sorted(folder_names(erin).values()) == [["xi-shared"], ["xi-shared", "sub"]]
     assert erin.get(f"/api/blocks/{deeper['id']}").json()["properties"]["folders"] == [sub]
     # pasted again: nothing new, the folder found by its id
-    assert _merge_zip(erin, zipped.content) == {**result, "pages_added": 0, "pages_skipped": 2, "chats_added": 0,
-                                                "comments_added": 0, "uploads_added": 0}
+    assert _merge_zip(erin, zipped.content) == {**result, "pages_added": 0, "added": [], "trees_added": [],
+                                                "pages_skipped": 2, "chats_added": 0, "comments_added": 0,
+                                                "uploads_added": 0}
 
     # an importer with a top-level folder of that name gets the pages in it
     make_user("fay_share", "faypw1234567")
@@ -956,3 +957,37 @@ def test_block_search_through_a_share_sees_only_what_it_opens(bob, anon):
     hits = anon.get("/api/block-search", params={**fq, "q": "quokkaneedle"}).json()["blocks"]
     assert [b["id"] for b in hits] == [secret["id"]]
     assert anon.get("/api/block-search", params={**fq, "ids": note["id"]}).json()["blocks"] == []
+
+
+def test_the_panels_post_search_keeps_to_the_share_whatever_pages_it_names(bob, anon):
+    # The Ctrl+F panel sends the page ids its filters keep: through a share
+    # token they only narrow what the token reaches, never widen it.
+    page = make_page(bob, "Posted shared")
+    note = _child(bob, page["id"], "a shared wombatneedle")
+    vault = make_folder(bob, "post-vault")
+    filed = make_page(bob, "Posted filed", {"folders": [vault]})
+    filed_note = _child(bob, filed["id"], "a filed wombatneedle")
+    other = make_page(bob, "Posted private")
+    secret = _child(bob, other["id"], "a private wombatneedle")
+
+    def post(token, **body):
+        r = anon.post("/api/block-search", params={"share": token}, json={"q": "wombatneedle", "limit": 20, **body})
+        assert r.status_code == 200, r.text
+        return [b["id"] for b in r.json()["blocks"]]
+
+    folder_token = _folder_share(bob, vault)["token"]
+    assert post(folder_token) == [filed_note["id"]]
+    assert post(folder_token, pages=[other["id"], page["id"]]) == []
+    assert post(folder_token, pages=[other["id"], filed["id"]]) == [filed_note["id"]]
+    page_token = bob.post(f"/api/share/{page['id']}").json()["token"]
+    assert post(page_token) == [note["id"]]
+    assert post(page_token, pages=[other["id"], filed["id"]]) == []
+    assert post(page_token, pages=[page["id"], other["id"]]) == [note["id"]]
+    assert {b["id"] for b in bob.post("/api/block-search", json={"q": "wombatneedle"}).json()["blocks"]} == {
+        note["id"], filed_note["id"], secret["id"]}
+    assert anon.post("/api/block-search", json={"q": "wombatneedle"}).status_code == 401
+    # The PDF group is a member's: a share token is no way in, as on the GET.
+    for token in (folder_token, page_token):
+        get = anon.get("/api/pdf-search", params={"share": token, "q": "wombatneedle"}).status_code
+        r = anon.post("/api/pdf-search", params={"share": token}, json={"q": "wombatneedle", "pages": [filed["id"]]})
+        assert r.status_code == get == 401

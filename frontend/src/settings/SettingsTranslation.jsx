@@ -4,19 +4,22 @@
 // machine-translation service — and the services' rows: Microsoft needs no
 // key; Google and Youdao keys are write-only like the AI keys:
 // /api/translate/engines masks them; then whether translations are kept,
-// and what this workspace keeps) and Speed (effort, tier, parallel requests).
+// and what this workspace keeps), Glossary (the workspace's terms in the
+// target language) and Speed (effort, tier, parallel requests).
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { friendlyApiError } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
-import { Section, Row, Toggle, SubDialog, Field, PasswordInput, UnitInput } from "./SettingsKit";
+import { Section, Row, Toggle, SubDialog, Field, PasswordInput, UnitInput, Empty, DialogButtons } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
-import { useSettingsRead } from "./settingsReads.js";
-import { SPEED_ORDER } from "../chat/modelPrefs.js";
+import { termsOf, useSettingsRead } from "./settingsReads.js";
+import { SPEED_LABELS, SPEED_ORDER } from "../chat/modelPrefs.js";
 import { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, TRANSLATE_PARALLEL_MAX, translateModelFor } from "../app/prefs";
-import { clearTranslations } from "../app/translateClient.js";
+import { addTerm, clearTranslations, editTerm, removeTerm } from "../app/translateClient.js";
 import { VIEWER_TOOLS } from "../app/viewerToolItems.js";
-import { ActivityIcon, ArchiveIcon, DatabaseIcon, GlobeIcon, HighlightIcon, KeyIcon, LanguagesIcon, RefreshIcon, SparklesIcon, TextCursorIcon, Trash2Icon, ZapIcon } from "../shared/ui/Icons";
+import { commandChord } from "../app/commands.js";
+import { chordLabel } from "../shared/lib/hotkeys.js";
+import { ActivityIcon, ArchiveIcon, BookIcon, DatabaseIcon, GlobeIcon, HighlightIcon, KeyIcon, LanguagesIcon, PlusIcon, RefreshIcon, SparklesIcon, TextCursorIcon, Trash2Icon, ZapIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { LANGUAGES, T, t, tn } from "../shared/i18n/i18n.js";
 
@@ -40,12 +43,13 @@ const ENGINE_FORMS = {
 // translations are kept), then how fast. "Translate with" names this
 // server's provider entries, so it stays with the browser (its row's own
 // tag); the service keys are the account's, kept on the server.
-export function TranslationSettings({ value }) {
+export function TranslationSettings({ value, keybindings }) {
+  const peekKey = commandChord("pdf.peekOriginal", keybindings);
   return (<>
     <Section title={t("Language")} scope="account" prefs={SECTION_PREFS.translation["Language"]}>
-      <Row icon={GlobeIcon} label={t("Language")} hint={t("Interface text only.")}
+      <Row icon={GlobeIcon} label={t("Interface language")} hint={t("Interface text only.")}
         title={t("Menus, settings and messages. Your notes, PDFs and the AI's replies are not affected; System follows the browser's language.")}>
-        <MenuSelect label={t("Language")} value={value.language} onChange={value.setLanguage}
+        <MenuSelect label={t("Interface language")} value={value.language} onChange={value.setLanguage}
           options={LANGUAGES.map(([code, name]) => [code, code === "system" ? t("System") : name])} />
       </Row>
     </Section>
@@ -54,16 +58,18 @@ export function TranslationSettings({ value }) {
       <Toggle
         icon={LanguagesIcon}
         label={t("Translation button")}
-        hint={t("On the viewer's strip; off, in its ⋯ menu. Nothing translates until you ask")}
-        title={t("Shows the translate button on the PDF viewer's strip; off, it is a row of the strip's ⋯ menu. Click translates the current page (or shows/hides an existing translation); right-click or long-press opens the options, including translating the whole document. Nothing translates until you ask. Appearance › Viewer tools sets the same, and the strip's order.")}
+        hint={t("Off, it moves to the ⋯ menu")}
+        title={t("Shows the translate button on the PDF viewer's strip; off, it is a row of the strip's ⋯ menu that opens its options. A click translates the page being read, or shows the original or the translation once it is translated; right-click or long-press opens the options: the whole document, the language, Forget. Nothing translates until you ask. Appearance › Viewer tools sets the same, and the strip's order.")}
         checked={VIEWER_TOOLS.read(value.viewerTools).modes.translate !== "hidden"}
         onChange={(on) => value.setViewerTools(VIEWER_TOOLS.setMode(value.viewerTools, "translate", on ? "always" : "hidden"))}
       />
       <Row
         icon={GlobeIcon}
         label={t("Translate into")}
-        hint={t("The translated view's language")}
-        title={t("The translated view (the languages button in the PDF viewer's zoom column) redraws each paragraph in this language in place — figures and layout stay put, and holding Alt peeks at the original. Paragraph translations are cached per language and model, so re-reading a page is free.")}
+        hint={t("Also in the translate button's menu")}
+        title={peekKey
+          ? t("The translated view (the languages button in the PDF viewer's zoom column) redraws each paragraph in this language in place — figures and layout stay put, and holding {key} peeks at the original. Each language and model keeps its own translations.", { key: chordLabel(peekKey) })
+          : t("The translated view (the languages button in the PDF viewer's zoom column) redraws each paragraph in this language in place — figures and layout stay put. Each language and model keeps its own translations.")}
       >
         <MenuSelect
           label={t("Translation language")}
@@ -95,7 +101,7 @@ export function TranslationSettings({ value }) {
         icon={SparklesIcon}
         label={t("Translate with")}
         scope="browser"
-        hint={t("A chat model, or a translation service below")}
+        hint={t("A chat model reads the paper first and keeps its terms; a service is quick and needs no AI")}
         title={t("What translates page text. A chat model reads a brief of the whole paper first, so its terms stay the same from page to page, and follows the paper's register; a translation service (Microsoft for free, or Google and Youdao with a key) translates sentence by sentence, is faster and cheaper per page, and needs no AI connection. Formulas, citations and links stay as printed either way. Translation is a bulk job — a fast, cheap model usually reads fine.")}
       >
         <TranslateModelSelect value={value} />
@@ -103,8 +109,120 @@ export function TranslationSettings({ value }) {
       <TranslationServices value={value} />
       <KeptTranslations value={value} />
     </Section>
+    <Glossary value={value} />
     <TranslationPerformance value={value} />
   </>);
+}
+
+// The workspace's glossary in the target language in use (GET
+// /api/translate/terms): a row per term, the term and its translation. A
+// writer of the workspace adds one (the section's Add term), edits one in
+// the same dialog and deletes one; a reader sees the rows alone. A chat
+// model renders each term as it says; a service takes none. A changed term
+// leaves the paragraphs on screen as they are (docs/dev/translation.md "The
+// glossary").
+function Glossary({ value }) {
+  const lang = value.translateLang;
+  const read = useSettingsRead(termsOf(lang));
+  const info = read.data; // {terms, max, max_chars, can_edit}
+  const [editor, setEditor] = React.useState(null); // {was?, source, target}
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const canEdit = !!info?.can_edit && !value.readOnly;
+  const full = !!info && info.terms.length >= info.max;
+  const langName = TRANSLATE_LANGS.find(([code]) => code === lang)?.[1] || lang;
+  async function change(call, after) {
+    setBusy(true);
+    setError("");
+    try {
+      read.set(await call());
+      after?.();
+    } catch (err) {
+      setError(friendlyApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const save = (draft) => change(() => (editor.was
+    ? editTerm(lang, editor.was, draft.source, draft.target)
+    : addTerm(lang, draft.source, draft.target)), () => setEditor(null));
+  const remove = (term) => change(() => removeTerm(lang, term.source));
+  const terms = info?.terms || [];
+  return <>
+    <Section title={t("Glossary")} action={canEdit ? (
+      <button type="button" className="uiBtn" disabled={busy || full} onClick={() => { setError(""); setEditor({ source: "", target: "" }); }}
+        title={full ? t("The glossary holds {n} terms in a language at most. Delete one to add another.", { n: info.max })
+          : t("A term and how to translate it into {lang}", { lang: langName })}>
+        <PlusIcon size={14} /> {t("Add term")}
+      </button>
+    ) : null}>
+      <div className="settingsPaneHint">
+        {t("How every translation into {lang} in this workspace renders these terms, when a chat model translates. A paragraph already translated keeps its words until you translate it again.", { lang: langName })}
+      </div>
+      {!info && !read.error ? <Empty icon={BookIcon} loading>{t("Loading the glossary…")}</Empty> : null}
+      {info && !terms.length ? <Empty icon={BookIcon}>{canEdit
+        ? t("No terms in {lang} yet. Add one here, or from a selection's translation.", { lang: langName })
+        : t("No terms in {lang} yet.", { lang: langName })}</Empty> : null}
+      {terms.map((term) => (
+        <div key={term.source} className="aiProvRow" data-term={term.source}>
+          <span className="aiProvAvatar"><BookIcon size={16} /></span>
+          <span className="aiProvMeta">
+            <span className="aiProvName">{term.source}</span>
+            <span className="aiProvDesc">
+              <span lang={lang}>{term.target}</span>
+              {term.by ? t(" · added by {name}", { name: term.by }) : ""}
+            </span>
+          </span>
+          {canEdit ? <span className="aiProvActions">
+            <button type="button" className="uiBtn sm" disabled={busy}
+              onClick={() => { setError(""); setEditor({ was: term.source, source: term.source, target: term.target }); }}>
+              {t("Edit")}
+            </button>
+            <button type="button" className="uiBtn sm iconSq" disabled={busy}
+              title={t("Delete “{term}”", { term: term.source })} aria-label={t("Delete “{term}”", { term: term.source })}
+              onClick={() => remove(term)}>
+              <Trash2Icon size={16} />
+            </button>
+          </span> : null}
+        </div>
+      ))}
+      {error && !editor ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
+      {read.error && !info ? <div className="settingsPaneHint aiKeysError">{friendlyApiError({ message: read.error })}</div> : null}
+    </Section>
+    {editor ? <TermDialog initial={editor} langName={langName} maxChars={info?.max_chars || 100} busy={busy} error={error}
+      onSave={save} onClose={() => { setEditor(null); setError(""); }} /> : null}
+  </>;
+}
+
+// Add a term, or edit one (`initial.was`: the term as it is): the term as the
+// papers write it and its translation.
+function TermDialog({ initial, langName, maxChars, busy, error, onSave, onClose }) {
+  const [draft, setDraft] = React.useState({ source: initial.source, target: initial.target });
+  const ready = draft.source.trim() && draft.target.trim();
+  const submit = (e) => { e.preventDefault(); if (ready && !busy) onSave(draft); };
+  const field = (key) => ({
+    className: "aiKeyInput", type: "text", spellCheck: false, autoComplete: "off", maxLength: maxChars, value: draft[key],
+    onChange: (event) => setDraft((prev) => ({ ...prev, [key]: event.target.value })),
+  });
+  return (
+    <SubDialog title={initial.was ? t("Edit term") : t("Add term")} draft={draft} onClose={onClose}>
+      <form className="settingsForm" onSubmit={submit}>
+        <Field label={t("Term")} hint={t("As papers write it. Case does not matter, but an acronym such as LED matches only in capitals.")}>
+          <input {...field("source")} autoFocus />
+        </Field>
+        <Field label={t("Translation")} hint={t("Into {lang}", { lang: langName })}>
+          <input {...field("target")} />
+        </Field>
+        {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
+        <DialogButtons footnote={ready ? null : t("Type the term and its translation to continue.")}>
+          <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
+          <button type="submit" className="uiBtn primary" disabled={busy || !ready}>
+            <MorphText>{busy ? t("Saving…") : t("Save")}</MorphText>
+          </button>
+        </DialogButtons>
+      </form>
+    </SubDialog>
+  );
 }
 
 // Keep translations (the account's switch, sent as `keep` with every
@@ -146,8 +264,8 @@ function KeptTranslations({ value }) {
     <Toggle
       icon={ArchiveIcon}
       label={t("Keep translations")}
-      hint={t("So a paper read again shows at once")}
-      title={t("Translations of this workspace's PDFs, and each paper's brief, are kept on the server in the workspace, so a paper read again shows its translation at once and needs no AI call. Off, they last only until the server restarts; what is kept already stays until you clear it. A PDF without a copy on the server is never kept.")}
+      hint={t("A paper translated again needs no AI call")}
+      title={t("Translations of this workspace's PDFs, and each paper's brief, are kept on the server in the workspace, so translating a paper again, yours or another member's, needs no AI call. Off, they last only until the server restarts; what is kept already stays until you clear it. A PDF without a copy on the server is never kept.")}
       checked={value.translateKeep}
       onChange={value.setTranslateKeep}
     />
@@ -155,7 +273,7 @@ function KeptTranslations({ value }) {
       icon={DatabaseIcon}
       label={t("Kept in this workspace")}
       hint={summary}
-      title={t("Translated paragraphs in every language and model, and the papers' briefs. A PDF that leaves the workspace takes its translations along; Forget this translation, in the translate button's menu, forgets one paper's.")}
+      title={t("Translated paragraphs in every language and model, and the papers' briefs. A PDF that leaves the workspace takes its translations along; Forget this paper's translations, in the translate button's menu, forgets one paper's.")}
     >
       {/* Clearing needs a writer of the workspace, as its other clears do. */}
       {!value.readOnly ? (
@@ -194,15 +312,15 @@ function TranslationPerformance({ value }) {
       title={t("Which service tier translation asks the provider for: fast uses premium low-latency routing at a higher price per token; flex trades latency for a lower price. Default uses the provider's usual routing. Models that do not offer the chosen tier use Default.")}
     >
       <MenuSelect label={t("Translation speed")} value={value.translateSpeed} onChange={value.setTranslateSpeed}
-        options={[["", t("Default")], ...SPEED_ORDER.map((tier) => [tier, tier])]} />
+        options={[["", t("Default")], ...SPEED_ORDER.map((tier) => [tier, t(SPEED_LABELS[tier])])]} />
     </Row> : null}
     <Row
       icon={RefreshIcon}
       label={t("Parallel requests")}
-      hint={t("Translation calls in flight at once (1–4)")}
+      hint={t("How many chunks translate at once (1–{max})", { max: TRANSLATE_PARALLEL_MAX })}
       title={t("A page is translated in small chunks, this many at a time; a whole-document job streams chunks across pages and never exceeds it. Higher is faster until your provider's rate limit pushes back.")}
     >
-      <UnitInput value={value.translateParallel} unit={t("calls")} min={1}
+      <UnitInput value={value.translateParallel} unit={t("calls")} min={1} max={TRANSLATE_PARALLEL_MAX}
         onCommit={(raw) => {
           const n = Number.parseInt(raw, 10);
           if (Number.isFinite(n)) value.setTranslateParallel(Math.max(1, Math.min(TRANSLATE_PARALLEL_MAX, n)));

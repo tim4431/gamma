@@ -115,7 +115,8 @@ def test_the_sketchbook_is_a_notebook_beside_it():
     from gamma import ink as inkmod
     from gamma import seed
     from gamma.blocks_store import block_to_dict, fetch_subtree
-    from gamma.db import connect_pages_db, ws_uploads_dir
+    from gamma import storage
+    from gamma.db import connect_pages_db
     from gamma.notebook import sheets_of
     from gamma.sketchbook import sheets
 
@@ -134,7 +135,7 @@ def test_the_sketchbook_is_a_notebook_beside_it():
         assert titles[sheet["id"]]["content"] == made.title
         assert titles[sheet["id"]]["properties"]["collapsed"] is True
         [group] = [b for b in sheet["blocks"] if "ink_url" in b["properties"]]
-        ink = inkmod.read_upload(ws_uploads_dir(ws), group["properties"]["ink_url"])
+        ink = inkmod.read_upload(storage.files(ws), group["properties"]["ink_url"])
         assert ink is not None and group["properties"]["ink_strokes"] == len(ink.strokes) == len(made.strokes)
         assert ink.space.kind == "canvas"
         assert (ink.space.width, ink.space.height) == (made.paper["width"], made.paper["height"])

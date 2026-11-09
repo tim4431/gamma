@@ -1380,19 +1380,48 @@ wins over the labels here.
     Stripe Checkout, and Play's Payments policy forbids linking to "a
     webpage that could lead to an alternate payment method"
     ([payments](https://support.google.com/googleplay/android-developer/answer/10281818)).
+    For the same reason the account server's sign-in and sign-up pages,
+    in the browser the app's Gamma Cloud sign-in opens, show their brand
+    without its links to gammapdf.com and the account home, and lead a new
+    account back to the sign-in
+    ([cloud_accounts.md "From a native app"](cloud_accounts.md#the-oidc-provider)).
+    Their terms and privacy policy line still links to gammapdf.com/terms/
+    and /privacy/, whose header links *Pricing*.
   - Play counts a Gamma Cloud account as one the app lets the person
     create, since the sign-in's browser offers sign-up, so the app needs
     an in-app way to start deleting it and a public web page for the Data
     safety form ([account deletion](https://support.google.com/googleplay/android-developer/answer/13327111)).
     The page is <https://gammapdf.com/delete-account/>, and the app links
-    to it from Settings → Account & sync.
+    to it from Settings → Account & sync. Deleting the account deletes its
+    library on the shared server and its published pages within the hour
+    ([cloud_accounts.md](cloud_accounts.md) "A deleted account on the
+    share host"), since Play does not count closing them as deletion.
   - The privacy policy is linked in the Console and inside the app,
     among its help links ([User Data](https://support.google.com/googleplay/android-developer/answer/10144311)).
   - Reviewers get a reusable Gamma Cloud test account under App content →
     *Sign-in details*, since the sign-in is a part of the app restricted
     by a login.
-  - Still open: whether Play's AI-generated content and user-generated
-    content policies apply to the app.
+  - User-generated content, in case Play's policy applies
+    ([UGC](https://support.google.com/googleplay/android-developer/answer/9876937)):
+    the Gamma Cloud sign-in and sign-up pages say that continuing accepts
+    the terms and the privacy policy, and [TERMS.md](../../TERMS.md) says
+    what may not be shared and how it is reported. A comment's "⋯" menu
+    and the share view's View menu (a published page is one) have
+    *Report*, which reaches the server's admins and, on a server with
+    Gamma Cloud sign-in, the developer
+    ([cloud.md "Reports"](cloud.md#reports)). A report names the author
+    (a comment's, a share's maker), which is how a user is reported;
+    there is no blocking of one user by another.
+  - AI-generated content, in case Play's policy applies
+    ([AI content](https://support.google.com/googleplay/android-developer/answer/13985936)):
+    every AI reply in the chat has *Report this reply*, which sends its
+    text and model to the server and on to the developer without leaving
+    the app. This device's server signs in with Gamma Cloud, so its
+    reports reach the developer whether or not the person has an
+    account; a report made on a server the person added that runs without
+    Gamma Cloud reaches only that server's admins.
+  - Still open: whether those two policies apply to the app at all, and
+    whether review asks for blocking between users.
 - **`PLAY_URL`** stays unset until the app is public on production. Only
   the testers on a closed test's lists can use its opt-in link, which
   appears only once the closed release has passed review, so the release

@@ -10,6 +10,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { MIN_ALPHA, hexToHsv, hsvToHex, normalizeColor, swatchCss } from "../model/palette.js";
 import { PipetteIcon } from "./Icons";
 import { t } from "../i18n/i18n.js";
+import { composing } from "../lib/hotkeys.js";
 
 const CHECKER = "repeating-conic-gradient(rgba(127, 127, 127, 0.35) 0 25%, transparent 0 50%) 0 0 / 10px 10px";
 const HUES = "linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)";
@@ -86,7 +87,7 @@ export function ColorPicker({ value, onChange }) {
         <span className="cpPreview" style={{ background: CHECKER }}><span style={{ background: swatchCss({ hex, alpha }) }} /></span>
         <input className="cpHex" value={draft ?? hex} aria-label={t("Hex color")} spellCheck={false}
           onChange={(e) => { setDraft(e.target.value); if (applyHex(e.target.value)) setDraft(null); }}
-          onBlur={() => setDraft(null)} onKeyDown={(e) => { if (e.key === "Enter") { applyHex(e.currentTarget.value); setDraft(null); } }} />
+          onBlur={() => setDraft(null)} onKeyDown={(e) => { if (e.key === "Enter" && !composing(e)) { applyHex(e.currentTarget.value); setDraft(null); } }} />
         <label className="cpAlphaField">
           <input type="number" min={Math.round(MIN_ALPHA * 100)} max={100} step={1} value={pct} aria-label={t("Opacity")}
             onChange={(e) => { const n = Number(e.target.value); if (Number.isFinite(n)) setAlpha(n / 100); }} />

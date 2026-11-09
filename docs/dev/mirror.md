@@ -40,7 +40,17 @@ publication or a Zotero link, never two of these: `create_mirror` refuses
 a workspace a link keeps (detached included), publishing refuses it too
 ("Publishing" below), and a link refuses a workspace that has a
 `mirrors` row, but for a publication emptied of its pages, which it
-forgets once the link is made.
+forgets once the link is made. A synced vault of the desktop app
+([synced_vaults.md](synced_vaults.md#rules-that-keep-files-safe)) may sit in
+a clone or a linked workspace only as one that pulls or pushes PDFs: a
+full clone (`create_mirror` with no `page_filter`) and a Zotero link refuse
+a workspace a vault pushes everything into (`folder_links.pushing_vault`:
+"let it push only PDFs, or only pull, first"), and the vault refuses to push
+everything into a clone or a linked workspace (`check_vault`). Publishing
+refuses a page a vault keeps. The vault's conflicts share `sync_conflicts`
+as kind `file_won` (`sync_engine.VAULT_KINDS`): the mirror's and Zotero's
+reads, counts and deletes leave them out (`NOT_VAULT`), and the vault's own
+routes read and resolve them.
 
 ## The model in one paragraph
 
@@ -195,11 +205,22 @@ A mirror may name the only pages that travel: `mirrors.page_filter`, a JSON
 list of page ids (NULL, what every mirror made by hand has, means every
 page; migration step 19). Only publishing makes such a mirror. What such a
 round moves is the filter's **reach** (`sync_engine._reach`): the listed
-pages, each with the pages inside it here (`blocks_store.with_sub_pages`:
-a publication of a page carries its sub-pages, at any depth), and every
-page with a saved base, which travelled before, so the deletion of a
-sub-page, with its parent or on its own, still goes there. With a filter
-a round:
+pages, each with the pages inside it here (`sync_engine.carried`, over
+`blocks_store.with_sub_pages`: a publication of a page carries its
+sub-pages, at any depth), less a page **left out** of it and the pages
+inside that one (`left_out` in the mirror's status: a sub-page unpublished
+on its own while the page around it stays published, `leave_out`), and
+every page with a saved base, which travelled before, so the deletion of a
+sub-page, with its parent or on its own, still goes there. A left-out page
+is listed until no page of the filter holds it any more (`_prune_filter`:
+moved out, or the page around it unpublished) or it is published again
+on its own (`filter_add`; a republish or a settings change of a page
+already published leaves the left-out pages alone, and a write to a
+left-out page asks for no round, `_counts`). The remote's feed adds to the reach a
+page this copy never held that sits there inside a page of the reach
+(`_made_there`, one `GET /api/pages/{id}/family` each there): a page made
+inside a published page through its edit share on the share host, which
+then comes here. With a filter a round:
 
 - takes from both change feeds, and from its retry list, only the pages
   of the reach, and fetches only their missing files (`missing_uploads(ws,
@@ -220,17 +241,28 @@ a round:
   at the start of a round): a page deleted here is deleted there by the
   normal rule first, then leaves the filter;
 - deletes there, on a two-way copy, the pages that **left the
-  publication** (`_drop_unreached`, right after `_prune_filter`): a page
-  with a saved base that is in the library here but no longer inside a
-  listed page, a sub-page moved out of the published page say. What was
+  publication** (`_unreached`, read right after `_prune_filter`;
+  `_drop_unreached`, once the round's `whoami` says this copy may still
+  write there, asked afresh rather than taken from the cache: a token
+  lowered to read-only deletes nothing): a page with a saved base that is
+  in the library here but no longer inside a listed page, a sub-page moved
+  out of the published page or left out of it say. What was
   written there since its last round (a share editor's text) is pulled
   here first, the page's own round in pull mode; while any of those pulls
   fails nothing is deleted that round, since a deletion there takes the
   pages inside the page along. Then a page of the reach that sits inside it
   there is taken out of it there (`spare_inside`), its copy there is
   deleted (`DELETE /api/blocks/{id}`, which a share host does for good),
-  and it leaves with its base (`filter_remove`); the page here stays. A
-  receive-only copy deletes nothing there and leaves such pages be;
+  and it leaves with its base (`filter_remove`; a copy gone there already
+  just leaves); the page here stays. A receive-only copy deletes nothing
+  there and leaves such pages be;
+- lets a page the remote has no room for wait (`CapDeferred`: a share
+  host's 402 on its creation, the plan's cap reached): nothing of it
+  landed, so it waits as a page never sent, on the retry list, round after
+  round, and the round's status names it under `capped` (`{page id: the
+  share host's words}`) rather than as an error; the engine logs it once,
+  when it first meets the cap. A page unpublished there, or a plan that
+  grows, lets it go at the next round;
 - asks nothing of the remote when the filter is empty.
 
 Local writes to pages outside the reach neither mark the copy dirty nor
@@ -331,6 +363,10 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
   passes them by. The format stays 44 and a pair keeps syncing while one
   side is not upgraded yet. That side lists sub-pages as library pages
   and carries their `parent_page` along untouched, as any property.
+- **Step 48** (`deleted_with`) does not move it either: it adds the
+  generated `deleted_with` column and its index the same way
+  (`DERIVED_STEPS`), and the stamp it reads is a property of rows in
+  Recently deleted, which no round sends.
 
 ## One round, one page (`sync_engine._sync_page`)
 
@@ -419,7 +455,9 @@ each):
 
 Every decision the engine takes on its own is a row of `sync_conflicts`
 (`merged`, `diverged`, `dropped`, `kept_local_edit`, `restored_remote_edit`,
-`page_restored`, `page_restored_from_remote`) with the texts involved. Two
+`page_restored`, `page_restored_from_remote`) with the texts involved
+(a synced vault's `file_won` rows sit in the same table and are none of
+the mirror's). Two
 kinds name drawings, by upload name. A `file` row is one the remote
 refused: `mine` the file, `theirs` the remote's reason. An `ink_merged`
 row is one the remote merged by stroke without keeping every change of
@@ -474,33 +512,62 @@ pins each rule.
   descendants with it (`_delete_here`). First the pages inside it that
   were edited here since their last round, never went there, or whose
   creation there is not confirmed are taken out of it here
-  (`_keep_edited_here`: `parent_page` cleared, the engine's own write),
-  with the pages inside them, so the cascade leaves them. Their own
-  turns then take them as a page deleted there but edited here: back
-  there whole (`page_restored`), as library pages. A force (`prune`) keeps
-  none. A page the cascade took finds itself gone here at its own turn,
-  its state still kept: `_delete_here` notes it `deleted here` and drops
-  the state without trashing it again.
+  (`_keep_edited_here`, the engine's own write), with the pages inside
+  them, so the cascade leaves them. A page taken out of a page this way,
+  here or there, loses its `parent_page` and is filed in the folders of
+  the deleted page's top (`ops.kept_out_of`, over the stored chain, live
+  or in Recently deleted), as Move to library files a page, rather than
+  landing unfiled. Their own turns then take them as a page deleted there
+  but edited here: back there whole (`page_restored`), as library pages
+  in those folders. A force (`prune`) keeps none. A page the cascade
+  took finds itself gone here at its own turn, its state still kept:
+  `_delete_here` notes it `deleted here` and drops the state without
+  trashing it again.
 - **Deleted here.** Before the deletion goes there, `_keep_edited_inside`
   reads the remote tree of each page that went to Recently deleted here
   with it (`deleted_with`) and has a base. One changed there since comes
   back here alone, as a page deleted here but edited there does
   (`page_restored_from_remote`, laid in whole by `_pull_whole`), with the
   pages that went with it from inside it (`ops.restore_inside`), still
-  inside it. Where its parent there is going too, its `parent_page` is
-  cleared there first, so the remote's cascade leaves it. Then the pages
-  inside the page there that this deletion is not for are taken out of it
-  there too (`spare_inside`): live here, or made or moved in there and
-  never here. `spare_inside` walks the remote's
+  inside it. Where its parent there is going too, it is taken out of it
+  there first (`kept_out_of`, filed where the deleted page's top is), so
+  the remote's cascade leaves it. Then the pages inside the page there
+  that this deletion is not for are taken out of it there too
+  (`spare_inside`): live here, or made or moved in there and never here.
+  `spare_inside` walks the remote's
   `GET /api/pages/{id}/family` level by level (a remote too old to answer
-  is left as it is) and drops the cleared `parent_page` from such a page's
-  base, so the next round reads the move as the engine's, not the
-  remote's. What is left goes with the page there, and each one's own
-  turn finds the remote's copy gone and drops its state. A page that
-  comes back this way is a library page on both sides (its parent stays
-  deleted); on a share host it is no longer inside a published page, so
-  the next round deletes it there as a page that left the publication
-  ("The page filter"), the page and its conflict row kept here.
+  is left as it is), filing such a page where the deleted page's top is
+  (`kept_out_of`), and lays the same patch on the page's base, so the
+  next round reads the move as the engine's, not the remote's: a page
+  live here sends where it is here, one made there comes here filed so.
+  What is left goes with the page there, and each one's own turn finds
+  the remote's copy gone and drops its state. A page that comes back this
+  way is a library page on both sides (its parent stays deleted), filed
+  where that page's top is. On a share host it stays published, on its
+  own (`_keep_published`: it joins the filter unless the reach still
+  carries it), rather than leaving as a page no longer inside a published
+  page ("The page filter"); its link there was the deleted page's, so
+  Publish again in its Share popover makes one of its own.
+- **Moved there into a page deleted here.** A page moved there into a
+  page this copy deleted takes the move at its own turn. When that turn
+  comes first (id order: the move is not stored here until then), the
+  page lands here inside a page in Recently deleted, and the deletion's
+  `spare_inside` takes it out there only. So once a two-way round has
+  worked its pages, `_settle_parents` takes each page of the mirror's
+  reach that is live here with a stored `parent_page` naming a page in
+  Recently deleted here, or deleted here for good (its change-log row
+  `deleted`, no row left), out of it (`kept_out_of`, the engine's own
+  write), and the next round sends what differs there; on a publication
+  the page stays published (`_keep_published`). It reads every such
+  page, not only the ones the round worked, so a page an earlier release
+  left inside a deleted page and nobody has touched since comes out on
+  the first round after the upgrade. A page or parent whose own turn
+  failed this round is left for the next one (its deletion may still be
+  undone), and
+  a parent this copy never held (a sub-page published without its
+  parent, one a mirror brings before its parent) is no deletion and is
+  left as it is. Nothing names the deleted page any more, so restoring
+  it does not take the page back inside.
 - **Went with its parent here, kept there.** A page in Recently deleted
   here because a page it was inside went there (`deleted_with`), while the
   remote still holds it (moved out of that page there, or restored on its
@@ -618,8 +685,8 @@ synced yet" state (with *Sync after an edit* on, the pill spins from the
 edit until a poll confirms the round is done, since a one-page round is
 shorter than the poll interval). The first pass runs
 `FIRST_PASS_S` (5 s) after startup, so a copy whose first fill was cut short
-by a restart continues at once; "Sync now" (`POST /api/mirrors/{ws}/sync`,
-`?wait=1` for the answer) runs one on demand. Rounds of one mirror never
+by a restart continues at once; "Sync now" (`POST /api/mirrors/{ws}/sync`)
+runs one on demand. Rounds of one mirror never
 overlap: a second caller waits for the round lock and reads the mirror's
 row only once it holds it, so it runs with a page unpublished or a detach
 done while it waited. The loop itself never waits on that lock: a mirror
@@ -639,6 +706,27 @@ rounds to a pool of threads of its own (`workers`). What the person does
   retry list for the reattach);
 - a force is noted as `status.force` and applied by the next round under
   the lock (`_start_force`), never by the running one.
+
+**Sync now answers at once** (`sync_engine.ask_round`), so no request
+waits out a round a proxy would cut (a first fill of a big library takes
+minutes). It marks the status `asked_at` (`sync_clock.LinkTable.ask`) and
+starts the round in the background; the next round to start takes the
+mark off in the same write that sets `running` (`drop=(ASKED,)`), and a
+round already running when it was asked leaves it on for the round after
+it. From the answer to the round's end the status reads `asked_at` or
+`running`, so every Sync now in the web app (the pill, Settings' rows,
+the publish section) follows it with `GET /api/mirrors/{ws}` until
+neither is set (`syncLinks.js` `followSync`, every 2 s, the round's
+progress moving meanwhile) and then reports the round's outcome. A
+detached copy asks for none. A held round that runs nothing (detached
+meanwhile, a filter naming no page) takes the mark off too
+(`LinkTable.answered`), as do a detach and the startup reset, so nothing
+follows a round that will never come. So does a step that fails before
+the round's `running` (the token that no longer reads, a force started,
+the filter pruned): `_held_round` records it as the round's `last_error`
+before the exception goes on to the thread or the clock that logs it.
+`?wait=1` still runs the round in
+the request and answers with its status, for scripts and the tests.
 
 A round that cannot reach the remote records the error on the
 mirror and moves no cursor. A page that fails inside a round — whatever the
@@ -715,7 +803,8 @@ Shown while a clone is open, in the desktop app and in a browser alike.
 Click: a popover of icons and numbers.
 
 - The head: the clone's name with *remote · host*, a **Sync** icon button
-  and the gear.
+  (the round asked for, then followed to its end, spinning meanwhile; the
+  log is read again after it) and the gear.
 - The state line: the last round's `+3 −1 ~2`, the progress bars while a
   round runs, a *Resolve* button when conflicts wait (it opens the conflict
   cards, each resolved in place or opened on its block).
@@ -771,6 +860,10 @@ view, Settings.
   `inkMergeLines`), and `MergeResolver.jsx` maps the glyph names to icons.
 - `useConflicts(wsId)` loads a clone's open conflicts and posts a decision;
   the pill's review view and Settings share it.
+- A synced vault's row (`file_won`, `isVaultConflict`) has two sides,
+  **This file** (which won, `theirs`) and **Gamma** (`mine`), each shown
+  against the text both last agreed on, and Apply on Gamma's puts it back
+  into the block, which the next pull writes to the file (`SIDE_VAULT`).
 
 **The chip.** A block the sync merged or had to decide on carries a small
 chip at its row's right end; its popover is the card. App owns which chip is
@@ -779,7 +872,9 @@ the card's ‹ n / N › step through them, and a decision opens the next one
 down the page, so a page of conflicts is worked through in one pass. App
 reads the page's conflicts (`GET /api/mirrors/{ws}/conflicts?page=`) on
 open and on `gamma:mirror` / `gamma:mirror-changed` (no timer of its own:
-the pill's poll raises the latter); a decision
+the pill's poll raises the latter), and on a page a synced vault keeps its
+vault's too (`GET /api/folder-links/{id}/conflicts?page=`,
+`vaultConflictsPath`), resolved there; a decision
 is an ordinary edit the next round pushes. The lists in the pill and in
 Settings jump to the block (`gamma:jump`).
 
@@ -792,9 +887,11 @@ Settings jump to the block (`gamma:jump`).
   *unpushed edits*, *N conflicts*), *clone of X · origin host* and one short status line
   (progress and the file in flight while a round runs; *up to date 14:37 ·
   2 pages pulled* after; *local edits not pushed yet* while `pending_local`).
-  The list is read again every 2 s while any row's round runs
-  (`useMirrors`), so the progress moves.
-- Actions: Open, *Sync* (*Reattach* when detached), *Conflicts* (the same
+  The list is read again every 2 s while any row's round is asked for
+  or runs (`useMirrors`), so the progress moves.
+- Actions: Open, *Sync* (*Reattach* when detached; it follows the round
+  to its end, the row moving meanwhile, and the dialog's status line then
+  says how it went), *Conflicts* (the same
   cards, each resolved there or opened on its block) and a "more"
   `ActionMenu`: *Force pull*, *Force push* (off on a receive-only clone),
   *Detach*, and a danger *Remove origin*. The forces and the removal are
@@ -828,10 +925,22 @@ mirror's own answer apart.
   - Not published, allowed: "Keep this page reachable while this computer
     is off." and a primary **Publish**. Where the plan caps publishing (the
     answer's `limit` has a `max`) the hint counts instead, "3 of 5 pages
-    published". While it runs the button is disabled and shows the
+    published". A page with pages inside it (the answer's `pages_inside`)
+    says under the row that they go along and each counts against the
+    plan. While it runs the button is disabled and shows the
     spinning refresh glyph. A refusal shows its `detail` under the row; the
     cap's refusal (a 409 carrying `limit`) adds an *Open account* button to
-    the issuer's portal, the Settings Account row's target.
+    the issuer's portal, the Settings Account row's target, and, when the
+    page had pages inside it, how many it counted (`going`: "This page and
+    the 2 pages inside it count as 3 published pages."). A page left out
+    of the published page around it (`left_out_of`) says so under the row:
+    Publish puts it back, with a link of its own.
+  - Inside a published page, not published itself (`carried_by`): the
+    *Cloud link* row holds that page's link opened on this one (`url` /
+    `public_url` with `page=`), *Copy link* and a danger *Leave out*,
+    confirmed inline, which is `DELETE /api/pages/{id}/publish`; a line
+    names the page it goes with, and the state line follows as for a
+    published page.
   - Not published, refused: the `reason` as the row's hint. When the reason
     is the sign-in one, *Link Gamma Cloud account* opens Settings → Account
     & sync, where the link flow runs.
@@ -846,19 +955,28 @@ mirror's own answer apart.
     - a danger icon button that asks inline before it unpublishes;
     - the state line (`mirrorState` of the answer's `mirror`, the pill's
       icon and words) with a *Sync now* icon button
-      (`POST /api/mirrors/{ws}/sync?wait=1`). While the publication is
+      (`POST /api/mirrors/{ws}/sync`, then the publication followed to
+      the round's end, its progress on the state line). While the publication is
       detached the button is off, the state line says so (the answer's
       `mirror` carries `mode` and `detached`) and the answer's `reason`
       shows under the row;
     - the cloud share's access as the local share draws it: the three
       audience tiles (their hints in the share host's terms) and the View /
-      Edit segmented as the section's action. A change is
+      Edit segmented as the section's action, its summary counting the
+      pages inside. A change is
       `POST /api/pages/{id}/publish {audience, role}`, shown at once and
-      put back when the server refuses.
+      put back when the server refuses (no round runs for it: only the
+      share changes);
+    - pages the plan has no room for (`status.capped`), named on a line
+      under the state line: this page's wait with the share host's words,
+      or how many pages inside published pages wait.
   - A viewer of the workspace sees the state and the link but no buttons.
 - **The header's sync pill** shows for a publication only on a published
   page. A clone syncs the whole workspace, so its pill is on every page; a
-  publication syncs the pages in its filter, so its pill is on those.
+  publication syncs the pages it publishes, so its pill is on those: the
+  mirror's `published_pages` (`sync_engine.published_pages`, the filter's
+  pages and the pages inside them, less those left out), which
+  `GET /api/mirrors` and the publish answers' `mirror` carry.
   Settings → Appearance › Top bar › Sync pill (*Synced pages* / *Every
   page* / *Hidden*) can put it on every page instead, or take it off the
   bar: the account menu's Sync status row then opens the same popover, on
@@ -873,7 +991,8 @@ mirror's own answer apart.
   in `SettingsMirrors.jsx`) lists publications under *Publishing*; the
   pill's gear link opens this pane for a publication and Workspaces for
   a clone. A row has the state avatar, the workspace's name with its tags,
-  *N published pages · host*, the status line, a *Conflicts* button when
+  *N published pages · host* (every page there, the pages inside the
+  published ones included, as the plan counts them), the status line, a *Conflicts* button when
   any wait, and a "more" menu with *Sync now* and a danger *Stop
   publishing all* (confirmed, then `DELETE /api/pages/{id}/publish?ws=`
   for every page in the filter). Open conflicts there raise the
@@ -998,6 +1117,10 @@ workspace there:
 4. `POST /api/share/{id}` on the share host under the mirror's token makes
    the share (default anyone / view; the request's `audience` / `role` set
    it, on a new link or an existing one through `PUT /api/share-settings`).
+   A change of `audience` / `role` on a page already published and
+   there (in the filter, its base saved, not on the retry list:
+   `publish._published_already`) checks the mirror and its token and
+   comes straight here: no round, its edits go at the next one.
    The answer is the link `<share host>/?share=<token>` (`url`; the token
    is the share host's, `<workspace id there>.<secret>`, taken as it is),
    the page's public address (`public_url`, below), the share and the
@@ -1008,8 +1131,18 @@ the next round, edits made through an edit share come back, conflicts are
 the usual rows. The pages inside it go with it (the filter's reach, "The
 page filter"), keeping their `parent_page`, and its share there reaches
 them (`ShareScope.allows_page`), so the share link opens them too; a
-sub-page made in it later goes over at the next round, and one moved out
-of it is deleted there. `DELETE /api/pages/{id}/publish` stops the share
+sub-page made in it later goes over at the next round (one made inside it
+there, through an edit share, comes here: `_made_there`), and one moved
+out of it is deleted there. `GET /api/pages/{id}/publish` on such a page
+answers `carried_by: {page_id, title}` with the published page's link
+opened on it, and the mirror's `published_pages` lists it, so the sync
+pill covers it and Settings counts it. Unpublishing it (*Leave out* in its
+popover) deletes its copy there with the pages inside it, as an unpublish
+does, and leaves it out of the page around it (`sync_engine.leave_out`):
+the rounds after send it no more while it stays inside, its state answers
+`left_out_of`, and publishing it again puts it back with a share of its
+own. A page inside a published page that is published on its own as well
+is left out the same way when it is unpublished. `DELETE /api/pages/{id}/publish` stops the share
 there, deletes the copy there and drops the page and its base from the
 filter, all under the round lock (so no round reads the copy's deletion
 as the page's); the page here is untouched, and when the share host cannot
@@ -1040,11 +1173,14 @@ server is a share host; a self-hosted server never counts.
   published, is never refused.
 - **The publishing side.** `publish` reads `GET /api/publish/limit` on the
   share host before a page's first round there, and needs room there for
-  the page and the pages inside it, which go with it. A workspace too full is
-  exchanged once more first, so an upgrade counts at once. Still full, the
-  page leaves the filter again and the answer is 409 with the share host's
-  words and `limit: {used, max, plan}`. A 402 the round itself met (the
-  workspace filled up meanwhile) ends the same way. `GET
+  the page and the pages inside it, which go with it (less one left out). A
+  workspace too full is exchanged once more first, so an upgrade counts at
+  once. Still full, the page leaves the filter again and the answer is 409
+  with the share host's words, `limit: {used, max, plan}` and `going`, the
+  pages it would have put there. A 402 the round itself met (the workspace
+  filled up meanwhile; the round's `capped`) ends the same way. A sub-page
+  made later inside a page already published, once the workspace there is
+  full, waits without a round error (`CapDeferred`, "The page filter"). `GET
   /api/pages/{id}/publish` carries the same `limit` whenever the account
   holds a publishing token, read fresh on every call.
 
@@ -1055,7 +1191,8 @@ Unpublishing deletes the copy there, which frees a slot.
 also has a pretty address on a hostname per account,
 `https://<username>-pages.gammapdf.com/<slug>-<page id>`.
 The slug (`publish.slug`, mirrored in `frontend/src/shared/lib/slug.js`,
-pinned by `tests/shared/slug.json`) is the title ASCII-folded (NFKD, marks
+pinned by `tests/shared/slug.json`, which pins the page-host match
+`page_host_user` / `pageHostUser` too) is the title ASCII-folded (NFKD, marks
 dropped), lowercased, runs of anything but `[a-z0-9]` turned into one `-`,
 trimmed, at most 60 characters; a title with nothing left (a CJK one) gives
 none and the path is just `/<id>`. It is decoration: routing uses only the
@@ -1100,7 +1237,7 @@ is listed in `GET /api/mirrors` with the clones; the UI shows it apart
 | POST | `/api/mirrors` | `{remote_url, token, name?, mode?, workspace_id?, adopt?}` → the mirror (validated against the remote's `whoami` first; a read token or a viewer's role makes it `pull`; `workspace_id` links an existing workspace of the caller's under the `adopt` policy); the first fill runs in the background |
 | GET | `/api/mirrors/{ws}` | one mirror, with `conflicts_open` and `conflicts_newest` (the newest open conflict's id: the pair changes exactly when the open conflicts do), `pending_local` (a local write no round has pushed yet; two-way copies only), `poll_s`, `on_change`, `detached`, `interval_s` (0 = the loop is off), `page_filter` (null = every page) |
 | PATCH | `/api/mirrors/{ws}` | `{poll_s?, on_change?, mode?}` — the cadence and direction |
-| POST | `/api/mirrors/{ws}/sync[?wait=1]` | a round now |
+| POST | `/api/mirrors/{ws}/sync[?wait=1]` | a round now, in the background: `{status, conflicts_open}` at once, `status.asked_at` until the round starts ("Sync now answers at once"); `wait=1` runs it in the request |
 | POST | `/api/mirrors/{ws}/detach` | detach (the link is kept) |
 | POST | `/api/mirrors/{ws}/relink` | `{token?, remote_url?, adopt?}` — link again, a round in the background |
 | POST | `/api/mirrors/{ws}/force` | `{direction: pull \| push}` — replace one side with the other, in the background |
@@ -1150,8 +1287,11 @@ sync-on-change trigger, a remote on another data format pausing the round
 (either side older, then a remote that names none), a detach and a force
 asked for while a round runs,
 edits made while the remote had demoted the account, a force pull on a
-receive-only clone, and a conflict resolved after its block moved to
-another page are in `test_mirror.py` too. So are a drawing's pushes.
+receive-only clone, a conflict resolved after its block moved to
+another page, and Sync now answered before its round (asked while
+another runs, the ask outliving that round and taken off by the next;
+forgotten on a detach, by a round that runs nothing, at a restart and
+with the error of a step before the round) are in `test_mirror.py` too. So are a drawing's pushes.
 `base_ids` go when this copy holds the base and are left off when it
 does not, and a base the remote purged is uploaded first, so the merge
 there is three-way and clean. A push and a resend each leave one
@@ -1195,15 +1335,26 @@ a re-publication, a revoked token exchanged again, and the refusals.
 `test_sub_pages_lifecycle.py` is the sub-pages' rounds: a deleted tree
 taken as a tree both ways (ids picked so that id order would trash a
 sub-page first), a sub-page edited on the side that did not delete its
-parent (here and there, nested ones staying nested), one moved out there
-or into the deleted page there, a page coming back alone with the pages
+parent (here and there, nested ones staying nested, each kept page filed
+where the deleted page's top was), one moved out there or into the deleted
+page there (its turn before the deletion's or after it), a parent this
+copy never held left alone, a page coming back alone with the pages
 inside it, a merged cycle that keeps syncing, and on the publishing side
 a publication carrying its sub-pages (one made later, one made after the
-reach was read, one trashed), a sub-page moved out of it (with a share
+reach was read, one trashed, one a share editor wrote in kept published
+on its own after its parent's deletion here), a sub-page moved out of it (with a share
 editor's text pulled first, and never by a receive-only copy),
 unpublishing a page with one published on its own inside it, and the
-plan's cap counting the pages inside a published page. The browser scenario
-drives the popover's settings view, detach / link again and the merge chip;
+plan's cap counting the pages inside a published page.
+`test_sub_pages_sharing.py` is the sub-pages' reach: the share settings'
+`pages_inside` and `via` and `GET /pages/{id}/reach`, a page made through
+an edit share's link (here and on the share host, where the next round
+brings it here), a sub-page read as carried, left out and published again,
+one waiting for room on the plan without a round error, the cap's
+refusal counting the pages inside, and a round that deletes nothing there
+while its token is read-only. The browser scenario
+drives the row's Sync (asked without `?wait=1`, the clone read until its
+round is over), the popover's settings view, detach / link again and the merge chip;
 `publish.mjs` publishes end to end against a second Gamma started as the
 share host and a stand-in account server
 ([debugging.md](debugging.md)). The
@@ -1217,12 +1368,20 @@ The iPad app keeps no copy of its own: it shows a server's web app, and
 the Gamma server it runs on the device keeps clones like any other
 ([ipad.md](ipad.md#offline-use-clones)).
 
-The folder sync ([folder_sync.md](folder_sync.md)) keeps no copy of the
-workspace either: it writes one folder's pages to a directory
-on a PC as files, from Gamma to disk, through
+A synced vault of the desktop app ([synced_vaults.md](synced_vaults.md))
+keeps no copy of the workspace either: it keeps one folder's pages and a
+directory on a PC in step as files. Gamma's changes are pulled to the files;
+what goes back, as its switch says, is the PDFs (each its page's new file
+through the replacement) or everything, a note's changes merged into its
+page with the file winning a clash, as client `disk`. A vault of another
+server reads it over HTTP with a token (`gamma/vault_http.py`: the change
+feed, the subtree and the op log) and writes a page's changes as one plan
+(`POST /api/pages/{id}/plan`), refused whole when the page moved meanwhile.
+The gamma-sync client ([synced_vaults.md](synced_vaults.md#the-client))
+writes a folder's pages from Gamma to disk through
 `GET /api/sync/folders/{id}` (the manifest) and `…/notes` beside the change
-feed. Only PDFs go back, each one as its page's new file through the
-replacement route, never as a merge.
+feed, and sends back only PDFs, each through the replacement route, never
+as a merge.
 
 A Zotero link reads the local change feed in-process
 (`routers.sync.changes`, from `zotero_state.local_cursor`) to find the
@@ -1270,19 +1429,3 @@ pages, folders and labels to send to Zotero
 - Every automated test runs both sides in one process (the backend suite's
   TestClient transport; the browser scenario clones a workspace of the same
   server). Two real servers are not exercised.
-- Sub-pages, what is left:
-  - Once the workspace on the share host is at the plan's cap, a sub-page
-    made later inside a published page is refused (402) on every round,
-    kept on the retry list with `last_error`, until a page is unpublished
-    or the plan grows. A 402 on a create is a round error, not a quiet
-    deferral.
-  - A sub-page unpublished on its own while its parent stays published is
-    deleted there and leaves the filter, and the next round sends it again
-    as part of the parent's publication, without a share of its own.
-  - Pages that left a publication are dropped before the round's
-    `whoami`, so a token lowered to read-only meanwhile still tries the
-    `DELETE`; the share host refuses it and nothing is deleted.
-  - A page moved into a page there whose turn comes before that page's
-    deletion here (a matter of id order) ends up a library page on both
-    sides with its text, its stored `parent_page` still naming the page in
-    Recently deleted: restoring that page puts it back inside.

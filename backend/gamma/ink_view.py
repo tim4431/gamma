@@ -15,9 +15,9 @@ as the user sees it. ``pdf_text.render_page`` rasterizes either.
 """
 
 from . import ink as inkmod
+from . import storage
 from .ai_pictures import page_pdf_path
 from .blocks_store import block_to_dict, fetch_subtree, page_attachment
-from .db import ws_uploads_dir
 from .highlights import is_ink
 from .logbuf import log
 from .notebook import is_sheet, normalize_paper, notebook_pdf, sheet_pictures, sheet_text_boxes, sheets_of
@@ -56,16 +56,16 @@ def crop_box(inks, width: float, height: float):
     return (fx0, fy0, fx1, fy1)
 
 
-def _sheet_pdf(paper, sheet, inks, uploads) -> bytes:
+def _sheet_pdf(paper, sheet, inks, stored) -> bytes:
     """One sheet as ``notebook_pdf`` draws it: its paper, pictures, text
     boxes and ``inks``; blank paper with the strokes alone when ``sheet``
     is None."""
     blocks = sheet["blocks"] if sheet else []
     return notebook_pdf([(paper, sheet_text_boxes(blocks), inks)], pictures=[sheet_pictures(blocks)],
-                        uploads_dir=uploads)
+                        stored=stored)
 
 
-def _placed(conn, blocks: list[dict], page_id: str, uploads) -> dict:
+def _placed(conn, blocks: list[dict], page_id: str, stored) -> dict:
     """What ``pdf_export.page_with_ink`` draws under the handwriting of the
     page ``page_id``'s PDF: its pictures and text boxes, with the originals
     they replace, picked as the annotated export picks them
@@ -74,8 +74,8 @@ def _placed(conn, blocks: list[dict], page_id: str, uploads) -> dict:
     from .routers.export import _collect_pictures, _collect_text_boxes
 
     boxes, replaced = _collect_text_boxes(blocks, page_id)
-    pictures, more = _collect_pictures(blocks, page_id, uploads)
-    return {"pictures": pictures, "text_boxes": boxes, "replaced": replaced | more, "uploads_dir": uploads,
+    pictures, more = _collect_pictures(blocks, page_id, stored)
+    return {"pictures": pictures, "text_boxes": boxes, "replaced": replaced | more, "stored": stored,
             "resolve_ref": block_ref_resolver(conn)}
 
 
@@ -99,11 +99,11 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False, ink
     if page_id not in by_id or (block is None and not inline):
         return {"error": "error: no such block on that page"}
     props = block["properties"] if block else {}
-    uploads = ws_uploads_dir(ws)
+    stored = storage.files(ws)
 
     def load(b):
         url = b["properties"].get("ink_url")
-        return inkmod.read_upload(uploads, url) if url else None
+        return inkmod.read_upload(stored, url) if url else None
 
     sheets = sheets_of(blocks, page_id)
     if inline:
@@ -113,7 +113,7 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False, ink
         if sheet is None:
             return {"error": "error: that page of paper could not be read"}
         inks = [ink for b in sheet["blocks"] if (ink := load(b)) is not None]
-        return _done(_render(_sheet_pdf(sheet["paper"], sheet, inks, uploads), None), inks, whole=True)
+        return _done(_render(_sheet_pdf(sheet["paper"], sheet, inks, stored), None), inks, whole=True)
     elif not is_ink(props):
         return {"error": ('error: that block holds no handwriting — pass the id of a handwriting '
                           'block (read_block labels it "handwriting on …") or of a page of paper')}
@@ -131,7 +131,7 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False, ink
         inks = ([i for b in sheet["blocks"] if (i := load(b)) is not None]
                 if whole and sheet else [ink])
         box = None if whole else crop_box([ink], paper["width"], paper["height"])
-        return _done(_render(_sheet_pdf(paper, sheet, inks, uploads), box), inks, whole=whole)
+        return _done(_render(_sheet_pdf(paper, sheet, inks, stored), box), inks, whole=whole)
 
     from .ai_context import pdf_path
     from .pdf_export import page_with_ink, still_embedded
@@ -152,7 +152,7 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False, ink
     data = b""
     if path:
         try:
-            data, pages = page_with_ink(path, page_no, inks, **_placed(conn, blocks, page_id, uploads))
+            data, pages = page_with_ink(path, page_no, inks, **_placed(conn, blocks, page_id, stored))
             if not data:
                 return {"error": f"error: the handwriting is on PDF page {page_no}, but the PDF has {pages} pages"}
         except Exception as e:  # an encrypted or broken file: the strokes alone still read
@@ -186,17 +186,17 @@ def page_with_handwriting(ws: str, conn, page_id: str, page_no: int, path=None):
     if not path:
         return None, 0
     blocks = [block_to_dict(row) for row in fetch_subtree(conn, page_id)]
-    uploads = ws_uploads_dir(ws)
+    stored = storage.files(ws)
     inks = []
     for b in blocks:
         url = b["properties"].get("ink_url")
         if not url or still_embedded(b["properties"]):
             continue
-        ink = inkmod.read_upload(uploads, url)
+        ink = inkmod.read_upload(stored, url)
         if ink is not None and ink.space.kind == "pdf-page" and ink.space.page == page_no:
             inks.append(ink)
     try:
-        return page_with_ink(path, page_no, inks, **_placed(conn, blocks, page_id, uploads))
+        return page_with_ink(path, page_no, inks, **_placed(conn, blocks, page_id, stored))
     except Exception as e:  # an encrypted or broken file: no handwriting, the page itself still renders
         log.warning(f"[ink-view] could not copy PDF page {page_no} of {page_id}: {e}")
         return b"", 0

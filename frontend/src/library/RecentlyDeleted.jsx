@@ -4,7 +4,7 @@ import { API, apiJson } from "../shared/lib/utils";
 import { DialogButtons, Empty, SubDialog } from "../settings/SettingsKit";
 import { FileTextIcon, Trash2Icon, UndoIcon } from "../shared/ui/Icons";
 import { Reveal } from "../shared/ui/MotionWidgets";
-import { firstFolderPath, formatFullDate, formatRelativeTime } from "./libraryUtils.js";
+import { firstFolderPath, formatFullDate, formatRelativeTime, pagePlaceLabel } from "./libraryUtils.js";
 import { aheadTrash, dropTrash } from "./trashList.js";
 
 // Recently deleted (docs/dev/home_library.md): the pages deleted in the last
@@ -14,11 +14,13 @@ import { aheadTrash, dropTrash } from "./trashList.js";
 // with it; the trash icon deletes it for good after a confirmation, and so
 // does Empty for all of them. `confirm` is App's
 // confirm box, `onRestored()` refreshes the library; `tree` (the listing's,
-// libraryUtils.libraryTree) names the folder a row was filed in. The list
+// libraryUtils.libraryTree) names the folder a row was filed in, and
+// `pages` (App's page blocks by id) the page a sub-page deleted on its own
+// comes back inside (`parent`, its path with it). The list
 // asked for ahead, as the pointer or the focus reached the trash button
 // (trashList.js), shows at once; without it the list comes into focus once
 // it is in (Reveal).
-export default function RecentlyDeleted({ onClose, confirm, onRestored, setStatus, tree }) {
+export default function RecentlyDeleted({ onClose, confirm, onRestored, setStatus, tree, pages: pagesById }) {
   const [ahead] = useState(aheadTrash);
   const [list, setList] = useState(ahead?.value || null); // {pages, keep_days} | {error}
   const [busy, setBusy] = useState(false); // a restore or delete is running
@@ -48,9 +50,15 @@ export default function RecentlyDeleted({ onClose, confirm, onRestored, setStatu
       load();
     }
   }
+  // The page a restore puts `page` back inside, by its path ("Top › Page");
+  // "" for one that comes back in the library, null for a page the
+  // listing lacks.
+  const insideOf = (page) => (!page.parent ? "" : pagesById?.has(page.parent) ? pagePlaceLabel(pagesById, page.parent) : null);
   const restore = (page) => run(() => apiJson(`${API}/trash/${encodeURIComponent(page.id)}/restore`, { method: "POST" }),
     () => {
-      setStatus(t("Restored “{title}”.", { title: page.title }));
+      const inside = insideOf(page);
+      setStatus(inside ? t("Restored “{title}” inside “{page}”.", { title: page.title, page: inside })
+        : t("Restored “{title}”.", { title: page.title }));
       onRestored();
     });
   const deleteForGood = (page) => confirm({
@@ -96,6 +104,9 @@ export default function RecentlyDeleted({ onClose, confirm, onRestored, setStatu
                 {[page.deleted_by ? t("Deleted {when} by {name}", { when: formatRelativeTime(page.deleted_at), name: page.deleted_by })
                   : t("Deleted {when}", { when: formatRelativeTime(page.deleted_at) }),
                 page.sub_pages ? tn("with {n} page inside", "with {n} pages inside", page.sub_pages) : "",
+                // a sub-page deleted on its own: Restore puts it back inside its parent
+                insideOf(page) ? t("comes back inside “{page}”", { page: insideOf(page) })
+                  : insideOf(page) === null ? t("comes back inside the page it was in") : "",
                 page.purge_at ? tn("{n} day left", "{n} days left", daysLeft(page.purge_at)) : "",
                 firstFolderPath(tree, page.folders)].filter(Boolean).join(" · ")}
               </span>

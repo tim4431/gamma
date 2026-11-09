@@ -2,8 +2,9 @@
 notes reads (gamma/folder_sync.py, routers/sync.py ``/sync/folders*``) and
 the gamma-sync client (gamma/gamma_sync.py, run over HTTP) that writes them —
 the layout, the vault pages with the page's id, and the client's rounds:
-adds, updates, renames, removals, and the files it must leave alone — and
-the PDFs it sends back when asked (more in test_disk_push.py)."""
+adds, updates, renames, removals, and the files it must leave alone — the
+PDFs it pushes when asked, and its ``pull``, which never pushes (more in
+test_disk_push.py)."""
 
 import base64
 import io
@@ -281,6 +282,32 @@ def _built(path, data):
     path.write_bytes(data)
     then = time.time() - 10
     os.utime(path, (then, then))
+
+
+def test_pull_writes_gammas_changes_and_pushes_nothing(owner, tmp_path, capsys, monkeypatch):
+    mod = _tool(monkeypatch)
+    write = create_token(account_of("fs_owner"), workspace_of("fs_owner"), "folder sync pull", 90, scope="write")["token"]
+    page, v1, _ = _pdf_page(owner, "Pulled paper", ["FS pull"])
+    dest = tmp_path / "pulled"
+    assert mod.main(["init", str(dest), "--server", SERVER, "--folder", "FS pull", "--token", write, "--push"]) == 0
+    assert mod.main(["pull", str(dest), "--token", write]) == 0
+    paper = dest / "Pulled paper.pdf"
+    assert paper.is_file() and (dest / "Pulled paper.md").is_file()
+
+    # a PDF built on disk and a note written in Gamma: pull takes the note and leaves the PDF where it is
+    _built(paper, _blank_pdf(pages=2) + b"% built for the pull")
+    _children(owner, page["id"], [_note("fs-pull-1", "pulled, never pushed")])
+    capsys.readouterr()
+    assert mod.main(["pull", str(dest), "--token", write]) == 0
+    out = capsys.readouterr().out
+    assert "sent" not in out and owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == v1
+    assert "pulled, never pushed" in (dest / "Pulled paper.md").read_text(encoding="utf-8")
+    assert mod.doc_of(paper) != v1                                       # the build stays on disk
+
+    # sync pushes it, then pulls
+    assert mod.main(["sync", str(dest), "--token", write]) == 0
+    assert "1 sent" in capsys.readouterr().out
+    assert owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == mod.doc_of(paper)
 
 
 def test_client_sends_pdfs_back_when_asked_and_follows_a_file(owner, token, tmp_path, capsys, monkeypatch):

@@ -1283,7 +1283,8 @@ def metadata_status(request: Request):
             "title": (meta or {}).get("title") or content or "Untitled",
             "updated_at": updated_at,
             "doc_id": doc_id,
-            "has_file": bool(doc_id and _DOC_ID_OK.match(doc_id) and f"{doc_id}.pdf" in stored),
+            "has_file": bool(doc_id and _DOC_ID_OK.match(doc_id)
+                             and (f"{doc_id}.pdf" in stored or storage.readable(ws, f"{doc_id}.pdf"))),
             "has_meta": bool(meta),
             "meta_source": (meta or {}).get("source", ""),
             "meta_kind": (meta or {}).get("kind", ""),
@@ -1805,7 +1806,7 @@ def metadata_batch(payload: MetaBatchRequest, request: Request):
         batch = _Batch(key)
         batch.add(papers, payload.force, options)
         job = jobs.start("metadata", owner=user_id, ws=ws, run=lambda job: batch.run(job, ws, user_id),
-                         title="Paper metadata lookup", params={"papers": len(papers)})
+                         title="Paper metadata lookup", params={"papers": len(papers)}, writes=True)
         batch.job_id = job["id"]
         _batches[key] = batch
     return job

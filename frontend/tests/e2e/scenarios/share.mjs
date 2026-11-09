@@ -5,7 +5,10 @@
 // the page, and a folder share (the folder view's link button; the listing a
 // visitor browses; the folder copied into another library by the listing's
 // Add to my library and by its link pasted into another Gamma's +, which
-// is a second server), and what a visitor's export holds.
+// is a second server), a visitor's export of the folder as the share's job,
+// and what a visitor's export holds. A page inside a
+// shared page names the link that opens it, a move into a shared page asks
+// first, and an edit link's visitor makes a page inside the shared page.
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { Account, ROOT, Server } from "../harness.mjs";
@@ -145,6 +148,122 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     assertNoProblems(o);
     await octx.close();
     await alice.api(`/api/share-settings/folder/${sharedlab}`, { method: "DELETE" });
+  });
+
+  await step("folder share: a visitor's export of the folder runs as the share's job, which goes with the share", async () => {
+    for (const title of ["Exported folder paper A", "Exported folder paper B"]) {
+      const paper = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } });
+      await alice.file(paper.id, { folders: ["exportlab"] });
+    }
+    const exportlab = await alice.folder("exportlab");
+    const { token } = await alice.api(`/api/share/folder/${exportlab}`, { method: "POST", body: { audience: "anyone" } });
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const v = await openPage(ctx, `${server.base}/?share=${token}`);
+    await v.locator(".fileRow", { hasText: "Exported folder paper A" }).waitFor({ timeout: 15000 });
+    const started = v.waitForResponse((r) => r.url().includes("/api/jobs/export") && r.request().method() === "POST");
+    const view = v.locator('[data-popover="menu"] > button');
+    await (await view.count() ? view : v.locator('[data-guide="header.account"]')).click();
+    await v.getByRole("menuitem", { name: "Export…", exact: true }).click();
+    const dialog = v.getByRole("dialog", { name: /^Export “exportlab”/ });
+    await dialog.getByRole("button", { name: "Markdown", exact: true }).click();
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    const download = v.waitForEvent("download");
+    await dialog.getByRole("button", { name: "Export", exact: true }).click();
+    const job = await (await started).json();
+    assertEq(job.owner, `share:${token}`, "the share's job");
+    // the dialog follows it to its end and the file comes by itself, through the share
+    await dialog.getByRole("heading", { name: "Export ready" }).waitFor();
+    await dialog.getByText("2 pages exported.").waitFor();
+    assert((await download).url().includes(`/api/jobs/${job.id}/download?share=`), "the job's file, through the share token");
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    await dialog.waitFor({ state: "detached" });
+    assertNoProblems(v);
+    await ctx.close();
+    // no one reaches it but through the share; stopped, the share takes its jobs along
+    assertEq((await fetch(`${server.base}/api/jobs/${job.id}`)).status, 401, "not without the share");
+    assertEq((await fetch(`${server.base}/api/jobs/${job.id}?share=${token}`)).status, 200, "through the share");
+    await alice.api(`/api/share-settings/folder/${exportlab}`, { method: "DELETE" });
+    assertEq((await fetch(`${server.base}/api/jobs/${job.id}/download?share=${token}`)).status, 401, "gone with the share");
+  });
+
+  await step("folder share: an export whose share is stopped while it runs ends as failed, and the tab stops asking", async () => {
+    const paper = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Stopped export paper" } });
+    await alice.file(paper.id, { folders: ["stoplab"] });
+    const stoplab = await alice.folder("stoplab");
+    const { token } = await alice.api(`/api/share/folder/${stoplab}`, { method: "POST", body: { audience: "anyone" } });
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const v = await openPage(ctx, `${server.base}/?share=${token}`);
+    await v.locator(".fileRow", { hasText: "Stopped export paper" }).waitFor({ timeout: 15000 });
+    // the job's reads wait until the share is stopped, then reach the server: 401
+    let reads = 0, release;
+    const stopped = new Promise((resolve) => { release = resolve; });
+    await v.route(/\/api\/jobs\/[0-9a-f]+\?share=/, async (route) => {
+      reads += 1;
+      await stopped;
+      await route.continue();
+    });
+    const started = v.waitForResponse((r) => r.url().includes("/api/jobs/export") && r.request().method() === "POST");
+    const view = v.locator('[data-popover="menu"] > button');
+    await (await view.count() ? view : v.locator('[data-guide="header.account"]')).click();
+    await v.getByRole("menuitem", { name: "Export…", exact: true }).click();
+    const dialog = v.getByRole("dialog", { name: /^Export “stoplab”/ });
+    await dialog.getByRole("button", { name: "Markdown", exact: true }).click();
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await dialog.getByRole("button", { name: "Export", exact: true }).click();
+    assertEq((await (await started).json()).owner, `share:${token}`, "the share's job");
+    await until(() => reads > 0, { what: "the dialog asks after its job" });
+    await alice.api(`/api/share-settings/folder/${stoplab}`, { method: "DELETE" });
+    release();
+    await dialog.getByRole("heading", { name: "Export failed" }).waitFor();
+    await dialog.getByRole("alert").getByText("This share link no longer lets you in.").waitFor();
+    const asked = reads;
+    await sleep(4000); // more than two of the fast polls' rounds
+    assertEq(reads, asked, "a job the share no longer reaches is not asked after again");
+    await ctx.close();
+  });
+
+  // A workspace being deleted takes no more changes (docs/dev/workspaces.md
+  // "Deleting a workspace"), and an edit share's visitor learns so from the
+  // refused edit: the share view turns read-only on that page and on every
+  // page it opens next, the pill saying why. The refusal is routed in, in
+  // the server's shape (a real delete of a small workspace is over first).
+  await step("folder share: an edit refused because the workspace is being deleted keeps the share view read-only", async () => {
+    const notes = [];
+    for (const title of ["Frozen share paper A", "Frozen share paper B"]) {
+      const paper = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } });
+      await alice.file(paper.id, { folders: ["freezelab"] });
+      await alice.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: `A note of ${title}` } });
+      notes.push(paper);
+    }
+    const freezelab = await alice.folder("freezelab");
+    const { token } = await alice.api(`/api/share/folder/${freezelab}`, { method: "POST", body: { audience: "anyone", role: "edit" } });
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    await ctx.route(/\/api\/pages\/[^/?]+\/ops\?/, (route) => (route.request().method() !== "POST" ? route.fallback() : route.fulfill({
+      status: 423, headers: { "X-Gamma-Workspace-Deleting": alice.ws },
+      json: { detail: "“Home” is being deleted and takes no more changes", error: "workspace_deleting", workspace: alice.ws },
+    })));
+    try {
+      const v = await openPage(ctx, `${server.base}/?share=${token}&page=${notes[0].id}`);
+      await until(async () => (await v.textContent("body")).includes("Can edit"), { what: "edit badge" });
+      await editRow(v, "A note of Frozen share paper A");
+      await v.keyboard.type(" and after");
+      await closeEditor(v);
+      const pill = v.locator(".statusPill", { hasText: "This workspace is being deleted, so changes are no longer saved." });
+      await pill.getByRole("button", { name: "Reload", exact: true }).waitFor();
+      await v.locator(".blockRow", { hasText: "A note of Frozen share paper A and after" }).waitFor({ state: "detached" });
+      await until(async () => (await v.textContent("body")).includes("View only"), { what: "the badge says view only" });
+      // the next page of the folder opens read-only too, and the pill stays
+      await v.locator(".shareCrumbs .crumbBtn", { hasText: "freezelab" }).click();
+      await v.locator(".fileRow", { hasText: "Frozen share paper B" }).dblclick();
+      await v.locator(".blockRow", { hasText: "A note of Frozen share paper B" }).waitFor({ timeout: 15000 });
+      await pill.waitFor();
+      await v.locator(".blockRow", { hasText: "A note of Frozen share paper B" }).locator(".blockBody").click();
+      await sleep(300);
+      assertEq(await v.locator(".blockEditorCm").count(), 0, "no editor opens on the next page");
+      assert(same(await tree(alice, notes[0].id), [{ content: "A note of Frozen share paper A", children: [] }]), "nothing was saved");
+      assertNoProblems(v, [/\/ops\?.* -> 423$/, /status of 423/]);
+    } finally { await ctx.close(); }
+    await alice.api(`/api/share-settings/folder/${freezelab}`, { method: "DELETE" });
   });
 
   await step("folder share: Add to my library, and the link pasted into another Gamma's +, copy the folder to the top level", async () => {
@@ -320,6 +439,63 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await ctx.close();
   });
 
+  await step("share: a page inside a shared page names the link that opens it; a move into one asks first; its edit link makes a page inside", async () => {
+    const top = await alice.api("/api/pages", { method: "POST", body: { title: "Reach top" } });
+    const kid = await alice.api("/api/pages", { method: "POST", body: { title: "Reach kid", parent_page: top.id } });
+    const loose = await alice.api("/api/pages", { method: "POST", body: { title: "Reach loose" } });
+    const { token } = await alice.api(`/api/share/${top.id}`, { method: "POST", body: { audience: "anyone", role: "edit" } });
+    const ctx = await alice.context(browser);
+    const vctx = await browser.newContext({ viewport: { width: 1280, height: 860 } }); // no session: the link alone
+    try {
+      // the page inside: not shared itself, and the popover says the parent's link opens it
+      const page = await openPage(ctx, `${server.base}/?page=${kid.id}&ws=${alice.ws}`);
+      const pop = page.locator(".sharePopover");
+      await page.click("button[aria-label='Share']");
+      await pop.locator("[data-share-via]")
+        .getByText("The link of “Reach top” opens this page too, as a page inside it: anyone with the link can edit it.").waitFor();
+      await pop.getByText("Not shared yet. Share makes a link you can send.").waitFor();
+      await page.keyboard.press("Escape");
+      await pop.waitFor({ state: "detached" });
+      // the shared page's own summary counts the page inside it
+      await page.goto(`${server.base}/?page=${top.id}&ws=${alice.ws}`);
+      await page.click("button[aria-label='Share']");
+      await pop.getByText("Anyone with the link can edit this page and the 1 page inside it.").waitFor();
+      assertEq(await pop.locator("[data-share-via]").count(), 0, "no other link opens the shared page");
+      await page.keyboard.press("Escape");
+      await pop.waitFor({ state: "detached" });
+
+      // Move into page… into the shared page says who will open the page before it moves
+      await page.goto(`${server.base}/?page=${loose.id}&ws=${alice.ws}`);
+      await page.locator(".tabStrip .tab", { hasText: "Reach loose" }).click({ button: "right" });
+      await page.locator(".ctxMenuItem", { hasText: "Move into page…" }).click();
+      const dialog = page.getByRole("dialog", { name: "Move into page" });
+      await dialog.getByRole("textbox").fill("Reach top");
+      await dialog.getByRole("option").filter({ has: page.locator("strong", { hasText: /^Reach top$/ }) }).click();
+      const confirm = page.locator(".confirmModal");
+      await confirm.getByText("Move into a shared page?", { exact: true }).waitFor();
+      await confirm.getByText("The link of “Reach top” opens it: anyone with the link can edit the page you move, too.").waitFor();
+      assertEq((await alice.api(`/api/blocks/${loose.id}`)).properties?.parent_page, undefined, "nothing moves before the confirm");
+      await confirm.getByRole("button", { name: "Move", exact: true }).click();
+      await until(async () => (await alice.api(`/api/blocks/${loose.id}`)).properties?.parent_page === top.id,
+        { what: "inside the shared page after the confirm" });
+      assertNoProblems(page);
+
+      // the edit link's visitor makes a page inside the shared page from its Pages inside panel
+      const v = await openPage(vctx, `${server.base}/?share=${token}`);
+      await v.waitForSelector(".readOnlyTitle", { timeout: 15000 });
+      await v.locator(".subPagesPanel .subPageNew", { hasText: "New page inside" }).click();
+      await until(() => v.url().includes("page="), { what: "the new page opens in the share view" });
+      await v.keyboard.type("Made through the link");
+      await v.keyboard.press("Enter");
+      await until(async () => (await alice.api(`/api/pages/${top.id}/family`)).sub_pages.some((p) => p.title === "Made through the link"),
+        { what: "the page inside the shared page, in alice's library" });
+      assertNoProblems(v);
+    } finally {
+      await vctx.close();
+      await ctx.close();
+    }
+  });
+
   await step("share: the command palette's Share this page… opens the open page's popover, not the last one shown", async () => {
     const shared = await alice.api("/api/pages", { method: "POST", body: { title: "Palette shared" } });
     const plain = await alice.api("/api/pages", { method: "POST", body: { title: "Palette plain" } });
@@ -428,12 +604,18 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
     const page = await openPage(ctx, `${server.base}/?share=${visitorToken}`);
     await page.locator(".blockRow", { hasText: "Openword" }).waitFor();
+    // the share view exports through the share's job, never the one-request download
+    const exports = [];
+    page.on("request", (r) => { if (/\/api\/(jobs\/export|pages\/[^/]+\/export)\b/.test(r.url())) exports.push(`${r.method()} ${r.url()}`); });
     for (const format of ["Markdown", "Obsidian", "Notion"]) {
       const dialog = await openDialog(page, "Export");
       await dialog.getByRole("button", { name: format, exact: true }).click();
       await dialog.getByRole("button", { name: "Next", exact: true }).click();
       const download = page.waitForEvent("download");
       await dialog.getByRole("button", { name: "Export", exact: true }).click();
+      await dialog.getByRole("heading", { name: "Export ready" }).waitFor();
+      await dialog.getByRole("button", { name: "Done", exact: true }).click();
+      await dialog.waitFor({ state: "detached" });
       // A page with no file to bundle comes as one .md, a vault and a Notion export as a zip.
       const held = execFileSync(python, ["-c", `
 import json, sys, zipfile
@@ -447,6 +629,9 @@ else:
       assert(held.includes("Openword"), `${format}: the shared page is in the export`);
       for (const word of ["TOPSECRETWORD", "Hiddentitleword", pictureName]) assert(!held.includes(word), `${format}: nothing names ${word}`);
     }
+    assertEq(exports.length, 3, `one job per export (${exports})`);
+    assert(exports.every((r) => r.startsWith("POST ") && r.includes(`share=${encodeURIComponent(visitorToken)}`)),
+      `each started as the share's job (${exports})`);
     assertNoProblems(page);
     await ctx.close();
   });
@@ -459,10 +644,10 @@ else:
     await until(async () => (await page.textContent("body")).includes("Can edit"), { what: "edit badge" });
     await editRow(page, "figure");
     await page.keyboard.type(" edited by bob");
-    // A share's editor makes no page in the owner's library.
+    // A share's editor makes a page inside the shared page (the step above makes one).
     await page.keyboard.type(" /page");
     await page.waitForSelector(".slashMenu");
-    assertEq(await page.locator(".slashMenu .slashMenuItem", { hasText: "New page" }).count(), 0, "/page offers no new page in a share");
+    assertEq(await page.locator(".slashMenu .slashMenuItem", { hasText: "New page" }).count(), 1, "/page offers a new page inside in an edit share");
     for (let i = 0; i < 6; i++) await page.keyboard.press("Backspace");
     await closeEditor(page);
     await until(async () => JSON.stringify(await tree(account, pdfPageId)).includes("edited by bob"), { what: "bob's edit saved to alice's page" });

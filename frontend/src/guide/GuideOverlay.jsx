@@ -202,7 +202,7 @@ function WelcomeDeck({ step, minutes, welcomePage, setups = [], onAction, onLate
 const MADE_ICONS = { page: PaperIcon, highlight: HighlightIcon, note: PencilIcon, label: LabelIcon };
 function FinishContent({ finish, onAction, onDone }) {
   // Names from the run (the paper's title, the label) stand out.
-  const strong = (args) => Object.fromEntries(Object.entries(args).map(([k, v]) => [k, typeof v === "string" ? <strong>{v}</strong> : v]));
+  const strong = (args) => Object.fromEntries(Object.entries(args).map(([k, v]) => [k, typeof v === "string" ? <strong key={k}>{v}</strong> : v]));
   return (
     <>
       <div className="guideHead">

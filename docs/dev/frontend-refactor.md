@@ -2,11 +2,13 @@
 
 The file organization is in place ([source map](../../frontend/src/README.md):
 functional folders directly under `src/`, alongside `app/` and `shared/`,
-without an extra `features/` layer), and so is the startup bundle split
-([Lazy boundaries](#lazy-boundaries)). The state decomposition below is
+without an extra `features/` layer), and so are the startup bundle split
+([Lazy boundaries](#lazy-boundaries)) and the rule that keeps new state
+out of App ([New state](#new-state)). The state decomposition below is
 still mostly a proposal: modules have moved, most of their state
-ownership has not been redesigned, and `app/App.jsx` is about 11,900
-lines. Three steps are taken: the block tree holds the document only, and
+ownership has not been redesigned, and `app/App.jsx` is still the largest
+file by far (its counts are in `frontend/tests/app-state-baseline.json`).
+Three steps are taken: the block tree holds the document only, and
 the viewer's own state (the open editor, their folding) is App's `view`
 beside it (`shared/model/blockModel.js`, [collab.md](collab.md)); the AI
 connect dialog's form state is `useProviderEditor`
@@ -43,6 +45,7 @@ does not show comes in chunks of its own, through `lazySurface` and
 | PDF margin cards (comments) | beside a page with room and an open thread | nothing |
 | Comments window | with its dock window | the window's frame (`DockWindow`), body empty |
 | Inbox panel | while open | nothing |
+| A vault page's Edit the file (`vault/FileSourceDialog.jsx`) and an opened PDF's Add to library… (`vault/FolderPickerDialog.jsx`) | while open | nothing |
 | pdf.js and its worker | `loadPdfEngine()` in `pdf/PdfViewer.jsx`, awaited just before `getDocument` | the viewer's skeleton and status pill |
 
 Mermaid was already loaded this way (`shared/lib/mermaidRenderer.js`).
@@ -85,8 +88,9 @@ screen downloads only what it paints.
   `vite.config.js`), so its bytes start arriving with the entry's.
 
 Adding one: import the module only through `lazySurface` (one static import
-anywhere in the `App` chunk's graph puts it back), and move the small
-exports App itself needs into a module of their own, as
+anywhere in the `App` chunk's graph puts it back, and `npm run budget`
+fails on that), and move the small exports App itself needs into a module
+of their own, as
 `settings/providerEditor.js`, `settings/workspaceRoles.js` and the
 `settingsNavigation.js` / `settingsSearch.js` split did. A surface that
 used to stay mounted while closed mounts on first use and then stays, so its
@@ -96,6 +100,126 @@ with one that used to follow it. A chunk that cannot be fetched (a deploy
 replaced the hashed files under an open tab) leaves the fallback in place
 instead of unmounting the app; a reload fetches the new files. Sizes and
 what each first screen downloads: [the bundle note](../research/bundle.md).
+
+### The startup budget
+
+`npm run budget` (`tools/bundleBudget.mjs`) reads a build: `frontend/dist`
+after `npm run build`, or another with `--dist <dir>`. `check.yml`'s
+frontend job runs it after the build, and the merge skill after its scratch
+build. The startup graph is what `index.html` loads before App renders: its
+module entry and its modulepreloads (the `App` chunk), followed through
+their static imports, never through `import()`. Startup CSS is the head's
+stylesheets. A file's Brotli bytes are its `.br` copy's size, which is what
+the backend sends. It fails, one line per broken rule, when:
+
+- `index.html` has other than one module entry.
+- A module the source imports with a literal `import("…")` (each
+  `lazySurface`, pdf.js, mermaid) has no chunk of its own, or its chunk is
+  in the startup graph. `App` must be modulepreloaded instead.
+- The build has other than one pdf.js worker.
+- A measured file of 1 KB or more has no `.br` or no `.gz` copy
+  (`precompress` in `vite.config.js`).
+- Startup JS (Brotli and raw) or startup CSS (Brotli) is over its ceiling,
+  or more than 20% under it.
+
+The ceilings are in `frontend/tests/bundle-budget.json`, each with the date
+it was set, the bytes it was set on and why. `npm run budget -- --reset
+"<reason>"` sets every ceiling 10% over the build, rounded up to 1,000
+bytes; figure names after the reason (`startupJsBrotli`, `startupJsRaw`,
+`startupCssBrotli`) reset only those. It refuses a build that breaks one of
+the other rules. A change that grows startup past a
+ceiling takes something off the first screen, or raises the ceiling in the
+same change with a reason that says what grew. A change that leaves a figure
+more than 20% under its ceiling, which is about 12% under the build a reset
+set it on, lowers it the same way, so the saving is kept. Raw bytes are gated
+beside Brotli because the iPad and Android apps load the build from a server
+on the device, where the download is free and parsing is not. The lazy
+chunks' sizes, the pdf.js worker, the locale catalogs and the build's total
+JS are printed, not gated. Chunks are found by Vite's default file names
+(`[name]-[hash].js`), so a `chunkFileNames` or `manualChunks` setting makes
+the lazy rule fail until the tool reads it. Why the ceilings sit where they
+do: [the bundle note](../research/bundle.md#a-month-later-november-2026).
+
+## New state
+
+Built, like the lazy boundaries. A feature's new state, and the effects
+that keep it, go into an owner module beside the feature, never into
+`app/App.jsx`. The owner is a `use…` hook, as the `ink/` owners,
+`comments/useComments.js`, `inbox/useInbox.js` and `vault/useVault.js` (a
+page's synced-vault standing, its banner and the two vault dialogs) are. State that must
+outlive a component, or be read outside React, is a store with listeners
+that components read through `useSyncExternalStore` (`pdf/translateState.js`,
+`recording/recorderStore.js`, `replay/playback.js`,
+`settings/settingsReads.js`). App calls the owner and hands its commands on.
+
+- **An owner is tested.** Its rules are a pure module with a node test,
+  since the frontend has no component tests: `ink/stripState.js` under
+  `useInkStrip.js`, `ink/inkSaver.js` under `useInkSave.js`,
+  `inbox/inboxText.js` under `useInbox.js`, `vault/vaultState.js` under
+  `useVault.js`.
+- **An owner is narrow.** It takes the few inputs it reads and returns
+  state and stable commands. A hook that takes App's variables wholesale
+  moves code without giving it an owner.
+- **A fix adds no state to App.** A fix that needs one more value folds it
+  into state that App or an owner already holds: a failed read is a field
+  of that read's state, not a second flag. Or it takes out an App hook it
+  makes unneeded.
+
+`frontend/tests/appState.test.mjs` holds App to
+`frontend/tests/app-state-baseline.json`, and `frontend/tools/appState.mjs`
+does the counting (its commands below run from `frontend/`). It reads
+`app/App.jsx` with its comments, strings and regex literals blanked, and
+counts two things:
+
+- **Hooks:** the calls of `useState`, `useReducer`, `useRef`, `useEffect`
+  and `useLayoutEffect`, and of the shared helpers that each hold one state
+  for their caller: `usePersistedState`, `usePersistedFlag` and `useCopied`.
+  They are one sum, so moving a value from a state to a ref, or an effect
+  into a handler's ref read, is net zero.
+- **Code lines:** lines with code on them. Blank lines and comments, a JSX
+  comment's braces included, cost nothing.
+
+`useMemo` and `useCallback` are not counted. They are the glue a
+composition root keeps, and often the fix itself: a new row prop needs a
+stable identity ([Goal and current constraints](#goal-and-current-constraints)).
+The shared helpers of the same kind are not counted either: `useStableActions`,
+`useWheelPan` (a callback ref) and `useLatch`, the mount latch that
+[a new lazy surface](#lazy-boundaries) takes. Nor are `useSyncExternalStore`
+and the calls of owner hooks, `shared/`'s `useTextScale` among them, since
+they are how App composes its owners. The tool prints the uncounted hooks
+from React and `shared/` with their counts. A feature's own owner hooks are
+not listed.
+
+The test fails in four ways:
+
+- **A hook from React or `shared/` that the tool does not list.** The tool
+  reads named and default imports and calls on a namespace import, as
+  `React.useId()` or `W.useToggle()`. Such a hook goes
+  into the tool's `STATE` when it holds a value for its caller, as
+  `useCopied` does, and into `INFO` when it is glue or a shared owner.
+- **More hooks than the baseline.** The new state goes into an owner.
+  `node tools/appState.mjs --list` prints every counted call with its line.
+- **Fewer hooks than the baseline.** `node tools/appState.mjs --baseline`
+  records the lower count in the same commit, so the next feature cannot
+  spend it. The diff then shows App's progress.
+- **More code lines than the ceiling.** The ceiling is the smallest size
+  recorded plus 1,000 code lines. Move code out of App first, in a commit
+  of its own: dead code, a view section, or a group of handlers into its
+  feature's folder ([Proposed ownership](#proposed-ownership)).
+
+`--baseline` never raises anything. While App holds more hooks than
+recorded, it prints both counts, writes nothing and exits 1. It sets the
+ceiling to the lower of the recorded one and the current size plus 1,000.
+A hook newly counted is the one rise, and it is written into the
+baseline's `hooks` by hand, in the commit that changes the list. With no
+option the tool prints each hook's count (the uncounted ones too), the code
+lines and the ceiling.
+
+Only App is tracked (the tool's `FILES`). The other large components are
+their feature's own home already and hold many small components, so a
+per-file count would fail a subcomponent's local state. CI runs the test
+only on the pull request to main, so a change to `app/App.jsx` runs it
+locally ([test selection](debugging.md#local-changes-test-the-affected-modules)).
 
 ## Goal and current constraints
 
@@ -114,7 +238,14 @@ depth and its place among its siblings (`place`, `siblings`: what the
 editing bar's move and indent buttons read from the tree's order). A new
 row prop must follow that rule or every row renders again. No browser
 profile has measured this yet
-([research/performance.md](../research/performance.md)).
+([research/performance.md](../research/performance.md)). The React Compiler
+was tried on this code and compiles none of `LibraryApp`, `BlockRow` or
+`BlockTree` ([research/react-19.md](../research/react-19.md)), so hand
+memoization stays the rule until the state owners below exist. The pure
+walks App runs for a key are timed and held to a budget in
+`tests/perf/keystroke.perf.mjs`, through `app/treeDerived.js`, which holds
+the memos' bodies while the memos stay in App
+([debugging.md](debugging.md#performance-budgets)).
 
 The goal is a small composition root with explicit state owners and commands.
 Extraction should remove coupled responsibilities, not merely move long

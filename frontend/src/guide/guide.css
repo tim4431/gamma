@@ -498,7 +498,7 @@
   gap: 2px;
   padding: 9px 11px;
   text-align: left;
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
   color: var(--text-primary);
   background: var(--bg-elevated);
   border: 1px solid var(--border);

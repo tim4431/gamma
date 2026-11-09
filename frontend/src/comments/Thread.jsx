@@ -2,13 +2,14 @@
 // "In the app"): the thread popover (ThreadPopover.jsx) lists a block's
 // threads, and the PDF's margin (CommentMargin.jsx) shows one card per
 // thread beside its highlight. Each comment with its author, time and text
-// rendered as a note is (so @people and [[links]] work), its "⋯" menu, the
+// rendered as a note is (so @people and [[links]] work), its "⋯" menu (Edit,
+// Copy link, Report on anyone else's, Delete), the
 // thread's Resolve and its reply field once the thread is the active one.
 // A comment that comes (a reply, yours or someone's) rises into place
 // (ListMotion).
 import React, { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { ContextMenu, MenuButton, MenuItem } from "../shared/ui/Menus";
-import { CheckIcon, LinkIcon, PencilIcon, RefreshIcon, Trash2Icon } from "../shared/ui/Icons";
+import { CheckIcon, FlagIcon, LinkIcon, PencilIcon, RefreshIcon, Trash2Icon } from "../shared/ui/Icons";
 import ListMotion from "../shared/ui/ListMotion";
 import { IconSwap } from "../shared/ui/MotionWidgets";
 import { PersonAvatar } from "../collaboration/Presence";
@@ -16,7 +17,8 @@ import { BlockMarkdown } from "../editor/BlockTree";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
 import { CommentComposer, hasDraft } from "./CommentComposer";
-import { canDeleteComment, canEditComment, estimatedLines, isEdited, isOpen } from "./comments.js";
+import { canDeleteComment, canEditComment, canReportComment, estimatedLines, isEdited, isOpen } from "./comments.js";
+import { openReport } from "../support/reportContent.js";
 
 // A comment's text, rendered as a note is. One put off (`later`) is drawn
 // once it comes within a screen of the view (the popover's list, else the
@@ -95,6 +97,13 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} aria-label={t("Comment actions")}>
           {mayEdit ? <MenuItem icon={PencilIcon} onClick={() => { setMenu(null); setEditing(true); }}>{t("Edit")}</MenuItem> : null}
           <MenuItem icon={LinkIcon} onClick={() => { setMenu(null); onCopyLink(comment); }}>{t("Copy link")}</MenuItem>
+          {canReportComment(comment, me) ? (
+            <MenuItem icon={FlagIcon} title={t("Tell the people who run this server about this comment")}
+              onClick={() => {
+                setMenu(null);
+                openReport({ kind: "comment", commentId: comment.id, text: comment.body, author: comment.author });
+              }}>{t("Report…")}</MenuItem>
+          ) : null}
           {mayDelete ? (
             <MenuItem icon={Trash2Icon} danger onClick={() => { setMenu(null); onDelete(comment.id); }}>{t("Delete")}</MenuItem>
           ) : null}

@@ -135,13 +135,18 @@ export default function CommentMargin({ margin, anchors, pageNumber, pageTop = 0
     observer.current = ro;
     return () => { ro.disconnect(); observer.current = null; };
   }, [measure]);
+  // One ref callback per card's key, kept for as long as the margin stands:
+  // a render hands React the same one, so no card is detached and attached
+  // again (and unobserved and observed). Dropped when its card went, it
+  // would be made anew on every render once StrictMode had attached it
+  // twice, as React 19 does in development.
   const refs = useRef(new Map());
   const boxRef = (key) => {
     if (!refs.current.has(key)) {
       refs.current.set(key, (el) => {
         const was = boxes.current.get(key);
         if (was) observer.current?.unobserve(was);
-        if (el) { boxes.current.set(key, el); observer.current?.observe(el); } else { boxes.current.delete(key); refs.current.delete(key); }
+        if (el) { boxes.current.set(key, el); observer.current?.observe(el); } else boxes.current.delete(key);
       });
     }
     return refs.current.get(key);

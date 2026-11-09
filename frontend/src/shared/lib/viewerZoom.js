@@ -4,10 +4,16 @@
 // to how zooming feels reaches both and the two cannot drift apart.
 //
 // Committing a real zoom per input event is hopelessly janky — every commit
-// re-lays-out and re-renders every page. So the wheel's dispatch is coalesced
-// to one per frame, and a pinch does not commit at all while the fingers are
-// down: it only moves a CSS transform on the content layer (compositing, no
-// layout; blurry until the fingers lift, like every native PDF app).
+// re-lays-out every page. So the wheel's dispatch is coalesced to one per
+// frame, and a pinch does not commit at all while the fingers are down: it
+// only moves a CSS transform on the content layer (compositing, no layout;
+// blurry until the fingers lift, like every native PDF app).
+//
+// The committed scale reaches the content as SCALE_VAR, written on the layer,
+// and no page or sheet takes it as a prop, so a commit renders the viewer and
+// not its pages. What sizes with the zoom says so in CSS: a box is
+// scaledPx(its size at scale 1), and only those elements pick the variable
+// up (`inherit`), once registerScaleVar below has made it non-inheriting.
 //
 // `el` is the scroller. Options:
 //   layer()  the pinch preview's transform target: the scroller's first
@@ -29,6 +35,50 @@
 //
 // Returns { dispose, sync }.
 
+// The committed zoom on a viewer's content layer (.pdfZoomLayer, .nbColumn).
+export const SCALE_VAR = "--viewer-scale";
+// A length that is `n` px at scale 1, at the layer's zoom.
+export const scaledPx = (n) => `calc(var(${SCALE_VAR}) * ${n}px)`;
+
+// Registers SCALE_VAR as a number that does not inherit, so a zoom restyles
+// only what picks it up with `inherit` (app.css, notebook.css, the text
+// layer's build). Left as a plain custom property it inherits, and each
+// change restyles every element under the layer, every text-layer span and
+// ink path, which costs more per frame than the page renders it saves.
+// Registered only where a child's `inherit` follows its parent, checked once
+// the way the app writes those styles: through the CSSOM, as React does.
+// WebKit (26.6, checked) gets that case right, but not an element whose
+// inline style is missing or only parsed from markup: its matched-properties
+// cache hands that element the value it was first styled with. So every
+// element that picks the variable up carries a style written by script. A
+// browser without CSS.registerProperty, or one that fails the check, keeps
+// the inheriting variable: slower per zoom frame, and the same picture.
+// Returns whether it is registered.
+let registered = null;
+export function registerScaleVar(doc = globalThis.document) {
+  if (registered !== null || !doc?.body) return !!registered;
+  registered = false;
+  const asNumber = (name) => doc.defaultView.CSS.registerProperty({ name, syntax: "<number>", inherits: false, initialValue: "1" });
+  const check = `${SCALE_VAR}-check`;
+  try { asNumber(check); } catch { return false; }
+  const outer = doc.createElement("div"), inner = doc.createElement("div");
+  outer.style.cssText = "position: absolute; visibility: hidden";
+  outer.style.setProperty(check, "2");
+  inner.style.setProperty(check, "inherit");
+  inner.style.width = `calc(var(${check}) * 1px)`;
+  inner.style.height = "1px";
+  outer.append(inner);
+  doc.body.append(outer);
+  const first = inner.offsetWidth;
+  outer.style.setProperty(check, "3");
+  const follows = first === 2 && inner.offsetWidth === 3;
+  outer.remove();
+  if (follows) {
+    try { asNumber(SCALE_VAR); registered = true; } catch { /* already registered: leave it as it is */ }
+  }
+  return registered;
+}
+
 // e^(-deltaY · RATE) per event, so a notch is a fixed ratio however many
 // pixels the device reports.
 const WHEEL_RATE = 0.0015;
@@ -36,6 +86,7 @@ const WHEEL_RATE = 0.0015;
 const LINE_PX = 33;
 
 export function installViewerZoom(el, { layer, clamp, onWheelZoom, onPinchZoom, held }) {
+  registerScaleVar(el.ownerDocument);
   // The scale the viewer is heading to. It runs ahead of the committed scale
   // while a wheel train is in flight — the dispatch is coalesced to one per
   // frame and the render lands a frame later still — so steps compound off

@@ -289,13 +289,16 @@ def test_a_share_reads_the_family_it_reaches(owner):
     assert [(p["id"], p["parent"]) for p in listing] == [(a, ""), (b, a), (c, b), (d, a)]
 
 
-def test_the_listing_names_the_parent_without_a_preview(owner):
-    a, b, _, _ = _tree(owner, "list")
+def test_the_listing_names_the_parent_and_previews_a_sub_page_too(owner):
+    """A sub-page's card (the pinned and recents strips, a label view)
+    shows its first notes as a library page's does."""
+    a, b, c, _ = _tree(owner, "list")
     for page in (a, b):
         owner.post("/api/blocks", json={"parent_id": page, "content": f"note of {page}"})
     listing = {p["id"]: p for p in owner.get("/api/blocks/root/children").json()["children"]}
     assert listing[a]["parent"] == "" and listing[a]["preview"] == f"note of {a}"
-    assert listing[b]["parent"] == a and listing[b]["preview"] == ""
+    assert listing[b]["parent"] == a and listing[b]["preview"] == f"note of {b}"
+    assert listing[c]["parent"] == b and listing[c]["preview"] == ""  # no notes, no preview
 
 
 # ---- filing and shares ---------------------------------------------------------
@@ -436,8 +439,9 @@ def test_step_47_gives_a_workspace_stamped_46_the_parent_page_column(data_dir):
     db.close_workspace_connections("spOld")
     with closing(sqlite3.connect(str(path))) as old:  # the file as release 46 left it
         db.register_functions(old)
-        old.execute("DROP INDEX idx_ub_parent_page")
-        old.execute("ALTER TABLE unified_blocks DROP COLUMN parent_page")
+        for column in ("deleted_with", "parent_page"):  # (step 48's column came after it)
+            old.execute(f"DROP INDEX idx_ub_{column}")
+            old.execute(f"ALTER TABLE unified_blocks DROP COLUMN {column}")
         old.execute("INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, "
                     "updated_at, page_id) VALUES ('spKid', 'root', 'a5', 'kid', '{\"parent_page\": \"spTop\"}', "
                     "'t', 't', 'spKid')")
@@ -450,12 +454,12 @@ def test_step_47_gives_a_workspace_stamped_46_the_parent_page_column(data_dir):
         with connect_pages_db("spOld") as cx:
             assert cx.execute("SELECT parent_page FROM unified_blocks WHERE id = 'spKid'").fetchone() == ("spTop",)
             assert cx.execute("SELECT 1 FROM sqlite_master WHERE name = 'idx_ub_parent_page'").fetchone()
-            assert cx.execute("PRAGMA user_version").fetchone()[0] == 47
+            assert cx.execute("PRAGMA user_version").fetchone()[0] == 48
             ddl = cx.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0]
             migrations._v47_parent_page("spOld", cx, None)  # re-runnable: nothing to do
             assert cx.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0] == ddl
             cols = [r[1] for r in cx.execute("PRAGMA table_xinfo(unified_blocks)")]
-            assert cols[-4:] == ["page_id", "kind", "doc_id", "parent_page"]  # a fresh table's order
+            assert cols[-5:] == ["page_id", "kind", "doc_id", "parent_page", "deleted_with"]  # a fresh table's order
     finally:
         db.close_workspace_connections("spOld")
     migrations._v47_parent_page("", sqlite3.connect(":memory:"), None)  # a copy without the table

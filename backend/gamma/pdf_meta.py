@@ -74,16 +74,19 @@ def ensure(ws: str, doc_id: str) -> dict | None:
 
 
 def _compute(ws: str, doc_id: str) -> dict | None:
-    from .storage import find_upload_file  # local: storage imports this module
+    from .storage import find_upload_file, is_linked  # local: storage imports this module
 
     try:
-        path = find_upload_file(f"{safe_doc_id(doc_id)}.pdf", ws)
+        name = f"{safe_doc_id(doc_id)}.pdf"
     except ValueError:
         return None
+    path = find_upload_file(name, ws)
     if path is None:
         return None
     size = path.stat().st_size
     dims = [[round(w, 2), round(h, 2)] for w, h in pdf_text.page_sizes(str(path))]
+    if not dims and is_linked(ws, name):
+        return None  # a person's file another program holds for now: no ``pages = 0`` to keep
     with connect_data_db(ws) as conn:
         conn.execute(
             "INSERT OR REPLACE INTO pdf_docs (doc_id, bytes, pages, dims, ver, at) VALUES (?, ?, ?, ?, ?, ?)",

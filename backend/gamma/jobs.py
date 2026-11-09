@@ -15,18 +15,23 @@ Starting one: the endpoint of the work authorizes the request, then calls
 runs in a worker thread with a ``Job`` handle and returns the result (a
 JSON value). It reports through ``job.progress(...)``, which raises
 ``Cancelled`` once the job was stopped, so every report is a place where the
-job can stop; ``stoppable=False`` marks the point after which it no longer
+job can stop (``Refused``, which fails it with a reason, once a delete took
+the workspace a ``writes`` job changes: ``refuse_writers``); ``stoppable=False`` marks the point after which it no longer
 can (a restore swapping the databases). A job that produces a file writes
 it to ``job.artifact_path`` and names the download with
-``job.set_artifact``. An exception fails the job with its message.
+``job.set_artifact``. An exception fails the job with its message. What a
+run needs that its params cannot hold (a translated export's layout) is
+``kept`` with the job (``start(kept=...)``, ``kept(id, name)``) for as long
+as the job is listed, however it ended, so the job can be started again.
 
 One server process runs the jobs (the app is one uvicorn process, like the
 page sockets). An account runs at most ``MAX_RUNNING_PER_ACCOUNT`` jobs at
 once and the server ``MAX_RUNNING``; the rest wait queued, oldest first. A
 workspace's own work (owner ``WORKSPACE``, the indexer) runs outside those
-limits. A finished job is kept ``RETENTION_S``, then ``sweep`` removes it
-with its file, and the files of one account are capped together
-(``ARTIFACT_CAP``). At startup, the jobs a stopped process left queued or
+limits. A share view's exports are owned by the share (``share_owner``),
+which stands for an account in every limit. A finished job is kept
+``RETENTION_S``, then ``sweep`` removes it with its file, and the files of
+one account are capped together (``ARTIFACT_CAP``). At startup, the jobs a stopped process left queued or
 running are failed as interrupted (``recover``).
 """
 
@@ -48,6 +53,7 @@ from .logbuf import log
 
 ACTIVE = ("queued", "running")
 WORKSPACE = ""                   # the owner of a workspace's own work (the search indexer)
+SHARE_OWNER = "share:"           # + a share token: the owner of the exports a share view starts
 MAX_RUNNING = 4                  # account jobs running at once on the server
 MAX_RUNNING_PER_ACCOUNT = 2      # one account's; the others wait queued
 MAX_ACTIVE_PER_ACCOUNT = 20      # queued + running: past it, starting another is refused
@@ -61,6 +67,8 @@ INSTANCE = secrets.token_hex(8)  # this server process, stamped on the jobs it r
 INTERRUPTED = "interrupted: the server restarted while this ran — start it again"
 
 _ID_RE = re.compile(r"^[0-9a-f]{24}$")
+KEPT_DIR = "kept"                # <id>/kept/: what start(kept=...) holds for the job's life
+_KEPT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _COLUMNS = ("id", "owner", "workspace_id", "kind", "key", "title", "params", "state", "progress", "result",
             "error", "artifact_name", "artifact_type", "artifact_size", "downloaded_at", "instance",
             "created_at", "started_at", "finished_at")
@@ -68,10 +76,22 @@ _SELECT = f"SELECT {', '.join(_COLUMNS)} FROM jobs"
 _FINISHED_SQL = "('done', 'failed', 'cancelled')"
 
 
+def share_owner(token: str) -> str:
+    """The owner of the jobs a share view starts under ``token``
+    (``auth.share_job_owner``): the share counts as one account in the
+    limits and the 10 GB of files, whoever of its visitors starts them."""
+    return SHARE_OWNER + token
+
+
 class Cancelled(BaseException):
     """Raised in a job's run by ``Job.progress`` once the job was stopped.
     A BaseException, like KeyboardInterrupt, so a run's own ``except
     Exception`` (an import skipping one bad item) never swallows it."""
+
+
+class Refused(Cancelled):
+    """Raised in a job's run by ``Job.progress`` once ``refuse_writers``
+    stopped it: the job ends failed, saying why (its message)."""
 
 
 class Busy(Exception):
@@ -94,6 +114,36 @@ def _dir(job_id: str) -> Path:
     return root() / job_id
 
 
+def _clear_run_files(job_id: str) -> None:
+    """Remove what a run wrote in the job's directory (its file, whole or
+    in part), leaving what the job keeps (``KEPT_DIR``)."""
+    d = _dir(job_id)
+    if not d.is_dir():
+        return
+    for entry in d.iterdir():
+        if entry.name == KEPT_DIR:
+            continue
+        if entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+        else:
+            entry.unlink(missing_ok=True)
+    try:
+        d.rmdir()  # nothing kept: no directory left behind
+    except OSError:
+        pass
+
+
+def kept(job_id: str, name: str) -> bytes | None:
+    """What ``start(kept=...)`` kept under ``name`` for this job, or None
+    (no such job any more, or nothing kept under that name)."""
+    if not _KEPT_NAME_RE.match(name or ""):
+        return None
+    try:
+        return (_dir(job_id) / KEPT_DIR / name).read_bytes()
+    except (ValueError, OSError):
+        return None
+
+
 def incoming_path(suffix: str = ".zip") -> Path:
     """A fresh path for an upload a job will read (a restore's zip), written
     before the job exists; the run deletes it, ``sweep`` one left behind."""
@@ -107,10 +157,13 @@ class _Live:
     ``progress`` (always a new dict) and ``artifact``; ``state`` and
     ``started_at`` change under ``_lock``."""
 
-    def __init__(self, row: dict, run, ended=None):
+    def __init__(self, row: dict, run, ended=None, writes: bool = False):
         self.id = row["id"]
         self.kind = row["kind"]
         self.owner = row["owner"]
+        self.ws = row["workspace_id"]
+        self.writes = writes
+        self.refused = ""  # why refuse_writers stopped it
         self.key = row["key"]
         self.created_at = row["created_at"]
         self.run = run
@@ -164,10 +217,10 @@ class Job:
             # point or is refused, never accepted and then ignored
             with _lock:
                 if live.stoppable and live.cancel.is_set():
-                    raise Cancelled()
+                    raise Refused(live.refused) if live.refused else Cancelled()
                 live.stoppable = False
         if live.stoppable and live.cancel.is_set():
-            raise Cancelled()
+            raise Refused(live.refused) if live.refused else Cancelled()
 
 
 def no_progress(**_) -> None:
@@ -263,7 +316,8 @@ def for_account(owner: str, ws: str = "") -> list[dict]:
 # --- starting and running -------------------------------------------------------------
 
 def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: dict | None = None,
-          key: str = "", artifact: bool = False, ended=None) -> dict:
+          key: str = "", artifact: bool = False, ended=None, kept: dict[str, bytes] | None = None,
+          writes: bool = False) -> dict:
     """Queue ``run(job)`` as a job of ``kind`` for ``owner`` (an account's
     id, or ``WORKSPACE`` for a workspace's own work) and return it. ``key``: work
     already queued or running for the same owner, kind and key raises
@@ -272,7 +326,14 @@ def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: 
     when the account already has ``MAX_ACTIVE_PER_ACCOUNT`` jobs going.
     ``ended(state)``: called once a run that started has ended, however it
     ended, when the job already reads as ended (``get``, ``latest``), so
-    work it wakes never finds it still running."""
+    work it wakes never finds it still running. ``kept``: files (name to
+    bytes) the job holds for as long as it is listed, whatever its state —
+    what a run needs that ``params`` cannot hold, read back with
+    ``kept(id, name)`` by the run or by a later start of the same work.
+    They count against the account's share like a finished file (507 past
+    it), so a job that fails at once still cannot pile them up. ``writes``:
+    the run changes workspace ``ws`` (an import, a restore, a metadata
+    lookup), so a delete of it stops the job first (``refuse_writers``)."""
     with _lock:
         if key:
             for other in _live.values():
@@ -282,33 +343,56 @@ def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: 
             raise HTTPException(status_code=429, detail=(
                 f"you already have {MAX_ACTIVE_PER_ACCOUNT} background tasks waiting or running — "
                 "let some of them finish first"))
-        if artifact:
-            _check_room(owner)
+        if artifact or kept:
+            _check_room(owner, sum(len(data) for data in (kept or {}).values()))
         row = {"id": secrets.token_hex(12), "owner": owner, "workspace_id": ws or "", "kind": kind,
                "key": key, "title": title[:300], "params": json.dumps(params or {}), "state": "queued",
                "progress": "{}", "instance": INSTANCE, "created_at": page_now()}
+        if kept:
+            if bad := [name for name in kept if not _KEPT_NAME_RE.match(name)]:
+                raise ValueError(f"not a kept file's name: {bad[0]!r}")
+            # before the row, so a listed job always has them (a row that
+            # fails to go in leaves an orphan directory sweep removes)
+            d = _dir(row["id"]) / KEPT_DIR
+            d.mkdir(parents=True, exist_ok=True)
+            for name, data in kept.items():
+                (d / name).write_bytes(data)
         with connect_users_db() as conn:
             conn.execute(f"INSERT INTO jobs ({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})",
                          tuple(row.values()))
             conn.commit()
-        live = _Live(row, run, ended)
+        live = _Live(row, run, ended, writes)
         _live[live.id] = live
         _pump()
     return get(live.id)
 
 
-def _check_room(owner: str) -> None:
+def _kept_size(job_id: str) -> int:
+    """The bytes a job keeps (``KEPT_DIR``), 0 when it keeps nothing."""
+    try:
+        return sum(entry.stat().st_size for entry in (_dir(job_id) / KEPT_DIR).iterdir() if entry.is_file())
+    except (ValueError, OSError):
+        return 0
+
+
+def _check_room(owner: str, adding: int = 0) -> None:
+    """507 when the disk is almost full, or when the account's files on the
+    server — its finished jobs' files and what all its listed jobs keep,
+    a failed or stopped one's too — with ``adding`` more would pass
+    ``ARTIFACT_CAP``."""
     root().mkdir(parents=True, exist_ok=True)
     if shutil.disk_usage(root()).free < MIN_FREE_BYTES:
         raise HTTPException(status_code=507, detail=(
             "the server's disk is almost full, so no export can be written now — ask the server's admin"))
     if owner != WORKSPACE:
         with connect_users_db() as conn:
-            held = conn.execute("SELECT COALESCE(SUM(artifact_size), 0) FROM jobs "
-                                "WHERE owner = ? AND state = 'done'", (owner,)).fetchone()[0]
-        if held >= ARTIFACT_CAP:
+            rows = conn.execute("SELECT id, CASE WHEN state = 'done' THEN artifact_size ELSE 0 END FROM jobs "
+                                "WHERE owner = ?", (owner,)).fetchall()
+        held = sum(size + _kept_size(job_id) for job_id, size in rows)
+        if held >= ARTIFACT_CAP or (adding and held + adding > ARTIFACT_CAP):
             raise HTTPException(status_code=507, detail=(
-                f"your finished exports take {held / (1 << 30):.1f} GB on the server — "
+                f"your finished exports, and what your background tasks keep to start them again, take "
+                f"{held / (1 << 30):.1f} GB on the server — "
                 "download them and remove them in Background tasks first"))
 
 
@@ -330,18 +414,31 @@ def _pump() -> None:
         threading.Thread(target=_work, args=(live,), daemon=True, name=f"job-{live.kind}-{live.id[:6]}").start()
 
 
+def error_text(exc: Exception) -> str:
+    """An exception's text as it may be said to anyone but the log. What
+    fails on a file may have landed on a linked file (gamma/linked_files.py),
+    whose path is the person's own: an OSError that names its file says only
+    what went wrong, and an error of MuPDF, which puts the path in its
+    message, only its class."""
+    if isinstance(exc, OSError) and exc.filename:
+        return exc.strerror or type(exc).__name__
+    if type(exc).__module__.startswith("pymupdf"):
+        return type(exc).__name__
+    return str(exc)
+
+
 def _message(live: _Live, exc: Exception) -> str:
     """What a failed job says. An HTTPException's detail and the domain
     errors (ValueError: a bad backup, a refused task; OSError: a full disk)
-    are sentences for the person; anything else is a bug, logged with its
-    traceback."""
+    are sentences for the person (``error_text``); anything else is a bug,
+    logged with its traceback."""
     if isinstance(exc, HTTPException):
         text = str(exc.detail)
     elif isinstance(exc, (ValueError, OSError)):
-        text = str(exc) or type(exc).__name__
+        text = error_text(exc) or type(exc).__name__
     else:
         log.exception(f"[jobs] {live.kind} {live.id} failed")
-        return f"unexpected error ({type(exc).__name__}: {exc})"[:500]
+        return f"unexpected error ({type(exc).__name__}: {error_text(exc)})"[:500]
     log.warning(f"[jobs] {live.kind} {live.id} failed: {text}")
     return text[:500]
 
@@ -362,6 +459,9 @@ def _work(live: _Live) -> None:
             part.replace(final)
             artifact = {"artifact_name": live.artifact[0], "artifact_type": live.artifact[1],
                         "artifact_size": final.stat().st_size}
+    except Refused as exc:
+        state, error = "failed", str(exc)[:500]
+        log.warning(f"[jobs] {live.kind} {live.id} refused: {exc}")
     except Cancelled:
         state = "cancelled"
     except Exception as exc:  # noqa: BLE001 — every failure ends the job with its message
@@ -370,7 +470,7 @@ def _work(live: _Live) -> None:
         if state != "done":
             result = encoded = None
             artifact = {}
-            shutil.rmtree(root() / live.id, ignore_errors=True)
+            _clear_run_files(live.id)
         # The row first, then out of the live set: a read in between still
         # sees the job running, never ended without its result or its file.
         try:
@@ -414,6 +514,36 @@ def cancel(job_id: str) -> dict | None:
                 raise HTTPException(status_code=409, detail="this task can no longer be stopped")
             live.cancel.set()
     return get(job_id)
+
+
+def refuse_writers(ws_ids, why: str, progress=no_progress, poll: float = 0.05) -> list[str]:
+    """Stop the jobs of this process that change one of ``ws_ids`` (started
+    with ``writes``) and wait until they have ended: what a delete does
+    before its final copy, so no import, restore or lookup goes on writing
+    into a workspace whose copy is being made. A queued one fails at once,
+    a running one at its next progress report (``Refused``), both saying
+    ``why``; one past its last stop is waited for, so what it wrote is in
+    the copy. ``progress`` (the delete's own report) is called while it
+    waits, so the delete can still be stopped. Returns the stopped jobs'
+    ids."""
+    ws_ids = set(ws_ids)
+    with _lock:
+        writers = [live for live in _live.values() if live.writes and live.ws in ws_ids]
+        for live in writers:
+            if live.state == "queued":
+                _update(live.id, state="failed", error=why[:500], finished_at=page_now())  # the row first, as in _work
+                live.state = "failed"
+                _live.pop(live.id, None)
+            elif live.stoppable:
+                live.refused = why
+                live.cancel.set()
+    ids = [live.id for live in writers]
+    for live in writers:
+        log.info(f"[jobs] {live.kind} {live.id}: stopped, {why}")
+    while any(job_id in _live or job_id in _ending for job_id in ids):
+        progress()
+        time.sleep(poll)
+    return ids
 
 
 def dismiss(job_id: str) -> bool:
@@ -478,17 +608,32 @@ def recover() -> int:
                          [(INTERRUPTED, page_now(), i) for i in ids])
         conn.commit()
     for job_id in ids:
-        shutil.rmtree(_dir(job_id), ignore_errors=True)
+        _clear_run_files(job_id)  # what it keeps stays: it can be started again
     if ids:
         log.warning(f"[jobs] {len(ids)} job(s) were interrupted by the last shutdown")
     return len(ids)
 
 
+def _forget_stopped_shares() -> None:
+    """The jobs of a share that no longer exists (stopped, its page or
+    folder deleted, its workspace gone) stop and go with their files, as a
+    deleted account's do. Its visitors could not reach them any more."""
+    with connect_users_db() as conn:
+        owners = [r[0] for r in conn.execute(
+            "SELECT DISTINCT owner FROM jobs WHERE substr(owner, 1, ?) = ? "
+            "AND substr(owner, ?) NOT IN (SELECT token FROM shares)",
+            (len(SHARE_OWNER), SHARE_OWNER, len(SHARE_OWNER) + 1))]
+    for owner in owners:
+        forget_account(owner)
+
+
 def sweep(now: float | None = None) -> int:
     """Remove the jobs that finished more than ``RETENTION_S`` ago with
-    their files, job directories no row names, and uploads no job took.
-    Returns how many jobs went."""
+    their files, the jobs of shares that are gone, job directories no row
+    names, and uploads no job took. Returns how many finished jobs went
+    for their age."""
     now = time.time() if now is None else now
+    _forget_stopped_shares()
     cutoff = format_stamp(datetime.fromtimestamp(now - RETENTION_S, timezone.utc))
     ids = _drop(f"state IN {_FINISHED_SQL} AND finished_at != '' AND finished_at < ?", (cutoff,))
     with connect_users_db() as conn:
@@ -510,7 +655,8 @@ def sweep(now: float | None = None) -> int:
 
 
 def forget_account(user_id: str) -> None:
-    """An account is deleted: its jobs stop and go, with their files."""
+    """An account is deleted (or a share, ``share_owner``): its jobs stop
+    and go, with their files."""
     with _lock:
         for live in list(_live.values()):
             if live.owner != user_id:

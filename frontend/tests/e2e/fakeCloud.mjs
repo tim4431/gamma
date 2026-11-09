@@ -11,7 +11,9 @@
 // order; their `invite_id` is the invitation's link secret, never the id a
 // Gamma server lists it by), and the plan sync a hosted container makes
 // with its own client (/api/hosted/sync, gamma/hosted.py: `hosted` holds
-// the client, the answer and the reports it got).
+// the client, the answer and the reports it got), and the reports of
+// content a Gamma server forwards (/api/reports, gamma/reports.py: `filed`
+// keeps each body with the subject of the token it came with, if any).
 import crypto from "node:crypto";
 import http from "node:http";
 
@@ -27,6 +29,7 @@ export class FakeCloud {
     this.prefs = new Map();    // `${subject} ${path}` -> {value, updated_at}
     this.invitations = [];     // every POST /api/invitations body, with the inviter's subject as `inviter`
     this.cancelled = [];       // every POST /api/invitations/cancel body
+    this.filed = [];           // every POST /api/reports body, with the token's subject as `by` ("" for none)
     this.shareHost = "";
     this.hosted = null;        // {clientId, secret, answer, reports}: what /api/hosted/sync answers
     this.login = "";           // the subject the authorization endpoint answers for
@@ -127,6 +130,10 @@ export class FakeCloud {
     }
     const sub = bearer();
     if (path === "/userinfo") return sub ? json(200, this.people.get(sub)) : json(401, { error: "invalid_token" });
+    if (path === "/api/reports" && req.method === "POST") {  // signed or not, as the account server takes them
+      this.filed.push({ ...JSON.parse(raw || "{}"), by: sub || "" });
+      return json(201, { ok: true, id: `cloud-${this.filed.length}` });
+    }
     if (path === "/api/invitations" && req.method === "POST") {
       if (!sub) return json(401, { detail: "not signed in" });
       this.invitations.push({ ...JSON.parse(raw || "{}"), inviter: sub });

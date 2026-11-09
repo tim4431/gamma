@@ -1,6 +1,6 @@
 """Kept translations (gamma/translate_store.py): a stored paper's translations
-and brief kept in the workspace's data.db, read where the server's memory
-misses, written when the request asks to keep them and its account may
+and brief kept in the workspace's data.db, read before the server's memory,
+written when the request asks to keep them and its account may
 change the workspace, counted, cleared and forgotten through
 /api/translations, and dropped with the PDF (pdf_index.purge_unused)."""
 
@@ -11,7 +11,7 @@ from contextlib import closing
 
 import pytest
 
-from ai_fixtures import segmented, texts_of
+from ai_fixtures import JsonResp, segmented, texts_of
 from conftest import account_of, login, make_user, workspace_of
 
 MODEL = "claude-test"
@@ -159,6 +159,101 @@ def test_a_row_made_with_the_brief_is_never_replaced_by_one_made_without(frank):
     # Another language or model is another row.
     assert translate_store.lookup(ws, doc, "ja", MODEL, ["h1"]) == {}
     assert translate_store.lookup(ws, doc, "zh-CN", "other-model", ["h1"]) == {}
+
+
+def test_a_replacing_put_takes_the_place_of_a_row_made_with_the_brief(frank):
+    from gamma import translate_store
+
+    ws, doc = workspace_of("tkept_frank"), "f1" * 12
+    translate_store.put(ws, doc, "zh-CN", MODEL, [("h1", "with the brief")], brief=True)
+    translate_store.put(ws, doc, "zh-CN", MODEL, [("h1", "asked afresh")], brief=False, replace=True)
+    assert translate_store.lookup(ws, doc, "zh-CN", MODEL, ["h1"]) == {"h1": "asked afresh"}
+    assert translate_store.lookup(ws, doc, "zh-CN", MODEL, ["h1"], need_brief=True) == {}
+
+
+def _rounds(monkeypatch, fail=()):
+    """A _call_ai stand-in whose every call answers in new words ("T1:", "T2:"
+    …), and none at all for a text in ``fail``; returns the batches sent."""
+    batches = []
+
+    def fake(messages, system, entry, rt, **kw):
+        if system.startswith(BRIEF_SYSTEM):
+            return BRIEF
+        batches.append(texts_of(messages))
+        n = len(batches)
+        return segmented(["" if t in fail else f"T{n}:{t}" for t in texts_of(messages)])
+
+    monkeypatch.setattr("gamma.routers.translate._call_ai", fake)
+    return batches
+
+
+def test_fresh_asks_the_model_again_and_its_answer_replaces_memory_and_the_kept_row(frank, monkeypatch):
+    page, doc = _paper(frank, "fresh")
+    batches = _rounds(monkeypatch)
+    text = ["a paragraph to translate again"]
+    assert _translate(frank, text, page_id=page)["translations"] == ["T1:" + text[0]]
+    # Asked again plainly, memory answers; afresh, the model does.
+    assert _translate(frank, text, page_id=page)["cached"] is True
+    out = _translate(frank, text, page_id=page, fresh=True)
+    assert out["cached"] is False and out["translations"] == ["T2:" + text[0]]
+    assert batches == [text, text]
+    # The new words are what memory and the kept rows hold from now on.
+    assert _translate(frank, text, page_id=page)["translations"] == ["T2:" + text[0]]
+    _restart()
+    assert _translate(frank, text, page_id=page)["translations"] == ["T2:" + text[0]]
+    assert _kept(workspace_of("tkept_frank"), doc, text) == {text[0]: "T2:" + text[0]}
+    assert len(batches) == 2
+
+
+def test_a_fresh_answer_reaches_the_other_editors_of_the_workspace_at_once(frank, monkeypatch):
+    """Memory is per account; the kept rows are the workspace's and answer
+    first, so another editor's memory never serves the words a Translate
+    again replaced."""
+    from gamma import workspaces
+
+    ed = _account("tkept_ed")
+    info = workspaces.create("Kept fresh lab", account_of("tkept_frank"), kind="shared")
+    workspaces.set_member(info["id"], account_of("tkept_ed"), "editor", by=account_of("tkept_frank"))
+    ws = info["id"]
+    page, doc = _paper(frank, "fresh-shared", ws)
+    batches = _rounds(monkeypatch)
+    text = ["a shared paragraph"]
+    assert _translate(frank, text, ws, page_id=page)["translations"] == ["T1:" + text[0]]
+    # The other editor is served the kept row, which goes into his memory.
+    assert _translate(ed, text, ws, page_id=page)["translations"] == ["T1:" + text[0]]
+    assert _translate(frank, text, ws, page_id=page, fresh=True)["translations"] == ["T2:" + text[0]]
+    assert _kept(ws, doc, text) == {text[0]: "T2:" + text[0]}
+    assert _translate(ed, text, ws, page_id=page)["translations"] == ["T2:" + text[0]]
+    assert len(batches) == 2
+
+
+def test_fresh_without_the_brief_replaces_a_row_made_with_it(frank, monkeypatch):
+    from gamma import translate_store
+
+    page, doc = _paper(frank, "fresh-brief")
+    batches = _rounds(monkeypatch)
+    text = ["kept with the paper's brief"]
+    ws = workspace_of("tkept_frank")
+    translate_store.put(ws, doc, "zh-CN", MODEL, [(translate_store.src_hash(text[0]), "made with the brief")], brief=True)
+    # The paper has no brief made, and the request does not wait for one.
+    out = _translate(frank, text, page_id=page, fresh=True, wait_brief=False)
+    assert out["brief"] is False and out["translations"] == ["T1:" + text[0]]
+    assert _kept(ws, doc, text) == {text[0]: "T1:" + text[0]}
+    assert len(batches) == 1
+
+
+def test_a_fresh_text_that_still_fails_leaves_what_was_kept(frank, monkeypatch):
+    page, doc = _paper(frank, "fresh-fail")
+    _rounds(monkeypatch)
+    text = ["a paragraph that will not translate again"]
+    _translate(frank, text, page_id=page)
+    batches = _rounds(monkeypatch, fail=set(text))
+    out = _translate(frank, text, page_id=page, fresh=True)
+    # Asked and asked again, it comes back as itself and named as failed.
+    assert len(batches) == 2 and out["failed"] == [0] and out["translations"] == text
+    assert _translate(frank, text, page_id=page)["translations"] == ["T1:" + text[0]]
+    _restart()
+    assert _kept(workspace_of("tkept_frank"), doc, text) == {text[0]: "T1:" + text[0]}
 
 
 def test_a_request_with_the_brief_translates_again_what_was_kept_without_it(frank, monkeypatch):
@@ -385,25 +480,12 @@ def test_a_request_reads_the_documents_generation_once(frank, monkeypatch):
 def test_a_services_translations_are_kept_as_made_with_a_brief(frank, monkeypatch):
     import gamma.translate_engines as engines
 
-    class Resp:
-        def __init__(self, body):
-            self.body = json.dumps(body).encode()
-
-        def read(self):
-            return self.body
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
     frank.put("/api/translate/engines/google", json={"fields": {"api_key": "AIza-kept-key-1234"}})
     asked = []
 
     def fake(req, timeout=None):
         asked.append(json.loads(req.data)["q"])
-        return Resp({"data": {"translations": [{"translatedText": f"G:{t}"} for t in json.loads(req.data)["q"]]}})
+        return JsonResp({"data": {"translations": [{"translatedText": f"G:{t}"} for t in json.loads(req.data)["q"]]}})
 
     monkeypatch.setattr(engines, "urlopen", fake)
     page, doc = _paper(frank, "service")
@@ -414,6 +496,143 @@ def test_a_services_translations_are_kept_as_made_with_a_brief(frank, monkeypatc
     _restart()
     assert _translate(frank, ["a sentence for the service"], page_id=page, model="engine:google")["cached"] is True
     assert len(asked) == 1
+
+
+def _lookup(c, texts, ws=None, **body):
+    r = c.post("/api/translations/lookup", json={"texts": texts, "lang": "zh-CN", **body}, headers=_in(ws))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _no_model(monkeypatch):
+    """Any model call, a service's included, fails the test."""
+    import gamma.translate_engines as engines
+
+    def called(*a, **kw):
+        raise AssertionError("the lookup called a model")
+
+    monkeypatch.setattr("gamma.routers.translate._call_ai", called)
+    monkeypatch.setattr("gamma.routers.translate._open_ai", called)
+    monkeypatch.setattr(engines, "urlopen", called)
+
+
+def test_the_lookup_answers_kept_rows_and_none_where_nothing_is_kept(frank, monkeypatch):
+    from gamma import translate
+    from gamma.ai_settings import ai_runtime
+
+    page, doc = _paper(frank, "lookup")
+    _fake(monkeypatch)
+    _translate(frank, ["looked up one", "looked up two"], page_id=page)
+    _restart()
+    _no_model(monkeypatch)
+    rid = ai_runtime(account_of("tkept_frank"))["models"][0]["id"]
+    for model in (rid, MODEL, ""):
+        out = _lookup(frank, ["looked up two", "never kept", "  ", "looked up one"], page_id=page, model=model)
+        assert out == {"translations": ["T:looked up two", None, None, "T:looked up one"], "model": MODEL}
+    # Another language or model keeps none of them.
+    assert _lookup(frank, ["looked up one"], page_id=page, lang="ja")["translations"] == [None]
+    assert _lookup(frank, ["looked up one"], page_id=page, model="other-model")["translations"] == [None]
+    # No page, or a page with no stored file: nothing is kept.
+    assert _lookup(frank, ["looked up one"])["translations"] == [None]
+    linked = frank.post("/api/blocks", json={"parent_id": "root", "content": "Linked lookup",
+                                             "properties": {"source_url": "https://example.org/l.pdf"}}).json()["id"]
+    assert _lookup(frank, ["looked up one"], page_id=linked)["translations"] == [None]
+    # The lookup never fills the account's memory.
+    with translate._LOCK:
+        assert not translate._CACHE
+
+
+def test_a_reader_with_no_ai_reads_what_the_workspace_keeps(frank, lab, monkeypatch):
+    """A viewer, and a member with no AI provider at all: the rows are found
+    by the model's registry id, its bare name or a shared entry's id, with no
+    runtime needed. What a viewer translated stays in its memory, not
+    among the rows, so the lookup does not find it."""
+    from gamma import workspaces
+
+    vera, ws = lab
+    make_user("tkept_noai", "pw")
+    noai = login("tkept_noai", "pw")
+    workspaces.set_member(ws, account_of("tkept_noai"), "viewer", by=account_of("tkept_frank"))
+    page, _ = _paper(frank, "lookup-lab", ws)
+    _fake(monkeypatch)
+    _translate(frank, ["kept by the owner"], ws, page_id=page)
+    _translate(vera, ["in the viewer's memory"], ws, page_id=page)
+    _no_model(monkeypatch)
+    texts = ["kept by the owner", "in the viewer's memory"]
+    assert _lookup(vera, texts, ws, page_id=page, model=MODEL)["translations"] == ["T:kept by the owner", None]
+    for model in ("Ab3_x-9z:" + MODEL, MODEL, "server:Zq8_k-2w:" + MODEL):
+        out = _lookup(noai, texts, ws, page_id=page, model=model)
+        assert out == {"translations": ["T:kept by the owner", None], "model": MODEL}
+    # No model named and none to default to: nothing to look under.
+    assert _lookup(noai, texts, ws, page_id=page) == {"translations": [None, None], "model": ""}
+    # The AI routes need a provider; the lookup does not.
+    r = noai.post("/api/ai/translate", json={"texts": texts, "lang": "zh-CN", "page_id": page, "model": MODEL},
+                  headers=_in(ws))
+    assert r.status_code == 503
+
+
+def test_a_lookup_by_registry_id_builds_no_ai_runtime(frank, monkeypatch):
+    """What the viewer sends, a registry id, names its model by itself: no
+    key is decrypted and no sign-in refreshed (ai_runtime) on the path of a
+    seed. A bare name, which only the runtime can tell, still goes through
+    it, a colon of its own and all."""
+    from gamma import ai_settings
+
+    page, _ = _paper(frank, "lookup-no-runtime")
+    _fake(monkeypatch)
+    _translate(frank, ["read without a runtime"], page_id=page)
+    rid = ai_settings.ai_runtime(account_of("tkept_frank"))["models"][0]["id"]
+    _no_model(monkeypatch)
+
+    def built(*a, **kw):
+        raise AssertionError("the lookup built an AI runtime")
+
+    monkeypatch.setattr("gamma.routers.translate.ai_runtime", built)
+    for model in (rid, "Gone_id-:" + MODEL, "server:Zq8_k-2w:" + MODEL):
+        out = _lookup(frank, ["read without a runtime"], page_id=page, model=model)
+        assert out == {"translations": ["T:read without a runtime"], "model": MODEL}, model
+    monkeypatch.setattr("gamma.routers.translate.ai_runtime", ai_settings.ai_runtime)
+    assert _lookup(frank, ["read without a runtime"], page_id=page, model="qwen2.5:7b")["model"] == "qwen2.5:7b"
+
+
+def test_the_lookup_reads_a_service_s_rows_under_its_id(frank, monkeypatch):
+    import gamma.translate_engines as engines
+
+    frank.put("/api/translate/engines/google", json={"fields": {"api_key": "AIza-lookup-key-1234"}})
+    monkeypatch.setattr(engines, "urlopen", lambda req, timeout=None: JsonResp(
+        {"data": {"translations": [{"translatedText": f"G:{t}"} for t in json.loads(req.data)["q"]]}}))
+    page, _ = _paper(frank, "lookup-service")
+    _translate(frank, ["a sentence a service kept"], page_id=page, model="engine:google")
+    _no_model(monkeypatch)
+    out = _lookup(frank, ["a sentence a service kept"], page_id=page, model="engine:google")
+    assert out == {"translations": ["G:a sentence a service kept"], "model": "engine:google"}
+    assert _lookup(frank, ["a sentence a service kept"], page_id=page, model=MODEL)["translations"] == [None]
+
+
+def test_the_lookup_stays_in_its_workspace(frank, monkeypatch):
+    page, _ = _paper(frank, "lookup-mine")
+    _fake(monkeypatch)
+    _translate(frank, ["frank's own paragraph"], page_id=page)
+    make_user("tkept_oscar", "pw")
+    oscar = login("tkept_oscar", "pw")
+    # Frank's page named from oscar's own workspace: no such page there.
+    assert _lookup(oscar, ["frank's own paragraph"], page_id=page, model=MODEL)["translations"] == [None]
+    # Frank's workspace: oscar is no member.
+    r = oscar.post("/api/translations/lookup", json={"texts": ["x"], "lang": "zh-CN", "page_id": page},
+                   headers=_in(workspace_of("tkept_frank")))
+    assert r.status_code == 403
+
+
+def test_the_lookup_has_the_translation_request_s_caps(frank):
+    def status(**body):
+        return frank.post("/api/translations/lookup", json={"lang": "zh-CN", "page_id": "p", **body}).status_code
+
+    assert status(texts=[]) == 400
+    assert status(texts=["x"] * 201) == 400
+    assert status(texts=[1]) == 400
+    assert status(texts=["x" * 30001, "y" * 30000]) == 413
+    assert status(texts=["x"], lang="xx") == 400
+    assert status(texts=["x"] * 200) == 200
 
 
 def test_purge_unused_drops_the_kept_translations_of_a_pdf_no_page_carries(frank, monkeypatch):
@@ -432,6 +651,69 @@ def test_purge_unused_drops_the_kept_translations_of_a_pdf_no_page_carries(frank
     assert translate_store.lookup(ws, gone, "zh-CN", MODEL, ["h"]) == {}
     assert translate_store.get_brief(ws, gone, "zh-CN", MODEL) is None
     assert _kept(ws, live, ["a paragraph of a live paper"]) == {"a paragraph of a live paper": "T:a paragraph of a live paper"}
+
+
+def test_a_duplicated_page_keeps_the_kept_translations_of_the_file_it_shows(frank, monkeypatch):
+    """A copy carries only the upload's address, and shows the same file
+    with the same kept translations. The original deleted for good takes
+    neither away; the last page showing the file deleted for good does."""
+    from gamma.db import connect_pages_db
+    from gamma import pdf_index
+
+    ws = workspace_of("tkept_frank")
+    page, doc = _paper(frank, "duplicated")
+    copy = frank.post("/api/blocks", json={"parent_id": "root", "content": "Paper duplicated (copy)",
+                                           "properties": {"source_url": f"/api/uploads/{doc}.pdf"}}).json()["id"]
+    batches = _fake(monkeypatch)
+    text = "a paragraph translated on the copy"
+    _translate(frank, [text], page_id=copy)
+    assert _kept(ws, doc, [text]) == {text: f"T:{text}"}
+
+    assert frank.delete(f"/api/blocks/{page}").status_code == 200
+    assert frank.delete(f"/api/trash/{page}").status_code == 200
+    assert _kept(ws, doc, [text]) == {text: f"T:{text}"}
+    assert frank.get(f"/api/uploads/{doc}.pdf").status_code == 200
+    _restart()
+    assert _translate(frank, [text], page_id=copy)["cached"] is True
+    assert batches == [[text]]
+
+    # In Recently deleted the copy can still come back, with them.
+    assert frank.delete(f"/api/blocks/{copy}").status_code == 200
+    with closing(connect_pages_db(ws)) as conn:
+        pdf_index.purge_unused(ws, conn)
+    assert _kept(ws, doc, [text]) == {text: f"T:{text}"}
+
+    assert frank.delete(f"/api/trash/{copy}").status_code == 200
+    assert _kept(ws, doc, [text]) == {}
+
+
+@pytest.mark.parametrize("tag,stored", [
+    ("list", '["source_url"]'),
+    ("string", '"source_url"'),
+    pytest.param("json5", '{"source_url": "x",}', marks=pytest.mark.skipif(
+        sqlite3.sqlite_version_info < (3, 45), reason="this SQLite refuses JSON5 as properties")),
+])
+def test_properties_no_parser_reads_as_an_object_never_stop_the_sweep(frank, tag, stored):
+    """A merged backup copies rows as they are, so a row may hold what no
+    writer here stores. It carries no paper, and the sweep goes on."""
+    from gamma import pdf_index, translate_store
+    from gamma.db import connect_pages_db
+
+    ws = workspace_of("tkept_frank")
+    page, live = _paper(frank, tag)
+    gone = "f5" * 12
+    translate_store.put(ws, gone, "zh-CN", MODEL, [("h", "of a deleted paper")], brief=True)
+    with closing(connect_pages_db(ws)) as conn:
+        conn.execute("INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, "
+                     "updated_at, page_id) VALUES ('oddrow', ?, 'a', '', ?, '', '', ?)", (page, stored, page))
+        conn.commit()
+        try:
+            assert live in pdf_index._live_docs(conn)
+            pdf_index.purge_unused(ws, conn)
+        finally:
+            conn.execute("DELETE FROM unified_blocks WHERE id = 'oddrow'")
+            conn.commit()
+    assert translate_store.lookup(ws, gone, "zh-CN", MODEL, ["h"]) == {}
 
 
 def test_a_broken_store_never_fails_a_translation(frank, monkeypatch):

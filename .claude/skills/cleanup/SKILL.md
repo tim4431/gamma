@@ -109,6 +109,13 @@ Each finding is a line: `file:line — what — fix / proposal`.
 - A feature spread across App.jsx state + a component + a util when one
   module would own it whole. Prefer the module the file map in
   `frontend/src/README.md` already assigns to that concern.
+- New state in `app/App.jsx` from the scoped commits, even when
+  `frontend/tests/appState.test.mjs` passed. In
+  `frontend/tests/app-state-baseline.json`, a raised ceiling, or a raised
+  count without a hook newly counted in `frontend/tools/appState.mjs`. A
+  shared hook put into the tool's `INFO` that holds a value for its caller.
+  The state belongs in an owner
+  ([frontend-refactor.md](../../../docs/dev/frontend-refactor.md#new-state)).
 - New helpers that duplicate an existing one under another name
   (`grep -rn "def <name>\|function <name>\|const <name>"` before keeping
   a new one).
@@ -233,7 +240,9 @@ report as proposals with a one-line reason.
 cd backend && venv/Scripts/python.exe -m pytest tests -q
 # when frontend/src changed (node is fnm-managed, not on the tool-shell PATH):
 export PATH="$HOME/AppData/Roaming/fnm/aliases/default:$PATH"
-cd frontend && npm run build
+cd frontend && npm run lint && npm run build
+# when app/App.jsx changed (a lower count: node tools/appState.mjs --baseline):
+cd frontend && node --test tests/appState.test.mjs
 ```
 
 Two vector-math tests fail under the conda `python`; use the venv one.

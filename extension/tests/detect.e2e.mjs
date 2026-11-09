@@ -5,8 +5,9 @@
 // and saves as that paper with doi_from_text, or as the web page itself on
 // "Save the web page instead"; a reference list naming several DOIs names
 // none; a repository's thesis page has no PDF or DOI but its citation tags,
-// which "Save this URL anyway" sends as the record; and a publisher page's
-// tags ride along with its clip.
+// which "Save this URL anyway" sends as the record — filed by the same
+// folder and labels a paper is, and taken back out again by Undo; and a
+// publisher page's tags ride along with its clip.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -52,13 +53,18 @@ const siteHttp = createServer((req, res) => {
 const site = await listen(siteHttp);
 
 const clips = [];
+const deleted = [];   // the pages DELETE /api/blocks/<id> was sent (Undo)
 const gammaHttp = createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json");
   let body = Buffer.alloc(0);
   for await (const chunk of req) body = Buffer.concat([body, chunk]);
   const url = new URL(req.url, "http://x");
   if (url.pathname === "/api/session") res.end('{"user":"alice"}');
-  else if (url.pathname === "/api/library/folders") res.end('{"folders":[],"labels":[]}');
+  else if (url.pathname === "/api/library/folders") res.end('{"folders":[{"id":"f-lab","path":["Lab"]}],"labels":[{"id":"l-1","name":"theses"}]}');
+  else if (req.method === "DELETE" && url.pathname.startsWith("/api/blocks/")) {
+    deleted.push(decodeURIComponent(url.pathname.slice("/api/blocks/".length)));
+    res.end('{"ok":true}');
+  }
   else if (url.pathname === "/api/library/preview" && url.searchParams.get("doi").toLowerCase() === "10.5555/news.1") {
     res.end(JSON.stringify({ title: "A thing, found", authors: ["A. Scientist"], year: "2026", venue: "Nature",
                              doi: "10.5555/news.1", arxiv_id: "", source: "doi" }));
@@ -129,16 +135,33 @@ try {
   assert.match(await refs.popup.locator("#nothing-msg").textContent(), /^This page names 3 papers by DOI/);
   assert.deepEqual([(await candidate(refs.tabId)).kind, (await candidate(refs.tabId)).doi], ["none", ""]);
 
-  // A thesis in a repository: no PDF, no DOI, its citation tags.
+  // A thesis in a repository: no PDF, no DOI, its citation tags. Nothing
+  // detected is still a save, so the notice heads the same folder and labels
+  // a paper is filed by, with the one action under them.
   const thesis = await popupFor("/handle/42");
   await thesis.popup.locator("#nothing:not(.hidden)").waitFor();
   assert.match(await thesis.popup.locator("#nothing-msg").textContent(), /citation tags name a work/);
+  assert.equal(await thesis.popup.locator("#filing").isVisible(), true, "the folder and labels, with no paper detected");
+  assert.equal(await thesis.popup.locator("#save").isVisible(), false, "one action: the page's own URL");
+  await thesis.popup.locator("#folder").fill("Lab");
+  await thesis.popup.locator("#folder").press("Enter");
+  await thesis.popup.locator("#labels").fill("theses");
+  await thesis.popup.locator("#labels").press("Enter");
   await thesis.popup.locator("#save-anyway").click();
   await thesis.popup.locator("#existing:not(.hidden)").waitFor();
+  assert.deepEqual([clips[2].folder, clips[2].labels], ["f-lab", ["theses"]]);
   assert.deepEqual(clips[2].record, {
     title: "Trapped ions in optical cavities", authors: ["Ada Lovelace"], year: "2019", venue: "", volume: "",
     pages: "", publisher: "Example University", isbn: "", kind: "thesis",
   });
+  // Undo takes that save back: the page it made goes to Recently deleted and
+  // the form comes back, ready to save again somewhere else.
+  await thesis.popup.locator("#undo:not(.hidden)").click();
+  await thesis.popup.locator("#filing:not(.hidden)").waitFor();
+  assert.deepEqual(deleted, ["p3"]);
+  assert.equal(await thesis.popup.locator("#existing").isVisible(), false);
+  assert.match(await thesis.popup.locator("#result").textContent(), /Recently deleted/);
+  assert.equal(await thesis.popup.locator("#folder-box .categoryTagText").textContent(), "Lab", "the filing is still there");
 
   // A publisher page: its tags ride along, its DOI is its own, the DOI it cites is not taken.
   const article = await popupFor("/article/7");
@@ -149,7 +172,7 @@ try {
     ["10.5555/article.7", false, "journalArticle", "Journal of Things", ["Charles Babbage"]]);
 
   assert.deepEqual(errors, []);
-  console.log("PASS: a story's one DOI, saving the story instead, a list of DOIs, a thesis page's tags, a publisher page's record.");
+  console.log("PASS: a story's one DOI, saving the story instead, a list of DOIs, a thesis page's tags with its filing and Undo, a publisher page's record.");
 } finally {
   await context?.close();
   gammaHttp.close();

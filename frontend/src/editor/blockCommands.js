@@ -82,7 +82,8 @@ export function newBlockKey(c) {
       return !plan.stay;
     }
   }
-  c.row.onEnterSibling?.(c.block.id);
+  if (!c.row.onEnterSibling) return false; // a row that takes none (a page whose notes are locked)
+  c.row.onEnterSibling(c.block.id);
   return true;
 }
 

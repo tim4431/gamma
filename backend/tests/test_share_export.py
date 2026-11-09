@@ -3,7 +3,9 @@ title or a file of a page outside the share (routers/export.py
 ``_ref_resolver``, ``_Builder._can_bundle``). The modes come from ``_BUILDERS``,
 so a new format is held to it from the day it exists; each is asked of the
 owner too, so that a format this reader cannot see into fails rather than
-passes. The owner's export is unchanged: there the same refs still read."""
+passes. The owner's export is unchanged: there the same refs still read.
+A share view's export job (``POST /api/jobs/export?share=``) is held to the
+share the same way, and is the share's own."""
 
 import io
 import zipfile
@@ -12,6 +14,7 @@ import fitz
 import pytest
 
 from conftest import login, make_folder, make_user
+from gamma import jobs
 from gamma.auth import ShareScope
 from gamma.obsidian_export import anchor_marker
 from gamma.routers import export as export_router
@@ -329,10 +332,100 @@ def test_a_bibliography_s_review_holds_only_the_share_s_pages(world, anon):
     assert HIDDEN_TITLE not in r.text and [e["title"] for e in r.json()["entries"]] == ["Open paper"]
 
 
-def test_the_export_job_is_not_open_to_a_share(world, anon):
-    """It works in the signed-in account's own workspace: a link visitor has
-    none, and a stranger's names no page of the share."""
-    body = {"page_id": world["paper"], "mode": "readable"}
-    params = {"share": world["page_token"]}
-    assert anon.post("/api/jobs/export", json=body, params=params).status_code == 401
-    assert login("sx_stranger", "sx-stranger-pw").post("/api/jobs/export", json=body, params=params).status_code == 404
+def _job_body(world, target, mode) -> dict:
+    """``_url``'s export as the export job's body."""
+    if target == "folder":
+        return {"folder": world["folder"], "mode": mode}
+    return {"page_id": world["paper"], "mode": mode, "sub_pages": True, "comments": True}
+
+
+def _share_job(c, body, token) -> dict:
+    """An export job a share view starts under ``token``, once it ended."""
+    started = c.post("/api/jobs/export", json=body, params={"share": token})
+    assert started.status_code == 200, started.text
+    assert started.json()["owner"] == jobs.share_owner(token)
+    return jobs.wait(started.json()["id"])
+
+
+@pytest.mark.parametrize("target", TARGETS)
+@pytest.mark.parametrize("mode", MODES)
+def test_a_share_view_s_export_job_holds_what_its_download_does(world, anon, target, mode):
+    """The share view's export runs as a job (a big folder's export outlives
+    a proxy's cut), held to the share as the download is."""
+    token = world[TARGETS[target]]
+    job = _share_job(anon, _job_body(world, target, mode), token)
+    assert job["state"] == "done", job["error"]
+    r = anon.get(f"/api/jobs/{job['id']}/download", params={"share": token})
+    assert r.status_code == 200, r.text
+    _assert_holds_nothing_outside(r.content)
+    assert HIDDEN_TITLE not in job["title"] + job["artifact"]["name"]
+    if mode in READS_REFS:
+        assert OPEN.encode() in _flat(r.content)
+    if mode in BUNDLES_IMAGES:
+        assert OPEN_PNG in _flat(r.content)
+
+
+def test_a_share_s_job_is_the_share_s_own(world, anon):
+    """Any visitor the share admits reaches the job by its id, through that
+    share; nobody else does, the workspace's owner included, and the share
+    view lists no jobs."""
+    token, other = world["folder_token"], world["page_token"]
+    job = _share_job(anon, {"folder": world["folder"], "mode": "bibtex"}, token)
+    path = f"/api/jobs/{job['id']}"
+    assert anon.get(path, params={"share": token}).json()["result"]["pages"] == 1
+    assert login("sx_stranger", "sx-stranger-pw").get(path, params={"share": token}).status_code == 200
+    assert anon.get(path).status_code == 401
+    assert anon.get(path, params={"share": other}).status_code == 404
+    assert anon.get(f"{path}/download", params={"share": other}).status_code == 404
+    assert world["owner"].get(path).status_code == 404
+    assert job["id"] not in {j["id"] for j in world["owner"].get("/api/jobs").json()["jobs"]}
+    assert anon.get("/api/jobs", params={"share": token}).status_code == 401
+    assert anon.delete(path, params={"share": token}).json() == {"ok": True}
+    assert anon.get(path, params={"share": token}).status_code == 404
+
+
+def test_a_share_s_job_reaches_only_what_the_share_does(world, anon):
+    page, folder = world["page_token"], world["folder_token"]
+    for body, token in [({"page_id": world["private"], "mode": "readable"}, page),
+                        ({"page_id": world["private"], "mode": "readable"}, folder),
+                        ({"folder": world["folder"], "mode": "readable"}, page)]:
+        assert anon.post("/api/jobs/export", json=body, params={"share": token}).status_code == 403, body
+    translated = {"page_id": world["paper"], "mode": "annotated-pdf", "translation_of": "0" * 24}
+    assert anon.post("/api/jobs/export", json=translated, params={"share": page}).status_code == 400
+    # a share for signed-in accounts admits no link visitor; a stranger's own
+    # export names no page of the share's workspace
+    accounts_only = _page(world["owner"], "Accounts-only page")
+    body = {"page_id": accounts_only, "mode": "readable"}
+    token = _share(world["owner"], accounts_only, audience="users")
+    assert anon.post("/api/jobs/export", json=body, params={"share": token}).status_code == 401
+    stranger = login("sx_stranger", "sx-stranger-pw")
+    assert stranger.post("/api/jobs/export", json=body).status_code == 404
+    assert _share_job(stranger, body, token)["state"] == "done"
+
+
+def test_a_share_s_job_checks_the_share_as_it_runs_and_goes_with_it(world, anon, monkeypatch):
+    owner = world["owner"]
+    page = _page(owner, "Stopped share page")
+    token = _share(owner, page)
+    body = {"page_id": page, "mode": "readable"}
+    monkeypatch.setattr(export_router, "share_lookup", lambda token: None)   # stopped before the run began
+    failed = _share_job(anon, body, token)
+    assert (failed["state"], failed["error"]) == ("failed", "the share link was stopped")
+    monkeypatch.undo()
+    done = _share_job(anon, body, token)
+    assert done["state"] == "done", done["error"]
+    assert owner.delete(f"/api/share-settings/{page}").status_code == 200
+    assert anon.get(f"/api/jobs/{done['id']}", params={"share": token}).status_code == 401
+    jobs.sweep()
+    assert jobs.get(done["id"]) is None and jobs.get(failed["id"]) is None
+
+
+def test_an_upload_is_told_by_its_name_wherever_its_file_lies(tmp_path):
+    """The entry carries the name: a stored file read from outside the
+    uploads directory is filtered like any other, and only a file of the
+    export's own, which has no name, passes."""
+    builder = export_router._Builder("ws", "base", {"share": object()})
+    builder.readable = {"open.pdf"}
+    path = tmp_path / "A paper.pdf"
+    builder.files = [("open.pdf", path, "open.pdf"), ("private.pdf", path, "private.pdf"), ("own.pdf", path, "")]
+    assert builder._bundled()[1] == [("open.pdf", path), ("own.pdf", path)]

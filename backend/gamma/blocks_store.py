@@ -50,6 +50,13 @@ IN_LIBRARY = "page_id IN (SELECT id FROM unified_blocks WHERE parent_id = 'root'
 
 BLOCK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # the shape of a block or page id
 
+# The page property of a page whose PDF stays at a path on this computer
+# (gamma/linked_files.py), where a stored copy would be: ``true``.
+LINKED_FILE = "linked_file"
+# A condition on a page's row for a lookup by attachment, which never finds
+# such a page: its bytes stand for no page of the library.
+NOT_LINKED = f"json_extract(properties, '$.{LINKED_FILE}') IS NULL"
+
 
 def valid_block_id(block_id) -> bool:
     """An id a client may give a new block or page: the id shape, and none
@@ -84,8 +91,8 @@ def load_props(text) -> dict:
 
 def block_kind(parent_id, page_id, props: dict) -> str | None:
     """The block's ``kind``, by the rule of the generated column
-    (db.BLOCK_HOT_COLUMNS: the SQL and this must agree, which
-    tests/test_block_columns.py checks): NULL on the reserved rows,
+    (db.BLOCK_HOT_COLUMNS: the SQL, this and the client's blockKind agree
+    on tests/shared/blockkind.json's cases): NULL on the reserved rows,
     ``page`` under root or the trash, ``folder`` / ``label`` in the trees,
     else by the properties — ``ink`` (an ``ink_url`` key, whatever its
     value: ``highlights.is_ink``), ``text_box`` / ``picture`` / ``sheet``
@@ -325,27 +332,26 @@ def trash_entry(conn, block_id: str) -> dict | None:
     went_with = conn.execute(
         "SELECT id, content, properties FROM unified_blocks WHERE id = json_extract(?, '$.deleted_with') "
         "AND parent_id = ?", (row[2], TRASH)).fetchone()
-    entry = went_with or row
-    return trashed_page(*entry, folders=trashed_folders(conn, load_props(entry[2])))
+    return trashed_page(conn, *(went_with or row))
 
 
-def trashed_page(page_id: str, title: str, props_raw, folders: list[str]) -> dict:
+def trashed_page(conn, page_id: str, title: str, props_raw) -> dict:
     """A trashed page as Recently deleted lists it: ``{id, title, folders,
-    deleted_at, deleted_by}`` — ``folders`` the folder ids a restore puts it
-    back in (``trashed_folders``, which the caller passes), the stamps
+    parent, deleted_at, deleted_by}`` — ``folders`` the folder ids a restore
+    puts it back in (``trashed_folders``), ``parent`` the live page it goes
+    back inside (``trashed_parent``, "" for none), the stamps
     ``ops.trash_page`` wrote."""
     props = load_props(props_raw)
-    return {"id": page_id, "title": title or "Untitled", "folders": folders,
+    return {"id": page_id, "title": title or "Untitled", "folders": trashed_folders(conn, props),
+            "parent": trashed_parent(conn, props),
             "deleted_at": str(props.get("deleted_at") or ""),
             "deleted_by": str(props.get("deleted_by") or "")}
 
 
-def trashed_folders(conn, props: dict) -> list[str]:
-    """The folder ids of a page in Recently deleted (its ``props``), where a
-    restore puts it back: for a page that went there with another still
-    there (``deleted_with``), that one's; for a sub-page whose parent is
-    still live, its parent's top's (``filed_folders``: a sub-page is filed
-    where its top is); else the page's own."""
+def _restored_props(conn, props: dict) -> dict:
+    """The properties a restore of a page in Recently deleted (its
+    ``props``) goes by: for a page that went there with another still there
+    (``deleted_with``), that one's; else its own."""
     seen = set()
     while isinstance(went := props.get("deleted_with"), str) and went not in seen:
         seen.add(went)
@@ -354,11 +360,30 @@ def trashed_folders(conn, props: dict) -> list[str]:
         if not row:
             break
         props = load_props(row[0])
-    parent = props.get(PARENT_PAGE)
+    return props
+
+
+def trashed_parent(conn, props: dict) -> str:
+    """The page a page in Recently deleted (its ``props``) goes back inside
+    when restored: its stored ``parent_page`` while that names a live page
+    (a sub-page deleted on its own, ``ops.restore_page``), of the page it
+    went there with for one that went with another still there; "" when it
+    comes back in the library."""
+    parent = _restored_props(conn, props).get(PARENT_PAGE)
     if isinstance(parent, str) and conn.execute(
             "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'", (parent,)).fetchone():
-        return filed_folders(conn, parent)
-    return filing(props, FOLDERS)
+        return parent
+    return ""
+
+
+def trashed_folders(conn, props: dict) -> list[str]:
+    """The folder ids of a page in Recently deleted (its ``props``), where a
+    restore puts it back: for a page that went there with another still
+    there (``deleted_with``), that one's; for a sub-page whose parent is
+    still live (``trashed_parent``), its parent's top's (``filed_folders``:
+    a sub-page is filed where its top is); else the page's own."""
+    parent = trashed_parent(conn, props)
+    return filed_folders(conn, parent) if parent else filing(_restored_props(conn, props), FOLDERS)
 
 
 def assert_block_in_scope(conn, block_id: str, scope) -> None:
@@ -422,7 +447,8 @@ def page_attachment(props: dict | None) -> dict | None:
     everywhere. Lookups BY attachment (``by-doc``, the search index, the
     PDF export) key on ``doc_id`` directly; they are about the file, not
     the page. Mirrored by ``pageAttachment()`` in
-    frontend/src/library/libraryUtils.js."""
+    frontend/src/library/libraryUtils.js; tests/shared/attachment.json
+    holds the two to the same answers."""
     props = props or {}
     doc_id = str(props.get("doc_id") or "")
     url = str(props.get("source_url") or "")
@@ -439,7 +465,8 @@ def attachment_file(attachment: dict | None) -> str:
     from another address alone, never stored). The attachment's ``id``
     stays ``""`` for such a page: this is for code that reads the file,
     not for gating or lookups by attachment. Mirrored by
-    ``attachmentFile()`` in frontend/src/library/libraryUtils.js."""
+    ``attachmentFile()`` in frontend/src/library/libraryUtils.js (the same
+    fixture)."""
     if not attachment:
         return ""
     return attachment["id"] or pdf_url_doc_id(attachment["url"])
@@ -448,14 +475,18 @@ def attachment_file(attachment: dict | None) -> str:
 def page_for_doc(conn, doc_id: str, columns: str = "id"):
     """Lookup BY ATTACHMENT: the row (``columns`` of it) of the root page
     whose PDF attachment is ``doc_id``, or None. The one query for "which
-    page carries this PDF" — root pages only, a nested block never counts.
-    Should a workspace hold two (an older copy of the data), the oldest
-    answers, every time."""
+    page carries this PDF": root pages only, a nested block never counts,
+    and a page that reads its PDF where it is on this computer
+    (``NOT_LINKED``) does not count either: a library PDF added never finds
+    one, and the bytes it holds are no other page's to be refused. Should a
+    workspace hold two (an older copy of the data), the oldest answers,
+    every time."""
     if not doc_id:
         return None
     return conn.execute(
         f"SELECT {columns} FROM unified_blocks WHERE doc_id = ? AND parent_id = 'root' "
-        "ORDER BY created_at, id LIMIT 1", (doc_id,)).fetchone()
+        f"AND {NOT_LINKED} ORDER BY created_at, id LIMIT 1",
+        (doc_id,)).fetchone()
 
 
 def write_lock(conn) -> None:
@@ -614,21 +645,24 @@ def sub_pages(conn, page_id: str) -> list[str]:
         (page_id,))]
 
 
-def with_sub_pages(conn, page_ids, parents: dict[str, str] | None = None) -> list[str]:
+def with_sub_pages(conn, page_ids, parents: dict[str, str] | None = None, *, skip=()) -> list[str]:
     """``page_ids``, each followed by its descendants — parents before
     children, siblings in library order — without repeats. ``parents`` is
-    a ``page_parents`` map already read."""
+    a ``page_parents`` map already read. A page of ``skip`` is passed by
+    with the pages inside it, unless it is one of ``page_ids`` (a page of
+    ``page_ids`` inside it still comes, with what is inside that one)."""
     if parents is None:
         parents = page_parents(conn)
     kids: dict[str, list[str]] = {}
     for page, parent in parents.items():
         kids.setdefault(parent, []).append(page)
+    roots = set(page_ids)
     out, seen = [], set()
     for page_id in page_ids:
         todo = [page_id]
         while todo:
             page = todo.pop()
-            if page not in seen:
+            if page not in seen and (page in roots or page not in skip):
                 seen.add(page)
                 out.append(page)
                 todo += reversed(kids.get(page, []))
@@ -720,9 +754,17 @@ def page_in_folder(conn, page_id: str, folder_id: str) -> bool:
         (folder_id, page_top(conn, page_id))).fetchone() is not None
 
 
+# The most page ids one search request may name (POST /block-search and
+# /pdf-search: the pages the Ctrl+F panel's filters keep), about 750 KB of
+# body; 413 past it.
+MAX_SEARCH_PAGES = 50_000
+
+
 def pages_in_scope(conn, scope: list[str]) -> set[str]:
     """The library's pages inside every folder and label of ``scope`` (block
-    ids, the search panel's filter chips): filed in the folder or below it
+    ids, the ``scope`` of GET /block-search and /pdf-search; the Ctrl+F
+    panel evaluates its chips in the browser and sends page ids): filed in
+    the folder or below it
     (``pages_in_folder``: a sub-page by its top), carrying the label (each
     page its own). An id that is neither reaches none."""
     pages = None
@@ -886,15 +928,16 @@ def new_block_id() -> str:
     return secrets.token_urlsafe(9)
 
 
-def folder_inserts(conn, paths, under: str = "") -> tuple[list[dict], dict[tuple, str]]:
+def folder_inserts(conn, paths, under: str = "", kids=None) -> tuple[list[dict], dict[tuple, str]]:
     """What filing pages under ``paths`` (each a list of names, from the top
     or from the folder ``under``, "" = the top) needs: the ``insert`` ops for the
     ``FOLDERS`` pseudo-page that make every path exist — a folder already
     there is reused (the first of several siblings that share a name), a new
     one goes last among its siblings — and ``{tuple(names): folder id}`` for
     each path. Apply the ops (``ops.apply_ops``) before writing the ids on a
-    page."""
-    kids = tree_children(conn, FOLDERS)
+    page. ``kids``: the tree as ``tree_children`` reads it, from another
+    server's answer (gamma/vault_http.py), in place of ``conn``'s."""
+    kids = tree_children(conn, FOLDERS) if kids is None else kids
     ops, ids = [], {}
     for path in paths:
         path = [n.strip() for n in path if n and n.strip()]
@@ -913,11 +956,12 @@ def folder_inserts(conn, paths, under: str = "") -> tuple[list[dict], dict[tuple
     return ops, ids
 
 
-def label_inserts(conn, names) -> tuple[list[dict], dict[str, str]]:
+def label_inserts(conn, names, have=None) -> tuple[list[dict], dict[str, str]]:
     """``folder_inserts`` for labels: the ``insert`` ops for the ``LABELS``
     pseudo-page that make each name a label (an existing one reused) and
-    ``{name: label id}``."""
-    have = tree_children(conn, LABELS).get(LABELS, [])
+    ``{name: label id}``; ``have``, the labels as ``(id, name)``, in place of
+    ``conn``'s."""
+    have = list(tree_children(conn, LABELS).get(LABELS, []) if have is None else have)
     ops, ids = [], {}
     for name in names:
         name = name.strip()
@@ -1125,15 +1169,15 @@ def pages_for_docs(conn, hashes) -> dict:
     (``markdown_import`` — the upload's content digest, so a ``<hash>.md``
     chip finds its page). Hashes with no page are absent. Feeds the file
     chip's "Open page" / "Open as page" — one query per page render, never
-    one per chip. Two pages of one file: the oldest answers, as in
-    ``page_for_doc``."""
+    one per chip. As in ``page_for_doc``, a linked page does not count and
+    of two pages of one file the oldest answers."""
     wanted = {str(d) for d in hashes if d}
     if not wanted:
         return {}
     found = {}
     for page_id, title, doc_id, md in conn.execute(
             "SELECT id, content, doc_id, json_extract(properties, '$.markdown_import') FROM unified_blocks "
-            "WHERE parent_id = 'root' AND (doc_id IN (SELECT value FROM json_each(?1)) "
+            f"WHERE parent_id = 'root' AND {NOT_LINKED} AND (doc_id IN (SELECT value FROM json_each(?1)) "
             "OR json_extract(properties, '$.markdown_import') IN (SELECT value FROM json_each(?1))) "
             "ORDER BY created_at, id", (json.dumps(sorted(wanted)),)):
         for key in (doc_id, md):

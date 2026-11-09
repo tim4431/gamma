@@ -102,6 +102,36 @@
       ]
     },
     {
+      "note": "a word typed beside text it repeats is not turned around",
+      "base": "the cat sat",
+      "ours": "the cool cat sat",
+      "theirs": "the sat",
+      "result": [
+        "the cool sat",
+        true
+      ]
+    },
+    {
+      "note": "a word typed beside text it repeats, the other way round",
+      "base": "the cat sat",
+      "ours": "the sat",
+      "theirs": "the cool cat sat",
+      "result": [
+        "the cool sat",
+        true
+      ]
+    },
+    {
+      "note": "a word typed in front of a deleted last word",
+      "base": "alpha beta",
+      "ours": "alpha TOKEN beta",
+      "theirs": "alpha",
+      "result": [
+        "alpha TOKEN",
+        true
+      ]
+    },
+    {
       "note": "a span both replaced keeps the stored text",
       "base": "The cat sat",
       "ours": "The dog sat",

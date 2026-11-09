@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  abandonedCommentHighlight, addComment, anchorSnippet, canDeleteComment, canEditComment, commentOnlyHighlight, deleteComment,
+  abandonedCommentHighlight, addComment, anchorSnippet, canDeleteComment, canEditComment, canReportComment, commentOnlyHighlight, deleteComment,
   EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, keepThreads, laterComments, popoverThreads, resolveThread, shortCount, threadLink, threadsIn,
   upsertThread,
 } from "../src/comments/comments.js";
@@ -128,6 +128,14 @@ test("who may edit and delete: the author, and for deleting the owner too; a tom
   assert.ok(canDeleteComment(mine, "ben", true), "the owner deletes anyone's");
   assert.ok(!canDeleteComment(mine, "ben"));
   assert.ok(!canDeleteComment({ ...mine, deleted: true }, "ann", true));
+});
+
+test("who may report: anyone but the author, a link visitor too; a tombstone no one", () => {
+  const mine = c("x", "x", "ann", "t");
+  assert.ok(canReportComment(mine, "ben"));
+  assert.ok(canReportComment(mine, ""), "a visitor without an account");
+  assert.ok(!canReportComment(mine, "ann"));
+  assert.ok(!canReportComment({ ...mine, deleted: true }, "ben"));
 });
 
 test("shortCount caps a badge at 9+", () => {

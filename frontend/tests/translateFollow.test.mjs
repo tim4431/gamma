@@ -3,7 +3,7 @@
 // what it was told.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SLOW_MS, createJobFollower } from "../src/app/translateFollow.js";
+import { SLOW_MS, createJobFollower, jobName } from "../src/app/translateFollow.js";
 
 const IDLE = { running: false, progress: 0, label: "" };
 
@@ -23,12 +23,14 @@ function app(over = {}) {
   let n = 0;
   const host = {
     screenUrl: "/a.pdf", langLabel: "Chinese", followsChat: true,
-    retried: 0, opened: 0, exports: 0,
+    retried: 0, reruns: 0, opened: 0, exports: 0, references: 0,
     addTask: (row) => { const id = ++n; tasks.set(id, { ...row }); return id; },
     updateTask: (id, patch) => tasks.set(id, { ...tasks.get(id), ...patch }),
     setStatus: (msg, action) => said.push({ msg, action }),
     postPill: (kind, pill) => pills.push(pill ? pill.msg : null),
     retry: () => { host.retried += 1; },
+    rerun: () => { host.reruns += 1; },
+    translateReferences: () => { host.references += 1; },
     openSettings: () => { host.opened += 1; },
     exportsTranslation: () => false,
     openExport: () => { host.exports += 1; },
@@ -54,23 +56,34 @@ const exportHints = (f) => f.said.filter((s) => EXPORT_HINT.test(s.msg)).length;
 // A session on a page whose annotated PDF would carry the translation.
 const exporting = (over) => follower({ followsChat: false, exportsTranslation: () => true, ...over });
 
-test("a job's row counts while it runs and says 100% at its end", () => {
-  const f = follower();
+test("a job's row counts while it runs and says Done at its end", () => {
+  const f = follower({ title: () => "Fast gates" });
   f.set("/a.pdf", run(0));
   assert.equal(f.tasks.size, 1);
   const [[id, row]] = f.tasks;
-  assert.equal(row.name, "Translate document → Chinese");
+  assert.equal(row.name, "Translate “Fast gates” into Chinese");
   f.set("/a.pdf", run(0.5, { reading: true }));
   assert.equal(f.tasks.get(id).info, "reading the paper…");
   f.set("/a.pdf", run(0.5));
   assert.equal(f.tasks.get(id).info, "50%");
   f.set("/a.pdf", end());
   assert.equal(f.tasks.get(id).state, "done");
-  assert.equal(f.tasks.get(id).info, "100%");
+  assert.equal(f.tasks.get(id).info, "Done");
   assert.deepEqual(f.said, []);
   // Nothing more for a status seen already.
   f.sync();
   assert.equal(f.tasks.size, 1);
+});
+
+test("a job's row names what it translates, the paper on screen, and the language", () => {
+  const h = { screenUrl: "/a.pdf", title: () => "Fast gates", langLabel: "Deutsch" };
+  assert.equal(jobName({ label: "p.3" }, "/a.pdf", h), "Translate p. 3 of “Fast gates” into Deutsch");
+  assert.equal(jobName({ label: "p.3", focus: { pn: 3, i: 2 } }, "/a.pdf", h), "Translate a paragraph on p. 3 of “Fast gates” into Deutsch");
+  assert.equal(jobName({ label: "document" }, "/a.pdf", h), "Translate “Fast gates” into Deutsch");
+  // Another PDF's job: the page on screen is not its paper.
+  assert.equal(jobName({ label: "p.3" }, "/b.pdf", h), "Translate p. 3 into Deutsch");
+  assert.equal(jobName({ label: "document" }, "/b.pdf", h), "Translate the document into Deutsch");
+  assert.equal(jobName({ label: "p.3", focus: { pn: 3, i: 0 } }, "/a.pdf", { ...h, title: () => "" }), "Translate a paragraph on p. 3 into Deutsch");
 });
 
 test("a halted job's row says where it stopped", () => {
@@ -86,7 +99,12 @@ test("a job that failed says why", () => {
   f.set("/a.pdf", run(0.2));
   f.set("/a.pdf", end({ progress: 0.2, error: "the provider is down" }));
   assert.equal(f.tasks.get(1).info, "stopped at 20%");
+  assert.equal(f.tasks.get(1).state, "failed");
   assert.match(f.said[0].msg, /Translation failed: the provider is down/);
+  // A job with paragraphs left over did what it could: it is done.
+  f.set("/a.pdf", run(0));
+  f.set("/a.pdf", end({ untranslated: 2 }));
+  assert.equal(f.tasks.get(2).state, "done");
 });
 
 test("'Try again' is offered for untranslated paragraphs only while their document is on screen", () => {
@@ -115,12 +133,45 @@ test("paragraphs left in the original because their requests failed say it was t
   f.set("/a.pdf", end({ progress: 0.8, untranslated: 3, unanswered: 2 }));
   assert.equal(f.tasks.get(1).info, "3 paragraphs untranslated");
   const { msg, action } = f.said.at(-1);
-  assert.equal(msg, "3 paragraphs could not be translated (the connection to the AI provider failed).");
+  assert.equal(msg, "3 paragraphs could not be translated (the translation request failed).");
   assert.equal(action.label, "Try again");
   // The model's alone say so.
   f.set("/a.pdf", run(0));
   f.set("/a.pdf", end({ untranslated: 1 }));
   assert.equal(f.said.at(-1).msg, "1 paragraph could not be translated and still shows the original.");
+});
+
+test("a stopped job offers to run it again, or the settings when there is no AI provider", () => {
+  const f = follower();
+  f.set("/a.pdf", run(0));
+  f.set("/a.pdf", end({ progress: 0.3, error: "" }));
+  assert.equal(f.said.at(-1).msg, "Translation failed.");
+  f.said.at(-1).action.run();
+  assert.equal(f.host.reruns, 1);
+  f.set("/a.pdf", run(0));
+  f.set("/a.pdf", end({ progress: 0, error: "No AI provider is set up", refused: 503 }));
+  assert.equal(f.said.at(-1).action.label, "Open settings");
+  f.said.at(-1).action.run();
+  assert.equal(f.host.opened, 1);
+});
+
+test("a paragraph asked for again says whether it failed, and keeps its earlier text when it had one", () => {
+  const f = follower();
+  const focus = { pn: 3, i: 2 };
+  f.set("/a.pdf", run(0, { label: "p.3", focus }));
+  f.set("/a.pdf", end({ label: "p.3", focus, progress: 0, unchanged: 1 }));
+  assert.equal(f.tasks.get(1).info, "earlier translation kept");
+  assert.equal(f.tasks.get(1).state, "failed", "no success's check");
+  assert.equal(f.said.at(-1).msg, "This paragraph could not be translated again; it keeps its earlier translation.");
+  f.said.at(-1).action.run();
+  assert.equal(f.host.reruns, 1);
+  f.set("/a.pdf", run(0, { label: "p.3", focus }));
+  f.set("/a.pdf", end({ label: "p.3", focus, progress: 0, untranslated: 1 }));
+  assert.equal(f.tasks.get(2).state, "failed");
+  assert.equal(f.said.at(-1).msg, "This paragraph could not be translated.");
+  f.said.at(-1).action.run();
+  assert.equal(f.host.reruns, 2);
+  assert.equal(f.host.retried, 0);
 });
 
 test("the model hint is said once, after a slow first job, when translation follows the chat model", () => {
@@ -254,6 +305,52 @@ test("the model hint goes first, and the export hint at the next job's end", () 
   f.set("/a.pdf", run(0.5));
   f.set("/a.pdf", end());
   assert.equal(exportHints(f), 1);
+});
+
+const REFS_ONLY = /Nothing else to translate here/;
+const REFS_HINT = /The references stay in the original/;
+
+test("a job that found only references says so every time, with the action to ask for them", () => {
+  const f = follower({ followsChat: false });
+  for (let k = 1; k <= 2; k++) {
+    f.set("/a.pdf", run(0));
+    f.set("/a.pdf", end({ refsLeft: 8, refsOnly: true, medianMs: null }));
+    assert.equal(f.said.length, k, "the click is never dead");
+    assert.match(f.said.at(-1).msg, REFS_ONLY);
+    assert.equal(f.said.at(-1).action.label, "Translate references too");
+  }
+  f.said.at(-1).action.run();
+  assert.equal(f.host.references, 1);
+  f.host.screenUrl = "/b.pdf";
+  f.said.at(-1).action.run();
+  assert.equal(f.host.references, 1, "the button does nothing once its document has left the screen");
+});
+
+test("a job that translated text says once a session that the references stayed, and the export hint goes at the next job's end", () => {
+  const f = exporting();
+  const ends = (url, more) => { f.set(url, run(0.5)); f.set(url, end(more)); };
+  ends("/b.pdf", { refsLeft: 4 });
+  assert.equal(f.said.length, 0, "not of a document off screen");
+  ends("/a.pdf", { refsLeft: 4 });
+  assert.equal(f.said.filter((s) => REFS_HINT.test(s.msg)).length, 1);
+  assert.equal(exportHints(f), 0, "one hint at a job's end");
+  ends("/a.pdf", { refsLeft: 4 });
+  assert.equal(f.said.filter((s) => REFS_HINT.test(s.msg)).length, 1);
+  assert.equal(exportHints(f), 1);
+});
+
+test("the references wait for a failed job, for paragraphs still to ask for and for a pill that is taken", () => {
+  let free = false;
+  const f = follower({ followsChat: false, statusFree: () => free });
+  const ends = (more) => { f.set("/a.pdf", run(0.5)); f.set("/a.pdf", end({ refsLeft: 4, ...more })); };
+  ends({ error: "no key" });
+  ends({ untranslated: 2 });
+  assert.equal(f.said.filter((s) => REFS_HINT.test(s.msg)).length, 0);
+  ends();
+  assert.equal(f.said.filter((s) => REFS_HINT.test(s.msg)).length, 0, "the pill holds an error or a button");
+  free = true;
+  ends();
+  assert.equal(f.said.filter((s) => REFS_HINT.test(s.msg)).length, 1);
 });
 
 test("the reading pill follows the PDF on screen", () => {

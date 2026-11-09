@@ -60,10 +60,14 @@ def _mine(request: Request, ws: str) -> dict:
 
 
 def _info(mirror: dict) -> dict:
-    """A mirror as the API shows it to its owner (who needs no owner id)."""
+    """A mirror as the API shows it to its owner (who needs no owner id);
+    a publication's ``published_pages`` are the pages it puts on the share
+    host, the pages inside its pages included (``sync_engine.published_pages``)."""
     info = workspaces.get(mirror["workspace_id"])
     count, newest = sync_engine.open_conflict_mark(mirror["workspace_id"])
     shown = {k: v for k, v in mirror.items() if k != "owner"}
+    if mirror["page_filter"] is not None:
+        shown["published_pages"] = sync_engine.published_pages(mirror["workspace_id"], mirror)
     return {**shown, "name": info["name"] if info else "",
             "conflicts_open": count, "conflicts_newest": newest,
             "pending_local": sync_engine.pending_local(mirror),
@@ -152,14 +156,15 @@ def force(ws: str, payload: Force, request: Request):
 # threadpool runs them and the event loop stays free.
 @router.post("/{ws}/sync")
 def run_sync(ws: str, request: Request, wait: int = 0):
-    """One round now. ``wait=1`` runs it inline and answers with the round's
-    status; otherwise it runs in the background and the current status is
-    returned."""
-    mirror = _mine(request, ws)
+    """One round now, in the background: the answer comes at once, its
+    status carrying ``asked_at`` until a round starts and then ``running``
+    until it ends, which the client follows with ``GET /{ws}``
+    (``sync_engine.ask_round``). ``wait=1``, for scripts, runs it inline
+    and answers with the round's status."""
+    _mine(request, ws)
     if wait:
         return {"status": sync_engine.sync_workspace(ws), "conflicts_open": sync_engine.open_conflicts(ws)}
-    sync_engine.sync_in_background(ws)
-    return {"status": mirror["status"], "conflicts_open": sync_engine.open_conflicts(ws)}
+    return {"status": sync_engine.ask_round(ws), "conflicts_open": sync_engine.open_conflicts(ws)}
 
 
 @router.delete("/{ws}")

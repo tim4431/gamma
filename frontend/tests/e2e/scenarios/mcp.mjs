@@ -5,7 +5,7 @@ import { newPageViaUi } from "./notes.mjs";
 import { Account, wanted } from "../harness.mjs";
 
 export async function mcpScenarios(env) {
-  const { server, browser, alice, step, openPage, assert, assertEq, assertNoProblems, flags, sleep, until } = env;
+  const { server, browser, alice, step, openPage, assert, assertEq, assertNoProblems, sleep, until } = env;
   if (!wanted("mcp")) return;
   await step("mcp: administrator confirms the suggested server URL and it persists", async () => {
     await server.manage("create-user", "mcp-admin", "mcp-admin-pw");

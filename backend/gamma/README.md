@@ -113,6 +113,7 @@ publisher_sessions.py  publisher cookies the Connector imports, stored encrypted
 translate.py       the PDF translated view's paragraph cache: a translation's key, the in-memory LRU, one request's texts against it and the kept ones
 translate_store.py the kept translations and briefs of stored papers, in the workspace's data.db
 translate_engines.py  machine translation for the PDF's translated view (Microsoft, Google, Youdao)
+pdf_font_cmap.py   a Unicode cmap for a paper's composite font that has none, from its ToUnicode (the translated export's own face)
 
 # Assistants (MCP)
 mcp_server.py      the MCP endpoint over the chat's tools, plus pasted links (mcp_links) and page files (mcp_export)

@@ -1,6 +1,9 @@
 // node --test tests/  (from frontend/) — the colour palette module
-// (shared/model/palette.js) and the palette preference's codec.
+// (shared/model/palette.js) and the palette preference's codec. One colour's
+// arithmetic is gamma/colors.py's too: tests/shared/colors.json holds both
+// to the same answers.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   DEFAULT_HIGHLIGHT, DEFAULT_PALETTE, INK_COLORS, INK_HIGHLIGHT_ALPHA, INK_HIGHLIGHT_COLORS, MAX_GROUPS, MAX_GROUP_COLORS, PICKERS,
@@ -12,9 +15,10 @@ import { PREFS, readProfile } from "../src/app/prefDefs.js";
 import { DEFAULT_TOOLS, HIGHLIGHTER_OPACITY } from "../src/ink/ink.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
+const SHARED = JSON.parse(readFileSync(new URL("../../tests/shared/colors.json", import.meta.url), "utf8"));
 
 test("the defaults: two groups, the four classic highlight colours leading the wash group, every picker filled", () => {
-  assert.deepEqual(WASH_COLORS.slice(0, 4), ["#ffe28f", "#aaebaa", "#9bcdff", "#e6b4ff"]);
+  assert.deepEqual(WASH_COLORS, SHARED.wash);
   for (const c of [...WASH_COLORS, ...INK_COLORS]) assert.match(c, /^#[0-9a-f]{6}$/);
   assert.equal(new Set([...WASH_COLORS, ...INK_COLORS]).size, WASH_COLORS.length + INK_COLORS.length, "no colour twice");
   assert.deepEqual(DEFAULT_PALETTE.groups.map((g) => [g.id, g.name, g.colors.length]),
@@ -32,7 +36,7 @@ test("the defaults: two groups, the four classic highlight colours leading the w
   assert.equal(HIGHLIGHTER_OPACITY, INK_HIGHLIGHT_ALPHA);
 });
 
-test("every colour Gamma ever stored parses, and the stored form is #rrggbbaa", () => {
+test("every colour Gamma ever stored parses, and the stored form is #rrggbbaa (the shared cases)", () => {
   assert.deepEqual(parseColor("rgba(255, 226, 143, 0.65)"), [255, 226, 143, 0.65]);
   assert.deepEqual(parseColor("rgb(1,2,3)"), [1, 2, 3, 1]);
   assert.deepEqual(parseColor("#abc"), [170, 187, 204, 1]);
@@ -42,38 +46,29 @@ test("every colour Gamma ever stored parses, and the stored form is #rrggbbaa", 
   assert.deepEqual(parseColor("rgba(300, 0, 0, 2)"), [255, 0, 0, 1], "channels clamp");
   for (const bad of ["red", "", null, undefined, 3, "#ggg", "rgba(1, 2)", "hsl(1, 2%, 3%)"]) assert.equal(parseColor(bad), null, String(bad));
 
-  // the legacy palette strings keep their hue and alpha, only the spelling changes
-  assert.equal(normalizeColor("rgba(255, 226, 143, 0.65)"), "#ffe28fa6");
-  assert.equal(normalizeColor("rgba(170, 235, 170, 0.65)"), "#aaebaaa6");
-  assert.equal(normalizeColor("#ffe28fa6"), "#ffe28fa6", "the stored form is a fixed point");
-  assert.equal(normalizeColor("#FFE28F"), "#ffe28fff", "opaque when no alpha is given");
-  assert.equal(normalizeColor("#abc"), "#aabbccff");
-  assert.equal(normalizeColor("red"), null);
+  for (const c of SHARED.normalize) assert.equal(normalizeColor(c.in), c.out, c.note);
+  for (const c of SHARED.with_alpha) assert.equal(withAlpha(c.color, c.alpha), c.out, c.note);
   assert.equal(hexColor("#ffe28fa6"), "#ffe28f");
   assert.equal(hexColor("rgba(1, 2, 3, 0.5)"), "#010203");
-  assert.equal(withAlpha("#ffe28f", 0.5), "#ffe28f80");
-  assert.equal(withAlpha("nope", 0.5), null);
 });
 
 test("a highlight stores a swatch at the swatch's alpha; a bare hex takes the wash alpha", () => {
-  assert.equal(WASH_ALPHA, 0.65);
+  assert.equal(WASH_ALPHA, SHARED.wash_alpha);
   assert.equal(highlightColor(WASH_COLORS[0]), "#ffe28fa6");
   assert.equal(highlightColor({ hex: "#ffe28f", alpha: 0.65 }), "#ffe28fa6");
   assert.equal(highlightColor({ hex: "#ff8800", alpha: 0.5 }), "#ff880080");
   assert.equal(highlightColor(WASH_COLORS[0]), normalizeColor("rgba(255, 226, 143, 0.65)"), "the classic yellow, exactly");
-  assert.equal(DEFAULT_HIGHLIGHT, "#ffe28fa6");
+  assert.equal(DEFAULT_HIGHLIGHT, SHARED.default_highlight);
   assert.equal(highlightColor(undefined), null);
   assert.equal(swatchCss({ hex: "#1f1f1f", alpha: 1 }), "#1f1f1fff");
 });
 
 test("nearest colour and names: a listed colour is itself, a custom one borrows the nearest name", () => {
+  for (const c of SHARED.nearest) assert.equal(nearestColor(c.color, c.colors), c.out, c.note);
   for (const c of [...WASH_COLORS, ...INK_COLORS]) assert.equal(nearestColor(c, [...WASH_COLORS, ...INK_COLORS]), c);
   assert.equal(nearestColor("#DC2626", INK_COLORS), "#dc2626");
   assert.equal(nearestColor("#e11d48", INK_COLORS), "#dc2626", "rose reads as red");
   assert.equal(nearestColor("#000", INK_COLORS), "#1f1f1f");
-  assert.equal(nearestColor("#ffe28fa6", WASH_COLORS), "#ffe28f", "alpha does not count");
-  assert.equal(nearestColor("nope", INK_COLORS), null);
-  assert.equal(nearestColor("#000", []), null);
   assert.equal(colorName("#ffe28f"), "Yellow");
   assert.equal(colorName({ hex: "#f9a8d4", alpha: 0.3 }), "Pink", "a swatch names its hex");
   assert.equal(colorName("#1f1f1f"), "Black");

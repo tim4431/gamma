@@ -1,7 +1,8 @@
 // What kind of work a paper record describes (meta.kind), under the names
 // Zotero gives its item types: the table gamma/item_types.py keeps on the
 // server, mirrored for the metadata popover's Type row, its fields and the
-// unverified-metadata warning. Keep the two in sync.
+// unverified-metadata warning. tests/shared/itemtypes.json holds the two to
+// the same answers.
 
 import { T } from "../i18n/i18n.js";
 
@@ -28,10 +29,11 @@ const LEGACY = { paper: "", notes: "document", slides: "presentation", other: "d
 // tied to the PDF is flagged.
 const CHECKABLE = new Set(["journalArticle", "conferencePaper", "preprint", "bookSection", "book"]);
 
-// A stored kind as an item type, "" when it names none.
+// A stored kind as an item type, "" when it names none ("constructor" too:
+// LEGACY is read by its own keys alone).
 export function normalizeItemType(value) {
   const name = String(value || "").trim().toLowerCase();
-  return NAMES.get(name) || LEGACY[name] || "";
+  return NAMES.get(name) || (Object.hasOwn(LEGACY, name) ? LEGACY[name] : "");
 }
 
 // The item type of a record: the one it names, else what its fields imply

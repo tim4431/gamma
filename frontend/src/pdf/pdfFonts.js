@@ -13,39 +13,41 @@
 // resolves, and `get(id, cb)` waits for it.
 
 const SUBSET = /^[A-Z]{6}\+/;
+// How long a font's name may take to resolve once the operator list is built.
+const FACE_TIMEOUT_MS = 3000;
 
 // What the classifier needs of a font: its name without the subset tag, and
 // whether it is a Type 3 font (glyph procedures, often bitmap TeX fonts,
-// whose name is just "Type3").
+// whose name is just "Type3"), and whether the file has none of it (`noFile`:
+// pdf.js draws it in a font of the machine's), for the translated view's face
+// (pdf/paperFace.js).
 function faceOf(obj) {
   if (!obj || typeof obj !== "object") return null; // an error font resolves to a string
-  return { name: String(obj.name || "").replace(SUBSET, ""), type3: !!obj.isType3Font };
+  return { name: String(obj.name || "").replace(SUBSET, ""), type3: !!obj.isType3Font, noFile: !!obj.missingFile };
 }
 
 // Map(fontId → {name, type3}) for `ids`, from `known` first (a document-wide
 // cache the caller keeps: ids are stable within one open document), then
 // the page's commonObjs, building the page's operator list once when a name
-// is missing. Ids that never resolve within `timeout` ms are left out; the
-// classifier then falls back to the characters alone. `opList` is the
-// caller's say over the operator list: false skips it (reads only what is
-// already there).
-export async function pageFaces(page, ids, { known = null, timeout = 3000, opList = true } = {}) {
+// is missing. Ids that never resolve in FACE_TIMEOUT_MS are left out; the
+// classifier then falls back to the characters alone.
+export async function pageFaces(page, ids, known) {
   const out = new Map();
   const objs = page?.commonObjs;
   const missing = [];
   for (const id of ids) {
     if (!id) continue;
-    if (known?.has(id)) { const f = known.get(id); if (f) out.set(id, f); continue; }
+    if (known.has(id)) { const f = known.get(id); if (f) out.set(id, f); continue; }
     if (objs?.has(id)) {
       const f = faceOf(objs.get(id));
-      known?.set(id, f);
+      known.set(id, f);
       if (f) out.set(id, f);
     } else missing.push(id);
   }
-  if (!missing.length || !objs || !opList) return out;
+  if (!missing.length || !objs) return out;
   try { await page.getOperatorList(); } catch { return out; }
   let timer;
-  const deadline = new Promise((resolve) => { timer = setTimeout(resolve, timeout); });
+  const deadline = new Promise((resolve) => { timer = setTimeout(resolve, FACE_TIMEOUT_MS); });
   await Promise.race([
     Promise.all(missing.map((id) => new Promise((resolve) => {
       try { objs.get(id, resolve); } catch { resolve(); }
@@ -56,7 +58,7 @@ export async function pageFaces(page, ids, { known = null, timeout = 3000, opLis
   for (const id of missing) {
     if (!objs.has(id)) continue;
     const f = faceOf(objs.get(id));
-    known?.set(id, f);
+    known.set(id, f);
     if (f) out.set(id, f);
   }
   return out;

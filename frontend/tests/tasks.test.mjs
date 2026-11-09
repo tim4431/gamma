@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addLocalRow, fmtElapsed, isActive, LOCAL_LIMIT, localRow, mergeTasks, newlyFinished, progressFraction,
-  sortTasks, trayBadge } from "../src/tasks/taskModel.js";
+import { addLocalRow, afterFollow, followed, fmtElapsed, isActive, LOCAL_LIMIT, localRow, mergeTasks, newlyFinished,
+  progressFraction, sortTasks, trayBadge } from "../src/tasks/taskModel.js";
 import { canOpen, exportAgain, kindOf, progressCounts, progressText, quietKinds, relocationSummary, relocationSuperseded, retryOf,
   taskActions, taskInfo, taskTime, taskTitle } from "../src/tasks/taskKinds.js";
 
@@ -71,6 +71,7 @@ test("titles read the job's params; local rows keep their own name", () => {
   assert.equal(taskTitle(job({ kind: "restore", params: { name: "Lab", mode: "merge", source: "upload", filename: "b.zip" } })), "Merge b.zip into “Lab”");
   assert.equal(taskTitle(job({ kind: "restore", params: { name: "Lab", mode: "replace", source: "snapshot" } })), "Restore “Lab” from a snapshot");
   assert.equal(taskTitle(job({ kind: "import", params: { filename: "zotero.zip" } })), "Import zotero.zip");
+  assert.equal(taskTitle(job({ kind: "import-preview", params: { filename: "vault.zip" } })), "Review vault.zip");
   assert.equal(taskTitle(job({ kind: "scheduled-backup", params: { name: "Nightly" } })), "Backup task “Nightly”");
   assert.equal(taskTitle(job({ kind: "metadata", params: { papers: 12 } })), "Metadata lookup for 12 papers");
   assert.equal(taskTitle(job({ kind: "relocate-highlights", params: { page_id: "p1", title: "Paper", doc_id: "d1" } })),
@@ -121,6 +122,7 @@ test("what a row offers: stop while it can, then download, start again and remov
   assert.deepEqual(taskActions(job({ state: "done", artifact: { name: "x" } })), ["download", "dismiss"]);
   assert.deepEqual(taskActions(job({ state: "failed" })), ["retry", "dismiss"]);
   assert.deepEqual(taskActions(job({ kind: "import", state: "failed" })), ["dismiss"], "an import's upload is gone");
+  assert.deepEqual(taskActions(job({ kind: "import-preview", state: "failed" })), ["dismiss"], "so is a failed review's");
   assert.deepEqual(taskActions(job({ kind: "restore", state: "failed", params: { source: "upload" } })), ["dismiss"]);
   assert.deepEqual(taskActions(job({ kind: "scheduled-backup", state: "running", stoppable: false, readonly: true })), []);
   // a delete starts again only through its confirm
@@ -144,11 +146,13 @@ test("starting the same work again names the route and the body the first start 
   assert.deepEqual(retryOf(job({ kind: "relocate-highlights", params: { page_id: "p1", title: "Paper", doc_id: "d1" } })),
     ["relocate-highlights", { page_id: "p1" }], "Try again places the page's highlights in the file it carries now");
   assert.deepEqual(retryOf(job({ kind: "db-check", state: "failed" })), ["db-check", {}]);
-  assert.equal(retryOf(job({ params: { ...exported, mode: "annotated-pdf", translation: "zh-CN" } })), null,
-    "an export that wrote the viewer's translation has none: its params keep no translation");
-  assert.deepEqual(retryOf(job({ params: { ...exported, mode: "annotated-pdf", translation: "", sub_pages: false } }))?.[0], "export");
-  assert.deepEqual(taskActions(job({ state: "failed", params: { mode: "annotated-pdf", translation: "zh-CN" } })), ["dismiss"],
-    "the tray offers no retry for it");
+  assert.deepEqual(retryOf(job({ id: "j1", params: { ...exported, mode: "annotated-pdf", translation: "zh-CN", sub_pages: false } })),
+    ["export", { ...exported, mode: "annotated-pdf", sub_pages: false, translation_of: "j1" }],
+    "an export that wrote the viewer's translation names its job, which keeps the translation it was sent");
+  assert.deepEqual(retryOf(job({ params: { ...exported, mode: "annotated-pdf", translation: "", sub_pages: false } })),
+    ["export", { ...exported, mode: "annotated-pdf", sub_pages: false }], "one without names none");
+  assert.deepEqual(taskActions(job({ id: "j1", state: "failed", params: { mode: "annotated-pdf", translation: "zh-CN" } })),
+    ["retry", "dismiss"], "the tray offers it Start again");
   assert.equal(retryOf(job({ kind: "workspace-delete", params: { ws: "w1", name: "Lab" } })), null);
   assert.equal(retryOf(job({ kind: "indexing" })), null);
   assert.equal(retryOf({ local: true, kind: "download" }), null);
@@ -160,10 +164,10 @@ test("a failed export's dialog offers the job again, or for a translated one the
   assert.equal(exportAgain(job({ state: "failed", params }), "p2"), "retry", "its params start it again, whatever page is open");
   const translated = job({ state: "failed", params: { ...params, translation: "zh-CN" } });
   assert.equal(exportAgain(translated, "p1"), "setup", "its page is open: the setup exports it again from the viewer");
-  assert.equal(exportAgain(translated, "p2"), "", "another page is open: the setup would export that one, so Close alone");
-  assert.equal(exportAgain(translated, ""), "");
+  assert.equal(exportAgain(translated, "p2"), "retry",
+    "another page is open: the setup would export that one, so the job again with the translation it kept");
+  assert.equal(exportAgain(translated, ""), "retry");
   assert.equal(exportAgain(job({ state: "cancelled", params: { ...params, translation: "zh-CN" } }), "p1"), "setup");
-  assert.equal(exportAgain(job({ state: "failed", params: { ...params, page_id: "", translation: "zh-CN" } }), ""), "");
 });
 
 test("a highlights run the PDF's next replacement took over is no news", () => {
@@ -202,10 +206,37 @@ test("a finished highlights run says how many moved, are dashed to check, stayed
 test("a click opens the export and import dialogs again, or where the work is managed", () => {
   assert.equal(canOpen(job({})), true);
   assert.equal(kindOf(job({ kind: "import" })).open, "import");
+  assert.equal(kindOf(job({ kind: "import-preview" })).open, "import", "a review opens the import dialog on it");
   assert.equal(kindOf(job({ kind: "snapshot" })).open, "settings:backups");
   assert.equal(kindOf(job({ kind: "metadata" })).open, "settings:maintenance");
   assert.equal(kindOf(job({ kind: "db-check" })).open, "settings:server");
   assert.equal(canOpen(job({ kind: "workspace-export" })), false);
   assert.equal(canOpen(job({ kind: "workspace-delete" })), false, "the workspace's Settings row shows it");
   assert.equal(canOpen({ local: true, kind: "download" }), false);
+});
+
+test("a share view follows only the share's own jobs that wait or run", () => {
+  assert.equal(followed(job({ id: "a", owner: "share:tok" })), true);
+  assert.equal(followed(job({ id: "b", owner: "share:tok", state: "queued" })), true);
+  assert.equal(followed(job({ id: "c", owner: "share:tok", state: "done" })), false, "over");
+  assert.equal(followed(job({ id: "d", owner: "u-visitor", kind: "transcribe" })), false, "the visitor's own job");
+  assert.equal(followed(job({ id: "e" })), false, "no owner");
+});
+
+test("a follow round: the answer, the job failed when the share refuses it or it is gone, else the row kept", () => {
+  const row = job({ id: "j", owner: "share:tok" });
+  const answer = { ...row, state: "done" };
+  assert.equal(afterFollow(row, { job: answer }), answer);
+  const now = Date.UTC(2026, 8, 29, 13, 0);
+  for (const status of [401, 403, 404]) {
+    const out = afterFollow(row, { error: { status, message: `why ${status}` } }, now);
+    assert.equal(out.state, "failed", `${status}`);
+    assert.equal(out.error, `why ${status}`);
+    assert.equal(out.stoppable, false);
+    assert.equal(out.finished_at, new Date(now).toISOString());
+    assert.deepEqual(newlyFinished([row], [out]).map((j) => j.id), ["j"], "it settles");
+  }
+  for (const error of [{ status: 500, message: "boom" }, new Error("Failed to fetch"), {}]) {
+    assert.equal(afterFollow(row, { error }), row, "offline or a 5xx: asked again next round");
+  }
 });

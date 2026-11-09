@@ -14,13 +14,13 @@ import anyio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-from . import backup_schedule, cloud_auth, cloud_sync, comments, config, db_maintenance, email_invites, guests, hosted
-from . import inbox, jobs, migrations, offsite, sync_engine, trash, upload_gc, version, workspaces, ws_backup
-from . import zotero_stream
+from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, email_invites
+from . import guests, hosted, inbox, jobs, migrations, offsite, reports, sync_engine, trash, upload_gc, version
+from . import workspaces, ws_backup, zotero_stream
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
 from .compression import JsonGzip
-from .db import connect_data_db, connect_pages_db, connect_users_db, workspace_ids, ws_dir
+from .db import connect_data_db, connect_pages_db, connect_users_db, connect_vaults_db, workspace_ids, ws_dir
 from .logbuf import log, setup_logging
 from .mcp_lazy import LazyMCP
 from .mcp_oauth import router as mcp_oauth_router
@@ -54,6 +54,7 @@ from .routers import (
     publish,
     publisher_sessions,
     recordings,
+    reports as reports_router,
     search,
     shares,
     sync,
@@ -239,7 +240,8 @@ def _blocked_app(guide: dict) -> FastAPI:
 
 def _startup_maintenance():
     """After the data directory is current: create users.db on a fresh
-    install, seed the first admin, then per workspace: apply the per-file
+    install (and vaults.db on the desktop app's own server, the one server
+    that keeps it), seed the first admin, then per workspace: apply the per-file
     schema statements (a restored backup gains page_ops, WAL, ...). A
     workspace behind on its own migration steps is skipped: the background
     walk the lifespan starts (``migrations.warming``) upgrades it, or the
@@ -248,6 +250,8 @@ def _startup_maintenance():
     reconciliation (gamma/upload_gc.py) runs in the background once the
     server is up, never here."""
     connect_users_db().close()
+    if config.folder_links_enabled():
+        connect_vaults_db().close()
     jobs.recover()
     ensure_admin_seed()
     for ws_id in workspace_ids():
@@ -268,16 +272,17 @@ def _startup_maintenance():
 async def read_only_gate(request: Request, call_next):
     """A hosted server its plan made read-only (gamma/hosted.py): every
     state-changing /api request but ``hosted.READ_ONLY_ALLOWED`` is refused
-    with 423 and the reason. Inside the session middleware, so the refusal
-    is logged like any answer. Collaboration needs nothing of its own: an
-    op batch is a POST, and the page socket carries only carets. A hosted
-    server also notes every answer here for the sync's report
-    (``hosted.answered``: a 5xx, an accepted write); any other server only
-    passes the request on."""
+    with 423 and the reason; a read sent as a POST (``hosted.POST_READS``)
+    is no write. Inside the session middleware, so the refusal is logged
+    like any answer. Collaboration needs nothing of its own: an op batch is
+    a POST, and the page socket carries only carets. A hosted server also
+    notes every answer here for the sync's report (``hosted.answered``: a
+    5xx, an accepted write); any other server only passes the request on."""
     if not hosted.enabled():
         return await call_next(request)
-    write = request.method in hosted.WRITE_METHODS and request.url.path.startswith("/api/")
-    if write and not hosted.allowed_when_read_only(request.url.path):
+    path = request.url.path
+    write = request.method in hosted.WRITE_METHODS and path.startswith("/api/") and not hosted.is_post_read(path)
+    if write and not hosted.allowed_when_read_only(path):
         refusal = hosted.read_only()  # from memory: tick loaded it at startup
         if refusal:
             return JSONResponse({"detail": refusal, "read_only": True}, status_code=423)
@@ -353,17 +358,20 @@ def create_app() -> FastAPI:
         # /mcp route from scope["state"]) — it must pass through here.
         async with mcp.lifespan(app) as state, backup_schedule.lifespan(), \
                 every(cloud_sync.CHECK_INTERVAL, cloud_sync.check_all, "cloud: the grant check failed"), \
+                every(cloud_deletions.TICK_S, cloud_deletions.tick, "cloud: the deleted accounts' round failed"), \
                 every(hosted.SYNC_INTERVAL, hosted.tick, "[hosted] the plan sync failed"), \
                 every(guests.SWEEP_INTERVAL_S, guests.delete_expired, "[guests] sweep failed"), \
                 every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"), \
                 every(comments.SWEEP_INTERVAL_S, comments.sweep, "[comments] sweep failed"), \
                 every(email_invites.SWEEP_INTERVAL_S, email_invites.sweep, "[invites] sweep failed"), \
+                every(reports.SWEEP_INTERVAL_S, reports.tick, "[reports] round failed"), \
                 every(inbox.SWEEP_INTERVAL_S, inbox.sweep, "[inbox] sweep failed"), \
                 every(ws_backup.STALE_TEMP_S, ws_backup.sweep_stale_temp, "[backups] temp sweep failed"), \
                 every(jobs.SWEEP_INTERVAL_S, jobs.sweep, "[jobs] sweep failed"), \
                 every(db_maintenance.EVERY_S, db_maintenance.tick, "[db] maintenance failed"), \
                 every(offsite.wait_s, offsite.tick, "[offsite] round failed"), \
                 every(folder_links.TICK_S, folder_links.tick, "[folders] round failed"), \
+                every(folder_links.HOT_S, folder_links.hot_tick, "[folders] a page's round failed"), \
                 every(workspaces.LEFTOVERS_EVERY_S, workspaces.remove_leftovers,
                       "[workspaces] leftover sweep failed"), \
                 zotero_live():
@@ -386,6 +394,14 @@ def create_app() -> FastAPI:
         # (gamma/email_invites.py): whichever router sent or resent it
         # answers the inviter with the status the failure carries.
         return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+
+    @app.exception_handler(workspaces.WorkspaceDeleting)
+    async def workspace_deleting(request: Request, exc: workspaces.WorkspaceDeleting):
+        # A change to a workspace a delete holds (workspaces.refuse_writes):
+        # the 423 with a code a script can test beside its header, which
+        # the web app's fetch wrapper turns the tab read-only on.
+        return JSONResponse({"detail": exc.detail, "error": "workspace_deleting", "workspace": exc.ws},
+                            status_code=exc.status_code, headers=exc.headers)
 
     app.middleware("http")(read_only_gate)  # added first: runs inside the session middleware
     app.middleware("http")(session_middleware)
@@ -436,6 +452,7 @@ def create_app() -> FastAPI:
     app.include_router(folders.router)
     app.include_router(collab.router)
     app.include_router(comments_router.router)
+    app.include_router(reports_router.router)
     app.include_router(sync.router)
     app.include_router(mirrors.router)
     app.include_router(folder_links_api.router)

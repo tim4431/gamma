@@ -802,18 +802,5 @@ def start_account_delete(payload: AccountDeleteJob, request: Request):
         workspaces.check_account_deletable(user_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-    def allowed(conn):
-        _still_deletable(conn, by, user_id)
-
-    def run(job):
-        with connect_users_db() as conn:
-            allowed(conn)
-        return {"deleted_workspaces": workspaces.delete_account(user_id, by=by, progress=job.progress,
-                                                                allowed=allowed)}
-
-    try:
-        return jobs.start("account-delete", owner=by, key=user_id, run=run, title=f"Delete account {username}",
-                          params={"username": username, "guest": bool(row[1])})
-    except jobs.Busy as busy:  # the same work asked for again: answer it
-        return busy.job
+    return workspaces.start_account_delete(user_id, username, owner=by, by=by, guest=bool(row[1]),
+                                           allowed=lambda conn: _still_deletable(conn, by, user_id))

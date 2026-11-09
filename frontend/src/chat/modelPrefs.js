@@ -4,6 +4,7 @@
 // and sends each model what that model actually takes; a model's levels and
 // tiers come from GET /api/ai/model-info (its provider's listing, else
 // models.dev for effort, else what the wire itself can ask for).
+import { T, t } from "../shared/i18n/i18n.js";
 
 // The models one connection offers, out of the /api/ai/models registry: the
 // picked connection's (Settings → AI › Connections), else the first one's —
@@ -15,6 +16,13 @@ export function providerModels(models, providerId) {
   return all.filter((m) => m.provider === id);
 }
 
+// A model as the model menus list it: its name, and "· no tools" when it
+// can't call tools on its connection (the registry row's `tools` false; its
+// chats then answer as a plain chat, gamma/routers/ai.py _checked_tools).
+export function modelLabel(m) {
+  return m?.tools === false ? t("{model} · no tools", { model: m.model }) : m?.model || "";
+}
+
 // Lowest first — the order mirrors EFFORT_ORDER in gamma/routers/ai.py.
 export const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -23,6 +31,8 @@ export const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh"
 // low-latency routing (Anthropic's fast mode, OpenAI's and Codex's) at a
 // higher one.
 export const SPEED_ORDER = ["flex", "fast"];
+// Their names in a menu, through t() where they show.
+export const SPEED_LABELS = { flex: T("Flex"), fast: T("Fast") };
 
 // The level to send for the preferred one: itself when the model takes it,
 // else the nearest level it does (a tie goes to the lower one); "" — the

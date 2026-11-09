@@ -18,6 +18,7 @@ const ICON_PATHS = {
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
   scissors: '<circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"/>',
+  undo: '<path d="m9 4-5 5 5 5"/><path d="M4 9h10a6 6 0 0 1 0 12"/>',
 
   chevronDown: '<path d="m6 9 6 6 6-6"/>',
   cookie: '<path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5"/><path d="M8.5 8.5v.01"/><path d="M16 15.5v.01"/><path d="M12 12v.01"/><path d="M11 17v.01"/><path d="M7 14v.01"/>',
@@ -194,7 +195,15 @@ function inlineName(placeholder, { commit, cancel }) {
 // is the input, `{draft(name) → chip, placeholder, depth, last?}`. The focus
 // moves into it and back. Committing, Escape, or using another row of the menu
 // or a chip's × ends it; those last two make nothing.
-export function chipField({ box, input, menu, suggest, fromText, single = false, separator = "", onChange = null }) {
+//
+// `complete(row)` makes Tab a completion key over what is being typed, as a
+// shell or VS Code completes a path: it returns the text the row puts in the
+// input — nothing committed, the menu filtered again — or "" for a row that
+// completes nothing. Tab takes the highlighted row, else the first one. With
+// an empty field, or with nothing left to add, Tab leaves for the next field
+// as it always has.
+export function chipField({ box, input, menu, suggest, fromText, single = false, separator = "",
+                           onChange = null, complete = null }) {
   const placeholder = input.placeholder;
   const same = (a, b) => a.text.toLowerCase() === b.text.toLowerCase();
   let chips = [];
@@ -347,7 +356,16 @@ export function chipField({ box, input, menu, suggest, fromText, single = false,
     const open = !menu.classList.contains("hidden");
     const tree = open && sel >= 0 && rows[sel].tree;
     if (tree && treeKey(e, tree)) return;
-    if (e.key === "ArrowDown" && rows.length) {
+    if (e.key === "Tab" && !e.shiftKey && complete && open && input.value.trim()) {
+      const row = rows[sel] || rows[0];
+      const text = row ? complete(row) : "";
+      if (text && text !== input.value) {
+        e.preventDefault();
+        input.value = text;
+        sel = -1;
+        update();
+      }
+    } else if (e.key === "ArrowDown" && rows.length) {
       e.preventDefault();
       if (open) highlight(Math.min(sel + 1, rows.length - 1)); else update();
     } else if (e.key === "ArrowUp" && open) {
@@ -388,14 +406,19 @@ function pathHolds(names, fragment) {
   return false;
 }
 
+// A path as the field writes it, the chips' separator ("Lab / Clocks"), and
+// the same with the separator that opens the folder: what Tab leaves in the
+// field for a folder with subfolders, so the next keys search inside it.
+const pathText = (path, inside = false) => path.join(" / ") + (inside ? " / " : "");
+
 // A chip's value is the filing POST /api/clip takes: a folder id, or a new
 // folder's path (made by the save).
-const folderChip = (f) => ({ text: f.path.join(" / "), value: { folder: f.id, folder_path: "" },
+const folderChip = (f) => ({ text: pathText(f.path), value: { folder: f.id, folder_path: "" },
                              icon: "folder", chipIcon: "folder" });
 
 function newFolderChip(path) {
   const names = pathNames(path);
-  const text = names.join(" / ");
+  const text = pathText(names);
   return { text, value: { folder: "", folder_path: names.join("/") }, icon: "folderPlus", chipIcon: "folderPlus",
            row: `New folder “${text}”`, title: `${text} — a new folder, made when you save` };
 }
@@ -474,15 +497,44 @@ export function folderChipField({ box, input, menu, onChange = null, onError }) 
     return rows;
   }
 
+  // The folder a typed path ending in the separator names, when it has
+  // subfolders: "Lab / Clocks /" asks to see what is inside, which is where
+  // Tab's completion leaves the field. One with nothing inside is no such
+  // ask — its own row, from the match below, is what the field still needs.
+  function insideOf(fragment) {
+    if (!/\/\s*$/.test(fragment)) return null;
+    const node = tree.byId.get(folderByPath(folders, fragment));
+    return node && node.kids.length ? node : null;
+  }
+
+  // Every folder whose path holds the typed names, those whose own name the
+  // last typed one begins first: that is the folder being named, rather than
+  // one merely holding the text somewhere above it — and so what Tab takes.
+  function ranked(fragment, chosen) {
+    const last = pathNames(fragment.toLowerCase()).at(-1) || "";
+    const found = folders.filter((f) => f.id !== chosen && pathHolds(f.path, fragment));
+    const heads = found.filter((f) => f.path.at(-1).toLowerCase().startsWith(last));
+    return [...heads, ...found.filter((f) => !heads.includes(f))];
+  }
+
   function suggest(fragment, chips, naming) {
     const chosen = chips.length ? chips[0].value.folder : "";
     if (!fragment) return listed ? treeRows(chosen, naming) : [];
-    const rows = folders.filter((f) => f.id !== chosen && pathHolds(f.path, fragment)).map(folderChip);
+    const inside = insideOf(fragment);
+    const rows = (inside ? inside.kids : ranked(fragment, chosen)).map(folderChip);
     if (!onChange && pathNames(fragment).length && !folderByPath(folders, fragment)) rows.push(newFolderChip(fragment));
     return rows;
   }
 
-  const field = chipField({ box, input, menu, suggest, fromText, single: true, onChange });
+  // Tab's completion: the row's folder written out in full, ending in the
+  // separator when it holds subfolders, so Tab after Tab walks down the tree.
+  // The ways to a new folder complete nothing — they are a choice, not a path.
+  function complete(row) {
+    const node = row.value && row.value.folder && tree.byId.get(row.value.folder);
+    return node ? pathText(node.path, node.kids.length > 0) : "";
+  }
+
+  const field = chipField({ box, input, menu, suggest, fromText, single: true, onChange, complete });
   return {
     ...field,
     // The library's folders (null when they could not be read, like the bare

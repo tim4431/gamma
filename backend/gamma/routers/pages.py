@@ -6,11 +6,12 @@ existing page, not the way pages come into being. (``POST
 /api/blocks/by-doc/{doc_id}`` is the lookup-or-create BY ATTACHMENT path for
 PDF ingest and the extension's dedup.)
 
-Every endpoint but ``by-docs`` (any member) and ``family`` (any member, or
-a share that reaches the page) needs an editor of the workspace
-(``require_ws(write=True)``): a share token never creates pages or changes a
+Every endpoint but ``by-docs`` (any member), ``family`` (any member, or
+a share that reaches the page) and ``POST /pages`` needs an editor of the
+workspace (``require_ws(write=True)``): a share token never changes a
 page's attachment (page properties stay the owner's, same rule as PUT
-/blocks/{id} under a share).
+/blocks/{id} under a share). ``POST /pages`` also takes an edit share's
+token, for a page inside a page the share reaches and nothing else.
 """
 
 import json
@@ -21,7 +22,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .. import highlight_relocate, jobs, pdf_index, publish, upload_gc
-from ..auth import actor_of, require_user_id, require_ws, resolve_ws, share_scope
+from ..auth import (actor_of, link_ratelimit, require_user_id, require_ws, require_ws_writer, resolve_ws,
+                    share_scope)
 from ..blocks_store import (
     BLOCK_COLUMNS,
     FOLDERS,
@@ -52,6 +54,7 @@ from .imports import originals_gone
 router = APIRouter(prefix="/api", tags=["pages"])
 
 ATTACHMENT_KEYS = ("doc_id", "source_url", "original_filename")
+SHARE_PAGES_PER_5_MIN = 30  # pages a link visitor may make through an edit share, per IP
 RELOCATE = "relocate-highlights"  # the job that places a replaced PDF's highlights (_start_relocation)
 NOT_STORED = "the PDF is not stored on the server"  # why no run places the highlights of a PDF shown from a URL alone
 # Why a page of a Zotero link takes no PDF from a person while the link brings Zotero's (its ``zotero_pdf``
@@ -117,8 +120,25 @@ def create_page_endpoint(payload: PageCreate, request: Request):
     ``page_root_props`` leaves it, live or not. On a share host, 402 with
     ``{detail, limit, used, plan}`` when the owner's plan allows no more
     pages in the workspace (the path a publishing mirror creates its pages
-    by; gamma/publish.py page_cap)."""
-    ws = require_ws(request, write=True)
+    by; gamma/publish.py page_cap).
+
+    Through an edit share's token (``?share=``, ``require_ws_writer``) it
+    makes a page inside a page the share reaches, and nothing else: a
+    ``parent_page`` the share reaches is required (403 otherwise), no
+    ``properties`` (403: a page's settings stay the owner's), ``folders``
+    are ignored as for any sub-page, and the page is written under the
+    share editor's name (``actor_of``). An ``id`` the link names must be
+    new to the workspace: one that names a page in Recently deleted is
+    refused (409) as any taken id, rather than giving way, since that page
+    need not be one the share reaches."""
+    ws = require_ws_writer(request)
+    scope = share_scope(request)
+    if scope is not None:
+        link_ratelimit(request, "pages", SHARE_PAGES_PER_5_MIN, 300)
+        if not payload.parent_page:
+            raise HTTPException(status_code=403, detail="through a share link a page is made inside a shared page only")
+        if payload.properties:
+            raise HTTPException(status_code=403, detail="share editors cannot set a page's properties")
     props = dict(payload.properties or {})
     if payload.parent_page:
         props[PARENT_PAGE] = payload.parent_page
@@ -132,12 +152,15 @@ def create_page_endpoint(payload: PageCreate, request: Request):
         # same page id over (a mirror's retry) get one page and a 409, and
         # the plan's cap counts every page created before this one.
         write_lock(conn)
-        taken = payload.id and conn.execute(
-            "SELECT parent_id FROM unified_blocks WHERE id = ?", (payload.id,)).fetchone()
-        if taken and taken[0] != TRASH:  # a page of that id in Recently deleted gives way (create_page)
-            raise HTTPException(status_code=409, detail="a block with that id exists")
+        if scope is not None and not scope.allows_page(conn, payload.parent_page):
+            raise HTTPException(status_code=403, detail="not accessible via this share link")
         if payload.parent_page and page_root_id(conn, payload.parent_page) != payload.parent_page:
             raise HTTPException(status_code=400, detail="parent_page names no page")
+        taken = payload.id and conn.execute(
+            "SELECT parent_id FROM unified_blocks WHERE id = ?", (payload.id,)).fetchone()
+        # a page of that id in Recently deleted gives way (create_page), but not to a share link
+        if taken and (taken[0] != TRASH or scope is not None):
+            raise HTTPException(status_code=409, detail="a block with that id exists")
         refusal = publish.cap_refusal(ws)  # only a new page counts
         if refusal:
             return JSONResponse(status_code=402, content=refusal)
@@ -254,7 +277,8 @@ def _held_elsewhere(conn, doc_id: str):
     """The 409 for a ``doc_id`` a page carries already (``{"detail",
     "page_id"}``, so the client can offer to open that page), else None.
     Callers ask only for a ``doc_id`` the page itself does not carry, so
-    any page found is another."""
+    any page found is another. A page reading those bytes from a file on
+    this computer refuses nothing (``page_for_doc`` leaves it out)."""
     other = page_for_doc(conn, doc_id) if doc_id else None
     if other:
         return JSONResponse(status_code=409, content={
@@ -419,15 +443,16 @@ def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str = "",
     its Zotero item's PDF, ``_zotero_pdf_refusal``, and a mark nothing
     honours any more is dropped with the write); unless ``check_held`` is
     False, a ``doc_id`` another page carries is refused (``HeldElsewhere``,
-    409); the attachment op (``_attachment_op``: an automatic title becomes
-    the file name, a failed lookup's ``meta_error`` goes when the file
-    changes) is written, with ``props`` (a page property patch the caller
-    adds, such as dropping ``zotero_pdf``) merged into it. When the file
-    changes (whatever the page showed it from: a ``doc_id``, or only a
-    ``source_url`` as on a duplicated document page), the blocks imported
-    from the old file's embedded annotations are marked gone from the file
-    (``imports.originals_gone``), so PDF export draws them again. When the
-    stored file changes (``attachment_file``: a duplicated page's
+    409; a page reading those bytes from a file on this computer is passed
+    by, ``page_for_doc``); the attachment op (``_attachment_op``: an
+    automatic title becomes the file name, a failed lookup's ``meta_error``
+    goes when the file changes) is written, with ``props`` (a page property
+    patch the caller adds, such as dropping ``zotero_pdf``) merged into it.
+    When the file changes (whatever the page showed it from: a ``doc_id``,
+    or only a ``source_url`` as on a duplicated document page), the blocks
+    imported from the old file's embedded annotations are marked gone from
+    the file (``imports.originals_gone``), so PDF export draws them again.
+    When the stored file changes (``attachment_file``: a duplicated page's
     ``/api/uploads/<doc id>.pdf`` address is its stored file) and the page
     has highlights placed on its PDF, each of them that names no file yet
     gets the outgoing file's id as ``pdf_position.doc_id`` (the file its
@@ -578,7 +603,7 @@ def _start_relocation(owner: str, ws: str, page_id: str, title: str, new_doc: st
 
     try:
         return jobs.start(RELOCATE, owner=owner, ws=ws, key=f"{page_id}:{new_doc}", params=params, run=run,
-                          ended=ended, title=f"Placing the highlights of “{name}”"), ""
+                          ended=ended, title=f"Placing the highlights of “{name}”", writes=True), ""
     except jobs.Busy as busy:
         if not busy.job.get("stopping"):
             return busy.job, ""
@@ -604,18 +629,19 @@ def relocate_highlights(payload: RelocateRequest, request: Request):
     again): every highlight placed on its PDF is found again by its text
     and moved there, the ones not found marked ``lost``, each read from
     the file its rectangles were measured on while that file is stored
-    (``_start_relocation``). Session accounts only, like every job start
-    (a token gets 403), and workspace editors. → the job, the running one
-    when a run for this page and file is going already; 400 for a page
-    without a PDF, with one shown from a URL alone (``NOT_STORED``), or
-    without highlights on it, 404 for no such page, 429 when the account's
-    jobs are full, 409 while the last run for this file is still
+    (``_start_relocation``), and one known by its page and quote alone is
+    placed where its quote is, dashed. Session accounts only, like every
+    job start (a token gets 403), and workspace editors. → the job, the
+    running one when a run for this page and file is going already; 400 for
+    a page without a PDF, with one shown from a URL alone (``NOT_STORED``),
+    or without highlights on it, 404 for no such page, 429 when the
+    account's jobs are full, 409 while the last run for this file is still
     stopping."""
     require_user_id(request)
     ws = require_ws(request, write=True)
     with connect_pages_db(ws) as conn:
         page = _load_page(conn, payload.page_id)
-        placed = highlight_relocate.page_highlights(conn, page["id"])
+        placed = highlight_relocate.page_highlights(conn, page["id"], unplaced=True)
     attachment = page_attachment(page["properties"])
     if not attachment:
         raise HTTPException(status_code=400, detail="the page has no PDF")

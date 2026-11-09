@@ -54,6 +54,11 @@ interval from the pause after it. A round:
   volume, before anyone restored it) copies its fresh users.db, and must
   not push the old copies out. A restore makes them its own.
 
+While a round runs it keeps its progress (``_progress``, the status's
+``progress``): the databases looked at of all of them, then the files to
+upload and their bytes, counted as boto3 sends them, which the first
+round, sending every file, needs most.
+
 ``status`` is what the pane shows, from memory and the state file;
 ``restore`` (``manage.py offsite --restore``, the server stopped) puts
 copies back in place; ``litestream_config`` writes a Litestream
@@ -102,6 +107,8 @@ _save_lock = threading.Lock()
 # failed, error}; the state file keeps the same (without where) across restarts.
 _last_round: dict | None = None
 _next_round_at: float | None = None      # when the every() loop runs the next round (``wait_s``)
+# What the round in progress has done ({phase, done, total, bytes?, name}), read by ``status``.
+_progress: dict | None = None
 
 
 class RestoreError(ValueError):
@@ -476,9 +483,12 @@ def _copy_databases(bucket: s3.Client, state: dict, stamp: str, keep: int, done:
     shutil.rmtree(work, ignore_errors=True)  # what a killed round left
     work.mkdir(parents=True, exist_ok=True)
     checks, copied = {}, {}
+    databases = _databases()
+    progress = _phase("databases", len(databases))
     try:
-        for group, kind in _databases():
+        for i, (group, kind) in enumerate(databases):
             label, path = _label(group, kind), _path(group, kind)
+            progress.update(done=i, name=label)
             try:
                 seen = _signal(path)
                 if seen is None:
@@ -500,6 +510,7 @@ def _copy_databases(bucket: s3.Client, state: dict, stamp: str, keep: int, done:
             state["files"][label] = seen
             done["copied"].append(label)
             copied.setdefault(group, []).append(kind)
+        progress.update(done=len(databases), name="")
         for group, kinds in copied.items():
             try:
                 done["pruned"] += _prune(bucket, group, kinds, keep, state.get("since", ""))
@@ -510,12 +521,26 @@ def _copy_databases(bucket: s3.Client, state: dict, stamp: str, keep: int, done:
     return checks
 
 
+def _phase(phase: str, total: int, size: int | None = None) -> dict:
+    """The round's progress (``_progress``) as ``phase`` starts: ``total``
+    items, and ``size`` bytes to send when the phase counts them. The dict
+    the round updates as it goes."""
+    global _progress
+    _progress = {"phase": phase, "done": 0, "total": total, "name": ""}
+    if size is not None:
+        _progress["bytes"] = {"done": 0, "total": size}
+    return _progress
+
+
 def _copy_uploads(bucket: s3.Client, state: dict, done: dict) -> None:
-    """The round's uploads (above). A workspace's directory mtime is taken
-    before its files are listed and recorded once all of them are up, so a
-    file added meanwhile, or one that failed, makes the next round look
-    again."""
-    seen, present = state["uploads"], set()
+    """The round's uploads (above). Each workspace's to-do is read first
+    (its files against one listing of its objects), so the progress counts
+    the whole round's files and bytes from the start, and then sent. A
+    workspace's directory mtime is taken before its files are listed and
+    recorded once all of them are up, so a file added meanwhile, or one
+    that failed, makes the next round look again; an upload that fails
+    ends its workspace's share of the round."""
+    seen, present, todo = state["uploads"], set(), []
     for ws in db.workspace_ids():
         folder = db.ws_uploads_dir(ws)
         try:
@@ -531,20 +556,43 @@ def _copy_uploads(bucket: s3.Client, state: dict, done: dict) -> None:
             held = {}
             if local:  # one listing of the workspace's objects, never a HEAD per file
                 held = {k[len(prefix):]: size for k, size, _ in bucket.list_objects(prefix)}
-            for name, size in sorted(local.items()):
-                if held.get(name) == size:
-                    continue
-                try:
-                    bucket.put_object(prefix + name, folder / name)
-                except FileNotFoundError:
-                    continue  # deleted since the listing (the upload GC's purge)
-                done["uploads_copied"] += 1
         except (OSError, ValueError) as e:
             done["failed"][f"{ws}/uploads"] = str(e)
             continue
-        seen[ws] = mtime
+        todo.append((ws, folder, mtime, [(n, size) for n, size in sorted(local.items()) if held.get(n) != size]))
     for ws in [w for w in seen if w not in present]:
         del seen[ws]  # a deleted workspace: its files stay in the bucket
+    progress = _phase("uploads", sum(len(files) for *_, files in todo),
+                      sum(size for *_, files in todo for _, size in files))
+    sent = progress["bytes"]
+    for ws, folder, mtime, files in todo:
+        prefix = f"{UPLOADS}/{ws}/"
+        for i, (name, size) in enumerate(files):
+            progress["name"], before = f"{ws}/{name}", sent["done"]
+            try:
+                bucket.put_object(prefix + name, folder / name, tick=_counter(sent))
+            except FileNotFoundError:
+                pass  # deleted since the listing (the upload GC's purge)
+            except (OSError, ValueError) as e:
+                done["failed"][f"{ws}/uploads"] = str(e)
+                sent["done"] = before + sum(s for _, s in files[i:])  # the rest of the workspace is passed by
+                progress["done"] += len(files) - i
+                break
+            else:
+                done["uploads_copied"] += 1
+            sent["done"] = before + size  # boto3's count made exact (a part sent again counts twice)
+            progress["done"] += 1
+        else:
+            seen[ws] = mtime
+    progress["name"] = ""
+
+
+def _counter(sent: dict):
+    """boto3's ``Callback`` for one upload: each run of bytes it sends added
+    to the round's ``bytes.done`` as it goes."""
+    def tick(n: int) -> None:
+        sent["done"] += int(n)
+    return tick
 
 
 def _round() -> dict:
@@ -608,7 +656,14 @@ def tick() -> dict:
     try:
         return _round()
     finally:
-        _round_lock.release()
+        _release()
+
+
+def _release() -> None:
+    """A round's end: its progress gone, the round lock let go."""
+    global _progress
+    _progress = None
+    _round_lock.release()
 
 
 def _run_held() -> None:
@@ -617,7 +672,7 @@ def _run_held() -> None:
     except Exception:  # noqa: BLE001 — a thread of its own: logged, like the every() loop's
         log.exception("[offsite] round failed")
     finally:
-        _round_lock.release()
+        _release()
 
 
 def run_now() -> dict:
@@ -653,8 +708,11 @@ def wait_s() -> float:
 def status(conf: dict) -> dict:
     """What the pane shows of the rounds of ``conf`` (the settings as
     ``settings`` resolved them), opening no database: ``{enabled, running,
-    interval_s, keep, last_round_at, copied, uploads_copied, failed, error,
-    next_round_at}``. The last round is this process's newest, or after a
+    progress, interval_s, keep, last_round_at, copied, uploads_copied,
+    failed, error, next_round_at}``. ``progress`` is the running round's
+    (``_phase``: ``{phase: "databases" | "uploads", done, total, name,
+    bytes?: {done, total}}``, ``name`` the database or the file at hand),
+    None between rounds. The last round is this process's newest, or after a
     restart the one the state file records, of the bucket the settings
     name: its UTC time, how many databases and files it copied, how many
     failed, and why the first did (or why no round could run); all None
@@ -668,8 +726,11 @@ def status(conf: dict) -> dict:
     if last and not (isinstance(last.get("stamp"), str) and STAMP_RE.match(last["stamp"])):
         last = None
     last = last or {}
-    on = bool(conf["enabled"])
-    return {"enabled": on, "running": _round_lock.locked(), "interval_s": conf["interval_s"], "keep": conf["keep"],
+    on, running, progress = bool(conf["enabled"]), _round_lock.locked(), _progress
+    if running and progress:  # a copy: the round goes on changing its own
+        progress = {**progress, **({"bytes": dict(progress["bytes"])} if "bytes" in progress else {})}
+    return {"enabled": on, "running": running, "progress": progress if running else None,
+            "interval_s": conf["interval_s"], "keep": conf["keep"],
             "last_round_at": _iso(last["stamp"]) if last else None, "copied": last.get("copied"),
             "uploads_copied": last.get("uploads_copied"), "failed": last.get("failed"), "error": last.get("error"),
             "next_round_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(_next_round_at))

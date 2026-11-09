@@ -1,5 +1,6 @@
 import React from "react";
 import { stepList } from "../shared/ui/listKeys.js";
+import { composing } from "../shared/lib/hotkeys.js";
 import { backdropPress } from "../shared/ui/press.js";
 import { API, apiJson, fmtBytes, isUnverifiedPaperMeta, metaSourceInfo, getCurrentWorkspace } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
@@ -13,8 +14,9 @@ import { SECTION_PREFS } from "./sectionPrefs.js";
 import { DEFAULT_TOOLS } from "../ink/ink.js";
 import { SQUEEZE_HOLDS } from "../ink/pencilActions.js";
 import { nativeHost } from "../shared/lib/host.js";
+import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
-import { EFFORT_ORDER, SPEED_ORDER } from "../chat/modelPrefs.js";
+import { EFFORT_ORDER, SPEED_LABELS, SPEED_ORDER } from "../chat/modelPrefs.js";
 import { AppearanceSettings } from "./SettingsAppearance";
 import { AgentToolMatrix } from "./AssistantTools";
 import { OnlineSearchSettings } from "./OnlineSearch";
@@ -46,6 +48,7 @@ import {
   FileTextIcon,
   ImageIcon,
   FolderIcon,
+  FolderPlusIcon,
   FoldersIcon,
   GlobeIcon,
   HandIcon,
@@ -201,6 +204,18 @@ function ViewerSettings({ value }) {
           checked={value.pdfSaveLocal}
           onChange={value.setPdfSaveLocal}
         />
+        {/* Only the desktop app reads it, from the account's profile on the
+            server it opens a file on (desktop/main.js addsToLibrary). */}
+        {IS_DESKTOP ? (
+          <Toggle
+            icon={FolderPlusIcon}
+            label={t("Add opened PDFs to the library")}
+            hint={t("In the desktop app, a PDF opened from this computer goes into the library")}
+            title={t("Off, a PDF the desktop app opens from this computer is read where it lies, under Opened files, and Add to library… stores it when you want to keep it. On, every PDF opened that way is stored in the library at once.")}
+            checked={value.openAddsToLibrary}
+            onChange={value.setOpenAddsToLibrary}
+          />
+        ) : null}
       </Section>
       {/* How a replacement's run finds each highlight's text in the new file:
           the server reads both from the account's profile as a run starts
@@ -899,7 +914,7 @@ function ChatDefaults({ value, ai }) {
       <Row icon={ZapIcon} label={t("Default speed")} hint={t("Only models whose provider offers that tier")}
         title={t("Which service tier chats ask the provider for: \"fast\" buys its premium low-latency routing (Anthropic's fast mode, OpenAI's and Codex's Fast) at a higher price per token, \"flex\" trades latency for a lower one. A model whose provider offers neither is called as usual.")}>
         <MenuSelect label={t("Default speed")} value={ai.chatSpeed} onChange={ai.setChatSpeed}
-          options={[["", t("Default")], ...SPEED_ORDER.map((v) => [v, v])]} />
+          options={[["", t("Default")], ...SPEED_ORDER.map((v) => [v, t(SPEED_LABELS[v])])]} />
       </Row>
       <Toggle
         icon={RectSelectIcon}
@@ -1152,8 +1167,8 @@ export default function SettingsDialog({
   const syncState = useCloudSyncStatus(!!activePane, profileSync);
   // What the panes read, kept while the dialog is open (settingsReads.js).
   const reads = React.useMemo(() => createSettingsReads(), [!!activePane]); // eslint-disable-line react-hooks/exhaustive-deps
-  const who = React.useMemo(() => ({ admin: !!users?.isAdmin, signedIn: !!users?.me && !users.isGuest }),
-    [users?.isAdmin, users?.me, users?.isGuest]);
+  const who = React.useMemo(() => ({ admin: !!users?.isAdmin, signedIn: !!users?.me && !users.isGuest, lang: papers?.translateLang }),
+    [users?.isAdmin, users?.me, users?.isGuest, papers?.translateLang]);
   const [query, setQuery] = React.useState("");
   const [mobileIndex, setMobileIndex] = React.useState(false);
   const [jump, setJump] = React.useState(null);
@@ -1253,7 +1268,7 @@ export default function SettingsDialog({
     return () => previous?.focus?.();
   }, [!!activePane]);
   if (!activePane) return null;
-  const results = searchSettings(query, allowed.map(([id]) => id), { host: hostCaps(nativeHost()) });
+  const results = searchSettings(query, allowed.map(([id]) => id), { host: hostCaps(nativeHost()), desktop: IS_DESKTOP });
 
   const aiValue = { ...ai, aiInfo: prompts.aiInfo };
   const paperValue = { ...papers, chatModelName: (ai.aiModels || []).find((m) => m.id === ai.chatModel)?.model };
@@ -1312,7 +1327,7 @@ export default function SettingsDialog({
                 }}
                 onKeyDown={(event) => {
                   // Enter opens the first match; the arrows walk the list (the modal's onKeyDown).
-                  if (event.key === "Enter" && query.trim() && results.length && !event.nativeEvent.isComposing) {
+                  if (event.key === "Enter" && query.trim() && results.length && !composing(event)) {
                     event.preventDefault(); navigate(results[0].pane, results[0].target);
                   }
                 }} />
@@ -1320,7 +1335,7 @@ export default function SettingsDialog({
             </div>
             <button className="uiClose uiCloseLg" onClick={() => guard(onClose)} aria-label={t("Close settings")}><XIcon size={16} /></button>
           </div>
-          <div className="settingsBody" inert={pending ? "" : undefined}>
+          <div className="settingsBody" inert={!!pending}>
             <nav className="settingsSidebar" aria-label={t("Settings categories")}>
               {available("account") ? (
                 <NavAccountCard name={users.me} usedBytes={users.quotaInfo?.used_bytes} quotaMb={users.quotaInfo?.quota_mb}
@@ -1347,7 +1362,7 @@ export default function SettingsDialog({
                 </> : null}
                 {pane === "translation" ? <>
                   <PaneHead icon={LanguagesIcon} title={t("Language and Translation")} />
-                  <TranslationSettings value={paperValue} />
+                  <TranslationSettings value={paperValue} keybindings={keyboard?.keybindings} />
                 </> : null}
                 {pane === "keyboard" && keyboard ? <KeyboardSettings value={keyboard} /> : null}
                 {pane === "maintenance" ? <MaintenanceSettings value={library} /> : null}

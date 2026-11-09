@@ -1,0 +1,19 @@
+{
+  "about": "How much of each selected passage a chat message quotes (docs/dev/ai.md 'Selected PDF passages'): one budget shared by all of them, a passage within an even share kept whole and what it leaves split evenly among the rest, the remainder going to the later ones. gamma/ai_context.py fair_shares and quoted_shares; frontend/src/chat/passageBudget.js fairShares and passageShares, which the chat's chips read. shares gives sizes and a budget; texts gives passages, counted in code points on both sides (a math letter such as U+1D465 is one character, two UTF-16 units), with kept their shares and total their lengths. Read by backend/tests/test_shared_fixtures.py and frontend/tests/passageBudget.test.mjs.",
+  "shares": [
+    {"note": "everything fits", "sizes": [100, 200], "budget": 1000, "shares": [100, 200]},
+    {"note": "one passage: its first 12,000", "sizes": [31400], "budget": 12000, "shares": [12000]},
+    {"note": "the short one keeps all; the rest share", "sizes": [500, 40000, 30000], "budget": 60000, "shares": [500, 29750, 29750]},
+    {"note": "a tie: the remainder goes to the later one", "sizes": [100, 100], "budget": 151, "shares": [75, 76]},
+    {"note": "no budget keeps nothing", "sizes": [10, 20], "budget": 0, "shares": [0, 0]},
+    {"note": "no passages", "sizes": [], "budget": 60000, "shares": []},
+    {"note": "short ones whole in any order, the long ones even", "sizes": [7, 9000, 3, 120000, 45000], "budget": 60000, "shares": [7, 9000, 3, 25495, 25495]},
+    {"note": "an even split of what is left, the remainder last", "sizes": [5, 5, 5], "budget": 10, "shares": [3, 3, 4]},
+    {"note": "an empty passage leaves the budget to the rest", "sizes": [0, 50], "budget": 20, "shares": [0, 20]}
+  ],
+  "texts": [
+    {"note": "math letters count one character each", "texts": ["\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65", "abc"], "budget": 13, "kept": [10, 3], "total": [10, 3]},
+    {"note": "a passage of math letters cut by code points", "texts": ["\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65"], "budget": 5, "kept": [5], "total": [20]},
+    {"note": "both go whole when their characters fit, whatever their UTF-16 length", "texts": ["\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65\ud835\udc65", "aaaaaaaaaaaa"], "budget": 24, "kept": [10, 12], "total": [10, 12]}
+  ]
+}

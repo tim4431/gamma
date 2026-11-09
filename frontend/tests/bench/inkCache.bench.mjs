@@ -1,5 +1,7 @@
 // A micro-benchmark of the handwriting outline caches (docs/dev/handwriting.md
-// "Client", Caches) — not part of `npm test`. From frontend/:
+// "Client", Caches) — not part of `npm test`. Its scenarios are budgeted in
+// tests/perf/ink.perf.mjs (`npm run test:perf`); this file stays for
+// comparing two copies of the modules. From frontend/:
 //
 //   node tests/bench/inkCache.bench.mjs                  # the modules in src/ink
 //   node tests/bench/inkCache.bench.mjs <dir>/src/ink    # another copy (an older commit's export)
@@ -13,57 +15,20 @@
 // strokes here. For each it prints the median ms over RUNS and how many of the
 // strokes kept the outline object they had before, so two copies of the
 // modules compare as before / after.
-import { register } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { drawing, installInkShims } from "../perf/fixtures.mjs";
 
-// The app imports some modules without an extension, as Vite allows.
-register("data:text/javascript," + encodeURIComponent(`
-export async function resolve(specifier, context, next) {
-  try { return await next(specifier, context); } catch (err) {
-    if (err?.code === "ERR_MODULE_NOT_FOUND" && /^\\.\\.?\\//.test(specifier) && !/\\.[a-z]+$/.test(specifier)) return next(specifier + ".js", context);
-    throw err;
-  }
-}`));
-
-// What shared/lib/utils.js (behind inkStore) reads as it loads, and the
-// files the scenarios serve.
-const served = new Map();
-globalThis.window = globalThis;
-globalThis.location = new URL("http://bench.local/");
-globalThis.dispatchEvent = () => true;
-globalThis.fetch = async (url) => {
-  const body = served.get(new URL(String(url), location.href).pathname);
-  return body == null ? new Response("{}", { status: 404 }) : new Response(body, { status: 200, headers: { "Content-Type": "application/json" } });
-};
-Object.defineProperty(globalThis, "navigator", { value: {}, configurable: true });   // no Web Locks held open
+// The app's extensionless imports, the globals inkStore reads as it loads,
+// and the files the scenarios serve.
+const served = installInkShims();
 
 const dir = path.resolve(process.argv[2] || path.join(import.meta.dirname, "../../src/ink"));
 const ink = await import(pathToFileURL(path.join(dir, "ink.js")).href);
 const store = await import(pathToFileURL(path.join(dir, "inkStore.js")).href);
 
 const STROKES = 500, RUNS = 7;
-let seed = 7;
-const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-function drawing() {
-  const strokes = [];
-  for (let i = 0; i < STROKES; i++) {
-    const hl = i % 10 === 9, n = 60 + Math.floor(rnd() * 80);
-    let x = 40 + rnd() * 520, y = 40 + rnd() * 700, dx = rnd() - 0.5, dy = rnd() - 0.5;
-    const samples = [];
-    for (let j = 0; j < n; j++) {
-      dx += (rnd() - 0.5) * 0.4; dy += (rnd() - 0.5) * 0.4;
-      x += dx * 0.6; y += dy * 0.6;
-      const p = 0.3 + rnd() * 0.6;
-      samples.push({ x, y, p, t: j * 8, w: Math.round((1 + (p - 0.5)) * 1000) / 1000 });
-    }
-    strokes.push(ink.encodeStroke(hl
-      ? { id: `h${i}`, tool: "highlighter", color: "#ffe066", size: 14, opacity: 0.6, pen: true, t0: 1757760000000, samples, ch: "xypt" }
-      : { id: `s${i}`, tool: "pen", color: "#1f1f1f", size: 1.6, opacity: 1, pen: true, t0: 1757760000000, samples, ch: "xyptw" }));
-  }
-  return { format: "gamma-ink", version: 2, space: { kind: "pdf-page", page: 1, width: 612, height: 792 }, strokes };
-}
-const base = drawing();
+const base = drawing(ink, { strokes: STROKES });
 const bytes = ink.serializeInk(base);
 // A recolour of the first `n` pens and `add` new strokes, as the file another
 // writer would leave.

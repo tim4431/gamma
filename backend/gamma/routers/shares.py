@@ -55,10 +55,10 @@ import secrets
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import cloud_auth, collab, email_invites, join_requests, ratelimit, shares
+from .. import cloud_auth, collab, email_invites, join_requests, ratelimit, shares, sync_engine, workspaces
 from ..auth import (SHARE_AUDIENCES, SHARE_ROLES, ShareScope, can_write, is_token, note_share_miss, require_user_id,
                     require_ws, request_share_access, share_lookup)
-from ..blocks_store import FOLDERS, TRASH
+from ..blocks_store import FOLDERS, TRASH, page_ancestors, page_descendants
 from ..db import account_name, account_names, connect_pages_db, connect_users_db, delete_shares, page_now
 
 router = APIRouter(prefix="/api", tags=["shares"])
@@ -381,6 +381,28 @@ def _delete(ws: str, target: ShareScope) -> dict:
     return {"ok": True, "removed": removed}
 
 
+def reaching(ws: str, page_id: str, *, own: bool = False) -> list[dict]:
+    """The workspace's shares whose link opens the page ``page_id``
+    (``ShareScope.allows_page``), its own share left out unless ``own``:
+    the shares of the pages it is inside, nearest first, then those of the
+    folders its top is filed in. Each ``{page_id, folder, title, audience,
+    role}``, ``title`` the page's title or the folder's name."""
+    with connect_users_db() as conn:
+        rows = conn.execute("SELECT page_id, folder, audience, role FROM shares WHERE workspace_id = ?",
+                            (ws,)).fetchall()
+    out = []
+    with connect_pages_db(ws) as conn:
+        chain = page_ancestors(conn, page_id)
+        for page, folder, audience, role in rows:
+            if (page == page_id and not own) or not ShareScope(page=page, folder=folder).allows_page(conn, page_id):
+                continue
+            row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (page or folder,)).fetchone()
+            out.append({"page_id": page, "folder": folder, "title": (row[0] if row else "") or "",
+                        "audience": audience, "role": role})
+    depth = {p: n for n, p in enumerate([*chain, page_id])}
+    return sorted(out, key=lambda s: (not s["page_id"], -depth.get(s["page_id"], -1), s["title"]))
+
+
 def delete_folder_shares(ws: str, folder_ids) -> int:
     """The shares of folders that are gone (the folder and the folders below
     it; ``ops.after_commit`` runs this for the tree batch that deleted them,
@@ -481,9 +503,36 @@ def create_share(page_id: str, request: Request, payload: ShareSettings | None =
 @router.get("/share-settings/{page_id}")
 def get_share_settings(page_id: str, request: Request):
     """A member's view of a page's share: its settings, or ``{"token": null}``
-    when the page isn't shared."""
+    when the page isn't shared — with, either way, ``pages_inside`` (how
+    many pages inside it its link opens as well) and ``via``, the other
+    shares that open it (``reaching``: a page it is inside, a folder its
+    top is filed in)."""
     ws = require_ws(request)
-    return _get(ws, request, _require_page(ws, page_id))
+    out = _get(ws, request, _require_page(ws, page_id))
+    with connect_pages_db(ws) as conn:
+        inside = len(page_descendants(conn, page_id))
+    return {**out, "pages_inside": inside, "via": reaching(ws, page_id)}
+
+
+@router.get("/pages/{page_id}/reach")
+def page_reach(page_id: str, request: Request):
+    """Who else a page is open to, for a move into it to say so first
+    (Move into page…): ``{shares, published}`` — ``shares`` every share
+    whose link opens it, its own first (``reaching``), and ``published``
+    the published page whose publication carries it to the share host
+    (``{page_id, title}``, itself when it is published; null when none,
+    sync_engine.carrier_of). Any member; 404 for a block that is no live
+    page."""
+    ws = require_ws(request)
+    _require_page(ws, page_id)
+    mirror = sync_engine.get_mirror(ws)
+    carrier = sync_engine.carrier_of(ws, mirror, page_id) if mirror else ""
+    published = None
+    if carrier:
+        with connect_pages_db(ws) as conn:
+            row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (carrier,)).fetchone()
+        published = {"page_id": carrier, "title": (row[0] if row else "") or ""}
+    return {"shares": reaching(ws, page_id, own=True), "published": published}
 
 
 @router.put("/share-settings/{page_id}")
@@ -546,7 +595,9 @@ def get_share(token: str, request: Request):
     ``username`` is who shared it; ``workspace_id`` the workspace.
     ``viewer`` / ``viewer_is_guest``
     tell the share view whether to offer "Open in my library" (a member) or
-    "Add to my library" (an account that can import)."""
+    "Add to my library" (an account that can import). While a delete holds
+    the workspace, ``deleting`` is true and ``can_edit`` false: it takes no
+    more changes (``workspaces.refuse_writes``)."""
     share = share_lookup(token)
     if not share:
         note_share_miss(request)
@@ -569,9 +620,10 @@ def get_share(token: str, request: Request):
             folder_name = row[0] or ""
     with connect_users_db() as conn:
         sharer = account_name(conn, share["created_by"])
+    deleting = workspaces.is_deleting(share["workspace_id"])
     out = {"page_id": share["page_id"], "folder": share["folder"],
-           "username": sharer, "workspace_id": share["workspace_id"],
-           "audience": share["audience"], "role": share["role"], "can_edit": level == "edit",
+           "username": sharer, "workspace_id": share["workspace_id"], "deleting": deleting,
+           "audience": share["audience"], "role": share["role"], "can_edit": level == "edit" and not deleting,
            "viewer": request.state.user or "", "viewer_is_guest": bool(request.state.is_guest)}
     if not share["page_id"]:
         out["folder_name"] = folder_name

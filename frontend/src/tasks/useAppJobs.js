@@ -4,10 +4,10 @@
 // one, and what to say when a job ends that no window shows. One instance,
 // in App.jsx, over its `useTasks` store and the state the dialogs keep
 // there; `onJobFinished` is what the store's `onFinished` calls.
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { API, fmtBytes, getCurrentWorkspace, withWorkspace } from "../shared/lib/utils";
 import { t } from "../shared/i18n/i18n.js";
-import { exportJobBody, exportQuery } from "../transfers/transferFormats";
+import { exportJobBody } from "../transfers/transferFormats";
 import { importSummary } from "../transfers/importReview";
 import { guideEvents } from "../guide/events.js";
 import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle } from "./taskKinds.js";
@@ -19,16 +19,23 @@ export function useAppJobs({
   exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder,
   // the import review dialog
   importReview, setImportReview,
-  // what an export is of, and the share view's synchronous downloads;
-  // exportTranslation() is the translation the viewer shows over the page's
-  // PDF, for its annotated PDF to write (App.jsx), or null
-  pageId, shareMode, exportRawPdf, downloadExport, exportTranslation = () => null,
+  // what an export is of; exportTranslation() resolves to the translation
+  // the viewer shows over the page's PDF, for its annotated PDF to write
+  // (App.jsx), or null; exportFolderTranslations(folder) to those of the
+  // folder's papers (pdf/folderTranslation.js), or []
+  pageId, shareMode, exportRawPdf, exportTranslation = () => null, exportFolderTranslations = () => [],
   // the open workspace: what a finished restore / import there refreshes
   workspaceId, refreshQuota, fetchHomeBlocks,
   // the session read again: the workspaces a finished delete leaves
   refreshSession,
 }) {
   const exportStartingRef = useRef(false); // a second press while the first start is answered starts nothing
+  // An export being started, for the dialog's Export button to show busy
+  // meanwhile (reading the translation shown can take a moment).
+  const [exportStarting, setExportStarting] = useState(false);
+  // The dialog closed while its export was being started: nothing starts,
+  // or the job that did goes on in Background tasks with its file offered.
+  const exportLeftRef = useRef(false);
 
   // Export a workspace as a backup zip, or every personal workspace at once
   // (`body`: {ws, uploads} or {all, uploads}): a background job
@@ -71,37 +78,46 @@ export function useAppJobs({
   // exist behind the proxy), unless the viewer shows it translated: a
   // page's annotated PDF writes the translation shown in place of the
   // original text (`translation`, read as Export is pressed), which only
-  // the job does. A share view has no background tasks, and no translated
-  // view: it downloads the same export through the download endpoints.
+  // the job does; a folder's annotated PDF those of its papers this browser
+  // left translated (`translations`). A share view, which has no translated view, starts the
+  // same job under its share token, the share's own (routers/export.py), and
+  // follows it alone (useTasks' `follow`): a big folder's export outlives a
+  // proxy's cut there too.
+  // While it starts, the dialog's Export is busy and a second press starts
+  // nothing; a dialog closed meanwhile starts nothing either.
   async function runExport(o) {
     if (!exportFolder && !pageId) { setExportOpen(false); setStatus(t("Open a page first to export it.")); return; }
-    const translation = !exportFolder && !shareMode && o.format === "pdf" ? exportTranslation() : null;
-    if (!exportFolder && o.format === "pdf" && !translation && !o.highlights && !o.notes && !o.comments && !o.subPages) {
-      setExportOpen(false);
-      await exportRawPdf();
-      return;
-    }
-    const body = exportJobBody(o, { pageId, folder: exportFolder || "" });
-    if (shareMode) {
-      setExportOpen(false);
-      const query = exportQuery(body);
-      await downloadExport(exportFolder
-        ? `/folders/${encodeURIComponent(exportFolder)}/export?${query}` : `/pages/${pageId}/export?${query}`, "export");
-      return;
-    }
     if (exportStartingRef.current) return;
     exportStartingRef.current = true;
+    exportLeftRef.current = false;
+    setExportStarting(true);
     try {
-      const job = await tasks.start("export", translation ? { ...body, translation } : body, { download: "auto", dialog: "export" });
-      setExportJobId(job.id);
-    } catch (err) {
-      setStatus(t("Export failed: {message}", { message: err.message }));
+      const translation = !exportFolder && !shareMode && o.format === "pdf" ? await exportTranslation() : null;
+      const translations = exportFolder && !shareMode && o.format === "pdf" ? await exportFolderTranslations(exportFolder) : [];
+      if (exportLeftRef.current) return;
+      if (!exportFolder && o.format === "pdf" && !translation && !o.highlights && !o.notes && !o.comments && !o.subPages) {
+        setExportOpen(false);
+        await exportRawPdf();
+        return;
+      }
+      const body = exportJobBody(o, { pageId, folder: exportFolder || "" });
+      try {
+        const sent = translation ? { ...body, translation } : translations.length ? { ...body, translations } : body;
+        const job = await tasks.start("export", sent, { download: "auto", dialog: "export" });
+        if (exportLeftRef.current) tasks.setDownload(job.id, "offer");
+        else setExportJobId(job.id);
+      } catch (err) {
+        setStatus(t("Export failed: {message}", { message: err.message }));
+      }
     } finally {
       exportStartingRef.current = false;
+      setExportStarting(false);
     }
   }
-  // Closing the export dialog leaves its job first (leaveExportJob).
+  // Closing the export dialog leaves its job first (leaveExportJob), or the
+  // one being started.
   function closeExport() {
+    exportLeftRef.current = true;
     leaveExportJob();
     setExportOpen(false);
   }
@@ -125,7 +141,7 @@ export function useAppJobs({
       setExportJobId(task.id);
       setExportOpen(true);
     } else if (open === "import") {
-      setImportReview({ jobId: task.id });
+      setImportReview(task.kind === "import-preview" ? { previewJobId: task.id, previewJob: task } : { jobId: task.id });
     } else if (open === "handoff") {
       // A paper the chat could not download: its /go page leads on to the
       // publisher, and Gamma Connector knows the tab by that address.
@@ -161,7 +177,8 @@ export function useAppJobs({
     // The export or import dialog shows it (one that ends as it starts
     // comes here before the dialog knows its id).
     const shownInDialog = (exportOpen && (job.id === exportJobId || (started?.dialog === "export" && !exportJobId)))
-      || (importReview && (job.id === importReview.jobId || (started?.dialog === "import" && !importReview.jobId)));
+      || (importReview && (job.id === importReview.jobId || job.id === importReview.previewJobId
+        || (started?.dialog === "import" && !importReview.jobId)));
     const here = job.workspace && job.workspace === workspaceId;
     if (job.kind === "restore") {
       if (job.state === "done" && here) {
@@ -183,6 +200,17 @@ export function useAppJobs({
       }
       if (started) setStatus(job.state === "done" ? t("{name}: done.", { name: title }) : job.state === "failed"
         ? t("Import failed: {msg}", { msg: t(job.error) }) : t("{name} was stopped.", { name: title }));
+      return;
+    }
+    if (job.kind === "import-preview") {
+      // A review read while its dialog was closed: the pill opens it.
+      if (shownInDialog || !started) return;
+      if (job.state === "done") {
+        postPill(`job:${job.id}`, { msg: t("The review of {file} is ready.", { file: job.params?.filename || "" }),
+          action: { label: t("Open"), run: () => setImportReview({ previewJobId: job.id, previewJob: job }) } }, { after: [20000, null] });
+      } else if (job.state === "failed") {
+        setStatus(t("The review of {file} failed: {msg}", { file: job.params?.filename || "", msg: t(job.error) }));
+      }
       return;
     }
     if (job.kind === "import") {
@@ -290,5 +318,5 @@ export function useAppJobs({
     }
   }
 
-  return { startWorkspaceExport, runBackupImport, runExport, closeExport, leaveExportJob, openTask, retryTask, onJobFinished };
+  return { startWorkspaceExport, runBackupImport, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask, onJobFinished };
 }

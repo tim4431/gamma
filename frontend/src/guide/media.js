@@ -76,8 +76,8 @@ export const MEDIA = {
     shows: { anchors: ["zotero.link", "sync.pill"], events: ["zotero.linked"] } },
   "assistant-connect": { ratio: 1.6, description: "The setup command typed in a terminal, the workspace allowed in the browser, and a question to Gamma answered with a citation",
     shows: { anchors: ["settings.assistantSetup"], events: ["mcp.connected"] } },
-  "tex-follow": { ratio: 1.6, description: "The followed PDF rebuilt on disk reaches the page: a new paragraph opens and the highlight moves down with its text",
-    shows: { anchors: ["page.follow", "pdf.viewer"], events: ["page.fileReplaced"] } },
+  "tex-follow": { ratio: 1.6, description: "The PDF pushed from disk, rebuilt, reaches the page: a new paragraph opens and the highlight moves down with its text",
+    shows: { anchors: ["page.pushFile", "pdf.viewer"], events: ["page.fileReplaced"] } },
   // A setup guide's drawing: what happens in another app, before Gamma.
   "notability-export": { ratio: 1.6, description: "Notability's Export Options with Note picked and Export pressed; the .note goes to Gamma, where the page opens with its handwriting live and the drawing as a note" },
   // The welcome deck's: a whole flow, or what has no one control to point at.

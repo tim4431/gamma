@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from ..auth import link_ratelimit, require_ws, require_ws_writer, resolve_ws, share_scope
-from .. import pdf_meta, upload_parts
+from .. import linked_files, pdf_meta, upload_parts
 from ..db import connect_pages_db
 from ..server_settings import workspace_quota
 from ..storage import (
@@ -21,6 +21,7 @@ from ..storage import (
     SANDBOXED_EXTENSIONS,
     UPLOAD_REF_RE,
     display_filename,
+    exists,
     find_upload_file,
     pdf_url,
     store_file,
@@ -309,7 +310,7 @@ def serve_upload(filename: str, request: Request):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
 
     # Filenames are content hashes (or URL hashes the server only writes once),
-    # so a given name can never serve different bytes — cache hard for a month.
+    # so a stored name can never serve different bytes — cache hard for a month.
     headers = {"Cache-Control": "public, max-age=2592000, immutable",
                "X-Content-Type-Options": "nosniff"}
     # Only images, PDFs, plain text and audio render on direct navigation; generic
@@ -325,7 +326,18 @@ def serve_upload(filename: str, request: Request):
 
     path = find_upload_file(filename, ws)
     if not path:
+        # A linked file whose stat moved: answer from what the worker finds.
+        # The same bytes read again; new ones leave this name with nothing,
+        # and the ops that switch the viewer are on their way.
+        linked_files.settle_wait(ws, filename)
+        path = find_upload_file(filename, ws)
+    if not path:
         raise HTTPException(status_code=404, detail="not found")
+    # A linked file (gamma/linked_files.py) can be rewritten between the look
+    # that found it and this read, so its name may serve other bytes: no cache
+    # keeps it unasked, and FileResponse's ETag (its size and time) tells.
+    if not exists(ws, filename):
+        headers["Cache-Control"] = "no-cache"
     return FileResponse(path, media_type=media_type, headers=headers)
 
 

@@ -10,16 +10,26 @@ import { openDialog } from "./transfers.mjs";
 // inside" make one; the library lists only the pages outside any, while
 // the parent's "N pages inside" panel and the child's crumbs show where it
 // is; Quick open finds it with its path; "Move to library" and "Move into
-// page…" take it out and put one in, and Move to page… offers a block the
-// open page's pages inside first; deleting the parent takes the pages
-// inside along and Restore brings the tree back, from Recently deleted, a
+// page…" take it out and put one in, keeping to the topmost pages of a
+// selection, Move to folder files a selection's library pages and says what
+// it left out, Move to page… offers a block the open page's pages inside
+// first, and the move pickers match and show a path; deleting the parent
+// takes the pages inside along and Restore brings the tree back, from
+// Recently deleted, a
 // link's missing-page notice (which then opens the linked page) or the
 // open page's own notice; a page share of the parent reaches the pages
 // inside, one of the child reaches nothing above. A label on a page inside
 // counts in the label's tile and view, the search's folder chip keeps its
-// notes, and its Properties name the page it is inside. A Notion export's
+// notes, and its Properties name the page it is inside. A page's row and
+// card count the pages inside it, a pinned page inside shows its path and
+// its preview, and Quick open, the [[ picker and the @ menu match it on its
+// top's folder and its label's name. A Notion export's
 // pages inside pages come in as sub-pages, reviewed under their page, and
 // a page's export takes the pages inside it with "Include pages inside".
+// The panel follows a page made, moved in or taken out elsewhere when the
+// window comes back; its rows have the page menu and drag, and a page
+// dropped on a panel row, a crumb or a library row or card goes inside
+// that page (never into one inside it), one dropped on Home to the library.
 export async function subPageScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("sub-pages")) return;
@@ -48,6 +58,10 @@ export async function subPageScenarios(env) {
   const panel = (page) => page.locator(".subPagesPanel");
   const panelRows = (page) => panel(page).locator(".subPageRow:not(.subPageNew)");
   const crumbs = (page) => page.locator(".pageCrumbs .crumbBtn");
+  // a page picker's rows (library/PagePicker.jsx) as "title path": the
+  // page's title, then the pages a page inside is in
+  const optionTexts = (dialog) => dialog.getByRole("option").evaluateAll((els) => els.map((el) =>
+    [el.querySelector("strong"), el.querySelector("small")].filter(Boolean).map((n) => n.innerText.trim()).join(" ")));
   let childOne = "", childTwo = "";
 
   await step("sub-pages: /page in a filed page makes a page inside it, kept out of the library; the panel lists it and its crumbs lead back", async () => {
@@ -156,6 +170,9 @@ export async function subPageScenarios(env) {
       const dialog = page.getByRole("dialog", { name: "Move into page" });
       await dialog.waitFor();
       await dialog.getByRole("textbox").fill("Family");
+      // the page by its title, then the page inside it by its path
+      await until(async () => (await optionTexts(dialog)).join("|") === "Family top|Child one Family top",
+        { what: "the picker matches the title and the path" });
       await dialog.getByRole("option").filter({ has: page.locator("strong", { hasText: /^Family top$/ }) }).click();
       await fileRow(page, "Loose page").waitFor({ state: "detached" });
       const stored = await props(loose.id);
@@ -431,6 +448,187 @@ export async function subPageScenarios(env) {
       await page.locator(".homeFindInput").fill("Inside label");
       await page.locator(".homeSearchBanner").waitFor({ timeout: 15000 });
       assertEq(await found(page).count(), 0, "a folder its top is not in does not find it");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // Hearth top, filed in Quartz drawer, holds Ledger inside, which is
+  // pinned, labelled Zircon tag, has a note and carries a folder of its own
+  // (Basalt stray, as an import or a merge can leave): the library says the
+  // top holds a page, the pinned card shows the page inside by its path and
+  // its first note, and Quick open, the [[ picker and the @ menu find it by
+  // its top's folder and its label's name, never by the folder it carries.
+  await step("sub-pages: a page with pages inside says so on its row and card; a pinned page inside shows its path and preview; the pickers match its top's folder and its label by name", async () => {
+    const quartz = await user.folder("Quartz drawer");
+    const stray = await user.folder("Basalt stray");
+    const zircon = await user.label("Zircon tag");
+    const hearth = await user.api("/api/pages", { method: "POST", body: { title: "Hearth top", folders: [quartz] } });
+    const ledger = await user.api("/api/pages", { method: "POST", body: { title: "Ledger inside", parent_page: hearth.id } });
+    // a later set keeps the folder: only setting parent_page drops them
+    await user.api(`/api/pages/${ledger.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "ledgernote", parent: ledger.id, position: "a0", content: "ledger first note" },
+      { op: "set", id: ledger.id, props: { labels: [zircon], folders: [stray], pinned: new Date().toISOString() } }] } });
+    assertEq(JSON.stringify((await props(ledger.id)).folders), JSON.stringify([stray]), "the page inside carries a folder of its own");
+    const src = await user.api("/api/pages", { method: "POST", body: { title: "Picker source page" } });
+    await user.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "ledgersrc", parent: src.id, position: "a0", content: "pick from here" }] } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, home);
+    try {
+      const holds = fileRow(page, "Hearth top").locator(".pagesTagBadge");
+      await holds.waitFor({ timeout: 15000 });
+      assertEq(await holds.innerText(), "1", "the row counts the page inside");
+      assertEq(await holds.getAttribute("title"), "1 page inside");
+      const pinned = page.locator(".pinnedStrip .pageCard", { hasText: "Ledger inside" });
+      await pinned.waitFor({ timeout: 15000 });
+      assertEq(await pinned.locator(".insideTagBadge").innerText(), "Hearth top", "the pinned card names the page it is in");
+      assertEq(await pinned.locator(".folderTagBadge").count(), 0, "and shows no folder chip");
+      assert((await pinned.locator(".pageCardPreview").innerText()).includes("ledger first note"), "its cover previews its first note");
+      await page.getByRole("button", { name: "Grid view", exact: true }).click();
+      const card = page.locator(".fileGrid .pageCard", { has: page.locator(".pageCardTitle", { hasText: /^Hearth top$/ }) });
+      await card.waitFor({ timeout: 15000 });
+      assertEq(await card.locator(".pagesTagBadge").innerText(), "1", "the card counts it too");
+      await page.getByRole("button", { name: "List view", exact: true }).click();
+
+      // Quick open: the top's folder and the title; the folder it carries
+      // neither shows on its row nor finds it
+      await page.keyboard.press("Control+p");
+      const dialog = page.getByRole("dialog", { name: "Open a page" });
+      await dialog.waitFor();
+      const query = dialog.getByRole("textbox", { name: "Search pages by title or label" });
+      await query.fill("quartz ledger");
+      const option = dialog.locator('[role="option"][data-kind="page"]').filter({ hasText: "Ledger inside" });
+      await option.waitFor();
+      assertEq(await dialog.locator('[role="option"][data-kind="page"]').count(), 1, "only the page inside answers");
+      await option.locator(".labelTagBadge", { hasText: "Zircon tag" }).waitFor();
+      assertEq(await option.locator(".folderTagBadge").count(), 0, "its row shows its label but not the folder it carries");
+      await query.fill("basalt stray");
+      await dialog.locator('[role="option"][data-kind="folder"]', { hasText: "Basalt stray" }).waitFor();
+      assertEq(await option.count(), 0, "the folder it carries does not find it");
+      await page.keyboard.press("Escape");
+
+      // the [[ picker and the @ menu in a note of another page
+      await page.goto(at(src.id));
+      await editRow(page, "pick from here");
+      // the page's row, not a block row under its path
+      const pageRow = (popup) => popup.locator(".refPopupItem").filter({ has: page.locator(".refPopupText", { hasText: /^Ledger inside$/ }) });
+      const picker = page.locator('.refPopup[data-guide="editor.refSearch"]');
+      // a query typed, its row checked, the query taken out again
+      const typed = async (text, check) => {
+        await page.keyboard.type(text);
+        await check();
+        await page.keyboard.press("Escape");
+        for (let i = 0; i < text.length; i++) await page.keyboard.press("Backspace");
+      };
+      await typed(" [[quartz ledger", async () => {
+        await pageRow(picker).waitFor();
+        assertEq(await pageRow(picker).locator(".refPopupMeta").innerText(), "Page · Hearth top", "the [[ row names where it is");
+      });
+      await typed(" [[zircon", () => pageRow(picker).waitFor());
+      await page.keyboard.type(" @zircon");
+      const menu = page.locator(".mentionMenu");
+      await pageRow(menu).waitFor();
+      assert((await pageRow(menu).innerText()).includes("Hearth top"), "the @ row names where it is");
+      await page.keyboard.press("Escape");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // A selection holding a library page and a page inside it (the filter
+  // box lists both): the moves keep to the topmost page, Move to folder
+  // files the library page and says it left the other out.
+  await step("sub-pages: a page selected with a page inside it moves as one; Move to folder files the library page and says what it left out", async () => {
+    const selBin = await user.folder("Sel bin");
+    const outer = await user.api("/api/pages", { method: "POST", body: { title: "Sel outer" } });
+    const inner = await user.api("/api/pages", { method: "POST", body: { title: "Sel inner", parent_page: outer.id } });
+    const target = await user.api("/api/pages", { method: "POST", body: { title: "Sel target" } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, home);
+    const status = () => page.locator(".statusPill .pillText").allTextContents();
+    // both pages selected through the filter box, the menu opened on the page inside
+    const pickBoth = async () => {
+      await page.locator(".homeFindInput").fill("Sel");
+      await fileRow(page, "Sel inner").waitFor({ timeout: 15000 });
+      await fileRow(page, "Sel outer").click();
+      await fileRow(page, "Sel inner").click({ modifiers: ["Control"] });
+      await fileRow(page, "Sel inner").click({ button: "right" });
+    };
+    try {
+      await page.locator(".fileList").waitFor({ timeout: 15000 });
+      await pickBoth();
+      const flyoutRow = page.locator(".ctxMenu .ctxSubTrigger", { hasText: "Move to folder" });
+      await flyoutRow.click();
+      const flyout = page.getByRole("menu", { name: "Move to folder", exact: true });
+      await flyout.waitFor();
+      await flyout.locator(".ctxMenuItem", { hasText: "1 page inside another page is left out: it is filed with its top." }).waitFor();
+      await flyout.locator(".ctxMenuItem", { hasText: "Sel bin" }).click();
+      await until(async () => JSON.stringify((await props(outer.id)).folders) === JSON.stringify([selBin]), { what: "the library page filed" });
+      assertEq((await props(inner.id)).folders, undefined, "the page inside gets no folders of its own");
+      await until(async () => (await status()).some((text) => text.includes("Added 1 page to “Sel bin”. Left out 1 page inside another page, filed with its top.")),
+        { what: "the status says what it left out" });
+
+      // Move into page…: the page inside goes along inside its page
+      await pickBoth();
+      await page.locator(".ctxMenuItem", { hasText: "Move into page…" }).click();
+      const dialog = page.getByRole("dialog", { name: "Move into page" });
+      await dialog.waitFor();
+      assert((await dialog.innerText()).includes("The page goes inside the one you pick"), `one page moves: ${await dialog.innerText()}`);
+      await dialog.getByRole("textbox").fill("Sel target");
+      await dialog.getByRole("option").filter({ has: page.locator("strong", { hasText: /^Sel target$/ }) }).click();
+      await until(async () => (await props(outer.id)).parent_page === target.id, { what: "the page inside the target" });
+      assertEq((await props(inner.id)).parent_page, outer.id, "the page inside it stays inside it");
+      assertEq(await parentsOf([outer.id, inner.id]), `${target.id}|${outer.id}`, "the listing reads the tree");
+
+      // Move to library: the topmost page comes out, the one inside it stays
+      await pickBoth();
+      await page.locator(".ctxMenuItem", { hasText: "Move to library" }).click();
+      await until(async () => !(await props(outer.id)).parent_page, { what: "the page back in the library" });
+      assertEq((await props(inner.id)).parent_page, outer.id, "the page inside it still inside it");
+      await until(async () => (await status()).some((text) => text.includes("Moved 1 page to the library.")), { what: "one page moved" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // Two pages inside two pages, both called "Twin": the move pickers name
+  // each by its path and match on it, as Ctrl+P does.
+  await step("sub-pages: Move block to page and Move into page… name a page inside by its path and match on it", async () => {
+    const alpha = await user.api("/api/pages", { method: "POST", body: { title: "Twin home Alpha" } });
+    const beta = await user.api("/api/pages", { method: "POST", body: { title: "Twin home Beta" } });
+    await user.api("/api/pages", { method: "POST", body: { title: "Twin", parent_page: alpha.id } });
+    const twinB = await user.api("/api/pages", { method: "POST", body: { title: "Twin", parent_page: beta.id } });
+    const src = await user.api("/api/pages", { method: "POST", body: { title: "Twin source" } });
+    await user.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "twinmove", parent: src.id, position: "a0", content: "a block for a twin" }] } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, at(src.id));
+    try {
+      const wrap = page.locator(".sortableBlockWrap", { hasText: "a block for a twin" }).first();
+      await wrap.waitFor({ timeout: 15000 });
+      await wrap.hover();
+      await wrap.locator(".dragHandle").click();
+      await page.locator(".ctxMenuItem", { hasText: "Move to page…" }).click();
+      const dialog = page.getByRole("dialog", { name: "Move block to page" });
+      await dialog.waitFor();
+      await dialog.getByRole("textbox").fill("Twin");
+      const twins = async () => (await optionTexts(dialog)).filter((text) => /^Twin Twin home/.test(text)).sort();
+      await until(async () => (await twins()).length === 2, { what: "both twins listed" });
+      assertEq((await twins()).join("|"), "Twin Twin home Alpha|Twin Twin home Beta", "each twin names the page it is in");
+      await dialog.getByRole("textbox").fill("twin beta");
+      await until(async () => (await optionTexts(dialog)).join("|") === "Twin home Beta|Twin Twin home Beta",
+        { what: "the parent by its title, then the twin inside it by its path" });
+      await dialog.getByRole("option").nth(1).click();
+      await until(async () => (await user.api(`/api/blocks/${twinB.id}/subtree`)).block.children.some((b) => b.content === "a block for a twin"),
+        { what: "the block moved into the twin picked" });
+
+      // Move into page… matches the path the same way
+      await page.locator(".tabStrip .tab", { hasText: "Twin source" }).first().click({ button: "right" });
+      await page.locator(".ctxMenuItem", { hasText: "Move into page…" }).click();
+      const into = page.getByRole("dialog", { name: "Move into page" });
+      await into.waitFor();
+      await into.getByRole("textbox").fill("twin alpha");
+      await until(async () => (await optionTexts(into)).join("|") === "Twin home Alpha|Twin Twin home Alpha",
+        { what: "the twin inside Alpha by its path" });
+      await page.keyboard.press("Escape");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -716,6 +914,175 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await choice(dialog, "Gamma").click();
       assertEq(await choice(dialog, "Next").count(), 0, "Gamma exports straight from the first step");
       await choice(dialog, "Close Export").click();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // One HTML5 drag, the events a browser sends: dragstart on `source`,
+  // dragover then drop on the middle of `target`; `over` runs between the
+  // two, while the drag is over the target.
+  const drag = async (page, source, target, over) => {
+    const dt = await page.evaluateHandle(() => new DataTransfer());
+    await source.dispatchEvent("dragstart", { dataTransfer: dt });
+    const box = await target.boundingBox();
+    const at = { dataTransfer: dt, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 };
+    await target.dispatchEvent("dragover", at);
+    if (over) await over();
+    await target.dispatchEvent("drop", at);
+  };
+  const dragOver = (target) => until(() => target.evaluate((el) => el.classList.contains("dragOver")), { what: "the target shows the drop" });
+  const homeButton = (page) => page.getByRole("button", { name: "Home", exact: true });
+  const statusOf = (page) => page.locator(".statusPill .pillText").allTextContents();
+  const said = (page, text) => until(async () => (await statusOf(page)).some((line) => line.includes(text)), { what: `the status says "${text}"` });
+
+  // A page made inside the open page, or moved into it or out of it,
+  // elsewhere writes nothing to its room: the panel follows when the window
+  // comes back, with the listing (at most every 15 s, so the page's clock
+  // is put past that first).
+  await step("sub-pages: the panel follows a page another client makes inside the open page, moves in or takes out, when the window comes back", async () => {
+    const nest = await user.api("/api/pages", { method: "POST", body: { title: "Wake nest" } });
+    const first = await user.api("/api/pages", { method: "POST", body: { title: "Wake first", parent_page: nest.id } });
+    const mover = await user.api("/api/pages", { method: "POST", body: { title: "Wake mover" } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, at(nest.id));
+    const wake = () => page.evaluate(() => {
+      if (window.__e2eSkew === undefined) {
+        const real = Date.now.bind(Date);
+        window.__e2eSkew = 0;
+        Date.now = () => real() + window.__e2eSkew;
+      }
+      window.__e2eSkew += 20000;
+      window.dispatchEvent(new Event("focus"));
+    });
+    try {
+      await until(async () => (await panelRows(page).allInnerTexts()).join("|") === "Wake first", { what: "the panel lists the page inside" });
+      // another client makes one inside and moves one in
+      await user.api("/api/pages", { method: "POST", body: { title: "Wake made", parent_page: nest.id } });
+      await user.api(`/api/blocks/${mover.id}`, { method: "PUT", body: { properties: { parent_page: nest.id } } });
+      await page.waitForTimeout(400);
+      assertEq(await panelRows(page).allInnerTexts().then((texts) => texts.join("|")), "Wake first", "nothing reaches the open page's room");
+      await wake();
+      await until(async () => (await panelRows(page).allInnerTexts()).join("|") === "Wake first|Wake mover|Wake made",
+        { what: "the panel lists them, in the library's order" });
+      assert((await panel(page).locator(".backlinksHead").innerText()).includes("3 pages inside"), "and counts them");
+      // and takes one out
+      await user.api(`/api/blocks/${first.id}`, { method: "PUT", body: { properties: { parent_page: null } } });
+      await wake();
+      await until(async () => (await panelRows(page).allInnerTexts()).join("|") === "Wake mover|Wake made", { what: "the page taken out leaves the panel" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // A Pages inside row has the library's page menu, less Rename, and drags
+  // as a library row does: onto another row or a crumb it goes inside that
+  // page, onto the topbar's Home to the library, filed where its top is.
+  await step("sub-pages: a Pages inside row has the page menu; dragged onto another row, a crumb or Home it moves inside that page or to the library", async () => {
+    const dshelf = await user.folder("Drag shelf");
+    const dtop = await user.api("/api/pages", { method: "POST", body: { title: "Drag top", folders: [dshelf] } });
+    const alpha = await user.api("/api/pages", { method: "POST", body: { title: "Drag alpha", parent_page: dtop.id } });
+    const beta = await user.api("/api/pages", { method: "POST", body: { title: "Drag beta", parent_page: dtop.id } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, at(dtop.id));
+    const rowOf = (title) => panelRows(page).filter({ has: page.locator(".backlinkPageTitle", { hasText: new RegExp(`^${title}$`) }) });
+    const menuItem = (name) => page.locator(".ctxMenu .ctxMenuItem", { hasText: name });
+    const rows = () => panelRows(page).allInnerTexts().then((texts) => texts.join("|"));
+    try {
+      await until(async () => (await rows()) === "Drag alpha|Drag beta", { what: "the panel lists both" });
+      // the row's menu: a right-click, or its "⋯"
+      await rowOf("Drag beta").click({ button: "right" });
+      for (const name of ["Open", "New page inside", "Pin", "Add label", "Move into page…", "Move to library", "Duplicate", "Copy link", "Share…", "Export…", "Properties", "Delete"]) {
+        assertEq(await menuItem(name).count() > 0, true, `the menu has ${name}`);
+      }
+      assertEq(await menuItem("Rename").count(), 0, "no Rename, which is the listing's");
+      assertEq(await page.locator(".ctxMenu .ctxSubTrigger", { hasText: "Move to folder" }).count(), 0, "no Move to folder for a page inside another");
+      await page.keyboard.press("Escape");
+      await page.locator(".ctxMenu").waitFor({ state: "detached" });
+      await rowOf("Drag alpha").hover();
+      await rowOf("Drag alpha").getByRole("button", { name: "Actions", exact: true }).click();
+      await menuItem("Duplicate").click();
+      await until(async () => (await rows()) === "Drag alpha|Drag beta|Drag alpha (copy)", { what: "the copy is beside it, in the panel" });
+      await rowOf("Drag alpha \\(copy\\)").click({ button: "right" });
+      await menuItem("Delete").click();
+      await page.locator(".confirmModal").getByRole("button", { name: "Delete", exact: true }).click();
+      await until(async () => (await rows()) === "Drag alpha|Drag beta", { what: "the deleted copy leaves the panel" });
+
+      // onto another row: inside it
+      await drag(page, rowOf("Drag beta"), rowOf("Drag alpha"), () => dragOver(rowOf("Drag alpha")));
+      await until(async () => (await props(beta.id)).parent_page === alpha.id, { what: "inside the row it was dropped on" });
+      await until(async () => (await rows()) === "Drag alpha", { what: "it leaves the panel" });
+      await said(page, "Moved 1 page into “Drag alpha”.");
+      // onto itself: nothing
+      await drag(page, rowOf("Drag alpha"), rowOf("Drag alpha"));
+      assertEq((await props(alpha.id)).parent_page, dtop.id, "a drag let go where it began moves nothing");
+
+      // onto a crumb: inside that page, a level up
+      await rowOf("Drag alpha").click();
+      await until(() => blockOf(page) === alpha.id, { what: "the row opens its page" });
+      await until(async () => (await rows()) === "Drag beta", { what: "its panel" });
+      const topCrumb = crumbs(page).filter({ hasText: "Drag top" });
+      await drag(page, rowOf("Drag beta"), topCrumb, () => dragOver(topCrumb));
+      await until(async () => (await props(beta.id)).parent_page === dtop.id, { what: "inside the crumb's page" });
+      await panel(page).waitFor({ state: "detached" });
+
+      // onto Home: to the library, filed in its top's folder
+      await topCrumb.click();
+      await until(async () => (await rows()) === "Drag alpha|Drag beta", { what: "both inside the top again" });
+      await drag(page, rowOf("Drag beta"), homeButton(page), () => dragOver(homeButton(page)));
+      await until(async () => !(await props(beta.id)).parent_page, { what: "out of the page" });
+      assertEq(JSON.stringify((await props(beta.id)).folders), JSON.stringify([dshelf]), "filed in its former top's folder");
+      await until(async () => (await rows()) === "Drag alpha", { what: "it leaves the panel" });
+      await said(page, "Moved 1 page to the library.");
+      assert(blockOf(page) === dtop.id, "the page stays open");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // A library row or card takes a dropped page inside, never a page into
+  // itself or a page inside it; a page inside another dropped on Home goes
+  // to the library, and a folder drag is no page drag.
+  await step("sub-pages: a page dropped on a library row or card goes inside it, never into a page inside it; one inside another dropped on Home goes to the library", async () => {
+    const dropTop = await user.api("/api/pages", { method: "POST", body: { title: "Drop top" } });
+    const dropInner = await user.api("/api/pages", { method: "POST", body: { title: "Drop inner", parent_page: dropTop.id } });
+    const dropLoose = await user.api("/api/pages", { method: "POST", body: { title: "Drop loose" } });
+    const dropCard = await user.api("/api/pages", { method: "POST", body: { title: "Drop card" } });
+    const dropBin = await user.folder("Drop bin");
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, home);
+    try {
+      // a list row
+      await fileRow(page, "Drop loose").waitFor({ timeout: 15000 });
+      await drag(page, fileRow(page, "Drop loose"), fileRow(page, "Drop top"), () => dragOver(fileRow(page, "Drop top")));
+      await until(async () => (await props(dropLoose.id)).parent_page === dropTop.id, { what: "inside the row's page" });
+      await fileRow(page, "Drop loose").waitFor({ state: "detached" });
+      await said(page, "Moved 1 page into “Drop top”.");
+      assertEq((await props(dropLoose.id)).folders, undefined, "with no folders of its own");
+
+      // a grid card
+      await page.getByRole("button", { name: "Grid view", exact: true }).click();
+      const card = (title) => page.locator(".fileGrid .pageCard", { has: page.locator(".pageCardTitle", { hasText: new RegExp(`^${title}$`) }) });
+      await card("Drop card").waitFor({ timeout: 15000 });
+      await drag(page, card("Drop card"), card("Drop top"), () => dragOver(card("Drop top")));
+      await until(async () => (await props(dropCard.id)).parent_page === dropTop.id, { what: "inside the card's page" });
+      await card("Drop card").waitFor({ state: "detached" });
+      await page.getByRole("button", { name: "List view", exact: true }).click();
+
+      // a folder dragged onto a page row is no page drag: nothing moves
+      await drag(page, page.locator(".fileList .folderRow", { hasText: "Drop bin" }), fileRow(page, "Drop top"));
+      assertEq((await user.api("/api/blocks/folders/subtree")).block.children.find((f) => f.id === dropBin)?.id, dropBin, "the folder stays at the top level");
+
+      // the filter box lists the pages inside: one dropped on Home goes to
+      // the library; a page dropped on a page inside it is refused
+      await page.locator(".homeFindInput").fill("Drop");
+      await fileRow(page, "Drop inner").waitFor({ timeout: 15000 });
+      await drag(page, fileRow(page, "Drop top"), fileRow(page, "Drop inner"));
+      await said(page, "A page can’t go inside a page that is inside it.");
+      assertEq((await props(dropTop.id)).parent_page, undefined, "the page stays in the library");
+      assertEq((await props(dropInner.id)).parent_page, dropTop.id, "and the page inside it inside it");
+      await drag(page, fileRow(page, "Drop card"), homeButton(page), () => dragOver(homeButton(page)));
+      await until(async () => !(await props(dropCard.id)).parent_page, { what: "the page inside back in the library" });
+      await said(page, "Moved 1 page to the library.");
+      await drag(page, fileRow(page, "Drop top"), homeButton(page));
+      await said(page, "Already in the library.");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

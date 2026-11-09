@@ -3,7 +3,7 @@ and the ``notes-pdf`` export mode end to end."""
 
 import io
 
-from conftest import make_folder, make_page, require_math_renderer, workspace_of, guest_name
+from conftest import files_in, make_folder, make_page, require_math_renderer, workspace_of, guest_name
 from test_pdf_export import _object_kinds, _open
 
 from gamma.note_markup import MATH, TEXT
@@ -433,14 +433,14 @@ def test_cid_font_is_one_indirect_object_per_writer_and_lets_the_writer_go():
 
 
 def test_pasted_images_are_embedded(guest):
-    from gamma.db import ws_uploads_dir
+    from gamma import storage
 
     up = guest.post("/api/upload-image",
                     files={"file": ("shot.png", _blank_png(24, 16), "image/png")})
     assert up.status_code == 200, up.text
     src = up.json()["url"]
     pdf = render_document([_page("With a picture", None, [_block("b1", f"look:\n![shot]({src})")])],
-                          uploads_dir=ws_uploads_dir(workspace_of(guest_name())))
+                          stored=storage.files(workspace_of(guest_name())))
     assert "image" in _object_kinds(pdf), "the pasted image should be drawn as a page image"
     assert src not in _text(pdf)
 
@@ -450,7 +450,7 @@ def test_a_large_screenshot_with_alpha_is_embedded(guest):
     is drawn as the picture, not its alt text."""
     from PIL import Image
 
-    from gamma.db import ws_uploads_dir
+    from gamma import storage
 
     shot = Image.new("RGBA", (3000, 2000), (0, 0, 0, 0))
     shot.paste((40, 90, 200, 255), (100, 100, 2900, 1900))
@@ -459,7 +459,7 @@ def test_a_large_screenshot_with_alpha_is_embedded(guest):
     up = guest.post("/api/upload-image", files={"file": ("shot.png", buf.getvalue(), "image/png")})
     assert up.status_code == 200, up.text
     pdf = render_document([_page("Screenshot", None, [_block("b1", f"![a screenshot]({up.json()['url']})")])],
-                          uploads_dir=ws_uploads_dir(workspace_of(guest_name())))
+                          stored=storage.files(workspace_of(guest_name())))
     assert "a screenshot" not in _text(pdf)
     doc = _open(pdf)
     try:
@@ -619,7 +619,7 @@ def test_handwriting_keeps_the_pencil_s_grain_at_its_scale_with_one_tile_per_col
         (tmp_path / f"{name * 24}.ink").write_bytes(inkmod.dumps(data))
         return f"/api/uploads/{name * 24}.ink"
 
-    cv = _Canvas(PdfWriter(), uploads_dir=tmp_path)
+    cv = _Canvas(PdfWriter(), stored=files_in(tmp_path))
     black, red = upload("a", "#000000"), upload("b", "#dc2626")
     assert cv.y == MARGIN_TOP and cv.ink(black, 60, 300)    # scale 300 / 600: drawn at (60, 54), half size
     assert cv.ink(red, 60, 300)

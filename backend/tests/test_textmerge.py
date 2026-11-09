@@ -52,6 +52,43 @@ def test_an_insertion_inside_a_span_the_other_side_deleted_survives():
     assert textmerge.merge("hello world", "hello wor!ld", "hello") == ("hello!", True)
 
 
+def test_an_insertion_beside_text_it_repeats_is_not_turned_around():
+    # "cool " typed in front of "cat" is also "ool c" typed after its "c";
+    # merged with a delete of "cat " that reading kept "ool c" and lost the
+    # "c" typed in front of it: "the ool csat"
+    assert textmerge.merge("the cat sat", "the cool cat sat", "the sat") == ("the cool sat", True)
+    assert textmerge.merge("the cat sat", "the sat", "the cool cat sat") == ("the cool sat", True)
+    assert textmerge.merge("we see the tree", "we see the tall tree", "we see the") == ("we see the tall", True)
+    # a word typed in front of a deleted last word, which reads as " beta"
+    assert textmerge.merge("alpha beta", "alpha TOKEN beta", "alpha") == ("alpha TOKEN", True)
+
+
+def test_a_deletion_beside_text_it_repeats_is_read_around_the_other_insertion():
+    # "alpha " and "omega " deleted in one go read as " omega alpha" up to
+    # the end; the word the other side typed before the last "alpha" then
+    # sat inside it and lost its space
+    base = "R87CKLGD alpha alpha omega alpha"
+    ours, theirs = "R87CKLGD alpha alpha", "R87CKLGD alpha alpha omega XWR8692R alpha"
+    assert textmerge.merge(base, ours, theirs) == ("R87CKLGD alpha XWR8692R alpha", True)
+    assert textmerge.merge(base, theirs, ours) == ("R87CKLGD alpha XWR8692R alpha", True)
+    # a deleted word that reads as starting one letter in, inside the next
+    # word's first letter, keeps a word typed in front of that next word whole
+    base = "B3G49CWV DTS463RH DLDVJDRT X9TFFM8P"
+    ours, theirs = "B3G49CWV DTS463RH JBVW2KD4 DLDVJDRT X9TFFM8P", "B3G49CWV DLDVJDRT X9TFFM8P"
+    assert textmerge.merge(base, ours, theirs) == ("B3G49CWV JBVW2KD4 DLDVJDRT X9TFFM8P", True)
+
+
+def test_tokens_typed_and_deleted_around_each_other_stay_whole():
+    # the crowd soak's words (frontend/tests/e2e/collabSoak.mjs): a token
+    # typed between two words the other side deleted, and one typed in
+    # front of a deleted token
+    assert textmerge.merge("zeta WSVQ5R6L theta RJBFVZZM", "theta RJBFVZZM",
+                           "zeta WLXCVQTR WSVQ5R6L theta RJBFVZZM") == ("WLXCVQTR theta RJBFVZZM", True)
+    assert textmerge.merge("delta DDQ4JDT7 WS3CP5DN FBNR5KTF lambda 7VP9QHHZ",
+                           "delta DDQ4JDT7 WS3CP5DN FPRT65ST FBNR5KTF lambda",
+                           "delta DDQ4JDT7 WS3CP5DN lambda 7VP9QHHZ") == ("delta DDQ4JDT7 WS3CP5DN FPRT65ST lambda", True)
+
+
 def test_a_span_both_replaced_keeps_the_stored_text():
     assert textmerge.merge("The cat sat", "The dog sat", "The cow sat") == ("The cow sat", False)
     # the rest of the same change still applies

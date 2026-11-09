@@ -6,7 +6,7 @@ An engine is picked like a model: the viewer sends ``model: "engine:<id>"``
 to /api/ai/translate, which then calls ``translate()`` here instead of a chat
 model. No AI provider is needed for that path.
 
-Credentials are per account (Settings → Reading → Translation), stored in
+Credentials are per account (Settings → Language and Translation), stored in
 users.db ``user_prefs`` under the reserved account-wide ``translate-engines``
 key as {engine id: {field: value, "updated_at"}}. Like ``ai-settings`` the
 generic /api/prefs endpoints refuse the key; the only read path is the
@@ -89,7 +89,7 @@ class EngineError(Exception):
 # consecutive failures are counted in memory (a restart starts fresh). From
 # FREE_ALERT_AFTER on, the server log gets one warning per streak, and each
 # account that met the failures gets a notice (notices.free_translate_failing)
-# pointing at Settings → Reading, whose Microsoft row names the error. One
+# pointing at Settings → Language and Translation, whose Microsoft row names the error. One
 # success ends the streak.
 FREE_ENGINE = "microsoft"
 FREE_ALERT_AFTER = 3
@@ -233,7 +233,7 @@ def credentials(user_id: str, engine: str) -> dict:
     conf = load(user_id).get(engine)
     if not _complete(engine, conf):
         raise HTTPException(status_code=503,
-                            detail=f"{ENGINES[engine]['label']} is not set up — add its key in Settings → Reading")
+                            detail=f"{ENGINES[engine]['label']} is not set up — add its key in Settings → Language and Translation")
     return conf or {}
 
 

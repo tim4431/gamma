@@ -59,7 +59,7 @@ from . import ink as inkmod
 from . import notability as nb
 from . import notability_map as nmap
 from .ai_pictures import sniff
-from .blocks_store import (FOLDERS, filing, folder_inserts, folder_paths, insert_page_tree, load_props,
+from .blocks_store import (FOLDERS, filed_folders, folder_inserts, folder_paths, insert_page_tree, load_props,
                            new_block_id, write_lock)
 from .import_review import destination, validate_selection
 from .import_staging import MIN_FREE_BYTES
@@ -361,7 +361,8 @@ class AppImport:
             page_id, title, folders, kind = earlier["id"], earlier["title"], earlier["folders"], earlier["kind"]
         else:
             page_id, title, props = found
-            folders = [self.paths[f] for f in filing(props, FOLDERS) if f in self.paths]
+            # where it is filed: a page inside another page by its top's folders
+            folders = [self.paths[f] for f in filed_folders(self.conn, page_id) if f in self.paths]
             kind = "pdf" if props.get("doc_id") else "page"
         self.report["pages_skipped"] += 1
         self.report["pages"].append({"id": page_id, "title": title, "folders": folders,
@@ -429,7 +430,7 @@ class AppImport:
                 conn.rollback()
                 found = load_props(row[2])
                 entry.update(id=row[0], title=row[1], action="skip", kind="pdf" if found.get("doc_id") else "page",
-                             folders=[paths[f] for f in filing(found, FOLDERS) if f in paths])
+                             folders=[paths[f] for f in filed_folders(conn, row[0]) if f in paths])
                 self.report["pages_skipped"] += 1
                 return False
             path = [d.strip() for d in dirs if d.strip()]

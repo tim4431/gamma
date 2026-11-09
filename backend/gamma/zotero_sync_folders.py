@@ -7,7 +7,7 @@ and the rows go in one transaction, Zotero's writes after it, then their
 outcomes on the rows. A trash on either side never strips an item's
 membership: a trashed collection leaves both sides of every item's merge
 (``_forget_collection``), and only a removal for good
-(``collections_gone``) drops it. A folder shared or kept on disk stays here
+(``collections_gone``) drops it. A folder shared or a synced vault stays here
 when Zotero trashes its collection (``detail.kept``), as it is, and a
 Zotero restore finds it whole: deleting it would end its share links and
 invitations for good. Of the engine's parts it imports only
@@ -45,7 +45,7 @@ def collections_due(r: Round) -> bool:
 
 def _kept_folders(ws: str, ids) -> set[str]:
     """The folders among ``ids`` that a Zotero trash leaves here: shared (a
-    share link, the invitations mailed for it) or kept on disk by the
+    share link, the invitations mailed for it) or a synced vault of the
     desktop app (``folder_links``). Deleting one ends that for good, and a
     restore in Zotero could not bring it back."""
     from .routers.shares import shared_folders  # local: the routers import the engine

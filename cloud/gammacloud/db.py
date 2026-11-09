@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 BUSY_TIMEOUT = 10  # seconds a connection waits for another writer
 
 
@@ -66,8 +66,14 @@ def new_token(nbytes: int = 32) -> str:
 
 def new_id() -> str:
     """Account and grant ids: 20 url-safe chars, random — an account id is
-    the stable OIDC ``sub`` and never changes when the username does."""
-    return secrets.token_urlsafe(15)
+    the stable OIDC ``sub`` and never changes when the username does. Never
+    a leading ``-``: an id is typed on the command line (``manage.py
+    resolve-report <id>``), where argparse reads one as a flag and refuses
+    the command. One in sixty-four of the alphabet's first characters is
+    that dash, so a token drawn again costs nothing."""
+    while (out := secrets.token_urlsafe(15)).startswith("-"):
+        pass
+    return out
 
 
 # One Google/GitHub sign-in in flight (``identities.py``): ``redirect`` while
@@ -320,6 +326,41 @@ ZOTERO_CODES = """CREATE TABLE IF NOT EXISTS zotero_codes (
     expires_at TEXT NOT NULL
 )"""
 
+# A report of content or of an AI reply that a Gamma server forwarded
+# (``reports.py``, step 15): what kind of thing, why, the reporter's words,
+# the text reported and who wrote it as the server names them, the page it
+# is on, a public link when it has one, and the server. ``report_id`` is the
+# server's own id for it, so a retry stores nothing twice. ``account_id`` is
+# the reporter's Gamma Cloud account when the server sent their access token,
+# ``client_id`` the sign-in client the call was made as (by that token or the
+# client's own secret), '' for neither: the rest is the server's word. The
+# operator resolves a report (``state`` open / resolved) on the Admin page.
+REPORTS = """CREATE TABLE IF NOT EXISTS reports (
+    id TEXT PRIMARY KEY,
+    report_id TEXT NOT NULL,
+    server_url TEXT NOT NULL DEFAULT '',
+    server_name TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    details TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',
+    author TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    page_id TEXT NOT NULL DEFAULT '',
+    comment_id TEXT NOT NULL DEFAULT '',
+    link TEXT NOT NULL DEFAULT '',
+    reporter TEXT NOT NULL DEFAULT '',
+    account_id TEXT NOT NULL DEFAULT '',
+    client_id TEXT NOT NULL DEFAULT '',
+    ip TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    resolved_by TEXT NOT NULL DEFAULT '',
+    UNIQUE (server_url, report_id)
+)"""
+REPORTS_INDEX = "CREATE INDEX IF NOT EXISTS idx_reports_state ON reports(state, created_at)"
+
 SCHEMA = [
     # ``email`` is the address as it was typed; ``email_canon`` is the inbox
     # it reaches (accounts.py ``email_canon``), what uniqueness is judged on.
@@ -495,6 +536,8 @@ SCHEMA = [
     SERVER_INVITATIONS_INDEX,
     ZOTERO_REQUESTS,
     ZOTERO_CODES,
+    REPORTS,
+    REPORTS_INDEX,
 ]
 
 
@@ -670,6 +713,12 @@ def _step_zotero(conn) -> None:
     conn.execute(ZOTERO_CODES)
 
 
+def _step_reports(conn) -> None:
+    """The reports Gamma servers forward (content and AI replies)."""
+    conn.execute(REPORTS)
+    conn.execute(REPORTS_INDEX)
+
+
 STEPS: list = [
     # (version, name, fn(conn)) — append only; see docs/dev/cloud_accounts.md.
     (2, "external_logins", _step_external_logins),
@@ -685,6 +734,7 @@ STEPS: list = [
     (12, "fleet_containers", _step_fleet_containers),
     (13, "server_invitations", _step_server_invitations),
     (14, "zotero", _step_zotero),
+    (15, "reports", _step_reports),
 ]
 
 

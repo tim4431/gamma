@@ -133,7 +133,7 @@ export function Collapse({ open, still = false, children, className = "", ...res
   if (phase === "shut") return null;
   return (
     <div ref={ref} className={`collapse ${className}`.trim()} data-phase={phase}
-      inert={phase === "closing" ? "" : undefined} {...rest}>
+      inert={phase === "closing"} {...rest}>
       <div className="collapseBody" onScroll={moving ? (e) => { e.currentTarget.scrollTop = 0; } : undefined}>{children}</div>
     </div>
   );

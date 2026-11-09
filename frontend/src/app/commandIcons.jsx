@@ -7,9 +7,9 @@
 // here falls back to TerminalIcon — the palette's own ">" prompt.
 // FIXED_KEY_ICONS covers commands.js's fixedKeys() rows.
 import {
-  ArrowDownIcon, ArrowLeftIcon, ArrowUpIcon, BackspaceIcon, BoldIcon, BracesIcon, BugIcon, ChevronDownIcon, ChevronRightIcon,
+  ArrowDownIcon, ArrowLeftIcon, ArrowUpIcon, BackspaceIcon, BoldIcon, BookIcon, BracesIcon, BugIcon, ChevronDownIcon, ChevronRightIcon,
   ChevronUpIcon, ClipboardIcon, CodeIcon, CollapseIcon, CopyIcon, CornerDownLeftIcon, DatabaseIcon, DeleteLineIcon, DuplicateIcon,
-  DownloadIcon, ExpandIcon, ExportIcon, FilePlusIcon, FileTextIcon, FolderFilesIcon, HighlightIcon,
+  DownloadIcon, ExpandIcon, ExportIcon, FileIcon, FilePlusIcon, FileTextIcon, FolderFilesIcon, HighlightIcon,
   ImportIcon, IndentIcon, InfoIcon, InsertAboveIcon, InsertBelowIcon, ItalicIcon, KeyboardIcon, LanguagesIcon, LinkIcon,
   MarkdownIcon, MessageSquareIcon, OutdentIcon, OutlineIcon, PaperclipIcon, PaperIcon, PencilIcon, PlusIcon, QuoteMarkIcon,
   RectSelectIcon, RedoIcon, ScissorsIcon, SearchIcon, SettingsIcon, SigmaIcon, SlashIcon, SparklesIcon, SquareCheckIcon,
@@ -53,6 +53,9 @@ const COMMAND_ICONS = {
   "ink.selectAll": RectSelectIcon,
   "pdf.areaDrag": RectSelectIcon, // as the viewer's rectangle mode
   "pdf.peekOriginal": LanguagesIcon, // as the 文A button
+  "pdf.toggleTranslation": LanguagesIcon,
+  "pdf.translatePage": FileIcon, // as the translate menu's rows
+  "pdf.translateDocument": BookIcon,
   "block.up": ChevronUpIcon,
   "block.down": ChevronDownIcon,
   "block.moveUp": ArrowUpIcon,

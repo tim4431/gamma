@@ -35,12 +35,12 @@ def test_a_reupload_during_the_purge_keeps_the_file(monkeypatch):
     real_blocker = upload_gc.purge_blocker
     answers = []
 
-    def slow_blocker(conn, due, stored):
+    def slow_blocker(conn):
         # the user pastes the same picture while the purge checks the database
         paste = threading.Thread(target=lambda: answers.append(store_file(ws, DATA, ".png")))
         paste.start()
         time.sleep(0.3)
-        return real_blocker(conn, due, stored)
+        return real_blocker(conn)
 
     monkeypatch.setattr(upload_gc, "purge_blocker", slow_blocker)
     result = upload_gc.reconcile(ws)

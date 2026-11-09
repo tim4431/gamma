@@ -101,7 +101,7 @@ for (const [name, args] of [
   ["bcancel", 1], ["xcancel", 1], ["sout", 1], ["phantom", 1],
   ["hphantom", 1], ["vphantom", 1], ["smash", 1], ["mathstrut", 0],
   ["displaystyle", 0], ["textstyle", 0], ["scriptstyle", 0], ["limits", 0],
-  ["nolimits", 0], ["tag", 1], ["fbox", 1], ["substack", 1],
+  ["nolimits", 0], ["tag", 1], ["fbox", 1],
 ]) CATALOG.push({ name, ...(args ? { args } : {}) });
 // Braces with their label slot: caret in the brace, Tab hops to the label.
 CATALOG.push(
@@ -289,17 +289,33 @@ function commandMatch(c, query, abbr) {
 
 // The entries that match, best first — by tier, then cost, then catalog
 // order — each a copy carrying its `match`.
-function ranked(entries, matchOf, limit) {
+function ranked(entries, matchOf) {
   return entries.map((c, i) => [matchOf(c), i, c])
     .filter(([m]) => m)
     .sort(([a, i], [b, j]) => a.tier - b.tier || a.cost - b.cost || i - j)
-    .slice(0, limit)
     .map(([match, , c]) => ({ ...c, match }));
+}
+
+// A command the typed letters begin moves up to just before the first
+// match that extends it, wherever the catalog put it: "\tex" offers \text
+// before \textstyle, "\i" \in before \int, "\l" \lim before \limits. The
+// rest keep their order. Environments never move (aligned stays before
+// align, which needs display math).
+function headsFirst(rows, query) {
+  const q = query.toLowerCase();
+  const heads = rows.filter((c) => !c.env && c.name.toLowerCase().startsWith(q))
+    .sort((a, b) => a.name.length - b.name.length);
+  const out = new Set();
+  for (const c of rows) {
+    for (const h of heads) if (c.name.startsWith(h.name)) out.add(h);
+    out.add(c);
+  }
+  return [...out];
 }
 
 export function latexCompletions(query, limit = 8) {
   if (!query) return [];
-  return ranked(CATALOG, (c) => commandMatch(c, query, ABBR[query]), limit);
+  return headsFirst(ranked(CATALOG, (c) => commandMatch(c, query, ABBR[query])), query).slice(0, limit);
 }
 
 // Environment-name completions for the "\begin{prefix" trigger: every
@@ -312,7 +328,7 @@ export function envCompletions(prefix, limit = 12) {
     if (c.name.toLowerCase().startsWith(prefix.toLowerCase())) return { tier: 0, at: lead(prefix.length), cost: 0 };
     const inner = infixMatch(c.name, prefix);
     return inner && { tier: 1, ...inner };
-  }, limit);
+  }).slice(0, limit);
 }
 
 // What accepting a completion types, and where the caret lands within it

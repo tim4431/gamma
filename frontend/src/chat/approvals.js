@@ -174,6 +174,16 @@ export function declinedSummary(action, titleOf = () => "") {
   return `${why}: ${change}`;
 }
 
+// What the chip of a change a planning turn kept for the plan says
+// (`held`, chat/plan.js): the change it was, from the fields the server
+// copies onto the chip as it does for a declined one.
+export function heldSummary(action, titleOf = () => "") {
+  const change = approvalTitle({ tool: action?.tool, args: action?.args,
+    preview: { title: action?.title, mode: action?.mode, to: action?.args?.folder, count: action?.count } },
+  { titleOf, permission: action?.tool });
+  return t("Kept for the plan: {change}", { change });
+}
+
 // What a conversation decided for itself, kept in this browser per account
 // and conversation (named by its first message's id) and sent with each of
 // its requests. A new chat, or another conversation opened from history,

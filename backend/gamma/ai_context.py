@@ -13,14 +13,14 @@ from urllib.request import Request as URLRequest
 from . import ink as inkmod
 from .ai_pictures import picture as _picture
 from .ai_protocols.base import Protocol, reasoning_text
-from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filing, folder_paths, label_names,
+from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filed_folders, filing, folder_paths, label_names,
                            page_ancestors, page_attachment, page_for_doc, page_root_id, sub_pages)
 from .db import connect_data_db, connect_pages_db, page_now, safe_doc_id
 from .highlights import is_highlight, is_ink, page_of
 from .logbuf import log
 from .net_guard import guarded_urlopen
 from .notebook import is_sheet
-from .pdf_index import doc_pages, pdf_missing
+from .pdf_index import doc_pages, pdf_pending
 from .pdf_text import (MAX_PAGES, PAGE_LABEL_RE, PDF_EXTRACT_FAILED, extract_pages, extract_text,
                        extract_text_pages, outline, page_count, page_label, render_page)
 from .picture import is_picture, markdown_of, picture_page
@@ -133,7 +133,8 @@ def fair_shares(sizes: list[int], budget: int) -> list[int]:
     share keeps all of it, and what it leaves goes to the rest, again split
     evenly. Nothing is dropped, and one long item can't starve the others.
     The chat's composer computes the same (chat/passageBudget.js
-    ``fairShares``), so a chip says beforehand what the server keeps."""
+    ``fairShares``, held to it by tests/shared/passages.json), so a chip
+    says beforehand what the server keeps."""
     shares = [0] * len(sizes)
     left = max(0, budget)
     order = sorted(range(len(sizes)), key=lambda i: sizes[i])
@@ -152,7 +153,9 @@ def passage_budget(payload) -> int:
 def quoted_shares(payload, budget: int | None = None) -> tuple[list[int], list[int]]:
     """How many characters of each selected PDF passage and of each selected
     note text the question quotes: one budget shared by all of them, in the
-    order the request lists them (PDF passages, then note selections)."""
+    order the request lists them (PDF passages, then note selections).
+    Characters are code points, as the composer counts them too
+    (passageBudget.js ``charCount``)."""
     passages, notes = request_selections(payload), request_note_selections(payload)
     shares = fair_shares([len(p["text"]) for p in passages] + [len(s["text"]) for s in notes],
                          budget or passage_budget(payload))
@@ -595,15 +598,35 @@ def _omitted_calls(actions: list) -> str:
         f"{name} ×{count:,}" for name, count in counts.most_common()))
 
 
+def _newest_plan(history: list) -> tuple[int, int] | None:
+    """Where the newest replayed update_plan result is, ``(history_index,
+    action_index)``, or None."""
+    for i in range(len(history) - 1, -1, -1):
+        actions = _replayable(history[i])
+        for j in range(len(actions) - 1, _first_replayed(actions) - 1, -1):
+            if canonical_tool(actions[j]["tool"]) == "update_plan" and not actions[j].get("error"):
+                return i, j
+    return None
+
+
 def _elide_old_results(history: list) -> dict[int, set]:
     """Pick which replayed tool results keep their text: walk newest-first
-    under TOOL_REPLAY_BUDGET; everything older is elided. Returns
-    {history_index: {action_index, ...}} of the elided ones."""
+    under TOOL_REPLAY_BUDGET; everything older is elided. The newest plan
+    (update_plan's checklist, at most about 3.3k characters) is always kept
+    whole, its size taken from the budget first: the run that carries out
+    an approved plan, and a Continue after it, work from the whole plan
+    however much that run read. Returns {history_index: {action_index,
+    ...}} of the elided ones."""
     elided: dict[int, set] = {}
     budget = TOOL_REPLAY_BUDGET
+    plan = _newest_plan(history)
+    if plan:
+        budget -= len(str(_replayable(history[plan[0]])[plan[1]].get("result") or ""))
     for i in range(len(history) - 1, -1, -1):
         actions = _replayable(history[i])
         for j, action in reversed(list(enumerate(actions))[_first_replayed(actions):]):
+            if (i, j) == plan:
+                continue
             budget -= len(str(action.get("result") or ""))
             if budget < 0:
                 elided.setdefault(i, set()).add(j)
@@ -693,7 +716,8 @@ def prompt_tokens(messages: list, system: str = "", tools: list | None = None,
 def build_messages(payload, context: str, with_tools: bool = False,
                    located: list | None = None, message_context: str = "",
                    drop_turns: int = 0, picture_lines: str = "",
-                   files: list | None = None, quote_budget: int | None = None) -> list[dict]:
+                   files: list | None = None, quote_budget: int | None = None,
+                   turn_note: str = "") -> list[dict]:
     """Build common chat messages, injecting context once before a user turn.
 
     With ``with_tools`` (an agent chat), each saved reply's tool calls are
@@ -719,6 +743,10 @@ def build_messages(payload, context: str, with_tools: bool = False,
     of the conversation they sit at the same place in its head.
     ``quote_budget`` is what the question's quoted passages share (the
     request's ``passage_budget`` unless the window fit shrank it).
+    ``turn_note`` is an instruction for this message alone (a planning
+    turn's, ``ai_tools.PLANNING_TURN``): it ends the current user turn,
+    after the picture lines, like the selections it rides with the message
+    and never with a history turn.
     """
     history = [h for h in (payload.history or []) if not h.get("error")]
     if drop_turns > 0:
@@ -782,6 +810,8 @@ def build_messages(payload, context: str, with_tools: bool = False,
         content = f"{head}\n\nUser question: {content}"
     if picture_lines:
         content = f"{content}\n\n{picture_lines}"
+    if turn_note:
+        content = f"{content}\n\n{turn_note}"
     messages.append({"role": "user", "content": content,
                      **({"files": list(files)} if files and not context_used else {})})
     return messages
@@ -958,7 +988,7 @@ def ensure_indexed(ws: str, doc_id: str) -> bool:
     from .routers.search import _index_missing_async
     try:
         with connect_data_db(ws) as connection:
-            missing = pdf_missing(connection, [doc_id])
+            missing = pdf_pending(ws, connection, [doc_id])
     except sqlite3.OperationalError as e:
         log.warning(f"[ai_context] index check for {doc_id} failed: {e}")
         return False
@@ -1516,19 +1546,29 @@ def quoted_paths(paths: dict, folders: list[str]) -> str:
     return ", ".join(f'"{path}"' for path in paths_text(paths, folders))
 
 
-def page_properties_line(connection, properties: dict) -> str:
+def page_properties_line(connection, properties: dict, page_id: str = "") -> str:
     """One line describing what a page carries and how it is filed —
     folders (their paths), labels (their names), cached metadata (authors,
     year, venue, DOI/arXiv), web source, attachment — so the model can tell
     a paper from a note about one. "" when the page has none of it. A filed
-    page's folders and labels are read from their trees, one query each."""
+    page's folders and labels are read from their trees, one query each.
+    With ``page_id``, a page inside another page shows its path, the
+    titles of the pages it is inside and its own, and the folders it is
+    filed in, its top page's (``blocks_store.filed_folders``), never the
+    ones it may carry itself."""
     properties = properties or {}
     bits = []
-    folders = filing(properties, FOLDERS)
+    ancestors = page_ancestors(connection, page_id) if page_id else []
+    if ancestors:
+        titles = dict(connection.execute(
+            "SELECT id, content FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps(ancestors + [page_id]),)))
+        bits.append("path: " + " › ".join(f'"{(titles.get(p) or "Untitled")[:120]}"' for p in ancestors + [page_id]))
+    folders = filed_folders(connection, page_id) if ancestors else filing(properties, FOLDERS)
     if folders:
         quoted = quoted_paths(folder_paths(connection), folders)
         if quoted:
-            bits.append("folders: " + quoted)
+            bits.append(("folders (its top page's): " if ancestors else "folders: ") + quoted)
     labels = filing(properties, LABELS)
     if labels:
         names = label_names(connection)
@@ -1556,11 +1596,13 @@ def page_properties_line(connection, properties: dict) -> str:
 SUB_PAGES_SHOWN = 50  # sub-pages a page's section names; list_pages(parent=…) lists them all
 
 
-def page_family_lines(connection, page_id: str) -> list[str]:
+def page_family_lines(connection, page_id: str, listing: bool = True) -> list[str]:
     """Where a page sits among sub-pages (blocks_store's effective rule):
     the pages it is inside, top first, with its parent's id, and the pages
     right inside it, by title and id — the first SUB_PAGES_SHOWN of them,
-    then how many more. [] for a library page with no sub-pages."""
+    then how many more, and how to find them: ``list_pages(parent=…)``, or
+    with ``listing`` False (a page chat, which has no list_pages) the
+    search, which reaches them. [] for a library page with no sub-pages."""
     ancestors, inside = page_ancestors(connection, page_id), sub_pages(connection, page_id)
     shown = inside[:SUB_PAGES_SHOWN]
     titles = dict(connection.execute(
@@ -1577,7 +1619,9 @@ def page_family_lines(connection, page_id: str) -> list[str]:
     if inside:
         more = len(inside) - len(shown)
         lines.append(f"Pages inside ({len(inside)}): " + "; ".join(f'"{title(p)}" (page ID: {p})' for p in shown)
-                     + (f'; … {more} more — list_pages(parent="{page_id}") lists them all' if more else ""))
+                     + ((f'; … {more} more — list_pages(parent="{page_id}") lists them all' if listing else
+                         f"; … {more} more, which this chat cannot list — search_library searches them all")
+                        if more else ""))
     return lines
 
 
@@ -1586,7 +1630,7 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
                         document_text: str | None = None,
                         include_notes: bool = True, notes_budget: int = 0,
                         report: dict | None = None,
-                        notes_seen: dict | None = None) -> str | None:
+                        notes_seen: dict | None = None, listing: bool = True) -> str | None:
     """Render one page as context: title, where it sits among sub-pages
     (``page_family_lines``), properties, the attachment's text
     (a windowed excerpt of ``pdf_budget`` chars from ``pdf_offset`` /
@@ -1604,7 +1648,7 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
     "picture N attached" for those, and name the page for the rest). None
     when the page doesn't exist. ``notes_seen`` receives ``{block_id:
     text}`` for every note shown in full — what an edit_block replace may
-    start from."""
+    start from. ``listing``: as ``page_family_lines`` takes it."""
     rows = fetch_subtree(connection, page_id)
     if not rows:
         return None
@@ -1667,8 +1711,8 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
         walk(page_id, 0)
     sections = [f"### {root[3] or 'Untitled'}"]
     sections.append(f"Gamma page ID: {page_id}")
-    sections += page_family_lines(connection, page_id)
-    props_line = page_properties_line(connection, properties)
+    sections += page_family_lines(connection, page_id, listing)
+    props_line = page_properties_line(connection, properties, page_id)
     if props_line:
         sections.append(props_line)
     if properties.get("summary"):
@@ -1884,7 +1928,8 @@ def gather_inputs(ws: str, payload, allow_native: bool,
             section = page_report_section(connection, ws, page_id, 0,
                                           document_text=document_text or "",
                                           include_notes=with_notes, report=shown,
-                                          notes_seen=notes_seen)
+                                          notes_seen=notes_seen,
+                                          listing=getattr(payload, "agent_scope", "") != "page")
             if section:
                 context_sections.append(section)
                 if not doc_id:

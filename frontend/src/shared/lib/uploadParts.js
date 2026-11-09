@@ -1,7 +1,8 @@
 // A file's upload (uploadFile): one multipart POST for a file of up to
 // PART_BYTES, else in parts — a POST opens it, the parts follow one request
 // each, finish stores the whole (gamma/upload_parts.py's protocol, spoken at
-// /api/uploads/parts, /api/import/review/parts and /api/jobs/restore/parts).
+// /api/uploads/parts, /api/import/review/parts, /api/jobs/import-preview/parts
+// and /api/jobs/restore/parts).
 // A proxy in front of the server caps a request's body (Cloudflare at
 // 100 MB) and a part stays well under that. Each part is an xhrUpload
 // reporting its bytes into the whole's progress; a part the network lost

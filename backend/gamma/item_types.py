@@ -20,7 +20,7 @@ Records stored before these names (``paper``, ``notes``, ``slides``,
 ``other``) are read through ``normalize``, as is an AI reply written to a
 customised prompt; nothing in storage is rewritten.
 ``frontend/src/shared/lib/itemTypes.js`` holds the same table for the
-interface. Keep the two in sync.
+interface; tests/shared/itemtypes.json holds the two to the same answers.
 """
 
 ITEM_TYPES = (

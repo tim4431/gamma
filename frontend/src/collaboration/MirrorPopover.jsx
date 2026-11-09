@@ -6,7 +6,8 @@
 // count when conflicts wait, a dot — accent for local edits not pushed yet,
 // green when up to date, red on a problem — and an unlink glyph when
 // detached; the words live in its tooltip and in `data-state`. The popover:
-// the clone's name with its origin, a Sync button and a gear in the head,
+// the clone's name with its origin, a Sync button (the round asked for,
+// then followed through the status to its end) and a gear in the head,
 // the state line (with the progress bars while a round runs and the
 // conflicts chip when any wait), and the log — a direction arrow per row,
 // its `+3 −1 ~2` block counts, and on click the row's changes block by
@@ -43,9 +44,9 @@ import { Row, Segmented, Toggle } from "../settings/SettingsKit";
 import { ConflictCard, Marked, useConflicts, wordDiff } from "./MergeResolver";
 import {
   LINK_ACTIONS, ZOTERO_CADENCE_HINT, ZOTERO_CADENCE_TITLE, ZOTERO_LIVE_S, ZOTERO_LOG_ACTIONS, ZOTERO_MANUAL, ZOTERO_UPLOAD_HINT,
-  ZOTERO_UPLOAD_TITLE, linkKind, linkPath, linkPollMs, onChangeHint, pullByKey, unsentEdits, zoteroBytesText, zoteroCadence, zoteroError,
-  zoteroFollowing, zoteroForceConfirm, zoteroHalted, zoteroLibraryLabel, zoteroLimits, zoteroQueued, zoteroRunText, zoteroWaitingNote,
-  zoteroWaitingState,
+  ZOTERO_UPLOAD_TITLE, followSync, linkKind, linkPath, linkPollMs, onChangeHint, pullByKey, unsentEdits, zoteroBytesText, zoteroCadence,
+  zoteroError, zoteroFollowing, zoteroForceConfirm, zoteroHalted, zoteroLibraryLabel, zoteroLimits, zoteroQueued, zoteroRunText,
+  zoteroWaitingNote, zoteroWaitingState,
 } from "./syncLinks.js";
 import { needsZoteroConnect } from "../transfers/zoteroApi";
 import { MenuItem } from "../shared/ui/Menus";
@@ -144,6 +145,11 @@ export function roundSummary(s) {
   if (blocks) parts.push(t("{blocks} blocks", { blocks }));
   return parts.join(t(", "));
 }
+
+// The pages a publication puts on the share host: its published pages and
+// the pages inside them (the server's `published_pages`; the filter alone
+// from a server before it).
+export const publishedPages = (info) => info?.published_pages || info?.page_filter || [];
 
 // A mirror with a page filter is a publication, not a clone.
 export function isPublication(info) {
@@ -664,10 +670,11 @@ export function MirrorPopover({ wsId, kind = "mirror", mirrorOf: listedAs, publi
   const pending = Boolean(editAt) || unsentEdits(info);
   const publication = zotero ? false : info ? isPublication(info) : listedAsPublication;
   // A clone syncs the whole workspace, so its pill is on every page; a
-  // publication syncs the pages in its filter, so its pill is on those
-  // pages only (and nowhere until the filter is known) — unless Settings →
-  // Appearance › Top bar › Sync pill says every page (`everyPage`).
-  const covers = !publication || everyPage || Boolean(pageId && info?.page_filter?.includes(pageId));
+  // publication syncs the pages it publishes, the pages inside them
+  // included, so its pill is on those pages only (and nowhere until they
+  // are known) — unless Settings → Appearance › Top bar › Sync pill says
+  // every page (`everyPage`).
+  const covers = !publication || everyPage || Boolean(pageId && info && publishedPages(info).includes(pageId));
   // With the pill off the bar (`button` false: the same setting hides it)
   // only its popover shows, opened from the account menu's row, on any page.
   const shown = button ? covers : open;
@@ -707,12 +714,22 @@ export function MirrorPopover({ wsId, kind = "mirror", mirrorOf: listedAs, publi
     return () => { window.removeEventListener("gamma:mirror", h); window.removeEventListener("gamma:local-edit", edited); };
   }, [load, loadLog, open]);
 
+  // Sync now: the round asked for and followed through the link's status
+  // to its end (followSync; the pill's own reads show its progress), then
+  // the log read again and the other surfaces told.
+  const alive = React.useRef(true);
+  React.useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
   async function syncNow() {
     setBusy(true);
     setInfo((prev) => prev ? { ...prev, status: { ...prev.status, running: true } } : prev);
     try {
-      await apiJson(`${API}${linkPath(kind, wsId, "/sync?wait=1")}`, { method: "POST" });
+      await followSync(() => apiJson(`${API}${linkPath(kind, wsId, "/sync")}`, { method: "POST" }),
+        () => apiJson(`${API}${linkPath(kind, wsId)}`), { alive: () => alive.current });
     } catch {}
+    if (!alive.current) return;
     setEditAt(0);
     await load();
     await loadLog();
@@ -733,7 +750,7 @@ export function MirrorPopover({ wsId, kind = "mirror", mirrorOf: listedAs, publi
   const headTitle = zotero
     ? pull ? t("Receive only: Zotero's changes arrive here, yours stay here") : t("Two-way: your changes go to Zotero, Zotero's arrive here")
     : pull ? t("Receive only: the remote's changes arrive here, yours stay here") : t("Two-way: your changes go to the remote, the remote's arrive here");
-  const headHint = publication ? `${n(info?.page_filter?.length, "page")} · ${host}`
+  const headHint = publication ? `${n(publishedPages(info).length, "page")} · ${host}`
     : zotero ? (s.username ? t("Zotero · {user}", { user: s.username }) : t("Zotero"))
     : t("remote · {host}", { host }) + (s.remote_user ? ` · ${s.remote_user}` : "");
 

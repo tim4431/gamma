@@ -1,6 +1,6 @@
 # Gamma privacy policy
 
-_Last updated: 2026-11-06._
+_Last updated: 2026-11-08._
 
 Gamma is an open-source PDF annotation and note-taking application
 ([github.com/tim4431/Gamma](https://github.com/tim4431/Gamma)). This
@@ -22,7 +22,8 @@ and of its store editions, referred to below as "we".
   on a Gamma Cloud plan, on a server we run for you.
 - **Network requests only happen for features you use**, and go to the
   services listed below. Only a Gamma Cloud account, which is optional,
-  sends anything to us; what it holds is listed under "Gamma Cloud".
+  and a report you choose to make send anything to us; what they hold is
+  listed under "Gamma Cloud" and "Reports".
 
 ## What Gamma stores, and where
 
@@ -212,7 +213,8 @@ administer that server, so we can technically reach what is stored on it;
 we do not read it except as the terms say (to run the service, make
 backups, and fix a fault you ask us about). When a Lite or Plus plan ends
 the library is closed but kept; files beyond the free allowance may be
-deleted 90 days later, with notice by e-mail.
+deleted 90 days later, with notice by e-mail. Deleting your Gamma Cloud
+account deletes your library there, as described below.
 
 **Mail.** We send mail to confirm your address, to sign in or reset a
 password, to the old address when your e-mail address is changed, for
@@ -223,7 +225,8 @@ message.
 
 **What we keep, and for how long.** Usage samples of our hosts and
 servers (memory, disk, storage, counts) and resolved operator alerts are
-kept for 30 days. When a Gamma server invites someone by e-mail, the
+kept for 30 days. A report a Gamma server forwards to us (see
+[Reports](#reports)) is kept until we resolve it and for 180 days after. When a Gamma server invites someone by e-mail, the
 account server keeps the address the invitation was sent to, with the
 server's address and name, the name of what the invitation is to (a
 page's title, a folder's or a workspace's name) and where its link leads
@@ -232,12 +235,20 @@ asks us to delete it sooner once the invitation is accepted or
 withdrawn, or what it is to stops being shared. The audit log is kept.
 Deleting your account, on its Settings page, cancels any subscription at
 Stripe, removes the password, the Google or GitHub links, the preference
-profile and the server list at once and signs out every server; 30 days
-later the account's remaining records are removed, and a Pro server
-still running then is deleted with its files and backups. Until then the
-account can be restored on request. A library on the shared server is
-closed when the account's sign-in ends and is then handled as the terms
-describe for a plan that ended.
+profile and the server list at once and signs out every server. Within
+about an hour the shared server deletes the account there and its
+library: its workspaces with their files and backups, the shared
+workspaces only it owned, and the pages it published from them, which
+stop opening; what it wrote in a workspace someone else owns, and a link
+it made to a page there, stay with that workspace. The shared server first
+writes one copy of each workspace it deletes, which only we can reach, and
+removes it after 90 days. Backups of the server made before the deletion
+still hold what they held: the automatic ones until they are replaced in
+their rotation, and a copy we made by hand or keep off-site until we
+delete it; we use them only to recover the server after a fault. 30
+days after the deletion the account's remaining records are removed, and
+a Pro server still running then is deleted with its files and backups. Until then the account can be
+restored on request, without what was already deleted.
 [Deleting your Gamma Cloud account](DELETE_ACCOUNT.md) gives the steps,
 and how to ask for the deletion if you cannot sign in.
 
@@ -253,6 +264,21 @@ no one else.
 Gamma can create share links for pages. Anyone with a link can read (or,
 if you allow it, edit) that page on your server. Sharing is under your
 control and can be revoked at any time from the app.
+
+## Reports
+
+A comment, a shared or published page and an AI reply each have a
+**Report** action. A report sends the server you are using what you
+chose to report (the comment's text and its author's name, the page's
+title and who shared it, or the AI reply's text and the model that wrote
+it), the reason you picked, anything you added, and your username on that
+server if you are signed in. That server keeps it for its admins for at
+most 180 days. When the server uses Gamma Cloud sign-in (the desktop,
+iPad and Android apps' own servers do, and so do ours), it also sends the
+report to the Gamma Cloud account server, with the server's address and,
+if you linked your Gamma Cloud account there, your account; the account
+server keeps it, with the address the request came from, until we
+resolve it and then for 180 days. A report reaches no one else.
 
 ## Children
 

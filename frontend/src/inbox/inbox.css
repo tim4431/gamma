@@ -66,7 +66,7 @@
   border: 0;
   background: none;
   color: var(--text-secondary);
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
   text-align: left;
   cursor: pointer;
 }
@@ -85,9 +85,9 @@
 .inboxMeta { display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--fs-2xs); color: var(--text-muted); }
 .inboxWs { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inboxWs::after { content: "·"; margin-left: var(--space-3); }
-.inboxActions { flex-shrink: 0; opacity: 0; transition: opacity var(--dur-fast); }
-.inboxRow:is(:hover, :focus-within) .inboxActions { opacity: 1; }
-@media (hover: none) { .inboxActions { opacity: 1; } }
+.inboxActions { flex-shrink: 0; opacity: 0; pointer-events: none; transition: opacity var(--dur-fast); }
+.inboxRow:is(:hover, :focus-within) .inboxActions { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .inboxActions { opacity: 1; pointer-events: auto; } }
 .inboxDot {
   position: absolute;
   top: 13px;

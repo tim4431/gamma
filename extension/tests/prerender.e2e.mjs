@@ -123,6 +123,10 @@ try {
   // test's tabs never look at).
   const worker = await attach((t) => t.type === "service_worker" && /^chrome-extension:\/\/\w+\/worker\.js$/.test(t.url),
     () => send("Target.createTarget", { url: `${origin}/api/session` }));
+  // A worker that has just started is listed, and runs code, a moment
+  // before Chrome gives it its extension API: `chrome` is undefined there
+  // for about 100 ms after the browser starts.
+  await until("the worker's extension API", () => worker(() => typeof chrome === "object" && typeof chrome.runtime?.id === "string"));
   await worker((server) => chrome.storage.sync.set({ server }), origin);
   const id = await worker(() => chrome.runtime.id);
   const tabId = await worker(async (url) => (await chrome.tabs.create({ url })).id, `${origin}/paper`);

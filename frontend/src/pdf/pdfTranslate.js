@@ -2,21 +2,23 @@
 // paragraph blocks out. No pdf.js/react imports on purpose (like
 // shared/model/blockModel.js) — the geometry math is testable in isolation.
 // `textRuns` turns a page's TextContent items into the flat runs consumed
-// here, for the viewer (pdf/PdfViewer.jsx) and the translation bench
-// (tests/bench/translateBench.mjs) alike.
+// here, for the viewer's jobs (pdf/translateState.js) and the translation
+// bench (tests/bench/translateBench.mjs) alike.
 //
 // A run is {str, x, y, w, h}: baseline-left origin at scale-1 viewport
 // coordinates, w the advance width, h the font height (both viewport units),
 // plus its font's name and glyph metrics (textRuns).
-// A block is {x1, y1, x2, y2, size, nLines, lines, indent, text, src, spans,
-// translate} — the tight bbox the overlay masks and refills, its per-line
-// rects, the dominant font height, the text as extracted, the text for the
+// A block is {x1, y1, x2, y2, size, nLines, lines, indent, bold, italic, font,
+// face, text, src, spans, translate} — the tight bbox the overlay masks and
+// refills, its per-line rects, the dominant font height, whether it is set
+// whole in a bold or italic face and the font most of it is in (blockFace),
+// the text as extracted, the text for the
 // model with its formulas, citations and URLs as tokens and what each token
 // stands for (blockSource), and whether it is prose worth sending at all
 // (equations, bare numbers, stray symbols and author lines stay original — a
 // wrong "translation" of an equation is worse than none).
 
-import { TEXT_TOKEN, lineParts, spanBox } from "./pdfMath.js";
+import { TEXT_TOKEN, faceStyle, isMathRun, lineParts, spanBox } from "./pdfMath.js";
 
 // TextContent items → runs. `transform` is the scale-1 viewport's transform
 // (`page.getViewport({scale: 1}).transform`); each item's matrix is mapped
@@ -40,7 +42,7 @@ export function textRuns(items, transform, { faces = null, styles = null } = {})
       // Text not running left to right on screen (after the page's own
       // /Rotate, which the viewport transform includes).
       rotated: Math.abs(tx[1]) > Math.abs(tx[0]) * 0.05 || tx[0] < 0,
-      face: face?.name || "", type3: !!face?.type3,
+      face: face?.name || "", type3: !!face?.type3, ...(face?.noFile && { noFile: true }),
       asc: metrics ? style.ascent : 0.8,
       desc: metrics ? style.descent : -0.25,
     };
@@ -60,10 +62,6 @@ const GAP_SOFT = 1.05;
 const LINE_STEP = 1.7;
 // A soft gap is judged by the lines this × line height above and below.
 const GUTTER_REACH = 3;
-// A run this much smaller than its line's body text, off its baseline by more
-// than SCRIPT_SHIFT × the line height, is a sub- or superscript.
-const SCRIPT_SIZE = 0.9;
-const SCRIPT_SHIFT = 0.1;
 
 // --- lines → fragments -------------------------------------------------------
 
@@ -73,6 +71,13 @@ const SCRIPT_SHIFT = 0.1;
 function midOf(r) {
   return r.y - r.h * (r.asc + r.desc) / 2;
 }
+
+// Computer Modern's radical hangs from its baseline as a big operator does,
+// though its font's metrics, which are the whole font's, say it stands on it:
+// the baseline is the top of its bar, and the text beside it is centred 0.58
+// em below that.
+const HANGING_RADICAL = /^CM(?:SY|EX)/;
+const hangs = (r) => r.str.trim() === "√" && HANGING_RADICAL.test(r.face || "");
 
 // Group runs into visual lines. Only the last few lines are candidates — the
 // sort means anything older can't match. A line is anchored on its longest
@@ -92,7 +97,33 @@ function groupLines(items) {
     line.runs.push(it);
     if (chars > line.chars) { line.mid = it.mid; line.h = it.h; line.chars = chars; }
   }
-  return lines;
+  // A run joins the first line within reach as the sort meets it. An inline
+  // formula's glyph box sits a little higher than its text's, so it can sort
+  // before its own line exists and land on the other column's line a few
+  // points away: its sentence is then cut in three blocks. So a stretch of a
+  // line set apart from the rest by a hard gap, three characters or more,
+  // moves to a nearer line within reach that has text of its size beside it.
+  // The stretch that holds the line's anchor run stays.
+  for (let i = 0; i < lines.length; i++) {
+    const L = lines[i];
+    const keep = [];
+    for (const c of chains(L.runs, L.h * GAP_HARD)) {
+      const weight = (r) => r.str.trim().length || 1;
+      const at = c.runs.reduce((n, r) => n + r.mid * weight(r), 0) / c.runs.reduce((n, r) => n + weight(r), 0);
+      const chars = c.runs.reduce((n, r) => n + r.str.replace(/\s/g, "").length, 0);
+      const anchor = c.runs.some((r) => r.mid === L.mid && r.str.trim().length === L.chars);
+      let best = null, bestDist = Math.abs(L.mid - at);
+      for (let j = Math.max(0, i - 6); !anchor && chars >= 3 && j <= Math.min(lines.length - 1, i + 6); j++) {
+        const N = lines[j], dist = Math.abs(N.mid - at);
+        if (N === L || dist >= bestDist || dist > Math.min(N.h, c.h) * 0.45) continue;
+        if (Math.max(N.h, c.h) > Math.min(N.h, c.h) * 1.18) continue;
+        if (N.runs.some((r) => r.h >= N.h * 0.85 && r.x <= c.x2 + N.h * GAP_SOFT && r.x + r.w >= c.x1 - N.h * GAP_SOFT)) { best = N; bestDist = dist; }
+      }
+      (best || { runs: keep }).runs.push(...c.runs);
+    }
+    L.runs = keep;
+  }
+  return lines.filter((L) => L.runs.length);
 }
 
 // A line's runs in chains: left to right, each within `reach` of the last.
@@ -114,9 +145,14 @@ function chains(runs, reach) {
 // such script back into the line it is attached to. A script is short — a
 // chain of at most 12 characters and five glyph heights, smaller than the
 // glyph it touches (before it, as an affiliation's ¹, or after it, as x²)
-// and within that glyph's height of it. A line of smaller text (a reference
-// beside the body, a caption, a sidebar) never folds: it is no script, and
-// folded it would interleave two lines' words.
+// and within that glyph's height of it. An inline fraction's numerator and
+// denominator are such chains that touch nothing: a line they stand at the
+// height of takes them from further off, so that they join the formula on
+// it and not the lines above and below it, whose words run over them. A line
+// of smaller text (a reference beside the body, a caption, a sidebar) never
+// folds: it is no script, and folded it would interleave two lines' words.
+const FRACTION_HEIGHT = 0.55;
+const FRACTION_REACH = 0.8;
 function foldScripts(lines) {
   for (let i = 0; i < lines.length; i++) {
     const S = lines[i];
@@ -128,8 +164,9 @@ function foldScripts(lines) {
         if (j === i) continue;
         for (const n of lines[j].runs) {
           if (c.h > n.h * 0.85 || c.x2 - c.x1 > n.h * 5) continue;
-          if (Math.max(n.x - c.x2, c.x1 - (n.x + n.w)) > n.h * 0.4) continue;
           const dist = Math.abs(c.mid - n.mid);
+          const reach = dist <= n.h * FRACTION_HEIGHT ? FRACTION_REACH : 0.4;
+          if (Math.max(n.x - c.x2, c.x1 - (n.x + n.w)) > n.h * reach) continue;
           if (dist <= n.h * 0.9 && dist < bestDist) { best = lines[j]; bestDist = dist; }
         }
       }
@@ -217,10 +254,16 @@ function bodyLine(runs) {
 
 // A sub- or superscript: clearly smaller than the body text and off its
 // baseline, or a little smaller and well off it. An OCR text layer's words
-// vary a little in size and baseline and are no scripts.
+// vary a little in size and baseline and are no scripts. The thresholds are
+// shares of the body height: clearly smaller, off the baseline; a little
+// smaller, well off it.
+const SCRIPT_SMALL = 0.8;
+const SCRIPT_SHIFT = 0.1;
+const SCRIPT_SIZE = 0.9;
+const SCRIPT_FAR = 0.25;
 function scriptOf(r, y, h) {
   const shift = Math.abs(r.y - y);
-  const small = (r.h < h * 0.8 && shift > h * SCRIPT_SHIFT) || (r.h < h * SCRIPT_SIZE && shift > h * 0.25);
+  const small = (r.h < h * SCRIPT_SMALL && shift > h * SCRIPT_SHIFT) || (r.h < h * SCRIPT_SIZE && shift > h * SCRIPT_FAR);
   return small ? (r.y < y ? "sup" : "sub") : null;
 }
 
@@ -229,7 +272,7 @@ function buildFragments(runs) {
   // label) has no place in the horizontal line model: read as horizontal it
   // becomes one long run across the column. It stays as it is on the page.
   const items = runs.filter((r) => r.str && r.str.trim() && r.h > 0 && r.w > 0 && !r.rotated)
-    .map((r) => ({ ...r, mid: midOf(r) }));
+    .map((r) => (hangs(r) ? { ...r, asc: 0.04, desc: -0.96, mid: r.y + r.h * 0.58 } : { ...r, mid: midOf(r) }));
   const lines = foldScripts(groupLines(items));
   // Candidate split gaps per line (x-interval of the whitespace).
   for (const L of lines) {
@@ -307,9 +350,15 @@ function xOverlap(a, b) {
 // next line rejoins (joinLine here; pdf/translatePlan.js joins the same way
 // across a column or page break).
 export const HYPHENATED = /[A-Za-z]-$/;
+// CJK text: kana, Han and Hangul.
+export const CJK = /[぀-ヿ㐀-鿿가-힯]/;
+// Text whose characters meet with no space at a join: kana and Han. Hangul
+// has word spaces.
+export const NO_SPACE = /[぀-ヿ㐀-鿿]/;
 
 // Append `s` to the block text: rejoin hyphenated line breaks and URLs
-// broken after a path separator, no space between CJK, a space otherwise.
+// broken after a path separator, no space between kana or Han, a space
+// otherwise.
 function joinLine(out, s) {
   if (!out) return s;
   // After a period only a path goes on ("example." / "org/data"): a URL
@@ -317,7 +366,7 @@ function joinLine(out, s) {
   if (/https?:\/\/\S*[/\-_~#?=&]$/.test(out) && /^[\w%~#/-]/.test(s)) return out + s;
   if (/https?:\/\/\S*\.$/.test(out) && /^[a-z0-9][\w%~#-]*\//i.test(s)) return out + s;
   if (HYPHENATED.test(out) && /^[a-z]/.test(s)) return out.slice(0, -1) + s;
-  if (/[぀-ヿ㐀-鿿]$/.test(out) && /^[぀-ヿ㐀-鿿]/.test(s)) return out + s;
+  if (NO_SPACE.test(out[out.length - 1]) && NO_SPACE.test(s[0])) return out + s;
   return out + " " + s;
 }
 
@@ -332,19 +381,23 @@ export function selectionParagraphs(text) {
     .join("\n\n");
 }
 
+// A formula's operator names, which it sets in the text font: what is left of
+// an equation's line once its symbols are tokens ("cos sin ;") is no words.
+const OPERATOR_NAMES = /(?<![A-Za-z])(?:(?:arc)?(?:sin|cos|tan|cot|sec|csc)h?|exp|log|ln|lg|lim|max|min|sup|inf|det|tr|Tr|arg|mod|dim|ker|deg|gcd|Pr)(?![A-Za-z])/g;
+
 // Whether a block's text should go to the model. Mostly-symbolic content
 // (equations, tables of numbers, page footers) is left in place.
 export function isTranslatable(text) {
   const t = text.trim();
-  const dense = t.replace(/\s/g, "");
-  if (dense.length < 2) return false;
-  const cjk = (t.match(/[぀-ヿ㐀-鿿가-힯]/g) || []).length;
+  if (t.replace(/\s/g, "").length < 2) return false;
+  const cjk = (t.match(new RegExp(CJK.source, "g")) || []).length;
   if (cjk >= 2) return true;
-  const letters = (t.match(/[A-Za-zÀ-ɏЀ-ӿ]/g) || []).length;
-  if (letters < 4 || letters / dense.length < 0.5) return false;
+  const words = t.replace(OPERATOR_NAMES, " ");
+  const letters = (words.match(/[A-Za-zÀ-ɏЀ-ӿ]/g) || []).length;
+  if (letters < 4 || letters / words.replace(/\s/g, "").length < 0.5) return false;
   // At least one real word (two adjacent letters, Latin or Cyrillic) — a
   // scatter of single-letter variables like "x y z p q" isn't prose.
-  return /[A-Za-zÀ-ɏЀ-ӿ]{2}/.test(t);
+  return /[A-Za-zÀ-ɏЀ-ӿ]{2}/.test(words);
 }
 
 // Whether a block's text for the model (`src`, its formulas as tokens) is an
@@ -433,6 +486,38 @@ function blockSource(lines) {
   return { src, spans, plain };
 }
 
+// Whether a block is set whole in a bold or italic face: nearly all its text is,
+// by the characters, its formulas left out. A bold lead-in ("Notes:") or an
+// italic phrase in a paragraph is no such block. A font without a name
+// (a Type 3 font's, or none known yet) counts against both. The font most of
+// it is set in, by the same count, is its `font` (pdf.js's id, which the
+// overlay sets the translation in) and `face` (its name, which the export finds
+// it in the file by), when the file holds that font and it is no Type 3 one
+// (pdf/paperFace.js).
+const WHOLE_BLOCK = 0.9;
+function blockFace(lines) {
+  let all = 0, bold = 0, italic = 0;
+  const fonts = new Map();
+  for (const l of lines) {
+    for (const r of l.runs) {
+      const chars = r.str.replace(/\s/g, "").length;
+      if (!chars || isMathRun(r)) continue;
+      const style = faceStyle(r.face);
+      all += chars;
+      if (style.bold) bold += chars;
+      if (style.italic) italic += chars;
+      const f = fonts.get(r.font) || { run: r, chars: 0 };
+      f.chars += chars;
+      fonts.set(r.font, f);
+    }
+  }
+  const out = { bold: all > 0 && bold >= all * WHOLE_BLOCK, italic: all > 0 && italic >= all * WHOLE_BLOCK };
+  let most = null;
+  for (const f of fonts.values()) if (!most || f.chars > most.chars) most = f;
+  const r = most?.run;
+  return r && r.font && r.face && !r.type3 && !r.noFile ? { ...out, font: r.font, face: r.face } : out;
+}
+
 // A block accumulated too eagerly can wrap AROUND a figure: full-width lines
 // above it, short lines beside it. One bounding rect for that block covers
 // the figure. Split the line list where the right edge jumps — widening
@@ -454,6 +539,11 @@ function splitByWidth(lines, size) {
   return parts;
 }
 
+// A display equation's number, alone on its line at the column's right edge
+// ("(1)", "(12a)", "(A.7)", "(2.14)").
+const EQUATION_NUMBER = /^\(\s*(?:[A-Z]\.?)?\d+(?:\.\d+)*[a-z]?\s*\)$/;
+const NUMBER_INSET = 3;
+
 export function segmentPage(runs) {
   const frags = buildFragments(runs);
   const blocks = [];
@@ -470,6 +560,9 @@ export function segmentPage(runs) {
       // author/affiliation stacks one block per line, and splits lines that
       // wrap around a figure on the LEFT (they start much deeper).
       if (f.x1 - b.x1 > f.h * 0.9) continue;
+      // A line that runs from the column's left edge up under an equation's
+      // number is the next paragraph, which the number does not open.
+      if (b.lines.length === 1 && b.x1 - f.x1 > f.h * NUMBER_INSET && EQUATION_NUMBER.test(b.lines[0].text)) continue;
       // A confident font change (both sides ≥70% one font) is a boundary:
       // roman authors vs italic affiliations, a display-equation line inside
       // a paragraph. Mixed lines (inline math) stay mergeable, and so does a
@@ -515,6 +608,7 @@ export function segmentPage(runs) {
         // opener sits deeper than its wrapped lines (pdf/translatePlan.js
         // reads it to tell a new paragraph from a continued one).
         indent: lines.length > 1 ? lines[0].x1 - lines[1].x1 : null,
+        ...blockFace(lines),
         // Prose, judged without its formulas: a display equation (all
         // formula, maybe a word or two of operator names) stays original,
         // and so does an author line.

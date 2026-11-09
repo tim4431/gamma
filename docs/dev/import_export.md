@@ -253,34 +253,50 @@ Zotero, Markdown (ZIP or one file), Obsidian/Notion ZIPs, Notability notes,
 GoodNotes notebooks and Gamma exports share one review flow: Upload → Review →
 Import → Summary.
 
-- `POST /api/import/review` takes the file, its `source` (`zotero`,
+- The review is a background job ([tasks.md](tasks.md)):
+  `POST /api/jobs/import-preview` takes the file, its `source` (`zotero`,
   `markdown-zip`, `markdown-file`, `gamma`, `notability`, `goodnotes`), an optional `folder` (the
   destination folder's id, `""` the library's top; 400 when it is no
   folder, `import_review.destination`) and `strip`.
-  It stages the upload, runs the source's preview and returns the two trees
-  plus a `review_id`; `DELETE` discards it. An upload past 32 MiB comes in
-  parts instead (`POST /api/import/review/parts`, [api.md](api.md)), the
-  protocol of a PDF's upload in parts ([user_db.md](user_db.md) "Stored
-  files"), since a proxy in front of the server caps a request's body
-  (Cloudflare at 100 MB). The parts are appended to the staged upload, and
-  finishing answers with the preview, as the single request does.
+  It stages the upload and starts the job (`import-preview`), which runs
+  the source's preview, reporting its items, and keeps the two trees
+  beside the upload; `GET /api/import/review/{id}` reads them, with the
+  `review_id`, and `DELETE` discards them (stopping a job still reading).
+  An upload past 32 MiB comes in parts instead
+  (`POST /api/jobs/import-preview/parts`, [api.md](api.md)), the protocol
+  of a PDF's upload in parts ([user_db.md](user_db.md) "Stored files"),
+  since a proxy in front of the server caps a request's body (Cloudflare
+  at 100 MB). The parts are appended to the staged upload, and finishing
+  starts the job, as the single request does. The largest archives are the
+  ones whose review takes minutes (every PDF of a Zotero export inflated
+  and hashed), past the 100 s a proxy lets a silent request run: as a job,
+  the review is read to the end and kept. `POST /api/import/review` (and
+  its `/parts`) answers the same review in the request, for scripts.
 - The import itself is a background job ([tasks.md](tasks.md)):
   `POST /api/jobs/import` with `{review_id, selected: [...]}` imports from
   the staged upload against the current library, reporting each item; its
   result is the import report. Asking again for the same review answers the
   job already started (409 with another selection).
 - Each source is a request-free preview and commit in `routers/imports.py`
-  (`_review_source`), over the staged file and the review's metadata; the
-  plain endpoints (`/import/zotero`, `/import/markdown-zip`, …) run the
-  same functions in the request. A preview may return a `stage`, what it
-  learned that the commit can reuse (a Zotero review's PDF digests):
-  `_preview_staged` adds it to the review's metadata
-  (`import_staging.update`), and no answer carries it.
+  (`_review_source`), over the staged file and the review's metadata, each
+  taking a job's `progress`; the plain endpoints (`/import/zotero`,
+  `/import/markdown-zip`, …) run the same functions in the request. A
+  preview may return a `stage`, what it learned that the commit can reuse
+  (a Zotero review's PDF digests): `_preview_staged` adds it to the
+  review's metadata as it keeps the review (`import_staging.keep_review`,
+  `review.json` beside the upload), and no answer carries it. A Gamma
+  export's preview reads the staged zip where it lies and unpacks only its
+  databases and its handwriting files (`ws_backup.preview_zip`): the
+  uploads are known by their names in the zip, and step 41 converts a
+  stroke file of an older backup, as a restore's copy does.
 - Staging (`gamma/import_staging.py`): a directory per review, bound to the
   account and workspace, expiring after two hours (`TTL`; expired ones are
-  swept on the next upload). The import job holds a claim (`running/`
+  swept on the next upload). The review's job drops the upload when it
+  fails or is stopped. The import job holds a claim (`running/`
   mkdir; a `DELETE` meanwhile answers 409) while it reads the upload, and
-  removes the review when it ends — done, failed or stopped. Staging has
+  removes the review when it ends — done, failed or stopped. An import is
+  refused (409) while the review's job still reads; once it starts, the
+  review's job leaves Background tasks, the import's row standing for it. Staging has
   no size cap and is not metered by the account quota; an upload that would
   leave the disk with less than 1 GB free is refused (507,
   `import_staging.MIN_FREE_BYTES`). A review expires two hours after its
@@ -304,20 +320,38 @@ Import → Summary.
 - A stopped import keeps what it wrote: the Zotero and Markdown imports
   write the new pages whose files they already stored, then stop.
 - Frontend (`src/transfers/`): `ImportReviewDialog.jsx` owns the steps and
-  the report. It uploads and reviews itself, then follows the import job
-  (`tasks.start("import", …)`) with its progress and Stop. It may close while
-  the job runs, and the job's row in Background tasks opens it again on that
-  job (`{jobId}`, no file: the summary then shows the library column only).
-  Until Import, the upload and the review are the dialog's own, not a
-  task: a close by the backdrop, Escape or × asks first, since it stops
-  the upload or drops the staged review (or the choices of one gone); its
-  Cancel stays direct. While it shows a review, the dialog sends a
+  the report. It uploads the file itself, then follows the review's job
+  (`tasks.adopt`, its progress block while it reads) and reads the review
+  once it is done; then it follows the import job
+  (`tasks.start("import", …)`) with its progress and Stop. It may close
+  while either job runs, and the job's row in Background tasks opens it
+  again on that job: a review's (`{previewJobId, previewJob}`, no file: its
+  review once read), an import's (`{jobId}`: the summary then shows the
+  library column only). A review read while its dialog was closed is
+  offered in the pill too. A review's job no listing carries any more (its
+  row cleared, or dismissed by an import from another tab) is asked for by
+  its id, and one gone from the server is taken as ended: its review is
+  read if it is still kept, else the dialog says the server no longer
+  holds it. While the file goes up it is the dialog's own, not a task, and once
+  a review shows, closing drops it: a close by the backdrop, Escape or ×
+  asks first then, since it stops the upload or drops the staged review
+  (or the choices of one gone). A close while the review is read asks
+  nothing and leaves it to its job. Its Cancel stays direct and drops the
+  review, stopping a job still reading it, also in a dialog opened on that
+  job's row (the job's params name the review). While it shows a review, the dialog sends a
   keep-alive every 10 minutes and when the window regains focus or becomes
   visible. A review gone anyway (404 once swept, from the keep-alive or
   from Import) is cleared with a message, and Retry preview uploads the
-  file the dialog still holds again, keeping the selection. A preview the server refuses (400, 413, 415: a file the source
-  does not read, such as a Supernote `.note`, or one too large) shows its reason
-  without the retry a lost connection gets. The source column is headed by
+  file the dialog still holds again, keeping the selection (a dialog opened
+  from a row holds no file: it asks for the file again). A preview the
+  server refuses (a failed review job: a file the source does not read,
+  such as a Supernote `.note`, or one too large; or a start refused with
+  400, 413, 415) shows its reason without the retry a lost connection
+  gets, and so does a review stopped from its row. A review job the
+  server's restart cut short, or a bug failed (`importReview.reviewRefused`
+  tells them from a refusal by the error), offers Retry preview, which
+  drops the upload the restart left and uploads the file again (a close
+  drops it too). The source column is headed by
   what was uploaded: one file, a ZIP's contents, a folder, or the files
   picked together.
   `ImportTree.jsx` renders one tree with its checkboxes (a folder toggles
@@ -378,7 +412,9 @@ paragraphs, fenced code, math and other Markdown stay as raw block content for
 the normal editor renderer, except a Logseq image size: `md_to_blocks`, and
 so every import that parses with it (the zips and the paste as blocks among
 them), turns `![alt](url){:width N}` outside code into the `![alt|N](url)`
-Gamma stores (`note_markup.obsidian_image_sizes`). A list item keeps its marker, as a list block does:
+Gamma stores (`note_markup.obsidian_image_sizes`); a synced vault's file,
+read in spans mode, keeps `{:width N}` as it writes it
+([synced_vaults.md](synced_vaults.md#the-lens)). A list item keeps its marker, as a list block does:
 `- x` and `* x` are the block `- x`, `1. x` stays, and a task is `- [ ] x`.
 A bullet that only wraps a block of its own (`- # H`, `- ```py`, `- - x`,
 which a vault writes) gives way to that block; `- $$x$$ is it`, `- |x| is it`,
@@ -416,8 +452,9 @@ item and `scanMathSpans` leaves it raw.
 Gamma's readable export writes every block as a `- ` bullet, so `x` is `- x`
 and the list block `- x` is `- - x`, and there the marker says only "a block".
 `markdown_import.readable_outline` knows such a file by the one shape that
-writer has: a front-matter `title` and no `gamma_id` (the folder sync's, whose
-bullets are lists), then the H1, BibTeX if any, and only `- `
+writer has: a front-matter `title` and no `gamma_id` (the line the gamma-sync
+client writes, and a folder the desktop app kept before synced vaults; their
+bullets are lists, and a synced vault writes no such line), then the H1, BibTeX if any, and only `- `
 lines at the start of a line, so every branch of the writer keeps a block's next
 lines under its bullet (`_bullet`). `md_to_blocks(..., outline=True)` then reads each
 `- ` as a separator, which gives the blocks back as they were, from old zips
@@ -436,6 +473,19 @@ goes either way. What each caller passes:
 
 Pages imported before markers were kept read as indented paragraphs. The
 markers are gone, so nothing repairs them.
+
+`md_to_blocks(..., spans=True)` is the same parser for a synced vault's lens
+(`gamma/md_lens.py`, [synced_vaults.md](synced_vaults.md#the-lens)), which
+writes a file back by patching its own lines. Every block also carries the
+lines it came from (`Span`: the source lines, the raw indentation and
+marker, the block's class), and a few rules change so that a block's own
+lines are one run: a paragraph under an item ends before what follows it is
+read, a line that would go on an item with children is one more child, a
+`$$` at the left edge after a blank line is out of any item, only spaces and
+tabs are whitespace, a line of code keeps its trailing whitespace, and after
+a blank line at the top, with no list open, what stands four columns in is
+one `verbatim` block of raw lines. Without `spans` the parser reads as it
+always has, byte for byte: every importer above passes none.
 
 An empty list block is its marker and a space (`- `, `1. `), and the readable
 and vault exports keep that space (`markdown_export.block_text`), which is what
@@ -902,7 +952,11 @@ under the key through `idx_ub_zotero_key` ([user_db.md](user_db.md)), so
 two such pages can sit side by side. The import maps
 collections→folders, nested as in Zotero, made below the destination
 folder (the optional `folder` form field, a folder id) where missing — an
-item in no collection lands in the destination itself —,
+item in no collection lands in the destination itself; an item that merges
+into a page inside another page ([home_library.md](home_library.md)
+"Sub-pages") files it nowhere, since it is filed where its top is, and the
+preview and the report name its top's folders and the page it is inside
+(`parent`) —,
 tags→labels (by name, made where missing), notes→block trees (below),
 the item's other attachments→file chips and
 links under the page's "Attachments" block (below), then runs the
@@ -1305,7 +1359,9 @@ and never sits on disk twice. For each chosen note, in path order:
 
 1. Its Session.plist is read and hashed. A note whose digest a page of the
    library carries (`properties.notability_import`), or that came earlier in
-   the upload, is skipped and shown where it is.
+   the upload, is skipped and shown where it is: in the folders it is
+   filed in, a page inside another page's its top's
+   (`blocks_store.filed_folders`), as a GoodNotes notebook's too.
 2. The PDFs its pages name are checked against `MAX_HELD_BYTES` (256 MB: a
    PDF is read whole into memory, parsed and composed) and opened. One past
    it skips the note; one that does not open becomes paper.
@@ -2048,7 +2104,8 @@ inside it, a zip of their PDFs, the page's at the top (`Tree.pdf`,
 `Tree/Branch.pdf`, `Tree/Branch/Leaf.pdf`; one PDF among them is that PDF);
 `/pages/{id}/export-pdf?sub_pages=1` on a page with pages inside it answers
 the same, without the `X-Annotations-Written` and `X-Notes-Rendered`
-counts, and on a page with none answers as without the flag. For a folder it
+counts, and on a page with none answers as without the flag (the address
+the MCP `export_page` names for its file, [mcp.md](mcp.md#export-a-page)). For a folder it
 is a zip of them, `<subfolder>/<Title>.pdf`, the directories mirroring the
 page's first folder path below the exported folder (`Filing`,
 `obsidian_export.page_dir`), and a sub-page's in its parent's directory
@@ -2059,12 +2116,16 @@ and the pages inside it, with no PDF at all fails with the reason. A page
 exported while the viewer shows its translation carries it, and its PDF
 (not those of the pages inside it) is written translated before the
 annotations go on ([translation.md](translation.md#exporting-the-translation)).
+A folder's export carries the translations of its papers this browser left
+translated, read in the browser with no viewer, each written into its own
+PDF ([translation.md](translation.md#a-folders-export)).
 
 The single-page exports are also plain functions, for callers without a
 request: `page_builder` (one page through a mode's builder, what
 `/pages/{id}/export` runs), `page_markdown` (the readable Markdown, unbundled,
-upload links left as `/api/uploads/…`), `page_notes_pdf` and `annotated_pdf`
-(what `/pages/{id}/export-pdf` runs). They raise `HTTPException` like the
+upload links left as `/api/uploads/…`), `page_notes_pdf`, `annotated_pdf`
+(what `/pages/{id}/export-pdf` runs) and `page_export_file` (a mode's
+download as bytes, with `sub_pages` the pages inside too). They raise `HTTPException` like the
 routes. The MCP `export_page` tool is their other caller ([mcp.md](mcp.md)
 "Export a page").
 
@@ -2103,6 +2164,33 @@ other library sources, then merges the selected pages (`restore_zip` merge
 with a selection) as the import job; guests can't import. A Gamma export is
 a complete copy, so the Export dialog has no switches for it.
 
+Pages inside pages ([home_library.md](home_library.md) "Sub-pages") keep
+their `parent_page`. The review (`ws_backup._review_import`) gives each
+page entry its `parent`, the entry id of the page it is inside (the
+workspace's page's effective parent for a page it has, else the backup's,
+named by the workspace's page when it has that one), and `folders`, the
+paths of its top's folders, so the library column draws a sub-page under
+its parent. A new sub-page's `folders_alone` are those same folders: where
+it lands when the selection leaves its parent out, since `restore_zip`
+then writes its top's folders on it, and the review brings them (its
+`_tree`). The merge (`_merge`, `_placed`) puts a page inside the page its
+`parent_page` names when that page comes too or the workspace has it (a
+page it has for the same PDF under another id stands for it; a selection
+that leaves that page out has `restore_zip` write the workspace's id in
+first, as the review named it), dropping
+any `folders` of its own; otherwise it drops `parent_page`, and the page is
+a library page filed by its folders, which the report shows with `parent`
+`""`.
+
+A page that reads its PDF where it is on this computer (`linked_file`,
+[synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)) travels as
+bytes: the file is read through `storage.files` into `uploads/` like a
+stored one, and the copy's pages lose the `linked_file` mark, so where the
+export lands the page is an ordinary one with no path to read from. The
+same export (`page_gamma_zip`, with the page's properties patched first) is
+how *Add to library…* takes an opened PDF to another workspace of the server
+with everything on it.
+
 Through a share token (`?share=`: another Gamma importing a shared page or
 folder by its link, below) the export carries only what the share shows
 (`_GammaBuilder._shared_trees`):
@@ -2138,8 +2226,10 @@ and the `/export-pdf` route):
 
 Logseq and Gamma write a ref as stored, and BibTeX reads page properties
 alone, so they read no block outside the pages exported to begin with.
-`POST /api/jobs/export` takes no share: it works in the signed-in account's
-own workspace.
+`POST /api/jobs/export?share=`, the share view's export, is held to the
+share the same way (`opts["share"]`), and the job is the share's own
+([tasks.md](tasks.md#a-share-views-exports)); without a `?share=` it works
+in the signed-in account's own workspace.
 
 Folder and label names are not held back this way. The formats but Gamma's
 still write the folder's whole path (the download's name, a `.bib`'s header)
@@ -2183,8 +2273,8 @@ invite-only ones work too. Two entry points:
   there is still a paper.
 - The share view's topbar: a signed-in non-guest viewer gets "Add to my
   library" on a page and on a folder share's listing (not on a page host,
-  which serves no library). A share view has no workspace and no background
-  tasks of its own, so it does not import: `addShareToLibrary` puts the link
+  which serves no library). A share view has no workspace of its own and
+  lists no background tasks, so it does not import: `addShareToLibrary` puts the link
   for what it shows (the open page, or the folder browsed) in
   `sessionStorage` (`gamma-import-share`) and goes to the library, whose
   boot takes it and imports there, with the tray and the reload of the "+"
@@ -2223,7 +2313,8 @@ note and a comment card in a column beside the paper, or the note on it.
 While the open page shows its translation, the Annotated PDF's summary says
 that the translation replaces the original text, in which language and on
 how many pages; there is no switch for it (hiding the translation exports
-the original). Gamma and Notability have fixed contents, and a
+the original). A folder's says how many of its papers go translated, once
+they are read as the dialog opens. Gamma and Notability have fixed contents, and a
 PDF without a stored copy can only be the original file, so these export
 straight from step one, Gamma and Notability unless the page has pages
 inside it (below). Logseq
@@ -2286,12 +2377,14 @@ Import → Gamma export, BibTeX's beside-your-.tex, Notability's open-it-there,
 Notion's Settings → Import → ZIP. A failed or
 stopped export offers Start again, with the job's params (`sub_pages`,
 `comments` and `notes_at` included); one that wrote the viewer's
-translation, which its params cannot hold, offers Export again… instead,
-back to the setup, while its page is open, and Close alone otherwise
-([translation.md](translation.md#exporting-the-translation)). A share view has no background tasks:
-its Export downloads through the endpoints below, with the same mode and
-flags as query parameters (`exportQuery`, `sub_pages=1` for the pages
-inside).
+translation offers Export again… instead, back to the setup, while its
+page is open, and otherwise Start again with the translation the server
+kept with the job
+([translation.md](translation.md#exporting-the-translation)). A share view's
+Export starts the same job under its share token and follows it the same
+way, with no tray: a window closed meanwhile has its file offered in the
+pill once it is ready, and the step says so
+([tasks.md](tasks.md#a-share-views-exports)).
 
 The switches mean, per endpoint:
 `/pages/{id}/export?mode=readable&highlights=&notes=&pdf=` (Markdown,
@@ -2576,8 +2669,9 @@ one page.
   `attachments/<Title>.pdf` (shared by pages of one document); the Bundle
   switch off leaves server links instead.
 
-The folder sync ([folder_sync.md](folder_sync.md)) writes the same dialect
-with the PDF beside the note. It shares `unique_name`, `name_files`,
+The gamma-sync client ([synced_vaults.md](synced_vaults.md#the-client)) writes
+the same dialect with the PDF beside the note, and a page's `gamma_id` in its
+front matter. It shares `unique_name`, `name_files`,
 `link_texts` and `VaultContext.place_pages`/`place_pdf` with this export and the
 annotated-PDF folder export. `vault_name` appends `_` to a Windows device
 name (`CON` → `CON_`).
@@ -2588,6 +2682,28 @@ labels, the quoted `source` into the paper, `parent` into the page it is
 inside) — `test_obsidian.py` has the round trip, and
 `test_sub_pages_export.py` the nested layouts of every format, with and
 without `sub_pages`, and their round trips.
+
+A synced vault writes a highlight in a dialect of its own, on purpose
+(`gamma/vault_links.py`, [synced_vaults.md](synced_vaults.md#links-and-highlights)):
+the whole highlight is one callout, the person's note inside it, so that the
+lens reads it back as one block, and its anchor stands on its own line after
+it, Obsidian's rule for a quote:
+
+```
+> [!quote] [[Paper.pdf#page=3|p. 3]]
+> the quoted text
+>
+> the person's note, every line
+
+^a1b2c3
+```
+
+The export above puts the note after the callout as a paragraph. A
+vault reads a callout as a highlight by its first line alone (`> [!quote`,
+any case, folded or not), and a callout that links the page's own PDF and is
+no highlight Gamma knows becomes one with its quote and page and no
+rectangles, which the relocation run then places
+([highlight_relocation.md](highlight_relocation.md)).
 
 ## Notion export
 
@@ -2676,7 +2792,7 @@ changes a row and no block code:
   pipeline, which recurses a level at a time, is left out (about 250 levels);
   a link to it from another page is left pointing at no file, and an export
   with no page left fails with the reason. Warnings reach a job's result only:
-  the download routes (the share view's, scripts') answer the file alone.
+  the download routes (scripts', an import by link) answer the file alone.
 
 Read straight back into Gamma the zip is **Plain**, having no ids: `Paper/` is a
 folder and not sub-pages, a plain block with children is a bullet, and what

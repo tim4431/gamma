@@ -135,7 +135,7 @@ export function bindable(chord) {
 // default is prevented and propagation stopped), or null. `edits` commands
 // are skipped while ctx.readOnly.
 export function dispatch(commands, e, ctx, bindings, mac = IS_MAC) {
-  if (!e || e.isComposing || e.keyCode === 229) return null;
+  if (!e || composing(e)) return null;
   const chord = chordFromEvent(e, mac);
   if (!chord) return null;
   for (const cmd of commands) {
@@ -190,6 +190,13 @@ export function heldAlone(e, chord, mac = IS_MAC) {
   const want = heldFlags(chord, mac);
   return Object.values(want).some(Boolean) && Object.entries(want).every(([k, on]) => !!e[k] === on);
 }
+
+// A key an input method is still composing with (Chinese, Japanese,
+// Korean): its Enter confirms the word, so it must not also send, commit or
+// close. A React event or a DOM one; Safari's composing keydown says 229.
+// Every text field's Enter handler returns early on it
+// (docs/dev/ui-design.md, "Adding a control").
+export const composing = (e) => !!(e.nativeEvent || e).isComposing || e.keyCode === 229;
 
 // Whether `el` (the focused element) takes typed text: a key some command
 // or widget would claim stays with the field.

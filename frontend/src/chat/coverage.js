@@ -2,9 +2,10 @@
 // stream's {"context"} line, saved on the message) combined with the pages
 // its tools read (the read_page actions' `pdf_pages`), the turns left out
 // of a conversation too long for the model, the selected passages that
-// went short, a reply cut off at the output limit, and one a tool limit or
-// the window stopped (with the Continue both offer). Pure functions, so
-// the chat's component and the test share them.
+// went short, a reply cut off at the output limit, one a tool limit or
+// the window stopped (with the Continue both offer), and one that went
+// without tools because its model can't call them. Pure functions, so the
+// chat's component and the test share them.
 import { t, tn } from "../shared/i18n/i18n.js";
 import { estimateTokens, fmtTokens } from "./tokenUsage.js";
 
@@ -176,6 +177,20 @@ export function truncatedNote(truncated) {
   return {
     short: t("Reply cut off at the output limit"),
     long: t("The model reached its output limit before it finished. Continue carries on where it stopped."),
+    refused: true,
+  };
+}
+
+// The pill for a reply that went without tools: its model can't call them
+// on this connection (`tools_off` on the stream's {"model"} line, saved on
+// the message as `toolsOff`: the provider's words, or how the model
+// answered the check). `model` is the reply's model name.
+export function toolsOffNote(toolsOff, model) {
+  if (!toolsOff) return null;
+  return {
+    short: t("Answered without tools"),
+    long: t("{model} can't call tools on this connection ({reason}), so it answered as a plain chat. Pick another model to let the assistant work in your library, or check this one again from the message box.",
+      { model: model || t("This model"), reason: toolsOff }),
     refused: true,
   };
 }

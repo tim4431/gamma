@@ -24,7 +24,8 @@ const NONE = Object.freeze({ data: undefined, error: "", at: 0 });
 // it lands: Backups lists each of the account's workspaces' snapshots. One
 // marked `later` goes out with the others but is not waited for: what is
 // far down the pane (the server log) or shows only in a dialog (the
-// account pickers). `who`: {admin, signedIn}.
+// account pickers). `who`: {admin, signedIn, lang (the translation's target
+// language, whose glossary the translation pane shows)}.
 export const LOG_START = "/admin/logs?after=0";
 export const PANE_READS = {
   account: ({ admin, signedIn }) => [admin && "/admin/users", admin && "/admin/settings",
@@ -34,13 +35,15 @@ export const PANE_READS = {
     { path: "/server-config", later: true }],
   backups: ({ admin }) => [{ path: "/workspaces/mine", then: (d) => (d?.workspaces || []).map((w) => backupsOf(w.id)) },
     "/backup-tasks", admin && "/admin/offsite"],
-  server: () => ["/admin/server-info", "/admin/settings", "/admin/join-requests", "/admin/ai-providers", "/admin/workspaces",
-    "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
-  translation: () => ["/translate/engines", "/translations/stats"],
+  server: () => ["/admin/server-info", "/admin/settings", "/admin/join-requests", "/admin/reports", "/admin/ai-providers",
+    "/admin/workspaces", "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
+  translation: ({ lang }) => ["/translate/engines", "/translations/stats", termsOf(lang)],
   tools: () => ["/ai/search-services"],
   maintenance: () => ["/quota", "/metadata/status"],
 };
 export const backupsOf = (id) => `/workspaces/${encodeURIComponent(id)}/backups`;
+// The workspace's glossary in one target language.
+export const termsOf = (lang) => `/translate/terms?lang=${encodeURIComponent(lang || "zh-CN")}`;
 
 // A pane's reads as [{path, then, later}].
 function readsOf(pane, who) {

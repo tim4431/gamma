@@ -736,7 +736,7 @@ def _picture_annotation(writer, images, pic, rotation, crop, author, resolve_ref
 
 
 def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
-                 text_boxes=(), replaced=(), resolve_ref=None, pictures=(), uploads_dir=None,
+                 text_boxes=(), replaced=(), resolve_ref=None, pictures=(), stored=None,
                  zotero: bool = False) -> tuple[bytes, int]:
     """Return (annotated pdf bytes, number of annotations written).
 
@@ -757,7 +757,7 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
     references read through ``resolve_ref`` (``text_box._paragraphs``).
     ``pictures``: [{picture: <normalized picture>, content, page, id,
     modified}], written as ``/Stamp`` (``_picture_annotation``), their files
-    read from ``uploads_dir``, their captions' references through
+    found through ``stored``, their captions' references through
     ``resolve_ref`` too. ``replaced``: the ``imported_annot`` keys of text
     boxes and pictures imported from this PDF and still embedded in it,
     whose originals leave the copy (``_drop_replaced``) before anything is
@@ -796,7 +796,7 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
             annot = _highlight_annotation(pdf_rects, color, h.get("note") or "", author, zotero)
         writer.add_annotation(page_number=page_num - 1, annotation=annot)
         written += 1
-    images = XObjectStore(writer, uploads_dir)
+    images = XObjectStore(writer, stored)
     for pic in pictures:
         if not 1 <= pic["page"] <= len(writer.pages):
             continue
@@ -837,11 +837,11 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
     return out.getvalue(), written
 
 
-def page_with_ink(src, page_no: int, inks, *, pictures=(), text_boxes=(), replaced=(), uploads_dir=None,
+def page_with_ink(src, page_no: int, inks, *, pictures=(), text_boxes=(), replaced=(), stored=None,
                   resolve_ref=None) -> tuple[bytes, int]:
     """Page ``page_no`` (1-based) of the PDF ``src`` (a path or bytes) on
     its own, as the page shows it: its pictures and text boxes
-    (``annotate_pdf``'s ``pictures`` from ``uploads_dir`` and
+    (``annotate_pdf``'s ``pictures`` found through ``stored`` and
     ``text_boxes``, those on this page) drawn into its content
     (``_stamp_placed``), then the handwriting groups ``inks``
     (``gamma.ink.InkFile``s drawn on that page) over them (``_stamp_ink``),
@@ -862,14 +862,14 @@ def page_with_ink(src, page_no: int, inks, *, pictures=(), text_boxes=(), replac
         _drop_replaced(page, page_no, set(replaced))
     crop, rotation = page_frame(page)
     _stamp_placed(writer, page, [p for p in pictures if p["page"] == page_no],
-                  [b for b in text_boxes if b["page"] == page_no], rotation, crop, uploads_dir, resolve_ref)
+                  [b for b in text_boxes if b["page"] == page_no], rotation, crop, stored, resolve_ref)
     _stamp_ink(writer, page, inks, rotation, crop)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue(), pages
 
 
-def _stamp_placed(writer, page, pictures, text_boxes, rotation, crop, uploads_dir, resolve_ref) -> None:
+def _stamp_placed(writer, page, pictures, text_boxes, rotation, crop, stored, resolve_ref) -> None:
     """Draw ``pictures`` and then ``text_boxes`` over ``page``'s content as
     the page shows them (``notebook.placed_ops``): one form XObject in the
     display frame, mapped to user space through the page's view box and
@@ -885,7 +885,7 @@ def _stamp_placed(writer, page, pictures, text_boxes, rotation, crop, uploads_di
     (disp_w, disp_h), matrix = _frame(crop, rotation)
     glyphs = GlyphFonts(writer)
     ops, resources = placed_ops([p["picture"] for p in pictures], [(b["content"], b["box"]) for b in text_boxes],
-                                disp_w, XObjectStore(writer, uploads_dir), glyphs, resolve_ref)
+                                disp_w, XObjectStore(writer, stored), glyphs, resolve_ref)
     if not ops:
         return
     _stamp(writer, page, _form(writer, ops, disp_w, disp_h, matrix, resources), writer._add_object(_stream(b"q\n")))

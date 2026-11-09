@@ -35,6 +35,7 @@ import { diagramScenarios } from "./scenarios/diagrams.mjs";
 import { pdfScenarios } from "./scenarios/pdf.mjs";
 import { fileScenarios } from "./scenarios/files.mjs";
 import { collabScenarios } from "./scenarios/collab.mjs";
+import { collabSoakScenarios } from "./scenarios/collabSoak.mjs";
 import { shareScenarios } from "./scenarios/share.mjs";
 import { settingsScenarios } from "./scenarios/settings.mjs";
 import { mcpScenarios } from "./scenarios/mcp.mjs";
@@ -76,6 +77,7 @@ import { i18nScenarios } from "./scenarios/i18n.mjs";
 import { authScenarios } from "./scenarios/auth.mjs";
 import { zoteroLinkScenarios } from "./scenarios/zotero-link.mjs";
 import { blockPropertiesScenarios } from "./scenarios/blockProperties.mjs";
+import { vaultScenarios } from "./scenarios/vaults.mjs";
 import { GROUPS, changedFromGit, selectGroups, shardOf } from "./select.mjs";
 
 const RUNNERS = {
@@ -108,7 +110,9 @@ const RUNNERS = {
   "translation": translationScenarios,
   "inbox": inboxScenarios,
   "collab": collabScenarios,
+  "collab-soak": collabSoakScenarios,
   "mirror": mirrorScenarios,
+  "vaults": vaultScenarios,
   "zotero-link": zoteroLinkScenarios,
   "transfers": transferScenarios,
   "mcp": mcpScenarios,
