@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import stat
+import sys
 import threading
 import time
 
@@ -29,6 +30,7 @@ from gamma.publisher_sessions import seal
 from test_folder_links import over_http  # noqa: F401: the over_http fixture
 
 OWNER = "vr_owner"
+WINDOWS = sys.platform == "win32"
 REAL_DUE = folder_links.due
 
 
@@ -914,12 +916,16 @@ def test_a_viewer_is_told_no_path_in_a_link_its_status_or_a_files_problem(lab, d
     root = disk / "Paths"
     link = _vault(alice, root, {"L.md": "locked text\n"})
     page = _page_of(link, "L.md")
-    os.chmod(root / "L.md", stat.S_IREAD)
+    # a note is replaced through a temp file beside it and a rename: Windows refuses that over a read-only
+    # file, where POSIX goes by the directory's mode instead, so each locks what stops the write there
+    locked, shut, open_again = ((root / "L.md", stat.S_IREAD, stat.S_IWRITE | stat.S_IREAD) if WINDOWS
+                                else (root, stat.S_IRUSR | stat.S_IXUSR, stat.S_IRWXU))
+    os.chmod(locked, shut)
     try:
         _edit(link, page, _find(link, page, "locked text"), "gamma wants this")
         status = _sync(alice, link["id"])
     finally:
-        os.chmod(root / "L.md", stat.S_IWRITE | stat.S_IREAD)
+        os.chmod(locked, open_again)
     assert status["kept"] and "another program" in status["kept"][0]["why"]
     folder_links._write_status(link["id"], {**folder_links.get_link(link["id"])["status"],
                                             "last_error": f"Cannot write {root}: no", "stopped": f"{root} moved",

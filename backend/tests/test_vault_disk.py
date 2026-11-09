@@ -574,7 +574,7 @@ def test_the_markers_file_id_tells_a_copy_of_the_vault(tmp_path):
 
 def test_a_rename_that_only_changes_case_is_its_own_name(tmp_path):
     root, _id = vault(tmp_path, Foo_md="foo")
-    assert free_name(root, "foo.md") == ("foo 2.md" if WINDOWS or sys.platform == "darwin" else "foo.md")
+    assert free_name(root, "foo.md") == "foo 2.md"      # the one naming rule ignores case, whatever the disk does
     assert free_name(root, "foo.md", own="Foo.md") == "foo.md"
     move(root, "Foo.md", "foo.md")
     assert [p.name for p in root.iterdir() if p.suffix == ".md"] == ["foo.md"]

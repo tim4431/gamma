@@ -33,6 +33,7 @@ from gamma.ops import commit_ops
 from test_folder_links import _create, _sync, disk, over_http  # noqa: F401: the disk and over_http fixtures
 from test_pdf_export import _blank_pdf, _position
 
+WINDOWS = sys.platform == "win32"
 OWNER = "vu_owner"
 SERVER = "http://testserver"
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
@@ -606,6 +607,8 @@ def test_a_disk_unplugged_during_the_upgrades_pass_takes_nothing(owner, disk, ov
         owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
+@pytest.mark.skipif(not WINDOWS, reason="only Windows keeps a file another program holds: elsewhere the upgrade "
+                                        "takes the state file away while it is open, and there is nothing to stop")
 def test_a_state_file_held_open_through_a_removal_stops_it_and_goes_with_it(owner, disk, over_http, settled):
     """A state file the upgrade could not take away outlived the
     vault: removed with its files kept and made again there, the folder read

@@ -324,6 +324,17 @@ def test_a_block_justified_in_the_original_is_justified_unless_its_box_is_narrow
     assert max(narrow) - min(narrow) > 3, "a box under 18 em stays ragged"
 
 
+def _added_fonts(page, source, name):
+    """The font objects of ``page`` named ``name`` that the paper's page
+    ``source`` did not already hold: the face a block is set in is embedded
+    again for the translation, and what matters is that it goes in once.
+    MuPDF drops the paper's own subset once nothing draws it any more, but
+    only from 1.28: the apps' pin leaves the resource behind, so the paper's
+    own programs are counted out by name rather than assumed gone."""
+    had = {f[3] for f in source.get_fonts()}
+    return [f for f in page.get_fonts() if name in f[3] and f[3] not in had]
+
+
 def _font_paper():
     """A page whose paragraph is set in an embedded font (MuPDF's Nimbus
     Roman) subset to the letters it uses, as a paper's fonts are: MuPDF's
@@ -366,8 +377,8 @@ def test_a_block_is_set_in_the_papers_own_font_when_it_draws_every_letter():
     two = _write(data, [{"page": 1, "blocks": [
         {"lines": [_line_box(src, "Alpha line one")], "size": 10, "parts": ["the brown fox"], "face": face},
         {"lines": [_line_box(src, "Alpha line two")], "size": 10, "parts": ["a lazy dog"], "face": face}]}], "en")
-    held = pymupdf.open(stream=two, filetype="pdf")[0].get_fonts()
-    assert len({f[0] for f in held if face in f[3]}) == 1, held  # (xref, ext, type, basefont, …)
+    held = _added_fonts(pymupdf.open(stream=two, filetype="pdf")[0], src, face)
+    assert len({f[0] for f in held}) == 1, held  # (xref, ext, type, basefont, …)
 
 
 def test_the_blanks_a_papers_font_lacks_go_in_the_serif():
@@ -529,7 +540,7 @@ def test_a_composite_font_whose_program_maps_no_character_is_used_through_its_to
     for word in ("lazy", "jumps"):
         (area,) = page.search_for(word)
         assert min(page.get_pixmap(dpi=200, clip=area).samples) < 128, word
-    assert len([f for f in page.get_fonts() if name in f[3]]) == 1
+    assert len(_added_fonts(page, src[0], name)) == 1
     other = _write(data, [{"page": 1, "blocks": [_alpha_block(src[0], ["Die Wörter"]) | {"face": face}]}], "de")
     used = {f for t, _, _, _, f in _spans(other) if t.strip() and t.strip() in "Die Wörter"}
     assert used and name not in used, "a letter it lacks: the serif"
