@@ -1836,11 +1836,12 @@ class Round:
     def _known(path: str, row: dict) -> vault_disk.Known:
         return vault_disk.Known(path, row["kind"], row["size"], row["hash"], row["file_id"],
                                 (row["text"] or "") if row["kind"] == "pdf" else "",
-                                row["text"] if row["kind"] == "notes" else None)
+                                row["text"] if row["kind"] == "notes" else None, row["mtime_ns"])
 
     @staticmethod
     def _known_read(read: Read) -> vault_disk.Known:
-        return vault_disk.Known(read.path, read.kind, read.size, read.hash, read.file_id, read.pdf_id, read.text)
+        return vault_disk.Known(read.path, read.kind, read.size, read.hash, read.file_id, read.pdf_id, read.text,
+                                read.mtime_ns)
 
     def _read(self, path: str, found) -> Read:
         """A file read whole once it has settled: a note statted again after

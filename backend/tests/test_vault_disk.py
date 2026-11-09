@@ -310,6 +310,34 @@ def test_a_file_comes_back_to_its_page_where_it_lived_or_by_its_file_id_never_by
     assert vault_disk.came_back(tombs, [note("n.md", "a different note under the old name", "77")]) == {}
 
 
+def test_a_freed_inode_under_another_name_is_the_next_file_not_the_old_one():
+    """The daily note of one day deleted and the next made from the same
+    template: ext4 gave the new file the old one's inode, so a file id that
+    is proof of a move said the trashed page had come back, under the day
+    before's title. Bytes that match exactly carry the file's own time with
+    them now, and a move keeps that time where a file written in the freed
+    inode's place has its own."""
+    template, when = "## Tasks\n\n- [ ] \n\n## Log\n", 1_762_000_000_000_000_000
+    gone = note("2026-11-01.md", template, "302462", hash="h-template", mtime_ns=when)
+    copy = note("2026-11-07.md", template, "302462", hash="h-template", mtime_ns=when + 86_400_000_000_000)
+    assert vault_disk.came_back([gone], [copy]) == {}
+    moved = note("days/2026-11-01.md", template, "302462", hash="h-template", mtime_ns=when)
+    assert vault_disk.came_back([gone], [moved]) == {"days/2026-11-01.md": 0}   # a move keeps the file's time
+    assert pair_moves([gone], [moved])[0] == {"days/2026-11-01.md": "2026-11-01.md"}
+
+
+def test_a_note_written_under_a_name_its_page_was_deleted_under_is_a_new_note():
+    """Two notes of one name, the first trashed and its file removed: the
+    second took the first's inode, and the file id brought the first page
+    back under it instead of filing a page of its own. Where the file lived
+    is the whole answer for a file found there."""
+    gone = note("n.md", "the first note of this name", "77", mtime_ns=1)
+    other = note("n.md", "another note of the same name, other text", "77", mtime_ns=2)
+    assert vault_disk.came_back([gone], [other]) == {}
+    back = note("n.md", "the first note of this name", "77", mtime_ns=1)
+    assert vault_disk.came_back([gone], [back]) == {"n.md": 0}                  # the note itself, come back
+
+
 def test_nothing_is_read_or_written_out_of_the_vault_by_a_path(tmp_path):
     root, _id = vault(tmp_path, a__b_md="b")
     assert vault_disk.path(root, "a/b.md") == root / "a" / "b.md" and vault_disk.read(root, "a/b.md") == b"b"

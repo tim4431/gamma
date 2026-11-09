@@ -153,6 +153,7 @@ class Known:
     file_id: str = ""
     pdf_id: str = ""
     text: str | None = None
+    mtime_ns: int = 0
 
 
 @dataclass(slots=True)
@@ -546,18 +547,29 @@ def _stem(path: str) -> str:
 
 
 def _alike(gone: Known, found: Known) -> bool:
-    """What makes the same file id evidence: the same size or hash, the same
-    PDF ``/ID``, or a note's text alike, ``ID_SIMILAR`` being enough with the
-    id (a short note renamed and edited: ``buy more coffee`` to ``buy more tea
-    today``), where text alone needs ``MOVE_SIMILAR``, or the old text kept
-    in the new, ``MOVE_SIMILAR`` of its words in their order at least (a short
-    note moved and written on at length: ``kept``). Never the id alone: ext4
-    gives a freed inode to the next file made."""
-    if gone.size == found.size or (gone.hash and gone.hash == found.hash):
+    """What makes the same file id evidence: the same size or hash and the
+    file's own time with it, the same PDF ``/ID``, or a note's text alike,
+    ``ID_SIMILAR`` being enough with the id (a short note renamed and edited:
+    ``buy more coffee`` to ``buy more tea today``), where text alone needs
+    ``MOVE_SIMILAR``, or the old text kept in the new, ``MOVE_SIMILAR`` of its
+    words in their order at least (a short note moved and written on at
+    length: ``kept``). Never the id alone: ext4 gives a freed inode to the
+    next file made, so the file in its place answers to the old one's id.
+
+    Bytes that match exactly are the one thing that file is as likely to have
+    as the file that left (a template's copies share them, which is why a hash
+    elsewhere is no evidence either), so they count only with ``mtime_ns``:
+    a move keeps the file's time to the nanosecond, where a file written in
+    the freed inode's place has its own. Text that merely resembles the old
+    is evidence with the id still: nothing copies a file and then edits it
+    into most of what the old one said."""
+    if (gone.size == found.size or (gone.hash and gone.hash == found.hash)) and gone.mtime_ns == found.mtime_ns:
         return True
     if found.kind == "pdf":
         return bool(found.pdf_id and found.pdf_id == gone.pdf_id)
     old, new = gone.text or "", found.text or ""
+    if old and old == new:
+        return False
     return similarity(old, new, ID_SIMILAR) >= ID_SIMILAR or kept(old, new) >= MOVE_SIMILAR
 
 
@@ -634,17 +646,21 @@ def came_back(tombs: list, found: list) -> dict:
     alike (a branch switched there and back, an editor saving again the note it
     had open); anywhere, the same file id with a size or a text alike
     (``_alike``). A hash alone elsewhere is no evidence: a template's copies
-    share one."""
+    share one. A file at the very path the page's file had answers to that
+    first evidence alone, whatever its id: the next note written under a name
+    its page was deleted under is that name's new note, not the old one back,
+    and a freed inode would otherwise say it was."""
     out, taken = {}, set()
     for f in found:
         for k, g in enumerate(tombs):
             if k in taken or g.kind != f.kind:
                 continue
             same_id = f.file_id not in ("", "0") and f.file_id == g.file_id
-            here = _fold(g.path) == _fold(f.path) and bool(
+            where_it_lived = _fold(g.path) == _fold(f.path)
+            here = where_it_lived and bool(
                 (g.hash and g.hash == f.hash) or (f.kind == "pdf" and f.pdf_id and f.pdf_id == g.pdf_id)
                 or (f.kind == "notes" and similarity(g.text or "", f.text or "") >= MOVE_SIMILAR))
-            if here or (same_id and _alike(g, f)):
+            if here or (not where_it_lived and same_id and _alike(g, f)):
                 out[f.path] = k
                 taken.add(k)
                 break
