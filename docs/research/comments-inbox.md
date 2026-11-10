@@ -50,6 +50,50 @@ confirmed on the current pages.
   it is not seen within five minutes, e-mail when Notion is closed, Slack and
   Teams integrations, all switched in Settings, Notifications.
 
+## Who hears of a comment
+
+Survey date: 2026-11-09, asked as "if I comment on a block, who hears
+of it?". Before this, Gamma answered: the people the comment names, and
+on a reply the thread's authors, nobody else. The page's author never
+heard of a comment on their page, because Gamma does not know who wrote
+it. Notion's own help pages ([notification settings][n-settings],
+[inbox][n-inbox], [comments][n-comments]) give the levels but not the
+defaults. The defaults come from guides ([Notion VIP][n-vip],
+[Notionry][n-notionry], [Thomas Frank][n-frank]), which do not all agree,
+and none is current Notion documentation.
+
+- **Always.** An @mention, and a reply to your comment. Neither can be
+  turned off ("@-mentions and comment replies always come through").
+  Nothing comes from a page you cannot open.
+- **Notify me.** A page's ••• menu, Notify me: **All comments** or
+  **Replies and @mentions**. A database page also offers **All updates**
+  (comments and property changes) and **Important updates** (comments,
+  status, assignee, due date). The same choice is in an inbox item's •••.
+- **Following.** "You automatically follow pages that you create or edit"
+  (Notion VIP), or "if you comment on a page or if you create the page"
+  (Notionry). Following brings every comment on the page. Being added to a
+  database's person property notifies you too. Sub-pages are not followed
+  with their parent.
+
+Built ([dev/comments.md](../dev/comments.md) "Following a page"): every
+source's rule at once, so creating, editing or commenting on a page makes
+you follow it. The owner of a personal workspace follows all of its pages
+without a row, which covers the pages from before following existed. A page
+of a shared workspace gets its followers from the next person who touches
+it. Notify me is per account and page, set in the Comments window. A
+comment tells each person once: the mention, else the reply, else the
+follow. Following is stored per account in the workspace's `pages.db`
+(`page_follows`), the place for per-account state that names a workspace's
+pages, as `workspace_prefs` is. It is written inside the writer's own
+transaction (`touch_page`, the comment's insert), so it costs no extra
+commit and no `users.db` write.
+
+Turned down: notifying a block's author or last editor (Notion does not,
+and Gamma keeps no block author); backfilling the followers of existing
+shared-workspace pages from the op log (it keeps about a day) or the change
+log (it keeps only each page's last writer); Notion's All updates level
+(edits as well as comments) as a first step.
+
 ## Where Gamma started
 
 - `@username` mentions are plain text in note blocks, with chips, a menu and
@@ -122,7 +166,9 @@ socket stays the next step.
   and MCP; a highlight's thread could become PDF reply annotations
   (`/IRT`), which the import already reads as child notes.
 - A role that reads without commenting (viewers comment, unlike Notion's
-  Can view), following a page, reactions, ranges inside a block.
+  Can view), reactions, ranges inside a block.
+- Notify me from the tab's menu and from an Inbox item, and an All updates
+  level ("Who hears of a comment" above).
 - E-mail and push when no Gamma window is open; the iPad's web view has no
   notifications.
 
@@ -132,3 +178,7 @@ socket stays the next step.
 [n-perms]: https://www.notion.com/help/sharing-and-permissions
 [n-remind]: https://www.notion.com/help/reminders
 [n-api]: https://developers.notion.com/guides/data-apis/working-with-comments
+[n-settings]: https://www.notion.com/help/notification-settings
+[n-vip]: https://www.notion.vip/insights/collaborating-in-notion-comments-mentions-reminders
+[n-notionry]: https://www.notionry.com/tutorials/a-look-into-notions-comment-feature-tutorial
+[n-frank]: https://thomasjfrank.com/learn-notion/notifications/

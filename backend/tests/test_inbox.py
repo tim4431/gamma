@@ -1,6 +1,8 @@
 """The Inbox (gamma/inbox.py, routers/inbox.py, docs/dev/comments.md "The
 inbox"): every producer — a mention in a note, in a comment, a reply, a
-resolve, a share, an invitation —; the mention diff (a re-save is silent, a
+comment on a page one follows, a resolve, a share, an invitation —; who
+follows a page (made it, edited it, commented on it, owns the personal
+library) and its Notify me; the mention diff (a re-save is silent, a
 new name in the same block notifies); no self, no guest, no non-member; a
 share-invited account's way in, and no other share's link handed out; a
 half-typed name archived, a name moved by a split or a join followed; the
@@ -18,7 +20,7 @@ import pytest
 from conftest import account_of, login, make_folder, make_page, make_user, recv, recv_hello, workspace_of
 
 from gamma import comments, hosted, inbox, ops, workspaces
-from gamma.db import connect_users_db, page_now
+from gamma.db import connect_pages_db, connect_users_db, page_now
 from gamma.seed import insert_account
 
 
@@ -208,11 +210,12 @@ def test_comment_mentions_replies_and_resolves(own, edi, vie, out, lab):
     # someone a reply mentions gets that, not a second item as a reply
     again = _comment(own, page, "ibCom1", "@ib_vie please look", lab, thread_id=root)["comment"]["id"]
     assert _kinds(vie, comment_id=again) == ["comment_mention"] and _kinds(edi, comment_id=again) == ["reply"]
-    # an edit tells the people it adds only, and never a non-member
+    # an edit tells the people it adds only, and never a non-member (the page's
+    # maker heard of the thread as its follower already)
     r = edi.patch(f"/api/comments/{root}", json={"body": "what about this, @ib_vie and @ib_own and @ib_out?"},
                   headers=_in(lab))
     assert r.status_code == 200
-    assert _kinds(own, comment_id=root) == ["comment_mention"] and len(_items(vie, comment_id=root)) == 1
+    assert _kinds(own, comment_id=root) == ["comment", "comment_mention"] and len(_items(vie, comment_id=root)) == 1
     assert _items(out, comment_id=root) == []
     # resolved by someone else: its author hears; by its author, or a reopen: no one
     assert own.post(f"/api/comments/{root}/resolve", json={"resolved": True}, headers=_in(lab)).status_code == 200
@@ -299,6 +302,108 @@ def test_one_event_tells_at_most_25(own, lab):
     assert told == ids[:inbox.MAX_RECIPIENTS]
     with connect_users_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM inbox_items WHERE page_id = ?", (page,)).fetchone()[0] == 25
+
+
+# --- following a page ---------------------------------------------------------------------
+
+def _follows(ws, page):
+    with connect_pages_db(ws) as conn:
+        return dict(conn.execute("SELECT user_id, level FROM page_follows WHERE page_id = ?", (page,)).fetchall())
+
+
+def test_a_comment_tells_whoever_made_edited_or_commented_on_the_page(own, edi, vie, lab):
+    page = _page(own, "Followed page", lab)
+    _note(edi, page, "ibFol1", "a note", lab)
+    root = _comment(vie, page, "ibFol1", "a question", lab)["thread"]["id"]
+    assert _kinds(own, comment_id=root) == ["comment"] and _kinds(edi, comment_id=root) == ["comment"]
+    [item] = _items(own, comment_id=root)
+    assert (item["actor"], item["block_id"], item["thread_id"], item["snippet"], item["page_title"]) == (
+        "ib_vie", "ibFol1", root, "a question", "Followed page")
+    # the viewer only commented, and follows from then on
+    other = _comment(own, page, page, "on the page itself", lab)["comment"]["id"]
+    assert _kinds(vie, comment_id=other) == ["comment"] and _kinds(edi, comment_id=other) == ["comment"]
+    # one item a person: the thread's author hears of a reply as a reply, someone it names as a mention
+    reply = _comment(edi, page, "ibFol1", "an answer for @ib_own", lab, thread_id=root)["comment"]["id"]
+    assert _kinds(vie, comment_id=reply) == ["reply"] and _kinds(own, comment_id=reply) == ["comment_mention"]
+    # an edit of a comment tells no follower
+    r = own.patch(f"/api/comments/{other}", json={"body": "on the page itself, again"}, headers=_in(lab))
+    assert r.status_code == 200
+    assert len(_items(vie, comment_id=other)) == 1 and len(_items(edi, comment_id=other)) == 1
+    # the item goes with its comment
+    assert own.delete(f"/api/comments/{other}", headers=_in(lab)).status_code == 200
+    assert _items(vie, comment_id=other) == []
+
+
+def test_a_personal_librarys_owner_follows_every_page_of_it(own, out):
+    page = make_page(own, "Owner follows page")["id"]
+    r = own.post(f"/api/share/{page}", json={"audience": "list", "users": [{"name": "ib_out", "role": "view"}]})
+    token = r.json()["token"]
+    ws = workspace_of("ib_own")
+    with connect_pages_db(ws) as conn:  # a page from before following came: no row of the owner's
+        conn.execute("DELETE FROM page_follows WHERE page_id = ?", (page,))
+    root = _comment(out, page, page, "a visitor's question", params={"share": token})["thread"]["id"]
+    [item] = _items(own, kind="comment", thread_id=root)
+    assert (item["actor"], item["share_token"]) == ("ib_out", "")
+    assert _follows(ws, page) == {account_of("ib_out"): "all"}  # the owner's follow needs no row
+    # the invitee commented, so follows: the owner's new thread reaches them through the share
+    later = _comment(own, page, page, "another thing")["thread"]["id"]
+    assert _items(out, kind="comment", thread_id=later)[0]["share_token"] == token
+    # the owner may turn it down like anyone
+    assert own.put(f"/api/pages/{page}/notify", json={"level": "replies"}).json() == {"level": "replies"}
+    last = _comment(out, page, page, "one more", params={"share": token})["thread"]["id"]
+    assert _items(own, thread_id=last) == []
+
+
+def test_notify_me_is_each_accounts_choice_for_the_page(own, edi, vie, lab):
+    page = _page(own, "Notify me page", lab)
+    _note(edi, page, "ibNot1", "edited", lab)
+    url = f"/api/pages/{page}/notify"
+    assert edi.get(url, headers=_in(lab)).json() == {"level": "all"}
+    assert vie.get(url, headers=_in(lab)).json() == {"level": "replies"}
+    assert edi.put(url, json={"level": "replies"}, headers=_in(lab)).json() == {"level": "replies"}
+    _say(edi, page, "ibNot1", "edited again", lab)  # a later edit keeps the choice
+    root = _comment(own, page, "ibNot1", "a thought", lab)["thread"]["id"]
+    assert _items(edi, thread_id=root) == []
+    # replies and mentions come whichever it is, and a comment of one's own keeps the choice too
+    _comment(edi, page, "ibNot1", "noted", lab, thread_id=root)
+    reply = _comment(own, page, "ibNot1", "thanks", lab, thread_id=root)["comment"]["id"]
+    assert _kinds(edi, comment_id=reply) == ["reply"]
+    assert edi.get(url, headers=_in(lab)).json() == {"level": "replies"}
+    # a viewer turns All comments on
+    assert vie.put(url, json={"level": "all"}, headers=_in(lab)).status_code == 200
+    other = _comment(own, page, page, "for everyone", lab)["comment"]["id"]
+    assert _kinds(vie, comment_id=other) == ["comment"] and _items(edi, comment_id=other) == []
+    # the bounds: another level, a page that is none (any more)
+    assert vie.put(url, json={"level": "loud"}, headers=_in(lab)).status_code == 400
+    assert vie.get("/api/pages/ibNoPage/notify", headers=_in(lab)).status_code == 404
+    assert own.delete(f"/api/blocks/{page}", headers=_in(lab)).status_code == 200
+    assert vie.get(url, headers=_in(lab)).status_code == 404
+    # deleted for good, its followers go with it
+    assert own.delete(f"/api/trash/{page}", headers=_in(lab)).status_code == 200
+    assert _follows(lab, page) == {}
+
+
+def test_a_batch_typed_elsewhere_or_by_no_account_follows_nothing(own, lab):
+    page = _page(own, "Unfollowed page", lab)
+    by = account_of("ib_vie")
+    for i, client in enumerate(ops.UNFOLLOWED):
+        ops.commit_ops(lab, page, [{"op": "insert", "id": f"ibUnf{i}", "parent": page, "content": "x"}],
+                       actor=by, client=client)
+    for i, actor in enumerate(("mirror", "zotero", "link:Otter", "")):
+        ops.commit_ops(lab, page, [{"op": "insert", "id": f"ibUna{i}", "parent": page, "content": "x"}], actor=actor)
+    assert _follows(lab, page) == {account_of("ib_own"): "all"}
+    assert sorted(ops.UNFOLLOWED) == sorted((inbox.SYNC_CLIENT, inbox.ZOTERO_CLIENT, inbox.DISK_CLIENT, "meta"))
+
+
+def test_who_leaves_a_workspace_follows_nothing_there(own, lab):
+    make_user("ib_leaver", "ibleaverpw1")
+    leaver = login("ib_leaver", "ibleaverpw1")
+    uid = account_of("ib_leaver")
+    workspaces.set_member(lab, uid, "editor", by=account_of("ib_own"))
+    page = _page(leaver, "Leaver's page", lab)
+    assert _follows(lab, page) == {uid: "all"}
+    workspaces.remove_member(lab, uid)
+    assert _follows(lab, page) == {}
 
 
 # --- the listing --------------------------------------------------------------------------
@@ -624,10 +729,16 @@ def test_who_has_an_inbox(own, guest, anon):
     assert own.get("/api/inbox").status_code == 200
     assert anon.get("/api/inbox").status_code == 401
     assert guest.get("/api/inbox/unread").status_code == 403
+    # nor a page's Notify me: a guest's own page, a token's
+    guest_page = make_page(guest, "A guest's page")["id"]
+    assert guest.get(f"/api/pages/{guest_page}/notify").status_code == 403
     bearer = TestClient(app)
     token = create_token(account_of("ib_own"), workspace_of("ib_own"), "ib", 1, scope="write")["token"]
     bearer.headers["Authorization"] = f"Bearer {token}"
     assert bearer.get("/api/inbox").status_code == 403
     assert bearer.post("/api/inbox/mark", json={"all": True, "read": True}).status_code == 403
+    page = make_page(own, "A token's page")["id"]
+    assert own.get(f"/api/pages/{page}/notify").json() == {"level": "all"}
+    assert bearer.put(f"/api/pages/{page}/notify", json={"level": "replies"}).status_code == 403
     # marking is account bookkeeping: a read-only hosted server takes it
     assert hosted.allowed_when_read_only("/api/inbox/mark")

@@ -40,6 +40,7 @@ export function inboxSentence(item) {
     case "mention": return t("{who} mentioned you in {page}", { who, page });
     case "comment_mention": return t("{who} mentioned you in a comment on {page}", { who, page });
     case "reply": return t("{who} replied to a comment on {page}", { who, page });
+    case "comment": return t("{who} commented on {page}", { who, page });
     case "resolved": return t("{who} resolved your comment on {page}", { who, page });
     case "shared":
       return isFolderShare(item) ? t("{who} shared the folder {name} with you", { who, name: page })

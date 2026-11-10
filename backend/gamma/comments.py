@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 
 from . import inbox
-from .blocks_store import new_block_id, valid_block_id, write_lock
+from .blocks_store import follow_page, new_block_id, valid_block_id, write_lock
 from .db import account_names, connect_pages_db, connect_users_db, format_stamp, page_now, parse_stamp, workspace_ids
 from .logbuf import log
 
@@ -168,7 +168,9 @@ def create(conn, page_id: str, *, block_id: str, body: str, author: str, author_
     the block must be the thread's). ``comment_id``: the client's id for the
     comment (a block id's shape), minted here when absent; a comment of that
     id by the same author on this page is answered as stored, so a retry
-    writes nothing twice. Returns ``{comment, thread, created, event}`` —
+    writes nothing twice. The author follows the page from then on
+    (``blocks_store.follow_page``), unless they chose otherwise for it.
+    Returns ``{comment, thread, created, event}`` —
     ``created`` false for such a retry, ``event`` for ``after_write``.
     Commits. 404 unless the page is a page of the library, and for a retry
     of a comment hidden since; 400 for a block outside it, a thread that is
@@ -207,6 +209,7 @@ def create(conn, page_id: str, *, block_id: str, body: str, author: str, author_
         now = page_now()
         conn.execute(f"INSERT INTO comments ({COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)",
                      (comment_id, thread_id, block_id, page_id, author, author_name or "", body, now, now))
+        follow_page(conn, page_id, author, now=now)
         thread = thread_of(conn, thread_id)  # under the lock: no batch can hide its block before the answer
         conn.commit()
     except BaseException:
@@ -318,8 +321,9 @@ def _event(kind: str, actor: str, page_id: str, block_id: str, thread_id: str, c
 def after_write(ws: str, event: dict | None) -> None:
     """What follows a committed comment write, called by every writer once
     its transaction is in: the Inbox (``inbox.from_comment``: the people a
-    comment mentions, the thread's others on a reply, the thread's author
-    on a resolve; a deleted comment's items go). ``event`` is ``{kind,
+    comment mentions, the thread's others on a reply, the page's followers
+    on either, the thread's author on a resolve; a deleted comment's items
+    go). ``event`` is ``{kind,
     actor, page_id, block_id, thread_id, comment_id, ...}``, ``kind`` one
     of ``create`` (a new thread; ``body``), ``reply`` (``body``), ``edit``
     (``body``, ``before``), ``delete`` (``comment_ids``), ``resolve`` /

@@ -19,6 +19,7 @@ test("one sentence per kind, with the actor, the page and the workspace", () => 
   assert.equal(inboxSentence(item("a", at)), "ann mentioned you in Draft");
   assert.equal(inboxSentence(item("a", at, { kind: "comment_mention" })), "ann mentioned you in a comment on Draft");
   assert.equal(inboxSentence(item("a", at, { kind: "reply" })), "ann replied to a comment on Draft");
+  assert.equal(inboxSentence(item("a", at, { kind: "comment" })), "ann commented on Draft");
   assert.equal(inboxSentence(item("a", at, { kind: "resolved" })), "ann resolved your comment on Draft");
   assert.equal(inboxSentence(item("a", at, { kind: "shared", block_id: "" })), "ann shared Draft with you");
   assert.equal(inboxSentence(item("a", at, { kind: "shared", page_id: "", block_id: "f1", page_title: "Reading" })),

@@ -4946,6 +4946,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // not a link visitor without one, nor a guest account through a link.
   const commentMe = shareMode ? (shareInfo?.viewerIsGuest ? "" : shareInfo?.viewer || "") : authUser?.user || "";
   const canComment = !!commentMe;
+  // Whose Inbox the page's comments may reach, so the Comments window
+  // offers its Notify me: a commenter who is no guest account.
+  const canFollow = canComment && (shareMode || !authUser?.is_guest);
   // The workspace's owner deletes anyone's comment; not through a share link.
   const commentOwner = !shareMode && workspace?.role === "owner";
   const comments = useComments({ pageId: focusedBlockId, enabled: !!focusedBlockId, me: commentMe, onStatus: (msg) => setStatus(msg),
@@ -11969,6 +11972,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onClose={onClose}
             threads={comments.threads}
             pageId={focusedBlockId}
+            notify={canFollow && commentsOn}
+            onStatus={setStatus}
             // what a thread is on: a highlight's quote, else the note's text
             anchorText={(id) => { const b = treeById.get(id); return b ? blockQuote(b) || b.content || "" : ""; }}
             labelOf={(id) => { const rb = treeById.get(id) || refCache[id]; return rb ? refLabelOf(rb) : null; }}
