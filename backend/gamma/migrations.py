@@ -594,9 +594,10 @@ def warming():
 # that is a workspace step (WORKSPACE_STEPS), ``fn(ws, pages, data)`` on
 # one workspace's pages.db and data.db connections (data None when there
 # is no data.db; ws '' on a backup's copy), inside the runner's
-# transaction (it does not commit). A workspace step is also what a restored backup goes through,
-# so it is re-runnable and finds a table it changes missing on an old copy
-# (the schema statements, applied after it, create that one).
+# transaction (it does not commit). A workspace step is also what a restored
+# backup goes through, so it is re-runnable and finds a table it changes
+# missing on an old copy (the schema statements, applied after it, create
+# that one).
 
 def _columns(conn, table: str) -> list[str]:
     return [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
