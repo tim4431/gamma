@@ -19,50 +19,57 @@ install steps, unpacked included, in
    folder and labels → **Save to Gamma** → *Open in Gamma*
    (`/?block=<id>`). The folder is typed as a path and **Tab**-completed,
    subfolder by subfolder (below, "Completing a folder path"). A page where
-   nothing was detected shows the same folder and labels under its notice,
-   over *Save this URL anyway*: filing is the same work either way. On a
-   `?` page, *Save the web page instead* saves the
-   story rather than the paper it names.
+   nothing was detected is a web clip (item 3): the same folder and labels
+   under its notice, with what of the page to keep over them, since filing
+   is the same work either way. On a `?` page, *Save the web page instead*
+   saves the story rather than the paper it names, as a web clip too.
 2. **Save the PDF you are looking at.** The tab *is* a PDF, possibly behind
    an institutional login the server can't reach: the bytes are fetched with
    the browser's session → `POST /api/uploads` (in parts past 32 MiB:
    `/api/uploads/parts`, [api.md](api.md)) → `POST /api/clip {doc_id}`,
    automatically — browser-first on PDF tabs, and as a fallback on any page
    whose PDF the server fails to fetch (no checkbox; see the pipeline below).
-3. **Right-click**: *Save link to Gamma* (link), *Save page to Gamma* (page),
+3. **Clip a web page.** A page that names no paper (a blog post, a news
+   story, a GitHub issue) saves as a page of its own carrying the tab as
+   `web_url`, with *Save as* **Article** (the page's article as note
+   blocks: headings, lists, quotes, code, tables, pictures, math),
+   **Selection** (the text selected on it, likewise) or **Link** (only the
+   title and the link). Below, "Web clips".
+4. **Right-click**: *Save link to Gamma* (link), *Save page to Gamma* (page;
+   a page naming no paper is a web clip, as last picked in the popup),
    *Clip selection to Gamma* (selection → a `> quote — [title](url)` block
    under the paper matching this tab, else under a "Web clips" note page).
    Results arrive as a notification whose click opens the page.
-   A page with no PDF at all still saves: it becomes a page of its own
-   carrying the tab as `web_url` (see the pipeline below).
-4. **Already in the library** — ✓ badge; the popup offers *Open in Gamma*
+5. **Already in the library** — ✓ badge; the popup offers *Open in Gamma*
    and *Add to another folder…* instead of a duplicate save. A save that
    just finished shows the same block, with "Saved to your library" (plus
-   the server's note, in amber, when there was no PDF), and *Undo this
+   the server's note, in amber, when a PDF the page named could not be
+   had, or a web clip found nothing to clip), and *Undo this
    save* beside the refile, which moves that page to Recently deleted and
    brings the form back. The head already
    names the paper, so the notice doesn't repeat the title. When the
    library page's title differs from the paper the tab resolved to, the
    notice says "Already in your library as “…”", so a stale metadata record
    on that page is visible rather than shown as this paper's title.
-5. **Preview before saving.** A PDF tab has no meta tags to read a title
+6. **Preview before saving.** A PDF tab has no meta tags to read a title
    from, so for every detected DOI / arXiv id the worker asks
    `GET /api/library/preview` for the registry record. The popup head then
    shows the paper's title plus authors · year · venue. The previewed title
    also names the new page on save (`auto_title`, so the metadata lookup may
    still replace it).
-6. **Ctrl+Shift+S** saves the current page with the default folder.
-7. **Options**: saved-server switcher, server URL, sign in / out, default folder (the popup's own
+7. **Ctrl+Shift+S** saves the current page with the default folder (a page
+   naming no paper as a web clip, as last picked).
+8. **Options**: saved-server switcher, server URL, sign in / out, default folder (the popup's own
    folder field) + labels, *prefer
    open-access fallback* and *keep a PDF copy* (the app's `oaFallback` /
    `pdfSaveLocal` prefs, sent as `allow_oa` / `save_copy`), and whether
    connected publisher sessions refresh automatically.
-8. **Publisher sessions** — the cookie button in the popup's footer. On a
+9. **Publisher sessions** — the cookie button in the popup's footer. On a
    supported journal host over HTTPS it offers to send the browser's cookies
    for that host to the signed-in Gamma account (`POST
    /api/publisher-sessions`), so the *server* can download that journal's
    PDFs later. Details below.
-9. **Fetches for the AI chat.** When the chat's `fetch_paper` meets a
+10. **Fetches for the AI chat.** When the chat's `fetch_paper` meets a
    sign-in, a bot check or a paywall, its card opens the page in a tab the
    Connector watches; once the user is through, the Connector sends the PDF
    back to the chat on its own. Details below.
@@ -80,6 +87,9 @@ browser tab ──detect.js──▶ worker.js ──fetch, cookies──▶ Gam
                             popup.html · options.html    GET  /api/library/folders
                                                          POST /api/pages/folders/ops
                                                          POST /api/clip/note
+ the article (clip.js,      a web clip: the article,     POST /api/upload-image
+ lib/Readability.js,        its pictures fetched and
+ injected on demand)        uploaded
                                                          POST /api/uploads · GET /api/session
 ```
 
@@ -91,17 +101,18 @@ helpers — never re-implement it in the extension.
 
 | File | Role |
 |---|---|
-| `manifest.json` | MV3: module service worker, `<all_urls>` content scripts (`ids.js`, `detect.js`, `bridge.js`), popup, options, `save-to-gamma` command. `host_permissions: ["<all_urls>"]` — the same install warning the content script already carries, and it makes cookie-carrying fetches to the (user-configured) server origin and the PDF-from-tab fetch work without runtime permission prompts |
-| `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error, log, origin, ws}`), badge/icon, `lookup` + `preview`, the save pipeline and its log (`log:saves`, the last five), context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request, `handoff:queue`), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`, and bridge.js's `connector-hello` / `connector-probe` / `connector-tab`) |
+| `manifest.json` | MV3: module service worker, `<all_urls>` content scripts (`ids.js`, `detect.js`, `bridge.js`), popup, options, `save-to-gamma` command. `host_permissions: ["<all_urls>"]` — the same install warning the content script already carries, and it makes cookie-carrying fetches to the (user-configured) server origin and the PDF-from-tab fetch work without runtime permission prompts. `scripting` (no install warning of its own) injects the web clipper when a clip starts |
+| `clip.js`, `lib/Readability.js` | the web clipper, injected into the tab only when a clip starts (`chrome.scripting`; `worker.js` `clipTab`): Mozilla's Readability 0.6.0 (Apache-2.0, `lib/Readability-LICENSE.md`, vendored unchanged) and `globalThis.gammaClip(mode)`, which answers the article or the selection as a clean fragment (below, "Web clips") |
+| `worker.js` | per-tab state in `chrome.storage.session` (`tab:<id>` → `{candidate, hit, preview, auth, saving, error, log, origin, ws, pageLooked}`), badge/icon, `lookup` + `preview` (and `lookupWebPage`, a page naming no paper looked up once the popup opens on it), the save pipeline (a web clip's too: `webClip`, `uploadPictures`) and its log (`log:saves`, the last five), context menus, keyboard command, notifications, the publisher-session status cache + automatic refresh (`publisher:auto`, `publisher:attempts` in session storage), the tabs fetching for the chat (`handoffs`: tab id → request, `handoff:queue`), and the message API (`get-state`, `save`, `clip-selection`, `auth-changed`, `publisher-status`, `open`, and bridge.js's `connector-hello` / `connector-probe` / `connector-tab`) |
 | `handoff.js` | the chat-fetch rules: a tab's `/go` address → the request id (`handoffIdFrom`), whether the tab's paper can be the requested one (`sameWork`), which URLs to try in it (`harvestUrls`, a save's list too, with an Atypon reader's file: `readerPdfUrl`), which one to open in the tab when downloads fail (`nextToOpen`, `needsSignIn`, `signInUrl`), whether the tab shows a bot check (`checkPage`), and whether every background turn is taken (`backgroundBusy`, `MAX_BACKGROUND`, `NEEDS_YOU`) — pure, tested in `tests/` |
 | `bridge.js` | content script between the Gamma app and the worker: a `connector-probe` window message gets the worker's verdict on one request (`ok` / `signed-out` / `other-account` / `unreachable`), a `connector-tab` one (`open`, `show`, `close`) the worker's answer (`opened` / `queued` / `shown` / `none` / `closed`), and a `connector-hello` (no request) answers `connector-here` to the Connector's own server's app only — how Gamma knows not to suggest the extension to a browser that has it (`shared/lib/connector.js`, [onboarding.md](onboarding.md)); nothing to a page the worker gives no answer for; a question a second per request and kind |
 | `ids.js` | the identifier rules — a DOI used as a URL path (`gammaDoiFromPath`), a DOI cleaned of what a sentence or a link puts after it (`gammaCleanDoi`), the distinct DOIs a page prints or links to through doi.org (`gammaTextDois`), and the arXiv id (`gammaArxivId`) — one file loaded by the content script and imported by the worker, tested in `tests/` |
 | `pageRecord.js` | the page's own citation record (`gammaPageRecord`): the Highwire `citation_*` tags, Dublin Core and PRISM filling gaps, read as Zotero's Embedded Metadata translator reads them (below, "Detection") — a classic script before `detect.js`, pure, tested in `tests/` |
 | `saveLog.js` | a save's log (below, "The save log"): the header, each timed step, the detection and a download's answer as lines, the last five kept — pure, tested in `tests/` |
-| `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64, with the answer's status, type and size — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
-| `api.js` | settings (`chrome.storage.sync`: `server, servers, workspaces, defaultFolders, folder, labels, allowOa, saveCopy, autoRefreshSessions`), `api()` fetch wrapper (`credentials: "include"`, the chosen workspace as `X-Gamma-Workspace`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI`, the workspace and default folder, and the folder tree (`folderTree`, `namedKid`, `makeFolder`; below) |
+| `detect.js` | content script (`document_idle`): identifier extraction, re-run when a single-page app changes the address or the title (a page's title often lands after its address), reported only when the detection changed; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64, with the answer's status, type and size — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
+| `api.js` | settings (`chrome.storage.sync`: `server, servers, workspaces, defaultFolders, folder, labels, allowOa, saveCopy, autoRefreshSessions, webClip`), `api()` fetch wrapper (`credentials: "include"`, the chosen workspace as `X-Gamma-Workspace`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI`, the workspace and default folder, and the folder tree (`folderTree`, `namedKid`, `makeFolder`; below) |
 | `publisherSessions.js` | Publisher-host validation and the connection flow (checks the active tab and account, then sends a snapshot to Gamma with the browser's `navigator.userAgent`); the automatic-refresh rule (`shouldAutoRefresh`, `REFRESH_AFTER` / `RETRY_AFTER`) and the status text (`describeSession`) — pure, tested in `tests/` |
-| `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder and the labels are one control (`chipField`, `ui.js`): the app's `categoryTag` chip input over a ctxMenu of suggestions — typing filters them, arrow keys + Enter pick one, Enter commits what was typed, Backspace in an empty input removes the last chip, and text typed but not committed still counts at Save. Labels take any number (a comma commits one too) and suggest the library's labels holding the text. When there are some, *New label “…”* follows for text no label has, or with nothing typed *New label…*, a name input in place; alone, either would lie over Save, which takes typed text as it is. A new label is a chip like any, which the save makes by its name. The folder holds one, since a clip files into one folder (none is the library root). With nothing typed its menu is the tree (below, "The folder tree"); typed, it suggests every other folder whose path holds the typed names in order, each within one name of the path (`phys/c` finds *Physics / Clocks*), those whose own name the last typed one begins first, and a path no folder has as *New folder “…”*, sent as `folder_path`. **Tab completes** what is being typed (below, "Completing a folder path"). A save remembers its folder (the worker, once it succeeds) but not its labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. The main view shows one of two halves: `#found`, the folder and labels (`#filing`) with the one action under them — *Save to Gamma*, or *Save this URL anyway* under the `#nothing` notice when no paper was detected, since a page with none files like any other — and `#existing`, the page once it is in the library, with *Open in Gamma* over a quiet row of *Add to another folder…* and *Undo this save* (below, "Undo"). *Clip selected text* and *Copy the save log* (whenever the tab has one) share one row of quiet links at the bottom, under the actions and any result; the log link copies the tab's last save log. `?tab=<id>` targets a specific tab when opened as a page (tests) |
+| `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder and the labels are one control (`chipField`, `ui.js`): the app's `categoryTag` chip input over a ctxMenu of suggestions — typing filters them, arrow keys + Enter pick one, Enter commits what was typed, Backspace in an empty input removes the last chip, and text typed but not committed still counts at Save. Labels take any number (a comma commits one too) and suggest the library's labels holding the text. When there are some, *New label “…”* follows for text no label has, or with nothing typed *New label…*, a name input in place; alone, either would lie over Save, which takes typed text as it is. A new label is a chip like any, which the save makes by its name. The folder holds one, since a clip files into one folder (none is the library root). With nothing typed its menu is the tree (below, "The folder tree"); typed, it suggests every other folder whose path holds the typed names in order, each within one name of the path (`phys/c` finds *Physics / Clocks*), those whose own name the last typed one begins first, and a path no folder has as *New folder “…”*, sent as `folder_path`. **Tab completes** what is being typed (below, "Completing a folder path"). A save remembers its folder (the worker, once it succeeds) but not its labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. The main view between the head and the footer is one `.body` on one vertical rhythm: 12 px between its groups (the workspace row, a notice, the form or the saved page, the progress line or a result, the tab's tools), the form's rows 8 apart and 12 over its button. It shows one of two halves: `#found`, the folder and labels (`#filing`) with the one action under them — *Save to Gamma*, or, under the `#nothing` notice when no paper was detected, *Save as* Article · Selection · Link (`#mode-row`, the app's Segmented) over the folder and labels and the save named after the mode (*Save article*, *Save selection*, *Save link*; below, "Web clips"), since a page with none files like any other — and `#existing`, the page once it is in the library, with *Open in Gamma* over a quiet row of *Add to another folder…* and *Undo this save* 8 px under it (below, "Undo"). *Save the web page instead*, *Clip selected text* and *Copy the save log* (whenever the tab has one) share one row of quiet links at the bottom (`.tools`), 16 px under what is above so the two rows of links don't read as one; the log link copies the tab's last save log. `?tab=<id>` targets a specific tab when opened as a page (tests) |
 | `tokens.css`, `fonts/` | committed copies of the app's `shared/styles/tokens.css` and the Latin subset of Inter, like the desktop shell's ([ui-design.md](ui-design.md#the-desktop-shell-and-the-extension)): `npm run copy-tokens` in `frontend/` refreshes them, and `frontend/tests/themes.test.mjs` fails while a copy differs from its source |
 | `theme.js` | a classic script in the head of both pages, before the stylesheets: the app's pinned theme isn't knowable here, so it sets `data-theme` / `data-scheme` to Light or Dark from `prefers-color-scheme`, live |
 | `options.html/js` | server + host permission, account, saving defaults (the workspace picked from the signed-in account's libraries, the popup's folder field, whose choice is stored as it is made), *Copy recent saves* (the last five save logs) |
@@ -158,10 +169,10 @@ A "possible paper" heads the popup with the registry's title of the paper
 its DOI names, since under the page's own title (a news story's) the
 registry's authors · year · venue would read as the story's; the save names
 the page by it too. *Save the web page instead*, a quiet link under the
-actions, saves the tab as a page with its web source (the clip without the
-DOI), and the tab then reads as that page. The "nothing found" notice says
-why: no paper at all, several DOIs naming none, or no PDF or DOI but
-citation tags naming a work, which *Save this URL anyway* sends along.
+actions, saves the tab as a web clip (the clip without the DOI, below,
+"Web clips"), and the tab then reads as that page. The "nothing found"
+notice says why: no paper at all, several DOIs naming none, or no PDF or
+DOI but citation tags naming a work, which the web clip sends along.
 
 The popup head otherwise shows the first of: the page's own title (meta tags), the
 previewed registry title, the library page's title, the host. The chip +
@@ -356,6 +367,98 @@ the look-up *found* is never offered — it was the user's before this tab, and
 a second save into another folder only adds filing (`existed: true`), which
 Undo would be the wrong word for.
 
+## Web clips
+
+A page that names no paper (detection's `kind: "none"`) is saved as a web
+clip: a page of its own with the tab as `web_url`, and as its blocks the
+part of the page the popup's *Save as* says. The survey of other clippers
+behind this is [research/web-clippers.md](../research/web-clippers.md).
+
+- **Article** — the page's article, as Firefox's Reader View finds it:
+  Mozilla's Readability on a copy of the page, so navigation, sidebars,
+  comments and footers stay out. The default.
+- **Selection** — the text selected on the page, with its formatting. It is
+  the mode picked when text is selected as the popup opens, and the button
+  is disabled while nothing is (`get-selection`, detect.js).
+- **Link** — only the title and the link, which is what every page naming no
+  paper saved before.
+
+The pick between Article and Link is remembered (`webClip`) and used by the
+shortcut and *Save page to Gamma*. A selection is never remembered, since it
+belongs to that page. *Save the web page instead* on a `?` page clips the
+story the same way. *Add to another folder…* on a page already saved files
+it again and clips nothing.
+
+**In the browser** (`worker.js` `webClip`). The worker injects
+`lib/Readability.js` and `clip.js` into the tab (`chrome.scripting`, only
+then: Readability is 90 KB) and asks `gammaClip(mode)`. Before Readability
+runs, `clip.js` writes onto the copy what only the live page knows, because
+Readability would otherwise lose it:
+
+- an image's real address: what the browser shows (`currentSrc`), unless
+  that is a lazy loader's stand-in, then `data-src` and its kin, then the
+  largest of a srcset;
+- each formula as a `span[data-gamma-math]` with its TeX (KaTeX's
+  annotation, MathJax 2's script, Wikipedia's alt text, LaTeXML's) or, for
+  MathJax 3, its MathML;
+- a code block's language (`language-*`, GitHub's `highlight-source-*`)
+  and its text without the highlighter's spans or a line-number gutter.
+
+A tracking pixel goes, and an emoji drawn as a picture becomes its
+character. A selection keeps being a code block or a list when it lies
+inside one. The answer is `{html, title, byline, site, published, images,
+inline}`: the fragment, the article's title (a trailing "— Site" dropped,
+which Readability keeps), the source line's parts, and the pictures, a
+`data:` one swapped for a `gamma-inline:<n>` token so the fragment stays
+small.
+
+The worker then fetches each picture with the browser's session, which a
+site's hotlink rules let through. It sends each to `POST /api/upload-image`,
+four at a time and at most 60 per clip, keeping a PNG, JPEG, GIF, WebP or
+SVG by its first bytes when the site sends no type or the wrong one. A
+picture that can't be fetched or stored keeps its address and still shows
+while the site serves it; the save log says which and why. An answer that
+ends the save itself (signed out, another server, the server unreachable, no
+room) ends it there. The clip goes as `article: {kind, html, site, byline,
+published, images}`, `images` mapping a picture's address (or token) to its
+stored copy. A page the browser can't read (a browser page, the Web Store) or
+with nothing to clip sends `html: ""`. The server then keeps the link and its
+note says why.
+
+**On the server** (`gamma/web_clip.py`). The fragment is read with
+`html.parser` into a tree and walked once into Markdown:
+
+- headings keep their level, and lists nest by indentation;
+- quotes, fenced code with its language, GFM tables, rules, figures and
+  their captions keep their form, while a layout table becomes its cells'
+  content;
+- emphasis, links (absolute; an anchor into the page is plain text),
+  `<sup>`/`<sub>` and pictures (the stored copy, else the web address,
+  never a `data:` one) stay inline;
+- math is `$…$` / `$$…$$`, from the TeX or through `mathml.to_latex`;
+- text Markdown would read as markup is escaped (`$`, `*`, `_`, raw HTML,
+  a line opening with `#`, `>`, `-` or `1.`);
+- scripts, styles, form controls, inline SVG and navigation say nothing,
+  and a frame is a link to it.
+
+`markdown_import.md_to_blocks`, the .md import's parser, makes the blocks,
+which nest under their headings. A first heading that only repeats the
+title is dropped. A source line, `[site](url) · author · date`, comes first.
+`insert_page_tree` writes the page with its tree in one transaction, the
+import's bulk writer, and claims the uploads it shows (`upload_gc.claim`). A
+fragment past 5 MB is a 413 before anything is filed, as is one past
+`MAX_BLOCKS` blocks. Clipping a page already saved finds it by `web_url`
+and only files it.
+
+**Already clipped.** The badge's look-up runs on every page load, so it skips
+a page naming no paper. Otherwise every address the browser visits would
+reach the server. Once the popup opens on such a page, the worker looks it up
+by its address, once per page and library (`lookupWebPage`, `pageLooked`).
+The popup then says *Already in your library* rather than offering to clip it
+again.
+
+## The server's clip
+
 Server side (`clip.py`, sync `def` — it downloads):
 
 1. **Dedup** — `find_page()` by DOI / arXiv id / URL against every root page:
@@ -382,11 +485,14 @@ Server side (`clip.py`, sync `def` — it downloads):
    a broken attachment (the `openPdf` invariant) — instead the clip takes the
    **web-page path** (`_clip_web_page`): a page titled from the tab (else the
    URL's last segment / host) with `properties.web_url = source_url`, no
-   `doc_id`/`source_url`, the request's `selection` (if any) as its first
-   `> quote — [title](url)` block, folder/labels applied, `doc_id: ""` and a
-   `note` in the response. A request that names no PDF at all (no `pdf_url`,
+   `doc_id`/`source_url`, a web clip's `article` as its blocks (below, "Web
+   clips") or else the request's `selection` (if any) as its first
+   `> quote — [title](url)` block, folder/labels applied, `doc_id: ""`, and
+   a `note` in the response saying why there is no PDF when the request
+   named one. A request that names no PDF at all (no `pdf_url`,
    DOI, arXiv id or uploaded bytes — *Save page to Gamma* on a blog post)
-   skips the resolver and goes there directly. Re-clipping the same URL finds
+   skips the resolver and goes there directly, with no note: nothing was
+   missed. Its note says only that a web clip found nothing to clip. Re-clipping the same URL finds
    that page (`find_web_page`: `web_url` match on attachment-less pages) and
    only files it / appends the new selection. Only a request with nothing at
    all (no URL, title or selection) is a 400 — and, with `web_fallback:
@@ -681,7 +787,16 @@ signed in to the same server works the same way.
   an arXiv HTML page saving its PDF, `web_meta` kept cleaned and never
   overwritten, a text DOI that finds the paper but is kept as `text_doi`,
   a web page whose record names a work starting its lookup, an existing
-  page without a record gaining one, folders, clip notes, 401s).
+  page without a record gaining one, a web clip's article as the page's
+  blocks under their headings with its uploaded picture and its source
+  line, a clip that found nothing keeping the link and saying so, the 413
+  of a fragment too large, folders, clip notes, 401s).
+- `backend/tests/test_web_clip.py` — `gamma/web_clip.py`: blocks keeping
+  their shape (headings, nested lists, quotes, code with its language,
+  tables and layout tables, figures), links and pictures (absolute, an
+  anchor as text, the stored copy, a tracking pixel and a `data:` picture
+  dropped), math from TeX, MathML and Wikipedia's alt text, the escaping,
+  what says nothing, and the tree under its source line.
 - `extension/tests/*.test.mjs` (`node --test extension/tests/*.test.mjs`) —
   the pure modules: `ids.js`, `pageRecord.js`, `publisherSessions.js`,
   `handoff.js` and `saveLog.js`, plus
@@ -733,9 +848,21 @@ signed in to the same server works the same way.
   instead (no DOI sent, the tab then reads as the page); a list of three
   DOIs names none and says so; a repository's thesis page with tags but no
   PDF or DOI shows the folder and labels under its notice, files by them and
-  sends its record through *Save this URL anyway*, and *Undo this save*
+  sends its record through the web clip's save, and *Undo this save*
   deletes the page it made and brings that form back; a publisher
   page's record rides along with its own DOI, not one it cites.
+- `node extension/tests/webclip.e2e.mjs` — full Chromium against a fake
+  blog and a fake server: on an article the popup offers *Save as* with
+  Article picked and Selection disabled, and *Save article* sends the
+  article — the lazy picture by its real address, KaTeX's TeX as a formula,
+  the code block's language, the page's navigation and footer left out, the
+  title without the site's name — with the picture fetched and uploaded as
+  a PNG and the one the site refuses keeping its address (the save log says
+  so); the saved page's links sit 8 px under its button and the tab's tools
+  16 px further; text selected on a page picks Selection, which sends only
+  that; Link sends no article and is the mode the next page opens with; a
+  page clipped before is not looked up as it loads, the popup finds it once
+  it opens, and filing it again clips nothing.
 - `node extension/tests/prerender.e2e.mjs` — a fake paper page whose
   speculation rules prerender a "Warmup Page" with its own DOI. While the
   warmup page is hidden, the tab's detection, the page's `get-detection`

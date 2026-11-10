@@ -58,76 +58,83 @@
   <div id="view-main" class="hidden">
     <div class="head"><span id="dot" class="dot"></span><div><div class="t" id="title"></div><div class="s" id="sub"></div></div></div>
 
-    <!-- The library this popup saves to and looks the paper up in, over every
-         view below (the form, "already in …", no paper); shown only when the
-         account can write to more than one. -->
-    <div id="workspace-row" class="form workspaceBar hidden">
-      <div class="row"><label id="workspace-lbl">Workspace</label>
+    <!-- Everything between the head and the footer, on one rhythm: 12 px
+         between the groups (the workspace row, a notice, the form or the
+         saved page, a result, the tab's own tools), less inside one. -->
+    <div class="body">
+      <!-- The library this popup saves to and looks the paper up in, over
+           every view below (the form, "already in …", no paper); shown only
+           when the account can write to more than one. -->
+      <div id="workspace-row" class="row hidden"><label id="workspace-lbl">Workspace</label>
         <div class="selectWrap">
           <button id="workspace-btn" type="button" class="uiBtn sm uiSelectBtn block" aria-haspopup="menu" aria-labelledby="workspace-lbl"></button>
           <div id="workspace-menu" class="ctxMenu hidden" role="menu"></div>
         </div>
       </div>
-    </div>
 
-    <!-- A paper in the library: found by the look-up, or just saved. The
-         quiet row under "Open in Gamma" takes back what the save did: file
-         it somewhere else, or undo it altogether. -->
-    <div id="existing" class="hidden">
-      <div id="existing-msg" class="msg ok"><span id="existing-where">Already in your library</span><span id="existing-as"></span>.<span id="existing-note"></span></div>
-      <div class="actions">
+      <!-- A paper in the library: found by the look-up, or just saved. The
+           quiet row under "Open in Gamma" takes back what the save did: file
+           it somewhere else, or undo it altogether. -->
+      <div id="existing" class="hidden">
+        <div id="existing-msg" class="msg ok"><span id="existing-where">Already in your library</span><span id="existing-as"></span>.<span id="existing-note"></span></div>
         <button id="open-existing" class="uiBtn primary block">Open in Gamma</button>
-      </div>
-      <div class="minor">
-        <button id="refile" class="linkBtn quiet" type="button"></button>
-        <button id="undo" class="linkBtn quiet undoBtn hidden" type="button"></button>
-      </div>
-    </div>
-
-    <!-- Why this page shows no paper. The folder and labels below file the
-         page's URL as they file a paper, so the notice reads as their head. -->
-    <div id="nothing" class="hidden">
-      <div class="msg info" id="nothing-msg">No paper or PDF detected on this page. You can still save the page's URL — Gamma will look for a PDF behind it.</div>
-    </div>
-
-    <!-- The form that files a page into the library: the same folder and
-         labels whether the page holds a paper or only its own URL, then the
-         one action under them. -->
-    <div id="found" class="hidden">
-      <div id="filing" class="form">
-        <div class="row"><label for="folder">Folder</label>
-          <div class="selectWrap">
-            <div id="folder-box" class="field tagField single">
-              <input id="folder" class="tagInput" type="text" placeholder="Library root" autocomplete="off">
-            </div>
-            <div id="folder-menu" class="ctxMenu hidden" role="menu"></div>
-          </div>
-        </div>
-        <div class="row"><label for="labels">Labels</label>
-          <div class="selectWrap">
-            <div id="labels-box" class="field tagField">
-              <input id="labels" class="tagInput" type="text" placeholder="add label…" autocomplete="off">
-            </div>
-            <div id="label-menu" class="ctxMenu hidden" role="menu"></div>
-          </div>
+        <div class="minor pageActions">
+          <button id="refile" class="linkBtn quiet" type="button"></button>
+          <button id="undo" class="linkBtn quiet undoBtn hidden" type="button"></button>
         </div>
       </div>
-      <div class="actions">
+
+      <!-- Why this page shows no paper. The form below saves it as a web
+           clip and files it as it files a paper, so the notice reads as its
+           head. -->
+      <div id="nothing" class="hidden">
+        <div class="msg info" id="nothing-msg">No paper or PDF on this page. Save it as a web clip instead.</div>
+      </div>
+
+      <!-- The form that files a page into the library: the same folder and
+           labels whether the page holds a paper or is a web clip (which also
+           says what of the page to keep), then the one action under them. -->
+      <div id="found" class="hidden">
+        <div id="filing" class="rows">
+          <div id="mode-row" class="row hidden"><label id="mode-lbl">Save as</label>
+            <div id="mode" class="segGroup" role="group" aria-labelledby="mode-lbl">
+              <button type="button" class="uiBtn sm" data-mode="article" title="The page's article: its text, headings, pictures and math, as notes">Article</button>
+              <button type="button" class="uiBtn sm" data-mode="selection" title="The text selected on the page, as notes">Selection</button>
+              <button type="button" class="uiBtn sm" data-mode="link" title="Only the page's title and link">Link</button>
+            </div>
+          </div>
+          <div class="row"><label for="folder">Folder</label>
+            <div class="selectWrap">
+              <div id="folder-box" class="field tagField single">
+                <input id="folder" class="tagInput" type="text" placeholder="Library root" autocomplete="off">
+              </div>
+              <div id="folder-menu" class="ctxMenu hidden" role="menu"></div>
+            </div>
+          </div>
+          <div class="row"><label for="labels">Labels</label>
+            <div class="selectWrap">
+              <div id="labels-box" class="field tagField">
+                <input id="labels" class="tagInput" type="text" placeholder="add label…" autocomplete="off">
+              </div>
+              <div id="label-menu" class="ctxMenu hidden" role="menu"></div>
+            </div>
+          </div>
+        </div>
         <button id="save" class="uiBtn primary block hidden">Save to Gamma</button>
-        <button id="save-anyway" class="uiBtn primary block hidden">Save this URL anyway</button>
+        <button id="save-anyway" class="uiBtn primary block hidden">Save article</button>
       </div>
-    </div>
 
-    <div id="progress" class="progress hidden"><span class="spinner"></span><span id="progress-text"></span></div>
-    <div id="result" class="msg hidden"></div>
+      <div id="progress" class="progress hidden"><span class="spinner"></span><span id="progress-text"></span></div>
+      <div id="result" class="msg hidden"></div>
 
-    <!-- Side features, quiet text links in one row: saving the web page
-         rather than the paper its one DOI names, clipping a selection, and
-         what the tab's last save tried, step by step, for a bug report. -->
-    <div class="minor">
-      <button id="save-page" class="linkBtn quiet hidden" type="button"></button>
-      <button id="clip" class="linkBtn quiet hidden" type="button"></button>
-      <button id="copy-log" class="linkBtn quiet hidden" type="button"></button>
+      <!-- Side features, quiet text links in one row: saving the web page
+           rather than the paper its one DOI names, clipping a selection, and
+           what the tab's last save tried, step by step, for a bug report. -->
+      <div class="minor tools">
+        <button id="save-page" class="linkBtn quiet hidden" type="button"></button>
+        <button id="clip" class="linkBtn quiet hidden" type="button"></button>
+        <button id="copy-log" class="linkBtn quiet hidden" type="button"></button>
+      </div>
     </div>
 
     <!-- Publisher sessions: the footer's cookie button opens this drawer.

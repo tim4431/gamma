@@ -157,6 +157,9 @@ metadata (title, authors, venue, DOI) is resolved automatically.
   making a duplicate.
 - Behind a paywall your browser can see through (institutional login)?
   The bytes your browser already has are uploaded automatically.
+- A page that isn't a paper saves as a web clip: its article as notes
+  (text, headings, pictures, math, without the site's menus), the text
+  you selected, or just the link.
 - Right-click a link, a page, or selected text: Save to Gamma / Clip to Gamma
   (a quoted block with its source link).
 - Ctrl+Shift+S saves the current page.
@@ -179,6 +182,7 @@ browser into the user's own self-hosted Gamma library.
 | `activeTab` | When the user limits the extension's site access to "on click", activeTab lets a click on the toolbar button, the context menu or the keyboard shortcut read the current page so it can be saved to the user's Gamma server. |
 | `contextMenus` | Adds "Save link to Gamma", "Save page to Gamma" and "Clip selection to Gamma" to the right-click menu. |
 | `cookies` (optional) | Requested only when the user clicks Connect in the popup's publisher-session drawer. It reads the cookies of that one publisher host and sends them to the user's own Gamma server, which uses them to download PDFs the user has access to. After a host is connected, its cookies are re-sent when the user visits that host and the server's copy is more than an hour old; this can be turned off in the options. Hosts the user never connected are never read. |
+| `scripting` | When the user saves a web page that is not a paper as a web clip, injects the clipper (`clip.js` with Mozilla's Readability, both in the package) into that one tab to read its article or the selected text, which goes only to the user's Gamma server. Nothing is injected otherwise. |
 | `notifications` | Shows the result of a save started from the context menu or the keyboard shortcut, when no popup is open. |
 | `storage` | Stores the server address, the saving defaults (folder, labels), per-tab detection state, and the logs of the last few saves (in session storage, cleared when the browser closes; they leave the browser only when the user copies them). |
 | `tabs` | Reads each tab's URL and title to detect papers and show the toolbar badge, and opens, focuses and closes tabs when the user's Gamma app asks the extension to fetch a PDF that the server could not download itself (a publisher sign-in or bot check), so the user's own browser session can download it. |
@@ -188,7 +192,7 @@ browser into the user's own self-hosted Gamma library.
 package.
 
 **Data usage:** tick *Website content* (page title, URL, DOI/arXiv id,
-selected text, PDF files) and *Authentication information* (the cookies
+selected text, a clipped page's article and pictures, PDF files) and *Authentication information* (the cookies
 of publisher hosts the user connected), and certify all three statements.
 Everything goes only to the Gamma server the user configured: on a save,
 on a request from the user's own Gamma app, or, for a publisher the user
