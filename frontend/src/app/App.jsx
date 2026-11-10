@@ -3151,6 +3151,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  // The mouse's back button is Back too, and with no jump left to unwind it
+  // goes to the library. Its default, the window's history, would leave
+  // Gamma: the app moves by replaceState, so the entry before it is what
+  // came before (the desktop app's launcher). Not while a dialog is open, as
+  // Alt+← is not. A share view keeps the default: its history is its
+  // navigation (goSharedPage). The pointerup, not the mouseup: a pointerdown
+  // whose default a surface takes away (the palette does) sends no mouseup
+  // at all, and Chromium went back. In the capture phase, before a layer
+  // can stop it on its way up.
+  useEffect(() => {
+    function onUp(e) {
+      const c = appCmdRef.current;
+      if (e.button !== 3 || !c || c.shareMode) return;
+      e.preventDefault();
+      if (liveAppCommands().some((cmd) => cmd.id === "app.back")) c.mouseBack();
+    }
+    window.addEventListener("pointerup", onUp, true);
+    return () => window.removeEventListener("pointerup", onUp, true);
+  }, []);
   const [pdfHidden, setPdfHidden] = useState(false);
   const [pdfScale, setPdfScale] = useState("page-width");
   // Every localStorage-backed user preference (the Settings dialog's state)
@@ -8767,6 +8786,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setQuickOpen((v) => (v && v.prefix === prefix ? null : { prefix }));
     },
     back: () => goBackNavRef.current?.(),
+    mouseBack: () => {
+      if (navStackLen) goBackNavRef.current?.();
+      else if (!homeMode) goHome();
+    },
     undo: (redo) => {
       const active = document.activeElement;
       const inEditor = !!active?.closest?.(".cm-editor");

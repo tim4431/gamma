@@ -129,9 +129,10 @@ is no page: then every request does.
 - **The end-of-queue re-ask.** Each final reply says whether its
   translations carry the brief (`brief`). Once the queue is done, when some
   chunk came back with the brief, the chunks that came back without it are
-  asked once more, with `wait_brief: true`, whatever comes back. A chunk
-  whose request fails then keeps the text it has; one that lands fades its
-  new text in. Nothing loops.
+  asked once more, with `wait_brief: true`, whatever comes back, together
+  with the chunks that lost a paragraph ("Failures"). A chunk whose request
+  fails then keeps the text it has; one that lands fades its new text in.
+  Nothing loops: a chunk is asked again at most once.
 
 **Failures.** A chunk whose request fails is asked again
 (`translateJob.requestChunk`):
@@ -144,8 +145,14 @@ is no page: then every request does.
 
 A chunk that still fails is dropped, not the job. Its paragraphs go into
 their pages' `failed` sets and stay pending: the original shows, the page
-is not done, and the next job asks for them. The workers go on. The job
-stops, with the last failure's reason, only when:
+is not done, and the next job asks for them. The workers go on, and once
+the queue is done the chunk is asked once more (the end-of-queue re-ask,
+above), as is every chunk with a paragraph the server could not translate
+(below): a provider busy for a moment is often free again by then, and the
+paragraphs that came back are answered from the server's memory. What lands
+then takes its mark away. A job on one paragraph ("A paragraph's menu") is
+not asked again so: its queue ends with its one request, and its pill
+offers Try again. The job stops, with the last failure's reason, only when:
 
 - `FAILS_IN_A_ROW` (3) chunks fail with no success between them: the
   provider is down, not one connection lost;
@@ -155,8 +162,10 @@ stops, with the last failure's reason, only when:
   final: it drops that chunk only.
 
 The server asks the model again for what its reply got wrong ("The
-server") and names the paragraphs that still failed (`failed`). Those stay
-pending too, without the queued wash. At the job's end the status counts
+server"), or a service with its tokens in another form ("Machine-translation
+services"), and names the paragraphs that still failed (`failed`). Those
+stay pending too, without the queued wash, and their chunk is asked once more
+at the queue's end. At the job's end the status counts
 `untranslated`, the paragraphs left in the original: those the server could
 not translate and those whose chunk's request failed (`unanswered`). The
 end-of-job message says how many, with a "Try again" that runs a job over
@@ -2087,15 +2096,27 @@ the misses to `translate_engines.translate` instead of a chat model.
 - The service path needs no AI provider. It has no effort (`""` in the
   final object), no brief (the
   brief request answers `{"ready": false}` at once), no streamed partials
-  (the stream is just the final line), no token usage and nothing to ask
-  again, since the APIs answer aligned lists. A service translates sentence
+  (the stream is just the final line), no token usage and no text left out
+  to ask for again, since the APIs answer aligned lists. A service translates sentence
   by sentence and takes no context.
 - Cache, kept translations, validation and dedup are the LLM path's, keyed
   on `engine:<id>`; its final object says `brief: true`. Nothing tells a
-  service to keep the `{v1}` tokens or `{br}` markers; a reply that broke a
-  token comes back verbatim (the original shows), and a lost marker is cut
-  by length. `failed` stays empty: a service answers the same text the same
-  way, so the viewer asking again would get the same.
+  service to keep the tokens or the `{br}` markers, and a lost marker is cut
+  by length.
+- **Tokens** go out as `{1}`, `{2}`… (`translate_engines.TOKEN_FORMS`), the
+  placeholder of software's own message catalogs, and come back as `{v1}`.
+  Microsoft drops or rewrites `{vN}` in about one text in ten into Japanese
+  or Korean, mostly where a text opens on the end of a sentence a column
+  break cut ("droplets,{v1} but…" lost the word and the token), and kept
+  every `{N}` in the same texts (issue #163,
+  [research/translation-reliability.md](../research/translation-reliability.md#services-and-tokens)).
+  A text that already holds the form (a paper's own "{1}") goes as it is.
+- **A broken token is asked again.** A reply whose tokens `checked` refuses
+  would show the wrong formula, and the same text comes back the same way,
+  so those texts go to the service once more, in one call, with their
+  tokens as `[v1]` (`redone` counts them). One still broken comes back
+  verbatim, named in `failed` as a model's is: the viewer marks it, counts it
+  and asks for it again, and it is neither cached nor kept.
 
 Credentials are per account under the reserved `translate-engines` pref.
 Like `ai-settings`, `/api/prefs` refuses it and the only read path is the
