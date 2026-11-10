@@ -203,32 +203,31 @@ test("a job asking for references that stops keeps what has not landed left, so 
 // The blocks named failed in the entries, as `pn:i`.
 const failedBlocks = (v) => [...v.entries].flatMap(([pn, e]) => [...e.failed].map((i) => `${pn}:${i}`));
 
-// A server whose requests fail for the chunks numbered in `failing`, each
-// try with its own reason, for a job with one worker: 0 is the first chunk
-// asked, and a failed chunk's second try, which comes next, keeps its
-// number. `sizes` keeps each chunk's number of texts.
+// A server whose requests fail for the chunks numbered in `failing`, every
+// time they are asked, each try with its own reason, for a job with one
+// worker: 0 is the first chunk asked. A chunk is known by its texts' array,
+// which the job sends each time it asks. `sizes` keeps each chunk's number
+// of texts.
 function flaky(failing) {
   const sizes = [];
-  let retry = false; // the next request is a failed chunk's second try
+  const numbers = new Map();
   const s = server((texts, call) => {
-    const first = !retry;
-    retry = false;
-    if (first) sizes.push(texts.length);
-    if (!failing.includes(sizes.length - 1)) return translated(texts);
-    retry = first;
+    if (!numbers.has(texts)) numbers.set(texts, sizes.push(texts.length) - 1);
+    if (!failing.includes(numbers.get(texts))) return translated(texts);
     throw new Error(`provider down (request ${call})`);
   });
   return { ...s, sizes };
 }
 
-test("a chunk whose request still fails when asked once more leaves its paragraphs in the original, and the job goes on", async () => {
+test("a chunk whose request still fails when asked again, in its turn and at the queue's end, leaves its paragraphs in the original, and the job goes on", async () => {
   const everything = server();
   await viewer().job(everything.translate).run();
 
   const v = viewer();
   const s = flaky([0]);
   await v.job(s.translate, { parallel: 1 }).run();
-  assert.equal(s.asked.length, everything.asked.length + 1, "the first chunk asked twice, every other chunk once");
+  assert.equal(s.asked.length, everything.asked.length + 3, "the first chunk asked twice in its turn and twice at the end, every other chunk once");
+  assert.equal(last(s.asked).texts, s.asked[0].texts, "the last asked");
   const end = last(v.statuses);
   assert.equal(end.error, null, "the job is no failure");
   const lost = s.asked[0].texts.length;
@@ -246,6 +245,30 @@ test("a chunk whose request still fails when asked once more leaves its paragrap
   assert.deepEqual(v.pending(), []);
 });
 
+test("what did not come back is asked once more at the queue's end, and lands then: a chunk whose request failed, a paragraph the server could not translate", async () => {
+  const everything = server();
+  await viewer().job(everything.translate).run();
+  // How it fails in its turn, and how many tries that takes.
+  for (const [how, failing, turn] of [
+    ["the request failed, and again when asked again", () => { throw new Error("provider busy"); }, 2],
+    ["the server could not translate its first paragraph", (texts) => ({ translations: texts, failed: [0] }), 1],
+  ]) {
+    const v = viewer();
+    let first = null, tries = 0;
+    const s = server((texts) => {
+      first ??= texts;
+      return texts === first && ++tries <= turn ? failing(texts) : translated(texts);
+    });
+    await v.job(s.translate, { parallel: 1 }).run();
+    assert.equal(last(s.asked).texts, first, `${how}: the first chunk is asked last, after every other`);
+    assert.deepEqual(v.pending(), [], how);
+    assert.deepEqual(failedBlocks(v), [], `${how}: no mark left`);
+    const end = last(v.statuses);
+    assert.deepEqual([end.error, end.untranslated, end.unanswered, end.progress], [null, 0, 0, 1], how);
+    settled(v.entries);
+  }
+});
+
 test("chunks failing three in a row stop the job with the last one's reason; one that comes back between them starts the count again", async () => {
   assert.equal(FAILS_IN_A_ROW, 3);
   // Every request fails: three chunks, each asked twice, then no more.
@@ -260,7 +283,8 @@ test("chunks failing three in a row stop the job with the last one's reason; one
   assert.deepEqual(v.filled(), []);
   settled(v.entries);
 
-  // Two failures, a chunk that comes back, two more: the job runs to its end.
+  // Two failures, a chunk that comes back, two more: the job runs to its end,
+  // and asks for the four again there, each twice.
   const everything = server();
   await viewer(LONG).job(everything.translate).run();
   const chunks = everything.asked.length;
@@ -268,7 +292,7 @@ test("chunks failing three in a row stop the job with the last one's reason; one
   const w = viewer(LONG);
   const gaps = flaky([0, 1, 3, 4]);
   await w.job(gaps.translate, { parallel: 1 }).run();
-  assert.equal(gaps.asked.length, chunks + 4);
+  assert.equal(gaps.asked.length, chunks + 4 + 4 * 2);
   end = last(w.statuses);
   assert.equal(end.error, null);
   const lost = [0, 1, 3, 4].reduce((n, k) => n + gaps.sizes[k], 0);
@@ -329,9 +353,15 @@ test("a chunk turned away by a busy account past the wait's patience is dropped,
 
 test("the paragraphs the server could not translate stay pending and count as untranslated", async () => {
   const v = viewer();
-  // The server names its first text failed (and answers it as its source).
-  const s = server((texts, call) => ({ ...translated(texts), failed: call === 1 ? [0] : [] }));
+  // The server names its first text failed (and answers it as its source),
+  // and again when its chunk is asked once more at the queue's end.
+  let first = null;
+  const s = server((texts) => {
+    first ??= texts;
+    return { ...translated(texts), failed: texts === first ? [0] : [] };
+  });
   await v.job(s.translate, { parallel: 1 }).run();
+  assert.equal(s.asked.filter((r) => r.texts === first).length, 2);
   const end = last(v.statuses);
   assert.equal(end.error, null);
   assert.equal(end.untranslated, 1);
@@ -585,7 +615,9 @@ test("a paragraph that never had text, asked alone, is marked failed when it fai
   const other = e.texts.findIndex((t, i) => !!t && !CUT.includes(i));
   // Its paragraph came back as its source; another failed in an earlier job.
   v.entries.set(1, { ...e, texts: e.texts.map((t, i) => (CUT.includes(i) ? null : t)), failed: new Set([other]) });
-  await focused(v, server(() => { throw new Error("provider down"); }), CUT[0], { retry: { pauseMs: 1 } }).run();
+  const s = server(() => { throw new Error("provider down"); });
+  await focused(v, s, CUT[0], { retry: { pauseMs: 1 } }).run();
+  assert.equal(s.asked.length, 2, "asked again once, and not once more at the queue's end: the pill offers Try again");
   assert.deepEqual(failedBlocks(v).sort(), [other, ...CUT].map((i) => `1:${i}`).sort());
   assert.deepEqual(CUT.map((i) => v.entries.get(1).texts[i]), [null, null], "the original still shows");
   assert.equal(v.entries.get(1).done, true, "the page owes nothing more than it did");
@@ -683,11 +715,13 @@ test("the percentage does not go back as the total grows, or when a request aske
 });
 
 test("streaming changes where a job ends in nothing: a lost chunk and a halt end where they would have", async () => {
+  // The first chunk fails every time it is asked.
   const lost = (answer) => {
-    let failed = 0;
+    let first = null;
     return async (texts, call, tools) => {
       await answer(texts, call, tools);
-      if (failed < 2) { failed += 1; throw new Error("provider down"); }
+      first ??= texts;
+      if (texts === first) throw new Error("provider down");
       return translated(texts);
     };
   };

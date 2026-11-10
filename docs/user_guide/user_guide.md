@@ -123,13 +123,13 @@ A notebook is a page with sheets of paper to write on, and any page can hold the
 <img alt="A citation in the paper is clicked, a popover offers Fetch into Gamma, the cited paper opens in a new tab, and Back returns to the first paper at the same spot" src="assets/links.svg" width="100%">
 
 - **Citations are clickable**: a paper already in your library opens; otherwise choose *Fetch into Gamma* or *Open in browser*.
-- **Back** (**Alt+←**) unwinds jumps with their exact scroll positions, across papers too.
+- **Back** (**Alt+←**) unwinds jumps with their exact scroll positions, across papers too. The mouse's back button does the same, and once there is no jump left it goes to the library; it never takes you out of Gamma.
 
 <img alt="The translate button is clicked and the paragraphs are redrawn in another language over the original while the figure stays; holding Alt peeks at the original" src="assets/translate.svg" width="100%">
 
 - The **文A button** translates the page you are reading, in place, and then switches between the original and the translation of every page. Hold **Alt** (⌥ on a Mac, or the key set in Settings → Keyboard) to peek at the original. Right-click it for the whole document, the language and the translation settings. **Ctrl+Shift+O** shows the original or the translation from the keyboard while the PDF is open, and the command palette has **Translate this page** and **Translate whole document**. With Settings → Language and Translation › **Translation button** off, its row in the viewer's **⋯** menu opens the same menu.
 - While a page translates, a bar under the 文A button fills up; pressing the button then stops the translation.
-- The first paragraphs appear at once. The rest wait while Gamma reads the paper, so its terms are translated the same way throughout. The first ones are redone with those terms at the end when they went without them.
+- The first paragraphs appear at once. The rest wait while Gamma reads the paper, so its terms are translated the same way throughout. The first ones are redone with those terms at the end when they went without them, and paragraphs that failed along the way are tried once more then.
 - A whole-document translation goes on when you open another page. **Background tasks** shows how far it is and can stop it, and the PDF shows its translation when you come back.
 - Formulas, citations and links keep their printed look inside the translation, and a paragraph that runs on into the next column is translated as one, as is one that runs over a page break when you translate the whole document.
 - The reference list and the labels inside figures stay in the original: names and journals read as printed, and a plot keeps its marks. Once a translation has left a reference list in the original, right-click the 文A button and choose **Translate references too** to translate the references, or right-click one label or entry for **Translate this paragraph**.

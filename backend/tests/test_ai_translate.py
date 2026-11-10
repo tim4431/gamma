@@ -608,6 +608,43 @@ def test_translate_with_microsoft(dave, monkeypatch):
                         "error": "Microsoft: HTTP 400 \u2014 Request exceeds the maximum allowed translation size."}
 
 
+def test_engine_tokens_go_out_as_placeholders_and_a_broken_one_is_asked_again(dave, monkeypatch):
+    """Issue #163: Microsoft drops {vN} where a text opens on the end of a cut
+    sentence, and the paragraph came back in the original, unmarked. Tokens
+    go out as {N}; a text the service still broke is asked again with them as
+    [vN]; one broken both ways comes back verbatim, named in `failed`."""
+    import re
+
+    monkeypatch.setattr("gamma.routers.translate._call_ai", lambda *a, **k: pytest.fail("no LLM on the engine path"))
+
+    def service(t):
+        if t.startswith("droplets"):  # loses its first token in the {N} form only
+            t = t.replace("{1}", "", 1).replace("[v2]", "\uff3bv2\uff3d")
+        if t.startswith("lost"):  # loses it in every form
+            t = re.sub(r"\{\d+\}|\[v\d+\]", "", t)
+        return f"M:{t}"
+
+    fake, calls = _fake_urlopen(lambda req: [{"translations": [{"text": service(t)}]} for t in json.loads(req.data)])
+    monkeypatch.setattr("gamma.translate_engines.urlopen", fake)
+    texts = ["droplets,{v1} but hard to see.{v2}", "where {v1} is the flux.", "the set {1} and {v1}.", "lost {v1} here."]
+    r = dave.post("/api/ai/translate", json={"texts": texts, "lang": "ja", "model": "engine:microsoft"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"translations": ["M:droplets,{v1} but hard to see.{v2}", "M:where {v1} is the flux.",
+                                         "M:the set {1} and {v1}.", "lost {v1} here."],
+                        "model": "engine:microsoft", "cached": False, "redone": 2, "failed": [3],
+                        "effort": "", "brief": True}
+    first, again = (json.loads(req.data) for req in calls)
+    # A paper's own "{1}" would read back as a token: that text goes as it is.
+    assert first == ["droplets,{1} but hard to see.{2}", "where {1} is the flux.", "the set {1} and {v1}.",
+                     "lost {1} here."]
+    assert again == ["droplets,[v1] but hard to see.[v2]", "lost [v1] here."]
+
+    # The verbatim one is not kept, so the viewer's next ask reaches the service.
+    r = dave.post("/api/ai/translate", json={"texts": texts, "lang": "ja", "model": "engine:microsoft"})
+    assert r.json()["failed"] == [3] and len(calls) == 4
+    assert [json.loads(req.data) for req in calls[2:]] == [["lost {1} here."], ["lost [v1] here."]]
+
+
 def test_free_service_failures_warn_and_notify_until_it_answers(dave, carol, monkeypatch):
     from urllib.error import URLError
     from gamma import logbuf, translate_engines
