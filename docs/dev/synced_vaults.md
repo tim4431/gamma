@@ -125,10 +125,12 @@ Gamma's server is the **remote**, the directory or the file here is
   menu: *Push from a file on this computer…*. The launcher and the sync
   panel: *Add a synced vault…*, which starts from a directory. The
   desktop app's Server menu: *Open a PDF…*.
-- The sync panel: a row per vault with its name, its place, its remote and
-  its state; *Sync now*, *Pull now*, *Push now*, *Pause*, *Force pull…*,
-  *Force push…*, *Locate…* for a stopped vault, *Go on…* for a held one,
-  *Remove the vault…*. The upload arrow is the push switch.
+- The sync panel: a row per vault with its name, its direction and its
+  state, its place and its remote in the row's tooltip. Its *…* opens the
+  vault's view: the switches *Pull* and *Push*, then *Sync now*, *Pull
+  now*, *Push now*, *Pause* and the directory as a bar of buttons named by
+  their tooltips, and *Go on…* for a held vault, *Locate…* for a stopped
+  one, *Force pull…*, *Force push…* and *Remove the vault…* as rows.
 - A page of a vault: a chip in the page header, *Synced: Attention.md*
   (*Pushed from: main.pdf* for a vault of one file), its card with the
   path, the direction (*Pull: on · Push: everything*), *Show in folder* and
