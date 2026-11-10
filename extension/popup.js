@@ -15,6 +15,9 @@ let folderField = null;                    // the folder field (folderChipField)
 let labelField = null;                     // the labels field (chipField): a chip per label
 let labelNames = [];                       // the library's labels (GET /api/library/folders), suggested as you type
 let undoable = "";                         // the page a save on this tab made, which Undo takes back
+let clipMode = "article";                  // how a page naming no paper saves: article, selection or link
+let hasSelection = false;                  // whether text is selected on the tab (the Selection mode)
+let pickedMode = "";                       // the mode picked in this popup, kept across its refreshes
 let pub = null;                            // publisher sessions: the worker's `publisher-status` answer
 let cookieTimer = 0;                       // the cookie button's "done" flash
 let serverBusy = false;
@@ -136,6 +139,10 @@ async function showMain(st) {
   // A save this tab made, still undoable: the worker keeps the last save
   // (`last`), and only a page it created is this popup's to take back.
   undoable = st.hit && st.last && !st.last.existed && st.last.block_id === st.hit.block_id ? st.hit.block_id : "";
+  hasSelection = await pageSelection();
+  // Text selected when the popup opens is what to clip; else the way the
+  // last web clip was made.
+  setMode(pickedMode || (hasSelection ? "selection" : st.settings.webClip === "link" ? "link" : "article"));
   if (st.hit) showFiled(); else showForm(c);
   $("nothing-msg").textContent = nothingMessage(c);
   // A "possible paper" saves the paper its one DOI names; this saves the
@@ -152,12 +159,37 @@ async function showMain(st) {
   await loadPublisher(st);
 }
 
-// Why a page shows no paper, and what "Save this URL anyway" will keep.
+// Why a page shows no paper; the form under it saves the page as a web clip.
 function nothingMessage(c) {
-  const anyway = "You can still save the page's URL — Gamma will look for a PDF behind it.";
-  if (c.record) return `No PDF or DOI on this page, but its citation tags name a work. Saving keeps the page with that record. ${anyway}`;
-  if (c.dois_in_text > 1) return `This page names ${c.dois_in_text >= 10 ? "many" : c.dois_in_text} papers by DOI, so none of them is taken as its own. ${anyway}`;
-  return `No paper or PDF detected on this page. ${anyway}`;
+  if (c.record) return "No PDF or DOI on this page, but its citation tags name a work: the web clip keeps that record.";
+  if (c.dois_in_text > 1) return `This page names ${c.dois_in_text >= 10 ? "many" : c.dois_in_text} papers by DOI, so none of them is taken as its own. Save the page as a web clip instead.`;
+  return "No paper or PDF on this page. Save it as a web clip instead.";
+}
+
+// Whether text is selected on the tab (detect.js answers), which the
+// Selection mode clips.
+async function pageSelection() {
+  try {
+    const r = await chrome.tabs.sendMessage(tab.id, { type: "get-selection" });
+    return !!(r && r.text && r.text.trim());
+  } catch { return false; }
+}
+
+// The web clip's mode (worker.js webClip): the button lit, the action named
+// after it, Selection only with text selected.
+const MODE_ACTIONS = { article: "Save article", selection: "Save selection", link: "Save link" };
+function setMode(mode) {
+  clipMode = mode === "selection" && !hasSelection ? "article" : mode;
+  for (const b of $("mode").querySelectorAll("[data-mode]")) {
+    const on = b.dataset.mode === clipMode;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", String(on));
+    if (b.dataset.mode === "selection") {
+      b.disabled = !hasSelection;
+      b.title = hasSelection ? "The text selected on the page, as notes" : "Select text on the page first";
+    }
+  }
+  $("save-anyway").textContent = MODE_ACTIONS[clipMode];
 }
 
 // The page itself, not the paper its one DOI names: what "Save the web page
@@ -171,18 +203,21 @@ function pageCandidate(c) {
 // into the library, and the page once it is there.
 //
 // The form is the folder and the labels, then the one action under them —
-// *Save to Gamma* for a detected paper, *Save this URL anyway* under the
-// notice saying there is none. A page with no paper on it files like any
-// other, so the fields belong over both. `again` is the form brought back
-// over a page already saved ("Add to another folder…"): the notice has had
-// its say, and the button files that page again, into another folder.
+// *Save to Gamma* for a detected paper; under the notice saying there is
+// none, what of the page to keep (Article, Selection, Link) over the folder
+// and the labels, and the save named after it. A page with no paper on it
+// files like any other, so the fields belong over both. `again` is the form
+// brought back over a page already saved ("Add to another folder…"): the
+// notice has had its say, and the button files that page again, into
+// another folder.
 function showForm(c, again = false) {
-  const urlOnly = c.kind === "none" && !again;
+  const clip = c.kind === "none" && !again;
   show("existing", false);
-  show("nothing", urlOnly);
+  show("nothing", clip);
   show("found");
-  show("save", !urlOnly);
-  show("save-anyway", urlOnly);
+  show("mode-row", clip);
+  show("save", !clip);
+  show("save-anyway", clip);
 }
 
 // The other half: the paper is in the library. Undo shows only for a page a
@@ -448,7 +483,7 @@ async function showFailure(err) {
   if (err.status === 401) { state = await send({ type: "auth-changed" }); showLogin(state); }
 }
 
-async function doSave({ candidate, force, asPage = false } = {}) {
+async function doSave({ candidate, force, asPage = false, mode = "link" } = {}) {
   const c = candidate || state.candidate;
   const folder = chosenFolder();  // the worker remembers it once the save succeeds
   const make = folderField.owed();
@@ -465,7 +500,7 @@ async function doSave({ candidate, force, asPage = false } = {}) {
     const origins = [...new Set(fetchUrls.map((u) => { try { return originPattern(new URL(u).origin); } catch { return ""; } }))]
       .filter(Boolean);
     if (origins.length) { try { await chrome.permissions.request({ origins }); } catch {} }
-    const out = await send({ type: "save", tabId: tab.id, candidate: c, ...folder, make, labels, asPage,
+    const out = await send({ type: "save", tabId: tab.id, candidate: c, ...folder, make, labels, asPage, mode,
                              source_url: force ? (tab && tab.url) : undefined });
     show("progress", false);
     folderField.landed();
@@ -615,11 +650,23 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (e.key === "Escape" && !$("server-menu").classList.contains("hidden")) closeServerMenu(true);
     if (e.key === "Escape") closeDrawer();
   });
+  // A paper's save, or a page already saved filed again: nothing to clip.
   $("save").onclick = () => doSave();
   $("save-anyway").onclick = () => doSave({ candidate: { kind: "none", source_url: tab.url, title: tab.title,
                                                          record: (state.candidate && state.candidate.record) || null },
-                                             force: true });
-  $("save-page").onclick = () => doSave({ candidate: pageCandidate(state.candidate || {}), asPage: true });
+                                             force: true, mode: clipMode });
+  // The story around a "possible paper", clipped the way web pages last were.
+  $("save-page").onclick = () => doSave({ candidate: pageCandidate(state.candidate || {}), asPage: true,
+                                          mode: hasSelection ? "selection" : state.settings.webClip });
+  // A mode picked is the way web pages are clipped from then on (the
+  // shortcut, the context menu), but a selection, which is this page's alone.
+  for (const b of $("mode").querySelectorAll("[data-mode]")) {
+    b.onclick = () => {
+      setMode(b.dataset.mode);
+      pickedMode = clipMode;
+      if (clipMode !== "selection") { state.settings.webClip = clipMode; setSettings({ webClip: clipMode }).catch(() => {}); }
+    };
+  }
   $("save-page").append(icon("globe"), document.createTextNode("Save the web page instead"));
   $("open-existing").onclick = () => openPath(state.hit.open_url);
   $("refile").onclick = () => showForm(state.candidate || { kind: "none" }, true);

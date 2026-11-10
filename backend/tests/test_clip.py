@@ -239,7 +239,7 @@ def test_clip_without_pdf_creates_web_page(guest, upstream, meta_calls):
     body = r.json()
     assert body["doc_id"] == "" and body["existed"] is False
     assert body["title"] == "Ghost" and body["open_url"] == f"/?block={body['block_id']}"
-    assert body["note"].startswith("No PDF found")
+    assert "note" not in body  # it named no PDF: nothing was missed
     title, props = _props(body["block_id"])
     assert title == "Ghost" and props["web_url"] == url
     assert "doc_id" not in props and "source_url" not in props and "auto_title" not in props
@@ -266,6 +266,52 @@ def test_clip_without_pdf_creates_web_page(guest, upstream, meta_calls):
     assert meta_calls == [(account_of(guest_name()), r3.json()["block_id"])]
     # Nothing at all to save is still a 400.
     assert guest.post("/api/clip", json={}).status_code == 400
+
+
+def test_a_web_clip_makes_the_article_the_pages_blocks(guest, upstream, meta_calls):
+    """A page naming no paper, clipped with its article (the Connector's
+    clip.js, gamma/web_clip.py): the page carries the tab and the article as
+    its blocks, nested under their headings below a source line, the picture
+    the browser uploaded shown from its stored copy and one it couldn't from
+    the web. Nothing is said of a PDF it never named; an article the browser
+    found nothing in keeps the link and says so; clipping the page again
+    finds it and writes nothing twice."""
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (3, 2), "red").save(buf, "PNG")
+    picture = guest.post("/api/upload-image", files={"file": ("p.png", buf.getvalue(), "image/png")}).json()["url"]
+    url = "https://blog.example/posts/web-clip-1"
+    html = ("<h2>Why</h2><p>Because <b>so</b>, at <span data-gamma-math='inline' data-tex='10^{-18}'>x</span>.</p>"
+            "<p><img src='https://cdn.example/p.png' alt='fig'><img src='https://cdn.example/far.png'></p>")
+    article = {"html": html, "site": "Blog", "byline": "Ada", "published": "2026-01-02",
+               "images": {"https://cdn.example/p.png": picture}}
+    r = guest.post("/api/clip", json={"source_url": url, "title": "A post", "folder_path": "webclips",
+                                      "article": article})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["existed"] is False and body["doc_id"] == "" and "note" not in body
+    title, props = _props(body["block_id"])
+    assert title == "A post" and props["web_url"] == url and _filed(props) == (["webclips"], [])
+    kids = guest.get(f"/api/blocks/{body['block_id']}/children").json()["children"]
+    assert [k["content"] for k in kids] == ["[Blog](https://blog.example/posts/web-clip-1) · Ada · 2026-01-02",
+                                            "## Why"]
+    under = guest.get(f"/api/blocks/{kids[1]['id']}/children").json()["children"]
+    assert [k["content"] for k in under] == ["Because **so**, at $10^{-18}$.",
+                                             f"![fig]({picture})![](https://cdn.example/far.png)"]
+    assert meta_calls == []
+    lk = guest.get("/api/library/lookup", params={"url": url})
+    assert lk.status_code == 200 and lk.json()["block_id"] == body["block_id"]
+    r2 = guest.post("/api/clip", json={"source_url": url, "title": "A post", "article": article})
+    assert r2.json()["existed"] is True and r2.json()["block_id"] == body["block_id"]
+    assert len(guest.get(f"/api/blocks/{body['block_id']}/children").json()["children"]) == 2
+    # Nothing found to clip: the link, and why it is only that.
+    for kind, said in (("article", "Gamma found no article text"), ("selection", "Nothing was selected")):
+        r = guest.post("/api/clip", json={"source_url": f"https://blog.example/posts/empty-{kind}", "title": "Empty",
+                                          "article": {"html": " ", "kind": kind}})
+        assert r.status_code == 200 and r.json()["note"].startswith(said)
+        assert guest.get(f"/api/blocks/{r.json()['block_id']}/children").json()["children"] == []
+    too_big = {"source_url": "https://blog.example/posts/huge", "article": {"html": "<p>x</p>" * 800_000}}
+    assert guest.post("/api/clip", json=too_big).status_code == 413
 
 
 def test_clip_dead_pdf_link_falls_back_to_web_page(guest, upstream, meta_calls):
