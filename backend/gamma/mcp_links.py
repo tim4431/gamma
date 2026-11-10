@@ -1,6 +1,9 @@
-"""Resolve Gamma links locally within the authenticated MCP workspace.
+"""Resolve Gamma links locally within the workspaces the MCP connection
+may read.
 
 A pasted URL is an identifier, never a fetch target or an additional grant.
+It reads in the workspace it names (``?ws=``, a share token's prefix), else
+in the one holding its page or block, and only among the connection's.
 A page, block or page-share link resolves to a page (``page_id``); a
 folder-share link resolves to the folder (``folder``, its id, with its path
 as ``title``) — the same pages the share view lists — unless it also names
@@ -28,8 +31,24 @@ def _origin(url):
     return url.scheme.lower(), host, url.port if url.port is not None else (443 if url.scheme == "https" else 80)
 
 
-def resolve_link(ws: str, base: str, url: str) -> dict:
-    """Return a validated reference; caller reads it through the usual dispatcher."""
+def holders(workspaces: list[str], ids: list[str]) -> list[str]:
+    """The workspaces, of those given, that hold a block (a page, a note, a
+    folder) of one of ``ids``."""
+    ids = [i for i in ids if isinstance(i, str) and 0 < len(i) <= 128][:50]
+    if not ids:
+        return []
+    found = []
+    for ws in workspaces:
+        with connect_pages_db(ws) as conn:
+            if conn.execute(f"SELECT 1 FROM unified_blocks WHERE id IN ({','.join('?' * len(ids))}) LIMIT 1",
+                            ids).fetchone():
+                found.append(ws)
+    return found
+
+
+def resolve_link(workspaces: list[str], base: str, url: str) -> dict:
+    """Return a validated reference; caller reads it through the usual
+    dispatcher, in the reference's ``workspace_id``."""
     try:
         if not isinstance(url, str) or not url or len(url) > 8192 or any(ord(c) < 32 for c in url):
             raise ValueError
@@ -50,8 +69,11 @@ def resolve_link(ws: str, base: str, url: str) -> dict:
         raise ValueError("Use a valid Gamma page, block, or share URL.") from None
     if not same_origin:
         raise ValueError("This link belongs to a different Gamma server. Use its MCP connection or copy a link from this server.")
-    if values.get("ws", ws) != ws:
-        raise ValueError("This link is outside the connected workspace. Connect the page's workspace first.")
+    ws = values.get("ws") or share_token_workspace(values.get("share", "")) or next(
+        iter(holders(workspaces, [values.get("block", ""), values.get("page", "")])), workspaces[0])
+    if ws not in workspaces:
+        raise ValueError("This link is in a workspace this connection cannot read. Allow that workspace "
+                         "in Gamma under Settings → AI → Integrations.")
     page_id, block_id, folder, shared = values.get("page"), values.get("block"), "", ""
     if values.get("share"):
         # Resolve only in the granted workspace, including restricted shares.

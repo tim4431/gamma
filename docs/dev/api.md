@@ -879,11 +879,14 @@ Starting a job answers 429 when the account already has 20 queued or running, 50
 ### Integrations and MCP (`routers/integrations.py`, `mcp_oauth.py`, `mcp_server.py`) — see [mcp.md](mcp.md)
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/integrations/tokens` | the current workspace's assistant connections (manual tokens and OAuth grants: id, name, dates), the MCP URL and whether browser sign-in is available; session only, never a guest |
-| POST | `/integrations/tokens` | mint a manual token `{name, scope?: read \| write, expires_in_days?}` (shown once); at most 20 unexpired per account; `write` (a mirror's push credential, [mirror.md](mirror.md)) is refused to a viewer |
+| GET | `/integrations/tokens` | the account's assistant connections, whichever workspace is open (manual tokens and OAuth grants: id, name, dates, scope, `workspace_id`, and what it reads: `all_workspaces` or `workspaces`), the account's workspaces `[{id, name, personal, default}]`, the MCP URL and whether browser sign-in is available; session only, never a guest |
+| POST | `/integrations/tokens` | mint a manual token `{name, scope?: read \| write, expires_in_days?, workspaces?: [id], all_workspaces?}` (shown once; the workspaces default to the current one); at most 20 unexpired per account; `write` (a mirror's push credential, [mirror.md](mirror.md)) is for the current workspace alone and refused to a viewer |
+| PATCH | `/integrations/tokens/{id}` | change what a read connection reads `{workspaces: [id]}` or `{all_workspaces: true}`, each a workspace the account can open (403 otherwise; 400 for a write token) |
 | DELETE | `/integrations/tokens/{id}` | revoke a connection |
+| POST | `/integrations/setup-codes` | `{name, workspaces?, all_workspaces?}` → `{code, expires_in}`: a one-time code a setup command claims for a read token (ten minutes, while this session lasts) |
+| POST | `/integrations/claim` | `{code}` → `{token, name, expires_at}`, once; no session (the code is the credential), rate-limited per address; 400 for a used, expired or signed-out code |
 | GET | `/integrations/oauth/request?request_id=` | the pending consent (client name, the account's workspaces) for the consent screen |
-| POST | `/integrations/oauth/consent` | approve or deny a pending sign-in for one workspace |
+| POST | `/integrations/oauth/consent` | approve or deny a pending sign-in, `{request_id, csrf, approve, workspaces?: [id], all_workspaces?}`: the workspaces it may read |
 | GET | `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource` (and `…/oauth-protected-resource/mcp`) | OAuth discovery for MCP clients (no `/api` prefix) |
 | POST | `/oauth/register`; GET `/oauth/authorize`; POST `/oauth/token` | dynamic client registration, the authorization redirect, the PKCE code exchange (no `/api` prefix) |
 | POST | `/mcp` | the Streamable HTTP MCP endpoint (bearer token or OAuth access token; no `/api` prefix, browser origins refused) |

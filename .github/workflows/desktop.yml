@@ -376,7 +376,8 @@ jobs:
 
   # The AI assistant plugins with the release's version
   # (tools/release_plugins.py): the Codex and Claude Code plugin zips, the
-  # DeepSeek Harness tarball, the Codex setup scripts and the checksums.
+  # DeepSeek Harness tarball, the Codex and DeepSeek Harness setup scripts and
+  # the checksums.
   plugins:
     needs: meta
     runs-on: ubuntu-latest
@@ -389,6 +390,7 @@ jobs:
         run: |
           python -m unittest discover -s tools -p 'test_*codex*.py'
           python -m unittest discover -s tools -p 'test_plugins.py'
+          python -m unittest discover -s tools -p 'test_*dsh*.py'
       - name: Build plugin release assets
         env:
           VERSION: ${{ needs.meta.outputs.version }}

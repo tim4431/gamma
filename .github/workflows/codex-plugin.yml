@@ -10,6 +10,7 @@ on:
     paths:
       - 'plugins/gamma/**'
       - 'tools/*codex*'
+      - 'tools/*dsh*'
       - 'tools/*plugins*'
       - 'tools/marketplace-README.md'
       - 'frontend/src/settings/assistantSetup.js'
@@ -35,6 +36,7 @@ jobs:
           python-version: '3.12'
       - run: python -m unittest discover -s tools -p 'test_*codex*.py'
       - run: python -m unittest discover -s tools -p 'test_plugins.py'
+      - run: python -m unittest discover -s tools -p 'test_*dsh*.py'
       - run: node --test frontend/tests/assistantSetup.test.mjs
       - run: python tools/release_plugins.py --output dist/plugins --version 0.0.0-preview
       - uses: actions/upload-artifact@v7

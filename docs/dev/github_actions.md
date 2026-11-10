@@ -35,7 +35,7 @@ Watchtower (the `update-demo-server`, `update-share-host` and
 
 The `desktop` workflow also builds the versioned assistant plugin assets —
 the Codex and Claude Code plugin zips, the DeepSeek Harness tarball, the
-Codex setup scripts for Windows and macOS/Linux, and checksums
+Codex and DeepSeek Harness setup scripts for Windows and macOS/Linux, and checksums
 (`tools/release_plugins.py`) — and the browser extension zip, and uploads
 them onto the same release.
 

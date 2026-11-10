@@ -625,15 +625,30 @@ AI:
   (`toolRoundsUnlimited`, which also lifts the 200-change limit and keeps
   the number for when it is off) and the read window.
 - **Integrations** ([SettingsIntegrations.jsx](../../frontend/src/settings/SettingsIntegrations.jsx)):
-  the workspace's assistant connections, the MCP URL, Claude Code connection,
-  plugin setup and address-change commands, the Codex setup
-  command and the manual-token fallback ([mcp.md](mcp.md)) — a token's
-  scope is a `Segmented` (read-only for assistants, read and write for an
-  offline copy on another Gamma, [mirror.md](mirror.md)). Each command box
-  carries its copy button in its corner (a check for two seconds after a
-  copy); each connection row shows how it signed in (browser sign-in — the
-  `(OAuth)` suffix the provider mints — or token), its scope, the connected
-  and expiry dates, and an icon-only Disconnect.
+  the account's assistant connections, whichever workspace is open
+  ([mcp.md](mcp.md)). **Connect an assistant** is a `Segmented` of Claude
+  Code, Codex, DeepSeek Harness and Other, each tab numbered `Step`s: Claude
+  Code's connection command (with the optional plugin and the address-change
+  commands folded under it), Codex's setup command, DeepSeek Harness's
+  workspaces and its one-time setup command (shown on a button press, gone
+  once a new connection is listed), and the MCP URL for any other client.
+  The last step of the first three folds **Remove Gamma from …**: the
+  commands that undo the setup, then a reminder to disconnect. The
+  three that sign in through the browser show the public-URL notice instead
+  while browser sign-in is unavailable. **Connected assistants** lists each
+  connection: how it signed in (browser sign-in — the `(OAuth)` suffix the
+  provider mints — or token), what it reads ("Reads A, B", all workspaces, or
+  read and write for a token's workspace), the connected and expiry dates, an
+  icon-only **Choose workspaces** (read connections) that opens the
+  checklist under the row with Save and Cancel, and an icon-only Disconnect.
+  **Tokens (advanced)**, folded, makes a token by hand: its name, its scope as
+  a `Segmented` (read-only for assistants, read and write for an offline copy
+  of the open workspace on another Gamma, [mirror.md](mirror.md)) and, read
+  only, its workspaces. The checklist (`WorkspacePicker.jsx`, the page
+  picker's `.docPickerItem` rows) leads with **All workspaces, and those added
+  later**; the pane shows it only to an account with more than one workspace,
+  the MCP consent screen always. Each command box carries its copy button in
+  its corner (a check for two seconds after a copy).
 
 Library:
 

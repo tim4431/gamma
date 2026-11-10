@@ -134,8 +134,9 @@ All state is SQLite + files on disk under a data directory (env
   - `publisher_sessions` — encrypted publisher cookie snapshots per
     `(user_id, host)`, each sealed with its account's id, imported by the
     Connector ([extension.md](extension.md));
-  - `integration_tokens` — hashed assistant tokens per account and workspace
-    (with a `scope`, read or write), and `mcp_oauth` — the OAuth flow's
+  - `integration_tokens` — hashed assistant tokens per account, each of one
+    workspace (with a `scope`, read or write, and `workspaces`, what a read
+    token's MCP connection reads beside it: `''`, `'*'` or a JSON list), and `mcp_oauth` — the OAuth flow's
     expiring records ([mcp.md](mcp.md));
   - `mirrors` — the offline copies of remote workspaces: the local workspace,
     the remote's address and workspace, the write token (Fernet-encrypted

@@ -27,8 +27,8 @@ launcher, and desktop release workflows use these locations.
 | `tools/branding/` | Unified asset generation and consistency checks; README and Store layout recipes |
 | `tools/user_guide/` | The user guide's animations: one scene per section, generated into `docs/user_guide/assets/` |
 | `tools/check_mobile_pins.sh` | Resolves every pin of `backend/requirements-mobile.txt` for the iPad's and Android's platforms, installing nothing; `check.yml`'s `mobile-pins` job runs it ([ipad.md](ipad.md#the-wheels)) |
-| `tools/*codex*`, `tools/*plugins*` | Assistant plugin (Codex, Claude Code, DeepSeek Harness) packaging, release and installer scripts with their unit tests; `codex-plugin.yml` runs them and `desktop.yml` builds the release assets |
-| `plugins/gamma/` | The assistant plugin source: the `gamma` skill, its `.codex-plugin/` and `.claude-plugin/` manifests, and the DeepSeek Harness layer (`dsh-skill.js`, `cordis.patch.yml`) |
+| `tools/*codex*`, `tools/*dsh*`, `tools/*plugins*` | Assistant plugin (Codex, Claude Code, DeepSeek Harness) packaging, release and installer scripts with their unit tests; `codex-plugin.yml` runs them and `desktop.yml` builds the release assets |
+| `plugins/gamma/` | The assistant plugin source: the `gamma` skill, its `.codex-plugin/` and `.claude-plugin/` manifests, and the DeepSeek Harness layer (`dsh-gamma.js`, `cordis.patch.yml`) |
 | `artifacts/` | Ignored local sources and outputs; [retention guide](../../artifacts/README.md) |
 | `data/` | Ignored runtime databases and uploads, controlled by `GAMMA_DATA_DIR` |
 
