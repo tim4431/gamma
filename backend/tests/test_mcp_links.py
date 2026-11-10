@@ -30,16 +30,18 @@ def test_page_block_and_share_links_read_the_same_page(client, connection):
             assert ref["block_id"] == note["id"]
     # The token names its workspace (<workspace id>.<secret>): the bare secret a
     # link minted before carries, another workspace's prefix, or a share whose
-    # token names another workspace than its own resolves nothing.
+    # token names another workspace than its own resolves nothing. A prefix
+    # naming a workspace the connection does not read says how to allow it.
     assert share["token"].startswith(ws + ".")
     secret = share["token"].partition(".")[2]
     stray = make_page(c, "Stray prefix")
     with connect_users_db() as conn:
         conn.execute("INSERT INTO shares (token, workspace_id, page_id, created_by, created_at) VALUES (?, ?, ?, '', ?)",
                      (f"elsewhere.{secret}x", ws, stray["id"], page_now()))
-    for stale in (secret, f"elsewhere.{secret}", f"elsewhere.{secret}x"):
+    for stale, says in ((secret, "unavailable"), (f"elsewhere.{secret}", "cannot read"),
+                        (f"elsewhere.{secret}x", "cannot read")):
         result = read(client, credential["token"], url=f"http://localhost/?share={stale}")
-        assert result["isError"] and "unavailable" in result["content"][0]["text"], result
+        assert result["isError"] and says in result["content"][0]["text"], result
     # Existing workspace permission also covers a restricted share on that page.
     c.put(f"/api/share-settings/{page['id']}", json={"audience": "list"})
     assert not read(client, credential["token"], url=f"http://localhost/?share={share['token']}")["isError"]
