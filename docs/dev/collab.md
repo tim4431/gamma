@@ -663,11 +663,11 @@ poll (`hidden`), and `peers` / `me` as React state. The session owns:
   another took its text, less a list or heading marker, at its end.
   `blockOps.withMerges` folds that diff, the moves of the block's children
   included, into one `merge`, read off the transition like everything else
-  here. It came as a `set` and a `delete`, which lost text in two ways: the
-  `set` refused (the block above is gone) and the `delete` sent alone, or
-  both accepted and one person's `delete` taking the block the other's join
-  had just filled. Block deletes do not reach Recently deleted, so neither
-  had a way back. Now two merges compose: `one`, `two`, `three` end as
+  here. A `set` and a `delete` would lose text in two ways: the `set`
+  refused (the block above is gone) and the `delete` sent alone, or both
+  accepted and one person's `delete` taking the block the other's join had
+  just filled. Block deletes do not reach Recently deleted, so neither has
+  a way back. Two merges compose: `one`, `two`, `three` end as
   `onetwothree` when the lower one lands first, and as `onetwo`, `three`
   when the upper one does, the refused merge keeping its block. A target
   that only the merge needs is not rescued: whoever took it meant it to go.
