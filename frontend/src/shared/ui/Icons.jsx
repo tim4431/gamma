@@ -339,6 +339,14 @@ export const HardDriveIcon = (p) => (
 export const RefreshIcon = (p) => (
   <Icon {...p}><path d="M21 12a9 9 0 1 1-2.6-6.4" /><path d="M21 3v5h-5" /></Icon>
 );
+// Two arrows round a circle — "kept in step" (a synced vault), where
+// RefreshIcon's single arrow reads as "do it again".
+export const SyncIcon = (p) => (
+  <Icon {...p}>
+    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" />
+    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" />
+  </Icon>
+);
 // Clock with a counter-clockwise arrow — "history" / earlier conversations.
 export const HistoryIcon = (p) => (
   <Icon {...p}><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l3 2" /></Icon>

@@ -1,19 +1,23 @@
 // What a page shows of its standing with this computer
 // (docs/research/vaults.md "The words", "Reading a PDF where it is"), read by
-// vaultState.js: the chip among the page header's buttons, `Synced: …` for a
-// page a synced vault keeps, `On this computer` for a PDF opened where it
-// lies, with its card (where the file is, Show in folder, Add to library…,
-// Edit the file); and the banner over the page, in the missing-page notice's
-// slot, for a note the vault could not write and for an opened PDF whose
-// file is gone (Locate…, Remove). The actions are App's: it posts the
-// shell's messages and opens the dialogs.
+// vaultState.js: the chip among the page header's buttons, one icon for how
+// the page stands (vaultState's `kind`), with its card (where the file is,
+// Show in folder, Add to library…, Edit the file); and the banner over the
+// page, in the missing-page notice's slot, for a note the vault could not
+// write and for an opened PDF whose file is gone (Locate…, Remove). The
+// actions are App's: it posts the shell's messages and opens the dialogs.
 import React from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { AlertCircleIcon, CodeIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, LocateIcon, TrashIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, CodeIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, LocateIcon, PauseIcon, SyncIcon, TrashIcon, UploadIcon } from "../shared/ui/Icons";
 import { MenuItem, MenuScope } from "../shared/ui/Menus";
 import { Popover } from "../shared/ui/Surfaces";
 import { addsToLibrary, directionText, editsFile, notesLocked, vaultChip } from "./vaultState.js";
 import "./vault.css";
+
+// The chip's icon, by what the page's standing is (vaultState's `kind`):
+// kept in step, pushed from a file of its own, read where it lies, paused,
+// or something to see to.
+const CHIP_ICONS = { sync: SyncIcon, push: UploadIcon, disk: HardDriveIcon, paused: PauseIcon, alert: AlertCircleIcon };
 
 // The chip and its card. `open` / `onOpenChange`: App's popover state, so
 // the outside press and Escape close it as they close the header's others.
@@ -26,12 +30,13 @@ export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, 
   if (!chip) return null;
   const { vault, reader } = state;
   const path = vault ? vault.path : reader.path;
+  const Icon = CHIP_ICONS[chip.kind] || HardDriveIcon;
   return (
     <span data-popover="vault" className="popoverAnchor">
-      <button type="button" className={`uiBtn sm ghost vaultChip${chip.missing || chip.problem ? " warn" : ""}`}
-        title={chip.title} aria-haspopup="menu" aria-expanded={open} onClick={() => onOpenChange(!open)}>
-        {chip.missing || chip.problem ? <AlertCircleIcon size={14} /> : <HardDriveIcon size={14} />}
-        <span className="vaultChipText">{chip.label}</span>
+      <button type="button" className={`pageActionBtn vaultChip${chip.missing || chip.problem ? " warn" : ""}`}
+        title={`${chip.label}\n${chip.title}`} aria-label={chip.label}
+        aria-haspopup="menu" aria-expanded={open} onClick={() => onOpenChange(!open)}>
+        <Icon size={16} />
       </button>
       {open ? (
         <Popover as={MenuScope} className="addPopover vaultPopover" aria-label={chip.label}>

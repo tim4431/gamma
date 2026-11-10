@@ -131,12 +131,15 @@ Gamma's server is the **remote**, the directory or the file here is
   now*, *Push now*, *Pause* and the directory as a bar of buttons named by
   their tooltips, and *Go on…* for a held vault, *Locate…* for a stopped
   one, *Force pull…*, *Force push…* and *Remove the vault…* as rows.
-- A page of a vault: a chip in the page header, *Synced: Attention.md*
-  (*Pushed from: main.pdf* for a vault of one file), its card with the
-  path, the direction (*Pull: on · Push: everything*), *Show in folder* and
-  *Edit the file*, and a banner *Not written to disk: …* when the last
-  write was refused or the vault reaches no file now (stopped, offline,
-  held, failed). An opened PDF: *On this computer* or *File missing*.
+- A page of a vault: a chip among the page header's buttons, one icon for
+  how the page stands — kept in step, pushed from a file of its own,
+  paused, or something to see to — which its tooltip says in words,
+  *Synced: Attention.md* (*Pushed from: main.pdf* for a vault of one
+  file); its card holds the path, the direction (*Pull: on · Push:
+  everything*), *Show in folder* and *Edit the file*; and a banner *Not
+  written to disk: …* when the last write was refused or the vault reaches
+  no file now (stopped, offline, held, failed). An opened PDF: a disk,
+  *On this computer*, or the alert icon and *File missing*.
 - The client: `pull`, `sync`, `push`.
 
 In the code the table stays `folder_links` and the API
