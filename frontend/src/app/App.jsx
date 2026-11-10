@@ -131,7 +131,16 @@ import {
   moveSibling,
   removeBlockKeepChildren,
   visibleNeighbor,
+  removeBlocks,
+  indentBlocks,
+  outdentBlocks,
+  moveSiblings,
+  insertBlocks,
+  freshCopy,
 } from "../shared/model/blockModel";
+import { subtreeMarkdown } from "../editor/blockSelection.js";
+import { useBlockSelection } from "../editor/useBlockSelection.js";
+import { sourceCopied } from "../editor/sourceCopy.js";
 import { chordLabel, composing, dispatch as dispatchHotkey, effectiveKeys, isTextField } from "../shared/lib/hotkeys.js";
 import { APP_COMMANDS, liveAppCommands } from "./appCommands.js";
 import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
@@ -3127,6 +3136,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         setHomeMenu(null);
         setPropsPop(null);
         setSelectedPages((prev) => (prev.size ? new Set() : prev));
+        // Not the Esc a note's editor took to select its note (useBlockSelection.js).
+        if (!e.defaultPrevented) blockSel.clear();
       }
     }
     window.addEventListener("keydown", onKey);
@@ -4385,6 +4396,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // onBlockDrop still reads _dragState.dropTarget.
     const reset = () => {
       _dragState.draggingId = null;
+      _dragState.draggingIds = null;
       _dragState.fragment = null;
       _dragState.dropTarget = null;
       setDropTarget(null);
@@ -4818,6 +4830,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // another page that draws its notes with the same classes (PagePane).
   const liveSidebarRef = useRef(null);
   const liveNotesList = () => liveSidebarRef.current?.querySelector(":scope > .blockList") || null;
+  // Whole notes selected as in Notion, by a drag across them, a box from
+  // the blank beside them, Shift+click or Esc (editor/useBlockSelection.js);
+  // what its keys and the handle's menu do is blockSelectionAction's.
+  const blockSel = useBlockSelection({
+    enabled: !readOnly && !!focusedBlockId,
+    blocks,
+    editing: view.editingId,
+    list: liveNotesList,
+    tree: () => blocksRef.current,
+    view: () => viewRef.current,
+    anchorOf: () => viewRef.current.editingId || focusedId,
+    closeEditor: () => {
+      const active = document.activeElement;
+      if (active && liveNotesList()?.contains(active)) active.blur();
+      pendingFocusRef.current = null;
+      setView((v) => (v.editingId ? closeEditing(v, v.editingId) : v));
+    },
+    edit: (id) => {
+      pendingFocusRef.current = { id, caret: "end" };
+      startEditing(id);
+      setFocusedId(id);
+    },
+    act: (action, ids) => blockSelectionAction(action, ids),
+  });
   useEffect(() => {
     const land = landingRef.current;
     if (!land) return;
@@ -8633,6 +8669,70 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function undoableStatus(msg) {
     sayUndoable(msg, () => commandById("app.undo").run(appCmdRef.current));
   }
+  // What the keys and the handle's menu do to a selection of notes
+  // (editor/useBlockSelection.js): `ids` are its roots in document order,
+  // each taking the blocks under it along. A change of the tree is one
+  // setBlocks, so one undo step and one batch for the room. What comes back
+  // is selected next ([] lets the selection go); nothing keeps it.
+  function blockSelectionAction(action, ids) {
+    const tree = blocksRef.current;
+    const n = ids.length;
+    const roots = ids.map((id) => findBlock(tree, id)).filter(Boolean);
+    // A locked page's notes stay as its file has them (vault/notesLock.js).
+    const locked = (change, dir) => notesLocked && ids.some((id) => touchesLocked(tree, id, change, dir));
+    if (action === "copy" || action === "cut") {
+      const text = roots.map((b) => subtreeMarkdown(b, 0)).join("\n");
+      sourceCopied(text, { outline: true });
+      copyText(text);
+      if (action === "copy") {
+        setStatus(tn("Copied {n} block as markdown", "Copied {n} blocks as markdown", n));
+        return undefined;
+      }
+    }
+    if (readOnly) return undefined;
+    switch (action) {
+      case "cut":
+      case "delete":
+        if (locked("delete")) return undefined;
+        setBlocks(removeBlocks(tree, ids));
+        undoableStatus(tn("{n} block deleted.", "{n} blocks deleted.", n));
+        return [];
+      case "indent":
+      case "outdent": {
+        if (locked(action)) return undefined;
+        const next = action === "indent" ? indentBlocks(tree, ids) : outdentBlocks(tree, ids);
+        if (next === tree) return undefined;
+        setBlocks(next);
+        // under a parent that may be folded
+        setView((v) => ids.reduce((w, id) => revealBlock(next, w, id), v));
+        return undefined;
+      }
+      case "moveUp":
+      case "moveDown": {
+        const dir = action === "moveUp" ? -1 : 1;
+        if (locked("delete") || (notesLocked && touchesLocked(tree, ids[dir < 0 ? 0 : n - 1], "move", dir))) return undefined;
+        const next = moveSiblings(tree, ids, dir);
+        if (next !== tree) setBlocks(next);
+        return undefined;
+      }
+      case "duplicate": {
+        // On a locked page a copy would be a note, as onDuplicate's.
+        if (notesLocked) return undefined;
+        const copies = roots.map(freshCopy);
+        setBlocks(insertBlocks(tree, { type: "sibling", id: ids[n - 1], above: false }, copies));
+        setStatus(tn("{n} block duplicated.", "{n} blocks duplicated.", n));
+        return copies.map((b) => b.id);
+      }
+      case "chat":
+        if (!shareMode) roots.forEach(addBlockToChat);
+        return undefined;
+      case "move":
+        if (!locked("delete")) pickMovePage({ blockIds: ids });
+        return undefined;
+      default:
+        return undefined;
+    }
+  }
   bindingsRef.current = keybindings;
   appCmdRef.current = {
     shareMode, homeMode, readOnly, hasPage: !!focusedBlockId, hasPdf: !!pdfUrl && !homeMode, commentsOn,
@@ -9051,24 +9151,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setMovePicker(null);
     if (what?.fragment) doMoveFragment(what.fragment, page);
     else if (what?.pageIds) movePagesInto(what.pageIds, page);
-    else if (what?.blockId) doMoveBlock(what.blockId, page);
+    else if (what?.blockIds) doMoveBlocks(what.blockIds, page);
   }
-  // Move a block subtree to the end of another page: sync any queued edits
-  // first, then re-parent server-side (reorder carries parent_id). The block
-  // leaves this page through the room's delete, which the server logs with
-  // the move: removed here as an edit it would go out as a delete of a block
-  // that lives on the other page by then, which the server refuses (403).
-  async function doMoveBlock(blockId, page) {
+  // Move block subtrees (one, or a selection's roots in document order) to
+  // the end of another page: sync any queued edits first, then re-parent
+  // each server-side (reorder carries parent_id), after the one before, so
+  // they keep their order there. A block leaves this page through the
+  // room's delete, which the server logs with the move: removed here as an
+  // edit it would go out as a delete of a block that lives on the other
+  // page by then, which the server refuses (403).
+  async function doMoveBlocks(blockIds, page) {
     const title = (page.content || t("Untitled")).slice(0, 60);
     try {
       await persistBlocks(blocks);
       const kids = await apiJson(`${API}/blocks/${page.id}/children`);
-      const last = (kids.children || []).slice(-1)[0]?.position || null;
-      await apiJson(`${API}/blocks/${blockId}/reorder`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parent_id: page.id, before: last, after: null }),
-      });
+      let last = (kids.children || []).slice(-1)[0]?.position || null;
+      for (const blockId of blockIds) {
+        const moved = await apiJson(`${API}/blocks/${blockId}/reorder`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ parent_id: page.id, before: last, after: null }),
+        });
+        last = moved.position;
+      }
       // Older snapshots still contain the block; restoring one would put the
       // same id in two pages. A cross-page move is not undoable.
       blockHistory.clear();
@@ -11255,6 +11360,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 const rowProps = {
                   focusedId,
                   setFocusedId,
+                  // The notes selected whole (useBlockSelection.js): BlockTree
+                  // hands each row whether it is in it.
+                  selection: blockSel.ids,
+                  onSelectBlock: readOnly ? undefined : blockSel.selectBlock,
+                  onSelectAll: readOnly ? undefined : blockSel.selectEvery,
+                  onHandleSelect: blockSel.handleSelect,
+                  dragSelection: blockSel.dragSelection,
+                  onSelectionAction: blockSel.run,
                   view,
                   foldMoving: foldMovesRef.current.get(view),
                   flashingId, // a page's landing row flashes once (landingRef)
@@ -11511,22 +11624,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     if (readOnly) return;
                     const src = findBlock(blocks, id);
                     if (!src) return;
-                    // Fresh ids all the way down; PDF anchoring stays with the
-                    // original — a copy with the same position would draw a
-                    // duplicate highlight on the page (same rule as
-                    // linkHighlightToBlock), and so does the Zotero
-                    // annotation an import made it from. The quote text is kept.
-                    const clone = (b) => {
-                      const { pdf_position, imported_annot, annot_stripped, zotero_annotation, ...props } = b.properties || {};
-                      return { ...b, id: makeId(), properties: props,
-                        children: (b.children || []).map(clone) };
-                    };
-                    const copy = clone(src);
+                    // Fresh ids all the way down, the PDF anchoring left
+                    // with the original (blockModel's freshCopy).
+                    const copy = freshCopy(src);
                     setBlocks(insertSibling(blocks, id, copy, !above));
                     setFocusedId(copy.id);
                     setStatus(t("Block duplicated."));
                   },
-                  onMoveToPage: (id) => { if (!readOnly && !(notesLocked && touchesLocked(blocks, id, "delete"))) pickMovePage({ blockId: id }); },
+                  onMoveToPage: (id) => { if (!readOnly && !(notesLocked && touchesLocked(blocks, id, "delete"))) pickMovePage({ blockIds: [id] }); },
                   // An image / table / diagram (the object frame's menu):
                   // to a new block above / below its own, or to another
                   // page through the same picker as a block move.
@@ -11629,6 +11734,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     _dragState.draggingId = null;
                     const frag = _dragState.fragment;
                     _dragState.fragment = null;
+                    const many = _dragState.draggingIds;
+                    _dragState.draggingIds = null;
                     // A locked page's notes stay where its file has them.
                     if (!dt || readOnly || notesLocked) return;
                     // Where the indicator's depth puts a dropped block: under
@@ -11646,6 +11753,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       const target = dt.inside ? { type: "inside", id: dt.targetId, offset: dt.offset } : placement(blocks);
                       const next = found && target ? moveObjectInTree(blocks, { sourceId: frag.blockId, obj: found.obj, target }) : null;
                       if (next) setBlocks(next);
+                      return;
+                    }
+                    // The selection's notes, dragged by one of their handles:
+                    // taken out together, put back one after another.
+                    if (many) {
+                      if (many.some((id) => isDescendant(blocks, id, dt.targetId))) return;
+                      const moved = many.map((id) => findBlock(blocks, id)).filter(Boolean);
+                      const remaining = removeBlocks(blocks, many);
+                      const where = placement(remaining);
+                      if (where) setBlocks(insertBlocks(remaining, where, moved));
                       return;
                     }
                     const sourceId = e.dataTransfer.getData("text/plain");
@@ -13621,13 +13738,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </DialogOverlay>
       ) : null}
       {movePicker ? <LazyBoundary><PagePicker
-        label={movePicker.pageIds ? t("Move into page") : movePicker.fragment ? t("Move to page") : t("Move block to page")}
+        label={movePicker.pageIds ? t("Move into page") : movePicker.fragment ? t("Move to page")
+          : movePicker.blockIds?.length > 1 ? t("Move {n} blocks to page", { n: movePicker.blockIds.length }) : t("Move block to page")}
         placeholder={movePicker.pageIds ? t("Move into page…") : movePicker.fragment ? t("Move to page…") : t("Move block to page…")}
         note={movePicker.pageIds
           ? tn("The page goes inside the one you pick and is listed there, under Pages inside, rather than in the library.",
             "The {n} pages go inside the one you pick and are listed there, under Pages inside, rather than in the library.", movePicker.pageIds.length)
           : movePicker.fragment
           ? t("It becomes a block of its own at the end of the chosen page.")
+          : movePicker.blockIds?.length > 1
+          ? t("The {n} blocks and their sub-blocks move to the end of the chosen page, in their order.", { n: movePicker.blockIds.length })
           : t("The block and its sub-blocks move to the end of the chosen page.")}
         hint={t("↑↓ choose · Enter move · Esc close")}
         pages={homeBlocks}

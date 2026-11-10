@@ -43,8 +43,9 @@ websocket-delivered state. Selectors the scenarios already use: `.folderNewBtn`
 `.presenceBar .peerAvatar`, `.peerChips`. Editor rules that matter: plain
 Enter makes a new block and Shift+Enter a line break (the other way round
 when the `gamma-enter-new-block` preference is off; in a code fence or `$$`
-either is a line break), Escape does not close the editor
-(blur does: `closeEditor` in `scenarios/notes.mjs`), Tab / Shift+Tab remount
+either is a line break), Escape closes the editor and selects its note
+once no popup takes it (a blur closes it alone: `closeEditor` in
+`scenarios/notes.mjs`), Tab / Shift+Tab remount
 the row and keep its editor open, the caret where it was.
 
 ## 2. One-off drives

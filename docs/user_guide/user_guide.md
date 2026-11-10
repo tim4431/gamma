@@ -179,6 +179,8 @@ Read a paper on one side while you write up your notes on the other, each in a t
 - **Backspace** right after a `- `, `1. ` or `- [ ] ` takes the marker off in one press. At the start of a note it joins the note to the one above, unless one of the two is anything but plain text, or the note has comments. In an empty note it removes the note and keeps the notes under it.
 - These splits and joins are for plain notes. On a highlight, a text box, a picture, a recording or a drawing, Enter adds an empty note below and the text stays where it is.
 - Drag the **⋮⋮ handle** to reorder or re-nest; **+** beside it adds a block.
+- **Select whole notes**, as in Notion. Drag from one note into another and the notes from the first to the one under the pointer are selected; within one note a drag still selects its text. Drag from the blank beside or below the notes to draw a box: the notes it touches are selected. **Shift+click** selects from the note you are writing in to the one you click, **Alt+Shift+click** (⌘⇧ on a Mac) adds or removes one, **Esc** in a note selects it, and **Ctrl+A** in a note whose text is all selected selects every note. A selected note takes the notes under it along.
+- **With notes selected**: **Delete** or **Backspace** removes them (Undo brings them back), **Tab / Shift+Tab** indent and outdent them, **Ctrl+Shift+↑ / ↓** move them, **Ctrl+D** duplicates them, **Ctrl+C / Ctrl+X** copy or cut them as Markdown (pasted back, they are notes again), **↑ / ↓** select the note above or below, **Shift+↑ / ↓** grow or shrink the selection, **Enter** opens the last one picked, and **Esc** or a click anywhere lets them go. Dragging the **⋮⋮** of a selected note moves them all, and its click (or **Ctrl+/**) opens one menu for all of them: Copy as markdown, Add to chat, Duplicate, Move to page…, Delete. A click on the **⋮⋮** of any note selects it.
 - Click the **⋮⋮ handle** → **Properties** to see what a block is and everything it stores: a highlight's color and where it sits on the PDF, when a note was written, a page's file, paper details, folders and labels. Nothing in it can be changed. Each row has a copy button, and its **⋯** button (or right-clicking the row, or holding a finger on it) copies its value or its name. **JSON** shows the raw data. You also find it when you right-click a highlight on the PDF, a tab (**Page properties**), or a paper, a folder or a label in the library, and in the command palette (**Block properties**, **Page properties**). On a page shared with you to view, use the command palette.
 - **Undo** is one history for the whole page.
 
@@ -632,6 +634,10 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | ← / → | At the text's edge: collapse / expand the note's children |
 | Ctrl+Shift+K | Delete the line (children stay) |
 | Backspace | On an empty note: delete it |
+| Drag across notes · Shift+click · Alt+Shift+click · Esc | Select whole notes: from the note the drag starts in (from the blank beside them, a box) · from the note you are on to the one clicked · one more or one less · the note you are writing in |
+| ↑ / ↓ · Shift+↑ / Shift+↓ · Ctrl+Shift+↑ / Ctrl+Shift+↓ | With notes selected: select the one above / below · grow or shrink the selection · move them |
+| Del / Backspace · Tab / Shift+Tab · Enter | With notes selected: delete them · indent / outdent them · edit the last one picked |
+| Ctrl+C / Ctrl+X / Ctrl+D · Ctrl+A · Ctrl+/ | With notes selected: copy / cut as Markdown, duplicate · select every note · their menu |
 | Ctrl+B / Ctrl+I / Ctrl+U / Ctrl+E / Ctrl+Shift+X / Ctrl+Shift+H | Bold / italic / underline / code / strike / highlight |
 | Ctrl+K | Link the selection (URL from the clipboard) |
 | Ctrl+Shift+. | Quote or unquote the selected lines |
