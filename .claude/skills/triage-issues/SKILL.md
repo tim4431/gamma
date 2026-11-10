@@ -105,7 +105,10 @@ next release, and the `merge` / `release` skills ship it.
    main checkout: `git log --oneline -3 dev` (HEAD may have moved), then
    `git merge --no-ff <name>` with a message in the repo's style
    (`Merge <name> into dev: …`). If the merge would touch a file the
-   developer has uncommitted changes in, stop and ask. Then
+   developer has uncommitted changes in, stop and ask. Then unlink the
+   junction first, `cmd //c "rmdir <worktree>\frontend\node_modules"`
+   (`rmdir` takes the link, not the checkout's `node_modules` behind it,
+   which a recursive delete could follow), then
    `git worktree remove .claude/worktrees/<name>` and `git branch -d <name>`
    (the `merge` skill's last step: never `-D` or `--force` without asking).
 
