@@ -11,8 +11,21 @@ file name (checked by ``check_name``; what a name says about its bytes is
 ``list`` (``(name, size, mtime)``), ``touch`` (the upload GC's re-date),
 ``usage`` (bytes stored, cached), ``partial_dir`` (where a file is
 assembled before it is stored), ``put_path`` (a file assembled there,
-stored by a rename) and ``sweep_partial`` (dead temp files). Every read
-and write of a stored file goes through them.
+stored by a rename) and ``sweep_partial`` (dead temp files). A module that
+reads stored files as it works, an exporter or a merge, is handed them as
+one callable, ``name -> Path | None``, and builds no path of its own:
+``files(ws)``. Every read and write of a stored file goes through these;
+only what works on the directory whole goes past them:
+a server backup (gamma/backups.py), the off-site copy (gamma/offsite.py) and
+a migration over the directory beside a pages.db (gamma/migrations.py).
+
+On the desktop app's own server a name may instead be a **linked file**, a
+PDF read where it is on this computer (gamma/linked_files.py). ``open_path``
+and what reads through it find one, and ``readable`` asks "can this be read
+at all"; ``exists``, ``size``, ``stat``, ``touch`` and ``list`` stay "stored
+here", which is what keeps a linked file out of the quota, the orphan purge,
+backups, the off-site copy and a mirror. ``linked_stat`` is the one look at
+such a file, remembered for a moment.
 
 Docs: docs/dev/user_db.md "Stored files".
 """
@@ -29,8 +42,8 @@ import urllib.parse
 from pathlib import Path
 from stat import S_ISREG  # not ``import stat``: the module's own stat() would shadow it
 
-from . import pdf_meta
-from .db import ws_uploads_dir
+from . import config, pdf_meta
+from .db import connect_vaults_db, ws_uploads_dir
 from .logbuf import log
 from .server_settings import check_upload_allowed
 
@@ -597,8 +610,9 @@ def store_file_stream(ws: str, stream, ext: str) -> tuple[str, bool]:
 
 
 def find_upload_file(filename: str, ws: str) -> Path | None:
-    """The workspace's stored file ``filename``, its path in the uploads
-    directory, or None (no such file, or a name that cannot be one).
+    """The workspace's file ``filename``, its path in the uploads directory
+    or a linked file's (``open_path``), or None (no such file, or a name that
+    cannot be one).
 
     Deliberately scoped to the single named workspace — the caller resolves
     which (the session's workspace or a validated share's). No cross-workspace
@@ -612,12 +626,33 @@ def find_upload_file(filename: str, ws: str) -> Path | None:
         return None
 
 
+def files(ws: str):
+    """The workspace's stored files as a callable, ``name -> Path | None``
+    (``find_upload_file``): what a module that reads them is handed in place
+    of a directory, so the store answers for what a name reads."""
+    return lambda name: find_upload_file(name, ws)
+
+
 # --- the store: the workspace's uploads/ directory -----------------------------------
 
 USAGE_TTL_S = 60  # a workspace's stored bytes are listed again after this long
 
 _usage_lock = threading.Lock()
 _usage: dict = {}  # ws -> [monotonic expiry, the uploads directory's mtime_ns, bytes]
+
+# Called with ``(ws, name)`` when a read finds a linked file's stat moved. A
+# listener only takes note: it runs inside the read. Each registers itself at
+# import (gamma/linked_files.py).
+linked_moved: list = []
+
+LINKED_STAT_S = 1      # a linked file's stat is asked again after this long
+OFFLINE_S = 30         # a disk that did not answer is asked again after this long
+LINKED_STATS_MAX = 4096
+
+_stats_lock = threading.Lock()
+_stats: dict = {}      # path -> (expiry, its stat or None)
+_offline: dict = {}    # root -> expiry
+_clock = time.monotonic  # what both expiries are read against; tests drive it
 
 
 def check_name(name: str) -> str:
@@ -701,9 +736,102 @@ def stat(ws: str, name: str) -> tuple[int, float] | None:
 
 
 def open_path(ws: str, name: str) -> Path | None:
-    """The stored file's path, None when there is none."""
+    """The path ``name`` reads from: the stored file's, else a linked file's
+    (``_linked``), None when there is neither."""
     path = _path(ws, name)
-    return path if path.is_file() else None
+    return path if path.is_file() else _linked(ws, name)
+
+
+def readable(ws: str, name: str) -> bool:
+    """Whether ``name`` can be read at all, stored or linked; ``exists`` and
+    the calls beside it say only what is stored here."""
+    return find_upload_file(name, ws) is not None
+
+
+def _linked(ws: str, name: str) -> Path | None:
+    """The file on this computer that holds ``name``, on the server that
+    keeps links (gamma/linked_files.py): the first of its paths whose size
+    and time are as recorded, so what is read is what was hashed. One whose
+    stat moved reads as nothing and its listeners hear of it
+    (``linked_moved``); one that is gone reads as nothing and is the page's
+    missing file. Costs a query only for a name not in the directory, and
+    nothing where links are not kept. No hashing and no waiting here: this
+    runs on every read, HEAD and range request."""
+    if not config.folder_links_enabled():
+        return None
+    with connect_vaults_db() as conn:
+        rows = conn.execute("SELECT path, size, mtime_ns FROM linked_files WHERE ws = ? AND name = ?",
+                            (ws, name)).fetchall()
+    moved = False
+    for path, recorded, mtime_ns in rows:
+        st = linked_stat(path)
+        if st is None:
+            continue
+        if (st.st_size, st.st_mtime_ns) == (recorded, mtime_ns):
+            return Path(path)
+        moved = True
+    if moved:
+        for fn in linked_moved:
+            fn(ws, name)
+    return None
+
+
+def _root(path: str) -> str:
+    """Where the disk of a path begins, for a whole disk gone: its drive or
+    share, on a system with neither its first two directories (a mount
+    point: ``/Volumes/Disk``, ``/mnt/nas``)."""
+    parts = Path(path).parts
+    return parts[0] if len(parts[0]) > 1 else str(Path(*parts[:-1][:3]))
+
+
+def linked_stat(path: str) -> os.stat_result | None:
+    """The stat of the regular file at ``path``, None when there is none, by
+    at most one look per path per ``LINKED_STAT_S``: a viewer's range
+    requests come by the dozen. A failed look asks the file's disk too
+    (``_root``), and one that does not answer either is offline: every path
+    on it answers None for ``OFFLINE_S`` with no look at all, for a dead
+    share holds a look for many seconds, and a thread of the pool with it."""
+    root = _root(path)
+    with _stats_lock:
+        now = _clock()
+        if _offline.get(root, 0) > now:
+            return None
+        hit = _stats.get(path)
+        if hit and hit[0] > now:
+            return hit[1]
+    st, offline = None, False
+    try:
+        st = os.stat(path)
+    except OSError:
+        offline = not os.path.exists(root)
+    found = st if st is not None and S_ISREG(st.st_mode) else None
+    with _stats_lock:
+        now = _clock()
+        if offline:
+            _offline[root] = now + OFFLINE_S
+        else:
+            if len(_stats) >= LINKED_STATS_MAX:
+                _stats.clear()
+            _stats[path] = (now + LINKED_STAT_S, found)
+    return found
+
+
+def forget_linked_stat(path: str) -> None:
+    """What ``linked_stat`` remembers of ``path`` and its disk: the file was
+    just read, or its row changed, so the next look is a real one."""
+    with _stats_lock:
+        _stats.pop(path, None)
+        _offline.pop(_root(path), None)
+
+
+def is_linked(ws: str, name: str) -> bool:
+    """Whether a linked file goes by ``name``, readable right now or not: for
+    a caller that must tell "out of reach for a moment" from "no such file"."""
+    if not config.folder_links_enabled():
+        return False
+    with connect_vaults_db() as conn:
+        return conn.execute("SELECT 1 FROM linked_files WHERE ws = ? AND name = ? LIMIT 1",
+                            (ws, name)).fetchone() is not None
 
 
 def delete(ws: str, name: str) -> None:

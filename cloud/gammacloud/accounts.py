@@ -655,7 +655,8 @@ def delete(conn, account_id: str, actor: str = "") -> None:
     it, hourly from ``app.purge``), nothing can sign in as
     it any more (its Google/GitHub links, preference profile and linked
     servers go at once), and its servers' teardown is the provisioner's job
-    (v1)."""
+    (v1). Its ``account.delete`` audit entry is how the shared server
+    learns of it and deletes the account's library there (``deletions``)."""
     revoke_everything(conn, account_id)
     conn.execute("UPDATE accounts SET deleted_at = ?, password_hash = NULL WHERE id = ?", (now(), account_id))
     for table in ("identities", "prefs", "servers_linked"):
@@ -684,15 +685,41 @@ def purge(conn, account_id: str, actor: str = "system") -> None:
     subscription copy goes too: only a deleted account is purged, and the
     deletion already cancelled the subscription at Stripe
     (``billing.cancel_for_deletion``); ``billing_events`` keeps the id. So
-    do the e-mail invitations it sent (``invitations.purge_account``)."""
-    from . import hosted, invitations  # imported here: both import this module
+    do the e-mail invitations it sent (``invitations.purge_account``). The
+    reports it made stay, without it (``reports.purge_account``)."""
+    from . import hosted, invitations, reports  # imported here: they import this module
     hosted.purge_account(conn, account_id, actor)
     invitations.purge_account(conn, account_id)
+    reports.purge_account(conn, account_id)
     for table in ("subscriptions", "identities", "portal_sessions", "email_tokens", "grants", "access_tokens",
                   "prefs", "servers_linked"):
         conn.execute(f"DELETE FROM {table} WHERE account_id = ?", (account_id,))
     conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
     audit(conn, "account.purge", account_id, actor)
+
+
+DELETIONS_PAGE = 500   # the most deletions one ``deletions`` answer lists
+
+
+def deletions(conn, after: int = 0, limit: int = DELETIONS_PAGE) -> dict:
+    """The accounts deleted after audit entry ``after``, oldest first, for
+    the shared server, which deletes their libraries and published pages
+    there (``GET /api/share-host/deletions``): ``{deletions: [{id,
+    account_id, deleted_at}], next}``. The audit log's ``account.delete``
+    entries are the record, so a purged account is still listed and the
+    shared server finds every deletion it missed while it was down; an
+    account restored since is left out (a deletion after the restore is a
+    new entry). ``next`` is where the following call starts: past the last
+    entry listed when the page is full, else past every entry there is
+    now."""
+    limit = max(1, min(limit, DELETIONS_PAGE))
+    last = conn.execute("SELECT COALESCE(MAX(id), 0) FROM audit").fetchone()[0]
+    rows = conn.execute(
+        "SELECT a.id, a.account_id, a.at FROM audit a WHERE a.event = 'account.delete' AND a.id > ? AND a.id <= ? "
+        "AND NOT EXISTS (SELECT 1 FROM accounts WHERE id = a.account_id AND deleted_at IS NULL) "
+        "ORDER BY a.id LIMIT ?", (after, last, limit)).fetchall()
+    found = [{"id": r["id"], "account_id": r["account_id"], "deleted_at": r["at"]} for r in rows]
+    return {"deletions": found, "next": found[-1]["id"] if len(found) == limit else max(after, last)}
 
 
 def purge_deleted(conn, older_than_days: int) -> int:

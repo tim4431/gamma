@@ -11,7 +11,8 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import accounts, alerts, billing, config, db, hosted, identities, invitations, oidc, sessions, settings, zotero
+from . import (accounts, alerts, billing, config, db, hosted, identities, invitations, oidc, pages, reports,
+               sessions, settings, zotero)
 from .accounts import Problem
 from .log import log
 from .routers import accounts as accounts_router
@@ -24,6 +25,8 @@ from .routers import external as external_router
 from .routers import oidc as oidc_router
 from .routers import portal as portal_router
 from .routers import profile as profile_router
+from .routers import reports as reports_router
+from .routers import share_host as share_host_router
 from .routers import zotero as zotero_router
 
 
@@ -34,6 +37,7 @@ def purge() -> None:
         identities.purge_expired(conn)
         invitations.purge_expired(conn)
         zotero.purge_expired(conn)
+        reports.purge(conn)
         conn.commit()
     with closing(db.connect()) as conn:
         # grants that ended and accounts past their grace period, before the
@@ -121,6 +125,25 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     @app.middleware("http")
+    async def native_app(request: Request, call_next):
+        """Whether the pages render for a browser a native app opened for its
+        sign-in (``pages.in_app``): ``/authorize`` by the Gamma server's
+        ``gamma_app=1``, which it keeps in the ``gc_app`` cookie (or clears,
+        for a sign-in no app started), every other page by that cookie."""
+        authorize = request.url.path == "/authorize"
+        flag = (request.query_params.get(pages.APP_PARAM) if authorize else request.cookies.get(pages.APP_COOKIE)) == "1"
+        mark = pages.IN_APP.set(flag)
+        try:
+            response = await call_next(request)
+        finally:
+            pages.IN_APP.reset(mark)
+        if authorize and flag:
+            sessions.set_cookie(response, "1", name=pages.APP_COOKIE, max_age=config.APP_BROWSER_TTL)
+        elif authorize and pages.APP_COOKIE in request.cookies:
+            response.delete_cookie(pages.APP_COOKIE, path="/")
+        return response
+
+    @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -149,6 +172,8 @@ def create_app() -> FastAPI:
     app.include_router(oidc_router.router)
     app.include_router(accounts_router.router)
     app.include_router(profile_router.router)
+    app.include_router(reports_router.router)
+    app.include_router(share_host_router.router)
     app.include_router(admin_router.router)
     app.include_router(external_router.router)
     app.include_router(connect_router.router)

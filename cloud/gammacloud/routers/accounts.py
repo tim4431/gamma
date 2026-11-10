@@ -104,8 +104,10 @@ def register(body: RegisterBody, request: Request):
     shared, so opening it proves nothing about the inbox. ``redirect`` is
     where the page goes: ``next`` once the mail went (an invitation's page,
     which asks to confirm first and offers a resend; the Overview by
-    default), else the Overview with the failure notice. ``mailed`` says
-    whether it went."""
+    default), else the Overview with the failure notice, except in a native
+    app's browser (``pages.in_app``), which goes to a ``next`` it brought
+    (the sign-in's verify notice, with its resend) whether the mail went or
+    not. ``mailed`` says whether it went."""
     if settings.registration() == "closed":
         raise HTTPException(403, "Registration is closed.")
     ip = ratelimit.client_ip(request)
@@ -131,8 +133,9 @@ def register(body: RegisterBody, request: Request):
     except mail.MailError as e:
         log.warning("mail to %s failed: %s", account["email"], e)
         mailed = False
+    onward = mailed or (pages.in_app() and next_url != "/")
     resp = JSONResponse({"account": accounts.public(account), "mailed": mailed,
-                         "redirect": next_url if mailed else "/?mail=failed"}, status_code=201)
+                         "redirect": next_url if onward else "/?mail=failed"}, status_code=201)
     sessions.set_cookie(resp, token)
     return resp
 

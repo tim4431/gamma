@@ -226,6 +226,10 @@ export const PREFS = {
   oaFallback: flag("gamma-oa-fallback", ACCOUNT, true),
   metaAutoFetch: flag("gamma-meta-auto", ACCOUNT, true),
   pdfSaveLocal: flag("gamma-pdf-save", ACCOUNT, true),
+  // The desktop app's Open with: off, a PDF opened from this computer is read
+  // where it lies, inside *Opened files*; on, it is added to the library as
+  // before (the shell reads it from the profile, desktop/main.js readPdf).
+  openAddsToLibrary: flag("gamma-open-adds-to-library", ACCOUNT, false),
 
   // --- Highlights after a replaced PDF (Settings → Reading › Replacing a
   // PDF; docs/dev/highlight_relocation.md) ---

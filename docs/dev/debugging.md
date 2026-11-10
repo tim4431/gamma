@@ -97,8 +97,13 @@ key, for a bucket several servers share), the interval (default 3600 s, at
 least 60) and the copies kept per database. Test lists the bucket once with
 the form's values, saved or not. Copy now starts a round at once. It is the
 server's own round, not a background job ([tasks.md](tasks.md)), and the
-section's status line follows it: the last round, what it copied, what
-failed and why, and the next round. The settings are stored in users.db
+section's status line follows it: how far a running round is, the last
+round, what it copied, what failed and why, and the next round. A running
+round counts the databases it has looked at of all of them, then the
+files it sends and their bytes (boto3's upload callback), each
+workspace's files compared with one listing of its objects before the
+first is sent, so the first round, which sends every file, counts the
+whole library from its start. The settings are stored in users.db
 under the `settings` key `offsite`, the secret key encrypted with the data
 directory's key like the shared AI provider keys. A round reads them as it
 starts, and the pause after a round is read as the round ends. So a change
@@ -282,6 +287,22 @@ them only after further relevant changes or when a failure needs investigation.
   files, omit `-n auto` to avoid starting a worker per CPU.
 - Frontend pure-module changes: invoke `node --test` with the relevant test
   files directly. `npm test` always includes the full module suite.
+- Any frontend change: run `npm run lint` from `frontend/`. It reads the
+  whole tree in under a second ([Frontend lint](#frontend-lint)).
+- A change to `frontend/package-lock.json`: the brand ledger,
+  `design/brand/generated.json`, hashes the lockfile as part of the rendering
+  toolchain, so any dependency change fails check.yml's `branding` job until
+  the ledger records the new hash. From the repository root, run
+  `node tools/branding/build.mjs` to record it (its requirements are in
+  [tools/branding](../../tools/branding/README.md)), then
+  `node tools/branding/build.mjs --check` to verify it. While Playwright's
+  version stays the same, that hash is the only line that should move. If the
+  run also re-renders images, because this machine's system fonts differ from
+  the last renderer's, restore them with `git checkout` and keep only the
+  ledger's lockfile line ([design/brand](../../design/brand/README.md)).
+- A change to `app/App.jsx` also runs `node --test tests/appState.test.mjs`
+  from `frontend/`. CI runs `npm test` only on the pull request to main,
+  weeks after a hook lands on dev.
 - UI behavior changes: build once after the final frontend edit so the suite
   sees current code, then `npm run e2e -- --changed`, which runs the groups
   the working tree's changes select (see [the browser suite](#browser-end-to-end-suite);
@@ -290,6 +311,10 @@ them only after further relevant changes or when a failure needs investigation.
   than the change, e.g. a one-line edit in a shared module selects every
   group. Check that the intended steps actually ran. A pure-module change
   does not automatically require a build or browser run.
+- Import changes (a new dependency, a lazy surface, a module newly imported
+  into App's graph): `npm run budget` after the build, which reports the
+  startup bytes and fails on a broken lazy boundary
+  ([the startup budget](frontend-refactor.md#the-startup-budget)).
 - Leave the developer's screen and keyboard alone. One switch decides for every
   suite, `tools/headed.cjs`: the browser suites and the extension's run headless
   and the desktop scripts keep their window minimized, unless a run passes
@@ -403,7 +428,10 @@ The AI agent's tests are split by area — `test_ai_tools_registry.py`
 and `test_ai_agent_loop.py` (`/api/ai/chat` with a faked provider) — over the
 fixtures in `tests/ai_fixtures.py`. Its `org` fixture creates one account
 per test module (the module's name is in the username), so the files never
-see each other's pages or provider entries.
+see each other's pages or provider entries. conftest's autouse
+`_no_tool_checks` stubs the check of whether a model calls tools, so a chat
+there makes no check call; `test_ai_tool_check.py` puts the real one back
+([ai.md](ai.md#models-that-cant-call-tools)).
 
 The Zotero link's tests ([zotero_sync.md](zotero_sync.md#tests)) never
 reach zotero.org: they run against an in-memory Zotero,
@@ -428,9 +456,37 @@ a link unsettled on purpose says so with `idle.skip(reason)`). The fuzz
 runs 8 seeds by default: `ZOTERO_FUZZ_SEEDS=2000 ZOTERO_FUZZ_STEPS=100`
 runs more, and `ZOTERO_FUZZ_TRACE=<key>` follows one object round by round.
 
+The synced vaults' tests ([synced_vaults.md](synced_vaults.md)) work on
+real directories in `tmp_path` and a real workspace; a test that makes a
+vault removes it with `DELETE …?files=keep`, since the links live in the
+worker's shared users.db. By module: `test_md_lens.py` (the lens block by
+block, each law on small files) and `test_md_lens_corpus.py`, the gate: the
+lens's laws through `shape` over every Markdown file of the repository, the
+Notion fixtures and the Obsidian-style corpus in `tests/vault_fixtures/`,
+with random edits, inserts, deletes and moves from a seeded `random.Random`
+(the fixtures are stored with LF; CRLF, a byte-order mark and a missing last
+newline are made from them as bytes). `test_vault_links.py` (links and
+highlights), `test_vault_merge.py` (the three-way merge), `test_vault_disk.py`
+(the scan, the marker, the writes), `test_vault_store.py` (vaults.db, the
+journal, tombstones, history), `test_vault_sync.py` (every step of push and
+pull, a kill at each point of the journal, the echo, a vault of 2,000
+notes), `test_vault_upgrade.py` (a folder kept before synced vaults taken
+onto the engine), `test_vault_http.py` (a vault of another server, over a
+TestClient standing in for it), `test_vault_routes.py` (the routes, the
+refusals, the hot loop, the page's own routes, the shell's secret) and
+`test_linked_files.py` (PDFs read where they are, and a server that keeps
+no links never making vaults.db); `test_folder_links.py` and
+`test_disk_push.py` keep the links' API and the PDFs pushed from disk. On
+the frontend, `vaultState.test.mjs` (a page's standing with this computer)
+and `notesLock.test.mjs` (what a vault that does not pull and pushes
+everything refuses); in
+`desktop/`, `keeping.test.js` (the sync panel's reading of a vault) and
+`zipNames.test.js` (what the shell looks for in the Gamma export that takes
+an opened PDF to another server's library).
+
 Rules the frontend mirrors — search normalization (`gamma/textnorm.py` ↔
-`frontend/src/shared/lib/textnorm.js`), published pages' slugs
-(`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`), text boxes
+`frontend/src/shared/lib/textnorm.js`), published pages' slugs and page
+hosts (`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`), text boxes
 (`gamma/text_box.py` ↔ `frontend/src/markup/textBox.js`,
 `tests/shared/textbox.json`, [text_boxes.md](text_boxes.md)), pictures
 (`gamma/picture.py` ↔ `frontend/src/markup/picture.js`: the normalizer,
@@ -440,11 +496,43 @@ handwriting (`gamma/ink.py` ↔ `frontend/src/ink/ink.js` and
 `ink/grain.js`: the codec, dashes, merge, the calligraphy nib and the
 pencil's grain, [handwriting.md](handwriting.md)) — are pinned by ONE
 set of cases both sides read: `tests/shared/*.json` at the repository root,
-run by `backend/tests/test_shared_fixtures.py` (the slugs by
-`test_publish.py`) and the matching node tests. Add a case there when a rule
-changes; whichever side drifts fails.
+run by `backend/tests/test_shared_fixtures.py` and the matching node tests.
+So are a block's kind (`blockkind.json`: the `kind` column and
+`blocks_store.block_kind` ↔ `editor/blockProps.js`), item types
+(`itemtypes.json`: `gamma/item_types.py` ↔ `shared/lib/itemTypes.js`),
+colours (`colors.json`: `gamma/colors.py` ↔ `shared/model/palette.js`),
+share-link names (`linkname.json`: `auth.link_name` ↔
+`collaboration/linkName.js`), person colours (`personcolor.json`:
+`pdf_cards.person_color` ↔ `collaboration/personColor.js`), the chat's
+passage budget (`passages.json`: `ai_context.fair_shares` ↔
+`chat/passageBudget.js`), what a page carries (`attachment.json`:
+`blocks_store.page_attachment` ↔ `library/libraryUtils.js`), sibling keys
+(`fractionalkeys.json`: the npm and PyPI fractional-indexing libraries) and
+pasted math (`pastemath.json`: `gamma/paste_math.py` ↔
+`editor/pasteMath.js`). The kinds are run against the column by
+`test_block_columns.py`, the pasted math by `test_paste_math.py` and the
+slugs by `test_publish.py`. Add a case there when a rule changes; whichever
+side drifts fails. `test_every_fixture_is_read_by_both_suites` fails a
+fixture that no node test or no pytest module reads, except those in its
+`ONE_SIDED` table: the mirror's tree rules and the text merge, which only
+the server runs, and the held pen shape, which the server never draws. It
+counts a name only as a string a test opens (closed by a quote), so a
+comment that still names a fixture after its reader went does not hide the
+gap.
 
-The frontend has **no linter** and no component tests. Its pure modules have
+A twin drifts where the two languages differ, so a new fixture should try
+those inputs. JS `.length` and `slice` count UTF-16 units where Python
+counts code points (an emoji, a math letter such as U+1D465). `Math.round`
+takes a half up where Python's `round` takes the even one (`ink.js_round`,
+`text_box._round`). JS `\s` and `trim()` take U+FEFF and leave U+0085, and
+Python's `\s` and `strip()` the reverse. A JS object literal answers its
+prototype's keys (`"constructor"`), where a Python dict does not. And a
+library on each side may check its inputs differently: neither
+fractional-indexing checks a key's characters, so `fractionalkeys.json`'s
+`foreign` keys are the ones the server refuses itself.
+
+The frontend has few component tests. Its lint is [below](#frontend-lint),
+and three ratchets (below) hold its styles and conventions. Its pure modules have
 `node --test` tests (`npm test` from `frontend/`, the files in
 `frontend/tests/*.test.mjs`): `blockOps` (diff/apply), `collabSession` (the
 page session's transport logic over fakes — ordering, reconciliation,
@@ -453,14 +541,25 @@ retries, presence, the caret throttle), `sessionState`, `settings`
 above), `mdMarks` (the formatting hotkeys' toggle), `logseqPdfModel` (tree
 ops), `blockHistory` (the undo classifier), `menuAim` (the safe-triangle
 geometry), `themes` (the design tokens: the desktop copy, the pre-paint's
-theme lists, every theme resolving, the contrast ratchet) and
+theme lists, every theme resolving, the contrast ratchet),
 `designTokens` (the raw-value ratchet on the stylesheets, and no
-`(pointer: coarse)` rule sizing a control but the text box's handle).
-Both ratchets are described in [ui-design.md](ui-design.md#ratchets). A
+`(pointer: coarse)` rule sizing a control but the text box's handle),
+`inert` (no string given to the `inert` prop in `src`, and React writing
+the attribute for true and removing it for false), `uiConventions` (the
+conventions ratchet over `src/`: the press helpers, pointer.js,
+`pickFiles`, `composing` on a text field's Enter, the shared components'
+classes, the icon sizes, hover reveals that take a tap) and `appState` (the
+ratchet on `app/App.jsx`'s state and effect hooks and its code lines). The
+three design ratchets are described in [ui-design.md](ui-design.md#ratchets),
+App's in [frontend-refactor.md](frontend-refactor.md#new-state). A
 module is testable there when its relative imports carry the `.js`
 extension (node resolves nothing else). Modules that import React can still be imported for their
-pure exports. Actual React rendering and
-interactions are exercised by the browser suite below, plus one standalone
+pure exports. A few tests render React itself. The markdown ones
+(`callouts`, `noteSanitize`, `diagramMarkdown`, `remarkPaperLinks`,
+`textBoxShown`) render to static markup, and `leave` and `inert` mount a
+React root in jsdom. Node runs React's development build, so StrictMode's
+double ref attach shows there, as it does in `npm run dev`. Other React
+rendering and interactions are exercised by the browser suite below, plus one standalone
 browser regression: `npm run e2e:latex` bundles the block
 editor with esbuild over an in-memory fixture ([latex_editing.md](latex_editing.md)).
 
@@ -499,6 +598,152 @@ A process with no step finished for 15 minutes ends with status 1 (not under
 `--headed`). Workers leave when their parent is gone, and a backend reads a
 stdin pipe only the process that started it holds, so killing a run takes its
 workers, backends and browsers with it.
+
+### Frontend lint
+
+```bash
+cd frontend
+npm run lint    # Biome over src/, tests/, tools/ and vite.config.js, under a second
+```
+
+`npm run lint` runs `biome lint --error-on-warnings` with
+`frontend/biome.json`. It reads the scripts, the stylesheets and the i18n
+catalogs, so a duplicate CSS property or JSON key fails it too. Every
+diagnostic fails the run, and check.yml runs it before the unit tests.
+Biome is pinned to one exact version in package.json, because a release can
+change what a rule reports. An upgrade is a change of its own, made with a
+lint run.
+
+Only rules that find bugs are on. There is no formatter and no style rule.
+The config takes Biome's recommended `correctness` and `suspicious` rules
+and adds four that those presets leave out:
+- `useHookAtTopLevel`: a hook after an early return or inside a condition.
+  That is how a blocked share link once crashed to a blank page.
+- `noUndeclaredVariables`: a name that is not imported or declared.
+- `useJsxKeyInIterable`: a mapped element without a `key`.
+- `noNestedComponentDefinitions`: a component defined inside another one,
+  which remounts on every render.
+
+`noUnusedVariables` is raised to an error. These recommended rules are off,
+each for a reason:
+- `noUnusedImports`: 34 files still carry an unused `import React` from
+  the classic JSX runtime. The rule can go on once they are removed by hand.
+- `noUnusedFunctionParameters`: a callback names its positional parameters
+  to reach the ones after them.
+- `useExhaustiveDependencies`: the partial dependency lists are deliberate,
+  and the old `eslint-disable` comments mark them. The config names it off,
+  so a change of preset or a Biome upgrade cannot turn it on.
+- `noAssignInExpressions`: `exec` loops and parenthesised lazy
+  initialisation are written that way on purpose.
+- `noShadowRestrictedNames`: key handlers are called `escape`.
+- `noThenProperty`: openBlock's `then:` option and settingsReads.js's
+  `then:` steps are never awaited.
+- `noPrototypeBuiltins`: it flags the safe
+  `Object.prototype.hasOwnProperty.call` form too.
+- `noGlobalIsNan`: `isNaN(date)` is meant. The `Number.isNaN` fix is always
+  false for a Date.
+- `noApproximativeNumericConstant`: a test writes an A4 page's aspect as
+  1.414 on purpose.
+- `useParseIntRadix`: `parseInt` reads decimal data attributes, which need
+  no radix.
+
+`useIterableCallbackReturn` runs with `checkForEach: false`. It checks that
+a `map` or `filter` callback returns a value. It does not check that a
+`forEach` arrow returns nothing.
+
+A diagnostic is fixed by hand, never with `biome lint --write` (its
+unused-import fix once took a file's header comment with it). Where the code
+is right as it is:
+- Suppress the one line with `// biome-ignore lint/<group>/<rule>: <reason>`
+  above it (in CSS, `/* biome-ignore … */`). A suppression that no longer
+  suppresses anything fails the lint too.
+- Prefix a binding that must stay unread with `_`. It is not reported.
+- `x ||= v` on a variable read nowhere else is reported unused. Write
+  `if (!x) x = v`.
+- A page global read inside a scenario's `page.evaluate` is written
+  `window.x`, since the lint knows only the ES, browser and Node globals.
+
+### Performance budgets
+
+```bash
+cd frontend && npm run test:perf                               # ~15 s on an idle machine
+cd backend && python -m pytest tests/test_perf.py -m perf -q   # ~10 s; -s prints each case's numbers
+```
+
+The timing budgets hold the pure hot paths to fixed times. Neither
+`npm test` nor the backend suite runs them. Each case first checks what it
+computed, then times it: 3 untimed warmups, then 20 timed runs. Its
+nearest-rank p95 (the 19th of the 20 sorted runs, so the single slowest is
+left out) is held to the case's budget. A cold case builds fresh data in a
+setup that runs outside the timed span. A garbage collection runs between
+the runs on both sides (`node --expose-gc` in `test:perf`, `gc.collect()`
+in Python), so one run does not pay for the last one's garbage.
+
+The frontend's cases are `frontend/tests/perf/*.perf.mjs`, run one file at
+a time (`--test-concurrency=1`):
+
+- `keystroke.perf.mjs`: 200 keystrokes at the last note of a 1,000-block
+  page, with every walk App runs for a key: `updateBlockTree`, the render's
+  memos (`app/treeDerived.js`, `sheetsOf`, `refLabelsByBlock` and the keeps
+  of `shared/lib/keepIfSame.js`), the history's `observeTree` and the
+  collab session's `diffTrees`. The biggest pieces are also timed alone, so
+  a breach points at its piece. React's render is not timed.
+- `ops.perf.mjs`: `applyOps` of a peer's batch, one set and 50 inserts.
+- `ink.perf.mjs`: on a 500-stroke drawing, the outline caches (cold, a
+  peer's file, a merged save, a restyle), the eraser's flush warm and cold,
+  and `mergeInk`.
+- `search.perf.mjs`: a PDF page's search text (`runChars`,
+  `normalizeChars`). The viewer's query loop and the scroll tracker are
+  inline in their components and are not timed.
+- `fixtures.mjs` builds the seeded data: the page, the drawing and a PDF
+  page's text runs. `measure.mjs` has `measure` and `budget`, which
+  `tests/perfMeasure.test.mjs` checks under `npm test`.
+
+The server's cases are `backend/tests/test_perf.py`: the subtree read of a
+page of the same shape, in-process and through the API; `commit_ops` of 20
+keystrokes, of a 50-op batch and of a stale set merged into a
+20,000-character block; `textmerge.merge` and `map_offset`; and
+`ink.merge_ink` and `parse_ink` on 500 strokes. They are marked `perf`.
+`pytest.ini`'s `addopts = -m "not perf"` leaves them out of every run, and
+`-m perf` on the command line takes its place. So
+`pytest tests/test_perf.py` without `-m perf` deselects every case and
+exits with code 5. Under xdist (`-n`) the module skips, since its numbers
+would mean nothing beside the other workers.
+
+The budgets are about 5x the p95 an idle Ryzen 9 9950X3D measured (Node
+22.23, Python 3.12, November 2026), rounded up. Cases near a millisecond
+have about 6 to 8x (the warm eraser flush, a restyle, the one-set
+`applyOps`), since a timer's jitter and one collection are a large share
+of them: they guard against a lost cache or prefilter, not against a small
+slowdown. Run them on an idle machine. With every core busy the
+p95s grew 2 to 3x, and other worktrees' test runs on the same machine
+count. A case over its budget fails with its p95, its budget and the
+machine the budgets were set on.
+
+- A breach on your machine: find its cause, timing the change before and
+  after on the same idle machine. Never raise a budget to make a case
+  pass. A budget changes only with its reason in the commit: the case
+  grew, or the fixture did.
+- On CI the `perf` job of `check.yml` runs both suites and only reports
+  them ([github_actions.md](github_actions.md#checkyml)). A case over its
+  budget there prints a `::warning` line, which the run shows as an
+  annotation (`gh run view <id>`); `npm run test:perf` uses the spec
+  reporter because TAP would prefix that line with `# `.
+- Adding a case: take its data from `tests/perf/fixtures.mjs` (or
+  `test_perf.py`'s `page_tree`), check what it computed before timing it,
+  and set its budget to about 5x your idle p95, with the machine named in
+  the commit.
+- A performance fix still lands with a structural test, which stays the
+  blocking guard: `tests/blockTree.test.mjs` (only the edited path is
+  copied), `tests/refLabels.test.mjs` (labels keep their identity),
+  `test_subtree_response.py` (the subtree is encoded off the event loop),
+  `test_search_index_perf.py` (the index's SQL) and `test_block_columns.py`
+  (the page read by `page_id`).
+- `tests/bench/inkCache.bench.mjs` and `inkErase.bench.mjs` time the ink
+  scenarios against another copy of `src/ink`, such as an older commit's
+  export, for a before and after
+  ([handwriting.md](handwriting.md#client)).
+  `translateBench.mjs` measures translation quality, not time.
 
 ### Browser end-to-end suite
 
@@ -587,6 +832,33 @@ cookie
 ([research/keepalive-abort.md](../research/keepalive-abort.md#the-app-at-a-close)).
 A step that times a close passes `{lastLook: false}` to `page.close` or
 `context.close`, which skips the screenshot the harness takes first.
+
+`node tests/e2e/collabSoak.mjs` is the crowd soak for real-time
+collaboration ([collab.md](collab.md#testing)), a script apart from the
+browser. It needs no build: its server serves the API alone
+(`new Server({ static: false })`). Twenty tabs, each the app's page
+session over Node's fetch and WebSocket, type into 5 pages of a shared
+workspace for 120 s, then go quiet until every tab shows the server's
+tree. `--clients N`, `--accounts N` (default one per tab), `--pages N`,
+`--seconds N`, `--seed N` and `--keep-live N` (the tokens a tab keeps
+before it takes its oldest out again, so the pages stop growing) size the
+run. `--faults` drops a socket every 4 s and takes a tab's network away
+for 4 s every 6 s. It prints a row per 30 s window (batches/s; the ack,
+the fan-out to each peer's socket and the time until a peer shows a token
+at p50/p95/p99; the server's memory, pages.db + WAL; the driver's
+event-loop delay) and the totals, and exits 1 on any failure. `--strict`
+also fails a run whose server memory or pages.db grows in its last third,
+or whose fan-out p99 in a window passes max(3 × the first full window's,
+50 ms); it needs a run of some 300 s to mean anything. `--json out.json`
+writes the report. A failed run keeps the temp dir with `forensic.json`:
+the report, and for each token lost its batch's base, ours, the stored
+text before it, what was stored and the merge. `--sabotage` sends one set
+without a base mid-run, which the run must fail on by its batch id (the
+oracle's own check). The `collab-soak` group is a 20 s run of 5 tabs as
+alice and bob on 2 pages with faults on seed 1, which checks correctness
+only. It takes about 25 s and runs in CI's e2e shards like any other
+group. On one seed the tabs do the same things each run; only the
+server's timing varies.
 
 `frontend/tests/e2e/run.mjs` starts an ISOLATED backend (the project venv's
 python — or the interpreter `GAMMA_E2E_PYTHON` names — over a fresh
@@ -805,6 +1077,16 @@ The scenarios live in `tests/e2e/scenarios/`:
   log and settings (cadence, detach, reattach), a same-block conflict
   resolved on its row chip, Remove origin ([mirror.md](mirror.md)).
   `--only mirror`.
+- `vaults.mjs`: synced vaults and PDFs read where they are, as a page of
+  the desktop app shows them ([synced_vaults.md](synced_vaults.md)). A
+  second Gamma keeps vaults (`GAMMA_FOLDER_LINKS=1`, no shell secret) and
+  the browser says it is the desktop app (an Electron user agent); real
+  temp directories are made vaults through the API. The page's chip and
+  card (Show in folder), Edit the file and its 409, a block changed in the
+  file and in Gamma resolved on its merge chip, the notes lock of a vault
+  that does not pull and pushes everything, a PDF opened through `/open` added to the library
+  from its tab menu, and the folder and Document menu items, whose
+  messages to the shell an init script records. `--group vaults`.
 - `zotero-link.mjs`: a Zotero link on the clone's surfaces. A second Gamma
   talks to the fake Zotero (`backend/tests/zotero_fake.py --port 0`, over
   HTTP, serving `zotero_fixtures.standard_library`) through
@@ -1190,7 +1472,9 @@ The scenarios live in `tests/e2e/scenarios/`:
   A flyout sits inside its parent, and a menu a control opens is named by
   it. `--group touch`.
 - `pdfTouch.mjs`: 400% rendering under an emulated canvas limit, distant-page
-  release/repaint, live ink, native touch swipes ([pdf_loading.md](pdf_loading.md)).
+  release/repaint, live ink, native touch swipes, and a Ctrl+wheel train that
+  renders no page until it rests, counted through a stand-in React DevTools
+  hook ([pdf_loading.md](pdf_loading.md)).
   `--only "pdf touch"`.
 - `pdfload.mjs`: PDF loading, in a non-default workspace — the timing probe
   (a 300-page, 20 MB document opened cold at an emulated 20 Mbps, the
@@ -1366,6 +1650,18 @@ Bash, `gradlew.bat` from PowerShell. What each test covers:
   `FORWARDED_ALLOW_IPS` lists, so anyone on that port can choose the client
   address rate limits count by. Close the remote port to everything but the
   reverse proxy.
+- **"[collab] a page socket reached the server as plain HTTP …"** is a
+  warning, logged once an hour at most: a proxy in front dropped a page
+  socket's `Upgrade`, so the request reached the server as a plain `GET
+  /api/ws/page/{id}`, answered 426. Each attempt also leaves an `[http] GET
+  /api/ws/page/… status=426` line. The tabs behind it poll the page's op
+  log instead ([collab.md](collab.md) "The client", "without a socket"):
+  others' edits arrive within about 2 s, and nobody sees anyone's cursor.
+  In the browser's Network tab such a tab shows `ops?since=` every 2 s
+  and a socket attempt about once a minute. The fix is the proxy's
+  WebSocket settings (`README.md`, the reverse-proxy paragraph). A
+  TLS-inspecting proxy that holds the socket without passing anything
+  polls the same way, but logs nothing here.
 - **"WebSocket from <peer> dropped: [WinError 121] …"** is an info line for
   a page socket whose peer stopped answering: a laptop asleep, Wi-Fi gone.
   The websockets library logs it as the error "data transfer failed" with a
@@ -1416,8 +1712,10 @@ Bash, `gradlew.bat` from PowerShell. What each test covers:
   file (not stored, unreadable, no text layer).
 - **Two request lines, on purpose.** The console carries uvicorn's access
   log for every request (`INFO: 127.0.0.1:… "GET /api/… HTTP/1.1" 200 OK`)
-  except the Background tasks tray's answered `GET /api/jobs`, which comes
-  every 1.5 s while a job runs (`logbuf._QuietPolls`). Likewise a `[jobs]`
+  except the answered polls (`logbuf._QuietPolls`): the Background tasks
+  tray's `GET /api/jobs`, which comes every 1.5 s while a job runs, and a
+  page's `GET /api/pages/{id}/ops?since=`, which a tab without its socket
+  sends every 2 s. Likewise a `[jobs]`
   line marks how a job ended, except a search-indexer run that simply
   finished. Interleaved with the access log comes Gamma's own line for the ones worth reading
   (`auth.py` `_finish_request_log`): `[http] request=<id> GET /api/… status=…
@@ -1558,6 +1856,20 @@ Bash, `gradlew.bat` from PowerShell. What each test covers:
   registered again, its `order` changed, makes the group read its saved
   layout, and a splitter moves the panels by its index among the
   splitters, past any pinned at no size.
+- React stays on 19.2 (`~19.2.9` in `frontend/package.json`), so a
+  dependency refresh takes its patches but not 19.3. 19.3 adds about 7 KB
+  of Brotli to the entry chunk, which every first screen loads, for view
+  transitions and Fragment refs, which Gamma does not use. Moving to it is
+  a decision, not a refresh ([research/react-19.md](../research/react-19.md)).
+- `inert` is a boolean prop: `inert={!!folded}`. React 19 reads the empty
+  string as false, so `inert=""` makes nothing inert, and it says so only
+  in development. `tests/inert.test.mjs` fails on a string given to it.
+  `npm run dev` runs StrictMode, which in React 19 attaches each callback
+  ref twice as an element mounts (the element, null, the element again).
+  A ref that does work on attach or detach must allow for that, as
+  `useTextScale`, `useWheelPan`, `useLeave` and the comment margin's card
+  refs do. The browser suite drives the production build, which never
+  does this.
 - Timestamps are UTC ISO strings with `Z` (`page_now()`); keep the format.
   `db.format_stamp` writes a datetime in it and `db.parse_stamp` reads one
   back (None when unreadable — whether that means expired, due or now is

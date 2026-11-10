@@ -55,7 +55,7 @@ import secrets
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import cloud_auth, collab, email_invites, join_requests, ratelimit, shares, sync_engine
+from .. import cloud_auth, collab, email_invites, join_requests, ratelimit, shares, sync_engine, workspaces
 from ..auth import (SHARE_AUDIENCES, SHARE_ROLES, ShareScope, can_write, is_token, note_share_miss, require_user_id,
                     require_ws, request_share_access, share_lookup)
 from ..blocks_store import FOLDERS, TRASH, page_ancestors, page_descendants
@@ -595,7 +595,9 @@ def get_share(token: str, request: Request):
     ``username`` is who shared it; ``workspace_id`` the workspace.
     ``viewer`` / ``viewer_is_guest``
     tell the share view whether to offer "Open in my library" (a member) or
-    "Add to my library" (an account that can import)."""
+    "Add to my library" (an account that can import). While a delete holds
+    the workspace, ``deleting`` is true and ``can_edit`` false: it takes no
+    more changes (``workspaces.refuse_writes``)."""
     share = share_lookup(token)
     if not share:
         note_share_miss(request)
@@ -618,9 +620,10 @@ def get_share(token: str, request: Request):
             folder_name = row[0] or ""
     with connect_users_db() as conn:
         sharer = account_name(conn, share["created_by"])
+    deleting = workspaces.is_deleting(share["workspace_id"])
     out = {"page_id": share["page_id"], "folder": share["folder"],
-           "username": sharer, "workspace_id": share["workspace_id"],
-           "audience": share["audience"], "role": share["role"], "can_edit": level == "edit",
+           "username": sharer, "workspace_id": share["workspace_id"], "deleting": deleting,
+           "audience": share["audience"], "role": share["role"], "can_edit": level == "edit" and not deleting,
            "viewer": request.state.user or "", "viewer_is_guest": bool(request.state.is_guest)}
     if not share["page_id"]:
         out["folder_name"] = folder_name

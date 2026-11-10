@@ -133,6 +133,11 @@ export const isDefaultPalette = (palette) => JSON.stringify(normalizePalette(pal
 
 // --- one colour ---------------------------------------------------------------
 
+// The server reads and writes colours by the same arithmetic
+// (gamma/colors.py: parse_color, normalize_color, with_alpha, nearest), held
+// to the same answers by tests/shared/colors.json; a byte rounds half up,
+// as Math.round does.
+
 // Any CSS colour Gamma ever stored (#rgb, #rgba, #rrggbb, #rrggbbaa,
 // rgb(…), rgba(…)) → [r, g, b, a] with the channels 0..255 and a 0..1, or
 // null for anything else.

@@ -3,7 +3,8 @@
 // pattern drawn from each sheet's paper — with the layers a PDF page has
 // (markup/MarkupLayers.jsx, keyed by the sheet's id instead of a page number) and
 // an "Add page" sheet after the last. The scale follows the viewer's zoom ("page-width"
-// fits the widest sheet). App owns the tree; the tools, the stroke history
+// fits the widest sheet), and reaches the sheets as SCALE_VAR on the column
+// (shared/lib/viewerZoom.js), so a zoom does not render them. App owns the tree; the tools, the stroke history
 // and the commits are in the owners App composes (ink/useInkStrip.js,
 // ink/useInkDocument.js, ink/useInkStrokes.js); PaperMenu edits a sheet's
 // paper.
@@ -14,7 +15,7 @@ import { armedClasses, usePageTools } from "../markup/PageTools";
 import { PlusIcon, XIcon } from "../shared/ui/Icons";
 import { Segmented } from "../settings/SettingsKit";
 import { t, T } from "../shared/i18n/i18n.js";
-import { installViewerZoom } from "../shared/lib/viewerZoom.js";
+import { SCALE_VAR, installViewerZoom, scaledPx } from "../shared/lib/viewerZoom.js";
 import { clampZoom } from "../shared/model/zoom.js";
 import {
   DEFAULT_PAPER, DOT_RADIUS, LINE_WIDTH, PAPER_COLORS, PAPER_SIZES, isLandscape, paperIsDark, paperLines, paperSizeKey, turnPaper,
@@ -86,12 +87,13 @@ export function PaperBackground({ paper }) {
   );
 }
 
-const NotebookSheet = React.memo(function NotebookSheet({ sheet, number, scale, marks }) {
+// Sized at the column's zoom (SCALE_VAR), which notebook.css lets it inherit.
+const NotebookSheet = React.memo(function NotebookSheet({ sheet, number, marks }) {
   const wrapRef = useRef(null);
   const { paper } = sheet;
   return (
     <div ref={wrapRef} className="nbSheet" data-sheet-id={sheet.id} data-paper={paperIsDark(paper) ? "dark" : undefined}
-      style={{ width: `${paper.width * scale}px`, height: `${paper.height * scale}px` }}
+      style={{ width: scaledPx(paper.width), height: scaledPx(paper.height) }}
       aria-label={t("Page {n}", { n: number })}>
       <PaperBackground paper={paper} />
       <MarkupLayers surface={sheet.id} wrapRef={wrapRef} width={paper.width} height={paper.height} marks={marks} />
@@ -241,9 +243,9 @@ export function NotebookViewer({ sheets, marks, scaleValue = "page-width", onEff
   const lastWidth = (sheets.at(-1)?.paper.width || DEFAULT_PAPER.width) * scale;
   return (
     <div ref={boxRef} className={"nbViewer" + armedClasses(tools)}>
-      <div ref={columnRef} className="nbColumn" style={{ padding: `${PAD}px` }}>
+      <div ref={columnRef} className="nbColumn" style={{ padding: `${PAD}px`, [SCALE_VAR]: String(scale) }}>
         {sheets.map((s, i) => (
-          <NotebookSheet key={s.id} sheet={s} number={i + 1} scale={scale} marks={marks.get(s.id) || NO_MARKS} />
+          <NotebookSheet key={s.id} sheet={s} number={i + 1} marks={marks.get(s.id) || NO_MARKS} />
         ))}
         {!readOnly && onAddSheet ? (
           <button type="button" className="uiBtn ghost nbAddSheet" style={{ width: `${lastWidth}px` }} onClick={onAddSheet}

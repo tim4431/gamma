@@ -80,11 +80,14 @@ export function sweepRuns() {
 }
 
 // `env` adds to the backend's environment (a second Gamma started as another
-// kind of server, e.g. the publish scenario's share host).
+// kind of server, e.g. the publish scenario's share host). `static: false`
+// serves the API alone, without a copy of frontend/dist (a script that
+// drives no browser, tests/e2e/collabSoak.mjs, needs no build).
 export class Server {
-  constructor({ env = {} } = {}) {
+  constructor({ env = {}, static: serveApp = true } = {}) {
     servers.push(this);
     this.env = env;
+    this.serveApp = serveApp;
     this.dir = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-"));
     this.dataDir = path.join(this.dir, "data");
     this.logPath = path.join(this.dir, "server.log");
@@ -106,19 +109,19 @@ export class Server {
     return stdout;
   }
   async start() {
-    if (!fs.existsSync(path.join(DIST, "index.html"))) throw new Error("frontend/dist is missing: run `npm run build` first");
+    if (this.serveApp && !fs.existsSync(path.join(DIST, "index.html"))) throw new Error("frontend/dist is missing: run `npm run build` first");
     if (path.isAbsolute(PYTHON) && !fs.existsSync(PYTHON)) throw new Error(`backend venv python not found at ${PYTHON}`);
     fs.mkdirSync(this.dataDir, { recursive: true });
     // Serve a copy of the build: an `npm run build` elsewhere during a run
     // replaces dist/ and would otherwise 500 every page load until it ends.
     const dist = path.join(this.dir, "dist");
-    fs.cpSync(DIST, dist, { recursive: true });
+    if (this.serveApp) fs.cpSync(DIST, dist, { recursive: true });
     await this.manage("setup");
     this.port = await freePort();
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-c", SERVE, String(this.port)], {
       cwd: BACKEND, stdio: ["pipe", log, log],
-      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
+      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...(this.serveApp ? { GAMMA_STATIC_DIR: dist } : {}), TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {
@@ -511,15 +514,23 @@ export async function assertMenuRoles(menu, what, around = 0) {
 // it says (PDF user space, y up: the page's top is y = h), in one of the
 // standard fonts "F1" Helvetica, "F2" Times-Roman, "F3" Times-Italic, "F4"
 // Symbol (its text in the Symbol encoding: "a" draws α, "W" draws Ω), "F5"
-// Times-Bold, `rgb` its colour (0 to 1), over `fills`: [{x, y, w, h, rgb}].
+// Times-Bold, or "F6", Liberation Sans embedded in the file (EMBEDDED_FONT,
+// its printable ASCII; `embeddedWidth` measures a text in it), `rgb` its
+// colour (0 to 1), over `fills`: [{x, y, w, h, rgb}].
 export function makePdf(pages, { padBytes = 0 } = {}) {
   const esc = (s) => s.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
   const objs = [];
   const add = (s) => { objs.push(s); return objs.length; };
   const catalog = add("");
   const pagesObj = add("");
-  const fonts = ["Helvetica", "Times-Roman", "Times-Italic", "Symbol", "Times-Bold"]
+  let fonts = ["Helvetica", "Times-Roman", "Times-Italic", "Symbol", "Times-Bold"]
     .map((name, i) => `/F${i + 1} ${add(`<< /Type /Font /Subtype /Type1 /BaseFont /${name} >>`)} 0 R`).join(" ");
+  if (pages.some((pg) => pg.runs?.some((r) => r.font === "F6"))) {
+    const { file, widths } = embeddedFont();
+    const program = add(`<< /Length ${file.length} /Length1 ${file.length} >>\nstream\n${file.toString("latin1")}\nendstream`);
+    const descriptor = add(`<< /Type /FontDescriptor /FontName /GAMMAE+LiberationSans /Flags 32 /FontBBox [-203 -303 1050 910] /ItalicAngle 0 /Ascent 905 /Descent -212 /CapHeight 729 /StemV 80 /FontFile2 ${program} 0 R >>`);
+    fonts += ` /F6 ${add(`<< /Type /Font /Subtype /TrueType /BaseFont /GAMMAE+LiberationSans /FirstChar 32 /LastChar 126 /Widths [${widths.join(" ")}] /Encoding /WinAnsiEncoding /FontDescriptor ${descriptor} 0 R >>`)} 0 R`;
+  }
   const kids = [];
   for (const pg of pages) {
     const [w, h] = (Array.isArray(pg) ? null : pg.box) || [612, 792];
@@ -545,6 +556,43 @@ endstream`);
   out += `trailer\n<< /Size ${objs.length + 1} /Root ${catalog} 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(out, "latin1");
 }
+
+// The font makePdf embeds as "F6": pdf.js's own copy of Liberation Sans (SIL
+// Open Font License), and its advances, in thousandths of the em, for the codes
+// 32 to 126, read from its cmap and hmtx.
+export const EMBEDDED_FONT = path.join(ROOT, "frontend", "node_modules", "pdfjs-dist", "standard_fonts", "LiberationSans-Regular.ttf");
+let embedded = null;
+function embeddedFont() {
+  if (embedded) return embedded;
+  const file = fs.readFileSync(EMBEDDED_FONT);
+  const u16 = (o) => file.readUInt16BE(o), i16 = (o) => file.readInt16BE(o), u32 = (o) => file.readUInt32BE(o);
+  const tables = {};
+  for (let i = 0; i < u16(4); i++) tables[file.toString("latin1", 12 + 16 * i, 16 + 16 * i)] = u32(20 + 16 * i);
+  const unitsPerEm = u16(tables.head + 18), metrics = u16(tables.hhea + 34);
+  let map = 0; // the (3, 1) subtable, format 4
+  for (let i = 0; i < u16(tables.cmap + 2); i++) {
+    const r = tables.cmap + 4 + 8 * i;
+    if (u16(r) === 3 && u16(r + 2) === 1) map = tables.cmap + u32(r + 4);
+  }
+  const segs = u16(map + 6), ends = map + 14, starts = ends + segs + 2, deltas = starts + segs, ranges = deltas + segs;
+  const glyph = (c) => {
+    for (let s = 0; s < segs; s += 2) {
+      if (u16(ends + s) < c) continue;
+      if (u16(starts + s) > c) return 0;
+      const range = u16(ranges + s);
+      if (!range) return (c + i16(deltas + s)) & 0xffff;
+      const g = u16(ranges + s + range + 2 * (c - u16(starts + s)));
+      return g ? (g + i16(deltas + s)) & 0xffff : 0;
+    }
+    return 0;
+  };
+  const widths = [];
+  for (let c = 32; c <= 126; c++) widths.push(Math.round(u16(tables.hmtx + 4 * Math.min(glyph(c), metrics - 1)) * 1000 / unitsPerEm));
+  return (embedded = { file, widths });
+}
+
+// How wide `text` is at `size` in the font makePdf embeds, in pt.
+export const embeddedWidth = (text, size) => [...text].reduce((w, c) => w + (embeddedFont().widths[c.charCodeAt(0) - 32] || 0), 0) * size / 1000;
 
 // ---------------------------------------------------------------------------
 // Steps

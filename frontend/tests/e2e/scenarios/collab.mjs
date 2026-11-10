@@ -10,10 +10,11 @@
 // for its retry kept taken back through a tab switch, a two-batch paste
 // leaving the idle tab silent, typing kept through Recently deleted and a
 // restore, a merge losing the race to another merge keeping its text either
-// way round, a highlight one person makes on the PDF showing up for the
-// other, and a stroke one person is drawing showing on the other's page
-// before it is saved (ink-live), and going from it at once when undone
-// before its save.
+// way round, a tab whose WebSocket is blocked following the page over HTTP
+// and taking the socket back once it is let through, a highlight one person
+// makes on the PDF showing up for the other, and a stroke one person is
+// drawing showing on the other's page before it is saved (ink-live), and
+// going from it at once when undone before its save.
 import { tree, same, editRow, closeEditor } from "./notes.mjs";
 import { waitForPdf, selectPdfText } from "./pdf.mjs";
 
@@ -515,6 +516,57 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     const after = (await texts(joined)).join("|");
     assert(after.includes("two") && after.includes("three of bob's") && after.endsWith("tail"), `after the undo: ${after}`);
     assertNoProblems(A, expected); assertNoProblems(B, expected);
+  });
+
+  await step("collab: a tab whose WebSocket is blocked still gets the others' edits over HTTP, and takes the socket back once allowed", async () => {
+    // A third tab of bob's behind something that drops page sockets (a
+    // proxy without the upgrade headers): every attempt is closed at once,
+    // until `blocked` is cleared.
+    const ctxC = await bobT.context(browser);
+    let blocked = true;
+    await ctxC.routeWebSocket((u) => u.pathname.startsWith("/api/ws/page/"), (ws) => {
+      if (blocked) { ws.close(); return; }
+      const upstream = ws.connectToServer();
+      ws.onMessage((m) => upstream.send(m));
+      upstream.onMessage((m) => ws.send(m));
+    });
+    try {
+      const pg = await scratchPage("Without a socket", ["poll me"], [A]);
+      const C = await openPage(ctxC);
+      const reads = []; // C's reads of the op log, by time
+      C.on("request", (r) => {
+        if (r.method() === "GET" && /\/api\/pages\/[^/]+\/ops\?since=/.test(r.url())) reads.push(Date.now());
+      });
+      const opened = Date.now();
+      await C.goto(`${server.base}/?page=${pg.id}&ws=${teamId}`);
+      await bodyHas(C, "poll me");
+      await until(async () => reads.length >= 2, { what: "the tab reading the op log every 2 s", timeout: 10000 });
+      assert(reads[1] - opened < 10000, `two reads within 10 s of opening (${reads[1] - opened} ms)`);
+      // alice's typing reaches it within a couple of seconds
+      await editRow(A, "poll me");
+      await A.keyboard.type(" alice");
+      await closeEditor(A);
+      await until(async () => (await C.textContent("body")).includes("poll me alice"),
+        { what: "alice's edit on the tab without a socket", timeout: 5000 });
+      // its own typing goes out as ever, and reaches alice on her socket
+      await editRow(C, "poll me alice");
+      await C.keyboard.type(" bob");
+      await closeEditor(C);
+      await bodyHas(A, "poll me alice bob");
+      await until(async () => (await pg.tree())[0]?.content === "poll me alice bob", { what: "the server has both" });
+      assertEq((await A.$$(".presenceBar .peerAvatar")).length, 0, "alice sees no one: the polling tab has no presence");
+      // let the socket through: the browser's `online` tries it at once
+      blocked = false;
+      await C.evaluate(() => window.dispatchEvent(new Event("online")));
+      await until(async () => (await A.$$(".presenceBar .peerAvatar")).length === 1, { what: "bob's tab in alice's presence stack" });
+      const after = reads.length;
+      await sleep(5000);
+      assert(reads.length - after <= 1, `the hello ended the polling (${reads.length - after} reads in the 5 s after it)`);
+      assertNoProblems(C, [/WebSocket/]);
+      assertNoProblems(A);
+    } finally {
+      await ctxC.close();
+    }
   });
 
   let sharedPaperId = null;   // the paper both tabs are left on, for the ink-live step

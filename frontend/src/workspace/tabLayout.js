@@ -18,7 +18,6 @@
 // identities.
 
 const SIDES = { left: ["row", 0], right: ["row", 1], top: ["col", 0], bottom: ["col", 1] };
-export const SPLIT_SIDES = Object.keys(SIDES);
 
 const dedupe = (ids) => {
   const out = [];

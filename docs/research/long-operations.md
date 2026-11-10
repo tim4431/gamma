@@ -88,10 +88,16 @@ single request was slow, so no proxy cut them, but:
   and a folder deleted "with its pages" stayed, half emptied, since the
   folder itself went only after the loop.
 
-The real cost is the N round trips, so the better fix is one request
-that applies them all on the server (`ops.apply_batches` already does
-that for a folder delete). Until then a row of Background tasks that
-counts, stops and reports failures honestly is the cheap fix.
+The real cost is the N round trips. A row of Background tasks that
+counts, stops and reports failures honestly came first; then one request
+for many pages: `POST /blocks/bulk` trashes a set of pages
+(`ops.trash_pages`) or applies a set of properties patches
+(`ops.apply_each`, `apply_batches` one batch at a time in a savepoint of
+one transaction), each page checked and answered as its own request was,
+and the app sends 100 pages a request (`pageBatch.runBulk`): 1,000 pages
+are ten round trips, with the row and Stop between them. A duplicate
+still goes page by page (each one reads its page whole and writes it
+again).
 
 ## Found on the way
 
@@ -106,15 +112,16 @@ counts, stops and reports failures honestly is the cheap fix.
   indexed page's text (`pdf_index.doc_chars`, a full scan of `pdf_fts`) on
   each read, and the pane reads it again after every paper a metadata
   batch finishes. A count stored by the indexer would make it a lookup.
+  Closed below (2026-11-08).
 - **The Server pane's backup list** stats every file of every snapshot on
   each listing (`backups._dir_size`); the size could live in the
-  snapshot's manifest.
-- **Edits during a delete's final copy** are in neither the copy nor
-  anywhere else once the rows go. Members other than the one deleting can
-  keep editing for the minutes the zip takes. Refusing writes to a
-  workspace being deleted would close it, but the web app learns it may
-  only read from the session's role, not from the page socket, so a
-  refusal mid-session would surface as failed saves; left open.
+  snapshot's manifest. Closed below (2026-11-08).
+- **Edits during a delete's final copy** were in neither the copy nor
+  anywhere else once the rows went. Members other than the one deleting
+  could keep editing for the minutes the zip takes. The web app learned it
+  may only read from the session's role, not from the page socket, so a
+  refusal mid-session would have surfaced as failed saves. Closed below
+  (2026-11-08).
 
 ## Decided
 
@@ -208,20 +215,103 @@ reads wrong in a way the checks miss, which is why the chunks keep the
 full pass's cadence instead of running back to back
 ([dev/user_db.md](../dev/user_db.md) "Stored files").
 
+Empty Recently deleted, and the 30-day sweeper with it, is one pass on
+one connection (2026-11-07): one read of the trash gives each entry with
+the pages that went with it (`trash._trashed`), so no entry reads the
+trash again, the `deleted_with` stamp is an indexed column for the reads
+that remain (migration step 48), and `purge_unused` runs once after the
+loop, as it already did. Each entry still commits on its own, so the
+write lock is let go between pages and a restore meanwhile is not lost
+([dev/home_library.md](../dev/home_library.md) "Recently deleted").
+
+The off-site copies' rounds and a synced vault's rounds report their
+progress as the other rounds do. An off-site round keeps it in memory for
+its status (`offsite._phase`): the databases looked at of all of them,
+then the files it sends and their bytes, boto3's upload callback moving
+the bytes within a file. To count the whole round from its start, the
+uploads now compare every workspace's files with its listing before the
+first is sent. Settings → Backups' status line reads "copying now… ·
+files 120 / 3,400 · 1.2 GB / 8.0 GB", read every 3 s while the round runs
+([dev/debugging.md](../dev/debugging.md#off-site-copies-in-a-bucket)). A
+folder link's `Round` took a `progress` callback in place of the `say`
+the server threw away: the files fetched of those to fetch and the PDFs'
+bytes by the manifest's `pdf_size`. Folder links have since become synced
+vaults, and a vault's round (`vault_sync.Round`) takes the same callback:
+the files push takes and then the pages pull looks at, and the bytes of
+the PDFs it pushes. `folder_links._progress_writer` writes it into the
+vault's status once the round has run a second and at most once a second
+after, so a quiet round writes nothing, and the desktop app's sync panel
+reads *Syncing 30 / 120*
+([dev/synced_vaults.md](../dev/synced_vaults.md#when-rounds-run)).
+Neither is a job, so neither is in the tasks tray: they stay recurring
+rounds, shown where they are followed.
+
+A share view's export is a job too (2026-11-08). The share host sits behind
+Cloudflare, and a big shared folder's export ran in the one GET of
+`/folders/{id}/export`, so the proxy's cut came before the zip did. The
+share view now starts the same `export` job under its token (`POST
+/api/jobs/export?share=`), held to the share as the downloads are. The
+job's owner is the share (`share:<token>`), not the visitor, who may have
+no account: the share counts as one account in the limits and the 10 GB
+of files, link visitors start at most 30 in five minutes per IP, and the
+job is reached by its id through that share alone, by any visitor the
+share admits. No listing shows it, so visitors of one link do not see
+each other's exports, and the share view follows only the jobs its tab
+started. A run checks that the share still stands, and the sweep takes
+the jobs of a share that is gone
+([dev/tasks.md](../dev/tasks.md#a-share-views-exports)). The GET routes
+stay, for scripts, the fixed bibliography link and another Gamma's import
+by link, which fetches a whole shared folder as one Gamma export in one
+request and can still be cut on a big one.
+
+A workspace being deleted takes no more changes (2026-11-08). From the
+moment its delete runs, the write gates (`require_ws(write=True)`, an edit
+share's, a comment's, a restore or merge into it) refuse every change
+with 423 `workspace_deleting` and the `X-Gamma-Workspace-Deleting`
+header, and the session lists the workspace `deleting`. The web app
+learns it from the first refused write: the fetch wrapper raises an
+event, and the tab acts as a viewer of the workspace and says on a pill
+that stays that changes are no longer saved; the refused edit is dropped
+and the page refetched. A share view keeps that from page to page, and
+the share's own answer says so to one opened meanwhile. Work that passed
+its gate before the delete is stopped too: the delete stops the jobs that
+change the workspace (imports, restores, metadata lookups, transcriptions,
+highlight runs) before its final copy, failing them with the reason, and
+an AI turn's changing tools are refused at each call. A stopped delete
+lets the workspace go again. A request or an AI tool call already running
+as the delete starts, and the background rounds (a clone's, a Zotero
+link's), are not held
+([dev/workspaces.md](../dev/workspaces.md) "Deleting a workspace").
+
 ## Still open
 
 In the order they matter:
 
-1. One request for the library's bulk actions (trash many pages, apply
-   many page patches), on `ops.apply_batches`.
-2. Empty Recently deleted: `purge_unused` once after the loop, one
-   connection, the `deleted_with` map read once.
-3. Progress for the off-site copies' first round and a folder link's
-   rounds (`say` is thrown away in `folder_links._folder_round`).
-4. A share view's export of a big shared folder (the share host sits
-   behind Cloudflare and the share view has no jobs).
-5. A workspace being deleted taking no more changes (above), which needs
-   the web app to learn a lost write right mid-session.
-6. Smaller: a publish that only changes the audience still runs a full
-   round; unlinking Zotero clears marks page by page; the health table's
-   and the backup list's scans (above).
+1. Another Gamma importing a big shared folder by its link: one GET of
+   the folder's Gamma export, which a proxy can cut (above). The share
+   job is there to use, but the importing tab would have to follow a job
+   on the other server across origins.
+2. Smaller: a folder link's round shows no progress while it sends PDFs
+   back, nor within one large PDF it fetches.
+3. Smaller: a workspace's delete holds back what passes its gates after it
+   starts, not a request or an AI tool call already running then, nor the
+   background rounds (a clone's fill, a Zotero link's round, the indexer),
+   any of which can still write after the final copy read the database
+   ([dev/workspaces.md](../dev/workspaces.md) "Deleting a workspace").
+
+Four smaller ones (2026-11-08). A publish that only changes the cloud
+share's audience or role, on a page already published and there, runs no
+round: it checks the mirror and its token and sets the share
+([dev/mirror.md](../dev/mirror.md) "Publishing"). Unlinking Zotero takes
+the link's marks off every page in one statement, in the transaction
+that empties its tables, each page that lost one logged as a reload,
+instead of one transaction per page ([dev/zotero_sync.md](../dev/zotero_sync.md)).
+The health table reads each paper's count of characters from its
+`pdf_fts_docs` row, which `store_doc` writes and an older index fills
+once ([dev/user_db.md](../dev/user_db.md)), and the backup list reads each
+snapshot's size from its manifest and the lines of the workspaces added
+to it, measuring only a snapshot from before them
+([dev/migrations.md](../dev/migrations.md)). Testing the snapshot lock
+that `ws_backup.remove_all` takes turned up a snapshot that read its own
+zip back after letting the lock go, so a delete waiting on it took the
+zip first and the snapshot failed; it now answers under the lock.

@@ -2,7 +2,7 @@
 the server settings with the plans on sale, the environment's configuration
 (read-only) and a test mail, the audit log, the fleet's machines and every
 container on them, hosted servers and jobs, the Overview with the operator's
-alerts, and the fleet's history. Only an
+alerts, the reports Gamma servers forwarded, and the fleet's history. Only an
 account with ``is_admin`` (set
 with ``manage.py set-admin``) and only through a portal session — never a
 bearer token from a Gamma server."""
@@ -12,7 +12,7 @@ from contextlib import closing
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from .. import accounts, alerts, billing, config, db, fleet, hosted, mail, metrics, oidc, ratelimit, settings
+from .. import accounts, alerts, billing, config, db, fleet, hosted, mail, metrics, oidc, ratelimit, reports, settings
 from ..accounts import Problem
 from .accounts import portal_account, send_mail, verify_message
 
@@ -323,6 +323,49 @@ def audit_log(request: Request, limit: int = 200):
         require_admin(conn, request)
         rows = conn.execute("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (max(1, min(limit, 1000)),)).fetchall()
         return {"audit": [dict(r) for r in rows]}
+
+
+# --- reports (docs/dev/cloud.md "Reports") -------------------------------------
+
+class ReportPatch(BaseModel):
+    state: str
+
+
+@router.get("/reports")
+def list_reports(request: Request, state: str = "open", limit: int = 200):
+    """The reports Gamma servers forwarded, newest first: ``state`` open,
+    resolved or all."""
+    with closing(db.connect()) as conn:
+        require_admin(conn, request)
+        return {"reports": reports.listing(conn, state, limit), "open": reports.count_open(conn)}
+
+
+@router.patch("/reports/{report_id}")
+def patch_report(report_id: str, body: ReportPatch, request: Request):
+    """Resolve a report (``{state: "resolved"}``) or open it again; its
+    alert follows."""
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        try:
+            row = reports.set_state(conn, report_id, body.state, admin["id"])
+        except LookupError:
+            raise HTTPException(404, "no such report") from None
+        due = alerts.sync(conn)
+        conn.commit()
+    alerts.notify(due)
+    return {"report": row}
+
+
+@router.delete("/reports/{report_id}")
+def delete_report(report_id: str, request: Request):
+    with closing(db.connect()) as conn:
+        admin = require_admin(conn, request)
+        if not reports.delete(conn, report_id, admin["id"]):
+            raise HTTPException(404, "no such report")
+        due = alerts.sync(conn)
+        conn.commit()
+    alerts.notify(due)
+    return {"ok": True}
 
 
 # --- billing (docs/dev/billing.md) ----------------------------------------------

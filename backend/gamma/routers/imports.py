@@ -28,12 +28,12 @@ from pydantic import BaseModel
 from fractional_indexing import generate_n_keys_between
 
 from .. import bibtex as bibtex_mod
-from .. import import_staging, jobs, picture, upload_gc, upload_parts
+from .. import import_staging, jobs, picture, storage, upload_gc, upload_parts
 from ..auth import actor_of, require_user_id, require_ws
-from ..db import connect_pages_db, page_now, safe_doc_id, ws_uploads_dir
-from ..blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, create_page, existing_in, filing, folder_paths,
-                            insert_page_tree, last_child_position, new_block_id, page_for_doc, page_root_id, refiled,
-                            refiled_paths, touch_page, write_lock)
+from ..db import connect_pages_db, page_now, safe_doc_id
+from ..blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, create_page, existing_in, filed_folders, filing,
+                            folder_paths, insert_page_tree, last_child_position, new_block_id, page_for_doc, page_parent,
+                            page_parents, page_root_id, refiled, refiled_paths, top_of, touch_page, write_lock)
 from ..colors import DEFAULT_HIGHLIGHT, normalize_color
 from ..highlights import position as highlight_position
 from ..logbuf import log
@@ -51,9 +51,9 @@ from ..pdf_export import (GAMMA_ALPHA, LOCKED, TEXT_BOX_TYPES, _resolve, annotat
                           pdf_point_to_viewer, reply_parent)
 from ..pdf_image import DecodeBudget, image_file, stream_data
 from ..text_box import escape_markdown, keep_on_surface, markdown_of, measure, normalize_text_box, plain_text
-from ..storage import (IMAGE_MEDIA_TYPES, content_digest, display_filename, find_upload_file, pdf_url, put_upload,
-                       store_file, store_file_stream, store_pdf_stream, size as stored_size, stat as stored_stat,
-                       touch as stored_touch, upload_refs)
+from ..storage import (IMAGE_MEDIA_TYPES, content_digest, display_filename, exists as stored_exists,
+                       find_upload_file, pdf_url, put_upload, store_file, store_file_stream, store_pdf_stream,
+                       size as stored_size, stat as stored_stat, touch as stored_touch, upload_refs)
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -355,7 +355,8 @@ def start_import_job(payload: ImportJob, request: Request):
                 pass  # already gone (expired)
 
     try:
-        started = jobs.start("import", owner=user_id, ws=ws, key=token, run=run, title=f"Import {metadata['filename']}",
+        started = jobs.start("import", owner=user_id, ws=ws, key=token, run=run, writes=True,
+                             title=f"Import {metadata['filename']}",
                              params={"review_id": token, "source": metadata["source"], "filename": metadata["filename"],
                                      "folder": metadata["folder"], "size": upload.stat().st_size,
                                      "selected": len(selection), "digest": digest})
@@ -1341,7 +1342,7 @@ def _mark_from_annotation(obj, subtype, pnum, pw, ph, contents, glyphs):
             "quote": quote, "color": color, "position": position}
 
 
-def _strip_embedded_annotations(ws: str, pdf_path, keep=frozenset()) -> tuple[int, set]:
+def _strip_embedded_annotations(ws: str, name: str, pdf_path, keep=frozenset()) -> tuple[int, set]:
     """Rewrite the stored PDF without the annotations the import turns into
     blocks (``_extract_pdf_annotations``, folded replies included), with
     their threads and /Popup windows (``pdf_export.drop_annotations``), so
@@ -1355,7 +1356,7 @@ def _strip_embedded_annotations(ws: str, pdf_path, keep=frozenset()) -> tuple[in
 
     Note the file keeps its content-hash name even though its bytes change —
     the name is only a key (``doc_id`` property), never re-derived.
-    ``pdf_path`` is the stored file's path."""
+    ``pdf_path`` is the file to read, ``name`` what it is stored as."""
     from pypdf import PdfReader
 
     reader = PdfReader(os.fspath(pdf_path))
@@ -1378,7 +1379,7 @@ def _strip_embedded_annotations(ws: str, pdf_path, keep=frozenset()) -> tuple[in
     out = io.BytesIO()
     copy_pdf(reader).write(out)
     # Stored whole, so a concurrent download never sees a half-written file.
-    put_upload(ws, pdf_path.name, out.getvalue())
+    put_upload(ws, name, out.getvalue())
     return removed, keys
 
 
@@ -1424,30 +1425,34 @@ class PdfAnnotsRequest(BaseModel):
     strip: bool = False
 
 
-def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, actor: str = "") -> dict:
+def import_embedded_annotations(ws: str, block_id: str, name: str, pdf_path, strip: bool,
+                                actor: str = "") -> dict:
     """Extract the annotations embedded in the stored PDF and add the missing
     ones as highlight, handwriting, text-box and picture blocks under ``block_id``,
     each reply a note under the block of the annotation it answers
     (idempotent via the stable ``imported_annot`` key: a reply is there
     under its own key or the legacy one, from before replies were notes),
-    then optionally strip the originals from the file. ``annot_stripped``
-    then follows the file on every block an import made: set where this
-    import's strip removed the original, cleared where the page's own file,
-    as this import read it, holds the original again (a replacement file
-    carrying the old one's annotations, ``originals_gone``). A block made
+    then optionally strip the originals from the file, when it is stored
+    here: a linked file (gamma/linked_files.py) is read and never written.
+    ``annot_stripped`` then follows the file on every block an import made:
+    set where this import's strip removed the original, cleared where the
+    page's own file, as this import read it, holds the original again (a
+    replacement file carrying the old one's annotations, ``originals_gone``). A block made
     from a copy of a Zotero annotation names it (``zotero_annotation``, its
     ``/Zotero:Key``); a block there already is left as it is, and so is one
     the workspace's Zotero link keeps (its key has a ``zotero_objects``
     row). ``found``
     counts the annotations that make blocks, replies included. Shared by
     the per-paper endpoint below and the Zotero library import.
-    ``pdf_path``: the stored file's path (``storage.find_upload_file``).
-    ImportError, with nothing written, when a highlight needs its quote and
-    PyMuPDF does not load: the next import makes the block with it."""
+    ``name``: the stored file's name, ``<doc_id>.pdf``; ``pdf_path``: the
+    file it reads (``storage.find_upload_file``), whose own name says
+    nothing. ImportError, with nothing written, when a highlight needs its
+    quote and PyMuPDF does not load: the next import makes the block with
+    it."""
     from pypdf import PdfReader
 
     from ..zotero_sync import get_link  # local: the engine reads the routers' change feed
-    read_as = stored_stat(ws, pdf_path.name)  # the file ``found`` describes; a strip rewrites it
+    read_as = stored_stat(ws, name)  # the file ``found`` describes; a strip rewrites it
     reader = PdfReader(os.fspath(pdf_path))
     with GlyphPages(os.fspath(pdf_path)) as glyphs:
         found = _extract_pdf_annotations(reader, glyphs)
@@ -1548,13 +1553,15 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
             note_reload(ws, conn, page_id, actor)  # logs the reload, touches the page, commits: one transaction
 
     # Strip AFTER the blocks are committed: if the rewrite fails the file is
-    # untouched and the import still stands; a re-run can strip again.
+    # untouched and the import still stands; a re-run can strip again. Only a
+    # file stored here is ever rewritten: a linked one is a person's own.
+    strip = strip and stored_exists(ws, name)
     stripped, gone = 0, set()
     if strip:
         try:
-            stripped, gone = _strip_embedded_annotations(ws, pdf_path, keep=left)
+            stripped, gone = _strip_embedded_annotations(ws, name, pdf_path, keep=left)
         except Exception as e:
-            log.warning(f"[pdf-annots] could not strip annotations from {pdf_path.name}: {e}")
+            log.warning(f"[pdf-annots] could not strip annotations from {name}: {e}")
     # PDF export skips an imported block while its original is in the file
     # (``pdf_export.still_embedded``), so the mark follows the file: on where
     # this strip removed the original, off where the file holds it. What the
@@ -1567,8 +1574,8 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
         write_lock(conn)
         try:
             row = conn.execute("SELECT doc_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-            as_read = (not strip and row is not None and row[0] == pdf_path.stem
-                       and stored_stat(ws, pdf_path.name) == read_as)
+            as_read = (not strip and row is not None and row[0] == name.removesuffix(".pdf")
+                       and stored_stat(ws, name) == read_as)
             held = _record_keys(found) if as_read else set()
             marks = [{"op": "set", "id": bid, "props": {"annot_stripped": True if key in gone else None}}
                      for bid, key, done in _imported_blocks(conn, block_id)
@@ -1596,12 +1603,12 @@ def import_pdf_annotations(payload: PdfAnnotsRequest, request: Request):
     if pdf_path is None:
         raise HTTPException(status_code=404, detail="PDF not stored on the server")
     try:
-        result = import_embedded_annotations(ws, payload.block_id, pdf_path, payload.strip,
+        result = import_embedded_annotations(ws, payload.block_id, name, pdf_path, payload.strip,
                                              actor_of(request))
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"could not read PDF annotations: {e}")
+        raise HTTPException(status_code=400, detail=f"could not read PDF annotations: {jobs.error_text(e)}")
     return {"ok": True, **result}
 
 
@@ -1890,11 +1897,16 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
 
     under = dest["under"]
     # filed like any refiling (refiled): a merged page's own folders first,
-    # a folder above a new one giving way; labelled on top of its own labels
+    # a folder above a new one giving way — but a page inside another page
+    # is filed where its top is and gets no folders of its own
+    # (blocks_store.filed_folders); labelled on top of its own labels
+    parent = "" if created else page_parent(conn, block_id)
+    inside = bool(parent)
     folders = filing(props, FOLDERS)
-    for folder_id in [dest["folders"][tuple(path)] for path in item["folders"]] or ([under] if under else []):
+    for folder_id in [] if inside else [dest["folders"][tuple(path)] for path in item["folders"]] or (
+            [under] if under else []):
         folders = refiled(conn, folders, folder_id)
-    if folders:
+    if folders and not inside:
         props[FOLDERS] = existing_in(conn, FOLDERS, folders)
     labels = [dest["labels"][tag] for tag in item["tags"]]
     if labels:
@@ -1935,7 +1947,8 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
                                      report)
     return {"item": item, "row": row, "block_id": block_id, "old": old, "props": props,
             "blocks": blocks, "notes": notes, "extras": extras, "heading": heading, "created": created,
-            "folders": [dest["paths"][f] for f in filing(props, FOLDERS) if f in dest["paths"]]}
+            "parent": parent, "folders": [dest["paths"][f] for f in (
+                filed_folders(conn, block_id) if inside else filing(props, FOLDERS)) if f in dest["paths"]]}
 
 
 def _zotero_sources(item):
@@ -1946,22 +1959,24 @@ def _zotero_sources(item):
     return [path.replace("\\", "/") for path in paths]
 
 
-def _zotero_done(prep, report, uploads):
-    """Count a written item into the report. Returns (block_id, pdf_path)
-    when its PDF's embedded annotations should be imported afterwards, else
-    None."""
+def _zotero_done(prep, report, stored):
+    """Count a written item into the report. Returns (block_id, stored name,
+    pdf_path) when its PDF's embedded annotations should be imported
+    afterwards, else None."""
     item, props, created = prep["item"], prep["props"], prep["created"]
     report["pages_created" if created else "pages_merged"] += 1
     report["notes_imported"] += prep["notes"]
     report["attachments_imported"] += len(prep["extras"])
     report["pages"].append({"id": prep["block_id"], "title": item["title"] if created else prep["row"][2],
                             "created": created, "kind": "pdf" if props.get("doc_id") else "page",
-                            "folders": prep["folders"], "source_paths": _zotero_sources(item)})
+                            "folders": prep["folders"], "parent": prep["parent"],
+                            "source_paths": _zotero_sources(item)})
     doc_id = props.get("doc_id")
     if doc_id:
-        pdf_path = uploads / f"{doc_id}.pdf"
-        if pdf_path.exists():
-            return prep["block_id"], pdf_path
+        name = f"{doc_id}.pdf"
+        pdf_path = stored(name)
+        if pdf_path:
+            return prep["block_id"], name, pdf_path
     return None
 
 
@@ -1984,7 +1999,7 @@ def _insert_ops(parent: str, blocks: list) -> list:
     return ops
 
 
-def _zotero_merge(conn, ws, prep, report, uploads, actor):
+def _zotero_merge(conn, ws, prep, report, stored, actor):
     """An item that merges into an existing page: an op batch by ``actor``,
     which the page's open tabs and the workspace's mirrors see, in MAX_OPS
     pieces when it is longer, all in one transaction (``apply_batches``):
@@ -2008,7 +2023,7 @@ def _zotero_merge(conn, ws, prep, report, uploads, actor):
             conn.rollback()
             raise
         after_commits(ws, conn, results)
-    return _zotero_done(prep, report, uploads)
+    return _zotero_done(prep, report, stored)
 
 
 def _tree_uploads(title, props, blocks) -> set:
@@ -2022,7 +2037,7 @@ def _tree_uploads(title, props, blocks) -> set:
     return names
 
 
-def _zotero_write_new(conn, staged, report, uploads, actor):
+def _zotero_write_new(conn, staged, report, stored, actor):
     """Write new items' pages with their block trees (``insert_page_tree``):
     the notes, then the "Attachments" block. ZOTERO_PAGES_PER_COMMIT of
     them go in one short transaction, each page touched by ``actor``
@@ -2048,7 +2063,7 @@ def _zotero_write_new(conn, staged, report, uploads, actor):
     except BaseException:
         conn.rollback()
         raise
-    return [job for job in (_zotero_done(prep, report, uploads) for prep in written) if job], retry
+    return [job for job in (_zotero_done(prep, report, stored) for prep in written) if job], retry
 
 
 def _open_zotero_zip(data):
@@ -2090,11 +2105,15 @@ def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
     # Simulate merges within this ZIP too, without storing files or changing pages.
     with connect_pages_db(ws) as conn:
         _, under_path = destination(conn, meta.get("folder", ""))
-        paths = folder_paths(conn)
-        for row in conn.execute("SELECT id, properties, content FROM unified_blocks WHERE parent_id='root'"):
-            props = json.loads(row[1] or "{}")
+        paths, parents = folder_paths(conn), page_parents(conn)
+        rows = conn.execute("SELECT id, properties, content FROM unified_blocks WHERE parent_id='root'").fetchall()
+        props_of = {row[0]: json.loads(row[1] or "{}") for row in rows}
+        for row in rows:
+            props = props_of[row[0]]
+            # a sub-page is filed where its top is, and a merge files it nowhere else (_zotero_prepare)
             target = {"id": row[0], "title": row[2], "props": props, "exists": True,
-                      "folders": [paths[f] for f in filing(props, FOLDERS) if f in paths]}
+                      "parent": parents.get(row[0], ""),
+                      "folders": [paths[f] for f in filing(props_of[top_of(parents, row[0])], FOLDERS) if f in paths]}
             by_id[row[0]] = target
             if props.get("doc_id"):
                 by_digest.setdefault(props["doc_id"], target)
@@ -2111,7 +2130,7 @@ def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
                 target = {"id": f"new:{index}", "title": item["title"], "props": {}, "exists": False, "folders": []}
             props = target["props"]
             folders = target["folders"]
-            for path in _zotero_paths(item, under_path):
+            for path in [] if target.get("parent") else _zotero_paths(item, under_path):
                 folders = refiled_paths(folders, path)
             target["folders"] = folders
             kind = "pdf" if props.get("doc_id") or item["digest"] else "page"
@@ -2123,7 +2142,8 @@ def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
             prior = pages.get(target["id"])
             sources = _zotero_sources(item)
             page = {"key": item["key"], "title": target["title"],
-                    "folders": folders, "kind": kind, "action": "merge" if target["exists"] else "create",
+                    "folders": folders, "parent": target.get("parent", ""), "kind": kind,
+                    "action": "merge" if target["exists"] else "create",
                     "existing_id": target["id"] if target["exists"] else None, "source_path": item["pdf_entry"],
                     "notes": len(item["notes"]), "attachments": len(item["extras"]),
                     "tags": item["tags"], "warnings": warnings,
@@ -2178,7 +2198,7 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
         plan = _zotero_plan(zf, meta.get("zotero_digests"))
         validate_selection(selection, (i["selection_id"] for i in plan["items"]))
         items = [i for i in plan["items"] if selection is None or i["selection_id"] in selection]
-        uploads = ws_uploads_dir(ws)
+        stored = storage.files(ws)
         report = {"items": len(items), "pages_created": 0, "pages_merged": 0,
                   "pdfs_stored": 0, "annotations_imported": 0, "notes_imported": 0, "attachments_imported": 0,
                   "pages": [], "skipped": [], "warnings": selected_warnings(plan["warnings"], selection)}
@@ -2200,7 +2220,7 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
                 batch = staged[:]
                 staged.clear()
                 try:
-                    written, retry = _zotero_write_new(conn, batch, report, uploads, actor)
+                    written, retry = _zotero_write_new(conn, batch, report, stored, actor)
                 except Exception as e:
                     log.warning(f"[zotero] {len(batch)} new page(s) failed: {e}")
                     for prep in batch:
@@ -2219,7 +2239,7 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
                             flush()
                         return
                     flush()  # the pages before it first: the report keeps the export's order
-                    job = _zotero_merge(conn, ws, prep, report, uploads, actor)
+                    job = _zotero_merge(conn, ws, prep, report, stored, actor)
                     if job:
                         annot_jobs.append(job)
                 except HTTPException as e:  # the quota (507) skips the item
@@ -2237,14 +2257,14 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
 
     # Annotations after the pages are committed — import_embedded_annotations
     # opens its own connections.
-    for n, (block_id, pdf_path) in enumerate(annot_jobs):
+    for n, (block_id, name, pdf_path) in enumerate(annot_jobs):
         progress(phase="annotations", done=n, total=len(annot_jobs), unit="files")
         try:
-            result = import_embedded_annotations(ws, block_id, pdf_path, strip, actor)
+            result = import_embedded_annotations(ws, block_id, name, pdf_path, strip, actor)
             report["annotations_imported"] += result["imported"]
         except Exception as e:
-            log.warning(f"[zotero] annotations for {pdf_path.name} failed: {e}")
-            report["warnings"].append({"title": pdf_path.name, "reason": f"annotations: {e}"})
+            log.warning(f"[zotero] annotations for {name} failed: {e}")
+            report["warnings"].append({"title": name, "reason": f"annotations: {e}"})
 
     log.info(f"[zotero] import: {report['items']} items, "
              f"{report['pages_created']} new, {report['pages_merged']} merged, "

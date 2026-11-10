@@ -216,6 +216,7 @@ export function spanBox(runs, base) {
 // Citation markers and URLs in a text part: tokens too, but drawn as their
 // own text (they reflow; a crop of a URL would not). A URL stops at the
 // markers pdf/pdfTranslate.js blockSource puts around a formula after it.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: U+0001/U+0002 mark a formula (pdfTranslate.js blockSource)
 export const TEXT_TOKEN = /\[\d+(?:[a-z])?(?:\s*[,–-]\s*\d+[a-z]?)*\]|https?:\/\/[^\s)\]\u0001\u0002]+[^\s)\].,;:\u0001\u0002]/g;
 
 export function textTokens(s) {

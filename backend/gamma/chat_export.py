@@ -1,9 +1,10 @@
 """An AI chat conversation as a file to keep (docs/dev/chat_history.md
 "Exporting a conversation"): the transcript in Markdown — who said what, the
 pictures each message carried, the steps a reply took with the pictures its
-tools looked at, and the reply itself — with every picture written beside it
-under ``assets/``. The pictures are read or drawn here as the chat shows
-them (``ai_pictures.picture_at``), so the file holds what the chat showed and
+tools looked at, the plan it proposed or worked through, and the reply
+itself — with every picture written beside it under ``assets/``. The
+pictures are read or drawn here as the chat shows them
+(``ai_pictures.picture_at``), so the file holds what the chat showed and
 opens without a server. A conversation without pictures is the bare .md.
 
 What the chat shows is what goes: no reasoning, no tool output, no prompt
@@ -140,6 +141,16 @@ def selection_crops(message: dict) -> list[str]:
     return urls
 
 
+def reply_plan(actions) -> list:
+    """The steps of a reply's plan: its last update_plan that ran
+    (``replyPlan`` in chat/plan.js); [] without one."""
+    for action in reversed(actions or []):
+        if (isinstance(action, dict) and action.get("tool") == "update_plan" and not action.get("error")
+                and isinstance(action.get("plan"), dict)):
+            return [s for s in action["plan"].get("steps") or [] if isinstance(s, dict)]
+    return []
+
+
 # --- the transcript ---------------------------------------------------------------------
 
 def _reply_text(text: str, assets: _Assets) -> str:
@@ -194,10 +205,20 @@ def _message(message: dict, assets: _Assets) -> list[str]:
     if steps:
         out += ["**Steps**", ""]
         for action in steps:
-            out.append(f"- {' '.join(str(action['summary']).split())}" + (" *(failed)*" if action.get("error") else ""))
+            # A change a planning turn held is no failure: its summary says so.
+            failed = action.get("error") and not action.get("held")
+            out.append(f"- {' '.join(str(action['summary']).split())}" + (" *(failed)*" if failed else ""))
             url = chip_picture(action)
             if url:
                 out += ["", f"  {assets.image(url, action['summary'])}", ""]
+        out.append("")
+    plan = reply_plan(message.get("actions"))
+    if plan:
+        out += ["**Plan**", ""]
+        for step in plan:
+            mark = "x" if step.get("status") == "completed" else " "
+            out.append(f"- [{mark}] {' '.join(str(step.get('step') or '').split())}"
+                       + (" *(in progress)*" if step.get("status") == "in_progress" else ""))
         out.append("")
     if message.get("error"):
         detail = " ".join(text.split())[:300]

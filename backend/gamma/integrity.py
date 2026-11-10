@@ -82,19 +82,18 @@ def record(results: dict, source: str) -> None:
 
 def failures() -> dict:
     """``{relative path: {result, at, source}}`` for every database file a
-    check covers (``db_files``: users.db and the workspaces' files) whose
-    latest check failed and that still exists. Another entry is ignored: a
-    deleted workspace's, or one of a file no check reads again, which no
-    passing check could clear."""
+    check covers (``db_files``: users.db, vaults.db and the workspaces'
+    files) whose latest check failed and that still exists. Another entry is
+    ignored: a deleted workspace's, or one of a file no check reads again,
+    which no passing check could clear."""
     return {rel: v for rel, v in _read().items()
-            if (rel == "users.db" or rel.startswith("workspaces/")) and (config.DATA_DIR / rel).exists()}
+            if (rel in ("users.db", "vaults.db") or rel.startswith("workspaces/"))
+            and (config.DATA_DIR / rel).exists()}
 
 
 def db_files() -> list[Path]:
-    """users.db and every workspace's pages.db and data.db."""
-    files = []
-    if config.USERS_DB.exists():
-        files.append(config.USERS_DB)
+    """users.db, vaults.db and every workspace's pages.db and data.db."""
+    files = [f for f in (config.USERS_DB, config.VAULTS_DB) if f.exists()]
     if config.WORKSPACES_DIR.is_dir():
         for d in sorted(config.WORKSPACES_DIR.iterdir()):
             if d.name.startswith("."):
@@ -106,8 +105,8 @@ def db_files() -> list[Path]:
 
 
 def check_all(progress=jobs.no_progress) -> dict:
-    """Quick-check users.db and every workspace's pages.db and data.db as
-    they are now (the admin's "Check databases"). Returns ``{ok,
+    """Quick-check users.db, vaults.db and every workspace's pages.db and
+    data.db as they are now (the admin's "Check databases"). Returns ``{ok,
     checked_at, files: [{file, workspace, name, result, ok}]}`` and records
     the results. ``progress`` (a background job's report, gamma/jobs.py)
     hears each file before it is read. A workspace deleted meanwhile, or

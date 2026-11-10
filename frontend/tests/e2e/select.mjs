@@ -37,6 +37,7 @@ export const GROUPS = [
   { id: "zotero-link", files: ["zotero-link.mjs"], s: 27 },
   { id: "pdf-load", files: ["pdfload.mjs"], s: 25 },
   { id: "publish", files: ["publish.mjs"], s: 25 },
+  { id: "collab-soak", files: ["collabSoak.mjs"], s: 24 },
   { id: "pdf-touch", files: ["pdfTouch.mjs"], s: 23 },
   { id: "files", files: ["files.mjs"], s: 22 },
   { id: "cloud-sign-in", files: ["cloudSignIn.mjs"], s: 20 },
@@ -57,6 +58,7 @@ export const GROUPS = [
   { id: "note-mentions", files: ["noteMentions.mjs"], s: 10 },
   { id: "translation", files: ["translation.mjs"], s: 10 },
   { id: "recording", files: ["recording.mjs"], s: 10 },
+  { id: "vaults", files: ["vaults.mjs"], s: 20 },
   { id: "mirror", files: ["mirror.mjs"], s: 7 },
   { id: "ink-zoom", files: ["inkZoom.mjs"], s: 7 },
   { id: "trash", files: ["trash.mjs"], s: 5 },
@@ -172,20 +174,23 @@ export const RULES = [
   ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link"]],
   // the sync pill and its popover, the conflict cards: a clone's, a publication's, a Zotero link's
   ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish", "zotero-link"]],
-  ["frontend/src/collaboration/MergeResolver.jsx", ["mirror", "zotero-link"]],
-  ["frontend/src/collaboration/conflictKinds.js", ["mirror", "zotero-link"]], // the conflict card's words
+  ["frontend/src/collaboration/MergeResolver.jsx", ["mirror", "zotero-link", "vaults"]],
+  ["frontend/src/collaboration/conflictKinds.js", ["mirror", "zotero-link", "vaults"]], // the conflict card's words
   // which API a clone, a publication or a Zotero link calls: the pill, its popover, Settings' Clones and Zotero links
   ["frontend/src/collaboration/syncLinks.js", ["mirror", "publish", "settings", "zotero-link"]],
   // a Zotero-linked page's PDF card and read-only badges
   ["frontend/src/collaboration/ZoteroPage.jsx", ["zotero-link"]],
   ["frontend/src/collaboration/zoteroLink.css", ["zotero-link"]],
   ["frontend/src/collaboration/**", ALL], // the page's live session carries every edit
+  // a page's standing with this computer in the desktop app: the chip, its card and dialogs, the banner, the notes lock
+  ["frontend/src/vault/**", ["vaults"]],
   ["frontend/src/library/QuickOpen.jsx", ["quick-open", "sub-pages"]],
   ["frontend/src/library/RecentlyDeleted.jsx", ["trash", "sub-pages"]],
   // the library's bulk actions: delete (a folder's pages too), file and label, move into a page, duplicate
   ["frontend/src/library/pageBatch.js", ["trash", "folders", "quick-open", "sub-pages", "files"]],
   ["frontend/src/library/**", ALL], // the home view every scenario opens on
-  ["frontend/src/search/**", ["notes-pdf-share", "quick-open"]],
+  // folders, sub-pages: the panel's filter chips and typed qualifiers
+  ["frontend/src/search/**", ["notes-pdf-share", "quick-open", "folders", "sub-pages"]],
   // cloud-sign-in: the people invited by e-mail and the requests to join
   ["frontend/src/sharing/**", ["notes-pdf-share", "publish", "collab", "cloud-sign-in"]],
   // the Zotero account and links' calls (Account & sync › Zotero, the link dialog)
@@ -226,14 +231,19 @@ export const RULES = [
   ["backend/gamma/mcp_*", ["mcp"]],
   ["backend/gamma/integrations.py", ["mcp", "mirror", "settings"]],
   ["backend/gamma/routers/integrations.py", ["mcp", "mirror", "settings"]],
-  // folders on disk: the desktop app's suite drives them (desktop/test/e2e.js)
-  ["backend/gamma/folder_links.py", []],
+  // synced vaults and PDFs read where they are: the routes a page reads and the engine behind them
+  // (the vaults scenario; the shell's side is the desktop app's suite, desktop/test/e2e.js)
+  ["backend/gamma/folder_links.py", ["vaults"]],
+  ["backend/gamma/routers/folder_links.py", ["vaults"]],
+  ["backend/gamma/linked_files.py", ["vaults"]],
+  ["backend/gamma/vault_*.py", ["vaults"]],
+  ["backend/gamma/md_lens.py", ["vaults"]],
   ["backend/gamma/folder_sync.py", []],
   ["backend/gamma/gamma_sync.py", []],
-  ["backend/gamma/routers/folder_links.py", []],
   // the clones' engine and the clock the Zotero link's rounds run on (sync_clock.py), its conflicts and log tables (sync_engine.py)
   ["backend/gamma/sync_*.py", ["mirror", "publish", "zotero-link"]],
-  ["backend/gamma/textmerge.py", ["mirror"]],
+  // the same-block merge: a mirror's sync, two tabs typing in one block, the soak's crowd
+  ["backend/gamma/textmerge.py", ["mirror", "collab", "collab-soak"]],
   ["backend/gamma/routers/sync.py", ["mirror", "publish"]],
   ["backend/gamma/routers/mirrors.py", ["mirror", "publish"]],
   ["backend/gamma/cloud_*.py", ["cloud-sign-in", "publish"]],
@@ -258,7 +268,7 @@ export const RULES = [
   ["backend/gamma/routers/pdf.py", PDF_VIEW],
   ["backend/gamma/textnorm.py", ["notes-pdf-share", "quick-open"]],
   ["backend/gamma/block_index.py", ["notes-pdf-share", "quick-open"]],
-  ["backend/gamma/routers/search.py", ["notes-pdf-share", "quick-open"]],
+  ["backend/gamma/routers/search.py", ["notes-pdf-share", "quick-open", "folders", "sub-pages"]],
   ["backend/gamma/markdown_zip_import.py", [...EXPORTS, "sub-pages"]], // a Notion export's pages inside pages
   ["backend/gamma/markdown_zip_links.py", [...EXPORTS, "sub-pages"]], // a parent: is read as a link
   ["backend/gamma/notion_import.py", [...EXPORTS, "sub-pages"]],
@@ -362,6 +372,7 @@ const regexCache = new Map();
 function globRegex(glob) {
   if (!regexCache.has(glob)) {
     const re = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: NUL holds the place of ** while * is rewritten
       .replace(/\*\*\/?/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*");
     regexCache.set(glob, new RegExp(`^${re}$`));
   }

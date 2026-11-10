@@ -577,6 +577,7 @@ class _Unit(UnitPdf):
                                prefer=prefer)
         if self.note:
             m = self._note_merge(m, first)
+        m = self._held_collections(m, Z, G)
         sig = signature(G)
         self._apply(m)
         push = {}
@@ -608,6 +609,23 @@ class _Unit(UnitPdf):
         self.merged = {"m": m, "zbase": zbase, "gbase": gbase, "Z": Z, "G": G}
         if push:
             self.sent[self.key] = {"what": "update", "sig": sig, "restore": restore, **self.merged}
+
+    def _held_collections(self, m, Z: dict, G: dict):
+        """A sub-page is filed where its top page is and carries no folders
+        of its own (docs/dev/home_library.md "Sub-pages"): Zotero's change
+        to its item's collections is not applied, which would store folders
+        on it, but answered with Gamma's, its top's folders' collections, as
+        a change Gamma made would be (sent on a two-way round)."""
+        if "collections" not in m.apply or self.side is None or not self.side.inside:
+            return m
+        ours = sorted(set(G.get("collections") or []))
+        sets = {**m.sets, "collections": {"gamma": ours, "zotero": ours}}
+        push = dict(m.push)
+        if ours != sorted(set(Z.get("collections") or [])):
+            push["collections"] = ours
+        else:
+            push.pop("collections", None)
+        return m._replace(apply={k: v for k, v in m.apply.items() if k != "collections"}, push=push, sets=sets)
 
     def page_html(self) -> str:
         """A note page's note as Gamma would send it (``note_page_html``),

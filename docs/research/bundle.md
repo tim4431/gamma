@@ -6,7 +6,9 @@ Findings from October 2026, from one question: the frontend shipped one
 each first screen need, and how far does splitting it by surface go without
 changing what a page paints? The mechanics that came out of it, the lazy
 boundaries and the preload rule, are in
-[frontend-refactor.md](../dev/frontend-refactor.md#lazy-boundaries).
+[frontend-refactor.md](../dev/frontend-refactor.md#lazy-boundaries). How
+startup grew in the month after, and the budget that now holds it:
+[A month later](#a-month-later-november-2026).
 
 ## How it was measured
 
@@ -118,3 +120,56 @@ The import review's e2e step held `/api/import/review` behind a gate that
 never matched: the upload's URL carries `?ws=`, which a Playwright glob
 without `*` does not cover, so the step had been racing the upload. The
 glob now ends in `*`.
+
+## A month later (November 2026)
+
+Startup JS, the entry plus the `App` chunk, in a build of dev once a week
+since the split (bytes; Brotli is the build's `.br` copies):
+
+| Build | Raw | Brotli |
+|---|---|---|
+| Oct 3, the split (066707b9) | 2,029,033 | 535,344 |
+| Oct 9 | 2,123,865 | 562,403 |
+| Oct 17 | 2,211,796 | 586,977 |
+| Oct 24 | 2,505,612 | 674,014 |
+| Oct 31 | 2,662,319 | 715,844 |
+| Nov 5 (48ed8452) | 2,717,864 | 731,215 |
+
+That is 37% more Brotli in five weeks. The `App` chunk alone went from
+1,883,010 bytes (493,886 Brotli) to 2,568,929 (688,802). No lazy boundary
+broke: the 14 `lazySurface` modules, pdf.js and mermaid each still had a
+chunk of its own. The growth is 174 modules new to the `App` chunk:
+DOMPurify and `hast-util-sanitize`, the handwriting's shapes, selection,
+`finishStroke` and `inkAi`, pictures, the PDF translated view, the
+highlight review, `pageRaster`, `syncLinks`, mentions, and `App.jsx` itself
+(116 KB more before minification). Nothing reported it: this note still
+said 494 KB.
+
+The zh catalog, which App waits for on a Chinese interface (`main.jsx`),
+went from 282,217 bytes (82,014 Brotli) to 452,703 (125,826). It grows with
+every translated string, so the budget prints it and does not gate it.
+
+`npm run budget` now checks the build
+([frontend-refactor.md](../dev/frontend-refactor.md#the-startup-budget)).
+Its byte ceilings sit 10% over the build they were set on. At October's
+pace (42 KB Brotli a week on average, 87 KB in the week of Oct 17-24) that
+is about two weeks of growth, so each trip is a decision: split something
+off, or raise the ceiling with a reason. An exact ratchet like the design
+tokens' (`tests/design-baseline.json`) suits counts whose target is zero.
+Bytes grow with every feature that needs them, and every weekly build here
+grew.
+
+A byte ceiling does not guard a boundary. One static `import SettingsDialog`
+in `App.jsx` folded Settings into the `App` chunk and took startup to
+3,027,392 bytes (803,178 Brotli): just over the raw ceiling and just under
+the Brotli one. A small surface such as the Inbox panel (3,466 bytes, 1,285
+Brotli) would pass any ceiling. So the boundaries are yes-or-no rules beside
+the bytes: each literal `import()` in the source has a chunk of its own
+outside the startup graph.
+
+How it was measured: each commit built into a scratch output directory,
+the startup graph read from `index.html` (the entry and the modulepreload)
+and the chunks' static imports. The budget's reading of those imports
+matched Rollup's own `chunk.imports`, dumped by a temporary config outside
+the repository, on all 87 chunks of the November build and all 80 of
+October's.

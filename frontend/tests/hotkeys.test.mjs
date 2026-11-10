@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  bindable, chordFromEvent, chordLabel, chordParts, conflicts, dispatch, effectiveKeys, heldAlone, heldFlags,
+  bindable, chordFromEvent, chordLabel, chordParts, composing, conflicts, dispatch, effectiveKeys, heldAlone, heldFlags,
   heldFromEvent, heldKey, isHeldKey, normalizeChord,
 } from "../src/shared/lib/hotkeys.js";
 
@@ -90,6 +90,13 @@ test("dispatch runs the first matching command that applies and swallows the key
   // An IME composition is never a shortcut.
   assert.equal(dispatch(commands, { ...ev("KeyK", "k", { ctrlKey: true }), isComposing: true }, {}, {}, false), null);
   assert.deepEqual(log, ["b", "prevented", "stopped", "a", "prevented", "stopped", "d-declined", "e", "prevented", "stopped", "c", "prevented", "stopped"]);
+});
+
+test("an Enter that confirms an input method's word is the input method's", () => {
+  assert.equal(composing({ key: "Enter", keyCode: 13, nativeEvent: { isComposing: true } }), true, "a React event");
+  assert.equal(composing({ key: "Enter", keyCode: 229, nativeEvent: {} }), true, "Safari's composing keydown");
+  assert.equal(composing({ key: "Enter", isComposing: true }), true, "a DOM event");
+  assert.equal(composing({ key: "Enter", keyCode: 13, nativeEvent: {} }), false);
 });
 
 test("a held key is a lone modifier; off a Mac Ctrl is Mod", () => {

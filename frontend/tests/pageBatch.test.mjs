@@ -1,9 +1,10 @@
 // The library's page batches (src/library/pageBatch.js): a row of
-// Background tasks from ROW_FROM pages on, Stop, failures, the pool, and the
-// closing status.
+// Background tasks from ROW_FROM pages on, Stop, failures, the pool, the
+// bulk requests of CHUNK pages and their per-page outcomes, and the closing
+// status.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { POOL, ROW_FROM, batchText, runBatch } from "../src/library/pageBatch.js";
+import { CHUNK, POOL, ROW_FROM, batchText, bulkOutcomes, runBatch, runBulk } from "../src/library/pageBatch.js";
 
 // The store's local rows (tasks/useTasks.js): `stop` is the tray's Stop,
 // which calls the row's cancel and marks it cancelled.
@@ -117,6 +118,46 @@ test("the pool runs at most `pool` requests at once", async () => {
     }, { name: "Move 30 pages", tasks: fakeTasks(), pool });
     assert.equal(most, pool);
   }
+});
+
+test("runBulk sends CHUNK pages a request, counts each page's outcome, and fails a refused request's pages", async () => {
+  const tasks = fakeTasks();
+  const sent = [];
+  const result = await runBulk(pages(CHUNK * 2 + 40), async (chunk) => {
+    sent.push(chunk);
+    if (sent.length === 2) throw new Error("Bad gateway");
+    return chunk.map((id) => (id === "p3" ? new Error("block not found") : null));
+  }, { name: "Delete 240 pages", tasks });
+  assert.deepEqual(sent.map((chunk) => chunk.length), [CHUNK, CHUNK, 40]);
+  assert.deepEqual(sent.flat(), pages(CHUNK * 2 + 40), "every page once, in order");
+  assert.equal(result.failed.length, CHUNK + 1);
+  assert.equal(result.failed[0].message, "block not found");
+  assert.equal(result.done.length, CHUNK * 2 + 40 - CHUNK - 1);
+  assert(!result.done.includes("p3") && !result.done.includes(`p${CHUNK}`));
+  const row = tasks.rows.get("row1");
+  assert.equal(row.state, "failed");
+  assert.equal(row.info, `${CHUNK + 1} pages could not be changed: block not found`);
+  assert.equal(tasks.patches.filter((p) => !p.state).length, 3, "one patch a request");
+});
+
+test("runBulk's Stop takes effect before the next request", async () => {
+  const tasks = fakeTasks();
+  let requests = 0;
+  const result = await runBulk(pages(25), async (chunk) => {
+    requests++;
+    tasks.stop("row1");
+    return chunk.map(() => null);
+  }, { name: "Pin 25 pages", tasks, size: 10 });
+  assert.equal(requests, 1);
+  assert.deepEqual(result, { done: pages(10), failed: [], stopped: true });
+  assert.equal(tasks.rows.get("row1").state, "cancelled");
+});
+
+test("bulkOutcomes turns POST /blocks/bulk's results into null or an Error with the status", () => {
+  const [went, refused] = bulkOutcomes([{ id: "a", ok: true }, { id: "b", ok: false, status: 404, detail: "block not found" }]);
+  assert.equal(went, null);
+  assert.equal(refused.message, "block not found");
+  assert.equal(refused.status, 404);
 });
 
 test("batchText says what was done, where a Stop left it and what could not be done", () => {

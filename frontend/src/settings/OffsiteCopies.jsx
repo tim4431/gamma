@@ -16,6 +16,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { DialogButtons, Field, PasswordInput, Row, Section, SubDialog, Toggle, UnitInput } from "./SettingsKit";
 import { fmtWhen } from "./SettingsBackups";
 import { useSettingsRead } from "./settingsReads.js";
+import { offsiteProgressText } from "./offsiteRound.js";
 import { CheckIcon, CloudIcon, CloudUploadIcon, RefreshIcon, XIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { t, tn } from "../shared/i18n/i18n.js";
@@ -77,9 +78,10 @@ function TestResult({ test }) {
   );
 }
 
-// The status line: how the last round went and when the next one is due.
+// The status line: the round running and how far it is, how the last round
+// went, and when the next one is due.
 function roundHint(status) {
-  const parts = status.running ? [t("copying now…")] : [];
+  const parts = status.running ? [t("copying now…"), offsiteProgressText(status.progress)].filter(Boolean) : [];
   if (status.last_round_at) {
     parts.push(t("last round {time}", { time: fmtWhen(status.last_round_at) }),
       tn("{n} database", "{n} databases", status.copied || 0),

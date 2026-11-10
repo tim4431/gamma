@@ -27,7 +27,7 @@
    screen as in the file. A Zotero box takes Zotero's face instead (below). */
 .textBoxBody {
   padding: calc(4 * var(--tb-pt));
-  font-family: Helvetica, Arial, "Liberation Sans", "Noto Sans", sans-serif;
+  font-family: Helvetica, Arial, "Liberation Sans", "Noto Sans", sans-serif; /* ds-allow: metric-compatible with the PDF's Helvetica (text_boxes.md) */
   font-size: calc(var(--tb-size) * var(--tb-pt));
   line-height: 1.25;
   overflow-wrap: anywhere;
@@ -44,7 +44,7 @@
    word-break: break-word computes to. */
 .textBox.zotero .textBoxBody {
   padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; /* ds-allow: Zotero's reader's stack, verbatim (text_boxes.md) */
   line-height: normal;
   font-weight: 400;
   font-style: normal;
@@ -101,7 +101,7 @@
 .textBoxText li:has(> .mdTaskCheckbox) { list-style: none; }
 .textBoxText .mdTaskCheckbox { font-size: inherit; width: 0.9em; height: 0.9em; margin: 0 0.3em 0 -1.2em; vertical-align: -0.1em; }
 .textBoxText blockquote { font-style: italic; }
-.textBoxText :is(code, pre) { font-family: "Courier New", Courier, "Liberation Mono", monospace; font-size: 1em; }
+.textBoxText :is(code, pre) { font-family: "Courier New", Courier, "Liberation Mono", monospace; font-size: 1em; } /* ds-allow: the PDF export's Courier (text_boxes.md) */
 .textBoxText pre { white-space: pre-wrap; }
 /* ds-allow-start: the PDF export's colours for code, links and marks */
 .textBoxText code { background: #f0f0f2; }
@@ -123,7 +123,7 @@
   border-radius: 0;
   outline: 0;
   background: none;
-  font: inherit;
+  font: inherit; /* ui-allow font-inherit: links and spans, no zoomed control: they take the box's type whole */
   vertical-align: baseline;
   white-space: inherit;
   overflow: visible;

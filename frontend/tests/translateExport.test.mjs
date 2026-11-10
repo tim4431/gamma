@@ -90,6 +90,14 @@ test("a block goes as the overlay sets it: its room, centred, bold, italic, an o
   assert.equal(opens.indent, 9.96);
 });
 
+test("a block justified in the original goes justified, and with the name of the face it is set in", () => {
+  const set = { ...block(), justified: true, font: "g_d0_f2", face: "CMR10" };
+  const [written] = exportLayout(view([[1, entry([set], ["正文"])]]), KEY).pages[0].blocks;
+  assert.equal(written.justified, true);
+  assert.equal(written.face, "CMR10", "its name, which the file knows it by, not pdf.js's id");
+  assert.equal(written.font, undefined);
+});
+
 test("a block's foot goes as on screen", () => {
   const [written] = exportLayout(view([[1, entry([{ ...block(), foot: 120.123 }], ["正文"])]]), KEY).pages[0].blocks;
   assert.equal(written.foot, 120.12);
@@ -157,5 +165,6 @@ test("a segmented page's formulas and citation markers go out as the segmenter f
     parts: ["公式 ", { page: 1, box: [r(f.x1), r(f.y1), r(f.x2), r(f.y2)], base: r(f.base), text: f.str },
       ` 与引用 ${p.spans[c - 1].str}`],
     indent: r(p.indent),
+    face: "CMR10",
   }]);
 });

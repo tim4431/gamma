@@ -31,6 +31,7 @@ from ..blocks_store import (
     BLOCK_COLUMNS,
     FOLDERS,
     LABELS,
+    NOT_LINKED,
     block_to_dict,
     create_page,
     existing_in,
@@ -43,9 +44,11 @@ from ..blocks_store import (
     new_block_id,
     page_attachment,
     page_for_doc,
+    page_parents,
     page_top,
     refiled,
     split_path,
+    top_of,
     tree_parents,
     write_lock,
 )
@@ -96,7 +99,8 @@ def url_doc_id(source_url: str) -> str:
 def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict | None:
     """Lookup BY ATTACHMENT: the page whose PDF attachment is this paper, by
     DOI, arXiv id, or any of its URLs — only pages carrying a ``doc_id`` are
-    candidates (a clip dedups against files, not titles). Identifier matches
+    candidates (a clip dedups against files, not titles), and a page reading
+    its PDF from this computer is none (``NOT_LINKED``). Identifier matches
     come from the metadata cache (properties.meta), the identifiers the web
     page it was saved from carried in its tags (properties.web_meta, there
     before the lookup lands and after one that failed; never a DOI only
@@ -107,7 +111,7 @@ def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict
     urls = tuple(u for u in urls if u)
     url_ids = {url_doc_id(u) for u in urls}
     rows = conn.execute(
-        f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root'"
+        f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' AND {NOT_LINKED}"
     ).fetchall()
     for row in rows:
         props = json.loads(row[4] or "{}")
@@ -476,7 +480,9 @@ def library_preview(request: Request, doi: str = "", arxiv_id: str = "", url: st
 def library_folders(request: Request):
     """The popup's pickers: ``{folders: [{id, path}], labels: [{id,
     name}]}`` — every folder (``path`` its names from the top), recently
-    viewed first, and every label by name."""
+    viewed first, and every label by name. A page counts for the folders it
+    is filed in, a page inside another page for its top's
+    (``blocks_store.filed_folders``' rule)."""
     user_id = require_user_id(request)
     ws = require_ws(request)
     recent_views, _ = get_pref(user_id, "recent-views", ws)
@@ -492,9 +498,11 @@ def library_folders(request: Request):
         labels = label_names(conn)
         rows = conn.execute("SELECT id, updated_at, json_extract(properties, '$.folders') FROM unified_blocks "
                             "WHERE parent_id = 'root'").fetchall()
+        tops = page_parents(conn)
+    filed_in = {page_id: filing({FOLDERS: json.loads(filed or "[]")}, FOLDERS) for page_id, _, filed in rows}
     times = dict.fromkeys(paths, ("", ""))
-    for page_id, updated_at, filed in rows:
-        for folder in filing({FOLDERS: json.loads(filed or "[]")}, FOLDERS):
+    for page_id, updated_at, _ in rows:
+        for folder in filed_in.get(top_of(tops, page_id), []):
             while folder in times:  # a folder takes its pages' times, and its subfolders'
                 viewed, updated = times[folder]
                 times[folder] = (max(viewed, viewed_at.get(page_id, "")), max(updated, updated_at or ""))

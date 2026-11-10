@@ -332,11 +332,28 @@ def _imported_annotations(guest, pdf, page=None):
     return page, r.json(), {c["content"]: c["properties"] for c in kids if c["properties"].get("imported_annot")}
 
 
+def test_a_strip_stores_under_the_name_given_not_the_name_of_the_file_read(guest, tmp_path):
+    from conftest import workspace_of
+    from gamma import storage
+    from gamma.routers.imports import import_embedded_annotations
+
+    ws, pdf = workspace_of(guest_name()), _annotated_pdf(b"A name apart from its path")
+    up = guest.post("/api/uploads", files={"file": ("a.pdf", pdf, "application/pdf")}).json()
+    page = make_page(guest, "Read from elsewhere", {"doc_id": up["doc_id"], "source_url": up["source_url"]})
+    name, copy = f"{up['doc_id']}.pdf", tmp_path / "A paper.pdf"
+    copy.write_bytes(pdf)
+    assert import_embedded_annotations(ws, page["id"], name, copy, True)["stripped"] == 1
+    assert copy.read_bytes() == pdf and not storage.exists(ws, copy.name)
+    assert storage.open_path(ws, name).read_bytes() != pdf
+
+
 def test_embedded_alpha_is_gamma_alpha_before_ca(guest):
     """A highlight's or area's alpha is Gamma's /GammaAlpha when it has
     one, which a Zotero copy writes in place of /CA, even beside a /CA
     another app added; else its /CA; else the 0.45 of an annotation with
-    neither, as Zotero's own are."""
+    neither, as Zotero's own are. An alpha of 0.3 is half way between two
+    bytes (76.5) and rounds up, as the app rounds it (tests/shared/
+    colors.json)."""
     quads = {"QuadPoints": (72, 732, 300, 732, 72, 716, 300, 716)}
     _, result, kids = _imported_annotations(guest, _with_annotations(
         _annot("/Highlight", (72, 716, 300, 732), C=(1, 0, 0), GammaAlpha=0.3, Contents="gamma alpha", **quads),
@@ -345,7 +362,7 @@ def test_embedded_alpha_is_gamma_alpha_before_ca(guest):
         _annot("/Highlight", (72, 516, 300, 532), C=(1, 1, 0), Contents="neither")))
     assert result["imported"] == 4
     assert {content: props["color"] for content, props in kids.items()} == {
-        "gamma alpha": "#ff00004c", "both": "#0000ff99", "ca only": "#00ff00cc", "neither": "#ffff0073"}
+        "gamma alpha": "#ff00004d", "both": "#0000ff99", "ca only": "#00ff00cc", "neither": "#ffff0073"}
 
 
 def test_a_gamma_zotero_copy_brings_its_colours_back(guest):

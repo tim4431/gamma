@@ -319,18 +319,49 @@ and measurements behind it are in
   stretch with it in the same commit. The redraw starts 150 ms after the
   last zoom step (`ZOOM_SETTLE_MS`), the part in view first, then the base.
   A first paint does not wait.
+- **How a zoom reaches the pages.** The viewer writes its committed scale
+  as `--viewer-scale` on `.pdfZoomLayer`
+  ([ui-design.md](ui-design.md#zoom-gestures-in-a-viewer)). A page box is
+  `calc(var(--viewer-scale) * Wpx)` wide and high, and picks the variable
+  up with `inherit` (`app.css`), as its translation layer does. Highlights,
+  badges, link boxes and find marks are percentages of the box. So a wheel
+  train, a pinch's commit or a pane drag at fit-width re-renders the viewer
+  and none of its pages. What needs the scale as a number reads the
+  viewer's store (`pdf/pageScale.js`). The raster gets the live value from
+  `get()` and keeps its own settle. A page reads the settled value,
+  `rest()`, through `useSyncExternalStore`, subscribed only inside the
+  look-ahead. A live change is no new snapshot, so the page renders once
+  per zoom, once it rests, and a page away from the view renders not at
+  all.
+- **What still renders per zoom frame.** The pages of a document in
+  comment-margin mode, whose card column sits at an offset worked out in px
+  (`marginLeft`, `pageTop`, `marginScale`). An ink layer that redraws on a
+  resize (`useGroupRasters`, the ruler), and a page crossing an observer
+  margin. And the viewer itself, with App twice over.
+- **Why the boxes are not written from the store.** Writing each box's
+  size from `pageScale` costs less style than the variable. But the
+  document's "rendered" layout effect, which restores the reader's place,
+  and the ink layers' own layout effects read layout before such a write
+  would land. React writing the variable in the commit keeps every page box
+  at its new size before any layout effect runs.
 - **The text layer is built once per page**, after the page's first pixels
   and once the scroller has sent no scroll event for 100 ms
   (`afterScrollRest`), and kept across zooms and when the page scrolls away.
   A fast scroll would build it for pages it passes, and under the smooth
   wheel the frame or two it takes is a visible stall. pdf_viewer.css sets
-  `--scale-factor: 1` on `.pdfViewer`, so the layer is laid out at scale 1
-  and `PdfPage` scales it with a CSS transform. After a zoom settles
-  `TextLayer.update` re-measures the spans at the new size. A text selection
+  `--scale-factor: 1` on `.pdfViewer`, so the layer is laid out at scale 1.
+  pdf.js sizes it, and the build sets `transform: scale(var(--viewer-scale))`
+  and `--viewer-scale: inherit` on it inline, which also overrides
+  pdf_viewer.css's rotation transforms. React never writes the layer's size
+  or transform. Until it is built, the layer is pdf.js's `inset: 0` and
+  fills the box, and an empty layer restyles nothing on a zoom. After a
+  zoom settles (`rest()`) `TextLayer.update` re-measures the spans at the
+  new size. A text selection
   and the citation marks survive a zoom. Only a page far from the view
   drops it. A second observer with `FAR_MARGIN` (four viewport heights each
-  way; pdf.js's own viewer keeps about ten pages) empties the layer and
-  forgets the paint, and the next paint builds it again. A book read
+  way; pdf.js's own viewer keeps about ten pages) empties the layer, takes
+  off what the build set on it, and forgets the paint, and the next paint
+  builds it again. A book read
   through would otherwise leave every page's spans in the DOM.
 - **One renderer.** Every raster goes through `renderRegion`: the base, the
   detail canvas, the highlight capture (`captureRef`) and the area-note
@@ -436,7 +467,15 @@ paper theme, which is what a doubled blend would change. The rendering cases
 run in Playwright WebKit too (`GAMMA_E2E_BROWSER=webkit`, after
 `npx playwright install webkit`) and pass there; the swipe and pinch steps
 are Chromium-only, since they drive CDP touch events. A step sets the zoom
-it starts from, since the steps before it differ by browser.
+it starts from, since the steps before it differ by browser. One step turns
+a 12-notch Ctrl+wheel train over a page with a highlight and its note. It
+asserts that page 1 renders no time while the wheel turns and at least once
+at rest, that no style is written on its box, text layer, highlight or
+badge, and that the highlight and badge keep their place on the page. It
+counts renders through a stand-in React DevTools hook that walks the fiber
+tree after each commit (a page is React.memo's fiber, tag 15, over the
+`.pdfPageWrap` div). That reads React internals, so re-check it on a React
+upgrade; its positive controls make a broken counter fail, not pass.
 `tests/pageRaster.test.mjs` and `tests/canvasSize.test.mjs` pin the raster
 rules and the canvas bounds; other unit tests pin the snap timing,
 cancellation and older-Safari fallback. Physical iPad GPU limits, render

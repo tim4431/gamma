@@ -7,7 +7,8 @@
 // one's own; Ctrl+Shift+M from an open editor and Escape back to the
 // control; a viewer commenting from a read-only row; the link visitor
 // reading only; ?thread= opening the thread, and a note thread's copied
-// link opening it through a folder share; a reply left unsent kept in its
+// link opening it through a folder share; Report on another's comment, which
+// the server's admin finds in Settings → Server and resolves; a reply left unsent kept in its
 // field; the field as a note's editor ([[ links, @ people, $…$ with its
 // preview, Enter and Shift+Enter, the "/" menu); on a phone, a note's thread link
 // bringing the notes over the PDF; the selection popup opening at the
@@ -22,7 +23,7 @@
 // card keeping its right-click, Enter and Escape from the strip.
 import { editRow } from "./notes.mjs";
 import { dragSelectPdfText, selectPdfText, waitForPdf } from "./pdf.mjs";
-import { Account, arrived, assertOpensInPlace, sleep, wanted } from "../harness.mjs";
+import { Account, arrived, assertOpensInPlace, settingsPane, sleep, wanted } from "../harness.mjs";
 
 export async function commentScenarios({ server, browser, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
   if (!wanted("comments")) return;
@@ -183,17 +184,17 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     assertNoProblems(A);
   });
 
-  await step("comments: edit and delete one's own; another person's comment offers neither", async () => {
+  await step("comments: edit and delete one's own; another person's comment offers neither, and Report instead", async () => {
     await ann.api(`/api/pages/${pg.id}/comments`, { method: "POST", body: { block_id: "cmnote2", body: "Ann's remark, with a tpyo" } });
     await ben.api(`/api/pages/${pg.id}/comments`, { method: "POST", body: { block_id: "cmnote2", body: "Ben's remark" } });
     await until(async () => (await control(A, "The second claim").innerText().catch(() => "")) === "2", { what: "both threads counted", timeout: 10000 });
-    // Ben sees Copy link only on Ann's comment.
+    // Ben sees Copy link and Report on Ann's comment.
     await until(async () => (await control(B, "The second claim").innerText().catch(() => "")) === "2", { what: "ben sees both", timeout: 10000 });
     await openControl(B, "The second claim");
     const annsInB = popover(B).locator(".commentItem", { hasText: "Ann's remark" });
     await annsInB.hover();
     await annsInB.locator(".rowMenuBtn").click();
-    assertEq((await B.locator(".ctxMenu .ctxMenuItem").allInnerTexts()).map((s) => s.trim()).join("|"), "Copy link", "no Edit or Delete on another's");
+    assertEq((await B.locator(".ctxMenu .ctxMenuItem").allInnerTexts()).map((s) => s.trim()).join("|"), "Copy link|Report…", "no Edit or Delete on another's");
     await B.keyboard.press("Escape");
     await closePopover(B);
 
@@ -201,6 +202,8 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const mine = popover(A).locator(".commentItem", { hasText: "Ann's remark" });
     await mine.hover();
     await mine.locator(".rowMenuBtn").click();
+    assertEq((await A.locator(".ctxMenu .ctxMenuItem").allInnerTexts()).map((s) => s.trim()).join("|"), "Edit|Copy link|Delete",
+      "no Report on one's own");
     await A.locator(".ctxMenu .ctxMenuItem", { hasText: "Edit" }).click();
     const edit = field(mine);
     await edit.waitFor();
@@ -218,6 +221,59 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await until(async () => (await control(A, "The second claim").innerText()) === "1", { what: "one thread left" });
     await closePopover(A);
     assertNoProblems(A); assertNoProblems(B);
+  });
+
+  await step("comments: Report on another's comment reaches the server's admins, whose Server pane lists it to resolve", async () => {
+    await server.manage("create-user", "cm-adm", "cm-adm-pw");
+    await server.manage("set-admin", "cm-adm", "on");
+    const adm = await new Account(server, "cm-adm", "cm-adm-pw").login();
+    const posted = await ann.api(`/api/pages/${pg.id}/comments`, { method: "POST", body: { block_id: "cmnote2", body: "A remark worth reporting" } });
+    await until(async () => (await control(B, "The second claim").innerText().catch(() => "")) === "2", { what: "ben sees it", timeout: 10000 });
+    await openControl(B, "The second claim");
+    const item = popover(B).locator(".commentItem", { hasText: "A remark worth reporting" });
+    await item.hover();
+    await item.locator(".rowMenuBtn").click();
+    await B.locator(".ctxMenu .ctxMenuItem", { hasText: "Report…" }).click();
+    const dialog = B.locator(".reportModal.reportContent");
+    await dialog.waitFor();
+    assertEq(await dialog.locator(".reportModalTitle").first().textContent(), "Report this comment", "the dialog's title");
+    const quote = await dialog.locator(".reportQuote").textContent();
+    assert(quote.includes("A remark worth reporting") && quote.includes("By cm-ann"), `the dialog quotes it and its author: ${quote}`);
+    const send = dialog.getByRole("button", { name: "Send report", exact: true });
+    assert(await send.isDisabled(), "no reason, no report");
+    await dialog.getByLabel("Harassment, bullying or hate").check();
+    await dialog.locator("textarea").fill("Not the first time");
+    await send.click();
+    await B.getByRole("status").filter({ hasText: "Report sent." }).waitFor();
+    await dialog.waitFor({ state: "detached" });
+    const listed = (await adm.api("/api/admin/reports")).reports.find((r) => r.comment_id === posted.comment.id);
+    assert(listed, "the admins have it");
+    assertEq(`${listed.kind} ${listed.reason} ${listed.author} ${listed.reporter} ${listed.details}`,
+      "comment harassment cm-ann cm-ben Not the first time", "what it says, as the server read it");
+    assertEq(listed.content, "A remark worth reporting", "the comment's own text");
+    if (await popover(B).count()) await closePopover(B);  // the dialog took the focus from it, which may close it
+    // the admin's Server pane: the report, then Resolve
+    const ctx = await adm.context(browser);
+    const M = await openPage(ctx, server.base);
+    try {
+      await M.getByRole("button", { name: "Account & settings", exact: true }).click();
+      await M.getByRole("menuitem", { name: "Settings…", exact: true }).click();
+      await settingsPane(M, "Server");
+      const row = M.locator(`.aiProvRow[data-report="${listed.id}"]`);
+      await row.locator(".aiProvName", { hasText: "Harassment, bullying or hate" }).waitFor();
+      await row.getByText("reported by cm-ben", { exact: false }).waitFor();
+      await row.getByRole("button", { name: "Resolve", exact: true }).click();
+      await until(async () => (await adm.api("/api/admin/reports")).reports.find((r) => r.id === listed.id)?.state === "resolved",
+        { what: "the report is resolved" });
+      await row.waitFor({ state: "detached" });
+      assertNoProblems(M);
+    } finally {
+      await ctx.close();
+      await server.manage("set-admin", "cm-adm", "off");
+    }
+    await ann.api(`/api/comments/${posted.comment.id}`, { method: "DELETE" });
+    await until(async () => (await control(B, "The second claim").innerText().catch(() => "")) === "1", { what: "the remark gone", timeout: 10000 });
+    assertNoProblems(B);
   });
 
   await step("comments: a reply left unsent is still in its field when the popover opens again", async () => {

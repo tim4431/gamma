@@ -32,6 +32,8 @@ export const NOTICE_MESSAGES = [
   T("Connect this server to Gamma Cloud to finish turning on its sign-in"),
   T("{n} person asks to join this server"),
   T("{n} people ask to join this server"),
+  T("{n} report waits for review"),
+  T("{n} reports wait for review"),
   T("Microsoft's free translation keeps failing — set up Google or Youdao"),
   T("Your storage is full ({used} of {quota} MB used)"),
   T("Your storage is nearly full ({used} of {quota} MB used)"),
@@ -62,6 +64,7 @@ const ACTIONS = {
   "cloud-link": T("Link Gamma Cloud"),
   "cloud-setup": T("Set up Gamma Cloud"),
   "join-requests": T("Review the requests"),
+  reports: T("Review the reports"),
   "free-translate": T("Set up translation"),
   storage: T("Review storage"),
 };

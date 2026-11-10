@@ -32,8 +32,9 @@ store, the pure model, the kind registry, the tray).
 
 A job is a row of `users.db`'s `jobs` table ([migrations.md](migrations.md)
 step 24) and, while it is queued or running, a worker thread in this
-process. The row holds the kind, the owner (the account that started it, or
-`""` for a workspace's own work), the workspace, an English title, the
+process. The row holds the kind, the owner (the account that started it,
+`""` for a workspace's own work, or `share:<token>` for a share view's
+export, below), the workspace, an English title, the
 parameters (JSON, what a window needs to show the job again), the state
 (`queued`, `running`, `done`, `failed`, `cancelled`), the last progress, the
 result (JSON), the error, and the file the job produced. A running job's
@@ -64,7 +65,13 @@ marks the point after which the job can no longer stop; a restore reports
 it just before it swaps or merges the databases, a delete once its final
 copy is written. That report is the last place to stop: a stop that landed
 before it raises there (`cancel` and the report decide under one lock), so
-a stop the interface took is never ignored. A job that writes a file
+a stop the interface took is never ignored. A job started with
+`writes=True` changes its workspace (an import, a restore, a metadata
+lookup, a transcription, a highlight run): a delete of that workspace
+stops it before its final copy (`jobs.refuse_writers`), a queued one at
+once and a running one at its next report, which raises `jobs.Refused` (a
+`Cancelled` that fails the job with the reason), and waits for one past
+its last stop. A job that writes a file
 writes it to `job.artifact_path` and names the download with
 `job.set_artifact(name, media_type)`. An exception fails the job: an
 `HTTPException`'s detail, a `ValueError` or an `OSError` is the message as
@@ -94,14 +101,25 @@ the protocol of a PDF's upload in parts), since a proxy in front of the
 server caps a request's body (Cloudflare at 100 MB). It is staged like an
 import review's upload (`gamma/import_staging.py`, no size cap, refused only
 when the disk would keep less than 1 GB free); the finish starts the job,
-and the job removes the staged zip once it is over. A job that writes a file does not start while the disk has less
-than 1 GB free or the account's finished files take 10 GB (507, "download
-them and remove them in Background tasks first"). Files are not metered
+and the job removes the staged zip once it is over. A job that writes a file or keeps one does not start while the disk has less
+than 1 GB free or the account's files take 10 GB: its finished jobs' files and
+what all its listed jobs keep, a failed or stopped one's too (507, "download
+them and remove them in Background tasks first"; `jobs._check_room`). Files are not metered
 against the account's storage quota.
+
+What a run needs that its params cannot hold is kept with the job:
+`jobs.start(kept={name: bytes})` writes `jobs/<id>/kept/<name>` before the
+row goes in, and `jobs.kept(id, name)` reads it back. It stays for as long
+as the job is listed, however the job ended: a failure, a stop and
+`recover` take only what the run wrote. Removing the job, clearing it and
+the sweep take it with the row. It counts against the account's 10 GB like a
+finished file, so jobs that fail at once cannot pile it up. A translated annotated-PDF export keeps
+the viewer's layout this way, so it can be started again
+([translation.md](translation.md#exporting-the-translation)).
 
 **Ending.** A finished job is kept 24 hours (`RETENTION_S`). The sweep
 (`jobs.sweep`, every 10 minutes from the app lifespan) removes it with its
-file, job directories no row names and uploads no job took. At startup
+file and what it kept, the jobs of a share that no longer exists, job directories no row names and uploads no job took. At startup
 `jobs.recover` fails the jobs a stopped process left queued or running
 ("interrupted: the server restarted while this ran"). A process only
 recovers rows another process stamped (`instance`), so a second app
@@ -113,7 +131,8 @@ with it (`workspaces.delete_account`).
 ## The API (`routers/jobs.py`)
 
 Only a session account uses jobs (integration tokens get 403, like every
-account-level endpoint). The one exception: a token's `PUT
+account-level endpoint), and a share view for its exports (below). The one
+exception for a token: a token's `PUT
 /pages/{id}/attachment` that replaces a page's PDF starts its account's
 `relocate-highlights` run, as a session's does, and the account's sessions
 see it in Background tasks while the token cannot read it. A job is its
@@ -147,7 +166,7 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 
 | Kind | Route | Started from | Result, file |
 |---|---|---|---|
-| `export` | `export` (`routers/export.py`) | the Export dialog, for a page or a folder | the file; `{pages, skipped}` |
+| `export` | `export` (`routers/export.py`) | the Export dialog, for a page or a folder, a share view's too | the file; `{pages, skipped}` |
 | `import-preview` | `import-preview` (`routers/imports.py`, an uploaded file; `import-preview/parts` for one in parts; one per review) | the import dialog, once the file is chosen | `{review_id, pages, warnings}`, the counts; the review itself is kept with the staged upload (`GET /import/review/{id}`) |
 | `import` | `import` (`routers/imports.py`) | the import review's Import to library | the import report |
 | `workspace-export` | `workspace-export` (`routers/ws_backups.py`) | Settings → Workspaces → Data → Export…, Export all | the zip |
@@ -158,19 +177,19 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `indexing` | — (`routers/search.py`, owner `""`) | a search, a page chat, Settings → Maintenance → Rebuild | `{papers}` |
 | `transcribe` | `transcribe` (`routers/recordings.py`, one per recording block) | a recording's menu → Transcribe; every recording that ends, with Settings → Reading & editing › Recordings › Transcribe recordings on | `{paragraphs, model}` ([recording.md](recording.md)) |
 | `workspace-delete` | `workspace-delete` (`routers/workspaces.py`, one per workspace) | Settings → Workspaces → Manage → Delete…, for an owner or an admin | `{warning, final_copy}`; phases `keeping` (the final copy's bytes) and `deleting`, past which it no longer stops ([workspaces.md](workspaces.md) "Deleting a workspace") |
-| `account-delete` | `account-delete` (`routers/admin.py`, one per account) | Settings → Users → an account → Delete… (admins) | `{deleted_workspaces}`; the same phases, a final copy per workspace that goes |
+| `account-delete` | `account-delete` (`routers/admin.py`, one per account; `workspaces.start_account_delete`) | Settings → Users → an account → Delete… (admins); on a share host also the server's own, owner `jobs.WORKSPACE`, for an account whose Gamma Cloud account was deleted ([cloud_accounts.md](cloud_accounts.md) "A deleted account on the share host") | `{deleted_workspaces}`; the same phases, a final copy per workspace that goes |
 | `db-check` | `db-check` (`routers/admin.py`) | Settings → Server → Databases → Check now (admins) | what `/admin/check-databases` answers; progress in files |
 | `relocate-highlights` | `relocate-highlights` (`routers/pages.py`, one per page and file; `PUT /pages/{id}/attachment` starts it by itself) | a replaced PDF (the Document menu → Replace the PDF…, a build script's `PUT`, a Zotero link bringing Zotero's new file, which starts it for the link's owner, [zotero_sync.md](zotero_sync.md#pdfs)); the Document menu → Find highlights in this PDF | `{highlights, moved, kept, lost, approx, changed, min_match, exact_chars}`: the counts, then the owner's thresholds the run went by, which its params `{page_id, title, doc_id, min_match, exact_chars}` record as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) |
 
 The off-site copies' Copy now (Settings → Backups, `POST
 /api/admin/offsite/run`) is not a job: it starts the server's own
 scheduled round early, one at a time, and the section's status line
-follows it (`gamma/offsite.py`). Nor is Sync now of a clone, a
-publication, a Zotero link or a folder link: it answers at once and the
-surface that asked follows the round's own status to its end (`asked_at`
-until the round starts, then `running`), so no request waits out a long
-round ([mirror.md](mirror.md#rounds-and-cadence),
-[folder_sync.md](folder_sync.md)).
+follows it, its progress included (`gamma/offsite.py`). Nor is Sync now
+of a clone, a publication, a Zotero link or a synced vault: it answers at
+once and the surface that asked follows the round's own status to its end
+(`asked_at` until the round starts, then `running` with its `progress`),
+so no request waits out a long round ([mirror.md](mirror.md#rounds-and-cadence),
+[synced_vaults.md](synced_vaults.md#when-rounds-run)).
 
 A metadata batch looks its papers up one at a time; a paper nothing is found
 for counts as failed and the batch goes on. A stop lands between two
@@ -204,8 +223,8 @@ whose row goes. The import job (`import`) holds the staged review's claim
 while it reads the upload and removes the upload when it ends, however it
 ends. Asking again for the same review answers the job already started,
 for either kind (an import 409 with another selection). The indexer keeps one row per
-workspace (`jobs.prune`). Synchronous endpoints serve scripts, the share
-view and the MCP export: `/api/export`, `/export-all`, `/import-data`,
+workspace (`jobs.prune`). Synchronous endpoints serve scripts, another
+Gamma's import by link and the MCP export: `/api/export`, `/export-all`, `/import-data`,
 `/import/review` (the review answered in the request),
 `/pages/{id}/export`, `/folders/{id}/export`, the snapshot endpoints,
 `DELETE /workspaces/{id}`, `DELETE /admin/users/{name}` and
@@ -217,7 +236,10 @@ asking for the same workspace's or account's delete again is answered
 with the job, which the web app then follows. Who may delete is checked
 as a delete starts, again as it runs and once more at its point of no
 return, under the users.db write lock with the first write, so a
-demotion or another delete that came first wins. Neither delete kind has a
+demotion or another delete that came first wins. While a delete runs, its
+workspaces take no more changes (423 `workspace_deleting`), and before
+its final copy it stops their `writes` jobs, which fail saying the
+workspace is being deleted ([workspaces.md](workspaces.md) "Deleting a workspace"). Neither delete kind has a
 `retry`: starting one again goes through its confirmation. A server
 snapshot's download (`GET /admin/backups/{name}/download`) is no job: it
 streams the zip as it is made, so the browser's download starts at once and
@@ -262,7 +284,10 @@ runs first, oldest on top; then what ended, newest on top) and the tray
 badge. `taskKinds.js` gives each kind its icon, title, detail line and row
 actions, where a click opens it (`open`) and how to start it again
 (`retry`: the same route and body; an export that carried the viewer's
-translation has none, since its params cannot hold it).
+translation, or a folder's that carried its papers', names its job as
+`translation_of`, since its params cannot hold the layout and the server
+keeps it with the job,
+[translation.md](translation.md#exporting-the-translation)).
 
 `TasksTray.jsx` holds the button, the panel and its rows:
 
@@ -339,11 +364,13 @@ too, since a close drops it.
 
 The library's actions over many pages (delete, delete a folder with its
 pages, move into a page or to the library, pin, add or remove a label or
-a folder, duplicate) send one request per page, so a big selection takes
-as long as its round trips. `library/pageBatch.js` `runBatch` runs them,
-up to four at once (duplicates one at a time). From ten pages on it is a
-row of Background tasks (local kind `batch`), "12 of 340 pages", patched
-once per visible percent, and its Stop takes no new pages. The pages a
+a folder) go to the server 100 pages a request (`POST /blocks/bulk`,
+[api.md](api.md); `library/pageBatch.js` `runBulk`), which trashes or
+patches them in one transaction and answers each page's outcome. A
+duplicate has no bulk form and sends a request a page, one at a time
+(`runBatch`). From ten pages on either is a row of Background tasks
+(local kind `batch`), "12 of 340 pages", patched once per visible percent
+(at most once a request), and its Stop takes no new request. The pages a
 delete takes leave the library at once and stay out of the listings read
 meanwhile; the read after the batch brings back any that stayed. The
 closing status says what went, where a Stop left it and what failed with
@@ -352,15 +379,46 @@ deleted with its pages goes only once every one of them went, without a
 Stop. The batch lives in the tab: a reload or a closed tab ends it part
 way. It does not ask before the tab goes, since the app's own reloads (a
 workspace switch, a restore, a deleted workspace) would ask too, and the
-desktop app would cancel them without a word. One request for the whole
-action on the server is still open
-([research/long-operations.md](../research/long-operations.md)).
+desktop app would cancel them without a word.
 
-A share view has no background tasks. Its exports download directly
-through the synchronous endpoints, and its "Add to my library" hands the
-link to the visitor's own library, which imports it
-([import_export.md](import_export.md) "Importing a shared page or folder
-by link").
+## A share view's exports
+
+A share view's Export runs the same `export` job, started under the
+share token (`POST /api/jobs/export?share=`), so a big shared folder's
+export is not cut by a proxy in front of the share host. The job is the
+share's: its owner is `share:<token>` (`jobs.share_owner`,
+`auth.share_job_owner`), the same for every visitor, signed in or not, so
+the share counts as one account in the limits (two running, twenty
+waiting or running, 10 GB of files). A link visitor starts at most 30 in
+five minutes per IP. The export reaches only what the share does (403
+outside it) and is held to it as the share's downloads are
+([import_export.md](import_export.md#gamma-to-gamma-export)); it takes no
+translation. As it runs it checks again that the share stands ("the share
+link was stopped") and still reaches the page or folder.
+
+No listing shows such a job. Whoever holds its id reads, stops, removes and
+downloads it through `/api/jobs/{id}…?share=<token>`, any visitor the
+share admits, and nobody does without that share: the workspace's own
+members get 404 for it, and a share stopped or changed to keep the
+visitor out answers 401 or 403. The sweep stops and removes the jobs of a
+share that is gone.
+
+The share view's store follows only the share's jobs its tab started
+(`useTasks({follow: true})`: `GET /api/jobs/{id}` for each one waiting or
+running whose owner is `share:<token>`, taskModel's `followed`, never the
+listing), and it has no tray. A job of the visitor's own account that the
+share view adopted (a recording's transcript) is not followed: the share
+does not reach it. A read the share refuses (401: stopped or keeping the
+visitor out; 403) or that finds no job (404) ends the job there as failed
+with why (`afterFollow`), so the dialog says so and the tab stops asking;
+any other failed read (offline, a 5xx) is asked again next round. The Export dialog
+follows the job as in the library; closed meanwhile, its file is offered
+in the pill once it is ready. A reload loses the job to the tab: the share
+view keeps no row to open it again.
+
+Its "Add to my library" hands the link to the visitor's own library,
+which imports it ([import_export.md](import_export.md) "Importing a shared
+page or folder by link").
 
 ## Adding a kind
 
@@ -382,24 +440,35 @@ by link").
 - Backend: `test_jobs.py` covers the registry and the API: lifecycle,
   progress, stop, failure, limits, visibility, files, sweep, recovery and
   the account lifecycle. `test_export_jobs.py` covers every export format
-  as a job and the annotated-PDF folder zip; `test_backup_jobs.py` the
+  as a job and the annotated-PDF folder zip, `test_share_export.py` a
+  share view's (every format held to the share, the job the share's own,
+  checked as it runs and gone with the share); `test_backup_jobs.py` the
   snapshots, restores and server backups. The import job and the
   review's (kept for its dialog, in parts, stopped, refused, a Gamma
   export unpacking no PDF) are tested in `test_import_review.py`, the metadata batch in `test_metadata_batch.py`
   and the indexer in `test_search.py`. `test_delete_jobs.py` covers the
   delete kinds (a stop during the final copy and just after it deletes
   nothing, none after it, the refusals, a second start of either kind, the
-  check at the point of no return, two admins deleting each other), the database
+  check at the point of no return, two admins deleting each other, the
+  workspace taking no more changes while its delete runs, from requests,
+  a share, the AI's tools and the jobs that change it), the database
   check and the streamed snapshot download; `test_backup_safety.py` the
   final copy itself and the delete holds.
-- Frontend: `tests/tasks.test.mjs` covers the model and kinds,
+- Frontend: `tests/tasks.test.mjs` covers the model and kinds (the share view's follow rounds too),
   `tests/transferFormats.test.mjs` the export job's body and
-  `tests/pageBatch.test.mjs` the library's page batches.
+  `tests/pageBatch.test.mjs` the library's page batches; `test_bulk_pages.py` their
+  endpoint, `POST /blocks/bulk`.
 - Browser: the transfers group covers a folder's annotated PDFs closed
   mid-way, reopened from the tray and downloaded, plus every export
   dialog's finished step, and an import review closed while the server
   reads it, opened from its row and imported, and one cancelled. The settings group covers a workspace export
   that downloads itself and a merged backup that reloads the library. The
   files group covers an upload stopped from the tray. The settings group
-  also deletes a workspace through its job and runs the database check
-  as one; the trash group deletes twelve selected pages as a batch.
+  also deletes a workspace through its job, turns a tab read-only on an
+  edit refused for a workspace being deleted, and runs the database check
+  as one; the trash group deletes twelve selected pages as a batch, in one request.
+  The notes-pdf-share group keeps a folder share's view read-only from
+  page to page after an edit refused for a workspace being deleted, and exports a shared page and a shared folder from
+  the share view as the share's jobs, the folder's gone with its share,
+  and one whose share is stopped while it runs ends as failed in the
+  dialog, the tab asking no more.

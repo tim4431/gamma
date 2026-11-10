@@ -1,26 +1,28 @@
-// The workspace search's paging (search/searchPages.js): one page's request,
-// scoped to the filter chips, and a further page added without repeats.
+// The workspace search's paging (search/searchPages.js): one page's request
+// body, kept to the filters' pages, and a further page added without repeats.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { NOTES_PAGE, PDF_PAGE, TITLES_PAGE, appendNew, searchQuery } from "../src/search/searchPages.js";
-
-const params = (query) => Object.fromEntries(new URLSearchParams(query));
+import { NOTES_PAGE, PDF_PAGE, TITLES_PAGE, appendNew, searchBody } from "../src/search/searchPages.js";
 
 test("the first pages keep their sizes", () => {
   assert.deepEqual([NOTES_PAGE, PDF_PAGE, TITLES_PAGE], [20, 15, 8]);
 });
 
-test("searchQuery: the query and page size, the chips as one scope", () => {
-  assert.deepEqual(params(searchQuery("3,000 qubit & more", { limit: 20 })), { q: "3,000 qubit & more", limit: "20" });
-  const chips = [{ kind: "folder", id: "f1", name: "Physics / Atoms" }, { kind: "label", id: "l2", name: "toread" }];
-  assert.deepEqual(params(searchQuery("atom", { limit: 15, chips })), { q: "atom", limit: "15", scope: "f1,l2" });
+test("searchBody: the query and page size; the filters' pages, [] kept apart from none", () => {
+  assert.deepEqual(searchBody("3,000 qubit & more", { limit: 20 }), { q: "3,000 qubit & more", limit: 20 });
+  assert.deepEqual(searchBody("atom", { limit: 15, pages: ["p1", "p2"] }), { q: "atom", limit: 15, pages: ["p1", "p2"] });
+  assert.deepEqual(searchBody("atom", { limit: 15, pages: [] }), { q: "atom", limit: 15, pages: [] }, "[] reaches no page");
+  assert.deepEqual(searchBody("atom", { limit: 15, pages: null }), { q: "atom", limit: 15 }, "none: the whole library");
 });
 
-test("searchQuery: a cursor and the endpoint's params, empty ones left out", () => {
-  const query = searchQuery("atom", { limit: 20, cursor: "2026-10-16T09:00:00.000000Z|42", case: 0, whole: 1, exclude: "" });
-  assert.deepEqual(params(query), { q: "atom", limit: "20", cursor: "2026-10-16T09:00:00.000000Z|42", case: "0", whole: "1" });
-  assert.ok(query.startsWith("q=atom&"), "the query leads, as the browser suite looks for it");
-  assert.equal(params(searchQuery("atom", { limit: 15, cursor: "", exclude: null })).cursor, undefined);
+test("searchBody: a cursor, the kinds and the endpoint's fields, empty ones left out", () => {
+  const body = searchBody("atom", { limit: 20, cursor: "2026-10-16T09:00:00.000000Z|42", kinds: ["highlight"],
+    case: false, whole: true, exclude: "" });
+  assert.deepEqual(body, { q: "atom", limit: 20, cursor: "2026-10-16T09:00:00.000000Z|42", kinds: ["highlight"],
+    case: false, whole: true });
+  assert.deepEqual(searchBody("atom", { limit: 15, cursor: "", kinds: null, exclude: null }), { q: "atom", limit: 15 });
+  assert.deepEqual(searchBody("atom", { limit: 15, kinds: [] }), { q: "atom", limit: 15 }, "no kinds: every kind");
+  assert.deepEqual(searchBody("atom", { limit: 15, exclude: "pg1" }), { q: "atom", limit: 15, exclude: "pg1" });
 });
 
 test("appendNew adds a page after the list, without the hits it holds", () => {

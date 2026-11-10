@@ -2,12 +2,18 @@
 tests/shared/*.json at the repository root. The node half is
 frontend/tests/textnorm.test.mjs, ink.test.mjs, inkRender.test.mjs,
 finishStroke.test.mjs, notebook.test.mjs, mentions.test.mjs, textBox.test.mjs,
-picture.test.mjs, shapes.test.mjs and shapeTool.test.mjs; a case added here fails whichever
-side drifts. The mirror's cases (synctree.json, textmerge.json) have only
-this Python side; the client's recognisers (inkshapes.json, inkscribble.json)
-have only the node side, and this side checks their shape, but both sides
-draw inkshapes.json's ``samples`` and count the samples of its Shapes tool
-drags."""
+picture.test.mjs, shapes.test.mjs, shapeTool.test.mjs, itemTypes.test.mjs,
+palette.test.mjs, linkName.test.mjs, personColor.test.mjs,
+passageBudget.test.mjs, libraryUtils.test.mjs and blockOps.test.mjs; a case
+added here fails whichever side drifts. Other pytest modules read the rest
+(blockkind.json test_block_columns.py, pastemath.json test_paste_math.py,
+slug.json test_publish.py, zoterotext.json and zoteroshown.json the text box
+tests), and test_every_fixture_is_read_by_both_suites checks that every
+fixture has a reader on each side but those ONE_SIDED names. The mirror's
+cases (synctree.json, textmerge.json) have only this Python side; the
+client's recognisers (inkshapes.json, inkscribble.json) have only the node
+side, and this side checks their shape, but both sides draw inkshapes.json's
+``samples`` and count the samples of its Shapes tool drags."""
 
 import base64
 import json
@@ -25,6 +31,39 @@ SHARED = Path(__file__).resolve().parents[2] / "tests" / "shared"
 
 def _load(name):
     return json.loads((SHARED / name).read_text(encoding="utf-8"))
+
+
+# The fixtures one suite alone reads, and why. Every other file in
+# tests/shared is read by a node test and by a pytest module, so a rule
+# changed on one side alone fails a suite.
+ONE_SIDED = {
+    "synctree.json": "the mirror's tree rules, which only the server runs",
+    "textmerge.json": "the server's three-way text merge",
+    "inkhold.json": "the held pen shape, drawn by the web, the iPad and Android; the server stores only the result",
+}
+
+
+def test_every_fixture_is_read_by_both_suites():
+    """A fixture's name as a string some frontend/tests/*.test.mjs and some
+    backend/tests/*.py read (in this module, a ``_load`` of it: the table
+    above reads nothing), so a fixture added with one reader fails here. A
+    name in prose, ``colors.json`` or tests/shared/colors.json's cases, is no
+    reader: only a name closed by a quote counts, so a comment left behind
+    when a reader goes does not hide it."""
+    here = Path(__file__).resolve()
+    node = "\n".join(p.read_text(encoding="utf-8") for p in sorted((SHARED.parents[1] / "frontend" / "tests").glob("*.test.mjs")))
+    python = "\n".join([p.read_text(encoding="utf-8") for p in sorted(here.parent.glob("*.py")) if p != here]
+                       + re.findall(r'_load\(("[^"]+")\)', here.read_text(encoding="utf-8")))
+    names = sorted(p.name for p in SHARED.glob("*.json"))
+    assert set(ONE_SIDED) <= set(names), "ONE_SIDED names a fixture that is gone"
+    for name in names:
+        named = re.compile(r"(?<![\w.-])" + re.escape(name) + r"""(?=["'](?!\w))""")
+        in_node, in_python = bool(named.search(node)), bool(named.search(python))
+        if name in ONE_SIDED:
+            assert in_node != in_python, f"{name} is read by {'both suites' if in_node else 'neither suite'}: update ONE_SIDED"
+        else:
+            assert in_node, f"no frontend/tests/*.test.mjs reads tests/shared/{name}"
+            assert in_python, f"no backend/tests/*.py reads tests/shared/{name}"
 
 
 TEXTNORM = _load("textnorm.json")
@@ -702,3 +741,147 @@ def test_ink_scribble_fixture(case):
         file_order = [i for i in ids_by_group[target["gid"]] if i in target["ids"]]
         assert target["ids"] == file_order, "ids in file order"
     assert seen == sorted(seen) and len(set(seen)) == len(seen), "groups in order, each once"
+
+
+ITEMTYPES = _load("itemtypes.json")
+
+
+def test_item_type_lists():
+    from gamma import item_types
+    assert list(item_types.ITEM_TYPES) == ITEMTYPES["types"]
+    assert item_types.CHECKABLE == set(ITEMTYPES["checkable"])
+
+
+@pytest.mark.parametrize("case", ITEMTYPES["normalize"], ids=[c["note"] for c in ITEMTYPES["normalize"]])
+def test_item_type_normalize(case):
+    from gamma import item_types
+    assert item_types.normalize(case["in"]) == case["out"]
+
+
+@pytest.mark.parametrize("case", ITEMTYPES["item_type"], ids=[c["note"] for c in ITEMTYPES["item_type"]])
+def test_item_type_of_a_record(case):
+    from gamma import item_types
+    assert item_types.item_type(case["meta"]) == case["type"]
+
+
+COLORS = _load("colors.json")
+
+
+def test_color_wash_set():
+    from gamma import colors
+    assert list(colors.WASH) == COLORS["wash"] and colors.WASH_ALPHA == COLORS["wash_alpha"]
+    assert colors.highlight_color(colors.WASH[0]) == colors.DEFAULT_HIGHLIGHT == COLORS["default_highlight"]
+
+
+@pytest.mark.parametrize("case", COLORS["normalize"], ids=[c["note"] for c in COLORS["normalize"]])
+def test_color_normalize(case):
+    from gamma import colors
+    assert colors.normalize_color(case["in"]) == case["out"]
+
+
+@pytest.mark.parametrize("case", COLORS["with_alpha"], ids=[c["note"] for c in COLORS["with_alpha"]])
+def test_color_with_alpha(case):
+    from gamma import colors
+    assert colors.with_alpha(case["color"], case["alpha"]) == case["out"]
+
+
+@pytest.mark.parametrize("case", COLORS["nearest"], ids=[c["note"] for c in COLORS["nearest"]])
+def test_color_nearest(case):
+    from gamma import colors
+    assert colors.nearest(case["color"], case["colors"]) == case["out"]
+
+
+LINKNAME = _load("linkname.json")
+
+
+@pytest.mark.parametrize("case", LINKNAME["clean"], ids=[c["note"] for c in LINKNAME["clean"]])
+def test_link_name(case):
+    from gamma.auth import ANONYMOUS_NAME, link_name
+    assert link_name(case["in"]) == (case["out"] or ANONYMOUS_NAME)
+
+
+PERSONCOLOR = _load("personcolor.json")
+
+
+@pytest.mark.parametrize("case", PERSONCOLOR["names"], ids=[c["note"] for c in PERSONCOLOR["names"]])
+def test_person_color(case):
+    from gamma.pdf_cards import PEOPLE, person_color
+    value = PEOPLE[case["index"]]
+    assert person_color(case["name"]) == tuple(int(value[i:i + 2], 16) / 255 for i in (1, 3, 5))
+
+
+PASSAGES = _load("passages.json")
+
+
+@pytest.mark.parametrize("case", PASSAGES["shares"], ids=[c["note"] for c in PASSAGES["shares"]])
+def test_passage_shares(case):
+    from gamma.ai_context import fair_shares
+    assert fair_shares(case["sizes"], case["budget"]) == case["shares"]
+
+
+@pytest.mark.parametrize("case", PASSAGES["texts"], ids=[c["note"] for c in PASSAGES["texts"]])
+def test_passage_texts(case):
+    """The PDF passages of a request, as quoted_shares and passage_cuts
+    measure them."""
+    from types import SimpleNamespace
+
+    from gamma.ai_context import passage_cuts, quoted_shares, request_selections
+    payload = SimpleNamespace(prompt="summarize this", selection="", note_selections=[],
+                              selections=[{"text": text, "page": 1} for text in case["texts"]])
+    assert [len(p["text"]) for p in request_selections(payload)] == case["total"]
+    assert quoted_shares(payload, case["budget"]) == (case["kept"], [])
+    assert [(c["kept"], c["total"]) for c in passage_cuts(payload, case["budget"])] == [
+        (kept, total) for kept, total in zip(case["kept"], case["total"]) if kept < total]
+
+
+ATTACHMENT = _load("attachment.json")
+
+
+@pytest.mark.parametrize("case", ATTACHMENT["cases"], ids=[c["note"] for c in ATTACHMENT["cases"]])
+def test_page_attachment(case):
+    from gamma.blocks_store import attachment_file, page_attachment
+    attachment = page_attachment(case["properties"])
+    assert attachment == case["attachment"]
+    assert attachment_file(attachment) == case["file"]
+
+
+FRACTIONALKEYS = _load("fractionalkeys.json")
+
+
+@pytest.mark.parametrize("case", FRACTIONALKEYS["between"], ids=[c["note"] for c in FRACTIONALKEYS["between"]])
+def test_order_keys_between(case):
+    from fractional_indexing import generate_key_between, generate_n_keys_between
+
+    from gamma.ops import order_key_error
+    keys = generate_n_keys_between(case["a"], case["b"], case["n"])
+    assert keys == case["keys"]
+    if case["n"] == 1:
+        assert generate_key_between(case["a"], case["b"]) == keys[0]
+    assert all(order_key_error(key) == "" for key in keys)
+
+
+@pytest.mark.parametrize("case", FRACTIONALKEYS["invalid"], ids=[c["note"] for c in FRACTIONALKEYS["invalid"]])
+def test_order_key_invalid(case):
+    """A key the client could not have minted: an op naming it answers 400."""
+    from gamma.ops import order_key_error
+    assert order_key_error(case["key"])
+
+
+@pytest.mark.parametrize("case", FRACTIONALKEYS["foreign"], ids=[c["note"] for c in FRACTIONALKEYS["foreign"]])
+def test_order_key_foreign(case):
+    """A key outside the base-62 alphabet: the library takes it, but a key
+    beside it (after it, or between it and the first key before it) fails
+    with a ValueError, so an op naming it answers 400."""
+    from fractional_indexing import generate_key_between, validate_order_key
+
+    from gamma.ops import order_key_error
+    key = case["key"]
+    validate_order_key(key)
+    failed = 0
+    for a, b in [(key, None)] + ([("a0", key)] if "a0" < key else []):
+        try:
+            generate_key_between(a, b)
+        except ValueError:
+            failed += 1
+    assert failed, "the library keys beside it: the server need not refuse it"
+    assert "base-62" in order_key_error(key)

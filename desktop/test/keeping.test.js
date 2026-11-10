@@ -1,7 +1,9 @@
 // The bar's reading of what this computer keeps (lib/keeping.js): a clone's
 // states in the order Gamma's sync pill checks them, a Zotero link's, a
-// folder's, a followed file's, and the one summary the sync button shows.
-// `npm test` in desktop/.
+// synced vault's of a directory and of one file, the one summary the sync
+// button shows, and what the shell says about a vault: the dialog's first
+// round, the questions before a removal, a force or going on, a round's
+// outcome. `npm test` in desktop/.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -11,8 +13,8 @@ const local = { id: 'l1', name: 'Local', type: 'local' };
 const servers = [local, { id: 'r1', name: 'NAS', type: 'remote', url: 'http://nas.lan:9001' }];
 const now = new Date().toISOString();
 const clone = (info) => keeping.clone(local, { workspace_id: 'w1', name: 'Lab (clone)', remote_name: 'Lab', remote_url: 'http://nas.lan:9001', ...info }, servers);
-const folder = (link) => keeping.folder(local, { id: 'f1', folder_id: 'x', dest: 'C:\\Papers\\Quantum', remote_url: '', ...link }, servers);
-const file = (link) => keeping.file(local, { id: 'p1', kind: 'file', page_id: 'pg', dest: 'D:\\tex\\build\\main.pdf', remote_url: '', title: 'Draft on X', ...link }, servers);
+const folder = (link) => keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Papers\\Quantum', remote_url: '', pull: true, push: 'off', ...link }, servers);
+const file = (link) => keeping.vault(local, { id: 'p1', kind: 'file', page_id: 'pg', dest: 'D:\\tex\\build\\main.pdf', remote_url: '', pull: false, push: 'pdfs', title: 'Draft on X', ...link }, servers);
 
 test('a clone reads as the sync pill reads it, in the same order', () => {
   assert.equal(clone({ mode: 'off', status: { running: true } }).state, 'detached');
@@ -31,105 +33,169 @@ test('a clone reads as the sync pill reads it, in the same order', () => {
   assert.equal(ok.key, 'clone:l1:w1');
 });
 
-test('a folder: syncing, a problem, not written yet, or up to date with files left alone', () => {
-  assert.equal(folder({ status: { running: true } }).state, 'busy');
-  assert.equal(folder({ status: { last_error: 'disk full' } }).title, 'disk full');
-  assert.equal(folder({ status: {} }).state, 'new');
-  const kept = folder({ status: { last_sync: now, kept: [{ path: 'a.md', why: 'changed', force: true }], folder_path: ['Papers', 'Quantum'] } });
-  assert.equal(kept.state, 'ok');
-  assert.equal(kept.name, 'Quantum');
-  assert.match(kept.text, /· 1 changed here$/);
+test('a vault of a directory: its name, its row\'s path ⇄ remote · folder, and its direction as words', () => {
+  const v = folder({ status: { last_sync: now, folder_path: ['Papers', 'Quantum'] } });
+  assert.deepEqual([v.kind, v.scope, v.key, v.name], ['vault', 'folder', 'vault:l1:f1', 'Quantum']);
+  assert.equal(v.where, 'C:\\Papers\\Quantum ⇄ Local · Papers / Quantum');
+  assert.deepEqual([v.pull, v.push], [true, 'off']);
   assert.equal(folder({ status: {} }).name, 'Quantum', 'named from its directory before a round');
-  assert.equal(folder({ folder_id: 'root', status: {} }).name, 'Whole library');
-  assert.equal(folder({ remote_url: 'http://other.example:9001', status: {} }).from, 'other.example:9001');
+  assert.equal(folder({ folder_id: 'root', status: {} }).where, 'C:\\Papers\\Quantum ⇄ Local · Whole library');
+  assert.equal(folder({ remote_url: 'http://nas.lan:9001', status: { folder_path: ['Lab'] } }).where, 'C:\\Papers\\Quantum ⇄ NAS · Lab', 'the remote by its registered name');
+  assert.equal(folder({ remote_url: 'http://other.example:9001', status: {} }).remote, 'other.example:9001');
+  // push is a word: the string "off" is no push, whatever Boolean() says of it
+  assert.equal(folder({ push: 'off', status: {} }).push, 'off');
+  assert.equal(folder({ push: 'everything', status: {} }).push, 'everything');
+  assert.equal(folder({ push: true, status: {} }).push, 'off', 'a flag is not a word');
+  assert.equal(folder({ pull: false, push: 'everything', status: {} }).pull, false);
 });
 
-test('a folder that sends PDFs back says so, and how many its last round sent', () => {
-  assert.equal(folder({ status: { last_sync: now } }).push, false);
-  const back = folder({ push: true, status: { last_sync: now, counts: { sent: 2, written: 0 }, kept: [{ path: 'a.pdf', why: 'changed', force: true }] } });
-  assert.equal(back.push, true);
-  assert.equal(back.state, 'ok');
-  assert.match(back.text, /^Up to date · .+ · sends back · 2 sent · 1 changed here$/);
-  assert.match(back.title, /sent back to Gamma; the last round sent 2\./);
-  const quiet = folder({ push: true, status: { last_sync: now, counts: { sent: 0 } } });
-  assert.match(quiet.text, /· sends back$/);
-  assert.doesNotMatch(quiet.text, /sent/);
+test('a vault of a directory, worst first: syncing, paused, stopped, held, not there, a problem, never synced, up to date', () => {
+  assert.equal(folder({ status: { running: true, stopped: 'x' } }).state, 'busy');
+  const paused = folder({ status: { paused_at: now, stopped: 'x', last_error: 'x' } });
+  assert.equal(paused.state, 'paused');
+  assert.match(paused.text, /^Paused · /);
+  const stopped = folder({ status: { stopped: 'C:\\Papers\\Quantum holds another vault\'s marker', last_error: 'x', held: { removals: 9, total: 10 } } });
+  assert.deepEqual([stopped.state, stopped.text], ['error', 'Stopped']);
+  assert.match(stopped.title, /another vault's marker Locate… tells Gamma where the directory is now\.$/);
+  const held = folder({ status: { held: { removals: 7, total: 12 }, offline: true, last_error: 'x' } });
+  assert.deepEqual([held.state, held.text], ['held', 'Held · 7 of 12 files gone']);
+  assert.match(held.title, /Go on pushes the removals/);
+  const away = folder({ status: { offline: true, last_error: 'the directory is not there' } });
+  assert.deepEqual([away.state, away.text], ['waiting', 'Directory not there']);
+  assert.match(away.title, /^the directory is not there The vault syncs again once it is back; Locate… if it moved\.$/);
+  assert.deepEqual([folder({ status: { last_error: 'disk full' } }).state, folder({ status: { last_error: 'disk full' } }).title], ['error', 'disk full']);
+  assert.deepEqual([folder({ status: {} }).state, folder({ status: {} }).text], ['new', 'Not synced yet']);
 });
 
-test('a PDF a send could not deliver is no change Sync can replace', () => {
-  const held = folder({ push: true, status: { last_sync: now, kept: [
-    { path: 'a.pdf', why: 'attachment belongs to another page', force: false },
-    { path: 'b.pdf', why: 'changed here and in Gamma', force: true },
+test('an up-to-date vault says what it pushed, its conflicts, the files changed here and those not synced', () => {
+  const v = folder({ push: 'pdfs', status: { last_sync: now, untracked: 4, counts: { sent: 2, conflicts: 1 }, kept: [
+    { path: 'a.md', why: 'changed here', force: true },
+    { path: 'b.pdf', why: 'attachment belongs to another page', force: false },
   ] } });
-  assert.equal(held.changed, 1, 'only what a forced round replaces');
-  assert.equal(held.held, 1);
-  assert.match(held.text, /· 1 changed here · 1 not synced$/);
-  assert.match(held.title, /Sync can replace it\./);
-  assert.match(held.title, /Not synced: a\.pdf \(attachment belongs to another page\)\./);
-  const none = folder({ push: true, status: { last_sync: now, kept: [{ path: 'a.pdf', why: 'the quota', force: false }] } });
-  assert.equal(none.changed, 0);
-  assert.doesNotMatch(none.text, /changed here/);
-  assert.doesNotMatch(none.title, /Sync can replace/);
+  assert.equal(v.state, 'ok');
+  assert.match(v.text, /^Up to date · .+ · 2 pushed · 1 conflict · 1 changed here · 1 not synced$/);
+  assert.deepEqual([v.changed, v.left, v.untracked], [1, 1, 4]);
+  assert.match(v.title, /Gamma's changes are pulled; PDFs you change here are pushed\./);
+  assert.match(v.title, /1 conflict in the last round: the file won/);
+  assert.match(v.title, /Force pull… replaces it with Gamma's\./);
+  assert.match(v.title, /Not synced: b\.pdf \(attachment belongs to another page\)\./);
+  assert.match(v.title, /Untracked: 4 files Gamma does not read\.$/);
+  const quiet = folder({ status: { last_sync: now, counts: { sent: 0 } } });
+  assert.doesNotMatch(quiet.text, /pushed|conflict|changed|not synced/);
+  assert.match(quiet.title, /nothing here is pushed\.$/);
+  assert.match(folder({ push: 'everything', status: { last_sync: now } }).title, /are pulled and pushed\.$/);
+  assert.match(folder({ pull: false, push: 'everything', status: { last_sync: now } }).title, /nothing is pulled\.$/);
 });
 
-test('a followed file: sending, paused, a problem, waiting for the file, not sent yet, then sent or up to date', () => {
-  assert.equal(file({ status: { running: true, last_error: 'x' } }).text, 'Sending…');
+test('an up-to-date vault lists the names its scan refused among those not synced, says why its push went off, and names the pages another vault keeps', () => {
+  const v = folder({ status: { last_sync: now, upgraded_at: now,
+    kept: [{ path: 'b.pdf', why: 'attachment belongs to another page', force: false }],
+    refused: [{ path: 'notes.md', why: 'differs from another name here only by case' }, { path: 'con.md', why: 'is a name Windows keeps for a device' }],
+    push_off: 'push turned off when it was taken onto synced vaults: Its folder holds pages the synced vault D:\\Old pushes into too: only one vault pushes into a page.',
+    shared: [{ page: 'p1', title: 'Attention' }, { page: 'p2', title: 'BERT' }] } });
+  assert.equal(v.state, 'ok');
+  assert.match(v.text, /^Up to date · .+ · 3 not synced · 2 in another vault · push turned off$/);
+  assert.equal(v.left, 3);
+  assert.match(v.title, /Not synced: b\.pdf \(attachment belongs to another page\); notes\.md \(differs from another name here only by case\); con\.md \(is a name Windows keeps for a device\)\./);
+  assert.match(v.title, / Push turned off when it was taken onto synced vaults: Its folder holds pages the synced vault D:\\Old pushes into too: only one vault pushes into a page\./);
+  assert.match(v.title, / Kept by an older synced vault beside this one, so not written here: “Attention”, “BERT”\./);
+  assert.match(v.title, / Kept on this computer before; a synced vault since .+, with \.gamma\/ in place of \.gamma-sync\.json\./);
+  const plain = folder({ status: { last_sync: now } });
+  assert.doesNotMatch(`${plain.text} ${plain.title}`, /not synced|another vault|turned off|before/);
+});
+
+test('a vault of one file: pushing, paused, a problem, waiting for the file, never pushed, then pushed or up to date', () => {
+  assert.equal(file({ status: { running: true, last_error: 'x' } }).text, 'Pushing…');
   const running = file({ status: { running: true, paused_at: now } });
   assert.equal(running.state, 'busy');
   assert.equal(running.paused, true, 'still paused once the round ends');
   const paused = file({ status: { paused_at: now, last_error: 'x', waiting: 'still being written' } });
   assert.equal(paused.state, 'paused');
-  assert.match(paused.text, /^Paused · /);
   const bad = file({ status: { last_error: 'the page is no longer in Gamma', waiting: 'still being written', last_sync: now } });
   assert.deepEqual([bad.state, bad.text, bad.title], ['error', 'Problem', 'the page is no longer in Gamma']);
   const waiting = file({ status: { waiting: 'still being written', last_sync: now } });
   assert.deepEqual([waiting.state, waiting.text, waiting.title], ['pending', 'Waiting for the file to finish', 'still being written']);
-  assert.deepEqual([file({ status: {} }).state, file({ status: {} }).text], ['new', 'Not sent yet']);
+  assert.deepEqual([file({ status: {} }).state, file({ status: {} }).text], ['new', 'Not pushed yet']);
   const sent = file({ status: { last_sync: now, last_sent: now } });
   assert.equal(sent.state, 'ok');
-  assert.match(sent.text, /^Sent · /);
-  const same = file({ status: { last_sync: now } });
-  assert.equal(same.state, 'ok');
-  assert.match(same.text, /^Up to date · /);
+  assert.match(sent.text, /^Pushed · /);
+  assert.match(file({ status: { last_sync: now } }).text, /^Up to date · /);
   assert.match(file({ status: { last_sync: now, last_sent: now, relocation_error: 'too many background tasks' } }).title,
     /The highlights were not moved: too many background tasks$/);
 });
 
-test('a followed file is named after its page, else the title its rounds saw, else the file; it says where it goes', () => {
+test('a vault of one file is named after its page, only pushes, and its row names the page', () => {
   const f = file({ status: {} });
-  assert.deepEqual([f.kind, f.key, f.name, f.where, f.dest, f.from, f.paused], ['file', 'file:l1:p1', 'Draft on X', 'D:\\tex\\build\\main.pdf', 'D:\\tex\\build\\main.pdf', 'Local', false]);
+  assert.deepEqual([f.kind, f.scope, f.key, f.name, f.dest, f.remote, f.paused], ['vault', 'file', 'vault:l1:p1', 'Draft on X', 'D:\\tex\\build\\main.pdf', 'Local', false]);
+  assert.equal(f.where, 'D:\\tex\\build\\main.pdf ⇄ Local · Draft on X');
+  assert.deepEqual([f.pull, f.push], [false, 'pdfs']);
   assert.equal(file({ title: '', status: { title: 'Draft on Y' } }).name, 'Draft on Y');
   assert.equal(file({ title: '', status: {} }).name, 'main.pdf');
-  assert.equal(file({ remote_url: 'http://nas.lan:9001', status: {} }).from, 'NAS');
-  const [a, b] = keeping.itemsOf(local, { links: [{ id: 'f1', folder_id: 'x', dest: 'C:\\Papers', status: {} }, { id: 'p1', kind: 'file', dest: 'D:\\main.pdf', status: {} }] }, servers);
-  assert.deepEqual([a.kind, b.kind], ['folder', 'file'], 'the links split by kind');
+  assert.equal(file({ remote_url: 'http://nas.lan:9001', status: {} }).remote, 'NAS');
+  const items = keeping.itemsOf(local, { links: [{ id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Papers', status: {} }, { id: 'p1', kind: 'file', dest: 'D:\\main.pdf', status: {} }] }, servers);
+  assert.deepEqual(items.map((i) => [i.kind, i.scope]), [['vault', 'folder'], ['vault', 'file']], 'one kind, two scopes');
 });
 
-test('a paused folder reads as paused unless a round asked for runs; a detached clone is paused', () => {
+test('a directory vault\'s round says how far it is: the files pushed and pages pulled of those it knows, the pushed PDFs\' bytes', () => {
+  assert.equal(folder({ status: { running: true, progress: { done: 0, total: 0, path: '' } } }).text, 'Syncing…');
+  const going = folder({ status: { running: true, progress: { done: 1200, total: 3400, path: 'Sub/A paper.pdf',
+    bytes: { done: 1.2 * 1073741824, total: 8 * 1073741824 } } } });
+  assert.equal(going.state, 'busy');
+  assert.equal(going.text, 'Syncing 1,200 / 3,400');
+  assert.equal(going.title, 'A round is running: 1,200 of 3,400 pushed or pulled (PDFs 1.2 GB of 8.0 GB pushed), now Sub/A paper.pdf.');
+  const notes = folder({ status: { running: true, progress: { done: 0, total: 1, path: '', bytes: { done: 0, total: 0 } } } });
+  assert.equal(notes.title, 'A round is running: 0 of 1 pushed or pulled.');
+  assert.equal(file({ status: { running: true, progress: { done: 1, total: 3 } } }).text, 'Pushing…', 'a file\'s vault pushes one file');
+});
+
+test('a vault of a workspace its maker left says so, paused it stays quiet; another account\'s seen by a viewer names no place', () => {
+  const roles = [{ id: 'mine', role: 'owner' }, { id: 'lab', role: 'viewer' }];
+  const link = (more) => ({ id: 'f1', kind: 'folder', folder_id: 'x', workspace_id: 'gone', dest: 'C:\\Papers', remote_url: '',
+    status: { last_sync: now, last_error: 'the account that made this vault has no access to its workspace any more', folder_path: ['Papers'] }, ...more });
+  const [away, inLab, remote, unread] = [
+    ...keeping.itemsOf(local, { links: [link(), link({ id: 'f2', workspace_id: 'lab' }), link({ id: 'f3', remote_url: 'http://nas.lan:9001' })], roles }, servers),
+    ...keeping.itemsOf(local, { links: [link()] }, servers)];
+  assert.deepEqual([away.away, away.state, away.text, away.name, away.where], [true, 'error', 'No access to its workspace', 'Papers', 'C:\\Papers ⇄ Local · Papers']);
+  assert.match(away.title, /no longer a member.*Remove the vault to free its directory/);
+  assert.deepEqual([inLab.away, inLab.text], [false, 'Sync problem'], 'a viewer is still in the workspace');
+  assert.equal(remote.away, false, 'a vault of another server names a workspace there');
+  assert.equal(unread.away, false, 'no session read: nothing is assumed');
+  const awayFile = keeping.itemsOf(local, { links: [{ id: 'p1', kind: 'file', workspace_id: 'gone', dest: 'D:\\main.pdf', status: {} }], roles }, servers)[0];
+  assert.match(awayFile.title, /free the file; it stays as it is/);
+  assert.equal(keeping.itemsOf(local, { links: [link({ status: { paused_at: now } })], roles }, servers)[0].state, 'paused');
+  const seen = folder({ dest: '', path: '', status: { last_sync: now } });
+  assert.deepEqual([seen.seen, seen.dest, seen.where, seen.name], [true, '', 'Local', 'Synced vault']);
+  assert.match(seen.title, /Another account made this vault/);
+  assert.equal(folder({ status: {} }).seen, false);
+});
+
+test('the button shows the worst state; a detached clone or a paused vault never raises it; a held vault asks for a look', () => {
+  assert.deepEqual(keeping.summarize([]), { state: 'none', text: '', title: 'Nothing syncs with this computer yet' });
+  const ok = folder({ status: { last_sync: now } });
+  const busy = folder({ id: 'f2', status: { running: true } });
+  const bad = clone({ status: { last_error: 'x', last_sync: now } });
+  const off = clone({ workspace_id: 'w2', mode: 'off' });
+  assert.deepEqual(keeping.summarize([ok, off]), { state: 'ok', text: 'Synced', title: '1 clone and 1 synced vault on this computer: synced' });
+  assert.equal(keeping.summarize([ok, busy]).text, 'Syncing…');
+  assert.equal(keeping.summarize([ok, busy, bad]).text, '1 problem');
+  const held = folder({ id: 'f4', status: { held: { removals: 6, total: 10 } } });
+  assert.equal(keeping.summarize([ok, busy, held]).text, 'Held');
+  assert.equal(keeping.summarize([held, bad]).state, 'error');
+  assert.equal(keeping.summarize([ok, folder({ id: 'f5', status: { offline: true } })]).text, 'Waiting', 'a disk unplugged only says so');
+  const paused = folder({ id: 'f3', status: { last_error: 'x', paused_at: now } });
+  assert.equal(keeping.summarize([ok, paused]).text, 'Synced');
+  assert.deepEqual(keeping.summarize([off, paused]), { state: 'paused', text: 'Paused', title: '1 clone and 1 synced vault on this computer: paused' });
+});
+
+test('the paused states of a vault and a clone', () => {
   const paused = folder({ status: { last_sync: now, last_error: 'x', paused_at: now } });
-  assert.equal(paused.state, 'paused');
   assert.equal(paused.paused, true);
-  assert.match(paused.text, /^Paused · /);
   const running = folder({ status: { running: true, paused_at: now } });
   assert.equal(running.state, 'busy');
   assert.equal(running.paused, true, 'still paused once the round ends');
   assert.equal(folder({ status: { last_sync: now } }).paused, false);
   assert.equal(clone({ mode: 'off' }).paused, true);
   assert.equal(clone({ status: { last_sync: now } }).paused, false);
-});
-
-test('the button shows the worst state; a detached clone or a paused folder never raises it', () => {
-  assert.equal(keeping.summarize([]).state, 'none');
-  const ok = folder({ status: { last_sync: now } });
-  const busy = folder({ id: 'f2', status: { running: true } });
-  const bad = clone({ status: { last_error: 'x', last_sync: now } });
-  const off = clone({ workspace_id: 'w2', mode: 'off' });
-  assert.deepEqual(keeping.summarize([ok, off]), { state: 'ok', text: 'Synced', title: '1 clone and 1 folder on disk on this computer: synced' });
-  assert.equal(keeping.summarize([ok, busy]).text, 'Syncing…');
-  assert.equal(keeping.summarize([ok, busy, bad]).text, '1 problem');
-  const paused = folder({ id: 'f3', status: { last_error: 'x', paused_at: now } });
-  assert.equal(keeping.summarize([ok, paused]).text, 'Synced');
-  assert.deepEqual(keeping.summarize([off, paused]), { state: 'paused', text: 'Paused', title: '1 clone and 1 folder on disk on this computer: paused' });
 });
 
 const link = (info) => keeping.zotero(local, { kind: 'zotero', workspace_id: 'w3', name: 'Papers', library: 'users/1', library_name: 'My Library', mode: 'two-way', ...info });
@@ -209,21 +275,111 @@ test('a server lists its Zotero links among what it keeps, and the button counts
   assert.deepEqual(keeping.summarize([waiting]), { state: 'waiting', text: 'Waiting', title: '1 Zotero link on this computer: waiting' });
   const ok = folder({ status: { last_sync: now } });
   const off = clone({ workspace_id: 'w2', mode: 'off' });
-  assert.equal(keeping.summarize([ok, off, link({ status: { last_sync: now } })]).title, '1 clone, 1 Zotero link and 1 folder on disk on this computer: synced');
+  assert.equal(keeping.summarize([ok, off, link({ status: { last_sync: now } })]).title, '1 clone, 1 Zotero link and 1 synced vault on this computer: synced');
   assert.equal(keeping.summarize([link({ status: { last_error: 'x', error_kind: 'auth' } }), ok]).state, 'error');
 });
 
-test('the summary names every kind; a paused file never raises it', () => {
+test('the summary counts vaults of both scopes together; a paused one never raises it', () => {
   const ok = folder({ status: { last_sync: now } });
-  const ok2 = folder({ id: 'f2', status: { last_sync: now } });
   const sent = file({ status: { last_sync: now, last_sent: now } });
   const cl = clone({ status: { last_sync: now } });
-  assert.equal(keeping.summarize([cl, ok, ok2, sent]).title, '1 clone, 2 folders on disk and 1 file followed on this computer: synced');
   const zl = link({ status: { last_sync: now } });
-  assert.equal(keeping.summarize([cl, zl, ok, ok2, sent]).title, '1 clone, 1 Zotero link, 2 folders on disk and 1 file followed on this computer: synced');
-  assert.equal(keeping.summarize([sent, file({ id: 'p2', status: { last_sync: now } })]).title, '2 files followed on this computer: synced');
+  assert.equal(keeping.summarize([cl, zl, ok, sent]).title, '1 clone, 1 Zotero link and 2 synced vaults on this computer: synced');
   const paused = file({ id: 'p3', status: { last_error: 'x', paused_at: now } });
   assert.equal(keeping.summarize([ok, paused]).text, 'Synced');
   assert.equal(keeping.summarize([paused]).state, 'paused');
   assert.equal(keeping.summarize([ok, file({ id: 'p4', status: { waiting: 'still being written', last_sync: now } })]).text, 'Not synced yet');
+});
+
+// The dialog's sentence for `preview` and the switches.
+const say = (preview, more = {}) => keeping.firstRound({ path: 'D:\\Papers', folder: 'Papers', preview, pull: true, push: 'off', ...more });
+
+test('the dialog says what the first round does: pull into the directory, push from it, or both', () => {
+  const pages = { notes: 0, pdfs: 0, pages: 12, empty: true, marker: null, refusal: '' };
+  assert.deepEqual(say(pages), { ok: true,
+    text: 'Pull 12 pages into D:\\Papers; nothing there is pushed. Gamma adds .gamma/ there, to know the directory again, and nothing else of its own.' });
+  assert.match(say(pages, { push: 'pdfs' }).text, /^Pull 12 pages into D:\\Papers; PDFs you change there are pushed back\. Gamma adds \.gamma\//);
+  // every vault made now is the engine's: none keeps a list of its files beside them
+  for (const pull of [true, false]) {
+    for (const push of keeping.PUSH) assert.doesNotMatch(say(pages, { pull, push }).text, /gamma-sync/, `${pull}:${push}`);
+  }
+  const files = { notes: 3, pdfs: 2, pages: 0, untracked: 4, marker: null, refusal: '' };
+  assert.deepEqual(say(files, { push: 'everything', newFolder: true }), { ok: true,
+    text: 'Push 3 notes and 2 PDFs from D:\\Papers into a new folder “Papers”; from then on both sides are kept in step. ' +
+      'Gamma adds .gamma/ there, to know the directory again, and nothing else of its own. 4 other files stay untracked.' });
+  assert.match(say(files, { push: 'everything', pull: false }).text, /^Push 3 notes and 2 PDFs from D:\\Papers into “Papers”; nothing is ever pulled into D:\\Papers\. Gamma adds \.gamma\//);
+  assert.match(say(files, { push: 'pdfs', pull: false }).text, /^Push the 2 PDFs of D:\\Papers into “Papers”; nothing is ever pulled/);
+  assert.match(say({ pages: 12 }, { push: 'everything' }).text, /^Pull 12 pages into D:\\Papers; from then on both sides are kept in step\./);
+  assert.match(say(files).text, /The 5 notes and PDFs already there are left as they are\./, 'a vault that does not push everything makes no page of them');
+  assert.match(say(files, { push: 'pdfs', newFolder: true }).text, /The 5 notes and PDFs already there are left as they are\./, 'made from the directory too');
+  assert.doesNotMatch(say(files, { push: 'everything' }).text, /left as they are/);
+  assert.match(say({ untracked: 1 }).text, /1 other file stays untracked\.$/);
+});
+
+test('the dialog shuts Sync for a vault that would be refused, and says why', () => {
+  assert.deepEqual(say({}, { pull: false, push: 'off' }), { ok: false, text: 'A vault pulls, pushes, or both: turn one of them on.' });
+  assert.equal(say({}, { remote: true, push: 'everything' }).ok, false);
+  assert.deepEqual(say({}, { remote: true, pull: false, push: 'pdfs' }), { ok: false, text: keeping.REMOTE_RULE }, 'the rule the vault\'s switches keep to');
+  assert.equal(keeping.REMOTE_RULE, 'A vault of another server pulls, and pushes PDFs at most, for now.');
+  assert.equal(say({}, { remote: true, push: 'pdfs' }).ok, true, 'a remote\'s folder may push its PDFs');
+  assert.deepEqual(say({ refusal: 'D:\\Papers holds the marker of the synced vault E:\\Papers: was it copied?' }),
+    { ok: false, text: 'D:\\Papers holds the marker of the synced vault E:\\Papers: was it copied?' });
+  assert.match(say({ pages: 3, notes: 1 }, { push: 'everything' }).text, /^Both the folder and the directory hold files/);
+  assert.equal(say({ pages: 3, notes: 1 }, { push: 'everything' }).ok, false);
+  assert.equal(say({ pages: 0, notes: 1 }, { push: 'everything', newFolder: true }).ok, true);
+});
+
+test('a directory that was a vault no link holds is taken up again; one with its marker writes nothing of its own', () => {
+  assert.match(say({ marker: { id: 'v1', link_id: '' } }, { push: 'everything', newFolder: true }).text, /D:\\Papers was a synced vault before: it is taken up again\.$/);
+  assert.doesNotMatch(say({ marker: { id: 'v1', link_id: 'l9' } }, { push: 'everything', newFolder: true }).text, /\.gamma\//);
+});
+
+test('removing a vault: the pages stay, the PDFs read in place are stored first; the files stay or go to its trash', () => {
+  const v = folder({ status: { last_sync: now, folder_path: ['Papers'] } });
+  const q = keeping.removalAsk(v, { pages: 12, in_place: 2, bytes: 3_400_000 });
+  assert.equal(q.message, 'Remove the synced vault “Papers”?');
+  assert.match(q.detail, /^Its 12 pages stay in Gamma; 2 PDFs read where they are \(3\.4 MB\) are stored in Gamma first\. /);
+  assert.match(q.detail, /\.gamma\/trash; files you added or changed stay\.$/);
+  assert.deepEqual(q.choices, ['keep', 'trash', null]);
+  assert.equal(q.buttons.length, q.choices.length);
+  assert.match(keeping.removalAsk(v, { pages: 1 }).detail, /^Its page stays in Gamma\. /);
+  assert.match(keeping.removalAsk(v, { pages: 0 }).detail, /^It holds no pages yet\. /);
+  const away = keeping.removalAsk(folder({ status: { offline: true } }), { pages: 3 });
+  assert.deepEqual(away.choices, ['keep', null], 'a directory not there is never touched');
+  assert.match(away.detail, /is not there now, so nothing on disk is touched\.$/);
+  // a stopped vault (its marker gone or another's): the server touches nothing there, so no trash is offered
+  const stopped = keeping.removalAsk(folder({ status: { stopped: 'The marker is gone.' } }), { pages: 3 });
+  assert.deepEqual(stopped.choices, ['keep', null]);
+  assert.deepEqual(stopped.buttons, ['Remove the vault', 'Cancel']);
+  assert.match(stopped.detail, /is no longer this vault's directory, so nothing in it is touched\.$/);
+  const f = keeping.removalAsk(file({ status: {} }), { pages: 1 });
+  assert.deepEqual(f.choices, ['keep', null]);
+  assert.match(f.detail, /^main\.pdf is no longer pushed to the page\. The file and the page stay as they are\.$/);
+});
+
+test('a force pull or push and going on are counted and asked first', () => {
+  const v = folder({ status: { last_sync: now, folder_path: ['Papers'], kept: [{ path: 'a.md', why: 'changed', force: true }] } });
+  const pull = keeping.forceAsk(v, 'pull', { pages: 12 });
+  assert.equal(pull.message, 'Force pull “Papers”?');
+  assert.match(pull.detail, /^Every file of its 12 pages in C:\\Papers\\Quantum becomes what Gamma holds, the 1 file you changed on this computer among them\./);
+  assert.deepEqual(pull.buttons, ['Force pull', 'Cancel']);
+  const push = keeping.forceAsk(v, 'push', { pages: 1 });
+  assert.match(push.detail, /^Each of its 1 page becomes what its file in C:\\Papers\\Quantum says/);
+  assert.deepEqual(push.buttons, ['Force push', 'Cancel']);
+  const on = keeping.goOnAsk(folder({ status: { held: { removals: 7, total: 12 }, folder_path: ['Papers'] } }));
+  assert.equal(on.message, '7 files of 12 in “Papers” went from this computer since the last sync.');
+  assert.deepEqual(on.buttons, ['Go on', 'Cancel']);
+});
+
+test('a round asked for is said in the words: pushed, pulled files, conflicts; stopped, held or a problem', () => {
+  const v = folder({ status: { folder_path: ['Papers'] } });
+  assert.equal(keeping.roundSaid(v, { counts: { added: 2, unchanged: 9, kept: 1, sent: 3, conflicts: 1 } }), 'Papers is up to date: 2 added, 3 pushed, 1 conflict.');
+  assert.equal(keeping.roundSaid(v, { counts: { unchanged: 4 } }), 'Papers is up to date.');
+  assert.equal(keeping.roundSaid(v, { stopped: 'its marker is gone', last_error: 'its marker is gone' }), 'Papers: its marker is gone');
+  assert.match(keeping.roundSaid(v, { held: { removals: 7, total: 12 } }), /^Papers is held: 7 files of 12 went from this computer\./);
+  assert.equal(keeping.roundSaid(v, { last_error: 'disk full' }), 'Papers: disk full');
+  const f = file({ status: {} });
+  assert.equal(keeping.roundSaid(f, { counts: { sent: 1 } }), 'main.pdf was pushed to Gamma.');
+  assert.equal(keeping.roundSaid(f, { counts: {}, waiting: 'still being written' }), 'main.pdf is not pushed yet: still being written.');
+  assert.equal(keeping.roundSaid(f, { counts: {} }), 'main.pdf: nothing new to push.');
 });

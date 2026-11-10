@@ -55,7 +55,8 @@ cloud-signin``, which only the machine the browser runs on can reach, RFC
 verifier of the challenge it started with (``app_claim``), and that
 answer sets the cookie. A sign-in link someone else started delivers its
 result to this person's own machine, never to the one that holds the
-verifier.
+verifier. The app's authorize URL carries ``gamma_app=1``, which tells the
+account server's pages to leave out their links to the plans.
 
 Configuration lives in the ``settings`` KV (issuer, client id, the secret
 Fernet-encrypted with the data directory's key, policy) with ``GAMMA_CLOUD_*``
@@ -99,6 +100,7 @@ by Gamma Cloud username makes (``lookup_username``) and the mail of an
 invitation by e-mail (``send_invitation``, ``cancel_invitation``) are here.
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -263,6 +265,17 @@ def client_secret() -> str:
     except (InvalidToken, ValueError):
         log.warning("cloud sign-in: the stored client secret cannot be decrypted (key changed?)")
         return ""
+
+
+def client_basic(cfg: dict) -> dict:
+    """The Authorization header that names this server to the account
+    server as its confidential client (``cfg``'s client id and the client
+    secret, HTTP Basic); {} for a server with no secret."""
+    secret = client_secret()
+    if not secret:
+        return {}
+    pair = base64.b64encode(f"{cfg['client_id']}:{secret}".encode()).decode("ascii")
+    return {"Authorization": f"Basic {pair}"}
 
 
 def validate_issuer(value: str) -> str:
@@ -499,6 +512,10 @@ def begin(request, *, link_user: str | None, next_path: str, app: dict | None = 
     params = {"response_type": "code", "client_id": cfg["client_id"], "redirect_uri": base + CALLBACK_PATH,
               "scope": SCOPE, "state": state, "nonce": nonce,
               "code_challenge": _b64url(hashlib.sha256(verifier.encode()).digest()), "code_challenge_method": "S256"}
+    if app:
+        # The account server's pages then link nowhere a plan is bought (cloud/gammacloud/pages.py
+        # in_app); an authorization server ignores a parameter it does not know (RFC 6749 §3.1).
+        params["gamma_app"] = "1"
     return doc["authorization_endpoint"] + "?" + urllib.parse.urlencode(params)
 
 

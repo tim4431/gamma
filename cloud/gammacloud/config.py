@@ -92,6 +92,7 @@ VERIFY_TOKEN_TTL = 24 * 3600
 RESET_TOKEN_TTL = 3600
 AUTHORIZE_REQUEST_TTL = 600            # a pending sign-in on the authorize page
 EXTERNAL_LOGIN_TTL = 900               # a Google/GitHub round trip, or the signup form after it
+APP_BROWSER_TTL = 3600                 # a browser a native app opened for its sign-in (pages.in_app)
 ZOTERO_REQUEST_TTL = 540               # a browser at zotero.org: inside the Gamma server's own 600 s wait
 ZOTERO_CODE_TTL = 300                  # an approval awaiting its server: outlasts the server's 240 s confirm page
 AUTH_CODE_TTL = 120

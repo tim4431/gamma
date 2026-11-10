@@ -1,9 +1,11 @@
 """Search: GET /api/search — one query over the notes index (block_fts in
 pages.db, gamma/block_index.py) and the PDF index (pdf_fts): result shape,
 ordering, folder scope, and a search right after every kind of block write
-finding what it wrote (the triggers, tests/test_notes_index.py) — plus the
-PDF index itself: /api/pdf-search hits and separator tolerance, stale index
-versions, the reindex endpoint, the indexing job."""
+finding what it wrote (the triggers, tests/test_notes_index.py) — the
+Ctrl+F panel's POST /block-search and /pdf-search, kept to the page ids its
+filters send — plus the PDF index itself: /api/pdf-search hits and
+separator tolerance, stale index versions, the reindex endpoint, the
+indexing job."""
 
 import sqlite3
 
@@ -199,6 +201,93 @@ def test_block_search_keeps_to_the_chips_and_pages_on():
             break
     assert [len(p) for p in pages] == [5, 5, 4]
     assert [i for p in pages for i in p] == whole
+
+
+def test_block_search_post_keeps_to_the_pages_and_kinds_it_names():
+    """The panel's notes group as a POST: the page ids its filters keep go
+    in the body (``pages``), so a match inside them is found however many
+    newer ones elsewhere come first, ``next`` goes on without a repeat or
+    a skip, and ``kinds`` keeps to the block kinds ``in:`` names. What it
+    answers is what the GET answers."""
+    make_user("srch_post", "pw")
+    c = login("srch_post", "pw")
+    folder = make_folder(c, "atoms")
+    inside = make_page(c, "Inside", properties={"folders": [folder]})
+    old = _block(c, inside["id"], "quokka in the trap")
+    marked = _block(c, inside["id"], "quokka marked", {"pdf_position": {"pageNumber": 1}})
+    elsewhere = make_page(c, "Elsewhere")
+    newer = [_block(c, elsewhere["id"], f"quokka note {i}") for i in range(25)]
+    trashed = make_page(c, "Trashed")
+    _block(c, trashed["id"], "quokka in the bin")
+    assert c.delete(f"/api/blocks/{trashed['id']}").status_code == 200
+
+    def notes(status=200, **body):
+        r = c.post("/api/block-search", json={"q": "quokka", "limit": 20, **body})
+        assert r.status_code == status, r.text
+        return r.json()
+
+    def ids(body):
+        return [b["id"] for b in body["blocks"]]
+
+    first = notes()
+    assert first == c.get("/api/block-search", params={"q": "quokka", "limit": 20}).json()
+    assert old not in ids(first) and first["next"]
+    assert ids(notes(pages=[inside["id"]])) == [marked, old]
+    assert "next" not in notes(pages=[inside["id"]])
+    assert notes(pages=[]) == {"blocks": []}
+    # a folder's id, a trashed page and a foreign id are no pages of the library
+    assert notes(pages=[folder, trashed["id"], "nosuchpage00"]) == {"blocks": []}
+    second = notes(cursor=first["next"])
+    assert "next" not in second
+    assert ids(first) + ids(second) == [*reversed(newer), marked, old]
+    assert ids(notes(kinds=["highlight"])) == [marked]
+    assert ids(notes(kinds=["note"], pages=[inside["id"]])) == [old]
+    assert ids(notes(kinds=["page"], q="inside")) == [inside["id"]]
+    hit = notes(pages=[inside["id"]], limit=1)["blocks"][0]
+    assert hit["page_root_id"] == inside["id"] and hit["page_title"] == "Inside" and hit["kind"] == "highlight"
+    assert notes(400, kinds=["bogus"])["detail"] == "unknown kind: bogus"
+    assert notes(400, cursor="nonsense")["detail"] == "bad cursor"
+    assert notes(q="") == {"blocks": [], "error": "empty query"}
+    too_many = notes(413, pages=[f"p{i:011d}" for i in range(50_001)])
+    assert "50000" in too_many["detail"]
+    assert notes(pages=[f"p{i:011d}" for i in range(50_000)]) == {"blocks": []}, "the cap itself passes"
+    assert notes(regex=1) == first, "a regex field is ignored: the query is text"
+
+
+def test_pdf_search_post_keeps_to_the_pages_it_names():
+    """The panel's PDF group as a POST: the papers of the ``pages`` only,
+    a paper's best three per round, ``next`` and the 400 for a bad cursor
+    as the GET has them, and ``indexing`` over those pages alone."""
+    make_user("srch_pdfpost", "pw")
+    c = login("srch_pdfpost", "pw")
+    book = make_page(c, "Big book", properties={"doc_id": "ppbook001"})
+    _index_pdf("srch_pdfpost", "ppbook001", [(p, f"axolotl axolotl on page {p}") for p in range(1, 11)])
+    paper = make_page(c, "Paper", properties={"doc_id": "pppaper01"})
+    _index_pdf("srch_pdfpost", "pppaper01", [(1, "an axolotl in the paper")])
+    unindexed = make_page(c, "Not indexed", properties={"doc_id": "ppmissing1"})
+
+    def hits(status=200, **body):
+        r = c.post("/api/pdf-search", json={"q": "axolotl", **body})
+        assert r.status_code == status, r.text
+        return r.json()
+
+    def keys(body):
+        return [(h["doc_id"], h["page"]) for h in body["results"]]
+
+    # First, before any search hands the unindexed paper to the indexer
+    # (which, finding no file, records it as done).
+    assert hits(pages=[paper["id"], unindexed["id"]])["indexing"] == 1
+    assert hits(pages=[paper["id"]])["indexing"] == 0
+    assert keys(hits(limit=100)) == keys(c.get("/api/pdf-search", params={"q": "axolotl", "limit": 100}).json())
+    assert keys(hits(pages=[paper["id"]])) == [("pppaper01", 1)]
+    assert hits(pages=[]) == {"results": [], "indexing": 0}
+    first = hits(pages=[book["id"], paper["id"]], limit=4)
+    assert [d for d, _ in keys(first)] == ["ppbook001"] * 3 + ["pppaper01"] and first["next"] == "4"
+    rest = hits(pages=[book["id"], paper["id"]], limit=100, cursor="4")
+    assert len(keys(rest)) == 7 and "next" not in rest
+    assert keys(hits(pages=[book["id"], paper["id"]], exclude=book["id"])) == [("pppaper01", 1)]
+    assert hits(400, cursor="x")["detail"] == "bad cursor"
+    assert "50000" in hits(413, pages=["x"] * 50_001)["detail"]
 
 
 # --- the PDF index ---------------------------------------------------------------

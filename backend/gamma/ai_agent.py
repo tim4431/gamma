@@ -42,6 +42,10 @@ Reads of one round run at the same time (:data:`MAX_PARALLEL_CALLS`), since
 four papers fetched one after another cost four round trips of waiting.
 Anything that changes the library, and anything that may stop on a card,
 runs on its own in call order.
+
+In a planning turn (the scope's ``planning``) a changing call is refused at
+dispatch (``ai_tools.held_for_plan``): it shows no card and types nothing
+into the notes.
 """
 
 import itertools
@@ -54,8 +58,8 @@ from .ai_client import UpstreamError, failure_kind, partial_json_object
 from .ai_context import canonical_tool, elide_live_results
 from .ai_protocols.base import reasoning_text, truncated_stop
 from .ai_tools import (CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, MAX_TOOL_ROUNDS, MUTATING_TOOLS,
-                       TREE_DELETES, approval_preview, ensure_tally, find_selection, listed_pages, run_agent_tool,
-                       settled_action, skipped_fetch, tool_action, tool_permission, unanswered_fetch)
+                       TREE_DELETES, approval_preview, ensure_tally, find_selection, held_for_plan, listed_pages,
+                       run_agent_tool, settled_action, skipped_fetch, tool_action, tool_permission, unanswered_fetch)
 from .logbuf import log
 
 # Tool calls of one round that run at the same time. Reads are network- or
@@ -450,8 +454,10 @@ class AgentLoop:
         the model is still writing: the block it targets and the markdown so
         far, read out of the partial argument JSON. A call that waits for
         approval is never previewed — the note must not change in front of
-        the user before they decided."""
+        the user before they decided — nor one a planning turn refuses."""
         name = canonical_tool(data.get("name") or "")
+        if held_for_plan(self.scope, name):
+            return None
         if name not in PREVIEW_TOOLS or name not in self.armed:
             return None
         if self.gate and self.gate.asks(name):
@@ -631,7 +637,8 @@ class ApprovalGate:
         """Yield the card event if there is one, then return
         ``(result, action)`` — or None once the client is gone."""
         args = call.get("arguments") or {}
-        if name not in armed or not self.asks(name):
+        # A call a planning turn refuses gets its refusal, not a card.
+        if name not in armed or held_for_plan(self.scope, name) or not self.asks(name):
             return run_agent_tool(self.ws, self.scope, name, args, allowed_tools=armed)
         preview, answer = approval_preview(self.ws, self.scope, name, args)
         if answer is not None:

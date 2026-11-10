@@ -1,7 +1,8 @@
 // How a page's blocks sit in their columns (src/pdf/pageShape.js).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { footOf, isCentred, markShape, roomOf } from "../src/pdf/pageShape.js";
+import fs from "node:fs";
+import { footOf, isCentred, isJustified, markShape, roomOf } from "../src/pdf/pageShape.js";
 import { segmentPage } from "../src/pdf/pdfTranslate.js";
 
 const COLUMN = { x1: 54, x2: 300 };
@@ -155,4 +156,40 @@ test("a one-line caption, which is out of the flow, takes the column it stands i
   markShape(paras);
   const box = paras.find((p) => p.text.startsWith("FIG. 1"));
   assert.ok(box.room && box.room.x2 < 300 && box.room.x2 > 280, JSON.stringify(box.room));
+});
+
+test("a block whose lines but its last end at one edge, and start at one, is justified", () => {
+  assert.equal(isJustified(block([[64, 300], [54, 300], [54, 299.5], [54, 180]]), COLUMN), true, "an opener's indent, a last line short");
+  assert.equal(isJustified(block([[54, 300], [54, 288], [54, 296], [54, 180]]), COLUMN), false, "ragged: the lines end where their words do");
+  assert.equal(isJustified(block([[54, 300], [70, 300], [54, 300]]), COLUMN), false, "a line set in");
+  assert.equal(isJustified(block([[54, 300], [54, 300], [54, 120]]), null), true, "three lines need no column");
+});
+
+test("two lines and one are justified only when they reach their column's edge", () => {
+  assert.equal(isJustified(block([[54, 300], [54, 180]]), COLUMN), true);
+  assert.equal(isJustified(block([[54, 280], [54, 180]]), COLUMN), false, "its first line is its widest whatever the setting");
+  assert.equal(isJustified(block([[54, 280], [54, 180]]), null), false, "no column to tell by");
+  assert.equal(isJustified(block([[66, 300]]), COLUMN), true, "a paragraph's first line, at a column's foot");
+  assert.equal(isJustified(block([[54, 220]]), COLUMN), false, "a heading");
+  assert.equal(isJustified(block([[120, 300]]), COLUMN), false, "a line that opens deeper than an indent");
+});
+
+test("markShape justifies a paragraph and leaves a centred heading centred", () => {
+  const paras = segmentPage(twoColumns([run("II. MODEL", 149, 120, 50)]));
+  markShape(paras);
+  assert.equal(paras.find((p) => p.text === "II. MODEL").justified, undefined);
+  assert.ok(paras.filter((p) => p.nLines > 1).every((p) => p.justified), "the columns' paragraphs");
+});
+
+test("the fixture paper's paragraphs are justified, and its table and lone lines are not", () => {
+  const paper = JSON.parse(fs.readFileSync(new URL("./fixtures/translatePaper.json", import.meta.url)));
+  const shaped = (n) => {
+    const paras = segmentPage(paper.pages[n].runs);
+    markShape(paras);
+    return (s) => paras.find((p) => p.text.includes(s));
+  };
+  const first = shaped(0);
+  for (const s of ["We study how an ensemble", "Ensembles of neutral atoms", "Our main result is"]) assert.equal(first(s).justified, true, s);
+  assert.equal(first("Hamiltonian reads").justified, undefined);
+  assert.equal(shaped(1)("Sample A").justified, undefined, "a table's rows");
 });

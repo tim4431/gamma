@@ -61,9 +61,10 @@ def test_seeded_admin_password_never_enters_buffer():
     assert not any("[startup]   password" in e["msg"] for e in tail(0))
 
 
-def test_the_console_access_log_leaves_out_answered_task_polls(client):
-    """uvicorn's access log keeps every request but the tray's answered
-    GET /api/jobs, which comes every 1.5 s while a job runs."""
+def test_the_console_access_log_leaves_out_answered_polls(client):
+    """uvicorn's access log keeps every request but the answered polls: the
+    tray's GET /api/jobs, which comes every 1.5 s while a job runs, and a
+    page's op-log read, which a tab without a socket sends every 2 s."""
     import logging
 
     access = logging.getLogger("uvicorn.access")
@@ -78,6 +79,12 @@ def test_the_console_access_log_leaves_out_answered_task_polls(client):
     assert shown("GET", "/api/jobs/abc", 200)
     assert shown("POST", "/api/jobs/metadata", 200)
     assert shown("GET", "/api/quota", 200)
+    # a page's op-log read, every 2 s from a tab whose socket never connects
+    assert not shown("GET", "/api/pages/p/ops?since=3", 200)
+    assert not shown("GET", "/api/pages/p/ops?since=3&ws=w", 200)
+    assert shown("GET", "/api/pages/p/ops?since=3", 410)
+    assert shown("POST", "/api/pages/p/ops", 200)
+    assert shown("GET", "/api/pages/p/ops-elsewhere", 200)
 
 
 @pytest.mark.parametrize("http", ["httptools", "h11"])

@@ -326,15 +326,16 @@ _cache: dict = {}
 _CACHE_MAX = 64
 
 
-def read_upload(uploads_dir, url: str) -> InkFile | None:
+def read_upload(stored, url: str) -> InkFile | None:
     """The parsed file a block's ``ink_url`` (``/api/uploads/<sha>.ink``)
-    names, or None when the reference, the file or its contents are off;
-    the exporters skip such a group. Parsed files are kept in a small LRU
+    names, found through ``stored`` (``storage.files``), or None when the
+    reference, the file or its contents are off; the exporters skip such a
+    group. Parsed files are kept in a small LRU
     keyed by path and stat (the name is the content's hash), so a page's
     exporters and merges parse each file once; callers never mutate what
     they get."""
     m = _UPLOAD_RE.search(url or "")
-    path = uploads_dir / m.group(1) if (m and uploads_dir) else None
+    path = stored(m.group(1)) if (m and stored) else None
     if not path:
         return None
     try:

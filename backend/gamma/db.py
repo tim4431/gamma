@@ -1,6 +1,6 @@
 """SQLite helpers: schemas, connections, workspace paths, prefs, timestamps.
 
-Two kinds of database (docs/dev/user_db.md):
+Three kinds of database (docs/dev/user_db.md):
 
 - ``users.db`` — global: accounts, sessions, workspaces + memberships, page
   shares, account-wide prefs, server settings. Every column that names an
@@ -10,6 +10,10 @@ Two kinds of database (docs/dev/user_db.md):
   the data directory's schema version (``SCHEMA_VERSION``); a data
   directory behind it is upgraded by ``gamma/migrations.py`` before the
   server serves anything, one ahead of it is refused.
+- ``vaults.db``: global, and only on the desktop app's own server: what
+  this computer knows of its synced vaults and of the PDFs read where they
+  are. It stays out of a workspace's files, so no workspace backup carries
+  a path. Its statements are ``CREATE ... IF NOT EXISTS``, never migrated.
 - per workspace, under ``workspaces/<id>/``: ``pages.db`` (the block tree,
   the op and change logs, the AI chats, the comments, the notes index,
   each account's prefs that name its pages) and ``data.db``
@@ -38,13 +42,13 @@ from collections import OrderedDict, deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .config import USERS_DB, WORKSPACES_DIR
+from .config import USERS_DB, VAULTS_DB, WORKSPACES_DIR
 from .textnorm import normalize_text
 
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 47
+SCHEMA_VERSION = 50
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -198,7 +202,9 @@ USERS_SCHEMA = [
     # (kind 'file') makes the PDF at `path` the page `page_id`'s file each
     # time it changes, `push` always 1; `state` holds what its rounds know of
     # the file ({doc, size, mtime, ...}; a folder link's live in its
-    # directory's state file). A link whose folder or page is on another
+    # directory's state file). `push` is 0 off, 1 PDFs, 2 everything;
+    # `pull` is whether Gamma's changes reach the disk, 0 on a file link,
+    # which Gamma never writes. A link whose folder or page is on another
     # Gamma server names it (remote_url; workspace_id is then its workspace
     # there) with a token of it, Fernet-encrypted, and that token's id for
     # whoever revokes it there.
@@ -218,7 +224,8 @@ USERS_SCHEMA = [
         kind TEXT NOT NULL DEFAULT 'folder',
         page_id TEXT NOT NULL DEFAULT '',
         push INTEGER NOT NULL DEFAULT 0,
-        state TEXT NOT NULL DEFAULT '{}'
+        state TEXT NOT NULL DEFAULT '{}',
+        pull INTEGER NOT NULL DEFAULT 1
     )""",
     """CREATE TABLE IF NOT EXISTS publisher_sessions (
         user_id TEXT NOT NULL,
@@ -414,6 +421,37 @@ USERS_SCHEMA = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_email_invites_target "
     "ON email_invites(kind, workspace_id, share_token, email_norm)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_email_invites_link ON email_invites(link_id)",
+    # A report of a comment, a page or an AI reply that someone made from its
+    # menu (gamma/reports.py): kind comment / page / ai, the reason, the
+    # reporter's words, the text reported and who wrote it (a comment's
+    # author, a share's maker, the AI model), the page's title, where it is
+    # (workspace, page, comment), a public link when it has one, and the
+    # reporter (an account id and its name; '' for a link visitor). Kept for
+    # this server's admins (state open / resolved); on a server with Gamma
+    # Cloud sign-in, also forwarded to the account server: sent_at once it
+    # took it, send_error the last failure (the hourly round tries again).
+    """CREATE TABLE IF NOT EXISTS content_reports (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        details TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        author TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        workspace_id TEXT NOT NULL DEFAULT '',
+        page_id TEXT NOT NULL DEFAULT '',
+        comment_id TEXT NOT NULL DEFAULT '',
+        link TEXT NOT NULL DEFAULT '',
+        reporter_id TEXT NOT NULL DEFAULT '',
+        reporter TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL,
+        resolved_at TEXT NOT NULL DEFAULT '',
+        resolved_by TEXT NOT NULL DEFAULT '',
+        sent_at TEXT NOT NULL DEFAULT '',
+        send_error TEXT NOT NULL DEFAULT ''
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_content_reports_state ON content_reports(state, created_at)",
     # Small JSON values that follow the ACCOUNT (docs/dev/settings.md):
     # workspace_id '' = account-wide (the profile, the AI provider entries:
     # USER_PREF_KEYS). The prefs per account AND workspace (open tabs,
@@ -512,6 +550,79 @@ USERS_SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_jobs_workspace ON jobs(workspace_id, owner)",
 ]
 
+
+# vaults.db: what this computer knows, never migrated (additive statements,
+# like a workspace's data.db). linked_files = PDFs read where they are
+# (gamma/linked_files.py): the workspace, the stored name a page reads them by
+# (<doc_id>.pdf), the path and what the file was when last read (size, time,
+# file id), the page, '' for a vault's picture, the account a change of the
+# file is made as, and why that file's replacement placed no highlights. One
+# name may have several paths; a path has one page. vault_files = a vault's
+# files as the last round left them, one row a path, a trashed file's being
+# the trash path with ``was`` where it lived (kind 'notes', 'pdf' or
+# 'picture'; the hash and stat and when they were read, for the racy rule; a
+# note's base text, its nodes [{id, g, m?}] in document order and ``gone``,
+# the blocks the file dropped [{id, hash, anchor, props, at}]; the title and
+# first filing this base recorded, the page's change-log seq it is level
+# with, whether pull made the file, when a scan first missed it, why it could
+# not be written, and the journal ``pending``, JSON {token, ...});
+# vault_dirs = a vault's directories, their folders and file ids;
+# vault_history = the bytes a write replaced, zlib, kept some days. A file id
+# is text: it can pass 63 bits.
+VAULTS_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS linked_files (
+        ws TEXT NOT NULL,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        mtime_ns INTEGER NOT NULL,
+        file_id TEXT NOT NULL DEFAULT '',
+        page_id TEXT NOT NULL DEFAULT '',
+        actor TEXT NOT NULL DEFAULT '',
+        relocation_error TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (ws, name, path)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_linked_files_page ON linked_files(ws, page_id)",
+    """CREATE TABLE IF NOT EXISTS vault_files (
+        link_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        page_id TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL,
+        hash TEXT NOT NULL DEFAULT '',
+        size INTEGER NOT NULL DEFAULT 0,
+        mtime_ns INTEGER NOT NULL DEFAULT 0,
+        file_id TEXT NOT NULL DEFAULT '',
+        read_at REAL NOT NULL DEFAULT 0,
+        text TEXT,
+        nodes TEXT,
+        gone TEXT,
+        title TEXT,
+        folder TEXT,
+        seq INTEGER NOT NULL DEFAULT 0,
+        ours INTEGER NOT NULL DEFAULT 0,
+        was TEXT NOT NULL DEFAULT '',
+        missing_since REAL NOT NULL DEFAULT 0,
+        problem TEXT NOT NULL DEFAULT '',
+        pending TEXT,
+        PRIMARY KEY (link_id, path)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_vault_files_page ON vault_files(page_id)",
+    """CREATE TABLE IF NOT EXISTS vault_dirs (
+        link_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        folder_id TEXT NOT NULL,
+        file_id TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (link_id, path)
+    )""",
+    """CREATE TABLE IF NOT EXISTS vault_history (
+        id INTEGER PRIMARY KEY,
+        link_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        at TEXT NOT NULL,
+        data BLOB NOT NULL
+    )""",
+]
+
 # unified_blocks' typed hot fields, after the seven columns blocks always
 # had (docs/dev/user_db.md "pages.db"). ``page_id`` is stored, and every
 # writer sets it: the top block the row lives under — a page's own id on the
@@ -519,7 +630,7 @@ USERS_SCHEMA = [
 # deleted; ``folders`` / ``labels`` on a folder or label block (the
 # pseudo-pages, gamma/blocks_store.py ``TREES``); '' on the reserved
 # parentless rows (``root``, ``trash``, ``folders``, ``labels``).
-# ``kind``, ``doc_id`` and ``parent_page`` are generated VIRTUAL columns,
+# ``kind``, ``doc_id``, ``parent_page`` and ``deleted_with`` are generated VIRTUAL columns,
 # computed from ``parent_id``, ``page_id`` and ``properties`` when read
 # and never written: the op log and the mirror carry ``properties`` alone.
 # ``kind`` is NULL on the reserved rows, ``page`` on a page (in the library
@@ -530,8 +641,11 @@ USERS_SCHEMA = [
 # which ink groups and link regions carry too — gamma/highlights.py).
 # ``parent_page`` is the page a sub-page is inside (its
 # ``properties.parent_page``, gamma/blocks_store.py ``page_parents``), NULL
-# on every other row. An older file gains them, or a ``kind`` of an older
-# definition, through normalize.block_columns.
+# on every other row. ``deleted_with`` is the page a page in Recently
+# deleted went there with (its ``properties.deleted_with``, stamped by
+# ops.trash_page: the page it was inside was trashed), NULL on every other
+# row. An older file gains them, or a ``kind`` of an older definition,
+# through normalize.block_columns.
 BLOCK_HOT_COLUMNS = {
     "page_id": "page_id TEXT NOT NULL DEFAULT ''",
     "kind": """kind TEXT GENERATED ALWAYS AS (CASE
@@ -550,12 +664,14 @@ BLOCK_HOT_COLUMNS = {
             ELSE 'note' END) VIRTUAL""",
     "doc_id": "doc_id TEXT GENERATED ALWAYS AS (json_extract(properties, '$.doc_id')) VIRTUAL",
     "parent_page": "parent_page TEXT GENERATED ALWAYS AS (json_extract(properties, '$.parent_page')) VIRTUAL",
+    "deleted_with": "deleted_with TEXT GENERATED ALWAYS AS (json_extract(properties, '$.deleted_with')) VIRTUAL",
 }
 BLOCK_HOT_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ub_page ON unified_blocks(page_id)",
     "CREATE INDEX IF NOT EXISTS idx_ub_kind ON unified_blocks(kind)",
     "CREATE INDEX IF NOT EXISTS idx_ub_doc ON unified_blocks(doc_id) WHERE doc_id IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_ub_parent_page ON unified_blocks(parent_page) WHERE parent_page IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_ub_deleted_with ON unified_blocks(deleted_with) WHERE deleted_with IS NOT NULL",
 ]
 _HOT_COLUMNS_SQL = ",\n        ".join(BLOCK_HOT_COLUMNS.values())
 
@@ -1063,9 +1179,9 @@ class Connection(sqlite3.Connection):
     Never use a connection after its ``with`` block. ``close()`` closes it
     for good, past the cache (the startup pass opens every workspace that
     way); one taken without ``with`` is closed by its owner. ``ws`` names
-    the workspace whose database it is ("" for users.db), for writers that
-    reach the workspace's files through the connection (the ink merge in
-    gamma/ops.py)."""
+    the workspace whose database it is ("" for users.db and vaults.db), for
+    writers that reach the workspace's files through the connection (the
+    ink merge in gamma/ops.py)."""
 
     ws = ""
     _path = ""
@@ -1322,7 +1438,8 @@ def evict_idle() -> int:
 
 def cached_files() -> list[tuple[str, str]]:
     """``(path, ws)`` of every database the cache holds a connection to,
-    idle or in a ``with`` block, sorted; ``ws`` is "" for users.db."""
+    idle or in a ``with`` block, sorted; ``ws`` is "" for users.db and
+    vaults.db."""
     with _lock:
         conns = [*_idle.values(), *_out]
     return sorted({(conn._path, conn.ws) for conn in conns})
@@ -1389,6 +1506,28 @@ def _wal(conn: sqlite3.Connection) -> str:
     if mode == "wal":
         conn.execute("PRAGMA synchronous=NORMAL")
     return mode
+
+
+def connect_vaults_db() -> Connection:
+    """vaults.db, created when it does not exist yet: WAL mode and the busy
+    timeout like the others, its statements (``VAULTS_SCHEMA``) applied when
+    a connection opens. Only where ``config.folder_links_enabled``: a server
+    that keeps no links never makes the file, and every caller asks first."""
+    return _cached(str(VAULTS_DB), "", _open_vaults_db)
+
+
+def _open_vaults_db(path: str, ws: str) -> Connection:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    conn = _new_connection(path, ws)
+    try:
+        _settle(conn)
+        for stmt in VAULTS_SCHEMA:
+            conn.execute(stmt)
+        conn.commit()
+        return _opened(conn)
+    except BaseException:
+        conn.close()
+        raise
 
 
 def connect_users_db() -> Connection:

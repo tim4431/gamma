@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TOKEN_COPIES, sameCopy } from "../tools/copy-tokens.mjs";
-import { BASELINE, contrastTable, failures, parseColor, parseRules, resolveTheme } from "../tools/themes.mjs";
+import { BASELINE, contrastTable, declared, failures, parseColor, parseRules, resolveTheme } from "../tools/themes.mjs";
 import { DARK_THEMES, THEMES, UI_SCALE, themeScheme } from "../src/app/prefDefs.js";
 
 const FRONTEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,6 +23,12 @@ test("the token evaluator mixes like a browser", () => {
   assert.deepEqual(parseColor("color-mix(in srgb, #3a7bd5 10.5%, transparent)").map((v) => +v.toFixed(3)), [58, 123, 213, 0.105]);
   assert.deepEqual(parseColor("rgba(42, 79, 122, 0.3)"), [42, 79, 122, 0.3]);
   assert.deepEqual(parseColor("#586e754d").map((v) => +v.toFixed(2)), [88, 110, 117, 0.3]);
+});
+
+// The root is html, so an html-qualified rule applies to it.
+test("the token evaluator reads an html-qualified rule", () => {
+  const css = ':root { --x: blue; } html[data-theme="dark"] { --x: red; }';
+  assert.equal(declared(parseRules(css), "dark", "dark")["--x"], "red");
 });
 
 test("every pinned theme is in tokens.css, on the scheme prefDefs gives it", () => {

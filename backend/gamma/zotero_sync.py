@@ -102,10 +102,10 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from . import (config, sync_clock, sync_engine, workspaces, zotero_account, zotero_local, zotero_merge,
-               zotero_sync_items, zotero_sync_pages, zotero_sync_pdfs, zotero_sync_rows)
+from . import (collab, config, ops, sync_clock, sync_engine, workspaces, zotero_account, zotero_local,
+               zotero_merge, zotero_sync_items, zotero_sync_pages, zotero_sync_pdfs, zotero_sync_rows)
 from . import zotero_remote as zr
-from .blocks_store import FOLDERS, label_names, newest_change_seq, write_lock
+from .blocks_store import FOLDERS, filed_folders, label_names, newest_change_seq, page_parents, with_sub_pages, write_lock
 from .db import connect_pages_db, connect_users_db, page_now
 from .logbuf import log
 from .routers.sync import changes as local_changes
@@ -115,6 +115,7 @@ from .zotero_sync_first import first_match, first_notes, preview_first_link
 from .zotero_sync_folders import TREE_ENTRIES, collections_due, collections_gone, collections_pass
 from .zotero_sync_gone import items_gone
 from .zotero_sync_pdfs import STORAGE_WAIT, quota_step
+from .zotero_sync_reads import collection_map
 from .zotero_sync_resolve import resolve_field, resolve_file
 from .zotero_sync_rows import (CLIENT, DEBOUNCE_S, ENGINE, HELD, LINKS, LIVE_POLL_S, LIVE_SAFETY_S, SETTLED, STOPS_ROUND,
                                WORKERS, Detached, Round, json_dict, new_row, patch_status, read_rows, record_conflict,
@@ -198,7 +199,8 @@ def create_link(owner: str, library: str, *, workspace_id: str = "", name: str =
     """Link ``library`` ("users/<id>" | "groups/<id>", one the account's key
     reads) to a new personal workspace of ``owner``'s named ``name``, or to
     ``workspace_id``, an existing one of the owner's that is neither a clone
-    nor publishes pages nor is linked (a publication whose last page was
+    nor publishes pages nor is linked nor has a synced vault that pushes
+    everything (gamma/folder_links.py) (a publication whose last page was
     unpublished counts as none, as for ``workspaces.update``, and is
     forgotten once the link is made, ``sync_engine.remove_mirror``, so the
     two never share the conflict and log tables): its pages and the
@@ -239,6 +241,11 @@ def create_link(owner: str, library: str, *, workspace_id: str = "", name: str =
                     raise ValueError("that workspace is a clone or publishes pages — forget that link first")
                 if conn.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ?", (workspace_id,)).fetchone():
                     raise ValueError("that workspace is linked to a Zotero library already")
+            from .folder_links import pushing_vault  # local: only a link to an existing workspace asks
+
+            if pushing_vault(workspace_id):
+                raise ValueError("that workspace has a synced vault that pushes everything from this computer: "
+                                 "let it push only PDFs, or only pull, first")
             emptied = mirror is not None
             status["adopt"] = adopt
             info = {"id": workspace_id}
@@ -423,10 +430,15 @@ def remove_link(ws: str) -> None:
     and Zotero's items as they are; what the link kept in the workspace's
     pages.db (its objects, queue and state, the sync log and conflicts) goes,
     and so do the marks it left on pages and blocks (``zotero_pdf``,
-    ``zotero_readonly``), on the pages in Recently deleted too, so a page
-    brought back later takes a PDF like any other. A round in flight is
-    stopped first (at its next unit, or at once while it waits on Zotero
-    or moves a file)."""
+    ``zotero_readonly``, ``zotero_author``), on the pages in Recently
+    deleted too, so a page brought back later takes a PDF like any other.
+    The marks go in one statement, in the transaction that empties the
+    link's tables: each live page that lost one is logged as a reload
+    (``ops.log_reload``: the change feed and a catching-up client refetch
+    it) and its room reloads after the commit; a page in Recently deleted
+    is touched when it is brought back. A round in flight is stopped first
+    (at its next unit, or at once while it waits on Zotero or moves a
+    file)."""
     if not get_link(ws):
         return
     save_link(ws, mode="off")  # a round in flight stops at its next unit...
@@ -437,27 +449,22 @@ def remove_link(ws: str) -> None:
         with connect_pages_db(ws) as conn:
             write_lock(conn)
             zr.clear(conn)
-            conn.execute("DELETE FROM sync_conflicts")
+            conn.execute(f"DELETE FROM sync_conflicts WHERE {sync_engine.NOT_VAULT}")   # a synced vault's stay its own
             conn.execute("DELETE FROM sync_log")
-            # a page in Recently deleted is no page an op may write: its marks go in place (no session has it
-            # open; bringing it back touches it, so a clone fetches it whole)
+            live = [page for (page,) in conn.execute(
+                f"SELECT id FROM unified_blocks WHERE parent_id = 'root' AND id IN (SELECT CASE WHEN page_id = '' "
+                f"THEN id ELSE page_id END FROM unified_blocks WHERE {_MARKED})")]
             conn.execute(f"UPDATE unified_blocks SET properties = json_remove(properties, '$.zotero_pdf', "
-                         f"'$.zotero_readonly', '$.zotero_author') WHERE ({_MARKED}) AND NOT EXISTS (SELECT 1 FROM "
-                         f"unified_blocks p WHERE p.id = CASE WHEN unified_blocks.page_id = '' THEN unified_blocks.id "
-                         f"ELSE unified_blocks.page_id END AND p.parent_id = 'root')")
+                         f"'$.zotero_readonly', '$.zotero_author') WHERE {_MARKED}")
+            for page in live:
+                ops.log_reload(conn, page, zotero_local.ACTOR, client=zotero_local.CLIENT)
             conn.commit()
-            marked = conn.execute(f"SELECT id, page_id FROM unified_blocks WHERE {_MARKED}").fetchall()
     _access_seen.pop(ws, None)
     _clock.pending.pop(ws, None)
-    by_page: dict[str, list] = {}
-    for block_id, page_id in marked:
-        by_page.setdefault(page_id or block_id, []).append(zotero_local.props_op(
-            block_id, {"zotero_pdf": None, "zotero_readonly": None, "zotero_author": None}))
-    for page_id, ops in by_page.items():
-        try:
-            zotero_local.apply(ws, page_id, ops)
-        except Exception as e:  # noqa: BLE001 — a mark left behind is no reason to keep the link
-            log.warning(f"[zotero] {ws}: the link's marks on {page_id} stayed: {e}")
+    for page in live:
+        collab.publish_reload(ws, page)
+    if live:
+        ops.notify_commit(ws, zotero_local.CLIENT)
 
 
 _MARKED = ("json_extract(properties, '$.zotero_pdf') IS NOT NULL "
@@ -632,12 +639,13 @@ def resolve_conflict(ws: str, conflict_id: int, choice: str) -> dict | None:
     """``keep`` marks the row seen; ``mine`` / ``theirs`` first write that
     side through the kind's resolver (``RESOLVERS``), and a kind without
     one, or a row resolved already, is a ValueError for them. None when
-    there is no such row."""
+    there is no such row, and for a synced vault's (``VAULT_KINDS``), which
+    its own routes resolve."""
     if choice not in ("keep", "mine", "theirs"):
         raise ValueError("choice must be keep, mine or theirs")
     with connect_pages_db(ws) as conn:
         found = conn.execute("SELECT id, page_id, block_id, kind, mine, theirs, result, base, resolved "
-                             "FROM sync_conflicts WHERE id = ?", (conflict_id,)).fetchone()
+                             f"FROM sync_conflicts WHERE id = ? AND {sync_engine.NOT_VAULT}", (conflict_id,)).fetchone()
     if not found:
         return None
     row = dict(zip(("id", "page_id", "block_id", "kind", "mine", "theirs", "result", "base", "resolved"), found))
@@ -990,6 +998,30 @@ def _pages_with_labels(conn, label_ids) -> set[str]:
         (json.dumps(sorted(label_ids)),))}
 
 
+def _refiled_inside(conn, pages: set[str]) -> set[str]:
+    """The linked sub-pages among and inside ``pages``, at any depth, whose
+    item's collections as last synced (the row's ``gbase``) are not those
+    of the folders they are filed in now. A sub-page is filed where its top
+    is (``blocks_store.filed_folders``), so refiling the top refiles the
+    pages inside it without a change of their own for the feed to list, and
+    one whose newest change is the link's own write (a pull) still needs
+    its item refiled."""
+    parents = page_parents(conn)
+    inside = {p for p in with_sub_pages(conn, sorted(pages), parents) if p in parents} if parents and pages else set()
+    if not inside:
+        return set()
+    inverse = {fid: key for key, fid in collection_map(conn).items()}
+    out = set()
+    for page_id, synced in conn.execute(
+            "SELECT page_id, json_extract(gbase, '$.collections') FROM zotero_objects WHERE page_id IN "
+            "(SELECT value FROM json_each(?)) AND kind IN ('item', 'attachment', 'note') AND parent = '' "
+            "AND state = 'live' AND json_extract(gbase, '$.collections') IS NOT NULL", (json.dumps(sorted(inside)),)):
+        now = {inverse[f] for f in filed_folders(conn, page_id) if f in inverse}
+        if now != set(json.loads(synced)):
+            out.add(page_id)
+    return out
+
+
 def _list_gamma(r: Round) -> None:
     """Step 3: the pages the local change feed lists since the cursor (the
     folder and label trees among them) into the queue, but for those whose
@@ -1013,6 +1045,8 @@ def _list_gamma(r: Round) -> None:
             cursor = out["cursor"]
             if not out["more"]:
                 break
+        inside = _refiled_inside(conn, pages)  # from every page the feed lists (a pulled refiling of a top too),
+        # and never passed by below: a sub-page the link last wrote to has no change of its own when its top moves
         if since and pages:  # a page whose newest change is the link's own write, which the unit of the page's
             # own row settled whole (the change number that row keeps, ``detail.gseq``: its item's, a standalone
             # PDF's or note's while no item holds the page), is passed by; a person's edit since moves it on. A
@@ -1022,6 +1056,7 @@ def _list_gamma(r: Round) -> None:
                 "WHERE c.page_id IN (SELECT value FROM json_each(?)) AND json_extract(o.detail, '$.gseq') = c.seq "
                 "AND (o.kind = 'item' OR NOT EXISTS (SELECT 1 FROM zotero_objects i WHERE i.page_id = c.page_id "
                 "AND i.kind = 'item'))", (json.dumps(sorted(pages)),))}
+        pages |= inside
         labels = label_names(conn)
         renamed = [lid for lid, name in labels.items() if r.state["labels"].get(lid) != name]
         if renamed:

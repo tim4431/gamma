@@ -190,7 +190,7 @@ export async function trashScenarios(env) {
 
   // From ten pages on a bulk action is a row of Background tasks that
   // counts them (library/pageBatch.js); the status says how many went.
-  await step("trash: twelve selected pages deleted at once count in Background tasks, and the status says how many went", async () => {
+  await step("trash: twelve selected pages deleted at once go in one request, count in Background tasks, and the status says how many went", async () => {
     const binBatch = await user.folder("bin/batch");
     const batch = [];
     for (let i = 1; i <= 12; i++) batch.push(await pageApi(`Batch page ${i}`, [binBatch]));
@@ -204,10 +204,17 @@ export async function trashScenarios(env) {
       await rows.last().click({ button: "right" });
       await page.locator(".ctxMenuItem", { hasText: "Delete 12 pages" }).click();
       const confirm = page.locator(".confirmModal", { hasText: "Move these 12 pages to Recently deleted?" });
+      // the twelve go in one request (POST /blocks/bulk), none page by page
+      const sent = [];
+      page.on("request", (req) => {
+        const path = new URL(req.url()).pathname;
+        if (path.startsWith("/api/blocks/") && ["POST", "DELETE"].includes(req.method())) sent.push(`${req.method()} ${path}`);
+      });
       await confirm.getByRole("button", { name: "Delete", exact: true }).click();
       await until(async () => (await page.locator(".statusPill .pillText").allTextContents())
         .some((text) => text.includes("Moved 12 pages to Recently deleted.")), { what: "the status counts what went" });
       assertEq(await rows.count(), 0, "gone from the folder");
+      assertEq(sent.join(", "), "POST /api/blocks/bulk", "one request for the twelve");
       const inTrash = await trashed();
       assert(batch.every((p) => inTrash.includes(p.id)), "every page is in the trash");
 

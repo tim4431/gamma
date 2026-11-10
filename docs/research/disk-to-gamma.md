@@ -1,16 +1,19 @@
 # Disk to Gamma: PDFs that change on this computer
 
 Designed in October 2026, after the one-way folder sync shipped
-([folder-sync.md](folder-sync.md), built as
-[dev/folder_sync.md](../dev/folder_sync.md)). The question was how a PDF
+([folder-sync.md](folder-sync.md), built as what is now
+[dev/synced_vaults.md](../dev/synced_vaults.md)). The question was how a PDF
 that changes on a PC reaches Gamma: a manuscript compiled again from its
 TeX, a paper annotated in another app. Status: **built** (2026-10-30):
-steps 1 and 2 below, and the two retention rules of step 3. The mechanics
-are in [dev/folder_sync.md](../dev/folder_sync.md) ("Sending PDFs back"),
+steps 1 and 2 below, and the two retention rules of step 3. On 2026-11-07
+both links became synced vaults ([vaults.md](vaults.md)), a vault that
+pushes PDFs and a vault of one file, and a PDF dropped in a vault that
+pushes everything becomes a page. The mechanics are in
+[dev/synced_vaults.md](../dev/synced_vaults.md),
 [dev/user_db.md](../dev/user_db.md) ("Stored files") and the desktop's
-[architecture.md](../../desktop/docs/architecture.md) ("Folders and files
-on this computer"). This note keeps the reasoning; "As built" at the end
-lists where the build departs from it.
+[architecture.md](../../desktop/docs/architecture.md) ("Synced vaults").
+This note keeps the reasoning; "As built" at the end lists where the build
+departs from it.
 
 ## Two stories, one mechanism
 

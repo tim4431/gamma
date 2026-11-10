@@ -1,10 +1,11 @@
 // usePageCollab: the page's live session (collabSession.js — the state
 // machine: op batches out, remote ops and presence in, same-block
-// reconciliation, catch-up) wired to the app. ONE hook per open page. This
-// file owns only what needs the browser or React: the fetch wrapper, the
-// socket URL (share token / workspace), the keepalive sends as the tab
-// closes or is hidden and their claim on the page's keepalive room, and
-// `peers` / `me` as React state.
+// reconciliation, catch-up, the op log polled where the socket can't
+// connect) wired to the app. ONE hook per open page. This file owns only
+// what needs the browser or React: the fetch wrapper, the socket URL (share
+// token / workspace), the tab's visibility (a hidden tab polls nothing), the
+// keepalive sends as the tab closes or is hidden and their claim on the
+// page's keepalive room, and `peers` / `me` as React state.
 import { useEffect, useRef, useState } from "react";
 import { keepaliveFetch, keepaliveShare, registerKeepaliveClaim } from "../shared/lib/keepalive.js";
 import { API, apiJson, getLinkName, makeId, withShare, withWorkspace } from "../shared/lib/utils";
@@ -34,9 +35,13 @@ function socketUrl(pageId) {
 //   onSaveNotice(text, kind)  — the lasting save notice (collabSession.js)
 //   onGone(pageId, gone)      — the page went to Recently deleted, or is back (null)
 //   onInkLive(msg)            — a peer's handwriting stroke in progress (ink/inkLive.js)
-//   onBuild(build)            — the server's build, from the socket's hello
+//   onBuild(build)            — the server's build, from the socket's hello (or a poll's answer)
 //   onComments(msg)           — a comment was written on the page, or the socket
-//                               (re)joined (null): refetch its threads
+//                               (re)joined or the poll came round (null): refetch
+//                               its threads
+//   onVault()                 — a synced vault's round touched the page, or the socket
+//                               (re)joined or the poll came round: refetch its
+//                               standing (vault/useVault.js)
 // A `{t: "inbox"}` nudge (the account's inbox has news) becomes the window
 // event gamma:inbox, whatever page it arrived on.
 // Returns the session's commit/flush/hasPending/sendCursor/sendInkLive/overlay/
@@ -45,13 +50,15 @@ function socketUrl(pageId) {
 // handshake). While edits are unsaved, leaving the tab asks first
 // (beforeunload); a tab going to the background sends the next batch with
 // keepalive (a phone may kill it without a pagehide), and the browser coming
-// back online or the window regaining focus retries a failed save at once.
+// back online or the window regaining focus retries a failed save at once
+// (and reads the log of a page followed without a socket); coming back
+// online also tries the socket at once.
 export function usePageCollab(opts) {
   const o = useRef(opts);
   o.current = opts;
   const { pageId, enabled } = opts;
   const [peers, setPeers] = useState([]);       // other clients on the page
-  const [me, setMe] = useState({ client: CLIENT_ID, connected: false });
+  const [me, setMe] = useState({ client: CLIENT_ID, connected: false, via: null });
 
   const ref = useRef(null);
   if (!ref.current) {
@@ -68,6 +75,11 @@ export function usePageCollab(opts) {
         }, { priority: "critical" }).catch(() => {});
       },
       opts: () => o.current,
+      // Where the socket can't connect (a proxy that drops the upgrade),
+      // the op log is read every 2 s while the tab shows (docs/dev/collab.md
+      // "The client").
+      fallback: true,
+      hidden: () => document.visibilityState === "hidden",
       onPeers: setPeers,
       onMe: setMe,
       // a clone's sync pill (MirrorPopover) marks local edits as not pushed yet
@@ -111,13 +123,14 @@ export function usePageCollab(opts) {
       else if (closing === 1) onHide();
       else if (!closing) session.hide(false);
     };
-    const onOnline = () => session.retryNow();
+    const onOnline = () => session.retryNow({ socket: true });
+    const onFocus = () => session.retryNow();
     window.addEventListener("pagehide", onHide);
     window.addEventListener("pageshow", onShow);
     window.addEventListener("beforeunload", onLeave);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("online", onOnline);
-    window.addEventListener("focus", onOnline);
+    window.addEventListener("focus", onFocus);
     return () => {
       unclaim();
       window.removeEventListener("pagehide", onHide);
@@ -125,7 +138,7 @@ export function usePageCollab(opts) {
       window.removeEventListener("beforeunload", onLeave);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("online", onOnline);
-      window.removeEventListener("focus", onOnline);
+      window.removeEventListener("focus", onFocus);
     };
   }, [session]);
 

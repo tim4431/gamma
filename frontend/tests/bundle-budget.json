@@ -1,0 +1,20 @@
+{
+  "startupJsBrotli": {
+    "max": 841000,
+    "set": "2026-11-08",
+    "measured": 763853,
+    "why": "Reset on the merged learn-from-oleafly build over dev fd6f9104: React 19.2 adds about 12 KB Brotli to the entry, and search qualifiers, model checks and plan mode add their parts to the App chunk."
+  },
+  "startupJsRaw": {
+    "max": 3123000,
+    "set": "2026-11-08",
+    "measured": 2838326,
+    "why": "Reset on the merged learn-from-oleafly build over dev fd6f9104: React 19.2 adds about 12 KB Brotli to the entry, and search qualifiers, model checks and plan mode add their parts to the App chunk."
+  },
+  "startupCssBrotli": {
+    "max": 81000,
+    "set": "2026-11-08",
+    "measured": 72880,
+    "why": "Reset on the merged learn-from-oleafly build over dev fd6f9104: React 19.2 adds about 12 KB Brotli to the entry, and search qualifiers, model checks and plan mode add their parts to the App chunk."
+  }
+}

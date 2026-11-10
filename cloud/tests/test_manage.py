@@ -136,3 +136,9 @@ def test_newer_db_refused():
     with pytest.raises(db.NewerDataError):
         db.ensure_current()
 
+
+def test_an_id_is_safe_to_type_after_a_subcommand():
+    """An id beginning with ``-`` was a flag to argparse, so one account in
+    sixty-four could not be named on the command line at all."""
+    assert not [i for i in (db.new_id() for _ in range(3000)) if i.startswith("-")]
+    assert len({db.new_id() for _ in range(100)}) == 100

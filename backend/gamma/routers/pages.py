@@ -277,7 +277,8 @@ def _held_elsewhere(conn, doc_id: str):
     """The 409 for a ``doc_id`` a page carries already (``{"detail",
     "page_id"}``, so the client can offer to open that page), else None.
     Callers ask only for a ``doc_id`` the page itself does not carry, so
-    any page found is another."""
+    any page found is another. A page reading those bytes from a file on
+    this computer refuses nothing (``page_for_doc`` leaves it out)."""
     other = page_for_doc(conn, doc_id) if doc_id else None
     if other:
         return JSONResponse(status_code=409, content={
@@ -442,15 +443,16 @@ def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str = "",
     its Zotero item's PDF, ``_zotero_pdf_refusal``, and a mark nothing
     honours any more is dropped with the write); unless ``check_held`` is
     False, a ``doc_id`` another page carries is refused (``HeldElsewhere``,
-    409); the attachment op (``_attachment_op``: an automatic title becomes
-    the file name, a failed lookup's ``meta_error`` goes when the file
-    changes) is written, with ``props`` (a page property patch the caller
-    adds, such as dropping ``zotero_pdf``) merged into it. When the file
-    changes (whatever the page showed it from: a ``doc_id``, or only a
-    ``source_url`` as on a duplicated document page), the blocks imported
-    from the old file's embedded annotations are marked gone from the file
-    (``imports.originals_gone``), so PDF export draws them again. When the
-    stored file changes (``attachment_file``: a duplicated page's
+    409; a page reading those bytes from a file on this computer is passed
+    by, ``page_for_doc``); the attachment op (``_attachment_op``: an
+    automatic title becomes the file name, a failed lookup's ``meta_error``
+    goes when the file changes) is written, with ``props`` (a page property
+    patch the caller adds, such as dropping ``zotero_pdf``) merged into it.
+    When the file changes (whatever the page showed it from: a ``doc_id``,
+    or only a ``source_url`` as on a duplicated document page), the blocks
+    imported from the old file's embedded annotations are marked gone from
+    the file (``imports.originals_gone``), so PDF export draws them again.
+    When the stored file changes (``attachment_file``: a duplicated page's
     ``/api/uploads/<doc id>.pdf`` address is its stored file) and the page
     has highlights placed on its PDF, each of them that names no file yet
     gets the outgoing file's id as ``pdf_position.doc_id`` (the file its
@@ -601,7 +603,7 @@ def _start_relocation(owner: str, ws: str, page_id: str, title: str, new_doc: st
 
     try:
         return jobs.start(RELOCATE, owner=owner, ws=ws, key=f"{page_id}:{new_doc}", params=params, run=run,
-                          ended=ended, title=f"Placing the highlights of “{name}”"), ""
+                          ended=ended, title=f"Placing the highlights of “{name}”", writes=True), ""
     except jobs.Busy as busy:
         if not busy.job.get("stopping"):
             return busy.job, ""
@@ -627,18 +629,19 @@ def relocate_highlights(payload: RelocateRequest, request: Request):
     again): every highlight placed on its PDF is found again by its text
     and moved there, the ones not found marked ``lost``, each read from
     the file its rectangles were measured on while that file is stored
-    (``_start_relocation``). Session accounts only, like every job start
-    (a token gets 403), and workspace editors. → the job, the running one
-    when a run for this page and file is going already; 400 for a page
-    without a PDF, with one shown from a URL alone (``NOT_STORED``), or
-    without highlights on it, 404 for no such page, 429 when the account's
-    jobs are full, 409 while the last run for this file is still
+    (``_start_relocation``), and one known by its page and quote alone is
+    placed where its quote is, dashed. Session accounts only, like every
+    job start (a token gets 403), and workspace editors. → the job, the
+    running one when a run for this page and file is going already; 400 for
+    a page without a PDF, with one shown from a URL alone (``NOT_STORED``),
+    or without highlights on it, 404 for no such page, 429 when the
+    account's jobs are full, 409 while the last run for this file is still
     stopping."""
     require_user_id(request)
     ws = require_ws(request, write=True)
     with connect_pages_db(ws) as conn:
         page = _load_page(conn, payload.page_id)
-        placed = highlight_relocate.page_highlights(conn, page["id"])
+        placed = highlight_relocate.page_highlights(conn, page["id"], unplaced=True)
     attachment = page_attachment(page["properties"])
     if not attachment:
         raise HTTPException(status_code=400, detail="the page has no PDF")

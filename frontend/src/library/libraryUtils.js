@@ -54,6 +54,82 @@ export const labelName = (tree, id) => (id === NO_LABEL ? NO_LABEL_TITLE : tree.
 // matched against and what a folder picker or filter lists.
 export const folderEntries = (tree) => [...tree.folders.keys()].map((id) => ({ id, name: folderPath(tree, id) }));
 
+// ---------- typed folder paths ----------
+//
+// A folder is named in a field by typing its path, and completed from it the
+// way a shell or VS Code completes one: what is typed narrows the list, Tab
+// writes the folder out in full, and a path ending in the separator lists
+// what is inside that folder, so Tab after Tab walks down the tree. The
+// Connector's folder field reads the same rules against its own flat list
+// (extension/ui.js, extension/api.js `pathNames`).
+
+// The names a typed path holds: split on "/", trimmed, blanks dropped — as
+// the server splits one (blocks_store.split_path). "phys / c" is two names.
+export const folderPathNames = (text) => text.split("/").map((name) => name.trim()).filter(Boolean);
+
+// Whether a folder's path holds a typed one: each typed name, in order,
+// within one of as many consecutive names of the path, so "phys/c" finds
+// "Physics / Clocks" and "2026" any folder named with it. A name may itself
+// hold "/", so the path as it reads counts whole too — that is how a folder
+// actually called "a/b" is still found by typing it.
+export function folderPathHolds(path, text) {
+  const want = folderPathNames(text.toLowerCase());
+  const have = path.map((name) => name.toLowerCase());
+  for (let i = 0; i + want.length <= have.length; i++) {
+    if (want.every((w, j) => have[i + j].includes(w))) return true;
+  }
+  return path.join(PATH_SEP).toLowerCase().includes(text.trim().toLowerCase());
+}
+
+// The folder a typed path names, or null: the one whose path reads exactly
+// so (a name may hold "/", and that reading comes first), else the one
+// reached name by name from the top. Each name is matched as the server's
+// blocks_store.named matches: exactly, else ignoring case.
+export function folderAtPath(tree, text) {
+  const whole = findNamed(folderEntries(tree), text);
+  if (whole) return tree.folders.get(whole.id);
+  const names = folderPathNames(text);
+  let folder = null;
+  for (const name of names) {
+    folder = findNamed(siblingFolders(tree, folder ? folder.id : ""), name);
+    if (!folder) return null;
+  }
+  return folder;
+}
+
+// The folder a typed path ending in the separator asks to see inside, when
+// it holds subfolders: "Physics /" lists what is in Physics, which is where
+// Tab's completion leaves the field. Null for anything else — a folder with
+// nothing inside is no such ask, and the match below still offers it.
+export function folderInside(tree, text) {
+  if (!/\/\s*$/.test(text)) return null;
+  const folder = folderAtPath(tree, text);
+  return folder && folder.children.length ? folder : null;
+}
+
+// The folders a typed path suggests, as {id, name} named by their paths:
+// what is inside the folder a drill-down names, else every folder whose path
+// holds the typed names — the one the last typed name begins first, since
+// that is the folder being named rather than one merely holding it. `skip`
+// are the ids already filed.
+export function folderMatches(tree, text, skip = []) {
+  const left = (folders) => folders.filter((f) => !skip.includes(f.id)).map((f) => ({ id: f.id, name: folderPath(tree, f.id) }));
+  const inside = folderInside(tree, text);
+  if (inside) return left(siblingFolders(tree, inside.id));
+  const last = folderPathNames(text).at(-1)?.toLowerCase() || "";
+  const found = [...tree.folders.values()].filter((f) => folderPathHolds(f.path, text));
+  const heads = found.filter((f) => f.name.toLowerCase().startsWith(last));
+  return left([...heads, ...found.filter((f) => !heads.includes(f))]);
+}
+
+// What Tab puts in a field for a folder: its path as it reads, ending in the
+// separator when it holds subfolders, so the next keys search inside it.
+// "" for an id the tree lacks.
+export function folderCompletion(tree, id) {
+  const folder = tree.folders.get(id);
+  return folder ? folder.path.join(PATH_SEP) + (folder.children.length ? PATH_SEP : "") : "";
+}
+
 // The folders from the top down to `id`, ids; [] when it is no folder.
 export function folderChain(tree, id) {
   const chain = [];
@@ -196,10 +272,13 @@ export function pagesIntoPage(pages, ids, target) {
 // read them: {id, content ("Untitled" when empty), _pageId, _attachment,
 // _preview, _folders, _labels (ids the trees have), _folderChips,
 // _labelChips ({id, name}, filingChips), _createdAt, _updatedAt, _pinned,
-// _parentPage, _path, _subPages}. A page is filed by its top, so a
-// sub-page's folders are its top's (the server's blocks_store.filed_folders)
-// and its labels its own; `_path` is where it is (pagePathLabel, "" for a
-// library page) and `_subPages` how many pages are right inside it.
+// _parentPage, _path, _subPages, _linkedFile, _opened}. A page is filed by
+// its top, so a sub-page's folders are its top's (the server's
+// blocks_store.filed_folders) and its labels its own; `_path` is where it is
+// (pagePathLabel, "" for a library page) and `_subPages` how many pages are
+// right inside it. `_linkedFile`: the page reads its PDF from a file on this
+// computer (gamma/linked_files.py); `_opened`: it is *Opened files*, the page
+// those are inside (vault/vaultState.js isOpenedPdf).
 export function pageBlocksOf(rows, tree) {
   const byId = new Map(rows.map((b) => [b.id, b]));
   const chains = rows.map((b) => (b._parentPage ? pageAncestors(byId, b.id) : []));
@@ -228,6 +307,8 @@ export function pageBlocksOf(rows, tree) {
       _parentPage: b._parentPage || "",
       _path: chain.map((a) => a.title).join(PAGE_PATH_SEP),
       _subPages: inside.get(b.id) || 0,
+      _linkedFile: !!b.properties?.linked_file,
+      _opened: !!b.properties?.opened_files,
     };
   });
 }
@@ -339,7 +420,8 @@ export function formatFullDate(iso) {
 // raw properties. Null for a page that is only blocks. `url` is where the
 // file is fetched from: the stored source_url, else the stored copy by
 // hash — a page stores no source_url that is its own doc_id's
-// (gamma/blocks_store.py page_attachment, the twin).
+// (gamma/blocks_store.py page_attachment, the twin; tests/shared/
+// attachment.json holds both to the same answers).
 export function pageAttachment(block) {
   const p = block?.properties || {};
   if (!p.doc_id && !p.source_url) return null;
@@ -355,6 +437,15 @@ export function pageAttachment(block) {
 export function attachmentFile(attachment) {
   if (!attachment) return "";
   return attachment.id || /^\/api\/uploads\/([0-9A-Za-z_-]{1,128})\.pdf$/.exec(attachment.url || "")?.[1] || "";
+}
+
+// The ids of a selection a copy can be made of (`pagesById`: the listing's
+// rows). A page reading its PDF from a file on this computer has no stored
+// bytes (gamma/linked_files.py): a copy's address would stop answering when the
+// file changes, and nothing would bring it back. Add to library makes it one
+// that can be copied.
+export function duplicable(ids, pagesById) {
+  return ids.filter((id) => !pagesById.get(id)?._linkedFile);
 }
 
 // What a card/row says a page is: the attachment kind, else just a page.

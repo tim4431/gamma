@@ -233,6 +233,7 @@ and integration tokens get an empty list. The sources:
 | `cloud-link` | everyone | Account | info | cloud sign-in works here (on, and not waiting for Connect) and the account has no Gamma Cloud identity (`cloud_auth.status_of`); not on the share host. The Account pane's Gamma Cloud row says what linking gives and links it | constant: seen once |
 | `cloud-setup` | admins | Server | info | cloud sign-in is off, or on but the server still has to be connected (`cloud_auth.needs_connect`); Server → Sign-in turns it on | `off` / `connect`, so each state is seen once |
 | `join-requests` | admins | Server | info | Gamma Cloud accounts ask to join this server (`join_requests.waiting`: the waiting requests, [cloud_accounts.md](cloud_accounts.md) "Requests to join"); Server → Sign-in lists them | when the newest waiting one was made: a new request brings it back, a decided one does not |
+| `reports` | admins | Server | info | open reports someone other than this admin made here (`reports.waiting`; [api.md](api.md) "Reports"); Server → Reports lists them | the newest open one: a new report brings it back, a resolved one does not |
 | `free-translate` | everyone who met the failures | Translation | warn | Microsoft's free translation service failed `FREE_ALERT_AFTER` (3) times in a row, in memory (`translate_engines.free_failing`); one success ends it, and the Microsoft row names the error | the streak's start time |
 | `hosted` | admins (grace), everyone (read-only) | Server for admins, Account for members | warn / error | a hosted container's cached plan answer (`hosted.limits`, from memory) is in `grace` (admins only; names `grace_until`) or read-only (everyone) — [cloud_accounts.md](cloud_accounts.md) "Hosted containers" | the status and since when it holds (`status_since`), so each episode is seen once |
 | `storage` | everyone | Account | warn / error | personal storage past 90 % of the quota / full; only computed for an account under a quota, and the upload walk is remembered ten minutes (`notices.forget_usage`) | `90` / `full` |
@@ -335,7 +336,8 @@ Preferences:
   (`shared/ui/paletteContext.js`): the selection popup and a highlight's
   recolour menu store the swatch at its alpha (a highlight's
   `properties.color` is `#rrggbbaa`, [api.md](api.md) "The highlight
-  shape"), a pen or highlighter preset takes the swatch's alpha as its
+  shape"; the alpha byte rounds half up on both sides, `palette.js` and
+  the server's `gamma/colors.py` held to `tests/shared/colors.json`), a pen or highlighter preset takes the swatch's alpha as its
   own `opacity` ([handwriting.md](handwriting.md)), a text box takes the
   hex alone. A changed swatch is what the pickers offer from then on;
   stored highlights and strokes keep the colour they have. The first
@@ -353,7 +355,15 @@ Preferences:
   pane at their sections.
 - **Reading & editing**: how papers and notes behave, one section per
   subject. **PDFs**: imported annotations (a Keep / Remove segmented choice),
-  open-access fallback, metadata auto-fetch and saving external PDFs.
+  open-access fallback, metadata auto-fetch and saving external PDFs, and
+  in the desktop app alone *Add opened PDFs to the library*
+  (`openAddsToLibrary`, account scope, off by default): off, a PDF the app
+  opens from this computer is read where it lies, under *Opened files*,
+  until Add to library… stores it; on, every PDF opened that way is stored
+  in the library at once. The shell reads it from the account's profile on
+  the server it opens the file on (`desktop/main.js` `addsToLibrary`;
+  [synced_vaults.md](synced_vaults.md#the-desktop-app)), so the row shows
+  only where `IS_DESKTOP`.
   **Replacing a PDF** (account scope, `SECTION_PREFS.reading["Replacing a
   PDF"]`): how the highlight run of a replaced PDF finds each highlight's
   text ([highlight_relocation.md](highlight_relocation.md#the-thresholds)).
@@ -558,7 +568,11 @@ AI:
   custom endpoint and its API format; [ai.md](ai.md#other-services)), the key with the
   provider's placeholder, a "Get a key at …" link and the live check, then
   the models with the name and test model under More options; its button is
-  Connect, and the new connection is tested once saved; the server's shared entries follow the account's own as read-only
+  Connect, and the new connection is tested once saved; each model tag on a
+  row shows whether the model calls tools on that connection (a check, a ban
+  with the reason and date on hover, or nothing before its first chat with
+  tools), and a click on the tag checks it again ([ai.md](ai.md#models-that-cant-call-tools));
+  the server's shared entries follow the account's own as read-only
   rows tagged "Shared by this server", selectable as the active key but
   without Test / Manage / delete; with no key picked, or the picked one
   removed, the first connection that offers models is the active one, here
@@ -712,6 +726,10 @@ Library:
   the copies are on, Status reads "last round … · 12 databases · 340
   uploads · 0 failed · next round …" (or "no round yet", with the round's
   error under it) beside Copy now, which is disabled while a round runs.
+  A running round leads it with how far it is ("copying now… · databases
+  3 / 12", then "files 120 / 3,400 · 1.2 GB / 8.0 GB",
+  [offsiteRound.js](../../frontend/src/settings/offsiteRound.js)), read
+  every 3 s while it runs.
   With `GAMMA_S3_BUCKET` set, the environment supplies every field: the
   switch is disabled, the summary says "Set by GAMMA_S3_BUCKET in the
   server's environment" (the summary line is its hover title), and its one
@@ -814,6 +832,17 @@ sign-in and the MCP host allowlist and persists in the server `settings`
 table. An existing `GAMMA_PUBLIC_URL` environment override is shown
 read-only.
 
+**Reports** (Server, `SettingsReports.jsx` `ContentReports`, `GET
+/api/admin/reports`), under Sign-in: a Row with how many are open (its
+hover says whether this server sends each one on to Gamma Cloud) and an
+Open / Resolved switch, then one row per report: the reason with a tag for
+what it is (Comment, Page, AI reply), the text reported, quoted, the
+reporter's own words, and a line with who wrote it and on which page, who
+reported it (a visitor without an account named so) and when, and, on a
+server that forwards them, whether Gamma Cloud has it yet. Resolve (or
+Reopen) and Delete, which asks first, are icon buttons
+([api.md](api.md) "Reports").
+
 **Sign-in** (Server, `SettingsCloudSignIn.jsx` `CloudSignInSettings`) has
 three rows. The account server's address (empty = off, an on/off `uiTag`).
 The **server client**: how this Gamma identifies itself to the account
@@ -872,7 +901,10 @@ a setting only a native host shows (Reading & editing › the pen section,
 Apple Pencil or Stylus, marked `hostOnly(flags, entry)`, a flag or a
 list), unless the host has every one of its flags as `hostCaps` reads
 them (the dialog passes `hostCaps(nativeHost())` as
-`searchSettings(query, panes, {host})`). A result is a
+`searchSettings(query, panes, {host, desktop})`). A setting only the
+desktop app reads (Reading & editing › PDFs › *Add opened PDFs to the
+library*, marked `desktopOnly(entry)`) is listed only with `desktop`
+(`IS_DESKTOP`). A result is a
 row-like button: the pane's icon, the label with the query marked, the
 hint, and "Pane › Section" on the right. Past six results they group under
 one caption per pane. Picking one opens the pane and focuses the matching

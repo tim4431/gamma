@@ -18,6 +18,7 @@ import { t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 import { copyText } from "../shared/lib/utils";
 import { saveLinkClick } from "../shared/lib/saveFile.js";
+import { composing } from "../shared/lib/hotkeys.js";
 import {
   AlignCenterIcon, AlignLeftIcon, AlignRightIcon, CaptionIcon, CopyIcon, DownloadIcon,
   GridIcon, PlusIcon, Trash2Icon, ZoomInIcon,
@@ -254,6 +255,7 @@ export function MdImage({ src, alt, width, idx, onEdit }) {
           onClick={stop}
           onKeyDown={(e) => {
             e.stopPropagation();
+            if (composing(e)) return;
             if (e.key === "Enter") commitCaption(caption);
             else if (e.key === "Escape") setCaption(null);
           }}
@@ -537,6 +539,7 @@ export function MdTableWrap({ idx, onEdit, model, editKey, children }) {
           onClick={stop}
           onKeyDown={(e) => {
             e.stopPropagation();
+            if (composing(e)) return;
             if (e.key === "Enter") { e.preventDefault(); commitCell(null); }
             else if (e.key === "Escape") { e.preventDefault(); _tableEditSession.delete(editKey); setCellEdit(null); }
             else if (e.key === "Tab") { e.preventDefault(); commitCell(nextCell(cellEdit, e.shiftKey)); }

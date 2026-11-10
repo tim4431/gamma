@@ -252,7 +252,9 @@ No schema change: sheets are blocks and properties.
   keyed by the sheet's id instead of a page number. The layers read the
   tools from `PageToolsContext` and each sheet takes its own marks from
   App's `marks`, so a memoized sheet re-renders only for its own ink,
-  boxes and pictures.
+  boxes and pictures. A zoom is not one of those: the column carries the
+  scale as `--viewer-scale`, and a sheet is `scaledPx` of its paper's size
+  ([ui-design.md](ui-design.md#zoom-gestures-in-a-viewer)).
   It sizes to fit the widest sheet
   at `page-width`, else follows the viewer's zoom (`pdfScale`, from the
   buttons, Ctrl+wheel or a two-finger pinch), and keeps a point of the

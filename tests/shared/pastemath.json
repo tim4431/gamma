@@ -1,4 +1,6 @@
-[
+{
+  "about": "Pasted and AI-written \\( \\) and \\[ \\] math as the $ and $$ notes render (docs/dev/latex_editing.md): gamma/paste_math.py and frontend/src/editor/pasteMath.js. dollar: what dollar_math / dollarMath make of in, keep being the text read before (its pairs stay as written), code and escaped brackets left alone; converting out again changes nothing. paste: text put in at the caret of at ('|' marks it, and is not part of the note), which stays as written when it lands in a code fence, inline code or math. Read by backend/tests/test_paste_math.py and frontend/tests/pasteMath.test.mjs.",
+  "dollar": [
   { "why": "inline math, its padding trimmed", "in": "where \\( x \\) is the position", "out": "where $x$ is the position" },
   { "why": "display math on lines of its own", "in": "\\[\nE = mc^2\n\\]", "out": "$$\nE = mc^2\n$$" },
   { "why": "on lines of its own, any content is a formula", "in": "\\[\n(x+1)(x-1)\n\\]", "out": "$$\n(x+1)(x-1)\n$$" },
@@ -67,5 +69,35 @@
   { "why": "escaped text with money stays as written", "in": "\\[sic\\] cost \\$5", "out": "\\[sic\\] cost \\$5" },
   { "why": "a pair the text read already held stays as written", "in": "\\(x\\) and \\(y\\)", "keep": "see \\(x\\)", "out": "\\(x\\) and $y$" },
   { "why": "dollar formulas the text read already held stay", "in": "where $ \\alpha $ is the rate and \\(\\beta\\) the decay", "keep": "where $ \\alpha $ is the rate", "out": "where $ \\alpha $ is the rate and $\\beta$ the decay" },
-  { "why": "a pair in the code the text read is none to keep", "in": "Write `\\(x\\)` for math, e.g. \\(x\\) squared.", "keep": "Write `\\(x\\)` for math.", "out": "Write `\\(x\\)` for math, e.g. $x$ squared." }
-]
+  { "why": "a pair in the code the text read is none to keep", "in": "Write `\\(x\\)` for math, e.g. \\(x\\) squared.", "keep": "Write `\\(x\\)` for math.", "out": "Write `\\(x\\)` for math, e.g. $x$ squared." },
+  { "why": "a tilde fence is source", "in": "~~~\n\\(x\\)\n~~~", "out": "~~~\n\\(x\\)\n~~~" },
+  { "why": "a quoted backtick fence is source", "in": "> ```\n> \\(x\\)\n> ```", "out": "> ```\n> \\(x\\)\n> ```" },
+  { "why": "a listed fence still open is source", "in": "- ```\n  \\(x\\)", "out": "- ```\n  \\(x\\)" },
+  { "why": "a fence still open is source to the end", "in": "```\n\\(x\\)", "out": "```\n\\(x\\)" },
+  { "why": "a backtick line with a backtick in its info string opens no fence", "in": "```js `x`\n\\(y\\)", "out": "```js `x`\n$y$" },
+  { "why": "after a tilde fence formulas convert", "in": "~~~\n\\(x\\)\n~~~\n\\(y\\)", "out": "~~~\n\\(x\\)\n~~~\n$y$" },
+  { "why": "empty text", "in": "", "out": "" }
+  ],
+  "paste": [
+  { "why": "in prose", "at": "see |", "text": "\\(x\\)", "out": "$x$" },
+  { "why": "inside inline math", "at": "$a + | b$", "text": "\\(x\\)", "out": "\\(x\\)" },
+  { "why": "inside display math", "at": "$$\na |\n$$", "text": "\\[x^2\\]", "out": "\\[x^2\\]" },
+  { "why": "an unclosed $ reads as math to its line's end", "at": "price $5 and |", "text": "\\(x\\)", "out": "\\(x\\)" },
+  { "why": "inside a code fence", "at": "```\nconst s = |\n```", "text": "\\(x\\)", "out": "\\(x\\)" },
+  { "why": "inside an open fence", "at": "```\nopen |", "text": "\\(x\\)", "out": "\\(x\\)" },
+  { "why": "in an open fence's info string", "at": "```py|thon", "text": "\\(x\\)", "out": "$x$" },
+  { "why": "inside a quoted fence", "at": "> ```latex\n> |\n> ```", "text": "\\(x\\)", "out": "\\(x\\)" },
+  { "why": "inside a listed tilde fence", "at": "- step\n  ~~~\n  |\n  ~~~", "text": "\\(x\\)", "out": "\\(x\\)" },
+  { "why": "after a fence", "at": "```\ncode\n```\nafter |", "text": "\\(x\\)", "out": "$x$" },
+  { "why": "inside inline code", "at": "run `echo |` now", "text": "\\(x\\)", "out": "\\(x\\)" },
+  { "why": "after inline code", "at": "`code` and |", "text": "\\(x\\)", "out": "$x$" },
+  { "why": "a dollar in code is no math", "at": "Set `$HOME` first, then |", "text": "\\(x\\)", "out": "$x$" },
+  { "why": "before an indented closing mark", "at": "- ```\n  ab\n  |```", "text": "\\(x\\)", "out": "\\(x\\)" },
+  { "why": "after the list item that held a fence", "at": "- ```\n  code\nafter |", "text": "\\(x\\)", "out": "$x$" },
+  { "why": "after the quote that held one", "at": "> ```\n> code\n\nafter |", "text": "\\(x\\)", "out": "$x$" },
+  { "why": "a $$ in code is no math", "at": "use `$$` for |", "text": "\\(x\\)", "out": "$x$" },
+  { "why": "a dollar in code closes no dollar above", "at": "Costs $5 a month.\n\nSet it up: |\n\n```sh\necho $HOME\n```", "text": "\\(x\\)", "out": "$x$" },
+  { "why": "nor a $$ block", "at": "$$\na `x$y` b\n|\n$$", "text": "\\(x\\)", "out": "\\(x\\)" },
+  { "why": "a lone $ ends with its paragraph", "at": "Costs $5.\n\nRun `echo $HOME`.\n\n$$\nx|\n$$", "text": "\\(x\\)", "out": "\\(x\\)" }
+  ]
+}

@@ -1,7 +1,7 @@
 import { Account, fakeAiModels, wanted } from "../harness.mjs";
 
 export async function mentionScenarios(env) {
-  const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, flags, makePdf } = env;
+  const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, makePdf } = env;
   if (!wanted("mentions")) return;
   await server.manage("create-user", "mentions-user", "mentions-pw");
   const user = await new Account(server, "mentions-user", "mentions-pw").login();

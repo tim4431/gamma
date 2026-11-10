@@ -5,6 +5,7 @@
   },
   "shared/styles/app.css": {
     "color": 80,
-    "shadow": 3
+    "shadow": 3,
+    "family": 2
   }
 }

@@ -54,7 +54,11 @@ of these: `sync_engine.create_mirror` and `publish.publish` refuse a
 workspace with a `zotero_links` row (detached included), and
 `zotero_sync.create_link` refuses one with a `mirrors` row, but for the row
 of a publication whose last page was unpublished, which it forgets once
-the link is made ([Refusals](#refusals)).
+the link is made ([Refusals](#refusals)). A synced vault of the desktop app
+([synced_vaults.md](synced_vaults.md#rules-that-keep-files-safe)) shares a
+linked workspace only as one that pulls or pushes PDFs: the link refuses a
+workspace a vault pushes everything into, and the vault refuses to push
+everything into a linked one.
 
 ## Modules
 
@@ -289,7 +293,8 @@ priority, and a newer version starts its backoff over.
 
 `sync_log` and `sync_conflicts` are the mirror's tables
 ([Conflicts and the log](#conflicts-and-the-log)). `remove_link` empties
-all five.
+all five, but for a synced vault's `file_won` conflicts in `sync_conflicts`
+(`sync_engine.NOT_VAULT`), which are the vault's own.
 
 ### Properties the engine writes on pages and blocks
 
@@ -317,7 +322,10 @@ The row decides identity, never a property: a duplicated page or block
 carries `zotero_key` or `zotero_annotation` but has no row, and is new
 (the app's duplicate also drops `zotero_pdf`, `zotero_readonly` and
 `zotero_author`). `remove_link` takes the marks off every page and block,
-those in Recently deleted included.
+those in Recently deleted included, in one statement in the transaction
+that empties the link's tables; each live page that lost a mark is logged
+as a reload (`ops.log_reload`, so the change feed lists it) and its room
+refetches it after the commit.
 
 ## Keys and identity
 
@@ -858,17 +866,32 @@ A folder with no live collection behind it stays where a page is filed
 when Zotero's collections are applied, and a collection Gamma has no row
 for stays in an item's collections when Gamma's are sent.
 
-**A trashed collection whose folder is shared or kept on disk** (a share
-link, or a desktop folder link, `_kept_folders`) stays here: deleting it
+**A page inside another page** ([home_library.md](home_library.md)
+"Sub-pages") is filed where its top page is and carries no folders of its
+own, so its item's collections are its top's folders' (`page_side` reads
+`blocks_store.filed_folders`; a page in Recently deleted reads
+`trashed_folders`, where a restore files it). A paper moved inside a page
+goes to that page's top's collections, and a new sub-page with a record is
+created in them. Refiling the top changes nothing of the sub-page's own, so
+`_list_gamma` queues the linked pages inside a changed page whose item's
+collections as last synced (`gbase`) are no longer their folders'
+(`_refiled_inside`), after the pass-by of the link's own writes, so a
+sub-page the link last wrote to (a pull) is refiled too. Zotero's change of a sub-page item's collections is
+never applied, which would store folders on it: `_Unit._held_collections`
+turns it into Gamma's side, the top's collections, sent back on a two-way
+round.
+
+**A trashed collection whose folder is shared or a synced vault's** (a share
+link, or a synced vault of the desktop app, `_kept_folders`) stays here: deleting it
 would end its share links and invitations for good, and a restore in
 Zotero could not bring them back. Its rows turn `trashed` with
 `detail.kept` (its subfolders' rows too, `collateral`), the folders and
 the pages' filing stay as they are, and a "kept here" log line says why.
 A Zotero restore makes the rows live again with the bases they kept, so
 what either side changed meanwhile is merged; emptying Zotero's trash
-removes an unchanged kept folder as any removal for good does. A restore
+removes an unchanged folder kept so as any removal for good does. A restore
 of a folder that was deleted gives it back its old block id when nothing
-holds it, so what names the folder by id (a desktop folder link, a
+holds it, so what names the folder by id (a synced vault, a
 reading position) finds it again.
 
 **Removed for good** (`collections_gone`, from `/deleted`): a folder
@@ -2373,7 +2396,9 @@ under one lock with the insert (two requests at once make one link):
   is refused the same way);
 - a `workspace_id` that is not a personal workspace the owner owns, one
   with a `mirrors` row (a clone, a workspace that publishes pages, either
-  detached included), or one linked already. The row a publication keeps
+  detached included), one linked already, or one a synced vault of this
+  server pushes everything into (`folder_links.pushing_vault`: "let it push
+  only PDFs, or only pull, first"). The row a publication keeps
   once its last page was unpublished (`page_filter` `'[]'`) is no bar, as
   for `workspaces.update`: once the link's row is written, `create_link`
   forgets that publication under its round lock
@@ -2585,7 +2610,7 @@ holds every reading only a Zotero link has, pure so node tests it.
   conflicts").
 - **The desktop bar** (`desktop/lib/keeping.js`, `desktop/main.js`
   `refreshKeeping`): each local server's links (`GET /api/zotero/links`)
-  are items of kind `zotero` beside its clones and folders on disk, read as
+  are items of kind `zotero` beside its clones and synced vaults, read as
   the pill reads them; pause detaches, resume reattaches, sync runs a round
   ([mirror.md](mirror.md#the-desktop-switcher)).
 
@@ -2684,7 +2709,7 @@ holds every reading only a Zotero link has, pure so node tests it.
   Zotero link that is not detached, as it does the clones' hosts and the
   folder host (`startBackgroundHosts`, `registry.launchHosts`), from what
   its last reading of each running server's links recorded
-  (`zoteroHost`, [architecture.md](../../desktop/docs/architecture.md#kept-on-this-computer)).
+  (`zoteroHost`, [architecture.md](../../desktop/docs/architecture.md#the-sync-panel)).
   It reads them as that server's seeded admin, so a link another account
   made there does not count, and a link made in Settings counts from the
   shell's next reading (3 s after launch, then every 15 s): a server quit
@@ -2758,6 +2783,7 @@ that leaked the key would fail its test).
 |---|---|
 | `test_zotero_sync.py` | the registry and API, the dialog's counts, conflicts, clock and status (Sync now answered before its round, its ask taken off by the round, a detach, a restart, an error before the round or a round of its own where the clock would drop it), listing and the feed, bounded rounds |
 | `test_zotero_sync_folders.py` | collections ↔ folders |
+| `test_sub_pages_zotero.py` | a page inside another page: filed in Zotero where its top is, refiled with it, Zotero's collections answered with its top's, a new one created in them |
 | `test_zotero_sync_items.py` | first fill, records, retypes, trash and removals, both-sides and field conflicts, lost creates, re-parenting, the change-feed skip |
 | `test_zotero_sync_pdfs.py` | downloads, uploads, both sides replaced (in place and beside, with and without a copy, a lost answer, Take Zotero's back on Zotero's PDF), kept copies and the upload GC, full storage (a download it holds still counted when its item changes again), hashing, transfers, the wait while highlights are placed (stubbed and the real relocate job) and going in place once they are, a new attachment decided afresh, standalone PDFs removed for good |
 | `test_zotero_sync_first_link.py` | the first link of an existing workspace, its records and PDFs, force |
@@ -2776,7 +2802,7 @@ that leaked the key would fail its test).
 Each engine file has its own account (`zs_` the registry and API, `zd_`
 folders, `zi_` items, `zp_` PDFs, `zk_` first links, `zlk_` the link's
 lifecycle, `zw_` the words, `za_` annotations, `zn_` notes, `zg_` scale,
-`zh_` hardening, `zc_` crashes, `zf_` the fuzz),
+`zh_` hardening, `zc_` crashes, `zf_` the fuzz, `zsp_` sub-pages),
 and `owner_id` fails when two files claim one. Run them with `--dist loadfile`, as the full suite
 does ([debugging.md](debugging.md#full-backend-suite)); the fuzz takes more
 seeds with `ZOTERO_FUZZ_SEEDS=400` and `-n 8`. The consumers have their

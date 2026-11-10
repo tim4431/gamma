@@ -1,12 +1,10 @@
 // The Return key in the chat's text fields, decided here once: the composer,
 // an edit and re-send, the history's rename and a hand-off card's note; and
-// in a comment's field, which has it the other way round.
+// in a comment's field, which has it the other way round. An Enter an input
+// method is composing with is the input method's (`composing`,
+// shared/lib/hotkeys.js).
+import { composing } from "../shared/lib/hotkeys.js";
 import { touchTyping } from "../shared/lib/pointer.js";
-
-// An Enter that confirms a word an input method is still composing (Chinese,
-// Japanese, Korean). It belongs to the input method: it must not also send,
-// commit or close.
-export const composing = (e) => !!(e.nativeEvent || e).isComposing || e.keyCode === 229;
 
 // Whether an Enter sends the message being written. With a keyboard, Enter
 // sends and Shift+Enter breaks the line. On an on-screen keyboard Return is

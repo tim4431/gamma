@@ -419,6 +419,25 @@ export function seedPages(url, { doc, key, pages, lookup, near = () => false }) 
   return Promise.all([...d.seeds]).then(() => {});
 }
 
+// A paper's kept translation read with no viewer (a folder's export,
+// pdf/folderTranslation.js): every page of `doc` seeded as seedPages seeds
+// it, from the kept translations with no model call, into a state of its own
+// that the store does not keep and no one is told of, so reading a folder's
+// papers pushes none of the documents the reader has open out of the store.
+// Resolves to what translateExport.exportLayout reads: the view, shown, and
+// the formula spans of its blocks. `signal` stops it: what was found so far
+// is not used.
+export async function seedDetached({ doc, key, lookup, signal = null }) {
+  signal ||= new AbortController().signal;
+  const d = { url: "", view: EMPTY, paras: new Map(), segmenting: new Map(), job: null, seeded: null, seeds: new Set(), seedCtl: null, epoch: 0 };
+  d.seeded = { key, pages: new Set() };
+  const pages = Array.from({ length: doc?.numPages || 0 }, (_, k) => k + 1);
+  if (key && pages.length && !signal.aborted) {
+    await seedNow(d, { doc, key, pages, lookup, near: () => false, signal, seeded: d.seeded });
+  }
+  return { view: { ...d.view, shown: !signal.aborted }, span: (pn, i, k) => d.paras.get(pn)?.[i]?.spans?.[k - 1] || null };
+}
+
 function stopSeeds(d) {
   d.seedCtl?.abort();
   d.seedCtl = null;

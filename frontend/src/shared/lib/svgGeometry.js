@@ -41,9 +41,9 @@ function mapBox(b, m) {
 // their transforms), skipping empty ones.
 export function computedBBox(el, nativeGetBBox) {
   switch (el.localName) {
+    // biome-ignore lint/suspicious/noFallthroughSwitchClause: a <use> with a width is sized like a rect
     case "use":
       if (!el.hasAttribute("width")) return plain(nativeGetBBox.call(el));
-    // falls through
     case "foreignObject": case "rect": case "image":
       return { x: num(el, "x"), y: num(el, "y"), width: num(el, "width"), height: num(el, "height") };
     case "circle": {

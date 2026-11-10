@@ -1,6 +1,6 @@
 // PDFs the operating system hands the app (lib/openFiles.js): the files a
-// command line names, and the workspace a file goes into. `npm test` in
-// desktop/.
+// command line names, and the workspace a file goes into, added to the
+// library or read where it is. `npm test` in desktop/.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -52,9 +52,47 @@ test('a workspace others see offers your own instead; your own alone offers noth
   assert.deepEqual(openFiles.placeFor(session(), 'mine'), { ws: mine, audience: '', mine: null, readOnly: null });
 });
 
+test('a PDF read where it is lands in the workspace the window shows, unless it is a clone or read-only: then the host\'s own takes it', () => {
+  const lab = ws('lab', { role: 'editor', members: 3 });
+  // a shared one asks first: each member could read the file from this computer through its page
+  assert.deepEqual(openFiles.readerPlace(session(lab), 'lab'), { ws: lab, audience: 'shared', mine });
+  const open = ws('open', { access: 'public' });
+  assert.equal(openFiles.readerPlace(session(open), 'open').audience, 'shared', 'every account sees a public workspace');
+  const together = { ...mine, members: 2 };
+  assert.deepEqual(openFiles.readerPlace({ user: 'tim', default_workspace: 'mine', workspaces: [together, lab] }, 'lab'),
+    { ws: lab, audience: 'shared', mine: null }, 'an own workspace others see too is not offered instead');
+  assert.deepEqual(openFiles.readerPlace(session(ws('solo')), 'solo'), { ws: ws('solo'), audience: '', mine: null });
+  assert.deepEqual(openFiles.readerPlace(session(lab), ''), { ws: mine, audience: '', mine: null }, 'nothing shown yet: the default');
+  assert.equal(openFiles.readerPlace(session(ws('clone', { mirror_of: 'Lab' })), 'clone'), null, 'a clone\'s pages are its origin\'s');
+  assert.equal(openFiles.readerPlace(session(ws('read', { role: 'viewer' })), 'read'), null);
+  assert.equal(openFiles.readerPlace(session(lab), 'gone'), null, 'a workspace no longer listed');
+  assert.equal(openFiles.readerPlace({ user: null }, ''), null, 'signed out');
+  assert.equal(openFiles.personalOf(session(lab)), mine);
+  assert.equal(openFiles.personalOf({ user: 'g', workspaces: [ws('p', { personal: true, mirror_of: 'X' })] }), null, 'a clone is nobody\'s own');
+  assert.equal(openFiles.personalOf({ user: null }), null);
+});
+
 test('a workspace you can only read hands the file to your own; none to write in is null', () => {
   const read = ws('lab', { role: 'viewer', members: 4 });
   assert.deepEqual(openFiles.placeFor(session(read), 'lab'), { ws: mine, audience: '', mine: null, readOnly: read });
   assert.equal(openFiles.placeFor({ user: 'g', default_workspace: 'lab', workspaces: [read] }, 'lab'), null);
   assert.equal(openFiles.placeFor({ user: null }, ''), null, 'signed out');
+});
+
+test('a file\'s id is the one Gamma stores its bytes under: the first 24 hex characters of its SHA-256', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gamma-open-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'abc.pdf');
+  fs.writeFileSync(file, 'abc');
+  assert.equal(await openFiles.docIdOf(file), 'ba7816bf8f01cfea414140de', 'storage.content_digest(b"abc")');
+  await assert.rejects(openFiles.docIdOf(path.join(dir, 'gone.pdf')), /ENOENT/);
+});
+
+test('an opened PDF is carried to a workspace of the other server the account writes in, its own first, never a clone', () => {
+  const lab = ws('lab', { role: 'editor', members: 3 });
+  const read = ws('read', { role: 'viewer' });
+  const clone = ws('clone', { mirror_of: 'Lab' });
+  assert.deepEqual(openFiles.carryPlaces({ user: 'tim', workspaces: [lab, read, clone, mine] }), [mine, lab]);
+  assert.deepEqual(openFiles.carryPlaces({ user: 'g', workspaces: [read] }), []);
+  assert.deepEqual(openFiles.carryPlaces({ user: null }), [], 'signed out');
 });

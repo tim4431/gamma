@@ -51,6 +51,15 @@ def test_the_store_keeps_files_in_the_uploads_directory(local_ws):
     assert storage.find_upload_file(name, local_ws) is None and not storage.touch(local_ws, name)
 
 
+def test_a_stored_file_is_reached_by_name_through_a_callable(local_ws):
+    data = b"reached by name"
+    name = _name(data)
+    storage.put(local_ws, name, data)
+    assert storage.files(local_ws)(name) == ws_uploads_dir(local_ws) / name
+    find = storage.files(local_ws)
+    assert find("none.pdf") is None and find(f"../{name}") is None and find(".partial") is None
+
+
 def test_a_name_is_one_path_segment(local_ws):
     for bad in ("", ".partial", "../users.db", "a/b.png", "a\\b.png", "x\0.png", "a" * 256):
         with pytest.raises(ValueError):

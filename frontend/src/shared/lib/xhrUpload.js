@@ -1,10 +1,11 @@
 // Multipart POST → the JSON reply. XMLHttpRequest rather than fetch because
 // only it reports upload progress and can be aborted mid-body; it bypasses
 // the fetch wrapper, so the workspace header and the tab-identity guard are
-// set by hand, and a 409 from that guard raises the same window events the
-// wrapper does. Rejects with an Error carrying `status` / `data` like the
-// fetch wrapper's, or `aborted: true` after onAbortable's function ran or
-// `signal` fired. A 413 without Gamma's JSON detail is a proxy's refusal
+// set by hand, and a 409 from that guard, or a 423 for a workspace being
+// deleted, raises the same window events the wrapper does. Rejects with an
+// Error carrying `status` / `data` like the fetch wrapper's, or
+// `aborted: true` after onAbortable's function ran or `signal` fired. A 413
+// without Gamma's JSON detail is a proxy's refusal
 // (utils.js proxyRefusal) and says so. Shared by every upload: block files
 // and images (FileChip postFile), PDFs (shared/lib/uploadParts.js — one
 // request, or the parts of one), the jobs' uploads such as backup zips
@@ -12,7 +13,7 @@
 // and a handed-off PDF (chat/FetchHandoffCards.jsx).
 //   onProgress(loaded, total)  bytes sent, while the total is known
 //   onProcessing()             the body is up; the server is working
-import { getCurrentWorkspace, getExpectedUser, proxyRefusal, withShare, withWorkspace } from "./utils";
+import { getCurrentWorkspace, getExpectedUser, noteDeletingWorkspace, proxyRefusal, withShare, withWorkspace } from "./utils";
 
 export function xhrUpload(endpoint, form, { onProgress, onProcessing, onAbortable, signal } = {}) {
   return new Promise((resolve, reject) => {
@@ -35,6 +36,7 @@ export function xhrUpload(endpoint, form, { onProgress, onProcessing, onAbortabl
         const user = xhr.getResponseHeader("X-Gamma-Session-User");
         window.dispatchEvent(new CustomEvent(user ? "gamma-user-mismatch" : "gamma-auth-expired", { detail: { user } }));
       }
+      noteDeletingWorkspace(xhr.status, (name) => xhr.getResponseHeader(name));
       if (xhr.status >= 200 && xhr.status < 300) { finish(resolve, data); return; }
       const err = new Error(proxyRefusal(xhr.status, data) || String(data?.detail || xhr.statusText || `HTTP ${xhr.status}`));
       err.status = xhr.status; err.data = data;

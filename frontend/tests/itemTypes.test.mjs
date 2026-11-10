@@ -1,25 +1,26 @@
 // Item types (meta.kind) under Zotero's names: the interface's copy of the
-// server's table (gamma/item_types.py), the popover rows each type shows,
-// and the unverified-metadata rule that depends on the type.
+// server's table (gamma/item_types.py), held to the same answers by
+// tests/shared/itemtypes.json, the popover rows each type shows, and the
+// unverified-metadata rule that depends on the type.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { isCheckableType, itemTypeFields, itemTypeLabel, itemTypeOf, normalizeItemType } from "../src/shared/lib/itemTypes.js";
+import { ITEM_TYPES, isCheckableType, itemTypeFields, itemTypeLabel, itemTypeOf, normalizeItemType } from "../src/shared/lib/itemTypes.js";
 import { metadataToDraft } from "../src/library/libraryUtils.js";
 
-test("stored kinds are read as Zotero's item types, the old ones included", () => {
-  assert.equal(normalizeItemType("conferencePaper"), "conferencePaper");
-  assert.equal(normalizeItemType("BookSection"), "bookSection");
-  assert.equal(normalizeItemType("notes"), "document");
-  assert.equal(normalizeItemType("slides"), "presentation");
-  assert.equal(normalizeItemType("paper"), "");
-  assert.equal(normalizeItemType("podcast"), "");
+const SHARED = JSON.parse(readFileSync(new URL("../../tests/shared/itemtypes.json", import.meta.url), "utf8"));
+
+test("the types in the popover's order, and those a registry can confirm, are the server's", () => {
+  assert.deepEqual(ITEM_TYPES.map(([type]) => type), SHARED.types);
+  assert.deepEqual(SHARED.types.filter(isCheckableType), SHARED.checkable);
 });
 
-test("a record naming no type is read from its fields, as the server reads it", () => {
-  assert.equal(itemTypeOf({ publisher: "Wiley" }), "book");
-  assert.equal(itemTypeOf({ arxiv_id: "1706.03762", venue: "arXiv:1706.03762" }), "preprint");
-  assert.equal(itemTypeOf({ kind: "paper", arxiv_id: "1602.03837", venue: "Phys. Rev. Lett." }), "journalArticle");
-  assert.equal(itemTypeOf(null), "journalArticle");
+test("stored kinds are read as Zotero's item types, the old ones included (the shared cases)", () => {
+  for (const c of SHARED.normalize) assert.equal(normalizeItemType(c.in), c.out, c.note);
+});
+
+test("a record naming no type is read from its fields, as the server reads it (the shared cases)", () => {
+  for (const c of SHARED.item_type) assert.equal(itemTypeOf(c.meta), c.type, c.note);
   assert.equal(metadataToDraft({ kind: "thesis", title: "T" }).kind, "thesis");
   assert.equal(itemTypeLabel("bookSection"), "Book chapter");
 });

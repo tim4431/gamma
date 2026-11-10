@@ -120,7 +120,8 @@ rules). The quirks as observed live:
 
 **Item type.** `meta.kind` names what the record describes, under the names
 Zotero gives its item types (`gamma/item_types.py`, mirrored for the
-interface in `frontend/src/shared/lib/itemTypes.js`): `journalArticle`,
+interface in `frontend/src/shared/lib/itemTypes.js`, both held to
+`tests/shared/itemtypes.json`): `journalArticle`,
 `conferencePaper`, `preprint`, `bookSection`, `book`, `thesis`, `report`,
 `presentation`, `document`. Zotero's item types are CSL's types under
 another spelling, the vocabulary reference managers and citation styles
@@ -393,7 +394,7 @@ is configured.
 
 `GET /api/metadata/status` reports library-wide health (per paper: metadata
 present/failed + source/kind, extracted-text chars and index state from the
-FTS tables) — it feeds the Settings → Maintenance pane's status table and its
+FTS tables; the chars are the count the indexer kept per paper, a lookup) — it feeds the Settings → Maintenance pane's status table and its
 adaptive batch retry (selected, else missing + unverified; plus "Refetch
 all"/"Refetch shown"). The batch is the `metadata` background job (`POST
 /api/jobs/metadata`, [tasks.md](tasks.md)): the server looks the papers up

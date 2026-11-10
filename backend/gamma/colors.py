@@ -1,5 +1,6 @@
 """Colours as Gamma stores and names them: the server half of
-frontend/src/shared/model/palette.js (docs/dev/settings.md "Colors").
+frontend/src/shared/model/palette.js (docs/dev/settings.md "Colors"), the
+two held to the same answers by tests/shared/colors.json.
 
 A highlight block's ``properties.color`` is ``#rrggbbaa`` — hex with its
 alpha — since migration step 37; before it the viewer wrote ``rgba(r, g,
@@ -46,7 +47,14 @@ def parse_color(value) -> tuple[float, float, float, float] | None:
 
 
 def _hex2(v: float) -> str:
-    return f"{round(min(max(v, 0.0), 1.0) * 255):02x}"
+    """One byte of the stored form: ``v`` (0..1) times 255, a half rounded
+    up as palette.js's Math.round rounds it (Python's ``round`` goes to
+    even, so an alpha of 0.3, 76.5, would store 4c against the app's 4d).
+    It is ink.js_round's rule, written out because ink.py imports this
+    module."""
+    x = min(max(v, 0.0), 1.0) * 255
+    n = round(x)
+    return f"{n + 1 if x - n == 0.5 else n:02x}"   # (x - n is exact: n is the integer nearest x)
 
 
 def normalize_color(value) -> str | None:

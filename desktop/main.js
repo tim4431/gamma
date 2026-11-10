@@ -25,6 +25,7 @@ const { app, BaseWindow, WebContentsView, Menu, Tray, clipboard, nativeImage, na
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 
 const SMOKE = process.argv.includes('--smoke');
@@ -50,6 +51,7 @@ const startup = require('./lib/startup');
 const keeping = require('./lib/keeping');
 const cloudSignIn = require('./lib/cloudSignIn');
 const openFiles = require('./lib/openFiles');
+const { zipNames } = require('./lib/zipNames');
 const { loadPage } = require('./lib/loadPage');
 const { hostPath } = require('./lib/hostPath');
 const folderAccessFor = require('./lib/folderAccess');
@@ -58,6 +60,12 @@ const { pages: shellPages, isShellPage, trustedShellSender } = require('./lib/sh
 const windowControls = require('./lib/windowControls');
 
 const BAR_H = 38;
+// The shell's word to its local servers on the routes that take a path on
+// this computer (X-Gamma-Shell; lib/sidecar.js hands it to each server as
+// GAMMA_SHELL_SECRET): made anew at each start and held only here, so a
+// page of Gamma, which shares its server's origin and session, cannot name
+// a path itself.
+const SHELL_SECRET = crypto.randomBytes(32).toString('hex');
 // The Store's own updates page (Library → Get updates); needs no product id.
 const STORE_UPDATES_URL = 'ms-windows-store://downloadsandupdates';
 
@@ -168,6 +176,7 @@ function appInfo() {
     // who installs the next release (GAMMA_UPDATES)
     updates: process.mas ? 'mas' : process.windowsStore ? 'store' : 'desktop',
     access: folderAccess ? folderAccess.generation() : 0, // the folder grants a server starting now inherits
+    shellSecret: SHELL_SECRET,
   };
 }
 
@@ -299,6 +308,7 @@ function createWindow() {
     readWindowControls();
     win.on('focus', readWindowControls);
   }
+  win.on('focus', hintServers);
   if (TEST_MINIMIZED) {
     for (const v of [bar, content]) v.webContents.on('did-navigate', () => { sizedViews.add(v); emulateViewSize(v); });
   }
@@ -342,6 +352,7 @@ function createWindow() {
   cwc.on('did-navigate', () => { pushState(); refreshGamma(); });
   cwc.on('did-navigate-in-page', () => { pushState(); refreshGamma(); });
   cwc.on('did-finish-load', refreshGamma);
+  // (not while the vault dialog is up: setBarExpanded keeps it shown)
   cwc.on('focus', () => {
     if (barExpanded) setBarExpanded(false);
   });
@@ -374,6 +385,7 @@ function createWindow() {
     current = null;
     gamma = null;
     barExpanded = false;
+    if (vaultAsk) answerVault(vaultAsk.id, null); // its panel went with the window
   });
 }
 
@@ -389,6 +401,9 @@ function openDirectory(p) {
   externalOpens.push(p);
   if (!process.env.GAMMA_SHELL_TEST) shell.openPath(hostPath(p));
 }
+
+// A local server's log, where lib/sidecar.js writes it.
+const logPath = (id) => path.join(app.getPath('userData'), 'logs', `${id}.log`);
 
 // A file shown in its directory in the system's file manager; under the
 // test harness only recorded, like openDirectory.
@@ -406,8 +421,12 @@ function copyText(text) {
   if (!process.env.GAMMA_SHELL_TEST) Promise.resolve(clipboard.writeText(text)).catch(() => {});
 }
 
+// The bar view over the content while a dropdown is open. The vault dialog
+// (askVault) keeps it expanded until it is answered: a click in the page
+// meanwhile (a look at the folder) must not hide a dialog that still waits,
+// so only its answer or its cancel (answerVault) shrinks the bar.
 function setBarExpanded(on) {
-  barExpanded = Boolean(on);
+  barExpanded = Boolean(on) || Boolean(vaultAsk);
   layout();
 }
 
@@ -421,6 +440,7 @@ function launcherError(error, serverId) {
 
 function loadLauncher(error, serverId) {
   if (!win) return;
+  cancelVaultAsk();
   current = null;
   gamma = null;
   busy = null;
@@ -534,10 +554,10 @@ async function openOriginal(wsId) {
 
 // Local servers to run for as long as the app does, whichever server the
 // window shows (registry.launchHosts): the hosts of offline copies, of
-// folders and files kept of remote servers and of Zotero links that are
-// not detached (all sync only while their server runs) and, in background
-// mode, every local server, since a folder or a file kept of a local
-// workspace is its own server's job. Best effort, after the window is up;
+// synced vaults of remote servers and of Zotero links that are not
+// detached (all sync only while their server runs) and, in background
+// mode, every local server, since a synced vault of a local workspace is
+// its own server's job. Best effort, after the window is up;
 // a server already running (the one just opened) is left alone.
 function startBackgroundHosts() {
   for (const srv of registry.launchHosts()) {
@@ -612,12 +632,13 @@ async function keepOffline(wsId) {
 }
 
 // Gamma's public API through the content session (its cookies), on the
-// local server or a remote: what keepOffline and the folders on disk use.
+// local server or a remote: what keepOffline and the synced vaults use. A
+// refusal throws with its `status` and its `body`.
 function serverApi(ses) {
   return async (origin, apiPath, init) => {
     const r = await ses.fetch(origin + apiPath, { credentials: 'include', cache: 'no-store', ...init });
     const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(body.detail || `${apiPath}: HTTP ${r.status}`);
+    if (!r.ok) throw Object.assign(new Error(body.detail || `${apiPath}: HTTP ${r.status}`), { status: r.status, body });
     return body;
   };
 }
@@ -689,11 +710,11 @@ async function reachFolder(srv, dir) {
 }
 
 // The local server that hosts what this computer keeps of remote servers —
-// the clones and the folders on disk: the first local server, made when
-// there is none, started, and signed into with its seeded credentials.
+// the clones and the synced vaults: the first local server, made when
+// there is none (hostOf), started, and signed into with its seeded
+// credentials in the session of `api`.
 async function ensureHost(api) {
-  let local = registry.load().servers.find((s) => s.type === 'local');
-  if (!local) local = registry.addLocal('Local');
+  const local = hostOf();
   const entry = await startLocal(local);
   const origin = new URL(entry.url).origin;
   allowedOrigins.add(origin);
@@ -727,39 +748,68 @@ async function localServer(serverId) {
   return { srv, origin, api };
 }
 
-// ------------------------------------------------- folders on this computer -----
-// "Keep a folder on this computer": a folder of the open server's workspace
-// written to a directory of the user's choice — PDFs beside Markdown notes —
-// and kept up to date by a local server (docs/dev/folder_sync.md "Folders
-// kept by the desktop app"). On a LOCAL server the link is that server's own; it reads
-// the workspace in-process. On a REMOTE server the link lives on the host
-// local server (ensureHost) with a read-scope token minted on the remote,
-// and the host reads the folder over HTTP: no clone, only the folder's files
-// come down. The shell asks for the directory (the native picker;
-// GAMMA_SHELL_PICK_DIR in tests), mints the token, and makes the link
-// through the servers' public API with the content session's cookies; only
-// local sidecars keep links (GAMMA_FOLDER_LINKS), and they take the full
-// path. Two ways in: the sync panel's chooser, and a folder's "Keep on
-// this computer…" in Gamma's own menu, which the page preload passes on
-// (shell:keep-folder-from-page). The rounds are the server's; the sync
-// panel (below, "kept on this computer") shows each kept folder's state,
-// pauses or resumes it (pauseFolder), syncs it (syncFolder), has it send
-// the PDFs changed there back to Gamma or stop doing so (setPush; off until
-// asked for) and stops it (dropFolder, the files kept or taken back; the
-// token it minted revoked). An empty directory is used as it is; one
-// holding anything gets a subdirectory named after the folder. In the Mac
-// App Store build the server that is to write there first starts again
-// when it started before the directory was picked (reachFolder).
+// ------------------------------------------------------- synced vaults -----
+// A synced vault (docs/research/vaults.md): a folder of a workspace and a
+// directory on this computer kept in step, or a page and one PDF file, by a
+// local server (docs/dev/synced_vaults.md "The desktop app").
+// Gamma's server is the remote, the directory or the file is local; a vault
+// pulls (Gamma to disk), pushes (disk to Gamma: nothing, its PDFs, or
+// everything), or both. On a LOCAL server the vault is that server's own and
+// reads the workspace in-process. A REMOTE server's folder is synced by the
+// host local server (ensureHost) with a token minted on the remote, read
+// over HTTP: no clone, only the folder's files come down. The shell asks for
+// the directory or the file (the native picker; GAMMA_SHELL_PICK_DIR and
+// GAMMA_SHELL_PICK_FILE in tests), shows what the server found there and
+// what the first round would do (the vault dialog, a view of the sync panel:
+// askVault), mints the token, and makes the vault through the servers'
+// public API. Only the shell names a path: the routes that take one want its
+// word (shellWord, X-Gamma-Shell). The ways in: a folder's "Sync with this
+// computer…" in Gamma's page and the panel's chooser (addFolderVault), "Add a
+// synced vault…" in the launcher and the panel (addDirectoryVault), a page's
+// "Push from a file on this computer…" (addFileVault). The rounds are the
+// server's; the sync panel (below, "the sync panel") shows each vault
+// and acts on it. In the Mac App Store build the server that is to read or
+// write there first starts again when it started before the pick
+// (reachFolder).
+
+const JSON_TYPE = { 'Content-Type': 'application/json' };
+
+// The headers of a route that takes a path on this computer: the shell's
+// word, for a running local server of this app only. Asked with the origin
+// the request goes to, so neither the word nor a path ever reaches a remote
+// server, whatever the window opened while a picker was up.
+function shellWord(origin) {
+  const local = registry.load().servers.some((s) => {
+    const entry = s.type === 'local' && sidecar.status(s.id);
+    return entry && new URL(entry.url).origin === origin;
+  });
+  if (!local) throw new Error('A path on this computer goes only to a server on this computer.');
+  return { 'X-Gamma-Shell': SHELL_SECRET };
+}
 
 function openOrigin() {
   if (!current || !content) throw new Error('Open a server first');
   return new URL(current.url).origin;
 }
 
-// The links of the open server's workspace, kept folders and followed
-// files: a local server's own, or the host's links that read this remote's
-// workspace. `server` names the local server holding each. No local server
-// yet: none.
+// Where local server `srv` answers now: its sidecar's origin (reachFolder
+// may have started it again on another port), never what the window shows.
+function localOrigin(srv) {
+  const entry = srv && srv.type === 'local' && sidecar.status(srv.id);
+  if (!entry) throw new Error(`${srv ? srv.name : 'That server'} is not running.`);
+  return new URL(entry.url).origin;
+}
+
+// A flow of the window's server goes on through the window's session only
+// while the window still shows that server (`at`, the `current` it started
+// on): one opened meanwhile, while a picker was up, has its own session.
+function stillOn(at) {
+  if (!current || current.id !== at.id) throw new Error(`The window left ${at.name} meanwhile: ask again there.`);
+}
+
+// The vaults of the open server's workspace, of folders and of files: a
+// local server's own, or the host's that sync this remote's workspace.
+// `server` names the local server holding each. No local server yet: none.
 async function listLinks(api, wsId) {
   const origin = openOrigin();
   if (current.type === 'local') {
@@ -772,7 +822,7 @@ async function listLinks(api, wsId) {
   return all.filter((l) => l.remote_url === origin && l.workspace_id === wsId).map((l) => ({ ...l, server: host.local.id }));
 }
 
-// The open workspace's folders, and its kept folders (not its followed files).
+// The open workspace's folders, and its folders' vaults (not its files').
 async function listFolders(wsId) {
   const api = serverApi(content.webContents.session);
   const [tree, links] = await Promise.all([
@@ -793,100 +843,28 @@ async function choosePath(opts) {
   return chosen;
 }
 
-function pickDirectory(name) {
+function pickDirectory(title, message) {
   if (process.env.GAMMA_SHELL_PICK_DIR) return process.env.GAMMA_SHELL_PICK_DIR;
+  return choosePath({ title, message, buttonLabel: 'Choose', properties: ['openDirectory', 'createDirectory'], defaultPath: app.getPath('documents') });
+}
+
+function pickPdf(title, message, buttonLabel = 'Choose') {
+  if (process.env.GAMMA_SHELL_PICK_FILE) return process.env.GAMMA_SHELL_PICK_FILE;
   return choosePath({
-    title: `Keep “${name}” on this computer`,
-    message: `Choose where “${name}” goes. An empty folder is used as it is; any other gets a folder named “${name}” inside.`,
-    buttonLabel: 'Keep here',
-    properties: ['openDirectory', 'createDirectory'],
-    defaultPath: app.getPath('documents'),
+    title, message, buttonLabel, properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }], defaultPath: app.getPath('documents'),
   });
 }
 
-function isEmptyDir(p) {
-  try {
-    return fs.readdirSync(p).length === 0;
-  } catch {
-    return true; // not there yet: the server makes it
-  }
-}
-
-async function keepFolder(wsId, folderId) {
-  const origin = openOrigin();
-  const remote = current.type === 'remote';
-  const api = serverApi(content.webContents.session);
-  const g = gamma;
-  const wsName = (g && (g.list.find((w) => w.id === wsId) || {}).name) || 'Library';
-  const tree = await api(origin, '/api/sync/folders', { headers: { 'X-Gamma-Workspace': wsId } });
-  const folder = folderId === 'root' ? { path: [] } : (tree.folders || []).find((f) => f.id === folderId);
-  if (!folder) throw new Error('Unknown folder');
-  const name = folder.path.length ? folder.path[folder.path.length - 1] : wsName;
-  // Kept already: open it rather than make a second copy.
-  const kept = (await listLinks(api, wsId)).find((l) => l.folder_id === folderId);
-  if (kept) {
-    openDirectory(kept.dest);
-    showNotice(`${name} is already on this computer at ${kept.dest}`);
-    return kept;
-  }
-  const picked = await pickDirectory(name);
-  if (!picked) return null;
-  const target = isEmptyDir(picked) ? picked : path.join(picked, name);
-  busy = `Keeping ${name} on this computer…`;
-  pushState();
-  let token = null;
-  try {
-    let link;
-    if (remote) {
-      // A read token on the remote, for the host to read the folder with; the link on the host.
-      token = await api(origin, '/api/integrations/tokens', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Gamma-Workspace': wsId },
-        body: JSON.stringify({ name: `Gamma desktop: ${name} on disk`.slice(0, 80), scope: 'read', expires_in_days: 365 }),
-      });
-      let host = await ensureHost(api);
-      if (await reachFolder(host.local, target)) host = await ensureHost(api);
-      link = await api(host.origin, '/api/folder-links', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder: folderId, path: target, notes: true, remote_url: origin, workspace: wsId, token: token.token, token_id: token.id }),
-      });
-      token = null; // the host holds it now
-      registry.setSettings({ folderHost: host.local.id }); // runs at launch with the clones' hosts
-    } else {
-      await reachFolder(registry.get(current.id), target);
-      link = await api(openOrigin(), '/api/folder-links', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Gamma-Workspace': wsId },
-        body: JSON.stringify({ folder: folderId, path: target, notes: true }),
-      });
-    }
-    showNotice(`${name} is being written to ${link.dest}`);
-    offerBackground(`“${name}” on this computer`).catch(() => {});
-    refreshKeeping().catch(() => {});
-    return link;
-  } catch (e) {
-    if (token) await revokeToken(api, origin, wsId, token.id); // minted for a link that was never made
-    throw e;
-  } finally {
-    busy = null;
-    pushState();
-  }
-}
-
-// A kept folder in words: its name from the path its last round saw; a
-// followed file: its page's title.
-function linkName(link) {
-  if (link.kind === 'file') return `“${link.title || path.basename(link.dest)}”`;
-  if (link.folder_id === 'root') return 'The whole library';
-  const names = (link.status && link.status.folder_path) || [];
-  return names.length ? `“${names[names.length - 1]}”` : 'The folder';
-}
-
-// The native question, or its answer under the test harness (the first
-// choice that writes nothing extra).
+// The native question, or its answer under the test harness: the one a test
+// queued (`answers`), else the first choice that writes nothing extra, the
+// question then only recorded (`asked`: its message and its detail).
+const asked = [];
+const answers = [];
 async function ask(opts, testAnswer) {
-  if (process.env.GAMMA_SHELL_TEST) return testAnswer;
+  if (process.env.GAMMA_SHELL_TEST) {
+    asked.push(`${opts.message} ${opts.detail || ''}`.trim());
+    return answers.length ? answers.shift() : testAnswer;
+  }
   const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
   return r.response;
 }
@@ -906,25 +884,381 @@ async function microphoneRefused() {
   if (choice === 0) openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
 }
 
-// A link of local server `serverId`, with what to call it through.
-async function linkOn(serverId, linkId) {
+// The vault dialog, a view of the sync panel (ui/bar.html), which answers
+// through shell:answer-vault: the directory, what the server found there
+// (`preview`, POST /api/folder-links/preview), the switches Pull and Push,
+// and what the first round would do, a sentence for each setting of them
+// (keeping.firstRound; one that is not `ok` shuts Sync). `view`: `{ path,
+// server, workspace, folder, newFolder, remote, preview, pull, push }`, the
+// last two the switches as they start. One at a time: a newer one cancels
+// the one shown. Resolves to `{ pull, push }`, or null when cancelled. While
+// it is up the bar stays expanded on it (setBarExpanded), the page's asks
+// wait (fromPage), and the window going to the launcher or to another server
+// cancels it (cancelVaultAsk): it was asked about what the window showed.
+let vaultAsk = null; // the dialog shown, with its resolve
+let vaultAsks = 0;
+function askVault(view) {
+  if (vaultAsk) vaultAsk.resolve(null);
+  return new Promise((resolve) => {
+    const sentences = {};
+    for (const pull of [true, false]) {
+      for (const push of keeping.PUSH) sentences[`${pull}:${push}`] = keeping.firstRound({ ...view, pull, push });
+    }
+    vaultAsk = { ...view, id: ++vaultAsks, sentences, resolve };
+    setBarExpanded(true);
+    pushState();
+  });
+}
+
+// The dialog answered: true when `id` is the one shown and the answer one
+// its sentences allow (or null, a cancel).
+function answerVault(id, answer) {
+  if (!vaultAsk || vaultAsk.id !== id) return false;
+  const choice = answer ? { pull: Boolean(answer.pull), push: keeping.pushWord(answer.push) } : null;
+  if (choice && !(vaultAsk.sentences[`${choice.pull}:${choice.push}`] || {}).ok) return false;
+  const { resolve } = vaultAsk;
+  vaultAsk = null;
+  setBarExpanded(false);
+  pushState();
+  resolve(choice);
+  return true;
+}
+
+function cancelVaultAsk() {
+  if (vaultAsk) answerVault(vaultAsk.id, null);
+}
+
+// One flow that asks the user at a time (a picker, a native question, the
+// vault dialog), held from its first line until it settles: an ask while
+// one runs, a double click or a page asking in a loop, is dropped (null)
+// instead of stacking pickers, and a later dialog never cancels the one the
+// user is answering.
+let asking = false;
+function oneAsk(fn) {
+  return async (...args) => {
+    if (asking) return null;
+    asking = true;
+    try {
+      return await fn(...args);
+    } finally {
+      asking = false;
+    }
+  };
+}
+
+// The dialog as the bar renders it.
+function vaultAskState() {
+  if (!vaultAsk) return null;
+  const { resolve: _resolve, ...view } = vaultAsk;
+  return view;
+}
+
+// What making a vault of `dir` would find and write, writing nothing, on the
+// local server at `origin` (`headers`: the workspace it would be made in).
+function previewVault(api, origin, headers, dir, folder) {
+  return api(origin, '/api/folder-links/preview', {
+    method: 'POST', headers: { ...headers, ...JSON_TYPE, ...shellWord(origin) }, body: JSON.stringify({ path: dir, folder: folder || '', kind: 'folder' }),
+  });
+}
+
+// A directory holding the marker of a vault no link holds any more takes it up again.
+const adopts = (preview) => Boolean(preview.marker && !preview.marker.link_id);
+
+// How a folder's vault starts: pulling, and pushing nothing while the folder
+// has pages; an empty folder and a directory with notes or PDFs push
+// everything (never to another server, for now).
+function firstPush(preview, remote) {
+  return !remote && !preview.pages && (preview.notes || preview.pdfs) ? 'everything' : 'off';
+}
+
+// The pages a folder of a remote server holds, for the dialog's sentence (the
+// host's preview cannot count them). Best effort: 0.
+async function remotePages(api, origin, headers, folderId) {
+  try {
+    return ((await api(origin, `/api/sync/folders/${encodeURIComponent(folderId)}`, { headers })).pages || []).length;
+  } catch {
+    return 0;
+  }
+}
+
+// Folder `folderId` of the open server's workspace `wsId` synced with a
+// directory the user picks, as the dialog says. A folder that has a vault
+// already opens its directory instead.
+async function addFolderVault(wsId, folderId) {
+  const origin = openOrigin();
+  const shown = current; // the server it is asked of, whatever the window opens while the picker is up
+  const remote = shown.type === 'remote';
+  const serverName = shown.name;
+  const api = serverApi(content.webContents.session);
+  const g = gamma;
+  const wsName = (g && (g.list.find((w) => w.id === wsId) || {}).name) || 'Library';
+  const wsHeaders = { 'X-Gamma-Workspace': wsId };
+  const tree = await api(origin, '/api/sync/folders', { headers: wsHeaders });
+  const folder = folderId === 'root' ? { path: [] } : (tree.folders || []).find((f) => f.id === folderId);
+  if (!folder) throw new Error('Unknown folder');
+  const name = folder.path.length ? folder.path[folder.path.length - 1] : wsName;
+  const synced = (await listLinks(api, wsId)).find((l) => l.kind !== 'file' && l.folder_id === folderId);
+  if (synced) {
+    openDirectory(synced.dest);
+    showNotice(`${name} is already synced with ${synced.dest}`);
+    return synced;
+  }
+  const picked = await pickDirectory(`Sync “${name}” with this computer`,
+    `Choose the directory “${name}” is synced with: an empty one, or one whose notes and PDFs it takes.`);
+  if (!picked) return null;
+  stillOn(shown);
+  // The server that keeps the vault: the open one, or the host for a remote's folder.
+  let at = remote ? await ensureHost(api) : { local: registry.get(shown.id), origin };
+  if (await reachFolder(at.local, picked)) at = remote ? await ensureHost(api) : { local: at.local, origin: localOrigin(at.local) };
+  const preview = await previewVault(api, at.origin, remote ? {} : wsHeaders, picked, remote ? '' : folderId);
+  if (remote) preview.pages = await remotePages(api, origin, wsHeaders, folderId);
+  const choice = await askVault({ path: picked, server: serverName, workspace: wsName, folder: name, newFolder: false, remote, preview,
+    pull: true, push: firstPush(preview, remote) });
+  if (!choice) return null;
+  busy = `Syncing ${name} with this computer…`;
+  pushState();
+  let token = null;
+  try {
+    const body = { folder: folderId, path: picked, notes: true, pull: choice.pull, push: choice.push };
+    let link;
+    if (remote) {
+      // A token on the remote for the host to read the folder with, one that
+      // may write when the vault pushes; the vault on the host.
+      token = await api(origin, '/api/integrations/tokens', {
+        method: 'POST',
+        headers: { ...JSON_TYPE, ...wsHeaders },
+        body: JSON.stringify({ name: `Gamma desktop: ${name} synced vault`.slice(0, 80), scope: choice.push === 'off' ? 'read' : 'write', expires_in_days: 365 }),
+      });
+      link = await api(at.origin, '/api/folder-links', {
+        method: 'POST',
+        headers: { ...JSON_TYPE, ...shellWord(at.origin) },
+        body: JSON.stringify({ ...body, remote_url: origin, workspace: wsId, token: token.token, token_id: token.id }),
+      });
+      token = null; // the host holds it now
+      registry.setSettings({ folderHost: at.local.id }); // runs at launch with the clones' hosts
+    } else {
+      stillOn(shown);
+      link = await api(at.origin, '/api/folder-links', {
+        method: 'POST',
+        headers: { ...JSON_TYPE, ...shellWord(at.origin), ...wsHeaders },
+        body: JSON.stringify({ ...body, adopt: adopts(preview) }),
+      });
+    }
+    showNotice(`${name} is synced with ${link.dest}`);
+    offerBackground(`The synced vault “${name}”`).catch(() => {});
+    refreshKeeping().catch(() => {});
+    return link;
+  } catch (e) {
+    if (token) await revokeToken(api, origin, wsId, token.id); // minted for a vault that was never made
+    throw e;
+  } finally {
+    busy = null;
+    pushState();
+  }
+}
+
+// The host: the first local server, made when there is none.
+function hostOf() {
+  return registry.load().servers.find((s) => s.type === 'local') || registry.addLocal('Local');
+}
+
+// The host, started, and signed into in its own session (localServer).
+async function startHost() {
+  const local = hostOf();
+  const entry = await startLocal(local);
+  allowedOrigins.add(new URL(entry.url).origin);
+  return localServer(local.id);
+}
+
+// Where a vault made from a directory lands (openFiles.readerPlace): `{ srv,
+// origin, api, ws }`, the open local server through the window's session in
+// the workspace the window shows when the account writes there, it is no
+// clone and no one else sees it (else the account's own there), else the
+// host in the account's personal workspace. A shared workspace takes a
+// directory through its folder's "Sync with this computer…", which names it.
+// `wsId`: the workspace asked in, in place of the one the window shows.
+async function vaultPlace(wsId) {
+  if (current && current.type === 'local' && content) {
+    const origin = openOrigin();
+    const api = serverApi(content.webContents.session);
+    const place = openFiles.readerPlace(await api(origin, '/api/session'), wsId || currentWsId());
+    const ws = place && (place.audience ? place.mine : place.ws);
+    if (ws) return { srv: registry.get(current.id), origin, api, ws };
+  }
+  const host = await startHost();
+  const ws = openFiles.personalOf(await host.api(host.origin, '/api/session'));
+  if (!ws) throw new Error(`Your account on ${host.srv.name} has no workspace of its own.`);
+  return { ...host, ws };
+}
+
+// "Add a synced vault…" (the launcher, the sync panel): a directory the user
+// picks becomes a new folder named after it, its notes and PDFs pushed and
+// Gamma's changes pulled, as the dialog says. No server need be open
+// (vaultPlace). `dir`, the directory already chosen (oneByOne's "Sync the
+// folder…"), asks for none; `wsId`, the workspace it was asked in there.
+async function addDirectoryVault(dir, wsId) {
+  const picked = dir || await pickDirectory('Add a synced vault',
+    'Choose a directory: its notes and PDFs become a folder of Gamma named after it, kept in step with it.');
+  if (!picked) return null;
+  let place = await vaultPlace(wsId);
+  if (await reachFolder(place.srv, picked)) place = await vaultPlace(wsId);
+  const { srv, origin, api, ws } = place;
+  const headers = { 'X-Gamma-Workspace': ws.id };
+  const name = path.basename(picked) || picked;
+  const preview = await previewVault(api, origin, headers, picked, '');
+  const choice = await askVault({ path: picked, server: srv.name, workspace: ws.name, folder: name, newFolder: true, remote: false, preview,
+    pull: true, push: 'everything' });
+  if (!choice) return null;
+  busy = `Adding the synced vault ${name}…`;
+  pushState();
+  try {
+    const link = await api(origin, '/api/folder-links', {
+      method: 'POST',
+      headers: { ...JSON_TYPE, ...shellWord(origin), ...headers },
+      body: JSON.stringify({ path: picked, new_folder: true, pull: choice.pull, push: choice.push, adopt: adopts(preview) }),
+    });
+    showNotice(`${name} is synced with ${link.dest}: a folder of ${ws.name} on ${srv.name}.`);
+    offerBackground(`The synced vault “${name}”`).catch(() => {});
+    refreshKeeping().catch(() => {});
+    return link;
+  } finally {
+    busy = null;
+    pushState();
+  }
+}
+
+// Page `pageId` of the open server's workspace `wsId` pushed from a PDF the
+// user picks: a vault of one file, which only pushes (each new version of
+// the file becomes the page's PDF as "Replace the PDF…" makes it, the
+// highlights moved to where their text is) and never writes the file. On a
+// REMOTE server the vault is the host's, with a token minted there that may
+// write. A page that has one already offers to show the file or to remove
+// the vault.
+async function addFileVault(wsId, pageId) {
+  const origin = openOrigin();
+  const shown = current; // the server it is asked of, whatever the window opens while the picker is up
+  const remote = shown.type === 'remote';
+  const api = serverApi(content.webContents.session);
+  const wsHeaders = { 'X-Gamma-Workspace': wsId };
+  const page = await api(origin, `/api/blocks/${encodeURIComponent(pageId)}`, { headers: wsHeaders });
+  const title = page.content || 'Untitled';
+  const synced = (await listLinks(api, wsId)).find((l) => l.kind === 'file' && l.page_id === pageId);
+  if (synced) {
+    const r = await ask({
+      type: 'question', buttons: ['Show in folder', 'Remove the vault…', 'Cancel'], defaultId: 0, cancelId: 2,
+      message: `“${title}” is pushed from ${synced.dest}`,
+      detail: 'Each new version of the file becomes its PDF.',
+    }, 0);
+    if (r === 0) revealFile(synced.dest);
+    if (r === 1) await removeVault(synced.server, synced.id);
+    return synced;
+  }
+  const picked = await pickPdf(`Push “${title}” from a file`, `Choose a PDF on this computer. Each time it changes, it becomes the PDF of “${title}”.`, 'Push from it');
+  if (!picked) return null;
+  if (!remote) {
+    const way = await oneByOne(api, localOrigin(registry.get(shown.id)), wsId, picked);
+    if (!way) return null;
+    stillOn(shown);
+    if (way === 'folder') return addDirectoryVault(path.dirname(picked), wsId);
+  }
+  const file = path.basename(picked);
+  busy = `Pushing ${file}…`;
+  pushState();
+  let token = null;
+  try {
+    let link;
+    if (remote) {
+      // A write token on the remote, for the host to replace the page's PDF with; the vault on the host.
+      token = await api(origin, '/api/integrations/tokens', {
+        method: 'POST',
+        headers: { ...JSON_TYPE, ...wsHeaders },
+        body: JSON.stringify({ name: `Gamma desktop: ${title} from ${file}`.slice(0, 80), scope: 'write', expires_in_days: 365 }),
+      });
+      let host = await ensureHost(api);
+      if (await reachFolder(host.local, picked)) host = await ensureHost(api);
+      link = await api(host.origin, '/api/folder-links', {
+        method: 'POST',
+        headers: { ...JSON_TYPE, ...shellWord(host.origin) },
+        body: JSON.stringify({ kind: 'file', page: pageId, path: picked, remote_url: origin, workspace: wsId, token: token.token, token_id: token.id }),
+      });
+      token = null; // the host holds it now
+      registry.setSettings({ folderHost: host.local.id }); // runs at launch with the clones' hosts
+    } else {
+      stillOn(shown);
+      const local = registry.get(shown.id);
+      await reachFolder(local, picked);
+      stillOn(shown);
+      // its origin now: reachFolder may have restarted the server on another port
+      const at = localOrigin(local);
+      link = await api(at, '/api/folder-links', {
+        method: 'POST',
+        headers: { ...JSON_TYPE, ...shellWord(at), ...wsHeaders },
+        body: JSON.stringify({ kind: 'file', page: pageId, path: picked }),
+      });
+    }
+    showNotice(`“${title}” is pushed from ${file}: each new version becomes its PDF.`);
+    offerBackground(`“${title}”`).catch(() => {});
+    refreshKeeping().catch(() => {});
+    return link;
+  } catch (e) {
+    if (token) await revokeToken(api, origin, wsId, token.id); // minted for a vault that was never made
+    throw e;
+  } finally {
+    busy = null;
+    pushState();
+  }
+}
+
+// A path as the file system tells paths apart: by case only on Linux.
+const samePath = (p) => (process.platform === 'linux' ? path.resolve(p) : path.resolve(p).toLowerCase());
+
+// The one hint about vaults of one file (docs/research/vaults.md "A vault of
+// one file, and .gamma/"): the vault of `file` would be the third or a later
+// one of the files of its directory in workspace `wsId` of the local server
+// at `origin`, so the question offers the directory's vault instead, which
+// takes the files' pages in. → 'file' (push this file only), 'folder' (sync
+// the folder), or null (cancelled). Only a local server's own vaults, of a
+// workspace a directory's vault would land in (vaultPlace: no clone, no one
+// else sees it): a directory's vault of a remote's pages, or of a shared
+// workspace's, is a folder of its, which the folder's "Sync with this
+// computer…" makes.
+async function oneByOne(api, origin, wsId, file) {
+  const place = openFiles.readerPlace(await api(origin, '/api/session'), wsId);
+  if (!place || place.audience || place.ws.id !== wsId) return 'file';
+  const dir = path.dirname(file);
+  const beside = ((await api(origin, '/api/folder-links')).links || []).filter((l) => l.kind === 'file' && !l.remote_url &&
+    l.workspace_id === wsId && l.dest && samePath(l.dest) !== samePath(file) && samePath(path.dirname(l.dest)) === samePath(dir));
+  if (beside.length < 2) return 'file';
+  const r = await ask({
+    type: 'question', buttons: ['Sync the folder…', 'Push this file only', 'Cancel'], defaultId: 0, cancelId: 2,
+    message: `${beside.length + 1} files in ${dir} are synced one by one. Sync the folder instead?`,
+    detail: 'A synced vault of the folder takes these files’ pages in, with their notes and highlights, and keeps every PDF and note in it in step, the ones added later too.',
+  }, 1);
+  return ['folder', 'file', null][r] ?? null;
+}
+
+// A vault of local server `serverId`, with what to call it through, and as
+// the panel reads it (`item`, lib/keeping.js).
+async function vaultOn(serverId, linkId) {
   const at = await localServer(serverId);
   const link = ((await at.api(at.origin, '/api/folder-links')).links || []).find((l) => l.id === linkId);
-  if (!link) throw new Error('That is no longer kept on this computer');
-  // A link of the server's own workspace is changed in that workspace; one with a remote source is the account's.
-  return { ...at, link, headers: link.remote_url ? {} : { 'X-Gamma-Workspace': link.workspace_id } };
+  if (!link) throw new Error('That vault is no longer synced with this computer');
+  // A vault of the server's own workspace is changed in that workspace; one of a remote's is the account's.
+  return { ...at, link, item: keeping.vault(at.srv, link, registry.load().servers),
+    headers: link.remote_url ? {} : { 'X-Gamma-Workspace': link.workspace_id } };
 }
 
 // A round of a link asked for and followed to its end: the server answers
 // at once with the round's `running` set (the one it started, or one
-// already running, which answers it), and the link is read again every
+// already running, after which the round asked for runs, the link reading
+// `running` until that one ends), and the link is read again every
 // ROUND_POLL_MS until `running` comes down, however long the round takes:
 // the server reads `running` from the round's lock, so a mark a server
 // stopped mid-round left never reads as a round (gamma/folder_links.py
 // _round_held). No request stays open for the round. → the link after it.
 const ROUND_POLL_MS = 1_000;
-async function roundOf(api, origin, link, headers, query = '') {
-  let after = await api(origin, `/api/folder-links/${link.id}/sync${query}`, { method: 'POST', headers });
+async function followRound(api, origin, link, headers, query) {
+  let after = await api(origin, `/api/folder-links/${link.id}/sync?${query}`, { method: 'POST', headers });
   while (after.status && after.status.running) {
     await new Promise((done) => setTimeout(done, ROUND_POLL_MS));
     after = await api(origin, `/api/folder-links/${link.id}`, { headers });
@@ -932,30 +1266,15 @@ async function roundOf(api, origin, link, headers, query = '') {
   return after;
 }
 
-// A round of a kept folder now, followed to its end (roundOf), its outcome
-// in the bar. Files changed on disk stay unless the user says to replace
-// them, asked only when there are some a forced round would replace (a
-// kept entry's `force`; not a PDF a send could not deliver, which Gamma's
-// copy would not change) (`force` answers that in tests).
-async function syncFolder(serverId, linkId, force) {
-  const { origin, api, link, headers } = await linkOn(serverId, linkId);
-  const changed = ((link.status && link.status.kept) || []).filter((k) => k.force).length;
-  if (force === undefined && changed) {
-    const r = await ask({
-      type: 'question', buttons: ['Keep my changes', 'Replace them', 'Cancel'], defaultId: 0, cancelId: 2,
-      message: `${changed} file${changed === 1 ? '' : 's'} of ${linkName(link)} changed on this computer.`,
-      detail: 'The sync leaves files you changed alone. Replace them with what Gamma holds?',
-    }, 0);
-    if (r === 2) return null;
-    force = r === 1;
-  }
-  busy = `Syncing ${linkName(link)}…`;
+// A round of a vault now (`query`: its direction, a force, the guard passed),
+// followed to its end (followRound), its outcome in the bar.
+async function roundOf(at, query, doing) {
+  const { origin, api, link, item, headers } = at;
+  busy = doing;
   pushState();
   try {
-    const after = await roundOf(api, origin, link, headers, force ? '?force=1' : '');
-    const s = after.status || {};
-    const moved = Object.entries(s.counts || {}).filter(([k, n]) => n && k !== 'unchanged' && k !== 'kept').map(([k, n]) => `${n} ${k}`);
-    showNotice(s.last_error ? `${linkName(link)}: ${s.last_error}` : `${linkName(link)} is up to date${moved.length ? `: ${moved.join(', ')}` : ''}.`);
+    const after = await followRound(api, origin, link, headers, query);
+    showNotice(keeping.roundSaid(item, after.status));
     return after;
   } finally {
     busy = null;
@@ -964,75 +1283,146 @@ async function syncFolder(serverId, linkId, force) {
   }
 }
 
-// Pause a kept folder or a followed file, or resume it (a round runs then).
-// Paused, the server's loop leaves it alone; a sync asked for still runs.
-async function pauseFolder(serverId, linkId, paused) {
-  const { origin, api, link, headers } = await linkOn(serverId, linkId);
+// Sync now (`both`: push, then pull), Pull now or Push now. A paused vault
+// syncs too and stays paused.
+async function syncVault(serverId, linkId, direction = 'both') {
+  const at = await vaultOn(serverId, linkId);
+  const doing = direction === 'pull' ? 'Pulling' : direction === 'push' || at.item.scope === 'file' ? 'Pushing' : 'Syncing';
+  return roundOf(at, `direction=${direction}`, `${doing} ${at.item.name}…`);
+}
+
+// Force pull (the files become what Gamma holds) or force push (the pages
+// become what their files say), after a count and a confirmation;
+// `confirmed` answers it in tests, where the question takes Cancel.
+async function forceVault(serverId, linkId, which, confirmed) {
+  const at = await vaultOn(serverId, linkId);
+  if (!confirmed) {
+    const removal = await at.api(at.origin, `/api/folder-links/${at.link.id}/removal`, { headers: at.headers });
+    const q = keeping.forceAsk(at.item, which, removal);
+    if (await ask({ type: 'warning', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 1, cancelId: 1 }, 1) !== 0) return null;
+  }
+  return roundOf(at, `force=${which}`, `Force ${which === 'pull' ? 'pulling' : 'pushing'} ${at.item.name}…`);
+}
+
+// A vault its guard held (many files gone from the directory at once) goes
+// on, once the user says so; `confirmed` answers it in tests.
+async function goOnVault(serverId, linkId, confirmed) {
+  const at = await vaultOn(serverId, linkId);
+  if (!confirmed) {
+    const q = keeping.goOnAsk(at.item);
+    if (await ask({ type: 'question', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 0, cancelId: 1 }, 1) !== 0) return null;
+  }
+  return roundOf(at, 'confirm=1', `Syncing ${at.item.name}…`);
+}
+
+// Pause a vault, or resume it (a round runs then). Paused, the server's loop
+// leaves it alone; a sync asked for still runs.
+async function pauseVault(serverId, linkId, paused) {
+  const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
   await api(origin, `/api/folder-links/${link.id}`, {
-    method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ paused }),
+    method: 'PATCH', headers: { ...headers, ...JSON_TYPE }, body: JSON.stringify({ paused }),
   });
-  const file = link.kind === 'file' && path.basename(link.dest);
-  showNotice(paused ? `${linkName(link)} is paused: ${file ? `${file} is not sent` : `${link.dest} stays as it is`} until you resume or sync it.`
-    : file ? `${linkName(link)} follows ${file} again.` : `${linkName(link)} is kept up to date again.`);
+  showNotice(paused ? `${item.name} is paused: nothing is pulled or pushed until you resume or sync it.` : `${item.name} syncs again.`);
   refreshKeeping().catch(() => {});
   return true;
 }
 
-// Whether a kept folder sends the PDFs changed in it back to Gamma. A
-// folder of a remote server needs a write token for that, where it was
-// made with a read one: a write token is minted on the remote with the
-// window's session (signed into the remote, as for revokeToken) and handed
-// to the host in place of the old one, which is then revoked; the new one
-// is revoked instead when the host refuses it, or when the link the host
-// answers with holds another token. One change per link at a time: a
-// second click while one runs is ignored, so no two write tokens are
-// minted for one link.
+// Whether a vault pulls: Gamma's changes written to its directory. A vault
+// of another server keeps pulling (keeping.REMOTE_RULE).
+async function setPull(serverId, linkId, pull) {
+  const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
+  if (!pull && link.remote_url) throw new Error(keeping.REMOTE_RULE);
+  await api(origin, `/api/folder-links/${link.id}`, {
+    method: 'PATCH', headers: { ...headers, ...JSON_TYPE }, body: JSON.stringify({ pull }),
+  });
+  showNotice(pull ? `${item.name} pulls Gamma's changes again.` : `${item.name} no longer pulls: its files stay as they are.`);
+  refreshKeeping().catch(() => {});
+  return true;
+}
+
+// What a vault pushes: 'off', 'pdfs' or 'everything' (the Push segment of
+// the vault's own view); a remote server's folder PDFs at most
+// (keeping.REMOTE_RULE). A folder of a remote server needs a write token
+// for it, where it was made with a read one: a write token is minted on the
+// remote with the window's session (signed into the remote, as for
+// revokeToken) and handed to the host in place of the old one, which is
+// then revoked; the new one is revoked instead when the host refuses it, or
+// when the vault the host answers with holds another token. One change per
+// vault at a time: a second click while one runs is ignored, so no two
+// write tokens are minted for one vault.
 const pushing = new Set();
-async function setPush(serverId, linkId, on) {
+async function setPush(serverId, linkId, word) {
   const key = `${serverId}:${linkId}`;
   if (pushing.has(key)) return false;
   pushing.add(key);
   try {
-    return await changePush(serverId, linkId, on);
+    return await changePush(serverId, linkId, word);
   } finally {
     pushing.delete(key);
   }
 }
 
-async function changePush(serverId, linkId, on) {
-  const { origin, api, link, headers } = await linkOn(serverId, linkId);
+const PUSH_SAID = {
+  off: (name) => `${name} no longer pushes.`,
+  pdfs: (name) => `${name} pushes the PDFs you change there.`,
+  everything: (name) => `${name} pushes everything: notes, PDFs, new files, renames and deletions.`,
+};
+
+async function changePush(serverId, linkId, word) {
+  if (!keeping.PUSH.includes(word)) throw new Error(`Push is off, pdfs or everything, not ${word}`);
+  const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
+  if (word === 'everything' && link.remote_url) throw new Error(keeping.REMOTE_RULE);
   const patch = (body) => api(origin, `/api/folder-links/${link.id}`, {
-    method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    method: 'PATCH', headers: { ...headers, ...JSON_TYPE }, body: JSON.stringify(body),
   });
-  if (on && link.remote_url) {
+  if (word !== 'off' && link.remote_url && keeping.pushWord(link.push) === 'off') {
     const remote = serverApi(session.defaultSession);
     const remoteOrigin = new URL(link.remote_url).origin;
     const token = await remote(remoteOrigin, '/api/integrations/tokens', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Gamma-Workspace': link.workspace_id },
-      body: JSON.stringify({ name: `Gamma desktop: ${path.basename(link.dest)} on disk`.slice(0, 80), scope: 'write', expires_in_days: 365 }),
+      headers: { ...JSON_TYPE, 'X-Gamma-Workspace': link.workspace_id },
+      body: JSON.stringify({ name: `Gamma desktop: ${item.name} synced vault`.slice(0, 80), scope: 'write', expires_in_days: 365 }),
     });
     let after;
     try {
-      after = await patch({ push: true, token: token.token, token_id: token.id });
+      after = await patch({ push: word, token: token.token, token_id: token.id });
     } catch (e) {
       await revokeToken(remote, remoteOrigin, link.workspace_id, token.id);
       throw e;
     }
     if (after && after.token_id && after.token_id !== token.id) {
-      await revokeToken(remote, remoteOrigin, link.workspace_id, token.id); // another change won: ours is no link's
+      await revokeToken(remote, remoteOrigin, link.workspace_id, token.id); // another change won: ours is no vault's
     } else if (link.token_id && link.token_id !== token.id) {
       await revokeToken(remote, remoteOrigin, link.workspace_id, link.token_id);
     }
   } else {
-    await patch({ push: on });
+    await patch({ push: word });
   }
-  showNotice(on ? `${linkName(link)} sends PDFs you change there back to Gamma.` : `${linkName(link)} no longer sends PDFs back.`);
+  showNotice(PUSH_SAID[word](item.name));
   refreshKeeping().catch(() => {});
   return true;
 }
 
-// A link with a remote source is gone: the token the shell minted for it is
+// Locate…: a vault found where it is now, a directory that moved or a disk
+// mounted elsewhere (its marker must be the vault's), or the file of a
+// vault of one file that moved; a round follows there.
+async function locateVault(serverId, linkId) {
+  const { srv, origin, api, link, item, headers } = await vaultOn(serverId, linkId);
+  const picked = item.scope === 'file'
+    ? await pickPdf(`Where is ${path.basename(item.dest)} now?`, `Choose the PDF “${item.name}” is pushed from.`)
+    : await pickDirectory(`Where is “${item.name}” now?`, `Choose the directory of the synced vault “${item.name}”, wherever it is now.`);
+  if (!picked) return null;
+  let at = { origin, api };
+  if (await reachFolder(srv, picked)) at = await localServer(serverId);
+  const after = await at.api(at.origin, `/api/folder-links/${link.id}/relink`, {
+    method: 'POST', headers: { ...headers, ...JSON_TYPE, ...shellWord(at.origin) }, body: JSON.stringify({ path: picked }),
+  });
+  showNotice(`${item.name} is synced with ${after.dest} from now on.`);
+  refreshKeeping().catch(() => {});
+  return after;
+}
+
+// A vault of a remote server is gone: the token the shell minted for it is
 // revoked there, with the window's session, which is signed into the
 // remote, and once the host keeps nothing more of remote servers it need
 // not start at launch for them.
@@ -1042,27 +1432,29 @@ async function releaseRemote(origin, api, serverId, link) {
   if (!left.length && registry.getSettings().folderHost === serverId) registry.setSettings({ folderHost: '' });
 }
 
-// Stop keeping a folder: the link goes, and the token the shell minted on
-// a remote for it is revoked there. The files stay, or with `how` 'remove'
-// what the sync wrote is taken back; asked when not given.
-async function dropFolder(serverId, linkId, how) {
-  const { origin, api, link, headers } = await linkOn(serverId, linkId);
-  if (!how) {
-    const r = await ask({
-      type: 'question', buttons: ['Stop, keep the files', 'Stop and remove the files', 'Cancel'], defaultId: 0, cancelId: 2,
-      message: `Stop keeping ${linkName(link)} on this computer?`,
-      detail: `${link.dest} stops updating. Removing the files takes back only what the sync wrote there; files you added or changed stay.`,
-    }, 0);
-    how = ['keep', 'remove', null][r];
-    if (!how) return false;
+// Remove the vault…: its pages stay (the PDFs it read where they are stored
+// in Gamma first), and the token the shell minted on a remote for it is
+// revoked there. Asked first with GET .../removal's counts, unless `files`
+// says: `keep`, the directory's files stay as they are; `trash`, the files
+// the sync wrote move to the vault's trash (.gamma/trash). A file's vault
+// never touches its file.
+async function removeVault(serverId, linkId, files) {
+  const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
+  if (!files) {
+    const q = keeping.removalAsk(item, await api(origin, `/api/folder-links/${link.id}/removal`, { headers }));
+    const r = await ask({ type: 'question', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 0, cancelId: q.buttons.length - 1 }, 0);
+    files = q.choices[r];
+    if (!files) return false;
   }
-  busy = 'Stopping…';
+  busy = `Removing the synced vault ${item.name}…`;
   pushState();
   try {
-    await api(origin, `/api/folder-links/${link.id}${how === 'remove' ? '?remove_files=1' : ''}`, { method: 'DELETE', headers });
+    await api(origin, `/api/folder-links/${link.id}?files=${files === 'trash' ? 'trash' : 'keep'}`, { method: 'DELETE', headers });
     if (link.remote_url) await releaseRemote(origin, api, serverId, link);
-    showNotice(how === 'remove' ? `${linkName(link)} is no longer on this computer; the files the sync wrote are gone.`
-      : `${link.dest} is no longer kept up to date; its files stay.`);
+    showNotice(item.scope === 'file' ? `${item.name} is no longer pushed from ${path.basename(item.dest)}; the file stays as it is.`
+      : item.offline || item.stopped ? `${item.name} is no longer synced; nothing in ${item.dest} was touched.`
+      : files === 'trash' ? `${item.name} is no longer synced; the files the sync wrote are in its trash, .gamma/trash.`
+      : `${item.dest} is no longer synced; its files stay.`);
     return true;
   } finally {
     busy = null;
@@ -1071,143 +1463,83 @@ async function dropFolder(serverId, linkId, how) {
   }
 }
 
-// --------------------------------------------------- files on this computer -----
-// "Follow a file on this computer": a page whose PDF follows one PDF file
-// on disk, a manuscript's build output say. Each new version of the file
-// becomes the page's PDF as "Replace the PDF…" makes it: the notes and
-// highlights stay, and each highlight moves to where its text is
-// (docs/dev/folder_sync.md, a link of kind file). Nothing goes from Gamma
-// to the file, which is never written or removed. The link lives where a
-// kept folder's does: on a LOCAL server it is that server's own; on a
-// REMOTE server it is the host's, with a write-scope token minted on the
-// remote, since each send replaces the page's PDF there. One way in: the
-// Document menu's "Follow a file on this computer…" in Gamma's page, which
-// the page preload passes on (shell:follow-file-from-page); the native file
-// picker is the user's say (GAMMA_SHELL_PICK_FILE in tests). The sync panel
-// lists the file under "Files followed", pauses or resumes it
-// (pauseFolder), sends it now (sendFile) and stops following it (dropFile).
-
-function pickFile(title) {
-  if (process.env.GAMMA_SHELL_PICK_FILE) return process.env.GAMMA_SHELL_PICK_FILE;
-  return choosePath({
-    title: `The PDF “${title}” follows`,
-    message: `Choose a PDF on this computer. Each time it changes, it becomes the PDF of “${title}”.`,
-    buttonLabel: 'Follow',
-    properties: ['openFile'],
-    filters: [{ name: 'PDF', extensions: ['pdf'] }],
-    defaultPath: app.getPath('documents'),
-  });
-}
-
-// Page `pageId` of the open server's workspace `wsId` follows the file the
-// user picks. A page that follows one already offers to show it or to stop.
-async function followFile(wsId, pageId) {
+// Where page `pageId` of the open server's workspace `wsId` is on this
+// computer: `{ path, vault, reader, server }`. On a local server as it says
+// (GET /api/folder-links/page/<id>: the vault that keeps the page, or the
+// PDF it reads where it is); on a remote one, the host's vault of one file
+// that pushes to it, read only while the host runs: a page's ask starts no
+// server. null for a page with no file here.
+async function pageOnDisk(wsId, pageId) {
+  if (current.type === 'local') {
+    const api = serverApi(content.webContents.session);
+    const s = await api(openOrigin(), `/api/folder-links/page/${encodeURIComponent(pageId)}`, { headers: { 'X-Gamma-Workspace': wsId } });
+    if (s.vault) return { path: s.vault.path, vault: s.vault, reader: null, server: current.id };
+    if (s.reader) return { path: s.reader.path, vault: null, reader: s.reader, server: current.id };
+    return null;
+  }
+  const host = registry.load().servers.find((s) => s.type === 'local');
+  if (!host || !sidecar.status(host.id)) return null;
+  const at = await localServer(host.id);
   const origin = openOrigin();
-  const remote = current.type === 'remote';
-  const api = serverApi(content.webContents.session);
-  const page = await api(origin, `/api/blocks/${encodeURIComponent(pageId)}`, { headers: { 'X-Gamma-Workspace': wsId } });
-  const title = page.content || 'Untitled';
-  const followed = (await listLinks(api, wsId)).find((l) => l.kind === 'file' && l.page_id === pageId);
-  if (followed) {
-    const r = await ask({
-      type: 'question', buttons: ['Reveal', 'Stop following', 'Cancel'], defaultId: 0, cancelId: 2,
-      message: `“${title}” follows ${followed.dest}`,
-      detail: 'Each new version of the file is sent to Gamma.',
-    }, 0);
-    if (r === 0) revealFile(followed.dest);
-    if (r === 1) await dropFile(followed.server, followed.id);
-    return followed;
-  }
-  const picked = await pickFile(title);
+  const link = ((await at.api(at.origin, '/api/folder-links')).links || []).find((l) =>
+    l.kind === 'file' && l.remote_url === origin && l.workspace_id === wsId && l.page_id === pageId);
+  return link ? { path: link.dest, vault: { id: link.id, scope: 'file', name: link.title || '' }, reader: null, server: host.id } : null;
+}
+
+// A page's "Show in folder": its file in the system's file manager. Only a
+// local server's page asks (its chip, vault/VaultChip.jsx): a remote's page
+// has no chip, and a remote server opens no file manager on this computer
+// (its ask is dropped); its vault of one file shows its file from the sync
+// panel and from "Push from a file on this computer…".
+async function revealOnDisk(wsId, pageId) {
+  if (current.type !== 'local') return null;
+  const found = await pageOnDisk(wsId, pageId);
+  if (!found || !found.path) throw new Error('This page has no file on this computer yet.');
+  revealFile(found.path);
+  return found;
+}
+
+// A page's missing file located: a PDF read where it is takes the PDF the
+// user picks (POST /api/folder-links/opened/<id>/locate), and the page of a
+// vault has its vault located (locateVault).
+async function relocateFile(wsId, pageId) {
+  const shown = current; // the server it is asked of, whatever the window opens while the picker is up
+  const found = await pageOnDisk(wsId, pageId);
+  if (!found) throw new Error('This page reads no file on this computer.');
+  if (found.vault) return locateVault(found.server, found.vault.id);
+  const picked = await pickPdf(`Where is ${path.basename(found.path) || 'the file'} now?`, 'Choose the PDF this page reads.');
   if (!picked) return null;
-  const file = path.basename(picked);
-  busy = `Following ${file}…`;
-  pushState();
-  let token = null;
-  try {
-    let link;
-    if (remote) {
-      // A write token on the remote, for the host to replace the page's PDF with; the link on the host.
-      token = await api(origin, '/api/integrations/tokens', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Gamma-Workspace': wsId },
-        body: JSON.stringify({ name: `Gamma desktop: ${title} from ${file}`.slice(0, 80), scope: 'write', expires_in_days: 365 }),
-      });
-      let host = await ensureHost(api);
-      if (await reachFolder(host.local, picked)) host = await ensureHost(api);
-      link = await api(host.origin, '/api/folder-links', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'file', page: pageId, path: picked, remote_url: origin, workspace: wsId, token: token.token, token_id: token.id }),
-      });
-      token = null; // the host holds it now
-      registry.setSettings({ folderHost: host.local.id }); // runs at launch with the clones' hosts
-    } else {
-      await reachFolder(registry.get(current.id), picked);
-      // openOrigin again: reachFolder may have restarted the server on another port
-      link = await api(openOrigin(), '/api/folder-links', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Gamma-Workspace': wsId },
-        body: JSON.stringify({ kind: 'file', page: pageId, path: picked }),
-      });
-    }
-    showNotice(`“${title}” follows ${file}: each new version is sent to Gamma.`);
-    offerBackground(`“${title}”`).catch(() => {});
-    refreshKeeping().catch(() => {});
-    return link;
-  } catch (e) {
-    if (token) await revokeToken(api, origin, wsId, token.id); // minted for a link that was never made
-    throw e;
-  } finally {
-    busy = null;
-    pushState();
+  stillOn(shown);
+  const local = registry.get(shown.id);
+  await reachFolder(local, picked);
+  stillOn(shown);
+  // its origin now: reachFolder may have restarted the server on another port
+  const at = localOrigin(local);
+  const page = await serverApi(content.webContents.session)(at, `/api/folder-links/opened/${encodeURIComponent(pageId)}/locate`, {
+    method: 'POST', headers: { 'X-Gamma-Workspace': wsId, ...JSON_TYPE, ...shellWord(at) }, body: JSON.stringify({ path: picked }),
+  });
+  showNotice(`“${page.content || 'The page'}” reads ${path.basename(picked)} from now on.`);
+  return page;
+}
+
+// A window got the focus: each running local server's vaults look at their
+// disks now (POST /api/folder-links/hint: the server's tick, in the
+// background), at most every HINT_MS. Best effort.
+const HINT_MS = 10_000;
+let hintedAt = 0;
+function hintServers() {
+  if (Date.now() - hintedAt < HINT_MS) return;
+  hintedAt = Date.now();
+  for (const srv of registry.load().servers) {
+    if (srv.type !== 'local' || !sidecar.status(srv.id)) continue;
+    localServer(srv.id).then(({ origin, api }) => api(origin, '/api/folder-links/hint', { method: 'POST' })).catch(() => {});
   }
 }
 
-// A round of a followed file now, followed to its end (roundOf): the file
-// sent when it changed, and what happened in the bar.
-async function sendFile(serverId, linkId) {
-  const { origin, api, link, headers } = await linkOn(serverId, linkId);
-  const file = path.basename(link.dest);
-  busy = `Sending ${file}…`;
-  pushState();
-  try {
-    const after = await roundOf(api, origin, link, headers);
-    const s = after.status || {};
-    showNotice(s.last_error ? `${linkName(link)}: ${s.last_error}`
-      : (s.counts || {}).sent ? `${file} was sent to Gamma.`
-      : s.waiting ? `${file} is not sent yet: ${s.waiting}.`
-      : `${file}: nothing new to send.`);
-    return after;
-  } finally {
-    busy = null;
-    pushState();
-    refreshKeeping().catch(() => {});
-  }
-}
-
-// Stop following a file: the link goes, and the token the shell minted on a
-// remote for it is revoked there. The file stays as it is, so nothing is asked.
-async function dropFile(serverId, linkId) {
-  const { origin, api, link, headers } = await linkOn(serverId, linkId);
-  busy = 'Stopping…';
-  pushState();
-  try {
-    await api(origin, `/api/folder-links/${link.id}`, { method: 'DELETE', headers });
-    if (link.remote_url) await releaseRemote(origin, api, serverId, link);
-    showNotice(`${linkName(link)} no longer follows ${path.basename(link.dest)}; the file stays as it is.`);
-    return true;
-  } finally {
-    busy = null;
-    pushState();
-    refreshKeeping().catch(() => {});
-  }
-}
-
-// ------------------------------------------------- kept on this computer -----
-// The bar's sync button and its panel (docs/architecture.md "Kept on this
-// computer"): every clone, Zotero link, folder on disk and file followed
-// the running local servers keep, read from each in its own session
+// -------------------------------------------------------- the sync panel -----
+// The bar's sync button and its panel (docs/architecture.md "The sync
+// panel"): every clone, Zotero link and synced vault the running local
+// servers keep, read from each in its own session
 // (localServer, signed in on first use), turned into states and one
 // summary by lib/keeping.js, and pushed in the shell state as `keeping`.
 // Read every KEEPING_MS, every KEEPING_BUSY_MS while something syncs, on
@@ -1251,10 +1583,12 @@ function refreshKeeping() {
       if (srv.type !== 'local' || !sidecar.status(srv.id)) continue;
       try {
         const { origin, api } = await localServer(srv.id);
-        // (a server from before the Zotero links has no list of them: none)
-        const [m, f, z] = await Promise.all([api(origin, '/api/mirrors'), api(origin, '/api/folder-links'),
-          api(origin, '/api/zotero/links').catch(() => null)]);
-        const kept = keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links, zotero: z ? z.links : [] }, servers);
+        // (a server from before the Zotero links has no list of them: none; the session's
+        // workspaces say which vaults' workspaces the account is still in, unread when it does not answer)
+        const [m, f, z, who] = await Promise.all([api(origin, '/api/mirrors'), api(origin, '/api/folder-links'),
+          api(origin, '/api/zotero/links').catch(() => null), api(origin, '/api/session').catch(() => null)]);
+        const roles = who && Array.isArray(who.workspaces) ? who.workspaces : null;
+        const kept = keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links, zotero: z ? z.links : [], roles }, servers);
         // A server with a link that is not detached starts at launch; one
         // whose links all went or were detached no longer does. A list that
         // did not come leaves that as it was.
@@ -1275,14 +1609,30 @@ function refreshKeeping() {
   return keepingRead;
 }
 
+// What a vault's row and its view in the panel do (VAULT_ACTIONS), `value`
+// the switch's new setting for `pull` (a bool) and `push` (a word).
+const VAULT_ACTIONS = {
+  pause: (serverId, id) => pauseVault(serverId, id, true),
+  resume: (serverId, id) => pauseVault(serverId, id, false),
+  sync: (serverId, id) => syncVault(serverId, id, 'both'),
+  'pull-now': (serverId, id) => syncVault(serverId, id, 'pull'),
+  'push-now': (serverId, id) => syncVault(serverId, id, 'push'),
+  pull: (serverId, id, value) => setPull(serverId, id, Boolean(value)),
+  push: (serverId, id, value) => setPush(serverId, id, value),
+  'force-pull': (serverId, id) => forceVault(serverId, id, 'pull'),
+  'force-push': (serverId, id) => forceVault(serverId, id, 'push'),
+  'go-on': (serverId, id) => goOnVault(serverId, id),
+  locate: (serverId, id) => locateVault(serverId, id),
+  remove: (serverId, id) => removeVault(serverId, id),
+};
+
 // What a panel row does: a clone or a Zotero link opens, pauses (detaches)
 // or resumes (reattaches, what both sides did meanwhile merging), or syncs;
-// a folder opens its directory, pauses or resumes, syncs, turns sending
-// PDFs back on or off, or stops; a file shows itself in its directory,
-// pauses or resumes, is sent now, or stops being followed.
-async function keepingAction(kind, serverId, id, action) {
+// a vault opens its directory or shows its file, or does one of
+// VAULT_ACTIONS.
+async function keepingAction(kind, serverId, id, action, value) {
   const item = keepingState.items.find((i) => i.kind === kind && i.server === serverId && i.id === id);
-  if (!item) throw new Error('That is no longer kept on this computer');
+  if (!item) throw new Error('That no longer syncs with this computer');
   const link = `/api/zotero/links/${encodeURIComponent(id)}`;
   if ((kind === 'clone' || kind === 'zotero') && action === 'open') {
     await openServer(serverId);
@@ -1312,22 +1662,12 @@ async function keepingAction(kind, serverId, id, action) {
     const { origin, api } = await localServer(serverId);
     await api(origin, `${link}/sync`, { method: 'POST' });
     showNotice(`Syncing ${item.name} with Zotero…`);
-  } else if (kind === 'folder' && action === 'open') {
-    openDirectory(item.dest);
-  } else if (kind === 'file' && action === 'open') {
-    revealFile(item.where);
-  } else if ((kind === 'folder' || kind === 'file') && (action === 'pause' || action === 'resume')) {
-    return pauseFolder(serverId, id, action === 'pause');
-  } else if (kind === 'folder' && action === 'sync') {
-    return syncFolder(serverId, id);
-  } else if (kind === 'folder' && (action === 'push-on' || action === 'push-off')) {
-    return setPush(serverId, id, action === 'push-on');
-  } else if (kind === 'folder' && action === 'stop') {
-    return dropFolder(serverId, id);
-  } else if (kind === 'file' && action === 'sync') {
-    return sendFile(serverId, id);
-  } else if (kind === 'file' && action === 'stop') {
-    return dropFile(serverId, id);
+  } else if (kind === 'vault' && action === 'open') {
+    if (!item.dest) throw new Error('This vault is another account\'s: where its files are is that account\'s to see.');
+    if (item.scope === 'file') revealFile(item.dest);
+    else openDirectory(item.dest);
+  } else if (kind === 'vault' && Object.prototype.hasOwnProperty.call(VAULT_ACTIONS, action)) {
+    return VAULT_ACTIONS[action](serverId, id, value);
   } else {
     throw new Error(`Unknown action: ${kind} ${action}`);
   }
@@ -1391,16 +1731,21 @@ async function signInWithCloud(startUrl) {
 
 // ------------------------------------------------- PDFs from the system -----
 // A PDF the operating system hands the app ("Open with → Gamma", Gamma as
-// the default PDF app, a file dropped on the app's icon) is added to the
-// library the window shows and opened there, as an upload in Gamma adds it:
-// the file is stored, the page carrying it found or made (`POST
-// /api/blocks/by-doc/<hash>`, so a file already in the library opens its
-// page), the annotations another reader saved in it imported, and the
-// window moves to the page. With no server open the last one opens (the
-// first local server, made when there is none). A workspace others see
-// asks first and offers the account's own; one the account can only read
-// hands the file to its own (lib/openFiles.js; docs/architecture.md
-// "Opening PDF files"). One file at a time, in the order they came.
+// the default PDF app, a file dropped on the app's icon) or Server → Open a
+// PDF… picks is read where it is (readPdf, docs/research/vaults.md "Reading
+// a PDF where it is"): a page of a local server reads the file, and nothing
+// is stored or written beside it. The account's preference to add opened
+// PDFs to the library, and the Mac App Store build, take the older way
+// (addPdf): the file is added to the library the window shows and opened
+// there, as an upload in Gamma adds it: stored, the page carrying it found
+// or made (`POST /api/blocks/by-doc/<hash>`, so a file already in the
+// library opens its page), the annotations another reader saved in it
+// imported, and the window moves to the page. With no server open the last
+// one opens (the first local server, made when there is none). A workspace
+// others see asks first and offers the account's own; one the account can
+// only read hands the file to its own (lib/openFiles.js;
+// docs/architecture.md "Opening PDF files"). One file at a time, in the
+// order they came.
 
 // A proxy in front of a server caps a request's body, so past this a file
 // goes in parts, as Gamma's own upload sends it (frontend/src/shared/lib/uploadParts.js).
@@ -1421,7 +1766,7 @@ function openPdfFiles(files) {
     const done = [];
     for (const file of files) {
       try {
-        done.push({ file, ...(await addPdf(file)) });
+        done.push({ file, ...(await readPdf(file)) });
       } catch (e) {
         const detail = String((e && e.message) || e);
         done.push({ file, error: detail });
@@ -1441,6 +1786,338 @@ function errorBox(opts) {
   if (process.env.GAMMA_SHELL_TEST) errorBoxes.push(`${opts.message} ${opts.detail}`);
   if (TEST_MINIMIZED) console.error(`[shell] ${opts.message} ${opts.detail}`);
   else (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts)).catch(() => {});
+}
+
+// A PDF read where it is: `POST /api/folder-links/open` on a local server,
+// never a remote one, so a paper opened on a train is not sent to the NAS.
+// It lands in the workspace the window shows when that is a local server's,
+// the account writes there and it is no clone, else in the host's personal
+// workspace (openFiles.readerPlace), as a page inside *Opened files*, and
+// the bar says where. Before the host takes it, a page of the workspace
+// the window shows that carries those bytes already opens instead
+// (openCarried): a paper annotated on the NAS, in a clone or in a workspace
+// the account only reads opens its page there. A workspace others see asks
+// first, its members being able to read the file through the page, and
+// offers the account's own. The server opens a file inside a vault as that
+// vault's page, bytes a page of the workspace stores as that page, and a
+// file opened before as its page. The annotations
+// another reader saved in a new page's file become Gamma's
+// (importAnnotations). `openAddsToLibrary` in the account's profile on the
+// open server, and the Mac App Store build, whose servers reach only the
+// folders the app held when they started, add the file instead (addPdf).
+async function readPdf(file) {
+  if (process.mas) return addPdf(file);
+  await surfaceWindow();
+  if (opening) await opening.catch(() => {});
+  if (!current) {
+    await openServer(hostOf().id);
+    buildMenu();
+  }
+  const api = serverApi(content.webContents.session);
+  if (await addsToLibrary(api, openOrigin())) return addPdf(file);
+  const name = path.basename(file);
+  // (a remote's session is not asked: a NAS out of reach still lets the file be read here)
+  let info = current.type === 'local' ? await api(openOrigin(), '/api/session') : null;
+  let place = info && openFiles.readerPlace(info, currentWsId());
+  if (!place) {
+    const carried = await openCarried(api, file);
+    if (carried) return carried;
+    const host = hostOf();
+    if (current.id !== host.id) {
+      await openServer(host.id);
+      buildMenu();
+    }
+    info = await api(openOrigin(), '/api/session');
+    const mine = openFiles.personalOf(info);
+    if (!mine) throw new Error(`Sign in to ${current.name}, then open the file again.`);
+    place = { ws: mine, audience: '', mine: null };
+  }
+  if (current.type !== 'local') throw new Error('A PDF is read where it is by a server on this computer only.');
+  const at = current; // the server it is read on, whatever the window opens meanwhile
+  let ws = place.ws;
+  // A page of a workspace others see reads the file for each of them: asked
+  // first, as addPdf asks, with the account's own offered instead.
+  if (place.audience) {
+    const buttons = [...(place.mine ? [`Open in ${place.mine.name}`] : []), `Open in ${ws.name}`, 'Cancel'];
+    const r = await ask({
+      type: 'question', buttons, defaultId: 0, cancelId: buttons.length - 1,
+      message: `Open “${name}” in ${ws.name}?`,
+      detail: `${ws.name} is shared: everyone in it can see the page and read the file from this computer while Gamma runs.`,
+    }, 0);
+    if (r === buttons.length - 1) return {};
+    if (r === 0 && place.mine) ws = place.mine;
+  }
+  const origin = localOrigin(registry.get(at.id));
+  busy = `Opening ${name}…`;
+  pushState();
+  try {
+    const opened = await api(origin, '/api/folder-links/open', {
+      method: 'POST',
+      headers: { 'X-Gamma-Workspace': ws.id, ...JSON_TYPE, ...shellWord(origin) },
+      body: JSON.stringify({ path: file }),
+    });
+    const headers = { 'X-Gamma-Workspace': opened.workspace };
+    if (opened.created) {
+      const page = await api(origin, `/api/blocks/${encodeURIComponent(opened.page)}`, { headers });
+      const docId = (page.properties || {}).doc_id;
+      if (docId) await importAnnotations(api, origin, headers, opened.page, docId);
+    }
+    // Said always, a page that was there already too: where the file is read.
+    const where = ((info.workspaces || []).find((w) => w.id === opened.workspace) || ws).name;
+    showNotice(opened.created ? `${opened.title || name} is read from this computer, under Opened files in ${where} on ${at.name}.`
+      : `${opened.title || name} is read from this computer, in ${where} on ${at.name}.`);
+    if (!current || current.id !== at.id) await openServer(at.id);
+    await openGammaWorkspace(opened.workspace, opened.page);
+    return { workspace: opened.workspace, page: opened.page };
+  } finally {
+    busy = null;
+    pushState();
+  }
+}
+
+// The page of the workspace the window shows that carries the file's bytes
+// already, opened there as an added file's page opens (`GET
+// /api/blocks/by-doc/<hash>`, the hash made here, so nothing of the file
+// is sent): `{ workspace, page }`. null when no page there holds them or
+// the server does not answer: the file is then read on this computer.
+async function openCarried(api, file) {
+  const shown = currentWsId();
+  if (!shown) return null;
+  const at = current; // the server asked, whatever the window opens meanwhile
+  const origin = openOrigin();
+  const name = path.basename(file);
+  busy = `Opening ${name}…`;
+  pushState();
+  let page;
+  try {
+    page = await openFiles.docIdOf(file)
+      .then((docId) => api(origin, `/api/blocks/by-doc/${docId}`, {
+        headers: { 'X-Gamma-Workspace': shown }, signal: AbortSignal.timeout(5000),
+      }))
+      .catch(() => null);
+  } finally {
+    busy = null;
+    pushState();
+  }
+  if (!page || !page.id) return null;
+  stillOn(at);
+  const where = (((gamma && gamma.list) || []).find((w) => w.id === shown) || { name: 'this workspace' }).name;
+  showNotice(`${page.content || name} is in ${where} on ${at.name} already.`);
+  await openGammaWorkspace(shown, page.id);
+  return { workspace: shown, page: page.id };
+}
+
+// Whether the account wants an opened PDF added to its library, as before
+// (Settings: `openAddsToLibrary` in its profile on the server at `origin`).
+// Not said, or not read: no.
+async function addsToLibrary(api, origin) {
+  try {
+    const profile = await api(origin, '/api/prefs/profile', { signal: AbortSignal.timeout(5000) });
+    return (profile.value || {}).openAddsToLibrary === true;
+  } catch {
+    return false;
+  }
+}
+
+// An opened PDF's "Add to library…" for another server (docs/research/vaults.md
+// "Reading a PDF where it is"): the page `pageId` of the open local server's
+// workspace `wsId`, which reads its file where it is, carried to a library of
+// another server the user picks (carryPage), then opened there. Another
+// workspace of this server is the page's own "Add to library…" (POST
+// /api/folder-links/opened/<id>/add).
+async function carryToServer(wsId, pageId) {
+  const done = await carryPage(wsId, pageId);
+  if (!done) return null;
+  showNotice(`“${done.title}” is in ${done.workspaceName} on ${done.serverName} now, with its notes, highlights and chat.`);
+  await openServer(done.server);
+  buildMenu();
+  await openGammaWorkspace(done.workspace, done.page);
+  return done;
+}
+
+// What carryToServer carries: the server asked (the other servers of the
+// registry, before any is started or reached), then the workspace when it
+// has several (a remote's workspaces as the window's session has them, a
+// local one's as its own session does), the page and the pages inside
+// it exported from here as a Gamma export (GET /api/pages/<id>/export?mode=gamma,
+// which takes the PDF's bytes from the file and leaves its link to the file
+// behind), merged in there (POST /api/import-data?mode=merge), taken out of
+// *Opened files*, whose page stays here, and only then the page here moved
+// to Recently deleted with the pages inside it, as a carry to another
+// workspace here moves it (POST /api/folder-links/opened/<id>/carried with
+// the digest its GET gave before the export), so the file opened again is a
+// new page rather than this one back. A page written on here since that
+// digest stays here (409): the copy there lacks what was written, so it is
+// in both places. Each check comes before anything is written there (none
+// of the pages may be a page there already, live or in Recently deleted,
+// nor any of their PDFs), and nothing here goes unless the page and every
+// page inside it are there, with the PDF; once they are, the page here is
+// let go whatever the window opened meanwhile. Only the account
+// that opened the file carries it (the page state's `reader.mine`), as only
+// it takes the page to another workspace here: the file is on its computer,
+// and another editor of the workspace would take that account's page, its
+// notes and chat with it, away. → `{ server, serverName, workspace,
+// workspaceName, page, title }`, or null when a question was cancelled.
+async function carryPage(wsId, pageId) {
+  if (!current || current.type !== 'local' || !content) throw new Error('Only a page of a server on this computer reads a file here.');
+  const shown = current; // the server it is carried from, whatever the window opens while a question is up
+  const ses = content.webContents.session;
+  const api = serverApi(ses);
+  const origin = localOrigin(registry.get(shown.id));
+  const headers = { 'X-Gamma-Workspace': wsId };
+  const state = await api(origin, `/api/folder-links/page/${encodeURIComponent(pageId)}`, { headers });
+  if (!state.reader) throw new Error('This page does not read a file on this computer.');
+  if (state.reader.mine !== true) {
+    throw new Error('Only the account that opened this file may take it to another server: the file is on that account\'s computer.');
+  }
+  if (state.reader.missing) throw new Error('The file this page reads is not there: locate it first.');
+  const page = await api(origin, `/api/blocks/${encodeURIComponent(pageId)}`, { headers });
+  const title = page.content || 'Untitled';
+  const docId = (page.properties || {}).doc_id;
+  if (!docId) throw new Error('This page has no PDF.');
+
+  const others = registry.load().servers.filter((s) => s.id !== shown.id);
+  if (!others.length) {
+    await ask({
+      type: 'info', buttons: ['OK'], defaultId: 0,
+      message: `This app knows no other Gamma server to add “${title}” to.`,
+      detail: 'Add one under Server → All Servers… (New local server or Add remote server…), then add the page to its library from here again.',
+    }, 0);
+    return null;
+  }
+  // Asked before the server is reached: a page's ask starts no server and
+  // sends nothing anywhere on its own.
+  const pick = await ask({
+    type: 'question', buttons: [...others.map((s) => `To ${s.name}`), 'Cancel'], defaultId: 0, cancelId: others.length,
+    message: others.length > 1 ? `Add “${title}” to the library of which server?` : `Add “${title}” to the library of ${others[0].name}?`,
+    detail: 'Its notes, highlights, comments and chat go with it, and its PDF is stored there. Once it is there, the page here is moved to Recently deleted here; the file on this computer stays as it is.',
+  }, others.length);
+  if (!(pick >= 0 && pick < others.length)) return null;
+  const srv = others[pick];
+  stillOn(shown);
+  let at;
+  if (srv.type === 'local') {
+    if (!sidecar.status(srv.id)) await startLocal(srv);
+    at = await localServer(srv.id);
+  } else {
+    at = { srv, origin: registry.originOf(srv.url), api };
+  }
+  const info = await at.api(at.origin, '/api/session');
+  if (!info.user) throw new Error(`Sign in to ${srv.name} first, then add the page to its library again.`);
+  const places = openFiles.carryPlaces(info);
+  if (!places.length) throw new Error(`Your account on ${srv.name} has no workspace it can add pages to.`);
+  let ws = places[0];
+  if (places.length > 1) {
+    const r = await ask({
+      type: 'question', buttons: [...places.map((w) => `To ${w.name}`), 'Cancel'], defaultId: 0, cancelId: places.length,
+      message: `Add “${title}” to the library of which workspace of ${srv.name}?`,
+      detail: 'Once it is there, the page here is moved to Recently deleted here; the file on this computer stays as it is.',
+    }, places.length);
+    if (!(r >= 0 && r < places.length)) return null;
+    ws = places[r];
+  }
+  stillOn(shown);
+
+  const there = { 'X-Gamma-Workspace': ws.id };
+  // What the workspace there holds of `apiPath`: 'live', 'trashed' for a
+  // page in its Recently deleted (a 404 that names its entry there), or ''
+  // for nothing. The merge skips a live page, and puts the copy sent in the
+  // place of a trashed one, which it deletes for good with all that was
+  // written on it there (ws_backup._merge): either is refused before
+  // anything is sent, as a carry to another workspace here refuses both.
+  const holds = (apiPath) => at.api(at.origin, apiPath, { headers: there }).then(() => 'live', (e) => {
+    if (e.status !== 404) throw e;
+    return e.body && e.body.trashed ? 'trashed' : '';
+  });
+  const held = await holds(`/api/blocks/${encodeURIComponent(pageId)}`);
+  if (held === 'trashed') throw new Error(`${ws.name} on ${srv.name} has this page in Recently deleted: restore it there and open it.`);
+  if (held) throw new Error(`${ws.name} on ${srv.name} has this page already: open it there.`);
+  if (await holds(`/api/blocks/by-doc/${encodeURIComponent(docId)}`)) throw new Error(`${ws.name} on ${srv.name} has a page of this PDF already: open it there.`);
+
+  busy = `Adding ${title} to the library of ${srv.name}…`;
+  pushState();
+  try {
+    // What the export takes, read before it: anything written here since
+    // keeps the page here (the POST below). Each page inside it is looked
+    // for there as the page was.
+    const carried = `/api/folder-links/opened/${encodeURIComponent(pageId)}/carried`;
+    const { digest, pages } = await api(origin, carried, { headers });
+    for (const id of pages) {
+      const inside = id !== pageId && await holds(`/api/blocks/${encodeURIComponent(id)}`);
+      if (inside) {
+        throw new Error(`A page inside “${title}” is a page of ${ws.name} on ${srv.name} already${inside === 'trashed' ? ', in Recently deleted' : ''}: take it out of “${title}” first.`);
+      }
+    }
+    const zip = await apiBytes(ses, origin, `/api/pages/${encodeURIComponent(pageId)}/export?mode=gamma&sub_pages=1`, { headers });
+    const names = zipNames(zip);
+    if (!names.includes(`uploads/${docId}.pdf`)) {
+      throw new Error('The PDF did not come with the page: its file is gone or has just changed. Locate it, or try again in a moment.');
+    }
+    // A page inside it whose PDF is a page there already would not go (the
+    // merge skips it), and would go to Recently deleted here with its page.
+    for (const name of names) {
+      const doc = /^uploads\/([\w-]+)\.pdf$/.exec(name);
+      if (doc && doc[1] !== docId && await holds(`/api/blocks/by-doc/${encodeURIComponent(doc[1])}`)) {
+        throw new Error(`A page inside “${title}” has a PDF that ${ws.name} on ${srv.name} has a page of already: take it out of “${title}” first.`);
+      }
+    }
+    const form = new FormData();
+    form.append('file', new Blob([zip], { type: 'application/zip' }), `${pageId}-gamma.zip`);
+    const merged = await at.api(at.origin, `/api/import-data?mode=merge&ws=${encodeURIComponent(ws.id)}`, { method: 'POST', headers: there, body: form });
+    if (!merged.pages_added) throw new Error(`${ws.name} on ${srv.name} has this page already: open it there.`);
+    try {
+      await at.api(at.origin, `/api/blocks/${encodeURIComponent(pageId)}`, {
+        method: 'PUT', headers: { ...there, ...JSON_TYPE }, body: JSON.stringify({ properties: { parent_page: null } }),
+      });
+    } catch (e) {
+      throw new Error(`“${title}” went to ${ws.name} on ${srv.name}, but stays inside a page it does not have there (${e.message}). The page here is kept.`);
+    }
+    // Every page sent arrived, or nothing here goes: the ones skipped would
+    // go to Recently deleted here with their page, with no copy there.
+    if (merged.pages_skipped) {
+      throw new Error(`“${title}” went to ${ws.name} on ${srv.name}, but ${merged.pages_skipped === 1 ? 'a page' : `${merged.pages_skipped} pages`} inside it did not: it has them already. The page here is kept.`);
+    }
+    // The page here let go on the server it came from, whatever the window
+    // shows now: through the window's session, else, once the window has
+    // signed into another server on this computer (a cookie does not tell
+    // ports apart, so that one's is all it holds: 401), through the
+    // server's own (localServer). Either way the server lets it go only for
+    // the account that opened the file.
+    const letGo = { method: 'POST', headers: { ...headers, ...JSON_TYPE }, body: JSON.stringify({ digest }) };
+    try {
+      await api(localOrigin(registry.get(shown.id)), carried, letGo).catch(async (e) => {
+        if (e.status !== 401) throw e;
+        const own = await localServer(shown.id);
+        return own.api(own.origin, carried, letGo);
+      });
+    } catch (e) {
+      if (e.status === 409) {
+        throw new Error(`“${title}” is in ${ws.name} on ${srv.name} now, and stays here too: it changed here while it was carried, so nothing here was deleted. It is in both places now.`);
+      }
+      throw new Error(`“${title}” is in ${ws.name} on ${srv.name} now, but the page here could not be moved to Recently deleted: ${e.message.replace(/\.$/, '')}. It is in both places now: delete the page here to keep only the copy there.`);
+    }
+    return { server: srv.id, serverName: srv.name, workspace: ws.id, workspaceName: ws.name, page: pageId, title };
+  } finally {
+    busy = null;
+    pushState();
+  }
+}
+
+// A route's answer as bytes (an export's zip), through session `ses`.
+async function apiBytes(ses, origin, apiPath, init) {
+  const r = await ses.fetch(origin + apiPath, { credentials: 'include', cache: 'no-store', ...init });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body.detail || `${apiPath}: HTTP ${r.status}`);
+  }
+  return Buffer.from(await r.arrayBuffer());
+}
+
+// Server → Open a PDF…: a PDF from the native picker, read where it is as
+// one the system hands over (openPdfFiles).
+async function openPdfDialog() {
+  const file = await pickPdf('Open a PDF', 'Choose a PDF on this computer to open in Gamma.', 'Open');
+  if (file) await openPdfFiles([file]);
 }
 
 async function addPdf(file) {
@@ -1543,7 +2220,7 @@ async function importAnnotations(api, origin, headers, pageId, docId) {
 
 // ---------------------------------------------------------- background -----
 // "Keep running in the background": closing the window leaves the app in
-// the tray with every local server running, so clones and folders on disk
+// the tray with every local server running, so clones and synced vaults
 // keep syncing (docs/architecture.md "Background and tray"). Off, closing
 // the last window quits (macOS keeps the dock process either way). "Start
 // at login" launches it hidden, straight into the tray.
@@ -1671,7 +2348,7 @@ function applyLoginItem() {
   app.setLoginItemSettings({ openAtLogin: on, args: ['--hidden'] });
 }
 
-// A clone or a folder on disk stays in sync only while Gamma runs: when one
+// A clone or a synced vault stays in sync only while Gamma runs: when one
 // is made and the app still quits with its window, offer the background.
 async function offerBackground(what) {
   if (registry.getSettings().background || !win) return;
@@ -1710,6 +2387,8 @@ function barState() {
     notice,
     // what this computer keeps (the sync button and its panel)
     keeping: keepingState,
+    // the vault dialog the sync panel shows (askVault), or null
+    vaultAsk: vaultAskState(),
     update: updater.state(),
     // Gamma's workspaces on the open server (null until known / signed in),
     // with the one the content view shows and the offline-copy cross-links.
@@ -1746,7 +2425,7 @@ function fullState() {
       // Paths as the file manager can find them (hostPath, a Store install).
       dataDir: hostPath(ws.dataDir),
       sizeBytes: ws.type === 'local' ? registry.dirSize(ws.dataDir) : undefined,
-      logPath: ws.type === 'local' ? hostPath(path.join(app.getPath('userData'), 'logs', `${ws.id}.log`)) : undefined,
+      logPath: ws.type === 'local' ? hostPath(logPath(ws.id)) : undefined,
     })),
     settings: state.settings,
     lastOpened: state.lastOpened,
@@ -1773,7 +2452,11 @@ function pushState() {
 
 // Local servers log in silently with the credentials the shell seeded.
 // Runs in the page after load: if /api/session says anonymous, POST the
-// stored credentials and reload. Harmless when already logged in.
+// stored credentials and answer 'logged-in'. Harmless when already logged in.
+// The page does not reload itself: the caller loads it again through
+// loadPage and waits (signedInAgain), so the reload is over before whatever
+// load comes next. A location.reload() here ran on after the shell had moved
+// on, and the next load (a server, then its workspace) started under it.
 function autoLoginScript(username, password) {
   return `(async () => {
     try {
@@ -1788,10 +2471,16 @@ function autoLoginScript(username, password) {
         credentials: 'same-origin',
         body: JSON.stringify({ username: ${JSON.stringify(username)}, password: ${JSON.stringify(password)} }),
       });
-      if (r.ok) { location.reload(); return 'logged-in'; }
+      if (r.ok) return 'logged-in';
       return 'login-failed:' + r.status;
     } catch (e) { return 'error:' + e; }
   })()`;
+}
+
+// The page again after a silent login, now signed in, as location.reload()
+// would load it, and over by the time this resolves.
+function signedInAgain(webContents) {
+  return loadPage(webContents, webContents.getURL());
 }
 
 let opening = null; // serialize opens: a second click while one is in flight waits
@@ -1812,6 +2501,7 @@ async function openServerNow(id) {
   if (dataMove && dataMove.ids.has(id)) throw new Error(`${ws.name} is being moved to the new storage folder: open it once the move is done.`);
   if (!win) createWindow();
   if (current && current.id === id) return { url: current.url, autoLogin: 'already-open' };
+  cancelVaultAsk(); // it was asked about what the window showed
   busy = ws.type === 'local' ? `Starting ${ws.name}…` : `Connecting to ${ws.name}…`;
   pushState();
   try {
@@ -1835,6 +2525,7 @@ async function openServerNow(id) {
       const result = await content.webContents
         .executeJavaScript(autoLoginScript(creds.username, creds.password))
         .catch((e) => 'exec-error:' + e);
+      if (String(result) === 'logged-in') await signedInAgain(content.webContents);
       refreshGamma();
       return { url, autoLogin: String(result) };
     }
@@ -1878,8 +2569,9 @@ async function checkForUpdatesInteractive() {
   } else {
     opts.message = `You are on the latest version (${st.current}).`;
   }
-  const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
-  if (r.response === 0 && opts.buttons.length > 1) updater.install();
+  // Under the test harness the last button, Later or OK, which installs nothing.
+  const r = await ask(opts, opts.buttons.length - 1);
+  if (r === 0 && opts.buttons.length > 1) updater.install();
 }
 
 // ----------------------------------------------------------------- menu -----
@@ -1893,6 +2585,7 @@ function buildMenu() {
       label: 'Server',
       submenu: [
         { label: 'All Servers…', accelerator: 'CmdOrCtrl+Shift+L', click: () => loadLauncher() },
+        { label: 'Open a PDF…', click: () => openPdfDialog().catch(() => {}) },
         { type: 'separator' },
         ...servers.map((ws) => ({
           label: `${ws.name}${ws.type === 'remote' ? '  (remote)' : ''}`,
@@ -1937,7 +2630,7 @@ function buildMenu() {
     {
       role: 'help',
       submenu: [
-        { label: 'Check for Updates…', click: () => checkForUpdatesInteractive().catch(() => {}) },
+        { id: 'check-updates', label: 'Check for Updates…', click: () => checkForUpdatesInteractive().catch(() => {}) },
         { label: 'Gamma on GitHub', click: () => openExternal('https://github.com/tim4431/Gamma') },
       ],
     },
@@ -2018,11 +2711,11 @@ function registerIpc() {
   ipcMain.handle('shell:reload', shellOnly(() => content && content.webContents.reload()));
   ipcMain.handle('shell:reveal-data', shellOnly((id) => {
     const ws = registry.get(id);
-    if (ws && ws.type === 'local') shell.openPath(hostPath(ws.dataDir));
+    if (ws && ws.type === 'local') openDirectory(ws.dataDir);
   }));
   ipcMain.handle('shell:reveal-log', shellOnly((id) => {
-    const p = path.join(app.getPath('userData'), 'logs', `${id}.log`);
-    if (fs.existsSync(p)) shell.showItemInFolder(hostPath(p));
+    const p = logPath(id);
+    if (fs.existsSync(p)) revealFile(p);
   }));
   // A running local server's address, for the Gamma Connector's options.
   ipcMain.handle('shell:copy-address', shellOnly((id) => {
@@ -2038,31 +2731,50 @@ function registerIpc() {
     return s;
   }));
   ipcMain.handle('shell:folders', shellOnly((wsId) => listFolders(wsId)));
-  ipcMain.handle('shell:keep-folder', shellOnly((wsId, folderId) =>
-    withDialog('Could not keep the folder on this computer.', () => keepFolder(wsId, folderId))()));
+  ipcMain.handle('shell:add-folder-vault', shellOnly((wsId, folderId) =>
+    withDialog('Could not sync the folder with this computer.', oneAsk(() => addFolderVault(wsId, folderId)))()));
+  ipcMain.handle('shell:add-vault', shellOnly(() => withDialog('Could not add the synced vault.', oneAsk(() => addDirectoryVault()))()));
+  ipcMain.handle('shell:answer-vault', shellOnly((id, answer) => answerVault(id, answer)));
   ipcMain.handle('shell:keeping', shellOnly(() => { refreshKeeping().catch(() => {}); return keepingState; }));
-  // pause, resume, sync and sending back leave the sync panel open on the new state (bar.html keptRow)
-  ipcMain.handle('shell:keeping-action', shellOnly((kind, serverId, id, action) =>
-    withDialog('Could not do that.', () => keepingAction(kind, serverId, id, action), action === 'open' || action === 'stop')()));
-  // A folder's "Keep on this computer…" and a page's "Follow a file on this
-  // computer…" in Gamma's own menus, passed on by the page preload: only
-  // from the content view's page of the open server, with plain ids, one
-  // action at a time. The native picker is the user's say, so the page can
-  // start nothing on its own.
+  // Of a vault's actions, those that change it or run a round leave the sync
+  // panel open on the new state (bar.html keptRow); the others ask first, or
+  // open something.
+  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push'];
+  ipcMain.handle('shell:keeping-action', shellOnly((kind, serverId, id, action, value) =>
+    withDialog('Could not do that.', () => keepingAction(kind, serverId, id, action, value), !STAYS_OPEN.includes(action))()));
+  // A page's asks about this computer in Gamma's own menus (a folder's "Sync
+  // with this computer…", a page's "Push from a file on this computer…", its
+  // file shown in its folder, its missing file located, an opened PDF carried
+  // to another server's library), passed on by the
+  // page preload: only from the content view's page of the open server,
+  // with plain ids, one action at a time (oneAsk: none while a picker, a
+  // question or the vault dialog is up), and at most one a second, so a page
+  // asking in a loop opens no row of file manager windows. The native picker
+  // is the user's say, so the page can start nothing on its own.
+  const PAGE_ASK_MS = 1000;
+  let pageAskAt = 0;
   const fromPage = (event, ...ids) => {
-    if (!content || event.sender !== content.webContents || busy || !current) return false;
+    if (!content || event.sender !== content.webContents || busy || vaultAsk || asking || !current) return false;
     let from = '';
     try { from = new URL(event.senderFrame.url).origin; } catch {}
-    return from === openOrigin() && ids.every((id) => /^[\w-]{1,64}$/.test(id));
+    if (from !== openOrigin() || !ids.every((id) => /^[\w-]{1,64}$/.test(id))) return false;
+    if (Date.now() - pageAskAt < PAGE_ASK_MS) return false;
+    pageAskAt = Date.now();
+    return true;
   };
-  ipcMain.on('shell:keep-folder-from-page', (event, wsId, folderId) => {
-    if (!fromPage(event, wsId, folderId)) return;
-    withDialog('Could not keep the folder on this computer.', () => keepFolder(wsId, folderId))().catch(() => {});
-  });
-  ipcMain.on('shell:follow-file-from-page', (event, wsId, pageId) => {
-    if (!fromPage(event, wsId, pageId)) return;
-    withDialog('Could not follow the file.', () => followFile(wsId, pageId))().catch(() => {});
-  });
+  const PAGE_ASKS = {
+    'shell:sync-folder-from-page': ['Could not sync the folder with this computer.', addFolderVault],
+    'shell:push-file-from-page': ['Could not push from the file.', addFileVault],
+    'shell:reveal-from-page': ['Could not show the file.', revealOnDisk],
+    'shell:relocate-from-page': ['Could not locate the file.', relocateFile],
+    'shell:carry-from-page': ['Could not add the page to the other server\'s library.', carryToServer],
+  };
+  for (const [channel, [message, run]] of Object.entries(PAGE_ASKS)) {
+    ipcMain.on(channel, (event, wsId, id) => {
+      if (!fromPage(event, wsId, id)) return;
+      withDialog(message, oneAsk(() => run(wsId, id)))().catch(() => {});
+    });
+  }
   // Reveal a directory a link of the open server's workspace writes — only such a one.
   ipcMain.handle('shell:open-path', shellOnly(async (wsId, p) => {
     const { links } = await listFolders(wsId);
@@ -2167,7 +2879,7 @@ async function runSmoke() {
     );
     out.firstLogin = String(login);
     if (String(login) === 'logged-in') {
-      await new Promise((r) => setTimeout(r, 1500)); // let the reload settle
+      await signedInAgain(content.webContents);
       const who = await content.webContents.executeJavaScript(
         `fetch('/api/session',{credentials:'same-origin'}).then(r=>r.json()).then(j=>j.user||'')`
       );
@@ -2222,7 +2934,7 @@ app.whenReady().then(async () => {
   const files = [...earlyPdfs.splice(0), ...openFiles.pdfPaths(process.argv.slice(1), process.cwd())];
   // Started at login (`--hidden`, or `wasOpenedAtLogin` on macOS, which
   // passes a login item no arguments): no window, the servers run in the
-  // background for the clones, the Zotero links and the folders on disk.
+  // background for the clones, the Zotero links and the synced vaults.
   const hidden = !files.length && Boolean(settings.background) && (process.argv.includes('--hidden') ||
     (process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin));
   if (hidden) startBackgroundHosts();
@@ -2276,18 +2988,46 @@ if (process.env.GAMMA_SHELL_TEST) {
     openCopy,
     openOriginal,
     keepOffline,
-    keepFolder,
-    dropFolder,
-    syncFolder,
+    addFolderVault,
+    addDirectoryVault,
+    addFileVault,
+    vaultAsk: vaultAskState,
+    answerVault,
+    oneAsk,
+    shellWord,
+    setBarExpanded,
+    barExpanded: () => barExpanded,
+    syncVault,
+    pauseVault,
+    setPull,
     setPush,
+    forceVault,
+    goOnVault,
+    locateVault,
+    removeVault,
+    revealOnDisk,
+    relocateFile,
+    carryPage,
+    carryToServer,
+    asked,
+    answers,
+    // main.test.js: the window shows server `srv`, `view` standing in for its
+    // content view and `window` (none by default) for the window itself.
+    pretendShown: (srv, view, window = null) => {
+      current = srv && { id: srv.id, name: srv.name, type: srv.type, url: srv.type === 'local' ? sidecar.status(srv.id).url : srv.url };
+      content = view;
+      win = window;
+    },
+    hintServers,
+    shellSecret: SHELL_SECRET,
     listFolders,
-    followFile,
     refreshKeeping,
     keepingAction,
     keeping: () => keepingState,
     startLocal,
     startBackgroundHosts,
     openPdfFiles,
+    readPdf,
     // Gamma's API on the open server in a named workspace, as the shell calls
     // it. A page's own fetch cannot do that: Gamma's wrapper stamps the
     // workspace the page has settled on, or none before it has.
@@ -2308,11 +3048,11 @@ if (process.env.GAMMA_SHELL_TEST) {
     theme: () => currentTheme(),
     externalOpens,
     errorBoxes,
+    logPath,
     copied: () => copied,
     update: () => updater.state(),
     remoteHealth,
     probeRemotes,
-    barExpanded: () => barExpanded,
     bounds: () => ({ bar: bar && bar.getBounds(), content: content && content.getBounds() }),
   };
 }

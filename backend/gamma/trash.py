@@ -18,6 +18,7 @@ with it), and its restore and its deletion for good take them too, so
 nothing here reaches them but through their page.
 """
 
+import json
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -86,32 +87,68 @@ def purge(ws: str, page_id: str, *, actor: str = "", sweep: bool = True) -> dict
         return delete_page(ws, conn, page_id, actor=actor, sweep=sweep)
 
 
-def _trashed(ws: str) -> list[dict]:
-    with connect_pages_db(ws) as conn:
-        return list_trash(conn)
+def _trashed(conn) -> list[tuple[str, str, list[str]]]:
+    """The trash as a pass of deletions for good walks it, from one read of
+    it: ``(page id, deleted_at, the pages that went there with it)`` for
+    each entry Recently deleted lists (``list_trash``: a page that went
+    with another still there is none), the last deleted first, the pages
+    that went with it in their trash order (``ops._went_with``'s)."""
+    rows = conn.execute("SELECT id, json_extract(properties, '$.deleted_at'), deleted_with FROM unified_blocks "
+                        "WHERE parent_id = ? ORDER BY position, id", (TRASH,)).fetchall()
+    ids = {row[0] for row in rows}
+    went: dict[str, list[str]] = {}
+    for page_id, _, stamp in rows:
+        if stamp in ids:
+            went.setdefault(stamp, []).append(page_id)
+    entries = [(page_id, str(at or ""), went.get(page_id, [])) for page_id, at, stamp in rows if stamp not in ids]
+    return sorted(entries, key=lambda e: e[1], reverse=True)
+
+
+def _purge_entry(ws: str, conn, page_id: str, deleted_at: str, went: list[str], *, actor: str) -> dict | None:
+    """``purge`` of one entry of a pass (``_trashed``), on the pass's
+    connection and with ``sweep=False``: under one write lock, the check
+    that the page is still in the trash, as the pass read it, and its
+    deletion with the pages that went with it, without reading the trash
+    again. A page restored and deleted again since the read (another
+    ``deleted_at``) has what went with it read again (``delete_page``'s
+    ``_went_with``); a page of ``went`` restored since is passed by. None
+    when the page is no longer in the trash."""
+    write_lock(conn)
+    rows = {row[0]: row[1:] for row in conn.execute(
+        "SELECT id, parent_id, json_extract(properties, '$.deleted_at'), deleted_with FROM unified_blocks "
+        "WHERE id IN (SELECT value FROM json_each(?))", (json.dumps([page_id, *went]),))}
+    page = rows.get(page_id)
+    if not page or page[0] != TRASH:
+        conn.rollback()
+        return None
+    still = None if str(page[1] or "") != deleted_at else [
+        sub for sub in went if sub in rows and rows[sub][0] == TRASH and rows[sub][2] == page_id]
+    return delete_page(ws, conn, page_id, actor=actor, sweep=False, went=still)
 
 
 @contextmanager
-def _swept_after(ws: str):
-    """A pass of deletions for good, each with ``sweep=False``: yields the
-    list the pass adds the ids it deleted to, and when that is not empty
-    purges data.db once at the end, also after a deletion that raised (the
-    pages before it are gone, and a later pass may delete nothing)."""
+def _swept_after(ws: str, conn):
+    """A pass of deletions for good on ``conn``, each with ``sweep=False``:
+    yields the list the pass adds the ids it deleted to, and when that is
+    not empty purges data.db once at the end, on the same connection, also
+    after a deletion that raised (the pages before it are gone, and a later
+    pass may delete nothing)."""
     gone = []
     try:
         yield gone
     finally:
         if gone:
-            with connect_pages_db(ws) as conn:
-                pdf_index.purge_unused(ws, conn)
+            pdf_index.purge_unused(ws, conn)
 
 
 def empty(ws: str, *, actor: str = "") -> list[str]:
-    """Delete every page of the trash for good; their ids."""
-    with _swept_after(ws) as gone:
-        for page in _trashed(ws):
-            if purge(ws, page["id"], actor=actor, sweep=False) is not None:
-                gone.append(page["id"])
+    """Delete every page of the trash for good; their ids. One connection
+    and one read of the trash for the whole pass (``_trashed``), one
+    data.db purge after it (``_swept_after``)."""
+    with connect_pages_db(ws) as conn, _swept_after(ws, conn) as gone:
+        for page_id, deleted_at, went in _trashed(conn):
+            if _purge_entry(ws, conn, page_id, deleted_at, went, actor=actor) is not None:
+                gone.append(page_id)
     return gone
 
 
@@ -125,13 +162,15 @@ def purge_expired(ws: str, *, now: datetime | None = None) -> list[str]:
 def _purge_expired(ws: str, now: datetime) -> tuple[list[str], datetime | None]:
     """``purge_expired`` with, from the same listing, when the earliest page
     still in the trash expires: None with the trash left empty; a page that
-    could not be dated or purged is due at once (the next sweep tries again)."""
+    could not be dated or purged is due at once (the next sweep tries again).
+    One connection and one read of the trash, as ``empty``."""
     expiries = []
-    with _swept_after(ws) as gone:
-        for page in _trashed(ws):
-            at = parse_stamp(page["deleted_at"])
-            if (at is None or now >= at + timedelta(days=KEEP_DAYS)) and purge(ws, page["id"], sweep=False) is not None:
-                gone.append(page["id"])
+    with connect_pages_db(ws) as conn, _swept_after(ws, conn) as gone:
+        for page_id, deleted_at, went in _trashed(conn):
+            at = parse_stamp(deleted_at)
+            if (at is None or now >= at + timedelta(days=KEEP_DAYS)) and _purge_entry(
+                    ws, conn, page_id, deleted_at, went, actor="") is not None:
+                gone.append(page_id)
             else:
                 expiries.append(at + timedelta(days=KEEP_DAYS) if at else datetime.min.replace(tzinfo=timezone.utc))
     return gone, min(expiries, default=None)

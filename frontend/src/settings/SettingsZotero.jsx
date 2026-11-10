@@ -19,7 +19,7 @@ import { Field, PasswordInput, Row, Step, SubDialog } from "./SettingsKit";
 import { useSettingsRead } from "./settingsReads.js";
 import { ZOTERO_ACCOUNT, connectZoteroKey, disconnectZotero, startZoteroOAuth, zoteroKeyRefusal,
   zoteroOAuthStatus } from "../transfers/zoteroApi";
-import { composing } from "../chat/enterKey.js";
+import { composing } from "../shared/lib/hotkeys.js";
 import { BookIcon, ExternalLinkIcon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
@@ -151,7 +151,7 @@ export function ZoteroAccountRow({ setStatus, confirm }) {
 
   const oauth = Boolean(account.oauth?.available);
   const since = account.connected_at ? account.connected_at.slice(0, 10) : "";
-  const useKey = (primary) => <button className={`uiBtn sm${primary ? " primary" : ""}`}
+  const keyButton = (primary) => <button className={`uiBtn sm${primary ? " primary" : ""}`}
     onClick={() => { setError(""); setKeyOpen(true); }}>{t("Use an API key…")}</button>;
   return <>
     <Row icon={BookIcon} label={t("Zotero")}
@@ -170,11 +170,11 @@ export function ZoteroAccountRow({ setStatus, confirm }) {
               library needs. */}
           <span className={`uiTag ${dead ? "warn" : "ok"}`}>{dead ? t("key no longer works") : t("connected")}</span>
           {oauth ? <button className={`uiBtn sm${dead ? " primary" : ""}`} disabled={signIn.starting} onClick={signIn.connect}>{t("Connect again")}</button> : null}
-          {useKey(dead && !oauth)}
+          {keyButton(dead && !oauth)}
           <button className="uiBtn sm" onClick={disconnect}>{t("Disconnect")}</button>
         </> : <>
           {oauth ? <button className="uiBtn sm primary" disabled={signIn.starting} onClick={signIn.connect}>{t("Connect Zotero")}</button> : null}
-          {useKey(!oauth)}
+          {keyButton(!oauth)}
         </>}
       </span>
     </Row>

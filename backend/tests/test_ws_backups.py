@@ -302,3 +302,35 @@ def test_an_upload_dated_before_1980_still_snapshots(owner):
     entry = zipfile.ZipFile(io.BytesIO(z.content)).getinfo(f"uploads/{up.json()['doc_id']}.pdf")
     assert entry.date_time[0] == 1980
     assert owner.delete(f"/api/workspaces/{ws}/backups/{r.json()['name']}").status_code == 200
+
+
+def test_dropping_the_snapshots_waits_for_one_being_written(owner):
+    # ws_backup.remove_all takes the workspace's snapshot lock: a snapshot
+    # half written when the workspace goes finishes first, then its folder
+    # goes with the rest, rather than a zip landing in a folder already gone.
+    import threading
+    from gamma import ws_backup
+    play = owner.post("/api/workspaces", json={"name": "Snapshot while deleted"}).json()["id"]
+    owner.post("/api/blocks", json={"parent_id": "root", "content": "A page"}, headers=_in(play))
+    writing, finish = threading.Event(), threading.Event()
+
+    def progress(**_):
+        writing.set()
+        assert finish.wait(10)
+
+    made = []
+    snap = threading.Thread(target=lambda: made.append(ws_backup.create(play, uploads=False, progress=progress)))
+    snap.start()
+    drop = threading.Thread(target=ws_backup.remove_all, args=(play,))
+    try:
+        assert writing.wait(10)
+        drop.start()
+        drop.join(0.3)
+        assert drop.is_alive() and ws_backup.store_dir(play).is_dir()  # waits for the snapshot
+    finally:
+        finish.set()
+        snap.join(10)
+    drop.join(10)
+    assert made and made[0]["size_bytes"] > 0  # the snapshot answered before its folder went
+    assert not drop.is_alive() and not ws_backup.store_dir(play).exists()
+    assert owner.delete(f"/api/workspaces/{play}").status_code == 200

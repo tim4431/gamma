@@ -239,6 +239,7 @@ body {
   flex-direction: column;
   height: 100vh;
   /* mobile browsers: exclude the collapsing URL bar so nothing hides behind it */
+  /* biome-ignore lint/suspicious/noDuplicateProperties: 100vh holds the root's height where dvh is unknown */
   height: 100dvh;
 }
 
@@ -458,6 +459,31 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 
 .blockRow.focused {
   background: var(--bg-selected);
+}
+
+/* Notes selected as whole blocks (editor/useBlockSelection.js), and the
+   notes under them, which go with them: a stronger accent tint than the
+   focused row's, as Notion's blue. */
+.blockRow.selected,
+.blockRow.selected:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* While a drag selects notes, no text: the browser's selection would
+   follow the pointer across them. */
+.blockList.blockSelecting {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The box a drag from the blank beside the notes draws. */
+.blockSelectBand {
+  position: fixed;
+  z-index: var(--z-popover);
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--radius-sm);
 }
 
 /* The row a page opened at (where the reader left off): one accent tint
@@ -2402,7 +2428,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 /* --- modern topbar bits --- */
 .addPopover { min-width: 300px; }
 .shareCrumbs { display: flex; align-items: center; gap: 2px; white-space: nowrap; }
-.shareCrumbs .crumbBtn { font-family: inherit; font-weight: inherit; line-height: inherit; font-weight: 500; color: var(--text-secondary); }
+.shareCrumbs .crumbBtn { font-family: inherit; line-height: inherit; font-weight: 500; color: var(--text-secondary); }
 .shareCrumbs .crumbSep { padding: 0 3px; }
 .readOnlyTitle {
   flex: 1;
@@ -2726,7 +2752,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   background: none;
   border: none;
   border-radius: var(--radius-sm);
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -2831,6 +2857,8 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
 }
 .searchResults { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .searchHint { font-size: var(--fs-xs); color: var(--text-dim); padding: 8px 4px; }
+/* A qualifier searched as text, and why (search/searchFilters.js problems). */
+.searchHint.warn { color: var(--warn); padding: 4px 4px; }
 /* A group's "Show more" (library.css's load-more pill), tight to its rows. */
 .searchResults .loadMoreBtn { margin: 4px auto 6px; }
 .topbar .searchResult,
@@ -2940,7 +2968,18 @@ mark.searchMark {
   border-radius: var(--radius-xs);
   padding: 0 4px;
 }
-.searchSuggestName { display: inline-flex; align-items: center; gap: 5px; }
+.searchSuggestName { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+/* A qualifier row: its key before a value, and its line after it, muted. */
+.searchSuggestKey { color: var(--text-dim); }
+.searchSuggestDesc {
+  margin-left: 4px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.searchPopover .searchSuggestInert { cursor: default; }
+.searchPopover .searchSuggestInert:hover { background: none; }
 .searchSuggestName svg, .searchChip svg { flex-shrink: 0; opacity: 0.8; }
 .topbar .searchToggle,
 .searchToggle {
@@ -3846,6 +3885,25 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   background: var(--bg-surface);
 }
 .chatApprovalNote { margin-top: 6px; color: var(--text-secondary); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
+/* A reply's plan (PlanCard.jsx) has the approval card's look: its steps
+   are an ordered list of a glyph column (the number, a spinner, a check)
+   and the text. */
+.chatPlanSteps { display: grid; gap: 3px; margin: 8px 0 0; padding: 0; list-style: none; }
+.chatPlanSteps li { display: grid; grid-template-columns: 1.6em minmax(0, 1fr); gap: 6px; align-items: start; }
+.chatPlanMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5em;
+  color: var(--text-muted);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+.chatPlanMark.done { color: var(--ok); }
+.chatPlanDot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.chatPlanStep { min-width: 0; overflow-wrap: anywhere; }
+.chatPlanSteps li.done .chatPlanStep { color: var(--text-secondary); }
+.chatPlanBadge { display: inline-flex; gap: 0.3em; min-width: 0; font-weight: 400; }
 /* "Allowed in this chat" in the composer's toolbar: click to ask again. In a
    narrow chat its words give way first (down to the shield and the ×), so
    the send button keeps its place. */
@@ -3853,6 +3911,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatGrantChip svg { flex: none; }
 .chatGrantLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chatGrantChip:hover { color: var(--text-primary); border-color: var(--border-light); }
+/* The Plan switch beside the PDF one: in a narrow chat its word gives way
+   as the grant chip's does, so the send button keeps its place. */
+.chatPlanToggle { min-width: 0; overflow: hidden; }
+.chatPlanToggle svg { flex: none; }
+.chatPlanLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* A reply's papers (chat/ReplyPapers.jsx): one pill, opening to a checklist
    saved into the library together. */
 .chatPapersWrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 8px; min-width: 0; }
@@ -4355,6 +4418,30 @@ a.shareBrand:hover { background: var(--bg-hover); }
   padding: 8px 10px;
   resize: vertical;
 }
+/* Reporting content (support/ReportContentDialog.jsx): the text reported,
+   quoted, then the reasons as one column of radios. */
+.reportModal.reportContent { width: min(480px, calc(100vw - 32px)); }
+.reportQuote {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--border);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.reportQuoteBy { display: block; margin-top: 2px; font-size: var(--fs-2xs); color: var(--text-muted); }
+.reportReasons { display: flex; flex-direction: column; gap: 2px; }
+.reportReason {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  font-size: var(--fs-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.reportReason input { margin: 0; }
 .reportPreview summary {
   cursor: pointer;
   font-size: var(--fs-xs);
@@ -5597,6 +5684,16 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfZoomLayer {
   transform-origin: 0 0;
 }
+/* The committed zoom (shared/lib/viewerZoom.js SCALE_VAR), which the viewer
+   writes on the layer and the page boxes size with (pdf/PdfViewer.jsx), so
+   a zoom re-lays-out the pages without rendering them. registerScaleVar
+   makes it a number that does not inherit, so a zoom restyles only what
+   picks it up here, with `inherit`: a page box and its translation, a built
+   text layer (inline, from its build), a notebook's sheet
+   (notebook/notebook.css). Anything else that reads it gets 1, once it is
+   registered. Each of them carries a style React or the build writes,
+   which WebKit needs to see the new value (viewerZoom.js says why). */
+.pdfZoomLayer > .pdfPageWrap, .pdfPageWrap > .pdfTransLayer { --viewer-scale: inherit; }
 
 /* The page's bitmaps (pdf/pageRaster.js): a canvas over the whole page and,
    at high zoom, a second one over the part in view, which the raster places
@@ -5760,6 +5857,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfTransPara.centred { text-align: center; }
 .pdfTransPara.bold { font-weight: 600; }
 .pdfTransPara.italic { font-style: italic; }
+/* The paper's own font, when it draws every word (pdf/paperFace.js): pdf.js's
+   face, which carries its weight and slant. A blank it lacks comes from the next. */
+.pdfTransPara.paperFace { font-family: var(--paper-face), var(--font-page); /* ds-allow: the PDF's own font, then the page face */ }
 /* A CJK face with no bold of its own stays regular: at body size the browser's
    synthetic bold fills its strokes in. Latin words beside it keep their bold. */
 .pdfTransPara.bold:is(:lang(zh), :lang(ja), :lang(ko)) { font-synthesis: none; }
@@ -6091,7 +6191,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border-radius: var(--radius-sm);
   background: transparent;
   color: inherit;
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
   cursor: pointer;
 }
 .bibPaperRow:hover { background: var(--bg-hover); }
@@ -6402,7 +6502,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border-radius: var(--radius-sm);
   text-align: left;
   cursor: pointer;
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
 }
 .refPopupItem:hover { background: var(--bg-hover); }
 .refPopupItem.selected { background: var(--accent-bg); }
@@ -6525,7 +6625,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   text-align: left;
   cursor: pointer;
   color: var(--text-primary);
-  font: inherit;
+  font-family: inherit; font-weight: inherit; line-height: inherit;
 }
 .slashMenuItem:hover { background: var(--bg-hover); }
 .slashMenuItem.selected { background: var(--accent-bg); }
@@ -7122,11 +7222,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-secondary);
   cursor: pointer;
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--dur-fast);
 }
 .blockInkCardWrap .inkReplayBtn:hover { color: var(--text-primary); }
-.blockInkCardWrap:hover .inkReplayBtn, .blockInkCardWrap .inkReplayBtn:is(:focus-visible, [aria-pressed="true"]) { opacity: 1; }
-@media (hover: none) { .blockInkCardWrap .inkReplayBtn { opacity: 1; } }
+.blockInkCardWrap:hover .inkReplayBtn, .blockInkCardWrap .inkReplayBtn:is(:focus-visible, [aria-pressed="true"]) { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .blockInkCardWrap .inkReplayBtn { opacity: 1; pointer-events: auto; } }
 /* The lasso selection: a dashed box the pointer drags to move. */
 .inkSelRect {
   fill: rgba(80, 140, 255, 0.06);

@@ -18,10 +18,12 @@ const FACE_TIMEOUT_MS = 3000;
 
 // What the classifier needs of a font: its name without the subset tag, and
 // whether it is a Type 3 font (glyph procedures, often bitmap TeX fonts,
-// whose name is just "Type3").
+// whose name is just "Type3"), and whether the file has none of it (`noFile`:
+// pdf.js draws it in a font of the machine's), for the translated view's face
+// (pdf/paperFace.js).
 function faceOf(obj) {
   if (!obj || typeof obj !== "object") return null; // an error font resolves to a string
-  return { name: String(obj.name || "").replace(SUBSET, ""), type3: !!obj.isType3Font };
+  return { name: String(obj.name || "").replace(SUBSET, ""), type3: !!obj.isType3Font, noFile: !!obj.missingFile };
 }
 
 // Map(fontId → {name, type3}) for `ids`, from `known` first (a document-wide

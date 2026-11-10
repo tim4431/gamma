@@ -75,6 +75,53 @@ def _nearest(base_dir, paths):
     return min(same or paths, key=lambda p: (p.count("/"), p.lower()))
 
 
+def resolve_path(base_dir, href, lower, stems, files_by_name, page_exts=_MD_EXTS, absent=None):
+    """A link target → the path it names, or None: the one rule of a zip's
+    links and a synced vault's (gamma/vault_links.py). Relative to the note
+    first (Markdown links), then by exact vault path, then by basename
+    anywhere (wikilinks, "shortest path" Markdown links), ignoring case, the
+    name NFC. ``lower``: lower-cased path → path, notes and files;
+    ``stems``: lower-cased stem → note paths; ``files_by_name``: lower-cased
+    filename → file paths; ``absent(leaf)``: the stem of a note that stands
+    for a file the link names and nothing holds, or None."""
+    if not href or _SCHEME_RE.match(href) or href.startswith(("#", "/")):
+        return None
+    target = re.split(r"[#?]", href, maxsplit=1)[0].strip()
+    if not target:
+        return None
+    cands = list(dict.fromkeys((unquote(target), target)))
+    for cand in cands:
+        cand = unicodedata.normalize("NFC", cand)
+        for full in (posixpath.normpath(posixpath.join(base_dir, cand)) if base_dir else cand,
+                     posixpath.normpath(cand)):
+            for variant in (full, full + ".md"):
+                hit = lower.get(variant.lower())
+                if hit:
+                    return hit
+    for cand in cands:
+        leaf = unicodedata.normalize("NFC", posixpath.basename(cand)).lower()
+        stem, ext = _split_ext(leaf)
+        paths = (stems.get(stem) if ext in page_exts or not ext else None) \
+            or stems.get(leaf) or files_by_name.get(leaf)
+        if not paths and absent:
+            paths = stems.get(absent(leaf))
+        if paths:
+            return _nearest(base_dir, paths)
+    return None
+
+
+def named_block(sub, anchors, headings):
+    """The block a link's ``#Heading`` / ``#^id`` names (``sub``, its last
+    part counting) among a note's ``anchors`` (lower-cased marker → block)
+    and ``headings`` (``_norm_heading`` → block), or None."""
+    last = next((part.strip() for part in reversed((sub or "").split("#")) if part.strip()), "")
+    if not last:
+        return None
+    if last.startswith("^"):
+        return anchors.get(last[1:].lower())
+    return headings.get(_norm_heading(last))
+
+
 class Links:
     """Where the links of a run's notes go, worked out once they are chosen
     (``ZipRun.build_links``): ``every`` maps the zip paths of every note to
@@ -112,41 +159,14 @@ class Links:
         basename anywhere (wikilinks, "shortest path" Markdown links).
         ``tables``: a ``lookup`` to read instead of the chosen notes'."""
         lower, stems = tables or (self.by_lower, self.notes_by_stem)
-        if not href or _SCHEME_RE.match(href) or href.startswith(("#", "/")):
-            return None
-        target = re.split(r"[#?]", href, maxsplit=1)[0].strip()
-        if not target:
-            return None
-        cands = list(dict.fromkeys((unquote(target), target)))
-        for cand in cands:
-            cand = unicodedata.normalize("NFC", cand)
-            for full in (posixpath.normpath(posixpath.join(base_dir, cand)) if base_dir else cand,
-                         posixpath.normpath(cand)):
-                for variant in (full, full + ".md"):
-                    hit = lower.get(variant.lower())
-                    if hit:
-                        return hit
-        for cand in cands:
-            leaf = unicodedata.normalize("NFC", posixpath.basename(cand)).lower()
-            stem, ext = _split_ext(leaf)
-            paths = (stems.get(stem) if ext in self.run.dialect.page_exts or not ext else None) \
-                or stems.get(leaf) or self.assets_by_name.get(leaf)
-            if not paths:
-                paths = stems.get(self.run.dialect.absent_csv(leaf))
-            if paths:
-                return _nearest(base_dir, paths)
-        return None
+        dialect = self.run.dialect
+        return resolve_path(base_dir, href, lower, stems, self.assets_by_name, dialect.page_exts, dialect.absent_csv)
 
     def block_target(self, page_id, sub):
         """``#Heading`` / ``#^id`` inside a link to ``page_id`` → the block it
         names, else the page itself."""
         plan = self.run.plan_of.get(page_id)
-        last = next((part.strip() for part in reversed((sub or "").split("#")) if part.strip()), "")
-        if plan is None or not last:
-            return page_id
-        if last.startswith("^"):
-            return plan.anchors.get(last[1:].lower(), page_id)
-        return plan.headings.get(_norm_heading(last), page_id)
+        return (named_block(sub, plan.anchors, plan.headings) if plan is not None else None) or page_id
 
     def rewrite_links(self, body, base_dir, plan):
         run, report, targets = self.run, self.run.report, self.targets

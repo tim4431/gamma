@@ -122,6 +122,8 @@
   <div class="adders">
     <button class="uiBtn primary desktopOnly" id="btnAddLocal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>New local server</button>
     <button class="uiBtn" id="btnAddRemote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>Add remote server…</button>
+    <!-- A directory on this computer becomes a folder of Gamma kept in step with it (main.js addDirectoryVault); the dialog opens in the bar's sync panel. -->
+    <button class="uiBtn desktopOnly" id="btnAddVault" title="A directory on this computer becomes a folder of Gamma, its notes and PDFs kept in step with it"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M12 10v6"/><path d="M9 13h6"/></svg>Add a synced vault…</button>
   </div>
   <div class="status" id="status"></div>
 
@@ -153,7 +155,7 @@
       <div class="setRow">
         <div>
           <div class="l">Keep running in the background</div>
-          <div class="d">Closing the window leaves Gamma in the tray; clones and folders on disk keep syncing.</div>
+          <div class="d">Closing the window leaves Gamma in the tray; clones and synced vaults keep syncing.</div>
         </div>
         <label class="switch"><input type="checkbox" role="switch" id="swBackground" aria-label="Keep running in the background"><span class="switchTrack"></span></label>
       </div>
@@ -583,6 +585,8 @@
     }
   };
   $('remoteUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnCreateRemote').click(); });
+  // The shell says a failure in a dialog of its own; the status line keeps it after.
+  $('btnAddVault').onclick = () => gammaShell.addVault().catch((e) => setStatus(cleanErr(e), true));
   $('renameName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnRename').click(); });
   $('renameUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnRename').click(); });
   $('swOpenLast').onchange = async () => {

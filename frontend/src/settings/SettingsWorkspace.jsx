@@ -32,6 +32,7 @@ import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { ROLE_LABEL, ROLE_OPTIONS, workspaceMeta } from "./workspaceRoles.js";
 import { TaskBlock } from "../tasks/TasksTray";
 import { useActiveJobs, useJobEnd } from "../tasks/useTasks";
+import { composing } from "../shared/lib/hotkeys.js";
 
 const ROLE_TEXT = { owner: t("you own it"), editor: t("you can edit"), viewer: t("you can view") };
 export const ACCESS_OPTIONS = [["private", t("Private"), UsersIcon], ["public", t("Public"), GlobeIcon]];
@@ -320,7 +321,7 @@ export function InviteDialog({ name, accounts, exclude, email, busy, error, onSu
               className="aiKeyInput" type="email" autoFocus spellCheck={false} autoCapitalize="none"
               placeholder="name@example.org" value={address}
               onChange={(e) => setAddress(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && !composing(e)) submit(); }}
             />
           </Field>
         ) : (
@@ -351,7 +352,7 @@ export function NameDialog({ title, label, hint, initial, submitLabel, busy, err
           <input
             className="aiKeyInput" type="text" autoFocus value={name}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) onSubmit(name.trim()); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && !composing(e) && name.trim()) onSubmit(name.trim()); }}
           />
         </Field>
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}

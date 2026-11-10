@@ -3,9 +3,11 @@
 A page's PDF can be replaced by another file: a paper compiled again from
 its TeX, or the published version in place of the arXiv one. The
 replacement comes through `PUT /pages/{id}/attachment` (the Document menu's
-**Replace the PDF…**, a build script, [api.md](api.md) "Pages"), or from a
+**Replace the PDF…**, a build script, [api.md](api.md) "Pages"), from a
 Zotero link bringing its item's file
-([zotero_sync.md](zotero_sync.md#pdfs)).
+([zotero_sync.md](zotero_sync.md#pdfs)), or in the desktop app from a file
+on this computer that changed: a synced vault's PDF, a vault of one file,
+or a PDF read where it is ([synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)).
 
 A highlight's place (`pdf_position`, [api.md](api.md) "The highlight
 shape") is a page and rectangles that hold only for the file it was made
@@ -114,19 +116,35 @@ gets 403). It answers:
 - 409 only while that run is still stopping.
 - 429 when the account's jobs are full.
 - 400 for a page without a PDF, with one not stored (`NOT_STORED`), or
-  without highlights placed on it.
+  without highlights placed on it or known by their quote.
 - 404 for no such page.
 
 The run (`relocate`) works from a snapshot of the page's placed highlights
 (`page_highlights`, `highlights.is_highlight`): highlights and link regions
-with rectangles, at any depth. Ink groups, text boxes, pictures, sheets and
-a position naming only its page are skipped. It opens the new file
+with rectangles, at any depth, and the text highlights known by their page
+and quote alone (`unplaced`: no rectangles, no area, a quote; below). Ink
+groups, text boxes, pictures, sheets and any other position naming only its
+page are skipped. It opens the new file
 (`ai_context.pdf_path`), reads every page (phase `reading`, unit `pages`),
 places each highlight (phase `matching`, unit `highlights`), then closes
 the files and drops what it read. A stop asked for before the last matching
 report lands there. Then the run sets `stoppable=False` and writes. A new
 file not stored, unreadable, or with no text layer on any page fails the
 run rather than leaving every highlight lost.
+
+**A highlight known by its quote alone.** A synced vault reads a `[!quote]`
+callout that links the page's own PDF and carries no anchor Gamma knows (a
+vault copied from another computer) as a highlight with its quote and page
+and no rectangles ([synced_vaults.md](synced_vaults.md#links-and-highlights)),
+and starts a run on the page's current file for it
+(`LocalRemote.place_highlights`; a run that cannot start now waits for the
+vault's next whole round). The run looks for its quote, the page it names
+first, and draws it dashed wherever it is found, an exact copy too, since
+the words may stand twice: `match` its confidence and `prev` that page and
+quote with no rectangles. One not found stays as it is, counted `lost`. A
+pending highlight whose `prev` has no rectangles and whose own are this
+file's is left for the person, so a run over the same file again writes
+nothing.
 
 **The write** (`_write`) is one compare-and-set, in one transaction under
 the page's write lock. It fails, writing nothing, when the page is no

@@ -20,7 +20,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { FolderIcon, LabelIcon, PlusIcon, SearchIcon, TerminalIcon } from "../shared/ui/Icons";
 import { commandIcon } from "../app/commandIcons.jsx";
-import { chordLabel } from "../shared/lib/hotkeys.js";
+import { chordLabel, composing } from "../shared/lib/hotkeys.js";
 import { MarkedText } from "../search/SearchPanel";
 import PageOption, { recencySections } from "./PageOption";
 import { createLibraryMatcher, rankLibraryPages } from "./librarySearch";

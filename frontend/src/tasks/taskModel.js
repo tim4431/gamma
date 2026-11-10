@@ -68,6 +68,25 @@ export function newlyFinished(before, after) {
   return after.filter((job) => isFinished(job) && isActive(was.get(job.id)));
 }
 
+// The share view's store (useTasks' `follow`) follows only the share's own
+// jobs, the ones its Export started under the share token (owner
+// `share:<token>`, jobs.share_owner): a job of the visitor's account it
+// adopted is not the share's to read.
+const SHARE_OWNER = "share:";
+export const followed = (job) => isActive(job) && String(job?.owner || "").startsWith(SHARE_OWNER);
+
+// What one follow round makes of a job, from its read — {job} or {error}:
+// the server's answer; the job over, failed with why, when the share no
+// longer lets this tab in (401, 403) or the job is gone (404), so the
+// dialog says so and the tab stops asking; else (offline, a 5xx) the row as
+// it was, for the next round.
+export function afterFollow(job, read, now = Date.now()) {
+  if (read.job) return read.job;
+  if (![401, 403, 404].includes(read.error?.status)) return job;
+  return { ...job, state: "failed", error: String(read.error.message || "failed"), stoppable: false, stopping: false,
+    finished_at: new Date(now).toISOString() };
+}
+
 // What the tray button shows: "running" (a spinner) while anything runs or
 // waits, else "failed" (a red dot) for a failure worth a look, "ready" (an
 // accent dot) for a file not downloaded yet, or "".

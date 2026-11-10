@@ -244,10 +244,15 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   // step that has the user make something (`creates: anchor`) when that
   // thing is already there — the tour points at the existing one instead.
   const steps = run?.steps || [];
+  // A step may name the phone layout's own control for the same thing
+  // (`phoneAnchor`, as `bodyTouch` words the copy for touch): the server bar
+  // row sits in the View menu, whose button a phone — an iPad held upright
+  // among them — has not got, so the card points at More there.
   const stepsFor = (tour) => {
     const siblingDone = !!tour.sibling && progress.current.read(TOURS[tour.sibling], scope)?.state === "done";
     return tour.steps.filter((s) => stepApplies(s, factsRef.current, siblingDone)
-      && !(s.creates && anchorElement(s.creates)));
+      && !(s.creates && anchorElement(s.creates)))
+      .map((s) => (s.phoneAnchor && factsRef.current.phone ? { ...s, anchor: s.phoneAnchor } : s));
   };
   // The step a run would open on: the first one that will show here — an
   // optional step whose anchor is missing would be passed over. None means

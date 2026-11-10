@@ -1,6 +1,7 @@
 import { T } from "../../shared/i18n/i18n.js";
-// The viewer's left edge, top to bottom: the PDF's table of contents, then
-// the tool column, its tools in the order the user gave them (Settings →
+// A card on the whole tool column, then the viewer's left edge top to
+// bottom: the PDF's table of contents, then the tool column, its tools in
+// the order the user gave them (Settings →
 // Appearance › Viewer tools; a tour shows every one, hidden or not, so no
 // step speaks of where a tool stands among the others). The PDF and the
 // notebook viewer share the zoom and the pen, so their tours are siblings:
@@ -8,6 +9,13 @@ import { T } from "../../shared/i18n/i18n.js";
 // finished either tour gets the other without them — only what is new
 // there (stepApplies in guide/triggers.js, docs/dev/onboarding.md).
 
+// The first card of either tour: what the column is, before any one button.
+// Whoever wants the tools one at a time takes Next; Dismiss, beside it,
+// leaves the viewer as it was. It teaches the column itself, so it is
+// `shared` like the tools below — whichever tour comes first says it.
+const tools = { id: "viewer-tools", anchor: "viewer.tools", placement: "right", shared: true,
+  title: T("These buttons are the viewer's tools"),
+  body: T("Next shows them one by one.") };
 const zoom = { id: "viewer-zoom", anchor: "viewer.zoom", placement: "right", shared: true,
   title: T("Zoom, or fit to the width"),
   body: T("{key:Mod} + scroll zooms at the pointer."),
@@ -35,6 +43,7 @@ export const pdfViewer = {
   offerPlacement: "right",
   offer: { title: T("You opened a paper"), line: T("Its tools sit down the left edge.") },
   steps: [
+    tools,
     { id: "pdf-outline", anchor: "viewer.outline", placement: "right", optional: true,
       title: T("Click a heading to jump there") },
     zoom,
@@ -62,6 +71,7 @@ export const notebookView = {
   offerPlacement: "right",
   offer: { title: T("You're in the notebook view"), line: T("Its tools, its paper, and the way back to your notes.") },
   steps: [
+    tools,
     zoom,
     pen,
     { id: "nbv-paper", anchor: "viewer.paper", placement: "right", requires: { editable: true },

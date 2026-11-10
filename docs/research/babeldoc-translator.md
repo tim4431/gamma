@@ -120,7 +120,7 @@ documented.
 | A paragraph cut by a column or page | Two paragraphs (BabelDOC roadmap) | One unit joined with `{br}`, split on return |
 | Unit of a model call | One paragraph, title and the neighbours around it | Up to 10 paragraphs / 2,500 characters as numbered segments, with `before`, `after`, `section` and the paper's brief |
 | Consistency of terms | None across paragraphs beyond the title; a glossary CSV the user writes; BabelDOC's auto glossary when its own translator runs | A brief (field, notation, 20–30 terms, names kept) made once per paper, language and model, in every request's cached system prompt |
-| Formulas | `{vN}`, the original glyphs typeset back | `{vN}`, the original glyphs cropped from the page bitmap; a picture in the export |
+| Formulas | `{vN}`, the original glyphs typeset back | `{vN}`, the original glyphs cropped from the page bitmap; in the export, the page's own glyphs filtered down to the formula's box, a picture only where that cannot be done |
 | Bold and italic | `<style>` pairs | Lost; the translation is plain text |
 | What the reader sees | A dual PDF swapped into the reader after the batch ends; nothing while it runs | Paragraphs streaming into place as the model writes them, the original under Alt |
 | Per-paragraph actions | Right-click: translate, re-translate; hover boxes | None on the overlay; a selection translates in a popup |

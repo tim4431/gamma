@@ -7,7 +7,8 @@ Every chat has a *scope* deciding what its tools can touch:
   Builders that write the prompt add ``folder_path``, the folder's path as
   it reads (``agent_system``).
 - ``{"type": "page", "page_id": id}`` — the per-page chat; tools reach only
-  that page.
+  that page, and its reading tools the pages inside it too (``inside``,
+  which ``run_agent_tool`` sets for a reading tool).
 
 ``context_pages`` extends either scope for reads; mutations keep the base scope.
 
@@ -46,6 +47,11 @@ scope/permission lines are appended mechanically.  Renamed tools stay
 callable under their old name (``ai_context.DEPRECATED_TOOLS``) so saved
 chats replay.
 
+A planning turn (the chat's Plan switch) reads but changes nothing: every
+changing call is refused at dispatch, and the model proposes the change
+with update_plan, the one tool without a permission, armed beside any
+changing tool.
+
 Folders and labels are blocks of the ``folders`` and ``labels`` trees
 (``blocks_store``; a folder may be empty), and a page is filed by their ids
 (``properties.folders`` / ``properties.labels``). The model never sees the
@@ -77,17 +83,18 @@ from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canon
 from .blocks_store import (BLOCK_ID_RE, FOLDERS, LABELS, PATH_SEP, TRASH, block_kind, block_to_dict, descend,
                            existing_in, fetch_subtree, filed_folders, filing, folder_chain, folder_inserts,
                            folder_paths, folder_subtree_ids, label_by_name, label_inserts, label_names, load_props,
-                           named, page_attachment, page_descendants, page_in_folder, page_parent, page_parents,
-                           page_root_id, root_pages, top_of, trashed_folders, tree_children, tree_parents,
-                           valid_block_id, write_lock)
+                           named, page_ancestors, page_attachment, page_descendants, page_in_folder, page_parent,
+                           page_parents, page_root_id, root_pages, top_of, trashed_folders, tree_children,
+                           tree_parents, valid_block_id, write_lock)
 from .db import connect_data_db, connect_pages_db
 from .highlights import is_ink
 from .ops import (MAX_OPS, after_commit, after_commits, apply_batches, apply_ops, delete_tree, ensure_filing,
                   move_across_pages, tree_deletion)
+from .jobs import error_text
 from .logbuf import log
 from .notebook import is_sheet
 from .paste_math import dollar_math, paste_math
-from .pdf_index import pdf_missing, search_pdf
+from .pdf_index import pdf_pending, search_pdf
 from .pdf_text import RENDER_MAX_SIDE, image_part, render_page
 from .picture import caption_text, is_picture, normalize_picture
 from .storage import exists as _upload_exists, upload_refs
@@ -348,7 +355,9 @@ def _page_in_scope(conn, scope: dict, page_id: str, folders: list[str], reach=_N
     if page_id in (scope.get("context_pages") or []):
         return True
     if scope.get("type") == "page":
-        return page_id == scope.get("page_id")
+        # a reading tool of a page chat reaches the pages inside the page too (run_agent_tool's ``inside``)
+        return page_id == scope.get("page_id") or bool(
+            scope.get("inside") and scope.get("page_id") in page_ancestors(conn, page_id))
     return _filed_in(_reach(conn, scope) if reach is _NO_REACH else reach, folders)
 
 
@@ -376,11 +385,14 @@ def _load_scoped_page(conn, scope: dict, args: dict, reach=_NO_REACH):
 
 
 def _scope_pages(conn, scope: dict) -> dict:
-    """Titles and PDF ids for the base scope plus read-only context pages."""
+    """Titles and PDF ids for the base scope plus read-only context pages:
+    a page chat's page, with the pages inside it for a reading tool
+    (``inside``), or a folder chat's pages."""
     page_ids = list(scope.get("context_pages") or [])
     if scope.get("type") == "page":
         pages = {}
-        page_ids.insert(0, scope.get("page_id"))
+        page_id = str(scope.get("page_id") or "")
+        page_ids[:0] = [page_id] + (page_descendants(conn, page_id) if scope.get("inside") else [])
     else:
         pages = root_pages(conn, _scope_folder(scope))
     for page_id in page_ids:
@@ -811,7 +823,7 @@ def _run_read_page(conn, ws: str, scope: dict, args: dict):
     section = page_report_section(conn, ws, page_id, budget, offset, page,
                                   include_notes=include_notes,
                                   notes_budget=_read_cap(scope.get("read_chars")), report=report,
-                                  notes_seen=notes_seen(scope))
+                                  notes_seen=notes_seen(scope), listing=scope.get("type") != "page")
     if not section:
         return f'"{title}" has no readable content', None
     if notes_wanted and notes_in_context:
@@ -1974,7 +1986,7 @@ def _run_search_library(conn, ws: str, scope: dict, args: dict):
     missing: list = []
     with connect_data_db(ws) as database:
         if docs:
-            missing = pdf_missing(database, docs)
+            missing = pdf_pending(ws, database, docs)
             if missing:
                 _index_missing_async(ws, missing)
         lines = fts(database, query)
@@ -2573,7 +2585,7 @@ def _run_save_paper(conn, ws: str, scope: dict, args: dict):
         text += f". Note: {out['note']}"
     if scope.get("type") == "page":
         text += (". The new page is outside this chat's reach (a page chat reads only its own "
-                 "page); read the paper with fetch_paper")
+                 "page and the pages inside it); read the paper with fetch_paper")
     return text + ".", {"kind": "save", "page_id": page_id, "title": name, "to": path if folder else "",
                         "existed": bool(out.get("existed")), "pdf": bool(out.get("doc_id")),
                         "summary": f"Saved “{name[:60]}” to {path if folder else 'the library root'}"}
@@ -3025,7 +3037,9 @@ def _run_move_page(conn, ws: str, scope: dict, args: dict):
 def _run_list_deleted(conn, ws: str, scope: dict, args: dict):
     """Recently deleted (gamma/trash.py) as far as the chat's folder
     reaches — the pages that were filed under it — the last deleted first,
-    with the folders a restore puts each page back in."""
+    with the folders a restore puts each page back in, the page it goes
+    back inside (``parent``) and how many pages inside it come back with
+    it (``sub_pages``)."""
     query = str(args.get("title_contains") or "").strip().lower()
     reach = _reach(conn, scope)
     pages = [p for p in list_trash(conn) if _filed_in(reach, p["folders"])
@@ -3039,12 +3053,20 @@ def _run_list_deleted(conn, ws: str, scope: dict, args: dict):
         return (f"Recently deleted holds no pages{where}"
                 + (f' with "{query}" in the title' if query else "") + ".", action)
     lines = [f'- id={p["id"]} | "{p["title"]}" | was in {quoted_paths(paths, p["folders"]) or "no folder"} '
-             f'| deleted {p["deleted_at"][:10]}' + (f' by {p["deleted_by"]}' if p["deleted_by"] else "")
+             + (f'| goes back inside page {p["parent"]} ' if p["parent"] else "")
+             + (f'| {_back_with(p["sub_pages"])} ' if p["sub_pages"] else "")
+             + f'| deleted {p["deleted_at"][:10]}' + (f' by {p["deleted_by"]}' if p["deleted_by"] else "")
              + f' | gone for good after {p["purge_at"][:10]}' for p in pages[:_LIST_CAP]]
     more = f"\n(+{len(pages) - _LIST_CAP} more not shown)" if len(pages) > _LIST_CAP else ""
     return (f"Recently deleted{where} ({len(pages)}, the last deleted first; a page is deleted for "
             f"good {KEEP_DAYS} days after it went) — restore_page(page_ids) puts them back in the "
-            "folders they were in:\n" + "\n".join(lines) + more), action
+            "folders they were in, a page deleted from inside a page back inside it, and the pages "
+            "that went with a page back inside it, which are not listed apart:\n" + "\n".join(lines) + more), action
+
+
+def _back_with(n: int) -> str:
+    """How many pages went to Recently deleted with a page, and come back with it."""
+    return "the page inside it comes back with it" if n == 1 else f"the {n} pages inside it come back with it"
 
 
 def _plan_restore_one(conn, trash: dict, reach, page_id: str) -> tuple:
@@ -3119,13 +3141,21 @@ def _run_restore_page(conn, ws: str, scope: dict, args: dict):
     items = [{"page_id": p["page_id"], "title": p["title"], "to": ", ".join(paths_text(paths, p["folders"]))}
              for p in done]
     revert = {"restore": [p["page_id"] for p in done]}  # ai_revert._plan_trash: a revert deletes them again
+    went = sum(p["sub_pages"] for p in done)
+    along = f", with the {went} page{'s' if went != 1 else ''} inside {'it' if len(done) == 1 else 'them'}" \
+        if went else ""
     if batch["asked"] == 1:
         p = done[0]
         where = quoted_paths(paths, p["folders"]) or "the library root"
-        return (f'ok — restored [{p["title"]}](/?page={p["page_id"]}) (page_id {p["page_id"]}) to {where}',
+        if p["parent"]:  # (a sub-page deleted on its own: filed where its parent's top is)
+            where = f"inside page {p['parent']}, filed where that page is ({where})"
+        return (f'ok — restored [{p["title"]}](/?page={p["page_id"]}) (page_id {p["page_id"]}) to {where}{along}',
                 {"kind": "restore", **items[0], "summary": f"Restored “{p['title'][:60]}”", "revert": revert})
     n = len(done)
-    return (_batch_text(f"restored {_of(n, batch['asked'])}", done, batch, links=True),
+    inside = [p for p in done if p["parent"]]
+    back = ("; back inside the pages they were in: " + ", ".join(f"{p['page_id']} inside {p['parent']}"
+                                                                   for p in inside[:_PREVIEW_ITEMS])) if inside else ""
+    return (_batch_text(f"restored {_of(n, batch['asked'])}{along}{back}", done, batch, links=True),
             {"kind": "restore", "summary": f"Restored {n} page{'s' if n != 1 else ''}", "changes": n,
              "items": items, "revert": revert})
 
@@ -3730,6 +3760,85 @@ def _run_delete_folder(conn, ws: str, scope: dict, args: dict):
 # The deletions whose card names one folder or label (``block_id``): an
 # allowed card deletes only that one (ai_agent.ApprovalGate).
 TREE_DELETES = frozenset({"delete_folder", "delete_label"})
+
+
+# --- planning first ------------------------------------------------------------
+# A planning turn (the chat's Plan switch, the request's ``planning``) reads
+# and looks things up but changes nothing: every changing call is refused at
+# dispatch (``held_for_plan``), whatever the permissions, while the specs
+# and the system prompt stay as every other turn has them, so the cached
+# prefix holds. The model proposes the change with update_plan (Codex's
+# schema) and the user approves it in a normal turn. The caps keep the
+# longest checklist (about 3.3k characters) under ``_DETAIL_CAP``, so the
+# saved result is whole, and the replay keeps the newest plan whole however
+# much was read since (``ai_context._elide_old_results``).
+
+PLAN_TOOL = "update_plan"
+PLAN_STATUSES = ("pending", "in_progress", "completed")
+MAX_PLAN_STEPS = 15
+_PLAN_STEP_MAX = 200
+# What a planning turn's message ends with (ai_context.build_messages
+# ``turn_note``): it travels with the message, never in the system prompt.
+PLANNING_TURN = (
+    "[Plan mode: this message is a planning turn. Read and look things up as much as the task "
+    "needs, but change nothing: every changing tool is refused in this turn, whatever the settings. "
+    "Work out the whole change, call update_plan once with one concrete step per change (every "
+    "status pending), then end your reply with a short summary of the plan. The user approves it "
+    "with Approve plan or asks for changes; for a request for changes, call update_plan again with "
+    "the revised plan. A question that needs no change is simply answered, without a plan.]")
+# What the model hears for a changing call in a planning turn.
+PLAN_HELD = ("error: this is a planning turn, so nothing was changed — add this change to the plan "
+             "with update_plan; it is made once the user approves the plan")
+
+
+def held_for_plan(scope: dict, name: str) -> bool:
+    """Whether a call is refused because its turn only plans: a changing
+    tool in a request that sent ``planning``."""
+    return bool(scope.get("planning")) and canonical_tool(name) in MUTATING_TOOLS
+
+
+def _run_update_plan(conn, ws: str, scope: dict, args: dict):
+    """Record the plan: ``plan`` is a list of ``{step, status}``, read
+    leniently (a step's whitespace collapsed and cut at ``_PLAN_STEP_MAX``,
+    an empty one dropped, an unknown status pending, only the first
+    in_progress kept), at most ``MAX_PLAN_STEPS``. In a planning turn every
+    step is pending and the plan is ``proposed``. The result is the
+    numbered checklist, under a head that stays true in any later turn
+    that replays it. ``explanation`` stays in the call's arguments, cut at
+    ``_ARG_CAP`` like any other."""
+    items = args.get("plan")
+    if not isinstance(items, list) or not items:
+        return "error: `plan` must be a non-empty list of {step, status} items", None
+    planning = bool(scope.get("planning"))
+    steps, working = [], False
+    for item in items:
+        if isinstance(item, str):
+            item = {"step": item}
+        if not isinstance(item, dict):
+            continue
+        text = " ".join(str(item.get("step") or "").split())[:_PLAN_STEP_MAX]
+        if not text:
+            continue
+        status = item.get("status") if item.get("status") in PLAN_STATUSES else "pending"
+        if planning or (status == "in_progress" and working):
+            status = "pending"
+        working = working or status == "in_progress"
+        steps.append({"step": text, "status": status})
+    if not steps:
+        return "error: `plan` must be a non-empty list of {step, status} items", None
+    left_out = len(steps) - MAX_PLAN_STEPS
+    steps = steps[:MAX_PLAN_STEPS]
+    done = sum(1 for s in steps if s["status"] == "completed")
+    head = ("Proposed to the user; nothing is changed until they approve it:" if planning
+            else f"Plan updated, {done} of {len(steps)} done:")
+    lines = [head, *(f"{n}. [{s['status']}] {s['step']}" for n, s in enumerate(steps, start=1))]
+    if left_out > 0:
+        lines.append(f"({left_out} more step{'s were' if left_out != 1 else ' was'} left out: "
+                     f"a plan holds at most {MAX_PLAN_STEPS})")
+    n = len(steps)
+    summary = f"Planned {n} step{'s' if n != 1 else ''}" if planning else f"Plan: {done} of {n} done"
+    return "\n".join(lines), {"kind": "plan", "summary": summary,
+                              "plan": {"steps": steps, **({"proposed": True} if planning else {})}}
 
 
 # --- registry ------------------------------------------------------------------
@@ -4541,6 +4650,38 @@ TOOLS = [
             },
         },
     },
+    # No permission of its own: armed beside any changing tool (agent_tools).
+    {
+        "perm": "", "kind": "plan", "scopes": ("folder", "page"), "mutating": False, "run": _run_update_plan,
+        "spec": {
+            "name": PLAN_TOOL,
+            "description": (
+                "The plan for a change of several steps, shown to the user as a checklist. In a "
+                "planning turn, propose the change with it: one concrete step per change, every "
+                "status pending; nothing changes until the user approves the plan. While carrying "
+                "out a plan the user approved, you may mark steps completed (and the one under way "
+                "in_progress), always in the same turn as the next step's calls. Not for a "
+                "question or a single change."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "explanation": {"type": "string"},
+                    "plan": {
+                        "type": "array",
+                        "maxItems": MAX_PLAN_STEPS,
+                        "description": "the steps, in order",
+                        "items": {
+                            "type": "object",
+                            "properties": {"step": {"type": "string"},
+                                           "status": {"type": "string", "enum": list(PLAN_STATUSES)}},
+                            "required": ["step", "status"],
+                        },
+                    },
+                },
+                "required": ["plan"],
+            },
+        },
+    },
 ]
 
 _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
@@ -4560,10 +4701,11 @@ def mcp_tools() -> frozenset:
     (gamma/mcp_server.py): every reading tool that stays inside the library,
     so a new one is offered by rule — not the web tools (the assistant has
     its own web access), not the trash (``list_deleted``: its pages are out
-    of the reading tools' reach and restoring one is a change), and no
-    change tool. ``backend/tests/test_mcp.py`` pins the resulting names."""
+    of the reading tools' reach and restoring one is a change), no change
+    tool, and no tool without a permission (update_plan, which only goes
+    with the changes). ``backend/tests/test_mcp.py`` pins the resulting names."""
     return frozenset(t["spec"]["name"] for t in TOOLS
-                     if not t["mutating"] and t["perm"] not in ("web_search", "web_read")
+                     if t["perm"] and not t["mutating"] and t["perm"] not in ("web_search", "web_read")
                      and t["spec"]["name"] != "list_deleted")
 
 
@@ -4584,7 +4726,10 @@ def tool_permission(name: str) -> str:
 
 def _state_of(perms, tool: dict) -> str:
     """A tool's state in a request's permission map: its permission's value,
-    else the default for a reading or a changing tool."""
+    else the default for a reading or a changing tool. A tool without a
+    permission (update_plan) is allowed."""
+    if not tool["perm"]:
+        return "allow"
     return permission_state(perms, tool["perm"], tool["mutating"])
 
 
@@ -4597,6 +4742,8 @@ def tool_states(perms, *, granted=(), can_ask: bool = True) -> dict:
     show the card on) arms none of its asking tools."""
     states = {}
     for t in TOOLS:
+        if not t["perm"]:
+            continue
         state = _state_of(perms, t)
         if state == "ask" and t["perm"] in granted:
             state = "allow"
@@ -4619,7 +4766,8 @@ def agent_tools(scope_type: str, perms: dict | None = None, read_chars: int = 0,
     the window a call gets without asking (``read_default``, the scope's
     own when it sets one). A tool
     that ``needs`` something (a web engine) is armed only when ``has`` it
-    (``available(scope)``)."""
+    (``available(scope)``). update_plan, which has no permission, is armed
+    only beside a changing tool: a plan is of changes."""
     cap = _read_cap(read_chars)
     specs = []
     for t in TOOLS:
@@ -4636,6 +4784,8 @@ def agent_tools(scope_type: str, perms: dict | None = None, read_chars: int = 0,
             spec = {**spec, "description": spec["description"].format(
                 read_cap=cap, read_default=min(read_default or READ_CHARS_DEFAULT, cap))}
         specs.append(spec)
+    if not any(s["name"] in MUTATING_TOOLS for s in specs):
+        specs = [s for s in specs if s["name"] != PLAN_TOOL]
     return specs
 
 
@@ -4685,7 +4835,8 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
     text = (base.strip() or AGENT_PROMPT) + "\n"
     if scope.get("type") == "page":
         text += (f'This chat is about one page (page_id "{scope.get("page_id")}") — '
-                 "the tools reach it and the explicitly attached context pages below.\n")
+                 "the tools reach it, the read and search tools the pages inside it too (read_page "
+                 "names them), and the explicitly attached context pages below.\n")
     else:
         folder = _scope_folder(scope)
         where = (f'the folder "{scope.get("folder_path", "")}" (id {folder})' if folder
@@ -4914,6 +5065,12 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
                 "can revert it: only for what the user asked to remove; patch a block to cut "
                 "part of it.")
         text += " Change only the notes the user asked you to change."
+    if PLAN_TOOL in names:
+        text += (
+            "\nPlans: when the user approves a plan you proposed with update_plan, carry it out in "
+            "order. Marking steps completed is optional; when you do, call update_plan in the same "
+            "turn as your next calls, never in a turn of its own. Stay within the plan, and say so "
+            "when a step must change.")
     if not any(n in MUTATING_TOOLS for n in names):
         text += " Making changes is not available here — suggest them instead of attempting them."
     return text
@@ -4970,6 +5127,12 @@ def approval_preview(ws: str, scope: dict, name: str, args: dict) -> tuple:
         return None, f"error: {e}"
 
 
+def _deleting(ws: str) -> bool:
+    from .workspaces import is_deleting  # local: workspaces imports seed, which imports db
+
+    return is_deleting(ws)
+
+
 def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
                    *, allowed_tools=None, approved: str = "") -> tuple[str, dict]:
     """Execute one tool call against a trusted, caller-resolved workspace/scope.
@@ -4979,7 +5142,10 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
     authenticates the workspace before invoking this layer. ``approved`` is
     the digest of the approval card the user allowed for this call
     (``ApprovalGate``): a call naming several pages runs only as that card
-    showed it.
+    showed it. In a planning turn (the scope's ``planning``) a changing
+    call is refused with ``PLAN_HELD``, its chip marked ``held`` and naming
+    the change by its card's ``title``, ``mode`` and ``count``; one that
+    could not change anything gets its preview's answer instead.
 
     Returns ``(result_text, action)`` — result_text goes back to the model;
     action is the ``{kind, summary, tool, args, result}`` UI event for EVERY
@@ -5000,26 +5166,47 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
     if tool["mutating"] and not scope.get("can_write", True):
         result = "error: you can only view this workspace — no changes are possible"
         return result, tool_action("error", result[:200], name, args, result, error=True)
+    if tool["mutating"] and _deleting(ws):
+        # a turn that began before the workspace's delete: its tools were
+        # armed then, its changes would be in neither the final copy nor
+        # anywhere else (workspaces.refuse_writes)
+        result = "error: this workspace is being deleted — no changes are possible"
+        return result, tool_action("error", result[:200], name, args, result, error=True)
     permitted = {s["name"] for s in agent_tools(scope.get("type") or "", allowed_tools=allowed_tools,
                                                 has=available(scope))}
     if name not in permitted:
         result = "error: tool not enabled — the user's permission settings do not allow it"
         return result, tool_action("error", f"{name} — blocked by permissions", name, args, result, error=True)
-    # Attaching a reference expands read access, never the editing scope.
+    # A planning turn changes nothing: after the checks above, so a tool the
+    # user turned off is still refused as off. Its chip names the change as
+    # a declined call's does, from what the card would have shown (no card
+    # is shown). A call that could not change anything (a wrong id, nothing
+    # to do) gets the answer it would get under Ask, so no such step goes
+    # into the plan.
+    if held_for_plan(scope, name):
+        preview, answer = approval_preview(ws, scope, name, args)
+        if answer is not None:
+            return answer, settled_action(name, args, answer)
+        preview = preview or {}
+        return PLAN_HELD, tool_action("error", f"Held for the plan: {name}", name, args, PLAN_HELD,
+                                      error=True, held=True,
+                                      **{k: preview[k] for k in ("title", "mode", "count") if preview.get(k)})
+    # Attaching a reference expands read access, never the editing scope, and
+    # so does a page's inside: a page chat reads its sub-pages, edits only it.
     # The message's counters (saves, web searches, the works already listed)
     # live in one Tally the copy shares.
     ensure_tally(scope)
     notes_seen(scope)  # made on the caller's scope, so the reads of one turn carry over to its edits
     # The planners check stored files against the workspace (missing_uploads).
     scope = {**scope, "ws": ws, "approved": approved,
-             **({"context_pages": []} if tool["mutating"] else {})}
+             **({"context_pages": [], "inside": False} if tool["mutating"] else {"inside": True})}
     started = time.monotonic()
     try:
         with connect_pages_db(ws) as conn:
             result, action = tool["run"](conn, ws, scope, args)
     except Exception as e:  # a tool failure must never kill the chat stream
         log.warning(f"[ai_tools] {name} failed: {e}")
-        result, action = f"error: {e}", None
+        result, action = f"error: {error_text(e)}", None
     # How long the call took, for its chip: a fetch that waited 20 s on a
     # publisher and one served from the cache read very differently.
     took = {"ms": int((time.monotonic() - started) * 1000)}

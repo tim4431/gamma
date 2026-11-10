@@ -88,16 +88,16 @@ import urllib.request
 from . import migrations, pdf_meta, storage, sync_clock, textmerge, workspaces
 from . import ink as inkmod
 from cryptography.fernet import InvalidToken
-from fractional_indexing import FIError, generate_key_between, validate_order_key
+from fractional_indexing import generate_key_between
 
 from .auth import MIRROR_ACTOR
 from .blocks_store import (FOLDERS, LABELS, PARENT_PAGE, TRASH, TREES, create_page, fetch_subtree,
                            last_child_position, page_ancestors, page_descendants, page_parents, page_root_id,
                            with_sub_pages)
-from .db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
+from .db import connect_pages_db, connect_users_db, page_now
 from .logbuf import log
-from .ops import (MAX_OPS, PLACED_KEYS, SYNC_CLIENT, OpError, _went_with, commit_ops, latest_seq, props_patch,
-                  restore_inside, restore_page, trash_page, went_inside)
+from .ops import (MAX_OPS, PLACED_KEYS, SYNC_CLIENT, OpError, _went_with, commit_ops, kept_out_of, latest_seq,
+                  order_key_error, props_patch, restore_inside, restore_page, trash_page, went_inside)
 from .picture import resend_picture
 from .publisher_sessions import seal, unseal
 from .routers.sync import changes as local_changes
@@ -111,6 +111,8 @@ CLIENT = SYNC_CLIENT       # the op-log client of every local write the engine m
 ACTOR = MIRROR_ACTOR       # ...and its actor (the remote's per-op authors are not carried over)
 MODES = ("two-way", "pull", "off")   # off = detached: the link (token, cursors, bases) is kept, no round runs
 ADOPT = ("theirs", "mine")           # whose version a never-reconciled page takes (a linked workspace, a force)
+VAULT_KINDS = ("file_won",)          # a synced vault's conflicts (gamma/vault_sync.py): its routes read them, a mirror's never
+NOT_VAULT = "kind NOT IN ('file_won')"   # VAULT_KINDS in SQL: what the mirror's and Zotero's reads and deletes keep to
 DEBOUNCE_S = 1.0                     # a local edit → a round once things have been quiet this long (the loop wakes for it)
 TICK_S = sync_clock.TICK_S           # the loop's clock (gamma/sync_clock.py)
 WHOAMI_TTL_S = 900                   # how long a round trusts the remote's last whoami (a failed round asks again)
@@ -498,7 +500,9 @@ def create_mirror(owner: str, remote_url: str, token: str, *, name: str = "", mo
     and forgotten): its pages that exist on both sides have no common base,
     so the first round adopts ``adopt``'s version of each and records what
     differed as ``diverged`` conflicts; a workspace a Zotero link keeps
-    (gamma/zotero_sync.py), detached or not, cannot be one. Talks to the
+    (gamma/zotero_sync.py), detached or not, cannot be one, nor, for a
+    full copy, one a synced vault pushes everything into
+    (gamma/folder_links.py). Talks to the
     remote first (``whoami``), so a bad URL or token fails before anything
     is created.
     ``page_filter`` limits the mirror to those pages (several filtered
@@ -524,6 +528,12 @@ def create_mirror(owner: str, remote_url: str, token: str, *, name: str = "", mo
             raise ValueError("that is not a workspace of yours")
         if get_mirror(workspace_id):
             raise ValueError("that workspace already mirrors something — detach or forget it first")
+        if page_filter is None:
+            from .folder_links import pushing_vault  # local: only a link to an existing workspace asks
+
+            if pushing_vault(workspace_id):
+                raise ValueError("that workspace has a synced vault that pushes everything from this computer: "
+                                 "let it push only PDFs, or only pull, first")
         with connect_users_db() as conn:  # (gamma/zotero_sync.py imports this module: plain SQL here)
             if conn.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ?", (workspace_id,)).fetchone():
                 raise ValueError("that workspace is kept in step with a Zotero library — remove that link first")
@@ -800,7 +810,7 @@ def remove_mirror(ws: str) -> None:
     _filters.pop(ws, None)
     with connect_pages_db(ws) as conn:
         conn.execute("DELETE FROM sync_pages")
-        conn.execute("DELETE FROM sync_conflicts")
+        conn.execute(f"DELETE FROM sync_conflicts WHERE {NOT_VAULT}")   # a synced vault's stay its own
         conn.execute("DELETE FROM sync_log")
         conn.commit()
 
@@ -982,53 +992,71 @@ def list_log(ws: str, limit: int = 50) -> list[dict]:
 
 
 def open_conflicts(ws: str) -> int:
+    """The open conflicts of the mirror or the Zotero link (a synced vault's
+    are its own: ``VAULT_KINDS``)."""
     with connect_pages_db(ws) as conn:
-        return conn.execute("SELECT COUNT(*) FROM sync_conflicts WHERE resolved = 0").fetchone()[0]
+        return conn.execute(f"SELECT COUNT(*) FROM sync_conflicts WHERE resolved = 0 AND {NOT_VAULT}").fetchone()[0]
 
 
 def open_conflict_mark(ws: str) -> tuple[int, int]:
     """``(count, newest id)`` of the open conflicts — the notice's
     fingerprint (gamma/notices.py): a new conflict changes it, resolving
-    some of the old ones does not bring the notice back."""
+    some of the old ones does not bring the notice back. A synced vault's
+    are not counted."""
     with connect_pages_db(ws) as conn:
         count, newest = conn.execute(
-            "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM sync_conflicts WHERE resolved = 0").fetchone()
+            f"SELECT COUNT(*), COALESCE(MAX(id), 0) FROM sync_conflicts WHERE resolved = 0 AND {NOT_VAULT}").fetchone()
     return int(count), int(newest)
 
 
-def list_conflicts(ws: str, *, resolved: bool = False, page_id: str = "") -> list[dict]:
+def _kinds_sql(kinds) -> tuple[str, list]:
+    """The condition on ``sync_conflicts.kind`` for ``kinds``: those kinds, or
+    with None every kind but a synced vault's."""
+    if kinds is None:
+        return NOT_VAULT, []
+    return f"kind IN ({', '.join('?' * len(kinds))})", list(kinds)
+
+
+def list_conflicts(ws: str, *, resolved: bool = False, page_id: str = "", kinds=None) -> list[dict]:
     """The decisions to look at (or the looked-at ones), newest first, one
-    page's only when ``page_id`` is given."""
+    page's only when ``page_id`` is given. ``kinds``: only those (a synced
+    vault reads ``VAULT_KINDS``); by default every kind but a vault's, which
+    is what the mirror's and Zotero's routes read."""
+    where, args = _kinds_sql(kinds)
     with connect_pages_db(ws) as conn:
         rows = conn.execute(
             "SELECT c.id, c.page_id, c.block_id, c.kind, c.mine, c.theirs, c.result, c.at, c.resolved, "
             "(SELECT content FROM unified_blocks WHERE id = c.page_id), c.base FROM sync_conflicts c "
-            "WHERE c.resolved = ? AND (? = '' OR c.page_id = ?) ORDER BY c.id DESC LIMIT 500",
-            (1 if resolved else 0, page_id, page_id)).fetchall()
+            f"WHERE c.resolved = ? AND (? = '' OR c.page_id = ?) AND c.{where} ORDER BY c.id DESC LIMIT 500",
+            (1 if resolved else 0, page_id, page_id, *args)).fetchall()
     return [dict(zip(("id", "page_id", "block_id", "kind", "mine", "theirs", "result", "at", "resolved",
                       "page_title", "base"), r)) for r in rows]
 
 
-def resolve_conflict(ws: str, conflict_id: int, choice: str) -> dict | None:
+def resolve_conflict(ws: str, conflict_id: int, choice: str, *, actor: str = ACTOR, kinds=None) -> dict | None:
     """``keep`` marks it seen; ``mine`` / ``theirs`` write that text into the
-    block (a normal local edit, pushed by the next round)."""
+    block (a normal local edit, pushed by the next round), as ``actor``: the
+    mirror's, or for a synced vault's ``file_won`` the account that made the
+    vault, whose next pull writes it to the file. ``kinds`` as for
+    ``list_conflicts``: a row of another kind is no row here (None)."""
     if choice not in ("keep", "mine", "theirs"):
         raise ValueError("choice must be keep, mine or theirs")
+    where, args = _kinds_sql(kinds)
     with connect_pages_db(ws) as conn:
-        row = conn.execute("SELECT page_id, block_id, kind, mine, theirs, result FROM sync_conflicts WHERE id = ?",
-                           (conflict_id,)).fetchone()
+        row = conn.execute(f"SELECT page_id, block_id, kind, mine, theirs, result FROM sync_conflicts WHERE id = ? AND {where}",
+                           (conflict_id, *args)).fetchone()
         if not row:
             return None
         page_id, block_id, kind, mine, theirs, result = row
         # the block's page now: it may have moved to another page since the conflict was recorded
-        home = page_root_id(conn, block_id) if choice != "keep" and kind in ("merged", "diverged") else None
+        home = page_root_id(conn, block_id) if choice != "keep" and kind in ("merged", "diverged", "file_won") else None
     if home:
         # written as an edit from the text the conflict recorded: whatever was
         # typed into the block since is merged over the chosen version, not lost
         op = {"op": "set", "id": block_id, "content": mine if choice == "mine" else theirs}
         if result:
             op["base"] = result
-        commit_ops(ws, home, [op], actor=ACTOR)  # an OpError leaves the conflict open
+        commit_ops(ws, home, [op], actor=actor)  # an OpError leaves the conflict open
     with connect_pages_db(ws) as conn:
         conn.execute("UPDATE sync_conflicts SET resolved = 1 WHERE id = ?", (conflict_id,))
         conn.commit()
@@ -1137,11 +1165,11 @@ def _push_bases(ws: str, remote: Remote, ops: list[dict], report: dict) -> None:
     copy's it could not apply. Only a file this copy reads as a drawing
     goes (not a version 1 base from before step 41), and one the remote
     refuses is let be: the push still carries ``base_ids``."""
-    uploads = ws_uploads_dir(ws)
+    stored = storage.files(ws)
     for op in ops:
         url = op["base_props"]["ink_url"] if _merges_ink(op) else ""
         name = _upload_name(url)
-        if not UPLOAD_NAME_RE.match(name) or inkmod.read_upload(uploads, url) is None \
+        if not UPLOAD_NAME_RE.match(name) or inkmod.read_upload(stored, url) is None \
                 or remote.head_ok(f"/api/uploads/{name}"):
             continue
         path = find_upload_file(name, ws)
@@ -1430,7 +1458,7 @@ def _with_base_ids(ws: str, ops: list[dict]) -> list[dict]:
     older release ignores the key."""
     out = []
     for op in ops:
-        base = inkmod.read_upload(ws_uploads_dir(ws), op["base_props"]["ink_url"]) if _merges_ink(op) else None
+        base = inkmod.read_upload(storage.files(ws), op["base_props"]["ink_url"]) if _merges_ink(op) else None
         out.append({**op, "base_ids": [s.id for s in base.strokes]} if base is not None else op)
     return out
 
@@ -1841,9 +1869,7 @@ def _pull_whole(ws: str, remote: Remote, page_id: str, remote_tree: dict, seq: i
 def _free_page_key(conn, key: str) -> str:
     """``key`` for a page made here when it is a valid key no page holds,
     else "" (last in the library)."""
-    try:
-        validate_order_key(key or "")
-    except FIError:
+    if order_key_error(key):
         return ""
     taken = conn.execute("SELECT 1 FROM unified_blocks WHERE parent_id = 'root' AND position = ?", (key,)).fetchone()
     return "" if taken else key
@@ -1912,8 +1938,9 @@ def _keep_edited_here(ws: str, conn, page_id: str) -> None:
     """Before the deletion made there of ``page_id`` is made here: the pages
     inside it here that were edited here since their last round, or never
     went there (no sync record, or their creation there unconfirmed), are
-    taken out of it here (``parent_page`` cleared, the engine's own write),
-    so ``trash_page`` leaves them, with the pages inside them. Their own
+    taken out of it here (``kept_out_of``: ``parent_page`` cleared and the
+    page filed in its top's folders, the engine's own write), so
+    ``trash_page`` leaves them, with the pages inside them. Their own
     turns, after this page's (``_round_order``), then take them as a page
     deleted there but edited here (``page_restored``: it goes back there),
     a library page's rule; an untouched one goes with the page."""
@@ -1926,7 +1953,8 @@ def _keep_edited_here(ws: str, conn, page_id: str) -> None:
         state = _state(conn, sub)
         if state and not (state["pending"] or {}).get("create")                 and not diff(state["base"], _local_snapshot(conn, sub) or {}, sub):
             continue
-        commit_ops(ws, sub, [{"op": "set", "id": sub, "props": {PARENT_PAGE: None}}], actor=ACTOR, client=CLIENT)
+        commit_ops(ws, sub, [{"op": "set", "id": sub, "props": kept_out_of(conn, parents[sub])}],
+                   actor=ACTOR, client=CLIENT)
         kept.add(sub)
         log.info(f"[mirror] {ws}: {sub} was edited here; it stays, out of {page_id}, which was deleted there")
 
@@ -1936,8 +1964,74 @@ def _went_with_here(ws: str, page_id: str) -> bool:
     inside went there (``deleted_with``, ``trash_page``)."""
     with connect_pages_db(ws) as conn:
         return conn.execute(
-            "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = ? "
-            "AND json_extract(properties, '$.deleted_with') IS NOT NULL", (page_id, TRASH)).fetchone() is not None
+            "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = ? AND deleted_with IS NOT NULL",
+            (page_id, TRASH)).fetchone() is not None
+
+
+def _keep_published(ws: str, page_id: str) -> None:
+    """A page of a publication taken out of a published page deleted here
+    (``kept_out_of``) stays published, on its own: it joins the filter
+    (``filter_add``) unless the filter's reach carries it still, so the
+    next round does not delete its copy on the share host as a page that
+    left the publication (``_unreached``). Its link there was the deleted
+    page's, gone with it: publishing it again makes one of its own. Nothing
+    for a mirror without a filter. Runs in a round, under the round lock."""
+    mirror = get_mirror(ws)
+    if not mirror or mirror["page_filter"] is None:
+        return
+    with connect_pages_db(ws) as conn:
+        if page_id in carried(conn, mirror["page_filter"], left_out(mirror)):
+            return
+    filter_add(ws, page_id)
+    log.info(f"[mirror] {ws}: {page_id} stays published on its own, out of a published page deleted here")
+
+
+def _settle_parents(ws: str, reach, failed) -> list[str]:
+    """After a round's pages: each page live here with a stored
+    ``parent_page`` naming a page in Recently deleted here, or one deleted
+    here for good (its row of the change log ``deleted``, no row left), is
+    taken out of it (``kept_out_of``: filed where that page's top is, the
+    engine's own write), unless its own turn or that page's failed this
+    round (``failed``: it may come back next round). Every such page of the
+    mirror's ``reach`` (None: the whole workspace) is looked at, not only
+    the ones the round worked, so one an earlier round left inside a
+    deleted page (before this pass existed) and nobody has touched since
+    comes out too, before a restore of that page could take it back
+    inside. Such a parent comes from the other side: a page moved there
+    into a page deleted here takes the move here at its own turn, and when
+    that turn comes before the deletion's (``_round_order`` reads the
+    parents stored here before the round), the deletion's ``spare_inside``
+    takes it out there but not here. No live page names one in Recently
+    deleted otherwise (a deletion takes the pages inside along, and a
+    restore alone drops a parent that is not live). The next round sends
+    what is left to send there; on a publication the page stays published
+    (``_keep_published``). A parent this copy never held (a sub-page
+    published without its parent) is no deletion and is left as it is.
+    Returns the pages taken out."""
+    with connect_pages_db(ws) as conn:
+        rows = conn.execute(
+            "SELECT c.id, c.parent_page FROM unified_blocks c LEFT JOIN unified_blocks p ON p.id = c.parent_page "
+            "WHERE c.parent_page IS NOT NULL AND c.parent_id = 'root' "
+            "AND (p.parent_id = ? OR (p.id IS NULL AND EXISTS (SELECT 1 FROM page_changes g "
+            "WHERE g.page_id = c.parent_page AND g.kind = 'deleted'))) ORDER BY c.id",
+            (TRASH,)).fetchall()
+    rows = [(page_id, parent) for page_id, parent in rows
+            if page_id not in TREES and page_id not in failed and (reach is None or page_id in reach)]
+    settled = []
+    for page_id, parent in rows:
+        if parent in failed:
+            continue
+        try:
+            with connect_pages_db(ws) as conn:
+                patch = kept_out_of(conn, parent)
+            commit_ops(ws, page_id, [{"op": "set", "id": page_id, "props": patch}], actor=ACTOR, client=CLIENT)
+            _keep_published(ws, page_id)
+        except Exception as e:  # noqa: BLE001 — the next round finds it again
+            log.warning(f"[mirror] {ws}: {page_id} stays inside {parent}, which is deleted here, for now ({e})")
+            continue
+        settled.append(page_id)
+        log.info(f"[mirror] {ws}: {page_id} was moved there into {parent}, deleted here; it stays, out of it")
+    return settled
 
 
 def _keep_edited_inside(ws: str, remote: Remote, page_id: str, report: dict) -> None:
@@ -1948,9 +2042,12 @@ def _keep_edited_inside(ws: str, remote: Remote, page_id: str, report: dict) -> 
     (``page_restored_from_remote``), with the pages inside them that went
     with it too (``restore_inside``: a page that comes back keeps what is
     inside it). There the ones whose parent goes are first taken out of it
-    (``parent_page`` cleared): the remote's deletion of the page takes the
-    pages inside it along (a share host's for good), and their own turns,
-    after this page's (``_round_order``), would find them gone. A page
+    (``kept_out_of``: ``parent_page`` cleared, and the page filed in the
+    folders of that page's top here): the remote's deletion of the page
+    takes the pages inside it along (a share host's for good), and their
+    own turns, after this page's (``_round_order``), would find them gone.
+    On a publication such a page stays published, on its own
+    (``_keep_published``). A page
     untouched there, and not inside one that comes back, is left to its
     own turn, which deletes it there. Then the pages inside it there that
     stay here are spared the same way (``spare_inside``): moved into it
@@ -1969,13 +2066,19 @@ def _keep_edited_inside(ws: str, remote: Remote, page_id: str, report: dict) -> 
         inside = {p for sub in trees for p in went_inside(conn, sub, page_id)}
     going = {page_id, *went} - set(trees) - inside
     for sub, (remote_tree, seq) in trees.items():
-        if remote_tree[sub]["props"].get(PARENT_PAGE) in going:
+        parent = remote_tree[sub]["props"].get(PARENT_PAGE)
+        alone = parent in going
+        if alone:
+            with connect_pages_db(ws) as conn:
+                patch = kept_out_of(conn, parent)
             remote.post(f"/api/pages/{sub}/ops", {"client": CLIENT, "ops": [
-                {"op": "set", "id": sub, "props": {PARENT_PAGE: None}}]})
+                {"op": "set", "id": sub, "props": patch}]})
             remote_tree, seq = _remote_tree(remote, sub)
             if remote_tree is None:
                 continue
         _pull_whole(ws, remote, sub, remote_tree, seq, report, "restored here")
+        if alone:
+            _keep_published(ws, sub)
         with connect_pages_db(ws) as conn:
             restore_inside(ws, conn, sub, page_id, actor=ACTOR, client=CLIENT, skip=set(trees))
             _conflict(conn, sub, sub, "page_restored_from_remote", theirs=remote_tree[sub]["content"],
@@ -1995,15 +2098,19 @@ def _keep_edited_inside(ws: str, remote: Remote, page_id: str, report: dict) -> 
 
 def spare_inside(ws: str, remote: Remote, page_id: str, keep) -> list[str]:
     """Before ``page_id`` is deleted there: the pages inside it there that
-    ``keep(id)`` names are taken out of it there (``parent_page`` cleared,
-    the engine's own write), so its deletion, which takes the pages inside
-    a page along (a share host's for good), leaves them and the pages
-    inside them. The pages inside it there are read from the remote
+    ``keep(id)`` names are taken out of it there (``kept_out_of``:
+    ``parent_page`` cleared and the page filed where ``page_id``'s top is
+    here, the engine's own write), so its deletion, which takes the pages
+    inside a page along (a share host's for good), leaves them and the
+    pages inside them. The pages inside it there are read from the remote
     (``GET /api/pages/{id}/family``, level by level); a remote that does
     not answer that (an older release) is left as it is. A spared page with
-    a saved base here has the parent cleared in its base too: the move was
+    a saved base here has the same patch laid on its base: the move was
     the engine's, not the remote's, so the next round keeps where the page
-    is here and sends that there. Returns the pages spared."""
+    is here and sends that there (a page made there, never here, comes
+    here filed so). Returns the pages spared."""
+    with connect_pages_db(ws) as conn:
+        patch = kept_out_of(conn, page_id)
     todo, seen, spared = [page_id], {page_id}, []
     while todo:
         try:
@@ -2019,15 +2126,16 @@ def spare_inside(ws: str, remote: Remote, page_id: str, keep) -> list[str]:
                 todo.append(kid)
                 continue
             remote.post(f"/api/pages/{kid}/ops", {"client": CLIENT, "ops": [
-                {"op": "set", "id": kid, "props": {PARENT_PAGE: None}}]})
+                {"op": "set", "id": kid, "props": patch}]})
             spared.append(kid)
             log.info(f"[mirror] {ws}: {kid} stays there, taken out of {page_id}, which is deleted there")
     with connect_pages_db(ws) as conn:
         for kid in spared:
             state = _state(conn, kid)
-            if state and PARENT_PAGE in (state["base"].get(kid) or {}).get("props", {}):
-                base = {**state["base"], kid: {**state["base"][kid], "props": {
-                    k: v for k, v in state["base"][kid]["props"].items() if k != PARENT_PAGE}}}
+            if state and kid in state["base"]:
+                props = {k: v for k, v in {**(state["base"][kid].get("props") or {}), **patch}.items()
+                         if v is not None}
+                base = {**state["base"], kid: {**state["base"][kid], "props": props}}
                 _store_state(conn, kid, state["remote_seq"], base, state["pending"])
     return spared
 
@@ -2530,6 +2638,9 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
                 failed[page_id] = flags
                 report["errors"].append(f"{page_id}: {e}")
                 log.warning(f"[mirror] {ws}: page {page_id}: {e}")
+        if mode == "two-way":
+            # a page moved there into one deleted here comes out of it here too
+            _settle_parents(ws, reach, failed)
         _filters.pop(ws, None)  # what the copy's writes concern is read again (a sub-page made, a page moved in)
         # files the copy's pages reference but it does not store (an
         # interrupted round, a file lost): fetched again every round

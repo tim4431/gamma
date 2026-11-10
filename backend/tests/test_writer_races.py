@@ -354,7 +354,7 @@ def test_embedded_annotations_under_a_nested_block_reload_its_page(owner, monkey
     with TestClient(app, cookies=c.cookies) as sc, \
             sc.websocket_connect(f"/api/ws/page/{page_id}?ws={ws}&client=an") as sock:
         recv(sock, "hello")
-        result = imports_mod.import_embedded_annotations(ws, nested, path, False, actor=USER)
+        result = imports_mod.import_embedded_annotations(ws, nested, path.name, path, False, actor=USER)
         assert result["imported"] == 1
         assert recv(sock, "reload")
     batches = c.get(f"/api/pages/{page_id}/ops?since=0").json()["batches"]
@@ -369,7 +369,7 @@ def test_embedded_annotations_imported_twice_at_once_land_once(owner, monkeypatc
     page_id = _page(c, "Annotated twice")
     path = _annotated_pdf(ws, "writer-races-annots-twice.pdf", monkeypatch)
     slowed(monkeypatch, imports_mod, "last_child_position", 0.15)  # between the lookup and the insert
-    results = together(2, lambda: imports_mod.import_embedded_annotations(ws, page_id, path, False, actor=USER))
+    results = together(2, lambda: imports_mod.import_embedded_annotations(ws, page_id, path.name, path, False, actor=USER))
     assert sorted(r["imported"] for r in results) == [0, 1]
     with connect_pages_db(ws) as conn:
         assert conn.execute("SELECT COUNT(*) FROM unified_blocks WHERE parent_id = ?", (page_id,)).fetchone()[0] == 1

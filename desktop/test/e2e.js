@@ -310,17 +310,37 @@ async function makeFolderWithPage(app, ws, folderId, position, folder, title) {
   return page.id;
 }
 
-// The bar menu's folder chooser for workspace `ws`, at the row of `folder`.
 // The sync panel's folder chooser for the open workspace, at the row of `folder`.
 async function chooserRow(bar, folder) {
   await bar.click('#syncBtn');
-  await bar.click('#keepFolderBtn');
+  await bar.click('#syncFolderBtn');
   const item = bar.locator('#syncPanel .folderItem', { hasText: folder });
   await item.waitFor({ timeout: 15_000 });
   return item;
 }
 
-// The sync panel's row of a kept clone or folder, read fresh.
+// The vault dialog in the sync panel (main.js askVault), once it is up: its
+// sentence, and Sync pressed.
+async function syncInDialog(bar, said) {
+  const box = bar.locator('#syncPanel #vaultAsk');
+  await box.waitFor({ timeout: 30_000 });
+  const text = await bar.locator('#vaultSay').textContent();
+  if (said) assert.match(text, said, 'the dialog says what the first round does');
+  await bar.click('#vaultSync');
+  return text;
+}
+
+// A vault's own view in the panel (its row's "more"), at its action `act`:
+// a button of the view's bar (sync, pull-now, push-now, pause, open) or a
+// row under it (go-on, locate, the forces, remove).
+async function vaultAct(row, bar, act) {
+  await row.locator('[data-act="more"]').click();
+  const item = bar.locator(`#syncPanel .vaultAct[data-act="${act}"]`);
+  await item.waitFor({ timeout: 15_000 });
+  return item;
+}
+
+// The sync panel's row of a clone or a synced vault, read fresh.
 async function keptRow(app, bar, kind, name) {
   await hook(app, (s) => s.refreshKeeping());
   await bar.click('#syncBtn');
@@ -354,6 +374,12 @@ async function main() {
   const downloads = path.join(profile, 'downloads');
   fs.mkdirSync(downloads);
   console.log(`e2e (${packaged ? 'packaged' : 'dev'}) profile: ${profile}`);
+  // A worktree has no backend/venv of its own: GAMMA_E2E_PYTHON (as the
+  // browser suite takes it) names the Python its sidecars run this tree's
+  // backend with (the launcher's Python path setting).
+  if (!packaged && process.env.GAMMA_E2E_PYTHON) {
+    fs.writeFileSync(path.join(profile, 'servers.json'), JSON.stringify({ settings: { pythonPath: process.env.GAMMA_E2E_PYTHON } }));
+  }
   // Every sidecar signs in with Gamma Cloud at the stand-in, never the real one;
   // a new identity gets an account of its own.
   const cloud = await fakeAccountServer({ sub: 'sub-e2e-desk', preferred_username: 'desk', email: 'desk@example.org',
@@ -365,8 +391,10 @@ async function main() {
   let bar, content;
   const ids = {};
   const urls = {};
+  const homeWs = {}; // a server's workspace, by the server's key
   const pids = {};
   let pageId, sourceUrl, alphaUploads;
+  let openedPage = null; // the PDF a step opened where it is: { id, ws, doc }
   let backupZip;
 
   try {
@@ -561,6 +589,7 @@ async function main() {
     });
 
     await step('switch back to Alpha: instant, same server, no restart', async () => {
+      homeWs.beta = await waitFor(() => new URL(content.url()).searchParams.get('ws'), 'Beta writes its workspace into the address', 15_000);
       const t0 = Date.now();
       await bar.click('#wsBtn');
       await bar.locator(`#menu .item[data-id="${ids.alpha}"]`).click();
@@ -587,10 +616,35 @@ async function main() {
       const g = await hook(app, (s) => s.gamma());
       assert(g && g.current === lab && g.list.length === 2, 'shell knows the workspaces: ' + JSON.stringify(g));
       assert.equal(new URL(content.url()).origin, urls.alpha, 'same server');
+      // One session cookie per host: signed in on Alpha, the window is signed out of
+      // Beta. Opening Beta signs in again, and its workspace follows at once, as an
+      // origin's or a clone's chip and a PDF opened with Gamma do. openServer answers
+      // once the signed-in page has loaded, so the workspace's load does not start
+      // under the sign-in's reload, and the workspace is there when it resolves. Then
+      // the same way back to Alpha's lab.
+      for (const [k, ws] of [['beta', homeWs.beta], ['alpha', lab]]) {
+        const r = await app.evaluate(({ webContents }, [id, w]) => new Promise((resolve, reject) => {
+          setImmediate(async () => { // a turn of the loop of its own, as hook gives
+            try {
+              const opened = await global.__gammaShell.openServer(id);
+              await global.__gammaShell.openGammaWorkspace(w);
+              const shown = webContents.getAllWebContents().find((c) => c.getURL().startsWith('http'));
+              resolve({ autoLogin: opened.autoLogin, url: shown && shown.getURL() });
+            } catch (e) {
+              reject(e);
+            }
+          });
+        }), [ids[k], ws]);
+        assert.equal(r.autoLogin, 'logged-in', `${k} signed in again`);
+        assert.equal(new URL(r.url).origin, urls[k], `on ${k}`);
+        assert.equal(new URL(r.url).searchParams.get('ws'), ws, `${k}'s workspace shown once its load resolved`);
+        await waitLoggedIn(content);
+      }
+      await waitFor(() => new URL(content.url()).searchParams.get('ws') === lab, 'back in the lab', 15_000);
       return `${lab} on ${urls.alpha}`;
     });
 
-    await step('a PDF opened with Gamma: a second start hands it over and quits; its page opens in the workspace the window shows; the same file again opens that page', async () => {
+    await step('a PDF opened with Gamma: a second start hands it over and quits; it is read where it is, its page in Opened files of the workspace the window shows; the same file again opens that page', async () => {
       const lab = new URL(content.url()).searchParams.get('ws');
       const pdf = path.join(profile, 'Opened with Gamma.pdf');
       fs.writeFileSync(pdf, minimalPdf('Opened from the file manager', 'Saved in another reader'));
@@ -599,8 +653,13 @@ async function main() {
       const pageId = await waitFor(() => shownPage(content) !== before && shownPage(content), 'the window on the page', 60_000);
       assert.equal(new URL(content.url()).searchParams.get('ws'), lab, 'in the workspace the window showed');
       const page = await serverCall(app, `/api/blocks/${pageId}`, { ws: lab });
-      assert.equal(page.content, 'Opened with Gamma.pdf', 'titled as an upload in Gamma is');
+      assert.equal(page.content, 'Opened with Gamma', 'titled with the file\'s stem');
       assert(page.properties.doc_id, 'the page carries the file: ' + JSON.stringify(page.properties));
+      assert.equal(page.properties.linked_file, true, 'read where it is, not stored: ' + JSON.stringify(page.properties));
+      assert(page.properties.parent_page, 'inside Opened files');
+      const opened = await serverCall(app, `/api/blocks/${page.properties.parent_page}`, { ws: lab });
+      assert.equal(opened.properties.opened_files, true, 'the one page Opened files: ' + JSON.stringify(opened.properties));
+      await waitFor(async () => /is read from this computer, under Opened files/.test((await hook(app, (s) => s.notice())) || ''), 'the bar says where', 10_000);
       const kids = await serverCall(app, `/api/blocks/${page.id}/children`, { ws: lab });
       const blocks = JSON.stringify(kids);
       assert(blocks.includes('Saved in another reader'), 'the highlight the file carried was imported: ' + blocks.slice(0, 400));
@@ -608,7 +667,40 @@ async function main() {
       assert.equal(again.page, page.id, 'the same page, not a second one: ' + JSON.stringify(again));
       const twice = await serverCall(app, `/api/blocks/${page.id}/children`, { ws: lab });
       assert.equal(JSON.stringify(twice).split('Saved in another reader').length, blocks.split('Saved in another reader').length, 'the highlight is not imported twice');
+      openedPage = { id: page.id, ws: lab, doc: page.properties.doc_id };
       return `${page.id} in ${lab}`;
+    });
+
+    await step('an opened PDF carried to another server: the page asks, the shell asks where, the page goes to Beta with its PDF and highlights and opens there, and is in Recently deleted on Alpha', async () => {
+      assert(openedPage, 'the step before opened a PDF');
+      const { id, ws, doc } = openedPage;
+      // One other server (Beta): asked about before it is reached, then its workspace when it has several, the account's own the first offered.
+      await hook(app, (s) => { s.asked.length = 0; s.answers.push(0, 0); });
+      await content.evaluate(([w, p]) => window.postMessage({ source: 'gamma-app', type: 'carry-to-server', ws: w, page: p }, window.location.origin), [ws, id]);
+      await waitFor(async () => new URL(content.url()).origin === urls.beta && shownPage(content) === id, 'the window on the page in Beta', 60_000);
+      await waitLoggedIn(content);
+      // (the harness records a question with its detail)
+      assert.match((await hook(app, (s) => s.asked))[0], /^Add “Opened with Gamma” to the library of Beta\? Its notes, highlights, comments and chat go with it/);
+      await hook(app, (s) => { s.answers.length = 0; });
+      await waitFor(async () => /“Opened with Gamma” is in .+ on Beta now/.test((await hook(app, (s) => s.notice())) || ''), 'the bar says where', 10_000);
+      const there = await content.evaluate(async ([p, d]) => {
+        const page = await (await fetch(`/api/blocks/${p}`, { credentials: 'same-origin' })).json();
+        const kids = await (await fetch(`/api/blocks/${p}/children`, { credentials: 'same-origin' })).text();
+        const pdf = await fetch(`/api/uploads/${d}.pdf`, { credentials: 'same-origin' });
+        return { props: page.properties, kids, pdf: pdf.status };
+      }, [id, doc]);
+      assert.equal(there.props.doc_id, doc, 'the same PDF');
+      assert.equal(there.props.linked_file, undefined, 'no file of this computer read there: ' + JSON.stringify(there.props));
+      assert.equal(there.props.parent_page, undefined, 'out of Opened files: ' + JSON.stringify(there.props));
+      assert.equal(there.pdf, 200, 'its bytes stored there');
+      assert(there.kids.includes('Saved in another reader'), 'its highlight came with it');
+      await hook(app, (s, a) => s.openServer(a), ids.alpha);
+      await waitLoggedIn(content);
+      await assert.rejects(serverCall(app, `/api/blocks/${id}`, { ws }), /page is in Recently deleted/, 'out of the library on Alpha');
+      const trash = await serverCall(app, '/api/trash', { ws });
+      assert((trash.pages || []).some((p) => p.id === id), 'in Recently deleted on Alpha, for a restore: ' + JSON.stringify(trash).slice(0, 400));
+      openedPage = null;
+      return `${id} → Beta, ${doc}.pdf stored there`;
     });
 
     await step('remote server: a URL, loads without auto-login', async () => {
@@ -711,53 +803,62 @@ async function main() {
       return `${origWs} → copy ${copyWs} on Alpha, paused and resumed`;
     });
 
-    await step('folder on this computer: the sync panel\'s chooser on a local server writes the folder where the picker said', async () => {
+    await step('synced vault of a folder: the sync panel\'s chooser on a local server asks for the directory, the dialog says what the first round does, Sync pulls the folder there', async () => {
       await hook(app, (s, id) => s.openServer(id), ids.alpha);
       await waitLoggedIn(content);
       const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000)).current;
-      const page = await makeFolderWithPage(app, ws, 'e2efolder1', 'a0', 'Kept lab', 'Kept paper');
+      await makeFolderWithPage(app, ws, 'e2efolder1', 'a0', 'Kept lab', 'Kept paper');
       await hook(app, (s, w) => s.openGammaWorkspace(w), ws); // the panel's chooser lists the open workspace's folders
       await waitLoggedIn(content);
       const kept = path.join(profile, 'kept');
       fs.mkdirSync(kept, { recursive: true });
       const choice = await chooserRow(bar, 'Kept lab');
-      assert((await choice.textContent()).includes('keep here'), 'not kept yet');
+      assert((await choice.textContent()).includes('sync…'), 'not synced yet');
       await choice.click();
+      // the picker answers GAMMA_SHELL_PICK_DIR; the dialog comes up in the panel, pulling and pushing nothing
+      await bar.locator('#syncPanel #vaultAsk').waitFor({ timeout: 30_000 });
+      assert.equal(await bar.locator('#vaultAsk .seg [data-push="off"]').getAttribute('aria-pressed'), 'true', 'push starts off for a folder with pages');
+      const said = await syncInDialog(bar, /^Pull 1 page into .+; nothing there is pushed\./);
       await menuClosed(bar);
       const md = path.join(kept, 'Kept paper.md');
       await waitFor(() => fs.existsSync(md), 'the note file is written', 30_000, 500);
-      assert(fs.readFileSync(md, 'utf8').includes(`gamma_id: ${page}`), 'the file names its page');
       const { links } = await hook(app, (s, w) => s.listFolders(w), ws);
-      assert.equal(links.length, 1, 'one link');
-      assert.equal(fs.realpathSync(links[0].dest).toLowerCase(), fs.realpathSync(kept).toLowerCase(), 'written where the picker said');
-      await waitFor(async () => /is being written to/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
-      // The chooser now shows the folder on disk; the panel lists it with its state, and "sync" runs a round.
+      assert.equal(links.length, 1, 'one vault');
+      assert.deepEqual([links[0].pull, links[0].push], [true, 'off'], 'as the dialog said');
+      assert.equal(fs.realpathSync(links[0].dest).toLowerCase(), fs.realpathSync(kept).toLowerCase(), 'synced where the picker said');
+      await waitFor(async () => /is synced with/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      // The chooser now shows the folder synced; the panel lists it under Synced vaults, and "sync" runs a round.
       const again = await chooserRow(bar, 'Kept lab');
-      assert((await again.textContent()).includes('on disk'), 'shown as kept');
+      assert((await again.textContent()).includes('synced'), 'shown as synced');
       await bar.keyboard.press('Escape');
       await menuClosed(bar);
-      const row = await keptRow(app, bar, 'folder', 'Kept lab');
-      assert((await row.locator('.state').textContent()).includes(fs.realpathSync(kept).split(path.sep).pop()), 'its state and where it is');
-      for (const act of ['pause', 'sync', 'stop']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown without hovering`);
+      const row = await keptRow(app, bar, 'vault', 'Kept lab');
+      assert.equal(await bar.locator('#syncPanel .menuLabel', { hasText: 'Synced vaults' }).count(), 1, 'under its group');
+      assert((await row.getAttribute('title')).includes(`${fs.realpathSync(kept).split(path.sep).pop()} ⇄ Alpha · Kept lab`), 'path ⇄ remote · folder in its tooltip');
+      for (const act of ['pause', 'sync', 'more']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown without hovering`);
+      assert.equal(await row.locator('[data-act="push"]').count(), 0, 'the push switch is the vault view\'s, not the row\'s');
       await row.locator('[data-act="sync"]').click();
       await waitFor(async () => /is up to date/.test((await hook(app, (s) => s.notice())) || ''), 'the sync reported', 15_000);
       await panelStaysOpen(app, bar);
       // "pause" leaves the panel open on the paused row, whose "resume" starts it again.
-      const toggled = row;
-      await toggled.locator('[data-act="pause"]').click();
-      await waitFor(async () => (await toggled.locator('.state').textContent()).startsWith('Paused'), 'shown paused', 15_000);
+      await row.locator('[data-act="pause"]').click();
+      await waitFor(async () => (await row.locator('.state').textContent()).startsWith('Paused'), 'shown paused', 15_000);
       await panelStaysOpen(app, bar);
       const linkOf = async () => (await hook(app, (s, w) => s.listFolders(w), ws)).links[0];
       assert((await linkOf()).status.paused_at, 'paused on the server');
-      await toggled.locator('[data-act="resume"]').click();
-      await waitFor(async () => (await toggled.locator('[data-act="pause"]').count()) === 1, 'shown resumed', 15_000);
+      await row.locator('[data-act="resume"]').click();
+      await waitFor(async () => (await row.locator('[data-act="pause"]').count()) === 1, 'shown resumed', 15_000);
       assert(!(await linkOf()).status.paused_at, 'resumed on the server');
+      // its own view: Pull now runs a pulling round, the panel staying open
+      await (await vaultAct(row, bar, 'pull-now')).click();
+      await waitFor(async () => /is up to date/.test((await hook(app, (s) => s.notice())) || ''), 'the pull reported', 15_000);
+      await panelStaysOpen(app, bar);
       await bar.keyboard.press('Escape');
       await menuClosed(bar);
-      return `${links[0].dest}, paused and resumed`;
+      return `${links[0].dest}: ${said}`;
     });
 
-    await step('folder from the library: a folder\'s "Keep on this computer…" asks where and keeps it; asked again, it opens it', async () => {
+    await step('synced vault from the library: a folder\'s "Sync with this computer…" asks for the directory and shows the dialog; asked again, it opens it; removed with its files to the trash', async () => {
       await hook(app, (s, id) => s.openServer(id), ids.alpha);
       await waitLoggedIn(content);
       const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000)).current;
@@ -771,32 +872,35 @@ async function main() {
       const row = content.locator('.fileList .folderRow', { hasText: 'Menu lab' });
       await row.waitFor({ timeout: 20_000 });
       // Gamma's page speaks this computer's language: the entry in either catalog.
-      const keep = async () => {
+      const sync = async () => {
         await row.click({ button: 'right' });
-        await content.locator('.ctxMenuItem', { hasText: /Keep on this computer|保存到这台电脑/ }).click();
+        await content.locator('.ctxMenuItem', { hasText: /Sync with this computer|同步/ }).click();
       };
-      await keep();
+      await sync();
+      await syncInDialog(bar, /^Pull 1 page into /);
       const md = path.join(dir, 'Menu paper.md');
       await waitFor(() => fs.existsSync(md), 'the note file is written', 30_000, 500);
-      await keep(); // kept already: its directory opens, no second copy
-      await waitFor(async () => /already on this computer/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 10_000);
+      await sleep(1100); // the shell takes one ask of a page a second (main.js PAGE_ASK_MS)
+      await sync(); // synced already: its directory opens, no second vault
+      await waitFor(async () => /already synced with/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 10_000);
       const mine = (await hook(app, (s, w) => s.listFolders(w), ws)).links.filter((l) => l.folder_id === 'e2efolder3');
-      assert.equal(mine.length, 1, 'one link');
+      assert.equal(mine.length, 1, 'one vault');
       const opened = await hook(app, (s) => s.externalOpens[s.externalOpens.length - 1]);
       assert.equal(fs.realpathSync(opened).toLowerCase(), fs.realpathSync(dir).toLowerCase(), 'its directory opened');
-      // Stopping with "remove the files" takes back what the sync wrote.
-      await hook(app, (s, [server, id]) => s.dropFolder(server, id, 'remove'), [mine[0].server, mine[0].id]);
-      await waitFor(() => !fs.existsSync(md), 'the files are taken back', 10_000);
-      return `${mine[0].dest}, then removed with its files`;
+      // Removing it with its files moves what the sync wrote to the vault's trash.
+      await hook(app, (s, [server, id]) => s.removeVault(server, id, 'trash'), [mine[0].server, mine[0].id]);
+      await waitFor(() => !fs.existsSync(md), 'the files went to the trash', 10_000);
+      assert(fs.existsSync(path.join(dir, '.gamma', 'trash')), 'into .gamma/trash');
+      return `${mine[0].dest}, then removed with its files in its trash`;
     });
 
-    await step('folder from a remote: the sync panel\'s chooser on a remote server keeps the folder on the host — no clone, a read token; "stop" drops it', async () => {
+    await step('synced vault from a remote: the chooser on a remote server makes the vault on the host — no clone, a read token for a vault that pushes nothing; "Remove the vault…" drops it', async () => {
       // On the remote (Alpha by URL: the same server, so the session is there).
       await hook(app, (s, id) => s.openServer(id), ids.remote);
       await waitFor(async () => (await hook(app, (s) => s.current())).id === ids.remote && new URL(content.url()).origin === urls.alpha, 'remote open', 15_000);
       await waitLoggedIn(content);
       const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read off the remote', 15_000)).current;
-      const page = await makeFolderWithPage(app, ws, 'e2efolder2', 'a1', 'Far lab', 'Far paper');
+      await makeFolderWithPage(app, ws, 'e2efolder2', 'a1', 'Far lab', 'Far paper');
       await hook(app, (s, w) => s.openGammaWorkspace(w), ws); // the panel's chooser lists the open workspace's folders
       await waitLoggedIn(content);
       const tokensOf = async () => (await serverCall(app, '/api/integrations/tokens', { ws })).tokens;
@@ -806,40 +910,44 @@ async function main() {
       await hook(app, (s, dir) => { process.env.GAMMA_SHELL_PICK_DIR = dir; }, far); // the picker's answer, this time
       const mirrorsBefore = (await hook(app, (s) => s.registry.load().mirrors)).length;
       const choice = await chooserRow(bar, 'Far lab');
-      assert((await choice.textContent()).includes('keep here'), 'not kept yet');
+      assert((await choice.textContent()).includes('sync…'), 'not synced yet');
       assert((await choice.getAttribute('title')).includes('local server on this computer'), 'the tooltip names who keeps it');
       await choice.click();
+      await bar.locator('#syncPanel #vaultAsk').waitFor({ timeout: 30_000 });
+      assert(await bar.locator('#vaultAsk .seg [data-push="everything"]').isDisabled(), 'a remote\'s folder pushes PDFs at most');
+      await syncInDialog(bar, /^Pull 1 page into /);
       await menuClosed(bar);
       const md = path.join(far, 'Far paper.md');
       await waitFor(() => fs.existsSync(md), 'the note file is written by the host', 30_000, 500);
-      assert(fs.readFileSync(md, 'utf8').includes(`gamma_id: ${page}`), 'the file names its page');
       const { links } = await hook(app, (s, w) => s.listFolders(w), ws);
-      assert.equal(links.length, 1, 'one link for this remote workspace');
-      assert.equal(links[0].remote_url, urls.alpha, 'the link reads the remote');
+      assert.equal(links.length, 1, 'one vault for this remote workspace');
+      assert.equal(links[0].remote_url, urls.alpha, 'the vault reads the remote');
       assert(links[0].token_id && !links[0].token, 'with a token minted there, never shown');
       assert.equal((await hook(app, (s) => s.registry.load().mirrors)).length, mirrorsBefore, 'no clone was made');
       assert.equal(await hook(app, (s) => s.registry.getSettings().folderHost), ids.alpha, 'the host is remembered for launch');
       const tokens = await tokensOf();
       assert.equal(tokens.length, before + 1, 'one token minted');
       assert(tokens.some((t) => t.id === links[0].token_id && t.scope === 'read' && /Far lab/.test(t.name)), 'read scope, named after the folder');
-      // The chooser shows it kept; the panel's "stop" drops the link and revokes the token; the files stay.
+      // The chooser shows it synced; the vault's "Remove the vault…" drops it and revokes the token; the files stay.
       const shown = await chooserRow(bar, 'Far lab');
-      assert((await shown.textContent()).includes('on disk'), 'shown as kept');
+      assert((await shown.textContent()).includes('synced'), 'shown as synced');
       await bar.keyboard.press('Escape');
       await menuClosed(bar);
-      const kept = await keptRow(app, bar, 'folder', 'Far lab');
-      assert((await kept.getAttribute('title')).includes('from Alpha by URL'), 'from the remote, by its name');
-      await kept.locator('[data-act="stop"]').click();
+      const kept = await keptRow(app, bar, 'vault', 'Far lab');
+      assert((await kept.getAttribute('title')).includes('⇄ Alpha by URL · Far lab'), 'its remote, by its name');
+      await (await vaultAct(kept, bar, 'remove')).click(); // the question takes "keep the files" under the harness
       await menuClosed(bar);
-      await waitFor(async () => (await hook(app, (s, w) => s.listFolders(w), ws)).links.length === 0, 'the link is gone', 15_000);
+      await waitFor(async () => (await hook(app, (s, w) => s.listFolders(w), ws)).links.length === 0, 'the vault is gone', 15_000);
+      // The notice comes once the token is revoked and the host let go (removeVault's releaseRemote),
+      // which the vault's going does not wait for.
+      await waitFor(async () => /is no longer synced; its files stay/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 15_000);
       assert(fs.existsSync(md), 'the files stay');
       assert.equal((await tokensOf()).length, before, 'the token was revoked');
       assert.equal(await hook(app, (s) => s.registry.getSettings().folderHost), '', 'the host no longer starts at launch for it');
-      await waitFor(async () => /no longer kept/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
-      return `${links[0].dest} from ${links[0].remote_url}, then dropped`;
+      return `${links[0].dest} from ${links[0].remote_url}, then removed`;
     });
 
-    await step('file on this computer: a page follows a PDF on disk; a new version is sent and the panel says so', async () => {
+    await step('synced vault of one file: a page pushed from a PDF on disk; a new version is pushed and the panel says so', async () => {
       await hook(app, (s, id) => s.openServer(id), ids.alpha);
       await waitLoggedIn(content);
       const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000)).current;
@@ -858,59 +966,88 @@ async function main() {
       };
       const first = build('Followed draft, first build');
       await hook(app, (s, f) => { process.env.GAMMA_SHELL_PICK_FILE = f; }, pdf); // the file picker's answer
-      const link = await hook(app, (s, [w, p]) => s.followFile(w, p), [ws, page.id]);
+      const link = await hook(app, (s, [w, p]) => s.addFileVault(w, p), [ws, page.id]);
       assert.equal(link.kind, 'file');
       assert.equal(link.page_id, page.id);
       assert.equal(fs.realpathSync(link.dest).toLowerCase(), fs.realpathSync(pdf).toLowerCase(), 'the file the picker said');
-      await waitFor(async () => /follows main\.pdf: each new version is sent to Gamma/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      await waitFor(async () => /is pushed from main\.pdf: each new version becomes its PDF/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
       await waitFor(async () => (await docOf()) === first, 'the page carries the first build', 30_000, 500);
       // Asked again for the same page, it shows the file instead.
-      await hook(app, (s, [w, p]) => s.followFile(w, p), [ws, page.id]);
+      await hook(app, (s, [w, p]) => s.addFileVault(w, p), [ws, page.id]);
       const opened = await hook(app, (s) => s.externalOpens[s.externalOpens.length - 1]);
       assert.equal(fs.realpathSync(opened).toLowerCase(), fs.realpathSync(pdf).toLowerCase(), 'the file is shown');
-      // A new build: the row's "sync" sends it now (the server's own loop would, within its 30 s tick).
+      // A new build: the row's "sync" pushes it now (the server's own loop would, within its 30 s tick).
       const second = build('Followed draft, second build with more text');
-      const row = await keptRow(app, bar, 'file', 'Followed draft');
-      assert.equal(await bar.locator('#syncPanel .menuLabel', { hasText: 'Files followed' }).count(), 1, 'under its own heading');
-      for (const act of ['pause', 'sync', 'stop']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown`);
+      const row = await keptRow(app, bar, 'vault', 'Followed draft');
+      assert.equal(await row.getAttribute('data-scope'), 'file');
+      for (const act of ['pause', 'sync', 'more']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown`);
       await row.locator('[data-act="sync"]').click();
       await waitFor(async () => (await docOf()) === second, 'the page carries the second build', 60_000, 500);
-      await waitFor(async () => /main\.pdf( was sent to Gamma|: nothing new to send)/.test((await hook(app, (s) => s.notice())) || ''), 'the sync reported', 15_000);
+      await waitFor(async () => /main\.pdf( was pushed to Gamma|: nothing new to push)/.test((await hook(app, (s) => s.notice())) || ''), 'the push reported', 15_000);
       await panelStaysOpen(app, bar);
-      await waitFor(async () => (await row.locator('.state').textContent()).startsWith('Sent'), 'the row reads Sent', 15_000);
-      // "stop" drops the link; the file stays as it is.
-      await row.locator('[data-act="stop"]').click();
+      await waitFor(async () => (await row.locator('.state').textContent()).startsWith('Pushed'), 'the row reads Pushed', 15_000);
+      // "Remove the vault…" drops it; the file stays as it is.
+      await (await vaultAct(row, bar, 'remove')).click();
       await menuClosed(bar);
       await waitFor(async () => {
         await hook(app, (s) => s.refreshKeeping());
-        return !(await hook(app, (s) => s.keeping().items.some((i) => i.kind === 'file')));
-      }, 'the link is gone', 15_000);
+        return !(await hook(app, (s) => s.keeping().items.some((i) => i.kind === 'vault' && i.scope === 'file')));
+      }, 'the vault is gone', 15_000);
       assert(fs.existsSync(pdf), 'the file stays');
       assert.equal(await docOf(), second, 'the page keeps the last build');
-      await waitFor(async () => /no longer follows main\.pdf/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
-      return `${page.id} followed ${link.dest}: ${first}, then ${second}`;
+      await waitFor(async () => /is no longer pushed from main\.pdf/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      return `${page.id} pushed from ${link.dest}: ${first}, then ${second}`;
     });
 
-    await step('sending back from a kept folder: the folder row\'s upload arrow turns it on and off', async () => {
-      const row = await keptRow(app, bar, 'folder', 'Kept lab');
+    await step('pushing from a folder\'s vault: the Push segment in the vault\'s view turns pushing its PDFs on and off, in words', async () => {
+      const row = await keptRow(app, bar, 'vault', 'Kept lab');
       const pushOf = async () => {
         await hook(app, (s) => s.refreshKeeping());
-        return (await hook(app, (s) => s.keeping().items.find((i) => i.kind === 'folder' && i.name === 'Kept lab'))).push;
+        return (await hook(app, (s) => s.keeping().items.find((i) => i.kind === 'vault' && i.name === 'Kept lab'))).push;
       };
-      const toggle = (act, pressed) => row.locator(`[data-act="${act}"][aria-pressed="${pressed}"]`);
-      assert.equal(await toggle('push-on', false).count(), 1, 'off until asked for');
-      await toggle('push-on', false).click();
-      await waitFor(async () => (await toggle('push-off', true).count()) === 1, 'shown on', 15_000);
+      await row.locator('[data-act="more"]').click();
+      const seg = (word) => bar.locator(`#syncPanel #vaultView .seg [data-push="${word}"]`);
+      await seg('off').waitFor({ timeout: 15_000 });
+      assert.equal(await seg('off').getAttribute('aria-pressed'), 'true', 'off until asked for');
+      await seg('pdfs').click();
+      await waitFor(async () => (await seg('pdfs').getAttribute('aria-pressed')) === 'true', 'shown on', 15_000);
       await panelStaysOpen(app, bar);
-      assert.equal(await pushOf(), true, 'on, on the server');
-      await waitFor(async () => /sends PDFs you change there back to Gamma/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
-      await toggle('push-off', true).click();
-      await waitFor(async () => (await toggle('push-on', false).count()) === 1, 'shown off', 15_000);
-      assert.equal(await pushOf(), false, 'off, on the server');
-      await waitFor(async () => /no longer sends PDFs back/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      assert.equal(await pushOf(), 'pdfs', 'pushing PDFs, on the server');
+      await waitFor(async () => /pushes the PDFs you change there/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      await seg('off').click();
+      await waitFor(async () => (await seg('off').getAttribute('aria-pressed')) === 'true', 'shown off', 15_000);
+      assert.equal(await pushOf(), 'off', 'off, on the server');
+      await waitFor(async () => /no longer pushes/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
       await bar.keyboard.press('Escape');
       await menuClosed(bar);
-      return 'on, then off';
+      return 'pdfs, then off';
+    });
+
+    await step('"Add a synced vault…" in the launcher: a directory of notes becomes a new folder of the host\'s own workspace, pushed and pulled, its marker written', async () => {
+      const dir = path.join(profile, 'Reading');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'Idea.md'), '# Idea\n\n- a first thought\n- a second one\n');
+      await hook(app, (s, d) => { process.env.GAMMA_SHELL_PICK_DIR = d; }, dir);
+      await hook(app, (s) => s.loadLauncher());
+      content = await findPage(app, isLauncher);
+      await content.click('#btnAddVault');
+      const said = await syncInDialog(bar, /^Push 1 note from .+ into a new folder “Reading”; from then on both sides are kept in step\./);
+      await menuClosed(bar);
+      await waitFor(() => fs.existsSync(path.join(dir, '.gamma', 'vault.json')), 'the marker is written', 30_000, 500);
+      const vault = await waitFor(async () => {
+        await hook(app, (s) => s.refreshKeeping());
+        return hook(app, (s) => s.keeping().items.find((i) => i.kind === 'vault' && i.name === 'Reading'));
+      }, 'the vault in the panel', 30_000);
+      assert.deepEqual([vault.scope, vault.pull, vault.push], ['folder', true, 'everything']);
+      assert.equal(vault.server, ids.alpha, 'on the host, the first local server');
+      await waitFor(async () => /Reading is synced with .+: a folder of .+ on Alpha\./.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      await hook(app, (s, [server, id]) => s.removeVault(server, id, 'keep'), [vault.server, vault.id]);
+      assert(fs.existsSync(path.join(dir, 'Idea.md')), 'the note stays');
+      assert(!fs.existsSync(path.join(dir, '.gamma', 'vault.json')), 'the marker goes with the vault');
+      await hook(app, (s) => { delete process.env.GAMMA_SHELL_PICK_DIR; });
+      await hook(app, (s, id) => s.openServer(id), ids.alpha); // the steps after start from Alpha
+      await waitLoggedIn(content);
+      return said;
     });
 
     await step('background: with "keep running" on, closing the window leaves the servers up and the tray in place; Window → Show Gamma and the Dock icon bring it back over the same server', async () => {
@@ -992,7 +1129,13 @@ async function main() {
       assert(/Not available in this build/.test(row), row);
       assert(await content.locator('#btnUpdate').isHidden(), 'no check button when unsupported');
       assert(await bar.locator('#btnUpdate').isHidden(), 'no update pill in the bar');
-      return `${u.status} (${u.error}), v${u.current}`;
+      // Help → Check for Updates…: its box is only recorded under test, with the answer that installs nothing.
+      const before = await hook(app, (s) => s.asked.length);
+      await app.evaluate(({ Menu }) => Menu.getApplicationMenu().getMenuItemById('check-updates').click());
+      const box = await waitFor(async () => (await hook(app, (s) => s.asked.slice()))[before], 'the update box', 10_000);
+      assert.equal(box, 'Updates are not available in this build. disabled');
+      assert.equal((await hook(app, (s) => s.update())).status, 'unsupported', 'nothing installed');
+      return `${u.status} (${u.error}), v${u.current}; the menu says: ${box}`;
     });
 
     await step('unreachable remote falls back to the launcher with the error', async () => {
@@ -1045,6 +1188,14 @@ async function main() {
       assert(/unable to open database file/.test(await content.textContent('#failDetail')), "the server's own line shown");
       assert(/Open data folder/.test(await content.textContent('#failActs .primary')), 'the fix is offered first');
       assert(await content.locator('#failLog').isHidden(), 'the raw log stays folded away');
+      // Its buttons reach the file manager, which the harness only records.
+      const where = await hook(app, (s, id) => ({ data: s.registry.get(id).dataDir, log: s.logPath(id) }), ids.alpha);
+      assert(fs.existsSync(where.log), 'the server has a log file');
+      const seen = await hook(app, (s) => s.externalOpens.length);
+      await content.click('#failActs .primary');
+      await content.locator('#failActs button', { hasText: 'Show log file' }).click();
+      await waitFor(async () => (await hook(app, (s) => s.externalOpens.slice())).slice(seen).length === 2, 'both recorded', 5_000);
+      assert.deepEqual((await hook(app, (s) => s.externalOpens.slice())).slice(seen), [where.data, where.log], 'the data folder, then the log');
       await content.click('#failClose');
       assert(await content.locator('#fail').isHidden(), 'dismissable');
       return d.summary;
@@ -1095,7 +1246,8 @@ async function main() {
       // Back to Alpha (auto-login signs the window back in), and the server goes.
       await hook(app, (s, id) => s.openServer(id), ids.alpha);
       await waitLoggedIn(content);
-      await hook(app, (s, id) => { s.sidecar.stop(id); s.registry.remove(id, { deleteData: true }); }, ids.cloud);
+      // (its process gone first: on Windows a running server holds its databases open)
+      await hook(app, async (s, id) => { await s.sidecar.stop(id); s.registry.remove(id, { deleteData: true }); }, ids.cloud);
       return back.split('?')[0];
     });
 
@@ -1137,6 +1289,13 @@ async function main() {
       await alpha.locator('button[title="Copy address"]').click();
       await waitFor(async () => (await content.textContent('#status')).includes(`Copied ${urls.alpha}`), 'the copy reported', 5_000);
       assert.equal(await hook(app, (s) => s.copied()), urls.alpha, 'the address copied');
+      // The card's folder and log buttons go to the file manager, recorded only.
+      const where = await hook(app, (s, id) => ({ data: s.registry.get(id).dataDir, log: s.logPath(id) }), ids.alpha);
+      const seen = await hook(app, (s) => s.externalOpens.length);
+      await alpha.locator('button[title="Open data folder"]').click();
+      await alpha.locator('button[title="Show server log"]').click();
+      await waitFor(async () => (await hook(app, (s) => s.externalOpens.slice())).slice(seen).length === 2, 'both recorded', 5_000);
+      assert.deepEqual((await hook(app, (s) => s.externalOpens.slice())).slice(seen), [where.data, where.log], 'the data folder, then the log');
       await alpha.locator('button[title="Show credentials"]').click();
       assert((await content.textContent('#credsText')).includes(`server:   ${urls.alpha}`), 'the credentials name the address');
       await content.click('#dlgCreds .uiBtn.primary');
@@ -1221,7 +1380,7 @@ async function main() {
       return titles.join(' | ');
     });
 
-    await step('a PDF named at launch opens in the last server once it is up', async () => {
+    await step('a PDF named at launch is read where it is in the last server once it is up', async () => {
       await app.close();
       const pdf = path.join(profile, 'Opened at launch.pdf');
       fs.writeFileSync(pdf, minimalPdf('Opened while the app was closed'));
@@ -1232,7 +1391,7 @@ async function main() {
       const page = await waitFor(async () => {
         const id = shownPage(content);
         const b = id && ws() ? await serverCall(app, `/api/blocks/${id}`, { ws: ws() }) : null;
-        return b && b.content === 'Opened at launch.pdf' && b;
+        return b && b.content === 'Opened at launch' && b;
       }, 'the window on the file\'s page', 90_000);
       assert.equal(new URL(content.url()).origin, urls.alpha, 'the last server');
       return `${page.id} in ${ws()}`;

@@ -19,38 +19,20 @@ const section = (sections, id) => sections.find((s) => s.id === id);
 const row = (sections, key) => sections.flatMap((s) => s.rows).find((r) => r.key === key);
 const NOW = Date.parse("2026-11-03T14:00:00Z");
 
-test("blockKind follows the server's rule, case for case (tests/test_block_columns.py)", () => {
-  const cases = {
-    note: [{}, "note"],
-    hl: [{ pdf_position: pos, quote: "q" }, "highlight"],
-    pageOnly: [{ pdf_position: { pageNumber: 2 } }, "highlight"],
-    link: [{ pdf_position: pos, link_url: "", link_page_id: "pg" }, "link"],
-    linkUnset: [{ pdf_position: pos, link_url: "" }, "highlight"],
-    ink: [{ ink_url: "", pdf_position: pos }, "ink"],
-    box: [{ text_box: { x: 1 }, pdf_page: 1 }, "text_box"],
-    boxPlaced: [{ text_box: { x: 1 }, pdf_position: pos }, "text_box"],
-    pic: [{ picture: pic, pdf_page: 1 }, "picture"],
-    picPlaced: [{ picture: pic, pdf_position: pos, sheet: { size: "a4" } }, "picture"],
-    picBox: [{ picture: pic, text_box: { x: 1 } }, "text_box"],
-    picGone: [{ picture: { url: "/api/uploads/gone.svg" } }, "picture"],
-    sheet: [{ sheet: { size: "a4" }, pdf_position: pos }, "sheet"],
-    rec: [{ recording: { started: 1, segments: [], state: "done" }, link_page_id: "pg" }, "recording"],
-    recPlaced: [{ recording: { started: 1, segments: [] }, pdf_position: pos }, "recording"],
-    recNull: [{ recording: null }, "note"],
-    noPos: [{ pdf_position: null, quote: "q" }, "note"],
-    arrayPos: [{ pdf_position: [1, 2] }, "note"],
-    pdfPage: [{ pdf_page: 1 }, "note"],
-    fileBlock: [{ doc_id: "e".repeat(24) }, "note"],
-  };
-  for (const [name, [props, kind]] of Object.entries(cases)) assert.equal(blockKind({ properties: props }), kind, name);
+// The server's rule, case for case: tests/shared/blockkind.json, which
+// backend/tests/test_block_columns.py runs through the kind column and
+// blocks_store.block_kind.
+const KINDS_SHARED = JSON.parse(await readFile(new URL("../../tests/shared/blockkind.json", import.meta.url), "utf8"));
+
+test("blockKind follows the server's rule (the shared cases)", () => {
+  for (const c of KINDS_SHARED.props) assert.equal(blockKind({ properties: c.props }), c.kind, c.note);
+  // the dict's own fields say it too, whatever the properties hold
+  for (const c of KINDS_SHARED.tree) {
+    assert.equal(blockKind({ parent_id: c.parent_id, page_id: c.page_id, properties: c.props }), c.kind, c.note);
+  }
   assert.equal(blockKind({ properties: { pdf_position: pos } }, { isPage: true }), "page");
   assert.equal(blockKind({ properties: {} }, { isFolder: true }), "folder");
   assert.equal(blockKind({ properties: {} }, { isLabel: true }), "label");
-  // the dict's own fields say it too, whatever the properties hold
-  assert.equal(blockKind({ parent_id: "root", properties: { pdf_position: pos } }), "page");
-  assert.equal(blockKind({ parent_id: "trash", properties: {} }), "page");
-  assert.equal(blockKind({ parent_id: "f1", page_id: "folders", properties: { link_url: "https://x" } }), "folder");
-  assert.equal(blockKind({ parent_id: "labels", page_id: "labels", properties: {} }), "label");
   for (const kind of ["note", "highlight", "link", "ink", "text_box", "picture", "sheet", "recording", "page", "folder", "label"]) {
     assert.ok(KINDS[kind]?.label, kind);
   }

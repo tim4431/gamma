@@ -217,10 +217,10 @@ def test_a_copy_that_fails_its_check_and_uploads_that_fail_are_tried_again(data,
         result = real_snapshot(src, dst)
         return "*** in database main ***\nPage 3 is never used" if str(src) == damaged else result
 
-    def put(self, key, path):
+    def put(self, key, path, tick=None):
         if key.startswith(("offsite/ws-b/", "uploads/ws-b/")):
             raise s3.S3Error("PUT refused: the bucket is out of reach")
-        real_put(self, key, path)
+        real_put(self, key, path, tick)
 
     monkeypatch.setattr(offsite, "snapshot_db", snapshot)
     monkeypatch.setattr(s3.Client, "put_object", put)
@@ -267,7 +267,7 @@ def test_the_status_opens_no_database_and_survives_a_restart(data, monkeypatch):
     conf = offsite.settings()
     with mock.patch("sqlite3.connect", side_effect=AssertionError("the status opened a database")):
         assert offsite.status(conf) == {
-            "enabled": True, "running": False, "interval_s": 3600, "keep": 7, "last_round_at": None,
+            "enabled": True, "running": False, "progress": None, "interval_s": 3600, "keep": 7, "last_round_at": None,
             "copied": None, "uploads_copied": None, "failed": None, "error": None, "next_round_at": None}
     offsite.tick()
     before = time.time()
@@ -308,6 +308,58 @@ def test_copy_now_runs_one_round_at_a_time(data, monkeypatch):
         time.sleep(0.05)
     shown = offsite.status(offsite.settings())
     assert shown["running"] is False and shown["copied"] == 5
+
+
+def test_a_round_shows_its_progress_databases_then_files_and_bytes(data, monkeypatch):
+    """What the pane follows while a round runs, the first above all,
+    which sends every file: the databases looked at of all of them, then
+    the files to send and their bytes, counted as boto3 sends them; the
+    files of a workspace whose upload fails, and their bytes, are passed
+    by in the count, so the round ends at its totals; nothing between
+    rounds."""
+    data.uploads["ws-b"].append(_upload(data.root, "ws-b", b"paper three" * 50, ".pdf"))
+    conf, real_put, real_write, seen, ended = offsite.settings(), s3.Client.put_object, offsite._write_state, [], []
+    sizes = {name: (data.root / "workspaces" / ws / "uploads" / name).stat().st_size
+             for ws, names in data.uploads.items() for name in names}
+
+    def put(self, key, path, tick=None):
+        seen.append((key, offsite.status(conf)["progress"]))
+        if key.startswith("uploads/ws-b/"):
+            raise s3.S3Error("PUT refused: the bucket is out of reach")
+        real_put(self, key, path, tick)
+        if key.startswith("uploads/"):
+            seen.append(("sent", offsite.status(conf)["progress"]))
+
+    def write_state(state):  # the round's last step, its progress as the files left it
+        ended.append(offsite.status(conf)["progress"])
+        real_write(state)
+
+    monkeypatch.setattr(s3.Client, "put_object", put)
+    monkeypatch.setattr(offsite, "_write_state", write_state)
+    assert offsite.status(conf)["progress"] is None
+    done = offsite.tick()
+    assert done["uploads_copied"] == 2 and "ws-b/uploads" in done["failed"]
+    databases = [p for k, p in seen if k.startswith("offsite/")]
+    assert [p["phase"] for p in databases] == ["databases"] * 5 and {p["total"] for p in databases} == {5}
+    assert [p["done"] for p in databases] == [0, 1, 2, 3, 4]
+    assert [p["name"] for p in databases] == ["users.db", "ws-a/pages.db", "ws-a/data.db", "ws-b/pages.db", "ws-b/data.db"]
+    files = [(k, p) for k, p in seen if k.startswith("uploads/")]
+    tried = [("ws-a", n) for n in sorted(data.uploads["ws-a"])] + [("ws-b", sorted(data.uploads["ws-b"])[0])]
+    assert [k for k, _ in files] == [f"uploads/{ws}/{n}" for ws, n in tried]  # ws-b's second never put
+    assert {p["phase"] for _, p in files} == {"uploads"} and {p["total"] for _, p in files} == {4}
+    assert {p["bytes"]["total"] for _, p in files} == {sum(sizes.values())}
+    assert [p["done"] for _, p in files] == [0, 1, 2] and files[0][1]["bytes"]["done"] == 0
+    assert [p["name"] for _, p in files] == [k[len("uploads/"):] for k, _ in files]
+    first = sizes[sorted(data.uploads["ws-a"])[0]]
+    after_first = next(p for k, p in seen if k == "sent")
+    assert after_first["bytes"]["done"] == first and after_first["done"] == 0  # boto3's count, as it went
+    assert files[1][1]["bytes"]["done"] == first
+    assert files[2][1]["bytes"]["done"] == sum(sizes[n] for n in data.uploads["ws-a"])
+    assert ended == [{"phase": "uploads", "done": 4, "total": 4, "name": "",
+                      "bytes": {"done": sum(sizes.values()), "total": sum(sizes.values())}}]  # both of ws-b's passed by
+    assert offsite.status(conf)["progress"] is None and offsite._progress is None
+    monkeypatch.setattr(offsite, "_progress", {"phase": "uploads", "done": 1, "total": 3, "name": "x"})
+    assert offsite.status(conf)["progress"] is None  # what no round holds is no progress
 
 
 # --- restoring -----------------------------------------------------------------------
@@ -576,7 +628,7 @@ def test_the_settings_through_the_api(admin, monkeypatch):
     assert view["from_env"] is False and view["settings"] == {
         "enabled": False, "bucket": "", "endpoint": "", "region": "", "access_key": "", "secret_set": False,
         "prefix": "", "interval_s": 3600, "keep": 7}
-    assert set(view["status"]) == {"enabled", "running", "interval_s", "keep", "last_round_at", "copied",
+    assert set(view["status"]) == {"enabled", "running", "progress", "interval_s", "keep", "last_round_at", "copied",
                                    "uploads_copied", "failed", "error", "next_round_at"}
 
     r = admin.put("/api/admin/offsite", json={"enabled": True, "bucket": "gamma-backups", "region": "auto",

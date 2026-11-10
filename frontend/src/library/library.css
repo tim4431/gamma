@@ -42,7 +42,6 @@
   cursor: pointer;
   text-align: left;
   color: var(--text-primary);
-  font: inherit;
   transition: background var(--dur-fast), border-color var(--dur-fast), box-shadow var(--dur-fast);
 }
 /* One width for every fixed-width strip card, and the grid's minimum track —

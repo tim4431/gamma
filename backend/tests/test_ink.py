@@ -701,19 +701,21 @@ def test_orphan_bookkeeping_follows_ink_url(guest, monkeypatch):
 
 
 def test_read_upload_caches_the_parsed_file_by_path_and_stat(guest, tmp_path):
+    from conftest import files_in
+
     body = _bytes(_ink())
     (tmp_path / ("a" * 24 + ".ink")).write_bytes(body)
     url = f"/api/uploads/{'a' * 24}.ink"
-    first = inkmod.read_upload(tmp_path, url)
-    assert first is not None and inkmod.read_upload(tmp_path, url) is first
-    assert inkmod.read_upload(tmp_path, "/api/uploads/" + "b" * 24 + ".ink") is None
-    assert inkmod.read_upload(tmp_path, "/api/uploads/x.gamma-ink") is None
+    first = inkmod.read_upload(files_in(tmp_path), url)
+    assert first is not None and inkmod.read_upload(files_in(tmp_path), url) is first
+    assert inkmod.read_upload(files_in(tmp_path), "/api/uploads/" + "b" * 24 + ".ink") is None
+    assert inkmod.read_upload(files_in(tmp_path), "/api/uploads/x.gamma-ink") is None
     # a stored file no client could read (an extra key past the largest double) is unreadable, not an error
     (tmp_path / ("c" * 24 + ".ink")).write_bytes(_bytes({**_ink(), "x": 10 ** 400}))
-    assert inkmod.read_upload(tmp_path, f"/api/uploads/{'c' * 24}.ink") is None
+    assert inkmod.read_upload(files_in(tmp_path), f"/api/uploads/{'c' * 24}.ink") is None
     # nor one the parser refuses: an integer past Python's 4300 digits
     (tmp_path / ("d" * 24 + ".ink")).write_bytes(_bytes(_ink())[:-1] + b',"x":1' + b"0" * 5000 + b"}")
-    assert inkmod.read_upload(tmp_path, f"/api/uploads/{'d' * 24}.ink") is None
+    assert inkmod.read_upload(files_in(tmp_path), f"/api/uploads/{'d' * 24}.ink") is None
 
 
 # --- two writers, one group ------------------------------------------------------------

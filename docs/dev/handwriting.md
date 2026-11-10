@@ -54,8 +54,12 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     `inkSurfaces.test.mjs`, `inkHistory.test.mjs`, `inkEdits.test.mjs`,
     `selectionEdits.test.mjs` and `inkCommands.test.mjs`;
   - the Convert menu's: `inkAi.test.mjs` and `inkSvg.test.mjs`;
-  - the benchmarks `bench/inkCache.bench.mjs` and `bench/inkErase.bench.mjs`,
-    which are not part of `npm test`.
+  - the timing budgets of the outline caches, the eraser's flush and the
+    stroke merge, `perf/ink.perf.mjs` (`npm run test:perf`,
+    [debugging.md](debugging.md#performance-budgets)), and the benchmarks
+    `bench/inkCache.bench.mjs` and `bench/inkErase.bench.mjs`, which time
+    the same scenarios against another copy of `src/ink`. None of them is
+    part of `npm test`.
 - Shared fixtures in `tests/shared/` are read by
   `backend/tests/test_shared_fixtures.py` and the node tests:
   - `inkv2.json`, `inkwidth.json`, `inkdash.json`, `inkmerge.json`,
@@ -708,6 +712,9 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
   - Every wet stroke of someone who leaves goes with them.
   - A stroke written in the iPad app, and a Shapes stroke, shows once it
     is saved.
+  - A page without its live connection (a network that blocks it) sends
+    and gets no wet strokes: the others' drawing shows once it is saved,
+    within a couple of seconds.
 - **Dense pages**: a group of more than 200 strokes appears first as thin
   lines that fill out to their true widths within a moment. Groups
   scrolled far off the visible part of a page are not drawn.
@@ -1478,9 +1485,11 @@ reach.
     (408, 429). The draft is kept behind the sticky pill "Handwriting not
     saved: <detail>".
   - 5xx and network errors retry after 2 s.
-- The page socket's hello and `/api/session` carry the server's `build`.
-  The client keeps the build its session first reported and compares
-  every hello's with it (`ink/buildFence.js` `noteServerBuild`,
+- The page socket's hello and `/api/session` carry the server's `build`,
+  and so does the op-log read a tab without its socket polls
+  (`GET /pages/{id}/ops`, [collab.md](collab.md) "The client"). The client
+  keeps the build its session first reported and compares every hello's
+  and every read's with it (`ink/buildFence.js` `noteServerBuild`,
   "Client").
   - On a mismatch it shows "Gamma was updated, reload to keep drawing"
     and refuses to start a stroke or a cut (reads keep working).
@@ -1539,11 +1548,14 @@ reach.
       eraser's test on the same geometry (the strokes the partial eraser
       would cut), `hitStrokes(ink, x, y, radius, keep)` at one point.
     - `frontend/tests/inkErase.test.mjs` pins the cuts.
+    - `frontend/tests/perf/ink.perf.mjs` (`npm run test:perf`) holds one
+      flush of a 20-point path over a 500-stroke drawing to a budget, warm
+      and cold, once it has checked that the flush leaves no sample inside
+      the swept band.
     - `frontend/tests/bench/inkErase.bench.mjs` (not part of `npm test`)
-      times one flush of a 20-point path over a 500-stroke drawing, against
-      any copy of `src/ink`, and counts the samples a flush leaves inside
-      the swept band. It runs a copy without `eraseAlong` as its layer ran
-      it, the point eraser at each of the path's points.
+      times the same flush against any copy of `src/ink`, for a before and
+      after. It runs a copy without `eraseAlong` as its layer ran it, the
+      point eraser at each of the path's points.
   - `translateStrokes` only touches the first sample's two absolute
     integers (and a shape record's points, below).
   - `transformStrokes` scales/rotates selected XY samples around a shared
@@ -1661,9 +1673,12 @@ reach.
       `strokePlaceholder(stroke)` is the stand-in a dense group draws
       meanwhile (the samples as a stroked polyline at the mean drawn
       width).
+    - `frontend/tests/perf/ink.perf.mjs` (`npm run test:perf`) holds the
+      outlines of a 500-stroke drawing to budgets: cold, and after a reload,
+      a merged save and a restyle, each of them checking how many outlines
+      it kept.
     - `frontend/tests/bench/inkCache.bench.mjs` (not part of `npm test`)
-      times the outlines of a 500-stroke drawing cold and after a reload, a
-      merged save and a restyle, against any copy of `src/ink`.
+      times the same scenarios against any copy of `src/ink`.
   - `nearestInkStroke` resolves a touch to the nearest stroke edge (a
     band-1 stroke wins over a band-0 one within the radius, then the
     topmost).
@@ -3554,7 +3569,8 @@ reach.
   strip's owner with its session's build.
   - `noteServerBuild` keeps the names of the server's build as the session
     reported it (`/api/session` `build`: commit, label, version). It
-    compares every socket hello's `build` with them (`usePageCollab`'s
+    compares every socket hello's `build` with them, and every op-log
+    read's when the page polls without its socket (`usePageCollab`'s
     `onBuild`).
   - A build sharing none of the names sets `inkStale`, which disarms the
     tools (`inkTool`, `inkPenTool` null) behind the sticky pill "Gamma was

@@ -91,7 +91,7 @@ function test(sel, attrs) {
       if (m[1] !== "where") spec += Math.max(...args.map((a) => a.spec));
       rest = rest.slice(i);
       continue;
-    } else if ((m = rest.match(/^html/))) spec += 0;
+    } else if ((m = rest.match(/^html\b/))) spec += 0;
     // Another element or a class (the type sizes' control-reset list) is
     // never the root: it can't match, whatever else the compound says. Nor
     // is a language modelled here, and none of them changes a colour.

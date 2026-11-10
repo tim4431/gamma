@@ -140,16 +140,6 @@ export function exportJobBody(payload, { pageId = "", folder = "" } = {}) {
     : body;
 }
 
-// The same export as the download endpoints' query, `/pages/{id}/export?…`
-// or `/folders/{id}/export?…` (a share view, which has no background tasks,
-// downloads through them): a job body's mode and flags, each 0 or 1.
-export function exportQuery(body) {
-  const flag = (value) => (value ? 1 : 0);
-  return new URLSearchParams({ mode: body.mode, pdf: flag(body.pdf), highlights: flag(body.highlights), notes: flag(body.notes),
-    ...(body.notes_at ? { comments: flag(body.comments), notes_at: body.notes_at } : {}),
-    ...(body.sub_pages ? { sub_pages: 1 } : {}) }).toString();
-}
-
 // Whether a page's export offers the "Include pages inside" switch:
 // `subPages`, the number of pages inside it at any depth, is not 0. A
 // folder's export has no such switch.
@@ -176,7 +166,9 @@ export function hasReviewStep(format, controls) {
 // pages kept but not yet seen are read in), else null. An annotated
 // PDF of the page writes that translation in place of the original text
 // (App adds it to the job's body), which its summary says; nothing else
-// changes, there is no switch for it.
+// changes, there is no switch for it. A folder's is {papers, language,
+// counting}: how many of its papers go translated (pdf/folderTranslation.js;
+// while they are being read, `counting`, how many may).
 export function resolveExport(opts, { hasPdf, pdfStored, folder, hasMeta, subPages = 0, subPagesDirect = false, translated = null } = {}) {
   const formats = EXPORT_FORMATS
     .filter(({ id }) => (id !== "pdf" || hasPdf || folder) && (id !== "bibtex" || hasMeta || folder))
@@ -209,7 +201,7 @@ export function resolveExport(opts, { hasPdf, pdfStored, folder, hasMeta, subPag
   }
   return { definition, formats, noPdfCopy, subPages: withSubPages ? subPages : 0,
     subPagesDirect: withSubPages && Boolean(subPagesDirect), controls,
-    translated: definition.id === "pdf" && !folder && !noPdfCopy && translated?.pages > 0 ? translated : null,
+    translated: definition.id === "pdf" && !noPdfCopy && (folder ? translated?.papers : translated?.pages) > 0 ? translated : null,
     needsReview: hasReviewStep(definition, controls.filter(({ disabled }) => !disabled)),
     payload: { format: definition.id, ...values } };
 }
@@ -263,7 +255,15 @@ function formatSummary({ payload, noPdfCopy, translated }, folder) {
   // (translation.md "Exporting the translation": the dialog has no switch).
   // While the pages kept and not yet seen are read (`counting`), it names no
   // number: the count would be too low.
+  // A folder's papers each go as they would open: translated where this
+  // browser left them showing their translation.
   const swapped = !translated ? ""
+    : folder ? (translated.counting
+      ? t("The translation into {language} replaces the original text of the papers this browser left showing it, which are being counted. To export a paper's original, show it first with the translate button.",
+        { language: translated.language })
+      : tn("The translation into {language} replaces the original text of {n} paper, which this browser left showing it. To export a paper's original, show it first with the translate button.",
+        "The translation into {language} replaces the original text of {n} papers, which this browser left showing it. To export a paper's original, show it first with the translate button.",
+        translated.papers, { language: translated.language }))
     : translated.counting ? t("The translation into {language} replaces the original text on the pages it covers, which are being counted. To export the original, show it first with the translate button.",
       { language: translated.language })
     : tn("The translation into {language} replaces the original text on {n} page. To export the original, show it first with the translate button.",
@@ -290,9 +290,11 @@ function formatSummary({ payload, noPdfCopy, translated }, folder) {
       // (they are the user's own on the page); highlights and ink only with
       // the first (routers/export.py).
       if (folder) {
-        return highlights || notes || comments
+        return [highlights || notes || comments
           ? t("Every paper's PDF in one .zip, with {annotations}{page}, its subfolders as folders. Pages without a PDF are left out.", { annotations: highlights ? t("highlight annotations") : t("text box and picture annotations only"), page: cardsSummary(payload) })
-          : t("Every paper's PDF in one .zip, exactly as stored, its subfolders as folders. Pages without a PDF are left out.");
+          : translated ? t("Every paper's PDF in one .zip with nothing else added, its subfolders as folders. Pages without a PDF are left out.")
+            : t("Every paper's PDF in one .zip, exactly as stored, its subfolders as folders. Pages without a PDF are left out."),
+        swapped].filter(Boolean).join(" ");
       }
       if (noPdfCopy) return t("This PDF isn't stored on the server, so only the file itself can be exported.");
       if (!highlights && !notes && !comments) {

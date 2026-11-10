@@ -110,12 +110,12 @@ def paper_ops(paper: dict) -> bytes:
     return b"\n".join(ops)
 
 
-def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None, pictures=(), uploads_dir=None) -> bytes:
+def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None, pictures=(), stored=None) -> bytes:
     """A PDF of a page's sheets: one PDF page per ``(paper, [(content,
     text_box)], [InkFile])`` in order (at least one), the text boxes
     normalized. ``pictures`` holds, for the sheets in that order, the
     pictures on each (``sheet_pictures``; a sheet past its end has none),
-    their files read from ``uploads_dir``. The paper is painted, the
+    their files found through ``stored``. The paper is painted, the
     pictures drawn on it as placed and the text boxes typeset over them as
     real text (``placed_ops``, ``resolve_ref`` reading their references),
     and the handwriting drawn over those as vectors (the page is the drawing, so
@@ -136,7 +136,7 @@ def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None, pictur
     writer = PdfWriter()
     glyphs = GlyphFonts(writer)
     grain = inkmod.GrainPatterns(writer)
-    images = XObjectStore(writer, uploads_dir)
+    images = XObjectStore(writer, stored)
     for n, (paper, boxes, inks) in enumerate(sheets):
         w, h = paper["width"], paper["height"]
         writer.add_blank_page(w, h)

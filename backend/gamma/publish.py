@@ -34,7 +34,7 @@ import re
 import unicodedata
 from urllib.parse import unquote, urlsplit
 
-from . import cloud_auth, config, integrations, ratelimit, sync_engine, workspaces
+from . import cloud_auth, config, folder_links, integrations, ratelimit, sync_engine, workspaces
 from .auth import SHARE_AUDIENCES, SHARE_ROLES
 from .blocks_store import page_ancestors, page_descendants, with_sub_pages
 from .cloud_auth import CloudAuthError
@@ -47,6 +47,7 @@ MIRROR_NAME = "Gamma Cloud"
 SIGN_IN = "Sign in with Gamma Cloud to publish."
 IS_SHARE_HOST = "This server is a share host: share its pages directly."
 ZOTERO_LINKED = "This workspace is kept in step with a Zotero library, so it cannot publish pages."
+IN_VAULT = "This page is kept in step with files on this computer (a synced vault), so it cannot be published."
 EXCHANGE_PATH = "/api/auth/cloud/exchange"
 
 
@@ -282,6 +283,14 @@ def _zotero_linked(ws: str) -> bool:
         return conn.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ?", (ws,)).fetchone() is not None
 
 
+def _in_vault(ws: str, page_id: str) -> bool:
+    """Whether a synced vault of this computer keeps the page
+    (gamma/folder_links.py): its files are the page's other side, which a
+    copy on the share host would not follow. Only the desktop app's own
+    server keeps vaults."""
+    return config.folder_links_enabled() and folder_links.vault_of_page(ws, page_id) is not None
+
+
 def _require_page(ws: str, page_id: str) -> None:
     with connect_pages_db(ws) as conn:
         row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
@@ -353,16 +362,33 @@ def _token_ok(host: str, token: str) -> bool:
         raise PublishError(502, f"Cannot reach the share host: {e}") from e
 
 
+def _checked_token(user_id: str, ws: str, mirror: dict, host: str, server_name: str) -> None:
+    """The workspace's mirror checked as its publication (``_check_mirror``)
+    and its token as one the share host still takes: an expired or revoked
+    one is exchanged again, for this mirror and the account's other
+    publishing ones."""
+    _check_mirror(mirror, host, user_id)
+    if not _token_ok(host, mirror["token"]):
+        sync_engine.replace_token(ws, _exchange(user_id, host, server_name))
+
+
+def _published_already(ws: str, page_id: str) -> bool:
+    """Whether ``page_id`` is published and there: its own entry in the
+    mirror's filter (or a mirror without one), its base saved and nothing
+    of it waiting on the retry list."""
+    mirror = sync_engine.get_mirror(ws)
+    if not mirror or (mirror["page_filter"] is not None and page_id not in mirror["page_filter"]):
+        return False
+    return _synced(ws, page_id) and page_id not in (mirror["status"].get("retry") or {})
+
+
 def _mirror_for(user_id: str, ws: str, page_id: str, host: str, server_name: str) -> dict:
     """The workspace's publishing mirror with ``page_id`` in its filter,
     made on the first publication (``adopt: mine``: the page here wins over
     anything the share host holds without a base)."""
     mirror = sync_engine.get_mirror(ws, with_token=True)
     if mirror:
-        _check_mirror(mirror, host, user_id)
-        if not _token_ok(host, mirror["token"]):
-            # an expired or revoked token: a new one for this mirror and the account's other publishing ones
-            sync_engine.replace_token(ws, _exchange(user_id, host, server_name))
+        _checked_token(user_id, ws, mirror, host, server_name)
         with sync_engine.round_lock(ws):
             # a full mirror of the share host moves every page already
             return sync_engine.filter_add(ws, page_id, adopt="mine" if mirror["page_filter"] is not None else "")
@@ -491,7 +517,10 @@ def publish(user_id: str, ws: str, page_id: str, *, audience: str | None = None,
     one round now, then the share on the share host (default anyone / view;
     ``audience`` / ``role`` set it, on a new link or an existing one).
     ``{url, public_url, share, mirror: {ws, status, ...}}``. A page new to
-    the share host must fit the person's plan there (``_check_cap``)."""
+    the share host must fit the person's plan there (``_check_cap``). A
+    change of ``audience`` / ``role`` on a page already published and there
+    (``_published_already``) runs no round: only the share changes, and
+    the page's edits go at the next round as ever."""
     if audience is not None and audience not in SHARE_AUDIENCES:
         raise PublishError(400, "audience must be anyone, users or list")
     if role is not None and role not in SHARE_ROLES:
@@ -501,9 +530,15 @@ def publish(user_id: str, ws: str, page_id: str, *, audience: str | None = None,
     _require_page(ws, page_id)
     if _zotero_linked(ws):  # before any token is minted on the share host
         raise PublishError(409, ZOTERO_LINKED)
+    if _in_vault(ws, page_id):
+        raise PublishError(409, IN_VAULT)
     if not cloud_auth.settings()["enabled"] or not cloud_auth.grant_of(user_id)[1]:
         raise PublishError(409, SIGN_IN)
     host = share_host()
+    wanted = {k: v for k, v in (("audience", audience), ("role", role)) if v is not None}
+    if wanted and _published_already(ws, page_id):
+        _checked_token(user_id, ws, sync_engine.get_mirror(ws, with_token=True), host, server_name)
+        return _share(ws, page_id, wanted)
     _mirror_for(user_id, ws, page_id, host, server_name)
     _check_cap(user_id, ws, page_id, host, server_name)
     going = _going(ws, sync_engine.get_mirror(ws), page_id)
@@ -521,9 +556,14 @@ def publish(user_id: str, ws: str, page_id: str, *, audience: str | None = None,
             raise _cap_error(limit, capped[page_id], going)
         error = status.get("last_error") or ""
         raise PublishError(502, f"The page did not reach the share host: {error or 'try again'}")
+    return _share(ws, page_id, wanted)
+
+
+def _share(ws: str, page_id: str, wanted: dict) -> dict:
+    """The page's share on the share host, made when missing and set to
+    ``wanted`` (``{audience?, role?}``), and ``publish``'s answer."""
     mirror = sync_engine.get_mirror(ws, with_token=True)
     remote = _remote(mirror)
-    wanted = {k: v for k, v in (("audience", audience), ("role", role)) if v is not None}
     try:
         share = _json(remote, "POST", f"/api/share/{page_id}", wanted or None)
         if any(share.get(k) != v for k, v in wanted.items()):
@@ -622,6 +662,8 @@ def state(user_id: str, ws: str, page_id: str) -> dict:
         reason = IS_SHARE_HOST
     elif _zotero_linked(ws):
         reason = ZOTERO_LINKED
+    elif _in_vault(ws, page_id):
+        reason = IN_VAULT
     elif not cloud_auth.settings()["enabled"] or not cloud_auth.grant_of(user_id)[1]:
         reason = SIGN_IN
     else:

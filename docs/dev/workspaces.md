@@ -276,6 +276,7 @@ Keep identity and data location separate in endpoint code:
 | `require_ws_writer(request)` | Write through an edit share, otherwise workspace editor access |
 | `require_commenter(request, page_id)` | Write a comment on the page: any member (viewers too), or a signed-in account a share admits, view or edit, within the share's pages; never a link visitor or a read-scope token ([comments.md](comments.md) "Who may comment") |
 | `share_scope(request)` | The `ShareScope` (one page and the pages inside it, or the pages filed in one folder and the pages inside those) a share-enabled endpoint must enforce |
+| `share_job_owner(request)` | The owner of a share view's jobs, `share:<token>`, for any visitor the share admits (the share view's export, [tasks.md](tasks.md#a-share-views-exports)); "" without a share token |
 
 Without a share token, selection is `?ws=` first, then `X-Gamma-Workspace`,
 then the account's default. An inaccessible explicit workspace is refused;
@@ -497,8 +498,9 @@ included, to `backups/deleted/<id>-<name>-<time>.zip` (`ws_backup.keep_final_cop
 That folder is outside the ones that go with the workspace. It is the same
 zip format, so an administrator restores it into any workspace through
 Import (`/import-data`). Copies older than 90 days are removed when the next
-one is written (`DELETED_KEEP_DAYS`); an admin may delete them by hand
-before that. When a copy cannot be written, nothing is deleted (507). The
+one is written and by the hourly sweep of snapshot work files
+(`DELETED_KEEP_DAYS`, `ws_backup.sweep_stale_temp`); an admin may delete
+them by hand before that. When a copy cannot be written, nothing is deleted (507). The
 copy is written before the delete's checks run again under the users.db
 write lock; when they refuse after all (the account's other personal
 workspace was made shared meanwhile, so this one is its last; two deletes
@@ -526,9 +528,46 @@ in the transaction that deletes the rows, so an owner made an editor or an
 admin demoted while the copy was written is refused there and the copy
 goes again. A guest's workspaces, which get no copy, are not held, so a guest's
 logout racing its expiry stays harmless. A snapshot of the workspace being
-written finishes before the snapshot folder goes, and one that waited for
-it finds the workspace gone (`ws_backup.remove_all`, `create`). Changes
-made in the workspace while its copy is written are not in the copy.
+written finishes, and answers, before the snapshot folder goes (both hold
+the workspace's snapshot lock), and one that waited for it finds the
+workspace gone (`ws_backup.remove_all`, `create`).
+
+A workspace a delete holds takes no more changes, since one made while
+its copy is written would be in neither the copy nor anywhere else once
+the rows go (`workspaces.refuse_writes`). The write gates refuse them:
+`auth.require_ws(write=True)`, `require_ws_writer` (an edit share too)
+and `require_commenter`, and a restore or a merge into it
+(`ws_backup.restore_zip`), each with 423 `{detail, error:
+"workspace_deleting", workspace}` and the header
+`X-Gamma-Workspace-Deleting` (the app's `WorkspaceDeleting` handler);
+`auth.can_write` answers false, so the AI chat arms no mutating tools,
+and a chat turn that armed them before the delete has each changing tool
+call refused (`ai_tools.run_agent_tool`). Work that passed its gate
+before is stopped too: the delete's job, before its final copy, stops the
+background jobs that change the workspace (started with `writes=True`:
+imports, restores, metadata lookups, transcriptions, highlight runs;
+`jobs.refuse_writers`), a queued one at once and a running one at its
+next progress report, each failed saying the workspace is being deleted,
+and waits for one past its last stop, so what it wrote is in the copy.
+Reads, exports, the delete's own Stop and a person's preferences go on.
+The session's listing marks the workspace `deleting`. The web app's fetch
+wrapper and `xhrUpload` turn the header into a `gamma-workspace-deleting`
+event, on which the tab that has the workspace open acts as a viewer of it
+(`workspaceRoles.actingRole`: the notes, the library and the chats read
+only) and says on a pill that stays that changes are no longer saved, with
+a Reload (`app/useWorkspaceDeleting.js`). A tab that opens it meanwhile
+starts that way, from the listing. A share view does the same: the
+refusal marks its share as read-only (`workspaceRoles.shareDeleting`), so
+every page it opens next stays read-only and the pill stays, and one
+opened meanwhile is told by `GET /share/{token}` (`deleting: true`,
+`can_edit: false`). A stopped delete lets the workspace go
+and it takes changes again; a reload brings the editing back. The edit
+the server refused is dropped and the page refetched
+([collab.md](collab.md)). Not held: a request already past its gate as
+the delete starts, until it answers, and an AI tool call already running,
+either of which can land after the copy read the database, and the
+background rounds (a clone's fill, a Zotero link's, the indexer), whose
+changes come from elsewhere.
 
 The directory is then renamed to `.deleting-<id>-…` (atomic, so a
 background pass about to open one of its databases finds none instead of
@@ -603,16 +642,23 @@ its state back with the pages ("Export and backups"). The design — what
 syncs, the round, merging, PDFs, notes, annotations, conflicts — is
 [zotero_sync.md](zotero_sync.md).
 
-## Folders on disk
+## Synced vaults
 
-The desktop app keeps a folder of a workspace as a directory on the
-computer it runs on: each paper's PDF beside a Markdown note of its
-highlights and notes, kept up to date, and when asked, the PDFs changed
-there sent back. A page can follow one PDF on that computer, each new
-version becoming its PDF. A folder's *Keep on this computer…*, a page's
-*Follow a file on this computer…* or the desktop app's sync panel starts
-them. The layout, the rounds, the links and the client that does the same
-without the app are [folder_sync.md](folder_sync.md).
+The desktop app keeps a folder of a workspace and a directory on the
+computer it runs on in step, a synced vault: each page a Markdown note
+beside its PDF, Gamma's changes pulled to the files and, as the vault's
+switches say, the PDFs or everything changed there pushed back, notes
+included. A vault of one file pushes a PDF on that computer to a page each
+time it changes, and a PDF opened from that computer is read where it lies,
+a page inside *Opened files*. A folder's *Sync with this computer…*, a
+page's *Push from a file on this computer…* or the desktop app's sync panel
+(*Add a synced vault…*) starts them. A vault's writes are its maker's, as
+op-log client `disk`, and its own conflicts (`file_won`) stay out of a
+clone's and a Zotero link's. A workspace that is a clone or has a Zotero
+link takes vaults that pull or push PDFs, never one that pushes everything,
+and a page a vault keeps is never published. The layout, the lens, the
+rounds, the rules, the routes and the client that does the same without the
+app are [synced_vaults.md](synced_vaults.md).
 
 ## Current limits
 

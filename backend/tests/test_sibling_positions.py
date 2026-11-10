@@ -2,7 +2,8 @@
 page made through POST /api/blocks without neighbours goes last in the
 library (the app's "Duplicate" sends that), and every key a client names —
 a page's, a cross-page move's — is re-keyed like an op's when a sibling
-holds it (blocks_store.free_position)."""
+holds it (blocks_store.free_position); an op's key that no client could
+have minted is refused."""
 
 from conftest import login, make_user
 
@@ -44,3 +45,24 @@ def test_a_cross_page_move_is_rekeyed_on_a_clash():
         assert r.status_code == 200, r.text
     keys = _keys(c, dst)
     assert len(keys) == 3 and _unique(keys)
+
+
+def test_an_op_naming_a_key_no_client_mints_is_refused():
+    """A position fractional-indexing could not have written answers 400,
+    the empty one included, which the library itself fails on with an
+    IndexError, and one outside the base-62 alphabet, which the library
+    takes but cannot key beside (tests/shared/fractionalkeys.json ``invalid``
+    and ``foreign``). Nothing is stored, so the next append still keys."""
+    make_user("sp_keys", "spkeyspw1")
+    c = login("sp_keys", "spkeyspw1")
+    page = c.post("/api/pages", json={"title": "Keys"}).json()["id"]
+    for n, position in enumerate(("", "a00", "!0", "a\u00e9", "a0\u00e9")):
+        r = c.post(f"/api/pages/{page}/ops", json={"client": "t", "ops": [
+            {"op": "insert", "id": f"spKey{n}", "parent": page, "position": position, "content": "x"}]})
+        assert r.status_code == 400 and "invalid position" in r.text, (position, r.text)
+    r = c.post(f"/api/pages/{page}/ops", json={"client": "t", "ops": [
+        {"op": "insert", "id": "spKeyOk", "parent": page, "position": "a0V", "content": "x"}]})
+    assert r.status_code == 200, r.text
+    r = c.post(f"/api/pages/{page}/ops", json={"client": "t", "ops": [
+        {"op": "insert", "id": "spKeyEnd", "parent": page, "content": "x"}]})
+    assert r.status_code == 200, r.text

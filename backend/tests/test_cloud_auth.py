@@ -41,6 +41,8 @@ class FakeAccountServer:
     ``person`` is who the next sign-in is; ``revoked`` the refresh tokens
     the client gave back; ``calls`` every request as (method, path);
     ``offline`` makes every call fail as if the network were down;
+    ``filed`` the reports forwarded to it, each with how the call was
+    signed (``auth``: Bearer, Basic or '') and the token's subject (``by``);
     ``invitations`` / ``cancels`` the bodies posted to send and withdraw an
     invitation, and ``refuse_invitation`` (status, detail) the answer the
     next sends get instead."""
@@ -69,6 +71,7 @@ class FakeAccountServer:
         self.invitations = []  # the bodies posted to /api/invitations, each with the inviter's subject as "by"
         self.cancels = []      # the bodies posted to /api/invitations/cancel, each with the grant's subject as "by"
         self.refuse_invitation = None  # (status, detail): what a send answers instead of mailing
+        self.filed = []        # the bodies posted to /api/reports, with "auth" and "by"
 
     def _mint_access(self, subject):
         self.minted += 1
@@ -149,6 +152,12 @@ class FakeAccountServer:
         raise AssertionError(f"unexpected url {url}")
 
     def api(self, method, path, body, headers):
+        if path == "/api/reports" and method == "POST":  # signed by a token, the client's secret, or not at all
+            auth = (headers or {}).get("Authorization", "")
+            scheme = auth.partition(" ")[0]
+            self.filed.append({**body, "auth": scheme, "by": self._bearer(headers) if scheme == "Bearer" else "",
+                               "basic": auth.partition(" ")[2] if scheme == "Basic" else ""})
+            return {"ok": True, "id": f"cloud-{len(self.filed)}"}
         subject = self._bearer(headers)
         if path.startswith("/api/me/prefs/"):
             key = path.removeprefix("/api/me/prefs/")
@@ -448,6 +457,8 @@ def test_the_desktop_app_signs_in_through_the_system_browser(cloud, monkeypatch)
     window, system_browser = browser(), browser()
     auth, verifier = app_start(window, next="/?page=abc")
     assert auth["redirect_uri"] == "http://testserver/api/auth/cloud/callback", "the account server calls back as before"
+    assert auth["gamma_app"] == "1", "the account server's pages then leave out their links to the plans"
+    assert "gamma_app" not in start(browser()), "a sign-in in a browser of its own keeps them"
     # The browser finishes the sign-in, gets no session, and carries a result to the app's address.
     r = callback(system_browser, auth)
     assert "set-cookie" not in r.headers

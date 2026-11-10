@@ -20,3 +20,13 @@ export function sameObject(a, b, same = (x, y) => x === y) {
   const keys = Object.keys(a);
   return keys.length === Object.keys(b).length && keys.every((k) => same(a[k], b[k]));
 }
+
+// `prevRef.current.value` while `next` reads as the same JSON, else `next`:
+// for a derived list of rebuilt objects, where only their text tells two
+// apart. The ref holds `{json, value}` and starts as `{json: "", value: []}`.
+export function keepIfSameJson(prevRef, next) {
+  const json = JSON.stringify(next);
+  if (json === prevRef.current.json) return prevRef.current.value;
+  prevRef.current = { json, value: next };
+  return next;
+}

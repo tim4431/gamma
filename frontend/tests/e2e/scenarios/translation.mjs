@@ -35,7 +35,7 @@
 // reader sees the glossary without its edit controls.
 import fs from "node:fs";
 import http from "node:http";
-import { Account, FAKE_AI_MODELS, assertMenuFrom, assertMenuRoles, fakeAiModels, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, assertMenuFrom, assertMenuRoles, embeddedWidth, fakeAiModels, wanted } from "../harness.mjs";
 import { dragSelectPdfText, waitForPdf } from "./pdf.mjs";
 
 // A paragraph on a tinted panel with a formula in it, one on plain paper right
@@ -79,6 +79,37 @@ function twoColumnPage() {
   line(330, 700, "continues with the Hamiltonian of the");
   line(330, 688, "system, which we now write down in full");
   line(330, 676, "for the reader who wants every detail.");
+  return { runs };
+}
+
+// Two paragraphs justified in a font the file holds (makePdf's "F6"), each line
+// but the last filling the measure from 72 to 540 pt, and a ragged one in Times,
+// which the file does not hold.
+const OWN_FACE = "The words of this paragraph are set in the own face of the paper and they run on over the measure until the line is full and spread out to both of its edges as a journal sets its pages for print";
+const SECOND_FACE = "A second paragraph in the same embedded face is justified as well and its translation brings letters the face has never seen so it takes the serif of the overlay instead of the face of the paper";
+function facesPage() {
+  const runs = [];
+  const justified = (text, top) => {
+    let y = top, line = [];
+    const put = (words, spread) => {
+      const widths = words.map((w) => embeddedWidth(w, 10));
+      const gap = spread ? (468 - widths.reduce((a, b) => a + b, 0)) / (words.length - 1) : embeddedWidth(" ", 10);
+      let x = 72;
+      words.forEach((w, k) => { runs.push({ x, y, size: 10, font: "F6", text: w }); x += widths[k] + gap; });
+      y -= 12;
+    };
+    for (const word of text.split(" ")) {
+      if (line.length && embeddedWidth([...line, word].join(" "), 10) > 468) { put(line, true); line = []; }
+      line.push(word);
+    }
+    put(line, false);
+  };
+  justified(OWN_FACE, 720);
+  justified(SECOND_FACE, 660);
+  const line = (y, text) => runs.push({ x: 72, y, size: 10, font: "F2", text });
+  line(600, "A ragged paragraph in Times ends its lines where the words end, which");
+  line(588, "the journal did not spread out to the edge of the measure, so");
+  line(576, "they stop short.");
   return { runs };
 }
 
@@ -137,7 +168,7 @@ function longPage(opening = "Paragraph") {
   return { runs };
 }
 
-export async function translationScenarios({ server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage }) {
+export async function translationScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }) {
   if (!wanted("translation")) return;
   let page, pageId, docId, stubbornDoc;
   const requests = [];
@@ -336,7 +367,7 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assertNoProblems(page);
   });
 
-  await step("translation: the overlay carries its language and the page's face, and a zoom writes one transform and no font size", async () => {
+  await step("translation: the overlay carries its language and the page's face, and a zoom writes nothing on it and no font size", async () => {
     const layer = page.locator('[data-page="1"] .pdfTransLayer');
     assertEq(await layer.getAttribute("lang"), requests[0].lang, "the layer says what language it is in");
     const set = await page.locator('[data-page="1"] .pdfTransText').first().evaluate((el) => ({
@@ -344,26 +375,29 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     }));
     assert(/^"?Times New Roman/.test(set.family), `the page's face: ${set.family}`);
     assertEq(set.rendering, "geometricprecision");
-    const transform = () => layer.evaluate((el) => el.style.transform);
+    // The zoom reaches the layer through the zoom layer's --viewer-scale, so its
+    // own style never changes: read the scale it shows from its rendered size
+    // (laid out at REF_SCALE, 2).
+    const shown = () => layer.evaluate((el) => 2 * el.getBoundingClientRect().width / el.offsetWidth);
     const sizes = () => page.locator('[data-page="1"] .pdfTransText').evaluateAll((els) => els.map((el) => getComputedStyle(el).fontSize));
-    const before = await transform(), sizesBefore = await sizes();
+    const before = await shown(), sizesBefore = await sizes();
     await layer.evaluate((el) => {
       window.transWrites = [];
       window.transWatch = new MutationObserver((changes) => window.transWrites.push(...changes.map((c) => c.target.className)));
       window.transWatch.observe(el, { attributes: true, attributeFilter: ["style"], subtree: true });
     });
     await page.getByRole("button", { name: "Zoom in", exact: true }).click();
-    await until(async () => (await transform()) !== before, { what: "the layer carried to the new zoom" });
+    await until(async () => Math.abs((await shown()) - before) > 0.01, { what: "the layer carried to the new zoom" });
     await page.waitForTimeout(700); // the sharp redraw lands, and the crops are drawn from it
     const writes = await page.evaluate(() => { window.transWatch.disconnect(); return window.transWrites; });
-    assertEq(writes.join(), "pdfTransLayer", "one write, of the layer's transform");
+    assertEq(writes.join(), "", "no write on the layer or in it");
     assertEq((await sizes()).join(), sizesBefore.join(), "the text keeps the size it is laid out at");
     assertNoProblems(page);
   });
 
   await step("translation: at 60% no translated text is cut, and each block keeps the ratio it fitted at", async () => {
     const layer = page.locator('[data-page="1"] .pdfTransLayer');
-    const scale = () => layer.evaluate((el) => 2 * Number(el.style.transform.match(/scale\((.+)\)/)[1]));
+    const scale = () => layer.evaluate((el) => 2 * el.getBoundingClientRect().width / el.offsetWidth);
     const fits = () => page.locator('[data-page="1"] .pdfTransText').evaluateAll((els) => els.map((el) => el.style.getPropertyValue("--fit")));
     const fitsBefore = await fits();
     let steps = 0;
@@ -416,10 +450,13 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
       await dialog.waitFor({ state: "detached" });
       const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
       const doc = await pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(await file.path())), verbosity: 0 }).promise;
-      const first = await (await doc.getPage(1)).getTextContent();
+      const firstPage = await doc.getPage(1);
+      const first = await firstPage.getTextContent();
+      const { fnArray } = await firstPage.getOperatorList();
       await doc.destroy();
       // Without spaces: pdf.js splits the runs a line was set in.
-      return { summary, body, text: first.items.map((item) => item.str).join("").replace(/\s+/g, "") };
+      return { summary, body, text: first.items.map((item) => item.str).join("").replace(/\s+/g, ""),
+               pictures: fnArray.filter((fn) => fn === pdfjs.OPS.paintImageXObject).length };
     };
 
     const translated = await exportPdf();
@@ -442,6 +479,10 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assert(translated.text.includes("译:ThecollectiveRabifrequency"), `the file holds the translation: ${translated.text}`);
     assertEq(translated.text.split(opening).length - 1, 1, `the original lines are gone: ${translated.text}`);
     assert(translated.text.includes(`译:${opening}`), translated.text);
+    // The formula is the page's own glyph, drawn as itself (the page has no
+    // picture to draw it as one) and read in its place in the sentence.
+    assertEq(translated.pictures, 0, "the formula is drawn as itself, not as a picture");
+    assert(translated.text.includes("thefieldΩofthedrive"), `the formula reads in its place: ${translated.text}`);
 
     // Hidden: the original, and no word of a translation.
     await page.getByRole("button", { name: "Show original", exact: true }).click();
@@ -452,6 +493,49 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assert(original.text.includes(opening) && !original.text.includes("译"), original.text);
     await page.getByRole("button", { name: "Show translation", exact: true }).click();
     await page.locator('[data-page="1"] .pdfTransPara').first().waitFor();
+    assertNoProblems(page);
+  });
+
+  await step("translation: a translated export that failed starts again from Background tasks with the translation the server kept", async () => {
+    // The first job is sent another file's doc_id, so it fails as one would
+    // whose PDF was replaced meanwhile; the server keeps the layout it was
+    // sent, and the tray's Start again names the job instead of sending it.
+    await page.route("**/api/jobs/export", async (route) => {
+      const body = route.request().postDataJSON();
+      await route.continue({ postData: JSON.stringify({ ...body, translation: { ...body.translation, doc_id: "0".repeat(64) } }) });
+    }, { times: 1 });
+    await page.click("button[aria-label='View']");
+    await page.locator(".menuPopover .ctxMenuItem", { hasText: "Export…" }).click();
+    const dialog = page.getByRole("dialog", { name: "Export", exact: true });
+    await dialog.waitFor();
+    await dialog.getByRole("button", { name: "Annotated PDF", exact: true }).click();
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    const answered = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/jobs/export" && r.request().method() === "POST");
+    await dialog.getByRole("button", { name: "Export", exact: true }).click();
+    const first = await (await answered).json();
+    assertEq(first.params.translation, requests[0].lang, "its params name the language alone");
+    await dialog.getByRole("heading", { name: "Export failed", exact: true }).waitFor();
+    assert(/changed after it was translated/.test(await dialog.getByRole("alert").innerText()), "it failed on the file");
+    // its page is open: the dialog goes back to the setup, which reads the viewer afresh
+    await dialog.getByRole("button", { name: "Export again…", exact: true }).waitFor();
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await dialog.waitFor({ state: "detached" });
+
+    await page.click("button[aria-label='Background tasks']");
+    const row = page.locator(".taskRow.failed").first();
+    const sent = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/jobs/export" && r.method() === "POST");
+    const again = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/jobs/export" && r.request().method() === "POST");
+    await row.getByRole("button", { name: /^Start .+ again$/ }).click();
+    const body = (await sent).postDataJSON();
+    assertEq(body.translation_of, first.id, "Start again names the failed job");
+    assert(!("translation" in body), `and sends no layout: ${JSON.stringify(body)}`);
+    const second = await (await again).json();
+    assert(second.id && second.id !== first.id, JSON.stringify(second));
+    // the layout it writes is the kept one, another file's: it fails the same way
+    await until(async () => /changed after it was translated/.test(
+      await page.evaluate(async (id) => (await (await fetch(`/api/jobs/${id}`)).json()).error || "", second.id)),
+    { what: "the retried job failing on the kept layout's file" });
+    await page.keyboard.press("Escape");
     assertNoProblems(page);
   });
 
@@ -1300,6 +1384,41 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assertNoProblems(page);
   });
 
+  await step("translation: a paragraph justified in the original is justified, and set in the paper's own font when it draws every word", async () => {
+    const up = await alice.upload("/api/uploads", makePdf([facesPage()]), "faces.pdf", "application/pdf");
+    const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Faces", source_url: up.source_url } });
+    // Words the embedded font draws for the first paragraph, CJK for the rest.
+    const english = "Set again in the face of the paper, every word of this translation is in letters that the font holds, and it fills the lines out to both edges of the measure as the original did, line after line.";
+    respond = (route, body) => route.fulfill({ contentType: "application/x-ndjson", body: `${JSON.stringify({
+      translations: body.texts.map((t) => (t.includes("own face") ? english : `译:${t.split("{br}").join("{br}译:")}`)),
+      model: "demo:model", cached: false })}\n` });
+    try {
+      await page.goto(`${server.base}/?page=${created.id}&ws=${alice.ws}`);
+      await waitForPdf(page, 1);
+      await page.getByRole("button", { name: "Translate", exact: true }).click();
+      const para = (text) => page.locator('[data-page="1"] .pdfTransPara', { hasText: text });
+      await until(async () => (await para("Set again").count()) && (await para("译:A second").count()) && (await para("译:A ragged").count()),
+        { what: "the three paragraphs translated" });
+      const set = (text) => para(text).evaluate((el) => {
+        const words = el.querySelector(".pdfTransText"), style = getComputedStyle(words);
+        return { own: el.classList.contains("paperFace"), family: style.fontFamily, align: style.textAlign,
+                 face: el.style.getPropertyValue("--paper-face"), loaded: document.fonts.check(`10px ${el.style.getPropertyValue("--paper-face") || "serif"}`) };
+      });
+      const own = await set("Set again"), cjk = await set("译:A second"), ragged = await set("译:A ragged");
+      assert(own.own && /^"g_d\d+_f\d+"$/.test(own.face), `the paper's font, by pdf.js's name: ${JSON.stringify(own)}`);
+      assert(own.family.replace(/"/g, "").startsWith(own.face.replace(/"/g, "")), `its words are set in it: ${own.family}`);
+      assert(own.loaded, "the font is the document's");
+      assertEq(own.align, "justify", "justified, as the original");
+      assert(!cjk.own && /^"?Times New Roman/.test(cjk.family), `a letter the font lacks: the overlay's serif, whole: ${JSON.stringify(cjk)}`);
+      assertEq(cjk.align, "justify", "still justified, as the original");
+      assert(!ragged.own, "a font the file does not hold is not the paper's");
+      assertEq(ragged.align, "start", "ragged, as the original");
+    } finally {
+      respond = null;
+    }
+    assertNoProblems(page);
+  });
+
   await step("translation: streaming masks only the lines reached, at the page's body size, the percentage counts it, and only a landing fades", async () => {
     const up = await alice.upload("/api/uploads", makePdf([longPage("Passage")]), "motion.pdf", "application/pdf");
     const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Motion", source_url: up.source_url } });
@@ -1563,6 +1682,46 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assert(lookups.length - looked > 1, "the pages not seen looked up for the export");
     assert(lookups.slice(looked + 1).some((l) => l.texts.some((t) => t.startsWith("Farthest"))));
     assertEq(requests.length, asked, "still no request to translate");
+    assertNoProblems(page);
+  });
+
+  await step("translation: a folder's annotated PDF carries the translation of the paper this browser left translated, read with no viewer", async () => {
+    const folder = "Translated reading";
+    const folderId = await alice.folder(folder);
+    await alice.file(keptPaper.id, { folders: [folder] });
+    const up = await alice.upload("/api/uploads", makePdf([longPage("Plain")]), "plain.pdf", "application/pdf");
+    const plain = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Plain", source_url: up.source_url } });
+    await alice.file(plain.id, { folders: [folder] });
+    const asked = requests.length, looked = lookups.length;
+    // The folder's view: no PDF open, so the paper is read with no viewer.
+    await page.goto(`${server.base}/?folder=${folderId}&ws=${alice.ws}`);
+    await page.waitForSelector(".folderNewBtn");
+    const view = page.locator('[data-popover="menu"] > button');
+    await (await view.count() ? view : page.locator('[data-guide="header.account"]')).click();
+    await page.getByRole("menuitem", { name: "Export…", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: `Export “${folder}”`, exact: true });
+    await dialog.getByRole("button", { name: "Annotated PDF", exact: true }).click();
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await dialog.getByText(/replaces the original text of 1 paper, which this browser left showing it/).waitFor();
+    const sent = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/jobs/export" && r.method() === "POST");
+    const download = page.waitForEvent("download", { timeout: 30000 });
+    await dialog.getByRole("button", { name: "Export", exact: true }).click();
+    const body = (await sent).postDataJSON();
+    await download;
+    await dialog.getByRole("heading", { name: "Export ready", exact: true }).waitFor();
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    await dialog.waitFor({ state: "detached" });
+    assertEq(body.folder, folderId);
+    assertEq((body.translations || []).map((t) => t.page_id).join(), keptPaper.id, "the kept paper alone goes translated");
+    const [kept] = body.translations;
+    assertEq(kept.pages.map((p) => p.page).join(), "1,2,3,4,5", "every page of it");
+    assert(kept.pages[4].blocks.flatMap((b) => b.parts).some((p) => typeof p === "string" && p.startsWith("译:Farthest one says")));
+    assert(lookups.slice(looked).every((l) => l.page_id === keptPaper.id), "only the kept paper is looked up");
+    assert(lookups.length > looked, "it is looked up");
+    assertEq(requests.length, asked, "no request to translate");
+    // Back to the paper for the steps after.
+    await keptPaper.open();
+    await shownAgain("Kept");
     assertNoProblems(page);
   });
 

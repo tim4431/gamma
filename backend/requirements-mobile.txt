@@ -28,6 +28,7 @@ orjson==3.11.9
 uvicorn==0.44.0
 websockets==17.1
 diff-match-patch==20241021
+markdown-it-py==4.2.0
 bcrypt==5.0.0
 # pydantic pins its pydantic-core exactly, and Flet publishes mobile builds of
 # only some cores: 2.13.4 needs pydantic-core 2.46.4, which it has (the

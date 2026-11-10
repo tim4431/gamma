@@ -72,3 +72,26 @@ def test_bad_names_and_labels(admin):
     assert admin.post("/api/admin/backups", json={"label": "no spaces here"}).status_code == 400
     assert admin.get("/api/admin/backups/..%2F..%2Fusers.db/download").status_code == 404
     assert admin.delete("/api/admin/backups/20260101-000000-nope").status_code == 404
+
+
+def test_a_listing_reads_each_snapshots_size_from_its_manifest(admin, plain, monkeypatch):
+    # The Server pane's list stats no file: a snapshot's manifest, and each
+    # workspace added to it later, record what its copies take.
+    from conftest import workspace_of
+    from gamma import backups
+    made = backups.create("sized", workspaces=False)
+    path = backups.backup_path(made["name"])
+    backups.add_workspace(made["name"], workspace_of("bk_plain"))
+    copies = sum(f.stat().st_size for f in path.rglob("*")
+                 if f.is_file() and f.name not in ("manifest.json", backups.ADDED_LIST))
+    assert 0 < made["size_bytes"] < copies
+    with monkeypatch.context() as m:
+        m.setattr(backups, "_dir_size", lambda p: pytest.fail("the listing measured a snapshot"))
+        listed = next(b for b in admin.get("/api/admin/backups").json()["backups"] if b["name"] == made["name"])
+    assert listed["size_bytes"] == copies
+    # a snapshot from before the field: measured, as before
+    manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
+    del manifest["size_bytes"]
+    (path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    assert backups.info(made["name"])["size_bytes"] == sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    assert backups.delete(made["name"])

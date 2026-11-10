@@ -32,6 +32,12 @@
 //     still on their way the same way (`ahead`);
 //   - catches up after a reconnect from the op log (GET …/ops?since=), or
 //     asks for a reload when the log no longer reaches back;
+//   - reads that same log every POLL_MS while the socket can't connect
+//     (`fallback`: POLL_AFTER_FAILS attempts in a row ended without a
+//     hello — a proxy that drops WebSocket upgrades), the tab visible: the
+//     others' edits still arrive, through the same ordered inbox, without
+//     presence either way; the socket is tried again every SOCKET_PROBE_MS
+//     and its hello ends the polling;
 //   - heals a batch the server refused for naming a block it doesn't have
 //     (404 with `missing`) while the base holds that block: the block goes
 //     out again ahead of the batch, where this tab has it, rather than the
@@ -68,6 +74,12 @@ export const MAX_RETRY_MS = 60000; // … up to this
 export const MAX_RESCUES = 20; // blocks re-sent between two saves that go through, before a refusal is a conflict
 export const MAX_OPS = 500;        // ops per batch, and …
 export const MAX_CONTENT = 200_000; // … characters per block: the server's limits (gamma/ops.py)
+// Without a socket (`fallback`, docs/dev/collab.md "The client"):
+export const SOCKET_HELLO_MS = 10000;  // an attempt without its hello this long is given up and counted
+export const POLL_AFTER_FAILS = 2;     // attempts in a row without a hello before the op log is polled
+export const POLL_MS = 2000;           // the poll's cadence while the tab is visible
+export const SOCKET_PROBE_MS = 60000;  // while polls answer, the socket is tried again this often
+export const POLL_COMMENTS_EVERY = 15; // a run refetches the threads on its first answer and every this many after
 const SOCKET_OPEN = 1; // WebSocket.OPEN
 const CLOSE_REVOKED = 4403; // the server closed the socket: no access to the page any more
 
@@ -236,21 +248,36 @@ function resealed(s, kept) {
 //                                     its edits wait — or is back (null)
 //       onInkLive(msg)                a peer's handwriting stroke in progress
 //                                     (`ink-live`, ink/inkLive.js)
-//       onBuild(build)                the server's build, from the hello (the build
-//                                     fence, ink/buildFence.js: a tab left open across
-//                                     an update stops drawing)
+//       onBuild(build)                the server's build, from the hello or a poll's
+//                                     answer (the build fence, ink/buildFence.js: a
+//                                     tab left open across an update stops drawing)
 //       onComments(msg)               someone wrote a comment on the page
 //                                     ({t: "comments", block_id, thread_id}), or
-//                                     the socket (re)joined (msg null): refetch
-//                                     the page's threads (comments/useComments.js)
+//                                     the socket (re)joined or a poll run began or
+//                                     came round again (msg null): refetch the
+//                                     page's threads (comments/useComments.js)
+//       onVault()                     a synced vault's round touched the page
+//                                     ({t: "vault"}), or the socket (re)joined or
+//                                     a poll run began or came round again and a
+//                                     message may have been missed: refetch how
+//                                     it stands with this computer
+//                                     (vault/useVault.js)
 //     onRemoteOps also gets the base the ops were applied to (`before`, what
 //     the server held before them), for the undo history's text rebase.
-//   onPeers(peers), onMe(me) — presence changes (the hook's React state)
+//   onPeers(peers), onMe(me) — presence changes (the hook's React state); me is
+//                               {client, connected, via}: connected while the page
+//                               is live, via "socket" (a hello) or "poll" (reads answer)
 //   onQueued()                — a local edit was queued (the clone's sync pill shows it as pending)
 //   onInbox()                 — the account has something new in its inbox ({t: "inbox"},
 //                               content-free; the hook dispatches the window event gamma:inbox)
 //   timers                — {set(fn, ms) → id, clear(id)}; default the globals
-export function createCollabSession({ clientId, api, openSocket, keepalivePost, opts, onPeers, onMe, onQueued, onInbox, timers }) {
+//   fallback              — poll the op log while the socket can't connect (the
+//                           hook passes true; without it none of that is armed:
+//                           no hello deadline, no poll)
+//   hidden()              — whether the tab is hidden: a hidden tab polls nothing
+//                           (default: never)
+export function createCollabSession({ clientId, api, openSocket, keepalivePost, opts, onPeers, onMe, onQueued, onInbox, timers,
+  fallback = false, hidden = () => false }) {
   const later = timers?.set || ((fn, ms) => globalThis.setTimeout(fn, ms));
   const cancel = timers?.clear || ((id) => globalThis.clearTimeout(id));
   const o = () => opts();
@@ -266,12 +293,28 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     sessions: new Set(),      // pages with queued or unacknowledged writes
     ws: null,
     wsPage: "",
+    page: "",                 // the page connect() follows
+    open: null,               // its next socket attempt (retryNow({socket}))
     backoff: 1000,
     closed: true,
     reconnectTimer: null,
+    probe: false,             // the attempt armed is the minute's probe (polls answer)
+    fails: 0,                 // attempts in a row that ended without a hello
+    helloTimer: null,         // the hello deadline of the attempt open (fallback)
+    // The poll (fallback): on from POLL_AFTER_FAILS failures until a hello,
+    // whatever page is open; its runs (`pollRun`, bumped whenever one stops:
+    // a hello, disconnect) let a late answer be told from a current one.
+    polling: false,
+    pollTimer: null,
+    pollRun: 0,
+    pollOk: false,            // the last poll answered: the page is live over HTTP
+    pollRetries: 0,           // failed polls in a row (the backoff)
+    pollFresh: true,          // the next answer is a run's first
+    pollAnswers: 0,           // answers since the threads were last refetched
+    pollGone: false,          // the page answered 404: onReload was asked, once
   };
   let peers = [];       // other clients on the page
-  let me = { client: clientId, connected: false };
+  let me = { client: clientId, connected: false, via: null };
   const setPeers = (next) => {
     peers = typeof next === "function" ? next(peers) : next;
     onPeers?.(peers);
@@ -660,11 +703,16 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     }
     // Refused for good (malformed, not allowed any more): this batch is
     // dropped and the page refetched to show what the server holds; the
-    // rest of the queue still goes out.
+    // rest of the queue still goes out. A workspace being deleted (423,
+    // `workspace_deleting`) takes no edit any more: App, told by the fetch
+    // wrapper, turns the tab read-only and says why on the status line, so
+    // the dropped edit is only the save notice's.
     forget(s, batch.ops);
     s.out = null;
-    const text = t("Save rejected: {message}", { message: err?.message || "" });
-    o().onStatus?.(text);
+    const deleting = status === 423 && data.error === "workspace_deleting";
+    const text = deleting ? t("This workspace is being deleted, so that edit was not saved.")
+      : t("Save rejected: {message}", { message: err?.message || "" });
+    if (!deleting) o().onStatus?.(text);
     o().onSaveNotice?.(text, "rejected");
     if (s === st.session) o().onReload?.(page);
     return null;
@@ -815,16 +863,30 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     return [...st.sessions].some((s) => s.queue.length > 0 || !!s.sending || !!s.out);
   }
 
-  // The network may be back (the browser's `online`, the window regaining
-  // focus, the socket's hello): a batch waiting for its next try goes out
-  // now, and should that fail the retries start over — short again, not a
-  // minute behind the recovery.
-  function retryNow() {
+  // The server is answering again (the socket's hello, a poll run's first
+  // answer): a batch waiting for its next try goes out now, and should that
+  // fail the retries start over — short again, not a minute behind the
+  // recovery.
+  function retrySaves() {
     for (const s of st.sessions) {
       if (!s.out || s.sending || s.gone) continue;
       if (s.timer) { cancel(s.timer); s.timer = null; }
       s.retries = 0;
       send(s);
+    }
+  }
+
+  // The network may be back (the window regaining focus; `socket`: the
+  // browser's `online`): the saves waiting go now (retrySaves), a page
+  // followed without a socket is read now, and with `socket` an attempt
+  // starts at once unless one is open or connecting.
+  function retryNow({ socket = false } = {}) {
+    retrySaves();
+    if (st.closed) return;
+    if (st.polling) { st.pollRetries = 0; armPoll(0); }
+    if (socket && !st.ws && st.open) {
+      if (st.reconnectTimer) { cancel(st.reconnectTimer); st.reconnectTimer = null; }
+      st.open();
     }
   }
 
@@ -979,6 +1041,15 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     }
   }
 
+  // Batches read from the log (`d`: a catch-up's or a poll's answer) into
+  // the ordered inbox.
+  function takeLog(s, d) {
+    for (const b of d.batches || []) applyRemoteBatch(b);
+    // A newer socket batch (or an ack) may have arrived while this snapshot
+    // of the log was being fetched. Recover that gap too.
+    if (s.pending.size && !s.reloading) queueMicrotask(() => catchUp());
+  }
+
   // After a reconnect: what did we miss?
   function catchUp() {
     const s = st.session;
@@ -989,17 +1060,154 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       try {
         const d = await api(`/pages/${encodeURIComponent(page)}/ops?since=${s.seq}`);
         if (st.session !== s) return;
-        for (const b of d.batches || []) applyRemoteBatch(b);
-        // A newer socket batch may have arrived while this snapshot of the
-        // log was being fetched. Recover that gap too.
-        if (s.pending.size && !s.reloading) queueMicrotask(() => catchUp());
-      } catch (err) {
+        takeLog(s, d);
+      } catch {
         if (st.session === s) o().onReload?.(page);
       } finally {
         s.catchingUp = null;
       }
     })();
     return s.catchingUp;
+  }
+
+  // A hello's catch-up to its `seq`. A read still on its way (a poll, or an
+  // ack's gap catch-up) read the log before the socket joined, and a poll's
+  // answer is ignored (its run is over): the catch-up follows it, and reads
+  // only what it left.
+  function catchUpTo(s, seq) {
+    const go = () => {
+      if (st.session !== s || seq <= s.seq) return;
+      if (s.catchingUp) s.catchingUp.then(go);
+      else catchUp();
+    };
+    go();
+  }
+
+  // --- without a socket: the op log, polled -------------------------------------
+
+  // The next tick of the current run, in `ms` (one armed at a time).
+  function armPoll(ms) {
+    if (st.pollTimer) cancel(st.pollTimer);
+    const run = st.pollRun;
+    st.pollTimer = later(() => { st.pollTimer = null; pollTick(run); }, ms);
+  }
+
+  // The run ends here: no tick armed, an answer on its way ignored. `polling`
+  // stays as it was (disconnect: the next page polls from its first tick).
+  function pausePoll() {
+    st.pollRun += 1;
+    if (st.pollTimer) { cancel(st.pollTimer); st.pollTimer = null; }
+  }
+
+  function startPolling() {
+    st.polling = true;
+    st.pollFresh = true;
+    st.pollRetries = 0;
+    armPoll(0);
+  }
+
+  // A hello: the socket carries the page again.
+  function stopPolling() {
+    pausePoll();
+    st.polling = false;
+    st.pollOk = false;
+    st.pollGone = false;
+  }
+
+  // Read the log since this tab's seq, in the catch-up's slot (never two
+  // reads at once) — unless the tab is hidden (the next visible tick starts
+  // a new run), the page connect() follows is not loaded yet, or a reload
+  // or a catch-up is on its way: then the next tick.
+  function pollTick(run) {
+    if (run !== st.pollRun || !st.polling || st.closed) return;
+    const s = st.session;
+    if (hidden()) { st.pollFresh = true; armPoll(POLL_MS); return; }
+    if (!s.pageId || s.pageId !== st.page || s.reloading || s.catchingUp) { armPoll(POLL_MS); return; }
+    const page = s.pageId;
+    const p = (async () => {
+      try {
+        const d = await api(`/pages/${encodeURIComponent(page)}/ops?since=${s.seq}`);
+        if (run !== st.pollRun) return;
+        if (st.session === s) polled(s, d); else armPoll(POLL_MS);
+      } catch (err) {
+        if (run !== st.pollRun) return;
+        if (st.session === s) pollFailed(s, err); else armPoll(POLL_MS);
+      } finally {
+        s.catchingUp = null;
+      }
+    })();
+    p.poll = true;
+    s.catchingUp = p;
+  }
+
+  // A poll answered: the page is live over HTTP.
+  function polled(s, d) {
+    st.pollOk = true;
+    st.pollRetries = 0;
+    st.pollGone = false;
+    setMe((m) => (m.connected && m.via === "poll" ? m : { ...m, connected: true, via: "poll" }));
+    // (the hello's build, for the handwriting fence)
+    if (d.build != null) o().onBuild?.(d.build);
+    // A page in Recently deleted answers 404: this one is back (restored).
+    if (s.gone) { s.reloading = true; o().onReload?.(s.pageId); }
+    takeLog(s, d);
+    // Comments and a vault's nudges have no op log: the threads and the
+    // page's standing with this computer are refetched as a run begins (a
+    // hello's refetch) and every POLL_COMMENTS_EVERY answers after.
+    if (st.pollFresh) {
+      st.pollFresh = false;
+      st.pollAnswers = 0;
+      o().onComments?.(null);
+      o().onVault?.();
+      retrySaves(); // the server answers again: a save waiting goes now
+    } else if (++st.pollAnswers >= POLL_COMMENTS_EVERY) {
+      st.pollAnswers = 0;
+      o().onComments?.(null);
+      o().onVault?.();
+    }
+    armPoll(POLL_MS);
+  }
+
+  function pollFailed(s, err) {
+    const status = statusOf(err);
+    const backoff = () => {
+      st.pollRetries += 1;
+      armPoll(Math.min(RETRY_MS * 2 ** (st.pollRetries - 1), MAX_RETRY_MS));
+    };
+    if (status === 410) {
+      // The log no longer reaches back: refetch the tree; the ticks wait
+      // for its load (commit) or its failure (reloadFailed).
+      s.reloading = true;
+      o().onReload?.(s.pageId);
+      armPoll(POLL_MS);
+      return;
+    }
+    if (status === 404) {
+      // The page went (to Recently deleted, most likely): App's refetch
+      // learns where, and parks its edits (gone). Its answer of 200 later
+      // means it is back.
+      if (!st.pollGone) { st.pollGone = true; o().onReload?.(s.pageId); }
+      backoff();
+      return;
+    }
+    if (status === 401 || status === 403) {
+      // Refused: neither the poll nor the socket would get in.
+      disconnect();
+      setMe((m) => (m.connected ? { ...m, connected: false } : m));
+      if (status === 403) o().onStatus?.(t("You no longer have access to this page."));
+      return;
+    }
+    // Offline, a server error: try again ever longer apart, and the socket
+    // back on its own short backoff instead of the minute's probe.
+    st.pollOk = false;
+    setMe((m) => (m.connected ? { ...m, connected: false } : m));
+    if (st.probe && st.reconnectTimer && st.open) {
+      cancel(st.reconnectTimer);
+      st.probe = false;
+      st.reconnectTimer = later(st.open, st.backoff);
+      st.backoff = Math.min(st.backoff * 2, 15000);
+    }
+    backoff();
   }
 
   // The one ordered inbox for HTTP acks and socket batches.
@@ -1012,17 +1220,58 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   // --- the socket -------------------------------------------------------------
 
   // Open the page's room (closing any other page's first); reconnects with
-  // backoff until disconnect().
+  // backoff until disconnect(). The backoff starts over at a hello, not at
+  // the socket's open: a proxy that lets the upgrade through and passes
+  // nothing would otherwise be asked every second. With `fallback`, an
+  // attempt that ends without a hello (closed, or none within
+  // SOCKET_HELLO_MS) counts, and POLL_AFTER_FAILS of them in a row start the
+  // poll; while polls answer, the next attempt waits SOCKET_PROBE_MS. A page
+  // opened while polling is polled from its first tick, beside its socket's
+  // attempt.
   function connect(pageId) {
     disconnect();
     st.closed = false;
+    st.page = pageId;
     const open = () => {
+      st.reconnectTimer = null;
+      st.probe = false;
       if (st.closed) return;
       let ws;
       try { ws = openSocket(pageId); } catch { return; }
       st.ws = ws;
       st.wsPage = pageId;
-      ws.onopen = () => { st.backoff = 1000; };
+      let greeted = false;
+      // The attempt is over without the server's word (closed, or its hello
+      // overdue): presence goes, and the next attempt is armed.
+      const over = (ev) => {
+        if (st.helloTimer) { cancel(st.helloTimer); st.helloTimer = null; }
+        if (st.ws === ws) st.ws = null;
+        // While polls answer the page is still live: me stays connected.
+        if (!(st.polling && st.pollOk)) setMe((m) => (m.connected ? { ...m, connected: false } : m));
+        setPeers([]);
+        if (st.closed) return;
+        if (ev?.code === CLOSE_REVOKED) {
+          // Access to the page was taken away (a share stopped, a member
+          // removed): nothing to reconnect to.
+          st.closed = true;
+          pausePoll();
+          o().onStatus?.(t("You no longer have access to this page."));
+          return;
+        }
+        if (fallback && !greeted && ++st.fails >= POLL_AFTER_FAILS && !st.polling) startPolling();
+        st.probe = fallback && st.polling && st.pollOk;
+        st.reconnectTimer = later(open, st.probe ? SOCKET_PROBE_MS : st.backoff);
+        if (!st.probe) st.backoff = Math.min(st.backoff * 2, 15000);
+      };
+      if (fallback) {
+        st.helloTimer = later(() => {
+          st.helloTimer = null;
+          if (st.ws !== ws) return;
+          ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
+          try { ws.close(); } catch {}
+          over();
+        }, SOCKET_HELLO_MS);
+      }
       ws.onmessage = (ev) => {
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }
@@ -1031,7 +1280,14 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         if (session.pageId !== pageId && msg.t !== "hello" && msg.t !== "inbox") return;
         switch (msg.t) {
           case "hello": {
-            setMe({ client: msg.client, connected: true });
+            greeted = true;
+            if (st.helloTimer) { cancel(st.helloTimer); st.helloTimer = null; }
+            st.fails = 0;
+            st.backoff = 1000;
+            // The socket carries the page again: the poll stops (its
+            // answer on its way is ignored, the catch-up below follows it).
+            if (st.polling) stopPolling();
+            setMe({ client: msg.client, connected: true, via: "socket" });
             // The server's build, compared with the one this page loaded
             // under (ink/buildFence.js: a tab left open across an update
             // stops drawing).
@@ -1039,15 +1295,16 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
             setPeers((msg.peers || []).filter((p) => p.client !== msg.client));
             // The tree was fetched before the socket opened (its seq came
             // with it); anything that landed in between is in the log.
-            if (session.pageId === pageId && (msg.seq || 0) > session.seq) catchUp();
+            if (session.pageId === pageId) catchUpTo(session, msg.seq || 0);
             // A (re)join starts with empty presence on the server: tell
             // the room where we are.
             cursor.last = null;
             if (cursor.latest) { cursor.pending = cursor.latest; armCursor(); }
             // Connected again: a save waiting for its retry goes now.
-            retryNow();
-            // Comments written while the socket was away reach no nudge.
-            if (session.pageId === pageId) o().onComments?.(null);
+            retrySaves();
+            // Comments written while the socket was away reach no nudge,
+            // nor does a vault's round that touched the page meanwhile.
+            if (session.pageId === pageId) { o().onComments?.(null); o().onVault?.(); }
             break;
           }
           case "join":
@@ -1079,38 +1336,32 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
           case "comments":
             o().onComments?.(msg);
             break;
+          case "vault":
+            o().onVault?.();
+            break;
           case "inbox":
             onInbox?.();
             break;
           default:
         }
       };
-      ws.onclose = (ev) => {
-        if (st.ws === ws) st.ws = null;
-        setMe((m) => (m.connected ? { ...m, connected: false } : m));
-        setPeers([]);
-        if (st.closed) return;
-        if (ev?.code === CLOSE_REVOKED) {
-          // Access to the page was taken away (a share stopped, a member
-          // removed): nothing to reconnect to.
-          st.closed = true;
-          o().onStatus?.(t("You no longer have access to this page."));
-          return;
-        }
-        st.reconnectTimer = later(open, st.backoff);
-        st.backoff = Math.min(st.backoff * 2, 15000);
-      };
+      ws.onclose = (ev) => over(ev);
       ws.onerror = () => {};
     };
+    st.open = open;
     open();
+    if (st.polling) { st.pollFresh = true; st.pollRetries = 0; armPoll(0); }
   }
 
-  // Close the socket and stop reconnecting. `clearPresence`: the page went
-  // away (home library, read-only nothing) — the peer list empties now
-  // rather than at the next hello.
+  // Close the socket and stop reconnecting, and stop the poll's run (the
+  // poll itself stays on: `polling` lasts until a hello). `clearPresence`:
+  // the page went away (home library, read-only nothing) — the peer list
+  // empties now rather than at the next hello.
   function disconnect({ clearPresence = false } = {}) {
     st.closed = true;
     if (st.reconnectTimer) { cancel(st.reconnectTimer); st.reconnectTimer = null; }
+    if (st.helloTimer) { cancel(st.helloTimer); st.helloTimer = null; }
+    pausePoll();
     if (st.ws) { st.ws.onclose = null; st.ws.close(); st.ws = null; st.wsPage = ""; }
     if (clearPresence) {
       setPeers([]);

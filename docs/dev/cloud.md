@@ -123,7 +123,10 @@ its library under the free allowance; a Pro server turns read-only at
 once (reads and exports work), is stopped after 30 days and deleted after
 90, with a mail at each step. A grant that was given a date ends the
 same way. Deleting an account cancels at Stripe first and purges the row
-30 days later.
+30 days later; within the hour the shared server deletes the account's
+library there and the pages it published, since it asks the account
+server every hour for the accounts deleted (cloud_accounts.md "A deleted
+account on the share host").
 
 **What a container knows.** A hosted container never hears about money.
 At startup and every hour it posts a short report to the account server
@@ -200,11 +203,57 @@ that deep-link by hash:
 | Machines | a card per host with its capacity and containers; for the one selected, every container on it (the account server, the share host, Caddy, the demo, the agent, the hosted servers) with its image, state, use and actions (logs, restart, stop, start, update, rollback, *Update all*), the host's placement, public IP, name, token and removal, and its recent jobs |
 | Servers | every hosted server with its state, version, data, trends and actions (restart, stop, suspend, limits, environment, logs, history, upgrade, rollback, delete); the default image and upgrade runs; fleet-wide environment; the job queue |
 | Billing | subscriptions by status with a link into Stripe, the newest webhook events |
+| Reports | the reports Gamma servers forwarded, open, resolved or all: what was reported and why, the reporter's words, the text and who wrote it, the page, the server, who sent it; Resolve, Reopen, Delete ("Reports" below) |
 | Settings | sign-up, plans on sale, alerts, and the read-only configuration panel with a test mail |
 | Audit log | every account-changing event, with its actor |
 
 `manage.py` does the same from the shell inside the container, and the
 page, the CLI and the `/api/admin/*` API call the same functions.
+
+## Reports
+
+Anyone who can read a comment, a shared or published page, or an AI reply
+in the chat can report it from its menu, without leaving the app: the
+comment's "⋯" menu, the share view's View menu (a published page is a
+share view), a chat reply's actions. The web app posts it to its own
+Gamma server (`POST /api/reports`, [api.md](api.md) "Reports"), which reads
+what is reported where the reporter reads it (a comment's text and
+author, a page's title and the share's maker; an AI reply's text and
+model are the browser's), keeps it for its own admins (Settings → Server
+→ Reports, with a notice) and, when it signs people in with Gamma Cloud,
+forwards it here:
+
+- **The call.** `POST /api/reports` on the account server
+  (`routers/reports.py`, `reports.py`) with the reporter's access token
+  when they linked their Gamma Cloud account on that server, else the
+  server's client id and secret as Basic auth when it is a confidential
+  client (the share host, a hosted server, a connected one), else
+  nothing: the desktop app's and the apps' own servers for someone who
+  never linked an account, a visitor without one. A token or secret that
+  fails is a 401, never taken for an unsigned call. The body is the
+  server's word; what this server records is who proved what
+  (`account_id`, `client_id`). The server's own id for the report
+  (`report_id`) makes a retry store nothing twice, and a server whose
+  call failed tries again hourly for a week.
+- **The limits.** An unsigned call 20 an hour per address; a token's
+  account 30 an hour and 100 a day; a client's secret 300 an hour (the
+  share host forwards everyone's reports through one address). A failed
+  token or secret counts 30 an hour per address. Text is cut: the
+  reporter's words to 2,000 characters, the text reported to 8,000, a
+  name to 120, a title to 200; a link that is not http(s) is dropped.
+- **The operator.** Each open report is an alert (`report:<id>`,
+  [hosted.md](hosted.md) "Alerts"), mailed once as it comes when alerts
+  are on and listed on the Overview, until it is resolved or deleted on
+  the Reports tab (`/api/admin/reports`, `manage.py reports` and
+  `resolve-report`). A resolved report goes 180 days after it was
+  resolved; a purged account's reports stay without it.
+- **What it covers.** Google Play asks apps with content people share to
+  let them report it and the people who post it, and apps that generate
+  content with AI to let people report offensive output without leaving
+  the app ([android.md](android.md) "Publishing on Google Play"). The
+  terms accepted at sign-up say what may not be shared
+  ([TERMS.md](../../TERMS.md)). A server without Gamma Cloud sign-in keeps
+  its reports for its own admins only: its content is theirs to act on.
 
 ## Trust
 

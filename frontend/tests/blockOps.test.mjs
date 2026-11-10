@@ -1,7 +1,8 @@
 // node --test tests/  (from frontend/) — the pure op module has no DOM.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { generateNKeysBetween } from "fractional-indexing";
+import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { PLACED, applyOps, diffTrees, displacedRow, propsPatch, pushOp, seedPositions, withMerges } from "../src/shared/model/blockOps.js";
 import { blockPage, isHighlightBlock } from "../src/shared/model/blockModel.js";
 import { mergePicture } from "../src/markup/picture.js";
@@ -347,4 +348,22 @@ test("a remote move displaces the open editor's row when it moves it, an ancesto
   assert.equal(moved({ op: "insert", id: "new", parent: "parent", position: "a0", content: "", props: {} }), false, "a new block");
   assert.equal(displacedRow(tree, [{ op: "set", id: "child", content: "x" }], "child", PAGE), false);
   assert.equal(displacedRow(tree, [{ op: "move", id: "parent", parent: "top" }], null, PAGE), false, "no editor open");
+});
+
+// The positions the ops carry are minted here and checked by the server
+// (gamma/ops.py order_key_error) with another library, fractional_indexing
+// on PyPI: tests/shared/fractionalkeys.json holds the two to the same keys.
+const KEYS = JSON.parse(readFileSync(new URL("../../tests/shared/fractionalkeys.json", import.meta.url), "utf8"));
+
+test("sibling keys are the server's library's, and the keys it refuses are refused here (the shared cases)", () => {
+  for (const c of KEYS.between) {
+    assert.deepEqual(generateNKeysBetween(c.a, c.b, c.n), c.keys, c.note);
+    if (c.n === 1) assert.equal(generateKeyBetween(c.a, c.b), c.keys[0], c.note);
+  }
+  for (const c of KEYS.invalid) assert.throws(() => generateKeyBetween(c.key, null), undefined, c.note);
+  // The library takes a key outside the base-62 alphabet, which the server
+  // refuses: it must never mint one.
+  const base62 = /^[0-9A-Za-z]+$/;
+  for (const c of KEYS.between) for (const k of c.keys) assert.match(k, base62, c.note);
+  for (const c of KEYS.foreign) assert.doesNotMatch(c.key, base62, c.note);
 });

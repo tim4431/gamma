@@ -19,7 +19,7 @@ const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(
 // A session over fakes; `api(path, init)` answers the HTTP calls. Timers
 // never fire on their own: h.fire() runs whatever is armed.
 function setup(t, api, { canWrite = true, connect = true } = {}) {
-  const h = { calls: [], remote: [], reloads: [], status: [], notices: [], keepalive: [], sockets: [], timers: new Map(), peers: [], me: null, comments: [], inbox: 0 };
+  const h = { calls: [], remote: [], reloads: [], status: [], notices: [], keepalive: [], sockets: [], timers: new Map(), peers: [], me: null, comments: [], inbox: 0, vault: 0 };
   let timerId = 0;
   const options = {
     pageId: "page-a", canWrite,
@@ -28,6 +28,7 @@ function setup(t, api, { canWrite = true, connect = true } = {}) {
     onStatus: (text) => h.status.push(text),
     onSaveNotice: (text, kind) => h.notices.push([kind, text]),
     onComments: (msg) => h.comments.push(msg),
+    onVault: () => { h.vault += 1; },
   };
   h.session = createCollabSession({
     clientId: ME,
@@ -289,6 +290,21 @@ test("a rejected batch is dropped and the page reloads", async (t) => {
   assert.equal(h.session.hasPending(), false);
 });
 
+test("a batch refused because the workspace is being deleted is dropped, said once, and not retried", async (t) => {
+  const h = setup(t, async () => {
+    const e = new Error("“Lab” is being deleted and takes no more changes");
+    e.status = 423; e.data = { detail: e.message, error: "workspace_deleting", workspace: "ws1" };
+    throw e;
+  });
+  h.edit([block("a", "mine"), block("b")]);
+  await h.session.flush();
+  assert.deepEqual(h.status, [], "the status line is App's, which turns the tab read-only");
+  assert.deepEqual(h.notices, [["rejected", "This workspace is being deleted, so that edit was not saved."]]);
+  assert.deepEqual(h.reloads, ["page-a"]);
+  assert.equal(h.session.hasPending(), false);
+  assert.equal(h.timers.size, 0, "no retry is armed");
+});
+
 test("a batch refused for a block the server lacks sends that block again, subtree and all", async (t) => {
   // The tab holds "c" (with a child) that never reached the server — its
   // insert was lost. The edit to it is refused; the next POST re-creates it.
@@ -349,7 +365,7 @@ test("a hello with a newer sequence catches up from the log", async (t) => {
     return { seq: 1, batches: [batch(1, [{ op: "set", id: "b", content: "late" }])] };
   });
   h.message({ t: "hello", client: ME, seq: 1, peers: [{ client: ME }, { client: "p2" }] });
-  assert.deepEqual(h.me, { client: ME, connected: true });
+  assert.deepEqual(h.me, { client: ME, connected: true, via: "socket" });
   assert.deepEqual(h.peers.map((p) => p.client), ["p2"]);
   await settle();
   assert.equal(h.tree[1].content, "late");
@@ -701,4 +717,20 @@ test("the room's comments nudge and every hello refetch the page's threads; an i
   h.message({ t: "inbox" });
   assert.equal(h.comments.length, 2, "another page's comments are not this page's");
   assert.equal(h.inbox, 2, "the inbox nudge still counts");
+});
+
+test("a vault's nudge and every hello refetch the page's standing, so a round the socket missed while down is read", async (t) => {
+  const h = setup(t, async () => ({ seq: 0, batches: [] }));
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  h.message({ t: "vault" });
+  assert.equal(h.vault, 2);
+  h.socket().onclose({});
+  h.fire(); // the reconnect
+  assert.equal(h.sockets.length, 2, "a new socket");
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  assert.equal(h.vault, 3, "the rejoin asks again");
+  h.load("page-b", [block("p")]); // navigated away while the socket is still the old page's
+  h.message({ t: "vault" });
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  assert.equal(h.vault, 3, "another page's are not this page's");
 });

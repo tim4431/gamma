@@ -160,6 +160,7 @@ the signing keys and every token hash.
 | `zotero_requests` | a Zotero connection while the browser is at zotero.org: the request token's hash, its secret sealed with a key derived from the token, the Gamma server's address, its state and PKCE challenge (9 min, single use; step 14) |
 | `zotero_codes` | a person's approval at zotero.org waiting for its Gamma server: the one-time code's hash, the request token, its secret and Zotero's verifier sealed with a key derived from the code, the server's address, the PKCE challenge (5 min, single use; step 14). No key exists yet: Zotero makes it when the server redeems the code |
 | `server_invitations` | an e-mail invitation a Gamma server asked this server to send: the hash of the mailed link's token, the server's address (`server_url`) and name, its own id for the invitation (`invite_id`; one row per server and id), the sign-in client it came through (`client_id`), the kind (`server` / `workspace` / `page` / `folder`), what it is to (`what`), the path there to land on (`next`), the address as typed and its inbox (`email_canon`), the inviter, the invite code minted for it ('' for none), `created_at`, `expires_at` (14 days on) and `accepted_at` (step 13) |
+| `reports` | a report of a comment, a page or an AI reply a Gamma server forwarded ([cloud.md](cloud.md) "Reports"): the server's own id for it (`report_id`; one row per server and id, so a retry stores nothing twice), the server's address and name, `kind` (`comment` / `page` / `ai`), `reason`, the reporter's words (`details`), the text reported and who wrote it (`content`, `author`), the page's `title`, `page_id`, `comment_id`, a published page's `link`, the reporter as the server names them (`reporter`), the reporter's account when the server sent their token (`account_id`) and the sign-in client the call proved (`client_id`), the caller's address, `state` (`open` / `resolved`), `resolved_at` and `resolved_by` (step 15) |
 | `oauth_requests` | a sign-in in progress on the authorize page (10 min) |
 | `oauth_codes` | authorization codes (2 min, single use) and what the exchange issued (`grant_id`, `access_hash`), so a replay revokes exactly that |
 | `grants` | one per device: the rotating refresh token's hash, 90 days from the last rotation, `revoked_at`, the client's `device_id` and `device_name` (a new sign-in with the same `device_id` replaces the grant) |
@@ -192,6 +193,14 @@ header's **Sign in** and the `/login`, `/account`, `/signup` short links
 ([sites/README.md](../../sites/README.md)).
 
 ## Registration and the portal
+
+Every sign-in and sign-up page ends with one line under its form
+(`pages._terms`): "By continuing you agree to the terms and the privacy
+policy", linking gammapdf.com/terms/ ([TERMS.md](../../TERMS.md), which
+says what may not be stored or shared and that it can be reported) and
+gammapdf.com/privacy/. Creating an account, by password or through
+Google or GitHub, is continuing, so the terms are accepted before anyone
+can share anything; no separate record of it is kept.
 
 `routers/accounts.py` is the JSON API under `/api`; `routers/portal.py`
 serves the pages from `pages.py`: small server-rendered shells whose
@@ -440,6 +449,10 @@ content column):
   A purge deletes the account's hosted server first
   (`hosted.purge_account`, [hosted.md](hosted.md)) and the e-mail
   invitations it sent (`invitations.purge_account`).
+  The shared server deletes the account's library there within the hour of
+  the delete, not of the purge, and a restore does not bring it back ("A
+  deleted account on the share host" below); the portal's Settings →
+  Delete account row and its confirm name that server (`APP_URL`'s host).
 - `PATCH /api/admin/accounts/{id}` takes `plan`, `granted_until`,
   `is_admin`, `verified` and `username`. `plan` is a new grant, with no end
   unless `granted_until` comes with it; `granted_until` alone dates the
@@ -477,6 +490,7 @@ passes.
 | GET | `/api/lookup/username?u=` | any access token | `{sub, username}`; 404 otherwise |
 | POST | `/api/invitations` | any access token | body `{email, server_url, server_name, kind, what, invite_id, next}` → `{ok, expires_at}` |
 | POST | `/api/invitations/cancel` | any access token | body `{server_url, invite_id}` → `{ok, removed}` |
+| POST | `/api/reports` | the reporter's access token, the server's client id and secret (Basic), or none | body `{report_id, server_url, server_name, kind, reason, details, content, author, title, page_id, comment_id, link, reporter}` → 201 `{ok, id}` ([cloud.md](cloud.md) "Reports") |
 
 **The preference profile** is one JSON value per key: at most 64 KB
 serialized (413 past it), 20 keys per account (a 21st is a 400), keys of
@@ -842,6 +856,38 @@ is granted per scope: every client is first party, and the card only says
 who asks and what it gets. Gamma Cloud's own servers do not show it
 ("The entrance" below).
 
+**From a native app.** A sign-in the desktop, Android or iPad app started
+(`app-start`, below) opens these pages in a browser the app opened, and
+Google Play's Payments policy, like the App Store's, bars an app from
+leading to a payment outside its own billing, even through a page that
+"could lead to" one. So that browser's pages drop their links to where
+a plan is bought (`pages.in_app`), all but one, below. The Gamma server's authorize URL for such a
+sign-in carries `gamma_app=1` (`cloud_auth.begin`, which an account
+server that does not know it ignores). `/authorize` keeps the mark in the
+`gc_app` cookie for an hour (`APP_BROWSER_TTL`; `app.py`'s `native_app`),
+so the register, reset and Google/GitHub pages after it have it too, and
+an authorize request without the mark clears it. Those auth pages show
+the top bar's brand without its links to gammapdf.com (its pricing) and
+the Overview (Plan & billing). The sign-in's *Create an account* carries
+`next` back to the request (`/authorize/resume`), so a new account comes
+back to the verify notice there rather than to the Overview, also when
+the verify mail could not be sent (`/api/register` sends it to that
+`next` rather than to the Overview's failure notice). The verify notice
+leaves out *Your account*, and its *Resend the mail* sends the request's
+`/authorize/resume` as the new link's `next` (`RESEND_JS` reads the
+button's `data-next`); the verify link's page has no *Overview* link.
+The confirm card and the chooser name Devices without linking it, the
+no-library page leaves out *See plans* and *Get the desktop app*, and an
+error page has no *Back* to the Overview. The account's own pages (the
+app shell) are unchanged. Two ways still reach a plan: the reset page
+carries no request, so *Forgot password?* then *Back to sign in*, or the
+mailed reset link, ends signed in on the Overview; and the sign-in,
+register and sign-up pages' terms line links to gammapdf.com/terms/
+and gammapdf.com/privacy/, whose site header links *Pricing*, as the
+privacy policy the app itself opens does. Closing that needs a
+gammapdf.com page without the header, for the app's links and this one
+alike.
+
 ### The entrance
 
 `entrance.py`, with the authorize step in `routers/oidc.py` and `/open` in
@@ -1127,7 +1173,9 @@ is what its `authorize_url` asks for.
 `create-account`, `set-password`, `set-admin`, `set-plan`, `verify`,
 `delete-account`, `restore-account`, `purge-account`, `purge-deleted`, `invite`, `invites`, `create-client`,
 `client-redirect` (one more redirect URI for a client, for a server with a
-second address), `clients`, `delete-client`, `rotate-key`, `settings`, billing's
+second address), `clients`, `delete-client`, `rotate-key`, `settings`,
+`reports` (`--state open|resolved|all`) and `resolve-report <id>
+[--reopen]`, billing's
 `subscriptions` and `billing-sync` ([billing.md](billing.md)), and the
 fleet's `hosts`, `add-host`, `servers`, `provision`, `jobs`
 ([hosted.md](hosted.md) "Admin"). Every command but `setup` and
@@ -1141,7 +1189,10 @@ patch accounts (plan, the day the grant ends, admin, verified), resend a
 verify mail, delete, restore, purge; invites (`GET`, `POST` with
 `expires_days` and `grant_days`, `GET /invites/{code}` with the accounts
 that registered with it, `PATCH /invites/{code}` `{disabled}`, audited as
-`invite.disable` / `invite.enable`, `DELETE`); `GET`/`PATCH /settings`
+`invite.disable` / `invite.enable`, `DELETE`); the reports Gamma servers
+forwarded (`GET /reports?state=open|resolved|all` → `{reports, open}`,
+`PATCH /reports/{id}` `{state}`, audited as `report.resolve` /
+`report.reopen`, `DELETE`, audited as `report.delete`); `GET`/`PATCH /settings`
 (`settings.admin_view` / `settings.update`, plus `plans`, a row per paid
 plan `{plan, on_sale, sellable, reason}`); `GET /config` and `POST
 /test-mail` ("Running"); OIDC clients; the audit log;
@@ -1238,6 +1289,28 @@ and the CLI call the same functions.
   the server list (normalization, loopback, the client's own origin, the
   Overview), the build and schema a server reports, the username lookup
   and its limits, deletion, the step-4 and step-8 upgrades, and the share host's address in `/api/me` and discovery.
+- `test_share_host_deletions.py`: the deleted accounts the share host
+  asks for — one deleted in the portal listed for the share host's client,
+  a restored one left out until it is deleted again, a purged one still
+  listed, the cursor's pages, a wrong pair 401 and another client's 403,
+  and the Settings page's Delete account saying the shared server's
+  library goes.
+- `test_reports.py`: the reports Gamma servers forward — an unsigned one
+  kept as sent, a retry stored once, the fields checked and cut (a link
+  that is not http(s) dropped), the reporter's token and the server's
+  client secret recorded and a bad one refused, the desktop client proving
+  nothing, the per-IP limit of unsigned calls, the alert mailed once, the
+  Admin list, resolve, reopen and delete with their audit, the CLI, the
+  purge of old resolved reports, a purged account's reports kept without
+  it, the terms on the sign-up page, the step-15 upgrade.
+- `test_in_app.py`: a native app's sign-in — the mark kept in the cookie
+  and cleared by a sign-in no app started, the top bar without links on
+  the sign-in, register, reset and error pages, a new account sent back
+  to the sign-in (its verify mail sent or not), the verify notice's
+  resend going back to the sign-in, the verify notice, verify link page,
+  confirm card and no-library page without their portal links, the
+  terms and the privacy policy as their only gammapdf.com links, and the same pages with them in a browser of
+  its own.
 - `test_entrance.py`: the entrance — where the authorize step sends a
   signed-in person when the shared server asks, the sign-ins that skip the
   confirm card, the chooser, the no-library page, a plan's end closing the
@@ -1395,8 +1468,9 @@ to the victim's machine, never to the machine holding the verifier. The
 verifier, a one-try check, also keeps any other program on the same
 machine from redeeming a result it intercepted. The header requirement stops
 another site from posting a claim and signing this browser into an account
-of its choosing. The account server sees nothing new: its redirect URI is
-still the server's own callback, so this works for a local sidecar and for
+of its choosing. The account server sees one thing new, the authorize
+URL's `gamma_app=1`, which only changes its pages' links ("From a native
+app" above): its redirect URI is still the server's own callback, so this works for a local sidecar and for
 a remote server alike, and the session lands on the origin the window has
 open, whatever the server's public URL. A share host's forward of a paying
 person to their own server (`entrance.py`, above) starts a browser sign-in
@@ -1962,6 +2036,54 @@ pinned network only, so its rate limits count each visitor rather than
 each Cloudflare edge. Setup steps: [cloud/deploy/README.md](../../cloud/deploy/README.md)
 "The free share host".
 
+**A deleted account on the share host** (`gamma/cloud_deletions.py`).
+Deleting a Gamma Cloud account deletes its library on the share host: its
+account there, the workspaces `workspaces.delete_account` removes with it
+(its personal ones and the shared ones only it owned, their files and
+snapshots, and the shares that published its pages, so its links and its
+page host stop answering), its sessions and integration tokens. A share
+it made in a shared workspace that stays is that page's one link, which
+the workspace's owners manage, so it stays with the workspace, as the
+policy pages say. The
+account server keeps the record: each `account.delete` audit entry is a
+deletion, and `GET /api/share-host/deletions?after=<entry id>`
+(`routers/share_host.py`, `accounts.deletions`) lists those after a cursor,
+oldest first, 500 at a time, as `{deletions: [{id, account_id,
+deleted_at}], next}`, leaving out an account restored since (a later
+delete is a new entry) and keeping a purged one, so a share host that was
+down misses nothing. Only a `share-host` client may ask, with its client
+id and secret as Basic auth (`oidc.basic_client`, which the reports use
+too): a wrong pair is a 401 counted per IP (30 an hour), another client's
+a 403; the client's own limit is 120 an hour.
+
+The share host asks at startup and then every hour (`cloud_deletions.tick`
+in the app lifespan), when it has cloud sign-in, the share-host switch and
+a client secret. Each deletion whose subject has an identity here (one
+that signed in, or one a publish exchange made) is deleted by the
+`account-delete` job an admin's delete runs
+(`workspaces.start_account_delete`, [tasks.md](tasks.md)), owned by the
+server itself (`jobs.WORKSPACE`, so no one's task list shows it), a final
+copy of each workspace first in `backups/deleted/` for 90 days
+([user_db.md](user_db.md) "Data directory layout"). Two run at a time
+(`AT_ONCE`); one that ends done asks again at once, so a backlog does not
+wait an hour per pair. The cursor (`cloud_deletions_after` in the
+`settings` KV) moves past every deletion a tick reads (at most 20 pages);
+each whose subject has an account here goes on the list of those due
+(`cloud_deletions_pending`, `{subject: entry id}`) and stays there while
+that account does, so a delete that failed or waits its turn is tried
+again at the next tick, and one that is kept never holds back the
+deletions after it. Before it starts or keeps one, the tick asks again
+from that entry (`_stands`): a deletion the account server no longer
+lists, its account restored, comes off the list and the account here
+stays. The job checks, as it starts and at its point of no return, that the
+account is still linked to that subject and is not the server's last
+admin; such an account is kept, with a warning at every tick, and
+unlinking it (`manage.py unlink-identity`) keeps it for good. A share host
+whose account server predates the endpoint logs a warning every hour, so
+the account server is updated first. The first tick on a share host reads
+every deletion the audit log holds, so the libraries of accounts deleted
+before this existed go too. Tests: `backend/tests/test_cloud_deletions.py`.
+
 The rest of the plan's cloud mode is configuration, not code: registration
 is off on every Gamma (accounts come from the admin or the cloud), the
 default quota is the storage setting, and per-IP limits belong to the
@@ -2028,10 +2150,10 @@ times only:
   written to learn them. Someone who only reads in a tab left open is not
   counted.
 - `last_write_at` is when the server last answered a POST, PUT, PATCH or
-  DELETE under `/api/` below 400 (a sign-in and a read sent as a POST
-  count too), null when there was none. It is kept in memory and
-  saved in the `settings` KV under `hosted_last_write` at each sync, so a
-  restart loses at most the writes since the last sync.
+  DELETE under `/api/` below 400 (a sign-in counts too, a read sent as a
+  POST does not: `hosted.POST_READS`), null when there was none. It is
+  kept in memory and saved in the `settings` KV under `hosted_last_write`
+  at each sync, so a restart loses at most the writes since the last sync.
 - `errors` counts the answers with a 5xx status (an uncaught exception, or
   a 502 or 503 the server chose) since the last successful sync. A
   successful sync takes off the ones it reported; a failed one leaves
@@ -2094,19 +2216,20 @@ is a policy like the others: the environment, the Sign-in pane and the
 admin API take it on any server.
 
 **Read-only.** While the cached answer says `read_only`, every POST, PUT,
-PATCH and DELETE under `/api/` is answered 423 with `{detail, read_only:
-true}`, `detail` being the account server's `message` or "This server is
-read-only: its plan has lapsed. You can still sign in, read and export your
-data." (`app.read_only_gate`, inside the session middleware so the refusal
-is logged). The rule is `hosted.read_only()` plus one documented tuple,
-`hosted.READ_ONLY_ALLOWED`, of what still goes through:
+PATCH and DELETE under `/api/` but the reads sent as a POST (below) is
+answered 423 with `{detail, read_only: true}`, `detail` being the account
+server's `message` or "This server is read-only: its plan has lapsed. You
+can still sign in, read and export your data." (`app.read_only_gate`,
+inside the session middleware so the refusal is logged). The rule is
+`hosted.read_only()` plus two documented tuples: `hosted.POST_READS`, the
+reads sent as a POST, and `hosted.READ_ONLY_ALLOWED`, the writes that
+still go through:
 
 - `/api/login`, `/api/logout` and everything under `/api/auth/cloud/`:
   signing in and out;
 - `/api/jobs/export` and `/api/jobs/workspace-export`: the export jobs
   (the downloads themselves are GETs, like the page and folder exports,
   the workspace backups and the server snapshots);
-- `/api/pages/by-docs`: a read the file chips send as a POST;
 - `/api/notices/…/seen`, so a seen notice stays seen;
 - everything under `/api/inbox/`: marking Inbox items read or archived
   is the account's own bookkeeping ([comments.md](comments.md) "The
@@ -2114,7 +2237,13 @@ is logged). The rule is `hosted.read_only()` plus one documented tuple,
 - `/api/admin/hosted/sync`, the admin's Sync now, which is how a paid-up
   server comes back without waiting for the hour.
 
-Reads are untouched. Collaboration needs nothing of its own: an op batch is
+Reads are untouched, and so are the reads sent as a POST because their ids
+do not fit a URL, `hosted.POST_READS`: `/api/pages/by-docs` (the file
+chips' page lookup) and `POST /api/block-search` and `/api/pdf-search` (the
+Ctrl+F panel's searches, with the page ids its filters keep). The gate
+treats them as reads, so they also move no `last_write_at`.
+
+Collaboration needs nothing of its own: an op batch is
 `POST /api/pages/{id}/ops`, which the editor answers with its "Save
 rejected" message and a reload, and the page socket carries only carets.
 The guest login is refused like any write, and the login page hides its

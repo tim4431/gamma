@@ -160,11 +160,26 @@ a folder or label the trees lack (deleted elsewhere, a stale link) goes
 back to the library's root (a share's folder).
 
 The page header's label field (`page.labels` / `page.labelInput`) files
-the open page by both. Its suggestions are the folders (by path, a folder
-icon) and labels whose names contain what is typed, then *New label "q"*
-and *New folder "q"* (a top-level folder) when no label, or no top-level
-folder, has that name. Enter on a suggestion picks it, and Tab picks the highlighted
-suggestion or else the first; Enter (or leaving
+the open page by both. What is typed reads as a **folder path**, split on
+"/" and matched name by name, so `phys/c` finds *Physics / Clocks*; a name
+may itself hold "/", so the path as it reads counts whole too. Its
+suggestions are the folders whose path holds the typed names — those whose
+own name the last typed one begins first — and the labels whose names
+contain it, then *New label "q"* and *New folder "q"* when no label, and no
+folder at that path, has it. A new folder goes at the path typed, its
+missing parents made with it (`ensureFolders`), so `Beta / Nested one` is a
+subfolder of *Beta*, never a top folder called that.
+
+Enter on a suggestion picks it. **Tab completes**, as a shell or VS Code
+does: the highlighted suggestion, else the first, written out in full, and,
+for a folder holding subfolders, ending in the separator — the field then
+reads `Alpha /`, whose suggestions are what is inside *Alpha*, so Tab after
+Tab walks down the tree. With nothing left to write Tab picks, as it always
+did, and a label (which has no path) is picked on the first Tab. The rules
+are pure, in `libraryUtils` (`folderPathNames`, `folderPathHolds`,
+`folderAtPath`, `folderInside`, `folderMatches`, `folderCompletion`); the
+Connector's folder field completes the same way over its own flat list
+([extension.md](extension.md) "Completing a folder path"). Enter (or leaving
 the field) with none picked takes the label of that name, else the folder
 whose path or name it is, else makes a new label. Each pick writes the
 page at once, a folder with the same refinement as dropping the page on
@@ -186,7 +201,7 @@ one was chosen are in [research/sub-pages.md](../research/sub-pages.md). A
 Recently deleted), whose properties carry `parent_page`, the id of the page
 it is inside. Nothing is stored on the parent, and everything keyed on a
 page (the op path, rooms, the op log and the change log, the notes index,
-shares, chats, tabs, recents, the mirror, backups, folder links, the
+shares, chats, tabs, recents, the mirror, backups, synced vaults, the
 Zotero link) treats a sub-page as the page it is. A page without the key
 is a **library page**. The generated column `parent_page` and its partial
 index ([user_db.md](user_db.md) "pages.db") make "the pages inside P" one
@@ -227,10 +242,13 @@ filed where its top is, and `folders` it still carries (written past the
 op rule by an import, a raw write or a merged copy) count for nothing.
 `pages_in_folder` lists the library pages filed in the folder or below it,
 each followed by its descendants, `page_in_folder` asks the question of the
-page's top, and `pages_in_scope` tests a folder chip against the top and a
-label chip against the page itself. So a folder view, a folder share, the
-search scope, a folder export, a folder chat's agent and a folder link on
-disk reach a sub-page through its top without code of their own.
+page's top, and `pages_in_scope` (the `scope` of GET search) tests a
+folder id against the top and a label id against the page itself. So a
+folder view, a folder share, GET search's scope, a folder export, a folder
+chat's agent and a synced vault reach a sub-page through its top without
+code of their own. The Ctrl+F panel's chips and qualifiers are evaluated
+in the browser by the same rule (`search/searchFilters.js`, through
+`libraryUtils.topPageOf`), and it sends the page ids they keep.
 `root_pages` without a folder reaches every live page, sub-pages included
 (search, export, the agent, reindexing). `blocks_store.filed_folders` is
 a page's folders by this rule, which the connector's clip and lookup
@@ -377,6 +395,24 @@ the pages it is in; a block's or an object's picker leaves out the open
 page and lists the open page's own sub-pages first, under "Inside this
 page" (`rankLibraryPages`' `first`), before the recent pages.
 
+**Opened files.** In the desktop app a PDF opened from this computer
+(*Open with*, `Server → Open a PDF…`) is read where it lies: a page inside
+the one page *Opened files* (`opened_files`), carrying `linked_file`, made
+on demand, newest first ([synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)).
+Being a sub-page keeps it out of the library's list. Such a page leaves
+*Opened files* only through **Add to library…**, which stores its bytes
+first (`POST /folder-links/opened/{id}/add`): the page menu and a tab's menu
+offer it in place of Move into page… and Move to library when every acted-on
+page is an opened PDF, and neither when some are (`vault/vaultState.js`
+`isOpenedPdf`, `addingToLibrary` in App); Move to folder ▸ is hidden too
+while any acted-on page is one, and a move into a page or out to the
+library that names one opens the dialog instead. Its dialog (`vault/FolderPickerDialog.jsx`) picks the
+workspace and the folder, and whether the file goes on pushing its new
+versions (a vault of one file). Duplicate leaves such pages out
+(`libraryUtils.duplicable`): a copy's address would stop answering when
+the file changes. The preference `openAddsToLibrary` stores every opened
+PDF at once instead ([settings.md](settings.md)).
+
 **Shares.** A page share reaches the shared page and every page inside it
 (`ShareScope.allows_page`: one whose ancestors hold the shared page), and a
 folder share the sub-pages of the pages filed there, through their top. The
@@ -412,12 +448,27 @@ while the parent stays published ([mirror.md](mirror.md) "Publishing").
 restore brings them back ("Recently deleted" below).
 
 **Elsewhere.** The agent's `list_pages` marks a sub-page with its parent
-and filters by one, and `read_page` names a page's parent and the pages
-inside it ([ai_tools.md](ai_tools.md)). The Markdown and Obsidian exports
-and a folder link on disk write a sub-page's file in a directory named for
+and filters by one, `read_page` names a page's parent and the pages
+inside it, and its properties line a sub-page's path and its top's
+folders; a page chat reads and searches the pages inside its page, and
+edits only that page; `list_deleted` and `restore_page` say which pages
+come back with a page and which go back inside one
+([ai_tools.md](ai_tools.md)). The Zotero link files a sub-page's item in
+its top's collections and never applies Zotero's collections to it
+([zotero_sync.md](zotero_sync.md#collections-and-folders)); the Zotero,
+Notability and GoodNotes imports merge into or pass by a sub-page without
+filing it, naming its top's folders; the Gamma export's review shows a
+sub-page under its parent, and one imported without it is filed in its
+top's folders ([import_export.md](import_export.md#gamma-to-gamma-export)).
+The connector's folder picker counts a sub-page's views and edits for its
+top's folders ([extension.md](extension.md)), and the MCP `export_page`
+takes the pages inside with `sub_pages` ([mcp.md](mcp.md#export-a-page)). The Markdown and Obsidian exports
+and the gamma-sync client write a sub-page's file in a directory named for
 its parent, with `parent:` in its front matter, which the Markdown zip
 import reads back ([import_export.md](import_export.md),
-[folder_sync.md](folder_sync.md)). That import also makes a Notion
+[synced_vaults.md](synced_vaults.md#the-client)); a synced vault reads a
+new note's `parent:` as the page it is inside
+([synced_vaults.md](synced_vaults.md#a-round)). That import also makes a Notion
 export's pages inside pages sub-pages, its database rows inside the
 table's page, and the review shows each under the page it goes inside
 ([import_export.md](import_export.md#markdown-zips-obsidian-vaults-notion-exports-gamma-exports-zipped-notes)).
@@ -437,7 +488,9 @@ reach of shares and publications, a page made through an edit link, a
 sub-page left out of a publication or waiting for room on the plan),
 `test_sub_pages_ai.py`,
 `test_sub_pages_export.py`, `test_sub_pages_import.py` (a Notion export's
-tree), `frontend/tests/subPages.test.mjs` (the client
+tree), `test_sub_pages_zotero.py` (the Zotero link),
+`test_sub_pages_integrations.py` (the Zotero, Notability and Gamma
+imports, the connector's folders, the MCP export), `frontend/tests/subPages.test.mjs` (the client
 helpers, the drop rule, App's page list and the pickers' matching), `shareReach.test.mjs`
 (the popover's line and the move's question), `refLists.test.mjs`
 (the `[[` picker's) and the browser suite's `sub-pages` group
@@ -597,7 +650,12 @@ on a second line (the Phone block at the end of `library.css`).
 
 Search chips (Tab autosuggest; Enter stays the search's own key) cover both kinds, named from the trees: a
 label chip keeps the pages carrying that label, a folder chip (its path)
-the pages filed in the folder or below it.
+the pages filed in the folder or below it. The search popover's typed
+qualifiers (`label:`, `folder:`, `-label:read`, `is:pdf`, `year:>=2020` …,
+[api.md](api.md) "Search matching and display") combine with the chips.
+The home filter box and Ctrl+P read no qualifiers: a query holding one
+matches nothing there, so Enter (or the search row) hands it to the
+popover, where it works.
 
 **Start your library.** A library with nothing of the user's in it yet
 shows `library/LibraryEmpty.jsx` at the root, in both views, instead of the
@@ -716,7 +774,8 @@ page the panel is on:
 
 - A page: Open (Enter) · Rename (F2) | New page inside (one page) | Pin ·
   Add label ▸ · Move to folder ▸ (a library page among them) · Move into
-  page… · Move to library (a sub-page among the topmost) · Duplicate |
+  page… · Move to library (a sub-page among the topmost) · Add to library…
+  (opened PDFs, in place of the two moves) · Duplicate (not an opened PDF) |
   Copy link · Share… · Export… ·
   Ask AI about this page · Properties | Delete (Del). The three rows for
   pages inside pages are in "Sub-pages" above. Properties, for one page, opens the read-only
@@ -733,8 +792,10 @@ page the panel is on:
   open that a later one overtakes (a tab pressed before the page lands)
   drops its action with it.
 - A folder: Open | New page here · New subfolder | Move to ▸ · Move up ·
-  Move down | Rename · Pin · Share… · Export… · Keep on this computer…
-  (desktop app only, a folder filed once) · Properties (one folder) | Delete.
+  Move down | Rename · Pin · Share… · Export… · Sync with this computer…
+  (desktop app only, one folder, an editor: the app asks for a directory
+  and makes it a synced vault of the folder) · Properties (one folder) |
+  Delete.
 - A label: Open · Rename · Properties | Delete.
 - The folder's Move to ▸ lists the top level ("All files") and every
   folder the acted-on folders can go into: none of them, nor one below
@@ -775,9 +836,9 @@ nothing: no page changes.
 ## Recently deleted
 
 Deleting a page moves it to a 30-day trash instead of removing it. The
-page menu's Delete, the Del key, the page header's trash button and a
-folder's "Delete N pages too" all call `DELETE /api/blocks/{id}` on the
-page root, and the server moves the page there (`ops.trash_page`) with
+page header's trash button calls `DELETE /api/blocks/{id}` on the page
+root; the page menu's Delete, the Del key and a folder's "Delete N pages
+too" send their pages in bulk (below). Either way the server moves the page there (`ops.trash_page`) with
 the pages inside it ("Sub-pages" above). The confirmations say where it
 goes and for how long, and for a page with pages inside it how many go
 with it; one page is quoted by its title ("Move "Notes" and the 2 pages
@@ -787,10 +848,13 @@ button ask the same question, built by `deleteConfirm` in
 `library/libraryUtils.js`. Their tabs close too, and none is a place a closed tab goes
 back to. A selection holding a page and a page inside it sends the outer
 one only (`topmostPages`), so the cascade takes the rest rather than one
-going alone first. Many pages go as a batch (`library/pageBatch.js`, [tasks.md](tasks.md)
-"The web app"): they leave the library at once, a row of Background tasks
-counts them from ten on with Stop, and the status says how many went and
-what failed. The header's button closes the page's tab first, as its × does (back to the latest page still
+going alone first. Many pages go as a batch, 100 to a request of
+`POST /api/blocks/bulk` (`ops.trash_pages`: one transaction, each page
+checked and answered as its own DELETE would be; `library/pageBatch.js`,
+[tasks.md](tasks.md) "The web app"): they leave the library at once, a row
+of Background tasks counts them from ten on with Stop, and the status says
+how many went and what failed. Moving, pinning and filing many pages send
+their properties patches the same way. The header's button closes the page's tab first, as its × does (back to the latest page still
 open or library view in the tab history, App's `closeTab`), and then
 deletes. The `trashed` the page socket gets with the answer
 ([collab.md](collab.md)) is meant for other windows. If it reached the page
@@ -856,10 +920,17 @@ version comes back live under the same ids, its chats and op log kept
 for good through `ops.delete_page`, the one path that drops a page's chats
 and index rows. It deletes the rows that went with the page too, each
 the same way. Delete permanently, Empty and the sweeper walk the listing,
-so they reach those rows only through their page. Empty and the sweeper
-purge data.db's rows of papers no block carries once at the end of a pass
-that deleted a page, not per page, because `pdf_index.purge_unused` reads
-every block's properties. The sweeper runs at
+so they reach those rows only through their page: Delete permanently
+reads them through the `deleted_with` column's index (`ops._went_with`,
+migration step 48). Empty and the sweeper run one pass on one
+connection: one read of the trash gives every entry with the rows that
+went with it (`trash._trashed`), each entry's deletion checks under its
+write lock that the page is still there as read (a row restored since is
+passed by, a page restored and deleted again since has its rows read
+again), and data.db's rows of papers no block carries are purged once at
+the end of a pass that deleted a page, on the same connection, not per
+page, because `pdf_index.purge_unused` reads every block's
+properties. The sweeper runs at
 startup and every hour (`lifespan`). It
 skips a workspace whose `pages.db` and WAL are unchanged since the last
 sweep, until the next expiry that sweep found (`trash._due`), so a host with

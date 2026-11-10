@@ -204,14 +204,16 @@ function BibtexSteps({ url, folder }) {
 // `onLeaveJob` lets the last step's breadcrumb walk back into the setup: the
 // job itself goes on in Background tasks, as closing the window would leave it.
 // `translated`: {pages, language, counting} while the viewer shows the page's
-// PDF translated, which an annotated PDF of it writes (resolveExport), else
-// null. `busy`: the export cannot start yet (the translation is still being
-// read, or the last press is starting it).
-export function ExportDialog({ job, fetchJob, onDownload, onStop, onRetry, onLeaveJob, ...setup }) {
+// PDF translated, which an annotated PDF of it writes (resolveExport), and
+// for a folder {papers, language, counting}, its papers that go translated;
+// else null. `busy`: the export cannot start yet (the translation is still being
+// read, or the last press is starting it). `shareView`: a share view's
+// export, whose job has no row in Background tasks (useTasks' `follow`).
+export function ExportDialog({ job, fetchJob, onDownload, onStop, onRetry, onLeaveJob, shareView = false, ...setup }) {
   const [resume, setResume] = React.useState(0);
   if (job) {
     return <ExportJobStep job={job} folder={setup.folder} folderName={setup.folderName} pageId={setup.pageId} subPages={setup.subPages}
-      fetchJob={fetchJob} onClose={setup.onCancel}
+      shareView={shareView} fetchJob={fetchJob} onClose={setup.onCancel}
       onDownload={onDownload} onStop={onStop} onRetry={onRetry}
       onBack={(step) => { setResume(step); onLeaveJob(); }} />;
   }
@@ -300,9 +302,11 @@ const NEXT_STEP = {
 };
 // The reasons the server gives for a page an export left out
 // (routers/export.py), listed so the catalogs translate them.
+// biome-ignore lint/correctness/noUnusedVariables: kept for the catalogs; nothing reads it at run time
 const SKIP_REASONS = [T("page has no PDF"), T("PDF not stored on the server"),
   T("page has no paper metadata"), T("the PDF has no pages"), T("the page's PDF changed after it was translated")];
 // And the refusals a BibTeX export job fails with (its failed step shows them).
+// biome-ignore lint/correctness/noUnusedVariables: kept for the catalogs; nothing reads it at run time
 const EXPORT_REFUSALS = [T("none of these pages has paper metadata to cite"),
   T("this page has no paper metadata to cite")];
 
@@ -312,8 +316,9 @@ const EXPORT_HEADINGS = { queued: T("Exporting…"), running: T("Exporting…"),
 // The export dialog's last step: the export job (tasks/useTasks.js) as it
 // runs and once it ended — the file to download, the pages left out, what
 // to do next. The dialog can close any time: the job goes on in Background
-// tasks, where the row opens this step again.
-function ExportJobStep({ job, folder, folderName, pageId, subPages, fetchJob, onClose, onDownload, onStop, onRetry, onBack }) {
+// tasks, where the row opens this step again. A share view's goes on with no
+// row, and the tab offers its file once it is ready (useAppJobs).
+function ExportJobStep({ job, folder, folderName, pageId, subPages, shareView, fetchJob, onClose, onDownload, onStop, onRetry, onBack }) {
   const [full, setFull] = React.useState(null); // the ended job with its result
   const head = React.useRef(null);
   const ended = isFinished(job);
@@ -334,9 +339,9 @@ function ExportJobStep({ job, folder, folderName, pageId, subPages, fetchJob, on
   const reviewed = hasReviewStep(format) || Boolean(params.sub_pages)
     || (params.page_id === pageId && offersSubPages({ folder, subPages }));
   const total = reviewed ? 3 : 2;
-  // A job that cannot be started again from its params (one that wrote the
-  // translation the viewer showed, which they do not keep) is exported again
-  // from the setup, which reads the viewer afresh, while its page is open.
+  // Started again from its params, or for one that wrote the translation the
+  // viewer showed, from the setup, which reads the viewer afresh, while its
+  // page is open (exportAgain).
   const again = exportAgain(job, pageId);
   return <SubDialog title={folder ? t("Export “{folder}”", { folder: folderName }) : t("Export")} onClose={onClose} className="transferModal">
     <nav className="transferProgress" aria-label={t("Step {step} of {total}", { step: total, total })}>
@@ -356,7 +361,9 @@ function ExportJobStep({ job, folder, folderName, pageId, subPages, fetchJob, on
       <p className="reportModalHint">{taskTitle(job)}</p>
       {isActive(job) ? <>
         <TaskProgress task={job} label={t("Export progress")} />
-        <p className="reportModalHint">{t("You can close this window: the export goes on in Background tasks, and its file waits there.")}</p>
+        <p className="reportModalHint">{shareView
+          ? t("You can close this window: the export goes on, and this tab offers its file once it is ready.")
+          : t("You can close this window: the export goes on in Background tasks, and its file waits there.")}</p>
       </> : null}
       {job.state === "done" ? <>
         <div className="transferFile">
@@ -388,8 +395,7 @@ function ExportJobStep({ job, folder, folderName, pageId, subPages, fetchJob, on
           : NEXT_STEP[format?.id] ? <p className="reportModalHint">{t(NEXT_STEP[format.id])}</p> : null}
       </> : null}
       {job.state === "failed" ? <p role="alert" className="importWarning">{t(job.error)}</p> : null}
-      {job.state === "cancelled" ? <p className="reportModalHint">{again ? t("Nothing was saved. Start it again to export.")
-        : t("Nothing was saved. Open its page to export it again.")}</p> : null}
+      {job.state === "cancelled" ? <p className="reportModalHint">{t("Nothing was saved. Start it again to export.")}</p> : null}
     </div>
     <div className="reportModalBtns transferFooter">
       {isActive(job) && job.stoppable ? <button type="button" className="uiBtn" onClick={onStop}>{t("Stop")}</button> : null}

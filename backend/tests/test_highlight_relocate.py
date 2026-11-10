@@ -974,6 +974,33 @@ def test_a_dashed_placement_keeps_where_the_highlight_was_even_when_that_file_is
     assert previous_place({k: v for k, v in off.items() if k not in ("width", "height")}, "v1")["rects"] == []
 
 
+def test_a_highlight_known_by_its_page_and_quote_alone_is_placed_dashed_where_its_quote_is():
+    """A synced vault's ``[!quote]`` callout read with no anchor Gamma knows
+    (a vault copied from another computer) is a highlight with its quote and
+    page alone: the run finds the quote, the page it names first, and draws
+    it dashed even on an exact copy, its prev that page and quote with no
+    rectangles; a second run over the file writes nothing, and a quote that
+    is nowhere stays as it was."""
+    line = "the quick brown wombat digs a long burrow"
+    doc = _pdf([[(72, 100, "Front matter")], [(72, 300, line)]])
+    items = [("hl", {"pdf_position": {"pageNumber": 1}, "quote": line}),
+             ("gone", {"pdf_position": {"pageNumber": 1}, "quote": "words this paper never had in it at all"})]
+    with hr.Doc(doc) as d:
+        placed = hr.place_all(d, items, new_doc="v1")
+        assert placed["kinds"] == {"hl": "approx", "gone": "lost"} and "gone" not in placed["ops"]
+        pos = placed["ops"]["hl"]["pdf_position"]
+        assert pos["pageNumber"] == 2 and pos["approx"] is True and pos["match"] == 0.99
+        assert pos["prev"] == {"doc_id": "v1", "pageNumber": 1, "rects": [], "quote": line}
+        assert abs(pos["rects"][0]["y2"] - (300 + 0.3 * SIZE)) < 3 and "quote" not in placed["ops"]["hl"]
+        again = hr.place_all(d, _applied(items, placed), new_doc="v1")
+    assert again["ops"] == {} and again["kinds"] == {"hl": "approx", "gone": "lost"}
+    # placed on a file the page then replaced: found exactly there, it is solid
+    moved = _pdf([[(72, 500, line)]])
+    with hr.Doc(moved) as d:
+        later = hr.place_all(d, _stamped(_applied(items[:1], placed), "v1"), new_doc="v2")
+    assert later["kinds"] == {"hl": "moved"} and not set(hr.FLAGS) & set(later["ops"]["hl"]["pdf_position"])
+
+
 def test_the_account_s_thresholds_decide_what_a_rough_match_applies():
     # a renumbered citation, 0.97 alike: applied from the default 80%, or from 95%, not when only exact copies are
     line = "In all but a few cases [25], however, such attention mechanisms are used"

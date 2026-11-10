@@ -10,13 +10,18 @@ admin.py).
 The listing also shows the account's scheduled backup tasks while one runs
 (gamma/backup_schedule.py, which keeps its own state): read-only rows of
 kind ``scheduled-backup``.
+
+A share view's exports are the share's (``auth.share_job_owner``): a
+request carrying the ``?share=`` that started one reads, stops, removes and
+downloads it by its id, for any visitor the share admits; the share view
+lists no jobs.
 """
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from .. import backup_schedule, fetch_handoff, jobs, workspaces
-from ..auth import require_user_id, require_ws, ws_role
+from ..auth import require_user_id, require_ws, share_job_owner, ws_role
 from ..logbuf import log
 from ..storage import attachment_disposition
 
@@ -35,17 +40,24 @@ def _context(request: Request) -> tuple[str, str, str | None]:
     return user_id, ws, ws_role(request)
 
 
+def _owner(request: Request) -> str:
+    """Whose jobs the request reaches: the share's for a ``?share=``
+    request (``auth.share_job_owner``), else the session account's."""
+    return share_job_owner(request) or require_user_id(request)
+
+
 def _job_for(request: Request, job_id: str, *, write: bool = False) -> dict:
     """The job with its result, if the account may see it (``write``: stop
     or remove it); 404 otherwise, as for a job that does not exist. A
-    viewer asking to stop or remove a workspace's job gets 403."""
-    user_id = require_user_id(request)
+    viewer asking to stop or remove a workspace's job gets 403. Through a
+    share, only the share's own jobs."""
+    owner = _owner(request)
     job = jobs.get(job_id, full=True)
     if job is not None:
-        if job["owner"] == user_id:
+        if job["owner"] == owner:
             return job
-        if job["owner"] == jobs.WORKSPACE and job["workspace"]:
-            role = workspaces.role_of(job["workspace"], user_id)
+        if job["owner"] == jobs.WORKSPACE and job["workspace"] and not request.query_params.get("share"):
+            role = workspaces.role_of(job["workspace"], owner)
             if write and role == "viewer":
                 raise HTTPException(status_code=403, detail="you can only view this workspace")
             if role:
@@ -135,10 +147,11 @@ def dismiss_job(job_id: str, request: Request):
 
 @router.get("/{job_id}/download")
 def download_job(job_id: str, request: Request):
-    """The file a finished job produced (the account's own jobs only). A
-    plain link works: the browser's download manager shows its progress."""
+    """The file a finished job produced (the account's own jobs only, or
+    the share's through its ``?share=``). A plain link works: the browser's
+    download manager shows its progress."""
     job = _job_for(request, job_id)
-    found = jobs.artifact(job_id) if job["owner"] == require_user_id(request) else None
+    found = jobs.artifact(job_id) if job["owner"] == _owner(request) else None
     if found is None:
         raise HTTPException(status_code=404, detail="this task has no file to download (it expired or was removed)")
     path, name, media_type = found

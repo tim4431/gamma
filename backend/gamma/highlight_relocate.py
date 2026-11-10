@@ -1090,15 +1090,18 @@ class Doc:
         return dict(self._texts)
 
 
-def page_highlights(conn, page_id: str) -> list[tuple[str, dict]]:
+def page_highlights(conn, page_id: str, *, unplaced: bool = False) -> list[tuple[str, dict]]:
     """``(id, properties)`` of the page's blocks placed on a PDF page by
     rectangles: highlights and link regions (``highlights.is_highlight``),
-    whatever their depth in the notes."""
+    whatever their depth in the notes. With ``unplaced``, also the text
+    highlights known by their page and quote alone (``_unplaced``), which a
+    run looks for by their quote."""
+    column = "pageNumber" if unplaced else "boundingRect"
     rows = conn.execute(
         "WITH RECURSIVE sub(id) AS (SELECT id FROM unified_blocks WHERE parent_id = ? "
         "UNION ALL SELECT b.id FROM unified_blocks b JOIN sub ON b.parent_id = sub.id) "
         "SELECT b.id, b.properties FROM unified_blocks b JOIN sub ON b.id = sub.id "
-        "WHERE json_extract(b.properties, '$.pdf_position.boundingRect') IS NOT NULL ORDER BY b.id",
+        f"WHERE json_extract(b.properties, '$.pdf_position.{column}') IS NOT NULL ORDER BY b.id",
         (page_id,)).fetchall()
     out = []
     for bid, raw in rows:
@@ -1107,9 +1110,20 @@ def page_highlights(conn, page_id: str) -> list[tuple[str, dict]]:
         except ValueError:
             continue
         pos = props.get("pdf_position")
-        if shape.is_highlight(props) and isinstance(pos, dict) and pos.get("rects") and shape.page_of(props):
+        if not (shape.is_highlight(props) and isinstance(pos, dict) and shape.page_of(props)):
+            continue
+        if pos.get("rects") or (unplaced and _unplaced(props)):
             out.append((bid, props))
     return out
+
+
+def _unplaced(props: dict) -> bool:
+    """Whether a highlight is known by its page and quote alone: no
+    rectangles, no area, a quote (a synced vault's ``[!quote]`` callout read
+    with no anchor Gamma knows, an import without positions)."""
+    pos, quote = props["pdf_position"], props.get("quote")
+    return (not pos.get("rects") and not pos.get("boundingRect") and not pos.get("area")
+            and isinstance(quote, str) and bool(quote.strip()))
 
 
 def _quads(pos: dict, frame) -> list:
@@ -1504,6 +1518,14 @@ def place_all(new, items: list[tuple[str, dict]], progress=None, *, read_from=No
     under its reference places it or its neighbours all stay at its
     reference (there, still ``approx`` with its ``prev``).
 
+    A text highlight known by its page and quote alone (``page_highlights``'
+    ``unplaced``: a synced vault's callout with no anchor Gamma knows) is
+    looked for by its quote, the page it names first, and drawn dashed
+    wherever it is found, an exact copy too, its ``prev`` that page and
+    quote without rectangles; one not found stays as it is, counted
+    ``lost``. A pending highlight whose ``prev`` has no rectangles and whose
+    own are ``new``'s is left for the person.
+
     A run over the file it already ran on writes nothing. ``progress`` gets
     a report per page read and per highlight, and is called bare (no
     counts: a place to stop) once per page the slower searches cover."""
@@ -1693,11 +1715,41 @@ def place_all(new, items: list[tuple[str, dict]], progress=None, *, read_from=No
             # Pending, its rects another file's: back at its reference, still to check.
             write(h, {**h.ref, "approx": True, "prev": h.prev})
 
+    def guess(bid: str, props: dict):
+        """A highlight known by its page and quote alone (``_unplaced``): its
+        quote looked for, the page it names first, and drawn dashed wherever
+        it is found, an exact copy too (the words may stand twice), with
+        ``match`` and a ``prev`` of that page and quote and no rectangles;
+        left as it is when its words are nowhere (counted ``lost``)."""
+        pos, quote = props["pdf_position"], props["quote"]
+        match = find_passage(texts, normalize_quote(quote), hint_page=min(max(pos["pageNumber"], 1), max(new.count, 1)),
+                             tick=progress, min_match=min_match, exact_chars=exact_chars)
+        spans = _spans(match)
+        boxes = _boxes(texts, match, spans)
+        if not boxes:
+            kinds[bid] = "lost"
+            return
+        kinds[bid] = "approx"
+        target = {**_position(match.page, new.frame(match.page), boxes), "approx": True,
+                  "match": min(round(match.confidence, 2), 0.99), "prev": shape.previous_place(pos, new_doc, quote)}
+        ops[bid] = {"pdf_position": target}
+        spelled = _spelled(texts[match.page], spans) if match.confidence < 1.0 or match.part else ""
+        if spelled and spelled != quote:
+            ops[bid]["quote"] = spelled
+
     for i, (bid, props) in enumerate(items):
         if progress:
             progress(done=i, total=len(items), unit="highlights", phase="matching")
         _breathe()
+        if not props["pdf_position"].get("rects"):
+            guess(bid, props)
+            continue
         h = seen(bid, props)
+        if h.prev is not None and not h.prev["rects"] and on_new(h.pos):
+            # placed on this very file by its quote alone (``guess``), or with no frame to measure by: it waits for
+            # the person, and a run over the same file again writes nothing
+            kinds[bid] = "approx"
+            continue
         ref, src = h.ref, h.src
         area = bool(ref.get("area"))
         if area and h.at_ref and src is new and h.pos.get("doc_id"):
@@ -1822,7 +1874,7 @@ def relocate(ws: str, page_id: str, new_doc: str, *, actor: str, progress=None, 
     limits = {"min_match": ROUGH_APPLY if min_match is None else min_match,
               "exact_chars": ROUGH_MIN_CHARS if exact_chars is None else exact_chars}
     with connect_pages_db(ws) as conn:
-        items = page_highlights(conn, page_id)
+        items = page_highlights(conn, page_id, unplaced=True)
     if not items:
         return {"highlights": 0, "moved": 0, "kept": 0, "lost": 0, "approx": 0, "changed": 0, **limits}
     from .ai_context import pdf_path  # a URL-opened PDF: fetched as the indexer fetches it
@@ -1894,7 +1946,7 @@ def _write(ws: str, page_id: str, new_doc: str, items: list[tuple[str, dict]], o
                                  "choose Find highlights in this PDF")
             if attachment_file(page_attachment(load_json(row[1] or "{}") or {})) != new_doc:
                 raise ValueError("the page's PDF changed again before the highlights were placed")
-            now = {bid: state(props) for bid, props in page_highlights(conn, page_id)}
+            now = {bid: state(props) for bid, props in page_highlights(conn, page_id, unplaced=True)}
             unchanged = []
             for op in ops:
                 if now.get(op["id"]) == before[op["id"]]:

@@ -40,6 +40,7 @@ export function citationRuns(items, textDivs) {
 }
 
 const fold = s => s.toLowerCase().replace(/[\u2018\u2019]/g, "'")
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: pdf.js gives a hyphen as U+0002
   .replace(/[\u201c\u201d]/g, '"').replace(/[\u2010-\u2014\u0002]/g, "-");
 
 // One entry per text-layer character, tagged with its run (`it`) and offset.

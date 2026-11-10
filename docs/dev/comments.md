@@ -356,6 +356,7 @@ like any other content.
 | Where the recipient's tab is | How it learns | Latency |
 |---|---|---|
 | a page open, in any workspace or share | `{t: "inbox"}` through `collab.publish_account` | under a second |
+| a page open without its socket (a proxy dropping WebSocket upgrades: the page reads its op log every 2 s, [collab.md](collab.md) "The client") | the 30 s poll of `GET /api/inbox/unread`; the page's threads are refetched on the first read and about every 30 s after | up to 30 s |
 | the home library or Settings | `GET /api/inbox/unread` every 30 s while visible, and on window focus | up to 30 s |
 | the Inbox panel open | the same poll every 5 s, plus the nudge | under 5 s |
 | a hidden tab | nothing until it shows again | on return |
@@ -485,7 +486,12 @@ shown after the popover opened is drawn at once. Without this, a thread of
 twelve long comments full of math (300 equations) builds every equation
 before the popover shows: about 900 ms in one task, against about 80 ms
 with it. Its "⋯" (`MenuButton`) has Edit and Delete for its
-author (Delete for the workspace's owner too) and Copy link. "New comment"
+author (Delete for the workspace's owner too), Copy link, and Report… on
+anyone else's (`canReportComment`; a link visitor's too): the report dialog
+(`support/ReportContentDialog.jsx`) asks why and posts it to `POST
+/api/reports`, where the server reads the comment's text and author
+itself, keeps it for its admins (Settings → Server → Reports) and, with
+Gamma Cloud sign-in on, sends it on ([api.md](api.md) "Reports"). "New comment"
 starts another thread. A link visitor without an account reads, with "Sign
 in to comment" (the share's sign-in gate) in place of the fields.
 
@@ -523,8 +529,8 @@ popover.
 Left out: the outliner's keys, "Paste as", image and file upload, sheets,
 embeds, presence carets and object drags.
 
-**The composer's keys.** `sendsOnShiftEnter` and `composing`
-(`chat/enterKey.js`) decide Return. Enter breaks the line,
+**The composer's keys.** `sendsOnShiftEnter` (`chat/enterKey.js`) and
+`composing` (`shared/lib/hotkeys.js`) decide Return. Enter breaks the line as in a note,
 continuing a list or a quote (`mdLines.enterPlan`) outside a code fence or
 `$$…$$`. Shift+Enter and Ctrl/⌘+Enter send. On an on-screen keyboard
 Return breaks the line, Shift or not, and the button sends; Ctrl/⌘+Enter
@@ -940,7 +946,8 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   two editors, a viewer and a link visitor without an account. It covers a
   thread from each control, live replies, resolve, the Comments window, the
   composer as a note's editor (pickers, math, the "/" menu, Enter and
-  Shift+Enter, the send button), drafts, `?thread=` and Copy link, the
+  Shift+Enter, the send button), drafts, `?thread=` and Copy link, Report
+  on another's comment and the admin resolving it in Settings → Server, the
   selection popup's Comment, and the PDF margin's cards (placement,
   activation, a reply, Escape, Resolve, no margin at fit-width; beside
   the pen strip, a press with a tool armed, a handwriting selection let

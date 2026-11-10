@@ -263,8 +263,9 @@ Built as recommended, with these differences:
   design allocates no more canvas than today, but render times and
   allocation behaviour on a real iPad need a device.
 - **The whole app.** The benchmark rendered outside React. What a zoom commit
-  costs across a long document, where every `PdfPage` re-renders because
-  `scale` is a prop, was not measured and is not addressed here.
+  cost across a long document, where every `PdfPage` re-rendered because
+  `scale` was a prop, was measured later, and the scale taken off the
+  pages' props: [pdf-zoom-frames.md](pdf-zoom-frames.md).
 - **A render queue.** Visible pages render concurrently, as today. If
   profiling shows dropped frames with a heavy figure in view, the renders
   can be serialized with the viewport's page first.

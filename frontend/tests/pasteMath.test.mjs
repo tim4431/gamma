@@ -11,11 +11,15 @@ import { mathTex, scanMathSpans } from "../src/editor/mdScan.js";
 const CASES = JSON.parse(readFileSync(new URL("../../tests/shared/pastemath.json", import.meta.url), "utf8"));
 
 test("the shared cases: formulas convert, escaped brackets and code stay", () => {
-  for (const c of CASES) assert.equal(dollarMath(c.in, c.keep), c.out, c.why);
+  for (const c of CASES.dollar) assert.equal(dollarMath(c.in, c.keep), c.out, c.why);
 });
 
 test("converting twice changes nothing more", () => {
-  for (const c of CASES) assert.equal(dollarMath(c.out, c.keep), c.out, c.why);
+  for (const c of CASES.dollar) assert.equal(dollarMath(c.out, c.keep), c.out, c.why);
+});
+
+test("the shared cases: a paste into source stays as copied", () => {
+  for (const c of CASES.paste) assert.equal(pasteMath(c.at.replace("|", ""), c.at.indexOf("|"), c.text), c.out, c.why);
 });
 
 test("a converted formula is the span the editor and the rendered view read", () => {
@@ -30,28 +34,4 @@ test("a converted formula in a quote is TeX without the quote's marks", () => {
   const [span] = scanMathSpans(text);
   assert.equal(mathTex(text, span), "\nE = mc^2\n");
   assert.equal(mathTex("$$\na\n> b\n$$", scanMathSpans("$$\na\n> b\n$$")[0]), "\na\n> b\n", "outside a quote a > is TeX");
-});
-
-// The same positions as backend/tests/test_paste_math.py's.
-test("a paste into source stays as copied", () => {
-  const at = (withCaret, text) => pasteMath(withCaret.replace("|", ""), withCaret.indexOf("|"), text);
-  assert.equal(at("see |", "\\(x\\)"), "$x$");
-  assert.equal(at("$a + | b$", "\\(x\\)"), "\\(x\\)", "inside inline math");
-  assert.equal(at("$$\na |\n$$", "\\[x^2\\]"), "\\[x^2\\]", "inside display math");
-  assert.equal(at("price $5 and |", "\\(x\\)"), "\\(x\\)", "an unclosed $ reads as math to its line's end");
-  assert.equal(at("```\nconst s = |\n```", "\\(x\\)"), "\\(x\\)", "inside a code fence");
-  assert.equal(at("```\nopen |", "\\(x\\)"), "\\(x\\)", "inside an open fence");
-  assert.equal(at("```py|thon", "\\(x\\)"), "$x$", "in an open fence's info string");
-  assert.equal(at("> ```latex\n> |\n> ```", "\\(x\\)"), "\\(x\\)", "inside a quoted fence");
-  assert.equal(at("- step\n  ~~~\n  |\n  ~~~", "\\(x\\)"), "\\(x\\)", "inside a listed tilde fence");
-  assert.equal(at("- ```\n  ab\n  |```", "\\(x\\)"), "\\(x\\)", "before an indented closing mark");
-  assert.equal(at("```\ncode\n```\nafter |", "\\(x\\)"), "$x$", "after a fence");
-  assert.equal(at("- ```\n  code\nafter |", "\\(x\\)"), "$x$", "after the list item that held a fence");
-  assert.equal(at("> ```\n> code\n\nafter |", "\\(x\\)"), "$x$", "after the quote that held one");
-  assert.equal(at("use `$$` for |", "\\(x\\)"), "$x$", "a $$ in code is no math");
-  assert.equal(at("Costs $5 a month.\n\nSet it up: |\n\n```sh\necho $HOME\n```", "\\(x\\)"), "$x$", "a dollar in code closes no dollar above");
-  assert.equal(at("$$\na `x$y` b\n|\n$$", "\\(x\\)"), "\\(x\\)", "nor a $$ block");
-  assert.equal(at("run `echo |` now", "\\(x\\)"), "\\(x\\)", "inside inline code");
-  assert.equal(at("`code` and |", "\\(x\\)"), "$x$", "after inline code");
-  assert.equal(at("Set `$HOME` first, then |", "\\(x\\)"), "$x$", "a dollar in code is no math");
 });

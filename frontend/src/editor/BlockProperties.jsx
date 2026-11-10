@@ -615,6 +615,7 @@ export default function BlockProperties({ target, live, isOpenPage = false, ctx,
   return createPortal(
     <div
       ref={leaveRef}
+      // ui-allow owned-class: one .popover.propsPopover that App renders through a portal like ThreadPopover (ui-design.md, The properties popover)
       className="popover propsPopover"
       data-popover="props"
       data-view={view}

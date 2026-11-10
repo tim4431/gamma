@@ -4,7 +4,7 @@
 // and sends each model what that model actually takes; a model's levels and
 // tiers come from GET /api/ai/model-info (its provider's listing, else
 // models.dev for effort, else what the wire itself can ask for).
-import { T } from "../shared/i18n/i18n.js";
+import { T, t } from "../shared/i18n/i18n.js";
 
 // The models one connection offers, out of the /api/ai/models registry: the
 // picked connection's (Settings → AI › Connections), else the first one's —
@@ -14,6 +14,13 @@ export function providerModels(models, providerId) {
   const all = models || [];
   const id = all.some((m) => m.provider === providerId) ? providerId : all[0]?.provider;
   return all.filter((m) => m.provider === id);
+}
+
+// A model as the model menus list it: its name, and "· no tools" when it
+// can't call tools on its connection (the registry row's `tools` false; its
+// chats then answer as a plain chat, gamma/routers/ai.py _checked_tools).
+export function modelLabel(m) {
+  return m?.tools === false ? t("{model} · no tools", { model: m.model }) : m?.model || "";
 }
 
 // Lowest first — the order mirrors EFFORT_ORDER in gamma/routers/ai.py.

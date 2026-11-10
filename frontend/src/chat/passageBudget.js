@@ -3,8 +3,9 @@
 // within the single-paper budget (Settings → AI → Chat → Context size), one
 // budget shared by all of them, and serves the attached blocks within
 // another of the same size (gamma/ai_context.py, passage_budget). This is
-// the same rule, so a chip can say what it keeps; the reply's "shortened"
-// pill (chat/coverage.js) says what the server did. Pure, for the test.
+// the same rule, held to the same answers by tests/shared/passages.json, so
+// a chip can say what it keeps; the reply's "shortened" pill
+// (chat/coverage.js) says what the server did. Pure, for the test.
 import { t } from "../shared/i18n/i18n.js";
 
 // At most this many PDF passages, attached blocks and attached note
@@ -32,12 +33,21 @@ export function fairShares(sizes, budget) {
   return shares;
 }
 
+// A passage's length in characters as the server counts them (Python's
+// len, code points): a math letter such as U+1D465 is one, where .length
+// counts its two UTF-16 units.
+export function charCount(text) {
+  let n = 0;
+  for (const _ of text || "") n++;
+  return n;
+}
+
 // The characters each passage keeps, as a Map from the passage (an object
 // with `text`) to its share. `passages` is in the order the request sends
 // them: the PDF passages, then the note selections, the editor's first.
 export function passageShares(passages, budget) {
   const list = passages.filter(Boolean);
-  const shares = fairShares(list.map((p) => (p.text || "").length), budget);
+  const shares = fairShares(list.map((p) => charCount(p.text)), budget);
   return new Map(list.map((p, i) => [p, shares[i]]));
 }
 

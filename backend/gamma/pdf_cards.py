@@ -96,7 +96,8 @@ Row = namedtuple("Row", "kind x top w h data")
 
 def person_color(name: str):
     """A person's colour from their name, as the app picks it
-    (``frontend/src/collaboration/personColor.js``): ``(r, g, b)`` in 0..1."""
+    (``frontend/src/collaboration/personColor.js``; tests/shared/
+    personcolor.json pins both): ``(r, g, b)`` in 0..1."""
     h = 0
     for ch in str(name or ""):
         h = (h * 31 + ord(ch)) & 0xFFFFFFFF

@@ -14,6 +14,7 @@ let workspaceSelect = null;                // the workspace picker (ui.js); "" =
 let folderField = null;                    // the folder field (folderChipField): one chip, none = the library root
 let labelField = null;                     // the labels field (chipField): a chip per label
 let labelNames = [];                       // the library's labels (GET /api/library/folders), suggested as you type
+let undoable = "";                         // the page a save on this tab made, which Undo takes back
 let pub = null;                            // publisher sessions: the worker's `publisher-status` answer
 let cookieTimer = 0;                       // the cookie button's "done" flash
 let serverBusy = false;
@@ -132,9 +133,10 @@ async function showMain(st) {
 
   showExisting(st);
   $("dot").className = "dot " + (st.hit ? "ok" : c.kind === "none" ? "" : "on");
-  show("existing", !!st.hit);
-  show("found", !st.hit && c.kind !== "none");
-  show("nothing", !st.hit && c.kind === "none");
+  // A save this tab made, still undoable: the worker keeps the last save
+  // (`last`), and only a page it created is this popup's to take back.
+  undoable = st.hit && st.last && !st.last.existed && st.last.block_id === st.hit.block_id ? st.hit.block_id : "";
+  if (st.hit) showFiled(); else showForm(c);
   $("nothing-msg").textContent = nothingMessage(c);
   // A "possible paper" saves the paper its one DOI names; this saves the
   // page around it instead (a news story, a blog post).
@@ -163,6 +165,33 @@ function nothingMessage(c) {
 function pageCandidate(c) {
   return { kind: "none", source_url: c.source_url || (tab && tab.url) || "", title: c.title || (tab && tab.title) || "",
            record: c.record || null };
+}
+
+// The main view has two halves, one at a time: the form that files a page
+// into the library, and the page once it is there.
+//
+// The form is the folder and the labels, then the one action under them —
+// *Save to Gamma* for a detected paper, *Save this URL anyway* under the
+// notice saying there is none. A page with no paper on it files like any
+// other, so the fields belong over both. `again` is the form brought back
+// over a page already saved ("Add to another folder…"): the notice has had
+// its say, and the button files that page again, into another folder.
+function showForm(c, again = false) {
+  const urlOnly = c.kind === "none" && !again;
+  show("existing", false);
+  show("nothing", urlOnly);
+  show("found");
+  show("save", !urlOnly);
+  show("save-anyway", urlOnly);
+}
+
+// The other half: the paper is in the library. Undo shows only for a page a
+// save on this tab made.
+function showFiled() {
+  show("existing");
+  show("undo", !!undoable);
+  show("nothing", false);
+  show("found", false);
 }
 
 // The notice over "Open in Gamma", for a paper the look-up found or a save
@@ -442,12 +471,14 @@ async function doSave({ candidate, force, asPage = false } = {}) {
     folderField.landed();
     // The paper is in the library now: the popup reads as it will when
     // reopened on this tab (as the web page, when that is what was saved).
-    state = { ...state, hit: out, ...(asPage ? { candidate: c, preview: null } : {}) };
+    state = { ...state, hit: out, last: out, ...(asPage ? { candidate: c, preview: null } : {}) };
     show("save-page", state.candidate && state.candidate.kind === "maybe");
     renderHead(state);
     showExisting(state, out);
-    show("existing");
-    show("found", false); show("nothing", false);
+    // Only a page this save made can be taken back; one the look-up found
+    // was already the user's.
+    undoable = out.existed ? "" : out.block_id;
+    showFiled();
     $("dot").className = "dot ok";
   } catch (err) {
     show("progress", false);
@@ -455,6 +486,31 @@ async function doSave({ candidate, force, asPage = false } = {}) {
   } finally {
     $("save").disabled = false; $("save-anyway").disabled = false; $("save-page").disabled = false;
   }
+}
+
+// Undo: the page this popup's save made goes to Recently deleted (the
+// worker, so a popup closing mid-way doesn't lose it), and the view goes
+// back to the form it was saved from — the folder and labels still as they
+// were, to save again somewhere else. A page the look-up found is never
+// offered, so Undo can only take back what this tab put there.
+async function doUndo() {
+  const btn = $("undo");
+  btn.disabled = true;
+  show("result", false);
+  try {
+    await send({ type: "undo-save", tabId: tab.id, blockId: undoable });
+    undoable = "";
+    state = { ...state, hit: null, last: null };
+    const c = state.candidate || { kind: "none" };
+    showForm(c);
+    $("dot").className = "dot " + (c.kind === "none" ? "" : "on");
+    const r = $("result");
+    r.className = "msg ok";
+    r.textContent = "Undone — the page is in Recently deleted.";
+    show("result");
+  } catch (err) {
+    await showFailure(err);
+  } finally { btn.disabled = false; }
 }
 
 // The tab's last save, step by step (worker.js keepLog), onto the clipboard
@@ -566,7 +622,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("save-page").onclick = () => doSave({ candidate: pageCandidate(state.candidate || {}), asPage: true });
   $("save-page").append(icon("globe"), document.createTextNode("Save the web page instead"));
   $("open-existing").onclick = () => openPath(state.hit.open_url);
-  $("refile").onclick = () => { show("existing", false); show("found"); };
+  $("refile").onclick = () => showForm(state.candidate || { kind: "none" }, true);
+  $("refile").append(icon("folderPlus"), document.createTextNode("Add to another folder…"));
+  $("undo").onclick = doUndo;
+  $("undo").append(icon("undo"), document.createTextNode("Undo this save"));
   $("clip").onclick = doClip;
   $("clip").append(icon("scissors"), document.createTextNode("Clip selected text"));
   $("copy-log").onclick = copyLog;

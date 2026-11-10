@@ -721,3 +721,82 @@ export function mergeIntoAbove(blocks, id, view) {
     : updateBlockTree(removeBlockTree(blocks, id), above.id, (b) => ({ ...b, content: merged, children: [...(b.children || []), ...kids] }));
   return { blocks: next, gone: id, focusId: above.id, caret: aboveText.length };
 }
+
+// --- Several blocks at once (a selection of notes, editor/blockSelection.js) ---
+// `ids` are the selection's roots in document order (selectionRoots): none
+// of them is under another.
+
+// The tree without the blocks `ids` and everything under them. Only the
+// paths to them are copied; the same array comes back when none is there.
+export function removeBlocks(blocks, ids) {
+  const drop = new Set(ids);
+  const walk = (list) => {
+    let out = null;
+    list.forEach((b, i) => {
+      if (drop.has(b.id)) {
+        out ??= list.slice(0, i);
+        return;
+      }
+      const kids = b.children?.length ? walk(b.children) : b.children;
+      const next = kids === b.children ? b : { ...b, children: kids };
+      if (out) out.push(next);
+      else if (next !== b) out = [...list.slice(0, i), next];
+    });
+    return out || list;
+  };
+  return walk(blocks || []);
+}
+
+// Each block made the last child of the sibling above it, as Tab does one
+// (a run of siblings goes under the same one, in order); nothing moves when
+// one of them is the first of its siblings and has none to go under.
+export function indentBlocks(blocks, ids) {
+  if (ids.some((id) => !(getParentInfo(blocks, id)?.index > 0))) return blocks;
+  return ids.reduce((tree, id) => indentBlock(tree, id), blocks);
+}
+
+// Each block put right after its parent, as Shift+Tab does one; the last
+// goes first, so a run of siblings keeps its order. A block at the top
+// stays where it is.
+export function outdentBlocks(blocks, ids) {
+  return [...ids].reverse().reduce((tree, id) => outdentBlock(tree, id), blocks);
+}
+
+// A run of siblings one step up (dir -1) or down (+1) among the others, as
+// Move block up / down does one; the same tree when the blocks are no one
+// run under one parent, or the run is at that end.
+export function moveSiblings(blocks, ids, dir) {
+  const info = getParentInfo(blocks, ids[0]);
+  if (!info) return blocks;
+  const { parent, siblings, index } = info;
+  const end = index + ids.length - 1;
+  if (ids.some((id, i) => siblings[index + i]?.id !== id)) return blocks;
+  const swap = dir < 0 ? index - 1 : end + 1;
+  if (swap < 0 || swap >= siblings.length) return blocks;
+  const next = siblings.slice();
+  const [other] = next.splice(swap, 1);
+  next.splice(dir < 0 ? end : index, 0, other);
+  return parent ? updateBlockTree(blocks, parent.id, (p) => ({ ...p, children: next })) : next;
+}
+
+// The blocks `list` put into the tree one after another: the first where
+// `at` says ({type: "child", id}: first under it; {type: "sibling", id,
+// above}), each next one right after the one before.
+export function insertBlocks(blocks, at, list) {
+  let tree = blocks, prev = null;
+  for (const b of list) {
+    tree = prev ? insertSibling(tree, prev, b, true)
+      : at.type === "child" ? insertChild(tree, at.id, b, false) : insertSibling(tree, at.id, b, !at.above);
+    prev = b.id;
+  }
+  return tree;
+}
+
+// A copy of block `b` and everything under it with fresh ids, as Duplicate
+// makes it. The PDF anchoring stays with the original: a copy with the same
+// position would draw the highlight twice (linkHighlightToBlock's rule), and
+// so would the Zotero annotation an import made it from. The quote is kept.
+export function freshCopy(b) {
+  const { pdf_position, imported_annot, annot_stripped, zotero_annotation, ...props } = b.properties || {};
+  return { ...b, id: makeId(), properties: props, children: (b.children || []).map(freshCopy) };
+}

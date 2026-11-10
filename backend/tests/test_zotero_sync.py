@@ -311,21 +311,34 @@ def test_a_force_is_noted_then_runs_as_a_first_link(me, made, fake, background):
     assert _writes(fake, calls) == []  # nothing differed
 
 
-def test_removing_a_link_forgets_what_it_kept_and_its_marks(me, made, owner_id):
+def test_removing_a_link_forgets_what_it_kept_and_its_marks(me, made, owner_id, monkeypatch):
     ws = _link(me)
     _sync(me, ws)
     page = _page(ws, "zsMarked", "Marked", zotero_pdf={"key": "ATTA2345", "state": "remote"})
     ops.commit_ops(ws, page, [{"op": "insert", "id": "zsLossy1", "parent": page, "content": "a note",
-                               "props": {"zotero_readonly": "lossy"}}], actor=owner_id, client="t")
+                               "props": {"zotero_readonly": "lossy"}},
+                              {"op": "insert", "id": "zsLocked1", "parent": page, "content": "theirs",
+                               "props": {"zotero_readonly": "locked", "zotero_author": "Ann"}}],
+                   actor=owner_id, client="t")
     zotero_sync_rows.record_conflict(ws, page, "zsLossy1", "zotero_lossy", mine="a note")
+    with connect_pages_db(ws) as conn:
+        fed = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM page_changes").fetchone()[0]
+    reloads = []
+    monkeypatch.setattr(zotero_sync.collab, "publish_reload", lambda w, p, seq=None: reloads.append((w, p)))
     assert me.delete(f"/api/zotero/links/{ws}").json() == {"ok": True}
     assert zotero_sync.get_link(ws) is None and me.get(f"/api/zotero/links/{ws}").status_code == 404
     with connect_pages_db(ws) as conn:
         for table in ("zotero_objects", "zotero_queue", "zotero_state", "sync_log", "sync_conflicts"):
             assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
         props = {bid: json.loads(raw) for bid, raw in conn.execute(
-            "SELECT id, properties FROM unified_blocks WHERE id IN (?, ?)", (page, "zsLossy1"))}
+            "SELECT id, properties FROM unified_blocks WHERE id IN (?, ?, ?)", (page, "zsLossy1", "zsLocked1"))}
+        # the marks went in one statement: the page logged once, as a reload, and in the change feed
+        last = conn.execute("SELECT ops FROM page_ops WHERE page_id = ? ORDER BY seq DESC LIMIT 1", (page,)).fetchone()
+        changed = conn.execute("SELECT seq FROM page_changes WHERE page_id = ?", (page,)).fetchone()[0]
     assert "zotero_pdf" not in props[page] and "zotero_readonly" not in props["zsLossy1"]
+    assert not {"zotero_readonly", "zotero_author"} & set(props["zsLocked1"])
+    assert json.loads(last[0]) == [{"op": "reload"}] and changed > fed
+    assert (ws, page) in reloads and len(reloads) == len(set(reloads))  # each marked page's room refetches it
     assert set(_paths(ws)) == {("ML",), ("ML", "Transformers"), ("ML", "Transformers", "Efficient"), ("Reading",)}
     assert workspaces.get(ws) is not None
 

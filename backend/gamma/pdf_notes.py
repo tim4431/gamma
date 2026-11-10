@@ -416,7 +416,7 @@ def _anchor(pos, page_w: float, page_h: float):
 
 # --- entry point --------------------------------------------------------------
 
-def render_notes(pdf_bytes: bytes, highlights, *, notes_at: str = "beside", uploads_dir=None,
+def render_notes(pdf_bytes: bytes, highlights, *, notes_at: str = "beside", stored=None,
                  resolve_ref=None) -> tuple[bytes, int]:
     """Return (pdf bytes with the cards drawn, cards drawn).
 
@@ -434,9 +434,9 @@ def render_notes(pdf_bytes: bytes, highlights, *, notes_at: str = "beside", uplo
     threads on its notes the cards do not show (the Notes switch off, an
     empty note, a text box), each a card quoting its note. A highlight with
     nothing to print, without usable rects or on a page out of range is
-    skipped; nothing to draw leaves the bytes as they are. ``uploads_dir`` is
-    where ``/api/uploads/…`` pictures are read from (without it they read as
-    their alt text), and ``resolve_ref`` (block id → {content, …} or None)
+    skipped; nothing to draw leaves the bytes as they are. ``stored``
+    (``storage.files``) finds the files of ``/api/uploads/…`` pictures (without
+    it they read as their alt text), and ``resolve_ref`` (block id → {content, …} or None)
     reads ``[[refs]]`` as the notes PDF does.
     """
     if notes_at not in NOTES_AT:
@@ -487,7 +487,7 @@ def render_notes(pdf_bytes: bytes, highlights, *, notes_at: str = "beside", uplo
     spaces = pdf_free_space.occupancy(pdf_bytes, {
         index: (frames[index][0], _to_display(*frames[index]), *sizes[index])
         for index in on_page}) if on_page else {}
-    images = XObjectStore(writer, uploads_dir)
+    images = XObjectStore(writer, stored)
     glyphs = GlyphFonts(writer)
     head = writer._add_object(_stream(b"q\n"))
     bare = {}                   # (size, matrix) → the strip's form, shared by pages without cards

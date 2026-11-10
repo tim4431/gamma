@@ -34,6 +34,7 @@ from test_text_box import CROP, _annots, _kids, _pdf, _put_children, _upload_pdf
 from test_text_box import _imported as _records
 from test_text_box import _reimported as _rerecords
 
+from conftest import files_in
 from gamma import ink as inkmod
 from gamma import notebook, picture, text_box
 from gamma.ai_context import placed_label
@@ -150,7 +151,7 @@ def test_the_stamp_and_its_keys(tmp_path):
     uploads, url = _stored(tmp_path, _file(_quads()))
     pic = _pic(url, angle=30, flip_h=True, crop={"x": 0.25, "w": 0.75})
     caption = "A *caption*\nover  two lines"
-    out, written = annotate_pdf(_pdf(), [], author="tester", uploads_dir=uploads, pictures=[_entry(pic, caption)],
+    out, written = annotate_pdf(_pdf(), [], author="tester", stored=files_in(uploads), pictures=[_entry(pic, caption)],
                                 text_boxes=[{"box": text_box.normalize_text_box({"x": 10, "y": 10}),
                                              "content": "box", "page": 1, "id": "tb", "modified": ""}])
     assert written == 2
@@ -168,7 +169,7 @@ def test_the_stamp_and_its_keys(tmp_path):
     [image] = form["/Resources"]["/XObject"].values()
     assert image.get_object()["/Subtype"] == "/Image"
     # No caption, no /Contents; no author, no /T.
-    [bare] = _stamps(annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(pic)])[0])
+    [bare] = _stamps(annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(pic)])[0])
     assert "/Contents" not in bare and "/T" not in bare
 
 
@@ -183,7 +184,7 @@ def test_the_rect_follows_the_crop_box_and_the_rotation(tmp_path, rotation, rect
     cropped to 550 × 720 at (30, 40): its user-space /Rect, and a /Matrix
     that turns the appearance back so it stands as the page shows it."""
     uploads, url = _stored(tmp_path, _file(_quads()))
-    [a] = _stamps(annotate_pdf(_pdf(rotation, CROP), [], uploads_dir=uploads, pictures=[_entry(_pic(url))])[0])
+    [a] = _stamps(annotate_pdf(_pdf(rotation, CROP), [], stored=files_in(uploads), pictures=[_entry(_pic(url))])[0])
     assert [float(v) for v in a["/Rect"]] == pytest.approx(rect, abs=0.001)
     form = a["/AP"]["/N"].get_object()
     assert [float(v) for v in form["/BBox"]] == [0, 0, 200, 100]
@@ -200,7 +201,7 @@ def test_the_stamp_draws_the_picture_as_the_screen_does(tmp_path, rotation, angl
     uploads, url = _stored(tmp_path, _file(_quads()))
     pic = _pic(url, x=150, y=120, w=200, h=120, angle=angle, flip_h=flip_h, flip_v=flip_v,
                crop={"x": 0.25, "y": 0, "w": 0.75, "h": 1})
-    pixel = _raster(annotate_pdf(_pdf(rotation, CROP), [], uploads_dir=uploads, pictures=[_entry(pic)])[0])
+    pixel = _raster(annotate_pdf(_pdf(rotation, CROP), [], stored=files_in(uploads), pictures=[_entry(pic)])[0])
     x0, y0, x1, y1 = picture.turned_box(pic)
     inside = outside = 0
     for x in range(int(x0), int(x1), 5):
@@ -218,7 +219,7 @@ def test_the_stamp_draws_the_picture_as_the_screen_does(tmp_path, rotation, angl
 def test_export_then_import_restores_the_picture(tmp_path, rotation):
     uploads, url = _stored(tmp_path, _file(_quads()))
     pic = _pic(url, x=150.37, y=120.11, angle=30, flip_v=True, crop={"x": 0.1, "y": 0.2, "w": 0.6, "h": 0.5})
-    out, _ = annotate_pdf(_pdf(rotation, CROP), [], uploads_dir=uploads, pictures=[_entry(pic, "**Fig. 1**")])
+    out, _ = annotate_pdf(_pdf(rotation, CROP), [], stored=files_in(uploads), pictures=[_entry(pic, "**Fig. 1**")])
     [found] = _imported(out)
     assert found["kind"] == "picture" and found["page"] == 1 and found["content"] == "**Fig. 1**"
     assert found["original"] == url
@@ -235,7 +236,7 @@ def test_export_then_import_restores_the_picture(tmp_path, rotation):
 def test_a_move_or_a_new_caption_in_another_viewer_holds(tmp_path):
     uploads, url = _stored(tmp_path, _file(_quads()))
     pic = _pic(url, angle=-45)
-    out, _ = annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(pic, "my *figure*")])
+    out, _ = annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(pic, "my *figure*")])
 
     def moved(annot):
         x0, y0, x1, y1 = (float(v) for v in annot["/Rect"])
@@ -259,7 +260,7 @@ def test_a_locked_picture_is_a_locked_stamp_and_its_lock_comes_back_from_f(tmp_p
     lock in another viewer holds, and a foreign stamp marked Locked comes
     in locked."""
     uploads, url = _stored(tmp_path, _file(_quads()))
-    out, _ = annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(_pic(url, locked=True))])
+    out, _ = annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url, locked=True))])
     [a] = _stamps(out)
     assert a["/F"] == 4 | 128 and json.loads(a["/GammaPicture"])["picture"]["locked"] is True
     assert _imported(out)[0]["picture"]["locked"] is True
@@ -270,7 +271,7 @@ def test_a_locked_picture_is_a_locked_stamp_and_its_lock_comes_back_from_f(tmp_p
         return edit
 
     assert "locked" not in _reimported(out, flags(4))[0]["picture"], "unlocked in another viewer"
-    out, _ = annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(_pic(url))])
+    out, _ = annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url))])
     assert _stamps(out)[0]["/F"] == 4 and "locked" not in _imported(out)[0]["picture"]
     assert _reimported(out, flags(4 | 128))[0]["picture"]["locked"] is True, "locked in another viewer"
     doc = pymupdf.open(stream=_pdf(), filetype="pdf")
@@ -296,7 +297,7 @@ def test_a_faded_picture_is_a_translucent_stamp_and_its_opacity_comes_back_from_
     /CA is written as the hundredths it holds and comes back down to the
     least opacity a picture stores."""
     uploads, url = _stored(tmp_path, _file(_quads()))
-    out, _ = annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(_pic(url, opacity=0.5))])
+    out, _ = annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url, opacity=0.5))])
     [a] = _stamps(out)
     assert a["/CA"] == 0.5 and json.loads(a["/GammaPicture"])["picture"]["opacity"] == 0.5
     form = a["/AP"]["/N"].get_object()
@@ -306,7 +307,7 @@ def test_a_faded_picture_is_a_translucent_stamp_and_its_opacity_comes_back_from_
     assert _near(_raster(out)(130, 70), HALF_RED, tol=12)
     assert _imported(out)[0]["picture"]["opacity"] == 0.5
     for opacity in (0.46, picture.MIN_OPACITY):
-        out, _ = annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(_pic(url, opacity=opacity))])
+        out, _ = annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url, opacity=opacity))])
         [a] = _stamps(out)
         assert str(a["/CA"]) == f"{opacity:g}", "not the float's every binary digit"
         assert _imported(out)[0]["picture"]["opacity"] == opacity
@@ -321,7 +322,7 @@ def test_a_faded_picture_is_a_translucent_stamp_and_its_opacity_comes_back_from_
 
     assert _reimported(out, alpha(0.25))[0]["picture"]["opacity"] == 0.25, "faded further in another viewer"
     assert "opacity" not in _reimported(out, alpha(None))[0]["picture"], "made opaque in another viewer"
-    out, _ = annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(_pic(url))])
+    out, _ = annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url))])
     [a] = _stamps(out)
     assert "/CA" not in a and "/ExtGState" not in a["/AP"]["/N"].get_object()["/Resources"]
     assert _raster(out)(130, 70) == RED and "opacity" not in _imported(out)[0]["picture"]
@@ -341,7 +342,7 @@ def test_the_stamps_order_is_their_stacking_and_no_z_comes_back(tmp_path):
     adds them in the page's order without the record's ``z``: document
     order alone stacks them as they were."""
     uploads, url = _stored(tmp_path, _file(_quads()))
-    out, _ = annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[
+    out, _ = annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[
         _entry(_pic(url, z=-1), "low", "low"), _entry(_pic(url, x=150, z=3), "high", "high")])
     assert [json.loads(a["/GammaPicture"])["picture"]["z"] for a in _stamps(out)] == [-1, 3]
     found = _imported(out)
@@ -355,14 +356,14 @@ def test_a_faded_picture_is_faded_in_the_notebook_page_and_notes_pdfs(tmp_path):
     uploads, url = _stored(tmp_path, _file(_quads()))
     pic = picture.normalize_picture({"url": url, "x": 50, "y": 50, "w": 200, "h": 200, "opacity": 0.5})
     paper = notebook.normalize_paper({"width": 300, "height": 300})
-    pixel = _raster(notebook.notebook_pdf([(paper, [], [])], pictures=[[pic]], uploads_dir=uploads))
+    pixel = _raster(notebook.notebook_pdf([(paper, [], [])], pictures=[[pic]], stored=files_in(uploads)))
     assert _near(pixel(100, 100), HALF_RED, tol=12)
-    data, _ = page_with_ink(_pdf(), 1, [], pictures=[_entry(pic)], uploads_dir=uploads)
+    data, _ = page_with_ink(_pdf(), 1, [], pictures=[_entry(pic)], stored=files_in(uploads))
     assert _near(_raster(data)(100, 100), HALF_RED, tol=12)
     tree = {"id": "page", "content": "Notes", "properties": {}, "children": [
         {"id": "p", "content": "", "properties": {"picture": {"url": url, "w": 160, "h": 80, "opacity": 0.5},
                                                   "pdf_page": 3}, "children": []}]}
-    doc = pymupdf.open(stream=render_document([tree], uploads_dir=uploads), filetype="pdf")
+    doc = pymupdf.open(stream=render_document([tree], stored=files_in(uploads)), filetype="pdf")
     try:
         [info] = doc[0].get_image_info()
         x0, y0, _x1, _y1 = info["bbox"]
@@ -378,7 +379,7 @@ def test_the_stamps_contents_is_the_caption_as_a_reader_sees_it(tmp_path):
     references with it, until another viewer edits that text."""
     uploads, url = _stored(tmp_path, _file(_quads()))
     escaped = text_box.escape_markdown("my_photo_2024.jpg")                 # as the Notability import stores it
-    out, _ = annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(_pic(url), escaped)])
+    out, _ = annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url), escaped)])
     [a] = _stamps(out)
     assert escaped != "my_photo_2024.jpg" and a["/Contents"] == "my_photo_2024.jpg"
     assert _imported(out)[0]["content"] == escaped
@@ -389,7 +390,7 @@ def test_the_stamps_contents_is_the_caption_as_a_reader_sees_it(tmp_path):
     [found] = _reimported(out, appended)
     assert found["content"] == text_box.markdown_of("my_photo_2024.jpg (2)") == escaped + " (2)"
     linked = "**Fig.** of [[abc123]]"
-    out, _ = annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(_pic(url), linked)],
+    out, _ = annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url), linked)],
                           resolve_ref=lambda ref: {"content": "the setup"} if ref == "abc123" else None)
     [a] = _stamps(out)
     assert a["/Contents"] == "Fig. of the setup"
@@ -498,7 +499,7 @@ def test_a_foreign_stamp_is_placed_where_its_appearance_draws_the_image(tmp_path
     mirrored."""
     uploads, url = _stored(tmp_path, _file(_quads()))
     pic = _pic(url, x=150, y=120, w=200, h=120, angle=30, flip_h=True)
-    out, _ = annotate_pdf(_pdf(rotation, CROP), [], uploads_dir=uploads, pictures=[_entry(pic)])
+    out, _ = annotate_pdf(_pdf(rotation, CROP), [], stored=files_in(uploads), pictures=[_entry(pic)])
 
     def anonymous(annot):
         del annot["/GammaPicture"]
@@ -590,11 +591,11 @@ def test_a_picture_is_drawn_as_the_browser_shows_it(tmp_path, fmt, orientation, 
     assert browser_orientation(data) == (orientation if turned else 1)
     ext = "jpg" if fmt == "JPEG" else fmt.lower()[:4] if fmt == "WEBP" else "png"
     uploads, url = _stored(tmp_path, data, ext)
-    store = XObjectStore(PdfWriter(), uploads)
+    store = XObjectStore(PdfWriter(), files_in(uploads))
     assert store.resolve(url)[1:] == shown.size
     pic = picture.normalize_picture({"url": url, "w": shown.width * 4, "h": shown.height * 4})
     pdf = notebook.notebook_pdf([(notebook.normalize_paper({"width": 300, "height": 300}), [], [])],
-                                pictures=[[pic]], uploads_dir=uploads)
+                                pictures=[[pic]], stored=files_in(uploads))
     assert _shows_as(pdf, shown, 4)
 
 
@@ -605,7 +606,7 @@ def test_an_oriented_jpeg_goes_in_and_comes_back_as_it_is(tmp_path):
     back."""
     jpeg = _file(_quads(60, 30), "JPEG", 6)
     uploads, url = _stored(tmp_path, jpeg, "jpg")
-    out, _ = annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(_pic(url, w=60, h=120))])
+    out, _ = annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url, w=60, h=120))])
     [stamp] = _stamps(out)
     [turned] = stamp["/AP"]["/N"]["/Resources"]["/XObject"].values()
     turned = turned.get_object()
@@ -616,7 +617,7 @@ def test_an_oriented_jpeg_goes_in_and_comes_back_as_it_is(tmp_path):
     assert found["file"] == (jpeg, ".jpg")
     png = _file(_quads(60, 30), "PNG", 8)
     uploads, url = _stored(tmp_path, png, "png", stem="0b8d")
-    [found] = _imported(annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(_pic(url))])[0])
+    [found] = _imported(annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url))])[0])
     shown = ImageOps.exif_transpose(Image.open(io.BytesIO(png))).convert("RGB")
     assert Image.open(io.BytesIO(found["file"][0])).convert("RGB").tobytes() == shown.tobytes()
 
@@ -627,7 +628,7 @@ def test_a_translucent_picture_comes_back_with_its_alpha(tmp_path):
     image = _quads().convert("RGBA")
     image.putalpha(Image.linear_gradient("L").resize(image.size))
     uploads, url = _stored(tmp_path, _file(image))
-    [found] = _imported(annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(_pic(url))])[0])
+    [found] = _imported(annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url))])[0])
     back = Image.open(io.BytesIO(found["file"][0]))
     assert found["file"][1] == ".png" and back.mode == "RGBA" and back.tobytes() == image.tobytes()
 
@@ -683,7 +684,7 @@ def test_an_image_is_opened_as_the_format_its_filter_names(tmp_path, monkeypatch
     assert image_file(_image(eps, 2, 2, "/JPXDecode", "/DeviceRGB")) is None
     assert image_file(_image(eps, 2, 2, "/DCTDecode", "/DeviceRGB", **{NameObject("/SMask"): mask})) is None
     uploads, _url = _stored(tmp_path, eps)
-    assert XObjectStore(PdfWriter(), uploads).resolve(_url) is None
+    assert XObjectStore(PdfWriter(), files_in(uploads)).resolve(_url) is None
     assert opened == []
 
 
@@ -740,7 +741,7 @@ def test_the_notebook_pdf_draws_a_sheets_pictures_under_its_boxes_and_ink(tmp_pa
     pic = picture.normalize_picture({"url": url, "x": 50, "y": 50, "w": 200, "h": 200})
     box = text_box.normalize_text_box({"x": 60, "y": 60, "w": 60, "h": 40, "auto": False, "bg": "#ff00ff"})
     paper = notebook.normalize_paper({"width": 300, "height": 300})
-    pixel = _raster(notebook.notebook_pdf([(paper, [("", box)], [_ink()])], pictures=[[pic]], uploads_dir=uploads))
+    pixel = _raster(notebook.notebook_pdf([(paper, [("", box)], [_ink()])], pictures=[[pic]], stored=files_in(uploads)))
     assert pixel(80, 90) == (255, 0, 255)                   # the box over the picture
     assert _near(pixel(100, 200), BLUE) and _near(pixel(200, 200), YELLOW)
     assert pixel(150, 150) == (0, 0, 0)                     # the ink over both
@@ -761,22 +762,22 @@ def test_page_with_ink_draws_the_pictures_and_boxes_under_the_ink(tmp_path):
     boxes = [{"box": text_box.normalize_text_box({"x": 60, "y": 60, "w": 60, "h": 40, "auto": False, "bg": "#ff00ff"}),
               "content": "", "page": 1, "id": "tb", "modified": ""}]
     ink = _ink(kind="pdf-page", width=612, height=792)
-    data, pages = page_with_ink(_pdf(), 1, [ink], pictures=pictures, text_boxes=boxes, uploads_dir=uploads)
+    data, pages = page_with_ink(_pdf(), 1, [ink], pictures=pictures, text_boxes=boxes, stored=files_in(uploads))
     pixel = _raster(data)
     assert pages == 1 and pixel(80, 90) == (255, 0, 255)
     assert _near(pixel(100, 200), BLUE) and _near(pixel(200, 100), GREEN)
     assert pixel(150, 150) == (0, 0, 0) and pixel(50, 450) == WHITE
-    assert page_with_ink(_pdf(), 1, [], pictures=pictures[1:], uploads_dir=uploads)[0]   # nothing on p. 1
+    assert page_with_ink(_pdf(), 1, [], pictures=pictures[1:], stored=files_in(uploads))[0]   # nothing on p. 1
 
 
 def test_page_with_ink_draws_an_embedded_picture_once(tmp_path):
     """A picture imported from the PDF and still embedded in it is drawn as
     Gamma has it, its original taken off the copy, as the export does."""
     uploads, url = _stored(tmp_path, _file(_quads()))
-    original = annotate_pdf(_pdf(), [], uploads_dir=uploads, pictures=[_entry(_pic(url))])[0]
+    original = annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url))])[0]
     [found] = _imported(original)
     moved = {**_entry({**found["picture"], "url": url, "x": 300, "y": 400})}
-    data, _ = page_with_ink(original, 1, [], pictures=[moved], replaced={found["key"]}, uploads_dir=uploads)
+    data, _ = page_with_ink(original, 1, [], pictures=[moved], replaced={found["key"]}, stored=files_in(uploads))
     pixel = _raster(data)
     assert pixel(150, 75) == WHITE and _near(pixel(350, 425), RED)
     assert _annots(data) == []
@@ -823,7 +824,7 @@ def test_a_highlight_is_under_the_pictures(tmp_path):
     uploads, url = _stored(tmp_path, _file(Image.new("RGB", (40, 40), BLUE)))
     band = {"position": {"pageNumber": 1, "width": 612, "height": 792,
                          "rects": [{"x1": 50, "y1": 180, "x2": 400, "y2": 220}]}, "color": "#ffeb3b", "note": ""}
-    out, written = annotate_pdf(_pdf(), [band], uploads_dir=uploads,
+    out, written = annotate_pdf(_pdf(), [band], stored=files_in(uploads),
                                 pictures=[_entry(_pic(url, x=100, y=100, w=200, h=200))])
     assert written == 2 and [a["/Subtype"] for a in _annots(out)] == ["/Highlight", "/Stamp"]
     pixel = _raster(out)
@@ -893,7 +894,7 @@ def test_a_sheets_pictures_are_drawn_as_they_stack(tmp_path):
     pictures = notebook.sheet_pictures(blocks)
     assert [p["url"] for p in pictures] == [blue, red]
     paper = notebook.normalize_paper({"width": 300, "height": 300})
-    pixel = _raster(notebook.notebook_pdf([(paper, [], [])], pictures=[pictures], uploads_dir=uploads))
+    pixel = _raster(notebook.notebook_pdf([(paper, [], [])], pictures=[pictures], stored=files_in(uploads)))
     assert _near(pixel(130, 80), RED, 10)
 
 
@@ -904,7 +905,7 @@ def _stamp_pdf(tmp_path, images, per_image=1, note=False):
     ``note``."""
     writer = PdfWriter()
     writer.add_blank_page(width=612, height=792)
-    store = XObjectStore(writer, tmp_path)
+    store = XObjectStore(writer, files_in(tmp_path))
     for n, image in enumerate(images):
         _stored(tmp_path, _file(image), stem=f"5{n}")
         name, _w, _h = store.resolve(f"/api/uploads/5{n}.png")
@@ -1193,7 +1194,7 @@ def test_the_notes_pdf_draws_the_picture_with_its_page_line(tmp_path):
     tree = {"id": "page", "content": "Notes", "properties": {}, "children": [
         {"id": "p", "content": "the caption", "properties": {"picture": {"url": url, "w": 160, "h": 80},
                                                              "pdf_page": 3}, "children": []}]}
-    pdf = render_document([tree], uploads_dir=uploads)
+    pdf = render_document([tree], stored=files_in(uploads))
     text = _page_text(pdf)
     assert "picture, p. 3" in text and "the caption" in text
     assert text.index("picture, p. 3") < text.index("the caption")
@@ -1203,8 +1204,8 @@ def test_the_notes_pdf_draws_the_picture_with_its_page_line(tmp_path):
         assert info["bbox"][2] - info["bbox"][0] == pytest.approx(160, abs=0.5)
     finally:
         doc.close()
-    assert "picture, p. 3" not in _page_text(render_document([tree], uploads_dir=uploads, notes=False))
-    gone = render_document([tree], uploads_dir=tmp_path / "missing")
+    assert "picture, p. 3" not in _page_text(render_document([tree], stored=files_in(uploads), notes=False))
+    gone = render_document([tree], stored=files_in(tmp_path / "missing"))
     assert "picture, p. 3" in _page_text(gone)                       # named even when it cannot be drawn
 
 

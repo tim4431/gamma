@@ -86,24 +86,25 @@ from datetime import timedelta
 from typing import Annotated, Literal, Union
 
 from fastapi import HTTPException
-from fractional_indexing import FIError, generate_key_between, validate_order_key
+from fractional_indexing import BASE_62_DIGITS, FIError, generate_key_between, validate_order_key
 from pydantic import BaseModel, Field, model_validator
 
-from . import collab, comments, inbox, mentions, pdf_index, textmerge, upload_gc
+from . import collab, comments, inbox, mentions, pdf_index, storage, textmerge, upload_gc
 from . import ink as inkmod
 from .picture import merge_picture, normalize_picture
 from .text_box import merge_text_box, normalize_text_box
 from .blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, MAX_PAGE_DEPTH, PARENT_PAGE, TRASH, TREES, block_to_dict, delete_subtree,
     ensure_reserved, fetch_subtree, filing, filing_ids, folder_inserts, free_position, is_op_page, label_inserts,
-    last_child_position, move_subtree_to_page, page_descendants, page_root_id, redundant_source_url, subtree_refs,
+    last_child_position, load_props, move_subtree_to_page, page_descendants, page_root_id, redundant_source_url, subtree_refs,
     touch_page, trashed_page, valid_block_id, valid_parent_value, write_lock)
-from .db import connect_pages_db, format_stamp, page_now, parse_stamp, ws_uploads_dir
+from .db import connect_pages_db, format_stamp, page_now, parse_stamp
 from .logbuf import log
 from .storage import content_digest, store_file, upload_refs
 
 SYNC_CLIENT = "sync"  # the mirror's own writes, here and on its remote (sync_engine.CLIENT reads it)
 MAX_OPS = 500
+MAX_PLAN_OPS = 50 * MAX_OPS   # a synced vault's plan, one transaction (``commit_plan``)
 MAX_CONTENT = 200_000
 # The log per page is bounded three ways — a set logs the block's whole
 # text, so typing in one long block would otherwise keep KEEP_OPS copies of
@@ -130,12 +131,13 @@ PLACED_KEYS = {"text_box": (normalize_text_box, merge_text_box), "picture": (nor
 MISSING = "missing"  # the block or the parent is gone
 MOVED = "moved"      # it lives in another page now
 CYCLE = "cycle"      # the move would put a block inside itself
+STALE = "stale"      # the page moved past the seq a plan was made at (``commit_plan``)
 
 
 class OpError(Exception):
     """A refused batch. ``missing``: the unknown block or parent id behind a
     404, so a client that holds that block can send it again as an insert.
-    ``conflict`` (MISSING / MOVED / CYCLE): refused because someone else
+    ``conflict`` (MISSING / MOVED / CYCLE / STALE): refused because someone else
     changed the page meanwhile, not because the batch is malformed;
     ``index`` is the refused op's place in the batch."""
 
@@ -242,6 +244,35 @@ class OpsRequest(BaseModel):
     cursor: CursorState | None = None
 
 
+def order_key_error(key) -> str:
+    """Why ``key`` is no sibling position fractional-indexing could have
+    minted, "" when it is one (tests/shared/fractionalkeys.json holds the
+    client's library to the same keys). The library fails on an empty key
+    with an IndexError rather than its FIError, so an empty key, or one that
+    is no string, is answered before the library reads it. Neither library
+    checks a key's digits, and the server's next key beside one
+    outside the base-62 alphabet fails with a ValueError, so such a key is
+    refused here too."""
+    if not isinstance(key, str) or not key:
+        return "invalid order key: empty"
+    if any(ch not in BASE_62_DIGITS for ch in key):
+        return "invalid order key: a character outside the base-62 alphabet"
+    try:
+        validate_order_key(key)
+    except FIError as e:
+        return str(e)
+    return ""
+
+
+class PlanRequest(BaseModel):
+    """A synced vault's plan (``commit_plan``): its ops, any number up to
+    ``MAX_PLAN_OPS``, made against the page at ``seq``."""
+    client: str = ""
+    batch: str = ""
+    seq: int
+    ops: list[Op] = Field(max_length=MAX_PLAN_OPS)
+
+
 def props_patch(old: dict, new: dict) -> dict:
     """The ``set.props`` patch turning ``old`` into ``new`` (keys gone from
     ``new`` become null). Lets writers that compute a full property dict
@@ -340,11 +371,8 @@ class _Batch:
             raise OpError(403, f"{what} {block_id} is outside this page", conflict=MOVED)
 
     def free_position(self, parent: str, position: str | None, block_id: str) -> str:
-        if position is not None:
-            try:
-                validate_order_key(position)
-            except FIError as e:
-                raise OpError(400, f"invalid position: {e}")
+        if position is not None and (why := order_key_error(position)):
+            raise OpError(400, f"invalid position: {why}")
         return free_position(self.conn, parent, position, block_id)
 
     def check_parent(self, parent: str, block_id: str | None) -> None:
@@ -437,16 +465,16 @@ class _Batch:
         new, base, now = patch.get("ink_url"), base_props.get("ink_url"), props.get("ink_url") or ""
         if not (isinstance(new, str) and new and isinstance(base, str)) or now in (base, new) or not self.ws:
             return patch
-        uploads = ws_uploads_dir(self.ws)
-        ours = inkmod.read_upload(uploads, new)
-        theirs = inkmod.read_upload(uploads, now) if now else None
+        stored = storage.files(self.ws)
+        ours = inkmod.read_upload(stored, new)
+        theirs = inkmod.read_upload(stored, now) if now else None
         if ours is None or (now and theirs is None):
             return patch
 
         def empty():
             return inkmod.InkFile(format=inkmod.FORMAT, version=inkmod.VERSION, space=ours.space, strokes=[])
 
-        base_file = inkmod.read_upload(uploads, base) if base else empty()
+        base_file = inkmod.read_upload(stored, base) if base else empty()
         ids = [i for i in base_ids if isinstance(i, str)] if isinstance(base_ids, list) else None
         try:
             result = inkmod.merge_ink(base_file, ours, theirs or empty(), ids)
@@ -461,7 +489,7 @@ class _Batch:
         else:
             data = inkmod.dumps(merged)
             name = f"{content_digest(data)}.ink"
-            if not (uploads / name).is_file():
+            if not stored(name):
                 try:
                     store_file(self.ws, data, ".ink")
                 except Exception as e:  # noqa: BLE001 — storage full: the writer's file as sent
@@ -610,10 +638,14 @@ def _merged(merges: dict, block_id: str, base: str, content: str, stored: str, c
     the writer read it, the writer's edit is applied as a patch on the
     current text (gamma/textmerge.py). An edit that is already the text —
     the same change made twice, a retried batch — has nothing to merge:
-    patching it in again would double it. The diffs are kept in ``merges``
-    by their texts, so a merge ``_premerge`` computed before the write lock
-    is not computed again under it."""
-    if len(base) > MAX_CONTENT or stored in (base, content) or base == content:
+    patching it in again would double it. An edit that took its text back
+    to its base (a word typed and deleted again within one save) changes
+    nothing: the text stored now stands, never the older text it was made
+    from (textmerge.merge keeps it), with the writer's cursor remapped into
+    it like any merge's. The diffs are kept in ``merges`` by their texts,
+    so a merge ``_premerge`` computed before the write lock is not computed
+    again under it."""
+    if len(base) > MAX_CONTENT or stored in (base, content):
         return content
     merged, _clean = _memo(merges, textmerge.merge, base, content, stored)
     if cursor and cursor.get("block") == block_id and merged != content:
@@ -709,6 +741,28 @@ def _stored_chain(conn, page_id: str) -> list[str]:
             break
         chain.append(row[0])
     return chain
+
+
+def kept_out_of(conn, parent: str) -> dict:
+    """The page-root patch that takes a page out of ``parent``, a page
+    deleted (here or on the other side of a mirror) while the page stays,
+    and files it where ``parent`` was filed: ``parent_page`` removed and
+    ``folders`` those of the top of the stored chain up from ``parent``
+    (``_stored_chain``: the last of its pages this copy has a row of, live
+    or in Recently deleted; None when that top is filed nowhere). A
+    ``parent`` this copy has no row of leaves the folders as they are. So
+    a page kept out of a deleted tree lands in the folders it was listed
+    under, as Move to library sends it, not loose in the library."""
+    patch: dict = {PARENT_PAGE: None}
+    top = None
+    for page in _stored_chain(conn, parent):
+        row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page,)).fetchone()
+        if not row:
+            break
+        top = row[0]
+    if top is not None:
+        patch[FOLDERS] = filing(load_props(top), FOLDERS) or None
+    return patch
 
 
 def _attachment_patch(patch: dict, props: dict) -> dict:
@@ -822,23 +876,47 @@ def apply_ops(conn, page_id: str, ops: list[dict], *, actor: str, client: str = 
     return result
 
 
-def apply_batches(conn, batches: list[tuple[str, list[dict]]], *, actor: str, client: str = "") -> list[dict]:
+def apply_batches(conn, batches: list[tuple[str, list[dict]]], *, actor: str, client: str = "",
+                  batch_id: str = "") -> list[dict]:
     """Several batches, ``[(page_id, ops), …]`` — each its own page's, each
     logged on its page — in the caller's transaction: what one request
     changes across pages as one step (a folder deleted together with the
     ids it leaves on the pages filed in it). Takes the write lock; the
     caller commits, or rolls back and nothing is written, then hands each
     result to ``after_commit``. ``client`` names the writer on each
-    batch's log row, as ``apply_ops``'s does. Raises ``OpError`` as
-    ``apply_ops`` does."""
+    batch's log row, as ``apply_ops``'s does, and ``batch_id`` the first
+    batch's (a synced vault's journal looks for it after a crash). Raises
+    ``OpError`` as ``apply_ops`` does."""
     write_lock(conn)
     results = []
-    for page_id, ops in batches:
+    for k, (page_id, ops) in enumerate(batches):
         ops = _checked(ops)
         if not is_op_page(conn, page_id):
             raise OpError(404, "page not found")
-        results.append(_apply(conn, page_id, ops, actor=actor, client=client))
+        results.append(_apply(conn, page_id, ops, actor=actor, client=client, batch_id=batch_id if k == 0 else ""))
     return results
+
+
+def apply_each(conn, batches: list[tuple[str, list[dict]]], *, actor: str,
+               client: str = "") -> list[dict | OpError]:
+    """``apply_batches`` for batches that stand or fall one by one, in the
+    caller's transaction: each runs in a savepoint of it, and one refused
+    (``OpError``) is undone alone and answered in its place, while the
+    others stand. The library's bulk patches (``POST /blocks/bulk``): a
+    page someone else just trashed fails, the rest of the selection goes
+    with one commit. Takes the write lock; the caller commits and hands
+    the results (the dicts) to ``after_commits``."""
+    write_lock(conn)
+    out: list[dict | OpError] = []
+    for page_id, ops in batches:
+        conn.execute("SAVEPOINT apply_each")
+        try:
+            out += apply_batches(conn, [(page_id, ops)], actor=actor, client=client)
+        except OpError as e:
+            conn.execute("ROLLBACK TO apply_each")
+            out.append(e)
+        conn.execute("RELEASE apply_each")
+    return out
 
 
 def _checked(ops: list[dict]) -> list[dict]:
@@ -983,6 +1061,40 @@ def commit_ops(ws: str, page_id: str, ops: list[dict], *, actor: str, client: st
         return after_commit(ws, conn, result, via=via)
 
 
+def commit_plan(ws: str, page_id: str, ops: list[dict], *, actor: str, client: str, batch_id: str, seq: int) -> dict:
+    """A synced vault's plan for a page from another computer
+    (gamma/vault_http.py): every op of it in one transaction, in
+    ``MAX_OPS`` batches each logged on the page, the first under
+    ``batch_id``, or none of them. Planned against the page as it stood at
+    ``seq`` (its op log's, ``latest_seq``), so a page written since is
+    refused whole, ``OpError`` 409 ``STALE``, and the vault plans again from
+    what it holds now: what someone typed in between, a child under a block
+    the file dropped among it, is never written over. A plan the log holds
+    already (a retry whose answer was lost) is answered from its row. →
+    ``{seq}``, the page's after the plan."""
+    if not ops:
+        raise OpError(400, "no ops")
+    chunks = [(page_id, ops[i:i + MAX_OPS]) for i in range(0, len(ops), MAX_OPS)]
+    with connect_pages_db(ws) as conn:
+        write_lock(conn)
+        try:
+            if not is_op_page(conn, page_id):
+                raise OpError(404, "page not found")
+            replay = _replayed(conn, page_id, client, batch_id) if batch_id else None
+            if replay:
+                conn.rollback()
+                return {"seq": replay["seq"] + len(chunks) - 1}
+            if latest_seq(conn, page_id) != seq:
+                raise OpError(409, "the page changed since the plan was made", conflict=STALE)
+            results = apply_batches(conn, chunks, actor=actor, client=client, batch_id=batch_id)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        after_commits(ws, conn, results)
+    return {"seq": results[-1]["seq"]}
+
+
 def ensure_filing(ws: str, conn, *, paths=(), labels=(), under: str = "",
                   actor: str, client: str = "") -> tuple[dict, dict]:
     """The folders at ``paths`` (lists of names, from the top or from the
@@ -1000,7 +1112,8 @@ def ensure_filing(ws: str, conn, *, paths=(), labels=(), under: str = "",
     return folder_ids, label_ids
 
 
-def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "", sweep: bool = True) -> dict:
+def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "", sweep: bool = True,
+                went: list[str] | None = None) -> dict:
     """Delete a page for good with the pages inside it, in one transaction
     committed here. Each page goes the same way (``_purge``): its subtree
     (its notes index rows with it), its comments (``comments.purge``), its
@@ -1012,7 +1125,9 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "", sw
     went then). The pages inside it are, for a page still in the library
     (a share host's delete), its live descendants (``page_descendants``),
     and the rows of Recently deleted that went there with it
-    (``deleted_with``, ``trash_page``). Then the upload names the pages
+    (``deleted_with``, ``trash_page``; ``went``: those rows as a caller
+    deleting many pages read them for all at once, ``_went_with`` read
+    here otherwise). Then the upload names the pages
     held go to the orphan check, data.db's rows of papers no block carries
     any more are purged (``sweep`` False leaves that to a caller deleting
     many pages, which purges once after them: ``pdf_index.purge_unused``
@@ -1026,14 +1141,70 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "", sw
     writers here are the ones outside the op batches — every other block
     write goes through ``apply_ops``. ``client`` names the writer to the
     commit listeners like a batch's."""
+    write_lock(conn)  # the pages inside it are read under the lock that deletes them
+    went = _went_with(conn, page_id) if went is None else went
+    return purge_pages(ws, conn, [page_id, *page_descendants(conn, page_id), *went], actor=actor, client=client,
+                       sweep=sweep)
+
+
+def purge_pages(ws: str, conn, pages: list[str], *, actor: str, client: str = "", sweep: bool = True) -> dict:
+    """``delete_page`` for the pages ``pages`` and no other: a page inside
+    one of them that is not listed stays, and reads as a library page once
+    its parent is gone (blocks_store's sub-pages). What takes back out the
+    pages a merge of its own added, by the merge's list, where a page inside
+    one of them may have come another way and be written on there
+    (gamma/linked_files.py ``_carry``). In the caller's transaction when it
+    holds the write lock already (``write_lock``); commits. ``sweep`` as
+    ``delete_page``'s."""
     write_lock(conn)
     try:
-        pages = [page_id, *page_descendants(conn, page_id), *_went_with(conn, page_id)]
         rows = [row for page in pages for row in _purge(conn, page, actor)]
         conn.commit()
     except BaseException:
         conn.rollback()
         raise
+    return _purged(ws, conn, pages, rows, client=client, sweep=sweep)
+
+
+def delete_pages(ws: str, conn, page_ids: list[str], *, actor: str, client: str = "") -> list[dict | OpError]:
+    """``delete_page`` for many library pages in one transaction committed
+    here, in order (a share host's bulk delete, ``POST /blocks/bulk``):
+    each page goes with its live descendants and the rows of Recently
+    deleted that went with it, as there. One that is no longer a library
+    page when its turn comes (gone with a page before it, or asked twice)
+    is answered ``OpError(404)`` and writes nothing, while the others go.
+    The upload check, data.db's purge and the rooms' reloads run once
+    after the one commit. Returns each page's ``{deleted_ids,
+    dropped_uploads}`` (the pages it took) or its refusal."""
+    write_lock(conn)
+    out: list[dict | OpError] = []
+    pages: list[str] = []
+    rows: list = []
+    try:
+        for page_id in page_ids:
+            row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+            if not row or row[0] != "root":
+                out.append(OpError(404, "block not found"))
+                continue
+            took = [page_id, *page_descendants(conn, page_id), *_went_with(conn, page_id)]
+            purged = [r for page in took for r in _purge(conn, page, actor)]
+            out.append({"deleted_ids": [r[0] for r in purged], "dropped_uploads": sorted(subtree_refs(purged))})
+            pages += took
+            rows += purged
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    if pages:
+        _purged(ws, conn, pages, rows, client=client, sweep=True)
+    return out
+
+
+def _purged(ws: str, conn, pages: list[str], rows: list, *, client: str, sweep: bool) -> dict:
+    """What follows the commit of deletions for good: the upload names the
+    deleted ``rows`` held go to the orphan check, data.db is purged
+    (``sweep``), and each page's room reloads and the commit listeners are
+    told. Returns ``{deleted_ids, dropped_uploads}``."""
     deleted_ids = [r[0] for r in rows]
     dropped = sorted(subtree_refs(rows))
     upload_gc.schedule(ws, dropped)
@@ -1062,14 +1233,18 @@ def _purge(conn, page_id: str, actor: str) -> list:
     return rows
 
 
+# ``_went_with``'s read, kept apart so its test plans this very statement
+WENT_WITH_SQL = "SELECT id FROM unified_blocks WHERE deleted_with = ? AND +parent_id = ? ORDER BY position, id"
+
+
 def _went_with(conn, page_id: str) -> list[str]:
     """The pages of Recently deleted that went there with ``page_id``
-    (stamped ``deleted_with`` by ``trash_page``), in their trash order. A
-    row whose text does not hold the id is passed by before its JSON is
-    read: Empty and the sweeper ask this of every page they delete."""
-    return [r[0] for r in conn.execute(
-        "SELECT id FROM unified_blocks WHERE parent_id = ? AND instr(properties, ?) > 0 "
-        "AND json_extract(properties, '$.deleted_with') = ? ORDER BY position, id", (TRASH, page_id, page_id))]
+    (stamped ``deleted_with`` by ``trash_page``), in their trash order: a
+    read of the generated column's partial index (``idx_ub_deleted_with``,
+    migration step 48), which holds those rows alone (``+parent_id`` keeps
+    the planner off ``idx_ub_parent``, which would walk the whole trash).
+    The statement is ``WENT_WITH_SQL``, whose plan the step's test reads."""
+    return [r[0] for r in conn.execute(WENT_WITH_SQL, (page_id, TRASH))]
 
 
 def trash_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> dict:
@@ -1089,26 +1264,62 @@ def trash_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> 
     copies. ``restore_page`` brings them back, ``delete_page`` removes them
     for good. Commits; returns the page's trash entry. OpError(404) unless
     ``page_id`` is a page, 409 when a block holds the reserved id."""
+    return trash_pages(ws, conn, [page_id], actor=actor, client=client, each=False)[0]
+
+
+def trash_pages(ws: str, conn, page_ids: list[str], *, actor: str, client: str = "",
+                each: bool = True) -> list[dict | OpError]:
+    """``trash_page`` for many pages in one transaction committed here, in
+    order (the library's bulk trash, ``POST /blocks/bulk``): each page goes
+    in a savepoint of it, and one refused (``OpError``: no page any more,
+    or gone with a page before it) is answered in its place while the
+    others go. The rooms hear ``trashed`` and the commit listeners are told
+    after the one commit. ``each`` False raises the first refusal instead,
+    nothing written (``trash_page``). Returns each page's trash entry or
+    its refusal."""
     write_lock(conn)
+    out: list[dict | OpError] = []
+    gone: list[str] = []
     try:
-        row = conn.execute("SELECT parent_id, content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-        if not row or row[0] != "root":
-            raise OpError(404, "page not found")
-        if not ensure_reserved(conn, TRASH):
-            raise OpError(409, f"a block holds the reserved id {TRASH!r}")
-        went = page_descendants(conn, page_id)  # read first: once the page is gone they read as library pages
-        stamps = {"deleted_at": page_now(), "deleted_by": actor}
-        props = _to_trash(conn, page_id, stamps, actor)
-        for sub in went:
-            _to_trash(conn, sub, {**stamps, "deleted_with": page_id}, actor)
+        for page_id in page_ids:
+            if each:
+                conn.execute("SAVEPOINT trash_pages")
+            try:
+                entry, went = _trash(conn, page_id, actor)
+                gone += [page_id, *went]
+            except OpError as e:
+                if not each:
+                    raise
+                conn.execute("ROLLBACK TO trash_pages")
+                entry = e
+            if each:
+                conn.execute("RELEASE trash_pages")
+            out.append(entry)
         conn.commit()
     except BaseException:
         conn.rollback()
         raise
-    for page in (page_id, *went):
+    for page in gone:
         collab.publish(ws, page, {"t": "trashed"})
         notify_commit(ws, client, page)
-    return trashed_page(conn, page_id, row[1], props)
+    return out
+
+
+def _trash(conn, page_id: str, actor: str) -> tuple[dict, list[str]]:
+    """``trash_page``'s move of a page and the pages inside it, in the
+    caller's transaction. Returns its trash entry and the pages that went
+    with it."""
+    row = conn.execute("SELECT parent_id, content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    if not row or row[0] != "root":
+        raise OpError(404, "page not found")
+    if not ensure_reserved(conn, TRASH):
+        raise OpError(409, f"a block holds the reserved id {TRASH!r}")
+    went = page_descendants(conn, page_id)  # read first: once the page is gone they read as library pages
+    stamps = {"deleted_at": page_now(), "deleted_by": actor}
+    props = _to_trash(conn, page_id, stamps, actor)
+    for sub in went:
+        _to_trash(conn, sub, {**stamps, "deleted_with": page_id}, actor)
+    return trashed_page(conn, page_id, row[1], props), went
 
 
 def _to_trash(conn, page_id: str, stamps: dict, actor: str) -> str:
@@ -1340,7 +1551,9 @@ def ops_since(conn, page_id: str, since: int) -> tuple[list[dict], bool]:
     continue from ``since`` at all: it ends before it (the page's log was
     replaced — a backup restore — or restarted) or skips the batch right
     after it (a restore moved the page's seq forward). Either way the client
-    must reload the tree."""
+    must reload the tree. Each batch names its writer's ``batch`` ("" for
+    none): a synced vault of another server asks it whether a batch of its
+    landed (gamma/vault_http.py ``HttpRemote.landed``)."""
     low = conn.execute(
         "SELECT MIN(seq) FROM page_ops WHERE page_id = ?", (page_id,)).fetchone()[0]
     if low is not None and since < low - 1:
@@ -1348,13 +1561,14 @@ def ops_since(conn, page_id: str, since: int) -> tuple[list[dict], bool]:
     if since > latest_seq(conn, page_id):
         return [], True
     batches, size = [], 0
-    for seq, actor, client, at, ops in conn.execute(
-            "SELECT seq, actor, client, at, ops FROM page_ops WHERE page_id = ? AND seq > ? ORDER BY seq",
+    for seq, actor, client, at, ops, batch_id in conn.execute(
+            "SELECT seq, actor, client, at, ops, batch_id FROM page_ops WHERE page_id = ? AND seq > ? ORDER BY seq",
             (page_id, since)):
         if not batches and seq != since + 1:
             return [], True
         size += len(ops)
         if len(batches) >= CATCHUP_MAX_BATCHES or size > CATCHUP_MAX_BYTES:
             return [], True
-        batches.append({"seq": seq, "actor": actor, "client": client, "at": at, "ops": json.loads(ops)})
+        batches.append({"seq": seq, "actor": actor, "client": client, "at": at, "ops": json.loads(ops),
+                        "batch": batch_id or ""})
     return batches, False

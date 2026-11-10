@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  approvalTitle, batchNotes, conversationId, declinedSummary, deletionNotes, grantsIn, readGrants, waitsForPapers,
-  withGrant, withoutGrants, withoutPaperWait, writeGrants,
+  approvalTitle, batchNotes, conversationId, declinedSummary, deletionNotes, grantsIn, heldSummary, readGrants,
+  waitsForPapers, withGrant, withoutGrants, withoutPaperWait, writeGrants,
 } from "../src/chat/approvals.js";
 
 test("the card's headline says what the call would do", () => {
@@ -143,4 +143,13 @@ test("a conversation can stop waiting for blocked papers, without losing its gra
   // A chat with no first message yet waits, and records nothing.
   assert.equal(waitsForPapers(store, "ada", ""), true);
   assert.deepEqual(withoutPaperWait(store, "ada", "", 3), store);
+});
+
+test("a change kept for the plan names the change it was", () => {
+  assert.equal(heldSummary({ tool: "rename_page", held: true, count: 37, args: { renames: "[…]" } }),
+    "Kept for the plan: Rename 37 pages");
+  assert.equal(heldSummary({ tool: "edit_block", held: true, title: "Notes", mode: "append", args: { block_id: "b1" } }),
+    "Kept for the plan: Add to a note in “Notes”");
+  assert.equal(heldSummary({ tool: "move_page", held: true, args: { page_id: "p1", folder: "ML" } }, () => "Kimble 2008"),
+    "Kept for the plan: Move “Kimble 2008” to ML");
 });

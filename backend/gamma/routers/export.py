@@ -6,10 +6,11 @@ or the annotated PDFs themselves. Most builders produce a zip; a bare .md (nothi
 .bib, the notes PDF and one page's annotated PDF are single files. A page's
 export takes the pages inside it too when asked (``sub_pages``), laid out
 as a folder's pages are. The same builders serve the downloads
-(``/pages/{id}/export``, ``/folders/{id}/export``: the share view, scripts)
+(``/pages/{id}/export``, ``/folders/{id}/export``: an import by link, scripts)
 and the background job the web app starts (``POST /api/jobs/export``)."""
 
 import base64
+import gzip
 import json
 import mimetypes
 import os
@@ -24,18 +25,19 @@ from typing import Annotated, Union
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 from starlette.background import BackgroundTask
 
 from .. import bibtex as bibtex_mod
 from .. import ink as inkmod
-from .. import comments, jobs, notability_export, notebook, notion_export, pdf_text, pdf_translated
-from ..auth import require_user, require_ws, resolve_ws, share_scope
+from .. import comments, jobs, notability_export, notebook, notion_export, pdf_text, pdf_translated, storage
+from ..auth import (link_ratelimit, require_user, require_ws, resolve_ws, share_job_owner, share_lookup,
+                    share_scope)
 from ..blocks_store import (
-    BLOCK_COLUMNS, FOLDERS, LABELS, PATH_SEP, TREES, assert_block_in_scope, block_to_dict,
+    BLOCK_COLUMNS, FOLDERS, LABELS, LINKED_FILE, PATH_SEP, TREES, assert_block_in_scope, block_to_dict,
     existing_in, fetch_subtree, filing, folder_path, folder_subtree_ids, page_root_id, pages_in_folder,
     sub_pages as pages_right_inside, tree_parents, tree_rows, with_sub_pages)
-from ..db import connect_pages_db, ws_uploads_dir
+from ..db import connect_pages_db
 from ..db import (
     PAGES_SCHEMA,
     copy_chats,
@@ -97,41 +99,41 @@ def _compression(arcname: str) -> int:
     return zipfile.ZIP_STORED if os.path.splitext(arcname)[1].lower() in _STORED_EXTENSIONS else zipfile.ZIP_DEFLATED
 
 
-def _write_zip(dest, entries, assets, uploads_dir, files=(), blobs=(), progress=jobs.no_progress) -> None:
-    """entries: list of (arcname, text). assets: set of upload filenames, written
-    once under assets/ (deduped by content-addressed name). files: (arcname,
-    disk path) pairs; blobs: (arcname, bytes) pairs. ``progress`` hears the
+def _write_zip(dest, entries, assets, stored, files=(), blobs=(), progress=jobs.no_progress) -> None:
+    """entries: list of (arcname, text). assets: set of upload filenames, found
+    through ``stored`` (``storage.files``), written once under assets/ (deduped
+    by content-addressed name). files: (arcname, disk path) pairs, a path of
+    None passed over; blobs: (arcname, bytes) pairs. ``progress`` hears the
     files packed so far (the phase "packing"). PDFs and compressed media are
     stored (``_compression``), the rest deflated."""
-    stored = [(f"assets/{name}", uploads_dir / name) for name in sorted(assets)] + list(files)
+    packed = [(f"assets/{name}", stored(name)) for name in sorted(assets)] + list(files)
     # strict_timestamps=False: a file dated before 1980 goes in as 1980 (backups.stream_zip)
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as z:
         for arcname, text in entries:
             z.writestr(arcname, text, compress_type=_compression(arcname))
-        for n, (arcname, path) in enumerate(stored):
-            progress(phase="packing", done=n, total=len(stored), unit="files")
-            if path.is_file():
+        for n, (arcname, path) in enumerate(packed):
+            progress(phase="packing", done=n, total=len(packed), unit="files")
+            if path and path.is_file():
                 z.write(path, arcname, compress_type=_compression(arcname))
         for arcname, data in blobs:
             z.writestr(arcname, data, compress_type=_compression(arcname))
-    progress(phase="packing", done=len(stored), total=len(stored), unit="files")
+    progress(phase="packing", done=len(packed), total=len(packed), unit="files")
 
 
-def _graph_page_parts(page, uploads_dir, include_pdf):
-    """One page in Logseq file-graph layout → (text entries, disk files,
-    blobs, image-asset names). The PDF is renamed sha → page stem so the
+def _graph_page_parts(page, stored, include_pdf):
+    """One page in Logseq file-graph layout → (text entries, ``_Builder.files``
+    entries, blobs, image-asset names). The PDF is renamed sha → page stem so the
     ``hls__<stem>`` page / ``<stem>.edn`` / ``<stem>.pdf`` naming convention
     Logseq's annotation system keys on actually holds. Spaces are replaced so
     inline ``![](../assets/<stem>.pdf)`` links stay valid Markdown."""
     stem = slugify(page.get("content"), page["id"]).replace(" ", "_")
     doc_id = (page.get("properties") or {}).get("doc_id")
-    pdf_path = None
-    if doc_id:
-        try:
-            pdf_path = uploads_dir / f"{safe_doc_id(doc_id)}.pdf"
-        except ValueError:
-            pdf_path = None
-    has_pdf = bool(include_pdf and pdf_path and pdf_path.is_file())
+    try:
+        name = f"{safe_doc_id(doc_id)}.pdf" if doc_id else ""
+    except ValueError:
+        name = ""
+    pdf_path = stored(name) if name else None
+    has_pdf = bool(include_pdf and pdf_path)
 
     md, assets = collect_and_rewrite(
         render_graph_page_md(page, stem, has_pdf), include_pdf=False, prefix="../assets/"
@@ -142,7 +144,7 @@ def _graph_page_parts(page, uploads_dir, include_pdf):
         highlights = collect_highlights(page)
         entries.append((f"pages/hls__{stem}.md", render_hls_md(stem, highlights)))
         entries.append((f"assets/{stem}.edn", render_edn(highlights)))
-        files.append((f"assets/{stem}.pdf", pdf_path))
+        files.append((f"assets/{stem}.pdf", pdf_path, name))
         blobs.extend(render_area_images(pdf_path, stem, highlights))
     return entries, files, blobs, assets
 
@@ -213,7 +215,7 @@ def _collect_cards(blocks, *, notes: bool, threads: dict) -> list[dict]:
     return cards
 
 
-def _collect_ink(blocks, uploads_dir) -> list[dict]:
+def _collect_ink(blocks, stored) -> list[dict]:
     """Handwriting blocks → ``annotate_pdf``'s ink groups (the parsed file,
     the caption + nested notes, the block id). Same skip rule as marks for
     ink that came from the PDF and is still embedded in it."""
@@ -224,7 +226,7 @@ def _collect_ink(blocks, uploads_dir) -> list[dict]:
         url = props.get("ink_url")
         if not url or still_embedded(props):
             continue
-        ink_file = inkmod.read_upload(uploads_dir, url)
+        ink_file = inkmod.read_upload(stored, url)
         if not ink_file:
             continue
         groups.append({"ink": ink_file, "note": highlight_note_text(b, children_by_id), "id": b["id"]})
@@ -262,7 +264,7 @@ def _collect_text_boxes(blocks, page_id) -> tuple[list[dict], set]:
     return boxes, replaced
 
 
-def _collect_pictures(blocks, page_id, uploads_dir) -> tuple[list[dict], set]:
+def _collect_pictures(blocks, page_id, stored) -> tuple[list[dict], set]:
     """Pictures on the PDF's pages, each page's in the order they stack
     (``picture.stack_order``) → ``annotate_pdf``'s pictures (the normalized
     picture, the caption, the page, the block id, when it last changed) and
@@ -280,7 +282,7 @@ def _collect_pictures(blocks, page_id, uploads_dir) -> tuple[list[dict], set]:
         if pic is None:
             continue
         page = picture_page(props, on_sheet=b["id"] in on_sheets)
-        if page and not (uploads_dir / pic["url"].rsplit("/", 1)[1]).is_file():
+        if page and not stored(pic["url"].rsplit("/", 1)[1]):
             log.info(f"[export] the picture {b['id']} is left out: its file {pic['url']} is missing")
             continue
         if still_embedded(props):
@@ -334,12 +336,12 @@ def _ref_resolver(conn, reach=None):
     return resolve
 
 
-def _image_resolver(uploads_dir):
+def _image_resolver(stored):
     """``resolve_image`` for note_html: upload filename → (mime, base64)."""
     def resolve(filename):
         mime = IMAGE_MIME.get(filename.rsplit(".", 1)[-1].lower())
-        path = uploads_dir / filename
-        if not mime or not path.is_file() or path.stat().st_size > _EMBED_IMAGE_CAP:
+        path = stored(filename)
+        if not mime or not path or path.stat().st_size > _EMBED_IMAGE_CAP:
             return None
         return mime, base64.b64encode(path.read_bytes()).decode("ascii")
     return resolve
@@ -362,7 +364,9 @@ class _Builder:
     ``reach`` is what its [[refs]] and ![[embeds]] may read (``_ref_resolver``)
     and ``save`` packs only ``readable``, the uploads the share can read
     (``_can_bundle``): both hold for every format here, so a builder has no
-    share rule of its own for them."""
+    share rule of its own for them. ``stored`` finds an upload's file
+    (``storage.files``); ``files`` holds ``(arcname, path, name)``, ``name``
+    the upload it packs, "" for a file of the export's own."""
     suffix = ".zip"  # appended to the base slug for the download name
     roots_only = False  # True: the driver hands over the page's own row, not its subtree
 
@@ -370,7 +374,7 @@ class _Builder:
         self.ws = ws
         self.base = base
         self.opts = opts
-        self.uploads_dir = ws_uploads_dir(ws)
+        self.stored = storage.files(ws)
         self.entries, self.assets = [], set()
         self.files, self.blobs = [], []
         self.walked, self.skipped = 0, []  # pages the driver fed in; {title, reason} left out
@@ -402,7 +406,7 @@ class _Builder:
             self._spool = Path(tempfile.mkdtemp(prefix="gamma-export-"))
         path = self._spool / f"{len(self.files)}.part"
         path.write_bytes(data)
-        self.files.append((arcname, path))
+        self.files.append((arcname, path, ""))
 
     def discard(self) -> None:
         """Remove what ``spool`` wrote (``save`` does it once the file is out)."""
@@ -417,22 +421,24 @@ class _Builder:
         every file). A handwriting picture goes by its ink."""
         if self.opts.get("share") is None:
             return True
-        drawn = name.endswith(".svg") and not (self.uploads_dir / name).is_file()
+        drawn = name.endswith(".svg") and not self.stored(name)
         return (f"{name[:-4]}.ink" if drawn else name) in self.readable
 
     def _bundled(self) -> tuple[set, list]:
         """The ``assets`` and ``files`` the zip may hold (``_can_bundle``);
-        what is no upload (a spooled PDF, a note) is the export's own."""
+        what is no upload (a spooled PDF, a note) is the export's own, and
+        an upload is told by the name its entry carries, not by where its
+        path lies."""
         return ({name for name in self.assets if self._can_bundle(name)},
-                [(arcname, path) for arcname, path in self.files
-                 if path.parent != self.uploads_dir or self._can_bundle(path.name)])
+                [(arcname, path) for arcname, path, name in self.files
+                 if not name or self._can_bundle(name)])
 
     def save(self, dest, progress=jobs.no_progress) -> tuple[str, str]:
         """Write the export to ``dest``: ``(download name, media type)``."""
         try:
             self.finish()
             assets, files = self._bundled()
-            _write_zip(dest, self.entries, assets, self.uploads_dir, files, self.blobs, progress)
+            _write_zip(dest, self.entries, assets, self.stored, files, self.blobs, progress)
         finally:
             self.discard()
         return f"{self.base}{self.suffix}", "application/zip"
@@ -492,10 +498,9 @@ class _Builder:
         for name in page_assets:
             if not name.endswith(".svg") or not self._can_bundle(name):
                 continue
-            source = self.uploads_dir / (name[:-4] + ".ink")
+            source = self.stored(name[:-4] + ".ink")
             arc = f"{prefix}{name}"
-            if not source.is_file() or (self.uploads_dir / name).is_file() \
-                    or any(b[0] == arc for b in self.blobs):
+            if not source or self.stored(name) or any(b[0] == arc for b in self.blobs):
                 continue
             try:
                 svg = inkmod.to_svg(inkmod.parse_ink(source.read_bytes()))
@@ -620,13 +625,14 @@ class _ObsidianBuilder(_Builder):
         row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (rid,)).fetchone()
         try:
             doc_id = json.loads(row[0] or "{}").get("doc_id") if row else None
-            path = self.uploads_dir / f"{safe_doc_id(doc_id)}.pdf" if doc_id else None
+            name = f"{safe_doc_id(doc_id)}.pdf" if doc_id else ""
         except (TypeError, ValueError):
-            path = None
-        if path and path.is_file():
+            name = ""
+        path = self.stored(name) if name else None
+        if path:
             arcname = self.ctx.name_pdf(rid, title, doc_id)
             if all(f[0] != arcname for f in self.files):
-                self.files.append((arcname, path))
+                self.files.append((arcname, path, name))
 
     def add_page(self, n, rows, page):
         md, page_assets = collect_and_rewrite(
@@ -638,7 +644,7 @@ class _ObsidianBuilder(_Builder):
 
     def finish(self):
         # Attachments live in attachments/, not the readable export's assets/.
-        self.files += [(f"attachments/{name}", self.uploads_dir / name)
+        self.files += [(f"attachments/{name}", self.stored(name), name)
                        for name in sorted(self.assets)]
         self.assets = set()
         self.entries.append((".obsidian/app.json", APP_JSON))
@@ -651,7 +657,7 @@ class _LogseqBuilder(_Builder):
 
     def add_page(self, n, rows, page):
         p_entries, p_files, p_blobs, p_assets = _graph_page_parts(
-            page, self.uploads_dir, self.opts["pdf"])
+            page, self.stored, self.opts["pdf"])
         self.entries += p_entries
         self.files += p_files
         self.blobs += p_blobs
@@ -688,7 +694,7 @@ class _ZoteroBuilder(_Builder):
         super().__init__(ws, base, opts)
         self.items = []
         self.keys = set()  # the item keys written: each names one item
-        self.resolve_image = _image_resolver(self.uploads_dir)
+        self.resolve_image = _image_resolver(self.stored)
         self.resolve_ref = None
 
     def begin(self, conn, root_ids):
@@ -719,31 +725,32 @@ class _ZoteroBuilder(_Builder):
         if not (self.opts["pdf"] and doc_id):
             return None, set()
         try:
-            pdf_path = self.uploads_dir / f"{safe_doc_id(doc_id)}.pdf"
+            name = f"{safe_doc_id(doc_id)}.pdf"
         except ValueError:
             return None, set()
-        if not pdf_path.is_file():
+        pdf_path = self.stored(name)
+        if not pdf_path:
             return None, set()
         pdf_arc = f"files/{n}/{slugify(title, '')}.pdf"
         highlights, notes = self.opts["highlights"], self.opts["notes"]
         blocks = [block_to_dict(r) for r in rows] if highlights or notes else []
         marks = _collect_marks(blocks) if highlights else []
-        ink = _collect_ink(blocks, self.uploads_dir) if highlights else []
+        ink = _collect_ink(blocks, self.stored) if highlights else []
         boxes, replaced = _collect_text_boxes(blocks, page["id"]) if highlights or notes else ([], set())
-        pictures, more = _collect_pictures(blocks, page["id"], self.uploads_dir) if highlights or notes else ([], set())
+        pictures, more = _collect_pictures(blocks, page["id"], self.stored) if highlights or notes else ([], set())
         if marks or ink or boxes or pictures or replaced or more:
             for mark in marks + ink:
                 mark["note"] = strip_image_md(mark["note"])
             try:
                 data, _ = annotate_pdf(pdf_path.read_bytes(), marks, author=self.opts.get("author", ""), ink=ink,
                                        text_boxes=boxes, replaced=replaced | more, resolve_ref=self.resolve_ref,
-                                       pictures=pictures, uploads_dir=self.uploads_dir, zotero=True)
+                                       pictures=pictures, stored=self.stored, zotero=True)
             except Exception as e:
                 log.warning(f"[zotero export] annotating '{title}' failed, exporting bare PDF: {e}")
             else:
                 self.spool(f"{self.base}/{pdf_arc}", data)
                 return pdf_arc, {g["id"] for g in ink} | {b["id"] for b in boxes} | {p["id"] for p in pictures}
-        self.files.append((f"{self.base}/{pdf_arc}", pdf_path))
+        self.files.append((f"{self.base}/{pdf_arc}", pdf_path, name))
         return pdf_arc, set()
 
     def _attachments(self, n, page) -> tuple[list, set]:
@@ -756,10 +763,11 @@ class _ZoteroBuilder(_Builder):
         out, packed, chips = [], set(), set()
 
         def pack(fname, arc, title):
-            if fname in packed or not (self.uploads_dir / fname).is_file():
+            path = None if fname in packed else self.stored(fname)
+            if not path:
                 return
             packed.add(fname)
-            self.files.append((f"{self.base}/{arc}", self.uploads_dir / fname))
+            self.files.append((f"{self.base}/{arc}", path, fname))
             out.append({"path": arc, "title": title,
                         "mime": IMAGE_MIME.get(fname.rsplit(".", 1)[-1].lower())
                                 or mimetypes.guess_type(fname)[0] or "application/octet-stream"})
@@ -1014,6 +1022,10 @@ class _GammaBuilder(_Builder):
                            [json.dumps(self.page_ids + sorted(subtree))])
             # the threads shown on the pages; their authors' names travel with them (author_name)
             comments.copy_rows(self.db, comments.rows_of_pages(src, self.page_ids))
+        # A PDF read from a file on this computer travels as bytes: where the
+        # export lands it is a page like any other, with no path to read from.
+        self.db.execute(f"UPDATE unified_blocks SET properties = json_remove(properties, '$.{LINKED_FILE}') "
+                        f"WHERE json_extract(properties, '$.{LINKED_FILE}') IS NOT NULL")
         self.db.commit()
         pages_bytes = self.db.serialize()
         self.db.close()
@@ -1024,7 +1036,7 @@ class _GammaBuilder(_Builder):
             "scope": {"folder": scope, "pages": len(self.page_ids)},
             "exported_at": page_now(),
         }, indent=2)))
-        self.files += [(f"uploads/{name}", self.uploads_dir / name)
+        self.files += [(f"uploads/{name}", self.stored(name), name)
                        for name in sorted(self.upload_names)]
 
 
@@ -1049,12 +1061,12 @@ class _NotesPdfBuilder(_Builder):
             # so [[ref]]/![[embed]] resolution opens its own (read-only use).
             with connect_pages_db(self.ws) as conn:
                 return render_document(
-                    self.pages, uploads_dir=self.uploads_dir,
+                    self.pages, stored=self.stored,
                     highlights=self.opts["highlights"], notes=self.opts["notes"],
                     resolve_ref=_ref_resolver(conn, self.reach))
         except Exception as e:
             log.warning(f"[notes pdf export] '{self.base}' failed: {e}")
-            raise HTTPException(status_code=400, detail=f"could not build the PDF: {e}")
+            raise HTTPException(status_code=400, detail=f"could not build the PDF: {jobs.error_text(e)}")
 
     def save(self, dest, progress=jobs.no_progress):
         progress(phase="typesetting")
@@ -1080,15 +1092,15 @@ class _AnnotatedPdfBuilder(_Builder):
         self.single_name = ""
 
     def add_page(self, n, rows, page):
-        # The translation shown in the viewer is the exported page's own,
-        # not that of a page inside it (``start_export_job``).
-        translated_page, translation = self.opts.get("translation") or ("", None)
+        # The translations go by page: a page's export carries its own, not
+        # that of a page inside it, and a folder's those of its papers the
+        # browser laid out (``start_export_job``).
+        translation = (self.opts.get("translations") or {}).get(page["id"])
         try:
             data, filename, _, _ = annotated_page_pdf(
                 self.ws, [block_to_dict(r) for r in rows], page["id"], highlights=self.opts["highlights"],
                 notes=self.opts["notes"], comments=self.opts["comments"], notes_at=self.opts["notes_at"],
-                author=self.opts.get("author", ""), reach=self.reach,
-                translation=translation if page["id"] == translated_page else None)
+                author=self.opts.get("author", ""), reach=self.reach, translation=translation)
         except HTTPException as e:
             self.skip(page, str(e.detail))
             return
@@ -1138,7 +1150,7 @@ class _NotabilityBuilder(_Builder):
             self._spool = Path(tempfile.mkdtemp(prefix="gamma-export-"))
         path = self._spool / f"{len(self.files)}.part"
         try:
-            warnings = notability_export.write_page([block_to_dict(r) for r in rows], page["id"], self.uploads_dir,
+            warnings = notability_export.write_page([block_to_dict(r) for r in rows], page["id"], self.stored,
                                                     path, self.resolve_ref)
         except notability_export.ExportError as e:
             path.unlink(missing_ok=True)
@@ -1148,7 +1160,7 @@ class _NotabilityBuilder(_Builder):
         self.warnings += [{"page_id": page["id"], "title": title, "reason": reason} for reason in warnings]
         name = self.file_name(page, ".note")
         self.single_name = name.rsplit("/", 1)[-1]
-        self.files.append((name, path))
+        self.files.append((name, path, ""))
 
     def save(self, dest, progress=jobs.no_progress):
         if not self.files:
@@ -1199,9 +1211,9 @@ class _NotionBuilder(_Builder):
         if arcname not in self.sizes and not self._can_bundle(name):
             self.sizes[arcname] = None
         if arcname not in self.sizes:
-            path = self.uploads_dir / name
-            if path.is_file():
-                self.files.append((arcname, path))
+            path = self.stored(name)
+            if path:
+                self.files.append((arcname, path, name))
                 self.sizes[arcname] = path.stat().st_size
             else:
                 self.render_ink_svgs([name], prefix=f"{stem}/")
@@ -1396,6 +1408,45 @@ def page_notes_pdf(ws: str, page_id: str, *, highlights=True, notes=True) -> tup
     return builder.render(), f"{builder.base}{builder.suffix}"
 
 
+def page_export_file(ws: str, page_id: str, mode: str, *, highlights=True, notes=True, author="",
+                     sub_pages=False) -> tuple[bytes, str, str]:
+    """One page in the export ``mode``, with ``sub_pages`` the pages inside
+    it too, as its download holds it: ``(bytes, file name, media type)``.
+    For callers that hand over the file itself (the MCP export)."""
+    builder = page_builder(ws, page_id, mode, _export_opts(highlights=highlights, notes=notes, author=author),
+                           sub_pages=sub_pages)
+    tmp = tempfile.NamedTemporaryFile(suffix=builder.suffix, delete=False)
+    tmp.close()
+    try:
+        name, media_type = builder.save(tmp.name)
+        return Path(tmp.name).read_bytes(), name, media_type
+    finally:
+        os.unlink(tmp.name)
+
+
+def page_gamma_zip(ws: str, page_id: str, dest, props: dict) -> None:
+    """A page and the pages inside it as a Gamma export at ``dest``, the
+    page's own properties patched by ``props`` first (a None value drops the
+    key), and the folders and labels it carries those the pages are filed
+    in once patched: what another workspace of this server merges in to
+    take the page across (``linked_files.add_to_library``), where a folder
+    the page leaves would be made, empty. Raises HTTPException like the
+    routes."""
+    builder = page_builder(ws, page_id, "gamma", _export_opts(), sub_pages=True)
+    row = builder.db.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    patched = json.loads(row[0] or "{}")
+    for key, value in props.items():
+        if value is None:
+            patched.pop(key, None)
+        else:
+            patched[key] = value
+    builder.db.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps(patched), page_id))
+    builder.filed = {block_id for (raw,) in builder.db.execute(
+        "SELECT properties FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(builder.page_ids),))
+        for tree in TREES for block_id in filing(json.loads(raw or "{}"), tree)}
+    builder.save(dest)
+
+
 def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, comments=False, notes_at="beside",
                   author="", scope=None) -> tuple[bytes, str, int, int]:
     """The page's PDF with its highlights, ink, text boxes and pictures as
@@ -1441,37 +1492,36 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
     read (``_ref_resolver``)."""
     root = next(b for b in blocks if b["id"] == block_id)
     doc_id = root["properties"].get("doc_id")
+    stored = storage.files(ws)
     page_sheets = [] if doc_id else notebook.sheets_of(blocks, block_id)
     if page_sheets:
         # A page without a PDF exports its sheets of paper: one PDF page
         # each, the paper painted, the text boxes typeset and the
         # handwriting drawn on it (gamma/notebook.py).
-        uploads = ws_uploads_dir(ws)
         sheets, pictures, drawn = [], [], 0
         for sheet in page_sheets:
             boxes = notebook.sheet_text_boxes(sheet["blocks"])
             inks = [ink for b in sheet["blocks"] if is_ink(b["properties"])
-                    if (ink := inkmod.read_upload(uploads, b["properties"]["ink_url"])) is not None]
+                    if (ink := inkmod.read_upload(stored, b["properties"]["ink_url"])) is not None]
             pictures.append(notebook.sheet_pictures(sheet["blocks"]))
             drawn += len(boxes) + len(inks) + len(pictures[-1])
             sheets.append((sheet["paper"], boxes, inks))
         with connect_pages_db(ws) as conn:
             pdf_bytes = notebook.notebook_pdf(sheets, resolve_ref=_ref_resolver(conn, reach), pictures=pictures,
-                                              uploads_dir=uploads)
+                                              stored=stored)
         return pdf_bytes, f"{slugify(root.get('content'), block_id)}.pdf", drawn, 0
     if not doc_id:
         raise HTTPException(status_code=400, detail="page has no PDF")
     try:
-        pdf_path = ws_uploads_dir(ws) / f"{safe_doc_id(doc_id)}.pdf"
+        pdf_path = stored(f"{safe_doc_id(doc_id)}.pdf")
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid document id")
-    if not pdf_path.is_file():
+    if not pdf_path:
         raise HTTPException(status_code=404, detail="PDF not stored on the server")
 
-    uploads = ws_uploads_dir(ws)
     marks = _collect_marks(blocks)
     boxes, replaced = _collect_text_boxes(blocks, block_id)
-    pictures, more = _collect_pictures(blocks, block_id, uploads)
+    pictures, more = _collect_pictures(blocks, block_id, stored)
     replaced |= more
 
     written = 0
@@ -1488,9 +1538,9 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
             with connect_pages_db(ws) as conn:
                 pdf_bytes, written = annotate_pdf(
                     pdf_bytes, marks if highlights else [], author=author,
-                    ink=_collect_ink(blocks, uploads) if highlights else (),
+                    ink=_collect_ink(blocks, stored) if highlights else (),
                     text_boxes=boxes, replaced=replaced, resolve_ref=_ref_resolver(conn, reach),
-                    pictures=pictures, uploads_dir=uploads)
+                    pictures=pictures, stored=stored)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not annotate PDF: {str(e) or type(e).__name__}") from e
 
@@ -1506,9 +1556,9 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
                     threads.setdefault(thread["block_id"], []).append(thread["comments"])
                 pdf_bytes, drawn = render_notes(
                     pdf_bytes, _collect_cards(blocks, notes=notes, threads=threads), notes_at=notes_at,
-                    uploads_dir=uploads, resolve_ref=_ref_resolver(conn, reach))
+                    stored=stored, resolve_ref=_ref_resolver(conn, reach))
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"could not render notes: {e}")
+            raise HTTPException(status_code=400, detail=f"could not render notes: {jobs.error_text(e)}")
 
     suffix = "-notes" if notes else "-comments" if comments else "-annotated" if highlights else ""
     return pdf_bytes, f"{slugify(root.get('content'), block_id)}{suffix}.pdf", written, drawn
@@ -1616,10 +1666,11 @@ def export_folder(folder_id: str, request: Request, mode: str = "readable", pdf:
     subfolders become collections), ``bibtex`` (one .bib with every paper's
     citation entry), ``notion`` (a zip for Notion's importer: subfolders as
     directories) or ``gamma`` (a scoped account backup any Gamma imports
-    via /api/import-data?mode=merge). The web app exports through a job
-    instead (``POST /api/jobs/export``); this is the share view's and the
-    scripts' download — with a folder share token, a ``mode=bibtex`` URL is
-    the stable bibliography link a LaTeX editor refreshes from. 404 for an
+    via /api/import-data?mode=merge). The web app, a share view's too,
+    exports through a job instead (``POST /api/jobs/export``); this is
+    another Gamma's import by link and the scripts' download — with a
+    folder share token, a ``mode=bibtex`` URL is the stable bibliography
+    link a LaTeX editor refreshes from. 404 for an
     id that is no folder or a folder without pages, 403 for a folder outside
     the request's share."""
     scope = share_scope(request)
@@ -1692,8 +1743,10 @@ class TranslatedBlock(_Finite):
     size, and its translation as text and formulas (none: its lines go,
     nothing is written). ``box`` is the room a one-line block has past its
     line, ``foot`` where its text stops when the next block starts inside its
-    box, ``centred``, ``bold``, ``italic`` and ``indent`` (of its first line)
-    how the overlay sets it."""
+    box, ``centred``, ``justified``, ``bold``, ``italic`` and ``indent`` (of
+    its first line) how the overlay sets it, and ``face`` the name of the
+    font most of it is set in, which it is set in again when that font draws
+    the translation."""
     lines: list[_Box] = Field(min_length=1, max_length=1_000)
     size: float = Field(gt=0, le=1_000)
     parts: list[Union[Annotated[str, Field(max_length=100_000)], TranslatedFormula]] = Field(
@@ -1701,9 +1754,11 @@ class TranslatedBlock(_Finite):
     box: Union[_Box, None] = None
     foot: Union[float, None] = None
     centred: bool = False
+    justified: bool = False
     bold: bool = False
     italic: bool = False
     indent: float = Field(default=0, ge=0, le=10_000)
+    face: Union[str, None] = Field(default=None, max_length=256)
 
 
 class TranslatedPage(_Finite):
@@ -1724,10 +1779,24 @@ class ExportTranslation(_Finite):
         return lang
 
 
-def _translation_bounds(translation: ExportTranslation) -> None:
-    """413 for a translation past the totals above, in one sentence (a
-    model validator's 422 would echo the whole translation back)."""
-    blocks = [block for page in translation.pages for block in page.blocks]
+class PaperTranslation(ExportTranslation):
+    """One paper's translation in a folder's annotated-PDF export, and the
+    page whose PDF it is written into (frontend/src/pdf/folderTranslation.js
+    lays it out in the browser, with no viewer)."""
+    page_id: str = Field(min_length=1, max_length=128)
+
+
+# The papers a folder's export may carry a translation for: the browser's
+# memory of the papers it left translated holds 300 (translateRecall.RECALL_MAX).
+TRANSLATED_PAPERS_MAX = 1_000
+_PAPER_TRANSLATIONS = TypeAdapter(list[PaperTranslation])
+
+
+def _translation_bounds(translations: list[ExportTranslation]) -> None:
+    """413 for translations past the totals above, a folder's papers all
+    together, in one sentence (a model validator's 422 would echo the whole
+    translation back)."""
+    blocks = [block for translation in translations for page in translation.pages for block in page.blocks]
     parts = [part for block in blocks for part in block.parts]
     formulas = [part for part in parts if not isinstance(part, str)]
     lines = sum(len(block.lines) for block in blocks)
@@ -1750,8 +1819,48 @@ class ExportJob(BaseModel):
     comments: bool = False      # an annotated PDF's open comment threads beside its pages
     notes_at: str = "beside"    # where an annotated PDF's notes go (NOTES_AT)
     sub_pages: bool = False     # a page's: the pages inside it too (a folder's pages always bring theirs)
-    # a page's annotated PDF: the translation the viewer shows of its PDF
+    # a page's annotated PDF: the translation the viewer shows of its PDF …
     translation: ExportTranslation | None = None
+    # … a folder's: those of its papers this browser left translated …
+    translations: list[PaperTranslation] = Field(default_factory=list, max_length=TRANSLATED_PAPERS_MAX)
+    # … or the ones an earlier export of that page or folder kept (its job's
+    # id): its retry
+    translation_of: str = ""
+
+
+# The exports a link visitor (no account) may start through a share in five
+# minutes, per IP; a share's own limits are an account's (jobs.share_owner).
+LINK_EXPORTS_PER_5_MIN = 30
+
+# The layout a translated export was sent, kept with its job (jobs.kept) so
+# Background tasks can start it again: a page's one translation, or the list
+# of a folder's papers'.
+KEPT_TRANSLATION = "translation.json.gz"
+KEPT_TRANSLATIONS = "translations.json.gz"
+
+
+def _kept_translations(request: Request, ws: str, page_id: str, folder: str, job_id: str) -> dict:
+    """The translations an earlier annotated-PDF export of this page or
+    folder was sent, kept with its job, by the page each goes into: one of
+    this account's exports, in this workspace, of the same page or folder.
+    404 once they are not (the job was removed, or ran before exports kept
+    them)."""
+    job = jobs.get(job_id)
+    data = None
+    if (job is not None and job["kind"] == "export" and job["owner"] == request.state.user_id
+            and job["workspace"] == ws and (job["params"].get("page_id") or "") == page_id
+            and (job["params"].get("folder") or "") == folder):
+        data = jobs.kept(job_id, KEPT_TRANSLATIONS if folder else KEPT_TRANSLATION)
+    try:
+        if data is not None and folder:
+            return {t.page_id: t for t in _PAPER_TRANSLATIONS.validate_json(gzip.decompress(data))}
+        if data is not None:
+            return {page_id: ExportTranslation.model_validate_json(gzip.decompress(data))}
+    except (OSError, ValueError):  # a damaged file (pydantic's ValidationError is a ValueError)
+        pass
+    raise HTTPException(status_code=404, detail=(
+        "that export's translation is no longer kept — export the folder again" if folder else
+        "that export's translation is no longer kept — export the page again from the viewer"))
 
 
 @router.post("/jobs/export")
@@ -1765,28 +1874,61 @@ def start_export_job(payload: ExportJob, request: Request):
     out (an annotated-PDF export skips pages without a PDF). A page's
     annotated PDF may carry ``translation``, the translated view the viewer
     shows of the page's PDF, which is written in place of the original text
-    of that page's PDF (not of the pages inside it); its params name the
-    language as ``translation`` ("" without one); 400 for one with a folder
-    or another format, 413 past ``_translation_bounds``. A page whose
-    translation cannot be written is left out like any page whose annotated
-    PDF fails (``_translated``)."""
-    user = require_user(request)
-    ws = require_ws(request)
+    of that page's PDF (not of the pages inside it); a folder's annotated
+    PDF ``translations``, one per paper by its ``page_id``, each written into
+    that page's PDF as the folder's export reaches it (one for a page the
+    folder no longer holds is passed by). The params name the language as
+    ``translation`` ("" without one); 400 for ``translation`` with a folder,
+    ``translations`` without one, or either with another format; 413 past
+    ``_translation_bounds`` (a folder's papers together). The job keeps
+    them for as long as it is listed (``KEPT_TRANSLATION``,
+    ``KEPT_TRANSLATIONS``), so ``translation_of``, that job's id in their
+    place, starts the same export again (Background tasks' retry; 404 once
+    they are gone, ``_kept_translations``). A page whose translation cannot
+    be written is left out like any page whose annotated PDF fails
+    (``_translated``).
+
+    With ``?share=`` it is a share view's export: of what the share reaches
+    (403 outside it), held to the share as its downloads are (``opts["share"]``),
+    and the share's job (``auth.share_job_owner``), which any visitor the
+    share admits starts and follows by its id, the downloads' proxy cut
+    gone. It takes no translation (400); a link visitor starts at most
+    ``LINK_EXPORTS_PER_5_MIN``. The run checks again that the share stands
+    and still reaches the page or folder."""
+    scope = share_scope(request)
+    token = request.query_params.get("share") or ""
+    if scope is None:
+        user, ws, owner = require_user(request), require_ws(request), request.state.user_id
+    else:
+        owner, ws, user = share_job_owner(request), resolve_ws(request), request.state.user or ""
+        link_ratelimit(request, "export", LINK_EXPORTS_PER_5_MIN, 300)
     mode = payload.mode
     if mode not in _BUILDERS:
         raise HTTPException(status_code=400, detail=f"unknown export mode: {mode}")
-    folder, page_id, translation = payload.folder, payload.page_id, payload.translation
-    if translation is not None:
-        if folder or mode != "annotated-pdf":
-            raise HTTPException(status_code=400, detail="a translation goes only with a page's annotated PDF")
-        _translation_bounds(translation)
+    folder, page_id = payload.folder, payload.page_id
+    # page id → the translation written into its PDF
+    translations = {page_id: payload.translation} if payload.translation is not None else {}
+    translations.update((t.page_id, t) for t in payload.translations)
+    if scope is not None and (translations or payload.translation_of):
+        raise HTTPException(status_code=400, detail="a share view's export carries no translation")
+    if translations or payload.translation_of:
+        if mode != "annotated-pdf" or (payload.translation is not None and (folder or not page_id)) \
+                or (payload.translations and not folder) or not (folder or page_id):
+            raise HTTPException(status_code=400, detail=(
+                "a translation goes only with a page's annotated PDF, and translations with a folder's"))
+        if translations and payload.translation_of:
+            raise HTTPException(status_code=400, detail="send a translation or name the export it came from, not both")
+        if not translations:
+            translations = _kept_translations(request, ws, "" if folder else page_id, folder, payload.translation_of)
+        _translation_bounds(list(translations.values()))
     with connect_pages_db(ws) as conn:
         if folder:
-            path = _export_folder(conn, folder)
+            path = _export_folder(conn, folder, scope)
             if not pages_in_folder(conn, folder):
                 raise HTTPException(status_code=404, detail="no pages in that folder")
             title, base = PATH_SEP.join(path), _folder_base(path)
         elif page_id:
+            assert_block_in_scope(conn, page_id, scope)
             row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
             if row is None or page_root_id(conn, page_id) is None:  # none, or in Recently deleted
                 raise HTTPException(status_code=404, detail="page not found")
@@ -1794,12 +1936,19 @@ def start_export_job(payload: ExportJob, request: Request):
         else:
             raise HTTPException(status_code=400, detail="name a page or a folder to export")
     opts = _export_opts(payload.pdf, payload.highlights, payload.notes, folder_scope=folder or None, author=user,
-                        comments=payload.comments, notes_at=payload.notes_at)
-    if translation is not None:
-        opts["translation"] = (page_id, translation)
+                        comments=payload.comments, notes_at=payload.notes_at, share=scope)
+    if translations:
+        opts["translations"] = translations
 
     def run(job):
+        if scope is not None and share_lookup(token) is None:
+            raise HTTPException(status_code=410, detail="the share link was stopped")
         with connect_pages_db(ws) as conn:
+            if scope is not None:  # moved out of the shared folder meanwhile, say
+                if folder and not scope.allows_folder(conn, folder):
+                    raise HTTPException(status_code=403, detail="not accessible via this share link")
+                if not folder:
+                    assert_block_in_scope(conn, page_id, scope)
             ids = pages_in_folder(conn, folder) if folder else _page_ids(conn, page_id, payload.sub_pages)
             if not ids:
                 raise HTTPException(status_code=404, detail="the folder holds no pages any more")
@@ -1810,9 +1959,16 @@ def start_export_job(payload: ExportJob, request: Request):
         job.set_artifact(name, media_type)
         return builder.summary()
 
-    return jobs.start("export", owner=request.state.user_id, ws=ws, run=run, artifact=True, title=f"Export of {title}",
-                      params={"page_id": page_id if not folder else "", "folder": folder, "name": title,
+    kept = None
+    if translations and folder:
+        kept = {KEPT_TRANSLATIONS: gzip.compress(_PAPER_TRANSLATIONS.dump_json(list(translations.values())), 6)}
+    elif translations:
+        kept = {KEPT_TRANSLATION: gzip.compress(translations[page_id].model_dump_json().encode(), 6)}
+    # one language: every paper's is the settings' (translateRecall.openKey)
+    lang = next(iter(translations.values())).lang if translations else ""
+    return jobs.start("export", owner=owner, ws=ws, run=run, artifact=True, title=f"Export of {title}",
+                      kept=kept, params={"page_id": page_id if not folder else "", "folder": folder, "name": title,
                               "mode": mode, "pdf": payload.pdf, "highlights": payload.highlights,
                               "notes": payload.notes, "comments": payload.comments,
                               "notes_at": payload.notes_at, "sub_pages": payload.sub_pages and not folder,
-                              "translation": translation.lang if translation is not None else ""})
+                              "translation": lang})

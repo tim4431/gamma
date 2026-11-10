@@ -1,0 +1,41 @@
+{
+  "about": "Colours as Gamma stores them (docs/dev/settings.md 'Colors'): gamma/colors.py and frontend/src/shared/model/palette.js. A highlight stores #rrggbbaa; normalize reads every spelling Gamma ever stored (#rgb, #rgba, #rrggbb, #rrggbbaa, rgb(), rgba()) into it, null for anything else. Each byte is the channel times 255 rounded half up, as Math.round rounds (Python's round goes to even), so the tie rows are pinned. with_alpha is a colour at another alpha; nearest the entry of colors closest by the redmean RGB distance, alpha ignored. wash, wash_alpha and default_highlight are the default highlight set. Read by backend/tests/test_shared_fixtures.py and frontend/tests/palette.test.mjs.",
+  "wash": ["#ffe28f", "#aaebaa", "#9bcdff", "#e6b4ff"],
+  "wash_alpha": 0.65,
+  "default_highlight": "#ffe28fa6",
+  "normalize": [
+    {"note": "the legacy yellow keeps its hue and alpha", "in": "rgba(255, 226, 143, 0.65)", "out": "#ffe28fa6"},
+    {"note": "the legacy green", "in": "rgba(170, 235, 170, 0.65)", "out": "#aaebaaa6"},
+    {"note": "the stored form is a fixed point", "in": "#ffe28fa6", "out": "#ffe28fa6"},
+    {"note": "opaque when no alpha is given, lowercase", "in": "#FFE28F", "out": "#ffe28fff"},
+    {"note": "padding is trimmed", "in": " #FFE28F ", "out": "#ffe28fff"},
+    {"note": "three digits double", "in": "#abc", "out": "#aabbccff"},
+    {"note": "four digits double, alpha too", "in": "#abcd", "out": "#aabbccdd"},
+    {"note": "rgb without alpha", "in": "rgb(1,2,3)", "out": "#010203ff"},
+    {"note": "channels and alpha clamp", "in": "rgba(300, 0, 0, 2)", "out": "#ff0000ff"},
+    {"note": "an alpha half way between two bytes rounds up (76.5)", "in": "rgba(10, 20, 30, 0.3)", "out": "#0a141e4d"},
+    {"note": "another half rounds up (178.5)", "in": "rgba(10, 20, 30, 0.7)", "out": "#0a141eb3"},
+    {"note": "a half alpha", "in": "rgba(10, 20, 30, 0.5)", "out": "#0a141e80"},
+    {"note": "a name is no colour", "in": "red", "out": null},
+    {"note": "empty", "in": "", "out": null},
+    {"note": "missing", "in": null, "out": null},
+    {"note": "a number", "in": 3, "out": null},
+    {"note": "bad hex digits", "in": "#ggg", "out": null},
+    {"note": "too few channels", "in": "rgba(1, 2)", "out": null},
+    {"note": "hsl is not read", "in": "hsl(1, 2%, 3%)", "out": null}
+  ],
+  "with_alpha": [
+    {"note": "a half", "color": "#ffe28f", "alpha": 0.5, "out": "#ffe28f80"},
+    {"note": "the wash alpha", "color": "#ffe28f", "alpha": 0.65, "out": "#ffe28fa6"},
+    {"note": "a tie rounds up (76.5)", "color": "#ffe28f", "alpha": 0.3, "out": "#ffe28f4d"},
+    {"note": "the colour's own alpha is replaced", "color": "#ffe28fa6", "alpha": 1, "out": "#ffe28fff"},
+    {"note": "not a colour", "color": "nope", "alpha": 0.5, "out": null}
+  ],
+  "nearest": [
+    {"note": "rose reads as red", "color": "#e11d48", "colors": ["#dc2626", "#1d4ed8"], "out": "#dc2626"},
+    {"note": "alpha does not count", "color": "#ffe28fa6", "colors": ["#ffe28f", "#aaebaa", "#9bcdff", "#e6b4ff"], "out": "#ffe28f"},
+    {"note": "any spelling", "color": "rgba(170, 235, 170, 0.65)", "colors": ["#ffe28f", "#aaebaa", "#9bcdff", "#e6b4ff"], "out": "#aaebaa"},
+    {"note": "not a colour", "color": "nope", "colors": ["#ffe28f"], "out": null},
+    {"note": "an empty list", "color": "#ffe28f", "colors": [], "out": null}
+  ]
+}

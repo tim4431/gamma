@@ -5,12 +5,13 @@ snapshot's download, streamed as it is zipped."""
 
 import io
 import threading
+import time
 import zipfile
 
 import pytest
 
-from conftest import account_of, drop_user, login, make_user
-from gamma import jobs, workspaces, ws_backup
+from conftest import account_of, drop_user, fresh_client, login, make_user
+from gamma import ai_tools, jobs, workspaces, ws_backup
 from gamma.db import ws_dir
 
 PW = "dj-pass-12345"
@@ -165,6 +166,126 @@ def test_a_second_start_answers_the_running_delete(monkeypatch):
     gate.go.set()
     assert jobs.wait(first["id"])["state"] == "done"
     assert len(_copies(doomed)) == 1
+
+
+def _deleting_refusal(r, ws):
+    assert r.status_code == 423, r.text
+    assert r.json()["error"] == "workspace_deleting" and r.json()["workspace"] == ws
+    assert "is being deleted" in r.json()["detail"]
+    assert r.headers["X-Gamma-Workspace-Deleting"] == ws
+
+
+def test_a_workspace_being_deleted_takes_no_more_changes(monkeypatch):
+    """From the moment the delete's job runs, every change to the workspace
+    is refused (423, ``workspace_deleting``): it would be in neither the
+    final copy nor anywhere else. Reads go on; a stop opens it again."""
+    _home, c = _account("dj_freeze")
+    doomed = c.post("/api/workspaces", json={"name": "Frozen"}).json()["id"]
+    there = {"X-Gamma-Workspace": doomed}
+    page = c.post("/api/pages", json={"title": "Copied as it was"}, headers=there).json()
+    token = c.post(f"/api/share/{page['id']}", headers=there).json()["token"]
+    assert c.put(f"/api/share-settings/{page['id']}", json={"audience": "anyone", "role": "edit"},
+                 headers=there).status_code == 200
+    gate = Gate()
+
+    def held(ws, dest, *, progress=None, **kw):
+        gate.hold()
+        dest.write_bytes(b"half a zip")
+
+    monkeypatch.setattr(ws_backup, "write_zip", held)
+    started = _start(c, "workspace-delete", {"ws": doomed})
+    gate.wait()
+    try:
+        ops = {"client": "t", "ops": [{"op": "insert", "id": "frz1", "parent": page["id"], "content": "lost"}]}
+        _deleting_refusal(c.post(f"/api/pages/{page['id']}/ops", json=ops, headers=there), doomed)
+        _deleting_refusal(c.post("/api/pages", json={"title": "Too late"}, headers=there), doomed)
+        _deleting_refusal(c.post(f"/api/pages/{page['id']}/comments", json={"block_id": page["id"], "body": "hi"},
+                                 headers=there), doomed)
+        visitor = fresh_client()
+        _deleting_refusal(visitor.post(f"/api/pages/{page['id']}/ops?share={token}", json=ops), doomed)
+        # the share says so to a view opened meanwhile, which starts read-only
+        shared = visitor.get(f"/api/share/{token}").json()
+        assert shared["deleting"] is True and shared["can_edit"] is False and shared["role"] == "edit"
+        # an AI turn that armed its changing tools before the delete has each call refused
+        result, action = ai_tools.run_agent_tool(doomed, {"type": "folder", "can_write": True}, "rename_page",
+                                                 {"page_id": page["id"], "title": "Renamed"})
+        assert result == "error: this workspace is being deleted — no changes are possible" and action["error"]
+        with pytest.raises(workspaces.WorkspaceDeleting):
+            ws_backup.restore_zip(doomed, ws_dir(doomed) / "none.zip", "merge")
+        # reads go on, and the session says so for the tab that opens it next
+        assert c.get(f"/api/blocks/{page['id']}", headers=there).status_code == 200
+        listed = {w["id"]: w for w in c.get("/api/session").json()["workspaces"]}
+        assert listed[doomed]["deleting"] is True and listed[_home]["deleting"] is False
+        # the account's other workspace takes changes as before
+        assert c.post("/api/pages", json={"title": "Elsewhere"}).status_code == 200
+        assert c.post(f"/api/jobs/{started['id']}/cancel").json()["stopping"] is True
+    finally:
+        gate.go.set()
+    assert jobs.wait(started["id"])["state"] == "cancelled"
+    # stopped, it takes changes again
+    assert c.post("/api/pages", json={"title": "Back again"}, headers=there).status_code == 200
+    assert not {w["id"]: w for w in c.get("/api/session").json()["workspaces"]}[doomed]["deleting"]
+    assert fresh_client().get(f"/api/share/{token}").json()["can_edit"] is True
+
+
+def test_a_delete_stops_the_jobs_still_changing_the_workspace_before_its_copy(monkeypatch):
+    """Work that passed its gate before the delete (an import, a restore, a
+    metadata lookup: a job started with ``writes``) does not go on writing
+    past the final copy: the delete fails a queued one at once and a running
+    one at its next report, saying why, and waits for one past its last
+    stop. A job that only reads the workspace runs on."""
+    _home, c = _account("dj_writers")
+    doomed = c.post("/api/workspaces", json={"name": "Busy lab"}).json()["id"]
+    monkeypatch.setattr(jobs, "MAX_RUNNING_PER_ACCOUNT", 1)
+    running, reader_go, last_stop, finishing = threading.Event(), threading.Event(), threading.Event(), threading.Event()
+
+    def writer(job):
+        running.set()
+        while True:
+            job.progress(done=1, total=2, unit="items")
+            time.sleep(0.01)
+
+    def past_its_last_stop(job):
+        job.progress(phase="restoring", stoppable=False)
+        last_stop.set()
+        assert finishing.wait(10)
+        return {"wrote": True}
+
+    def reader(job):
+        while not reader_go.is_set():
+            job.progress(done=0, total=1, unit="pages")
+            time.sleep(0.01)
+        return {"read": True}
+
+    looping = jobs.start("import", owner="dj-w-a", ws=doomed, run=writer, writes=True)
+    queued = jobs.start("import", owner="dj-w-a", ws=doomed, run=writer, writes=True)
+    finishing_job = jobs.start("restore", owner="dj-w-b", ws=doomed, run=past_its_last_stop, writes=True)
+    exporting = jobs.start("export", owner="dj-w-c", ws=doomed, run=reader)
+    assert running.wait(10) and last_stop.wait(10) and jobs.get(queued["id"])["state"] == "queued"
+    copied_with = []
+    write_zip = ws_backup.write_zip
+
+    def watched(ws, dest, **kw):
+        copied_with.append({j for j in (looping["id"], queued["id"], finishing_job["id"]) if j in jobs._live})
+        return write_zip(ws, dest, **kw)
+
+    monkeypatch.setattr(ws_backup, "write_zip", watched)
+    started = _start(c, "workspace-delete", {"ws": doomed})
+    try:
+        for job in (looping, queued):
+            ended = jobs.wait(job["id"])
+            assert ended["state"] == "failed" and "is being deleted" in ended["error"], ended
+        time.sleep(0.2)
+        assert not copied_with, "the copy waits for the job past its last stop"
+        assert jobs.get(started["id"])["state"] == "running"
+    finally:
+        finishing.set()
+        reader_go.set()
+    assert jobs.wait(finishing_job["id"])["state"] == "done"
+    deleted = jobs.wait(started["id"])
+    assert deleted["state"] == "done", deleted["error"]
+    assert copied_with == [set()], "every job that changed the workspace had ended before the copy"
+    assert jobs.wait(exporting["id"])["state"] == "done", "a job that only reads runs on"
 
 
 def test_a_failed_final_copy_fails_the_job_with_its_sentence(monkeypatch):

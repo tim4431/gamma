@@ -21,8 +21,12 @@ upload → image-XObject registry.
 ## Annotated-PDF export
 
 A page exported while the viewer shows its translation is translated
-first: its original lines redacted and the translation laid out in their
-place (`gamma/pdf_translated.py`,
+first, and so is each paper of a folder's export that this browser left
+translated: its original lines redacted and the translation laid out in
+their place by MuPDF's `Story`, not by this engine, justified where the
+original is and in the paper's own embedded font when that font draws every
+letter, each formula in it drawn as itself, the page's own glyphs filtered
+down to its box, or as a picture where it cannot be (`gamma/pdf_translated.py`,
 [translation.md](translation.md#exporting-the-translation)). Everything
 below is written over that file.
 
@@ -190,7 +194,8 @@ A **thread card** (`Layout.thread`) is its comments oldest first, each as
 the viewer's margin draws it: the author's avatar (their initial on their
 colour), their name, the day, and the comment under them past the avatar.
 The colour is `person_color`, the app's `personColor` with the same eight
-colours, held to it by `test_person_colours_match_the_app`. The replies
+colours (`test_person_colours_match_the_app`), picking the same one for a
+name (`tests/shared/personcolor.json`). The replies
 step in to the first comment's text, as the viewer draws them, so a thread
 reads as one comment and its answers. A deleted root reads "Comment
 deleted". A thread card has no colour bar, as in the viewer.

@@ -127,6 +127,56 @@ Server ([dev/ai_context.md](../dev/ai_context.md),
 - The trash sweep remembers each workspace's file stamp and next expiry.
 - The page render encodes its image outside the pdfium lock.
 
+## Measured (November 2026)
+
+The timing budgets ([dev/debugging.md](../dev/debugging.md#performance-budgets))
+time the pure hot paths on seeded fixtures: a page of 1,000 blocks (400
+highlights, 200 notes under them, 100 ink groups, 10 sheets, 30 text boxes,
+60 notes with `[[refs]]`), a drawing of 500 strokes, a block of 20,000
+characters. The p50s below are from an idle Ryzen 9 9950X3D (Node 22.23,
+Python 3.12). Each row is one timed run of the case, so a row of 200 keys
+is 200 calls.
+
+| Path | p50 |
+|---|--:|
+| 200 keys at the last block, every pure walk App runs per key | 295 ms (1.5 ms a key) |
+| the highlights memo (`blocksToHighlights` + `JSON.stringify`), x200 | 167 ms |
+| `diffTrees`, x200 | 56 ms |
+| `refLabelsByBlock`, x200 | 3.5 ms |
+| `updateBlockTree`, x200 | 1.3 ms |
+| `applyOps` of a one-set batch, x200 | 0.5 ms |
+| `applyOps` of 50 top-level inserts, x5 | 9 ms |
+| a page open of 500 strokes, every outline built | 51 ms |
+| one eraser flush, warm / cold | 0.5 / 6.3 ms |
+| `mergeInk` of 500 strokes, x20 | 2 ms |
+| 20 PDF pages' search text | 4 ms |
+| server: subtree read of the page, in-process / through the API | 3.1 / 7.7 ms |
+| server: `commit_ops` of 20 keystrokes / a 50-op batch / a stale set merged | 2.5 / 1.6 / 1.7 ms |
+| server: `textmerge.merge`, 50 scattered edits a side / `map_offset` | 8.7 / 3.6 ms |
+| server: `ink.merge_ink` / `parse_ink`, 500 strokes | 21 / 20 ms |
+
+What they showed:
+
+- The pure work of a keystroke on that page is about 1.5 ms. The highlights
+  memo is half of it, and the largest part of that is `JSON.stringify` of
+  the 254 KB highlights list, which only keeps the list's identity.
+  `blocksToHighlights` runs twice per key (the memo and `annotatedPage`).
+  `diffTrees` is about a fifth.
+- The server's `merge_ink` runs inside `_Batch.set`, under the write lock,
+  and about two-thirds of its ~20 ms on 500 strokes is `_result`'s pydantic
+  `model_dump`/`model_validate`. A text merge is worked out before the lock
+  (`_premerge`).
+- `inkStore.js` keeps every file it loaded for the life of the tab, each
+  with its strokes' outlines: about 37 MB for the 500-stroke drawing. A
+  timing case that loaded a fresh file per run ran the heap out at 3.4 GB.
+  In the app it is one entry per drawing seen, never let go.
+- With every core busy, p95s grew 2 to 3x, so the budgets are about 5x an
+  idle p95 and CI only reports them.
+
+Later (November 2026): the scale reaches the pages as a CSS variable on
+the zoom layer, so a zoom frame re-renders no page
+([pdf-zoom-frames.md](pdf-zoom-frames.md)).
+
 ## Left open
 
 - **App's own render per keystroke.** The rows no longer re-render, but
@@ -134,8 +184,6 @@ Server ([dev/ai_context.md](../dev/ai_context.md),
   highlights, the diff and the history's classification) and the chat
   dock. Moving that state out of App is the state-owner work of
   [dev/frontend-refactor.md](../dev/frontend-refactor.md).
-- **The scale as a CSS variable** on the zoom layer, so a zoom frame
-  re-renders no page.
 - **The annotated-PDF export as a job** answered with a `FileResponse`,
   instead of PyPDF2's clone and the whole result in the request.
 - **The startup walk and the upload GC over every workspace**, and each
@@ -144,7 +192,7 @@ Server ([dev/ai_context.md](../dev/ai_context.md),
   smaller than the pure-Python PNG.
 - **The whole-file threshold** (12 MB): one run of the e2e timing probe at
   mid sizes would say whether to lower it.
-- **Measurements.** Everything above is from reading the code and the one
-  SQLite benchmark; a browser profile of a 1,000-block page and a heap
-  snapshot after reading a long book would put numbers on the two client
-  items at the top.
+- **Measurements in a browser.** The pure paths are measured (above); a
+  browser profile of a 1,000-block page, React's render included, and a
+  heap snapshot after reading a long book would put numbers on the two
+  client items at the top.

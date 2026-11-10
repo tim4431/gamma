@@ -33,6 +33,7 @@ from . import guests, publisher_sessions
 from .blocks_store import (folder_subtree_ids, page_ancestors, page_descendants, page_in_folder, page_root_id,
                            pages_in_folder)
 from .db import account_names, connect_pages_db, connect_users_db, parse_stamp, share_token_workspace
+from .jobs import share_owner
 from .logbuf import log
 
 SESSION_COOKIE = "session"
@@ -388,7 +389,9 @@ def workspace_access(user_id: str, requested: str, default_ws: str) -> tuple[str
 def require_ws(request: Request, write: bool = False) -> str:
     """The workspace this session request works in (401 without a session,
     403 when the account is not a member — or is only a viewer and ``write``
-    is set). Cached on request.state as ``ws`` / ``ws_role``."""
+    is set; 423 for ``write`` while a delete holds the workspace,
+    ``workspaces.refuse_writes``). Cached on request.state as ``ws`` /
+    ``ws_role``."""
     user_id = signed_in(request)
     ws = getattr(request.state, "ws", None)
     if ws is None:
@@ -406,7 +409,16 @@ def require_ws(request: Request, write: bool = False) -> str:
     refusal = _write_refusal(request) if write else ""
     if refusal:
         raise HTTPException(status_code=403, detail=refusal)
+    if write:
+        _refuse_deleting(ws)
     return ws
+
+
+def _refuse_deleting(ws: str) -> None:
+    """WorkspaceDeleting (the app's 423) when a delete holds ``ws``."""
+    from . import workspaces  # local: workspaces imports seed, which imports db
+
+    workspaces.refuse_writes(ws)
 
 
 def _write_refusal(request: Request) -> str:
@@ -424,10 +436,13 @@ def can_write(request: Request) -> bool:
     """Whether the request may change its workspace — an editor or owner,
     and a write-scope token when it comes with one: the rule
     ``require_ws(write=True)`` enforces, for a caller that offers less
-    instead of refusing (the AI chat arms no mutating tools). 403 for a
-    non-member, like ``require_ws``."""
-    require_ws(request)
-    return not _write_refusal(request)
+    instead of refusing (the AI chat arms no mutating tools); false too
+    while a delete holds the workspace. 403 for a non-member, like
+    ``require_ws``."""
+    from . import workspaces  # local: workspaces imports seed, which imports db
+
+    ws = require_ws(request)
+    return not _write_refusal(request) and not workspaces.is_deleting(ws)
 
 
 def ws_role(request: Request) -> str | None:
@@ -643,13 +658,17 @@ LINK_ACTOR_PREFIX = "link:"
 MIRROR_ACTOR = "mirror"  # a mirror's round (gamma/sync_engine.py), the other writer that is no account
 ZOTERO_ACTOR = "zotero"  # a Zotero link's round (gamma/zotero_sync.py), shown as "Zotero"
 ZOTERO_CLIENT = "zotero"  # ...and the op-log client its writes carry (zotero_sync.CLIENT)
+DISK_CLIENT = "disk"  # the op-log client of a synced vault's writes (gamma/vault_sync.py), as the account that made it
 LINK_NAME_MAX = 40
 ANONYMOUS_NAME = "Anonymous"
 
 
 def link_name(raw) -> str:
     """A visitor's display name, cleaned: control characters dropped,
-    whitespace collapsed, capped at LINK_NAME_MAX; ``Anonymous`` when empty."""
+    whitespace collapsed, capped at LINK_NAME_MAX code points; ``Anonymous``
+    when empty. The share view cleans a name it shows alike
+    (collaboration/linkName.js ``cleanLinkName``; tests/shared/linkname.json
+    pins both)."""
     text = re.sub(r"[\x00-\x1f\x7f]", "", str(raw or ""))
     text = re.sub(r"\s+", " ", text).strip()[:LINK_NAME_MAX].strip()
     return text or ANONYMOUS_NAME
@@ -743,6 +762,22 @@ def share_scope(request: Request) -> ShareScope | None:
     return grant[1]
 
 
+def share_job_owner(request: Request) -> str:
+    """Who owns the jobs of a ``?share=`` request: the share itself
+    (``jobs.share_owner``), for any visitor it admits — so a share view
+    starts an export as a job and follows it by its id, signed in or not
+    (docs/dev/tasks.md "A share view's exports"). 401/403 as
+    ``share_scope`` for a share that does not admit this visitor, 403 for
+    an integration token (jobs are a session's). "" without a ``?share=``."""
+    token = request.query_params.get("share") or ""
+    if not token:
+        return ""
+    share_scope(request)
+    if is_token(request):
+        raise HTTPException(403, TOKEN_REFUSAL)
+    return share_owner(token)
+
+
 def share_via(request: Request) -> str:
     """The share token a request came through, when its ?share= grants
     it, else "": the one way in an Inbox item of the request's write may
@@ -770,7 +805,8 @@ def require_ws_writer(request: Request) -> str:
     the request's ?share= token grants edit, else the session's workspace
     with an editor or owner role. Endpoints that accept share editors must
     additionally confine every touched block to share_scope() — the
-    token never reaches the rest of the workspace."""
+    token never reaches the rest of the workspace. 423 while a delete
+    holds the workspace, either way."""
     if request.query_params.get("share"):
         grant = share_grant(request)
         if not grant:
@@ -779,6 +815,7 @@ def require_ws_writer(request: Request) -> str:
             require_ws(request, write=True)
         if grant[2] != "edit":
             raise HTTPException(status_code=403, detail="this share link is view-only")
+        _refuse_deleting(grant[0])
         return grant[0]
     return require_ws(request, write=True)
 
@@ -790,12 +827,14 @@ def require_commenter(request: Request, page_id: str) -> str:
     account a share admits, view or edit, confined to the share's pages.
     403 for a link visitor (no account to sign the comment with: "sign in
     to comment") and for an integration token without the write scope.
-    Whether the page is a page of the library is the writer's check."""
+    Whether the page is a page of the library is the writer's check. 423
+    while a delete holds the workspace."""
     ws = resolve_ws(request)
     if is_link_visitor(request):
         raise HTTPException(status_code=403, detail="sign in to comment")
     if is_token(request) and request.state.token_scope != "write":
         raise HTTPException(status_code=403, detail="this token is read-only")
+    _refuse_deleting(ws)
     scope = share_scope(request)
     if scope is not None:
         with connect_pages_db(ws) as conn:
