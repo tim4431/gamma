@@ -91,6 +91,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from . import collab, comments, inbox, mentions, pdf_index, storage, textmerge, upload_gc
 from . import ink as inkmod
+from .auth import DISK_CLIENT, ZOTERO_CLIENT
 from .picture import merge_picture, normalize_picture
 from .text_box import merge_text_box, normalize_text_box
 from .blocks_store import (
@@ -103,6 +104,10 @@ from .logbuf import log
 from .storage import content_digest, store_file, upload_refs
 
 SYNC_CLIENT = "sync"  # the mirror's own writes, here and on its remote (sync_engine.CLIENT reads it)
+# The batches that make no one follow the page (blocks_store.follow_page):
+# an offline copy's, a Zotero link's and a synced vault's (typed elsewhere),
+# and the paper-metadata worker's (routers/metadata.py, no one's keystrokes).
+UNFOLLOWED = (SYNC_CLIENT, ZOTERO_CLIENT, DISK_CLIENT, "meta")
 MAX_OPS = 500
 MAX_PLAN_OPS = 50 * MAX_OPS   # a synced vault's plan, one transaction (``commit_plan``)
 MAX_CONTENT = 200_000
@@ -959,7 +964,7 @@ def _apply(conn, page_id: str, ops: list[dict], *, actor: str, client: str = "",
     # the batch) changed nothing
     dropped = batch.dropped - batch.added
     upload_gc.claim(conn, batch.added - batch.dropped)
-    touch_page(conn, page_id, actor, now=now)
+    touch_page(conn, page_id, actor, now=now, follow=client not in UNFOLLOWED)
     seq = _log(conn, page_id, actor, client, now, batch.applied, batch_id=batch_id, cursor=cursor)
     result = {"page_id": page_id, "seq": seq, "at": now, "actor": actor, "client": client,
               "ops": batch.applied, "deleted_ids": batch.deleted, "dropped_uploads": sorted(dropped),
@@ -1218,13 +1223,14 @@ def _purged(ws: str, conn, pages: list[str], rows: list, *, client: str, sweep: 
 
 def _purge(conn, page_id: str, actor: str) -> list:
     """``delete_page``'s part for one page, in the caller's transaction:
-    its subtree, comments, op log and chats go, and a page that was not in
-    Recently deleted is touched ``deleted``. Returns the subtree's
-    ``fetch_subtree`` rows."""
+    its subtree, comments, followers, op log and chats go, and a page that
+    was not in Recently deleted is touched ``deleted``. Returns the
+    subtree's ``fetch_subtree`` rows."""
     rows = fetch_subtree(conn, page_id)
     trashed = any(r[0] == page_id and r[1] == TRASH for r in rows)
     delete_subtree(conn, page_id)
     comments.purge(conn, page_id, [r[0] for r in rows])
+    conn.execute("DELETE FROM page_follows WHERE page_id = ?", (page_id,))
     conn.execute("DELETE FROM page_ops WHERE page_id = ?", (page_id,))
     conn.execute("DELETE FROM chats WHERE bucket = ?", (page_id,))
     conn.execute("DELETE FROM chat_history WHERE bucket = ?", (page_id,))
@@ -1490,7 +1496,7 @@ def record_ops(ws: str, conn, page_id: str, ops: list[dict], *, actor: str, clie
     other), touching the page like a batch. ``client`` is logged, sent with
     the ops and told to the commit listeners, as a batch's is. Commits."""
     now = page_now()
-    touch_page(conn, page_id, actor, now=now)
+    touch_page(conn, page_id, actor, now=now, follow=client not in UNFOLLOWED)
     seq = _log(conn, page_id, actor, client, now, ops)
     conn.commit()
     collab.publish(ws, page_id, {"t": "ops", "seq": seq, "at": now, "actor": actor,
@@ -1526,16 +1532,19 @@ def note_reload(ws: str, conn, page_id: str, actor: str, *, client: str = "") ->
     return seq
 
 
-def log_reload(conn, page_id: str, actor: str, *, after: int = 0, client: str = "") -> int:
+def log_reload(conn, page_id: str, actor: str, *, after: int = 0, client: str = "",
+               follow: bool = True) -> int:
     """Log a change ops can't express (a subtree replace, an import into an
     existing page) so a catching-up client knows to refetch, and touch the
     page like any batch (``touch_page``: the home feed and the change feed).
     ``after``: a seq the entry must land above even when this log is behind
     it (a restored backup's log, which a client may have seen past —
-    gamma/ws_backup.py). ``client``: the writer's, logged. Caller commits
-    and publishes (``collab.publish_reload``)."""
+    gamma/ws_backup.py). ``client``: the writer's, logged. ``follow`` False:
+    the actor does not follow the page for it (a backup restored in place
+    puts back pages no one edited). Caller commits and publishes
+    (``collab.publish_reload``)."""
     now = page_now()
-    touch_page(conn, page_id, actor, now=now)
+    touch_page(conn, page_id, actor, now=now, follow=follow and client not in UNFOLLOWED)
     return _log(conn, page_id, actor, client, now, [{"op": "reload"}], after)
 
 

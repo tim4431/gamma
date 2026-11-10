@@ -8,12 +8,15 @@ or a signed-in account a share admits); reads are ``resolve_ws`` and the
 share's scope, as for the page itself. After each write the page's room
 hears ``{t: "comments", block_id, thread_id}``, every peer but the
 writer's tab (``client``), and the write's event goes to
-``comments.after_write``.
+``comments.after_write``. A page's Notify me (``/pages/{id}/notify``) is
+what its comments tell the session's account (gamma/inbox.py
+"following a page").
 """
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
-from .. import collab, comments
+from .. import collab, comments, inbox
 from ..auth import is_token, require_commenter, resolve_ws, share_scope, share_via, ws_role
 from ..db import connect_pages_db
 from ..ops import StorableBody
@@ -37,6 +40,10 @@ class CommentEdit(StorableBody):
 class CommentResolve(StorableBody):
     resolved: bool = True
     client: str = ""
+
+
+class NotifyLevel(BaseModel):
+    level: str  # inbox.LEVELS
 
 
 def _written(request: Request, ws: str, page_id: str, block_id: str, thread_id: str, client: str,
@@ -131,3 +138,38 @@ def resolve_comment(comment_id: str, payload: CommentResolve, request: Request):
     if out["event"]:
         _written(request, ws, thread["page_id"], thread["block_id"], thread["id"], payload.client, out["event"])
     return {"thread": thread}
+
+
+def _follower(request: Request, page_id: str) -> tuple[str, str]:
+    """The workspace and the account whose Notify me a request reads or
+    sets: who may comment on the page (``require_commenter``), signed in
+    to an account of their own — a guest and an integration token have no
+    Inbox (403, as for ``/api/inbox``). 404 for a page in Recently deleted
+    or gone."""
+    ws = require_commenter(request, page_id)
+    if request.state.is_guest or is_token(request):
+        raise HTTPException(status_code=403, detail="the inbox follows a signed-in account")
+    with connect_pages_db(ws) as conn:
+        if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'", (page_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="page not found")
+    return ws, request.state.user_id
+
+
+@router.get("/pages/{page_id}/notify")
+def get_notify(page_id: str, request: Request):
+    """``{level}``: what a comment on the page tells the account —
+    ``all`` (All comments) or ``replies`` (Replies and @mentions)."""
+    ws, user_id = _follower(request, page_id)
+    return {"level": inbox.notify_level(ws, page_id, user_id)}
+
+
+@router.put("/pages/{page_id}/notify")
+def set_notify(page_id: str, payload: NotifyLevel, request: Request):
+    """Set the page's Notify me for the account → ``{level}``; 400 for
+    another level. Kept over the account's later edits and comments."""
+    ws, user_id = _follower(request, page_id)
+    try:
+        inbox.set_notify_level(ws, page_id, user_id, payload.level)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"level": payload.level}
