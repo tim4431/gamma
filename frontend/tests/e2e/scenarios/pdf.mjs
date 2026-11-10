@@ -1366,8 +1366,17 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await waitForPdf(p, 1);
       await p.locator(`.blockRowWrap[data-block-id="${here.id}"] a.gammaLinkCard`).click();
       await p.waitForSelector(flash, { timeout: 8000 });
+      // Pressed before the card's label lands (its block-search held, as on
+      // a slow server), the link still finds the passage's page: it opened
+      // the highlight's id as a page, which landed on no passage.
+      let release;
+      const held = new Promise((resolve) => { release = resolve; });
+      const asksForTarget = (url) => url.pathname === "/api/block-search"
+        && (url.searchParams.get("ids") || "").split(",").includes(target.id);
+      await p.route(asksForTarget, async (route) => { await held; await route.continue(); });
       await p.goto(`${server.base}/?page=${elsewhere.id}&ws=${account.ws}`);
       await p.locator(".blockRow a.gammaLinkCard", { hasText: "the passage" }).click();
+      release();
       await p.waitForSelector(flash, { timeout: 15000 });
       assertNoProblems(p);
       await p.close();

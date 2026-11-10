@@ -5287,9 +5287,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       landOnBlock(id);
     } else {
       // block-ref click = link jump to another page, which Back returns from
-      const rootId = pageId || refCache[id]?.page_root_id;
+      const rootId = pageId || await pageOfBlock(id);
       if (rootId && rootId !== id) await openBlock(rootId, { pushNav: true, link: true, block: id });
       else await openBlock(id, { pushNav: true, link: true });
+    }
+  }
+
+  // The page a block is on: the ref cache's, else the server's. A card's
+  // link is pressable before its label lands, and the block opened as a
+  // page would land on none of it. "" when neither knows (the block itself
+  // is then opened).
+  async function pageOfBlock(id) {
+    const cached = refCacheRef.current[id]?.page_root_id;
+    if (cached) return cached;
+    try {
+      const data = await apiJson(`${API}/block-search?ids=${encodeURIComponent(id)}`);
+      return data.blocks?.[0]?.page_root_id || "";
+    } catch {
+      return "";
     }
   }
 
@@ -5369,18 +5384,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     else if (shareMode) return; // a page host's address that names no shared page: "not found" is up
     else if (initialBlockId) {
       (async () => {
-        try {
-          const data = await apiJson(`${API}/block-search?ids=${encodeURIComponent(initialBlockId)}`);
-          const block = data.blocks?.[0];
-          const rootId = block?.page_root_id;
-          if (rootId && rootId !== initialBlockId) {
-            openBlock(rootId, { link: true, block: initialBlockId });
-          } else {
-            openBlock(initialBlockId, { link: true });
-          }
-        } catch {
-          openBlock(initialBlockId, { link: true });
-        }
+        const rootId = await pageOfBlock(initialBlockId);
+        if (rootId && rootId !== initialBlockId) openBlock(rootId, { link: true, block: initialBlockId });
+        else openBlock(initialBlockId, { link: true });
       })();
     }
     else if (initialUrl) openPdf(initialUrl);
