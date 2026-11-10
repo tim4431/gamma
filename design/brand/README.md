@@ -48,7 +48,9 @@ layout is shared with all README headers and Store posters; edit
 2560 × 1440 banner on the hero's warm paper (the logo centred over a standing
 wave, the promise below), published as `gamma-banner-light.svg` and `.png`,
 and cropped close around the text as `gamma-banner-crop-light` (1420 × 700,
-its PNG at 2×). The unused Gamma/PDF Annotator wordmarks
+its PNG at 2×). `compositions/banner-light-zh.svg` is the same banner with
+the promise in Chinese, published only as that crop,
+`gamma-banner-crop-light-zh`. The unused Gamma/PDF Annotator wordmarks
 and their templates have been removed.
 
 ## Published copies and provenance
