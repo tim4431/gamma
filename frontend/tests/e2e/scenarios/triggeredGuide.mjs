@@ -575,15 +575,15 @@ export async function triggeredGuideScenarios(env) {
       await page.click('[data-guide="account.tour"]');
       const tours = page.getByRole("menu", { name: "Tours" });
       assertEq(await tours.locator('[data-tour="notebook-view"]').count(), 0, "the notebook view's tour is not listed on a PDF");
-      // Listed though its first step, the table of contents, has nothing to
-      // point at in this PDF: that step passes over.
+      // It opens on the column as a whole, then walks it; the table of
+      // contents has nothing to point at in this PDF, so that step passes over.
       await page.click('[data-tour="pdf-viewer"]');
-      await walk(page, [["viewer-zoom", null], ["viewer-pen", null], ["pdf-translate", null]]);
+      await walk(page, [["viewer-tools", null], ["viewer-zoom", null], ["viewer-pen", null], ["pdf-translate", null]]);
       assertEq(await progress(page, "pdf-viewer"), "done");
       await page.goto(`${server.base}/?ws=${user.ws}&page=${nb.id}`);
       await page.locator('[data-guide="sheet.notebookView"]').first().click();
       await page.waitForSelector('[data-guide-offer="notebook-view"] .guideCard', { timeout: 15000 });
-      assertEq(await page.locator(".guideCard .guideStep").textContent(), "Quick tour · 2 steps", "zoom and the pen are not taught twice");
+      assertEq(await page.locator(".guideCard .guideStep").textContent(), "Quick tour · 2 steps", "the column, zoom and the pen are not taught twice");
       const nbColumn = await page.locator('[data-guide="viewer.tools"] button').evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
       assertEq(nbColumn.slice(0, 4).join("|"), column.slice(0, 4).join("|"), "the same buttons in the same places");
       await page.getByRole("button", { name: "Show me" }).click();

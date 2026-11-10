@@ -33,7 +33,6 @@ Only a share host with its client secret asks: cloud sign-in on, *Accept
 published pages* on. Failures are warnings in the server log.
 """
 
-import base64
 import json
 import threading
 
@@ -88,8 +87,7 @@ def _save(cursor: int, pending: dict) -> None:
 
 def _fetch(cfg: dict, after: int) -> dict:
     """One page of the account server's deletions after ``after``."""
-    pair = base64.b64encode(f"{cfg['client_id']}:{cloud_auth.client_secret()}".encode()).decode()
-    out = cloud_auth._http(f"{cfg['issuer']}{PATH}?after={after}", headers={"Authorization": f"Basic {pair}"})
+    out = cloud_auth._http(f"{cfg['issuer']}{PATH}?after={after}", headers=cloud_auth.client_basic(cfg))
     items, nxt = out.get("deletions"), out.get("next")
     if (not isinstance(items, list) or not isinstance(nxt, int) or isinstance(nxt, bool)
             or not all(isinstance(d, dict) and isinstance(d.get("id"), int) and isinstance(d.get("account_id"), str)

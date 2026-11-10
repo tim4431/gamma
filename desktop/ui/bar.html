@@ -110,18 +110,21 @@
   .item .sub { color: var(--text-dim); font-size: var(--fs-2xs); margin-left: 6px; }
   .item .sub.addr { font-family: var(--font-mono); }
   .item .check { color: var(--accent); display: inline-flex; width: 14px; }
-  /* A kept row of the sync panel: the name over its state (and a vault's
-     `path ⇄ remote · folder` under that). */
+  /* A kept row of the sync panel: the name over its state. */
   .item .lines { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .item .lines .label { flex: none; }
   .item .lines .head { display: flex; align-items: center; min-width: 0; }
   .item .lines .head .label { flex: 0 1 auto; }
   .item .lines .state { color: var(--text-muted); font-size: var(--fs-2xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .item .lines .where { color: var(--text-dim); }
-  /* A vault's direction as two small marks: ↓ pull (Gamma to disk), ↑ push (disk to Gamma), dim while off. */
-  .dirs { display: inline-flex; gap: 3px; margin-left: 6px; flex-shrink: 0; color: var(--text-dim); font-size: var(--fs-2xs); font-weight: 600; }
+  /* A vault's direction as two small arrows, the ones its view's Pull now
+     and Push now carry: pull (Gamma to disk) and push (disk to Gamma), lit
+     where it goes that way, half-lit where it pushes PDFs only, dim where
+     it does not; the words are in their tooltip. */
+  .dirs { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; flex-shrink: 0; color: var(--text-dim); }
+  .dirs span { display: inline-flex; }
+  .dirs svg { width: 12px; height: 12px; stroke-width: 2.4; }
   .dirs .on { color: var(--accent); }
-  .dirs small { font-size: 9px; font-weight: 500; margin-left: 1px; }
+  .dirs .half { opacity: 0.5; }
   /* The vault dialog and a vault's own view: the panel's second level. */
   .vaultBox { display: flex; flex-direction: column; gap: 7px; padding: 4px 9px 8px; font-size: var(--fs-xs); }
   .vaultBox .row { display: flex; gap: 8px; align-items: baseline; }
@@ -140,6 +143,11 @@
   .seg button:hover:not(:disabled) { background: var(--bg-hover); }
   .seg button[aria-pressed="true"] { background: var(--accent-bg-light); color: var(--accent); }
   .seg button:disabled { color: var(--text-dim); cursor: default; }
+  /* A vault's view: its everyday actions as a bar of round buttons, each
+     named by its tooltip; the rare and the grave ones keep their rows. */
+  .vaultBar { display: flex; gap: 6px; padding: 2px 9px 4px; }
+  .vaultBar .keepAct { width: 28px; height: 28px; }
+  .vaultBar .keepAct svg { width: 14px; height: 14px; }
   .item.vaultAct[aria-disabled="true"] { opacity: 0.45; cursor: default; background: transparent; }
   .item.vaultAct.danger { color: var(--danger); }
   .item.vaultAct.danger .ico { color: var(--danger); }
@@ -155,17 +163,18 @@
   .item .rowAct.on { color: var(--accent); background: var(--accent-bg-light); border-color: transparent; }
   .item .rowAct:hover { background: var(--accent-bg-light); color: var(--accent); border-color: var(--accent); }
   .item .rowAct svg { width: 14px; height: 14px; stroke-width: 2.74; }
-  /* A kept row's actions (keptRow), always shown: pause or resume, sync, a vault's push switch and its menu. */
+  /* A round icon button, named by its tooltip: a kept row's actions
+     (keptRow: pause or resume, sync, and a vault's menu), shown without
+     hovering since a touch screen has none, and the vault view's bar. */
   .item .acts { display: inline-flex; gap: 3px; flex-shrink: 0; }
-  .item .keepAct {
-    display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
-    color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius-full);
+  .keepAct {
+    display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex-shrink: 0;
+    padding: 0; background: transparent; color: var(--text-muted); cursor: pointer;
+    border: 1px solid var(--border); border-radius: var(--radius-full);
   }
-  .item .keepAct:hover { background: var(--accent-bg-light); color: var(--accent); border-color: var(--accent); }
-  /* A toggle that is on (a vault's push switch) reads as the "on" chip above. */
-  .item .keepAct[aria-pressed="true"] { color: var(--accent); background: var(--accent-bg-light); border-color: transparent; }
-  .item .keepAct[aria-disabled="true"] { opacity: 0.4; cursor: default; background: transparent; color: var(--text-muted); border-color: var(--border); }
-  .item .keepAct svg { width: 13px; height: 13px; stroke-width: 2.74; }
+  .keepAct:hover { background: var(--accent-bg-light); color: var(--accent); border-color: var(--accent); }
+  .keepAct[aria-disabled="true"] { opacity: 0.4; cursor: default; background: transparent; color: var(--text-muted); border-color: var(--border); }
+  .keepAct svg { width: 13px; height: 13px; stroke-width: 2.74; }
   .item .check svg { width: 14px; height: 14px; stroke-width: 3.43; }
   .item.current { font-weight: 600; }
   .sep { height: 1px; background: var(--border); margin: 5px 4px; }
@@ -186,6 +195,8 @@
   body[data-touch] .wsBtn { height: 36px; }
   body[data-touch] .status { min-width: 0; overflow: hidden; white-space: nowrap; }
   body[data-touch] .item { padding: 9px; }
+  body[data-touch] .keepAct { width: 30px; height: 30px; }
+  body[data-touch] .vaultBar .keepAct { width: 34px; height: 34px; }
   body[data-touch] .menu { top: calc(42px + var(--inset-top, 0px)); left: 44px; max-height: calc(100vh - 42px - var(--inset-top, 0px) - 16px); overflow-y: auto; }
 </style>
 </head>
@@ -372,24 +383,28 @@
     b.hidden = !state.keeping || (!state.current && sum.state === 'none' && !state.vaultAsk);
   }
 
-  // A vault's direction as two marks (the file of a vault of one file only pushes).
-  const PUSHES = { off: 'pushes nothing', pdfs: 'pushes its PDFs', everything: 'pushes everything' };
+  // A vault's direction as two arrows, where its switches stand at a
+  // glance: the pull arrow lit while it pulls, the push arrow lit while it
+  // pushes everything and half-lit while it pushes PDFs only, the words in
+  // their tooltip. The file of a vault of one file only pushes.
+  const PUSHES = { off: 'pushes nothing', pdfs: 'pushes the PDFs you change here', everything: 'pushes everything you change here' };
   function dirMarks(i) {
-    const said = i.scope === 'file' ? 'Pushes the file' : `${i.pull ? 'Pulls' : 'Does not pull'}; ${PUSHES[i.push]}`;
-    return `<span class="dirs" title="${esc(said)}">` + (i.scope === 'file' ? '' : `<span class="${i.pull ? 'on' : ''}">↓</span>`) +
-      `<span class="${i.push !== 'off' ? 'on' : ''}">↑${i.push === 'pdfs' && i.scope !== 'file' ? '<small>PDF</small>' : ''}</span></span>`;
+    const said = i.scope === 'file' ? 'Pushes the file' : `${i.pull ? 'Pulls Gamma\'s changes' : 'Does not pull'}; ${PUSHES[i.push]}`;
+    const pushMark = i.push === 'off' ? '' : i.push === 'pdfs' && i.scope !== 'file' ? 'on half' : 'on';
+    return `<span class="dirs" title="${esc(said)}">` + (i.scope === 'file' ? '' : `<span class="${i.pull ? 'on' : ''}">${ICONS.pull}</span>`) +
+      `<span class="${pushMark}">${ICONS.upload}</span></span>`;
   }
 
   // A kept clone, Zotero link or synced vault in the panel: its name over
-  // its state (a vault's with its direction, and `path ⇄ remote · folder`
-  // under it), a dot for the state, and its actions, always shown. A click
-  // opens it (a clone or a link's workspace in the window, a vault's
-  // directory, or its file in its directory); "pause" stops its rounds (a
-  // clone or a link detaches) and "resume" starts them again; "sync" runs a
-  // round now (a detached clone or link has none); a vault's push switch
-  // turns pushing its PDFs on or off (one that pushes everything opens its
-  // view), and "more" opens its own view, with the rest; the panel staying
-  // open on the new state after each of these.
+  // its state (a vault's with its direction after the name), a dot for the
+  // state, and its actions, always shown. A vault's `path ⇄ remote · folder`
+  // is in the row's tooltip. A click opens it (a clone or
+  // a link's workspace in the window, a vault's directory, or its file in
+  // its directory); "pause" stops its rounds (a clone or a link detaches)
+  // and "resume" starts them again; "sync" runs a round now (a detached
+  // clone or link has none), and "more" opens a vault's own view, where its
+  // switches and the rest are; the panel staying open on the new state
+  // after each of these.
   const TONE = { ok: 'on', error: 'off', conflicts: 'warn', held: 'warn', pending: 'warn', waiting: 'warn', queued: 'busy', busy: 'busy' };
   const KEPT_ICON = { clone: 'local', zotero: 'library' };
   function keptRow(i) {
@@ -403,12 +418,8 @@
       : i.away ? 'No access to its workspace: nothing is pulled or pushed' : '';
     const vault = i.seen ? ['pause', ICONS.pause, shut, true]
       : i.paused ? ['resume', ICONS.play, 'Resume: sync it again'] : ['pause', ICONS.pause, 'Pause: nothing is pulled or pushed until you resume it'];
-    const pushSwitch = shut ? ['push', ICONS.upload, shut, true, i.push !== 'off']
-      : i.push === 'off' ? ['push', ICONS.upload, 'Push: off. Push the PDFs you change here', false, false, 'pdfs']
-      : i.push === 'pdfs' ? ['push', ICONS.upload, 'Push: PDFs. Stop pushing', false, true, 'off']
-      : ['push', ICONS.upload, 'Push: everything. Change it in the vault\'s menu', false, true, ''];
     const sync = (title) => (shut ? ['sync', ICONS.sync, shut, true] : ['sync', ICONS.sync, title]);
-    const acts = { // [action, icon, title, disabled, pressed, value]
+    const acts = { // [action, icon, title, disabled]
       clone: [
         i.paused ? ['resume', ICONS.play, 'Resume: follow the origin again; what both sides did meanwhile merges']
           : ['pause', ICONS.pause, 'Pause: nothing is pulled or pushed until you resume it; nothing is lost'],
@@ -421,31 +432,24 @@
       ],
       vault: i.scope === 'file'
         ? [vault, sync('Push now'), ['more', ICONS.more, 'More: locate the file, remove the vault…']]
-        : [vault, sync('Sync now: push, then pull'), pushSwitch, ['more', ICONS.more, 'More: pull now, push now, force, locate, remove the vault…']],
+        : [vault, sync('Sync now: push, then pull'), ['more', ICONS.more, 'More: its switches, pull now, push now, force, locate, remove the vault…']],
     }[i.kind] || [];
     b.innerHTML = `<span class="ico">${ICONS[KEPT_ICON[i.kind]] || ICONS[i.scope === 'file' ? 'file' : 'folder']}</span>` +
-      `<span class="lines"><span class="head"><span class="label"></span>${i.kind === 'vault' ? dirMarks(i) : ''}</span><span class="state"></span>` +
-      `${i.kind === 'vault' ? '<span class="state where"></span>' : ''}</span>` +
+      `<span class="lines"><span class="head"><span class="label"></span>${i.kind === 'vault' ? dirMarks(i) : ''}</span>` +
+      `<span class="state"></span></span>` +
       `<span class="dot ${TONE[i.state] || ''}"></span>` +
-      `<span class="acts">${acts.map(([act, icon, title, off, pressed, value]) =>
+      `<span class="acts">${acts.map(([act, icon, title, off]) =>
         `<span class="keepAct" role="button" tabindex="${off ? -1 : 0}" data-act="${act}" title="${esc(title)}" aria-label="${esc(title)}"` +
-        `${value === undefined ? '' : ` data-value="${esc(value)}"`}` +
-        `${off ? ' aria-disabled="true"' : ''}${pressed === undefined ? '' : ` aria-pressed="${pressed}"`}>${icon}</span>`).join('')}</span>`;
+        `${off ? ' aria-disabled="true"' : ''}>${icon}</span>`).join('')}</span>`;
     b.querySelector('.label').textContent = i.name;
-    if (i.kind === 'vault') {
-      b.querySelector('.state').textContent = i.text;
-      b.querySelector('.where').textContent = i.where;
-    } else {
-      b.querySelector('.state').textContent = `${i.text} · ${i.where}`;
-    }
+    b.querySelector('.state').textContent = i.kind === 'vault' ? i.text : `${i.text} · ${i.where}`;
     b.onclick = () => (i.kind === 'vault' && i.seen ? openVault(i) : runKept(i, 'open'));
     for (const act of b.querySelectorAll('[data-act]')) {
       const go = (e) => {
         e.stopPropagation(); e.preventDefault();
         if (act.getAttribute('aria-disabled') === 'true') return;
-        // a push switch with no value (a vault that pushes everything) opens the vault's view
-        if (act.dataset.act === 'more' || (act.dataset.act === 'push' && !act.dataset.value)) openVault(i);
-        else runKept(i, act.dataset.act, act.dataset.value);
+        if (act.dataset.act === 'more') openVault(i);
+        else runKept(i, act.dataset.act);
       };
       act.onclick = go;
       act.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') go(e); };
@@ -495,7 +499,8 @@
     if (!items.length) {
       const none = document.createElement('div');
       none.className = 'menuEmpty';
-      none.textContent = 'Nothing syncs with this computer yet. Clone a workspace from the workspace menu, link a Zotero library in Settings › Workspaces, add a synced vault below, or right-click a folder in the library and choose Sync with this computer.';
+      none.textContent = 'Nothing syncs with this computer yet.';
+      none.title = 'Clone a workspace from the workspace menu, link a Zotero library in Settings › Workspaces, add a synced vault below, or right-click a folder in the library and choose Sync with this computer.';
       panel.appendChild(none);
     }
     const sep = document.createElement('div'); sep.className = 'sep'; panel.appendChild(sep);
@@ -512,7 +517,7 @@
       b.className = 'item';
       b.id = 'syncFolderBtn';
       b.innerHTML = `<span class="ico">${ICONS.disk}</span><span class="label"></span>`;
-      b.querySelector('.label').textContent = `Sync a folder of ${ws.name} with this computer…`;
+      b.querySelector('.label').textContent = `Sync a folder of ${ws.name}…`;
       b.title = `A folder of ${ws.name} and a directory on this computer kept in step${state.current.type === 'remote' ? ', by the local server on this computer, no clone' : ''}`;
       b.onclick = () => openChooser(ws); // stays open: the folders come next
       panel.appendChild(b);
@@ -577,6 +582,17 @@
     return sw;
   }
 
+  // A vault's two switches in one row, each after its name: Pull, then Push.
+  function switchRow(pull, push) {
+    const sw = document.createElement('div');
+    sw.className = 'switches';
+    for (const [name, control] of [['Pull', pull], ['Push', push]]) {
+      const k = document.createElement('span'); k.className = 'k'; k.textContent = name;
+      sw.append(k, control);
+    }
+    return sw;
+  }
+
   // What the directory holds, as /preview found it.
   function foundText(p) {
     if (p.empty) return 'Nothing: an empty directory';
@@ -597,13 +613,8 @@
     boxRow(box, 'Local', a.path, 'path');
     boxRow(box, 'Remote', `${a.server} · ${a.workspace} · ${a.newFolder ? `a new folder “${a.folder}”` : a.folder}`);
     boxRow(box, 'Found', foundText(a.preview || {}));
-    const sw = document.createElement('div');
-    sw.className = 'switches';
-    const pullLabel = document.createElement('span'); pullLabel.className = 'k'; pullLabel.textContent = 'Pull';
-    const pushLabel = document.createElement('span'); pushLabel.className = 'k'; pushLabel.textContent = 'Push';
-    sw.append(pullLabel, pullSwitch('askPull', askPick.pull, (on) => { askPick = { ...askPick, pull: on }; renderSync(); }),
-      pushLabel, pushSeg(askPick.push, (word) => { askPick = { ...askPick, push: word }; renderSync(); }, a.remote));
-    box.appendChild(sw);
+    box.appendChild(switchRow(pullSwitch('askPull', askPick.pull, (on) => { askPick = { ...askPick, pull: on }; renderSync(); }),
+      pushSeg(askPick.push, (word) => { askPick = { ...askPick, push: word }; renderSync(); }, a.remote)));
     const said = (a.sentences || {})[`${askPick.pull}:${askPick.push}`] || { ok: false, text: '' };
     const say = document.createElement('div');
     say.className = `say${said.ok ? '' : ' no'}`;
@@ -639,9 +650,12 @@
   }
 
   // A vault's own view: where it is and how it stands, its switches, and
-  // every action: the rounds (Sync now, Pull now, Push now), Pause, Go on for
-  // a vault its guard held, Locate… for one whose directory or file is not
-  // where it was, Force pull… and Force push…, Remove the vault….
+  // every action. The everyday ones are a bar of buttons under the switches
+  // — the rounds (Sync now, Pull now, Push now), Pause or Resume, and the
+  // directory — each named by its tooltip; the rare and the grave ones keep
+  // their rows, where their words warn: Go on… for a vault its guard held,
+  // Locate… for one whose directory or file is not where it was, Force
+  // pull… and Force push…, Remove the vault….
   function renderVault(panel, i) {
     backRow(panel, () => { vaultView = null; renderSync(); });
     panel.appendChild(label(i.name));
@@ -655,12 +669,8 @@
     const shut = i.seen ? 'Another account made this vault: it, or an editor of the workspace, acts on it.'
       : i.away ? 'Your account is no longer a member of its workspace: nothing is pulled or pushed.' : '';
     if (i.scope === 'folder') {
-      const sw = document.createElement('div');
-      sw.className = 'switches';
-      const pullLabel = document.createElement('span'); pullLabel.className = 'k'; pullLabel.textContent = 'Pull';
-      const pushLabel = document.createElement('span'); pushLabel.className = 'k'; pushLabel.textContent = 'Push';
-      sw.append(pullLabel, pullSwitch('vaultPull', i.pull, (on) => runKept(i, 'pull', on), i.remoteUrl && 'A vault of another server pulls, for now'),
-        pushLabel, pushSeg(i.push, (word) => runKept(i, 'push', word), Boolean(i.remoteUrl)));
+      const sw = switchRow(pullSwitch('vaultPull', i.pull, (on) => runKept(i, 'pull', on), i.remoteUrl && 'A vault of another server pulls, for now'),
+        pushSeg(i.push, (word) => runKept(i, 'push', word), Boolean(i.remoteUrl)));
       if (shut) {
         sw.title = shut;
         for (const input of sw.querySelectorAll('input, button')) input.disabled = true;
@@ -676,14 +686,34 @@
     panel.appendChild(box);
     const folder = i.scope === 'folder';
     const rounds = !shut;
+    const quick = [ // [action, icon, title, shown, disabled]
+      ['sync', ICONS.sync, folder ? 'Sync now: push, then pull' : 'Push now', rounds],
+      ['pull-now', ICONS.pull, 'Pull now: Gamma\'s changes to this computer', rounds && folder, !i.pull],
+      ['push-now', ICONS.upload, 'Push now: this computer\'s changes to Gamma', rounds && folder, i.push === 'off'],
+      i.paused ? ['resume', ICONS.play, 'Resume: sync it again', !i.seen]
+        : ['pause', ICONS.pause, 'Pause: nothing is pulled or pushed until you resume it', !i.seen],
+      ['open', ICONS.open, folder ? 'Open the directory' : 'Show the file in its folder', !i.seen],
+    ];
+    const bar = document.createElement('div');
+    bar.className = 'vaultBar';
+    bar.id = 'vaultBar';
+    for (const [act, icon, title, shown, off] of quick) {
+      if (!shown) continue;
+      const b = document.createElement('button');
+      b.className = 'keepAct vaultAct';
+      b.dataset.act = act;
+      b.title = title;
+      b.setAttribute('aria-label', title);
+      b.innerHTML = icon;
+      if (off) b.setAttribute('aria-disabled', 'true');
+      b.onclick = () => { if (!off) runKept(i, act); };
+      bar.appendChild(b);
+    }
+    if (bar.children.length) panel.appendChild(bar);
+    const rows = document.createDocumentFragment();
     const acts = [ // [action, icon, label, shown, disabled, danger]
-      ['sync', ICONS.sync, folder ? 'Sync now' : 'Push now', rounds],
-      ['pull-now', ICONS.pull, 'Pull now', rounds && folder, !i.pull],
-      ['push-now', ICONS.upload, 'Push now', rounds && folder, i.push === 'off'],
-      i.paused ? ['resume', ICONS.play, 'Resume', !i.seen] : ['pause', ICONS.pause, 'Pause', !i.seen],
       ['go-on', ICONS.play, 'Go on…', rounds && Boolean(i.held)],
       ['locate', ICONS.locate, folder ? 'Locate…' : 'Locate the file…', !i.seen && (!folder || Boolean(i.stopped) || i.offline)],
-      ['open', ICONS.open, folder ? 'Open the directory' : 'Show in folder', !i.seen],
       ['force-pull', ICONS.force, 'Force pull…', rounds && folder],
       ['force-push', ICONS.force, 'Force push…', rounds && folder],
       ['remove', ICONS.stop, 'Remove the vault…', !i.seen, false, true],
@@ -697,8 +727,13 @@
       b.querySelector('.label').textContent = text;
       if (off) b.setAttribute('aria-disabled', 'true');
       b.onclick = () => { if (!off) runKept(i, act); };
-      panel.appendChild(b);
+      rows.appendChild(b);
     }
+    if (bar.children.length && rows.childNodes.length) {
+      const sep = document.createElement('div'); sep.className = 'sep';
+      panel.appendChild(sep);
+    }
+    panel.appendChild(rows);
   }
 
   // "Sync a folder with this computer": the folders of the open workspace,
@@ -720,7 +755,7 @@
     const { ws, folders, links } = chooser;
     const remote = state.current && state.current.type === 'remote';
     backRow(panel, () => { chooser = null; renderSync(); });
-    panel.appendChild(label(`Sync a folder of ${ws.name} with this computer${remote ? ', no clone' : ''}`));
+    panel.appendChild(label(`Sync a folder of ${ws.name}${remote ? ', no clone' : ''}`));
     if (folders === null) {
       const l = document.createElement('div'); l.className = 'menuEmpty'; l.textContent = 'reading the folders…';
       panel.appendChild(l);

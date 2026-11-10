@@ -50,7 +50,7 @@ test("tours reference registered anchors and catalogued events", () => {
       ids.add(step.id);
       if (step.anchor) assert.ok(ANCHORS[step.anchor], `${tour.id}/${step.id}: unregistered anchor ${step.anchor}`);
       if (step.advanceOn) assert.ok(EVENTS.includes(step.advanceOn.event), `${tour.id}/${step.id}: unknown event ${step.advanceOn.event}`);
-      for (const key of ["creates", "reveal", "avoid"]) {
+      for (const key of ["creates", "reveal", "avoid", "phoneAnchor"]) {
         if (step[key]) assert.ok(ANCHORS[step[key]], `${tour.id}/${step.id}: unregistered ${key} anchor ${step[key]}`);
       }
       if (step.creates) assert.ok(step.advanceOn, `${tour.id}/${step.id}: a step that has the user make something completes when they do`);
@@ -384,6 +384,11 @@ test("eventMatches honours the payload match", () => {
   assert.equal(eventMatches({ event: "popover.opened", match: { name: "add" } }, "popover.opened", { name: "add" }), true);
   assert.equal(eventMatches({ event: "popover.opened", match: { name: "add" } }, "popover.opened", { name: "user" }), false);
   assert.equal(eventMatches({ event: "popover.opened" }, "page.opened", {}), false);
+  // A list means "one of these" (the menu that holds the View rows is the
+  // View menu's popover, or the account menu's on a phone).
+  const either = { event: "popover.opened", match: { name: ["menu", "user"] } };
+  assert.equal(eventMatches(either, "popover.opened", { name: "user" }), true);
+  assert.equal(eventMatches(either, "popover.opened", { name: "add" }), false);
 });
 
 const facts = { view: "page", onPage: true, editable: true, hasPdf: true, guideAvailable: true, phone: false };
@@ -489,19 +494,23 @@ test("the viewer tours share their zoom and pen, and drop them once the sibling 
   assert.equal(pdf.sibling, nb.id);
   assert.equal(nb.sibling, pdf.id);
   const shared = (tour) => tour.steps.filter((s) => s.shared);
-  assert.deepEqual(shared(pdf).map((s) => s.id), ["viewer-zoom", "viewer-pen"]);
+  assert.deepEqual(shared(pdf).map((s) => s.id), ["viewer-tools", "viewer-zoom", "viewer-pen"]);
   shared(pdf).forEach((s, i) => assert.equal(s, shared(nb)[i], `${s.id}: the same object in both tours`));
-  assert.equal(shared(nb).length, 2);
+  assert.equal(shared(nb).length, 3);
   const ids = (tour, facts, siblingDone) => tour.steps.filter((s) => stepApplies(s, facts, siblingDone)).map((s) => s.id);
   const desk = { editable: true, phone: false };
-  assert.deepEqual(ids(pdf, desk, false), ["pdf-outline", "viewer-zoom", "viewer-pen", "pdf-translate"]);
+  // Each tour opens on the column as a whole, so the first card points at no
+  // one button; Next walks them from there.
+  assert.equal(pdf.steps[0].id, "viewer-tools");
+  assert.equal(pdf.steps[0].anchor, "viewer.tools");
+  assert.deepEqual(ids(pdf, desk, false), ["viewer-tools", "pdf-outline", "viewer-zoom", "viewer-pen", "pdf-translate"]);
   assert.deepEqual(ids(pdf, desk, true), ["pdf-outline", "pdf-translate"], "after the notebook view: what a PDF adds");
-  assert.deepEqual(ids(nb, desk, false), ["viewer-zoom", "viewer-pen", "nbv-paper", "nbv-notes"]);
+  assert.deepEqual(ids(nb, desk, false), ["viewer-tools", "viewer-zoom", "viewer-pen", "nbv-paper", "nbv-notes"]);
   assert.deepEqual(ids(nb, desk, true), ["nbv-paper", "nbv-notes"], "after a PDF: what the notebook view adds");
-  assert.deepEqual(ids(nb, { editable: false }, false), ["viewer-zoom", "nbv-notes"], "read only: no pen, no paper");
+  assert.deepEqual(ids(nb, { editable: false }, false), ["viewer-tools", "viewer-zoom", "nbv-notes"], "read only: no pen, no paper");
   assert.deepEqual(ids(nb, { editable: false }, true), ["nbv-notes"]);
   assert.deepEqual(ids(pdf, { editable: true, touch: true }, false),
-    ["pdf-outline", "viewer-zoom", "viewer-pen", "pdf-translate", "pdf-select"], "a touch screen picks what a drag does");
+    ["viewer-tools", "pdf-outline", "viewer-zoom", "viewer-pen", "pdf-translate", "pdf-select"], "a touch screen picks what a drag does");
   // Without a sibling done, a shared step always shows.
   assert.equal(stepApplies({ id: "s", shared: true }, {}), true);
   assert.equal(stepApplies({ id: "s", shared: true, requires: { phone: true } }, { phone: false }), false, "requires still holds");
@@ -536,7 +545,7 @@ test("the Connector and Cloud hints wait for what they suggest to be missing", (
 test("hints are single cards kept out of the Tours menu", () => {
   const hints = Object.values(TOURS).filter((t) => t.hint).map((t) => t.id);
   assert.deepEqual(hints, ["math-keys", "block-refs", "quick-open", "back", "conflicts", "folders", "install",
-    "approvals", "export-page", "clone-sync", "connector", "cloud-account", "window-closed", "new-chat", "pdf-switch",
+    "approvals", "export-page", "clone-sync", "connector", "cloud-account", "window-closed", "shell-bar", "new-chat", "pdf-switch",
     "assistant-changes", "ink-selection", "new-note-key", "slash-menu", "paste-as", "mentions", "objects",
     "paper-details", "bib-link", "command-palette", "settings", "tabs"]);
 });
@@ -582,6 +591,26 @@ test("the October hints come after their moment and retire when the feature is f
   // The math hint's second wording: Tab, not Enter, accepts a suggestion.
   assert.equal(TOURS["math-keys"].version, 2);
   assert.match(TOURS["math-keys"].steps[0].title, /accepts a suggestion/);
+});
+
+// The native apps' own bar: hidden from the shell, the page says where the
+// row that brings it back is — in the View menu, or More where the layout
+// has no View button (a phone, an iPad held upright).
+test("the server bar hint comes when the shell hides the bar and points at the menu holding the row", () => {
+  const hint = TOURS["shell-bar"];
+  const offered = (event, more = {}) => canOffer(hint, { facts: { ...facts, ...more }, progress: null, event, seen: 1 });
+  assert.equal(offered(at("shellBar.hidden")), true, "the shell hid its bar");
+  assert.equal(offered(at("shellBar.hidden"), { phone: true }), true, "upright too, where More holds the row");
+  assert.equal(offered(null), false, "mere presence of a shell says nothing");
+  assert.equal(retiresOffer(hint, at("shellBar.shown")), true, "brought back unaided");
+  // Either menu holds the row, so opening either answers the card.
+  assert.equal(answersOffer(hint, at("popover.opened", { name: "menu" })), true);
+  assert.equal(answersOffer(hint, at("popover.opened", { name: "user" })), true);
+  assert.equal(answersOffer(hint, at("popover.opened", { name: "add" })), false);
+  const [step] = hint.steps;
+  assert.equal(step.anchor, "header.view");
+  assert.equal(step.phoneAnchor, "header.account");
+  assert.match(step.title, /Server bar/);
 });
 
 test("the highlights and notes tours come once the user has made several", () => {

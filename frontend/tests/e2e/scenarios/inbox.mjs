@@ -9,7 +9,10 @@
 // through the share; Mark all read; Archive and back; an item whose page
 // went to Recently deleted settles into Archived; with Inbox notifications
 // on, a new item rings once per browser; a tab opens at its top, on the
-// first page of what it showed last, which its first look replaces.
+// first page of what it showed last, which its first look replaces; a
+// comment on a page the editor follows (he replied there) reaches his bell
+// and opens in place, and the Comments window's Notify me turns it down to
+// replies and @mentions.
 import { Account, live, wanted } from "../harness.mjs";
 import { closeEditor, editRow, tree } from "./notes.mjs";
 
@@ -315,6 +318,38 @@ export async function inboxScenarios({ server, browser, step, until, assert, ass
     } finally {
       await ctxD.close();
     }
+  });
+
+  await step("inbox: a comment on a page Ben follows reaches his bell and opens in place; Notify me turns it down to replies and @mentions", async () => {
+    assertEq((await ben.api(`/api/pages/${pg.id}/notify`)).level, "all", "he follows the page he replied on");
+    const before = Number(await badge(B));
+    const root = await ann.api(`/api/pages/${pg.id}/comments`, { method: "POST", body: { block_id: "ibnote1", body: "A thought for the followers" } });
+    await until(async () => (await badge(B)) === String(before + 1), { what: "the nudge brings the follower's item", timeout: 3000 });
+    await openPanel(B);
+    await tab(B, "Unread"); // the panel opens on the tab it showed last: Archived, from the settle above
+    const followed = row(B, "ib-ann commented on Review draft");
+    assert((await followed.innerText()).includes("A thought for the followers"), "the comment's words");
+    await followed.locator(".inboxMain").click();
+    await panel(B).waitFor({ state: "detached" });
+    await B.locator(`.commentPopover .commentThread[data-thread-id="${root.thread.id}"]`).waitFor({ timeout: 10000 });
+    await B.locator(".commentPopover .commentPopHead .uiClose").click();
+
+    if (!(await B.locator(".commentsPanel").count())) {
+      await B.getByRole("button", { name: "View", exact: true }).click();
+      await B.locator(".menuPopover .ctxMenuItem", { hasText: "Comments" }).click();
+      await B.keyboard.press("Escape");
+    }
+    const win = B.locator(".dockWindow:has(.commentsPanel)");
+    await win.getByRole("button", { name: "All comments — Notify me", exact: true }).click();
+    await B.getByRole("menuitemradio", { name: "Replies and @mentions" }).click();
+    await win.getByRole("button", { name: "Replies and @mentions — Notify me", exact: true }).waitFor();
+    await until(async () => (await ben.api(`/api/pages/${pg.id}/notify`)).level === "replies", { what: "the choice is on the server" });
+    // a comment that names no one tells him nothing now; one that names him still does
+    await ann.api(`/api/pages/${pg.id}/comments`, { method: "POST", body: { block_id: "ibnote2", body: "Quiet for Ben" } });
+    await ann.api(`/api/pages/${pg.id}/comments`, { method: "POST", body: { block_id: "ibnote2", body: "@ib-ben but not this one" } });
+    await until(async () => (await items(ben)).some((i) => i.snippet === "@ib-ben but not this one"), { what: "the mention comes" });
+    assert(!(await items(ben)).some((i) => i.snippet === "Quiet for Ben"), "no item for a comment that names no one");
+    assertNoProblems(B);
   });
 
   await ctxA.close();

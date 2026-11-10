@@ -25,10 +25,11 @@ import { isRecordingBlock } from "../recording/recording.js";
 import { useRecordings } from "../recording/RecordingContext.js";
 import { useBlockFrame } from "../replay/useFrame.js";
 import { isTextBox } from "../markup/textBox.js";
-import { isPicture, pictureMarkdown } from "../markup/picture.js";
+import { isPicture } from "../markup/picture.js";
+import { blockMarkdown, subtreeMarkdown } from "./blockSelection.js";
 import { PictureCard } from "../markup/PictureLayer";
 import { picturesDrag } from "../markup/pictureUpload.js";
-import { composing } from "../shared/lib/hotkeys.js";
+import { chordFromEvent, composing } from "../shared/lib/hotkeys.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
 import { CitationPill, GammaLinkCard, handleMarkdownCopy, useDockFolded } from "../shared/ui/Widgets";
@@ -80,9 +81,11 @@ import {
 } from "./MdTools";
 
 // Module-level ref for native HTML5 drag-and-drop (shared with App's drop handlers)
-// draggingId: the block a ⋮⋮ handle drags; fragment: {blockId, kind, idx},
-// an image / table / diagram dragged out of a block's rendered view.
-const _dragState = { draggingId: null, dropTarget: null, fragment: null };
+// draggingId: the block a ⋮⋮ handle drags; draggingIds: the selection's
+// roots when it is one of several notes selected (useBlockSelection.js),
+// which go with it; fragment: {blockId, kind, idx}, an image / table /
+// diagram dragged out of a block's rendered view.
+const _dragState = { draggingId: null, draggingIds: null, dropTarget: null, fragment: null };
 // Embed-card writes per source block, counted: only the latest one's answer
 // may replace what the card shows (BlockRow's embedEditRef).
 const _embedWrites = new Map();
@@ -760,6 +763,12 @@ const BlockRow = React.memo(function BlockRow({
   // block, hung under `anchor` when given (the handle menu's row and the
   // palette's "Block properties").
   onProperties,
+  // A selection of whole notes (editor/useBlockSelection.js): this row is
+  // in it, or under a note that is. Esc in its editor selects it, and
+  // Ctrl+A on its text all selected already selects every note.
+  selected = false,
+  onSelectBlock,
+  onSelectAll,
 }) {
   const ref = useRef(null);
   const clickPosRef = useRef(null);
@@ -1478,7 +1487,7 @@ const BlockRow = React.memo(function BlockRow({
           open={mergeOpen === block.id} onOpenChange={(v) => onMergeOpen?.(v ? block.id : null)} />
       ) : null}
       <div
-        className={`blockRow ${focusedId === block.id ? "focused" : ""}${flashingId === block.id ? " landed" : ""}${replayState ? (replayState === "pending" ? " replayPending" : " replayReached") : ""}${aiMark ? ` ai-${aiMark.kind} aiMark${aiMark.n % 2}` : ""}${scanIdx != null ? ` ai-scan aiMark${aiScan.n % 2}` : ""}${peerEditing ? ` peerOn peer-${personColor(peerEditing.name)}` : ""}`}
+        className={`blockRow ${focusedId === block.id ? "focused" : ""}${selected ? " selected" : ""}${flashingId === block.id ? " landed" : ""}${replayState ? (replayState === "pending" ? " replayPending" : " replayReached") : ""}${aiMark ? ` ai-${aiMark.kind} aiMark${aiMark.n % 2}` : ""}${scanIdx != null ? ` ai-scan aiMark${aiScan.n % 2}` : ""}${peerEditing ? ` peerOn peer-${personColor(peerEditing.name)}` : ""}`}
         style={scanIdx != null ? { animationDelay: `${Math.min(scanIdx * 45, 1600)}ms` } : undefined}
         onMouseDown={(e) => {
           if (e.button !== 0) return; // right-click is the context menu's
@@ -1732,6 +1741,20 @@ const BlockRow = React.memo(function BlockRow({
                 if (selTools.keyDown(e)) return;
                 // The \command completion's keys (useMathUi.js acKey).
                 if (acKey(e, ref.current)) return;
+                // Notion's way into a selection of whole notes
+                // (useBlockSelection.js): Esc selects this note, its editor
+                // closing; Ctrl+A on its text all selected selects every note.
+                if (e.key === "Escape" && onSelectBlock) {
+                  e.preventDefault();
+                  onSelectBlock(block.id);
+                  return;
+                }
+                if (onSelectAll && ref.current && chordFromEvent(e) === "Mod-a"
+                  && ref.current.selectionStart === 0 && ref.current.selectionEnd === ref.current.value.length) {
+                  e.preventDefault();
+                  onSelectAll();
+                  return;
+                }
                 // The block commands (blockCommands.js, docs/dev/hotkeys.md):
                 // move / duplicate / delete the block, formatting, the hop to
                 // the neighbouring block at the caret's top or bottom line…
@@ -1958,25 +1981,13 @@ const BlockRow = React.memo(function BlockRow({
   );
 });
 
-// A block's Markdown: its content, or for a picture its image line
-// (markup/picture.js pictureMarkdown: the caption as the alt text).
-const blockMarkdown = (b) => (isPicture(b) ? pictureMarkdown(b.content, b.properties.picture) : b.content || "");
-
-// Block subtree → a markdown outline: each block one "- " bullet (extra
-// content lines hang under it), children indented two spaces deeper.
-function subtreeMarkdown(b, depth) {
-  const indent = "  ".repeat(depth);
-  const own = blockMarkdown(b).split("\n")
-    .map((l, i) => (i === 0 ? `${indent}- ` : `${indent}  `) + l)
-    .join("\n");
-  return [own, ...(b.children || []).map((c) => subtreeMarkdown(c, depth + 1))].join("\n");
-}
-
 const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowProps }) {
   const depth = rowProps.depth || 0;
   // Notion-style handle: drag moves the block, a plain click opens the block
-  // menu (copy link / reference / embed, delete).
-  const [handleMenu, setHandleMenu] = useState(null); // {x, y}
+  // menu (copy link / reference / embed, delete). Both select the block
+  // (useBlockSelection.js), and on one of several notes selected they act
+  // on all of them: the drag moves them, the menu is theirs.
+  const [handleMenu, setHandleMenu] = useState(null); // {x, y, ids}
   const draggedRef = useRef(false);
   // The handle: what the Properties popover hangs under.
   const handleRef = useRef(null);
@@ -1986,11 +1997,14 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
     e.dataTransfer.setData("text/plain", block.id);
     e.dataTransfer.effectAllowed = "move";
     _dragState.draggingId = block.id;
+    const ids = rowProps.dragSelection?.(block.id);
+    _dragState.draggingIds = ids?.length > 1 ? ids : null;
     draggedRef.current = true;
   }
 
   function onDragEnd() {
     _dragState.draggingId = null;
+    _dragState.draggingIds = null;
     _dragState.dropTarget = null;
     window._gammaSetDropTarget?.(null);
     // Clear AFTER any click the drop gesture might synthesize.
@@ -2002,8 +2016,14 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
     e.preventDefault();
     e.stopPropagation();
     if (rowProps.preview) { rowProps.onStartEdit?.(block.id, true, null); return; }
-    setHandleMenu({ x: e.clientX, y: e.clientY });
+    setHandleMenu({ x: e.clientX, y: e.clientY, ids: rowProps.onHandleSelect?.(block.id) || [block.id] });
   }
+  // The menu's entries for several notes: the selection's actions.
+  const selectionAction = (action) => {
+    setHandleMenu(null);
+    rowProps.onSelectionAction?.(action);
+  };
+  const many = handleMenu ? handleMenu.ids.length : 0;
 
   const copy = (text, msg, source) => {
     setHandleMenu(null);
@@ -2051,7 +2071,39 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
           title={t("Drag to move · click for menu")}
         ><GripIcon size={16} /></span>
       </span>
-      {handleMenu ? (
+      {many > 1 ? (
+        <ContextMenu x={handleMenu.x} y={handleMenu.y} onClose={() => setHandleMenu(null)}>
+          <MenuItem
+            icon={CopyIcon}
+            title={t("Copy the {n} selected blocks as a markdown outline (sub-blocks indented under them)", { n: many })}
+            onClick={() => selectionAction("copy")}
+          >{t("Copy as markdown")}</MenuItem>
+          {rowProps.onAddToChat ? (
+            <MenuItem
+              icon={SparklesIcon}
+              title={t("Attach the {n} selected blocks (with their sub-blocks) to your next chat message", { n: many })}
+              onClick={() => selectionAction("chat")}
+            >{t("Add to chat")}</MenuItem>
+          ) : null}
+          {rowProps.onDuplicate ? (
+            <MenuItem
+              icon={CopyIcon}
+              title={t("Insert a copy of the {n} selected blocks below them (highlight anchors are not copied)", { n: many })}
+              onClick={() => selectionAction("duplicate")}
+            >{t("Duplicate")}</MenuItem>
+          ) : null}
+          <MenuItem
+            icon={ExportIcon}
+            title={t("Move the {n} selected blocks and their sub-blocks to the end of another page", { n: many })}
+            onClick={() => selectionAction("move")}
+          >{t("Move to page…")}</MenuItem>
+          <MenuItem
+            icon={Trash2Icon}
+            danger
+            onClick={() => selectionAction("delete")}
+          >{t("Delete {n} blocks", { n: many })}</MenuItem>
+        </ContextMenu>
+      ) : handleMenu ? (
         <ContextMenu x={handleMenu.x} y={handleMenu.y} onClose={() => setHandleMenu(null)}>
           <MenuItem
             icon={LinkIcon}
@@ -2221,12 +2273,13 @@ function AiGhostRow({ content, depth }) {
 // A fold of more blocks than this opens and shuts at once.
 const FOLD_MOVES_MOST = 60;
 
-function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = false, zoteroLock = "", notesLocked = false }) {
+function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = false, zoteroLock = "", notesLocked = false, underSelected = false }) {
   // Every row takes its own entry of the labels map, never the map itself
   // (a new one on every tree change would re-render each memoized row).
   // So too the comment counts: each row its own number, and whether its
-  // thread popover is open.
-  const { refLabelsById, commentCounts, commentOpenFor, foldMoving, view: openView, ...rest } = rowProps;
+  // thread popover is open; and the selection of notes, whether the row is
+  // in it (`underSelected`: a note above it is, which takes it along).
+  const { refLabelsById, commentCounts, commentOpenFor, foldMoving, view: openView, selection, ...rest } = rowProps;
   // In a folded dock window (useDockFolded) no row's editor is open: one
   // there could take neither the focus nor a finger, and its editing bar
   // would show over the rest of the screen. The view keeps the block that
@@ -2258,7 +2311,8 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
         const commentOpen = !!commentOpenFor && commentOpenFor === block.id;
         const sheetNumber = rowProps.sheetNumbers ? rowProps.sheetNumbers.get(block.id) || 0
           : depth === 0 && isSheet(block) ? ++sheets : 0;
-        const locked = notesLocked && !isHighlightBlock(block); return (
+        const locked = notesLocked && !isHighlightBlock(block);
+        const selected = underSelected || !!selection?.has(block.id); return (
         <React.Fragment key={block.id}>
           {/* place: the row's index among its siblings and their count. A
               memoized row renders again only for a changed prop, and what
@@ -2267,11 +2321,12 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
               removed beside it, is the same block at another place. */}
           {!readOnly && !locked ? (
             <SortableBlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} refLabels={refLabels}
-              commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} zoteroLock={zoteroLock} {...rowRest} />
+              commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} zoteroLock={zoteroLock}
+              selected={selected} {...rowRest} />
           ) : (
             <BlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} refLabels={refLabels}
-              commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} zoteroLock={zoteroLock} {...rowRest}
-              readOnly={rowRest.readOnly || locked} />
+              commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} zoteroLock={zoteroLock}
+              selected={selected} {...rowRest} readOnly={rowRest.readOnly || locked} />
           )}
           {/* The children fold under their row: the person's own toggle
               moves (foldMoving), anything else that folds or opens them (a
@@ -2283,7 +2338,7 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
               <div className="blockChildren" data-motion-key={`under:${block.id}`}>
                 <BlockTree blocks={block.children} readOnly={readOnly} rowProps={rowProps} depth={depth + 1} parentId={block.id}
                   onSheet={onSheet || isSheet(block)} zoteroLock={block.properties?.zotero_readonly ? block.id : zoteroLock}
-                  notesLocked={notesLocked} />
+                  notesLocked={notesLocked} underSelected={selected} />
               </div>
             </Collapse>
           ) : null}

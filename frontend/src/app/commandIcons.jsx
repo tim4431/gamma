@@ -100,4 +100,12 @@ export const FIXED_KEY_ICONS = {
   fold: ChevronRightIcon,
   slash: SlashIcon,
   escape: XIcon,
+  selectStep: ChevronDownIcon,
+  selectMove: ArrowUpIcon,
+  selectEdit: TextCursorIcon,
+  selectDelete: Trash2Icon,
+  selectIndent: IndentIcon,
+  selectCopy: CopyIcon,
+  selectAll: RectSelectIcon,
+  selectMenu: SlashIcon,
 };

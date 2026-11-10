@@ -44,7 +44,7 @@ const entries = [
   // Top bar and Viewer tools: a row per item of app/topbarItems.js and
   // app/viewerToolItems.js, its label, hint and synonyms
   ...TOPBAR_ITEMS.map((item) => e("appearance", t(item.label), t("Top bar"), t(item.hint),
-    `topbar top bar header toolbar button show hide order reorder arrange drag move ${item.keywords}`)),
+    `topbar top bar header toolbar button show hide order reorder arrange drag move${item.places ? " pane split side by side" : ""} ${item.keywords}`)),
   ...VIEWER_TOOL_ITEMS.map((item) => e("appearance", t(item.label), t("Viewer tools"), t(item.hint),
     `viewer tools strip side toolbar PDF notebook button show hide order reorder arrange drag move ${item.keywords}`)),
   e("appearance", t("Suggest tours"), t("Tours"), t("A short tour the first time a feature comes up."), "guide onboarding hints help"),
@@ -128,7 +128,7 @@ const entries = [
   e("tools", t("Tool rounds"), t("Tool limits"), t("AI ↔ tool round-trips per message"), "advanced tool requests limits"),
   e("tools", t("Unlimited rounds"), t("Tool limits"), t("Run until the reply is done or you stop it"), "advanced tool rounds limit unlimited no limit changes continue"),
   e("tools", t("Read window"), t("Tool limits"), t("Document text per read tool call"), "advanced context characters"),
-  e("integrations", t("Integrations"), null, t("Read-only access for Codex, Claude Code, DeepSeek Harness, or any MCP assistant."), "external assistants Codex Claude Code plugins MCP tokens read-only revoke connections"),
+  e("integrations", t("Integrations"), null, t("Read-only access for Codex, Claude Code, DeepSeek Harness, or any MCP assistant."), "external assistants Codex Claude Code DeepSeek Harness dsh plugins MCP tokens read-only revoke connections workspaces access setup command"),
   e("account", t("Account & sync"), null, t("Your account, Gamma Cloud link and settings sync"), "profile account user"),
   e("account", t("Gamma Cloud"), null, t("Publish pages for free and carry your settings to your other servers"), "cloud link unlink sign-in identity plan publish sync set up"),
   e("account", t("Zotero"), null, t("Link a Zotero library to a workspace and keep the two in step"), "zotero library libraries link sync connect disconnect reconnect api key oauth sign-in references citations"),

@@ -1,8 +1,8 @@
 import React from "react";
-import { MenuSelect } from "../shared/ui/Menus";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { API, apiJson, setExpectedUser } from "../shared/lib/utils";
 import { LoginPage, SessionConflictPage } from "./LoginPage";
+import { WorkspacePicker, accessBody } from "../settings/WorkspacePicker";
 import { Splash } from "../shared/ui/BrandMark";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -70,7 +70,7 @@ export function McpAuthorization({ requestId }) {
 
 export default function McpConsent({ requestId }) {
   const [details, setDetails] = React.useState(null);
-  const [workspace, setWorkspace] = React.useState("");
+  const [access, setAccess] = React.useState({ all: false, ids: [] });
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   React.useEffect(() => {
@@ -79,7 +79,7 @@ export default function McpConsent({ requestId }) {
       .then((data) => {
         if (!active) return;
         setDetails(data);
-        setWorkspace(data.default_workspace || data.workspaces[0]?.id || "");
+        setAccess({ all: false, ids: [data.default_workspace || data.workspaces[0]?.id].filter(Boolean) });
       }).catch((err) => { if (active) setError(err.message); });
     return () => { active = false; };
   }, [requestId]);
@@ -88,7 +88,7 @@ export default function McpConsent({ requestId }) {
     try {
       const result = await apiJson(`${API}/integrations/oauth/consent`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ request_id: requestId, csrf: details.csrf, workspace_id: workspace, approve }),
+        body: JSON.stringify({ request_id: requestId, csrf: details.csrf, ...accessBody(access), approve }),
       });
       window.location.assign(result.redirect_url);
     } catch (err) { setError(err.message); setBusy(false); }
@@ -104,26 +104,26 @@ export default function McpConsent({ requestId }) {
   if (!details && !error) return <Splash />;
   return <div className="app mcpConsentPage"><div className="loginPage"><div className="loginCard mcpConsent">
     <div className="loginTitle">{t("Gamma")}</div>
-    <h1 className="loginSubtitle">{t("Connect your workspace")}</h1>
+    <h1 className="loginSubtitle">{t("Connect your library")}</h1>
     {details ? <>
       <p><strong>{details.client_name}</strong> {t("wants to connect to Gamma.")}</p>
       <p className="loginConflictHint">{t("Signed in as")} <strong>{details.username}</strong>.</p>
-      <label>{t("Workspace")}</label>
-      <MenuSelect label={t("Workspace")} block value={workspace} onChange={setWorkspace}
-        options={details.workspaces.map((item) => [item.id, item.name])} />
+      <label>{t("Workspaces it may read")}</label>
+      <WorkspacePicker workspaces={details.workspaces} value={access} onChange={setAccess} disabled={busy}
+        label={t("Workspaces it may read")} />
       <div className="mcpPermissions">
         <strong>{t("Read-only access")}</strong>
         <ul><li>{t("Read pages, notes, highlights, and PDF text.")}</li>
           <li>{t("Cannot edit or delete your library.")}</li></ul>
         <p className="loginConflictHint">{t("Content the assistant reads is shared with its provider.")}</p>
       </div>
-      <p className="loginConflictHint">{t("Access lasts 90 days. Disconnect anytime in Settings → AI → Integrations.")}</p>
+      <p className="loginConflictHint">{t("Access lasts 90 days. Change the workspaces or disconnect any time in Settings → AI → Integrations.")}</p>
       <details className="mcpConnectionDetails"><summary>{t("Connection details")}</summary>
         <p className="loginConflictHint">{t("The assistant provided its name. Only approve if you started this connection.")}</p>
         <p className="loginConflictHint mcpCallback">{t("Returns to: {redirect_uri}", { redirect_uri: details.redirect_uri })}</p>
       </details>
       <div className="mcpConsentActions">
-      <button className="loginBtn" disabled={busy || !workspace} onClick={() => decide(true)}>
+      <button className="loginBtn" disabled={busy || !(access.all || access.ids.length)} onClick={() => decide(true)}>
         <MorphText>{busy ? t("Connecting…") : t("Allow read-only access")}</MorphText>
       </button>
       <button className="loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>

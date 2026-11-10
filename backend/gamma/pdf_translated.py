@@ -464,7 +464,7 @@ def _paper_font(mupdf, doc, xref: int, ext: str):
         return None
 
 
-def _sheets(mupdf, todo, frames, lang, papers=None, vectors=None):
+def _sheets(mupdf, todo, frames, lang, papers, vectors):
     """Step 2: every page's translation laid out on a page of one new
     document (``_layout_block``), its fonts subset. → (the document, page
     number → the formulas placed on it, the pages with anything drawn).
@@ -478,7 +478,7 @@ def _sheets(mupdf, todo, frames, lang, papers=None, vectors=None):
     it."""
     archive = mupdf.Archive()
     archive.add((_PLACEHOLDER, _PLACEHOLDER_NAME))
-    for paper in (papers or {}).values():
+    for paper in papers.values():
         archive.add((paper.buffer, paper.file))
     out = io.BytesIO()
     formulas, drawn = {}, set()
@@ -581,7 +581,7 @@ def _hidden_text(mupdf, pdf, fonts, part):
     return b"q\n3 Tr\n" + chunk + b"Q\n", {f"Fm{xref}": xref for xref in names.values()}, {}
 
 
-def _formula_texts(mupdf, page, placed, fonts, vectors=None, stub=None) -> None:
+def _formula_texts(mupdf, page, placed, fonts, vectors, stub) -> None:
     """A sheet's formula placeholders put to use, under the lock: each
     drawing of one (the writer's single content stream draws them in the
     order the formulas were placed) becomes that formula's hidden text
@@ -598,7 +598,7 @@ def _formula_texts(mupdf, page, placed, fonts, vectors=None, stub=None) -> None:
     content = doc.xref_stream(stream)
     draw = re.compile(rb"/(" + b"|".join(re.escape(n.encode()) for n in names) + rb") Do\b")
     count = len(draw.findall(content))
-    pdf, vectors = mupdf._as_pdf_document(doc), vectors if vectors is not None else {}
+    pdf = mupdf._as_pdf_document(doc)
     if count != len(placed):
         for part, _ in placed:
             vectors.pop(id(part), None)
@@ -787,7 +787,9 @@ def _filtered(mupdf, pdf, resources, stream, cull):
     low = mupdf.mupdf
     factory = _CULLER[1](cull)
     options = low.PdfFilterOptions()
-    options.instance_forms = 1
+    # PyMuPDF 1.28's constructor leaves no_update as the memory had it; set,
+    # the forms it copies would keep no content.
+    options.instance_forms, options.no_update = 1, 0
     options.add_factory(factory.internal())
     identity, buffer = low.FzMatrix(), low.fz_new_buffer(1024)
     out = low.ll_pdf_new_buffer_processor(buffer.m_internal, 0, 0)
@@ -1017,7 +1019,7 @@ def _inline(mupdf, doc, xref: int, vectors: dict) -> None:
             low.pdf_dict_dels(xobjects, f"Gq{n}")
 
 
-def _pictures(mupdf, doc, formulas, frames, vectors=None) -> dict:
+def _pictures(mupdf, doc, formulas, frames, vectors) -> dict:
     """Every formula's picture, ``(page number, k) → (dest, png)``: its box
     on its page drawn at ``FORMULA_DPI`` on a clear ground, before any page
     is changed, and the rectangle it goes in on the page it was placed on,
@@ -1028,7 +1030,7 @@ def _pictures(mupdf, doc, formulas, frames, vectors=None) -> dict:
     by_source = {}
     for pn, placed in formulas.items():
         for k, (part, dest) in enumerate(placed):
-            if id(part) not in (vectors or {}):
+            if id(part) not in vectors:
                 by_source.setdefault(part["page"], []).append((pn, k, part, dest))
     out = {}
     for source, items in sorted(by_source.items()):
@@ -1221,7 +1223,7 @@ def _put_resources(doc, xref: int, kind, entries) -> None:
         doc.xref_set_key(owner, path + name, value)
 
 
-def _stamp(mupdf, page, frame, blocks, sheets, sheet_index, pictures, vectors=None):
+def _stamp(mupdf, page, frame, blocks, sheets, sheet_index, pictures, vectors):
     """Steps 1 and 3 on one page, under the lock: its translated blocks'
     lines redacted (``REDACT_BATCH`` at a time) and masked in their grounds,
     white on plain paper, the laid-out sheet drawn over it (``sheet_index`` None: nothing to draw),

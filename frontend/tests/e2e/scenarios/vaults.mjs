@@ -77,7 +77,7 @@ export async function vaultScenarios(env) {
       try {
         const chip = page.locator(".vaultChip");
         await chip.waitFor({ timeout: 15000 });
-        assertEq((await chip.innerText()).trim(), "Synced: Attention.md", "the chip names the file");
+        assertEq(await chip.getAttribute("aria-label"), "Synced: Attention.md", "one icon, named for the file it keeps");
         assert((await chip.getAttribute("title")).includes(note), "its title the whole path");
         await chip.click();
         const card = page.locator(".vaultPopover");
@@ -227,7 +227,7 @@ export async function vaultScenarios(env) {
       try {
         const chip = page.locator(".vaultChip");
         await chip.waitFor({ timeout: 15000 });
-        assertEq((await chip.innerText()).trim(), "On this computer", "the chip says where it is read");
+        assertEq(await chip.getAttribute("aria-label"), "On this computer", "the chip says where it is read");
         // nothing in the Document menu replaces the file it reads
         await page.click("button[aria-label='Document']");
         const doc = page.locator(".attachPopover");

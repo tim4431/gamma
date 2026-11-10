@@ -20,6 +20,7 @@ import { same, tree } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { png } from "./pictures.mjs";
 import { IPAD_UA as SHELL_UA, T_SNAP, fakeShell, heldLine, shellPaper as shellPage } from "../shells.mjs";
+import { TOURS } from "../../../src/guide/tours/index.js";
 
 export async function ipadScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }) {
   const python = process.env.GAMMA_E2E_PYTHON || path.join(ROOT, "backend", "venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
@@ -780,7 +781,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
     } finally { await ctx?.close(); }
   });
 
-  await step("ipad shell: View › Server bar hides the shell's own bar and brings it back, its check following the shell's word; upright, More lists it as the shell last left it; a shell without shellBar gets no row", async () => {
+  await step("ipad shell: View › Server bar hides the shell's own bar and brings it back, its check following the shell's word; upright, More lists it as the shell last left it; a hide in the shell hints at the menu that holds the row, More's upright; a shell without shellBar gets no row", async () => {
     const contexts = [];
     const open = async (options, viewport) => {
       const ctx = await alice.context(browser, { hasTouch: true, viewport, userAgent: SHELL_UA });
@@ -791,7 +792,35 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       const sent = () => page.evaluate(() => window.e2eHostSent.filter((m) => m.type === "shellBar"));
       return { page, sent };
     };
+    const UPRIGHT = { width: 834, height: 1194 };
     const LANDSCAPE = { width: 1194, height: 834 };
+    // The guide's side (docs/dev/onboarding.md): a hide the shell did itself
+    // leaves nothing of the shell on screen, so a hint says where the row
+    // is. A fresh browser and a cleared account copy, with every other guide
+    // settled, so this load's one offer is the hint's. The last such context
+    // goes first: an open tab would push its own records back up over the
+    // cleared copy.
+    let hintCtx = null;
+    const openForHint = async (viewport) => {
+      await hintCtx?.close();
+      hintCtx = null;
+      // The account's own copy as well: every other context of the suite
+      // turns suggestions off, and the profile sync would push that here.
+      await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { tourProgress: {}, suggestTours: true } } });
+      const ctx = await alice.context(browser, { hasTouch: true, viewport, userAgent: SHELL_UA, suggestTours: true });
+      hintCtx = ctx;
+      await ctx.addInitScript(fakeShell, {});
+      await ctx.addInitScript((rows) => {
+        for (const [id, version] of rows) localStorage.setItem(`gamma-guide:alice:${id}`, JSON.stringify({ version, state: "dismissed" }));
+      }, Object.values(TOURS).filter((t) => t.id !== "shell-bar").map((t) => [t.id, t.version]));
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+      await page.waitForSelector(".folderNewBtn");
+      await until(async () => (await page.evaluate(() => window.e2eHostSent.filter((m) => m.type === "shellBar"))).length > 0,
+        { what: "the page knows how the bar stands" });
+      await page.evaluate(() => window.gammaNative.receive({ type: "shellBar", shown: false }));
+      await page.waitForSelector('[data-guide-offer="shell-bar"] .guideCard');
+      return page;
+    };
     try {
       const { page, sent } = await open({}, LANDSCAPE);
       await until(async () => (await sent()).length > 0, { what: "the page asks how the bar stands" });
@@ -811,7 +840,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
 
       // Upright, the View menu's rows are More's; a bar the shell left
       // hidden comes unchecked.
-      const upright = await open({ bar: false }, { width: 834, height: 1194 });
+      const upright = await open({ bar: false }, UPRIGHT);
       await upright.page.waitForSelector(".app.phoneUI");
       await upright.page.getByRole("button", { name: "More", exact: true }).tap();
       const more = upright.page.locator(".userPopover").getByRole("menuitemcheckbox", { name: "Server bar", exact: true });
@@ -828,7 +857,33 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       assertEq(await older.page.locator(".menuPopover").getByRole("menuitemcheckbox", { name: "Server bar", exact: true }).count(), 0, "no row");
       assertEq((await older.sent()).length, 0, "nothing asked");
       assertNoProblems(older.page);
-    } finally { for (const ctx of contexts) await ctx.close(); }
+
+      // No other context of this account open from here: one with
+      // suggestions off would push that choice back over the hint's.
+      for (const ctx of contexts.splice(0)) await ctx.close();
+      // The hint, beside the button that opens the menu holding the row;
+      // opening that menu answers it, so the card never covers the row.
+      const hinted = await openForHint(LANDSCAPE);
+      await hinted.waitForSelector('[data-guide="header.view"][data-guide-active]');
+      assert((await hinted.locator('[data-guide-offer="shell-bar"] .guideTitle').textContent()).includes("Server bar"),
+        "the card names the row");
+      await hinted.getByRole("button", { name: "View", exact: true }).click();
+      await until(async () => await hinted.locator(".guideCard").count() === 0, { what: "the card steps out of the menu's way" });
+      assertNoProblems(hinted);
+
+      // Upright there is no View button: the card points at More, which
+      // holds those rows.
+      const hintedUpright = await openForHint(UPRIGHT);
+      await hintedUpright.waitForSelector(".app.phoneUI");
+      await hintedUpright.waitForSelector('[data-guide="header.account"][data-guide-active]');
+      assertEq(await hintedUpright.locator('[data-guide="header.view"]').count(), 0, "no View button upright");
+      assertNoProblems(hintedUpright);
+    } finally {
+      await hintCtx?.close();
+      // The settled records this step pushed up are no later scenario's business.
+      await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { tourProgress: {}, suggestTours: false } } });
+      for (const ctx of contexts) await ctx.close();
+    }
   });
 
   await step("ipad shell: a finger's selection in the PDF turns the shell's edit menu off at once and the popup carries Copy in its place; the copy keeps it off, a colour or a selection elsewhere turns it on; a touch scroll brings the popup back; a shell without editMenu is told nothing and gets no Copy", async () => {

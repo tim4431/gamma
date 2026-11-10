@@ -67,6 +67,7 @@ export async function mcpScenarios(env) {
 
   await step("mcp: browser login, workspace approval, token exchange and revocation", async () => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const second = await alice.api("/api/workspaces", { method: "POST", body: { name: "Assistant second library" } });
     try {
       await ctx.route("https://client.example/callback**", (route) => route.fulfill({ status: 200, contentType: "text/plain", body: "Connection approved. Return to your assistant." }));
       const flow = await request();
@@ -77,8 +78,15 @@ export async function mcpScenarios(env) {
       await page.getByRole("button", { name: "Log in", exact: true }).click();
       await page.getByRole("button", { name: "Allow read-only access" }).waitFor();
       const workspaces = (await alice.api("/api/session")).workspaces || [];
-      const chosen = page.getByRole("button", { name: "Workspace", exact: true });
-      assertEq((await chosen.textContent()).trim(), workspaces.find((w) => w.id === alice.ws)?.name || "");
+      // the default workspace starts ticked; one connection may read several
+      const picker = page.getByRole("group", { name: "Workspaces it may read" });
+      const home = picker.getByRole("checkbox", { name: workspaces.find((w) => w.id === alice.ws)?.name || "", exact: true });
+      const other = picker.getByRole("checkbox", { name: "Assistant second library", exact: true });
+      assert(await home.isChecked() && !await other.isChecked(), "only the default workspace starts ticked");
+      await home.uncheck();
+      assert(await page.getByRole("button", { name: "Allow read-only access" }).isDisabled(), "a connection reads at least one workspace");
+      await home.check();
+      await other.check();
       if (process.env.GAMMA_MCP_SCREENSHOTS) {
         fs.mkdirSync(process.env.GAMMA_MCP_SCREENSHOTS, { recursive: true });
         await page.screenshot({ path: path.join(process.env.GAMMA_MCP_SCREENSHOTS, "consent-desktop.png") });
@@ -96,18 +104,23 @@ export async function mcpScenarios(env) {
       }) });
       assertEq(response.status, 200);
       const token = (await response.json()).access_token;
-      const rpc = () => fetch(`${server.base}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${token}`,
+      const rpc = (name = "list_pages") => fetch(`${server.base}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${token}`,
         "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "list_pages", arguments: {} } }) });
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: {} } }) });
       const read = await rpc();
       assertEq(read.status, 200);
       assert(!(await read.json()).result.isError, "MCP read succeeds");
+      const listed = (await (await rpc("list_workspaces")).json()).result.structuredContent.workspaces.map((w) => w.id);
+      assertEq(JSON.stringify(listed), JSON.stringify([alice.ws, second.id]), "the connection reads both workspaces ticked");
       const connection = (await alice.api("/api/integrations/tokens")).tokens.find((t) => t.name === "Codex browser test (OAuth)");
       assert(connection, "OAuth connection appears in settings");
       await alice.api(`/api/integrations/tokens/${connection.id}`, { method: "DELETE" });
       assertEq((await rpc()).status, 401);
       assertNoProblems(page);
-    } finally { await ctx.close(); }
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/workspaces/${second.id}`, { method: "DELETE" });
+    }
   });
 
   await step("mcp: a saved library page cannot dismiss authorization", async () => {

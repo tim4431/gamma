@@ -6,7 +6,7 @@
 // the PDF the page reads where it lies (`{path, missing, mine,
 // relocation_error?}`, `mine` whether this account opened the file).
 // What the page shows of it: the chip in the page header and its card
-// (VaultChip.jsx), the banner over the page (VaultBanner.jsx), whether the
+// (VaultChip.jsx), the banner over the page (its VaultBanner), whether the
 // notes are locked, and the conflict route the merge chips read. A path is
 // "" for a member who cannot act on the vault: where its files lie is the
 // reading of whoever made it. Pure: tests/vaultState.test.mjs.
@@ -32,11 +32,16 @@ export function directionText(vault) {
   return `${vault?.pull ? t("Pull: on") : t("Pull: off")} · ${push}`;
 }
 
-// The chip in the page header: `{label, title, missing, problem, paused}`,
-// or null for a page that has nothing to do with this computer. A folder
-// vault's page says where it is synced, a vault of one file where its PDF
-// is pushed from (a file vault only pushes), an opened PDF that it is on
-// this computer.
+// The chip in the page header: `{kind, label, title}`, or null for a page
+// that has nothing to do with this computer.
+// `kind` is what the header draws, one icon for how the page stands:
+// "sync" a folder vault keeps it in step, "push" its PDF comes from a file
+// of its own, "disk" it is a PDF read where it lies, "paused" its vault is
+// paused, "alert" the vault could not write or the file is gone. The label
+// says the same in words, for the tooltip, the screen reader and the card;
+// a folder vault's page says where it is synced, a vault of one file where
+// its PDF is pushed from (a file vault only pushes), an opened PDF that it
+// is on this computer.
 export function vaultChip(state) {
   if (!state) return null;
   const { vault, reader } = state;
@@ -49,15 +54,16 @@ export function vaultChip(state) {
     if (vault.paused) lines.push(t("The vault is paused."));
     if (vault.conflicts) lines.push(tn("{n} conflict", "{n} conflicts", vault.conflicts));
     if (vault.problem) lines.push(t("Not written to disk: {reason}", { reason: vault.problem }));
-    return { label, title: lines.join("\n"), missing: false, problem: !!vault.problem, paused: !!vault.paused };
+    const kind = vault.problem ? "alert" : vault.paused ? "paused" : file ? "push" : "sync";
+    return { kind, label, title: lines.join("\n") };
   }
   const missing = !!reader.missing;
   return {
+    kind: missing ? "alert" : "disk",
     label: missing ? t("File missing") : t("On this computer"),
     title: missing ? t("The file this PDF was read from is gone")
       : reader.path ? t("This PDF is read from {path}, not stored in the library", { path: reader.path })
       : t("This PDF is read from a file on this computer, not stored in the library"),
-    missing, problem: false, paused: false,
   };
 }
 

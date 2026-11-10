@@ -2,41 +2,59 @@ import React from "react";
 import { guideEvents } from "../guide/events.js";
 import { API, apiJson } from "../shared/lib/utils";
 import { CopyField, PaneHead, Section, Row, Segmented, Step } from "./SettingsKit";
-import { LinkIcon, KeyIcon, RefreshIcon, UnlinkIcon, ShieldIcon } from "../shared/ui/Icons";
-import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshInstallCommand, dshStartCommand } from "./assistantSetup";
+import { LinkIcon, KeyIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon } from "../shared/ui/Icons";
+import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshSetupCommand,
+  claudeRemoveCommands, codexRemoveCommands, dshRemoveCommand } from "./assistantSetup";
+import { WorkspacePicker, accessBody } from "./WorkspacePicker";
 import { t } from "../shared/i18n/i18n.js";
 
-const dateOf = (seconds) => new Date(seconds * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+const dateOf = (value) => new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+const timeOf = (value) => new Date(value).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+const ASSISTANTS = [["claude", t("Claude Code")], ["codex", t("Codex")], ["dsh", t("DeepSeek Harness")], ["other", t("Other")]];
+const PLATFORMS = [["windows", t("Windows PowerShell")], ["unix", t("macOS / Linux")]];
 
-// One connected assistant: how it signed in, what it may do, when it was
+// One connected assistant: how it signed in, what it may read, when it was
 // connected and when its access lapses. OAuth connections are minted with an
 // " (OAuth)" suffix on the client's name (mcp_oauth_provider.py).
-function ConnectionRow({ item, busy, onRevoke }) {
+function ConnectionRow({ item, names, busy, onEdit, onRevoke }) {
   const oauth = /\s\(OAuth\)$/.test(item.name);
   const name = oauth ? item.name.replace(/\s\(OAuth\)$/, "") : item.name;
   const daysLeft = Math.ceil((item.expires_at * 1000 - Date.now()) / 86400000);
-  const expiry = daysLeft <= 0 ? `Expired ${dateOf(item.expires_at)}`
-    : t("Expires {expires_at} ({days} left)", { expires_at: dateOf(item.expires_at), days: daysLeft === 1 ? "1 day" : `${daysLeft} days` });
-  const connected = item.created_at ? `Connected ${new Date(item.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}` : null;
-  const parts = [oauth ? t("Browser sign-in") : t("Token"), item.scope === "write" ? t("Read and write") : t("Read-only"), connected, expiry].filter(Boolean);
+  const expiry = daysLeft <= 0 ? t("Expired {date}", { date: dateOf(item.expires_at * 1000) })
+    : t("Expires {expires_at} ({days} left)", { expires_at: dateOf(item.expires_at * 1000), days: daysLeft === 1 ? "1 day" : `${daysLeft} days` });
+  const spaces = item.workspaces.map((id) => names.get(id)).filter(Boolean);
+  const reads = item.all_workspaces ? t("Reads all workspaces")
+    : spaces.length ? t("Reads {workspaces}", { workspaces: spaces.join(", ") }) : t("Reads no workspace");
+  const parts = [oauth ? t("Browser sign-in") : t("Token"), item.scope === "write" ? t("Read and write") : reads,
+    item.created_at ? t("Connected {date}", { date: dateOf(item.created_at) }) : null, expiry].filter(Boolean);
   return <Row icon={oauth ? LinkIcon : KeyIcon} label={name}
     hint={<>{parts.join(" · ")}{daysLeft <= 0 ? <span className="uiTag warn">{t("Expired")}</span> : null}</>}>
-    <button type="button" className="uiBtn sm iconSq danger" disabled={busy} aria-label={t("Disconnect")}
-      title={t("Disconnect {name}: the assistant loses access to this workspace", { name: name })} onClick={() => onRevoke(item)}>
-      <UnlinkIcon size={16} />
-    </button>
+    <div className="integrationActions">
+      {item.scope === "read" ? <button type="button" className="uiBtn sm iconSq" disabled={busy} aria-label={t("Choose workspaces")}
+        title={t("Choose the workspaces {name} may read", { name })} onClick={() => onEdit(item)}>
+        <FoldersIcon size={16} />
+      </button> : null}
+      <button type="button" className="uiBtn sm iconSq danger" disabled={busy} aria-label={t("Disconnect")}
+        title={t("Disconnect {name}: the assistant loses access", { name })} onClick={() => onRevoke(item)}>
+        <UnlinkIcon size={16} />
+      </button>
+    </div>
   </Row>;
 }
 
 export function IntegrationSettings({ workspaceId }) {
   const [data, setData] = React.useState(null);
-  const [name, setName] = React.useState(t("Codex"));
+  const [assistant, setAssistant] = React.useState("claude");
+  const [platform, setPlatform] = React.useState(() => /Windows/i.test(navigator.userAgent) ? "windows" : "unix");
+  // What DeepSeek Harness and a new token may read; the open workspace to start.
+  const [access, setAccess] = React.useState({ all: false, ids: [workspaceId] });
+  const [setup, setSetup] = React.useState(null);  // {code, until}: a dsh setup command's one-time code
+  const [editing, setEditing] = React.useState(null);  // {id, access}: a connection's workspaces, being changed
+  const [name, setName] = React.useState(t("Script"));
   const [scope, setScope] = React.useState("read");
   const [secret, setSecret] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
   const [message, setMessage] = React.useState("");
-  const [method, setMethod] = React.useState("settings");
-  const [platform, setPlatform] = React.useState(() => /Windows/i.test(navigator.userAgent) ? "windows" : "unix");
   const [loadError, setLoadError] = React.useState("");
   const endpoint = `${API}/integrations/tokens`;
   const loadVersion = React.useRef(0);
@@ -51,7 +69,10 @@ export function IntegrationSettings({ workspaceId }) {
       // A focus refresh started before a revocation must not restore its row.
       if (version !== loadVersion.current) return;
       const ids = new Set((value.tokens || []).map((item) => item.id));
-      if (known.current && [...ids].some((id) => !known.current.has(id))) guideEvents.emit("mcp.connected");
+      if (known.current && [...ids].some((id) => !known.current.has(id))) {
+        guideEvents.emit("mcp.connected");
+        setSetup(null);  // its code is spent: the connection it made is listed
+      }
       known.current = ids;
       setData(value); setLoadError("");
     } catch (err) {
@@ -59,7 +80,7 @@ export function IntegrationSettings({ workspaceId }) {
     }
   }, [endpoint]);
   React.useEffect(() => {
-    setData(null); setSecret(null); setMessage(""); setLoadError("");
+    setData(null); setSecret(null); setSetup(null); setEditing(null); setMessage(""); setLoadError("");
     const load = () => refresh();
     load();
     window.addEventListener("focus", load);
@@ -71,159 +92,189 @@ export function IntegrationSettings({ workspaceId }) {
       document.removeEventListener("visibilitychange", visible);
     };
   }, [refresh]);
-  // `origin` is where the one-time token is shown: the manual section, or the
-  // DeepSeek Harness tab, which connects only with a token.
-  const create = async (tokenName, tokenScope, origin) => {
+  const run = async (work) => {
     setBusy(true); setMessage("");
-    try {
-      const value = await apiJson(endpoint, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: tokenName, scope: tokenScope }) });
-      setSecret({ ...value, origin });
-      await refresh();
-    } catch (err) { setMessage(err.message); }
-    finally { setBusy(false); }
+    try { await work(); } catch (err) { setMessage(err.message); } finally { setBusy(false); }
   };
-  const revoke = async ({ id, name: connectionName }) => {
-    setBusy(true); setMessage("");
-    try {
-      await apiJson(`${API}/integrations/tokens/${id}`, { method: "DELETE" });
-      if (secret?.id === id) setSecret(null);
-      // DELETE succeeded even if reloading the remaining connections fails.
-      setData((value) => value ? { ...value, tokens: value.tokens.filter((item) => item.id !== id) } : value);
-      await refresh(t("Access revoked for the selected “{connectionName}” connection.", { connectionName }));
-    } catch (err) { setMessage(err.message); }
-    finally { setBusy(false); }
-  };
-  const config = data ? `[mcp_servers.gamma]\nurl = ${JSON.stringify(data.mcp_url)}\nbearer_token_env_var = "GAMMA_TOKEN"` : "";
-  const setup = data ? codexSetupCommand(data.mcp_url, platform) : "";
-  const isClaude = method === "claude";
-  const isDsh = method === "dsh";
-  const tokenField = <div className="integrationDetails">
-    <p>{t("Copy this token now. Gamma will not show it again. Keep it private.")}</p>
-    <CopyField label={t("New integration token")} value={secret?.token ?? ""} action="Copy token" />
-    <div className="integrationActions">
-      <button className="uiBtn" onClick={() => setSecret(null)}>{t("Done")}</button>
-    </div>
+  const post = (url, body) => apiJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const create = () => run(async () => {
+    setSecret(await post(endpoint, { name: name.trim(), scope, ...(scope === "read" ? accessBody(access) : {}) }));
+    await refresh();
+  });
+  const makeSetup = () => run(async () => {
+    const value = await post(`${API}/integrations/setup-codes`, { name: t("DeepSeek Harness"), ...accessBody(access) });
+    setSetup({ code: value.code, until: Date.now() + value.expires_in * 1000 });
+  });
+  const saveAccess = () => run(async () => {
+    await apiJson(`${endpoint}/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(accessBody(editing.access)) });
+    setEditing(null);
+    await refresh();
+  });
+  const revoke = ({ id, name: connectionName }) => run(async () => {
+    await apiJson(`${endpoint}/${id}`, { method: "DELETE" });
+    if (secret?.id === id) setSecret(null);
+    if (editing?.id === id) setEditing(null);
+    // DELETE succeeded even if reloading the remaining connections fails.
+    setData((value) => value ? { ...value, tokens: value.tokens.filter((item) => item.id !== id) } : value);
+    await refresh(t("Access revoked for the selected “{connectionName}” connection.", { connectionName }));
+  });
+  const chooseAccess = (value) => { setAccess(value); setSetup(null); };
+  const spaces = data?.workspaces || [];
+  const names = new Map(spaces.map((w) => [w.id, w.name]));
+  const picking = spaces.length > 1;
+  const chosen = access.all || access.ids.length > 0;
+  const live = setup && Date.now() < setup.until;
+  const platformPick = <div role="group" aria-label={t("Terminal platform")}>
+    <Segmented value={platform} onChange={setPlatform} options={PLATFORMS} />
   </div>;
+  const picker = (label) => <WorkspacePicker workspaces={spaces} value={access} onChange={chooseAccess} disabled={busy} label={label} />;
+  // Claude Code, Codex and other assistants sign in through the browser,
+  // which needs a confirmed address; DeepSeek Harness connects with a token.
+  const noSignIn = data && !data.oauth_available ? <div className="integrationDetails">
+    <p>{t("Browser sign-in is not available for this Gamma address yet.")}</p>
+    <p>{t("An administrator can enable it by confirming the public server URL in Settings → Server. DeepSeek Harness and tokens work without it.")}</p>
+    <details><summary>{t("Server setup details")}</summary><p>{data.oauth_error}</p></details>
+  </div> : null;
+  const signInStep = (n, who) => <Step n={n} title={t("Choose what it may read")}
+    hint={t("{who} opens Gamma in your browser. Sign in, tick the workspaces it may read, and allow it. You can change them here later.", { who })} />;
+  // How to take Gamma out of an assistant again, folded under its last step.
+  const removal = (who, hint, label, value) => <details>
+    <summary>{t("Remove Gamma from {assistant}", { assistant: who })}</summary>
+    <p>{hint}</p>
+    <CopyField key={label} label={label} value={value} action="Copy remove commands" rows={3} />
+    <p className="settingDesc">{t("Then disconnect it under Connected assistants: that ends its access.")}</p>
+  </details>;
+  const steps = !data ? null : assistant === "dsh" ? <>
+    {picking ? <Step n={1} title={t("Choose what it may read")}
+      hint={t("DeepSeek Harness reads these workspaces. You can change them here later.")}>
+      {picker(t("Workspaces DeepSeek Harness may read"))}
+    </Step> : null}
+    <Step n={picking ? 2 : 1} title={t("Run the setup command")}
+      hint={t("Quit DeepSeek Harness first, then run this in a terminal on the same computer. It adds the Gamma plugin to DeepSeek Harness and connects it to this server. The command works once.")}>
+      {platformPick}
+      {live ? <>
+        <CopyField key={`dsh-${platform}`} label={t("DeepSeek Harness setup command")} value={dshSetupCommand(data.mcp_url, setup.code, platform)}
+          action="Copy setup command" rows={platform === "windows" ? 3 : 4} />
+        <p className="settingDesc">{t("Valid until {time}. Requires {dsh}.", { time: timeOf(setup.until),
+          dsh: <a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer">{t("DeepSeek Harness")}</a> })}</p>
+      </> : <button className="uiBtn" disabled={busy || !chosen} onClick={makeSetup}>
+        {setup ? t("Show a new setup command") : t("Show the setup command")}
+      </button>}
+    </Step>
+    <Step n={picking ? 3 : 2} title={t("Open DeepSeek Harness")}
+      hint={t("Ask about your papers, or paste a Gamma page or share link with your question. Gamma's tools appear as mcp__gamma__….")}>
+      {removal(t("DeepSeek Harness"), t("Quit DeepSeek Harness, then run this in a terminal. It takes the Gamma plugin out of every DeepSeek Harness profile that has it and deletes the saved connection."),
+        t("DeepSeek Harness remove command"), dshRemoveCommand(platform))}
+    </Step>
+  </> : noSignIn || <>
+    {assistant === "claude" ? <>
+      <Step n={1} title={t("Run this in a terminal")}
+        hint={t("On the computer where you use Claude Code. If Gamma is already connected at this address, go on to the next step.")}>
+        {platformPick}
+        <CopyField key="claude-connect" label={t("Claude Code connection command")} value={claudeConnectCommand(data.mcp_url, platform)} action="Copy connection command" />
+      </Step>
+      <Step n={2} title={t("Sign in from Claude Code")}
+        hint={t("Start Claude Code, run /mcp, select gamma and choose Authenticate. Gamma opens in your browser: tick the workspaces it may read, and allow it.")} />
+      <Step n={3} title={t("Ask about your papers")}
+        hint={t("Start a new session and paste a Gamma page or share link with your question, or mention a paper by name.")}>
+        <details>
+          <summary>{t("Optional: the /gamma:gamma workflow")}</summary>
+          <p>{t("Download the Claude Code plugin ZIP from {release} and extract it into a permanent folder. Open a terminal in the folder containing {folder} and run:", {
+            release: <a href="https://github.com/tim4431/Gamma/releases/latest" target="_blank" rel="noreferrer">{t("Gamma's latest release")}</a>, folder: <code>gamma-marketplace</code> })}</p>
+          <CopyField label={t("Claude Code plugin install commands")} value={claudePluginInstallCommands} action="Copy plugin install commands" rows={3} />
+          <p className="settingDesc">{t("Choose the asset named {name} followed by the version and {ext}. Keep the extracted folder after installing.", {
+            name: <code>gamma-claude-code-plugin</code>, ext: <code>.zip</code> })}</p>
+        </details>
+        <details>
+          <summary>{t("Changed the server address?")}</summary>
+          <p>{t("Open Gamma at its new address, then copy these commands to replace the connection. Restart Claude Code and sign in again through {mcp}.", { mcp: <code>/mcp</code> })}</p>
+          <CopyField label={t("Claude Code change server commands")} value={claudeConnectCommand(data.mcp_url, platform, { replace: true })} action="Copy change server commands" rows={3} />
+        </details>
+        {removal(t("Claude Code"), t("Run these in a terminal. The last two are for the /gamma:gamma plugin, if you installed it."),
+          t("Claude Code remove commands"), claudeRemoveCommands)}
+      </Step>
+    </> : assistant === "codex" ? <>
+      <Step n={1} title={t("Run this in a terminal")}
+        hint={t("On the computer where you use Codex. It installs the Gamma PDF plugin, adds this server and opens Gamma's sign-in.")}>
+        {platformPick}
+        <CopyField key="codex" label={t("Codex setup command")} value={codexSetupCommand(data.mcp_url, platform)} action="Copy setup command" rows={4} />
+        <p className="settingDesc">{t("Requires the {codex}.", {
+          codex: <a href="https://learn.chatgpt.com/docs/cli" target="_blank" rel="noreferrer">{t("Codex CLI")}</a> })}</p>
+      </Step>
+      {signInStep(2, t("Codex"))}
+      <Step n={3} title={t("Start a new chat")}
+        hint={t("Paste a Gamma page or share link with your question, or mention @Gamma PDF. If sign-in was interrupted, run codex mcp login gamma.")}>
+        {removal(t("Codex"), t("Run these in a terminal: they remove the connection, the Gamma PDF plugin and its marketplace."),
+          t("Codex remove commands"), codexRemoveCommands)}
+      </Step>
+    </> : <>
+      <Step n={1} title={t("Add Gamma to your assistant")}
+        hint={t("In your assistant's settings, add an MCP server (Streamable HTTP) with this URL.")}>
+        <CopyField key="url" label={t("Gamma MCP server URL")} value={data.mcp_url} action="Copy server URL" />
+      </Step>
+      {signInStep(2, t("Your assistant"))}
+      <p className="settingDesc">{t("If your assistant cannot sign in through the browser, give it a token from Tokens (advanced) below.")}</p>
+    </>}
+  </>;
   return <>
-    <PaneHead icon={LinkIcon} title={t("Integrations")}>{t("Read-only access for Codex, Claude Code, DeepSeek Harness, or any MCP assistant.")}</PaneHead>
+    <PaneHead icon={LinkIcon} title={t("Integrations")}>{t("Let Claude Code, Codex, DeepSeek Harness or another MCP assistant read your library. One connection can read several workspaces; it never changes them.")}</PaneHead>
     {loadError ? <div className="integrationDetails" role="alert">
       <p>{t("Could not load your connections. {loadError}", { loadError: loadError })}</p>
       <button className="uiBtn" onClick={() => refresh()}>{t("Try again")}</button>
     </div> : null}
     <Section title={t("Connect an assistant")} guide="settings.assistantSetup">
       {data ? <div className="integrationDetails">
-        {data.oauth_available ? <>
-          <div role="group" aria-label={t("Connection method")}>
-            <Segmented value={method} onChange={setMethod} options={[["settings", t("Any assistant")], ["terminal", t("Codex CLI")], ["claude", t("Claude Code")], ["dsh", t("DeepSeek Harness")]]} />
-          </div>
-          {isDsh ? <>
-            <Step n={1} title={t("Create a token")}
-              hint={t("DeepSeek Harness has no browser sign-in. It connects with a read-only token for this workspace, which expires after 90 days.")}>
-              {secret?.origin === "dsh" ? tokenField
-                : <button className="uiBtn" disabled={busy || !!secret} onClick={() => create(t("DeepSeek Harness"), "read", "dsh")}>{t("Create token")}</button>}
-            </Step>
-            <Step n={2} title={t("Install the Gamma plugin")}
-              hint={t("Run this in a terminal on the computer where you use DeepSeek Harness. It downloads the plugin from Gamma's latest release into your dsh home and adds it to the web profile; run it again to update.")}>
-              <div role="group" aria-label={t("Terminal platform")}>
-                <Segmented value={platform} onChange={setPlatform} options={[["windows", t("Windows PowerShell")], ["unix", t("macOS / Linux")]]} />
-              </div>
-              <CopyField key="dsh-install" label={t("DeepSeek Harness plugin install command")} value={dshInstallCommand(platform)} action="Copy install command" rows={platform === "windows" ? 5 : 3} />
-              <p className="settingDesc">{t("Requires {dsh} and {pnpm}. For another dsh profile, change {flag}.", {
-                dsh: <a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer">{t("DeepSeek Harness")}</a>,
-                pnpm: <a href="https://pnpm.io/installation" target="_blank" rel="noreferrer">pnpm</a>, flag: <code>--profile web</code> })}</p>
-            </Step>
-            <Step n={3} title={t("Start dsh with Gamma")}
-              hint={t("Paste the token when asked. Then paste a Gamma page or share link with your question; Gamma's tools appear as mcp__gamma__….")}>
-              <CopyField key="dsh-start" label={t("DeepSeek Harness start command")} value={dshStartCommand(data.mcp_url, platform)} action="Copy start command" rows={3} />
-              <p className="settingDesc">{t("Without {env}, dsh starts without Gamma. When the token expires after 90 days, create a new one here.", { env: <code>GAMMA_URL</code> })}</p>
-            </Step>
-          </> : <>
-            <Step n={1} title={method === "settings" ? t("Add Gamma to your assistant") : isClaude ? t("Connect Claude Code to Gamma") : t("Install and connect Gamma PDF")}
-              hint={method === "settings" ? t("In your assistant's settings, add an MCP server with this URL.") : isClaude
-                ? t("Run this command in a terminal on the computer where you use Claude Code. If Gamma is already connected at this address, continue to sign-in.")
-                : t("Run this command on the computer where you use Codex. It installs the plugin and opens Gamma sign-in.")}>
-              {method === "settings"
-                ? <CopyField key="url" label={t("Gamma MCP server URL")} value={data.mcp_url} action="Copy server URL" />
-                : <>
-                  <div role="group" aria-label={t("Terminal platform")}>
-                    <Segmented value={platform} onChange={setPlatform} options={[["windows", t("Windows PowerShell")], ["unix", t("macOS / Linux")]]} />
-                  </div>
-                  {isClaude ? <>
-                    <CopyField key="claude-connect" label={t("Claude Code connection command")} value={claudeConnectCommand(data.mcp_url, platform)} action="Copy connection command" />
-                    <p className="settingDesc">{t("Requires {claude} and a running Gamma server.", { claude: <a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noreferrer">{t("Claude Code")}</a> })}</p>
-                  </> : <>
-                    <CopyField key="commands" label={t("Codex setup command")} value={setup} action="Copy setup command" rows={4} />
-                    <p className="settingDesc">{t("Requires the {codex}. Downloads the setup script and plugin from {release}.", {
-                      codex: <a href="https://learn.chatgpt.com/docs/cli" target="_blank" rel="noreferrer">{t("Codex CLI")}</a>,
-                      release: <a href="https://github.com/tim4431/Gamma/releases/latest" target="_blank" rel="noreferrer">{t("Gamma's latest release")}</a> })}</p>
-                </>}
-              </>}
-            </Step>
-            <Step n={2} title={t("Sign in and choose a workspace")}
-              hint={isClaude ? t("Start Claude Code, run /mcp, select gamma, and authenticate. Sign in to Gamma in your browser and approve a workspace.")
-                : t("Follow your assistant's sign-in prompt. Approve read-only access in Gamma. No token to create or paste.")} />
-            {isClaude ? <>
-              <Step n={3} title={t("Ask about your papers")}
-                hint={t("Start a new session and paste a Gamma page or share link with your question, or mention a paper by name. With the Gamma plugin installed, /gamma:gamma starts the workflow.")}>
-                <p className="settingDesc">{t("The MCP connection above is all Claude Code needs to read your library. The plugin (optional) adds the /gamma:gamma workflow and the Gamma identity.")}</p>
-                <details>
-                  <summary>{t("Install the plugin (once)")}</summary>
-                  <p>{t("Download the Claude Code plugin ZIP from {release} and extract it into a permanent folder. Open a terminal in the folder containing {folder} and run:", {
-                    release: <a href="https://github.com/tim4431/Gamma/releases/latest" target="_blank" rel="noreferrer">{t("Gamma's latest release")}</a>, folder: <code>gamma-marketplace</code> })}</p>
-                  <CopyField label={t("Claude Code plugin install commands")} value={claudePluginInstallCommands} action="Copy plugin install commands" rows={3} />
-                  <p className="settingDesc">{t("Choose the asset named {name} followed by the version and {ext}. Requires a release that includes the Claude Code plugin. Keep the extracted folder after installing.", {
-                    name: <code>gamma-claude-code-plugin</code>, ext: <code>.zip</code> })}</p>
-                </details>
-              </Step>
-              <details className="integrationAdvanced">
-                <summary>{t("Changed the server address?")}</summary>
-                <p>{t("Open Gamma at its new address, then copy these commands to replace the connection. Your plugin stays installed. Restart Claude Code and sign in again through {mcp}.", { mcp: <code>/mcp</code> })}</p>
-                <CopyField label={t("Claude Code change server commands")} value={claudeConnectCommand(data.mcp_url, platform, { replace: true })} action="Copy change server commands" rows={3} />
-                <p className="settingDesc">{t("If Gamma runs on the same computer, localhost keeps working when your LAN IP changes. For a remote server, use a stable HTTPS hostname and confirm it in Gamma's Settings → Server.")}</p>
-              </details>
-            </> : <Step n={3} title={t("Start a new chat")}
-              hint={method === "terminal" ? t("Copy the Gamma page URL from your browser and paste it with your question. A share link works too.") : t("Try asking: “Use Gamma to find my notes about…”")} />}
-          </>}
-        </> : <>
-          <p>{t("Browser sign-in is not available for this Gamma address yet.")}</p>
-          <p>{t("An administrator can enable it by confirming the public server URL in Settings → Server.")}</p>
-          <details><summary>{t("Server setup details")}</summary><p>{data.oauth_error}</p></details>
-        </>}
+        <div role="group" aria-label={t("Assistant")}>
+          <Segmented value={assistant} onChange={setAssistant} options={ASSISTANTS} />
+        </div>
+        {steps}
       </div> : !loadError ? <p role="status">{t("Loading connection settings…")}</p> : null}
     </Section>
-    <Section title={t("Workspace access")} guide="settings.assistantAccess" action={
+    <Section title={t("Connected assistants")} guide="settings.assistantAccess" action={
       <button type="button" className="uiBtn sm iconSq" aria-label={t("Refresh connections")} title={t("Refresh connections")} onClick={() => refresh()}>
         <RefreshIcon size={16} />
       </button>}>
-      {data ? data.tokens.length ? data.tokens.map((item) => <ConnectionRow key={item.id} item={item} busy={busy} onRevoke={revoke} />)
-        : <div className="integrationDetails"><p>{t("No assistants have access to this workspace yet.")}</p></div> : null}
+      {data ? data.tokens.length ? data.tokens.map((item) => <React.Fragment key={item.id}>
+        <ConnectionRow item={item} names={names} busy={busy} onRevoke={revoke}
+          onEdit={(row) => setEditing(editing?.id === row.id ? null : { id: row.id, access: { all: row.all_workspaces, ids: row.workspaces } })} />
+        {editing?.id === item.id ? <div className="integrationDetails integrationEdit">
+          <WorkspacePicker workspaces={spaces} value={editing.access} disabled={busy}
+            label={t("Workspaces {name} may read", { name: item.name })} onChange={(value) => setEditing({ ...editing, access: value })} />
+          <div className="integrationActions">
+            <button className="uiBtn primary" disabled={busy || !(editing.access.all || editing.access.ids.length)} onClick={saveAccess}>{t("Save")}</button>
+            <button className="uiBtn" disabled={busy} onClick={() => setEditing(null)}>{t("Cancel")}</button>
+          </div>
+        </div> : null}
+      </React.Fragment>)
+        : <div className="integrationDetails"><p>{t("No assistant is connected yet.")}</p></div> : null}
     </Section>
     {message ? <p role="status">{message}</p> : null}
     <details className="integrationAdvanced">
-      <summary>{t("Manual setup (advanced)")}</summary>
-      <div className="integrationDetails"><p>{t("Use a token if your assistant does not support browser sign-in.")}</p></div>
+      <summary>{t("Tokens (advanced)")}</summary>
+      <div className="integrationDetails"><p>{t("For an assistant without browser sign-in, or a script: it sends the token as an Authorization: Bearer header. Gamma shows a token once.")}</p></div>
       <Section title={t("Create a token")}>
-      <Row icon={KeyIcon} label={t("Connection name")} hint={t("Access to the current workspace. Expires after 90 days.")}>
-        <div className="integrationCreateControls">
-          <input className="aiKeyInput" aria-label={t("Connection name")} value={name} maxLength={80}
-            onChange={(event) => setName(event.target.value)} />
-          <button className="uiBtn" disabled={busy || !data || !name.trim() || !!secret} onClick={() => create(name.trim(), scope, "manual")}>{t("Create token")}</button>
-        </div>
-      </Row>
-      <Row icon={ShieldIcon} label={t("Scope")} hint={scope === "write"
-        ? t("Read and write: what an offline copy on another Gamma (Settings → Workspaces → Clones and Zotero links there) signs in with. Assistants only need read.") : t("Read-only: assistants. Choose “Read and write” for an offline copy of this workspace on another Gamma.")}>
-        <Segmented value={scope} onChange={setScope} options={[["read", t("Read-only")], ["write", t("Read and write")]]} />
-      </Row>
-      {secret?.origin === "manual" ? tokenField : null}
-    </Section>
-    <Section title={t("Add the token to Codex")}>
-      {data ? <div className="integrationDetails">
-        <p>{t("Set the {env} environment variable to your token before starting Codex. Add this connection to {file}, then restart Codex.", { env: <code>GAMMA_TOKEN</code>, file: <code>~/.codex/config.toml</code> })}</p>
-        <CopyField label={t("Codex MCP configuration")} value={config} action="Copy configuration" rows={4} />
-        <p>{t("Gamma must be running. For a remote server, its administrator must allow the server's hostname for MCP.")}</p>
-      </div> : null}
-    </Section>
+        <Row icon={KeyIcon} label={t("Connection name")} hint={t("Expires after 90 days.")}>
+          <div className="integrationCreateControls">
+            <input className="aiKeyInput" aria-label={t("Connection name")} value={name} maxLength={80}
+              onChange={(event) => setName(event.target.value)} />
+            <button className="uiBtn" disabled={busy || !data || !name.trim() || !!secret || (scope === "read" && !chosen)} onClick={create}>{t("Create token")}</button>
+          </div>
+        </Row>
+        <Row icon={ShieldIcon} label={t("Scope")} hint={scope === "write"
+          ? t("Read and write: what an offline copy of this workspace on another Gamma (Settings → Workspaces → Clones and Zotero links there) signs in with. Assistants only need read.") : t("Read-only: assistants and scripts. Choose “Read and write” for an offline copy of this workspace on another Gamma.")}>
+          <Segmented value={scope} onChange={setScope} options={[["read", t("Read-only")], ["write", t("Read and write")]]} />
+        </Row>
+        {scope === "read" && picking ? <Row icon={FoldersIcon} label={t("Workspaces")} hint={t("What an assistant with this token may read. The HTTP API reads the first one.")} /> : null}
+        {scope === "read" && picking ? picker(t("Workspaces the token may read")) : null}
+        {secret ? <div className="integrationDetails">
+          <p>{t("Copy this token now. Gamma will not show it again. Keep it private.")}</p>
+          <CopyField label={t("New integration token")} value={secret.token} action="Copy token" />
+          <div className="integrationActions">
+            <button className="uiBtn" onClick={() => setSecret(null)}>{t("Done")}</button>
+          </div>
+        </div> : null}
+      </Section>
     </details>
   </>;
 }

@@ -594,9 +594,10 @@ def warming():
 # that is a workspace step (WORKSPACE_STEPS), ``fn(ws, pages, data)`` on
 # one workspace's pages.db and data.db connections (data None when there
 # is no data.db; ws '' on a backup's copy), inside the runner's
-# transaction (it does not commit). A workspace step is also what a restored backup goes through,
-# so it is re-runnable and finds a table it changes missing on an old copy
-# (the schema statements, applied after it, create that one).
+# transaction (it does not commit). A workspace step is also what a restored
+# backup goes through, so it is re-runnable and finds a table it changes
+# missing on an old copy (the schema statements, applied after it, create
+# that one).
 
 def _columns(conn, table: str) -> list[str]:
     return [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
@@ -1886,6 +1887,17 @@ def _v50_folder_links_pull(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+
+def _v51_integration_workspaces(conn: sqlite3.Connection) -> None:
+    """``integration_tokens`` gains ``workspaces``, the workspaces a read
+    token's MCP connection may read beside its own (gamma/integrations.py):
+    ``''`` on every token so far, its workspace alone. Re-runnable: the
+    column is added only where ``_columns()`` lacks it. No workspace is
+    touched."""
+    if "workspaces" not in _columns(conn, "integration_tokens"):
+        conn.execute("ALTER TABLE integration_tokens ADD COLUMN workspaces TEXT NOT NULL DEFAULT ''")
+    conn.commit()
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1911,6 +1923,7 @@ STEPS = [
     (46, "folder_links_push", _v46_folder_links_push),
     (49, "content_reports", _v49_content_reports),
     (50, "folder_links_pull", _v50_folder_links_pull),
+    (51, "integration_workspaces", _v51_integration_workspaces),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

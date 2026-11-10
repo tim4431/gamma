@@ -1,16 +1,14 @@
 /* A page's standing with this computer (vault/VaultChip.jsx) and the
    dialogs it opens (FolderPickerDialog.jsx, FileSourceDialog.jsx). */
 
-/* The chip among the page header's buttons: a ghost button with the file's
-   name, cut short; the card says the whole path. The header's button column
-   never shrinks (app.css .pageActionCol), so the chip is held to a few icons'
-   width, and a narrow page (a split tab group, a phone) keeps its title. (A
-   container query on the header would contain its layout, and with it the
-   popovers its buttons open.) */
-.vaultChip { max-width: 9em; min-width: 0; color: var(--text-secondary); }
+/* The chip among the page header's buttons, in their own icon-button shape
+   (app.css .pageActionBtn): one icon for how the page stands with this
+   computer: kept in step, pushed from a file of its own, read where it
+   lies, paused, or something to see to. An icon and not a name: the
+   header's button column never shrinks (app.css .pageActionCol), so a name
+   there would be cut short on a narrow page. Its tooltip says it in words,
+   its card has the path and the actions. */
 .vaultChip.warn { color: var(--warn); }
-.vaultChip > svg { flex-shrink: 0; }
-.vaultChipText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .vaultPopover { max-width: 360px; display: flex; flex-direction: column; gap: var(--space-2); }
 .vaultPath { font-family: var(--font-mono); overflow-wrap: anywhere; }

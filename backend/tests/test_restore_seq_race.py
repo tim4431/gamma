@@ -37,11 +37,11 @@ def test_a_batch_committed_during_a_replace_restore_lands_above_its_reload(monke
 
     writer = threading.Thread(target=tab_b_types)
 
-    def log_reload_while_tab_b_types(conn, page_id, actor, *, after=0):
+    def log_reload_while_tab_b_types(conn, page_id, actor, **kw):
         if not writer.is_alive() and "seq" not in acked:
             writer.start()  # tab B's flush arrives while the restore is running
             time.sleep(0.3)
-        return real(conn, page_id, actor, after=after)
+        return real(conn, page_id, actor, **kw)
 
     monkeypatch.setattr(ops, "log_reload", log_reload_while_tab_b_types)
     r = c.post(f"/api/workspaces/{ws}/backups/{snap['name']}/restore?mode=replace")

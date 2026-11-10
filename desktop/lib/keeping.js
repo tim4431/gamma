@@ -243,8 +243,8 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 
 // A synced vault of local server `server`: one row of its `GET
 // /api/folder-links`, a folder with a directory (`scope` folder) or a page
-// with one file (`scope` file, which only pushes, its PDF). `where` is the
-// row's second line, `path ⇄ remote · folder`: the local side, the server
+// with one file (`scope` file, which only pushes, its PDF). `where` is in the
+// row's tooltip, `path ⇄ remote · folder`: the local side, the server
 // the vault belongs to by its name, and the folder (or the page). Of the
 // files the last round kept, `changed` counts those a force pull replaces
 // (their entry's `force`: changed here, never pushed); `left` counts the

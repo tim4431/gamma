@@ -79,10 +79,10 @@ export function useAppJobs({
   // page's annotated PDF writes the translation shown in place of the
   // original text (`translation`, read as Export is pressed), which only
   // the job does; a folder's annotated PDF those of its papers this browser
-  // left translated (`translations`). A share view, which has no translated view, starts the
-  // same job under its share token, the share's own (routers/export.py), and
-  // follows it alone (useTasks' `follow`): a big folder's export outlives a
-  // proxy's cut there too.
+  // left translated (`translations`). A share view, which has no translated
+  // view, starts the same job under its share token, the share's own
+  // (routers/export.py), and follows it alone (useTasks' `follow`): a big
+  // folder's export outlives a proxy's cut there too.
   // While it starts, the dialog's Export is busy and a second press starts
   // nothing; a dialog closed meanwhile starts nothing either.
   async function runExport(o) {

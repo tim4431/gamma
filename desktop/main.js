@@ -1340,7 +1340,7 @@ async function setPull(serverId, linkId, pull) {
   return true;
 }
 
-// What a vault pushes: 'off', 'pdfs' or 'everything' (the row's push switch,
+// What a vault pushes: 'off', 'pdfs' or 'everything' (the Push segment of
 // the vault's own view); a remote server's folder PDFs at most
 // (keeping.REMOTE_RULE). A folder of a remote server needs a write token
 // for it, where it was made with a read one: a write token is minted on the

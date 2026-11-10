@@ -28,9 +28,11 @@ test("the last name of a path, either separator", () => {
 test("a folder vault's page says where it is synced, and what stands in its way", () => {
   const chip = vaultChip(folder());
   assert.equal(chip.label, "Synced: Attention.md");
+  assert.equal(chip.kind, "sync");
   assert.match(chip.title, /synced with D:\\Papers\\Attention\.md/);
+  assert.equal(vaultChip(folder({ paused: true })).kind, "paused");
   const busy = vaultChip(folder({ paused: true, conflicts: 2, problem: "an open code block" }));
-  assert.ok(busy.problem && busy.paused);
+  assert.equal(busy.kind, "alert", "a problem comes before being paused");
   assert.match(busy.title, /paused/);
   assert.match(busy.title, /2 conflicts/);
   assert.match(busy.title, /Not written to disk: an open code block/);
@@ -43,15 +45,17 @@ test("a member who cannot see the path reads the vault's name", () => {
 test("a vault of one file says where its PDF is pushed from", () => {
   const chip = vaultChip({ vault: { id: "f", name: "main.pdf", scope: "file", path: "D:\\tex\\main.pdf", pull: false, push: "pdfs" }, reader: null });
   assert.equal(chip.label, "Pushed from: main.pdf");
+  assert.equal(chip.kind, "push");
   assert.match(chip.title, /pushed from D:\\tex\\main\.pdf/);
 });
 
 test("an opened PDF is on this computer, or its file is missing", () => {
   assert.equal(vaultChip(opened()).label, "On this computer");
+  assert.equal(vaultChip(opened()).kind, "disk");
   assert.match(vaultChip(opened()).title, /C:\\Downloads\\paper\.pdf/);
   const gone = vaultChip(opened({ missing: true }));
   assert.equal(gone.label, "File missing");
-  assert.ok(gone.missing);
+  assert.equal(gone.kind, "alert");
   assert.equal(vaultChip(null), null);
 });
 

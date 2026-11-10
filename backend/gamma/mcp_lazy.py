@@ -9,7 +9,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from .integrations import resolve_token
+from .integrations import resolve_connection
 from .mcp_oauth import public_base
 
 
@@ -83,13 +83,14 @@ async def _authorize(scope, receive, send):
     except HTTPException:
         base = None  # Manual tokens still support existing HTTP LAN setups.
     resource = base + "/mcp" if base else None
-    identity = await run_in_threadpool(resolve_token, token, resource) if scheme.lower() == "bearer" else None
+    identity = await run_in_threadpool(resolve_connection, token, resource) if scheme.lower() == "bearer" else None
     if identity is None:
         await JSONResponse({"detail": "A valid Gamma integration token is required."}, status_code=401,
                            headers={"WWW-Authenticate": (
                                f'Bearer resource_metadata="{base}/.well-known/oauth-protected-resource/mcp", scope="gamma:read"'
                                if base else "Bearer"), "Cache-Control": "no-store"})(scope, receive, send)
         return False
+    # (user_id, [the workspaces it may read, the default first])
     request.state.gamma_integration = identity
     # Use the same canonical origin for link resolution and read-tool citations.
     # Manual tokens still support HTTP LAN addresses without an OAuth issuer.

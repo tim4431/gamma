@@ -85,7 +85,7 @@ import {
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
-  PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, SplitRowsIcon, OnePaneIcon,
+  PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, OnePaneIcon,
   StopIcon, GlobeIcon, ChevronRightIcon, FlagIcon,
 } from "../shared/ui/Icons";
 import ReportContentHost from "../support/ReportContentHost";
@@ -131,7 +131,16 @@ import {
   moveSibling,
   removeBlockKeepChildren,
   visibleNeighbor,
+  removeBlocks,
+  indentBlocks,
+  outdentBlocks,
+  moveSiblings,
+  insertBlocks,
+  freshCopy,
 } from "../shared/model/blockModel";
+import { subtreeMarkdown } from "../editor/blockSelection.js";
+import { useBlockSelection } from "../editor/useBlockSelection.js";
+import { sourceCopied } from "../editor/sourceCopy.js";
 import { chordLabel, composing, dispatch as dispatchHotkey, effectiveKeys, isTextField } from "../shared/lib/hotkeys.js";
 import { APP_COMMANDS, liveAppCommands } from "./appCommands.js";
 import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
@@ -143,7 +152,9 @@ import { LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailableP
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
 import { TRANSLATE_LANGS, preloadPrefs, readPref, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
-import { TOPBAR } from "./topbarItems.js";
+import { TOPBAR, TOPBAR_ITEMS } from "./topbarItems.js";
+import { TOPBAR_ICONS } from "./topbarIcons.js";
+import { BAR_PLACES } from "../shared/model/barLayout.js";
 import { VIEWER_TOOLS } from "./viewerToolItems.js";
 import { adoptAccountLook, takeBootRead } from "./boot.js";
 import { applyTheme } from "./theme.js";
@@ -2417,7 +2428,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // title or the labels: the open takes this press's target instead
     if (next === prev) {
       const want = activeGroup(next)?.active || "";
-      const aimed = target?.edit || target?.title || target?.labels;
+      const aimed = target?.edit || target?.title || target?.labels || target?.then;
       if (aimed && want && want === tabPick && want !== focusedBlockId) selectTab(want, target);
       return;
     }
@@ -2436,8 +2447,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const activateTabGroup = (groupId, tabId, target) => applyLayout(activateGroupIn(tabLayoutRef.current, groupId, tabId), target);
   const moveTabToGroup = (tabId, groupId, index) => applyLayout(moveTab(tabLayoutRef.current, tabId, groupId, index));
   const splitTabGroup = (groupId, side, tabId) => applyLayout(splitGroup(tabLayoutRef.current, groupId, side, tabId));
-  // A tab into a group of its own beside the one it is in: the tab menu's
-  // and the palette's Split right and Split down. The only tab of a group
+  // A tab into a group of its own beside the one it is in: the tab menu's,
+  // the bar menu's and the palette's Split right. The only tab of a group
   // opens an empty group beside it instead, where the library shows to
   // pick that group's page.
   const splitTab = (tabId, side) => {
@@ -2445,6 +2456,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (g) splitTabGroup(g.id, side, g.tabs.length === 1 ? null : tabId);
   };
   const joinTabGroups = () => applyLayout(joinAll(tabLayoutRef.current));
+  // The pane a tab is not in, while there are two (the tab menu's Move to
+  // the other pane).
+  const otherPane = (tabId) => {
+    const groups = groupsOf(tabLayoutRef.current);
+    return groups.length === 2 ? groups.find((g) => !g.tabs.includes(tabId)) || null : null;
+  };
   const closeTabGroup = (groupId) => applyLayout(removeGroup(tabLayoutRef.current, groupId));
   const resizeTabSplit = (splitId, sizes) => {
     const next = resizeSplit(tabLayoutRef.current, splitId, sizes);
@@ -3127,6 +3144,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         setHomeMenu(null);
         setPropsPop(null);
         setSelectedPages((prev) => (prev.size ? new Set() : prev));
+        // Not the Esc a note's editor took to select its note (useBlockSelection.js).
+        if (!e.defaultPrevented) blockSel.clear();
       }
     }
     window.addEventListener("keydown", onKey);
@@ -4385,6 +4404,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // onBlockDrop still reads _dragState.dropTarget.
     const reset = () => {
       _dragState.draggingId = null;
+      _dragState.draggingIds = null;
       _dragState.fragment = null;
       _dragState.dropTarget = null;
       setDropTarget(null);
@@ -4818,6 +4838,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // another page that draws its notes with the same classes (PagePane).
   const liveSidebarRef = useRef(null);
   const liveNotesList = () => liveSidebarRef.current?.querySelector(":scope > .blockList") || null;
+  // Whole notes selected as in Notion, by a drag across them, a box from
+  // the blank beside them, Shift+click or Esc (editor/useBlockSelection.js);
+  // what its keys and the handle's menu do is blockSelectionAction's.
+  const blockSel = useBlockSelection({
+    enabled: !readOnly && !!focusedBlockId,
+    blocks,
+    editing: view.editingId,
+    list: liveNotesList,
+    tree: () => blocksRef.current,
+    view: () => viewRef.current,
+    anchorOf: () => viewRef.current.editingId || focusedId,
+    closeEditor: () => {
+      const active = document.activeElement;
+      if (active && liveNotesList()?.contains(active)) active.blur();
+      pendingFocusRef.current = null;
+      setView((v) => (v.editingId ? closeEditing(v, v.editingId) : v));
+    },
+    edit: (id) => {
+      pendingFocusRef.current = { id, caret: "end" };
+      startEditing(id);
+      setFocusedId(id);
+    },
+    act: (action, ids) => blockSelectionAction(action, ids),
+  });
   useEffect(() => {
     const land = landingRef.current;
     if (!land) return;
@@ -4902,6 +4946,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // not a link visitor without one, nor a guest account through a link.
   const commentMe = shareMode ? (shareInfo?.viewerIsGuest ? "" : shareInfo?.viewer || "") : authUser?.user || "";
   const canComment = !!commentMe;
+  // Whose Inbox the page's comments may reach, so the Comments window
+  // offers its Notify me: a commenter who is no guest account.
+  const canFollow = canComment && (shareMode || !authUser?.is_guest);
   // The workspace's owner deletes anyone's comment; not through a share link.
   const commentOwner = !shareMode && workspace?.role === "owner";
   const comments = useComments({ pageId: focusedBlockId, enabled: !!focusedBlockId, me: commentMe, onStatus: (msg) => setStatus(msg),
@@ -5240,9 +5287,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       landOnBlock(id);
     } else {
       // block-ref click = link jump to another page, which Back returns from
-      const rootId = pageId || refCache[id]?.page_root_id;
+      const rootId = pageId || await pageOfBlock(id);
       if (rootId && rootId !== id) await openBlock(rootId, { pushNav: true, link: true, block: id });
       else await openBlock(id, { pushNav: true, link: true });
+    }
+  }
+
+  // The page a block is on: the ref cache's, else the server's. A card's
+  // link is pressable before its label lands, and the block opened as a
+  // page would land on none of it. "" when neither knows (the block itself
+  // is then opened).
+  async function pageOfBlock(id) {
+    const cached = refCacheRef.current[id]?.page_root_id;
+    if (cached) return cached;
+    try {
+      const data = await apiJson(`${API}/block-search?ids=${encodeURIComponent(id)}`);
+      return data.blocks?.[0]?.page_root_id || "";
+    } catch {
+      return "";
     }
   }
 
@@ -5322,18 +5384,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     else if (shareMode) return; // a page host's address that names no shared page: "not found" is up
     else if (initialBlockId) {
       (async () => {
-        try {
-          const data = await apiJson(`${API}/block-search?ids=${encodeURIComponent(initialBlockId)}`);
-          const block = data.blocks?.[0];
-          const rootId = block?.page_root_id;
-          if (rootId && rootId !== initialBlockId) {
-            openBlock(rootId, { link: true, block: initialBlockId });
-          } else {
-            openBlock(initialBlockId, { link: true });
-          }
-        } catch {
-          openBlock(initialBlockId, { link: true });
-        }
+        const rootId = await pageOfBlock(initialBlockId);
+        if (rootId && rootId !== initialBlockId) openBlock(rootId, { link: true, block: initialBlockId });
+        else openBlock(initialBlockId, { link: true });
       })();
     }
     else if (initialUrl) openPdf(initialUrl);
@@ -6710,7 +6763,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function selectTab(id, target) {
     if (id === focusedBlockId) { dropTabPick(); return undefined; }
     setTabPick(id);
-    const then = target?.title ? "title" : target?.labels ? "labels" : undefined;
+    const then = target?.then || (target?.title ? "title" : target?.labels ? "labels" : undefined);
     return openBlock(id, { restoreScroll: true, edit: target?.edit, folds: target?.folds, zoom: target?.zoom, then });
   }
   // The pending open of a picked tab let go: neither its landing nor its
@@ -7351,6 +7404,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setLabelInput("");
       setLabelSuggestionIdx(-1);
       setLabelEditing(true);
+    } else if (TOPBAR.item(pending.action)) {
+      // a topbar item pressed in a pane whose page was a view (paneStandIns):
+      // its popover, under the pane now live
+      setOpenPopover(TOPBAR.item(pending.action).popover);
     }
   }, [focusedBlockId]); // eslint-disable-line react-hooks/exhaustive-deps
   // Share a folder: the same popover under the topbar's link button, which
@@ -8633,6 +8690,70 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function undoableStatus(msg) {
     sayUndoable(msg, () => commandById("app.undo").run(appCmdRef.current));
   }
+  // What the keys and the handle's menu do to a selection of notes
+  // (editor/useBlockSelection.js): `ids` are its roots in document order,
+  // each taking the blocks under it along. A change of the tree is one
+  // setBlocks, so one undo step and one batch for the room. What comes back
+  // is selected next ([] lets the selection go); nothing keeps it.
+  function blockSelectionAction(action, ids) {
+    const tree = blocksRef.current;
+    const n = ids.length;
+    const roots = ids.map((id) => findBlock(tree, id)).filter(Boolean);
+    // A locked page's notes stay as its file has them (vault/notesLock.js).
+    const locked = (change, dir) => notesLocked && ids.some((id) => touchesLocked(tree, id, change, dir));
+    if (action === "copy" || action === "cut") {
+      const text = roots.map((b) => subtreeMarkdown(b, 0)).join("\n");
+      sourceCopied(text, { outline: true });
+      copyText(text);
+      if (action === "copy") {
+        setStatus(tn("Copied {n} block as markdown", "Copied {n} blocks as markdown", n));
+        return undefined;
+      }
+    }
+    if (readOnly) return undefined;
+    switch (action) {
+      case "cut":
+      case "delete":
+        if (locked("delete")) return undefined;
+        setBlocks(removeBlocks(tree, ids));
+        undoableStatus(tn("{n} block deleted.", "{n} blocks deleted.", n));
+        return [];
+      case "indent":
+      case "outdent": {
+        if (locked(action)) return undefined;
+        const next = action === "indent" ? indentBlocks(tree, ids) : outdentBlocks(tree, ids);
+        if (next === tree) return undefined;
+        setBlocks(next);
+        // under a parent that may be folded
+        setView((v) => ids.reduce((w, id) => revealBlock(next, w, id), v));
+        return undefined;
+      }
+      case "moveUp":
+      case "moveDown": {
+        const dir = action === "moveUp" ? -1 : 1;
+        if (locked("delete") || (notesLocked && touchesLocked(tree, ids[dir < 0 ? 0 : n - 1], "move", dir))) return undefined;
+        const next = moveSiblings(tree, ids, dir);
+        if (next !== tree) setBlocks(next);
+        return undefined;
+      }
+      case "duplicate": {
+        // On a locked page a copy would be a note, as onDuplicate's.
+        if (notesLocked) return undefined;
+        const copies = roots.map(freshCopy);
+        setBlocks(insertBlocks(tree, { type: "sibling", id: ids[n - 1], above: false }, copies));
+        setStatus(tn("{n} block duplicated.", "{n} blocks duplicated.", n));
+        return copies.map((b) => b.id);
+      }
+      case "chat":
+        if (!shareMode) roots.forEach(addBlockToChat);
+        return undefined;
+      case "move":
+        if (!locked("delete")) pickMovePage({ blockIds: ids });
+        return undefined;
+      default:
+        return undefined;
+    }
+  }
   bindingsRef.current = keybindings;
   appCmdRef.current = {
     shareMode, homeMode, readOnly, hasPage: !!focusedBlockId, hasPdf: !!pdfUrl && !homeMode, commentsOn,
@@ -9051,24 +9172,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setMovePicker(null);
     if (what?.fragment) doMoveFragment(what.fragment, page);
     else if (what?.pageIds) movePagesInto(what.pageIds, page);
-    else if (what?.blockId) doMoveBlock(what.blockId, page);
+    else if (what?.blockIds) doMoveBlocks(what.blockIds, page);
   }
-  // Move a block subtree to the end of another page: sync any queued edits
-  // first, then re-parent server-side (reorder carries parent_id). The block
-  // leaves this page through the room's delete, which the server logs with
-  // the move: removed here as an edit it would go out as a delete of a block
-  // that lives on the other page by then, which the server refuses (403).
-  async function doMoveBlock(blockId, page) {
+  // Move block subtrees (one, or a selection's roots in document order) to
+  // the end of another page: sync any queued edits first, then re-parent
+  // each server-side (reorder carries parent_id), after the one before, so
+  // they keep their order there. A block leaves this page through the
+  // room's delete, which the server logs with the move: removed here as an
+  // edit it would go out as a delete of a block that lives on the other
+  // page by then, which the server refuses (403).
+  async function doMoveBlocks(blockIds, page) {
     const title = (page.content || t("Untitled")).slice(0, 60);
     try {
       await persistBlocks(blocks);
       const kids = await apiJson(`${API}/blocks/${page.id}/children`);
-      const last = (kids.children || []).slice(-1)[0]?.position || null;
-      await apiJson(`${API}/blocks/${blockId}/reorder`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parent_id: page.id, before: last, after: null }),
-      });
+      let last = (kids.children || []).slice(-1)[0]?.position || null;
+      for (const blockId of blockIds) {
+        const moved = await apiJson(`${API}/blocks/${blockId}/reorder`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ parent_id: page.id, before: last, after: null }),
+        });
+        last = moved.position;
+      }
       // Older snapshots still contain the block; restoring one would put the
       // same id in two pages. A cross-page move is not undoable.
       blockHistory.clear();
@@ -11255,6 +11381,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 const rowProps = {
                   focusedId,
                   setFocusedId,
+                  // The notes selected whole (useBlockSelection.js): BlockTree
+                  // hands each row whether it is in it.
+                  selection: blockSel.ids,
+                  onSelectBlock: readOnly ? undefined : blockSel.selectBlock,
+                  onSelectAll: readOnly ? undefined : blockSel.selectEvery,
+                  onHandleSelect: blockSel.handleSelect,
+                  dragSelection: blockSel.dragSelection,
+                  onSelectionAction: blockSel.run,
                   view,
                   foldMoving: foldMovesRef.current.get(view),
                   flashingId, // a page's landing row flashes once (landingRef)
@@ -11511,22 +11645,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     if (readOnly) return;
                     const src = findBlock(blocks, id);
                     if (!src) return;
-                    // Fresh ids all the way down; PDF anchoring stays with the
-                    // original — a copy with the same position would draw a
-                    // duplicate highlight on the page (same rule as
-                    // linkHighlightToBlock), and so does the Zotero
-                    // annotation an import made it from. The quote text is kept.
-                    const clone = (b) => {
-                      const { pdf_position, imported_annot, annot_stripped, zotero_annotation, ...props } = b.properties || {};
-                      return { ...b, id: makeId(), properties: props,
-                        children: (b.children || []).map(clone) };
-                    };
-                    const copy = clone(src);
+                    // Fresh ids all the way down, the PDF anchoring left
+                    // with the original (blockModel's freshCopy).
+                    const copy = freshCopy(src);
                     setBlocks(insertSibling(blocks, id, copy, !above));
                     setFocusedId(copy.id);
                     setStatus(t("Block duplicated."));
                   },
-                  onMoveToPage: (id) => { if (!readOnly && !(notesLocked && touchesLocked(blocks, id, "delete"))) pickMovePage({ blockId: id }); },
+                  onMoveToPage: (id) => { if (!readOnly && !(notesLocked && touchesLocked(blocks, id, "delete"))) pickMovePage({ blockIds: [id] }); },
                   // An image / table / diagram (the object frame's menu):
                   // to a new block above / below its own, or to another
                   // page through the same picker as a block move.
@@ -11629,6 +11755,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     _dragState.draggingId = null;
                     const frag = _dragState.fragment;
                     _dragState.fragment = null;
+                    const many = _dragState.draggingIds;
+                    _dragState.draggingIds = null;
                     // A locked page's notes stay where its file has them.
                     if (!dt || readOnly || notesLocked) return;
                     // Where the indicator's depth puts a dropped block: under
@@ -11646,6 +11774,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       const target = dt.inside ? { type: "inside", id: dt.targetId, offset: dt.offset } : placement(blocks);
                       const next = found && target ? moveObjectInTree(blocks, { sourceId: frag.blockId, obj: found.obj, target }) : null;
                       if (next) setBlocks(next);
+                      return;
+                    }
+                    // The selection's notes, dragged by one of their handles:
+                    // taken out together, put back one after another.
+                    if (many) {
+                      if (many.some((id) => isDescendant(blocks, id, dt.targetId))) return;
+                      const moved = many.map((id) => findBlock(blocks, id)).filter(Boolean);
+                      const remaining = removeBlocks(blocks, many);
+                      const where = placement(remaining);
+                      if (where) setBlocks(insertBlocks(remaining, where, moved));
                       return;
                     }
                     const sourceId = e.dataTransfer.getData("text/plain");
@@ -11840,6 +11978,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onClose={onClose}
             threads={comments.threads}
             pageId={focusedBlockId}
+            notify={canFollow && commentsOn}
+            onStatus={setStatus}
             // what a thread is on: a highlight's quote, else the note's text
             anchorText={(id) => { const b = treeById.get(id); return b ? blockQuote(b) || b.content || "" : ""; }}
             labelOf={(id) => { const rb = treeById.get(id) || refCache[id]; return rb ? refLabelOf(rb) : null; }}
@@ -12036,48 +12176,54 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Search, a page's Share and the sync pill). An item off the bar keeps
   // its popover anchor where its button would be (`.offBar`), so its row,
   // its shortcut or App opens the popover in the same place. A tour or a
-  // hint on screen shows them all.
+  // hint on screen shows them all. While pages stand side by side, an item
+  // shown whose place is the panes stands at the end of each pane's strip
+  // instead (paneLiveBar and paneStandIns, below).
   const topbarLayout = TOPBAR.read(topbar);
+  const paneSplit = !isPhone && !isSingle(tabLayout);
   const barPlaces = TOPBAR.place(topbarLayout, {
     phone: isPhone,
+    split: paneSplit,
     guide: guide.running || !!guide.offer,
     open: openPopover,
     active: { tasks: !!tasks.badge, inbox: inbox.unread > 0, sync: true },
   });
   const barAt = Object.fromEntries(barPlaces.map((x) => [x.id, x.at]));
-  const onBar = (id) => barAt[id] === "bar";
-  const offBar = (id) => (onBar(id) ? "" : "offBar");
+  // An item has a button, on the bar or on the panes' strips; else it is a
+  // row of the account menu.
+  const hasButton = (id) => barAt[id] !== "menu";
+  const offBar = (id) => (hasButton(id) ? "" : "offBar");
   const folderShareable = homeMode && lib.organize && libTree.folders.has(folderFilter) && !labelFilter;
   // the open page's Share, or the open folder's; a folder's is a row on a phone
   const sharesPage = !!focusedBlockId && !homeMode;
-  const shareOnBar = onBar("share") && (sharesPage || !isPhone);
+  const shareHasButton = hasButton("share") && (sharesPage || !isPhone);
   const syncs = !!authUser?.user && !!syncKind;
   const phoneMainActive = phonePanel === null || (phonePanel === "notes" && centerNotes);
   // An item's row in the account menu while it is off the bar (the View
   // menu's rows are the menu's last group, below).
   const barMenuRow = {
-    add: () => !onBar("add") && (
+    add: () => !hasButton("add") && (
       <MenuItem key="add" icon={PlusIcon} onClick={() => setOpenPopover("add")}
         title={t("Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files")}>{t("Add…")}</MenuItem>
     ),
-    tasks: () => !onBar("tasks") && (
+    tasks: () => !hasButton("tasks") && (
       <MenuItem key="tasks" icon={ActivityIcon} onClick={() => setOpenPopover("downloads")}
         title={t("Background tasks — exports, backups, imports, downloads and uploads")}
         trailing={<TaskBadge badge={tasks.badge} inline />}>
         {t("Background tasks")}
       </MenuItem>
     ),
-    search: () => !onBar("search") && (
+    search: () => !hasButton("search") && (
       <CommandMenuItem key="search" id="app.search" ctx={appCmdRef.current} bindings={keybindings}
         onClick={() => setOpenPopover("search")} />
     ),
-    share: () => !shareOnBar && (sharesPage ? commandRow("app.share") : folderShareable && (
+    share: () => !shareHasButton && (sharesPage ? commandRow("app.share") : folderShareable && (
       <MenuItem key="share" icon={LinkIcon} onClick={() => openFolderShare(folderFilter)}>{t("Share this folder")}</MenuItem>
     )),
-    sync: () => !onBar("sync") && syncs && (
+    sync: () => !hasButton("sync") && syncs && (
       <MenuItem key="sync" icon={CloudIcon} onClick={() => setOpenPopover("mirror")}>{t("Sync status")}</MenuItem>
     ),
-    inbox: () => !onBar("inbox") && inbox.enabled && (
+    inbox: () => !hasButton("inbox") && inbox.enabled && (
       <MenuItem key="inbox" icon={BellIcon} onPointerEnter={InboxPanel.preload} onClick={() => setOpenPopover("inbox")}
         trailing={<InboxBadge unread={inbox.unread} inline />}>
         {t("Inbox")}
@@ -12099,7 +12245,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return (
       <>
         {rows.length ? <><MenuDivider />{rows}</> : null}
-        {onBar("view") ? null : <><MenuDivider />{viewMenuItems(false)}</>}
+        {hasButton("view") ? null : <><MenuDivider />{viewMenuItems(false)}</>}
       </>
     );
   };
@@ -12111,7 +12257,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const topbarItem = {
     add: () => (
       <span data-popover="add" className={`popoverAnchor ${offBar("add")}`}>
-        {onBar("add") ? (
+        {hasButton("add") ? (
           <button
             className={`iconBtn addBtn ${openPopover === "add" ? "activeIcon" : ""}`}
             onClick={() => setOpenPopover((p) => (p === "add" ? null : "add"))}
@@ -12168,7 +12314,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             download leaves no broken page behind, so this is the sign it
             happened; AI lookups are quiet) or an accent dot for a file
             waiting to be downloaded (tasks/TasksTray.jsx). */}
-        {onBar("tasks") ? (
+        {hasButton("tasks") ? (
           <TasksButton tasks={tasks} open={openPopover === "downloads"}
             onToggle={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))} />
         ) : null}
@@ -12179,7 +12325,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       <SearchPanel
         open={openPopover === "search"}
         onOpenChange={(v) => setOpenPopover(v ? "search" : null)}
-        button={onBar("search")}
+        button={hasButton("search")}
         detailsDefault={focusedBlockId ? searchDetailsPaper : searchDetailsHome}
         focusedBlockId={focusedBlockId}
         homeBlocks={homeBlocks}
@@ -12196,8 +12342,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       />
     ),
     share: () => (sharesPage ? (
-      <span data-popover="share" className={`popoverAnchor ${shareOnBar ? "" : "offBar"}`}>
-        {shareOnBar ? (
+      <span data-popover="share" className={`popoverAnchor ${shareHasButton ? "" : "offBar"}`}>
+        {shareHasButton ? (
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openPageShare(focusedBlockId); }}
@@ -12217,8 +12363,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     ) : folderShareable ? (
       // The same button for the open folder: one link for every page filed
       // in it. On a phone the More sheet offers it instead.
-      <span data-popover="share" className={`popoverAnchor ${shareOnBar ? "" : "offBar"}`}>
-        {shareOnBar ? (
+      <span data-popover="share" className={`popoverAnchor ${shareHasButton ? "" : "offBar"}`}>
+        {shareHasButton ? (
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openFolderShare(folderFilter); }}
@@ -12243,7 +12389,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         publication={syncKind === "mirror" && !workspace.mirror_of && !!workspace.publishing}
         pageId={focusedBlockId}
         everyPage={topbarLayout.modes.sync === "always"}
-        button={onBar("sync")}
+        button={hasButton("sync")}
         open={openPopover === "mirror"}
         onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
         jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
@@ -12262,7 +12408,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // The Inbox: off the bar (always on a phone), a row of the account
       // menu opens the panel.
       <span data-popover="inbox" className={`popoverAnchor ${offBar("inbox")}`}>
-        {onBar("inbox") ? (
+        {hasButton("inbox") ? (
           <InboxButton unread={inbox.unread} open={openPopover === "inbox"} onPreload={InboxPanel.preload}
             onToggle={() => setOpenPopover((p) => (p === "inbox" ? null : "inbox"))} />
         ) : null}
@@ -12273,7 +12419,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         ) : null}
       </span>
     ) : null),
-    view: () => (onBar("view") ? renderOverflowMenu(false) : null),
+    view: () => (hasButton("view") ? renderOverflowMenu(false) : null),
   };
 
   // Account & settings is no item: it stays last, the menu the items off
@@ -12428,10 +12574,40 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // There each carries its word under the icon (.barLabel, hidden elsewhere).
   const topbarActions = (
     <>
-      {barPlaces.map(({ id }) => <React.Fragment key={id}>{topbarItem[id]()}</React.Fragment>)}
+      {barPlaces.filter((x) => x.at !== "pane").map(({ id }) => <React.Fragment key={id}>{topbarItem[id]()}</React.Fragment>)}
       {accountButton}
     </>
   );
+  // The topbar items placed in the panes while pages stand side by side, at
+  // the end of each pane's strip (TabGroups). The live pane's bar is the
+  // items themselves, popovers and all, drawn once (`liveBar`) and moved
+  // with the live pane. Another pane's page is a view, so its buttons stand
+  // for them: a press makes that pane live and, once its page has opened,
+  // opens the item there (selectTab's `then`), as a press on the view edits
+  // there. A pane with nothing open has no page to share.
+  const paneItems = barPlaces.filter((x) => x.at === "pane");
+  const wakePaneItem = (group, id) => {
+    if (group.active) activateTabGroup(group.id, undefined, { then: id });
+    else { activateTabGroup(group.id); setOpenPopover(TOPBAR.item(id).popover); }
+  };
+  const paneLiveBar = paneItems.length ? (
+    <div className="topbar paneBar">
+      {paneItems.map(({ id }) => <React.Fragment key={id}>{topbarItem[id]()}</React.Fragment>)}
+    </div>
+  ) : null;
+  const paneStandIns = (group) => (paneItems.length ? (
+    <div className="topbar paneBar">
+      {paneItems.filter(({ id }) => (id !== "share" || group.active) && (id !== "inbox" || inbox.enabled)).map(({ id, item }) => {
+        const Icon = TOPBAR_ICONS[id];
+        return (
+          <button key={id} type="button" className="iconBtn" data-bar-item={id} title={t(item.label)} aria-label={t(item.label)}
+            onClick={() => wakePaneItem(group, id)}>
+            <Icon size={16} />
+          </button>
+        );
+      })}
+    </div>
+  ) : null);
 
   // The viewer's side strip, the PDF's and the notebook's (app/viewerToolItems.js,
   // Settings → Appearance › Viewer tools): its tools in the user's order,
@@ -12830,15 +13006,31 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // the bar's shows (a popover's menu) is not the bar. The bar is no
   // [data-press]: that would keep the text of the popovers it holds from
   // being selected by a finger.
+  // On the top bar (and a pane's strip) the press may be on an item's
+  // button, whose place the menu then offers to change (barItemAt; a held
+  // finger's press names the bar, so the item is the one at its point).
   const customizePress = (pane, space = () => true) => {
-    const { "data-press": _, ...press } = menuPress((e) => { e.preventDefault(); setBarMenu({ pane, x: e.clientX, y: e.clientY }); });
+    const { "data-press": _, ...press } = menuPress((e) => {
+      e.preventDefault();
+      const at = pane === "topbar" ? document.elementFromPoint(e.clientX, e.clientY) || e.target : null;
+      setBarMenu({ pane, x: e.clientX, y: e.clientY, item: at ? barItemAt(at) : null });
+    });
     const mine = (e) => !e.defaultPrevented && e.currentTarget.contains(e.target) && space(e.target);
     return {
       onContextMenu: (e) => { if (mine(e)) press.onContextMenu(e); },
       onPointerDown: (e) => { if (mine(e)) press.onPointerDown(e); },
     };
   };
-  const topbarSpace = (el) => !el.closest("button, a, input, [role='tab'], [data-popover]");
+  // The topbar item a press is on: a pane's stand-in button, or the button
+  // of an item's anchor (named by its popover), never its open popover.
+  const barItemAt = (el) => {
+    if (el.closest(".popover")) return null;
+    const standIn = el.closest("[data-bar-item]");
+    if (standIn) return standIn.dataset.barItem;
+    const anchor = el.closest("[data-popover]");
+    return (anchor && TOPBAR_ITEMS.find((x) => x.popover === anchor.dataset.popover)?.id) || null;
+  };
+  const topbarSpace = (el) => !!barItemAt(el) || !el.closest("button, a, input, [role='tab'], [data-popover]");
   // The strip's ⋯ opens its menu on the press, so the strip leaves that
   // press alone: a held finger there would open both menus. (The translate
   // button's own menuPress answers before the strip's.)
@@ -13139,7 +13331,37 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </ContextMenu>
       ) : null}
       {barMenu ? (
+        // The bar's menu: on an item that offers places, where it stands
+        // while pages are side by side; on the top bar or a pane's strip,
+        // the split itself; then Customize….
         <ContextMenu x={barMenu.x} y={barMenu.y} onClose={() => setBarMenu(null)}>
+          {TOPBAR.item(barMenu.item)?.places ? (
+            <>
+              {BAR_PLACES.map((where) => {
+                const on = topbarLayout.places[barMenu.item] === where;
+                return (
+                  <MenuItem key={where} role="menuitemradio" aria-checked={on} title={t(TOPBAR.placeTip(where))}
+                    trailing={on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
+                    onClick={() => { setBarMenu(null); setTopbar(TOPBAR.setPlace(topbar, barMenu.item, where)); }}>
+                    {where === "top" ? t("Show on the top bar") : t("Show in each pane")}
+                  </MenuItem>
+                );
+              })}
+              <MenuDivider />
+            </>
+          ) : null}
+          {barMenu.pane === "topbar" && !isPhone && !shareMode && (paneSplit || focusedBlockId) ? (
+            <>
+              {paneSplit ? (
+                <MenuItem icon={OnePaneIcon} title={t("Every tab back in one group")}
+                  onClick={() => { setBarMenu(null); joinTabGroups(); }}>{t("Join tab groups")}</MenuItem>
+              ) : (
+                <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a group of its own, to the right")}
+                  onClick={() => { setBarMenu(null); splitTab(focusedBlockId, "right"); }}>{t("Split right")}</MenuItem>
+              )}
+              <MenuDivider />
+            </>
+          ) : null}
           <MenuItem icon={SettingsIcon} onClick={() => { setBarMenu(null); openSettingsPane(barMenu.pane); }}>
             {barMenu.pane === "topbar" ? t("Customize top bar…") : t("Customize viewer tools…")}
           </MenuItem>
@@ -13160,6 +13382,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       <PanelGroup direction="vertical" autoSaveId="gamma-work-v" ref={(h) => { panelGroupRefs.current["work-v"] = h; }}>
       <Panel id="slot-main" order={1} minSize={20} className="dockSlot">
       <TabGroups layout={tabLayout} liveId={shownGroupId} single={isPhone} tabsOf={groupTabs} activeTabId={tabPick || focusedBlockId}
+        liveBar={paneLiveBar}
         onActivate={activateTabGroup} onMoveTab={moveTabToGroup} onSplit={splitTabGroup} onResize={resizeTabSplit}
         sashMargins={SASH_MARGINS}
         strip={{
@@ -13168,6 +13391,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onMenuOpenChange: (groupId) => setOpenPopover(groupId ? `tabs:${groupId}` : null),
           onReorder: reorderGroupTabs, onClose: closeTab, onTogglePin: toggleTabPinned,
           onContext: (tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); },
+          actions: paneStandIns, headPress: () => customizePress("topbar", topbarSpace),
         }}
         renderPane={(group) => (group.active ? (
           <PagePane key={group.active} {...paneProps(group.active)}
@@ -13621,13 +13845,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </DialogOverlay>
       ) : null}
       {movePicker ? <LazyBoundary><PagePicker
-        label={movePicker.pageIds ? t("Move into page") : movePicker.fragment ? t("Move to page") : t("Move block to page")}
+        label={movePicker.pageIds ? t("Move into page") : movePicker.fragment ? t("Move to page")
+          : movePicker.blockIds?.length > 1 ? t("Move {n} blocks to page", { n: movePicker.blockIds.length }) : t("Move block to page")}
         placeholder={movePicker.pageIds ? t("Move into page…") : movePicker.fragment ? t("Move to page…") : t("Move block to page…")}
         note={movePicker.pageIds
           ? tn("The page goes inside the one you pick and is listed there, under Pages inside, rather than in the library.",
             "The {n} pages go inside the one you pick and are listed there, under Pages inside, rather than in the library.", movePicker.pageIds.length)
           : movePicker.fragment
           ? t("It becomes a block of its own at the end of the chosen page.")
+          : movePicker.blockIds?.length > 1
+          ? t("The {n} blocks and their sub-blocks move to the end of the chosen page, in their order.", { n: movePicker.blockIds.length })
           : t("The block and its sub-blocks move to the end of the chosen page.")}
         hint={t("↑↓ choose · Enter move · Esc close")}
         pages={homeBlocks}
@@ -14027,19 +14254,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {t("Page properties")}
           </MenuItem>
           {!isPhone ? (
-            // Tab groups (docs/dev/tab_groups.md): this tab into a group of its
-            // own beside its group (the only tab of a group: an empty group
-            // beside it), and every tab back into one group.
+            // Tab groups (docs/dev/tab_groups.md): one group splits once, this
+            // tab into a pane of its own on the right (the only tab of the
+            // group: an empty pane beside it); split, the tab moves to the
+            // other pane, or every tab goes back into one group.
             <>
               <MenuDivider />
-              <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a group of its own, to the right")}
-                onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "right"); }}>{t("Split right")}</MenuItem>
-              <MenuItem icon={SplitRowsIcon} title={t("Show this page in a group of its own, below")}
-                onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "bottom"); }}>{t("Split down")}</MenuItem>
-              {!isSingle(tabLayout) ? (
-                <MenuItem icon={OnePaneIcon} title={t("Every tab back in one group")}
-                  onClick={() => { setTabMenu(null); joinTabGroups(); }}>{t("Join tab groups")}</MenuItem>
-              ) : null}
+              {isSingle(tabLayout) ? (
+                <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a group of its own, to the right")}
+                  onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "right"); }}>{t("Split right")}</MenuItem>
+              ) : (
+                <>
+                  {otherPane(tabMenu.id) ? (
+                    <MenuItem icon={SplitColumnsIcon} title={t("Show this page in the other pane")}
+                      onClick={() => { setTabMenu(null); moveTabToGroup(tabMenu.id, otherPane(tabMenu.id).id); }}>{t("Move to the other pane")}</MenuItem>
+                  ) : null}
+                  <MenuItem icon={OnePaneIcon} title={t("Every tab back in one group")}
+                    onClick={() => { setTabMenu(null); joinTabGroups(); }}>{t("Join tab groups")}</MenuItem>
+                </>
+              )}
             </>
           ) : null}
           {lib.organize ? (

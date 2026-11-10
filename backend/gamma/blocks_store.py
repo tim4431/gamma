@@ -500,26 +500,49 @@ def write_lock(conn) -> None:
         conn.execute("BEGIN IMMEDIATE")
 
 
-def touch_page(conn, page_id: str, actor: str, kind: str = "live", *, now: str = "") -> None:
+def touch_page(conn, page_id: str, actor: str, kind: str = "live", *, now: str = "",
+               follow: bool = True) -> None:
     """Record a write to the page ``page_id`` in the workspace's change log
     (``page_changes``): its row takes the next seq of the workspace, so the
     change feed (routers/sync.py) lists the page once to any cursor below
     it. ``live`` (an edit, a creation, a restore) also stamps the page's
-    own row ``updated_at`` (``now``, the writer's stamp, or the time); a
-    page that went (``deleted``: moved to Recently deleted, or deleted for
-    good) keeps its row as it is. Every writer of a page calls it once per
-    write, inside its transaction: under the write lock (``write_lock``, or
-    the transaction's first write), so seqs are handed out in commit order
-    and never twice. The caller commits."""
+    own row ``updated_at`` (``now``, the writer's stamp, or the time), and
+    the writer follows the page (``follow_page``) unless ``follow`` is
+    False (a batch that is no one's keystrokes: ops' ``UNFOLLOWED``
+    clients); a page that went (``deleted``: moved to Recently deleted, or
+    deleted for good) keeps its row as it is. Every writer of a page calls
+    it once per write, inside its transaction: under the write lock
+    (``write_lock``, or the transaction's first write), so seqs are handed
+    out in commit order and never twice. The caller commits."""
     now = now or page_now()
     if kind == "live":
         conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, page_id))
+        if follow:
+            follow_page(conn, page_id, actor, now=now)
     conn.execute(
         "INSERT INTO page_changes (page_id, seq, kind, at, actor) "
         "VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM page_changes), ?, ?, ?) "
         "ON CONFLICT (page_id) DO UPDATE SET seq = excluded.seq, kind = excluded.kind, "
         "at = excluded.at, actor = excluded.actor",
         (page_id, kind, now, actor))
+
+
+def follow_page(conn, page_id: str, actor: str, *, now: str = "") -> None:
+    """The person ``actor`` follows the page ``page_id``: every comment on
+    it reaches their Inbox (``page_follows`` level ``all``,
+    docs/dev/comments.md "Following a page"), unless the page has their
+    row already — their own choice, or an earlier follow. Called inside the
+    writer's transaction by ``touch_page`` (a creation, an edit) and by a
+    new comment. A writer that is no account (the server's own ``''``, a
+    link visitor, a mirror's or a Zotero link's round) and the folder and
+    label trees follow nothing."""
+    from .auth import LINK_ACTOR_PREFIX, MIRROR_ACTOR, ZOTERO_ACTOR  # local: auth imports this module
+
+    if (not actor or actor in (MIRROR_ACTOR, ZOTERO_ACTOR) or actor.startswith(LINK_ACTOR_PREFIX)
+            or page_id in RESERVED):
+        return
+    conn.execute("INSERT OR IGNORE INTO page_follows (page_id, user_id, level, at) VALUES (?, ?, 'all', ?)",
+                 (page_id, actor, now or page_now()))
 
 
 def newest_change_seq(conn) -> int:

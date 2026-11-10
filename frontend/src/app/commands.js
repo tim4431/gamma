@@ -40,5 +40,15 @@ export function fixedKeys(enterNewBlock) {
     [["ArrowLeft", "ArrowRight"], t("At the text's edge: collapse / expand the children"), "fold"],
     [["/"], t("Command menu in a note"), "slash"],
     [["Escape"], t("Close popups, clear selections, cancel modes"), "escape"],
+    // With whole blocks selected (editor/useBlockSelection.js: a drag across
+    // notes, a box from the blank beside them, Shift+click, Esc in a note).
+    [["ArrowUp", "ArrowDown", "Shift-ArrowUp", "Shift-ArrowDown"], t("Selected blocks: select the one above / below · with Shift, grow or shrink the selection"), "selectStep"],
+    [["Mod-Shift-ArrowUp", "Mod-Shift-ArrowDown"], t("Selected blocks: move them up / down"), "selectMove"],
+    [["Enter"], t("Selected blocks: edit the last one picked"), "selectEdit"],
+    [["Backspace", "Delete"], t("Selected blocks: delete them"), "selectDelete"],
+    [["Tab", "Shift-Tab"], t("Selected blocks: indent / outdent them"), "selectIndent"],
+    [["Mod-c", "Mod-x", "Mod-d"], t("Selected blocks: copy / cut as Markdown, duplicate"), "selectCopy"],
+    [["Mod-a"], t("Select every block (in a note, once all its text is selected)"), "selectAll"],
+    [["Mod-/"], t("Selected blocks: open their menu"), "selectMenu"],
   ];
 }

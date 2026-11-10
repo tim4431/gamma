@@ -134,8 +134,9 @@ All state is SQLite + files on disk under a data directory (env
   - `publisher_sessions` — encrypted publisher cookie snapshots per
     `(user_id, host)`, each sealed with its account's id, imported by the
     Connector ([extension.md](extension.md));
-  - `integration_tokens` — hashed assistant tokens per account and workspace
-    (with a `scope`, read or write), and `mcp_oauth` — the OAuth flow's
+  - `integration_tokens` — hashed assistant tokens per account, each of one
+    workspace (with a `scope`, read or write, and `workspaces`, what a read
+    token's MCP connection reads beside it: `''`, `'*'` or a JSON list), and `mcp_oauth` — the OAuth flow's
     expiring records ([mcp.md](mcp.md));
   - `mirrors` — the offline copies of remote workspaces: the local workspace,
     the remote's address and workspace, the write token (Fernet-encrypted
@@ -351,6 +352,14 @@ All state is SQLite + files on disk under a data directory (env
     in them, so no block reader skips them; a backup and a Gamma export
     carry them, a page deleted for good takes its own with it, and a
     comment write touches no page;
+  - `page_follows` — who hears of every comment on a page
+    ([comments.md](comments.md) "Following a page"): a row per page and
+    account, `level` `all` or `replies`, `at`. A person who creates, edits
+    or comments on a page gets a row at `all` unless they have one; their
+    own choice replaces it. Each account's own state, like
+    `workspace_prefs`: no zip carries it, a restore keeps the live rows,
+    and it goes with the page deleted for good and with the member who
+    leaves;
   - `translation_terms` — the workspace's glossary for the PDF translated
     view ([translation.md](translation.md) "The glossary"): per target
     language (`lang`), one translation (`target`) per source term

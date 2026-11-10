@@ -1182,11 +1182,15 @@ own controls.
   included.
 - **The compact shell** neither drags nor folds a window: without
   `onGrip` the title is a plain label, with no "⠿".
-- **Tab groups.** Pages stand side by side in the dock's middle, each
-  group with a strip over it, split by a tab's menu or a tab dragged onto
-  a group's edge ([tab_groups.md](tab_groups.md)). The windows stay around
-  the groups, at their own sizes, and follow the page on screen; a press
-  that moves the page on screen to another group moves nothing else.
+- **Tab groups.** Pages stand side by side in the dock's middle, two
+  panes left and right, each with a strip over it, split by a tab's menu,
+  the topbar's right-click or a tab dragged onto a side of the page
+  ([tab_groups.md](tab_groups.md)). The live pane is ringed in
+  `--focus-ring`, as keyboard focus is, round its strip and its page. The
+  page's own topbar buttons stand at the end of each pane's strip, in the
+  topbar's own look (`.topbar.paneBar`). The windows stay around the
+  groups, at their own sizes, and follow the page on screen; a press that
+  moves the page on screen to another group moves nothing else.
 
 ### The PDF viewer
 
@@ -1620,7 +1624,10 @@ Add uses the same sibling creation path as Enter: below by default, above with A
 a home-library row creates a page. The handle menu copies a link or the subtree as Markdown,
 shows the block's Properties ([The properties popover](#the-properties-popover)),
 attaches the block to chat (also Ctrl+click), duplicates with fresh IDs and
-without highlight anchors, moves to another page, or deletes.
+without highlight anchors (`blockModel.freshCopy`), moves to another page, or
+deletes. A click on the handle selects its block, as Notion's does; on one of
+several selected notes it opens their menu instead ([Selecting
+notes](#selecting-notes)).
 
 Clipboard handling preserves Markdown storage:
 
@@ -1691,6 +1698,65 @@ press is kept from the editor and the row, so the selection stays where
 it was. It joins the shared floating surface, at `--z-refpopup` with the
 editor's other popups.
 
+### Selecting notes
+
+Whole notes are selected as in Notion (`editor/useBlockSelection.js`, the
+state and the pure ranges in `editor/blockSelection.js`):
+
+- A drag that starts in a note selects its text, as before. Once the pointer
+  leaves that note's row up or down, the notes from it to the row under the
+  pointer are selected (`selectRange`, over the rows shown: folded children
+  are not), the editor the press opened closes, and the text selection goes.
+- A drag from blank space draws a box (`.blockSelectBand`), and the notes
+  whose rows it touches are selected. Blank space is a press right on the
+  list or on the tree's own boxes between rows (`.listMotion`,
+  `.sortableBlockWrap`, `.rowHandles`, `.blockFold`, `.blockChildren`),
+  never on a row, a handle, an object frame or the tail below the notes,
+  whose press starts writing.
+- Either drag scrolls the list while the pointer is within 36 px of its top
+  or bottom edge or past it; the box keeps its start where the press was in
+  the list. `.blockSelecting` on the list stops the browser's text selection
+  meanwhile, and the click the release makes is swallowed.
+- Shift+click selects from the note being written in (else the selection's
+  anchor, else the focused row) to the one clicked; in the note being
+  written in it grows the text selection. Alt+Shift+click (⌘⇧ on a Mac)
+  adds or removes one note. Ctrl+click stays the chat's.
+- Esc in a note's editor selects that note, after its popups had their
+  Esc, and Ctrl+A in a note whose text is all selected selects every note.
+
+A selected note takes the notes under it along: they draw selected
+(`underSelected` down the tree) and every action works on
+`selectionRoots`, the selected notes none of whose ancestors is selected,
+in document order. Each row gets a `selected` flag of its own, as it gets
+its comment count, so a change of the selection draws only the rows it
+changes. The selection is the viewer's own, like the open editor: never in
+the tree or the room. Blocks the tree loses leave it (`pruneSelection`),
+an editor opening ends it, and a plain press anywhere but a menu lets it
+go. It is mouse only: a finger scrolls and a pen writes.
+
+With notes selected, their keys go before every other handler (a capture
+listener on the window), unless a text field or a menu has the focus:
+↑ / ↓ select the note above the top one or below the bottom one,
+Shift+↑ / ↓ grow or shrink from the anchor, Ctrl+Shift+↑ / ↓ move a run of
+siblings (`moveSiblings`), Enter opens the last one picked, Delete and
+Backspace delete, Tab / Shift+Tab indent and outdent (`indentBlocks`
+refuses when one of them is the first of its siblings; `outdentBlocks`
+goes from the last), Ctrl+D duplicates after the last one (the copies are
+selected next), Ctrl+C / Ctrl+X copy or cut an outline of one `- ` per
+block that Paste as Blocks gets back, Ctrl+A selects every note and Ctrl+/
+opens their menu. Esc stays App's: it closes the popovers and lets every
+selection go, this one too, unless a note's editor took it to select its
+note. They are the outliner's own keys, listed
+in `commands.js` `fixedKeys` ([hotkeys.md](hotkeys.md)). Dragging the
+handle of a selected note moves the selection's roots together
+(`_dragState.draggingIds`, `insertBlocks` one after another where the drop
+line says). The handle's menu for several notes has Copy as markdown, Add
+to chat, Duplicate, Move to page… (each root after the one before, so they
+keep their order there) and Delete. Every change to the tree is one
+`setBlocks`, so one undo step and one batch for the room, and a locked
+page's notes refuse what the single-block action refuses
+(`blockSelectionAction` in App).
+
 ## File map (frontend/src)
 
 | File | Owns |
@@ -1741,6 +1807,7 @@ editor's other popups.
 | `editor/mdObjects.js` | the pure source-range algebra behind every object move (`tests/mdObjects.test.mjs`). `cutObject`: the object's markdown and the content without it; a whole-line object takes its lines and the blank lines around it close up to the wider gap, an image inside a text line leaves the text; `mapOffset` carries a drop offset across the cut and returns null inside the removed zone, so a drop onto itself is a no-op. `insertObject`: a paragraph of its own at a line start or the end, the next line's indentation kept. `moveObject` (same block) and `moveObjectInTree` (the one tree edit for the drop and the menu: `inside` splices source, `sibling` / `child` make a new block) — one `setBlocks`, so a cross-block move is one undo step and one op batch. Nothing new is stored; the object's markdown changes place |
 | `editor/BlockCmEditor.jsx` | the CodeMirror 6 block editor (textarea-compatible facade) with live in-place rendering of closed `$…$`/`$$…$$` spans, ``` ``` ``` fences (highlight.js cards), `[[ref]]`/`![[embed]]` chips, `@` mention chips ([mentions.md](mentions.md)), `![alt](url)` images (the picture, sized like the rendered view, alt as caption; `scanImageSyntax` in `mdMarks.js` is the one image scanner, shared with `MdTools` and the rendered view's `sizedImagesHtml`) and GFM tables (`TableWidget`, a read-only table of the raw cells). Pictures and tables are objects, not text: they stay rendered while the caret rests at either end or steps through their lines, and only a selection reaching strictly inside shows the source. A click puts the caret after them; a right-click or a held finger (`menuPress`) drops it inside (the editor's "Edit markdown source"). The widget is a drag source through `onObjectDrag` (BlockRow's object action → `_dragState.fragment`), so a table can be dragged out of a block while it is being edited. A drop INTO an open editor is the editor's own: capture-phase `dragover`/`drop` on its host, recognized by the `application/x-gamma-object` data type, land at the line boundary nearest the pointer (the inside drop line, then `onMoveObject` `inside`); CodeMirror's default drop, which would paste the markdown at the caret as a copy, never runs. The object index comes from `mdScan.js`, so it matches the rendered view's frame. Markdown renders live too (headings, `**`/`*`/`` ` ``/`~~`/`==`, links + bare URLs, clickable `- [ ]` checkboxes, `- ` bullets, `1. ` numbers in tabular figures (Inter's own are proportional, so a `1.` item's text would start left of a `2.` item's), `---` rules, quote lines and full `> [!type]` callout boxes with their fold flag (a heading, list marker or rule after a line's quote marks renders as it does outside a quote), underline and colored runs — `<u>…</u>` and `<span style="color:…">` / `background:…` inline HTML, tags hidden, inline marks of `scanMarks` in `mdMarks.js` that nest with the rest) — the construct the caret touches stays raw source (line-level touch for heading/quote prefixes, marker-only touch for list markers so a todo's checkbox survives editing its text). Raw math gets VSCode-style bracket-pair colorization (depth-cycled `--bracket-*` colors, enclosing pair boxed). Opening a block's editor keeps its height (checked by notes.mjs): the rendered view's outer margins stop at the block's edges, a list, quote, callout or table hugs the text line above it as its source lines do, and the editor's widgets take the rendered metrics — the `$$` math and code cards their margins, a callout's first and last lines the box's 6px padding (the title 2px under it, 4px when foldable), the table widget the object frame's 3px halo, 6px under the line above and the 14px the rendered table keeps under it for its + row. Blank lines still differ (the rendered view folds one into a paragraph break), as does a heading directly under text. Decorations come from a `StateField`, not a ViewPlugin — plugin decorations may not replace line breaks (multi-line fences/`$$` would throw). Formatting hotkeys — Ctrl/Cmd+B/I/U/E, Ctrl+Shift+X/H toggle `**`/`*`/`<u>`/`` ` ``/`~~`/`==` Obsidian-style, Ctrl+K inserts `[sel](url)` (clipboard URL fills the slot); swallowed inside math/fences/inline code — are block commands of `editor/blockCommands.js`, planned by `markCommands.js` and dispatched to the editor; a system keyboard's or menu's `beforeinput` `formatBold` / `formatItalic` / `formatUnderline` / `formatStrikeThrough` runs the same commands. The system's typing aids (autocorrect, capitals, spelling, suggestions) are on in prose and off in a code fence or math, decided as the caret moves (`typingAids`, [ipad.md](ipad.md#the-editing-bar)) |
 | `editor/EditBar.jsx` | the touch editing bar: the markup strip's surface (`.pdfInkBar`'s elevated box, border, radius and light-scheme shadow) with its `.pdfInkSep` separators, holding `ctlBtn`s with 16 px icons at the ink menu's finger size (36 px), then a Done ✓. It floats centred 6 px above the on-screen keyboard, never lower than the compact shell's bottom bar, else at the screen's edge, at `--z-editbar` while a note's editor is open on a touch screen. Every button but Undo / Redo (the page's block history) is a block command, disabled when its `when` fails. Presses never take focus ([ipad.md](ipad.md) "The editing bar") |
+| `editor/useBlockSelection.js`, `editor/blockSelection.js` | selecting whole notes as in Notion (*Selecting notes* above): the drag across notes, the box from blank space, Shift and Alt+Shift clicks and the selection's keys; the pure ranges, steps, roots and the outline a selection copies as |
 | `editor/SelectionToolbar.jsx`, `editor/useSelectionToolbar.js` | the selection toolbar over a note's selected text (*The selection toolbar* above): the formatting commands as `ctlBtn`s pressed or disabled by their `state`, with `.pdfInkSep` separators, and the color row; the hook decides when it shows (after the mouse button's release, hidden on Escape and on an on-screen keyboard) |
 | `editor/clickToSource.js` | maps the rendered view back to the raw source by text (the layouts differ too much for coordinates): the clicked character a new editor opens on (`sourceOffsetAtPoint`), the gap line between two rendered blocks (`renderedBlocks`, `renderedGaps`, `blockStartInSource`, `gapInSource`), a Ctrl-selection's source range for the chat (`sourceRangeOfSelection`), and other people's carets placed on the rendered view (`renderedCaretRect`, via `locateInRendered`); `locateInSource` / `locateInRendered` / `gapInSource` are pure and unit-tested |
 | `editor/mdMarks.js` | the inline-mark table (regex + class per marker, inline code `mdCode.codeSpans`'s backtick runs, and a `close` where the closing delimiter differs: `<u>`…`</u>`, the colored run's `<span style>`…`</span>`) shared by the live renderer and the hotkeys, plus the pure `toggleMark`/`insertLink` transforms (wrap / unwrap / empty pair / per-line for multi-line selections) and `markedAt`, which reads the same target the toggle acts on. `scanMarks` allows proper nesting (`**a *b* c**`, `*a **b** c*`, a colored run in bold or bold in it; nothing inside inline code) and treats `***x***` as one bold+italic span with two `layers`, so Ctrl+B and Ctrl+I each peel off their own delimiters. `recolor` and `colorAt` are the color row's: a selection's runs restyled, split and merged, and the style they share |

@@ -35,39 +35,49 @@ and `claude plugin update gamma@gamma-local`, then start a new session. For loca
 development, load this directory directly with `claude --plugin-dir ./plugins/gamma`
 from the repository root; the MCP connection still needs separate setup.
 
+To remove Gamma from Claude Code, run `claude mcp remove gamma --scope user`
+and, if you installed the plugin, `claude plugin uninstall gamma@gamma-local
+--scope user` and `claude plugin marketplace remove gamma-local`. Then
+disconnect Claude Code under **Connected assistants** in Gamma.
+
 The plugin layout follows the [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference);
 connection setup follows the [Claude Code MCP guide](https://code.claude.com/docs/en/mcp).
 
 ## DeepSeek Harness
 
 This directory is also a DeepSeek Harness plugin: `package.json` declares a dsh
-bundle whose `cordis.patch.yml` adds the Gamma MCP connection and, through
-`dsh-skill.js`, the same `skills/gamma` skill. In Gamma, open **Settings → AI →
-Integrations → DeepSeek Harness**:
+bundle whose `cordis.patch.yml` adds one row, `dsh-gamma.js`, which mounts the
+same `skills/gamma` skill and the Gamma MCP connection. In Gamma, open
+**Settings → AI → Integrations → DeepSeek Harness**:
 
-1. Create a read-only token. dsh's MCP client has no browser sign-in.
-2. Run the install command. It downloads `dsh-gamma.tgz` from Gamma's latest
-   release into your dsh home (`~/.dsh`) and runs
-   `dsh plugin --profile web add` on that file. Run it again to update.
-   Requires pnpm, which `dsh plugin` uses.
-3. Run the start command. It sets `GAMMA_URL` to this server, asks for the
-   token (`GAMMA_TOKEN`) and starts `dsh web`.
+1. Tick the workspaces it may read. dsh's MCP client has no browser sign-in.
+2. Quit DeepSeek Harness, then run the setup command the tab shows, once. It
+   adds the plugin to the desktop app's profile (and to `web`, where `dsh web`
+   has made one), then exchanges its one-time code for a read-only token and
+   saves the connection in `~/.dsh/gamma.json`.
+3. Open DeepSeek Harness. The plugin reads the saved connection every time
+   dsh starts, from the app or the terminal.
 
-For local development with dsh 0.1.7 or later, add this directory itself:
+`GAMMA_URL` and `GAMMA_TOKEN` in the environment take the file's place. To
+remove Gamma, quit DeepSeek Harness and run the command under **Remove Gamma
+from DeepSeek Harness** in the same tab: it runs the setup script with
+`-Remove` (`--remove` on macOS / Linux), which takes the plugin out of every
+profile that has it and deletes `~/.dsh/gamma.json`. Then disconnect DeepSeek
+Harness under **Connected assistants** in Gamma. For
+local development with dsh 0.1.7 or later, add this directory itself:
 `dsh plugin --profile web add ./plugins/gamma`. Details:
 [the integration guide](../../docs/dev/mcp.md#deepseek-harness).
 
 ## Codex
 
-For the combined installer, open **Settings → AI → Integrations → Codex
-CLI**, select your operating system, and copy the setup command. It downloads
+For the combined installer, open **Settings → AI → Integrations → Codex**,
+select your operating system, and copy the setup command. It downloads
 the plugin from Gamma's latest release, installs it, and connects this server.
 Requires an installed Codex CLI and a release containing the setup scripts.
-Approve a workspace in your browser, then start a new chat. Gamma's desktop app
+Tick the workspaces in your browser, then start a new chat. Gamma's desktop app
 is not required. To connect manually or install a development package:
 
-1. Update/start Gamma and open **Settings → AI → Integrations** in the
-   workspace you want Codex to read.
+1. Update/start Gamma and open **Settings → AI → Integrations**.
 2. Copy the server URL into your assistant's MCP settings and sign in with Gamma.
    For Codex CLI, copy the setup commands shown in Gamma, or:
 
@@ -76,7 +86,7 @@ is not required. To connect manually or install a development package:
    ```
 
    If sign-in is interrupted, retry with `codex mcp login gamma`.
-   Approve read-only access to the workspace in your browser. No manual token
+   Tick the workspaces and approve read-only access in your browser. No manual token
    or environment variable is needed. HTTPS is required for remote servers;
    HTTP localhost is supported. Manual tokens remain available for other clients.
 
@@ -87,6 +97,11 @@ is not required. To connect manually or install a development package:
    picker, or invoke `$gamma` in the CLI.
 
 The IDE extension can use the direct MCP connection without the plugin.
+
+To remove Gamma from Codex, run `codex mcp remove gamma`,
+`codex plugin remove gamma@gamma-local` and
+`codex plugin marketplace remove gamma-local`, then disconnect Codex under
+**Connected assistants** in Gamma.
 
 Paste a Gamma page or share link with your question. The assistant uses
 `read_gamma_link` to resolve and read it. Copy the page URL directly from your
@@ -123,7 +138,7 @@ The `Assistant plugin package` workflow tests them and builds preview artifacts.
 ## Shared implementation
 
 Both manifests live in this directory and point to `skills/`; the dsh
-`package.json` serves the same `skills/` through `dsh-skill.js`. Edit
+`package.json` serves the same `skills/` through `dsh-gamma.js`. Edit
 `skills/gamma/SKILL.md` once to change the workflow for both clients. Codex's
 display metadata stays in `.codex-plugin/plugin.json` and `agents/openai.yaml`;
 Claude Code reads `.claude-plugin/plugin.json`. The builder checks shared

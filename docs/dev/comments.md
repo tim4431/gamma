@@ -50,7 +50,8 @@ deleted is no page of the library.
 A comment write never calls `touch_page`. It moves no change feed, starts no
 mirror round and does not reorder the home library. Nothing in
 `unified_blocks` changes, so the suite's drift checks
-(`tests/conftest.py`) hold.
+(`tests/conftest.py`) hold. A new comment adds its author's row of
+`page_follows` when they have none ("Following a page" below).
 
 The workspace's migration needs no step of its own for the table: it is
 additive, and `db._open_ws_db` applies `PAGES_SCHEMA` to every `pages.db` it
@@ -109,6 +110,8 @@ refused with a 400.
 | PATCH | `/api/comments/{id}` | `{body, client?}` | `{comment}` |
 | DELETE | `/api/comments/{id}?client=` | | `{deleted: true}` |
 | POST | `/api/comments/{id}/resolve` | `{resolved, client?}` | `{thread}` |
+| GET | `/api/pages/{page_id}/notify` | | `{level}`: `all` or `replies`, the page's Notify me for the session's account ("Following a page" below) |
+| PUT | `/api/pages/{page_id}/notify` | `{level}` | `{level}`; 400 for another level |
 
 - **Create.** `block_id` is a block of the page or the page itself (400
   otherwise). With `thread_id` the comment is a reply: the id must be a root
@@ -130,6 +133,11 @@ refused with a 400.
   Anyone who may comment on the page may do either.
 - A comment that is hidden answers 404: its block was deleted (orphaned),
   or its page is in Recently deleted.
+- **Notify me.** Whoever may comment on the page (`require_commenter`),
+  signed in to an account: a guest and an integration token have no Inbox
+  (403, as for `/api/inbox`). 404 for a page in Recently deleted or gone.
+  The PUT writes the workspace, so a read-only hosted server refuses it, as
+  it does a comment.
 
 After every write that changes something (an edit to the same text, or a
 resolve of a resolved thread, changes nothing) the router publishes
@@ -218,6 +226,7 @@ and it would notify again on every edit.
 | `mention` | a note gains `@name` | each person newly named | `ops._Batch` keeps the people each text it touches named before the batch and names after it (`mentions.people_in`: person mentions outside code; a `(remind @x)` names no one; an insert's text had none, a deleted block's has none). `mention_changes` diffs them across the whole batch, so a name that moves from one note to another (Enter before `@name`, a join) is no new mention. The result carries `mentions_added` (`[{block_id, users, text}]`), `mentions_moved` and `mentions_dropped` (below), and `ops.after_commit` hands it to `inbox.from_ops` |
 | `comment_mention` | a comment's text gains `@name` (a new comment, a reply, an edit) | each person newly named | `comments.after_write` → `inbox.from_comment` |
 | `reply` | a reply is posted | the authors of the thread's other comments and the people they mention, less those the reply itself mentions | the same |
+| `comment` | a new thread or a reply is posted | the page's followers set to All comments ("Following a page" below), less the people the comment mentions and those told of it as a reply | the same |
 | `resolved` | someone resolves a thread another person started | the thread's author | the same |
 | `shared` | people are invited to a page or folder share | each new invitee, with the share's token | `routers/shares._invite`, from both `_create` and `_update`: it compares the old and the new `share_users`, keeps `added_at` for the people who stay, and `shares.tell` writes the items after the commit; also `shares.invite_cloud`'s linked branch and `shares.claim_pending` for each share joined, from its inviter, and `email_invites.claim` for an invitation by e-mail whose mailed link the person signed in through (only for an entry it added) |
 | `invited` | an account is added to a shared workspace | the new member | `workspaces.set_member` (which returns whether it inserted the membership: a role change tells no one), `invite_cloud`'s linked branch, `claim_pending_memberships` for each workspace joined, from its inviter, `email_invites.claim` likewise (only for a membership it added), and `workspaces.create` for an owner someone else made a shared workspace for (an admin's `POST /api/workspaces` with an owner) |
@@ -350,6 +359,58 @@ them), and no session gets 401. A guest is never a recipient. Marking is
 account bookkeeping, so `/api/inbox/` is in `hosted.READ_ONLY_ALLOWED`:
 a read-only hosted server still takes it, while comment writes are refused
 like any other content.
+
+## Following a page
+
+Notion's Notify me ([research/comments-inbox.md](../research/comments-inbox.md)
+"Who hears of a comment"). A person follows the pages they create, edit or
+comment on, and hears of every comment on them (a `comment` item); they
+may set each page to **All comments** or **Replies and @mentions**. The
+people a comment names and the authors in its thread hear of it whatever
+their choice, as `comment_mention` and `reply` items. A comment tells a
+person once: the mention, else the reply, else the follow.
+
+The rows are the table `page_follows` of the workspace's `pages.db`
+(`page_id`, `user_id`, `level` `all` or `replies`, `at`; primary key on
+the page and the account). It is additive (`db.PAGES_SCHEMA`, no step:
+[migrations.md](migrations.md) rule 2) and each account's own state, like
+`workspace_prefs`: `ws_backup.PRIVATE_TABLES` empties it in a zip and keeps
+the live rows on a restore, and no export, clone or merge carries it.
+
+- **Who follows.** `blocks_store.follow_page(conn, page_id, actor)` adds the
+  writer's row at `all`, unless the page has one of theirs already (an
+  earlier follow or their own choice: `INSERT OR IGNORE`), inside the
+  writer's transaction. `touch_page` calls it for every `live` write, so a
+  page's creation (`create_page`, `insert_page_tree`, the imports, a backup
+  merge's new pages), an edit (`ops._apply`, `record_ops`, `log_reload`) and
+  a restore from Recently deleted all count, and `comments.create` calls it
+  for a new thread or a reply. A backup restored in place follows nothing
+  (`log_reload(..., follow=False)`): the live rows stay. A writer that is no
+  account (`''`, `link:<name>`, `mirror`, `zotero`), the folder and label
+  trees, and the batches of `ops.UNFOLLOWED` (an offline copy's `sync`, a
+  Zotero link's `zotero`, a synced vault's `disk`: typed elsewhere; the
+  paper-metadata worker's `meta`: no one's keystrokes) follow nothing. The
+  AI's batches are the chat owner's, so the owner follows what the AI edits.
+- **Without a row.** The owner of a personal workspace follows every page of
+  it (`inbox._default_level`): the library is theirs, and its pages from
+  before following existed have no rows. Anyone else hears of replies and
+  mentions only, so a page of a shared workspace that no one has touched
+  since this release has no followers.
+- **Who hears.** `inbox.followers(ws, page_id)` is the owner of a personal
+  workspace (unless they chose Replies and @mentions), then the rows at
+  `all`, oldest first. `inbox._from_comment` hands them to `emit` for a
+  `create` or a `reply` event, less those already told, so `emit`'s rules
+  apply: no actor, no guest, only those `reach` admits (a follower who lost
+  access hears nothing), 25 at most. An edit of a comment tells no follower.
+- **The choice.** `inbox.set_notify_level(ws, page_id, user_id, level)`
+  writes the account's row (`ON CONFLICT … DO UPDATE`), which no later edit
+  or comment of theirs changes; `inbox.notify_level` reads it, or the default
+  above.
+- **Upkeep.** A page deleted for good takes its rows (`ops._purge`). A member
+  who leaves or is removed, and a deleted account, lose theirs with their
+  workspace prefs (`db.delete_workspace_prefs`). A follower who is a share's
+  invitee keeps the row while the share stops naming them; `reach` keeps them
+  out.
 
 ## Live delivery
 
@@ -631,7 +692,13 @@ cache), not by its id. A click scrolls to the anchor, flashes it
 and opens its popover at the thread. A thread that comes rises into the
 list, and one with a new reply glides to the top as the others make room
 (`ListMotion`); the page's threads loading fill it still. In a thread,
-wherever it is drawn, a new comment rises into place.
+wherever it is drawn, a new comment rises into place. Beside the tabs, for a
+reader with an Inbox (App's `canFollow`: a commenter who is no guest
+account), a bell `MenuSelect` is the page's Notify me: **All comments** or
+**Replies and @mentions**, under a "Notify me" heading. The window reads
+it (`GET /pages/{id}/notify`) when it opens and for each page it shows; a
+choice shows at once and goes back, said in the status line, when the
+server refuses it.
 
 **Links.** Copy link gives `?page=&block=&thread=` (no `block` for the
 page's own thread) with the workspace, or with `share=` in a share view.
@@ -895,8 +962,13 @@ has notifications; the iPad's WKWebView has none, and the row says so.
 - **More of a thread.** No reactions, no anchor on a range of text inside a
   block (a thread hangs on the whole block), no person filter in the
   Comments window, no role or share access that reads without commenting
-  (every signed-in reader may comment), no following a page to hear of
-  every comment on it.
+  (every signed-in reader may comment).
+- **More of following.** Notify me is set in the Comments window only: not
+  from the tab's menu or from an Inbox item, as Notion's page menu and
+  inbox rows allow. A page inside a followed page is not followed with it
+  (Notion's sub-pages neither). No database-style "All updates" level (edits
+  as well as comments), and no backfill of the people who edited a shared
+  workspace's pages before following existed.
 - **More of the inbox.** Reminders keep their corner cards and stay out of
   the Inbox. There is no e-mail, no mobile push and no notification on the
   iPad (its WKWebView has no `Notification`); a system notification rings
@@ -925,6 +997,10 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   re-save, a moved name, a half-typed name archived); who is left out (the
   actor, guests, non-members, an offline copy, a mirror, a link visitor);
   the share tokens `reach` hands out and the settle updates; the 25 cap.
+  Following a page: who follows (its maker, an editor, a commenter, a
+  personal library's owner without a row), one item a person, Notify me
+  and its bounds, the batches that follow nothing (`ops.UNFOLLOWED`, no
+  account), the rows gone with the page and with a member who leaves.
   Also the listing, its paging and its settle, the marks, the cleanups and
   the sweep, the nudge reaching the recipient's sockets only, a users.db
   error never failing a write, a share whose name cannot be read still

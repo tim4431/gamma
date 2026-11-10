@@ -16,10 +16,11 @@ runs in a worker thread with a ``Job`` handle and returns the result (a
 JSON value). It reports through ``job.progress(...)``, which raises
 ``Cancelled`` once the job was stopped, so every report is a place where the
 job can stop (``Refused``, which fails it with a reason, once a delete took
-the workspace a ``writes`` job changes: ``refuse_writers``); ``stoppable=False`` marks the point after which it no longer
-can (a restore swapping the databases). A job that produces a file writes
-it to ``job.artifact_path`` and names the download with
-``job.set_artifact``. An exception fails the job with its message. What a
+the workspace a ``writes`` job changes: ``refuse_writers``);
+``stoppable=False`` marks the point after which it no longer can (a restore
+swapping the databases). A job that produces a file writes it to
+``job.artifact_path`` and names the download with ``job.set_artifact``. An
+exception fails the job with its message. What a
 run needs that its params cannot hold (a translated export's layout) is
 ``kept`` with the job (``start(kept=...)``, ``kept(id, name)``) for as long
 as the job is listed, however it ended, so the job can be started again.
@@ -31,8 +32,9 @@ workspace's own work (owner ``WORKSPACE``, the indexer) runs outside those
 limits. A share view's exports are owned by the share (``share_owner``),
 which stands for an account in every limit. A finished job is kept
 ``RETENTION_S``, then ``sweep`` removes it with its file, and the files of
-one account are capped together (``ARTIFACT_CAP``). At startup, the jobs a stopped process left queued or
-running are failed as interrupted (``recover``).
+one account are capped together (``ARTIFACT_CAP``). At startup, the jobs a
+stopped process left queued or running are failed as interrupted
+(``recover``).
 """
 
 import json

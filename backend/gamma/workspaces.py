@@ -867,7 +867,9 @@ def _delete_rows(conn, ws: str) -> list[tuple[str, str, str]]:
     ``(link_id, invited_by, server_url)`` of its invitations by e-mail and
     its shares', whose mailed links the caller withdraws once it
     committed."""
-    conn.execute("DELETE FROM integration_tokens WHERE workspace_id = ?", (ws,))
+    from .integrations import forget_workspace  # local: integrations imports this module
+
+    forget_workspace(conn, ws)
     conn.execute("DELETE FROM workspace_members WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM pending_memberships WHERE workspace_id = ?", (ws,))
     links = delete_email_invites(conn, "kind = 'workspace' AND workspace_id = ?", (ws,))

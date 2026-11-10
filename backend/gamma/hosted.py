@@ -48,7 +48,6 @@ Not hosted (``GAMMA_HOSTED`` unset), or hosted but never synced, ``limits``
 is None and the server runs on its own settings.
 """
 
-import base64
 import json
 import os
 import threading
@@ -365,12 +364,11 @@ def sync_now() -> dict | None:
             _failed("GAMMA_HOSTED is set, but GAMMA_CLOUD_ISSUER, GAMMA_CLOUD_CLIENT_ID and "
                     "GAMMA_CLOUD_CLIENT_SECRET do not name this server's own client")
             return None
-        basic = base64.b64encode(f"{cfg['client_id']}:{secret}".encode()).decode("ascii")
         try:
             sent = report()
             answer = _normalized(cloud_auth._http(
                 cfg["issuer"] + SYNC_PATH, data=json.dumps(sent).encode(), method="POST",
-                headers={"Authorization": f"Basic {basic}", "Content-Type": "application/json"}))
+                headers={**cloud_auth.client_basic(cfg), "Content-Type": "application/json"}))
         except CloudAuthError as e:
             _failed(str(e))
             return None

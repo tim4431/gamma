@@ -8,15 +8,24 @@ function shellQuote(value, platform) {
     : "'" + value.replaceAll("'", "'\"'\"'") + "'";
 }
 
-export function codexSetupCommand(serverUrl, platform) {
+// Run one of the release's setup scripts (`<name>.ps1` / `<name>.sh`) with
+// `args`, [[PowerShell parameter, value]] in the shell script's order; a
+// parameter without a value is a switch (`-Remove`, `--remove` for sh).
+function releaseScript(name, args, platform) {
   const quote = (value) => shellQuote(value, platform);
   if (platform === "windows") {
-    return `& ([scriptblock]::Create((Invoke-RestMethod ${quote(releaseBase + "/install-gamma-codex.ps1")}))) -ServerUrl ${quote(serverUrl)}`;
+    return `& ([scriptblock]::Create((Invoke-RestMethod ${quote(`${releaseBase}/${name}.ps1`)}))) `
+      + args.map(([flag, value]) => value === undefined ? `-${flag}` : `-${flag} ${quote(value)}`).join(" ");
   }
   // Download completely before executing, and leave stdin attached to the
   // terminal so Codex can open its interactive browser authorization flow.
   // The subshell keeps the cleanup trap local to setup, including failed downloads.
-  return `(gamma_setup=$(mktemp) && trap 'rm -f "$gamma_setup"' 0 && curl -fsSL ${quote(releaseBase + "/install-gamma-codex.sh")} -o "$gamma_setup" && sh "$gamma_setup" ${quote(serverUrl)})`;
+  return `(gamma_setup=$(mktemp) && trap 'rm -f "$gamma_setup"' 0 && curl -fsSL ${quote(`${releaseBase}/${name}.sh`)} -o "$gamma_setup" && sh "$gamma_setup" `
+    + args.map(([flag, value]) => value === undefined ? `--${flag.toLowerCase()}` : quote(value)).join(" ") + ")";
+}
+
+export function codexSetupCommand(serverUrl, platform) {
+  return releaseScript("install-gamma-codex", [["ServerUrl", serverUrl]], platform);
 }
 
 export function claudeConnectCommand(serverUrl, platform, { replace = false } = {}) {
@@ -27,31 +36,23 @@ export function claudeConnectCommand(serverUrl, platform, { replace = false } = 
 // Run from the parent of the extracted gamma-marketplace directory on either OS.
 export const claudePluginInstallCommands = "claude plugin marketplace add ./gamma-marketplace\nclaude plugin install gamma@gamma-local --scope user";
 
-// DeepSeek Harness installs Gamma as a dsh bundle (plugins/gamma/package.json +
-// cordis.patch.yml). pnpm cannot reuse a remote tarball it has already resolved
-// (a second profile or an update fails for want of an integrity hash), so the
-// command downloads the release tarball to a fixed file in the dsh home and adds
-// that file; running it again updates in place.
-export function dshInstallCommand(platform) {
-  const url = shellQuote(releaseBase + "/dsh-gamma.tgz", platform);
-  if (platform === "windows") {
-    return "$dshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $HOME '.dsh' }\n"
-      + "New-Item -ItemType Directory -Force $dshHome | Out-Null\n"
-      + "$bundle = Join-Path $dshHome 'dsh-gamma.tgz'\n"
-      + `Invoke-WebRequest -UseBasicParsing ${url} -OutFile $bundle\n`
-      + "npx @deepseek-ai/dsh plugin --profile web add $bundle";
-  }
-  return `(dsh_home="\${DSH_HOME:-$HOME/.dsh}" && mkdir -p "$dsh_home" && curl -fsSL -o "$dsh_home/dsh-gamma.tgz" ${url}`
-    + ` && npx @deepseek-ai/dsh plugin --profile web add "$dsh_home/dsh-gamma.tgz")`;
+// DeepSeek Harness has no browser sign-in: its setup script (tools/install-gamma-dsh.*)
+// adds the Gamma plugin to the dsh profiles on that computer, then exchanges the
+// one-time setup code for the connection's token and saves it where the plugin
+// reads it when dsh starts. The token never appears in the command or on screen.
+export function dshSetupCommand(serverUrl, setupCode, platform) {
+  return releaseScript("install-gamma-dsh", [["ServerUrl", serverUrl], ["SetupCode", setupCode]], platform);
 }
 
-// dsh's MCP client has no OAuth: the bundle reads the address and a manual
-// token from the environment when dsh starts. The token is typed at a prompt,
-// never into the command, so it stays out of shell history.
-export function dshStartCommand(serverUrl, platform) {
-  const url = shellQuote(serverUrl, platform);
-  if (platform === "windows") {
-    return `$env:GAMMA_URL = ${url}\n$env:GAMMA_TOKEN = Read-Host 'Gamma token'\nnpx @deepseek-ai/dsh web`;
-  }
-  return `export GAMMA_URL=${url}\nprintf 'Gamma token: '; read -r GAMMA_TOKEN; export GAMMA_TOKEN\nnpx @deepseek-ai/dsh web`;
+// Taking Gamma out of each assistant: its MCP connection and, where setup
+// installed one, the plugin and its local marketplace. The same on every
+// platform but DeepSeek Harness's, whose script removes the plugin from the
+// profiles that have it and deletes the saved connection. Disconnecting in
+// Gamma ends the access itself.
+export const claudeRemoveCommands = "claude mcp remove gamma --scope user\n"
+  + "claude plugin uninstall gamma@gamma-local --scope user\nclaude plugin marketplace remove gamma-local";
+export const codexRemoveCommands = "codex mcp remove gamma\ncodex plugin remove gamma@gamma-local\n"
+  + "codex plugin marketplace remove gamma-local";
+export function dshRemoveCommand(platform) {
+  return releaseScript("install-gamma-dsh", [["Remove"]], platform);
 }

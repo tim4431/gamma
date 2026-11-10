@@ -38,7 +38,8 @@ async function stillEditing(page, text) {
   }, text, { timeout: 5000 });
 }
 
-// Escape never closes the editor (it only dismisses popups); an in-page blur does.
+// An in-page blur closes the editor. (Escape, once no popup takes it, closes
+// it too and selects its note: useBlockSelection.js.)
 export async function closeEditor(page) {
   await page.evaluate(() => document.activeElement?.blur());
   await page.waitForSelector(".blockEditorCm", { state: "detached", timeout: 5000 });
@@ -540,6 +541,107 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await saved([{ content: "first", children: [{ content: "second", children: [] }] }, { content: "third", children: [] }], "moved back");
     assertEq(await line.count(), 0, "no drop line after the drop");
     assertNoProblems(page);
+  });
+
+  await step("notes: whole notes are selected as in Notion — a drag across them, a box from the blank, Shift+click, Esc — and their keys, menu and handle act on them all, each one undo step", async () => {
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Select source" } });
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "selA", parent: src.id, position: "a0", content: "alpha" },
+      { op: "insert", id: "selB", parent: src.id, position: "a1", content: "bravo" },
+      { op: "insert", id: "selBk", parent: "selB", position: "a0", content: "bravo kid" },
+      { op: "insert", id: "selC", parent: src.id, position: "a2", content: "charlie" },
+      { op: "insert", id: "selD", parent: src.id, position: "a3", content: "delta" },
+      { op: "insert", id: "selE", parent: src.id, position: "a4", content: "echo" }] } });
+    const n = (content, children = []) => ({ content, children });
+    const start = [n("alpha"), n("bravo", [n("bravo kid")]), n("charlie"), n("delta"), n("echo")];
+    const savedHere = (want, what) => until(async () => same(await tree(alice2, src.id), want), { what });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    try {
+      await p2.waitForSelector(".blockRow", { timeout: 15000 });
+      const picked = () => p2.locator(".blockRow.selected .blockRendered").allInnerTexts();
+      const isPicked = (want, what) => until(async () => same(await picked(), want), { what });
+      const centre = async (text) => {
+        const box = await row(p2, text).locator(".blockBody").boundingBox();
+        return { x: box.x + Math.min(30, box.width / 2), y: box.y + box.height / 2 };
+      };
+      const dragMouse = async (from, to) => {
+        await p2.mouse.move(from.x, from.y);
+        await p2.mouse.down();
+        await p2.mouse.move(to.x, to.y, { steps: 12 });
+        await p2.mouse.up();
+      };
+
+      // A drag from one note into another selects the notes between them,
+      // the one under a selected note with it, and no editor stays open.
+      await dragMouse(await centre("bravo"), await centre("delta"));
+      await isPicked(["bravo", "bravo kid", "charlie", "delta"], "the drag selected bravo to delta");
+      assertEq(await p2.locator(".blockEditorCm").count(), 0, "the editor the press opened is closed");
+      await p2.keyboard.press("Tab");
+      await savedHere([n("alpha", [n("bravo", [n("bravo kid")]), n("charlie"), n("delta")]), n("echo")], "Tab indented the three under alpha");
+      await p2.keyboard.press("Shift+Tab");
+      await savedHere(start, "Shift+Tab put them back");
+      await p2.keyboard.press("Control+Shift+ArrowUp");
+      await savedHere([n("bravo", [n("bravo kid")]), n("charlie"), n("delta"), n("alpha"), n("echo")], "moved up as one");
+      await p2.keyboard.press("Control+Shift+ArrowDown");
+      await savedHere(start, "moved back down");
+      await p2.keyboard.press("Delete");
+      await savedHere([n("alpha"), n("echo")], "Delete removed the three and what is under them");
+      assertEq((await picked()).length, 0, "nothing stays selected");
+      await p2.keyboard.press("Control+z");
+      await savedHere(start, "one undo brings them all back");
+
+      // A drag from the blank beside the notes draws a box; Esc lets go.
+      const blank = await p2.evaluate(() => {
+        const BLANK = ["blockList", "listMotion", "sortableBlockWrap", "rowHandles", "blockFold", "blockChildren"];
+        const rows = [...document.querySelectorAll(".blockList .blockRowWrap")];
+        const last = rows[rows.length - 1].getBoundingClientRect();
+        const y = last.top + last.height / 2;
+        for (let x = Math.ceil(document.querySelector(".blockList").getBoundingClientRect().left) + 1; x < last.left; x++) {
+          const el = document.elementFromPoint(x, y);
+          if (el && BLANK.some((c) => el.classList.contains(c))) return { x, y };
+        }
+        return null;
+      });
+      assert(blank, "there is blank space beside the last note");
+      const delta = await centre("delta");
+      await dragMouse(blank, { x: blank.x + 120, y: delta.y });
+      await isPicked(["delta", "echo"], "the box selected the two notes it touches");
+      assertEq(await p2.locator(".blockSelectBand").count(), 0, "the box goes with the release");
+      await p2.keyboard.press("Escape");
+      await isPicked([], "Esc let them go");
+
+      // Shift+click from the note being written in; the handle's menu acts on all.
+      await row(p2, "alpha").locator(".blockBody").click();
+      await p2.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
+      await row(p2, "charlie").locator(".blockBody").click({ modifiers: ["Shift"] });
+      await isPicked(["alpha", "bravo", "bravo kid", "charlie"], "Shift+click selected from the note being edited");
+      assertEq(await p2.locator(".blockEditorCm").count(), 0, "and closed its editor");
+      const wrapC = p2.locator(".sortableBlockWrap", { hasText: "charlie" }).first();
+      await wrapC.hover();
+      await wrapC.locator(".dragHandle").click();
+      await p2.locator(".ctxMenuItem", { hasText: "Delete 3 blocks" }).click();
+      await savedHere([n("delta"), n("echo")], "the menu deleted the three");
+      await p2.keyboard.press("Control+z");
+      await savedHere(start, "and one undo brought them back");
+
+      // Esc in a note selects it, Alt+Shift+click adds one, and a selected
+      // note's handle drags them both.
+      await editRow(p2, "echo");
+      await p2.keyboard.press("Escape");
+      await isPicked(["echo"], "Esc in the editor selected its note");
+      assertEq(await p2.locator(".blockEditorCm").count(), 0, "its editor closed");
+      await row(p2, "alpha").locator(".blockBody").click({ modifiers: ["Alt", "Shift"] });
+      await isPicked(["alpha", "echo"], "Alt+Shift+click added alpha");
+      const handleE = await p2.locator(".sortableBlockWrap", { hasText: "echo" }).first().locator(".dragHandle").first().elementHandle();
+      const drag = await startDrag(p2, handleE, "charlie");
+      await drag.finish("drop");
+      await savedHere([n("bravo", [n("bravo kid")]), n("alpha"), n("echo"), n("charlie"), n("delta")], "both moved above charlie, in order");
+      await p2.keyboard.press("Control+z");
+      await savedHere(start, "one undo for the drop");
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
   });
 
   await step("notes: a todo renders as a checkbox and clicking it writes [x]", async () => {

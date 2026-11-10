@@ -7,9 +7,9 @@ two switches, **pull** (Gamma to disk) and **push** (disk to Gamma: off,
 PDFs, or everything). A folder vault that pulls and pushes everything is a
 folder of Gamma and an Obsidian-style directory kept in step both ways: a
 note edited in either place reaches the other, a new file becomes a page,
-a page renamed renames its file. A vault that only pulls is the old *keep
-on this computer*: Gamma's pages written as files, what changes on disk
-kept and reported, never sent back.
+a page renamed renames its file. A vault that only pulls writes Gamma's
+pages as files: what changes on disk is kept and reported, never sent
+back.
 
 Only the desktop app's own server keeps vaults (`GAMMA_FOLDER_LINKS`,
 `config.folder_links_enabled`). On any other server, a NAS among them,
@@ -125,16 +125,21 @@ Gamma's server is the **remote**, the directory or the file here is
   menu: *Push from a file on this computer…*. The launcher and the sync
   panel: *Add a synced vault…*, which starts from a directory. The
   desktop app's Server menu: *Open a PDF…*.
-- The sync panel: a row per vault with its name, its place, its remote and
-  its state; *Sync now*, *Pull now*, *Push now*, *Pause*, *Force pull…*,
-  *Force push…*, *Locate…* for a stopped vault, *Go on…* for a held one,
-  *Remove the vault…*. The upload arrow is the push switch.
-- A page of a vault: a chip in the page header, *Synced: Attention.md*
-  (*Pushed from: main.pdf* for a vault of one file), its card with the
-  path, the direction (*Pull: on · Push: everything*), *Show in folder* and
-  *Edit the file*, and a banner *Not written to disk: …* when the last
-  write was refused or the vault reaches no file now (stopped, offline,
-  held, failed). An opened PDF: *On this computer* or *File missing*.
+- The sync panel: a row per vault with its name, its direction and its
+  state, its place and its remote in the row's tooltip. Its *…* opens the
+  vault's view: the switches *Pull* and *Push*, then *Sync now*, *Pull
+  now*, *Push now*, *Pause* and the directory as a bar of buttons named by
+  their tooltips, and *Go on…* for a held vault, *Locate…* for a stopped
+  one, *Force pull…*, *Force push…* and *Remove the vault…* as rows.
+- A page of a vault: a chip among the page header's buttons, one icon for
+  how the page stands: kept in step, pushed from a file of its own,
+  paused, or something to see to. Its tooltip says it in words, *Synced:
+  Attention.md* (*Pushed from: main.pdf* for a vault of one file). Its
+  card holds the path, the direction (*Pull: on · Push: everything*),
+  *Show in folder* and *Edit the file*. A banner, *Not written to disk:
+  …*, shows when the last write was refused or the vault reaches no file
+  now (stopped, offline, held, failed). An opened PDF: a disk, *On this
+  computer*, or the alert icon and *File missing*.
 - The client: `pull`, `sync`, `push`.
 
 In the code the table stays `folder_links` and the API
@@ -403,7 +408,7 @@ to *Add to library…*, since its bytes must be stored before it leaves
 (`vaultState.isOpenedPdf`), and *Move to folder ▸* is hidden while an
 opened PDF is among the pages acted on. The account preference `openAddsToLibrary`
 (Reading, off by default), and the Mac App Store build, make *Open with*
-add the file to the library as before.
+add the file to the library instead.
 
 ## The lens
 

@@ -517,13 +517,18 @@ def pdf_id(path: Path) -> str:
     return re.sub(rb"\s", b"", hexed).decode("ascii").lower() if hexed is not None else literal.hex()
 
 
+def _body_words(text: str) -> list:
+    """A note's words, its front matter left out."""
+    return _WORDS_RE.findall(_FRONT_RE.sub("", text, count=1))
+
+
 def similarity(a: str, b: str, floor: float = MOVE_SIMILAR) -> float:
     """How alike two notes' texts are, word by word, 0 to 1; 0 at once for two
     that cannot reach ``floor``, and for an empty one. The words are the
-    body's: front matter and marks (``- [ ]``, ``>``, ``#``) say nothing of
-    which note it is, and a short note saved under a new name with a
-    ``title:`` key or a task added would read as another."""
-    x, y = _WORDS_RE.findall(_FRONT_RE.sub("", a, count=1)), _WORDS_RE.findall(_FRONT_RE.sub("", b, count=1))
+    body's (``_body_words``): front matter and marks (``- [ ]``, ``>``, ``#``)
+    say nothing of which note it is, and a short note saved under a new name
+    with a ``title:`` key or a task added would read as another."""
+    x, y = _body_words(a), _body_words(b)
     if not x or not y:
         return 0.0
     seq = difflib.SequenceMatcher(None, x, y)
@@ -577,10 +582,10 @@ def kept(a: str, b: str) -> float:
     """How much of note ``a`` note ``b`` keeps, word by word in their order, 0
     to 1 (0 for an empty one); the words are the body's, as ``similarity``
     reads them."""
-    x, y = _WORDS_RE.findall(_FRONT_RE.sub("", a, count=1)), _WORDS_RE.findall(_FRONT_RE.sub("", b, count=1))
+    x, y = _body_words(a), _body_words(b)
     if not x or not y:
         return 0.0
-    blocks = difflib.SequenceMatcher(None, x, y, autojunk=False).get_matching_blocks()
+    blocks =difflib.SequenceMatcher(None, x, y, autojunk=False).get_matching_blocks()
     return sum(block.size for block in blocks) / len(x)
 
 
@@ -775,11 +780,11 @@ def write_new(root: Path, rel: str, data: bytes, ready=None) -> Written:
         tmp.unlink(missing_ok=True)
 
 
-def clean_temps(root: Path, temps, now: float | None = None) -> int:
+def clean_temps(root: Path, temps) -> int:
     """Gamma's temporary files a scan met (``Scan.temps``) that a write left
     when it died, ``STALE_TEMP_S`` old, removed (``remove``): how many went. A
     write going on now is younger."""
-    now, gone = time.time() if now is None else now, 0
+    now, gone = time.time(), 0
     for rel in temps:
         temp = root / rel
         try:

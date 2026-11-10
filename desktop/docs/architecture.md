@@ -329,13 +329,15 @@ kept or the vault dialog is up; its tooltip counts them ("1 clone and 2
 synced vaults on this computer: synced"). Its **panel** lists three
 groups, *Clones*, *Zotero links* and *Synced vaults*, each row with its
 name over its state, a state dot, and its action buttons, always shown
-(each named by its tooltip). A vault's row adds its direction as two marks
-after its name (↓ pull, ↑ push with a small *PDF* when it pushes PDFs,
-dim while off; a vault of one file shows only ↑) and a second line, `path
-⇄ remote · folder`: `D:\Papers ⇄ NAS · Research / Papers`. Under the
-groups come *Add a synced vault…* and, while a workspace is open, *Sync a
-folder of <workspace> with this computer…*. That opens the panel's second
-level, the chooser: *Whole library* and every folder of the open workspace
+(each named by its tooltip). A vault's row adds its direction after its
+name as the two arrows its view's *Pull now* and *Push now* carry: the
+pull arrow lit while it pulls, the push arrow lit while it pushes
+everything and half-lit while it pushes PDFs only, dim while off (a vault
+of one file shows the push arrow alone). Its `path ⇄ remote · folder`,
+`D:\Papers ⇄ NAS · Research / Papers`, is in the row's tooltip. Under
+the groups come *Add a synced vault…* and, while a
+workspace is open, *Sync a folder of <workspace>…*. That opens the
+panel's second level, the chooser: *Whole library* and every folder of the open workspace
 (`shell:folders` → `listFolders`: the open server's `GET /api/sync/folders`
 with the content session's cookies, and the vaults from `listLinks`). A
 folder that has a vault reads *synced* and opens its directory on click
@@ -366,17 +368,18 @@ other asks for a directory (`shell:add-folder-vault` → `addFolderVault`).
   from the round's lock, so a mark a stopped server left never reads as a
   round), and no request stays open for it. A paused vault syncs too and
   stays paused.
-- A folder's vault has a push switch: it turns pushing PDFs on and off
-  (`PATCH {push: "pdfs" | "off"}`), reading pressed while on. On a vault
-  that pushes everything it opens the vault's view instead, so one click
-  never drops it to off.
-- *more* (…) opens the vault's own view, the panel's second level.
+- *more* (…) opens the vault's own view, the panel's second level, where
+  the switches are. A row carries none of its own: a push switch there
+  could drop a vault that pushes everything to off in one click.
 
 **A vault's own view** has a back row (*Synced vaults*), *Local*, *Remote*
 and *State* (the state's tooltip on it), and for a folder's vault the two
 switches as the dialog has them: a remote's folder keeps *Pull* on and
 *everything* shut (`keeping.REMOTE_RULE`, which `setPull` and `setPush`
-refuse too). Its actions, each through
+refuse too). Its everyday actions follow as a bar of round buttons
+(`.vaultBar`: *Sync now*, *Pull now*, *Push now*, *Pause* or *Resume*, and
+the directory), each named by its tooltip; the rare and the grave ones
+keep their rows, where their words warn. Each goes through
 `shell:keeping-action` (kind, server, id, action, value: `VAULT_ACTIONS` in
 `main.js`):
 

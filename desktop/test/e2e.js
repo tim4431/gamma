@@ -330,10 +330,12 @@ async function syncInDialog(bar, said) {
   return text;
 }
 
-// A vault's own view in the panel (its row's "more"), at its action `act`.
+// A vault's own view in the panel (its row's "more"), at its action `act`:
+// a button of the view's bar (sync, pull-now, push-now, pause, open) or a
+// row under it (go-on, locate, the forces, remove).
 async function vaultAct(row, bar, act) {
   await row.locator('[data-act="more"]').click();
-  const item = bar.locator(`#syncPanel #vaultView ~ .vaultAct[data-act="${act}"]`);
+  const item = bar.locator(`#syncPanel .vaultAct[data-act="${act}"]`);
   await item.waitFor({ timeout: 15_000 });
   return item;
 }
@@ -832,14 +834,15 @@ async function main() {
       await menuClosed(bar);
       const row = await keptRow(app, bar, 'vault', 'Kept lab');
       assert.equal(await bar.locator('#syncPanel .menuLabel', { hasText: 'Synced vaults' }).count(), 1, 'under its group');
-      assert((await row.locator('.where').textContent()).includes(`${fs.realpathSync(kept).split(path.sep).pop()} ⇄ Alpha · Kept lab`), 'path ⇄ remote · folder');
-      for (const act of ['pause', 'sync', 'push', 'more']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown without hovering`);
+      assert((await row.getAttribute('title')).includes(`${fs.realpathSync(kept).split(path.sep).pop()} ⇄ Alpha · Kept lab`), 'path ⇄ remote · folder in its tooltip');
+      for (const act of ['pause', 'sync', 'more']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown without hovering`);
+      assert.equal(await row.locator('[data-act="push"]').count(), 0, 'the push switch is the vault view\'s, not the row\'s');
       await row.locator('[data-act="sync"]').click();
       await waitFor(async () => /is up to date/.test((await hook(app, (s) => s.notice())) || ''), 'the sync reported', 15_000);
       await panelStaysOpen(app, bar);
       // "pause" leaves the panel open on the paused row, whose "resume" starts it again.
       await row.locator('[data-act="pause"]').click();
-      await waitFor(async () => (await row.locator('.state:not(.where)').textContent()).startsWith('Paused'), 'shown paused', 15_000);
+      await waitFor(async () => (await row.locator('.state').textContent()).startsWith('Paused'), 'shown paused', 15_000);
       await panelStaysOpen(app, bar);
       const linkOf = async () => (await hook(app, (s, w) => s.listFolders(w), ws)).links[0];
       assert((await linkOf()).status.paused_at, 'paused on the server');
@@ -978,12 +981,11 @@ async function main() {
       const row = await keptRow(app, bar, 'vault', 'Followed draft');
       assert.equal(await row.getAttribute('data-scope'), 'file');
       for (const act of ['pause', 'sync', 'more']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown`);
-      assert.equal(await row.locator('[data-act="push"]').count(), 0, 'a file always pushes: no switch');
       await row.locator('[data-act="sync"]').click();
       await waitFor(async () => (await docOf()) === second, 'the page carries the second build', 60_000, 500);
       await waitFor(async () => /main\.pdf( was pushed to Gamma|: nothing new to push)/.test((await hook(app, (s) => s.notice())) || ''), 'the push reported', 15_000);
       await panelStaysOpen(app, bar);
-      await waitFor(async () => (await row.locator('.state:not(.where)').textContent()).startsWith('Pushed'), 'the row reads Pushed', 15_000);
+      await waitFor(async () => (await row.locator('.state').textContent()).startsWith('Pushed'), 'the row reads Pushed', 15_000);
       // "Remove the vault…" drops it; the file stays as it is.
       await (await vaultAct(row, bar, 'remove')).click();
       await menuClosed(bar);
@@ -997,21 +999,23 @@ async function main() {
       return `${page.id} pushed from ${link.dest}: ${first}, then ${second}`;
     });
 
-    await step('pushing from a folder\'s vault: the row\'s push switch turns pushing its PDFs on and off, in words', async () => {
+    await step('pushing from a folder\'s vault: the Push segment in the vault\'s view turns pushing its PDFs on and off, in words', async () => {
       const row = await keptRow(app, bar, 'vault', 'Kept lab');
       const pushOf = async () => {
         await hook(app, (s) => s.refreshKeeping());
         return (await hook(app, (s) => s.keeping().items.find((i) => i.kind === 'vault' && i.name === 'Kept lab'))).push;
       };
-      const toggle = (pressed) => row.locator(`[data-act="push"][aria-pressed="${pressed}"]`);
-      assert.equal(await toggle(false).count(), 1, 'off until asked for');
-      await toggle(false).click();
-      await waitFor(async () => (await toggle(true).count()) === 1, 'shown on', 15_000);
+      await row.locator('[data-act="more"]').click();
+      const seg = (word) => bar.locator(`#syncPanel #vaultView .seg [data-push="${word}"]`);
+      await seg('off').waitFor({ timeout: 15_000 });
+      assert.equal(await seg('off').getAttribute('aria-pressed'), 'true', 'off until asked for');
+      await seg('pdfs').click();
+      await waitFor(async () => (await seg('pdfs').getAttribute('aria-pressed')) === 'true', 'shown on', 15_000);
       await panelStaysOpen(app, bar);
       assert.equal(await pushOf(), 'pdfs', 'pushing PDFs, on the server');
       await waitFor(async () => /pushes the PDFs you change there/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
-      await toggle(true).click();
-      await waitFor(async () => (await toggle(false).count()) === 1, 'shown off', 15_000);
+      await seg('off').click();
+      await waitFor(async () => (await seg('off').getAttribute('aria-pressed')) === 'true', 'shown off', 15_000);
       assert.equal(await pushOf(), 'off', 'off, on the server');
       await waitFor(async () => /no longer pushes/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
       await bar.keyboard.press('Escape');

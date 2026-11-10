@@ -2003,6 +2003,10 @@ MuPDF's behaviour the writer depends on, each held by a test in
   a page drawn inside a form gives up only what lies in the box.
 - MuPDF 1.28's filter drops a `Tm` that repeats the line's: an overstruck
   glyph is drawn where the page drew it, or the formula is a picture.
+- PyMuPDF 1.28's `PdfFilterOptions()` leaves `no_update` as the memory had
+  it, and set, every form the filter copies comes out empty, so `_filtered`
+  sets it to 0; otherwise a formula on a form went a picture or not as the
+  heap fell, with the tests run before it.
 
 Why it is built this way, and the measurements:
 [research/translated-pdf-export.md](../research/translated-pdf-export.md).

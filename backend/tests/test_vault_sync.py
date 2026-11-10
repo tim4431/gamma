@@ -2969,7 +2969,7 @@ def test_tags_typed_on_disk_reach_gamma_with_the_blocks_wherever_the_round_dies(
     v.sync()
     page = v.page_of("note.md")
     v.write("note.md", f"---\n{front}\n---\nalpha\n", age=10)
-    promote, apply = vault_store.promote, LocalRemote.apply
+    promote = vault_store.promote
 
     def killed_after(link_id, path, token, **fields):
         if path == "note.md":

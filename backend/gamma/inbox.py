@@ -4,7 +4,9 @@ can reach (docs/dev/comments.md "The inbox").
 One row of users.db ``inbox_items`` per event and recipient, written when
 the event happens: someone mentioned in a note (``mention``) or in a
 comment (``comment_mention``), a reply in a thread they are in (``reply``),
-their thread resolved by someone else (``resolved``), a page or folder
+any other comment on a page they follow (``comment``: ``followers``,
+Notion's Notify me), their thread resolved by someone else
+(``resolved``), a page or folder
 shared with them (``shared``), added to a shared workspace (``invited``),
 someone without an account here asking to join through a share they
 manage (``join_request``: its actor is ``cloud:<subject>``, its snippet the
@@ -32,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 from . import collab, join_requests, mentions, workspaces
 from .auth import (DISK_CLIENT, LINK_ACTOR_PREFIX, MIRROR_ACTOR, ZOTERO_ACTOR, ZOTERO_CLIENT, ShareScope, share_access,
                    share_lookup)
-from .blocks_store import new_block_id, page_ancestors
+from .blocks_store import new_block_id, page_ancestors, write_lock
 from .db import account_names, connect_pages_db, connect_users_db, format_stamp, page_now
 from .logbuf import log
 
@@ -49,6 +51,7 @@ ARCHIVED_KEEP_DAYS = 30    # an archived one this long after it was archived
 UNREAD_KEEP_DAYS = 180     # an unread one is archived this long after it happened
 NUDGE = {"t": "inbox"}     # what the recipient's page sockets hear: no content
 SYNC_CLIENT = "sync"       # sync_engine.CLIENT: an offline copy's own writes, typed elsewhere
+LEVELS = ("all", "replies")  # a page's Notify me: All comments, or Replies and @mentions
 
 _COLUMNS = ("id, kind, actor, workspace_id, page_id, block_id, thread_id, comment_id, share_token, snippet, "
             "at, read_at, archived_at")
@@ -139,6 +142,58 @@ def reach(ws: str, page_id: str, user_ids, via: str = "") -> dict[str, str]:
                 out[uid] = share["token"]
                 break
     return out
+
+
+# --- following a page --------------------------------------------------------------
+# Notion's Notify me (docs/dev/comments.md "Following a page"): a person
+# follows the pages they create, edit or comment on (blocks_store.follow_page,
+# the row pages.db ``page_follows`` keeps), and hears of every comment on
+# them; the owner of a personal workspace follows all of its pages. Each
+# account may set a page to All comments (``all``) or Replies and
+# @mentions (``replies``); the mentions and the replies to their threads
+# come whichever it is.
+
+def _default_level(ws: str, user_id: str) -> str:
+    """What a page the account never followed tells it: every comment in a
+    personal workspace of its own, replies and @mentions elsewhere."""
+    return "all" if workspaces.personal_owner(ws) == user_id else "replies"
+
+
+def notify_level(ws: str, page_id: str, user_id: str) -> str:
+    """``all`` or ``replies``: what a comment on the page tells the account."""
+    with connect_pages_db(ws) as conn:
+        row = conn.execute("SELECT level FROM page_follows WHERE page_id = ? AND user_id = ?",
+                           (page_id, user_id)).fetchone()
+    return row[0] if row else _default_level(ws, user_id)
+
+
+def set_notify_level(ws: str, page_id: str, user_id: str, level: str) -> None:
+    """The account's choice for the page, which no later edit or comment of
+    its own changes. ValueError for a level not in ``LEVELS``. Commits."""
+    if level not in LEVELS:
+        raise ValueError("level must be all or replies")
+    with connect_pages_db(ws) as conn:
+        write_lock(conn)
+        try:
+            conn.execute("INSERT INTO page_follows (page_id, user_id, level, at) VALUES (?, ?, ?, ?) "
+                         "ON CONFLICT (page_id, user_id) DO UPDATE SET level = excluded.level, at = excluded.at",
+                         (page_id, user_id, level, page_now()))
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
+
+def followers(ws: str, page_id: str) -> list[str]:
+    """The accounts set to every comment on the page: a personal
+    workspace's owner unless they chose otherwise, then the rows at
+    ``all``, oldest first (``emit`` tells the first ``MAX_RECIPIENTS``)."""
+    with connect_pages_db(ws) as conn:
+        rows = conn.execute("SELECT user_id, level FROM page_follows WHERE page_id = ? ORDER BY at, user_id",
+                            (page_id,)).fetchall()
+    owner = workspaces.personal_owner(ws)
+    chose = {u for u, _ in rows}
+    return ([owner] if owner and owner not in chose else []) + [u for u, level in rows if level == "all"]
 
 
 # --- writing -----------------------------------------------------------------------
@@ -301,9 +356,11 @@ def from_comment(ws: str, event: dict) -> None:
     """What a committed comment write (``comments.after_write``'s event)
     tells: ``comment_mention`` to each person a comment's text gains,
     ``reply`` to the thread's other authors and the people it mentions
-    (less those just mentioned), ``resolved`` to the author of a thread
-    someone else resolved. A deleted comment's items go with it. Never
-    raises."""
+    (less those just mentioned), ``comment`` to the page's other
+    ``followers`` for a new thread or a reply (one item a person: the
+    mention, else the reply, else this), ``resolved`` to the author of a
+    thread someone else resolved. A deleted comment's items go with it.
+    Never raises."""
     try:
         _from_comment(ws, event)
     except Exception as e:  # noqa: BLE001
@@ -331,16 +388,21 @@ def _from_comment(ws: str, event: dict) -> None:
     mentioned = set(ids.values())
     if mentioned:
         emit("comment_mention", sorted(mentioned), actor, ws, snippet=body, **where)
-    if kind != "reply":
+    if kind == "edit":
         return
-    with connect_pages_db(ws) as conn:
-        others = conn.execute("SELECT author, body FROM comments WHERE thread_id = ? AND id != ? "
-                              "ORDER BY created_at, id", (event["thread_id"], event["comment_id"])).fetchall()
-    in_thread = set()
-    for _author, text in others:
-        in_thread |= mentions.people_in(text)
-    people = [a for a, _ in others] + sorted(_ids_of(in_thread).values())
-    emit("reply", [p for p in dict.fromkeys(people) if p not in mentioned], actor, ws, snippet=body, **where)
+    told = set(mentioned)
+    if kind == "reply":
+        with connect_pages_db(ws) as conn:
+            others = conn.execute("SELECT author, body FROM comments WHERE thread_id = ? AND id != ? "
+                                  "ORDER BY created_at, id", (event["thread_id"], event["comment_id"])).fetchall()
+        in_thread = set()
+        for _author, text in others:
+            in_thread |= mentions.people_in(text)
+        people = [p for p in dict.fromkeys([a for a, _ in others] + sorted(_ids_of(in_thread).values()))
+                  if p not in mentioned]
+        emit("reply", people, actor, ws, snippet=body, **where)
+        told |= set(people)
+    emit("comment", [u for u in followers(ws, event["page_id"]) if u not in told], actor, ws, snippet=body, **where)
 
 
 def forget(ws: str, comment_ids) -> None:
