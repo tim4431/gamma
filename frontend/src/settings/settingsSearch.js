@@ -41,7 +41,7 @@ const entries = [
   // Top bar and Viewer tools: a row per item of app/topbarItems.js and
   // app/viewerToolItems.js, its label, hint and synonyms
   ...TOPBAR_ITEMS.map((item) => e("appearance", t(item.label), t("Top bar"), t(item.hint),
-    `topbar top bar header toolbar button show hide order reorder arrange drag move ${item.keywords}`)),
+    `topbar top bar header toolbar button show hide order reorder arrange drag move${item.places ? " pane split side by side" : ""} ${item.keywords}`)),
   ...VIEWER_TOOL_ITEMS.map((item) => e("appearance", t(item.label), t("Viewer tools"), t(item.hint),
     `viewer tools strip side toolbar PDF notebook button show hide order reorder arrange drag move ${item.keywords}`)),
   e("appearance", t("Suggest tours"), t("Tours"), t("A short tour the first time a feature comes up."), "guide onboarding hints help"),

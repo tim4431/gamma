@@ -3,7 +3,7 @@
 // so the top bar's and the strip's registries can change without these.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BAR_MODES, barShows, defineBar, moveVisible } from "../src/shared/model/barLayout.js";
+import { BAR_MODES, BAR_PLACES, barShows, defineBar, moveVisible } from "../src/shared/model/barLayout.js";
 
 const BAR = defineBar([
   { id: "a", popover: "pa", modes: ["always", "hidden"] },
@@ -49,7 +49,7 @@ test("moveVisible: the visible slots, the others keeping their places, the same 
 });
 
 test("the default is the registry's order and each item's first mode", () => {
-  assert.deepEqual(BAR.DEFAULT, { order: ORDER, modes: MODES });
+  assert.deepEqual(BAR.DEFAULT, { order: ORDER, modes: MODES, places: {} });
   assert.ok(Object.isFrozen(BAR.DEFAULT) && Object.isFrozen(BAR.DEFAULT.order) && Object.isFrozen(BAR.DEFAULT.modes));
   assert.equal(BAR.items.length, 4);
   assert.equal(BAR.item("c").phone, false);
@@ -59,10 +59,10 @@ test("the default is the registry's order and each item's first mode", () => {
 
 test("normalize: anything but an object is the codec's default, an object comes back whole", () => {
   for (const bad of [null, undefined, "always", 3, true, ["a", "b"]]) assert.equal(BAR.normalize(bad), undefined);
-  assert.deepEqual(BAR.normalize({}), { order: ORDER, modes: MODES });
-  assert.deepEqual(BAR.normalize({ order: "a,b", modes: "always" }), { order: ORDER, modes: MODES }, "parts of the wrong kind");
-  assert.deepEqual(BAR.normalize({ a: "hidden", c: "always" }), { order: ORDER, modes: MODES }, "a map of modes alone is no layout");
-  assert.deepEqual(BAR.normalize({ order: [], modes: { b: "auto" } }), { order: ORDER, modes: { ...MODES, b: "auto" } });
+  assert.deepEqual(BAR.normalize({}), { order: ORDER, modes: MODES, places: {} });
+  assert.deepEqual(BAR.normalize({ order: "a,b", modes: "always" }), { order: ORDER, modes: MODES, places: {} }, "parts of the wrong kind");
+  assert.deepEqual(BAR.normalize({ a: "hidden", c: "always" }), { order: ORDER, modes: MODES, places: {} }, "a map of modes alone is no layout");
+  assert.deepEqual(BAR.normalize({ order: [], modes: { b: "auto" } }), { order: ORDER, modes: { ...MODES, b: "auto" }, places: {} });
 });
 
 test("normalize: the stored order deduplicated, unknown ids dropped", () => {
@@ -86,7 +86,7 @@ test("normalize: a mode its item does not offer takes the item's default", () =>
 test("read and isDefault: no value is the default, the order matters", () => {
   assert.equal(BAR.read(undefined), BAR.DEFAULT);
   assert.equal(BAR.read("junk"), BAR.DEFAULT);
-  assert.deepEqual(BAR.read({ modes: { d: "hidden" } }), { order: ORDER, modes: { ...MODES, d: "hidden" } });
+  assert.deepEqual(BAR.read({ modes: { d: "hidden" } }), { order: ORDER, modes: { ...MODES, d: "hidden" }, places: {} });
   assert.ok(BAR.isDefault(undefined));
   assert.ok(BAR.isDefault(BAR.DEFAULT));
   assert.ok(BAR.isDefault({ order: ["a", "ghost", "b"], modes: { ghost: "hidden" } }));
@@ -97,12 +97,12 @@ test("read and isDefault: no value is the default, the order matters", () => {
 test("setMode: a new layout with that mode, an unoffered one leaving it as it is", () => {
   const value = { order: ["d", "c", "b", "a"], modes: { b: "auto" } };
   const next = BAR.setMode(value, "a", "hidden");
-  assert.deepEqual(next, { order: ["d", "c", "b", "a"], modes: { ...MODES, b: "auto", a: "hidden" } });
+  assert.deepEqual(next, { order: ["d", "c", "b", "a"], modes: { ...MODES, b: "auto", a: "hidden" }, places: {} });
   assert.deepEqual(value, { order: ["d", "c", "b", "a"], modes: { b: "auto" } }, "the value given is not changed");
   assert.deepEqual(BAR.setMode(undefined, "c", "always").modes, { ...MODES, c: "always" });
   assert.deepEqual(BAR.setMode(value, "a", "auto"), BAR.read(value), "a offers no auto");
   assert.deepEqual(BAR.setMode(value, "ghost", "hidden"), BAR.read(value));
-  assert.deepEqual(BAR.DEFAULT, { order: ORDER, modes: MODES }, "the default is never written");
+  assert.deepEqual(BAR.DEFAULT, { order: ORDER, modes: MODES, places: {} }, "the default is never written");
 });
 
 test("move: to a slot among the items shown, the others keeping their places", () => {
@@ -162,4 +162,46 @@ test("modeLabel and modeTip: the item's own word first, then the bar's", () => {
   assert.equal(BAR.modeTip(b, "auto"), "While busy");
   assert.equal(BAR.modeTip(a, "always"), "");
   assert.equal(defineBar([{ id: "x", modes: ["always", "hidden"] }]).modeTip({ id: "x" }, "hidden"), "", "a bar with no tips");
+});
+
+test("places: offered by some items, read back and set like the modes, the panes taking the shown ones while split", () => {
+  assert.deepEqual(BAR_PLACES, ["top", "pane"]);
+  const PANED = defineBar([
+    { id: "p", popover: "pp", modes: ["always", "hidden"], places: ["pane", "top"] },
+    { id: "q", modes: ["always", "auto", "hidden"], places: ["top", "pane"] },
+    { id: "r", modes: ["always", "hidden"] },
+  ]);
+  const at = (list) => Object.fromEntries(list.map((x) => [x.id, x.at]));
+  assert.deepEqual(PANED.DEFAULT.places, { p: "pane", q: "top" }, "the first place offered; r offers none");
+  assert.ok(Object.isFrozen(PANED.DEFAULT.places));
+  assert.deepEqual(PANED.normalize({ places: { p: "top", q: "bogus", r: "pane", ghost: "pane" } }).places, { p: "top", q: "top" },
+    "an unoffered place takes the default, an item offering none has none");
+  assert.deepEqual(PANED.normalize({ places: "pane" }).places, PANED.DEFAULT.places, "a place of the wrong kind");
+  assert.ok(PANED.isDefault({ places: { p: "pane" } }));
+  assert.ok(!PANED.isDefault({ places: { q: "pane" } }), "another place");
+
+  const value = { modes: { q: "auto" } };
+  const next = PANED.setPlace(value, "q", "pane");
+  assert.deepEqual(next.places, { p: "pane", q: "pane" });
+  assert.equal(next.modes.q, "auto", "the modes come along");
+  assert.deepEqual(value, { modes: { q: "auto" } }, "the value given is not changed");
+  assert.deepEqual(PANED.setPlace(value, "r", "pane"), PANED.read(value), "r offers no place");
+  assert.deepEqual(PANED.setPlace(value, "p", "side"), PANED.read(value), "nor is side a place");
+  assert.deepEqual(PANED.move({ places: { p: "top" } }, "r", 0).places.p, "top", "a move keeps the places");
+
+  assert.deepEqual(at(PANED.place(undefined)), { p: "bar", q: "bar", r: "bar" }, "one pane: everything shown is on the bar");
+  assert.deepEqual(at(PANED.place(undefined, { split: true })), { p: "pane", q: "bar", r: "bar" });
+  assert.deepEqual(at(PANED.place(next, { split: true })), { p: "pane", q: "menu", r: "bar" }, "q is auto with nothing to say: still a menu row");
+  assert.equal(at(PANED.place(next, { split: true, active: { q: true } })).q, "pane");
+  assert.equal(at(PANED.place({ modes: { p: "hidden" } }, { split: true })).p, "menu", "hidden wins over the place");
+  assert.equal(at(PANED.place(undefined, { split: true, guide: true })).p, "pane", "a guide shows it where it stands");
+});
+
+test("placeLabel and placeTip: the bar's word for a place, else the place itself", () => {
+  const PANED = defineBar([{ id: "p", modes: ["always", "hidden"], places: ["top", "pane"] }],
+    { placeLabels: { top: "Up there" }, placeTips: { pane: "In each pane" } });
+  assert.equal(PANED.placeLabel("top"), "Up there");
+  assert.equal(PANED.placeLabel("pane"), "pane");
+  assert.equal(PANED.placeTip("pane"), "In each pane");
+  assert.equal(PANED.placeTip("top"), "");
 });

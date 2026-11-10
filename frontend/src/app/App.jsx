@@ -83,7 +83,7 @@ import {
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
-  PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, SplitRowsIcon, OnePaneIcon,
+  PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, OnePaneIcon,
   StopIcon, GlobeIcon, ChevronRightIcon,
 } from "../shared/ui/Icons";
 
@@ -140,7 +140,9 @@ import { LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailableP
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
 import { TRANSLATE_LANGS, preloadPrefs, readPref, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
-import { TOPBAR } from "./topbarItems.js";
+import { TOPBAR, TOPBAR_ITEMS } from "./topbarItems.js";
+import { TOPBAR_ICONS } from "./topbarIcons.js";
+import { BAR_PLACES } from "../shared/model/barLayout.js";
 import { VIEWER_TOOLS } from "./viewerToolItems.js";
 import { adoptAccountLook, takeBootRead } from "./boot.js";
 import { applyTheme } from "./theme.js";
@@ -2327,7 +2329,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // title or the labels: the open takes this press's target instead
     if (next === prev) {
       const want = activeGroup(next)?.active || "";
-      const aimed = target?.edit || target?.title || target?.labels;
+      const aimed = target?.edit || target?.title || target?.labels || target?.then;
       if (aimed && want && want === tabPick && want !== focusedBlockId) selectTab(want, target);
       return;
     }
@@ -2346,8 +2348,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const activateTabGroup = (groupId, tabId, target) => applyLayout(activateGroupIn(tabLayoutRef.current, groupId, tabId), target);
   const moveTabToGroup = (tabId, groupId, index) => applyLayout(moveTab(tabLayoutRef.current, tabId, groupId, index));
   const splitTabGroup = (groupId, side, tabId) => applyLayout(splitGroup(tabLayoutRef.current, groupId, side, tabId));
-  // A tab into a group of its own beside the one it is in: the tab menu's
-  // and the palette's Split right and Split down. The only tab of a group
+  // A tab into a group of its own beside the one it is in: the tab menu's,
+  // the bar menu's and the palette's Split right. The only tab of a group
   // opens an empty group beside it instead, where the library shows to
   // pick that group's page.
   const splitTab = (tabId, side) => {
@@ -2355,6 +2357,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (g) splitTabGroup(g.id, side, g.tabs.length === 1 ? null : tabId);
   };
   const joinTabGroups = () => applyLayout(joinAll(tabLayoutRef.current));
+  // The pane a tab is not in, while there are two (the tab menu's Move to
+  // the other pane).
+  const otherPane = (tabId) => {
+    const groups = groupsOf(tabLayoutRef.current);
+    return groups.length === 2 ? groups.find((g) => !g.tabs.includes(tabId)) || null : null;
+  };
   const closeTabGroup = (groupId) => applyLayout(removeGroup(tabLayoutRef.current, groupId));
   const resizeTabSplit = (splitId, sizes) => {
     const next = resizeSplit(tabLayoutRef.current, splitId, sizes);
@@ -6590,7 +6598,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function selectTab(id, target) {
     if (id === focusedBlockId) { dropTabPick(); return undefined; }
     setTabPick(id);
-    const then = target?.title ? "title" : target?.labels ? "labels" : undefined;
+    const then = target?.then || (target?.title ? "title" : target?.labels ? "labels" : undefined);
     return openBlock(id, { restoreScroll: true, edit: target?.edit, folds: target?.folds, zoom: target?.zoom, then });
   }
   // The pending open of a picked tab let go: neither its landing nor its
@@ -7231,6 +7239,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setLabelInput("");
       setLabelSuggestionIdx(-1);
       setLabelEditing(true);
+    } else if (TOPBAR.item(pending.action)) {
+      // a topbar item pressed in a pane whose page was a view (paneStandIns):
+      // its popover, under the pane now live
+      setOpenPopover(TOPBAR.item(pending.action).popover);
     }
   }, [focusedBlockId]); // eslint-disable-line react-hooks/exhaustive-deps
   // Share a folder: the same popover under the topbar's link button, which
@@ -11852,48 +11864,54 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Search, a page's Share and the sync pill). An item off the bar keeps
   // its popover anchor where its button would be (`.offBar`), so its row,
   // its shortcut or App opens the popover in the same place. A tour or a
-  // hint on screen shows them all.
+  // hint on screen shows them all. While pages stand side by side, an item
+  // shown whose place is the panes stands at the end of each pane's strip
+  // instead (paneLiveBar and paneStandIns, below).
   const topbarLayout = TOPBAR.read(topbar);
+  const paneSplit = !isPhone && !isSingle(tabLayout);
   const barPlaces = TOPBAR.place(topbarLayout, {
     phone: isPhone,
+    split: paneSplit,
     guide: guide.running || !!guide.offer,
     open: openPopover,
     active: { tasks: !!tasks.badge, inbox: inbox.unread > 0, sync: true },
   });
   const barAt = Object.fromEntries(barPlaces.map((x) => [x.id, x.at]));
-  const onBar = (id) => barAt[id] === "bar";
-  const offBar = (id) => (onBar(id) ? "" : "offBar");
+  // An item has a button, on the bar or on the panes' strips; else it is a
+  // row of the account menu.
+  const hasButton = (id) => barAt[id] !== "menu";
+  const offBar = (id) => (hasButton(id) ? "" : "offBar");
   const folderShareable = homeMode && lib.organize && libTree.folders.has(folderFilter) && !labelFilter;
   // the open page's Share, or the open folder's; a folder's is a row on a phone
   const sharesPage = !!focusedBlockId && !homeMode;
-  const shareOnBar = onBar("share") && (sharesPage || !isPhone);
+  const shareHasButton = hasButton("share") && (sharesPage || !isPhone);
   const syncs = !!authUser?.user && !!syncKind;
   const phoneMainActive = phonePanel === null || (phonePanel === "notes" && centerNotes);
   // An item's row in the account menu while it is off the bar (the View
   // menu's rows are the menu's last group, below).
   const barMenuRow = {
-    add: () => !onBar("add") && (
+    add: () => !hasButton("add") && (
       <MenuItem key="add" icon={PlusIcon} onClick={() => setOpenPopover("add")}
         title={t("Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files")}>{t("Add…")}</MenuItem>
     ),
-    tasks: () => !onBar("tasks") && (
+    tasks: () => !hasButton("tasks") && (
       <MenuItem key="tasks" icon={ActivityIcon} onClick={() => setOpenPopover("downloads")}
         title={t("Background tasks — exports, backups, imports, downloads and uploads")}
         trailing={<TaskBadge badge={tasks.badge} inline />}>
         {t("Background tasks")}
       </MenuItem>
     ),
-    search: () => !onBar("search") && (
+    search: () => !hasButton("search") && (
       <CommandMenuItem key="search" id="app.search" ctx={appCmdRef.current} bindings={keybindings}
         onClick={() => setOpenPopover("search")} />
     ),
-    share: () => !shareOnBar && (sharesPage ? commandRow("app.share") : folderShareable && (
+    share: () => !shareHasButton && (sharesPage ? commandRow("app.share") : folderShareable && (
       <MenuItem key="share" icon={LinkIcon} onClick={() => openFolderShare(folderFilter)}>{t("Share this folder")}</MenuItem>
     )),
-    sync: () => !onBar("sync") && syncs && (
+    sync: () => !hasButton("sync") && syncs && (
       <MenuItem key="sync" icon={CloudIcon} onClick={() => setOpenPopover("mirror")}>{t("Sync status")}</MenuItem>
     ),
-    inbox: () => !onBar("inbox") && inbox.enabled && (
+    inbox: () => !hasButton("inbox") && inbox.enabled && (
       <MenuItem key="inbox" icon={BellIcon} onPointerEnter={InboxPanel.preload} onClick={() => setOpenPopover("inbox")}
         trailing={<InboxBadge unread={inbox.unread} inline />}>
         {t("Inbox")}
@@ -11915,7 +11933,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return (
       <>
         {rows.length ? <><MenuDivider />{rows}</> : null}
-        {onBar("view") ? null : <><MenuDivider />{viewMenuItems(false)}</>}
+        {hasButton("view") ? null : <><MenuDivider />{viewMenuItems(false)}</>}
       </>
     );
   };
@@ -11927,7 +11945,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const topbarItem = {
     add: () => (
       <span data-popover="add" className={`popoverAnchor ${offBar("add")}`}>
-        {onBar("add") ? (
+        {hasButton("add") ? (
           <button
             className={`iconBtn addBtn ${openPopover === "add" ? "activeIcon" : ""}`}
             onClick={() => setOpenPopover((p) => (p === "add" ? null : "add"))}
@@ -11996,7 +12014,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             download leaves no broken page behind, so this is the sign it
             happened; AI lookups are quiet) or an accent dot for a file
             waiting to be downloaded (tasks/TasksTray.jsx). */}
-        {onBar("tasks") ? (
+        {hasButton("tasks") ? (
           <TasksButton tasks={tasks} open={openPopover === "downloads"}
             onToggle={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))} />
         ) : null}
@@ -12007,7 +12025,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       <SearchPanel
         open={openPopover === "search"}
         onOpenChange={(v) => setOpenPopover(v ? "search" : null)}
-        button={onBar("search")}
+        button={hasButton("search")}
         detailsDefault={focusedBlockId ? searchDetailsPaper : searchDetailsHome}
         focusedBlockId={focusedBlockId}
         homeBlocks={homeBlocks}
@@ -12024,8 +12042,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       />
     ),
     share: () => (sharesPage ? (
-      <span data-popover="share" className={`popoverAnchor ${shareOnBar ? "" : "offBar"}`}>
-        {shareOnBar ? (
+      <span data-popover="share" className={`popoverAnchor ${shareHasButton ? "" : "offBar"}`}>
+        {shareHasButton ? (
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openPageShare(focusedBlockId); }}
@@ -12045,8 +12063,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     ) : folderShareable ? (
       // The same button for the open folder: one link for every page filed
       // in it. On a phone the More sheet offers it instead.
-      <span data-popover="share" className={`popoverAnchor ${shareOnBar ? "" : "offBar"}`}>
-        {shareOnBar ? (
+      <span data-popover="share" className={`popoverAnchor ${shareHasButton ? "" : "offBar"}`}>
+        {shareHasButton ? (
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openFolderShare(folderFilter); }}
@@ -12071,7 +12089,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         publication={syncKind === "mirror" && !workspace.mirror_of && !!workspace.publishing}
         pageId={focusedBlockId}
         everyPage={topbarLayout.modes.sync === "always"}
-        button={onBar("sync")}
+        button={hasButton("sync")}
         open={openPopover === "mirror"}
         onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
         jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
@@ -12090,7 +12108,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // The Inbox: off the bar (always on a phone), a row of the account
       // menu opens the panel.
       <span data-popover="inbox" className={`popoverAnchor ${offBar("inbox")}`}>
-        {onBar("inbox") ? (
+        {hasButton("inbox") ? (
           <InboxButton unread={inbox.unread} open={openPopover === "inbox"} onPreload={InboxPanel.preload}
             onToggle={() => setOpenPopover((p) => (p === "inbox" ? null : "inbox"))} />
         ) : null}
@@ -12101,7 +12119,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         ) : null}
       </span>
     ) : null),
-    view: () => (onBar("view") ? renderOverflowMenu(false) : null),
+    view: () => (hasButton("view") ? renderOverflowMenu(false) : null),
   };
 
   // Account & settings is no item: it stays last, the menu the items off
@@ -12256,10 +12274,40 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // There each carries its word under the icon (.barLabel, hidden elsewhere).
   const topbarActions = (
     <>
-      {barPlaces.map(({ id }) => <React.Fragment key={id}>{topbarItem[id]()}</React.Fragment>)}
+      {barPlaces.filter((x) => x.at !== "pane").map(({ id }) => <React.Fragment key={id}>{topbarItem[id]()}</React.Fragment>)}
       {accountButton}
     </>
   );
+  // The topbar items placed in the panes while pages stand side by side, at
+  // the end of each pane's strip (TabGroups). The live pane's bar is the
+  // items themselves, popovers and all, drawn once (`liveBar`) and moved
+  // with the live pane. Another pane's page is a view, so its buttons stand
+  // for them: a press makes that pane live and, once its page has opened,
+  // opens the item there (selectTab's `then`), as a press on the view edits
+  // there. A pane with nothing open has no page to share.
+  const paneItems = barPlaces.filter((x) => x.at === "pane");
+  const wakePaneItem = (group, id) => {
+    if (group.active) activateTabGroup(group.id, undefined, { then: id });
+    else { activateTabGroup(group.id); setOpenPopover(TOPBAR.item(id).popover); }
+  };
+  const paneLiveBar = paneItems.length ? (
+    <div className="topbar paneBar">
+      {paneItems.map(({ id }) => <React.Fragment key={id}>{topbarItem[id]()}</React.Fragment>)}
+    </div>
+  ) : null;
+  const paneStandIns = (group) => (paneItems.length ? (
+    <div className="topbar paneBar">
+      {paneItems.filter(({ id }) => (id !== "share" || group.active) && (id !== "inbox" || inbox.enabled)).map(({ id, item }) => {
+        const Icon = TOPBAR_ICONS[id];
+        return (
+          <button key={id} type="button" className="iconBtn" data-bar-item={id} title={t(item.label)} aria-label={t(item.label)}
+            onClick={() => wakePaneItem(group, id)}>
+            <Icon size={16} />
+          </button>
+        );
+      })}
+    </div>
+  ) : null);
 
   // The viewer's side strip, the PDF's and the notebook's (app/viewerToolItems.js,
   // Settings → Appearance › Viewer tools): its tools in the user's order,
@@ -12658,15 +12706,31 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // the bar's shows (a popover's menu) is not the bar. The bar is no
   // [data-press]: that would keep the text of the popovers it holds from
   // being selected by a finger.
+  // On the top bar (and a pane's strip) the press may be on an item's
+  // button, whose place the menu then offers to change (barItemAt; a held
+  // finger's press names the bar, so the item is the one at its point).
   const customizePress = (pane, space = () => true) => {
-    const { "data-press": _, ...press } = menuPress((e) => { e.preventDefault(); setBarMenu({ pane, x: e.clientX, y: e.clientY }); });
+    const { "data-press": _, ...press } = menuPress((e) => {
+      e.preventDefault();
+      const at = pane === "topbar" ? document.elementFromPoint(e.clientX, e.clientY) || e.target : null;
+      setBarMenu({ pane, x: e.clientX, y: e.clientY, item: at ? barItemAt(at) : null });
+    });
     const mine = (e) => !e.defaultPrevented && e.currentTarget.contains(e.target) && space(e.target);
     return {
       onContextMenu: (e) => { if (mine(e)) press.onContextMenu(e); },
       onPointerDown: (e) => { if (mine(e)) press.onPointerDown(e); },
     };
   };
-  const topbarSpace = (el) => !el.closest("button, a, input, [role='tab'], [data-popover]");
+  // The topbar item a press is on: a pane's stand-in button, or the button
+  // of an item's anchor (named by its popover), never its open popover.
+  const barItemAt = (el) => {
+    if (el.closest(".popover")) return null;
+    const standIn = el.closest("[data-bar-item]");
+    if (standIn) return standIn.dataset.barItem;
+    const anchor = el.closest("[data-popover]");
+    return (anchor && TOPBAR_ITEMS.find((x) => x.popover === anchor.dataset.popover)?.id) || null;
+  };
+  const topbarSpace = (el) => !!barItemAt(el) || !el.closest("button, a, input, [role='tab'], [data-popover]");
   // The strip's ⋯ opens its menu on the press, so the strip leaves that
   // press alone: a held finger there would open both menus. (The translate
   // button's own menuPress answers before the strip's.)
@@ -12959,7 +13023,37 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </ContextMenu>
       ) : null}
       {barMenu ? (
+        // The bar's menu: on an item that offers places, where it stands
+        // while pages are side by side; on the top bar or a pane's strip,
+        // the split itself; then Customize….
         <ContextMenu x={barMenu.x} y={barMenu.y} onClose={() => setBarMenu(null)}>
+          {TOPBAR.item(barMenu.item)?.places ? (
+            <>
+              {BAR_PLACES.map((where) => {
+                const on = topbarLayout.places[barMenu.item] === where;
+                return (
+                  <MenuItem key={where} role="menuitemradio" aria-checked={on} title={t(TOPBAR.placeTip(where))}
+                    trailing={on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
+                    onClick={() => { setBarMenu(null); setTopbar(TOPBAR.setPlace(topbar, barMenu.item, where)); }}>
+                    {where === "top" ? t("Show on the top bar") : t("Show in each pane")}
+                  </MenuItem>
+                );
+              })}
+              <MenuDivider />
+            </>
+          ) : null}
+          {barMenu.pane === "topbar" && !isPhone && !shareMode && (paneSplit || focusedBlockId) ? (
+            <>
+              {paneSplit ? (
+                <MenuItem icon={OnePaneIcon} title={t("Every tab back in one group")}
+                  onClick={() => { setBarMenu(null); joinTabGroups(); }}>{t("Join tab groups")}</MenuItem>
+              ) : (
+                <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a group of its own, to the right")}
+                  onClick={() => { setBarMenu(null); splitTab(focusedBlockId, "right"); }}>{t("Split right")}</MenuItem>
+              )}
+              <MenuDivider />
+            </>
+          ) : null}
           <MenuItem icon={SettingsIcon} onClick={() => { setBarMenu(null); openSettingsPane(barMenu.pane); }}>
             {barMenu.pane === "topbar" ? t("Customize top bar…") : t("Customize viewer tools…")}
           </MenuItem>
@@ -12980,6 +13074,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       <PanelGroup direction="vertical" autoSaveId="gamma-work-v" ref={(h) => { panelGroupRefs.current["work-v"] = h; }}>
       <Panel id="slot-main" order={1} minSize={20} className="dockSlot">
       <TabGroups layout={tabLayout} liveId={shownGroupId} single={isPhone} tabsOf={groupTabs} activeTabId={tabPick || focusedBlockId}
+        liveBar={paneLiveBar}
         onActivate={activateTabGroup} onMoveTab={moveTabToGroup} onSplit={splitTabGroup} onResize={resizeTabSplit}
         sashMargins={SASH_MARGINS}
         strip={{
@@ -12988,6 +13083,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onMenuOpenChange: (groupId) => setOpenPopover(groupId ? `tabs:${groupId}` : null),
           onReorder: reorderGroupTabs, onClose: closeTab, onTogglePin: toggleTabPinned,
           onContext: (tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); },
+          actions: paneStandIns, headPress: () => customizePress("topbar", topbarSpace),
         }}
         renderPane={(group) => (group.active ? (
           <PagePane key={group.active} {...paneProps(group.active)}
@@ -13822,19 +13918,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {t("Page properties")}
           </MenuItem>
           {!isPhone ? (
-            // Tab groups (docs/dev/tab_groups.md): this tab into a group of its
-            // own beside its group (the only tab of a group: an empty group
-            // beside it), and every tab back into one group.
+            // Tab groups (docs/dev/tab_groups.md): one group splits once, this
+            // tab into a pane of its own on the right (the only tab of the
+            // group: an empty pane beside it); split, the tab moves to the
+            // other pane, or every tab goes back into one group.
             <>
               <MenuDivider />
-              <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a group of its own, to the right")}
-                onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "right"); }}>{t("Split right")}</MenuItem>
-              <MenuItem icon={SplitRowsIcon} title={t("Show this page in a group of its own, below")}
-                onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "bottom"); }}>{t("Split down")}</MenuItem>
-              {!isSingle(tabLayout) ? (
-                <MenuItem icon={OnePaneIcon} title={t("Every tab back in one group")}
-                  onClick={() => { setTabMenu(null); joinTabGroups(); }}>{t("Join tab groups")}</MenuItem>
-              ) : null}
+              {isSingle(tabLayout) ? (
+                <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a group of its own, to the right")}
+                  onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "right"); }}>{t("Split right")}</MenuItem>
+              ) : (
+                <>
+                  {otherPane(tabMenu.id) ? (
+                    <MenuItem icon={SplitColumnsIcon} title={t("Show this page in the other pane")}
+                      onClick={() => { setTabMenu(null); moveTabToGroup(tabMenu.id, otherPane(tabMenu.id).id); }}>{t("Move to the other pane")}</MenuItem>
+                  ) : null}
+                  <MenuItem icon={OnePaneIcon} title={t("Every tab back in one group")}
+                    onClick={() => { setTabMenu(null); joinTabGroups(); }}>{t("Join tab groups")}</MenuItem>
+                </>
+              )}
             </>
           ) : null}
           {lib.organize ? (

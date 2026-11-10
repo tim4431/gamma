@@ -11,7 +11,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Notebooks](#notebooks) | Sheets of paper to write on |
 | [Follow links and translate](#follow-links-and-translate) | Citations, Back, translation in place |
 | [Notes](#notes) | Markdown and math that render as you type |
-| [Pages side by side](#pages-side-by-side) | A paper in one group, your notes in another; split, drag, join |
+| [Pages side by side](#pages-side-by-side) | A paper in one pane, your notes in the other; split, drag, join |
 | [Outline and links between pages](#outline-and-links-between-pages) | Nesting, moving notes, `[[` links, `@` mentions and reminders |
 | [AI chat](#ai-chat) | Ask about the paper, with clickable citations; every AI service you can connect |
 | [The library agent](#the-library-agent) | Let the AI organize and edit, with your approval; what each tool does |
@@ -160,13 +160,14 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 
 ## Pages side by side
 
-Read a paper on one side while you write up your notes on the other, each in a tab group of its own.
+Read a paper on one side while you write up your notes on the other, each in a pane of its own with its own tabs.
 
-- **Split**: right-click a tab → **Split right** or **Split down**, and the page gets a group of its own beside the others, with its own tab strip. Or drag a tab onto the edge of a page: the band that lights up is where it lands (the left, right, top or bottom half splits the group; the middle joins it). Drag a tab onto another group's strip to move it there. **Split right**, **Split down** and **Join tab groups** are in the command palette too.
-- **Only the pages split.** The Notes, Chat and Comments windows stay where you docked them, beside the groups, at their own size.
-- **One group is live**: the page you are working on, with its tools. The other groups show their page as it is, with its highlights, handwriting and notes, where you left it and at its zoom. Click into one of them, or its tab, to work on it there: nothing moves, and a click on a note opens that note with the cursor where you clicked. Opening a page from the library, a link or Ctrl+P puts it in the live group, and a page already open in another group brings that group forward.
+- **Split**: right-click a tab → **Split right**, or right-click an empty part of the top bar → **Split right**, and the page gets a pane of its own on the right, with its own tab strip. Or drag a tab onto the left or right side of the page: the half that lights up is where it lands. The screen splits once, into two panes: once split, right-click a tab → **Move to the other pane**, or drag it onto the other pane's page or strip. **Split right** and **Join tab groups** are in the command palette too.
+- **Only the pages split.** The Notes, Chat and Comments windows stay where you docked them, beside the panes, at their own size.
+- **One pane is live**, the one with the coloured outline: the page you are working on, with its tools. The other pane shows its page as it is, with its highlights, handwriting and notes, where you left it and at its zoom. Click into it, or its tab, to work on it there: nothing moves, and a click on a note opens that note with the cursor where you clicked. Opening a page from the library, a link or Ctrl+P puts it in the live pane, and a page already open in the other pane brings that pane forward.
+- **Each pane has its own buttons**: Search, Share and the View menu sit at the right end of each pane's tabs and act on that pane's page. Pressing one in the other pane makes that pane live and opens it there in one go. Right-click a button → **Show on the top bar** or **Show in each pane** to choose where it goes; Add, Background tasks and the Inbox can move into the panes the same way, and the sync status always stays on the top bar.
 - **The Notes window** shows the notes of the paper on screen. While you write in a page of notes beside a paper, it keeps showing that paper's notes and highlights.
-- **Resize** by dragging the bar between groups. Close a group's last tab and the group goes; **Join tab groups** puts every tab back in one strip. A tab alone in its group splits off an empty group, with the library in it, to pick a page for.
+- **Resize** by dragging the bar between the panes. Close a pane's last tab and the pane goes; **Join tab groups** (in a tab's menu, or a right-click on a pane's strip) puts every tab back in one strip. A tab alone in its strip splits off an empty pane, with the library in it, to pick a page for.
 - Your open tabs still follow your account. How they are arranged is this browser's, like your window layout; another device shows the same tabs in one strip until you split them there. A phone shows one page at a time.
 
 ## Outline and links between pages
@@ -568,7 +569,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Users, Server (administrators) | Accounts and invitations by e-mail, public URL, Gamma Cloud sign-in and requests to join, shared workspaces, server backups, the log |
 | Help & diagnostics | Session log, **Report a problem…** (adds what a maintainer needs, never your notes) |
 
-**Top bar** in Appearance hides a button you never use, or shows Background tasks and the Inbox only when they have news. A hidden button becomes a row of the account menu, and its shortcut still works. **Viewer tools** does the same for the column of buttons beside a PDF or a notebook: a hidden tool moves into the **⋯** at the column's end, and one you are using (a recording, a translation, the pen's strip, the text highlighter) stays on the column until you are done. In both lists, drag a row by its **⋮⋮** grip to change the order, or focus the grip and press ↑ / ↓; **Reset** puts the default order and buttons back. To get there from the bar itself, right-click (or long-press) an empty part of the top bar, or the viewer's column, and choose **Customize top bar…** or **Customize viewer tools…**.
+**Top bar** in Appearance hides a button you never use, or shows Background tasks and the Inbox only when they have news. A hidden button becomes a row of the account menu, and its shortcut still works. **Viewer tools** does the same for the column of buttons beside a PDF or a notebook: a hidden tool moves into the **⋯** at the column's end, and one you are using (a recording, a translation, the pen's strip, the text highlighter) stays on the column until you are done. In both lists, drag a row by its **⋮⋮** grip to change the order, or focus the grip and press ↑ / ↓; **Reset** puts the default order and buttons back. To get there from the bar itself, right-click (or long-press) an empty part of the top bar, a button on it, or the viewer's column, and choose **Customize top bar…** or **Customize viewer tools…**. Each top bar row also says where the button stands while [pages are side by side](#pages-side-by-side): on the **Top bar**, or in **Each pane**.
 
 **Invite by e-mail…** in Users mails someone who has no account yet a link to make a free Gamma Cloud account, or sign in with theirs, and join this server. The **Invitations** list under the accounts sends one again or withdraws it.
 

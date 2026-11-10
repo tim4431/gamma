@@ -1094,11 +1094,15 @@ own controls.
   included.
 - **The compact shell** neither drags nor folds a window: without
   `onGrip` the title is a plain label, with no "⠿".
-- **Tab groups.** Pages stand side by side in the dock's middle, each
-  group with a strip over it, split by a tab's menu or a tab dragged onto
-  a group's edge ([tab_groups.md](tab_groups.md)). The windows stay around
-  the groups, at their own sizes, and follow the page on screen; a press
-  that moves the page on screen to another group moves nothing else.
+- **Tab groups.** Pages stand side by side in the dock's middle, two
+  panes left and right, each with a strip over it, split by a tab's menu,
+  the topbar's right-click or a tab dragged onto a side of the page
+  ([tab_groups.md](tab_groups.md)). The live pane is ringed in
+  `--focus-ring`, as keyboard focus is, round its strip and its page. The
+  page's own topbar buttons stand at the end of each pane's strip, in the
+  topbar's own look (`.topbar.paneBar`). The windows stay around the
+  groups, at their own sizes, and follow the page on screen; a press that
+  moves the page on screen to another group moves nothing else.
 
 ### The PDF viewer
 

@@ -975,26 +975,37 @@ label and hint (a strip tool's hint says where it applies when that is not
 everywhere: "PDFs only", "Notebooks only", "On touch screens"), its search
 synonyms and the modes it offers, the first being its default. A topbar
 entry also names the popover it opens and, with `phone: false`, that the
-phone's bottom bar has no room for it.
+phone's bottom bar has no room for it. An entry may offer `places`, where
+it stands while pages are side by side ([tab_groups.md](tab_groups.md)),
+the first its default: `"top"` on the bar, or `"pane"` at the end of each
+pane's tab strip, acting on that pane's page. Search, Share and the View
+menu default to the panes, Add, Background tasks and the Inbox to the top;
+the sync pill offers none, so it stays on the bar. The viewer's strip has
+no places.
 
 **What is stored.** `topbar` (`gamma-topbar`) and `viewerTools`
 (`gamma-viewer-tools`) are account preferences, each
-`{ order: [ids], modes: { id: mode } }`. `bar.normalize` is their codec:
+`{ order: [ids], modes: { id: mode }, places: { id: place } }` (`places`
+holds only the items that offer them, so the strip's is empty).
+`bar.normalize` is their codec:
 
 - an unknown id is dropped, and a repeated one kept where it first stands;
 - an id the order lacks (an item a later release adds) goes right after
   the item before it in the registry, at the start when it is the first,
   so it lands beside its neighbours wherever the user put them;
-- a mode its item does not offer becomes the item's default;
+- a mode or a place its item does not offer becomes the item's default,
+  and a value stored before places existed reads with every place at its
+  default;
 - anything but an object reads as the default, and so does a value in an
   earlier shape (the topbar's flat `{ id: mode }` map): there is no
   migration.
 
 Consumers call `bar.read(value)`. The edits Settings makes are
-`bar.setMode(value, id, mode)` and `bar.move(value, id, to, isVisible)`:
-`to` is a slot among the items `isVisible` keeps (`moveVisible`, the same
-step the handwriting strip's presets take), and the others keep their
-places. `bar.isDefault` compares order and modes.
+`bar.setMode(value, id, mode)`, `bar.setPlace(value, id, place)` and
+`bar.move(value, id, to, isVisible)`: `to` is a slot among the items
+`isVisible` keeps (`moveVisible`, the same step the handwriting strip's
+presets take), and the others keep their places. `bar.isDefault` compares
+order, modes and places.
 
 **The modes:**
 
@@ -1007,15 +1018,18 @@ places. `bar.isDefault` compares order and modes.
 - **hidden**: a row of the bar's menu instead: the account menu for the
   topbar (More on a phone), the ⋯ menu at the strip's end for the strip.
 
-**Where each item goes.** `bar.place(value, { phone, guide, open, active,
-pinned })` returns `[{ id, item, at: "bar" | "menu" }]` in the layout's
-order, and App renders each bar from it through a renderer per id, so the
-Tab order is the order seen. On a phone an item marked `phone: false` is a
-menu row in every mode. Otherwise an item is on the bar while a tour runs
-or a hint is offered (`guide`: steps point at every item), while it is
-`pinned`, or as its mode says (an auto item with something to say in
-`active`, or whose popover is `open`). Whether an item applies here at all
-is App's to say; `place` only says where it would go.
+**Where each item goes.** `bar.place(value, { phone, split, guide, open,
+active, pinned })` returns `[{ id, item, at: "bar" | "pane" | "menu" }]`
+in the layout's order, and App renders each bar from it through a
+renderer per id, so the Tab order is the order seen. On a phone an item
+marked `phone: false` is a menu row in every mode. Otherwise an item is
+shown while a tour runs or a hint is offered (`guide`: steps point at
+every item), while it is `pinned`, or as its mode says (an auto item with
+something to say in `active`, or whose popover is `open`). An item shown
+is at `"pane"` when `split` (pages side by side) and its place is the
+panes, else at `"bar"`; a hidden one is a menu row wherever its place.
+Whether an item applies here at all is App's to say; `place` only says
+where it would go.
 
 **The topbar.** A button off the bar is never gone. Its row in the account
 menu opens the same popover, and its shortcut still works, Ctrl+F for
@@ -1080,22 +1094,32 @@ turning it on closes the strip: both take a drag on the page.
 `SECTION_PREFS` holds it under Viewer tools, which shows no row for it.
 
 **Ways to the setting.** A right-click or a held finger (`menuPress`) on
-the topbar's own background, not on a button, link, tab or popover, offers
-"Customize top bar…"; on the strip, except the translate button, the text
-highlighter and the ⋯, which have their own menus, "Customize viewer
-tools…". The ⋯ menu ends with Customize….
+the topbar's own background or one of its items' buttons, not on a link,
+a tab, another button or a popover, offers "Customize top bar…"; on an
+item that offers places it first offers *Show on the top bar* and *Show
+in each pane*, the one in force checked, which set the place at once. A
+pane's strip, while pages are side by side, has the same menu. With one
+group the bar's menu also offers *Split right*, and while split *Join tab
+groups* ([tab_groups.md](tab_groups.md)). On the strip, except the
+translate button, the text highlighter and the ⋯, which have their own
+menus, it offers "Customize viewer tools…". The ⋯ menu ends with
+Customize….
 They call `openSettingsPane("topbar")` and `openSettingsPane("viewer-tools")`:
 section entry points of Appearance in `settingsNavigation.js`, which the
 dialog opens at the section's header.
 
 **The editor.**
 [settings/BarLayoutSection.jsx](../../frontend/src/settings/BarLayoutSection.jsx)
-draws a bar as a `Section` whose action is Reset: the bar's default order
-and modes, disabled while they are. Under it is one row per item in the
-layout's order: a ⋮⋮ grip, then the `Row` with the item's icon, label and
-hint and a `Segmented` of its modes (`bar.modeLabel`, `bar.modeTip`: Shown
-and Hidden, an item's own words where those would read wrong; hidden's
-tooltip says where the item goes). A hidden item's row reads muted
+draws a bar as a `Section` whose action is Reset: the bar's default order,
+modes and places, disabled while they are. Under it is one row per item in
+the layout's order: a ⋮⋮ grip, then the `Row` with the item's icon, label
+and hint and a `Segmented` of its modes (`bar.modeLabel`, `bar.modeTip`:
+Shown and Hidden, an item's own words where those would read wrong;
+hidden's tooltip says where the item goes), then, for an item offering
+places, a `Segmented` of them (`bar.placeLabel`, `bar.placeTip`: Top bar
+and Each pane), disabled while the item is hidden. The topbar's icons are
+`app/topbarIcons.js`, which the panes' stand-in buttons share. A hidden
+item's row reads muted
 (`.off`: its icon faded, its label in the hint's colour, the hint itself
 unchanged so it stays readable).
 
