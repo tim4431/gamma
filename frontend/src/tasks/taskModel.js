@@ -72,7 +72,7 @@ export function newlyFinished(before, after) {
 // jobs, the ones its Export started under the share token (owner
 // `share:<token>`, jobs.share_owner): a job of the visitor's account it
 // adopted is not the share's to read.
-export const SHARE_OWNER = "share:";
+const SHARE_OWNER = "share:";
 export const followed = (job) => isActive(job) && String(job?.owner || "").startsWith(SHARE_OWNER);
 
 // What one follow round makes of a job, from its read — {job} or {error}:
