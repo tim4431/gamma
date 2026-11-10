@@ -21,7 +21,6 @@ confidential client, else nothing. A report the account server did not
 take is tried again by the hourly round (``tick``) for ``SEND_DAYS``.
 """
 
-import base64
 import json
 import secrets
 import threading
@@ -48,8 +47,11 @@ KEEP_DAYS = 180         # a report goes this long after it was made
 SEND_DAYS = 7           # a report the account server did not take is tried again this long
 SWEEP_INTERVAL_S = 3600
 SEND_TIMEOUT = 20
-_COLUMNS = ("id, kind, reason, details, content, author, title, workspace_id, page_id, comment_id, link, "
-            "reporter_id, reporter, state, created_at, resolved_at, resolved_by, sent_at, send_error")
+_COLUMNS = ("id", "kind", "reason", "details", "content", "author", "title", "workspace_id", "page_id",
+            "comment_id", "link", "reporter_id", "reporter", "state", "created_at", "resolved_at", "resolved_by",
+            "sent_at", "send_error")
+_SELECT = f"SELECT {', '.join(_COLUMNS)} FROM content_reports"
+_INSERT = f"INSERT INTO content_reports ({', '.join(_COLUMNS)}) VALUES ({', '.join('?' * len(_COLUMNS))})"
 
 
 def _text(value, limit: int, *, lines: bool = False) -> str:
@@ -140,8 +142,7 @@ def file(request: Request, *, kind: str, reason: str, details: str = "", page_id
            "reporter": (request.state.user or "") if who else "", "state": "open", "created_at": page_now(),
            "resolved_at": "", "resolved_by": "", "sent_at": "", "send_error": ""}
     with connect_users_db() as conn:
-        conn.execute(f"INSERT INTO content_reports ({_COLUMNS}) VALUES ({', '.join('?' * 19)})",
-                     tuple(row[c] for c in _COLUMNS.split(", ")))
+        conn.execute(_INSERT, tuple(row[c] for c in _COLUMNS))
     if forwards():
         cloud_auth.server_url(request)  # a sidecar's loopback address, remembered for the send
         _background(lambda: send(row["id"]))
@@ -161,8 +162,8 @@ def _background(fn) -> None:
 
 def _get(report_id: str) -> dict | None:
     with connect_users_db() as conn:
-        found = conn.execute(f"SELECT {_COLUMNS} FROM content_reports WHERE id = ?", (report_id,)).fetchone()
-    return dict(zip(_COLUMNS.split(", "), found)) if found else None
+        found = conn.execute(f"{_SELECT} WHERE id = ?", (report_id,)).fetchone()
+    return dict(zip(_COLUMNS, found)) if found else None
 
 
 def _auth(row: dict, cfg: dict) -> tuple[dict, str]:
@@ -174,11 +175,7 @@ def _auth(row: dict, cfg: dict) -> tuple[dict, str]:
         token = cloud_auth.access_token_for(row["reporter_id"]) if subject else None
         if token:
             return {"Authorization": f"Bearer {token}"}, subject
-    secret = cloud_auth.client_secret()
-    if secret:
-        pair = base64.b64encode(f"{cfg['client_id']}:{secret}".encode()).decode()
-        return {"Authorization": f"Basic {pair}"}, ""
-    return {}, ""
+    return cloud_auth.client_basic(cfg), ""
 
 
 def send(report_id: str) -> bool:
@@ -193,17 +190,19 @@ def send(report_id: str) -> bool:
             **{k: row[k] for k in ("kind", "reason", "details", "content", "author", "title", "page_id",
                                    "comment_id", "link", "reporter")}}
     headers, subject = _auth(row, cfg)
+
+    def post(auth: dict) -> None:
+        cloud_auth._http(cfg["issuer"] + "/api/reports", data=json.dumps(body).encode(), timeout=SEND_TIMEOUT,
+                         headers={"Content-Type": "application/json", **auth})
+
     try:
         try:
-            cloud_auth._http(cfg["issuer"] + "/api/reports", data=json.dumps(body).encode(), timeout=SEND_TIMEOUT,
-                             headers={"Content-Type": "application/json", **headers})
+            post(headers)
         except CloudAuthError as e:
             if e.status != 401 or not subject:
                 raise
             cloud_auth.forget_access(subject)  # the reporter's token died: send it as the server does
-            headers = _auth({**row, "reporter_id": ""}, cfg)[0]
-            cloud_auth._http(cfg["issuer"] + "/api/reports", data=json.dumps(body).encode(), timeout=SEND_TIMEOUT,
-                             headers={"Content-Type": "application/json", **headers})
+            post(_auth({**row, "reporter_id": ""}, cfg)[0])
     except CloudAuthError as e:
         log.warning(f"[reports] Gamma Cloud did not take report {report_id}: {e}")
         with connect_users_db() as conn:
@@ -238,10 +237,9 @@ def listing(state: str = "all") -> dict:
         raise HTTPException(400, "state must be open, resolved or all")
     where, args = ("", ()) if state == "all" else ("WHERE state = ?", (state,))
     with connect_users_db() as conn:
-        rows = conn.execute(f"SELECT {_COLUMNS} FROM content_reports {where} ORDER BY created_at DESC LIMIT 500",
-                            args).fetchall()
+        rows = conn.execute(f"{_SELECT} {where} ORDER BY created_at DESC LIMIT 500", args).fetchall()
         count = conn.execute("SELECT COUNT(*) FROM content_reports WHERE state = 'open'").fetchone()[0]
-    return {"reports": [dict(zip(_COLUMNS.split(", "), r)) for r in rows], "open": count, "forwards": forwards()}
+    return {"reports": [dict(zip(_COLUMNS, r)) for r in rows], "open": count, "forwards": forwards()}
 
 
 def set_state(report_id: str, state: str, by: str) -> dict:

@@ -23,7 +23,7 @@ export const REPORT_REASONS = [
   ["harmful", T("Harmful or dangerous")],
   ["other", T("Something else")],
 ];
-export const REPORT_KINDS = ["comment", "page", "ai"];
+const REPORT_KINDS = ["comment", "page", "ai"];
 export const MAX_DETAILS = 2000;
 const MAX_CONTENT = 8000;
 const PREVIEW = 280;

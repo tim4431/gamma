@@ -100,6 +100,7 @@ by Gamma Cloud username makes (``lookup_username``) and the mail of an
 invitation by e-mail (``send_invitation``, ``cancel_invitation``) are here.
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -264,6 +265,17 @@ def client_secret() -> str:
     except (InvalidToken, ValueError):
         log.warning("cloud sign-in: the stored client secret cannot be decrypted (key changed?)")
         return ""
+
+
+def client_basic(cfg: dict) -> dict:
+    """The Authorization header that names this server to the account
+    server as its confidential client (``cfg``'s client id and the client
+    secret, HTTP Basic); {} for a server with no secret."""
+    secret = client_secret()
+    if not secret:
+        return {}
+    pair = base64.b64encode(f"{cfg['client_id']}:{secret}".encode()).decode("ascii")
+    return {"Authorization": f"Basic {pair}"}
 
 
 def validate_issuer(value: str) -> str:

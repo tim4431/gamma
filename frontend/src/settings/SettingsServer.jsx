@@ -1,12 +1,14 @@
 // Settings → Server (admins only): everything that is about the server
 // rather than one account — the dashboard (build, uptime, warnings, the
 // update check), the reports people made here (SettingsReports.jsx), on a
-// hosted container the plan its limits come from (HostedPlan), the storage defaults every account inherits, guests and
-// demo mode (SettingsGuests.jsx), the shared AI provider every account may
-// use (SettingsAi.jsx), the shared workspaces (SettingsWorkspacesAdmin.jsx),
-// the database check, whole-data-directory snapshots (SettingsBackups.jsx
-// ServerBackups) and the scrubbed server log with a level filter. Per-account things — including each account's personal
-// workspaces — stay in Users; per-workspace backups in Backups.
+// hosted container the plan its limits come from (HostedPlan), the storage
+// defaults every account inherits, guests and demo mode (SettingsGuests.jsx),
+// the shared AI provider every account may use (SettingsAi.jsx), the shared
+// workspaces (SettingsWorkspacesAdmin.jsx), the database check,
+// whole-data-directory snapshots (SettingsBackups.jsx ServerBackups) and the
+// scrubbed server log with a level filter. Per-account things — including
+// each account's personal workspaces — stay in Users; per-workspace backups
+// in Backups.
 // The sections read through the dialog's store (settingsReads.js), so the
 // pane's reads go out together and /api/admin/settings is read once for
 // all the sections over it.
