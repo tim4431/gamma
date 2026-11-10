@@ -1,8 +1,10 @@
 // A bar's layout in Settings (docs/dev/settings.md "Bars: order and modes"):
 // one row per item of a defineBar bar (shared/model/barLayout.js), in the
 // bar's order, each a grip, the item's icon, label and hint, and a
-// Segmented of the modes it offers. Appearance › Top bar and › Viewer tools
-// are two of these; a new bar is a registry and one more.
+// Segmented of the modes it offers, then one of the places it offers while
+// pages are side by side (the top bar's: on top or in each pane), muted
+// while the item is hidden. Appearance › Top bar and › Viewer tools are two
+// of these; a new bar is a registry and one more.
 //
 // The grip drags its row up or down the list (shared/ui/useDragOrder.js,
 // "handle": any pointer, at once; a release lands anywhere across the pane
@@ -12,7 +14,7 @@
 // `filter` drops the rows that do not apply here (the Inbox without one):
 // they keep their places in the order while the others move round them.
 // A hidden item's row reads muted, so the list reads as the bar does.
-// Reset puts the bar's default order and modes back.
+// Reset puts the bar's default order, modes and places back.
 import React from "react";
 import { createPortal } from "react-dom";
 import { Section, Row, Segmented } from "./SettingsKit";
@@ -68,14 +70,24 @@ export function BarLayoutSection({ bar, value, onChange, icons, title, scope, pr
         {rows.map((item) => {
           const label = t(item.label);
           const mode = layout.modes[item.id];
+          const modes = (
+            <Segmented value={mode} onChange={(next) => onChange(bar.setMode(layout, item.id, next))}
+              options={item.modes.map((m) => [m, bar.modeLabel(item, m), null, bar.modeTip(item, m)])} />
+          );
           return (
             <div key={item.id} data-order-id={item.id}
               className={`barLayoutRow${mode === "hidden" ? " off" : ""}${drag?.id === item.id ? " lifted" : ""}`}>
               <button type="button" className="barLayoutGrip" aria-label={t("Move {label}", { label })}
                 title={t("Drag to reorder, or use the arrow keys")} {...sourceProps(item.id)} {...keyProps(item.id)}><GripIcon size={16} /></button>
               <Row icon={icons[item.id]} label={label} hint={t(item.hint)}>
-                <Segmented value={mode} onChange={(next) => onChange(bar.setMode(layout, item.id, next))}
-                  options={item.modes.map((m) => [m, bar.modeLabel(item, m), null, bar.modeTip(item, m)])} />
+                {item.places ? (
+                  <span className="barLayoutChoices">
+                    {modes}
+                    <Segmented value={layout.places[item.id]} disabled={mode === "hidden"}
+                      onChange={(next) => onChange(bar.setPlace(layout, item.id, next))}
+                      options={item.places.map((p) => [p, bar.placeLabel(p), null, bar.placeTip(p)])} />
+                  </span>
+                ) : modes}
               </Row>
             </div>
           );

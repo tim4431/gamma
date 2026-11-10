@@ -318,8 +318,9 @@ export async function settingsScenarios(env) {
       await until(async () => (await caps(del)) === "Ctrl Shift K", { what: "reset" });
       assertEq(await caps(ren), "F2", "the clash is gone with the reset");
       await page.getByRole("searchbox", { name: "Filter shortcuts" }).fill("duplicate");
-      // Duplicate block above / below, and the handwriting group's Duplicate handwriting.
-      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 3, { what: "filtered to the three duplicate rows" });
+      // Duplicate block above / below, the handwriting group's Duplicate handwriting, and the
+      // built-in row of the selected notes' keys (copy, cut, duplicate).
+      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 4, { what: "filtered to the four duplicate rows" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -1141,7 +1142,7 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("settings: a right-click on the top bar's empty space offers Customize top bar…, which opens its section", async () => {
+  await step("settings: a right-click on the top bar's empty space or one of its items offers Customize top bar…, which opens its section", async () => {
     const { ctx, page } = await setup();
     try {
       // a point of the bar that is none of its buttons, tabs or fields
@@ -1160,11 +1161,17 @@ export async function settingsScenarios(env) {
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       await until(() => page.evaluate(() => document.activeElement?.dataset.setting === "Top bar"), { what: "the Top bar section focused" });
       assertEq(await nav(page, "Appearance").getAttribute("aria-current"), "page");
-      // a right-click on a button is that button's, not the bar's
+      // a right-click on a button that is not one of the bar's items is that button's, not the bar's
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
-      await page.locator('[data-guide="header.add"]').click({ button: "right" });
+      await page.locator('[data-guide="header.home"]').click({ button: "right" });
       await sleep(300);
-      assertEq(await page.getByRole("menuitem", { name: "Customize top bar…", exact: true }).count(), 0, "no Customize… on a button");
+      assertEq(await page.getByRole("menuitem", { name: "Customize top bar…", exact: true }).count(), 0, "no Customize… on Home");
+      // on one of its items, the bar's menu, first with where the item stands while pages are side by side
+      await page.locator('[data-guide="header.add"]').click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Customize top bar…", exact: true }).waitFor();
+      assertEq(await page.getByRole("menuitemradio", { name: "Show on the top bar" }).getAttribute("aria-checked"), "true", "Add stands on top by default");
+      assertEq(await page.getByRole("menuitemradio", { name: "Show in each pane" }).getAttribute("aria-checked"), "false");
+      await page.keyboard.press("Escape");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

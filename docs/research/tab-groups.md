@@ -93,3 +93,8 @@ close shows (VS Code's `mru`; Gamma uses the tab history, which is the
 account's across groups); a keyboard way to move focus between groups;
 the issue's wish for several windows, which the desktop app's shell could
 offer and the browser cannot.
+
+What the two-pane UI lacks as drawn, Notability's Multi-Note beside VS
+Code's groups, and the design recommended for it, the same chrome on every
+pane first and the second workbench after, and what was built of it:
+[split-panes.md](split-panes.md).

@@ -5,10 +5,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PREFS } from "../src/app/prefDefs.js";
 import { TOPBAR, TOPBAR_ITEMS } from "../src/app/topbarItems.js";
-import { BAR_MODES } from "../src/shared/model/barLayout.js";
+import { BAR_MODES, BAR_PLACES } from "../src/shared/model/barLayout.js";
 
 const ORDER = ["add", "tasks", "search", "share", "sync", "inbox", "view"];
 const MODES = { add: "always", tasks: "always", search: "always", share: "always", sync: "auto", inbox: "always", view: "always" };
+const PLACES = { add: "top", tasks: "top", search: "pane", share: "pane", inbox: "top", view: "pane" };
 
 test("every item offers known modes, auto only with its own word, and has the parts its row and anchor need", () => {
   assert.equal(TOPBAR.items, TOPBAR_ITEMS);
@@ -33,14 +34,14 @@ test("every item offers known modes, auto only with its own word, and has the pa
 });
 
 test("the default is the bar's order and each item's first mode, and the preference stores it", () => {
-  assert.deepEqual(TOPBAR.DEFAULT, { order: ORDER, modes: MODES });
+  assert.deepEqual(TOPBAR.DEFAULT, { order: ORDER, modes: MODES, places: PLACES });
   for (const item of TOPBAR_ITEMS) assert.equal(TOPBAR.DEFAULT.modes[item.id], item.modes[0]);
   assert.equal(PREFS.topbar.key, "gamma-topbar");
   assert.equal(PREFS.topbar.scope, "account");
   assert.equal(PREFS.topbar.default, TOPBAR.DEFAULT);
   const value = TOPBAR.setMode(TOPBAR.move(undefined, "search", 0), "inbox", "auto");
   assert.deepEqual(PREFS.topbar.parse(PREFS.topbar.serialize(value)),
-    { order: ["search", "add", "tasks", "share", "sync", "inbox", "view"], modes: { ...MODES, inbox: "auto" } });
+    { order: ["search", "add", "tasks", "share", "sync", "inbox", "view"], modes: { ...MODES, inbox: "auto" }, places: PLACES });
   assert.equal(PREFS.topbar.parse("not json"), undefined);
   assert.equal(PREFS.topbar.parse(JSON.stringify(["add"])), undefined);
   assert.equal(PREFS.syncPillScope, undefined, "the old sync pill preference is gone");
@@ -86,4 +87,20 @@ test("places: the preference on a desktop, the phone's bar without the items it 
   const hidden = { modes: all("hidden") };
   assert.deepEqual(places(hidden, { guide: true }), all("bar"), "a tour or hint shows every item");
   assert.equal(places(hidden, { guide: true, phone: true }).tasks, "menu", "but never one the phone's bar has no room for");
+});
+
+test("split: the page's own buttons go to the panes, the rest stay on top, the sync pill has no pane place", () => {
+  for (const item of TOPBAR_ITEMS) {
+    if (!item.places) continue;
+    assert.deepEqual([...item.places].sort(), [...BAR_PLACES].sort(), `${item.id} offers both places`);
+  }
+  assert.equal(TOPBAR.item("sync").places, undefined);
+  for (const where of BAR_PLACES) assert.ok(TOPBAR.placeLabel(where) !== where && TOPBAR.placeTip(where), `${where} has a word and a tooltip`);
+  const at = (value, options) => Object.fromEntries(TOPBAR.place(value, options).map((x) => [x.id, x.at]));
+  assert.deepEqual(at(undefined, { split: true, active: { sync: true } }),
+    { add: "bar", tasks: "bar", search: "pane", share: "pane", sync: "bar", inbox: "bar", view: "pane" });
+  assert.equal(at(TOPBAR.setPlace(undefined, "inbox", "pane"), { split: true }).inbox, "pane");
+  assert.equal(at(TOPBAR.setPlace(undefined, "sync", "pane"), { split: true, active: { sync: true } }).sync, "bar");
+  assert.equal(at(TOPBAR.setPlace(undefined, "search", "pane"), { split: true, phone: true }).search, "pane",
+    "the caller never splits on a phone; the model says where it would go");
 });

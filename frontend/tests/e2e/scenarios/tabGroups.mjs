@@ -5,10 +5,12 @@
 // paper's place, the notes' rows), a press on a note landing in that note's
 // editor, the docked Notes window keeping the paper's notes while the notes
 // page is live, a live group's notes edited beside its sash, a tab dragged
-// onto a group's edge, a group gone with its last tab, an empty group with
+// into the other pane, a group gone with its last tab, an empty group with
 // the library in it, the arrangement kept across a reload in this browser,
-// and a right-click or a scrollbar press on a view leaving its group as it
-// is.
+// a right-click or a scrollbar press on a view leaving its group as it is,
+// and the two panes' own chrome: the live one ringed, the page's topbar
+// buttons at each pane's strip acting on that pane, their place changed
+// from a right-click, and the split's rows in the tab and bar menus.
 import { Account, launchBrowser, live } from "../harness.mjs";
 import { closeEditor } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
@@ -57,18 +59,25 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
     await until(async () => (await page.locator(live(".topbar .tabStrip .tab")).count()) === 2, { what: "both tabs in the topbar's strip" });
     return page;
   }
-  // A tab's drag, dropped on `target` at a point of it: the browser's drag
-  // events with one data store, as the strip and the drop layers see them.
-  async function dragTab(page, tab, target, at) {
+  // A tab's drag over `target` at a point of it: the browser's drag events
+  // with one data store, as the strip and the drop layers see them, and
+  // `drop()` to let go there. The tab is held as its element, so its
+  // dragend reaches it after the drop has moved it elsewhere.
+  async function dragOver(page, tab, target, at) {
     const dt = await page.evaluateHandle(() => new DataTransfer());
-    await tab.dispatchEvent("dragstart", { dataTransfer: dt });
+    const source = await tab.elementHandle();
+    await source.dispatchEvent("dragstart", { dataTransfer: dt });
     await target.waitFor();
     const box = await target.boundingBox();
     const point = { dataTransfer: dt, clientX: box.x + box.width * at.x, clientY: box.y + box.height * at.y };
     await target.dispatchEvent("dragenter", point);
     await target.dispatchEvent("dragover", point);
-    await target.dispatchEvent("drop", point);
-    await tab.dispatchEvent("dragend", { dataTransfer: dt }).catch(() => {});
+    return {
+      drop: async () => {
+        await target.dispatchEvent("drop", point);
+        await source.dispatchEvent("dragend", { dataTransfer: dt }).catch(() => {});
+      },
+    };
   }
 
   await step("tab groups: Split right puts the paper in a group of its own, shown to read beside the notes being edited", async () => {
@@ -265,7 +274,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
     } finally { await ctx.close(); }
   });
 
-  await step("tab groups: a tab dropped on a group's bottom edge stacks the groups; the last tab closed takes its group away", async () => {
+  await step("tab groups: split, a pane's whole body takes a dragged tab; the last tab closed takes its group away", async () => {
     await noTabs();
     const ctx = await user.context(browser);
     const page = await openBoth(ctx);
@@ -285,24 +294,104 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
       assert(over, "the live group's drop layer is over its page");
       await tabIn(readGroup(page), "Split paper").dispatchEvent("dragend", { dataTransfer: drag });
       await until(async () => (await page.locator(live(".tabDropLayer")).count()) === 0, { what: "the drop layers go with the drag" });
-      // the notes' tab (live, on the left) onto the lower edge of the paper's group: a column of
-      // paper over notes, the live role following the notes; the emptied left group goes
-      const target = readGroup(page).locator(".tabDropLayer");
-      await dragTab(page, tabIn(liveGroup(page), "Lecture notes"), target, { x: 0.5, y: 0.96 });
-      await until(async () => {
-        if ((await groups(page).count()) !== 2) return false;
-        const [a, b] = await Promise.all([groups(page).nth(0).boundingBox(), groups(page).nth(1).boundingBox()]);
-        return a && b && Math.abs(a.x - b.x) < 2 && a.y + a.height <= b.y + 1;
-      }, { what: "the two groups stacked, one over the other" });
+      // the notes' tab (live, on the left) over the lower edge of the paper's pane: the page's place
+      // splits once, so the whole pane is the zone, and the drop moves the tab into it, the live role
+      // following the notes; the emptied left group goes, and the one group's strip is the topbar's
+      const dragging = await dragOver(page, tabIn(liveGroup(page), "Lecture notes"), readGroup(page).locator(".tabDropLayer"), { x: 0.5, y: 0.96 });
+      await readGroup(page).locator(".tabDropZone.zone-center").waitFor();
+      assertEq(await page.locator(live(".tabDropZone:not(.zone-center)")).count(), 0, "no edge zone: the split is the one there is");
+      await dragging.drop();
+      await until(async () => (await groups(page).count()) === 0, { what: "one group, unframed" });
+      await until(async () => (await page.locator(live(".topbar .tabStrip .tab")).count()) === 2, { what: "both tabs in the topbar's strip" });
       assertEq(blockOf(page), notes.id, "the notes stay on screen");
-      await liveView(page).locator(".sidebar .blockList", { hasText: "Lecture notes body line" }).waitFor();
-      assert((await groups(page).nth(1).getAttribute("class")).includes("live"), "the live group is the lower one");
       assertEq(await page.locator(live(".tabDropLayer")).count(), 0, "the drop layers go with the drag");
-      // the paper's tab closed: its group goes, and the one group's strip is the topbar's again
+      // split again; the paper's tab closed: its group goes, and the one group's strip is the topbar's again
+      await tabIn(page.locator(".topbar"), "Split paper").click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Split right" }).click();
+      await until(async () => (await groups(page).count()) === 2, { what: "two groups again" });
       await tabIn(readGroup(page), "Split paper").hover();
       await tabIn(readGroup(page), "Split paper").locator(".tabClose").click();
       await until(async () => (await groups(page).count()) === 0, { what: "one group, unframed" });
       await until(async () => (await page.locator(live(".topbar .tabStrip .tab")).count()) === 1, { what: "the topbar's strip holds the one tab" });
+      assertEq(blockOf(page), notes.id);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("tab groups: two panes, the live one ringed, the page's buttons at each pane's strip acting on that pane", async () => {
+    await noTabs();
+    const ctx = await user.context(browser);
+    const page = await openBoth(ctx);
+    try {
+      // one group: the bar's own right-click splits it, the page on screen (the notes) going right
+      const strip = await page.locator(".topbar .tabStrip").boundingBox();
+      await page.mouse.click(strip.x + strip.width - 8, strip.y + strip.height / 2, { button: "right" });
+      await page.getByRole("menuitem", { name: "Split right" }).click();
+      await until(async () => (await groups(page).count()) === 2, { what: "two panes" });
+      assertEq(blockOf(page), notes.id, "the notes stay on screen");
+      const [paperSide, notesSide] = await Promise.all([readGroup(page).boundingBox(), liveGroup(page).boundingBox()]);
+      assert(paperSide.x + paperSide.width <= notesSide.x + 1, "the notes in a pane of their own on the right");
+      await readGroup(page).locator('.pagePane [data-page="1"] .textLayer span').first().waitFor({ timeout: 30000 });
+      // the ring is the live pane's alone
+      const ring = (loc) => loc.evaluate((el) => getComputedStyle(el, "::after").borderTopWidth);
+      assertEq(await ring(liveGroup(page)), "2px", "the live pane is ringed");
+      assertEq(await ring(readGroup(page)), "0px", "the other is not");
+      // Search, Share and the View menu stand at each pane's strip; Add stays on the top bar
+      const top = page.locator(".topbar:not(.paneBar)");
+      assertEq(await top.locator('[data-guide="header.search"]').count(), 0, "no Search on the top bar while split");
+      assertEq(await top.locator('[data-guide="header.add"]').count(), 1, "Add stays on top");
+      for (const id of ["search", "share", "view"]) {
+        assertEq(await page.locator(`.tabLiveBar [data-guide="header.${id}"]`).count(), 1, `the live pane's ${id} is the item itself`);
+        assertEq(await readGroup(page).locator(`.paneBar [data-bar-item="${id}"]`).count(), 1, `the other pane's ${id} stands for it`);
+      }
+      // the live pane's bar is drawn once, over the end of the live pane's strip
+      const barOnLive = async () => {
+        const [bar, head] = await Promise.all([page.locator(".tabLiveBar").boundingBox(), liveGroup(page).locator(".tabGroupHead").boundingBox()]);
+        return !!bar && !!head && bar.x >= head.x && bar.x + bar.width <= head.x + head.width + 1 && Math.abs(bar.y - head.y) <= 1;
+      };
+      await until(barOnLive, { what: "the live bar at the end of the live pane's strip" });
+      // the other pane's Search: that pane goes live and the search opens under it, on its page
+      await readGroup(page).locator('.paneBar [data-bar-item="search"]').click();
+      await until(() => blockOf(page) === paper.id, { what: "the paper's pane is live" });
+      await page.locator(".tabLiveBar .searchPopover").waitFor();
+      const [left, right] = await Promise.all([liveGroup(page).boundingBox(), readGroup(page).boundingBox()]);
+      assert(left.x + left.width <= right.x + 1, "the live pane is now the paper's, on the left");
+      assertEq(await ring(liveGroup(page)), "2px", "the ring went with it");
+      await until(barOnLive, { what: "the bar went with it" });
+      // the search is the same one whichever pane is live: a query typed stays across a switch
+      await page.locator('[data-guide="search.input"]').fill("Second line");
+      await page.keyboard.press("Escape");
+      await until(async () => (await page.locator(live(".searchPopover")).count()) === 0, { what: "the search closed" });
+      const notesView = await readGroup(page).locator(".pagePane").boundingBox();
+      await page.mouse.click(notesView.x + notesView.width / 2, notesView.y + notesView.height * 0.7);
+      await until(() => blockOf(page) === notes.id, { what: "the notes' pane is live again" });
+      await until(barOnLive, { what: "the bar back on the notes' pane" });
+      await page.locator('.tabLiveBar [data-guide="header.search"]').click();
+      assertEq(await page.locator('[data-guide="search.input"]').inputValue(), "Second line", "the query kept");
+      await page.keyboard.press("Escape");
+      await until(async () => (await page.locator(live(".searchPopover")).count()) === 0, { what: "the search closed" });
+      // a right-click on an item: where it stands while split, Search to the top bar and back
+      await page.locator('.tabLiveBar [data-guide="header.search"]').click({ button: "right" });
+      assertEq(await page.getByRole("menuitemradio", { name: "Show in each pane" }).getAttribute("aria-checked"), "true");
+      await page.getByRole("menuitemradio", { name: "Show on the top bar" }).click();
+      await until(async () => (await top.locator('[data-guide="header.search"]').count()) === 1, { what: "Search on the top bar" });
+      assertEq(await page.locator(live('.tabLiveBar [data-guide="header.search"], .paneBar [data-bar-item="search"]')).count(), 0, "and in no pane");
+      await top.locator('[data-guide="header.search"]').click({ button: "right" });
+      await page.getByRole("menuitemradio", { name: "Show in each pane" }).click();
+      await until(async () => (await page.locator('.tabLiveBar [data-guide="header.search"]').count()) === 1, { what: "Search back in the panes" });
+      // a tab's menu while split: no second split, the other pane instead
+      await tabIn(readGroup(page), "Split paper").click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Move to the other pane" }).waitFor();
+      assertEq(await page.getByRole("menuitem", { name: "Split right" }).count(), 0, "one split only");
+      assertEq(await page.getByRole("menuitem", { name: "Split down" }).count(), 0, "and never down");
+      await page.keyboard.press("Escape");
+      // a pane strip's own right-click joins the panes
+      const paneStrip = await liveGroup(page).locator(".tabStrip").boundingBox();
+      await page.mouse.click(paneStrip.x + paneStrip.width - 8, paneStrip.y + paneStrip.height / 2, { button: "right" });
+      await page.getByRole("menuitem", { name: "Join tab groups" }).click();
+      await until(async () => (await groups(page).count()) === 0, { what: "one group again" });
+      assertEq(await top.locator('[data-guide="header.search"]').count(), 1, "Search back on the top bar with one group");
+      assertEq(await page.locator(live(".tabLiveBar")).count(), 0, "and no pane bar");
       assertEq(blockOf(page), notes.id);
       assertNoProblems(page);
     } finally { await ctx.close(); }
