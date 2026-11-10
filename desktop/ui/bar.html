@@ -398,7 +398,7 @@
   // A kept clone, Zotero link or synced vault in the panel: its name over
   // its state (a vault's with its direction after the name), a dot for the
   // state, and its actions, always shown. A vault's `path ⇄ remote · folder`
-  // is in the row's tooltip, not a third line. A click opens it (a clone or
+  // is in the row's tooltip. A click opens it (a clone or
   // a link's workspace in the window, a vault's directory, or its file in
   // its directory); "pause" stops its rounds (a clone or a link detaches)
   // and "resume" starts them again; "sync" runs a round now (a detached
@@ -582,6 +582,17 @@
     return sw;
   }
 
+  // A vault's two switches in one row, each after its name: Pull, then Push.
+  function switchRow(pull, push) {
+    const sw = document.createElement('div');
+    sw.className = 'switches';
+    for (const [name, control] of [['Pull', pull], ['Push', push]]) {
+      const k = document.createElement('span'); k.className = 'k'; k.textContent = name;
+      sw.append(k, control);
+    }
+    return sw;
+  }
+
   // What the directory holds, as /preview found it.
   function foundText(p) {
     if (p.empty) return 'Nothing: an empty directory';
@@ -602,13 +613,8 @@
     boxRow(box, 'Local', a.path, 'path');
     boxRow(box, 'Remote', `${a.server} · ${a.workspace} · ${a.newFolder ? `a new folder “${a.folder}”` : a.folder}`);
     boxRow(box, 'Found', foundText(a.preview || {}));
-    const sw = document.createElement('div');
-    sw.className = 'switches';
-    const pullLabel = document.createElement('span'); pullLabel.className = 'k'; pullLabel.textContent = 'Pull';
-    const pushLabel = document.createElement('span'); pushLabel.className = 'k'; pushLabel.textContent = 'Push';
-    sw.append(pullLabel, pullSwitch('askPull', askPick.pull, (on) => { askPick = { ...askPick, pull: on }; renderSync(); }),
-      pushLabel, pushSeg(askPick.push, (word) => { askPick = { ...askPick, push: word }; renderSync(); }, a.remote));
-    box.appendChild(sw);
+    box.appendChild(switchRow(pullSwitch('askPull', askPick.pull, (on) => { askPick = { ...askPick, pull: on }; renderSync(); }),
+      pushSeg(askPick.push, (word) => { askPick = { ...askPick, push: word }; renderSync(); }, a.remote)));
     const said = (a.sentences || {})[`${askPick.pull}:${askPick.push}`] || { ok: false, text: '' };
     const say = document.createElement('div');
     say.className = `say${said.ok ? '' : ' no'}`;
@@ -663,12 +669,8 @@
     const shut = i.seen ? 'Another account made this vault: it, or an editor of the workspace, acts on it.'
       : i.away ? 'Your account is no longer a member of its workspace: nothing is pulled or pushed.' : '';
     if (i.scope === 'folder') {
-      const sw = document.createElement('div');
-      sw.className = 'switches';
-      const pullLabel = document.createElement('span'); pullLabel.className = 'k'; pullLabel.textContent = 'Pull';
-      const pushLabel = document.createElement('span'); pushLabel.className = 'k'; pushLabel.textContent = 'Push';
-      sw.append(pullLabel, pullSwitch('vaultPull', i.pull, (on) => runKept(i, 'pull', on), i.remoteUrl && 'A vault of another server pulls, for now'),
-        pushLabel, pushSeg(i.push, (word) => runKept(i, 'push', word), Boolean(i.remoteUrl)));
+      const sw = switchRow(pullSwitch('vaultPull', i.pull, (on) => runKept(i, 'pull', on), i.remoteUrl && 'A vault of another server pulls, for now'),
+        pushSeg(i.push, (word) => runKept(i, 'push', word), Boolean(i.remoteUrl)));
       if (shut) {
         sw.title = shut;
         for (const input of sw.querySelectorAll('input, button')) input.disabled = true;

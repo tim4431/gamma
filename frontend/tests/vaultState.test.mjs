@@ -32,7 +32,6 @@ test("a folder vault's page says where it is synced, and what stands in its way"
   assert.match(chip.title, /synced with D:\\Papers\\Attention\.md/);
   assert.equal(vaultChip(folder({ paused: true })).kind, "paused");
   const busy = vaultChip(folder({ paused: true, conflicts: 2, problem: "an open code block" }));
-  assert.ok(busy.problem && busy.paused);
   assert.equal(busy.kind, "alert", "a problem comes before being paused");
   assert.match(busy.title, /paused/);
   assert.match(busy.title, /2 conflicts/);
@@ -57,7 +56,6 @@ test("an opened PDF is on this computer, or its file is missing", () => {
   const gone = vaultChip(opened({ missing: true }));
   assert.equal(gone.label, "File missing");
   assert.equal(gone.kind, "alert");
-  assert.ok(gone.missing);
   assert.equal(vaultChip(null), null);
 });
 

@@ -3,11 +3,11 @@
 
 /* The chip among the page header's buttons, in their own icon-button shape
    (app.css .pageActionBtn): one icon for how the page stands with this
-   computer — kept in step, pushed from a file of its own, read where it
-   lies, paused, or something to see to — where a name used to stand and be
-   cut short to "Synced: …", since the header's button column never shrinks
-   (app.css .pageActionCol) and a narrow page keeps its title. Its tooltip
-   says it in words, its card has the path and the actions. */
+   computer: kept in step, pushed from a file of its own, read where it
+   lies, paused, or something to see to. An icon and not a name: the
+   header's button column never shrinks (app.css .pageActionCol), so a name
+   there would be cut short on a narrow page. Its tooltip says it in words,
+   its card has the path and the actions. */
 .vaultChip.warn { color: var(--warn); }
 
 .vaultPopover { max-width: 360px; display: flex; flex-direction: column; gap: var(--space-2); }

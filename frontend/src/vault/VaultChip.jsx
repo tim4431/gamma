@@ -30,10 +30,10 @@ export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, 
   if (!chip) return null;
   const { vault, reader } = state;
   const path = vault ? vault.path : reader.path;
-  const Icon = CHIP_ICONS[chip.kind] || HardDriveIcon;
+  const Icon = CHIP_ICONS[chip.kind];
   return (
     <span data-popover="vault" className="popoverAnchor">
-      <button type="button" className={`pageActionBtn vaultChip${chip.missing || chip.problem ? " warn" : ""}`}
+      <button type="button" className={`pageActionBtn vaultChip${chip.kind === "alert" ? " warn" : ""}`}
         title={`${chip.label}\n${chip.title}`} aria-label={chip.label}
         aria-haspopup="menu" aria-expanded={open} onClick={() => onOpenChange(!open)}>
         <Icon size={16} />
@@ -86,7 +86,7 @@ export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, 
 export function VaultBanner({ banner, onLocate, onRemove, onDismiss }) {
   if (!banner) return null;
   return (
-    <div className="missingPageNotice vaultNotice" role="status" data-vault-banner={banner.kind}>
+    <div className="missingPageNotice" role="status" data-vault-banner={banner.kind}>
       <AlertCircleIcon size={16} aria-hidden="true" />
       <span className="missingPageText">
         {banner.kind === "problem" ? (

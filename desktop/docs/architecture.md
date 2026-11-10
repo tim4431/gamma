@@ -334,8 +334,8 @@ name as the two arrows its view's *Pull now* and *Push now* carry: the
 pull arrow lit while it pulls, the push arrow lit while it pushes
 everything and half-lit while it pushes PDFs only, dim while off (a vault
 of one file shows the push arrow alone). Its `path ⇄ remote · folder`,
-`D:\Papers ⇄ NAS · Research / Papers`, is in the row's tooltip, not a
-third line. Under the groups come *Add a synced vault…* and, while a
+`D:\Papers ⇄ NAS · Research / Papers`, is in the row's tooltip. Under
+the groups come *Add a synced vault…* and, while a
 workspace is open, *Sync a folder of <workspace>…*. That opens the
 panel's second level, the chooser: *Whole library* and every folder of the open workspace
 (`shell:folders` → `listFolders`: the open server's `GET /api/sync/folders`
