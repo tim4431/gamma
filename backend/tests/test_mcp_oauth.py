@@ -48,7 +48,7 @@ def pending(c):
 
 def approve(c, ws):
     client_id, value = pending(c)
-    result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "workspace_id": ws})
+    result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "workspaces": [ws]})
     assert result.status_code == 200, result.text
     query = parse_qs(urlsplit(result.json()["redirect_url"]).query)
     assert query["state"] == ["test-state"]
@@ -83,7 +83,7 @@ def test_discovery_and_browser_signin_roundtrip(browser):
     tools = c.post("/mcp", headers={"Authorization": f"Bearer {token}", "Accept": "application/json, text/event-stream"},
                    json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
     assert tools.status_code == 200, tools.text
-    assert {tool["name"] for tool in tools.json()["result"]["tools"]} == mcp_tools() | {"read_gamma_link", "export_page"}
+    assert {tool["name"] for tool in tools.json()["result"]["tools"]} == mcp_tools() | {"list_workspaces", "read_gamma_link", "export_page"}
     listing = c.get("/api/integrations/tokens").json()
     connection = next(t for t in listing["tokens"] if t["name"] == "Codex test (OAuth)")
     c.delete("/api/integrations/tokens/" + connection["id"])
@@ -103,10 +103,10 @@ def test_consent_requires_matching_browser_session_and_membership(browser):
     from gamma.app import app
     c, ws = browser
     _, value = pending(c)
-    payload = {**value, "approve": True, "workspace_id": ws}
+    payload = {**value, "approve": True, "workspaces": [ws]}
     assert c.post("/api/integrations/oauth/consent", json={**payload, "csrf": "forged"}).status_code == 403
     assert c.post("/api/integrations/oauth/consent", json=payload, headers={"Origin": "https://evil.example"}).status_code == 403
-    assert c.post("/api/integrations/oauth/consent", json={**payload, "workspace_id": "other"}).status_code == 403
+    assert c.post("/api/integrations/oauth/consent", json={**payload, "workspaces": ["other"]}).status_code == 403
     with TestClient(app, base_url=BASE) as second:
         second.post("/api/login", json={"username": "oauth-reader", "password": "pw"})
         assert second.post("/api/integrations/oauth/consent", json=payload).status_code == 403
@@ -147,7 +147,7 @@ def test_consent_behind_https_proxy(browser, monkeypatch, configured_by, approve
                             headers={"Origin": public})
             assert details.status_code == 200, details.text
             payload = {"request_id": request_id, "csrf": details.json()["csrf"],
-                       "workspace_id": ws, "approve": approve_request}
+                       "workspaces": [ws], "approve": approve_request}
             for origin in ("https://evil.example", "http://gamma.example", "https://gamma.example:444", "null"):
                 denied = c.post("/api/integrations/oauth/consent", json=payload,
                                 headers={"Origin": origin, "X-Forwarded-Host": "evil.example",
@@ -296,7 +296,7 @@ def test_official_sdk_discovers_registers_and_completes_oauth(browser):
         request_id = parse_qs(urlsplit(response.headers["location"]).query)["gamma_oauth"][0]
         details = c.get("/api/integrations/oauth/request", params={"request_id": request_id}).json()
         result = c.post("/api/integrations/oauth/consent", json={"request_id": request_id,
-                        "csrf": details["csrf"], "workspace_id": ws, "approve": True})
+                        "csrf": details["csrf"], "workspaces": [ws], "approve": True})
         callback.update(parse_qs(urlsplit(result.json()["redirect_url"]).query))
 
     async def receive_callback():
@@ -315,3 +315,32 @@ def test_official_sdk_discovers_registers_and_completes_oauth(browser):
     asyncio.run(run())
     assert storage.tokens is not None
     assert resolve_token(storage.tokens.access_token, BASE + "/mcp") == (account_of("oauth-reader"), ws)
+
+
+def test_signin_approves_several_workspaces_or_all(browser):
+    from gamma import workspaces
+    from gamma.integrations import resolve_connection
+
+    c, ws = browser
+    lab = workspaces.create("OAuth lab", account_of("oauth-reader"))["id"]
+    try:
+        client_id, value = pending(c)
+        assert c.post("/api/integrations/oauth/consent", json={**value, "approve": True}).status_code == 400
+        result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "workspaces": [lab, ws]})
+        code = parse_qs(urlsplit(result.json()["redirect_url"]).query)["code"][0]
+        token = exchange(c, client_id, code).json()["access_token"]
+        assert resolve_connection(token, BASE + "/mcp") == (account_of("oauth-reader"), [lab, ws])
+        client_id, value = pending(c)
+        result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "all_workspaces": True})
+        code = parse_qs(urlsplit(result.json()["redirect_url"]).query)["code"][0]
+        every = exchange(c, client_id, code).json()["access_token"]
+        later = workspaces.create("OAuth later", account_of("oauth-reader"))["id"]
+        assert {ws, lab, later} <= set(resolve_connection(every, BASE + "/mcp")[1])
+        listing = c.get("/api/integrations/tokens").json()["tokens"]
+        mine = [t for t in listing if t["name"] == "Codex test (OAuth)"]
+        assert any(t["workspaces"] == [lab, ws] for t in mine) and any(t["all_workspaces"] for t in mine)
+        workspaces.delete(later)
+    finally:
+        for t in c.get("/api/integrations/tokens").json()["tokens"]:
+            c.delete("/api/integrations/tokens/" + t["id"])
+        workspaces.delete(lab)

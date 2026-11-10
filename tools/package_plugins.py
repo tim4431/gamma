@@ -20,7 +20,7 @@ MANIFEST_PATHS = (".codex-plugin/plugin.json", ".claude-plugin/plugin.json")
 PLUGIN_FILES = (*MANIFEST_PATHS, "README.md", "skills/gamma/SKILL.md",
                 "skills/gamma/agents/openai.yaml", "skills/gamma/assets/icon.png")
 # The dsh bundle: package.json declares dsh.bundle; its "files" must list the rest.
-DSH_FILES = ("package.json", "README.md", "cordis.patch.yml", "dsh-skill.js", "skills/gamma/SKILL.md")
+DSH_FILES = ("package.json", "README.md", "cordis.patch.yml", "dsh-gamma.js", "skills/gamma/SKILL.md")
 SOURCE = Path(__file__).resolve().parents[1] / "plugins" / "gamma"
 
 

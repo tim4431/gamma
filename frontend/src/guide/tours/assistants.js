@@ -13,13 +13,13 @@ export default {
   steps: [
     { id: "assistant-setup", anchor: "settings.assistantSetup", placement: "left", media: "assistant-connect",
       title: T("Pick your assistant and run its command"),
-      body: T("Then allow this workspace in the browser it opens."),
+      body: T("Then choose, in the browser it opens, the workspaces it may read."),
       advanceOn: { event: "mcp.connected" } },
     { id: "assistant-ask", anchor: null,
       title: T("Ask it with @Gamma"),
       body: T("*@Gamma, which of my papers use attention?* A Gamma link in the question reads that page.") },
     { id: "assistant-access", anchor: "settings.assistantAccess", placement: "left",
       title: T("Each connection is listed here"),
-      body: T("It lasts 90 days; disconnect it here any time."), next: T("Done") },
+      body: T("It lasts 90 days. Change what it reads, or disconnect it, here."), next: T("Done") },
   ],
 };

@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, ValidationError
 from . import ratelimit, workspaces
 from .auth import SESSION_COOKIE, read_body, require_personal_user_id
 from .db import connect_users_db
-from .integrations import token_digest
+from .integrations import ALL, grant, token_digest
 from .server_settings import LOOPBACK_HOSTS, mcp_allowed_hosts, public_url_settings, validate_public_url
 
 router = APIRouter()
@@ -201,7 +201,10 @@ def consent_details(request: Request, request_id: str):
 class Consent(BaseModel):
     request_id: str = Field(max_length=128)
     csrf: str = Field(max_length=128)
-    workspace_id: str = Field(default="", max_length=64)
+    # the workspaces the assistant may read: those listed, or every one the
+    # account can open, now and later (integrations.grant)
+    workspaces: list[str] = Field(default_factory=list, max_length=200)
+    all_workspaces: bool = False
     approve: bool
 
 
@@ -216,8 +219,7 @@ def consent(payload: Consent, request: Request):
     if (not binding or binding["request_id"] != payload.request_id or binding["user"] != user_id or
             binding["session"] != token_digest(request.cookies.get(SESSION_COOKIE, ""))):
         raise HTTPException(403, "Consent expired or the signed-in account changed. Start again.")
-    if payload.approve and not workspaces.role_of(payload.workspace_id, user_id):
-        raise HTTPException(403, "You cannot connect this workspace.")
+    primary, stored = grant(user_id, ALL if payload.all_workspaces else payload.workspaces) if payload.approve else ("", "")
     pending = load("request", base, payload.request_id, consume=True)
     load("consent", base, payload.csrf, consume=True)
     if not pending:
@@ -226,8 +228,8 @@ def consent(payload: Consent, request: Request):
     if not payload.approve:
         return _no_store({"redirect_url": construct_redirect_uri(str(params.redirect_uri), error="access_denied", state=params.state)})
     code = secrets.token_urlsafe(32)
-    value = GammaCode(code=code, client_id=pending["client_id"], user_id=user_id, workspace_id=payload.workspace_id,
-                      session_hash=binding["session"],
+    value = GammaCode(code=code, client_id=pending["client_id"], user_id=user_id, workspace_id=primary,
+                      workspaces=stored, session_hash=binding["session"],
                       scopes=[SCOPE], expires_at=time.time() + 120, code_challenge=params.code_challenge,
                       redirect_uri=params.redirect_uri, redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
                       resource=params.resource, subject=user_id)

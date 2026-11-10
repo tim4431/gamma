@@ -128,7 +128,7 @@ const entries = [
   e("tools", t("Tool rounds"), t("Tool limits"), t("AI ↔ tool round-trips per message"), "advanced tool requests limits"),
   e("tools", t("Unlimited rounds"), t("Tool limits"), t("Run until the reply is done or you stop it"), "advanced tool rounds limit unlimited no limit changes continue"),
   e("tools", t("Read window"), t("Tool limits"), t("Document text per read tool call"), "advanced context characters"),
-  e("integrations", t("Integrations"), null, t("Read-only access for Codex, Claude Code, DeepSeek Harness, or any MCP assistant."), "external assistants Codex Claude Code plugins MCP tokens read-only revoke connections"),
+  e("integrations", t("Integrations"), null, t("Read-only access for Codex, Claude Code, DeepSeek Harness, or any MCP assistant."), "external assistants Codex Claude Code DeepSeek Harness dsh plugins MCP tokens read-only revoke connections workspaces access setup command"),
   e("account", t("Account & sync"), null, t("Your account, Gamma Cloud link and settings sync"), "profile account user"),
   e("account", t("Gamma Cloud"), null, t("Publish pages for free and carry your settings to your other servers"), "cloud link unlink sign-in identity plan publish sync set up"),
   e("account", t("Zotero"), null, t("Link a Zotero library to a workspace and keep the two in step"), "zotero library libraries link sync connect disconnect reconnect api key oauth sign-in references citations"),

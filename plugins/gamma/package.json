@@ -7,9 +7,10 @@
   "repository": "https://github.com/tim4431/Gamma",
   "license": "AGPL-3.0-only",
   "type": "module",
-  "main": "dsh-skill.js",
-  "files": ["cordis.patch.yml", "dsh-skill.js", "skills/gamma/SKILL.md"],
+  "main": "dsh-gamma.js",
+  "files": ["cordis.patch.yml", "dsh-gamma.js", "skills/gamma/SKILL.md"],
   "peerDependencies": {
+    "@deepseek-ai/dsh-mcp-client": "*",
     "@deepseek-ai/dsh-skill-filesystem": "*"
   },
   "dsh": {

@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 50
+SCHEMA_VERSION = 51
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -142,7 +142,8 @@ USERS_SCHEMA = [
         name TEXT NOT NULL,
         created_at TEXT NOT NULL,
         expires_at INTEGER NOT NULL,
-        scope TEXT NOT NULL DEFAULT 'read'
+        scope TEXT NOT NULL DEFAULT 'read',
+        workspaces TEXT NOT NULL DEFAULT ''
     )""",
     # mirrors = local workspaces that are offline copies of a workspace on
     # another Gamma server (gamma/sync_engine.py): where it lives, the
