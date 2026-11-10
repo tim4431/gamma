@@ -230,6 +230,13 @@ def _one_line(line: dict) -> StreamingResponse:
     return StreamingResponse(iter([_ndjson(line)]), media_type="application/x-ndjson")
 
 
+def _check_lang(lang: str) -> str:
+    """A request's target language, one of TRANSLATE_LANGS."""
+    if lang not in TRANSLATE_LANGS:
+        raise HTTPException(status_code=400, detail="unsupported target language")
+    return lang
+
+
 def _check_texts(texts: list) -> None:
     """One request's texts within the caps: 1 to _TRANSLATE_MAX_TEXTS strings
     of _TRANSLATE_MAX_CHARS in all."""
@@ -253,9 +260,7 @@ def _check_door(rt: dict, entry: dict, user_id: str) -> None:
 @router.post("/ai/translate")
 def ai_translate(payload: AITranslateRequest, request: Request):
     user_id = require_user_id(request)
-    lang = payload.lang
-    if lang not in TRANSLATE_LANGS:
-        raise HTTPException(status_code=400, detail="unsupported target language")
+    lang = _check_lang(payload.lang)
     texts = payload.texts
     _check_texts(texts)
 
@@ -499,9 +504,7 @@ def ai_translate_brief(payload: AITranslateBriefRequest, request: Request):
     is no paper, no text to read or the call failed (``error`` says why),
     and at once for a machine-translation service, which takes no brief."""
     user_id = require_user_id(request)
-    lang = payload.lang
-    if lang not in TRANSLATE_LANGS:
-        raise HTTPException(status_code=400, detail="unsupported target language")
+    lang = _check_lang(payload.lang)
 
     def answer(brief, error=""):
         return {"ready": brief is not None, **({"error": error} if error else {})}
@@ -631,8 +634,7 @@ def translations_lookup(payload: TranslationsLookupRequest, request: Request):
     page, keeps nothing: every text is None."""
     user_id = require_user_id(request)
     ws = require_ws(request)
-    if payload.lang not in TRANSLATE_LANGS:
-        raise HTTPException(status_code=400, detail="unsupported target language")
+    _check_lang(payload.lang)
     _check_texts(payload.texts)
     nothing = [None] * len(payload.texts)
     model = _kept_model(user_id, payload.model)
@@ -689,12 +691,6 @@ class TranslationTermRequest(StorableBody):
     was: str = ""  # an edit: the source the term had
 
 
-def _terms_lang(lang: str) -> str:
-    if lang not in TRANSLATE_LANGS:
-        raise HTTPException(status_code=400, detail="unsupported target language")
-    return lang
-
-
 def _terms(request: Request, ws: str, lang: str) -> dict:
     """{terms: [{source, target, by, at}], max, max_chars, can_edit}."""
     return {"terms": translate_terms.listing(ws, lang), "max": translate_terms.MAX_TERMS,
@@ -703,7 +699,7 @@ def _terms(request: Request, ws: str, lang: str) -> dict:
 
 def _term_write(request: Request, lang: str, write) -> dict:
     ws = require_ws(request, write=True)
-    lang = _terms_lang(lang)
+    lang = _check_lang(lang)
     try:
         write(ws, lang)
     except translate_terms.TermError as e:
@@ -715,7 +711,7 @@ def _term_write(request: Request, lang: str, write) -> dict:
 def translate_terms_list(request: Request, lang: str = "zh-CN"):
     """The workspace's terms in ``lang``, by source."""
     ws = require_ws(request)
-    return _terms(request, ws, _terms_lang(lang))
+    return _terms(request, ws, _check_lang(lang))
 
 
 @router.post("/translate/terms")
