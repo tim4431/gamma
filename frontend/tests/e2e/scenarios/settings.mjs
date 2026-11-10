@@ -318,8 +318,9 @@ export async function settingsScenarios(env) {
       await until(async () => (await caps(del)) === "Ctrl Shift K", { what: "reset" });
       assertEq(await caps(ren), "F2", "the clash is gone with the reset");
       await page.getByRole("searchbox", { name: "Filter shortcuts" }).fill("duplicate");
-      // Duplicate block above / below, and the handwriting group's Duplicate handwriting.
-      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 3, { what: "filtered to the three duplicate rows" });
+      // Duplicate block above / below, the handwriting group's Duplicate handwriting, and the
+      // built-in row of the selected notes' keys (copy, cut, duplicate).
+      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 4, { what: "filtered to the four duplicate rows" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
