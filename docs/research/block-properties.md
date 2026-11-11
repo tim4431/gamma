@@ -85,6 +85,7 @@ pictures), since a generated column has to be rebuilt to change.
 |---|---|---|
 | `pdf_page` | a text box or a picture on a PDF page | the 1-based page; these two store no position. Absent on a sheet, where the tree says which sheet |
 | `quote`, `color` | a highlight | its text; its colour as `#rrggbbaa`, never a palette slot ([dev/settings.md](../dev/settings.md) "Colors") |
+| `style` | a highlight | how it marks its passage: `underline`, `squiggly` or `strikeout`, a line in its colour's line tone; none is the wash, and an area never has one ([dev/api.md](../dev/api.md) "The highlight shape") |
 | `linked_highlight_id` | a block placed by its page alone | the highlight it was attached to in the notes (attach mode) |
 | `imported_annot`, `annot_stripped` | a highlight, text box or picture that came from the PDF's own annotations | where it came from; that the PDF it came from was replaced ([dev/import_export.md](../dev/import_export.md)) |
 | `t0` | a block the web client makes, except an empty page's seed block and an ink group (its strokes carry their own) | wall-clock ms it was made, the replay's clock; `transcript: true` with `t0` on a recording's transcript paragraphs ([dev/recording.md](../dev/recording.md)) |

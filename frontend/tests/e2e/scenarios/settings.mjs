@@ -1321,17 +1321,22 @@ export async function settingsScenarios(env) {
       await until(async () => (await palette())?.groups?.[0]?.colors?.length === 4);
       await page.getByRole("button", { name: "Add group", exact: true }).click();
       await until(async () => (await palette())?.groups?.length === 4);
-      await group("New group").getByRole("textbox", { name: "Group name", exact: true }).fill("Work");
-      await until(async () => (await palette())?.groups?.[3]?.name === "Work");
+      // a name is typed as typed, its space too, and saved as the field is left
+      const name = group("New group").getByRole("textbox", { name: "Group name", exact: true });
+      await name.fill("");
+      await name.pressSequentially("Deep work");
+      assertEq(await name.inputValue(), "Deep work", "the space before the next word stays");
+      await name.press("Enter");
+      await until(async () => (await palette())?.groups?.[3]?.name === "Deep work", { what: "the name saved on Enter" });
       // each picker row is a dropdown of the groups; the new one becomes the text highlights' group
       const pickerRow = row(page, "Text highlights");
       assertEq(await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).innerText(), "Highlight");
       await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).click();
-      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Work", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Deep work", exact: true }).click();
       await until(async () => { const p = await palette(); return p?.pickers?.highlight === p?.groups?.[3]?.id; });
-      assertEq(await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).innerText(), "Work");
+      assertEq(await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).innerText(), "Deep work");
       // deleting the chosen group sends the picker back to its default group
-      await group("Work").getByRole("button", { name: "Delete group Work", exact: true }).click();
+      await group("Deep work").getByRole("button", { name: "Delete group Deep work", exact: true }).click();
       await until(async () => (await palette())?.groups?.length === 3 && (await palette())?.pickers?.highlight === "highlight");
       await reset.click();
       await until(async () => (await palette())?.groups?.[0]?.colors?.[0]?.hex === "#ffe28f");

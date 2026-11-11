@@ -1,5 +1,6 @@
 import React from "react";
-import { PaneHead, Section, Row, Toggle, Stepper, PictureChoices } from "./SettingsKit";
+import { NameInput, PaneHead, Section, Row, Toggle, Stepper, PictureChoices } from "./SettingsKit";
+import { HighlightPresets } from "./HighlightPresets";
 import { MenuSelect } from "../shared/ui/Menus";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
@@ -53,9 +54,8 @@ function PaletteGroup({ group, canAdd, canDelete, onChange, onDelete, onDuplicat
   return (
     <div className="setCard paletteGroup" data-setting={group.name}>
       <div className="paletteGroupHead">
-        <input className="paletteGroupName" value={group.name} maxLength={MAX_GROUP_NAME} aria-label={t("Group name")}
-          onChange={(e) => onChange({ ...group, name: e.target.value })}
-          onBlur={(e) => { if (!e.target.value.trim()) onChange({ ...group, name: t("Group") }); }} />
+        <NameInput className="paletteGroupName" value={group.name} maxLength={MAX_GROUP_NAME} aria-label={t("Group name")}
+          onCommit={(name) => onChange({ ...group, name })} />
         <span className="paletteGroupCount">{tn("{n} color", "{n} colors", group.colors.length)}</span>
         <button type="button" className="uiClose uiCloseSm" title={t("Duplicate group")} aria-label={t("Duplicate group {name}", { name: group.name })}
           disabled={!canAdd} onClick={onDuplicate}><CopyIcon size={14} /></button>
@@ -174,9 +174,10 @@ export function AppearanceSettings({ value, diagnostics }) {
           <PaletteGroup key={g.id} group={g} canAdd={palette.groups.length < MAX_GROUPS} canDelete={palette.groups.length > 1}
             onChange={(group) => setGroup(g.id, group)} onDelete={() => deleteGroup(g.id)} onDuplicate={() => addGroup(g)} />
         ))}
-        <Row icon={HighlightIcon} label={t("Text highlights")} hint={t("Highlighting selected PDF text, and recolouring a highlight from its menu.")}>
+        <Row icon={HighlightIcon} label={t("Text highlights")} hint={t("Highlighting selected PDF text, and recolouring a highlight from its menu; the selection popup switches it too.")}>
           <MenuSelect label={t("Text highlights")} value={palette.pickers.highlight} onChange={setPicker("highlight")} options={groupOptions} />
         </Row>
+        <HighlightPresets presets={value.highlightPresets} onChange={value.setHighlightPresets} palette={palette} />
         <Row icon={HighlightIcon} label={t("Ink highlights")} hint={t("A highlighter pen in the handwriting tool strip: the colours its options row offers.")}>
           <MenuSelect label={t("Ink highlights")} value={palette.pickers.highlighter} onChange={setPicker("highlighter")} options={groupOptions} />
         </Row>

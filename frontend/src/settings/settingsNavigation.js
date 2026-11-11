@@ -16,6 +16,10 @@ const SECTIONS = {
   // or the viewer strip, and the strip's ⋯ menu's Customize…: Appearance,
   // at the Top bar or the Viewer tools section.
   topbar: ["appearance", T("Top bar")],
+  // Edit colors and presets… beside the highlight colours (the selection
+  // popup's fold, a highlight's menu, the text highlighter's): Appearance,
+  // at the Colors section.
+  colors: ["appearance", T("Colors")],
   "viewer-tools": ["appearance", T("Viewer tools")],
 };
 export const resolveSettingsPane = (pane) => SECTIONS[pane]?.[0] || pane;

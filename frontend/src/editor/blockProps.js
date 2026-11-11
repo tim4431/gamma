@@ -18,6 +18,7 @@ import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { blockPosition, closestPlace, getParentInfo, isHighlightBlock, isInkGroup, isLinkBlock, isNum, isRecord, placedToCheck,
   roughMatchPercent, sameJson } from "../shared/model/blockModel.js";
 import { DEFAULT_HIGHLIGHT, LINK_COLOR, colorName, hexColor, normalizeColor, parseColor } from "../shared/model/palette.js";
+import { STYLE_NAMES, isLineStyle } from "../shared/model/markStyle.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { isPicture, normalizePicture } from "../markup/picture.js";
 import { isLandscape, isSheet, normalizePaper, paperSizeKey, sheetOfBlock, sheetsOf } from "../notebook/notebook.js";
@@ -113,6 +114,7 @@ export const CATALOG = {
   // highlights and link regions
   color: { section: "kind", type: "color", label: T("Colour"), hint: T("The highlight's colour as stored, #rrggbbaa.") },
   quote: { section: "kind", type: "quote", label: T("Quote"), hint: T("The passage this highlight marks.") },
+  style: { section: "kind", type: "text", label: T("Style"), hint: T("How the highlight marks its passage: an underline, a wavy underline or a strikethrough. None is the wash.") },
   pdf_position: { section: "kind", type: "place", label: T("Place"), hint: T("Where this sits on the PDF page, in the frame its page width and height give.") },
   "pdf_position.pageNumber": { section: "kind", type: "number", label: T("Page"), hint: T("The PDF page, counted from 1.") },
   "pdf_position.width": { section: "kind", type: "number", label: T("Page width"), hint: T("The width of the page the place was measured on: the viewer's page at its zoom then (points for handwriting and imported annotations).") },
@@ -635,9 +637,11 @@ function kindRows(kind, block, p, ctx, server) {
   const used = new Set();
   const take = (...keys) => keys.forEach((k) => used.add(k));
   if (kind === "highlight" || kind === "link") {
-    take("color", "quote", "pdf_position", "link_url", "link_page_id", "link_block_id");
+    take("color", "style", "quote", "pdf_position", "link_url", "link_page_id", "link_block_id");
     const color = colorSummary(p.color);
     rows.push(makeRow(s, ["color"], { type: "color", value: p.color, display: color }));
+    if (isLineStyle(p.style)) rows.push(makeRow(s, ["style"], { type: "text", value: p.style, display: plain(t(STYLE_NAMES[p.style])) }));
+    else if (!unset(p.style)) rows.push(valueRow(s, ["style"], p.style, ctx)); // one no build writes, as stored
     if (!unset(p.quote)) rows.push(valueRow(s, ["quote"], p.quote, ctx));
     if (isRecord(p.pdf_position)) rows.push(placeRow(s, block, p.pdf_position, ctx, color.css, server));
     if (!unset(p.link_url)) rows.push(valueRow(s, ["link_url"], p.link_url, ctx));

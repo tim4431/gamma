@@ -26,6 +26,7 @@ import { ZOOM_HEIGHT, ZOOM_HEIGHT_MAX, ZOOM_HEIGHT_MIN } from "../ink/zoomWindow
 import { textStyle } from "../markup/textBox.js";
 import { LANGUAGES } from "../shared/i18n/locales.js";
 import { normalizeChord } from "../shared/lib/hotkeys.js";
+import { MARK_STYLES, normalizePresets } from "../shared/model/markStyle.js";
 import { DEFAULT_PALETTE, normalizeColor, normalizePalette } from "../shared/model/palette.js";
 import { DARK_THEMES, THEMES, themeScheme } from "./theme.js";
 import { TOPBAR } from "./topbarItems.js";
@@ -189,6 +190,17 @@ export const PREFS = {
   // a changed palette leaves it as it is. "" until one is picked: the
   // highlight picker's first swatch. Set where it acts; no Settings row.
   highlighterColor: pref("gamma-highlighter-color", ACCOUNT, "", { parse: (raw) => (raw === "" ? "" : normalizeColor(raw) || undefined) }),
+  // How a new text highlight marks its passage (shared/model/markStyle.js):
+  // the wash, an underline, a wavy underline or a strikethrough, the last
+  // style picked in the selection popup's style row, a highlighter's menu
+  // or a preset. The popup and the text highlighter both make highlights
+  // in it. Set where it acts; no Settings row.
+  highlightStyle: pref("gamma-highlight-style", ACCOUNT, "highlight", oneOf(MARK_STYLES)),
+  // Named style-and-colour presets (Settings → Appearance › Colors;
+  // markStyle.js normalizePresets): [{id, name, style, color: {hex,
+  // alpha}}], offered beside the colours in the selection popup, a
+  // highlight's menu and the highlighter's.
+  highlightPresets: pref("gamma-highlight-presets", ACCOUNT, [], json(normalizePresets)),
   // Interface size: index.html applies the stored value before first paint,
   // App.jsx keeps `--ui-scale` on the root in sync afterwards. Screens
   // differ, so it stays with the device.

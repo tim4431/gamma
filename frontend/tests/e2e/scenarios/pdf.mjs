@@ -360,10 +360,11 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
   await step("pdf: a text selection makes a highlight (overlay + note row), persisted with its position", async () => {
     await selectPdfText(page, 1, "entanglement in Rydberg");
     await page.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
-    // The popup is as wide as its buttons, however many colours the palette has.
+    // The popup is as wide as its row (the styles, the colours, the tools),
+    // however many colours the palette has.
     const [left, right] = await page.evaluate(() => {
       const tip = document.querySelector(".plainTip").getBoundingClientRect();
-      const btns = [...document.querySelectorAll(".plainTip .colorRow > button")].map((b) => b.getBoundingClientRect());
+      const btns = [...document.querySelectorAll(".plainTip .colorRow > *")].map((b) => b.getBoundingClientRect());
       return [Math.min(...btns.map((b) => b.left)) - tip.left, tip.right - Math.max(...btns.map((b) => b.right))];
     });
     assert(Math.abs(left - right) < 1, `the popup's space left of its buttons ${left}px, right ${right}px`);
@@ -533,7 +534,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assert((kept.block.children || []).some((b) => b.properties?.color === "#ffe28fa6"), "the earlier highlight keeps its yellow");
       // the recolour menu offers the same swatches
       await page.click(`[data-page="1"] [data-hl-id="${saved.id}"]`, { button: "right" });
-      const swatch = page.locator(".ctxMenuColors .colorBtn").nth(1);
+      const swatch = page.locator(".markMenu .colorBtn").nth(1);
       assertEq(await swatch.getAttribute("aria-label"), "Change to Green");
       await swatch.click();
       await until(async () => {
@@ -570,7 +571,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
         { what: `the profile's highlighter colour ${color}` });
       // the button's menu: a colour turns it on
       await button.click({ button: "right" });
-      await p.locator(".ctxMenuColors .colorBtn").nth(1).click();
+      await p.locator(".markMenu .colorBtn").nth(1).click();
       assertEq(await button.getAttribute("aria-pressed"), "true", "a colour from its menu turns it on");
       await profileColor("#aaebaaa6");
       assertEq(await p.locator(".pdfViewer").evaluate((el) => el.style.getPropertyValue("--selection-color")), "#aaebaaa6",
@@ -616,6 +617,116 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await p.locator('[data-guide="ink.toolbar"]').waitFor({ state: "detached", timeout: 5000 }); // turning it on closes the pen's strip
       assertNoProblems(p);
     } finally { await p.close(); }
+  });
+  // How a passage is marked (shared/model/markStyle.js): the popup's style
+  // row picks a wash or a line apart from the colour, its swatches show the
+  // colour each gives, and the style is the next highlight's too. A
+  // highlight's menu restyles it in place, its note and place kept. A preset
+  // named from the popup's fold makes both at once; the fold also switches
+  // the colour group and leads to Settings. A paper of its own, as the
+  // highlighter's.
+  await step("pdf: a passage is marked in a style picked apart from its colour, restyled in place, and a preset makes both at once", async () => {
+    const up = await account.upload("/api/uploads", makePdf([["Kappa lambda mu nu", "Xi omicron pi rho", "Sigma tau upsilon phi"]]), "styles.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Styles paper", source_url: up.source_url } });
+    const p = await openPage(ctx, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+    const children = async () => (await account.api(`/api/blocks/${doc.id}/subtree`)).block.children || [];
+    const block = (test, what) => until(async () => (await children()).find(test) || null, { what });
+    const profile = (test, what) => until(async () => test((await account.api("/api/prefs/profile")).value || {}), { what });
+    try {
+      await waitForPdf(p, 1);
+      // the popup: the four styles, the wash pressed, its swatches a wash
+      await selectPdfText(p, 1, "lambda mu");
+      const tip = p.locator(".plainTip");
+      await tip.locator(".colorBtn").first().waitFor();
+      const styles = tip.getByRole("radiogroup", { name: "Style" });
+      assertEq(await styles.getByRole("radio").count(), 4);
+      assertEq(await styles.getByRole("radio", { checked: true }).getAttribute("aria-label"), "Highlight");
+      // Underline: the swatches are its lines' colours, deeper than the wash
+      await styles.getByRole("radio", { name: "Underline", exact: true }).click();
+      assertEq(await styles.getByRole("radio", { checked: true }).getAttribute("aria-label"), "Underline");
+      const blue = tip.locator(".colorBtn").nth(2);
+      assertEq(await blue.getAttribute("aria-label"), "Underline in Blue");
+      assertEq(await blue.evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(0, 107, 214)", "the blue's line tone");
+      await blue.click();
+      const under = await block((b) => b.properties?.quote === "lambda mu", "the underlined passage");
+      assertEq(under.properties.style, "underline");
+      assertEq(under.properties.color, "#9bcdffa6", "its colour as the wash would store it");
+      await profile((v) => v.highlightStyle === "underline", "the style kept for the next one");
+      const mark = p.locator(`[data-page="1"] [data-hl-id="${under.id}"]`).first();
+      const look = () => mark.evaluate((el) => {
+        const s = getComputedStyle(el);
+        return { style: el.dataset.hlStyle || "", image: s.backgroundImage.split("(")[0], mark: s.getPropertyValue("--hl-mark").trim(),
+          wave: getComputedStyle(el, "::after").content !== "none" };
+      });
+      assertEq(JSON.stringify(await look()), JSON.stringify({ style: "underline", image: "linear-gradient", mark: "#006bd6", wave: false }),
+        "a line at its foot in the line tone, no wash");
+      await until(() => p.evaluate(() => !!document.activeElement?.closest(".blockEditorCm")), { what: "its note open for typing" });
+      await p.keyboard.type("defines it");
+      await block((b) => b.id === under.id && b.content === "defines it", "its note");
+      // its row in the notes, its editor closed: the style's glyph in place of the dot
+      await p.keyboard.press("Escape");
+      const row = p.locator(`.blockRowWrap[data-block-id="${under.id}"]`);
+      await row.locator(".highlightDotBtn .markGlyph").waitFor();
+      assertEq(await row.locator(".highlightDot").count(), 0);
+      // the menu restyles it in place and stays open for a colour
+      await mark.click({ button: "right" });
+      const menu = p.locator(".ctxMenu");
+      await menu.getByRole("menuitemradio", { name: "Wavy underline", exact: true }).click();
+      const wavy = await block((b) => b.id === under.id && b.properties?.style === "squiggly", "the passage made wavy");
+      assertEq(wavy.content, "defines it", "its note stays");
+      assertEq(JSON.stringify(wavy.properties.pdf_position), JSON.stringify(under.properties.pdf_position), "its place stays");
+      assertEq(wavy.properties.color, under.properties.color, "its colour stays");
+      assertEq(await menu.getByRole("menuitemradio", { name: "Wavy underline", exact: true }).getAttribute("aria-checked"), "true", "the menu stays, the style pressed");
+      assertEq((await look()).wave, true, "a wave under it");
+      await menu.getByRole("menuitemradio", { name: "Strikethrough", exact: true }).click();
+      await block((b) => b.id === under.id && b.properties?.style === "strikeout", "the passage struck out");
+      await menu.getByRole("menuitemradio", { name: "Highlight", exact: true }).click();
+      const wash = await block((b) => b.id === under.id && !("style" in (b.properties || {})), "back to the wash: no style kept");
+      assertEq(wash.content, "defines it");
+      await p.keyboard.press("Escape");
+      await menu.waitFor({ state: "detached" });
+      assertEq((await look()).style, "", "drawn as a wash again");
+
+      // a preset, named in the popup's fold from the style and colour picked there
+      await selectPdfText(p, 1, "omicron pi");
+      await tip.locator(".colorBtn").first().waitFor();
+      await tip.getByRole("button", { name: "Color groups and presets" }).click();
+      await tip.getByRole("button", { name: "New preset…" }).click();
+      await styles.getByRole("radio", { name: "Wavy underline", exact: true }).click();
+      await tip.getByRole("button", { name: "Use Purple for the preset" }).click();
+      await tip.getByRole("textbox", { name: "Preset name" }).fill("Question");
+      await tip.getByRole("button", { name: "Save", exact: true }).click();
+      await profile((v) => v.highlightPresets?.length === 1 && v.highlightPresets[0].name === "Question"
+        && v.highlightPresets[0].style === "squiggly" && v.highlightPresets[0].color.hex === "#e6b4ff", "the preset saved to the account");
+      const chip = tip.locator(".markPreset", { hasText: "Question" });
+      await chip.click();
+      const asked = await block((b) => b.properties?.quote === "omicron pi", "the passage the preset marked");
+      assertEq(JSON.stringify([asked.properties.style, asked.properties.color]), JSON.stringify(["squiggly", "#e6b4ffa6"]));
+
+      // the fold switches the group the swatches come from
+      await selectPdfText(p, 1, "tau upsilon");
+      await tip.locator(".colorBtn").first().waitFor();
+      assertEq(await tip.locator(".colorRow > .colorBtn:not(.linkTipBtn)").count(), 4, "the Highlight group's four");
+      await tip.getByRole("button", { name: "Color groups and presets" }).click();
+      const groups = tip.getByRole("radiogroup", { name: "Color group" });
+      await groups.getByRole("radio", { name: /^Ink highlight/ }).click();
+      await profile((v) => v.palette?.pickers?.highlight === "ink-highlight", "the picker's group switched");
+      assertEq(await tip.locator(".colorRow > .colorBtn:not(.linkTipBtn)").count(), 8, "the Ink highlight group's eight");
+      await groups.getByRole("radio", { name: /^Highlight/ }).click();
+      await profile((v) => v.palette?.pickers?.highlight === "highlight", "back to the Highlight group");
+      // and leads to the colours' settings, where the preset is a card
+      await tip.getByRole("button", { name: "Edit colors and presets…" }).click();
+      const dialog = p.locator(".settingsModal");
+      await dialog.locator(".presetCard").first().waitFor();
+      assertEq(await p.locator(".plainTip").count(), 0, "the popup goes as Settings opens over it");
+      assertEq(await dialog.locator(".presetCard .paletteGroupName").inputValue(), "Question");
+      await p.keyboard.press("Escape");
+      await dialog.waitFor({ state: "detached" });
+      assertNoProblems(p);
+    } finally {
+      await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { highlightStyle: "highlight", highlightPresets: [], palette: DEFAULT_PALETTE } } });
+      await p.close();
+    }
   });
 
   await step("pdf: interface scale keeps note badges anchored and Tours consistent", async () => {

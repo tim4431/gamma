@@ -25,11 +25,12 @@ export const SECTION_PREFS = Object.freeze({
   appearance: sections({
     Theme: ["theme"],
     "PDF pages": ["pdfDarkPage"],
-    Colors: ["palette"],
+    Colors: ["palette", "highlightPresets"],
     Library: ["recentThumbs", "fileLabels"],
     "Top bar": ["topbar"],
-    // The highlighter's colour has no row: it is set where it acts.
-    "Viewer tools": ["viewerTools", "highlighterColor"],
+    // The highlighter's colour and the highlight style have no row: they
+    // are set where they act.
+    "Viewer tools": ["viewerTools", "highlighterColor", "highlightStyle"],
     Tours: ["suggestTours", "tourProgress"],
   }),
   reading: sections({

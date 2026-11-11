@@ -130,7 +130,9 @@ Zotero came in as a 40 × 200 box instead of 200 × 40, from its turned
   #aaaaaa`) by nearest hue, as the Logseq names are mapped, was not done.
   None of it was checked in a running Zotero.
 - **Annotation tags** (`/Zotero:Tags`) have no place on a block.
-- **Shapes Gamma lacks:** an underline is a highlight, a note's colour is
+- **Shapes Gamma lacks:** Gamma's wavy underline and strikethrough are
+  Zotero underlines (Zotero has only the one line; Gamma's own underline is
+  one both ways), a note's colour is
   dropped, a turned text annotation stands upright.
 - **Round trip through Zotero.** After Import Annotations… and an export
   from Zotero, Zotero has its own item keys and its own annotations, without

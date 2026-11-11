@@ -8,7 +8,7 @@ import { test } from "node:test";
 import {
   DEFAULT_HIGHLIGHT, DEFAULT_PALETTE, INK_COLORS, INK_HIGHLIGHT_ALPHA, INK_HIGHLIGHT_COLORS, MAX_GROUPS, MAX_GROUP_COLORS, PICKERS,
   WASH_ALPHA, WASH_COLORS, colorName,
-  darkPageColor, darkPageLine, hexColor, hexToHsv, highlightColor, hsvToHex, isDefaultPalette, nearestColor, newGroupId,
+  darkPageColor, darkPageLine, hexColor, hexToHsv, highlightColor, hsvToHex, isDefaultPalette, lineColor, nearestColor, newGroupId,
   normalizeColor, normalizePalette, normalizeSwatch, parseColor, pickerColors, swatchCss, swatchMarker, withAlpha,
 } from "../src/shared/model/palette.js";
 import { PREFS, readProfile } from "../src/app/prefDefs.js";
@@ -65,6 +65,7 @@ test("a highlight stores a swatch at the swatch's alpha; a bare hex takes the wa
 
 test("nearest colour and names: a listed colour is itself, a custom one borrows the nearest name", () => {
   for (const c of SHARED.nearest) assert.equal(nearestColor(c.color, c.colors), c.out, c.note);
+  for (const c of SHARED.line) assert.equal(lineColor(c.color), c.out, c.note);
   for (const c of [...WASH_COLORS, ...INK_COLORS]) assert.equal(nearestColor(c, [...WASH_COLORS, ...INK_COLORS]), c);
   assert.equal(nearestColor("#DC2626", INK_COLORS), "#dc2626");
   assert.equal(nearestColor("#e11d48", INK_COLORS), "#dc2626", "rose reads as red");

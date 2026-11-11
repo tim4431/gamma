@@ -17,6 +17,8 @@ import {
   isPlainNote, roughMatchPercent,
 } from "../shared/model/blockModel";
 import { DEFAULT_HIGHLIGHT, darkPageLine } from "../shared/model/palette.js";
+import { blockStyle, isLineStyle } from "../shared/model/markStyle.js";
+import { MarkGlyph } from "../shared/ui/MarkGlyph.jsx";
 import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
@@ -1613,6 +1615,9 @@ const BlockRow = React.memo(function BlockRow({
                   backgroundColor: color,
                   borderColor: darkPageLine(color),
                 }} />
+              ) : pos && isLineStyle(blockStyle(block)) ? (
+                // a passage marked by a line: its style in its colour, as the PDF draws it
+                <MarkGlyph style={blockStyle(block)} color={color} size={14} />
               ) : (
                 // backgroundColor in every branch: the one span takes each
                 // look in turn, and a background shorthand would undo
