@@ -226,9 +226,9 @@ workspace's files: a workspace backup that carried a path could make a
 restored server read an arbitrary file of the computer it lands on. Its
 tables ([user_db.md](user_db.md) has the columns):
 
-- `linked_files`: a stored name (`<doc_id>.pdf`, or a picture's upload
-  name) and the path that holds it, the size, time and file id when last
-  read, the page (`''` for a vault's picture), the account that opened the
+- `linked_files`: a stored name (`<hash>.pdf`, `documents.model.stored_name`,
+  or a picture's upload name) and the path that holds it, the size, time
+  and file id when last read, the page (`''` for a vault's picture), the account that opened the
   file, whom a change of it is made as (`actor`), and why the last replacement placed no
   highlights (`relocation_error`).
 - `vault_files`: a vault's files as its last round left them, one row a
@@ -242,11 +242,13 @@ vaults.db never holds every writer of a workspace.
 
 ## A PDF read where it is
 
-A page whose PDF stays at a path on this computer carries `linked_file:
-true` and a stored name like any other, `<doc_id>.pdf`, the SHA-256 prefix
-the bytes would get if stored; a `linked_files` row says which path holds
-that name. Nothing is copied, and nothing is ever written into the file or
-beside it.
+A page whose PDF stays at a path on this computer has its document read in
+place (`doc.at` is `path`, `documents.model.in_place`; the document's shape
+is in `gamma/documents/model.py`, [documents.md](documents.md)) and a
+stored name like any other,
+`<hash>.pdf` (`stored_name`), its hash the SHA-256 prefix the bytes would
+get if stored; a `linked_files` row says which path holds that name.
+Nothing is copied, and nothing is ever written into the file or beside it.
 
 **The read.** `storage.open_path` answers a name from the uploads directory,
 else from a linked file (`_linked`, only where vaults are kept): the first
@@ -303,10 +305,11 @@ has nobody else to look at it again.
 quota, the orphan purge, backups, the off-site copy and a mirror;
 `readable` asks "can this be read at all". A lookup by attachment
 (`blocks_store.page_for_doc`, the clipper's match, a backup's merge) leaves
-linked pages out (`NOT_LINKED`): their bytes stand for no page of the
-library. A Gamma export drops `linked_file`, so the page lands elsewhere
-with its bytes and no path. Importing a PDF's embedded annotations never
-strips a linked file. The search indexer leaves out a linked file it
+linked pages out (`documents.model.SQL_LIBRARY_PDF`): their bytes stand
+for no page of the library. A Gamma export carries the document as stored
+(`at` `store`), so the page lands elsewhere with its bytes and no path.
+Importing a PDF's embedded annotations never strips a linked file. The
+search indexer leaves out a linked file it
 cannot read now, so the pending count comes down. An error a job or a
 round reports says what went wrong without the path an `OSError` or MuPDF
 names (`jobs.error_text`): the path is the person's own.
@@ -329,9 +332,10 @@ metadata lookup is scheduled. A clone's workspace takes no new page. One
 open or locate runs at a time, so a path has one page.
 
 - **Add to library…** (`POST /opened/{id}/add`, `add_to_library`): the
-  bytes are stored (the same hash, so the page keeps its `doc_id`), the
-  page leaves *Opened files* for a folder or the library's top, and it no
-  longer reads the file. `keep_pushing` makes the file a vault of one file,
+  bytes are stored (the same hash, so the page's document keeps its hash
+  and name), the page leaves *Opened files* for a folder or the library's
+  top, and it no longer reads the file (its document at `store`,
+  `document_at`). `keep_pushing` makes the file a vault of one file,
   made before the page moves, so that a refusal leaves the page as it was.
   With `workspace`, another workspace of this server the account edits,
   the page goes there with everything on it (`_carry`): exported as a Gamma
@@ -623,7 +627,7 @@ folder under its upload's name (`LinkContext.new_files`): `attachments/`
 when the vault has no `.obsidian/app.json`, the vault's root when it has
 one without the key, as Obsidian does. Pull writes it once and it is read
 in place from then on. An upload of a kind Gamma never stores or serves
-(`storage.upload_media_type` refuses it: an executable a .gamma import or
+(`documents.formats.media_type` refuses it: an executable a .gamma import or
 another server holds) goes into no vault: its link stays as Gamma wrote
 it (`LinkContext._file_path`). A picture of the vault a note links is read where it
 is, under its content digest's name (`LocalRemote.link_file`: a
@@ -827,9 +831,10 @@ switched and switched back loses nothing. Otherwise:
   it: `tags` (labels), `aliases`, `doi`, `authors`, `year` (the paper's
   record), and `parent`, which makes it a sub-page of the note it names once
   the round's new pages are made;
-- a new PDF is a page reading it where it is (`linked_file`), with the note
-  it pairs with: the one whose front matter's `source` names it, else the
-  one of its stem beside it, else one of its stem in `notes_folder`;
+- a new PDF is a page reading it where it is (its document at `path`,
+  named by the file's leaf), with the note it pairs with: the one whose
+  front matter's `source` names it, else the one of its stem beside it,
+  else one of its stem in `notes_folder`;
 - a new PDF that pairs with a note already a page without a PDF is that
   page's file; a new note of a paper whose page has its PDF already is
   merged into that page from no base;
@@ -893,9 +898,10 @@ rest.
 
 **PDFs.** A PDF with new bytes is its page's, read where it is (the disk
 wins; `LocalRemote.replace_pdf`: its `linked_files` row first, then
-`replace_attachment` with `check_held=False`, the highlights relocated). A
-library page's PDF filed in the vault keeps its stored copy, and the copy
-pull wrote is followed. A PDF replaced in Gamma stands until the file
+`replace_attachment` with `at="path"` and `check_held=False`, the
+highlights relocated). A library page's PDF filed in the vault keeps its
+stored copy, and the copy pull wrote is followed: its first new bytes make
+the page read in place. A PDF replaced in Gamma stands until the file
 changes again.
 
 **A vault that does not push everything** makes, merges and removes
@@ -984,7 +990,8 @@ deleted for good), moves its files to the vault's trash (`_left`,
 `_to_trash`): the row becomes a tombstone at its trash path, written first,
 then the file moves (`.gamma/trash/<UTC stamp>/<path>`, on the vault's
 volume so that a delete is a rename). A PDF read in place is stored first
-when its page lives on. A note changed on disk that push has not read yet
+when its page lives on, its document at `store` with its hash and name
+(`LocalRemote.store_pdf`). A note changed on disk that push has not read yet
 stays where it is, kept, so that push brings the page back with it; a PDF
 changed on disk whose page left stays where it is, no longer synced, and is
 reported. A page brought back brings its files back from the trash under a
@@ -1112,10 +1119,13 @@ token that may write), and nothing else: no marker, no scan, no pull. What
 it knows of the file is the row's `state`, `{doc, size, mtime, seen?,
 title}`.
 
-**Identity decides.** A stored PDF's `doc_id` is the first 24 hex
-characters of its SHA-256, so `gamma_sync.doc_of` hashes a file and knows
-without a byte sent whether it is Gamma's file. A file is looked at only
-when its size or time differ from what is known (`modified`). Then:
+**Identity decides.** A stored PDF's hash (its page's `doc.hash`) is the
+first 24 hex characters of its SHA-256, so `gamma_sync.doc_of` hashes a
+file and knows without a byte sent whether it is Gamma's file. A sink's
+`current` answers the hash of the document the page owns (none for a
+duplicated page, whose `doc.copy` shows another's file) and that
+document's name. A file is looked at only when its size or time differ
+from what is known (`modified`). Then:
 
 - Not **settled** (`settled`): written less than `SETTLE_S` (3 s) ago (a
   time ahead of this clock counts as long ago), not open for reading
@@ -1132,7 +1142,8 @@ when its size or time differ from what is known (`modified`). Then:
 - The bytes the page shows already: the stat is taken, nothing travels.
 - The page gone: *kept*, "the page is no longer in Gamma".
 - Otherwise the file is **sent**: stored, then the page's PDF replaced by
-  it under the page's own `original_filename`, or the file's name. A file
+  it under the name of the page's document, or the file's name; a page
+  that read its PDF in place goes on reading it in place. A file
   whose bytes or stat changed while it was stored waits for the next pass
   instead (`gamma_sync.Changed` over HTTP), without `seen`.
 
@@ -1288,7 +1299,9 @@ As built:
 - **Removing the vault** (`delete_link`) leaves its pages as they are. The
   PDFs and pictures it reads in place are stored first (`GET /removal`
   counts them and their size), and one that cannot be stored stops the
-  removal before anything is undone. Then, with `files=keep`, the marker
+  removal before anything is undone; its live pages' documents are then at
+  `store`, and a page in Recently deleted reads in place still, its copy
+  stored (`_store_in_place`). Then, with `files=keep`, the marker
   goes and the files stay; with `files=trash`, the files its pulls made and
   nobody wrote in since (`ours`, still as their base) move to its trash
   first, and only the marker goes, never the trash. A vault whose disk is
@@ -1387,8 +1400,9 @@ What differs from a vault of this server:
   under the page's notes before the plan goes, and counted in
   `counts.conflicts`.
 - **PDFs are stored there**: a new paper's bytes are uploaded before its
-  page is made, a new version's before the attachment is replaced, and a
-  picture a note links is an upload there too.
+  page is made (its document at `store` there, never `path`), a new
+  version's before the attachment is replaced, and a picture a note links
+  is an upload there too.
 - **Not seen from here**: the carets in that server's rooms (a shape op may
   land on a block someone is typing in, which that editor merges), and the
   relocation run, which a token cannot start: the highlights a callout
@@ -1406,6 +1420,17 @@ What differs from a vault of this server:
   waits, never a file's problem. Any other refusal is the file's: a 404 in
   JSON, a write's 5xx, a proxy's 413 on a body past its limit among them. A server's
   answer that echoes the token has it left out (`gamma_sync.scrubbed`).
+- **The data format.** That server's pages must have this one's shape: its
+  change feed names its workspace data format (`format`,
+  `migrations.workspace_format`), and one that differs, an older or a newer
+  release, is `Refused` (`HttpRemote._check_format`, asked once before the
+  remote's first request of any kind: a page's round of the hot loop pushes
+  before it reads a listing) before anything is read or written, with the
+  mirror's sentence
+  (`sync_engine.FormatMismatch`: "sync is paused until … is updated"). The
+  vault waits until both run releases that agree, as a clone does
+  ([mirror.md](mirror.md)). Format 51 is one such change: a page's
+  document became one property, `doc`.
 
 **The token.** It is checked on creation (`/api/sync/whoami` names its
 workspace, which must be the request's `workspace` when one is given, and
@@ -1650,7 +1675,16 @@ share links do not. All three are in `routers/sync.py`:
 The PDFs and pictures come from `GET /api/uploads/<name>`. Pushing a PDF
 takes three more calls, each an editor's and so a write token's: `POST
 /api/uploads`, `PUT /api/pages/{id}/attachment` with `keep_old_days`, and
-`GET /api/blocks/{id}` for what the page shows now.
+`GET /api/blocks/{id}` for what the page shows now (its `doc`: the hash of
+the document it owns and its name, `RemoteSink.current`). Before that last
+read the client asks the change feed once (`GET /api/sync/changes?limit=1`,
+`Server.check_format`): a server whose `format` is missing or below
+`DOCUMENT_FORMAT` (51, the release where a page's document became one
+property) keeps its pages' PDFs in properties this client does not read,
+and the push is kept with "the server runs an older Gamma (workspace data
+format N): update it to use this gamma_sync". An older gamma_sync against a
+server of format 51 reads every page as showing no PDF; nothing on the
+server can tell it, so **update gamma_sync together with the server**.
 
 ### Its round
 

@@ -1859,8 +1859,8 @@ async function readPdf(file) {
     const headers = { 'X-Gamma-Workspace': opened.workspace };
     if (opened.created) {
       const page = await api(origin, `/api/blocks/${encodeURIComponent(opened.page)}`, { headers });
-      const docId = (page.properties || {}).doc_id;
-      if (docId) await importAnnotations(api, origin, headers, opened.page, docId);
+      const doc = (page.properties || {}).doc;
+      if (doc && doc.format === 'pdf' && doc.hash) await importAnnotations(api, origin, headers, opened.page, doc.hash);
     }
     // Said always, a page that was there already too: where the file is read.
     const where = ((info.workspaces || []).find((w) => w.id === opened.workspace) || ws).name;
@@ -1973,8 +1973,10 @@ async function carryPage(wsId, pageId) {
   if (state.reader.missing) throw new Error('The file this page reads is not there: locate it first.');
   const page = await api(origin, `/api/blocks/${encodeURIComponent(pageId)}`, { headers });
   const title = page.content || 'Untitled';
-  const docId = (page.properties || {}).doc_id;
-  if (!docId) throw new Error('This page has no PDF.');
+  // The page's own PDF (its `doc`: a duplicated page's `copy` owns none).
+  const pageDoc = (page.properties || {}).doc;
+  if (!pageDoc || pageDoc.format !== 'pdf' || !pageDoc.hash || pageDoc.copy) throw new Error('This page has no PDF.');
+  const docId = pageDoc.hash;
 
   const others = registry.load().servers.filter((s) => s.id !== shown.id);
   if (!others.length) {
@@ -2033,6 +2035,15 @@ async function carryPage(wsId, pageId) {
   if (held === 'trashed') throw new Error(`${ws.name} on ${srv.name} has this page in Recently deleted: restore it there and open it.`);
   if (held) throw new Error(`${ws.name} on ${srv.name} has this page already: open it there.`);
   if (await holds(`/api/blocks/by-doc/${encodeURIComponent(docId)}`)) throw new Error(`${ws.name} on ${srv.name} has a page of this PDF already: open it there.`);
+  // The pages go in this server's shape (its workspace data format, named
+  // by the change feed): a release older than it would keep them in a shape
+  // it cannot read, so it is refused before anything is sent.
+  const formatOf = (feed) => (Number.isInteger(feed.format) ? feed.format : 0);
+  const [here, thereFeed] = await Promise.all([
+    api(origin, '/api/sync/changes?limit=1', { headers }),
+    at.api(at.origin, '/api/sync/changes?limit=1', { headers: there }),
+  ]);
+  if (formatOf(thereFeed) < formatOf(here)) throw new Error(`${srv.name} runs an older Gamma than this app: update it, then add the page to its library again.`);
 
   busy = `Adding ${title} to the library of ${srv.name}…`;
   pushState();
@@ -2050,7 +2061,7 @@ async function carryPage(wsId, pageId) {
     }
     const zip = await apiBytes(ses, origin, `/api/pages/${encodeURIComponent(pageId)}/export?mode=gamma&sub_pages=1`, { headers });
     const names = zipNames(zip);
-    if (!names.includes(`uploads/${docId}.pdf`)) {
+    if (!names.includes(`uploads/${docId}${pageDoc.ext}`)) {
       throw new Error('The PDF did not come with the page: its file is gone or has just changed. Locate it, or try again in a moment.');
     }
     // A page inside it whose PDF is a page there already would not go (the

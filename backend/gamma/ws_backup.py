@@ -48,10 +48,11 @@ from pathlib import Path
 
 from . import comments, config, integrity, jobs, pdf_index, storage, upload_gc, zotero_remote
 from .backups import snapshot_db
-from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_LIBRARY, LABELS, NOT_LINKED, PARENT_PAGE, PATH_SEP, TRASH, TREES,
+from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_LIBRARY, LABELS, PARENT_PAGE, PATH_SEP, TRASH, TREES,
                            delete_subtree, existing_in, fetch_subtree, filing, folder_paths, last_child_position,
                            named, new_block_id, page_parents, top_of, touch_page, tree_children, tree_parents,
                            tree_rows, write_lock)
+from .documents.model import SQL_LIBRARY_PDF, own_hash, page_document
 from .db import (DATA_SCHEMA, PAGES_SCHEMA, account_names, connect_pages_db, connect_users_db, copy_chats,
                  page_now, register_functions, safe_ws_id, ws_dir)
 from .logbuf import log
@@ -346,8 +347,8 @@ def _normalize_copies(tdir: Path) -> None:
     """Bring the unpacked databases to the current shapes before anything
     reads them or anything live is touched. pages.db, in this order: a copy
     stamped below the base (``migrations.WS_VERSION_BASE``; 0, a backup
-    from before the stamps, can be of any age up to it, and a scoped Gamma
-    export carries no stamp) goes through the normalizers of the steps that
+    from before the stamps, can be of any age up to it, and so can a scoped
+    Gamma export from before release 51, which carried none) goes through the normalizers of the steps that
     walked every workspace: the block table's hot fields
     (``normalize.block_columns``, step 26), the change log
     (``page_changes``, step 27), the chats its data.db held
@@ -556,13 +557,14 @@ def _review_import(ws, tdir, upload_names):
     available = set(upload_names) | {name for name, _, _ in storage.list(ws)}
     conversations = "SELECT 'chats', bucket, bucket, messages FROM chats UNION ALL " \
                     "SELECT 'chat_history', id, bucket, messages FROM chat_history"
-    with closing(sqlite3.connect(str(ws_dir(ws) / "pages.db"))) as live:
+    # the one way in: a workspace nobody has opened since the server's upgrade is upgraded first
+    with connect_pages_db(ws) as live:
         # the library's blocks: a page only in Recently deleted comes back (``_merge``)
         live_pages = {r[0]: (r[1], json.loads(r[2] or "{}"))
                       for r in live.execute(f"SELECT id, content, properties FROM unified_blocks WHERE {IN_LIBRARY}")}
         live_docs = dict(live.execute(
-            f"SELECT doc_id, id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' AND {NOT_LINKED}"
-        ).fetchall())
+            f"SELECT doc_id, id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' "
+            f"AND {SQL_LIBRARY_PDF}").fetchall())
         live_chats = {(table, key) for table, key, _, _ in live.execute(conversations)}
         live_paths = folder_paths(live)
         live_parents = page_parents(live)
@@ -584,7 +586,7 @@ def _review_import(ws, tdir, upload_names):
         src_parents = page_parents(src)
         destinations = {}  # the backup's page id → the workspace's page it is (the same id, or the same PDF)
         for page_id, props in src_props.items():
-            found = page_id if page_id in live_pages else live_docs.get(props["doc_id"]) if props.get("doc_id") else None
+            found = page_id if page_id in live_pages else live_docs.get(own_hash(page_document(props)))
             if found:
                 destinations[page_id] = found
         for row in roots:
@@ -621,7 +623,8 @@ def _review_import(ws, tdir, upload_names):
             pages.append({"id": destination_id or row[0], "title": title, "comments": comments.count_on(src, ids),
                           "folders": folders, "parent": parent,
                           **({"folders_alone": folders} if top_folders else {}),
-                          "selection_ids": [selection_id], "kind": "pdf" if destination_props.get("doc_id") else "page",
+                          "selection_ids": [selection_id],
+                          "kind": "pdf" if own_hash(page_document(destination_props)) else "page",
                           "action": "skip" if destination_id else "create",
                           "source_paths": ["pages.db", *[f"uploads/{n}" for n in sorted(uploads)]],
                           "warnings": warnings, "missing": bool(missing),
@@ -757,7 +760,7 @@ def _fresh_ids(rows, taken: set) -> tuple[list[list], dict[str, str]]:
 
 def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
     """Additive import: pages from the backup that don't exist locally (by
-    block id, or by doc_id for PDF pages) are appended to the library; pages
+    block id, or by the PDF they own) are appended to the library; pages
     that do exist are left untouched (live data always wins). A page that is
     only in Recently deleted counts as absent: its trashed copy's rows go and
     the backup's version comes back under the same ids (its chats, op log and
@@ -807,8 +810,8 @@ def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
                 mapping, grew, made = _merge_trees(src, dst, taken)
                 in_trash = {r[0] for r in dst.execute("SELECT id FROM unified_blocks WHERE parent_id = ?", (TRASH,))}
                 live_docs = dict(dst.execute(
-                    f"SELECT doc_id, id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' AND {NOT_LINKED}"
-                ).fetchall())
+                    f"SELECT doc_id, id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' "
+                    f"AND {SQL_LIBRARY_PDF}").fetchall())
                 new_roots, same = [], {}  # same: a page skipped for the workspace's of its PDF → that page
                 for row in src.execute("SELECT id, doc_id FROM unified_blocks WHERE parent_id = 'root' "
                                        "ORDER BY position ASC").fetchall():

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import account_of, login, make_page, make_user, workspace_of, guest_name
+from conftest import account_of, doc_props, login, make_page, make_user, workspace_of, guest_name
 from zotero_engine import LIB, drop_link_row, link_row
 
 
@@ -45,7 +45,7 @@ def test_snapshot_round_trip(owner, other):
     ws = workspace_of("bk_owner")
     up = owner.post("/api/uploads", files={"file": ("a.pdf", b"%PDF-1.4 snapshot me", "application/pdf")})
     assert up.status_code == 200
-    page = make_page(owner, "Before the snapshot", properties={"source_url": up.json()["source_url"]})
+    page = make_page(owner, "Before the snapshot", properties=doc_props(up.json()["doc_id"]))
     assert owner.get(f"/api/workspaces/{ws}/backups").json() == {"backups": [], "max": 20}
 
     r = owner.post(f"/api/workspaces/{ws}/backups", json={"label": "before", "uploads": True})

@@ -11,7 +11,8 @@ import React from "react";
 import { CheckIcon, FileGlyph } from "../shared/ui/Icons";
 import { MarkedText } from "../search/SearchPanel";
 import { CardLabels } from "./FileBrowser";
-import { filingChips, formatRelativeTime, pageAttachment } from "./libraryUtils";
+import { filingChips, formatRelativeTime } from "./libraryUtils";
+import { pageDocument } from "../documents/pageDocument.js";
 import { t } from "../shared/i18n/i18n.js";
 
 // The headings of the list no query has narrowed, by a row's `section`.
@@ -25,7 +26,7 @@ export default function PageOption({ row: { page, time, path }, tree, query, cur
   const chips = filingChips(tree, page.properties);
   return (
     <button title={[title, detail].filter(Boolean).join("\n")} data-kind="page" {...props}>
-      <FileGlyph isPdf={!!pageAttachment(page)} size={16} />
+      <FileGlyph format={pageDocument(page)?.format} size={16} />
       <span><strong><MarkedText text={title} query={query} /></strong>{detail && <small>{detail}</small>}</span>
       <CardLabels className="fileRowLabels" folders={path ? [] : chips.folders} labels={chips.labels} />
       {checked ? <CheckIcon size={14} />

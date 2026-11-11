@@ -25,7 +25,7 @@ import time
 from datetime import timedelta
 
 import pytest
-from conftest import login
+from conftest import doc_props, login
 from zotero_engine import (LIB, _block, _block_of, _conflict_count, _conflicts, _due, _due_now, _edit,  # noqa: F401
                            _force, _kids, _link, _page_of, _rows, _sent_keys, _state, _sync, _writes, asked_soon,
                            background, bounded, drop_pending, fake, idle, made, me, no_relocation, owner_id, quiet)
@@ -1192,7 +1192,7 @@ def _imported_workspace(owner_id, fake, keys) -> tuple[str, str]:
             "venue": "Nature", "volume": "647", "pages": "1-10", "doi": "10.1038/s41586-000-00000-0",
             "arxiv_id": "", "publisher": "", "isbn": "", "source": "zotero"}
     zotero_local.create_page(ws, page_id=page, title="Attention is all you need", actor=owner_id, client="t",
-                             props={"meta": meta, "doc_id": doc, "zotero_key": item_uri(LIB, keys["attention"])})
+                             props={"meta": meta, **doc_props(doc), "zotero_key": item_uri(LIB, keys["attention"])})
     _edit(ws, owner_id, page, [
         {"op": "insert", "id": "zfImpNote", "parent": page, "content": "# Key points",
          "props": {"zotero_note": "#item_77"}},

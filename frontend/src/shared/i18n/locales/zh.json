@@ -4292,6 +4292,7 @@
   "The model got the text around your selection{place} and the start of {what}, not the whole document.": "模型看到的是你所选内容{place}附近的文本和 {what} 的开头，而不是整篇文档。",
   "The model reached its output limit before it finished. Continue carries on where it stopped.": "模型在写完之前达到了输出上限。“继续”会从停下的地方接着写。",
   "The most extracted PDF text one read_page tool call may return. The agent reads a long paper in windows of this size, continuing where the last call stopped — a larger window means fewer calls but more tokens per message.": "一次 read_page 工具调用最多返回的 PDF 文本量。助手以此大小分窗口阅读长论文，从上次停止处继续——窗口越大调用越少，但每条消息的 token 越多。",
+  "The name of the Markdown file this page was imported from.": "导入此页面时所用的 Markdown 文件的名称。",
   "The next highlight to review on this page": "此页下一条待检查的高亮",
   "The note was changed since. Redoing anyway makes this change:": "这条笔记之后又被改过。仍要重做将做出以下改动：",
   "The note was changed since. Reverting anyway makes this change:": "这条笔记之后又被改过。仍要撤销将做出以下改动：",

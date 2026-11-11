@@ -24,7 +24,7 @@ import time
 
 import pytest
 
-from conftest import account_of, login, make_folder, make_page, make_user, workspace_of
+from conftest import account_of, doc_props, login, make_folder, make_page, make_user, workspace_of
 from gamma import folder_links, gamma_sync, md_lens, vault_disk, vault_store, vault_sync
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.integrations import create_token
@@ -70,7 +70,7 @@ def _lab(c, name) -> dict:
     folder, sub = make_folder(c, name), make_folder(c, f"{name}/Sub")
     pdf = _blank_pdf(pages=1) + name.encode()
     up = c.post("/api/uploads", files={"file": ("p.pdf", pdf, "application/pdf")}).json()
-    paper = make_page(c, "UP paper", {"doc_id": up["doc_id"], "original_filename": "p.pdf", "folders": [folder]})
+    paper = make_page(c, "UP paper", {**doc_props(up["doc_id"], name="p.pdf"), "folders": [folder]})
     _children(c, paper["id"], [
         {"id": f"up-hl-{paper['id']}", "content": "why it matters", "children": [],
          "properties": {"quote": "the quoted words", "color": "rgba(255, 226, 143, 0.65)", "pdf_position": _position()}},
@@ -505,7 +505,7 @@ def test_a_pdf_changed_on_disk_and_in_gamma_is_kept_until_a_force_decides(owner,
         assert {"path": "UP paper.pdf", "why": vault_sync.BOTH_PDF, "force": True} in status["kept"]
         assert _sync(owner, link["id"])["counts"]["sent"] == 0       # the page's chip says why from then on
         assert vault_store.files(link["id"])["UP paper.pdf"]["problem"] == vault_sync.BOTH_PDF
-        assert owner.get(f"/api/blocks/{lab['paper']}").json()["properties"]["doc_id"] == up["doc_id"]
+        assert owner.get(f"/api/blocks/{lab['paper']}").json()["properties"]["doc"]["hash"] == up["doc_id"]
         assert (dest / "UP paper.pdf").read_bytes() == disk_pdf
         _sync(owner, link["id"], force="pull", confirm=1)
         assert gamma_sync.doc_of(dest / "UP paper.pdf") == up["doc_id"]

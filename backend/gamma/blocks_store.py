@@ -9,12 +9,15 @@ from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from . import upload_gc
 from .db import page_now
+from .documents.model import (SQL_IN_PLACE, SQL_LIBRARY_PDF, SQL_PDF, check_document, copy_document, document,
+                              document_props, document_title, page_document)
 from .highlights import is_ink, is_link
-from .storage import display_filename, pdf_url, pdf_url_doc_id, upload_refs, url_filename
+from .storage import upload_refs
 
 # A block's stored columns, in ``block_to_dict``'s row order: what an
 # insert writes and what a read selects. ``kind`` and ``doc_id`` are
-# generated (db.BLOCK_HOT_COLUMNS), so never written, and a read leaves
+# generated (db.BLOCK_HOT_COLUMNS; ``doc_id`` from the block's ``doc``,
+# gamma/documents/model.py), so never written, and a read leaves
 # ``kind`` to Python (``block_kind``): the generated column costs up to six
 # JSON functions per row, and the dict has the parsed properties anyway (a
 # 5,000-block tree read a third faster; docs/dev/api.md).
@@ -49,13 +52,6 @@ PATH_SEP = " / "  # how a folder's path reads: its names from the top, joined
 IN_LIBRARY = "page_id IN (SELECT id FROM unified_blocks WHERE parent_id = 'root')"
 
 BLOCK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # the shape of a block or page id
-
-# The page property of a page whose PDF stays at a path on this computer
-# (gamma/linked_files.py), where a stored copy would be: ``true``.
-LINKED_FILE = "linked_file"
-# A condition on a page's row for a lookup by attachment, which never finds
-# such a page: its bytes stand for no page of the library.
-NOT_LINKED = f"json_extract(properties, '$.{LINKED_FILE}') IS NULL"
 
 
 def valid_block_id(block_id) -> bool:
@@ -433,60 +429,41 @@ def ancestor_chains(conn, block_ids: list[str]):
     return ancestors_by_id, page_root_by_id
 
 
-def page_attachment(props: dict | None) -> dict | None:
-    """What a page carries: ``{"kind": "pdf", "id": doc_id, "url": source_url,
-    "name": original_filename}`` when the page has a PDF attachment (a stored
-    ``doc_id`` and/or a ``source_url`` the proxy fetches lazily), else None.
-    ``url`` is where the file is fetched from: the stored ``source_url``,
-    else the stored copy (``storage.pdf_url``) — a page stores no
-    ``source_url`` that is its own ``doc_id``'s (``redundant_source_url``).
-
-    The one read of what a page carries: backend code that decides what
-    kind of page it is (gating, labels, listings) asks here instead of
-    reading ``doc_id``/``source_url`` itself, so the rule above holds
-    everywhere. Lookups BY attachment (``by-doc``, the search index, the
-    PDF export) key on ``doc_id`` directly; they are about the file, not
-    the page. Mirrored by ``pageAttachment()`` in
-    frontend/src/library/libraryUtils.js; tests/shared/attachment.json
-    holds the two to the same answers."""
-    props = props or {}
-    doc_id = str(props.get("doc_id") or "")
-    url = str(props.get("source_url") or "")
-    if not doc_id and not url:
-        return None
-    return {"kind": "pdf", "id": doc_id, "url": url or pdf_url(doc_id),
-            "name": str(props.get("original_filename") or "")}
-
-
-def attachment_file(attachment: dict | None) -> str:
-    """The doc id of the file an attachment (``page_attachment``) shows: its
-    ``id``, else the stored upload its ``url`` serves (a duplicated page
-    carries only ``/api/uploads/<doc id>.pdf``), else ``""`` (a PDF shown
-    from another address alone, never stored). The attachment's ``id``
-    stays ``""`` for such a page: this is for code that reads the file,
-    not for gating or lookups by attachment. Mirrored by
-    ``attachmentFile()`` in frontend/src/library/libraryUtils.js (the same
-    fixture)."""
-    if not attachment:
-        return ""
-    return attachment["id"] or pdf_url_doc_id(attachment["url"])
-
-
 def page_for_doc(conn, doc_id: str, columns: str = "id"):
-    """Lookup BY ATTACHMENT: the row (``columns`` of it) of the root page
-    whose PDF attachment is ``doc_id``, or None. The one query for "which
-    page carries this PDF": root pages only, a nested block never counts,
-    and a page that reads its PDF where it is on this computer
-    (``NOT_LINKED``) does not count either: a library PDF added never finds
-    one, and the bytes it holds are no other page's to be refused. Should a
-    workspace hold two (an older copy of the data), the oldest answers,
-    every time."""
+    """Lookup BY DOCUMENT: the row (``columns`` of it) of the root page
+    whose own PDF is ``doc_id`` (the generated column: a copy owns none),
+    or None. The one query for "which page carries this PDF": root pages
+    only, a nested block never counts, and a page that reads its PDF where
+    it is on this computer does not count either (``SQL_LIBRARY_PDF``): a
+    library PDF added never finds one, and the bytes it holds are no other
+    page's to be refused. Should a workspace hold two (an older copy of the
+    data), the oldest answers, every time."""
     if not doc_id:
         return None
     return conn.execute(
         f"SELECT {columns} FROM unified_blocks WHERE doc_id = ? AND parent_id = 'root' "
-        f"AND {NOT_LINKED} ORDER BY created_at, id LIMIT 1",
+        f"AND {SQL_LIBRARY_PDF} ORDER BY created_at, id LIMIT 1",
         (doc_id,)).fetchone()
+
+
+def second_owner_as_copy(conn, props: dict) -> dict:
+    """``props`` of a new page a client writes whole (POST /api/blocks at
+    root: a duplicate, an open tab's from before the doc property among
+    them), checked already (``document_props``), with a ``doc`` that would
+    make the page a second owner of a file stored as the copy a duplicate
+    writes (``copy_document``): one whose hash a library page owns already
+    (``page_for_doc``), and one read in place whose file another page reads
+    in place (whose reader is that page's: gamma/linked_files.py). The
+    original stays the one page of its document."""
+    doc = props.get("doc") if isinstance(props, dict) else None
+    if not isinstance(doc, dict) or doc.get("copy") or not doc["hash"]:
+        return props
+    if doc["at"] == "path":
+        held = conn.execute("SELECT 1 FROM unified_blocks WHERE doc_id = ? AND parent_id = 'root' "
+                            f"AND {SQL_IN_PLACE}", (doc["hash"],)).fetchone()
+    else:
+        held = page_for_doc(conn, doc["hash"])
+    return {**props, "doc": copy_document(doc)} if held else props
 
 
 def write_lock(conn) -> None:
@@ -787,12 +764,14 @@ def root_pages(conn, folder: str = "") -> dict:
     operation reaches: every page, sub-pages included, or — with ``folder``
     a folder id — the pages filed in that folder or below it
     (``pages_in_folder``; an id that is no folder reaches none). ``doc_id``
-    is "" for a page without a PDF."""
+    is the hash of the PDF the page owns, "" for a page without one (a
+    copy's included)."""
+    pdf = f"CASE WHEN {SQL_PDF} THEN doc_id END"
     if folder:
-        rows = conn.execute("SELECT id, content, doc_id FROM unified_blocks WHERE id IN "
+        rows = conn.execute(f"SELECT id, content, {pdf} FROM unified_blocks WHERE id IN "
                             "(SELECT value FROM json_each(?))", (json.dumps(pages_in_folder(conn, folder)),))
     else:
-        rows = conn.execute("SELECT id, content, doc_id FROM unified_blocks WHERE parent_id = 'root'")
+        rows = conn.execute(f"SELECT id, content, {pdf} FROM unified_blocks WHERE parent_id = 'root'")
     return {page_id: {"title": content or "Untitled", "doc_id": doc_id or ""} for page_id, content, doc_id in rows}
 
 
@@ -978,24 +957,18 @@ def label_inserts(conn, names, have=None) -> tuple[list[dict], dict[str, str]]:
     return ops, ids
 
 
-def redundant_source_url(doc_id, source_url) -> bool:
-    """Whether ``source_url`` is the stored copy of ``doc_id``
-    (``storage.pdf_url``): what a page does not store, since its
-    attachment derives it (``page_attachment``)."""
-    return bool(doc_id) and source_url == pdf_url(doc_id)
-
-
 def page_root_props(props: dict | None, page_id: str = "") -> dict:
     """A copy of ``props`` as the new page row ``page_id`` stores them:
     ``folders`` / ``labels`` kept when they are lists of ids
     (``filing_ids``, without repeats), else dropped; ``parent_page`` kept
     when it has a parent's shape (``valid_parent_value``), else dropped —
     whether it names a page is not asked, since a mirror may bring a
-    sub-page before its parent; and no ``source_url`` that is the
-    ``doc_id``'s stored copy (``redundant_source_url``). The page writers
-    (``create_page``, ``insert_page_tree``) apply it; the op path holds a
-    page's patch to the same rules (ops._filing_patch, ops._parent_patch,
-    ops._attachment_patch)."""
+    sub-page before its parent; the flat keys a document was kept in
+    (``LEGACY_KEYS``) dropped, and a ``doc`` kept in canonical form when it
+    checks, else dropped (``documents.model.document_props``). The page
+    writers (``create_page``, ``insert_page_tree``) apply it; the op path
+    holds a page's patch to the same rules (ops._filing_patch,
+    ops._parent_patch, ops._document_patch), refusing what this drops."""
     props = dict(props or {})
     for tree in TREES:
         if tree in props:
@@ -1004,30 +977,7 @@ def page_root_props(props: dict | None, page_id: str = "") -> dict:
                 props[tree] = ids
     if PARENT_PAGE in props and not valid_parent_value(props[PARENT_PAGE], page_id):
         del props[PARENT_PAGE]
-    if redundant_source_url(props.get("doc_id"), props.get("source_url")):
-        del props["source_url"]
-    return props
-
-
-def attachment_props(doc_id: str, source_url: str = "", original_filename: str = "") -> tuple[dict, str]:
-    """What attaching a PDF writes on a page: ``({doc_id?, source_url?,
-    original_filename?}, automatic title)``. The title is the upload's file
-    name (its leaf — a browser may leak a relative path), else the URL's
-    file name, else the doc id; callers store it as ``auto_title`` too, the
-    compare-and-swap marker metadata_fetch replaces (any write of the
-    page's title through the op path drops it first — ops._Batch.set).
-    Both creation paths (by-doc ingest, POST /pages/{id}/attachment) go
-    through here so the rules match. A ``source_url`` that is the stored
-    copy of ``doc_id`` is not stored (``redundant_source_url``)."""
-    original = display_filename(original_filename)
-    props = {}
-    if doc_id:
-        props["doc_id"] = doc_id
-    if source_url and not redundant_source_url(doc_id, source_url):
-        props["source_url"] = source_url
-    if original:
-        props["original_filename"] = original
-    return props, original or url_filename(source_url) or doc_id
+    return document_props(props, refuse=False)
 
 
 def create_page(conn, title: str, props: dict | None = None, *, actor: str,
@@ -1114,35 +1064,44 @@ def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
                            source_url: str | None = None,
                            original_filename: str | None = None,
                            folder: str = "", *, ws: str, actor: str = "") -> dict:
-    """Lookup-or-create BY ATTACHMENT: the root page whose PDF attachment is
+    """Lookup-or-create BY DOCUMENT: the root page whose own PDF is
     `doc_id`, created under root when absent. Shared by POST /api/blocks/by-doc
     (PDF ingest from the app, "Open as document" on a PDF file block) and
     the extension's /api/clip (dedup). Pages without a PDF are created by
-    POST /api/pages (create_page).
+    POST /api/pages (create_page). A ``doc_id`` that can be no stored
+    file's stem is a ValueError (``documents.model.document``).
 
     The automatic title is the upload's file name, else ``default_title``
-    (the caller's — a clip's tab title), else what ``attachment_props``
+    (the caller's — a clip's tab title), else what ``document_title``
     derives (URL file name, doc id). ``folder`` (a folder id) files a NEW
     page; an existing page keeps its own. On an existing page this
-    opportunistically backfills the source/filename markers (an op batch on
-    the page, like every other write to an existing page — ``ws`` names the
-    workspace, ``actor`` the account); auto_title is
+    opportunistically backfills its document (one ``doc`` patch, an op
+    batch on the page, like every other write to an existing page — ``ws``
+    names the workspace, ``actor`` the account): the file name when it has
+    none, and the address when it is stored and one came; auto_title is
     only set when the page still carries the exact title this call considers
     automatic, so a re-upload can never mark a user's custom title as
     replaceable by the metadata worker. Lookup and creation run under the
     write lock (``write_lock``): one page per PDF, however many requests
     ask at once. Commits."""
-    attachment, auto = attachment_props(doc_id, source_url or "", original_filename or "")
-    original = attachment.get("original_filename", "")
-    title = original or (default_title or "").strip() or auto
+    stored = document(doc_id, source_url or "", original_filename or "")
+    title = (stored["name"] or (default_title or "").strip()
+             or document_title(original_filename or "", source_url or "", doc_id))
     write_lock(conn)
     row = page_for_doc(conn, doc_id, BLOCK_COLUMNS)
     if row:
         props = json.loads(row[4] or "{}")
         changed = False
-        for key in ("source_url", "original_filename"):
-            if attachment.get(key) and not props.get(key):
-                props[key] = attachment[key]
+        if page_document(props) is not None:
+            had = check_document(props["doc"])
+            doc = dict(had)
+            if stored["name"] and not doc["name"]:
+                doc["name"] = stored["name"]
+            if doc["at"] == "store" and stored["at"] == "url":
+                doc.update(at="url", url=stored["url"])
+            doc = check_document(doc)
+            if doc != had:
+                props["doc"] = doc
                 changed = True
         if not props.get("auto_title") and row[3] == title:
             props["auto_title"] = row[3]
@@ -1156,7 +1115,7 @@ def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
         else:
             conn.commit()  # nothing to write: let go of the lock
         return block_to_dict(row)
-    props = {**attachment, "auto_title": title}
+    props = {"doc": stored, "auto_title": title}
     if folder:
         props[FOLDERS] = [folder]
     return create_page(conn, title, props, actor=actor)
@@ -1164,20 +1123,21 @@ def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
 
 def pages_for_docs(conn, hashes) -> dict:
     """Which root page a stored file became, batched: ``{hash: {"id",
-    "title"}}`` for every hash that is some page's PDF attachment
-    (``doc_id``) or the markdown file a note page was made from
+    "title"}}`` for every hash that is some page's own PDF (the generated
+    ``doc_id``) or the markdown file a note page was made from
     (``markdown_import`` — the upload's content digest, so a ``<hash>.md``
     chip finds its page). Hashes with no page are absent. Feeds the file
     chip's "Open page" / "Open as page" — one query per page render, never
-    one per chip. As in ``page_for_doc``, a linked page does not count and
-    of two pages of one file the oldest answers."""
+    one per chip. As in ``page_for_doc``, a PDF read in place does not
+    count and of two pages of one file the oldest answers."""
     wanted = {str(d) for d in hashes if d}
     if not wanted:
         return {}
     found = {}
     for page_id, title, doc_id, md in conn.execute(
-            "SELECT id, content, doc_id, json_extract(properties, '$.markdown_import') FROM unified_blocks "
-            f"WHERE parent_id = 'root' AND {NOT_LINKED} AND (doc_id IN (SELECT value FROM json_each(?1)) "
+            f"SELECT id, content, CASE WHEN {SQL_LIBRARY_PDF} THEN doc_id END, "
+            "json_extract(properties, '$.markdown_import') FROM unified_blocks "
+            f"WHERE parent_id = 'root' AND ((doc_id IN (SELECT value FROM json_each(?1)) AND {SQL_LIBRARY_PDF}) "
             "OR json_extract(properties, '$.markdown_import') IN (SELECT value FROM json_each(?1))) "
             "ORDER BY created_at, id", (json.dumps(sorted(wanted)),)):
         for key in (doc_id, md):

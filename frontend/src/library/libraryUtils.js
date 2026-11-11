@@ -2,6 +2,7 @@
 // usable by dialogs, home views, and future tests without coupling them to React.
 
 import { generateNKeysBetween } from "fractional-indexing";
+import { inPlace, isPdf, pageDocument, sourceAddress } from "../documents/pageDocument.js";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { itemTypeOf } from "../shared/lib/itemTypes.js";
 
@@ -269,16 +270,16 @@ export function pagesIntoPage(pages, ids, target) {
 
 // App's page list (`pageBlocks`): the listing's rows, `_parentPage` added,
 // as the home view's cards and rows, the [[ and @ pickers and the chips
-// read them: {id, content ("Untitled" when empty), _pageId, _attachment,
+// read them: {id, content ("Untitled" when empty), _pageId, _doc,
 // _preview, _folders, _labels (ids the trees have), _folderChips,
 // _labelChips ({id, name}, filingChips), _createdAt, _updatedAt, _pinned,
-// _parentPage, _path, _subPages, _linkedFile, _opened}. A page is filed by
-// its top, so a sub-page's folders are its top's (the server's
+// _parentPage, _path, _subPages, _opened}. `_doc` is the page's document
+// (documents/pageDocument.js), null for none. A page is filed by its top, so
+// a sub-page's folders are its top's (the server's
 // blocks_store.filed_folders) and its labels its own; `_path` is where it is
 // (pagePathLabel, "" for a library page) and `_subPages` how many pages are
-// right inside it. `_linkedFile`: the page reads its PDF from a file on this
-// computer (gamma/linked_files.py); `_opened`: it is *Opened files*, the page
-// those are inside (vault/vaultState.js isOpenedPdf).
+// right inside it. `_opened`: it is *Opened files*, the page the files read
+// in place are inside (vault/vaultState.js isOpenedPdf).
 export function pageBlocksOf(rows, tree) {
   const byId = new Map(rows.map((b) => [b.id, b]));
   const chains = rows.map((b) => (b._parentPage ? pageAncestors(byId, b.id) : []));
@@ -289,13 +290,14 @@ export function pageBlocksOf(rows, tree) {
   }
   return rows.map((b, i) => {
     const chain = chains[i];
+    const doc = pageDocument(b);
     const own = filingChips(tree, b.properties);
     const folders = chain.length ? filingChips(tree, byId.get(chain[0].id).properties).folders : own.folders;
     return {
       id: b.id,
       content: b.content || t("Untitled"),
       _pageId: b.id,
-      _attachment: pageAttachment(b),
+      _doc: doc,
       _preview: b.preview || "",
       _folders: folders.map((c) => c.id),
       _labels: own.labels.map((c) => c.id),
@@ -307,7 +309,6 @@ export function pageBlocksOf(rows, tree) {
       _parentPage: b._parentPage || "",
       _path: chain.map((a) => a.title).join(PAGE_PATH_SEP),
       _subPages: inside.get(b.id) || 0,
-      _linkedFile: !!b.properties?.linked_file,
       _opened: !!b.properties?.opened_files,
     };
   });
@@ -414,52 +415,29 @@ export function formatFullDate(iso) {
   return Number.isNaN(then.getTime()) ? "" : fmtDate(then, { dateStyle: "medium", timeStyle: "short" });
 }
 
-// The page's attachment: its one PDF (`properties.doc_id` + `source_url` /
-// `original_filename`). This is the one read of what a page carries: every
-// decision on it (layout, card badge, gating, copy) reads this, never the
-// raw properties. Null for a page that is only blocks. `url` is where the
-// file is fetched from: the stored source_url, else the stored copy by
-// hash — a page stores no source_url that is its own doc_id's
-// (gamma/blocks_store.py page_attachment, the twin; tests/shared/
-// attachment.json holds both to the same answers).
-export function pageAttachment(block) {
-  const p = block?.properties || {};
-  if (!p.doc_id && !p.source_url) return null;
-  return { kind: "pdf", id: p.doc_id || "", url: p.source_url || `/api/uploads/${p.doc_id}.pdf`,
-    name: p.original_filename || "" };
-}
-
-// The doc id of the file an attachment shows: its id, else the stored upload
-// its url serves (a duplicated page carries only /api/uploads/<doc id>.pdf),
-// else "" (a PDF shown from another address alone, never stored). For what
-// reads the file, not for gating (gamma/blocks_store.py attachment_file, the
-// twin).
-export function attachmentFile(attachment) {
-  if (!attachment) return "";
-  return attachment.id || /^\/api\/uploads\/([0-9A-Za-z_-]{1,128})\.pdf$/.exec(attachment.url || "")?.[1] || "";
-}
-
 // The ids of a selection a copy can be made of (`pagesById`: the listing's
 // rows). A page reading its PDF from a file on this computer has no stored
 // bytes (gamma/linked_files.py): a copy's address would stop answering when the
 // file changes, and nothing would bring it back. Add to library makes it one
 // that can be copied.
 export function duplicable(ids, pagesById) {
-  return ids.filter((id) => !pagesById.get(id)?._linkedFile);
+  return ids.filter((id) => !inPlace(pagesById.get(id)?._doc));
 }
 
-// What a card/row says a page is: the attachment kind, else just a page.
-export function pageKindLabel(attachment) {
-  return attachment ? "PDF" : t("Page");
+// What a card/row says a page is, from its document (pageDocument): a PDF,
+// else just a page.
+export function pageKindLabel(doc) {
+  return isPdf(doc) ? "PDF" : t("Page");
 }
 
-// Title for a page whose title is empty: the attachment's file name or URL
-// tail, else "Untitled". A restored backup's pages titled "PDF Notes - <name>"
-// are renamed to <name> by gamma/normalize.py.
-export function defaultPageTitle(attachment) {
-  if (!attachment) return "Untitled";
-  if (attachment.name) return attachment.name;
-  const tail = (attachment.url || "").split("/").pop() || "";
+// Title for a page whose title is empty, from its document (pageDocument, or
+// the {name, url} of one about to be made): its file name or URL tail, else
+// "Untitled". A restored backup's pages titled "PDF Notes - <name>" are
+// renamed to <name> by gamma/normalize.py.
+export function defaultPageTitle(doc) {
+  if (!doc) return "Untitled";
+  if (doc.name) return doc.name;
+  const tail = (doc.url || "").split("/").pop() || "";
   let cleaned = tail;
   try { cleaned = decodeURIComponent(tail); } catch {}
   return cleaned.trim() || "Untitled";
@@ -519,11 +497,11 @@ export function findPageForUrl(url, pages) {
   if (!doi && !arxivId) return null;
 
   for (const page of pages || []) {
-    const properties = page.properties || {};
-    const metadata = properties.meta || {};
+    const metadata = page.properties?.meta || {};
+    const source = sourceAddress(pageDocument(page));
     if (doi && (metadata.doi || "").toLowerCase() === doi) return page.id;
-    if (arxivId && (metadata.arxiv_id === arxivId || (properties.source_url || "").includes(arxivId))) return page.id;
-    if (doi && (properties.source_url || "").toLowerCase().includes(doi)) return page.id;
+    if (arxivId && (metadata.arxiv_id === arxivId || source.includes(arxivId))) return page.id;
+    if (doi && source.toLowerCase().includes(doi)) return page.id;
   }
   return null;
 }

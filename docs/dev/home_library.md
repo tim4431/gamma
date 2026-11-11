@@ -234,7 +234,8 @@ refused, and a set drops the page's own `folders`. A parent that is no page
 is stored as written, as a folder id is: a mirror may bring a sub-page
 before its parent. The page writers (`create_page`, `insert_page_tree`)
 keep a `parent_page` of the right shape through `page_root_props`, without
-asking whether it names a page. A share editor never sets a page root's
+asking whether it names a page (and keep a page's document only as its
+`doc`, checked, [api.md](api.md) "A page's document"). A share editor never sets a page root's
 properties, so a share never moves a page.
 
 **Filing by the top.** A sub-page carries no folders of its own: it is
@@ -313,7 +314,7 @@ pages above it muted and shrinking first.
 - the `[[id]]` chip `/page` wrote, or any chip or link to the page;
 - **Pages inside** (`editor/SubPagesPanel.jsx`), under the notes above
   Linked from: "N pages inside", the page's sub-pages in library order,
-  each row with its glyph (a PDF's for one that carries a PDF) opening
+  each row with its glyph (its document's, by the family's `format`) opening
   that page, Back returning. Outside a share view a row has the library's
   page menu on a right-click, a held finger or its "⋯" ("The context
   menu" below), for that one page. Where `lib.organize`, a last row "New
@@ -397,8 +398,8 @@ page" (`rankLibraryPages`' `first`), before the recent pages.
 
 **Opened files.** In the desktop app a PDF opened from this computer
 (*Open with*, `Server → Open a PDF…`) is read where it lies: a page inside
-the one page *Opened files* (`opened_files`), carrying `linked_file`, made
-on demand, newest first ([synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)).
+the one page *Opened files* (`opened_files`), its document read in place
+(`doc.at: "path"`), made on demand, newest first ([synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)).
 Being a sub-page keeps it out of the library's list. Such a page leaves
 *Opened files* only through **Add to library…**, which stores its bytes
 first (`POST /folder-links/opened/{id}/add`): the page menu and a tab's menu
@@ -409,7 +410,7 @@ while any acted-on page is one, and a move into a page or out to the
 library that names one opens the dialog instead. Its dialog (`vault/FolderPickerDialog.jsx`) picks the
 workspace and the folder, and whether the file goes on pushing its new
 versions (a vault of one file). Duplicate leaves such pages out
-(`libraryUtils.duplicable`): a copy's address would stop answering when
+(`libraryUtils.duplicable`): a copy's stored file would stop answering when
 the file changes. The preference `openAddsToLibrary` stores every opened
 PDF at once instead ([settings.md](settings.md)).
 

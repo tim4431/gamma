@@ -252,14 +252,14 @@ Extraction should remove coupled responsibilities, not merely move long
 sections into hooks that accept every variable from App. Keep the existing
 React stack, URL formats, API contracts, and stored preference keys. Follow
 the [block-centric model](block_centric.md): a page owns its block tree and
-may carry a PDF attachment.
+may carry a document (`properties.doc`, [documents.md](documents.md)).
 
 ## Proposed ownership
 
 Paths below are relative to `frontend/src/`. The folders exist except
 `app/preferences/` and `pages/`; the hooks and state owners in this table
-are proposals, but for the `ink/` row's, which are built, and the tab
-groups of the `workspace/` row.
+are proposals, but for the `ink/` and `documents/` rows', which are built,
+and the tab groups of the `workspace/` row.
 
 | Module or area | Responsibility | Existing code to extract |
 |---|---|---|
@@ -272,6 +272,7 @@ groups of the `workspace/` row.
 | `editor/` | Block editing, caret/focus, undo, and notes rendering | Existing editor files, `editTail`, notes-window markup and editor actions |
 | `library/` | Listing derivation, selection, page/folder/label operations, and library UI | `pageBlocks` through `homeItems`, click handlers, filing, rename/move/delete, carousels |
 | `workspace/` (built: the tab groups, `tabLayout.js`, `TabGroups.jsx`, `PagePane.jsx`, [tab_groups.md](tab_groups.md); the dock arrangement itself is still App's) | Dock arrangement, visibility, panel sizes, drag geometry, and phone presentation; the open tabs' groups side by side | `moveWindow`, `startWindowDock`, `renderSlotGroup`, per-page layout snapshots |
+| `documents/` (built: `pageDocument.js`, `documentView.js`, `DocumentPane.jsx`, `formats.js`) | What a page carries and which viewer it shows: one rule for the live page and a tab group's (`documentView`), the pane that mounts the viewer it names | Extracted: the viewer decision (App reads it as `docView`) and the viewer switch; App keeps the viewers' props |
 | `pdf/` | Viewer controls, PDF/notes jumps, scroll restoration, translation, and snapshots | Existing viewer/translation files, `restorePdfScroll`, zoom and capture logic |
 | `ink/` (built: `buildFence.js`, `useInkStrip.js`, `useInkLive.js`, `useInkSave.js` over `inkSaver.js`, `useInkSurfaces.js`, `useInkDocument.js`, `useInkStrokes.js`, `useInkSelection.js`, `useInkRuler.js`, `useInkZoom.js`, `useStripKeys.js`, `usePencil.js`) | The strip's tools, a page's ink edits and history, saving, the lasso and clipboard, ruler, zoom window, strip keys, Pencil | Extracted: the build fence; `inkUi` with its presets and commands; live co-drawing; `flushInk` and `scheduleInk` (the save as a node-tested factory); the ink by surface and `pasteTarget`; `applyInk`, the stroke history and the erasers; `handleInkStroke` and `handleInkStrokes`; the lasso selection, its actions and the clipboard; the ruler; the zoom window; the strip's key handler; the Pencil's gestures and haptics; their pure parts, node-tested (`stripState.js`, `inkHistory.js`, `inkEdits.js`, `selectionEdits.js`, `inkSurfaces.js`, `inkCommands.js`). App keeps the composition, the page tools, navigation, the chat half of Transcribe ([handwriting.md](handwriting.md) "Client") |
 | `transfers/` | Upload/import/export operations | `uploadFiles`, format imports, backup transfer functions (the Background tasks store, tray and the job handlers in `useAppJobs.js` already live in `tasks/`) |
@@ -283,8 +284,8 @@ groups of the `workspace/` row.
 Split the larger areas into focused files as their state owners emerge.
 For example, library listing selectors, selection state, mutations, and
 `LibraryView` should be separate; do not create one giant `useLibrary` hook.
-Existing helpers such as `pageAttachment` and `useBlockHistory` remain the
-source of truth throughout the moves.
+Existing helpers such as `pageDocument`, `documentView` and `useBlockHistory`
+remain the source of truth throughout the moves.
 
 ## Logic cleanup to do with the extraction
 
@@ -344,8 +345,8 @@ Make all retry timers cancellable on navigation and unmount.
 
 Phone overlays should derive from the same visible-window model while retaining
 the desktop arrangement for the switch back to a wider viewport. Preserve
-notes in the center for pages without a PDF attachment and layout inheritance
-for pages without a saved arrangement.
+notes in the center for pages without a document pane (`documentView`'s
+`center`) and layout inheritance for pages without a saved arrangement.
 
 ### 4. Preference synchronization
 

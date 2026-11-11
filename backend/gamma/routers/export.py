@@ -34,16 +34,16 @@ from .. import comments, jobs, notability_export, notebook, notion_export, pdf_t
 from ..auth import (link_ratelimit, require_user, require_ws, resolve_ws, share_job_owner, share_lookup,
                     share_scope)
 from ..blocks_store import (
-    BLOCK_COLUMNS, FOLDERS, LABELS, LINKED_FILE, PATH_SEP, TREES, assert_block_in_scope, block_to_dict,
-    existing_in, fetch_subtree, filing, folder_path, folder_subtree_ids, page_root_id, pages_in_folder,
+    BLOCK_COLUMNS, FOLDERS, LABELS, PATH_SEP, TREES, assert_block_in_scope, block_to_dict,
+    existing_in, fetch_subtree, filing, folder_path, folder_subtree_ids, load_props, page_root_id, pages_in_folder,
     sub_pages as pages_right_inside, tree_parents, tree_rows, with_sub_pages)
+from ..documents.model import SQL_IN_PLACE, is_pdf, page_document, pdf_file_hash, stored_name
 from ..db import connect_pages_db
 from ..db import (
     PAGES_SCHEMA,
     copy_chats,
     page_now,
     register_functions,
-    safe_doc_id,
 )
 from ..logseq_graph_export import (
     CONFIG_EDN,
@@ -127,11 +127,8 @@ def _graph_page_parts(page, stored, include_pdf):
     Logseq's annotation system keys on actually holds. Spaces are replaced so
     inline ``![](../assets/<stem>.pdf)`` links stay valid Markdown."""
     stem = slugify(page.get("content"), page["id"]).replace(" ", "_")
-    doc_id = (page.get("properties") or {}).get("doc_id")
-    try:
-        name = f"{safe_doc_id(doc_id)}.pdf" if doc_id else ""
-    except ValueError:
-        name = ""
+    view = page_document(page.get("properties"))
+    name = view["file"] if is_pdf(view) else ""  # a duplicated page's is the file it was copied from
     pdf_path = stored(name) if name else None
     has_pdf = bool(include_pdf and pdf_path)
 
@@ -623,14 +620,11 @@ class _ObsidianBuilder(_Builder):
 
     def _bundle_pdf(self, conn, rid, title):
         row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (rid,)).fetchone()
-        try:
-            doc_id = json.loads(row[0] or "{}").get("doc_id") if row else None
-            name = f"{safe_doc_id(doc_id)}.pdf" if doc_id else ""
-        except (TypeError, ValueError):
-            name = ""
+        view = page_document(load_props(row[0]) if row else None)
+        name = view["file"] if is_pdf(view) else ""
         path = self.stored(name) if name else None
         if path:
-            arcname = self.ctx.name_pdf(rid, title, doc_id)
+            arcname = self.ctx.name_pdf(rid, title, view["hash"])
             if all(f[0] != arcname for f in self.files):
                 self.files.append((arcname, path, name))
 
@@ -721,12 +715,9 @@ class _ZoteroBuilder(_Builder):
         to draw it is the stored file, packed from storage unread; else the
         copy is drawn as Zotero reads it (``zotero=True``: no /CA for Zotero
         to pale the colours by) and spooled."""
-        doc_id = (page.get("properties") or {}).get("doc_id")
-        if not (self.opts["pdf"] and doc_id):
-            return None, set()
-        try:
-            name = f"{safe_doc_id(doc_id)}.pdf"
-        except ValueError:
+        view = page_document(page.get("properties"))
+        name = view["file"] if is_pdf(view) else ""
+        if not (self.opts["pdf"] and name):
             return None, set()
         pdf_path = self.stored(name)
         if not pdf_path:
@@ -907,10 +898,11 @@ class _GammaBuilder(_Builder):
     views in it —, and uploads/ with just the files they reference — no
     data.db, which holds nothing that is not rebuilt. Any Gamma imports it
     through the existing ``/api/import-data?mode=merge`` — additive, deduped
-    by block id / doc id / conversation / content hash, its folders mapped
-    onto the workspace's at the same path (``ws_backup._merge_trees``), so
-    re-importing adds nothing. Lossless by construction, which is why the
-    dialog's three switches don't apply to this format.
+    by block id / the PDF a page owns / conversation / content hash, its
+    folders mapped onto the workspace's at the same path
+    (``ws_backup._merge_trees``), so re-importing adds nothing. Lossless by
+    construction, which is why the dialog's three switches don't apply to
+    this format.
 
     Through a share token (``opts["share"]``, the request's ShareScope:
     another Gamma importing a shared page or folder by its link) it carries
@@ -941,11 +933,12 @@ class _GammaBuilder(_Builder):
         for row in rows:
             self._put(row)
             # Referenced uploads: any /api/uploads/<file> in content or
-            # properties (source_url, pasted images), plus a doc_id's PDF —
-            # the one reference rule (storage.upload_refs) the orphan
-            # bookkeeping keeps files by. Through a share, only what the
-            # pages show (held=False): the older PDF a pending highlight
-            # holds is no file the share serves (routers/uploads.py).
+            # properties (pasted images, file chips), plus the file of a
+            # block's document (doc) — the one reference rule
+            # (storage.upload_refs) the orphan bookkeeping keeps files by.
+            # Through a share, only what the pages show (held=False): the
+            # older PDF a pending highlight holds is no file the share
+            # serves (routers/uploads.py).
             self.upload_names |= upload_refs(row[3] or "", row[4] or "{}", held=not self.opts.get("share"))
 
     def _shared_trees(self, src, share, subtree: set) -> dict:
@@ -1024,8 +1017,15 @@ class _GammaBuilder(_Builder):
             comments.copy_rows(self.db, comments.rows_of_pages(src, self.page_ids))
         # A PDF read from a file on this computer travels as bytes: where the
         # export lands it is a page like any other, with no path to read from.
-        self.db.execute(f"UPDATE unified_blocks SET properties = json_remove(properties, '$.{LINKED_FILE}') "
-                        f"WHERE json_extract(properties, '$.{LINKED_FILE}') IS NOT NULL")
+        self.db.execute(f"UPDATE unified_blocks SET properties = json_set(properties, '$.doc.at', 'store') "
+                        f"WHERE {SQL_IN_PLACE}")
+        # Stamped as the rows are, of this release: one that predates their
+        # shapes refuses the file ("made by a newer Gamma") rather than
+        # merging pages it cannot read, and a newer one runs only its own
+        # steps on them (ws_backup._normalize_copies).
+        from .. import migrations  # local: only the stamp is read here
+
+        self.db.execute(f"PRAGMA user_version = {migrations.SCHEMA_VERSION}")
         self.db.commit()
         pages_bytes = self.db.serialize()
         self.db.close()
@@ -1491,7 +1491,8 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
     annotations (``_translated``). ``reach`` is what a share's [[refs]] may
     read (``_ref_resolver``)."""
     root = next(b for b in blocks if b["id"] == block_id)
-    doc_id = root["properties"].get("doc_id")
+    view = page_document(root["properties"])
+    doc_id = pdf_file_hash(view)
     stored = storage.files(ws)
     page_sheets = [] if doc_id else notebook.sheets_of(blocks, block_id)
     if page_sheets:
@@ -1512,10 +1513,7 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
         return pdf_bytes, f"{slugify(root.get('content'), block_id)}.pdf", drawn, 0
     if not doc_id:
         raise HTTPException(status_code=400, detail="page has no PDF")
-    try:
-        pdf_path = stored(f"{safe_doc_id(doc_id)}.pdf")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="invalid document id")
+    pdf_path = stored(stored_name(doc_id, ".pdf"))
     if not pdf_path:
         raise HTTPException(status_code=404, detail="PDF not stored on the server")
 

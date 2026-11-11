@@ -1309,11 +1309,12 @@ translation request never makes it.
 
 - **The paper** (`paper_of`): with `page_id`, the page row in the request's
   workspace (`require_ws`, checked only when a page is named) — its title,
-  authors, year and venue from `meta`, and its stored PDF (`page_attachment`,
-  `find_upload_file`, never a download). A duplicated page, which carries
-  only the stored upload's URL, is that stored file (`attachment_file`), as
-  the viewer reads it: the same paper, kept translations and Forget as the
-  page it was copied from. Without a stored file, the request's
+  authors, year and venue from `meta`, and its stored PDF (the file its
+  document shows, `documents.model.file_hash`; `find_upload_file`, never a
+  download). A duplicated page, which shows the original's stored file
+  without owning it (its doc is a `copy`), is that stored file, as the
+  viewer reads it: the same paper, kept translations and Forget as the page
+  it was copied from. Without a stored file, the request's
   `head`. The key names the stored file (`doc:<id>`). A page without one is
   named by its id (`page:<id>`), so the chunks and the selection translator,
   which send no head, find the brief a brief request made from the head.
@@ -1620,8 +1621,8 @@ translation without asking a model, after a restart too.
 - **Purge**: `pdf_index.purge_unused` calls `translate_store.purge` beside
   `pdf_meta.purge`, so a PDF that leaves the workspace takes its kept
   translations and brief along. A file a duplicated page still shows has
-  not left: the sweep reads that page's upload address as well as `doc_id`
-  (`attachment_file`, as `paper_of` does).
+  not left: the sweep reads the file a copy shows (`file_hash`, as
+  `paper_of` does) as well as the `doc_id` column, which leaves copies out.
 - **Errors**: every function logs its own sqlite errors and carries on as
   if nothing were kept. Derived data never fails a translation.
 
@@ -1670,9 +1671,9 @@ a writer clears it):
   offers it while no job runs, when some page holds translated text, the
   document on screen is the page's and the account may write the
   workspace. The page must also have a file the server keeps translations
-  under (`attachmentFile`: its upload, a duplicated page's upload, or for a
-  PDF opened from its link the copy the proxy saves under the link's
-  hash). A PDF opened
+  under (`fileHash` of its document: its upload, the original's upload on
+  a duplicated page, or for a PDF opened from its link the copy the proxy
+  saves under the link's hash). A PDF opened
   from its link with Save external PDFs off may have no copy: nothing of it is
   kept, and Forget resets the server's memory of it through `page`.
 
@@ -1780,10 +1781,15 @@ session's first translation to finish says so on the pill, with **Export…**.
   `lines`, and ground and ink from the file itself, so no colour is sent. App sends it (`exportTranslation`,
   through `tasks/useAppJobs.js` `runExport`) for a page's annotated PDF (a
   folder's carries `translations`, "A folder's export" below), and only
-  when the PDF the viewer translated is the file the job reads (`translateExport.exportFile`): the page's upload, or the proxy
-  reading the page's own link, whose saved copy has the page's `doc_id`. A
-  duplicated page names no `doc_id` and exports the file it shows; a link
-  page whose copy was not kept fails its annotated PDF, translated or not.
+  when the PDF the viewer translated is the file the job reads
+  (`translateExport.exportFile`): the stored file the page's document
+  names (`fileHash` of its document, [documents.md](documents.md)), as
+  its upload or as the proxy reading the page's own link, whose saved
+  copy is named by the page's `doc.hash`. A duplicated page's is the
+  original's upload, so its annotated PDF carries the translation as the
+  original's does. A page shown from an address alone names no stored
+  file and writes none; a link page whose copy was not kept fails its
+  annotated PDF, translated or not.
   Such an export always goes through the job, even with every switch off. A
   share view translates nothing and sends none.
 - **Retry**: the job's params name the language (`translation`) but cannot
@@ -2017,11 +2023,12 @@ viewer's own code and no viewer:
 
 - **Which papers** (`folderPapers`): the pages filed in the folder or below
   it, a page inside another filed where its top is (the server's
-  `pages_in_folder` rule), that show a stored PDF (`doc_id`; a duplicated
-  page or a link page without its copy has no file to write into), and of
-  those the ones whose file the memory holds under a key naming the
-  settings' language and model (`translateRecall.openKey`, App's
-  `folderKeyOf`). The paper open in the viewer goes as the viewer shows it
+  `pages_in_folder` rule), that show a stored PDF (`fileHash` of the
+  document, `doc_id` as the job names it: a duplicated page's is the
+  original's; a page shown from an address alone has no file to write
+  into), and of those the ones whose file the memory
+  holds under a key naming the settings' language and model
+  (`translateRecall.openKey`, App's `folderKeyOf`). The paper open in the viewer goes as the viewer shows it
   (`exportTranslation`, so Show original there exports its original).
 - **Each paper** (`paperLayout`): its PDF opened with pdf.js and no viewer
   (`PdfViewer.openPdfDocument`: the viewer's byte caches, else one GET, the

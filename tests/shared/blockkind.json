@@ -48,7 +48,7 @@
     {"note": "a position that is a list is a note", "props": {"pdf_position": [1, 2]}, "kind": "note"},
     {"note": "a quote with a null position is a note", "props": {"pdf_position": null, "quote": "q"}, "kind": "note"},
     {"note": "a page number alone is a note", "props": {"pdf_page": 1}, "kind": "note"},
-    {"note": "a file's doc id alone is a note", "props": {"doc_id": "eeeeeeeeeeeeeeeeeeeeeeee"}, "kind": "note"}
+    {"note": "a document alone is a note", "props": {"doc": {"format": "pdf", "name": "", "hash": "eeeeeeeeeeeeeeeeeeeeeeee", "ext": ".pdf", "at": "store"}}, "kind": "note"}
   ],
   "tree": [
     {"note": "under root: a page, whatever it holds", "parent_id": "root", "page_id": "p1", "props": {"pdf_position": {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": {"x1": 60, "y1": 312, "x2": 480, "y2": 330}, "rects": [{"x1": 60, "y1": 312, "x2": 480, "y2": 330}]}}, "kind": "page"},

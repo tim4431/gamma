@@ -11,9 +11,9 @@ gamma/zotero_sync_rows.py.
 """
 
 from . import storage, zotero_local, zotero_merge
-from .blocks_store import (FOLDERS, LABELS, attachment_file, filing, label_names, load_props, page_attachment,
-                           tree_rows, write_lock)
+from .blocks_store import FOLDERS, LABELS, filing, label_names, load_props, tree_rows, write_lock
 from .db import connect_pages_db
+from .documents.model import page_document, pdf_file_hash, stored_name
 from .logbuf import log
 from .zotero_annotations import file_md5
 from .zotero_sync_reads import file_sig
@@ -134,9 +134,10 @@ def _write_pairs(r: Round, rows: list[dict]) -> None:
 def match_inputs(conn, ws: str, items, attachments, *, sizes=None) -> tuple[list, list, dict]:
     """What ``zotero_merge.match`` pairs at a first link (and the link
     dialog's preview of one): ``(pages, candidates, pdfs)``. ``pages``: the
-    workspace's pages no row holds, each with its stored PDF (``doc_id``,
-    ``path``, ``md5``; only a file whose size is in ``sizes`` is read when
-    ``sizes`` is given, a size no Zotero PDF has meaning no MD5 can match);
+    workspace's pages no row holds, each with the PDF file it shows
+    (``pdf_file_hash``: ``doc_id``, ``path``, ``md5``; only a file
+    whose size is in ``sizes`` is read when ``sizes`` is given, a size no
+    Zotero PDF has meaning no MD5 can match);
     ``candidates``: the library's top-level items (``items``) no row holds,
     a regular item with its PDFs' MD5s, a standalone PDF with its own;
     ``pdfs``: ``{item key: [its PDF attachments]}`` of ``attachments``."""
@@ -149,8 +150,8 @@ def match_inputs(conn, ws: str, items, attachments, *, sizes=None) -> tuple[list
         if page_id in taken:
             continue
         props = load_props(raw)
-        doc_id = attachment_file(page_attachment(props))
-        path = storage.open_path(ws, f"{doc_id}.pdf") if doc_id else None
+        doc_id = pdf_file_hash(page_document(props))
+        path = storage.open_path(ws, stored_name(doc_id, ".pdf")) if doc_id else None
         hashed = path is not None and (sizes is None or path.stat().st_size in sizes)
         pages.append({"id": page_id, "created_at": created, "title": title or "", "props": props,
                       "doc_id": doc_id if path else "", "path": path, "md5": file_md5(path) if hashed else ""})

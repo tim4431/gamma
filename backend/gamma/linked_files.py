@@ -3,9 +3,10 @@ a PDF where it is"): a page of a workspace whose PDF stays at a path, nothing
 copied and nothing ever written into it or beside it. Only the desktop app's
 own server has them (``config.folder_links_enabled``).
 
-Such a page carries ``linked_file: true`` and a stored name like any other
-(``<doc_id>.pdf``); vaults.db ``linked_files`` says which path holds that
-name. ``storage.open_path`` answers from there, by one stat: a file whose
+Such a page's document is read in place (``doc.at`` ``path``,
+gamma/documents/model.py) and has a stored name like any other
+(``stored_name``: ``<hash>.pdf``); vaults.db ``linked_files`` says which path
+holds that name. ``storage.open_path`` answers from there, by one stat: a file whose
 size and time are as recorded is the bytes that name hashes, one that moved
 reads as nothing, and the read tells this module (``storage.linked_moved``).
 Hashing and the replacement never run inside a read: a worker thread takes
@@ -53,10 +54,11 @@ from pathlib import Path
 from fractional_indexing import generate_key_between
 
 from . import collab, comments, folder_links, gamma_sync, pdf_meta, storage, workspaces, ws_backup
-from .blocks_store import (BLOCK_COLUMNS, FOLDERS, LINKED_FILE, PARENT_PAGE, TRASH, TREES, attachment_props, block_to_dict,
-                           create_page, folder_paths, free_position, load_props, page_for_doc, page_root_id, touch_page,
-                           with_sub_pages, write_lock)
+from .blocks_store import (BLOCK_COLUMNS, FOLDERS, PARENT_PAGE, TRASH, TREES, block_to_dict, create_page, folder_paths,
+                           free_position, load_props, page_for_doc, page_root_id, touch_page, with_sub_pages,
+                           write_lock)
 from .db import connect_pages_db, connect_users_db, connect_vaults_db, format_stamp
+from .documents.model import SQL_IN_PLACE, document, document_at, in_place, own_hash, page_document, stored_name
 from .logbuf import log
 from .ops import after_commits, apply_batches, commit_ops, delete_page, purge_pages, restore_page, trash_page
 
@@ -83,7 +85,7 @@ _working = False                 # the worker is running
 # The pages inside *Opened files* nothing holds back: read and left, the file
 # all there is to them. A page someone moved in that is no opened PDF stays.
 _IDLE = ("SELECT p.id FROM unified_blocks p WHERE p.parent_page = ? AND p.parent_id = 'root' AND p.updated_at < ? "
-         f"AND json_extract(p.properties, '$.{LINKED_FILE}') IS NOT NULL "
+         f"AND {SQL_IN_PLACE} "
          "AND NOT EXISTS (SELECT 1 FROM unified_blocks b WHERE b.page_id = p.id AND b.id != p.id) "
          "AND NOT EXISTS (SELECT 1 FROM unified_blocks s WHERE s.parent_page = p.id) "
          "AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.page_id = p.id) "
@@ -132,7 +134,7 @@ def _put_row(ws: str, path: str, seen: tuple, page_id: str, actor: str = "", *, 
                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (ws, name, path) DO UPDATE SET size = excluded.size, "
                      "mtime_ns = excluded.mtime_ns, file_id = excluded.file_id, page_id = excluded.page_id, "
                      "actor = excluded.actor",
-                     (ws, name or f"{doc_id}.pdf", path, size, mtime_ns, file_id, page_id, actor))
+                     (ws, name or stored_name(doc_id, ".pdf"), path, size, mtime_ns, file_id, page_id, actor))
     storage.forget_linked_stat(path)
 
 
@@ -192,7 +194,7 @@ def _rows_standing(ws: str, path: str) -> dict[str, str]:
     with connect_pages_db(ws) as conn:
         carried = dict(conn.execute("SELECT id, doc_id FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
                                     (json.dumps(sorted(set(rows.values()))),)).fetchall())
-    for name in [name for name, page_id in rows.items() if f"{carried.get(page_id)}.pdf" != name]:
+    for name in [name for name, page_id in rows.items() if stored_name(carried.get(page_id) or "", ".pdf") != name]:
         _drop_row(ws, name, path)
         del rows[name]
     return rows
@@ -245,7 +247,7 @@ def _take_bytes(sink: folder_links.LocalSink, page_id: str, filename: str, path:
     run (past the account's background tasks): nobody is there to hear why,
     so the row keeps it for the page (``reader``), and Find highlights in
     this PDF places them later."""
-    ws, name = sink.ws, f"{seen[0]}.pdf"
+    ws, name = sink.ws, stored_name(seen[0], ".pdf")
     _put_row(ws, path, seen, page_id, opener or sink.user_id)
     try:
         answer = sink.replace(page_id, seen[0], filename, check_held=False)
@@ -267,7 +269,7 @@ def _catch_up(sink: folder_links.LocalSink, name: str, path: str, page_id: str, 
     ``seen``: the same bytes refresh its stat (``_refresh_row``), new ones
     are the page's (``page``, ``LocalSink.current``) and the row moves to
     their name, naming ``opener`` (``_take_bytes``)."""
-    if f"{seen[0]}.pdf" == name:
+    if stored_name(seen[0], ".pdf") == name:
         _refresh_row(sink.ws, name, path, page_id, seen, opener or sink.user_id)
         return
     _take_bytes(sink, page_id, page["filename"] or Path(path).name, path, seen, opener)
@@ -283,7 +285,7 @@ def _look(sink: folder_links.LocalSink, name: str, path: str, recorded: int, pag
     for a file still being written and the sweep's for one that stopped
     short."""
     seen = hash_file(path) if os.stat(path).st_size == recorded else None
-    if seen and f"{seen[0]}.pdf" == name:
+    if seen and stored_name(seen[0], ".pdf") == name:
         _refresh_row(sink.ws, name, path, page_id, seen, opener)
         return
     why = gamma_sync.settled(Path(path))
@@ -311,7 +313,7 @@ def follow(ws: str, name: str) -> None:
             page = sink.current(page_id)  # refused when nobody left in the workspace may edit it
             if page is None:
                 continue
-            if f"{page['doc_id']}.pdf" != name:
+            if stored_name(page["doc_id"], ".pdf") != name:
                 _drop_row(ws, name, path)
                 continue
             _look(sink, name, path, size, page_id, page, actor)
@@ -477,7 +479,7 @@ def _reopen(sink: folder_links.LocalSink, path: str, rows: dict[str, str], seen:
     its place in *Opened files*, brought up to the file (``_catch_up``, its
     rows naming its opener still), at the top of *Opened files*. LinkError
     for a page that does not take it."""
-    name = f"{seen[0]}.pdf"
+    name = stored_name(seen[0], ".pdf")
     page_id = rows.get(name) or next(iter(rows.values()))
     with connect_pages_db(sink.ws) as conn:
         if page_root_id(conn, page_id) != page_id:
@@ -523,9 +525,9 @@ def open_pdf(ws: str, path: str, actor: str) -> dict:
             raise folder_links.LinkError("A clone keeps its origin's pages: open this file in another workspace.")
         with connect_pages_db(ws) as conn:
             opened = _opened_files(conn) or create_page(conn, OPENED_TITLE, {OPENED_FILES: True}, actor=actor)["id"]
-            props, _title = attachment_props(seen[0], "", Path(path).name)
-            page = create_page(conn, Path(path).stem, {**props, LINKED_FILE: True, PARENT_PAGE: opened}, actor=actor,
-                               position=_top_key(conn, opened))
+            page = create_page(conn, Path(path).stem,
+                               {"doc": document(seen[0], name=Path(path).name, at="path"), PARENT_PAGE: opened},
+                               actor=actor, position=_top_key(conn, opened))
         _put_row(ws, path, seen, page["id"], actor)
     pdf_meta.schedule(ws, seen[0])
     return {"workspace": ws, "page": page, "created": True}
@@ -536,7 +538,7 @@ def _linked_page(ws: str, page_id: str) -> dict:
     does; LinkError otherwise."""
     with connect_pages_db(ws) as conn:
         page = _block(conn, page_id)
-    if not page or not page["properties"].get(LINKED_FILE):
+    if not page or not in_place(page_document(page["properties"])):
         raise folder_links.LinkError("That page does not read a file on this computer.")
     if _in_vault(page_id):
         raise folder_links.LinkError("That page's file belongs to its synced vault.")
@@ -559,8 +561,9 @@ def _store(ws: str, doc_id: str, path: str) -> None:
 def add_to_library(ws: str, page_id: str, folder_id: str, keep_pushing: bool, actor: str, workspace: str = "") -> dict:
     """An opened PDF becomes a page of the library, here in its workspace:
     its bytes are stored (``store_pdf_stream``; the same hash, so the page's
-    ``doc_id`` stays), the page leaves *Opened files* for ``folder_id`` or
-    the library's top, and it no longer reads the file. With ``keep_pushing``
+    document keeps its hash and name), the page leaves *Opened files* for
+    ``folder_id`` or the library's top, and it no longer reads the file (its
+    document at ``store``). With ``keep_pushing``
     the file goes on as a vault of one file (``create_file_link``), made
     before the page moves, so a refusal leaves the page as it was. The bytes
     may be a library page's already: two pages of one file, as a Zotero
@@ -589,8 +592,8 @@ def _add(ws: str, page_id: str, folder_id: str, keep_pushing: bool, actor: str, 
     with connect_pages_db(target) as conn:
         if folder_id and folder_id not in folder_paths(conn):
             raise folder_links.LinkError("That folder does not exist.")
-    doc_id = str(page["properties"].get("doc_id") or "")
-    name = f"{doc_id}.pdf"
+    view = page_document(page["properties"])
+    doc_id, name = own_hash(view), view["file"]
     rows = _rows_of(ws, page_id)
     path = _at_rest(rows, name)
     if not path and (keep_pushing or not storage.exists(ws, name)):
@@ -601,7 +604,7 @@ def _add(ws: str, page_id: str, folder_id: str, keep_pushing: bool, actor: str, 
         _store(ws, doc_id, path)
     link = folder_links.create_file_link(ws, page_id, path, actor) if keep_pushing else None
     commit_ops(ws, page_id, [{"op": "set", "id": page_id, "props": {
-        LINKED_FILE: None, PARENT_PAGE: None, FOLDERS: [folder_id] if folder_id else None}}], actor=actor)
+        "doc": document_at(view, "store"), PARENT_PAGE: None, FOLDERS: [folder_id] if folder_id else None}}], actor=actor)
     for row_name, row_path, _size, _mtime_ns in rows:
         _drop_row(ws, row_name, row_path)
     if link:
@@ -714,10 +717,11 @@ def _inside_at_hand(ws: str, page_id: str, pages: dict) -> dict[str, str]:
     by, while here it went to Recently deleted without its rows."""
     at_hand = {}
     for pid, (title, props) in pages.items():
-        doc = str(props.get("doc_id") or "")
-        if pid == page_id or not doc or not props.get(LINKED_FILE):
+        view = page_document(props)
+        doc = own_hash(view)
+        if pid == page_id or not doc or not in_place(view):
             continue
-        name = f"{doc}.pdf"
+        name = view["file"]
         at = _at_rest(_rows_of(ws, pid), name)
         if not at and not storage.exists(ws, name):
             raise folder_links.LinkError(f"The file of the page inside it, {title}, is gone or has just changed: "
@@ -778,7 +782,7 @@ def _carry(ws: str, page: dict, target: str, folder_id: str, keep_pushing: bool,
     from .routers.export import page_gamma_zip  # local: keep gamma.* free of the routers package
     from .sync_engine import get_mirror  # local: it imports the routers
 
-    page_id, doc_id = page["id"], str(page["properties"].get("doc_id") or "")
+    page_id, doc_id = page["id"], own_hash(page_document(page["properties"]))
     if get_mirror(target) is not None:
         raise folder_links.LinkError("A clone keeps its origin's pages: add this file to another workspace.")
     with connect_pages_db(ws) as conn:
@@ -788,12 +792,13 @@ def _carry(ws: str, page: dict, target: str, folder_id: str, keep_pushing: bool,
     with connect_pages_db(target) as conn:
         held = [pid for pid, (_title, props) in each.items()
                 if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (pid,)).fetchone()
-                or (props.get("doc_id") and page_for_doc(conn, str(props["doc_id"])))]
+                or page_for_doc(conn, own_hash(page_document(props)))]
     if held:
         raise folder_links.LinkError(HELD_THERE)
-    files = {**_inside_at_hand(ws, page_id, each), doc_id: path or str(storage.find_upload_file(f"{doc_id}.pdf", ws))}
+    files = {**_inside_at_hand(ws, page_id, each),
+             doc_id: path or str(storage.find_upload_file(stored_name(doc_id, ".pdf"), ws))}
     for doc, at in files.items():  # stored there before the export, which reads a file that moved as nothing
-        if not storage.exists(target, f"{doc}.pdf"):
+        if not storage.exists(target, stored_name(doc, ".pdf")):
             _store(target, doc, at)
     with tempfile.TemporaryDirectory(prefix="gamma-carry-") as td:
         zpath = Path(td) / "page.zip"
@@ -880,12 +885,12 @@ def locate(ws: str, page_id: str, path: str, actor: str) -> dict:
     page = _linked_page(ws, page_id)
     path = folder_links.clean_file_path(path)
     seen = _read(path)
-    name = f"{seen[0]}.pdf"
+    name = stored_name(seen[0], ".pdf")
     with _opening:
         if any(holder != page_id for holder in _rows_standing(ws, path).values()):
             raise folder_links.LinkError("Another opened page reads that file.")
         rows, opener = _rows_of(ws, page_id), _opener(ws, page_id, actor)
-        if seen[0] == page["properties"].get("doc_id"):
+        if seen[0] == own_hash(page_document(page["properties"])):
             _put_row(ws, path, seen, page_id, opener)
         else:
             try:
@@ -904,7 +909,7 @@ def missing(ws: str, page_id: str) -> bool:
     does not count: it goes its own way."""
     with connect_pages_db(ws) as conn:
         row = conn.execute("SELECT doc_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-    if row and row[0] and storage.exists(ws, f"{row[0]}.pdf"):
+    if row and row[0] and storage.exists(ws, stored_name(row[0], ".pdf")):
         return False
     return not any(storage.linked_stat(path) for _name, path, _size, _mtime_ns in _rows_of(ws, page_id))
 
@@ -917,7 +922,7 @@ def reader(ws: str, page_id: str, actor: str = "") -> dict | None:
     placed no highlights (``_take_bytes``); None for any other page."""
     with connect_pages_db(ws) as conn:
         row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-    if not row or not load_props(row[0]).get(LINKED_FILE):
+    if not row or not in_place(page_document(load_props(row[0]))):
         return None
     paths = [path for _name, path, _size, _mtime_ns in _rows_of(ws, page_id)]
     state = {"path": next((p for p in paths if storage.linked_stat(p)), paths[0] if paths else ""),

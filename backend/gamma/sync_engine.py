@@ -1091,8 +1091,9 @@ def _pull_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
 
 def missing_uploads(ws: str, pages=None) -> set[str]:
     """The upload names the workspace's blocks show (content, props, a
-    page's ``doc_id``; not the files highlights hold) that it does not store (one listing of its files,
-    ``storage.list``); only those of ``pages`` (page ids) when given."""
+    block's ``doc``; not the files highlights hold) that it does not store
+    (one listing of its files, ``storage.list``); only those of ``pages``
+    (page ids) when given."""
     with connect_pages_db(ws) as conn:
         if pages is None:
             rows = conn.execute("SELECT content, properties FROM unified_blocks").fetchall()

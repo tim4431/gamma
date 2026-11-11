@@ -93,6 +93,7 @@ These describe the implementation unless explicitly marked as plans.
 | The typesetting engine both PDF writers share, and the annotated-PDF export | [PDF typesetting](pdf_typesetting.md) |
 | Background jobs, the tasks tray, and adding a kind of long work | [Background tasks](tasks.md) |
 | Folders and labels, pages inside pages, page cards, recents, and trash | [Home library](home_library.md) |
+| A page's document, the `doc` property: the format registry, the stored shape and its rules, the one read and its predicates (the file a page owns, the file it shows, read in place, a library PDF), migration step 51, the shared fixtures, and which viewer a page shows | [Documents](documents.md) |
 | Pages side by side: the open tabs arranged into groups, each with its strip and its page, split by a tab's menu or a drag onto a group's edge; the live group and the views of the others, drawn as the page itself, with the docked windows around the groups; this browser's arrangement over the synced tabs | [Tab groups](tab_groups.md) |
 | Provider configuration, chat, and the library agent | [AI](ai.md) |
 | Agent tools and guardrails | [AI tools](ai_tools.md) |
@@ -133,6 +134,11 @@ These describe the implementation unless explicitly marked as plans.
   sub-pages, as pages that name the page they are inside; the block
   zoom-in is the open item. The stored shapes as built are in
   [storage](user_db.md) and [home library](home_library.md).
+- [Any file as a page](../research/file-explorer.md): a plan whose step 0
+  is built ([documents](documents.md)). A page's document of any format,
+  work folders through synced vaults whose tracked files are chosen,
+  comment threads as feedback a local agent acts on, and a Files window;
+  its steps and what is still to decide.
 - [Scaling on SQLite](../research/scaling.md): items 1 to 12 of its work list
   are done (item 8, the blob seam, was built and then taken out again) and
   described in the topic docs above; the cluster items (LiteFS, placement, a

@@ -249,7 +249,7 @@ export async function vaultScenarios(env) {
         await dialog.waitFor({ state: "detached" });
         await until(async () => {
           const props = (await subtree(opened.page)).properties || {};
-          return !props.parent_page && !props.linked_file && JSON.stringify(props.folders) === JSON.stringify([shelf]);
+          return !props.parent_page && props.doc?.at === "store" && JSON.stringify(props.folders) === JSON.stringify([shelf]);
         }, { what: "out of Opened files, stored and filed" });
         await chip.waitFor({ state: "detached", timeout: 10000 });
         assertEq((await user.api(`/api/folder-links/page/${opened.page}`)).reader, null, "it reads no file any more");
@@ -361,7 +361,7 @@ export async function vaultScenarios(env) {
         }, { timeout: 20000, what: "the tab opens the page in the other workspace" });
         await page.locator(".tabStrip .tab", { hasText: "Carried paper" }).first().waitFor({ timeout: 15000 });
         const props = (await there.api(`/api/blocks/${opened.page}/subtree`)).block.properties || {};
-        assert(!props.parent_page && !props.linked_file, "stored, out of Opened files");
+        assert(!props.parent_page && props.doc?.at === "store", "stored, out of Opened files");
         assertEq(JSON.stringify(props.folders), JSON.stringify([kept]), "filed in the folder picked there");
         const left = await user.api(`/api/blocks/${opened.page}/subtree`, { raw: true });
         assertEq(left.status, 404, "the opened page here is gone");

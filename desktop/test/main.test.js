@@ -681,7 +681,9 @@ test('a third vault of one file in one directory asks first: sync the folder (it
 function opened(here, { zip, missing = false, mine = true, digest = { digest: 'dg1', pages: ['p1'] }, letGo = { ok: true } } = {}) {
   here.fake.routes = (p, init) => {
     if (p === '/api/folder-links/page/p1') return { vault: null, reader: { path: 'C:\\Downloads\\attention.pdf', missing, mine } };
-    if (p === '/api/blocks/p1' && (init.method || 'GET') === 'GET') return { id: 'p1', content: 'Attention', properties: { doc_id: 'd1' } };
+    if (p === '/api/blocks/p1' && (init.method || 'GET') === 'GET') {
+      return { id: 'p1', content: 'Attention', properties: { doc: { format: 'pdf', name: 'attention.pdf', hash: 'd1', ext: '.pdf', at: 'path' } } };
+    }
     if (p === '/api/pages/p1/export') return zip;
     if (p === '/api/folder-links/opened/p1/carried') return (init.method || 'GET') === 'GET' ? digest : letGo;
     return null;

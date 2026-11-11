@@ -456,14 +456,14 @@ try {
   // The saved page, through the API: the PRL paper with its PDF, in the
   // folder, with the label.
   const { children } = await account.api('/api/blocks/root/children');
-  const saved = children.find((p) => (p.properties?.meta?.doi || '').toLowerCase() === DOI.toLowerCase() || (p.properties?.source_url || '').includes(DOI));
+  const saved = children.find((p) => (p.properties?.meta?.doi || '').toLowerCase() === DOI.toLowerCase() || (p.properties?.doc?.url || '').includes(DOI));
   const trees = await account.api('/api/library/folders');
   const folderPath = (id) => (trees.folders.find((f) => f.id === id)?.path || []).join('/');
   const labelName = (id) => trees.labels.find((l) => l.id === id)?.name || '';
   const folders = (saved?.properties?.folders || []).map(folderPath);
   const labels = (saved?.properties?.labels || []).map(labelName);
   take.check('saved', !!saved && TITLE.test(saved.content || ''), saved && { id: saved.id, title: saved.content });
-  take.check('pdf', !!saved?.properties?.doc_id, saved?.properties?.doc_id);
+  take.check('pdf', saved?.properties?.doc?.format === 'pdf', saved?.properties?.doc);
   take.check('folder', folders.includes(FOLDER), folders);
   take.check('labels', labels.includes(LABEL), labels);
   take.check('opened', saved && gammaUrl.searchParams.toString().includes(saved.id) || (saved && C.url().includes(saved.id)), C.url());

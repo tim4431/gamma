@@ -21,6 +21,7 @@ from gamma.ai_tools import approval_preview, run_agent_tool
 from gamma.db import connect_pages_db
 
 from ai_fixtures import ALLOW_ALL, CONF, FakeResp, ai_provider, children, folder, org, props  # noqa: F401  (fixtures)
+from conftest import doc_props
 
 PAGE_W, PAGE_H = 300.0, 400.0
 
@@ -78,7 +79,7 @@ def pictured(org, tmp_path_factory):
         assert r.status_code == 200, r.text
         return r.json()["id"]
 
-    paper = block("root", "figures paper", {"folders": [ids["readout"]], "doc_id": "f" * 24})
+    paper = block("root", "figures paper", {"folders": [ids["readout"]], **doc_props("f" * 24)})
     r = c.post("/api/upload-ink", json=_ink())
     assert r.status_code == 200, r.text
     drawn = r.json()

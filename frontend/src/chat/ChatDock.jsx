@@ -32,7 +32,8 @@ import {
 import { charCount, keptNote, keptTitle, passageShares } from "./passageBudget.js";
 import { recencySections } from "../library/PageOption";
 import { rankLibraryPages } from "../library/librarySearch";
-import { filedIn, pageAttachment, topPageOf } from "../library/libraryUtils";
+import { filedIn, topPageOf } from "../library/libraryUtils";
+import { fileHash, isPdf, pageDocument, pdfFileHash } from "../documents/pageDocument.js";
 import { ActionMenu, ContextMenu, MenuButton, MenuItem, MenuSelect } from "../shared/ui/Menus";
 import { backdropPress, menuPress } from "../shared/ui/press.js";
 import { useAltVariant } from "../shared/ui/altVariant.js";
@@ -438,6 +439,13 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings, intent }) {
   );
 }
 
+// The stored file of a page's PDF (a copy's is its original's), "" for one
+// read from an address alone, null for a page without a PDF.
+function pdfFileOf(page) {
+  const doc = pageDocument(page);
+  return isPdf(doc) ? fileHash(doc) : null;
+}
+
 export default function ChatDock({
   session,
   readOnly = false,
@@ -445,7 +453,8 @@ export default function ChatDock({
   // only editors change them: the conversation stays in this tab (no
   // history, New chat starts over locally). App's session saves nothing then.
   canSave = true,
-  docId, pageAttach, focusedBlockId, homeBlocks, libraryTree, pageTitle, openTabs,
+  // The open page's document (documents/pageDocument.js pageDocument).
+  doc, focusedBlockId, homeBlocks, libraryTree, pageTitle, openTabs,
   // App's recents queue ([{id, at}]): with the open tabs, what the page
   // pickers list first (rankLibraryPages).
   recentViews,
@@ -581,7 +590,10 @@ export default function ChatDock({
   // Which of the three chat kinds this is — each has its own tool permission
   // map in Settings → AI → Tool usage (app/prefDefs.js CHAT_KINDS): the folder chat, a
   // page with a PDF, a page of notes.
-  const chatKind = folderChat ? "folder" : pageAttach ? "pdf" : "notes";
+  const chatKind = folderChat ? "folder" : isPdf(doc) ? "pdf" : "notes";
+  // The stored file of the open page's PDF, which a copy shares with its
+  // original: what a message records it carried (pdfDocs).
+  const pdfFile = pdfFileHash(doc);
   const chatKindLabel = chatKindName(chatKind);
   // The chat settings shortcut edits the same global preferences as Settings.
   const chatToolPerms = agentPerms?.[chatKind] || {};
@@ -764,7 +776,7 @@ export default function ChatDock({
   const [chatDocs, setChatDocs] = useState([]);
   // The PDF switch shows only while a PDF is in context: the open
   // page's, or an attached page's.
-  const pdfInContext = !!pageAttach || chatDocs.some((id) => pageAttachment(homeBlocks.find((b) => b.id === id)));
+  const pdfInContext = isPdf(doc) || chatDocs.some((id) => isPdf(pageDocument(homeBlocks.find((b) => b.id === id))));
   const [chatIncludeNotes, setChatIncludeNotes] = useState(false);
   const [chatFiles, setChatFiles] = useState([]); // uploaded PDFs ({name, data}) pending send
   const [docPicker, setDocPicker] = useState(false); // "Add pages" modal
@@ -842,9 +854,9 @@ export default function ChatDock({
     setChatIncludeNotes(!!lastUser?.includeNotes);
     setChatTitle(title || "");
     const carried = !lastUser || (lastUser.pdfDocs
-      ? (docId && lastUser.pdfDocs.includes(docId)) || lastUser.pdfDocs.includes(focusedBlockId)
-        || (!docId && references.some((id) => lastUser.pdfDocs.includes(id)
-          || lastUser.pdfDocs.includes(pageAttachment(homeBlocks.find((b) => b.id === id))?.id)))
+      ? (pdfFile && lastUser.pdfDocs.includes(pdfFile)) || lastUser.pdfDocs.includes(focusedBlockId)
+        || (!pdfFile && references.some((id) => lastUser.pdfDocs.includes(id)
+          || lastUser.pdfDocs.includes(pdfFileOf(homeBlocks.find((b) => b.id === id)))))
       : !!lastUser.pdfs?.length);
     attachPdfManualRef.current = false;
     setAttachPdf(carried && nativePdf);
@@ -895,7 +907,7 @@ export default function ChatDock({
         setLoadedFor(chatKey);
       });
     return () => { cancelled = true; };
-  }, [chatKey, docId, readOnly, session]);
+  }, [chatKey, pdfFile, readOnly, session]);
 
   // Back in this tab: another tab or member may have moved the conversation
   // on (a newer answer, a New chat), so the stored copy is read again and
@@ -1374,8 +1386,8 @@ export default function ChatDock({
     const contextIds = [...new Set([focusedBlockId, ...selectedDocs].filter(Boolean))];
     const pdfPages = contextIds.flatMap((id) => {
       const page = homeBlocks.find((b) => b.id === id);
-      const attachment = id === focusedBlockId ? pageAttach : pageAttachment(page);
-      return attachment ? [{ id: attachment.id, title: page?.content || (id === focusedBlockId ? pageTitle : "") || t("Untitled") }] : [];
+      const file = id === focusedBlockId ? (isPdf(doc) ? pdfFile : null) : pdfFileOf(page);
+      return file != null ? [{ id: file, title: page?.content || (id === focusedBlockId ? pageTitle : "") || t("Untitled") }] : [];
     });
     const sendingPdf = attachPdf && pdfPages.length > 0;
     const pdfNames = [
@@ -2661,7 +2673,7 @@ export default function ChatDock({
               <input type="checkbox" checked={chatIncludeNotes} onChange={(e) => setChatIncludeNotes(e.target.checked)} />
               <span className="attachName">{t("Include my notes & highlights")}</span>
             </label>
-            {!chatDocs.length && docId ? (
+            {!chatDocs.length && pdfFile ? (
               <div className="popoverHint">{t("Nothing selected — the open page is used.")}</div>
             ) : null}
             <div className="reportModalBtns">

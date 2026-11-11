@@ -448,7 +448,7 @@ def test_gamma_markdown_export_round_trips(guest):
         ]},
     ]
     assert new_a["properties"]["folders"] == [restored]
-    assert "doc_id" not in new_a["properties"]
+    assert "doc" not in new_a["properties"]
 
     # a second import of the same zip is a no-op
     again = _import(guest, io.BytesIO(r.content), folder=restored)

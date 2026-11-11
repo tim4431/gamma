@@ -358,14 +358,17 @@ Undo would be the wrong word for.
 
 Server side (`clip.py`, sync `def` — it downloads):
 
-1. **Dedup** — `find_page()` by DOI / arXiv id / URL against every root page:
+1. **Dedup** — `find_page()` by DOI / arXiv id / URL against every root page
+   that owns its PDF in the library (a duplicated page, which only shows
+   another's file, and a page reading its PDF from this computer are none):
    `properties.meta.doi|arxiv_id` (from the metadata lookup),
    `properties.web_meta.doi|arxiv_id` (what an earlier clip's page said in
    its tags, there before that clip's lookup lands and after one that
    failed; never a DOI that page only printed in its text), the
-   attachment's URL (`source_url`, else its stored copy's, so a tab on that
-   URL finds its page; `blocks_store.page_attachment`), `web_url`, and the
-   proxy-cache hash `sha256(url)[:24]`. A hit returns
+   document's address (`doc.url`, else its stored copy's, so a tab on that
+   URL finds its page; `documents.model.page_document`), `web_url`, and the
+   proxy-cache hash `sha256(url)[:24]` (`documents.model.url_hash`) against
+   the PDF the page owns (`doc.hash`). A hit returns
    `existed: true` and still *adds* the folder/labels (soft link; a folder
    above the new one is refined away), and the clip's `web_meta` when the
    page has none; a page with no record yet gets its lookup started again.
@@ -382,7 +385,7 @@ Server side (`clip.py`, sync `def` — it downloads):
    a broken attachment (the `openPdf` invariant) — instead the clip takes the
    **web-page path** (`_clip_web_page`): a page titled from the tab (else the
    URL's last segment / host) with `properties.web_url = source_url`, no
-   `doc_id`/`source_url`, the request's `selection` (if any) as its first
+   `doc`, the request's `selection` (if any) as its first
    `> quote — [title](url)` block, folder/labels applied, `doc_id: ""` and a
    `note` in the response. A request that names no PDF at all (no `pdf_url`,
    DOI, arXiv id or uploaded bytes — *Save page to Gamma* on a blog post)
@@ -396,7 +399,11 @@ Server side (`clip.py`, sync `def` — it downloads):
 4. **Page** — `blocks_store.get_or_create_doc_page()` (extracted from
    `POST /api/blocks/by-doc`) with `default_title = citation_title`, so
    `auto_title` is set and the metadata lookup may still replace it (never a
-   user rename). The tab URL is kept as `properties.web_url` when it differs
+   user rename). The page's document (`properties.doc`, [api.md](api.md)
+   "A page's document") is the PDF at the resolved address (`at: "url"`, its
+   `hash` the address's, whether or not a copy was stored) or, from
+   uploaded bytes, the stored file (`at: "store"`); its `name` is empty. The
+   clip's answer `doc_id` is that `hash`. The tab URL is kept as `properties.web_url` when it differs
    from the PDF URL, and what the tab said about the paper as
    `properties.web_meta` (`metadata.web_record`: the identifiers its tags
    carried, a DOI only in its text as `text_doi`, its cleaned citation

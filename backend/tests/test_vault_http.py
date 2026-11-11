@@ -20,10 +20,10 @@ import zlib
 import pymupdf
 import pytest
 
-from conftest import account_of, fresh_client, login, make_folder, make_page, make_user, workspace_of
+from conftest import account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, workspace_of
 from gamma import folder_links, gamma_sync, vault_http, vault_store, vault_sync
 from gamma import ops as ops_module
-from gamma.blocks_store import LINKED_FILE, block_kind
+from gamma.blocks_store import block_kind
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
 from gamma.integrations import create_token
 from test_folder_links import _create, _sync, disk, over_http  # noqa: F401: the disk and over_http fixtures
@@ -144,8 +144,8 @@ def test_a_vault_of_another_server_pushes_everything_with_a_token_that_may_write
     sub = next(f for f, (_parent, name) in _layout(folder).folders.items() if name == "Sub dir")
     assert pages["Deep"].folders == [sub]
     props = owner.get(f"/api/blocks/{pages['Paper'].id}").json()["properties"]
-    assert props["doc_id"] == gamma_sync.doc_of(paper) and LINKED_FILE not in props
-    assert owner.get(f"/api/uploads/{props['doc_id']}.pdf").content == paper.read_bytes()
+    assert props["doc"]["hash"] == gamma_sync.doc_of(paper) and props["doc"]["at"] == "store"
+    assert owner.get(f"/api/uploads/{props['doc']['hash']}.pdf").content == paper.read_bytes()
     picture = _texts(pages["With picture"].id)[0]
     name = picture.split("/api/uploads/", 1)[1].split(")", 1)[0]
     assert owner.get(f"/api/uploads/{name}").content == PNG
@@ -585,6 +585,53 @@ def test_a_feed_that_says_more_and_never_moves_stops_the_round(owner, disk, faul
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
+@pytest.mark.parametrize("there", [44, 52])
+def test_a_server_that_keeps_its_pages_in_another_format_pauses_the_vault_before_anything(owner, disk, faulty, there):
+    """A server of an older or a newer release, whose pages have another
+    shape (its feed's ``format``, ``migrations.workspace_format``), as a
+    clone pauses: the round reads no listing and writes nothing, the vault
+    waits with the reason, and no file is a problem."""
+    url, rules, log = faulty
+    folder = make_folder(owner, f"VH format {there}")
+    root = disk / f"VH format {there}"
+    link = _remote_vault(owner, url, folder, root, _token("write"), push="everything")
+    feed = {"since": "", "pages": [], "deleted": [], "more": False, "cursor": "0", "format": there}
+    rules.append(lambda m, p, b: (200, json.dumps(feed).encode()) if p.startswith("/api/sync/changes") else None)
+    _put(root / "Written meanwhile.md", "a note the other server cannot take now\n")
+    log.clear()
+    status = _sync(owner, link["id"])
+    assert f"workspace data format {there}" in status["last_error"] and "paused" in status["last_error"], status
+    assert status["kept"] == [] and not status.get("stopped")
+    assert [p for m, p in log if m != "GET"] == [] and not any(p.startswith("/api/blocks/root/") for _m, p in log)
+    rules.clear()
+    assert "Written meanwhile" not in _titles(folder)
+    assert _sync(owner, link["id"])["last_error"] == ""          # both agree again: the round goes on
+    assert "Written meanwhile" in _titles(folder)
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
+def test_a_page_round_asks_the_format_before_it_reads_or_sends_a_pdf(owner, disk, faulty):
+    """The hot loop's round of one page (``sync_page``) pushes before it
+    reads any listing: against a server of another format it sent the new
+    version of a PDF, in a shape that server does not read. It reads
+    nothing but the feed, and sends nothing."""
+    url, rules, log = faulty
+    folder = make_folder(owner, "VH format page")
+    root = disk / "VH format page"
+    link = _remote_vault(owner, url, folder, root, _token("write"), push="everything")
+    _put(root / "Paper.pdf", _pdf("first version"))
+    assert _sync(owner, link["id"])["last_error"] == ""
+    page_id = _page_of(link, "Paper.pdf")
+    _put(root / "Paper.pdf", _pdf("second version"))
+    feed = {"since": "", "pages": [], "deleted": [], "more": False, "cursor": "0", "format": 44}
+    rules.append(lambda m, p, b: (200, json.dumps(feed).encode()) if p.startswith("/api/sync/changes") else None)
+    log.clear()
+    status = vault_sync.sync_page(folder_links.get_link(link["id"]), page_id).status
+    assert "workspace data format 44" in status["last_error"], status
+    assert [p for _m, p in log] == ["/api/sync/changes?limit=1"]
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
 def test_a_push_round_after_the_vaults_folder_went_there_stops_and_makes_nothing(owner, disk, faulty):
     """A round of push alone does not read the layout, so it made
     a page filed in the folder deleted there and said nothing."""
@@ -673,7 +720,7 @@ def test_a_download_that_is_not_the_stored_file_is_never_written(owner, disk, fa
     if what == "pdf":
         data = _pdf("VH portal paper")
         up = owner.post("/api/uploads", files={"file": ("p.pdf", data, "application/pdf")}).json()
-        make_page(owner, "VH portal paper", {"doc_id": up["doc_id"], "original_filename": "p.pdf", "folders": [folder]})
+        make_page(owner, "VH portal paper", {**doc_props(up["doc_id"], name="p.pdf"), "folders": [folder]})
         suffix = ".pdf"
     else:
         data, suffix = PNG, ".png"

@@ -61,6 +61,8 @@ from . import notability_map as nmap
 from .ai_pictures import sniff
 from .blocks_store import (FOLDERS, filed_folders, folder_inserts, folder_paths, insert_page_tree, load_props,
                            new_block_id, write_lock)
+from .documents.formats import IMAGE_EXTENSIONS
+from .documents.model import own_hash, page_document
 from .import_review import destination, validate_selection
 from .import_staging import MIN_FREE_BYTES
 from .import_zip import READ_ERRORS, DirectoryTooLarge, check_ratio, new_walk, open_nested, open_zip, walk_zip
@@ -70,7 +72,7 @@ from .ops import after_commit, apply_batches
 from .pdf_export import copyable, display_size, page_frame
 from .picture import image_size, picture_type
 from .recording import mp4_duration_ms
-from .storage import IMAGE_EXTENSIONS, is_pdf, store_file, store_file_stream
+from .storage import is_pdf, store_file, store_file_stream
 
 MAX_DIRECTORY_BYTES = 16 << 20   # a zip's central directory (the upload's, each note's): about 100,000 files
 MAX_HELD_BYTES = 256 << 20       # a note's PDF or picture: read whole into memory, parsed and composed
@@ -90,6 +92,12 @@ class Stop(Exception):
     def __init__(self, reason: str, title: str = ""):
         super().__init__(reason)
         self.title = title
+
+
+def page_kind(props: dict) -> str:
+    """A report entry's ``kind`` (the review's PDF or page mark): "pdf" for a
+    page that owns its PDF."""
+    return "pdf" if own_hash(page_document(props)) else "page"
 
 
 def open_upload(data, refused: str, refuse=None):
@@ -205,7 +213,7 @@ def open_pdf(entry, name: str, tag: str = "import") -> tuple | None:
 def picture_file(data: bytes) -> bytes:
     """A picture's file as a picture block holds it (``picture.URL_RE``): a
     PNG, JPEG, GIF, WebP or SVG as it is (an SVG is served so that its
-    scripts never run, ``storage.SANDBOXED_EXTENSIONS``); a TIFF, BMP or
+    scripts never run, ``formats.SANDBOXED_EXTENSIONS``); a TIFF, BMP or
     AVIF (``_CONVERTED``)
     as a PNG of its first frame, turned as its EXIF orientation says, so a
     crop's fractions of its size as shown hold for the PNG, its grey kept
@@ -363,7 +371,7 @@ class AppImport:
             page_id, title, props = found
             # where it is filed: a page inside another page by its top's folders
             folders = [self.paths[f] for f in filed_folders(self.conn, page_id) if f in self.paths]
-            kind = "pdf" if props.get("doc_id") else "page"
+            kind = page_kind(props)
         self.report["pages_skipped"] += 1
         self.report["pages"].append({"id": page_id, "title": title, "folders": folders,
                                      "selection_ids": [bundle.path], "source_path": bundle.path,
@@ -429,7 +437,7 @@ class AppImport:
                 paths = folder_paths(conn)  # with the folder the other import made
                 conn.rollback()
                 found = load_props(row[2])
-                entry.update(id=row[0], title=row[1], action="skip", kind="pdf" if found.get("doc_id") else "page",
+                entry.update(id=row[0], title=row[1], action="skip", kind=page_kind(found),
                              folders=[paths[f] for f in filed_folders(conn, row[0]) if f in paths])
                 self.report["pages_skipped"] += 1
                 return False

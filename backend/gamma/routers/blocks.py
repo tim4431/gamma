@@ -34,6 +34,7 @@ from ..blocks_store import (
     page_parents,
     page_root_id,
     pages_in_scope,
+    second_owner_as_copy,
     subtree_refs,
     trash_entry,
     valid_block_id,
@@ -41,6 +42,7 @@ from ..blocks_store import (
 )
 from .. import cloud_auth, comments, trash, upload_gc
 from ..db import connect_pages_db, page_now
+from ..documents.model import document_props
 from ..json_response import OrjsonResponse
 from ..markdown_export import build_tree
 from ..ops import (MAX_CONTENT, OpError, StorableBody, after_commits, apply_each, commit_ops, delete_page, delete_pages,
@@ -354,9 +356,12 @@ def ub_get_or_create_by_doc(doc_id: str, payload: UBByDocCreate, request: Reques
     # write, so it requires a real session (never the ?share= read principal).
     ws = require_ws(request, write=True)
     with connect_pages_db(ws) as conn:
-        return get_or_create_doc_page(
-            conn, doc_id, payload.default_title, payload.source_url, payload.original_filename,
-            folder=payload.folder or "", ws=ws, actor=actor_of(request))
+        try:
+            return get_or_create_doc_page(
+                conn, doc_id, payload.default_title, payload.source_url, payload.original_filename,
+                folder=payload.folder or "", ws=ws, actor=actor_of(request))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid doc_id")
 
 
 def _not_found(conn, block_id: str) -> JSONResponse:
@@ -441,13 +446,13 @@ def _trees(conn, scope, rows) -> dict:
 
 # What the library listing carries of a page's properties: what the home
 # view's cards and filters, quick open, the chat and link pickers and the
-# DOI / arXiv link matching read (docs/dev/api.md "The library listing"),
-# and the marks of a PDF read where it is (linked_file) and of the page that
-# holds such PDFs (opened_files), which the page menus read. The rest —
-# bibtex, ppt_cite, summary, the rest of meta, … — comes with the page itself
-# (GET /blocks/{id}).
-SUMMARY_PROPS = ("doc_id", "source_url", "original_filename", "folders", "labels", "pinned", "seeded", "linked_file",
-                 "opened_files")
+# DOI / arXiv link matching read (docs/dev/api.md "The library listing"):
+# the page's document whole (``doc``: its format, name, address, and
+# whether it is read where it is, gamma/documents/model.py) and the mark of
+# the page that holds PDFs read in place (opened_files), which the page
+# menus read. The rest — bibtex, ppt_cite, summary, the rest of meta, … —
+# comes with the page itself (GET /blocks/{id}).
+SUMMARY_PROPS = ("doc", "folders", "labels", "pinned", "seeded", "opened_files")
 SUMMARY_META = ("title", "authors", "year", "venue", "volume", "doi", "arxiv_id")
 SUMMARY_COLUMNS = ("id, position, content, created_at, updated_at, json_extract(properties, "
                    + ", ".join([f"'$.{k}'" for k in SUMMARY_PROPS] + [f"'$.meta.{k}'" for k in SUMMARY_META])
@@ -584,6 +589,10 @@ def ub_create_block(payload: UBCreateRequest, request: Request):
     block_id = new_block_id()
     ws = require_ws_writer(request)
     scope = share_scope(request)
+    try:
+        props = document_props(payload.properties)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if payload.parent_id == "root":
         # A new page: not an op on any page. Share editors never get here.
         if scope is not None:
@@ -595,7 +604,8 @@ def ub_create_block(payload: UBCreateRequest, request: Request):
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"invalid before/after: {e}")
         with connect_pages_db(ws) as conn:
-            return create_page(conn, payload.content, payload.properties, actor=actor_of(request),
+            write_lock(conn)  # the owner looked up and the page made as one step
+            return create_page(conn, payload.content, second_owner_as_copy(conn, props), actor=actor_of(request),
                                block_id=block_id, position=new_pos)
     with connect_pages_db(ws) as conn:
         page_id = page_root_id(conn, payload.parent_id)
@@ -607,7 +617,7 @@ def ub_create_block(payload: UBCreateRequest, request: Request):
         raise HTTPException(status_code=400, detail=f"invalid before/after: {e}")
     _ops(ws, page_id, [{"op": "insert", "id": block_id, "parent": payload.parent_id,
                         "position": position, "content": payload.content,
-                        "props": payload.properties}], request, scope)
+                        "props": props}], request, scope)
     with connect_pages_db(ws) as conn:
         row = conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
     if not row:  # deleted by someone else the moment it was made
@@ -795,6 +805,11 @@ def ub_put_children(block_id: str, payload: UBPutChildrenRequest, request: Reque
         raise HTTPException(status_code=400, detail="cannot replace the children of root")
     now = page_now()
     rows = _tree_rows(payload.blocks, block_id, now)
+    for r in rows:
+        try:
+            r["properties"] = document_props(r["properties"])
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     ws = require_ws_writer(request)
     scope = share_scope(request)
     with connect_pages_db(ws) as conn:

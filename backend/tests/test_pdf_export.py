@@ -2,11 +2,12 @@
 annotation importer, note flattening, and the HTTP endpoint end to end."""
 
 import io
+import zipfile
 from types import SimpleNamespace
 
 import pytest
 
-from conftest import make_page, require_math_renderer, workspace_of, guest_name
+from conftest import doc_props, make_page, require_math_renderer, workspace_of, guest_name
 
 from gamma.pdf_export import annotate_pdf, first_rect, page_with_ink, parse_css_color
 
@@ -237,7 +238,7 @@ def test_a_strip_and_an_export_read_past_an_entry_that_leads_nowhere(guest):
     up = guest.post("/api/uploads", files={"file": ("a.pdf", source, "application/pdf")})
     assert up.status_code == 200, up.text
     doc_id = up.json()["doc_id"]
-    page = make_page(guest, "Damaged", properties={"doc_id": doc_id, "source_url": up.json()["source_url"]})
+    page = make_page(guest, "Damaged", properties=doc_props(doc_id))
 
     r = guest.get(f"/api/pages/{page['id']}/export-pdf")
     assert r.status_code == 200, r.text
@@ -482,7 +483,7 @@ def test_export_pdf_endpoint(guest):
     up = guest.post("/api/uploads", files={"file": ("p.pdf", _pdf_with_dangling_reference(), "application/pdf")})
     assert up.status_code == 200, up.text
     page = make_page(guest, "Annotated paper",
-                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+                     properties=doc_props(up.json()["doc_id"]))
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": "hl1", "content": "top comment", "properties": {
             "quote": "quoted text",
@@ -511,6 +512,34 @@ def test_export_pdf_endpoint(guest):
     assert str(obj["/T"]) == guest_name()
 
 
+def test_a_duplicated_page_exports_the_pdf_it_shows(guest):
+    """A duplicated page (``doc.copy``: it shows the original's stored file
+    and owns no PDF) is exported with that file, as the original is: its
+    annotated PDF draws the copy's own highlights on it, and the Zotero RDF
+    and Logseq exports pack it."""
+    from pypdf import PdfReader
+
+    original = _uploaded(guest, _blank_pdf(pages=1) + b"a duplicated page's", "dup.pdf")
+    copy = make_page(guest, "Duplicated paper", properties=doc_props(url=f"/api/uploads/{original}.pdf"))
+    assert guest.get(f"/api/blocks/{copy['id']}").json()["properties"]["doc"] == {
+        "format": "pdf", "name": "", "hash": original, "ext": ".pdf", "at": "store", "copy": True}
+    r = guest.put(f"/api/blocks/{copy['id']}/children", json={"blocks": [
+        {"id": "dup-hl", "content": "on the copy", "children": [], "properties": {
+            "quote": "quoted text", "color": "rgba(155, 205, 255, 0.65)", "pdf_position": _position()}}]})
+    assert r.status_code == 200, r.text
+
+    r = guest.get(f"/api/pages/{copy['id']}/export-pdf")
+    assert r.status_code == 200, r.text
+    assert r.headers["x-annotations-written"] == "1"
+    [mark] = [a.get_object() for a in PdfReader(io.BytesIO(r.content)).pages[0]["/Annots"]
+              if a.get_object()["/Subtype"] == "/Highlight"]
+    assert str(mark["/Contents"]) == "on the copy"
+    for mode in ("zotero-rdf", "logseq-graph"):
+        r = guest.get(f"/api/pages/{copy['id']}/export", params={"mode": mode})
+        assert r.status_code == 200, r.text
+        assert any(n.endswith(".pdf") for n in zipfile.ZipFile(io.BytesIO(r.content)).namelist()), mode
+
+
 def _annotated_pdf(pages=1):
     """A PDF carrying one embedded highlight and one area square, the same
     two (same pages, kinds and rects: the same import keys) whatever
@@ -535,7 +564,7 @@ def test_import_annotations_strip_rewrites_pdf(guest):
     up = guest.post("/api/uploads", files={"file": ("a.pdf", _annotated_pdf(), "application/pdf")})
     assert up.status_code == 200, up.text
     doc_id, source_url = up.json()["doc_id"], up.json()["source_url"]
-    page = make_page(guest, "Strip me", properties={"doc_id": doc_id, "source_url": source_url})
+    page = make_page(guest, "Strip me", properties=doc_props(doc_id))
 
     r = guest.post("/api/import/pdf-annotations",
                    json={"block_id": page["id"], "doc_id": doc_id, "strip": True})
@@ -589,7 +618,7 @@ def test_replacing_the_pdf_marks_imported_annotations_gone(guest):
     their originals with it: replacing the page's PDF marks them
     annot_stripped, so export writes them into the new file."""
     old = _uploaded(guest, _annotated_pdf(pages=3))  # bytes of its own: the strip test strips its file
-    page = make_page(guest, "Replace me", properties={"doc_id": old})
+    page = make_page(guest, "Replace me", properties=doc_props(old))
     r = guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": old})
     assert r.json() == {"ok": True, "found": 2, "imported": 2, "stripped": 0}
     assert not any(b["properties"].get("annot_stripped") for b in _imported(guest, page["id"]))
@@ -610,7 +639,7 @@ def test_import_of_the_new_file_takes_the_mark_off_what_it_holds_again(guest):
     its import adds no block and takes annot_stripped off, so export does
     not write them twice; a stripping import marks them again."""
     old = _uploaded(guest, _annotated_pdf(pages=4))
-    page = make_page(guest, "Same marks", properties={"doc_id": old})
+    page = make_page(guest, "Same marks", properties=doc_props(old))
     guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": old})
     new = _uploaded(guest, _annotated_pdf(pages=5), "b.pdf")
     guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new})
@@ -628,14 +657,14 @@ def test_import_of_the_new_file_takes_the_mark_off_what_it_holds_again(guest):
     assert guest.get(f"/api/pages/{page['id']}/export-pdf").headers["x-annotations-written"] == "2"
 
 
-def test_replacing_a_pdf_shown_by_address_marks_its_imported_annotations(guest):
-    """A duplicated document page shows the original's file by address
-    (``source_url`` alone, no ``doc_id``) and holds copies of its imported
+def test_replacing_the_pdf_of_a_duplicated_page_marks_its_imported_annotations(guest):
+    """A duplicated document page shows the original's file as a copy
+    (``doc.copy``: it owns no PDF) and holds copies of its imported
     blocks: replacing that file marks them too."""
     original = _uploaded(guest, _annotated_pdf(pages=6))
-    page = make_page(guest, "Original", properties={"doc_id": original})
+    page = make_page(guest, "Original", properties=doc_props(original))
     guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": original})
-    copy = make_page(guest, "Copy", properties={"source_url": f"/api/uploads/{original}.pdf"})
+    copy = make_page(guest, "Copy", properties=doc_props(url=f"/api/uploads/{original}.pdf"))
     kids = [{"id": f"copy{i}", "content": b["content"], "properties": b["properties"], "children": []}
             for i, b in enumerate(_imported(guest, page["id"]))]
     assert guest.put(f"/api/blocks/{copy['id']}/children", json={"blocks": kids}).status_code == 200
@@ -652,7 +681,7 @@ def test_an_import_of_the_old_file_leaves_the_marks(guest):
     file the page carried before (a tab that has not caught up, an import
     still running) takes no mark off."""
     old = _uploaded(guest, _annotated_pdf(pages=7))
-    page = make_page(guest, "Old import", properties={"doc_id": old})
+    page = make_page(guest, "Old import", properties=doc_props(old))
     guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": old})
     new = _uploaded(guest, _blank_pdf(pages=7), "b.pdf")
     guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new})
@@ -669,7 +698,7 @@ def test_a_file_rewritten_since_the_import_read_it_takes_no_mark_off(guest, monk
     from gamma.routers import imports
 
     old = _uploaded(guest, _annotated_pdf(pages=8))
-    page = make_page(guest, "Raced", properties={"doc_id": old})
+    page = make_page(guest, "Raced", properties=doc_props(old))
     guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": old})
     new = _uploaded(guest, _annotated_pdf(pages=9), "b.pdf")
     guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new})
@@ -1274,7 +1303,7 @@ def test_export_pdf_comments_switch(guest):
     off as well; a resolved thread stays out, as it leaves the margin."""
     up = guest.post("/api/uploads", files={"file": ("p.pdf", _blank_pdf(), "application/pdf")})
     page = make_page(guest, "Commented",
-                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+                     properties=doc_props(up.json()["doc_id"]))
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": "chl1", "content": "my own note", "properties": {
             "quote": "quoted", "pdf_position": _position(y1=300, y2=320)}, "children": []},
@@ -1313,7 +1342,7 @@ def test_export_pdf_prints_the_threads_on_a_highlights_notes(guest):
     or off."""
     up = guest.post("/api/uploads", files={"file": ("p.pdf", _blank_pdf(), "application/pdf")})
     page = make_page(guest, "Replied",
-                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+                     properties=doc_props(up.json()["doc_id"]))
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": "rhl1", "content": "my own note", "properties": {
             "quote": "quoted", "pdf_position": _position(y1=300, y2=320)}, "children": [
@@ -1333,7 +1362,7 @@ def test_export_pdf_prints_the_threads_on_a_highlights_notes(guest):
 def test_export_pdf_notes_mode(guest):
     up = guest.post("/api/uploads", files={"file": ("p.pdf", _blank_pdf(), "application/pdf")})
     page = make_page(guest, "Rendered notes",
-                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+                     properties=doc_props(up.json()["doc_id"]))
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": "nhl1", "content": "top comment", "properties": {
             "quote": "quoted text", "pdf_position": _position(),
@@ -1367,7 +1396,7 @@ def test_export_pdf_highlights_switch(guest):
     up = guest.post("/api/uploads", files={"file": ("p.pdf", _blank_pdf(), "application/pdf")})
     original = _blank_pdf()
     page = make_page(guest, "Switches",
-                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+                     properties=doc_props(up.json()["doc_id"]))
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": "shl1", "content": "only the note", "properties": {
             "quote": "quoted text", "pdf_position": _position(),

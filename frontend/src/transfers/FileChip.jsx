@@ -21,6 +21,7 @@ import { API, apiJson, assetUrl } from "../shared/lib/utils";
 import { saveLinkClick, saveUrl } from "../shared/lib/saveFile.js";
 import { xhrUpload } from "../shared/lib/xhrUpload";
 import { t } from "../shared/i18n/i18n.js";
+import { formatOf } from "../documents/formats.js";
 
 // What the page around the chip provides: navigation and promotion come from
 // App (they need the page's folder and openBlock); a chip rendered with no
@@ -172,17 +173,19 @@ const stop = (e) => e.stopPropagation();
 // markdown file that already has a page additionally shows a small "open
 // page" button before the arrow; making that page ("Add to library") lives
 // in the chip's menu (a right-click or a held finger), so a chip never
-// advertises it inline.
-const PAGEABLE = /^(pdf|md|markdown)$/;
+// advertises it inline. The formats (documents/formats.js) a chip's file
+// can become a page of:
+const PAGEABLE = ["pdf", "markdown"];
 
 export function FileChip({ href, text }) {
   const ctx = useContext(FileChipContext);
   const parsed = parseUploadUrl(href);
   const ext = parsed?.ext || "";
-  const isPdf = ext === "pdf";
+  const { format } = formatOf(`x.${ext}`);
+  const isPdf = format === "pdf";
   const name = (text || "").trim() || decodeURIComponent((href.split("/").pop() || "file").split("?")[0]);
   const [menu, setMenu] = useState(null);
-  const canOpen = !!ctx?.canOpen && PAGEABLE.test(ext);
+  const canOpen = !!ctx?.canOpen && PAGEABLE.includes(format);
   const page = useDocPage(parsed?.hash, canOpen);
   const url = assetUrl(href);
   const close = () => setMenu(null);

@@ -17,6 +17,7 @@ import json
 import os
 
 import pytest
+from conftest import doc_props
 from zotero_engine import (LIB, WRITES, Crash, _edit, _highlight, _kids, _link, _page_of, _rows,  # noqa: F401
                            _sync, background, drop_pending, fake, idle, me, no_relocation, owner_id, quiet)
 from zotero_fake import FakeZotero
@@ -94,9 +95,10 @@ def gamma_print(ws) -> list:
         for page_id, title, props in kids.get(where, ()):
             meta = props.get("meta") if isinstance(props.get("meta"), dict) else {}
             mark = props.get("zotero_pdf") if isinstance(props.get("zotero_pdf"), dict) else {}
+            doc = props.get("doc") if isinstance(props.get("doc"), dict) else {}
             out.append(repr((where, title, meta.get("title"), meta.get("year"), meta.get("venue"),
                              sorted(labels.get(i, i) for i in props.get(LABELS) or ()),
-                             sorted(path(f) for f in props.get(FOLDERS) or ()), props.get("doc_id") or "",
+                             sorted(path(f) for f in props.get(FOLDERS) or ()), doc.get("hash") or "",
                              mark.get("state") or "", sorted(map(repr, blocks(page_id, 1))))))
     out += sorted(repr(("folder", path(fid))) for fid in folders)
     out += sorted(repr(("label", name)) for name in labels.values())
@@ -120,7 +122,7 @@ def _changes(ws, owner, fake, keys) -> None:
     doc_id, _ = storage.store_pdf(ws, NEW_PDF)
     zotero_local.create_page(ws, page_id="zcNewPaper", title="Written here", actor=owner, client="t", props={
         "meta": {"title": "Written here", "authors": ["Ada Lovelace"], "year": "2025", "source": "manual"},
-        "doc_id": doc_id, "original_filename": "written-here.pdf"})
+        **doc_props(doc_id, name="written-here.pdf")})
     thesis = _page_of(ws, keys["thesis"])
     with connect_pages_db(ws) as conn:
         meta = json.loads(conn.execute("SELECT properties FROM unified_blocks WHERE id = ?",
@@ -179,7 +181,7 @@ def _existing(owner, fake, keys) -> str:
     meta = {"title": "Attention is all you need", "authors": ["Ashish Vaswani", "Noam Shazeer"], "year": "2017",
             "venue": "Nature", "doi": "10.1038/s41586-000-00000-0", "source": "zotero"}
     zotero_local.create_page(ws, page_id="zcImported", title="Attention is all you need", actor=owner, client="t",
-                             props={"meta": meta, "doc_id": doc_id, "zotero_key": item_uri(LIB, keys["attention"])})
+                             props={"meta": meta, **doc_props(doc_id), "zotero_key": item_uri(LIB, keys["attention"])})
     with za.Pages(pdf_bytes()) as pages:
         imported = za.from_item(fake.data(LIB, keys["highlight"]), pages.page(1))
     _edit(ws, owner, "zcImported", [
@@ -197,8 +199,8 @@ def _existing(owner, fake, keys) -> str:
                  "doi": "10.5555/rag", "source": "manual"}})
     doc_id, _ = storage.store_pdf(ws, NEW_PDF)
     zotero_local.create_page(ws, page_id="zcMineOnly", title="Mine only", actor=owner, client="t", props={
-        "meta": {"title": "Mine only", "year": "2025", "source": "manual"}, "doc_id": doc_id,
-        "original_filename": "mine-only.pdf"})
+        "meta": {"title": "Mine only", "year": "2025", "source": "manual"},
+        **doc_props(doc_id, name="mine-only.pdf")})
     with connect_pages_db(ws) as conn:  # the page has been still a long while: its own notes may go
         conn.execute("UPDATE unified_blocks SET updated_at = '2020-01-01T00:00:00.000000Z' WHERE id = 'zcImported'")
         conn.commit()

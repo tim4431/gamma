@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from conftest import login, make_folder, make_user, workspace_of
+from conftest import doc_props, login, make_folder, make_user, workspace_of
 from gamma import ops, pdf_index, storage, upload_gc
 from gamma.db import connect_pages_db, page_now, ws_uploads_dir
 
@@ -159,7 +159,7 @@ def test_only_a_deleted_pdf_block_costs_the_library_wide_cleanup(ann, monkeypatc
     monkeypatch.setattr(pdf_index, "purge_unused", lambda w, conn: (calls.append(w), real(w, conn)))
     page = _page(c)
     _ops(c, page, [{"op": "insert", "id": "gcL1", "parent": page, "content": "plain"},
-                   {"op": "insert", "id": "gcL2", "parent": page, "content": "", "props": {"doc_id": "d" * 24}}])
+                   {"op": "insert", "id": "gcL2", "parent": page, "content": "", "props": doc_props("d" * 24)}])
     _ops(c, page, [{"op": "delete", "id": "gcL1"}])
     assert calls == []
     _ops(c, page, [{"op": "delete", "id": "gcL2"}])
@@ -172,11 +172,27 @@ def test_the_upload_reference_grammar():
     refs = storage.upload_refs(
         "![a](/api/uploads/0123abcd.png). [w](/api/uploads/beef01.safetensors) "
         "[p](/api/uploads/cafe02.pdf#page=2) /api/uploads/dead03.jpg?ws=x",
-        '{"ink_url": "/api/uploads/f00d04.ink", "doc_id": "facade05", "source_url": "/api/uploads/b0b06.pdf"}')
+        json.dumps({"ink_url": "/api/uploads/f00d04.ink", **doc_props("facade05", url="/api/uploads/b0b06.pdf")}))
     assert refs == {"0123abcd.png", "beef01.safetensors", "cafe02.pdf", "dead03.jpg",
                     "f00d04.ink", "facade05.pdf", "b0b06.pdf"}
     assert storage.upload_refs("plain text", {"color": "red"}) == set()
-    assert storage.upload_refs("", {"doc_id": "../../etc"}) == set()
+    # a block's doc names its file whatever reads it: stored, read in place, a
+    # copy (no address stored), cached under an address's hash, of any format
+    assert storage.upload_refs("", doc_props("s1")) == {"s1.pdf"}
+    assert storage.upload_refs("", doc_props("p1", at="path")) == {"p1.pdf"}
+    assert storage.upload_refs("", doc_props(url="/api/uploads/c1.pdf")) == {"c1.pdf"}
+    assert storage.upload_refs("", doc_props("u1", url="https://x.test/p.pdf")) == {"u1.pdf"}
+    assert storage.upload_refs("", doc_props(url="https://x.test/p.pdf")) == set()
+    text = {"doc": {"format": "text", "name": "main.tex", "hash": "t1", "ext": ".tex", "at": "store"}}
+    assert storage.upload_refs("", text) == {"t1.tex"} == storage.upload_refs("", json.dumps(text), held=False)
+    # a stem the grammar refuses, a doc that does not read, a flat doc_id: none
+    assert storage.upload_refs("", doc_props("a.b")) == set()
+    assert storage.upload_refs("", {"doc": {"hash": "../../etc"}}) == set()
+    assert storage.upload_refs("", {"doc_id": "facade05"}) == set()
+    # a highlight's position holds its files, shown or not
+    held = {"pdf_position": {"pageNumber": 1, "doc_id": "h1", "prev": {"doc_id": "h0"}}}
+    assert storage.upload_refs("", held) == {"h1.pdf", "h0.pdf"} and storage.upload_refs("", held, held=False) == set()
+    assert storage.upload_refs("", {"pdf_position": {"doc_id": storage.UNSTORED}}) == set()
 
 
 def test_reconcile_knows_every_reference_form(ann):
@@ -192,8 +208,9 @@ def test_reconcile_knows_every_reference_form(ann):
         {"op": "insert", "id": "gcF1", "parent": page, "content": f"[data](/api/uploads/{names['chip']})"},
         {"op": "insert", "id": "gcF2", "parent": page, "content": "", "props": {"ink_url": f"/api/uploads/{names['ink']}"}},
         {"op": "insert", "id": "gcF3", "parent": page, "content": f"[w](/api/uploads/{names['long']})"},
-        {"op": "insert", "id": "gcF4", "parent": page, "content": "", "props": {"source_url": f"/api/uploads/{names['src']}"}},
-        {"op": "insert", "id": "gcF5", "parent": page, "content": "", "props": {"doc_id": names["doc"][:-4]}},
+        # a copy's file (its address is not stored) and a nested document's
+        {"op": "insert", "id": "gcF4", "parent": page, "content": "", "props": doc_props(url=f"/api/uploads/{names['src']}")},
+        {"op": "insert", "id": "gcF5", "parent": page, "content": "", "props": doc_props(names["doc"][:-4])},
         {"op": "insert", "id": "gcF6", "parent": page, "content": f"see /api/uploads/{names['dot']}."},
     ])
     # a write that never finished: not a stored file, and swept once old

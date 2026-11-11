@@ -31,6 +31,7 @@ import json
 
 from .blocks_store import fetch_subtree, folder_paths, load_props, newest_change_seq, pages_in_folder
 from .db import safe_doc_id
+from .documents.model import is_pdf, own_hash, page_document, stored_name
 from .markdown_export import block_ref_resolver, build_tree, collect_and_rewrite
 from .obsidian_export import (Filing, VaultContext, link_texts, name_files, page_dir, referenced_blocks,
                               render_vault_page)
@@ -59,12 +60,12 @@ def _digest(text: str) -> str:
 
 
 def _stored_pdf(ws: str, doc_id: str):
-    """The stored file of a page's ``doc_id``, or None (no PDF, a proxied
-    one that was never stored, a bad id)."""
+    """The stored file of the PDF ``doc_id`` a page owns, or None (no PDF, a
+    proxied one that was never stored, a bad id)."""
     if not doc_id:
         return None
     try:
-        return find_upload_file(f"{safe_doc_id(doc_id)}.pdf", ws)
+        return find_upload_file(stored_name(safe_doc_id(doc_id), ".pdf"), ws)
     except ValueError:
         return None
 
@@ -107,7 +108,8 @@ def layout(conn, ws: str, folder_id: str) -> dict | None:
         parent = fil.parents.get(pid, "")
         parent = parent if parent in stems else ""
         tags = fil.tags(props)
-        doc_id = str(props.get("doc_id") or "")
+        view = page_document(props)
+        doc_id = own_hash(view) if is_pdf(view) else ""  # a copy owns none: its file stays the original's
         pdf = _stored_pdf(ws, doc_id)
         version = f"{seq}:{updated_at or ''}"
         if tags:

@@ -30,13 +30,10 @@ from ..blocks_store import (
     PARENT_PAGE,
     TRASH,
     assert_block_in_scope,
-    attachment_file,
-    attachment_props,
     block_to_dict,
     create_page,
     load_props,
     page_ancestors,
-    page_attachment,
     page_for_doc,
     page_root_id,
     pages_for_docs,
@@ -45,6 +42,8 @@ from ..blocks_store import (
     write_lock,
 )
 from ..db import connect_pages_db, connect_users_db, get_profile, safe_doc_id
+from ..documents.model import (document, document_props, document_title, file_hash, in_place, is_pdf, own_hash,
+                               page_document, stored_name)
 from ..markdown_zip_import import markdown_page
 from ..logbuf import log
 from ..storage import UNSTORED, find_upload_file
@@ -53,7 +52,9 @@ from .imports import originals_gone
 
 router = APIRouter(prefix="/api", tags=["pages"])
 
-ATTACHMENT_KEYS = ("doc_id", "source_url", "original_filename")
+# What an attach replaces and a detach removes: the page's document, and the
+# name of the Markdown file a page was imported from (markdown_zip_import).
+ATTACHMENT_KEYS = ("doc", "original_filename")
 SHARE_PAGES_PER_5_MIN = 30  # pages a link visitor may make through an edit share, per IP
 RELOCATE = "relocate-highlights"  # the job that places a replaced PDF's highlights (_start_relocation)
 NOT_STORED = "the PDF is not stored on the server"  # why no run places the highlights of a PDF shown from a URL alone
@@ -130,7 +131,11 @@ def create_page_endpoint(payload: PageCreate, request: Request):
     share editor's name (``actor_of``). An ``id`` the link names must be
     new to the workspace: one that names a page in Recently deleted is
     refused (409) as any taken id, rather than giving way, since that page
-    need not be one the share reaches."""
+    need not be one the share reaches.
+
+    400 for ``properties`` that keep a document in the flat keys of old
+    (``doc_id``, ``source_url``, ``linked_file``) or carry a ``doc`` that
+    does not check (``documents.model.document_props``)."""
     ws = require_ws_writer(request)
     scope = share_scope(request)
     if scope is not None:
@@ -139,7 +144,10 @@ def create_page_endpoint(payload: PageCreate, request: Request):
             raise HTTPException(status_code=403, detail="through a share link a page is made inside a shared page only")
         if payload.properties:
             raise HTTPException(status_code=403, detail="share editors cannot set a page's properties")
-    props = dict(payload.properties or {})
+    try:
+        props = dict(document_props(payload.properties or {}))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if payload.parent_page:
         props[PARENT_PAGE] = payload.parent_page
         props.pop(FOLDERS, None)
@@ -170,13 +178,13 @@ def create_page_endpoint(payload: PageCreate, request: Request):
 @router.get("/pages/{page_id}/family")
 def page_family(page_id: str, request: Request):
     """Where a page stands among pages: ``{"ancestors": [{id, title}],
-    "sub_pages": [{id, title, updated_at, pdf?}]}`` — its effective ancestors
-    top first (blocks_store.page_ancestors; under a share only those the
-    share reaches) and the pages right inside it, in library order
-    (``sub_pages``, ``pdf: true`` on one that carries a PDF,
-    page_attachment); "Untitled" for an empty title. Any member, or a share
-    that reaches the page (403 otherwise, as for its subtree); 404 for a
-    block that is no live page."""
+    "sub_pages": [{id, title, updated_at, format?}]}`` — its effective
+    ancestors top first (blocks_store.page_ancestors; under a share only
+    those the share reaches) and the pages right inside it, in library
+    order (``sub_pages``, ``format`` the format of the document one
+    carries, ``page_document``); "Untitled" for an empty title. Any member,
+    or a share that reaches the page (403 otherwise, as for its subtree);
+    404 for a block that is no live page."""
     scope = share_scope(request)
     with connect_pages_db(resolve_ws(request)) as conn:
         assert_block_in_scope(conn, page_id, scope)
@@ -191,8 +199,9 @@ def page_family(page_id: str, request: Request):
     def sub_page(i):
         _, title, updated_at, props = rows[i]
         entry = {"id": i, "title": title or "Untitled", "updated_at": updated_at}
-        if page_attachment(load_props(props)):
-            entry["pdf"] = True
+        view = page_document(load_props(props))
+        if view:
+            entry["format"] = view["format"]
         return entry
 
     return {"ancestors": [{"id": i, "title": rows[i][1] or "Untitled"} for i in ancestors],
@@ -206,8 +215,8 @@ class DocsLookup(BaseModel):
 @router.post("/pages/by-docs")
 def pages_by_docs(payload: DocsLookup, request: Request):
     """Which pages these stored files became: ``{doc_ids: [<hash>, ...]}`` →
-    ``{"pages": {hash: {id, title}}}`` — a hash matches the page carrying it
-    as its PDF (``doc_id``) or the note page made from it (a markdown file's
+    ``{"pages": {hash: {id, title}}}`` — a hash matches the page owning it
+    as its PDF (``doc.hash``) or the note page made from it (a markdown file's
     ``markdown_import``); hashes with no page are absent. The file chips ask
     this once per page render to show the "open page" button and label the
     menu "Open page" / "Open as page". Any member."""
@@ -291,7 +300,7 @@ def _zotero_marked(page: dict) -> bool:
     Zotero item holds (a ``zotero_pdf`` whose state is not ``unavailable``)."""
     props = page.get("properties") or {}
     mark = props.get("zotero_pdf")
-    return not page_attachment(props) and isinstance(mark, dict) and mark.get("state") != "unavailable"
+    return not page_document(props) and isinstance(mark, dict) and mark.get("state") != "unavailable"
 
 
 def _zotero_keeps(ws: str) -> bool:
@@ -315,30 +324,37 @@ def _zotero_pdf_refusal(ws: str, page: dict) -> str | None:
     return ZOTERO_PDF_COMING if _zotero_keeps(ws) else ""
 
 
-def _attachment_op(page: dict, doc_id: str, source_url: str, original_filename: str) -> tuple[dict, str, dict, bool]:
-    """The op that makes ``doc_id`` / ``source_url`` / ``original_filename``
-    the page's attachment, whatever it carried before, with the page's
-    title and properties after it. While the title is still automatic
-    ("Untitled"/empty) it becomes the file name (or URL tail) and is marked
-    ``auto_title``, the marker metadata may replace (same semantics as
-    get_or_create_doc_page; an explicit rename clears it). Any other title
-    stays. When the file changes (another ``doc_id`` or address than the
-    page showed, ``page_attachment``), a failed metadata lookup's
-    ``meta_error`` goes: that lookup read the file the page carried, and
-    the new one is looked up again. → ``(op, title, properties, file
+def _attachment_op(page: dict, hash: str, url: str, name: str, *,
+                   at: str | None = None) -> tuple[dict, str, dict, bool]:
+    """The op that makes the PDF ``hash`` / ``url`` named ``name`` the
+    page's document (``documents.model.document``), whatever it carried
+    before, with the page's title and properties after it. ``at`` says
+    where its bytes are read from; by default a page that read its PDF in
+    place (``in_place``) goes on reading the new one there, unless it now
+    comes from an address. While the title is still automatic
+    ("Untitled"/empty) it becomes the file name (or URL tail,
+    ``document_title``) and is marked ``auto_title``, the marker metadata
+    may replace (same semantics as get_or_create_doc_page; an explicit
+    rename clears it). Any other title stays. When the file changes
+    (another own PDF or address than the page showed), a failed metadata
+    lookup's ``meta_error`` goes: that lookup read the file the page
+    carried, and the new one is looked up again. OpError 400 for a hash
+    that can be no stored file's. → ``(op, title, properties, file
     changed)``; an op whose ``props`` patch is empty and that has no
     ``content`` changes nothing."""
-    before = page_attachment(page["properties"])
+    before = page_document(page["properties"])
     props = {k: v for k, v in page["properties"].items() if k not in ATTACHMENT_KEYS}
-    attachment, auto = attachment_props(doc_id, source_url, original_filename)
-    props.update(attachment)
-    after = page_attachment(props)
-    moved = before is None or (before["id"], before["url"]) != (after["id"], after["url"])
+    try:
+        props["doc"] = document(hash, url, name, at=at or ("path" if in_place(before) and not url else None))
+    except ValueError:
+        raise OpError(400, "invalid doc_id")
+    after = page_document(props)
+    moved = before is None or (own_hash(before), before["url"]) != (own_hash(after), after["url"])
     if moved:
         props.pop("meta_error", None)
     content = page["content"]
     if not content.strip() or content.strip() == "Untitled":
-        content = auto or content
+        content = document_title(name, url, hash) or content
         props["auto_title"] = content
     op = {"op": "set", "id": page["id"], "props": props_patch(page["properties"], props)}
     if content != page["content"]:
@@ -363,7 +379,7 @@ def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
         # same PDF at once can't both pass "no other page carries it".
         write_lock(conn)
         page = _load_page(conn, page_id)
-        if page_attachment(page["properties"]):
+        if page_document(page["properties"]):
             raise HTTPException(status_code=409, detail="page already has an attachment")
         refusal = _zotero_pdf_refusal(ws, page)
         if refusal:
@@ -371,7 +387,10 @@ def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
         conflict = _held_elsewhere(conn, doc_id)
         if conflict:
             return conflict
-        op, content, props, _moved = _attachment_op(page, doc_id, source_url, payload.original_filename)
+        try:
+            op, content, props, _moved = _attachment_op(page, doc_id, source_url, payload.original_filename)
+        except OpError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail)
         if refusal == "":  # a Zotero mark nothing honours any more goes with the attach
             props.pop("zotero_pdf", None)
             op["props"] = props_patch(page["properties"], props)
@@ -425,16 +444,19 @@ def replaced_answer(done: dict) -> dict:
     return answer
 
 
-def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str = "", original_filename: str = "", *,
+def replace_attachment(ws: str, page_id: str, hash: str, url: str = "", name: str = "", *, at: str | None = None,
                        actor: str, client: str = "", owner, check_held: bool = True, props: dict | None = None,
                        check=None, rows=None, check_zotero: bool = True,
                        keep_old_days: int | None = None) -> dict | None:
-    """Make ``doc_id`` / ``source_url`` the page's PDF, in place of what it
-    carries (or as its first), in one transaction under the write lock,
-    then start placing its highlights. PUT /pages/{id}/attachment and the
+    """Make the PDF ``hash`` / ``url`` named ``name`` the page's document,
+    in place of what it carries (or as its first), in one transaction under
+    the write lock, then start placing its highlights. ``at`` says where its
+    bytes are read from (``_attachment_op``: by default a page that read its
+    PDF in place goes on doing so). PUT /pages/{id}/attachment and the
     Zotero link (gamma/zotero_local.py, ``check_held=False``: linked items
     may share one PDF, and ``page_for_doc`` then answers the oldest page)
-    both go through here.
+    both go through here, and so do a synced vault's and gamma-sync's new
+    builds of a file.
 
     In the transaction: ``check(conn)``, a caller's compare-and-set, runs
     first (False: nothing is written, and the answer is None); the page is
@@ -442,20 +464,20 @@ def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str = "",
     no page; unless ``check_zotero`` is False, 409 while something brings
     its Zotero item's PDF, ``_zotero_pdf_refusal``, and a mark nothing
     honours any more is dropped with the write); unless ``check_held`` is
-    False, a ``doc_id`` another page carries is refused (``HeldElsewhere``,
+    False, a ``hash`` another page owns is refused (``HeldElsewhere``,
     409; a page reading those bytes from a file on this computer is passed
     by, ``page_for_doc``); the attachment op (``_attachment_op``: an
     automatic title becomes the file name, a failed lookup's ``meta_error``
     goes when the file changes) is written, with ``props`` (a page property
     patch the caller adds, such as dropping ``zotero_pdf``) merged into it.
-    When the file changes (whatever the page showed it from: a ``doc_id``,
-    or only a ``source_url`` as on a duplicated document page), the blocks
-    imported from the old file's embedded annotations are marked gone from
-    the file (``imports.originals_gone``), so PDF export draws them again.
-    When the stored file changes (``attachment_file``: a duplicated page's
-    ``/api/uploads/<doc id>.pdf`` address is its stored file) and the page
+    When the file changes (whatever the page showed it from: its own PDF,
+    or only an address or the file a copy shows, as on a duplicated
+    document page), the blocks imported from the old file's embedded
+    annotations are marked gone from the file (``imports.originals_gone``),
+    so PDF export draws them again. When the stored file changes
+    (``file_hash``: a duplicated page's is the file it shows) and the page
     has highlights placed on its PDF, each of them that names no file yet
-    gets the outgoing file's id as ``pdf_position.doc_id`` (the file its
+    gets the outgoing file's hash as ``pdf_position.doc_id`` (the file its
     rectangles were measured on; ``storage.UNSTORED`` for a page
     that showed its file from a URL alone), and a lost one's ``closest`` (a
     place in the outgoing file) goes. ``rows(conn)`` runs last, for a
@@ -476,7 +498,7 @@ def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str = "",
 
     → ``{page (as read), content, props (the page's title and properties
     after), results (the batches' results), placed ([(block id, props)] of
-    the highlights stamped), incoming, outgoing (the stored files' doc ids,
+    the highlights stamped), incoming, outgoing (the stored files' hashes,
     "" for none), job (the run, or None), relocation_error (why no run
     started; "" when one did or none was needed)}``."""
     with connect_pages_db(ws) as conn:
@@ -491,13 +513,14 @@ def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str = "",
                 raise OpError(409, refusal)
             if refusal == "":  # a Zotero mark nothing honours any more goes with the replacement
                 props = {**(props or {}), "zotero_pdf": None}
-            old = str(page["properties"].get("doc_id") or "")
-            if check_held and doc_id and doc_id != old:
-                other = page_for_doc(conn, doc_id)
+            old_doc = page_document(page["properties"])
+            old = own_hash(old_doc)
+            if check_held and hash and hash != old:
+                other = page_for_doc(conn, hash)
                 if other:
                     raise HeldElsewhere(other[0])
-            had = page_attachment(page["properties"]) is not None
-            op, content, after, moved = _attachment_op(page, doc_id, source_url, original_filename)
+            had = old_doc is not None
+            op, content, after, moved = _attachment_op(page, hash, url, name, at=at)
             if props:
                 for key, value in props.items():
                     if value is None:
@@ -505,8 +528,8 @@ def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str = "",
                     else:
                         after[key] = value
                 op["props"] = props_patch(page["properties"], after)
-            outgoing = attachment_file(page_attachment(page["properties"]))
-            incoming = attachment_file(page_attachment(after))
+            outgoing = file_hash(old_doc)
+            incoming = file_hash(page_document(after))
             if not op["props"] and "content" not in op:
                 if rows is not None:
                     rows(conn)
@@ -539,13 +562,14 @@ def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str = "",
             conn.rollback()
             raise
         after_commits(ws, conn, results)
-        if old and old != doc_id:
+        if old and old != hash:
             pdf_index.purge_unused(ws, conn)
     if keep_old_days and outgoing and outgoing != incoming:
+        replaced = stored_name(outgoing, old_doc["ext"])
         try:  # after the commit: retain takes the purge's lock, which never waits on the write lock
-            upload_gc.retain(ws, f"{outgoing}.pdf", keep_old_days * 86400)
+            upload_gc.retain(ws, replaced, keep_old_days * 86400)
         except Exception as e:  # noqa: BLE001 — a shorter life missed is no failed replacement
-            log.warning(f"[uploads] {page_id}: could not shorten the life of {outgoing}.pdf: {e}")
+            log.warning(f"[uploads] {page_id}: could not shorten the life of {replaced}: {e}")
     job, reason = None, ""
     if placed:
         job, reason = (_start_relocation(owner, ws, page["id"], content, incoming, outgoing=outgoing)
@@ -642,10 +666,10 @@ def relocate_highlights(payload: RelocateRequest, request: Request):
     with connect_pages_db(ws) as conn:
         page = _load_page(conn, payload.page_id)
         placed = highlight_relocate.page_highlights(conn, page["id"], unplaced=True)
-    attachment = page_attachment(page["properties"])
-    if not attachment:
+    view = page_document(page["properties"])
+    if not is_pdf(view):
         raise HTTPException(status_code=400, detail="the page has no PDF")
-    new_doc = attachment_file(attachment)
+    new_doc = file_hash(view)
     if not new_doc:
         raise HTTPException(status_code=400, detail=NOT_STORED)
     if not placed:
@@ -657,8 +681,9 @@ def relocate_highlights(payload: RelocateRequest, request: Request):
 
 @router.delete("/pages/{page_id}/attachment")
 def detach_pdf(page_id: str, request: Request):
-    """Remove the page's PDF attachment (``doc_id`` / ``source_url`` /
-    ``original_filename``). Highlight blocks keep their ``pdf_position``;
+    """Remove the page's PDF attachment (``ATTACHMENT_KEYS``: its ``doc``,
+    stored, read in place or at an address, and the ``original_filename``
+    a Markdown import left). Highlight blocks keep their ``pdf_position``;
     the file stays on disk, and unless something else references it the
     orphan bookkeeping purges it after 30 days (gamma/upload_gc.py) — a
     re-attach before then finds it. → ``{"ok", "block"}``."""
@@ -667,7 +692,7 @@ def detach_pdf(page_id: str, request: Request):
         write_lock(conn)  # the check and the write as one step, like attach_pdf
         page = _load_page(conn, page_id)
         props = dict(page["properties"])
-        if not page_attachment(props):
+        if not page_document(props):
             raise HTTPException(status_code=404, detail="page has no attachment")
         for key in ATTACHMENT_KEYS:
             props.pop(key, None)

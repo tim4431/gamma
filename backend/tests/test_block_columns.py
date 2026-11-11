@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import login, make_folder, make_label, make_user, page_id_drift, workspace_of
+from conftest import doc_props, login, make_folder, make_label, make_user, page_id_drift, workspace_of
 from gamma.blocks_store import BLOCK_COLUMNS, block_kind, fetch_subtree, page_for_doc, page_root_id, trash_entry
 from gamma.db import connect_pages_db
 from gamma.highlights import is_highlight, is_ink, is_link
@@ -64,8 +64,14 @@ def test_a_page_and_its_blocks_carry_the_page_id(owner):
 
 
 def test_kind_and_doc_id_follow_the_properties(owner):
-    page = _page(owner, "Kinds", {"doc_id": "c" * 24})
+    page = _page(owner, "Kinds", doc_props("c" * 24))
     assert _row(page["id"]) == (page["id"], "page", "c" * 24)
+    # the column is the hash a row owns: none for a copy or an address alone
+    copy = _page(owner, "A copy", doc_props(url=f"/api/uploads/{'c' * 24}.pdf"))
+    shown = _page(owner, "Shown", doc_props(url="https://x.test/p.pdf"))
+    cached = _page(owner, "Cached", doc_props("d" * 24, url="https://x.test/q.pdf"))
+    assert copy["properties"]["doc"]["copy"] is True
+    assert (_row(copy["id"])[2], _row(shown["id"])[2], _row(cached["id"])[2]) == (None, None, "d" * 24)
     rect = {"x1": 10, "y1": 20, "x2": 110, "y2": 32}
     pos = {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": rect, "rects": [rect]}
     # A highlight is a block with a pdf_position, tested after the ink,
@@ -92,7 +98,7 @@ def test_kind_and_doc_id_follow_the_properties(owner):
         "bcRecNull": ({"recording": None}, "note"),
         "bcNoPos": ({"pdf_position": None, "quote": "q"}, "note"),
         "bcPdfPage": ({"pdf_page": 1}, "note"),  # a page number alone, no position: no highlight
-        "bcFileBlock": ({"doc_id": "e" * 24}, "note"),
+        "bcFileBlock": (doc_props("e" * 24), "note"),
     }
     _ops(owner, page["id"], [{"op": "insert", "id": bid, "parent": page["id"], "content": bid, "props": props}
                              for bid, (props, _) in cases.items()])
@@ -175,9 +181,9 @@ def test_the_listing_carries_page_summaries(owner):
     meta = {"title": "On cavities", "authors": ["A. Author", "B. Author"], "year": 2024, "venue": "PRX",
             "volume": "14", "doi": "10.1/x", "arxiv_id": "2401.00001", "publisher": "APS", "abstract": "long"}
     filed = {"folders": [make_folder(owner, "bc/lab")], "labels": [make_label(owner, "read")]}
+    doc = doc_props("a" * 24, name="x.pdf", at="path")  # read in place: the menus read doc.at
     page = _page(owner, "Summarized", {
-        "doc_id": "a" * 24, "source_url": "/api/uploads/x.pdf", "original_filename": "x.pdf", **filed,
-        "pinned": True, "seeded": "welcome", "linked_file": True, "opened_files": True, "meta": meta,
+        **doc, **filed, "pinned": True, "seeded": "welcome", "opened_files": True, "meta": meta,
         "bibtex": "@article{x}", "ppt_cite": "Author 2024", "summary": "a summary", "auto_title": "x.pdf",
         "web_url": "https://x"})
     _ops(owner, page["id"], [{"op": "insert", "id": "bcPreview", "parent": page["id"], "content": "first note"}])
@@ -186,9 +192,9 @@ def test_the_listing_carries_page_summaries(owner):
                           "properties"}
     assert entry["preview"] == "first note" and entry["content"] == "Summarized" and entry["parent"] == ""
     assert entry["properties"] == {
-        "doc_id": "a" * 24, "source_url": "/api/uploads/x.pdf", "original_filename": "x.pdf", **filed,
-        "pinned": True, "seeded": "welcome", "linked_file": True, "opened_files": True,
+        **doc, **filed, "pinned": True, "seeded": "welcome", "opened_files": True,
         "meta": {k: meta[k] for k in blocks_router.SUMMARY_META}}
+    assert not {"doc_id", "source_url", "original_filename", "linked_file"} & set(entry["properties"])
     bare = _page(owner, "Bare")
     entry = next(p for p in owner.get("/api/blocks/root/children").json()["children"] if p["id"] == bare["id"])
     assert entry["properties"] == {} and entry["preview"] == ""

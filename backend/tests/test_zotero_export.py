@@ -11,7 +11,7 @@ import re
 import xml.etree.ElementTree as ET
 import zipfile
 
-from conftest import folder_names, fresh_client, make_folder, make_label, make_page
+from conftest import doc_props, folder_names, fresh_client, make_folder, make_label, make_page
 from pypdf import PdfReader
 
 from gamma import ink as inkmod
@@ -108,7 +108,7 @@ def _paper(guest, prefix):
     up = guest.post("/api/uploads", files={"file": ("p.pdf", _blank_pdf_bytes(), "application/pdf")})
     assert up.status_code == 200, up.text
     page = make_page(guest, f"Attention {prefix}", properties={
-        "doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
+        **doc_props(up.json()["doc_id"]),
         "folders": [make_folder(guest, f"{prefix}ML/Transformers")],
         "labels": [make_label(guest, "transformers"), make_label(guest, "attention")],
         "meta": {"title": f"Attention {prefix}",
@@ -887,7 +887,7 @@ def test_a_pdf_with_nothing_to_draw_goes_in_as_stored(guest, monkeypatch):
     monkeypatch.setattr(export_router, "annotate_pdf", refuse)
     pdf = _blank_pdf_bytes()
     up = guest.post("/api/uploads", files={"file": ("p.pdf", pdf, "application/pdf")}).json()
-    page = make_page(guest, "Zxs plain", properties={"doc_id": up["doc_id"], "source_url": up["source_url"]})
+    page = make_page(guest, "Zxs plain", properties=doc_props(up["doc_id"]))
     _put_children(guest, page["id"], [{"id": "zxsp", "content": "a plain note", "properties": {}, "children": []}])
     for params in ({}, {"highlights": 0, "notes": 0}):
         z = _zip_of(guest.get(f"/api/pages/{page['id']}/export", params={"mode": "zotero-rdf", **params}))
@@ -906,7 +906,7 @@ def test_a_pdf_that_cannot_be_drawn_on_goes_in_as_stored(guest, monkeypatch):
     monkeypatch.setattr(export_router, "annotate_pdf", fail)
     pdf = _blank_pdf_bytes()
     up = guest.post("/api/uploads", files={"file": ("p.pdf", pdf, "application/pdf")}).json()
-    page = make_page(guest, "Zxl locked", properties={"doc_id": up["doc_id"], "source_url": up["source_url"]})
+    page = make_page(guest, "Zxl locked", properties=doc_props(up["doc_id"]))
     _put_children(guest, page["id"], [
         _positioned("zxlh", "a passage", note="mine"),
         {"id": "zxln", "content": "a plain note", "properties": {}, "children": []}])

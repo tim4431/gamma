@@ -35,6 +35,8 @@ from ..blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, create_page, existin
                             folder_paths, insert_page_tree, last_child_position, new_block_id, page_for_doc, page_parent,
                             page_parents, page_root_id, refiled, refiled_paths, top_of, touch_page, write_lock)
 from ..colors import DEFAULT_HIGHLIGHT, normalize_color
+from ..documents.formats import IMAGE_MEDIA_TYPES
+from ..documents.model import document, own_hash, page_document, stored_name, upload_url
 from ..highlights import position as highlight_position
 from ..logbuf import log
 from ..ops import (MAX_CONTENT, MAX_OPS, after_commit, after_commits, apply_batches, ensure_filing, note_reload,
@@ -51,9 +53,9 @@ from ..pdf_export import (GAMMA_ALPHA, LOCKED, TEXT_BOX_TYPES, _resolve, annotat
                           pdf_point_to_viewer, reply_parent)
 from ..pdf_image import DecodeBudget, image_file, stream_data
 from ..text_box import escape_markdown, keep_on_surface, markdown_of, measure, normalize_text_box, plain_text
-from ..storage import (IMAGE_MEDIA_TYPES, content_digest, display_filename, exists as stored_exists,
-                       find_upload_file, pdf_url, put_upload, store_file, store_file_stream, store_pdf_stream,
-                       size as stored_size, stat as stored_stat, touch as stored_touch, upload_refs)
+from ..storage import (content_digest, display_filename, exists as stored_exists, find_upload_file, put_upload,
+                       store_file, store_file_stream, store_pdf_stream, size as stored_size, stat as stored_stat,
+                       touch as stored_touch, upload_refs)
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -430,7 +432,7 @@ def import_logseq(
     with connect_pages_db(ws) as conn:
         write_lock(conn)
         row = page_for_doc(conn, digest)
-        block_id = row[0] if row else create_page(conn, title, {"doc_id": digest}, actor=actor)["id"]
+        block_id = row[0] if row else create_page(conn, title, {"doc": document(digest)}, actor=actor)["id"]
 
         # 5. Append blocks, skipping what an earlier import of these files
         #    already put there: highlights by their quote, notes by their
@@ -472,7 +474,8 @@ def import_logseq(
                 touch_page(conn, block_id, actor)
             conn.commit()
 
-    return {"ok": True, "block_id": block_id, "doc_id": digest, "source_url": pdf_url(digest), "imported": inserted}
+    return {"ok": True, "block_id": block_id, "doc_id": digest, "source_url": upload_url(stored_name(digest, ".pdf")),
+            "imported": inserted}
 
 
 # --- Plain Markdown note import -----------------------------------------------
@@ -1355,7 +1358,7 @@ def _strip_embedded_annotations(ws: str, name: str, pdf_path, keep=frozenset()) 
     (a reply's legacy key too).
 
     Note the file keeps its content-hash name even though its bytes change —
-    the name is only a key (``doc_id`` property), never re-derived.
+    the name is only a key (the page's ``doc.hash``), never re-derived.
     ``pdf_path`` is the file to read, ``name`` what it is stored as."""
     from pypdf import PdfReader
 
@@ -1444,11 +1447,11 @@ def import_embedded_annotations(ws: str, block_id: str, name: str, pdf_path, str
     row). ``found``
     counts the annotations that make blocks, replies included. Shared by
     the per-paper endpoint below and the Zotero library import.
-    ``name``: the stored file's name, ``<doc_id>.pdf``; ``pdf_path``: the
-    file it reads (``storage.find_upload_file``), whose own name says
-    nothing. ImportError, with nothing written, when a highlight needs its
-    quote and PyMuPDF does not load: the next import makes the block with
-    it."""
+    ``name``: the stored file's name (``stored_name(hash, ".pdf")``);
+    ``pdf_path``: the file it reads (``storage.find_upload_file``), whose
+    own name says nothing. ImportError, with nothing written, when a
+    highlight needs its quote and PyMuPDF does not load: the next import
+    makes the block with it."""
     from pypdf import PdfReader
 
     from ..zotero_sync import get_link  # local: the engine reads the routers' change feed
@@ -1574,8 +1577,8 @@ def import_embedded_annotations(ws: str, block_id: str, name: str, pdf_path, str
         write_lock(conn)
         try:
             row = conn.execute("SELECT doc_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-            as_read = (not strip and row is not None and row[0] == name.removesuffix(".pdf")
-                       and stored_stat(ws, name) == read_as)
+            as_read = (not strip and row is not None and row[0] is not None
+                       and stored_name(row[0], ".pdf") == name and stored_stat(ws, name) == read_as)
             held = _record_keys(found) if as_read else set()
             marks = [{"op": "set", "id": bid, "props": {"annot_stripped": True if key in gone else None}}
                      for bid, key, done in _imported_blocks(conn, block_id)
@@ -1596,7 +1599,7 @@ def import_embedded_annotations(ws: str, block_id: str, name: str, pdf_path, str
 def import_pdf_annotations(payload: PdfAnnotsRequest, request: Request):
     ws = require_ws(request, write=True)
     try:
-        name = f"{safe_doc_id(payload.doc_id)}.pdf"
+        name = stored_name(safe_doc_id(payload.doc_id), ".pdf")
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid document id")
     pdf_path = find_upload_file(name, ws)
@@ -1757,7 +1760,7 @@ def _zotero_extras(conn, ws, zf, item, block_id, created, doc_id, held, report) 
             if name in names:
                 continue
             names.add(name)  # two attachments of one file make one chip
-            content = _markdown_link(extra["name"], f"/api/uploads/{name}")
+            content = _markdown_link(extra["name"], upload_url(name))
         blocks.append({"content": content, "properties": {ATTACHMENT_KEY: extra["key"]}})
     return blocks, heading
 
@@ -1824,11 +1827,20 @@ def _pdf_stored(ws, digest, size) -> bool:
     file is re-dated, as storing it again would (``storage``'s dedup),
     under the upload GC's guard, so its purge keeps the file the page about
     to be written names."""
-    name = f"{digest}.pdf"
+    name = stored_name(digest, ".pdf")
     if stored_size(ws, name) != size:
         return False
     with upload_gc.guard(ws):
         return stored_touch(ws, name)
+
+
+def _own_zotero_pdf(props: dict, digest: str) -> None:
+    """Give the page whose properties are ``props`` (changed in place) the
+    item's PDF ``digest`` as its own: a page that shows a file it does not
+    own (a duplicated page, one opened from an address) goes on showing it,
+    under its name."""
+    view = page_document(props)
+    props["doc"] = document(digest, view["url"] if view else "", view["name"] if view else "")
 
 
 def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
@@ -1859,23 +1871,24 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
         if created:
             props["zotero_key"] = props["zotero_note"] = item["key"]
     else:
-        if props.get("doc_id") and digest and props["doc_id"] != digest:
+        own = own_hash(page_document(props))
+        if own and digest and own != digest:
             report["warnings"].append({"title": item["title"], "reason": "Existing page keeps its current PDF and annotations; the different exported PDF will not replace it."})
 
         # Attach the file only when the page doesn't already have one — a page
         # found by zotero_key keeps its existing PDF (and the highlights tied to it).
-        if digest and not props.get("doc_id"):
+        if digest and not own:
             if not _pdf_stored(ws, digest, zf.getinfo(item["pdf_entry"]).file_size):
                 with zf.open(item["pdf_entry"]) as src:  # streamed, like its other files
                     _, already_existed, _ = store_pdf_stream(ws, src)
                 if not already_existed:
                     report["pdfs_stored"] += 1
-            props["doc_id"] = digest
+            _own_zotero_pdf(props, digest)
             # Its annotations, imported once the page is written
             # (``_zotero_done``), bring its pictures in with the files they
             # were drawn from: no chip of their own (``_zotero_extras``).
             if any(extra.get("ext") in IMAGE_MEDIA_TYPES for extra in item["extras"]) and (
-                    path := find_upload_file(f"{digest}.pdf", ws)) is not None:
+                    path := find_upload_file(stored_name(digest, ".pdf"), ws)) is not None:
                 pictures = _stamped_pictures(path)
 
         sets_meta = bool(item["meta"]["title"]) and not props.get("meta")
@@ -1943,8 +1956,8 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
             report["warnings"].append({"title": item["title"],
                                        "reason": f"Note text cut: a block longer than {MAX_CONTENT:,} characters"})
         pending += block.get("children") or []
-    extras, heading = _zotero_extras(conn, ws, zf, item, block_id, created, props.get("doc_id"), images | pictures,
-                                     report)
+    extras, heading = _zotero_extras(conn, ws, zf, item, block_id, created, own_hash(page_document(props)),
+                                     images | pictures, report)
     return {"item": item, "row": row, "block_id": block_id, "old": old, "props": props,
             "blocks": blocks, "notes": notes, "extras": extras, "heading": heading, "created": created,
             "parent": parent, "folders": [dest["paths"][f] for f in (
@@ -1967,13 +1980,13 @@ def _zotero_done(prep, report, stored):
     report["pages_created" if created else "pages_merged"] += 1
     report["notes_imported"] += prep["notes"]
     report["attachments_imported"] += len(prep["extras"])
+    doc_id = own_hash(page_document(props))
     report["pages"].append({"id": prep["block_id"], "title": item["title"] if created else prep["row"][2],
-                            "created": created, "kind": "pdf" if props.get("doc_id") else "page",
+                            "created": created, "kind": "pdf" if doc_id else "page",
                             "folders": prep["folders"], "parent": prep["parent"],
                             "source_paths": _zotero_sources(item)})
-    doc_id = props.get("doc_id")
     if doc_id:
-        name = f"{doc_id}.pdf"
+        name = stored_name(doc_id, ".pdf")
         pdf_path = stored(name)
         if pdf_path:
             return prep["block_id"], name, pdf_path
@@ -2115,8 +2128,8 @@ def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
                       "parent": parents.get(row[0], ""),
                       "folders": [paths[f] for f in filing(props_of[top_of(parents, row[0])], FOLDERS) if f in paths]}
             by_id[row[0]] = target
-            if props.get("doc_id"):
-                by_digest.setdefault(props["doc_id"], target)
+            if own := own_hash(page_document(props)):
+                by_digest.setdefault(own, target)
             if props.get("zotero_key"):
                 by_key.setdefault(props["zotero_key"], []).append(target)
         for index, item in enumerate(plan["items"]):
@@ -2133,9 +2146,10 @@ def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
             for path in [] if target.get("parent") else _zotero_paths(item, under_path):
                 folders = refiled_paths(folders, path)
             target["folders"] = folders
-            kind = "pdf" if props.get("doc_id") or item["digest"] else "page"
+            own = own_hash(page_document(props))
+            kind = "pdf" if own or item["digest"] else "page"
             warnings = list(item["warnings"])
-            if props.get("doc_id") and item["digest"] and props["doc_id"] != item["digest"]:
+            if own and item["digest"] and own != item["digest"]:
                 warning = {"title": item["title"], "reason": "Existing page keeps its current PDF and annotations; the different exported PDF will not replace it."}
                 warnings.append(warning)
                 plan["warnings"].append(warning)
@@ -2160,8 +2174,8 @@ def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
                 page["source_paths"] = list(dict.fromkeys(prior["source_paths"] + page["source_paths"]))
                 page["missing"] = prior["missing"] or page["missing"]
             pages[target["id"]] = page
-            if item["digest"] and not props.get("doc_id"):
-                props["doc_id"] = item["digest"]
+            if item["digest"] and not own:
+                _own_zotero_pdf(props, item["digest"])
                 by_digest[item["digest"]] = target
             if not item["standalone_note"] and item["meta"]["title"] and not props.get("meta"):
                 props["meta"] = item["meta"]  # what a later item's key is matched with

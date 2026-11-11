@@ -170,7 +170,9 @@ that make blocks, replies included.
 
 The Logseq import (`POST /api/import/logseq`, a .pdf + .edn and an optional
 .md) goes into the page carrying that PDF, made when there is none, under
-the write lock like every lookup by attachment. Highlights already on the
+the write lock like every lookup by attachment (a new page's `doc` has no
+name: the by-doc call the client makes next gives it the file's).
+Highlights already on the
 page are skipped by their quote and notes by their text (a note written
 twice in the .md stays twice), so running it again adds nothing. A note's
 Logseq image size, `![alt](url){:width N}`, comes in as Gamma's
@@ -753,10 +755,14 @@ The rest of this section holds for every dialect unless it says otherwise:
   then leave unclosed).
 - **Gamma specifics**: the front matter's `source:` restores the PDF when it
   is bundled (`assets/<sha>.pdf`, or the vault export's quoted
-  `"[[Paper.pdf]]"` → `doc_id`, the page becomes a paper again) or the
-  remote URL (`source_url`) when it isn't; the export writes the page's
-  attachment URL there, derived from `doc_id` for a stored copy
-  (`page_attachment`); `doi`/`authors`/`year` →
+  `"[[Paper.pdf]]"` → the page's `doc`, stored: the page becomes a paper
+  again) or the remote URL (a `doc` at that address) when it isn't; the
+  export writes there the address the page's document is fetched from
+  (`page_document`'s `url`: its stored file's, a duplicated page's
+  included, or the address it is shown from;
+  [documents.md](documents.md)). Such a PDF's `doc.name` is empty, and
+  `original_filename` stays the note's own file name (the Markdown
+  provenance beside `markdown_import`); `doi`/`authors`/`year` →
   `properties.meta` (`source: manual`; `authors` as a YAML list or a comma
   string), the ```` ```bibtex ```` block → `properties.bibtex`. Highlights come back as their quote blocks, not as
   positioned highlights — the Gamma format (`?mode=gamma`) is the lossless
@@ -989,7 +995,9 @@ block drops it, as it drops `imported_annot`.
 writes.
 Merging only fills gaps: existing meta/bibtex/files are kept, the folders
 and labels union (the page's own ids first, those that still exist —
-`existing_in`).
+`existing_in`). A page that owns no PDF is given the item's as its own;
+one that shows a file it does not own (a duplicated page, one opened from
+an address) goes on showing it, under its name (`_own_zotero_pdf`).
 Each item's PDF is stored first, outside any transaction
 (`_zotero_prepare`), and so are the pictures in its notes. New pages and
 their note trees then go in `ZOTERO_PAGES_PER_COMMIT` (50) at a time, in
@@ -2110,6 +2118,10 @@ is a zip of them, `<subfolder>/<Title>.pdf`, the directories mirroring the
 page's first folder path below the exported folder (`Filing`,
 `obsidian_export.page_dir`), and a sub-page's in its parent's directory
 when the parent's PDF is in the zip (`Review.pdf`, `Review/Cited.pdf`). A
+duplicated page (a `doc` that is a `copy`) is exported on the stored file
+it shows, as the page it was copied from is, here and in every export that
+packs or draws on a PDF (Zotero RDF, Logseq, Obsidian, Notability: they
+read `file_hash`, [documents.md](documents.md)). A
 page with sheets of paper and no PDF is exported as its sheets. A page with
 neither is left out, and the finished export lists it. A folder, or a page
 and the pages inside it, with no PDF at all fails with the reason. A page
@@ -2141,7 +2153,8 @@ and their AI chats — each page's bucket whole, the active conversation and
 its history, plus on a folder export the folder views' own buckets, the
 folder's and its subfolders' ids (`db.copy_chats`) — `uploads/` with just the referenced
 files (`storage.upload_refs`, the reference rule the orphan check uses:
-doc_id PDFs + `/api/uploads/…` in content/properties), and a
+the file of each block's document, `doc`, + `/api/uploads/…` in
+content/properties), and a
 `manifest.json`. No `data.db`: everything in it is rebuilt (since schema
 version 28; an older export carries its chats in one, and the import moves
 them as a restore does). **There is no new import code**: any Gamma
@@ -2151,7 +2164,8 @@ that block, else the one at the same path, or a label of the same name, else
 it is added there; the pages are filed under the workspace's ids for them
 and the folder chats follow — `ws_backup._merge_trees`, `_refiled`; a
 reviewed import brings only the folders and labels its chosen pages need),
-deduped by block id / doc id / conversation / content hash, so re-importing
+deduped by block id / the PDF a page owns (the `doc_id` column, a library
+PDF: `SQL_LIBRARY_PDF`) / conversation / content hash, so re-importing
 adds nothing. A folder's export names its folder in the manifest
 (`scope.folder`), and the merge's report then carries `folder`: the
 workspace's id for it, the folder it became (one of the same name already
@@ -2163,6 +2177,11 @@ Import dialog's "Gamma export (.zip)" source reviews the zip like the
 other library sources, then merges the selected pages (`restore_zip` merge
 with a selection) as the import job; guests can't import. A Gamma export is
 a complete copy, so the Export dialog has no switches for it.
+
+The review (`ws_backup._review_import`) reads the workspace through
+`connect_pages_db`, so one nobody has opened since the server's upgrade is
+upgraded first, and its pages are matched in the shape the backup's are
+brought to ([migrations.md](migrations.md)).
 
 Pages inside pages ([home_library.md](home_library.md) "Sub-pages") keep
 their `parent_page`. The review (`ws_backup._review_import`) gives each
@@ -2182,11 +2201,12 @@ any `folders` of its own; otherwise it drops `parent_page`, and the page is
 a library page filed by its folders, which the report shows with `parent`
 `""`.
 
-A page that reads its PDF where it is on this computer (`linked_file`,
+A page that reads its PDF where it is on this computer (`doc.at` "path",
 [synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)) travels as
 bytes: the file is read through `storage.files` into `uploads/` like a
-stored one, and the copy's pages lose the `linked_file` mark, so where the
-export lands the page is an ordinary one with no path to read from. The
+stored one, and the copy's pages have their document stored (`at`
+"store", `_GammaBuilder.finish`), so where the export lands the page is an
+ordinary one with no path to read from. The
 same export (`page_gamma_zip`, with the page's properties patched first) is
 how *Add to library…* takes an opened PDF to another workspace of the server
 with everything on it.

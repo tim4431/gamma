@@ -8,10 +8,12 @@ These lock in three fixes:
   3. Usernames and doc ids are validated before they become filesystem paths.
 """
 
+import json
+
 import pytest
 
 from gamma.net_guard import BlockedUrlError, validate_public_url
-from conftest import login, make_user, make_page
+from conftest import doc_props, login, make_user, make_page, workspace_of
 
 
 @pytest.fixture(scope="module")
@@ -24,7 +26,7 @@ def alice():
 
 def test_user_param_does_not_grant_reads(client, alice):
     """An unauthenticated client naming the owner with ?user= is refused."""
-    page = make_page(alice, "Alice secret", properties={"doc_id": "secdoc_a"})
+    page = make_page(alice, "Alice secret", properties=doc_props("secdoc_a"))
     from fastapi.testclient import TestClient
     from gamma.app import app
     anon = TestClient(app)  # no cookies
@@ -51,8 +53,8 @@ def test_share_token_reads_only_its_page(client, alice):
     from fastapi.testclient import TestClient
     from gamma.app import app
 
-    shared = make_page(alice, "Shared paper", properties={"doc_id": "shared_doc"})
-    other = make_page(alice, "Other private", properties={"doc_id": "other_doc"})
+    shared = make_page(alice, "Shared paper", properties=doc_props("shared_doc"))
+    other = make_page(alice, "Other private", properties=doc_props("other_doc"))
     token = alice.post(f"/api/share/{shared['id']}").json()["token"]
 
     anon = TestClient(app)
@@ -101,11 +103,22 @@ def test_proxy_refuses_loopback(guest):
 # --- 3. identifier validation ----------------------------------------------
 
 def test_doc_id_path_traversal_rejected(alice):
-    page = make_page(alice, "traversal",
-                     properties={"doc_id": "../../guest/uploads/deadbeef"})
+    # a document's hash names a stored file: one that steps out of the uploads is refused where it is written...
+    traversal = "../../guest/uploads/deadbeef"
+    page = make_page(alice, "traversal")
+    for props in ({"doc": {"format": "pdf", "name": "", "hash": traversal, "ext": ".pdf", "at": "store"}},
+                  {"doc_id": traversal}):
+        assert alice.put(f"/api/blocks/{page['id']}", json={"properties": props}).status_code == 400
+    assert alice.post("/api/pages", json={"properties": {"doc": {"hash": traversal}}}).status_code == 400
+    assert alice.post(f"/api/pages/{page['id']}/attachment", json={"doc_id": traversal}).status_code == 400
+    # ...and one written past the checks reads as no document: nothing reads a file by it
+    from gamma.db import connect_pages_db
+    with connect_pages_db(workspace_of("alice_sec")) as conn:
+        conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps(
+            {"doc": {"format": "pdf", "name": "", "hash": traversal, "ext": ".pdf", "at": "store"}}), page["id"]))
+        conn.commit()
     r = alice.get(f"/api/pages/{page['id']}/export-pdf")
     assert r.status_code == 400
-    assert "invalid document id" in r.json()["detail"]
 
 
 def test_safe_ws_id_rejects_traversal():

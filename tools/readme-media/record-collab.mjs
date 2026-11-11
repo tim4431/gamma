@@ -135,9 +135,9 @@ let recorder, peers;
 try {
   // The screenshot, from the paper's PDF as the server stores it.
   const paper = await alex.api(`/api/blocks/${ATOMS.id}`);
-  const docId = paper.properties?.doc_id;
-  if (!docId) throw new Error('The curated paper has no stored PDF');
-  const pdf = await alex.api(`/api/uploads/${docId}.pdf`, { raw: true });
+  const d = paper.properties?.doc;
+  if (!d?.hash) throw new Error('The curated paper has no stored PDF');
+  const pdf = await alex.api(`/api/uploads/${d.hash}${d.ext}`, { raw: true });
   if (!pdf.ok) throw new Error(`GET the paper's PDF: ${pdf.status}`);
   fs.writeFileSync(path.join(take.dir, 'paper.pdf'), Buffer.from(await pdf.arrayBuffer()));
   const figurePath = path.join(take.dir, 'fig1cd.png');

@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 
-from conftest import account_of, login as _login, make_page, make_user as _make_user
+from conftest import account_of, doc_props, login as _login, make_page, make_user as _make_user
 
 
 @pytest.fixture(scope="module")
@@ -29,7 +29,7 @@ def _import(c, payload: bytes, name="backup.zip"):
 def test_export_import_roundtrip_into_another_account(donor, receiver):
     up = donor.post("/api/uploads", files={"file": ("d.pdf", b"%PDF-1.4 donor", "application/pdf")})
     assert up.status_code == 200, up.text
-    make_page(donor, "Donor paper", properties={"source_url": up.json()["source_url"]})
+    make_page(donor, "Donor paper", properties=doc_props(up.json()["doc_id"]))
     make_page(receiver, "Receiver original")
 
     backup = donor.get("/api/export")
@@ -165,7 +165,7 @@ def _root_titles(c):
 def test_merge_adds_missing_pages_and_keeps_existing(mdonor, mreceiver):
     up = mdonor.post("/api/uploads", files={"file": ("m.pdf", b"%PDF-1.4 merge", "application/pdf")})
     assert up.status_code == 200, up.text
-    page = make_page(mdonor, "Merge donor paper", properties={"source_url": up.json()["source_url"]})
+    page = make_page(mdonor, "Merge donor paper", properties=doc_props(up.json()["doc_id"]))
     child = mdonor.post("/api/blocks", json={"parent_id": page["id"], "content": "donor note"}).json()
     mdonor.put(f"/api/chats/{page['id']}", json={"messages": [{"role": "user", "content": "hi"}]})
     make_page(mreceiver, "Receiver keeps this")
@@ -197,8 +197,8 @@ def test_merge_is_idempotent(mdonor, mreceiver):
 
 
 def test_merge_skips_pages_with_same_doc_id(mdonor, mreceiver):
-    make_page(mdonor, "Donor copy of paper X", properties={"doc_id": "docx-shared"})
-    make_page(mreceiver, "Receiver copy of paper X", properties={"doc_id": "docx-shared"})
+    make_page(mdonor, "Donor copy of paper X", properties=doc_props("docx-shared"))
+    make_page(mreceiver, "Receiver copy of paper X", properties=doc_props("docx-shared"))
     backup = mdonor.get("/api/export")
     r = mreceiver.post("/api/import-data?mode=merge",
                        files={"file": ("b.zip", backup.content, "application/zip")})

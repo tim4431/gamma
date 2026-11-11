@@ -145,9 +145,10 @@ names covers what Overleaf's completion does.
 
 - **The container.** A page is a root block; folders are nesting labels
   (a page may be filed in several, folders hold only folders, pages have no
-  order within one), and a page carries at most one attachment, a PDF
-  (`blocks_store.page_attachment`; `POST /pages/{id}/attachment` is 409 on
-  a second). So Gamma's folders cannot be a project's file tree — which is
+  order within one), and a page carries at most one document, a PDF so
+  far (`properties.doc`, [dev/documents.md](../dev/documents.md);
+  `POST /pages/{id}/attachment` is 409 on a second). So Gamma's folders
+  cannot be a project's file tree — which is
   Overleaf's own split: the project list is one thing, the file tree inside
   a project another.
 - **Block text.** A block holds up to 200,000 characters (`ops.MAX_CONTENT`),

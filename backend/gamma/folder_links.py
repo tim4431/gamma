@@ -91,10 +91,10 @@ from fastapi import HTTPException
 
 from . import collab, config, folder_sync, gamma_sync, md_lens, storage, vault_disk, vault_store, workspaces
 from .auth import DISK_CLIENT
-from .blocks_store import (FOLDERS, LINKED_FILE, PARENT_PAGE, TREES, filing, folder_path, folder_paths,
-                           folder_subtree_ids, load_json, load_props, new_block_id, page_in_folder, page_root_id,
-                           pages_in_folder)
+from .blocks_store import (FOLDERS, PARENT_PAGE, TREES, filing, folder_path, folder_paths, folder_subtree_ids,
+                           load_json, load_props, new_block_id, page_in_folder, page_root_id, pages_in_folder)
 from .db import connect_pages_db, connect_users_db, connect_vaults_db, page_now
+from .documents.model import document_at, in_place, own_hash, page_document
 from .jobs import error_text
 from .logbuf import log
 from .ops import OpError, commit_listeners, commit_ops
@@ -1047,14 +1047,14 @@ def _in_place(link: dict) -> list[tuple[str, str, str]]:
         return []
     ws = link["workspace_id"]
     with connect_pages_db(ws) as conn:
-        pages = {r[0]: (load_props(r[1]), r[2] or "") for r in conn.execute(
-            "SELECT id, properties, doc_id FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
+        views = {r[0]: page_document(load_props(r[1])) for r in conn.execute(
+            "SELECT id, properties FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
             (json.dumps(sorted({page_id for page_id, _path in rows})),))}
     out = []
     for page_id, rel in rows:
-        props, doc = pages.get(page_id, ({}, ""))
-        if props.get(LINKED_FILE) and doc and not storage.exists(ws, f"{doc}.pdf"):
-            out.append((page_id, rel, doc))
+        view = views.get(page_id)
+        if in_place(view) and not storage.exists(ws, view["file"]):
+            out.append((page_id, rel, view["hash"]))
     return out
 
 
@@ -1071,13 +1071,13 @@ def removal(link: dict) -> dict:
     with connect_vaults_db() as conn:
         pages = conn.execute("SELECT COUNT(DISTINCT page_id) FROM vault_files WHERE link_id = ? AND page_id != '' "
                              "AND was = ''", (link["id"],)).fetchone()[0]
-    in_place, size = [] if link["remote_url"] else _in_place(link), 0
-    for _page_id, rel, _doc in in_place:
+    pdfs, size = [] if link["remote_url"] else _in_place(link), 0
+    for _page_id, rel, _doc in pdfs:
         try:
             size += os.stat(dest_of(link) / rel).st_size
         except OSError:
             pass
-    return {"pages": pages, "in_place": len(in_place), "bytes": size}
+    return {"pages": pages, "in_place": len(pdfs), "bytes": size}
 
 
 def _store_copy(ws: str, path: Path, doc: str) -> None:
@@ -1150,14 +1150,15 @@ def _remove_vault(link: dict, files: str) -> None:
 
 def _store_in_place(link: dict, root: Path) -> None:
     """The PDFs and pictures a vault of this server reads in place stored
-    (nothing changed yet when one cannot be: LinkError), and its pages no
-    longer reading them. Of the linked files below the directory only the
-    vault's own rows go: a PDF opened from there before it was a vault reads
-    where it is still."""
+    (nothing changed yet when one cannot be: LinkError), and its live pages
+    no longer reading them (their documents at ``store``; one in Recently
+    deleted keeps reading in place, its copy stored). Of the linked files
+    below the directory only the vault's own rows go: a PDF opened from
+    there before it was a vault reads where it is still."""
     ws, actor = link["workspace_id"], link["created_by"]
-    in_place = _in_place(link)
+    pdfs = _in_place(link)
     pictures = _linked_pictures(link)
-    for _page_id, rel, doc in in_place:
+    for _page_id, rel, doc in pdfs:
         _store_copy(ws, root / rel, doc)
     for name, path in pictures:
         try:
@@ -1169,10 +1170,14 @@ def _store_in_place(link: dict, root: Path) -> None:
         if storage.matches_name(name, data):
             storage.put_upload(ws, name, data)
     with connect_pages_db(ws) as conn:
-        live = {page_id for page_id, _rel, _doc in in_place if page_root_id(conn, page_id) == page_id}
+        live = {page_id for page_id, _rel, _doc in pdfs if page_root_id(conn, page_id) == page_id}
+        views = {r[0]: page_document(load_props(r[1])) for r in conn.execute(
+            "SELECT id, properties FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps(sorted(live)),))}
     for page_id in sorted(live):
-        commit_ops(ws, page_id, [{"op": "set", "id": page_id, "props": {LINKED_FILE: None}}], actor=actor,
-                   client=DISK_CLIENT)
+        if in_place(views.get(page_id)):
+            stored = {"doc": document_at(views[page_id], "store")}
+            commit_ops(ws, page_id, [{"op": "set", "id": page_id, "props": stored}], actor=actor, client=DISK_CLIENT)
     below = str(root).rstrip("\\/") + os.sep
     with connect_vaults_db() as conn:
         conn.execute("DELETE FROM linked_files WHERE ws = ? AND substr(path, 1, ?) = ? AND (page_id = '' OR page_id IN "
@@ -1264,16 +1269,16 @@ def delete_link(link_id: str, files: str = "keep") -> bool:
 # --- reading and writing Gamma here -----------------------------------------------------------
 
 def _page(ws: str, page_id: str) -> dict | None:
-    """``{doc_id, filename, title}`` of a page of this server's workspace
-    (``""`` for no PDF or no file name); None when ``page_id`` is no page of
-    the library: not there, a block inside a page, or in the trash."""
+    """``{doc_id, filename, title}`` of a page of this server's workspace:
+    the hash of the document it owns and that document's name (``""`` for
+    no PDF or no file name); None when ``page_id`` is no page of the
+    library: not there, a block inside a page, or in the trash."""
     with connect_pages_db(ws) as conn:
         row = conn.execute("SELECT parent_id, content, properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
     if not row or row[0] != "root":
         return None
-    props = load_json(row[2] or "{}") or {}
-    return {"doc_id": str(props.get("doc_id") or ""), "filename": str(props.get("original_filename") or ""),
-            "title": row[1] or ""}
+    view = page_document(load_json(row[2] or "{}") or {})
+    return {"doc_id": own_hash(view), "filename": view["name"] if view else "", "title": row[1] or ""}
 
 
 def may_edit(ws: str, user_id: str) -> bool:
@@ -1310,7 +1315,9 @@ class LocalSink:
         return doc_id
 
     def replace(self, page_id: str, doc_id: str, filename: str, *, check_held: bool = True) -> dict:
-        """The page takes the file ``doc_id``. ``check_held`` False: bytes
+        """The page takes the file ``doc_id``: stored, or still read in place
+        on a page that reads its file in place (``replace_attachment``).
+        ``check_held`` False: bytes
         another page carries are no refusal, for a page reading a file where
         it is, whose bytes are whatever the disk holds (gamma/linked_files.py)."""
         from .routers.pages import replace_attachment, replaced_answer  # local: keep gamma.* free of the routers package

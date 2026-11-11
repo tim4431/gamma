@@ -3,12 +3,13 @@
 // that page; "New page inside", when `onNew` is given, makes another. Nothing
 // shows for a page with none: the page's menu makes the first. The collapsed
 // state is a browser preference (subPagesCollapsed). App fetches the list
-// (GET /pages/{id}/family's `sub_pages`: [{id, title, updated_at, pdf}],
-// `pdf` true on one that carries a PDF, so a share view, which has no
-// library listing, draws the right glyph too) and does the navigation and
-// the creation. `onMenu(page)`, when given, is the opener of a row's menu (a
-// right-click, a held finger, its "⋯"), and `rowProps(page)` what App adds
-// to a row: its drag and its drop, and a `className` while a drag is over it.
+// (GET /pages/{id}/family's `sub_pages`: [{id, title, updated_at, format}],
+// `format` its document's on one that carries one, so a share view, which
+// has no library listing, draws the right glyph too) and does the
+// navigation and the creation. `onMenu(page)`, when given, is the opener of
+// a row's menu (a right-click, a held finger, its "⋯"), and `rowProps(page)`
+// what App adds to a row: its drag and its drop, and a `className` while a
+// drag is over it.
 import React from "react";
 import { FileGlyph, PlusIcon } from "../shared/ui/Icons";
 import { MenuButton } from "../shared/ui/Menus";
@@ -35,7 +36,7 @@ export function SubPagesPanel({ pages, onOpen, onNew, onMenu, rowProps, collapse
               {...menuPress(menu)} {...props}>
               <button type="button" className="backlinkPage subPageOpen"
                 title={t("Open the page \"{name}\"", { name: title })} onClick={() => onOpen(page.id)}>
-                <FileGlyph isPdf={!!page.pdf} size={14} />
+                <FileGlyph format={page.format} size={14} />
                 <span className="backlinkPageTitle">{title}</span>
               </button>
               {menu ? <MenuButton className="subPageMenu" open={menu} /> : null}

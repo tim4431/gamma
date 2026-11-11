@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 50
+SCHEMA_VERSION = 51
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -94,7 +94,7 @@ def parse_stamp(stamp) -> datetime | None:
 # These guard every filesystem path built from a workspace id or doc id — the
 # last line of defense against traversal even after upstream auth checks.
 _WS_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_DOC_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+_DOC_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}\Z")
 
 
 def safe_ws_id(ws: str) -> str:
@@ -639,7 +639,10 @@ VAULTS_SCHEMA = [
 # tests them (ink: an ``ink_url`` key; text box, picture, sheet, recording:
 # an object; link: a non-empty value; highlight: a ``pdf_position`` object,
 # which ink groups and link regions carry too — gamma/highlights.py).
-# ``parent_page`` is the page a sub-page is inside (its
+# ``doc_id`` is the hash of the document the row owns (its ``properties.doc``,
+# gamma/documents/model.py ``own_hash``), on every row, nested and trashed
+# ones included: NULL on a row with no document, one shown from an address
+# alone and a copy. ``parent_page`` is the page a sub-page is inside (its
 # ``properties.parent_page``, gamma/blocks_store.py ``page_parents``), NULL
 # on every other row. ``deleted_with`` is the page a page in Recently
 # deleted went there with (its ``properties.deleted_with``, stamped by
@@ -662,7 +665,8 @@ BLOCK_HOT_COLUMNS = {
                 OR json_extract(properties, '$.link_page_id') != '' THEN 'link'
             WHEN json_type(properties, '$.pdf_position') = 'object' THEN 'highlight'
             ELSE 'note' END) VIRTUAL""",
-    "doc_id": "doc_id TEXT GENERATED ALWAYS AS (json_extract(properties, '$.doc_id')) VIRTUAL",
+    "doc_id": """doc_id TEXT GENERATED ALWAYS AS (CASE WHEN json_extract(properties, '$.doc.copy') IS NULL
+            THEN NULLIF(json_extract(properties, '$.doc.hash'), '') END) VIRTUAL""",
     "parent_page": "parent_page TEXT GENERATED ALWAYS AS (json_extract(properties, '$.parent_page')) VIRTUAL",
     "deleted_with": "deleted_with TEXT GENERATED ALWAYS AS (json_extract(properties, '$.deleted_with')) VIRTUAL",
 }

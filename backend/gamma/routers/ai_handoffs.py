@@ -16,7 +16,8 @@ from .. import fetch_handoff as handoff
 from .. import html_page
 from ..ai_web import FETCH_MAX_BYTES, FetchError
 from ..auth import require_personal_user_id, require_ws
-from ..storage import is_pdf, pdf_url, store_pdf
+from ..documents.model import stored_name, upload_url
+from ..storage import is_pdf, store_pdf
 
 router = APIRouter(prefix="/api/ai/handoffs", tags=["ai"])
 
@@ -97,7 +98,8 @@ def store(rid: str, request: Request):
         raise HTTPException(404, "The PDF is no longer held here — save it from your browser instead")
     data, url = held
     doc_id, existed = store_pdf(ws, data)
-    return {"doc_id": doc_id, "source_url": pdf_url(doc_id), "already_existed": existed, "url": url}
+    return {"doc_id": doc_id, "source_url": upload_url(stored_name(doc_id, ".pdf")), "already_existed": existed,
+            "url": url}
 
 
 @router.get("/{rid}/go", response_class=HTMLResponse)

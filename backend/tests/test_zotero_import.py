@@ -11,7 +11,7 @@ import time
 import zipfile
 
 import pytest
-from conftest import folder_names, guest_name, label_names, make_folder, make_page
+from conftest import doc_props, folder_names, guest_name, label_names, make_folder, make_page
 
 
 def _annotated_pdf(text=b"Attention is all you need, says the paper."):
@@ -132,7 +132,7 @@ def test_zotero_import_full(guest):
 
     block = guest.get(f"/api/blocks/{paper['id']}").json()
     props = block["properties"]
-    assert props["doc_id"] and "source_url" not in props  # the stored copy, derived from doc_id
+    assert props["doc"] == {"format": "pdf", "name": "", "hash": props["doc"]["hash"], "ext": ".pdf", "at": "store"}
     assert props["zotero_key"] == "https://www.nature.com/articles/s41586-000-00000-0"
     # nested collection → nested folders; tags (incl. AutomaticTag) → labels by name
     assert [folder_names(guest)[f] for f in props["folders"]] == [["ML", "Transformers"]]
@@ -159,7 +159,7 @@ def test_zotero_import_full(guest):
     # the arXiv preprint has no PDF: metadata-only page, id from the URL
     pre = guest.get(f"/api/blocks/{by_title['Proximal Policy Optimization']['id']}").json()
     assert pre["properties"]["meta"]["arxiv_id"] == "1707.06347"
-    assert "doc_id" not in pre["properties"]
+    assert "doc" not in pre["properties"]
 
 
 def test_zotero_import_idempotent(guest):
@@ -171,7 +171,7 @@ def test_zotero_import_idempotent(guest):
     assert d["pages_merged"] == 2
     assert d["notes_imported"] == 0
     assert d["annotations_imported"] == 0
-    # same page ids as before — matched by doc_id / zotero_key, not duplicated
+    # same page ids as before — matched by the PDF they own / zotero_key, not duplicated
     assert {p["id"] for p in d["pages"]} == {p["id"] for p in first["pages"]}
     # and the folders and labels are the same blocks, not made twice
     assert list(folder_names(guest).values()).count(["ML", "Transformers"]) == 1
@@ -324,8 +324,7 @@ def _imported_annotations(guest, pdf, page=None):
     up = guest.post("/api/uploads", files={"file": ("a.pdf", pdf, "application/pdf")})
     assert up.status_code == 200, up.text
     if page is None:
-        page = make_page(guest, "Embedded annotations",
-                         {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+        page = make_page(guest, "Embedded annotations", doc_props(up.json()["doc_id"]))
     r = guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": up.json()["doc_id"]})
     assert r.status_code == 200, r.text
     kids = guest.get(f"/api/blocks/{page['id']}/children").json()["children"]
@@ -339,7 +338,7 @@ def test_a_strip_stores_under_the_name_given_not_the_name_of_the_file_read(guest
 
     ws, pdf = workspace_of(guest_name()), _annotated_pdf(b"A name apart from its path")
     up = guest.post("/api/uploads", files={"file": ("a.pdf", pdf, "application/pdf")}).json()
-    page = make_page(guest, "Read from elsewhere", {"doc_id": up["doc_id"], "source_url": up["source_url"]})
+    page = make_page(guest, "Read from elsewhere", doc_props(up["doc_id"]))
     name, copy = f"{up['doc_id']}.pdf", tmp_path / "A paper.pdf"
     copy.write_bytes(pdf)
     assert import_embedded_annotations(ws, page["id"], name, copy, True)["stripped"] == 1
@@ -488,7 +487,7 @@ def test_preview_is_read_only_and_predicts_upgrade(guest):
     assert page["action"] == "merge" and page["kind"] == "pdf" and page["existing_id"] == page_id
     result = _send(guest, complete).json()
     assert next(p for p in result["pages"] if p["id"] == page_id)["kind"] == "pdf"
-    assert guest.get(f"/api/blocks/{page_id}").json()["properties"]["doc_id"]
+    assert guest.get(f"/api/blocks/{page_id}").json()["properties"]["doc"]["hash"]
 
 
 @pytest.mark.parametrize("path,entry", [
@@ -716,12 +715,12 @@ def test_preview_reports_existing_pdf_preservation(guest):
     changed = _custom_zip(rdf, {path: _annotated_pdf(b"New PDF")})
     first = _send(guest, original).json()
     page_id = first["pages"][0]["id"]
-    digest = guest.get(f"/api/blocks/{page_id}").json()["properties"]["doc_id"]
+    digest = guest.get(f"/api/blocks/{page_id}").json()["properties"]["doc"]["hash"]
     plan = _send(guest, changed, preview=True).json()
     assert any("keeps its current PDF" in w["reason"] for w in plan["warnings"])
     result = _send(guest, changed).json()
     assert result["warnings"] == plan["warnings"]
-    assert guest.get(f"/api/blocks/{page_id}").json()["properties"]["doc_id"] == digest
+    assert guest.get(f"/api/blocks/{page_id}").json()["properties"]["doc"]["hash"] == digest
 
 
 def test_preview_collapses_same_pdf_into_one_destination(guest):
@@ -1024,7 +1023,7 @@ def test_a_standalone_note_is_a_note_page():
 
     def filing():
         props = c.get(f"/api/blocks/{page_id}").json()["properties"]
-        assert props["zotero_key"] == props["zotero_note"] == "#item_20" and "doc_id" not in props
+        assert props["zotero_key"] == props["zotero_note"] == "#item_20" and "doc" not in props
         return (sorted(folder_names(c)[f] for f in props["folders"]),
                 [label_names(c)[label] for label in props["labels"]])
 
@@ -1079,12 +1078,13 @@ def test_a_pdf_the_library_stores_already_is_not_streamed_again(monkeypatch):
     storing it again would, so the upload GC keeps it; a PDF it lacks is
     streamed in."""
     from gamma import storage
+    from gamma.documents.model import stored_name
     from gamma.routers import imports
 
     c, ws = _library()
     stored, new = _annotated_pdf(b"Stored before the import"), _annotated_pdf(b"New with the import")
     doc_id, _ = storage.store_pdf(ws, stored)
-    path = storage.open_path(ws, f"{doc_id}.pdf")
+    path = storage.open_path(ws, stored_name(doc_id, ".pdf"))
     os.utime(path, (time.time() - 86400, time.time() - 86400))
     streamed, real = [], imports.store_pdf_stream
     monkeypatch.setattr(imports, "store_pdf_stream", lambda ws_, src: streamed.append(src.name) or real(ws_, src))
@@ -1096,7 +1096,7 @@ def test_a_pdf_the_library_stores_already_is_not_streamed_again(monkeypatch):
     assert (d["pages_created"], d["pdfs_stored"], d["annotations_imported"]) == (2, 1, 2)
     assert streamed == ["export/files/4/new.pdf"]
     by_title = {p["title"]: p["id"] for p in d["pages"]}
-    assert c.get(f"/api/blocks/{by_title['Stored before']}").json()["properties"]["doc_id"] == doc_id
+    assert c.get(f"/api/blocks/{by_title['Stored before']}").json()["properties"]["doc"]["hash"] == doc_id
     assert time.time() - path.stat().st_mtime < 600
 
 

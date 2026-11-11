@@ -87,6 +87,8 @@ from fastapi import HTTPException
 from . import config, jobs
 from .blocks_store import (FOLDERS, MAX_PAGE_DEPTH, PARENT_PAGE, filing, folder_inserts, folder_paths,
                            insert_page_tree, new_block_id, page_parents, split_path, top_of, write_lock)
+from .documents.formats import media_type
+from .documents.model import document, parse_upload_url
 from .import_review import archive_entries, destination, validate_selection
 from .import_staging import MIN_FREE_BYTES
 from .import_zip import READ_ERRORS, check_ratio, new_walk, walk_zip
@@ -95,9 +97,9 @@ from .markdown_import import (_WRAPPED_RE, MAX_BLOCKS, MAX_MARKDOWN_BYTES, TooMa
                               md_to_blocks, parse_frontmatter, readable_outline)
 from .markdown_zip_dialects import _ANCHOR_END_RE, _ANCHOR_LINE_RE, PageSource, _skipped, dialect_of, html_pages
 from .markdown_zip_links import _MD_EXTS, _SCHEME_RE, Links, _clean_stem, _norm_heading, _split_ext, _walk
-from .note_app_import import MAX_WARNINGS
+from .note_app_import import MAX_WARNINGS, page_kind
 from .ops import after_commit, apply_batches, ensure_filing
-from .storage import content_digest, is_pdf, store_file_stream, upload_media_type
+from .storage import content_digest, is_pdf, store_file_stream
 
 # New pages written in one transaction: few commits, and each hold of the
 # write lock stays short (a page's files are stored before it is staged).
@@ -113,7 +115,7 @@ _NOT_ASSET_EXTS = {".canvas", ""}
 
 
 def _is_asset_ext(ext: str) -> bool:
-    return ext not in _MD_EXTS and ext not in _NOT_ASSET_EXTS and upload_media_type(ext) is not None
+    return ext not in _MD_EXTS and ext not in _NOT_ASSET_EXTS and media_type(ext) is not None
 
 
 # --- the walked entries ------------------------------------------------------
@@ -760,7 +762,7 @@ class ZipRun:
                                      "folders": self.shown(plan), "parent": self.inside(plan),
                                      "selection_ids": [plan.entry.path],
                                      "source_path": plan.entry.source_path, "source_paths": [plan.entry.outer],
-                                     "kind": "pdf" if plan.props.get("doc_id") else "page", "created": False,
+                                     "kind": page_kind(plan.props), "created": False,
                                      "action": "skip", "warnings": [], "missing": False})
 
     def write_page(self, plan):
@@ -772,9 +774,9 @@ class ZipRun:
             if path and _split_ext(path)[1] == ".pdf":
                 url = self.store_asset(path)
                 if url:
-                    plan.props["doc_id"] = url.rsplit("/", 1)[1][:-4]
+                    plan.props["doc"] = document(parse_upload_url(url)[0])
             elif _SCHEME_RE.match(source) and source.lower().startswith(("http://", "https://")):
-                plan.props["source_url"] = source
+                plan.props["doc"] = document(url=source)
             else:
                 self.warn(plan.title, f"Missing PDF attachment: {source}")
         if not self.preview:
@@ -804,7 +806,7 @@ class ZipRun:
                                      "folders": self.shown(plan), "parent": self.inside(plan), **self.alone(plan),
                                      "selection_ids": [plan.entry.path],
                                      "source_path": plan.entry.source_path, "source_paths": [plan.entry.outer],
-                                     "kind": "pdf" if plan.props.get("doc_id") else "page", "created": True,
+                                     "kind": page_kind(plan.props), "created": True,
                                      "action": "create", "warnings": warnings,
                                      "missing": any("Missing" in w["reason"] for w in warnings)})
 

@@ -140,7 +140,10 @@ servers keep vaults (started with `GAMMA_FOLDER_LINKS=1`); the rounds, the
 marker, the status and the rules are theirs
 ([docs/dev/synced_vaults.md](../../docs/dev/synced_vaults.md)). A NAS keeps
 none: it answers the reads, the ops and the uploads a vault of its folder
-sends it. The shell adds the native pickers, the dialog, the tokens, the
+sends it, and a vault of its folder waits, its reason in its status, while
+the NAS keeps its pages in another shape than the app's own server (the
+change feed's workspace data format, as a clone pauses): update the NAS
+with the app. The shell adds the native pickers, the dialog, the tokens, the
 word that lets a path through, and the ways in:
 
 | Where | What the user picks | Flow |
@@ -705,9 +708,10 @@ A paper opened on a train does not go to the NAS.
    file opened before as its page again; anything else
    is a new page inside the one page *Opened files* (a page inside a page
    stays out of the library's list), titled with the file's stem, its PDF
-   read from the path (`linked_file`).
+   read from the path (the page's `doc` at `path`).
 4. For a new page the annotations another reader saved in the file become
-   Gamma's (`POST /api/import/pdf-annotations`, as below).
+   Gamma's (`POST /api/import/pdf-annotations` with the hash of the page's
+   `doc`, read from `GET /api/blocks/<id>`, as below).
 5. The bar says where the file is read ("main is read from this computer,
    under Opened files in Personal on Local."), every time, a page that was
    there already too, and the window loads `<origin>/?ws=<id>&page=<id>`.
@@ -722,7 +726,8 @@ of another server of the registry (`carryPage`):
 
 1. It checks the page: it reads a file here that is there
    (`GET /api/folder-links/page/<id>`'s `reader`), the window's account
-   opened that file (`reader.mine`), and it has a PDF. As with another
+   opened that file (`reader.mine`), and it has a PDF of its own (its
+   `doc`: format `pdf`, a hash, no `copy`). As with another
    workspace of this server, carrying an opened PDF away is its opener's
    alone: the file is on that account's computer, and another editor of the
    workspace would take that account's page away with its notes and chat.
@@ -734,9 +739,14 @@ of another server of the registry (`carryPage`):
    through its own, started when it is not running. The window must still
    show the page's server (`stillOn`).
 3. It refuses when the target has the page's id, or a page of its PDF
-   (`GET /api/blocks/by-doc/<doc>`), live or in Recently deleted: a 404
+   (`GET /api/blocks/by-doc/<hash>`), live or in Recently deleted: a 404
    that names `trashed` holds the page too, and the merge would replace
-   such a copy for good (`holds`).
+   such a copy for good (`holds`). It refuses as well a target whose
+   change feed (`GET /api/sync/changes?limit=1`) names an older workspace
+   data format than the page's server: the pages go in that server's
+   shape, which an older release cannot read. The export is stamped with
+   its release besides (`PRAGMA user_version`), and such a release refuses
+   it on its own ("made by a newer Gamma").
 4. `GET /api/folder-links/opened/<id>/carried` gives the digest of what
    the export takes (the page and the pages inside it, their blocks,
    comments and chats) and those pages' ids; it refuses while a page inside
@@ -744,13 +754,14 @@ of another server of the registry (`carryPage`):
    the target as in step 3. Then `GET /api/pages/<id>/export?mode=gamma&sub_pages=1`
    exports the page
    with the pages inside it, the PDF's bytes taken from the file and the
-   link to the file left behind. The zip must hold `uploads/<doc>.pdf`
+   link to the file left behind (the document at `store` in the export).
+   The zip must hold the document's stored name, `uploads/<hash><ext>`
    (`lib/zipNames.js`): a file gone or just changed is left out of an
    export, and the carry stops. So does a page inside it whose PDF the
    target has a page of, which the merge would skip. Nothing has been sent
    to the target yet.
 5. `POST /api/import-data?mode=merge` on the target, which must add the
-   page, and add every page inside it (`pages_skipped` none); then `PUT
+   page, and add every page inside it (`pages_skipped` none). Then `PUT
    /api/blocks/<id> {properties: {parent_page: null}}` takes it out of the
    *Opened files* it does not have there.
 6. Only then does the page here go: `POST

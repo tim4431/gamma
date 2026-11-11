@@ -35,8 +35,11 @@ import { BlockTree } from "../editor/BlockTree";
 import { refLabelsByBlock } from "../editor/refLabels.js";
 import { FileChipContext } from "../transfers/FileChip";
 import { blocksToHighlights, flattenBlocks, isFolded, isInkGroup, isLinkBlock } from "../shared/model/blockModel.js";
-import { filingChips, pageAttachment } from "../library/libraryUtils.js";
-import { API, apiJson, attachmentViewerUrl } from "../shared/lib/utils";
+import { filingChips } from "../library/libraryUtils.js";
+import { documentViewerUrl, isPdf, pageDocument } from "../documents/pageDocument.js";
+import { documentView, viewerOf } from "../documents/documentView.js";
+import DocumentPane from "../documents/DocumentPane.jsx";
+import { API, apiJson } from "../shared/lib/utils";
 import { InfoIcon, LabelIcon, MessageSquareIcon, NotebookIcon, PaperclipIcon, TrashIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -97,11 +100,12 @@ export default function PagePane({ pageId, title, dock = false, overlay, scroll,
     }, (err) => { if (on) setPage((p) => (p.id ? p : { id: pageId, block: null, children: EMPTY, error: err?.message || String(err) })); });
     return () => { on = false; };
   }, [pageId]); // eslint-disable-line react-hooks/exhaustive-deps
-  const attachment = pageAttachment(page.block);
-  const url = attachment ? attachmentViewerUrl(attachment.url) : "";
-  const sheets = useMemo(() => (attachment ? EMPTY : sheetsOf(page.children)), [attachment, page.children]);
-  const showPdf = !!url && !pdfHidden && !dock;
-  const showBook = !url && notebookView && sheets.length > 0 && !dock;
+  const doc = useMemo(() => pageDocument(page.block), [page.block]);
+  const url = isPdf(doc) ? documentViewerUrl(doc) : "";
+  const sheets = useMemo(() => (viewerOf(doc?.format) ? EMPTY : sheetsOf(page.children)), [doc, page.children]);
+  // What shows, by the live page's rule (documents/documentView.js): a
+  // closed PDF is not mounted here, and the dock shows the notes.
+  const view = documentView({ doc, url, sheets: sheets.length, notebook: notebookView, hidden: pdfHidden, dock });
 
   // A press (down and up within a few pixels) makes the page live; a drag,
   // a scroll or a text selection does not. It is the primary button's or
@@ -166,14 +170,15 @@ export default function PagePane({ pageId, title, dock = false, overlay, scroll,
   let body;
   if (page.error) body = <div className="pagePaneHint">{t("Could not open this page: {message}", { message: page.error })}</div>;
   else if (!page.id) body = <div className="pagePaneHint" aria-busy="true" />;
-  else if (showPdf) {
-    body = <PdfView pageId={pageId} url={url} children_={page.children} marks={marks} zoomIn={zoomIn} scroll={scroll} startPage={startPage}
-      shared={shared} onScroll={onScroll} onZoom={onZoom} reportRef={reportRef} zoomRef={zoomRef} />;
-  } else if (showBook) {
-    body = <BookView pageId={pageId} sheets={sheets} marks={marks} zoomIn={zoomIn} place={scroll?.place}
-      onScroll={onScroll} onZoom={onZoom} reportRef={reportRef} zoomRef={zoomRef} />;
+  else if (view.shown) {
+    body = <DocumentPane view={view} render={{
+      pdf: () => <PdfView pageId={pageId} url={url} children_={page.children} marks={marks} zoomIn={zoomIn} scroll={scroll} startPage={startPage}
+        shared={shared} onScroll={onScroll} onZoom={onZoom} reportRef={reportRef} zoomRef={zoomRef} />,
+      notebook: () => <BookView pageId={pageId} sheets={sheets} marks={marks} zoomIn={zoomIn} place={scroll?.place}
+        onScroll={onScroll} onZoom={onZoom} reportRef={reportRef} zoomRef={zoomRef} />,
+    }} />;
   } else {
-    body = <NotesView pageId={pageId} block={page.block} children_={page.children} title={title} dock={dock} attachment={attachment}
+    body = <NotesView pageId={pageId} block={page.block} children_={page.children} title={title} dock={dock} doc={doc}
       hasSheets={sheets.length > 0} notebookView={notebookView} marks={marks} url={url} notesPlace={notesPlace} shared={shared}
       press={press} foldsRef={foldsRef} onNotesPlace={onNotesPlace} onScroll={onScroll} reportRef={reportRef} />;
   }
@@ -277,7 +282,7 @@ function BookView({ pageId, sheets, marks, zoomIn, place, onScroll, onZoom, repo
 // buttons at rest, and the tree in BlockTree's preview. Inside a group it
 // stands where the live notes stand when a page has no viewer (div.main
 // pdfHidden); in the dock it is the window's body.
-function NotesView({ pageId, block, children_, title, dock, attachment, hasSheets, notebookView, marks, url, notesPlace, shared, press, foldsRef,
+function NotesView({ pageId, block, children_, title, dock, doc, hasSheets, notebookView, marks, url, notesPlace, shared, press, foldsRef,
   onNotesPlace, onScroll, reportRef }) {
   const listRef = useRef(null);
   const canWrite = !!shared?.canWrite;
@@ -323,8 +328,8 @@ function NotesView({ pageId, block, children_, title, dock, attachment, hasSheet
   }, [pageId, view, shared, canWrite, sheetNumbers, notebookView, hasSheets, url, refLabelsById, highlightColors, children_, byId, press]);
   const sheetCtx = useMemo(() => ({
     marks, inkOpen: false, onPen: noop, onPaper: noop, onPaperAll: noop, onAddAfter: noop,
-    onNotebookView: !attachment ? noop : undefined, onActivate: (id) => press({ edit: { id, clickPos: null } }),
-  }), [marks, attachment, press]);
+    onNotebookView: !doc ? noop : undefined, onActivate: (id) => press({ edit: { id, clickPos: null } }),
+  }), [marks, doc, press]);
 
   // At the place the page was left at, as the live notes land it (App's
   // landing), and reporting it as the notes scroll.
@@ -380,13 +385,13 @@ function NotesView({ pageId, block, children_, title, dock, attachment, hasSheet
           <div className="pageActionCol">
             {shared?.commentsOn ? <button type="button" className="pageActionBtn pageCommentBtn" tabIndex={-1} onClick={() => press()}><MessageSquareIcon size={16} /></button> : null}
             {shared?.labels ? (<>
-              {hasSheets && !attachment ? (
+              {hasSheets && !doc ? (
                 <button type="button" className="uiBtn sm ghost" tabIndex={-1} onClick={() => press()}><NotebookIcon size={16} /> {t("Notebook")}</button>
               ) : null}
-              {attachment || canWrite ? (
-                <button type="button" className={`pageActionBtn ${attachment ? "active" : ""}`} tabIndex={-1} onClick={() => press()}><PaperclipIcon size={16} /></button>
+              {doc || canWrite ? (
+                <button type="button" className={`pageActionBtn ${doc ? "active" : ""}`} tabIndex={-1} onClick={() => press()}><PaperclipIcon size={16} /></button>
               ) : null}
-              {attachment || props.meta ? <button type="button" className="pageActionBtn" tabIndex={-1} onClick={() => press()}><InfoIcon size={16} /></button> : null}
+              {isPdf(doc) || props.meta ? <button type="button" className="pageActionBtn" tabIndex={-1} onClick={() => press()}><InfoIcon size={16} /></button> : null}
               <button type="button" className="pageActionBtn pageDeleteBtn" tabIndex={-1} disabled={!canWrite} onClick={() => press()}><TrashIcon size={16} /></button>
             </>) : null}
           </div>

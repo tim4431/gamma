@@ -6,6 +6,7 @@ page both sides hold without a base keeps both; a link or a force keeps what
 it removes; a restored backup linked to its original keeps the pages being
 recovered. Same in-process pair as test_mirror.py."""
 import pytest
+from conftest import doc_props
 
 from gamma import sync_engine
 from gamma.db import connect_pages_db, ws_uploads_dir
@@ -47,7 +48,7 @@ def test_a_first_push_cut_short_by_a_refused_file_keeps_the_page(monkeypatch):
     remote, local, _ = _pair()
     _sync(local)
     up = local.client.post("/api/uploads", files={"file": ("p.pdf", PDF, "application/pdf")}).json()
-    page = local.page("Offline notes", doc_id=up["doc_id"], source_url=up["source_url"])
+    page = local.page("Offline notes", **doc_props(up["doc_id"], url=up["source_url"]))
     notes = {f"n{i}": f"important note {i}" for i in range(5)}
     for i, (bid, text) in enumerate(notes.items()):
         local.insert(page["id"], bid, text, position=f"a{i}")

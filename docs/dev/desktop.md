@@ -43,7 +43,13 @@ local server (read where it is, under *Opened files*), or with the
 Store build, the upload routes and `POST /api/blocks/by-doc/<hash>`; `POST
 /api/import/pdf-annotations`, the `embAnnots` entry of the account's
 profile and the `?ws=<id>&page=<id>` URL ([architecture.md](../../desktop/docs/architecture.md)
-"Opening PDF files"); and the `data-theme` attribute on `<html>` (the shell
+"Opening PDF files"); a page's document, `properties.doc` of `GET
+/api/blocks/<id>` (its `format`, `hash`, `ext` and `copy`: an opened PDF's
+hash for its annotations, a carried page's own PDF and its stored name in
+the export), read of the app's own local server only, which is always the
+shell's release; the change feed's `format` (`GET
+/api/sync/changes?limit=1`) of both servers before a carry, which refuses
+a target of an older one; and the `data-theme` attribute on `<html>` (the shell
 mirrors it into its own chrome).
 
 The iPad and Android apps run the same sidecar model: the same backend

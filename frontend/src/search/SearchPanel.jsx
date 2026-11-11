@@ -36,7 +36,8 @@ import { Chevron, MorphText } from "../shared/ui/MotionWidgets";
 
 import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
 import { createTitleScorer } from "../library/librarySearch";
-import { PAGE_PATH_SEP, filingChips, pageAttachment, pagePathLabel } from "../library/libraryUtils";
+import { PAGE_PATH_SEP, filingChips, pagePathLabel } from "../library/libraryUtils";
+import { pageDocument } from "../documents/pageDocument.js";
 import { markedParts, plainSnippet } from "./snippets";
 import { guideEvents } from "../guide/events.js";
 import { NOTES_PAGE, PDF_PAGE, TITLES_PAGE, appendNew, searchBody } from "./searchPages";
@@ -411,18 +412,19 @@ export default function SearchPanel({
   // through the normalized text, and marks nothing it cannot place). Notes
   // show as plain text, not markdown. The library's PDF index ignores the
   // Aa / ab toggles, so its rows are marked without them.
-  const isPdfPage = (id) => !!pageAttachment(pagesById.get(id));
+  // a page's document's format, the glyph's ("" for none)
+  const pageFormat = (page) => pageDocument(page)?.format || "";
   const markOpts = { caseSensitive, wholeWord };
   const marked = (text, opts = markOpts, lead = 0) => <MarkedText text={text} query={q} opts={opts} lead={lead} />;
   const section = (label, count) => (
     <div className="searchSection">{label}{count ? <span className="searchSectionCount">{count}</span> : null}</div>
   );
   const pageTag = (page) => <span className="searchPageTag">{t("p. {page}", { page })}</span>;
-  const resultHead = (pageId, title, isPdf, extra, opts) => {
+  const resultHead = (pageId, title, format, extra, opts) => {
     const path = pagePathLabel(pagesById, pageId);
     return (
       <span className="searchResultPage">
-        <FileGlyph isPdf={isPdf} size={14} />
+        <FileGlyph format={format} size={14} />
         {path ? <span className="searchResultPath">{path}{PAGE_PATH_SEP.trimEnd()}</span> : null}
         <span className="searchResultTitle">{marked(title || t("Untitled"), opts)}</span>
         {extra}
@@ -438,7 +440,7 @@ export default function SearchPanel({
     const pageId = r.page_root_id || r.id;
     return (
       <button key={r.id} className="searchResult" onClick={() => openNoteHit(r)}>
-        {resultHead(pageId, r.page_title, isPdfPage(pageId), kindBadge(r))}
+        {resultHead(pageId, r.page_title, pageFormat(pagesById.get(pageId)), kindBadge(r))}
         <span className="searchResultText">{marked(plainSnippet(r.content), markOpts, 50)}</span>
       </button>
     );
@@ -454,7 +456,7 @@ export default function SearchPanel({
       className="searchResult"
       onClick={() => { onOpenChange(false); openBlock(b.id, { restoreScroll: true }); }}
     >
-      {resultHead(b.id, b.content, !!pageAttachment(b))}
+      {resultHead(b.id, b.content, pageFormat(b))}
       {subtitle ? <span className="searchResultText">{subtitle}</span> : null}
     </button>
   );
@@ -672,7 +674,7 @@ export default function SearchPanel({
                     onClick={() => openLibHit(r)}
                     title={t("Open \"{title}\" at page {page} — the match will be highlighted", { title: r.title, page: r.page })}
                   >
-                    {resultHead(r.block_id, r.title.slice(0, 60), true, pageTag(r.page), {})}
+                    {resultHead(r.block_id, r.title.slice(0, 60), "pdf", pageTag(r.page), {})}
                     {/* the index's snippet() already marks a cut with "…" */}
                     <span className="searchResultText">{marked(r.snippet, {})}</span>
                   </button>

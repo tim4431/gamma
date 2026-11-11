@@ -46,6 +46,15 @@ npm --prefix frontend run build -- --outDir ../artifacts/readme-media/dist
 $env:GAMMA_E2E_DIST = (Resolve-Path artifacts/readme-media/dist).Path
 ```
 
+`artifacts/readme-media/demo.zip` keeps the workspace in the shape the
+server that exported it stored. An import converts an older one (a restore
+runs the migration steps above its stamp), but `make-notability-note.py`
+reads the zip's own `pages.db` and finds a page's PDF through its `doc`
+property, the shape of workspace data format 51 and later
+([documents.md](../../docs/dev/documents.md)). A zip exported by a server
+below 51, whose pages still say `doc_id`, has to be exported again with
+`export-demo.py` from a server at 51 or later.
+
 On Unix use `backend/venv/bin/python` and
 `export GAMMA_E2E_DIST="$PWD/artifacts/readme-media/dist"`.
 Initialize fnm normally if Node is not on PATH. If the browser is installed in a

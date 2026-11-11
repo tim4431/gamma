@@ -46,9 +46,10 @@ from ..ai_context import pdf_excerpt as _pdf_excerpt
 from ..ai_context import pdf_path as _pdf_path
 from ..ai_settings import ai_runtime, require_ai_runtime
 from ..auth import require_user_id, require_ws
-from ..blocks_store import page_attachment, write_lock
+from ..blocks_store import write_lock
 from ..ops import StorableBody, after_commit, apply_ops, props_patch
 from ..db import connect_data_db, connect_pages_db, page_now
+from ..documents.model import is_pdf, own_hash, page_document, source_address, stored_name
 from ..logbuf import log
 from ..pdf_index import doc_chars
 from ..pdf_text import PDF_EXTRACT_FAILED
@@ -58,10 +59,6 @@ from ..textnorm import INDEX_VERSION, normalize_text, plain_text
 from .ai import CITE_PROMPT, METADATA_PROMPT, _resolve_model
 from .pdf import ARXIV_ID, CONTACT_EMAIL
 from .translate import _translate_effort
-
-# Guards the doc-id → filename join below (defense in depth: doc ids come from
-# block properties a user can set). Mirrors gamma.db._DOC_ID_RE.
-_DOC_ID_OK = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
 router = APIRouter(prefix="/api", tags=["metadata"])
 
@@ -1272,10 +1269,10 @@ def metadata_status(request: Request):
     papers = []
     for block_id, content, props_json, updated_at in rows:
         props = json.loads(props_json or "{}")
-        attachment = page_attachment(props)
-        if not attachment and not props.get("meta"):
+        view = page_document(props)
+        if not view and not props.get("meta"):
             continue  # a plain note page: nothing to fetch metadata or text for
-        doc_id = attachment["id"] if attachment else ""
+        doc_id = own_hash(view) if is_pdf(view) else ""
         entry = index.get(doc_id)
         meta = props.get("meta") or None
         papers.append({
@@ -1283,8 +1280,8 @@ def metadata_status(request: Request):
             "title": (meta or {}).get("title") or content or "Untitled",
             "updated_at": updated_at,
             "doc_id": doc_id,
-            "has_file": bool(doc_id and _DOC_ID_OK.match(doc_id)
-                             and (f"{doc_id}.pdf" in stored or storage.readable(ws, f"{doc_id}.pdf"))),
+            "has_file": bool(doc_id and (stored_name(doc_id, ".pdf") in stored
+                                         or storage.readable(ws, stored_name(doc_id, ".pdf")))),
             "has_meta": bool(meta),
             "meta_source": (meta or {}).get("source", ""),
             "meta_kind": (meta or {}).get("kind", ""),
@@ -1425,8 +1422,9 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
                 "source": props["meta"].get("source", ""), "cached": True,
                 "title_updated": False, "page_title": content}
 
-    doc_id = props.get("doc_id") or ""
-    source_url = props.get("source_url") or ""
+    view = page_document(props)
+    doc_id = own_hash(view) if is_pdf(view) else ""
+    source_url = source_address(view)
     web = props.get("web_meta") if isinstance(props.get("web_meta"), dict) else {}
     arxiv_id = str(web.get("arxiv_id") or "").strip()
     text_doi = str(web.get("text_doi") or "").strip()

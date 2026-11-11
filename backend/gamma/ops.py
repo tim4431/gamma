@@ -96,9 +96,10 @@ from .text_box import merge_text_box, normalize_text_box
 from .blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, MAX_PAGE_DEPTH, PARENT_PAGE, TRASH, TREES, block_to_dict, delete_subtree,
     ensure_reserved, fetch_subtree, filing, filing_ids, folder_inserts, free_position, is_op_page, label_inserts,
-    last_child_position, load_props, move_subtree_to_page, page_descendants, page_root_id, redundant_source_url, subtree_refs,
+    last_child_position, load_props, move_subtree_to_page, page_descendants, page_root_id, subtree_refs,
     touch_page, trashed_page, valid_block_id, valid_parent_value, write_lock)
 from .db import connect_pages_db, format_stamp, page_now, parse_stamp
+from .documents.model import document_props
 from .logbuf import log
 from .storage import content_digest, store_file, upload_refs
 
@@ -305,7 +306,7 @@ class _Batch:
         # upload names the ops stopped / started referencing (gamma/upload_gc.py)
         self.dropped: set[str] = set()
         self.added: set[str] = set()
-        self.doc_deleted = False  # a deleted block carried a PDF (doc_id)
+        self.doc_deleted = False  # a deleted block carried a PDF (a doc, or a highlight's doc_id)
         self.chats_filed: dict[str, str] = {}  # folder chats a tree delete filed into the library's history
         # block id → (the people its text named before the batch, and names now), for the Inbox
         self.people: dict[str, tuple[set, set]] = {}
@@ -408,8 +409,8 @@ class _Batch:
         if content is not None and op.get("base") is not None:
             content = _merged(self.merges, block_id, op["base"], content, row[0] or "", self.cursor)
         props = json.loads(row[1] or "{}")
-        if patch and block_id == self.page_id:
-            patch = _attachment_patch(patch, props)
+        if patch:
+            patch = _document_patch(patch)
         base_props = op.get("base_props")
         if patch and base_props:
             patch = self.merge_ink(block_id, props, patch, base_props, op.get("base_ids"))
@@ -508,7 +509,7 @@ class _Batch:
         content = op.get("content") or ""
         if len(content) > MAX_CONTENT:
             raise OpError(413, "content too long")
-        props = op.get("props") or {}
+        props = _document_patch(op.get("props") or {}, patch=False)
         existing = self.conn.execute(
             "SELECT parent_id, position, content, properties FROM unified_blocks WHERE id = ?",
             (block_id,)).fetchone()
@@ -578,7 +579,7 @@ class _Batch:
             self.deleted.append(r[0])
             if r[0] in self.people or "@" in (r[3] or ""):
                 self.note_mentions(r[0], r[3] or "", "")
-            self.doc_deleted = self.doc_deleted or '"doc_id"' in (r[4] or "")
+            self.doc_deleted = self.doc_deleted or '"doc_id"' in (r[4] or "") or '"doc"' in (r[4] or "")
         self.dropped |= subtree_refs(rows)
         if self.page_id == FOLDERS:
             # A folder's conversations are never dropped with it, whichever
@@ -765,13 +766,17 @@ def kept_out_of(conn, parent: str) -> dict:
     return patch
 
 
-def _attachment_patch(patch: dict, props: dict) -> dict:
-    """A page root's ``patch`` against its stored ``props``, a
-    ``source_url`` that is the page's ``doc_id``'s stored copy removed
-    instead of stored (blocks_store.redundant_source_url)."""
-    if redundant_source_url(patch.get("doc_id", props.get("doc_id")), patch.get("source_url")):
-        patch = {**patch, "source_url": None}
-    return patch
+def _document_patch(props: dict, *, patch: bool = True) -> dict:
+    """A block's properties patch (``patch`` False: a new block's
+    properties) held to the one shape of a document
+    (``documents.model.document_props``): ``doc`` checked and stored in
+    canonical form, ``None`` removing it from a patch; a flat key a
+    document was kept in before (``LEGACY_KEYS``) refused with a value and
+    dropped as a removal. 400 on what does not check."""
+    try:
+        return document_props(props, patch=patch)
+    except ValueError as e:
+        raise OpError(400, str(e))
 
 
 def _log(conn, page_id: str, actor: str, client: str, now: str, applied: list, after: int = 0, *,

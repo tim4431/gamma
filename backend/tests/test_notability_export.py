@@ -170,7 +170,7 @@ def view(client, ws: str, pid: str) -> dict:
     children = root.get("children") or []
     props = root["properties"]
     surfaces = []
-    if props.get("doc_id"):
+    if (props.get("doc") or {}).get("hash"):
         by_page = {}
         for b in children:
             if b["kind"] == "ink":
@@ -197,7 +197,7 @@ def view(client, ws: str, pid: str) -> dict:
         kind = "markup" if kind in ("ink", "text_box", "picture") else kind
         if kind in ("note", "sheet", "recording") or (kind == "markup" and "markup" not in order):
             order.append(kind)
-    return {"title": root["content"], "doc_id": props.get("doc_id"), "notes": notes(children),
+    return {"title": root["content"], "doc_id": (props.get("doc") or {}).get("hash"), "notes": notes(children),
             "surfaces": surfaces, "recordings": recordings, "order": order}
 
 

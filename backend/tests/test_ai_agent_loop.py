@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from conftest import make_folder, make_label
+from conftest import doc_props, make_folder, make_label
 
 from ai_fixtures import ALL_PERMS, ALLOW_ALL, FakeResp, ai_provider, org, props  # noqa: F401  (fixtures)
 
@@ -199,7 +199,7 @@ def test_paper_chat_kicks_indexing_for_unindexed_doc(org, monkeypatch):
         {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}]))
     doc = "e" * 24
     fresh = c.post("/api/blocks", json={"parent_id": "root", "content": "fresh paper",
-                                        "properties": {"doc_id": doc}}).json()["id"]
+                                        "properties": doc_props(doc)}).json()["id"]
     # Plain (tools off) chat still kicks it — the index is what a later
     # tools-on turn needs, and it costs one query to check.
     r = c.post("/api/ai/chat", json={"prompt": "hi", "page_id": fresh, "stream": True})

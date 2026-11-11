@@ -9,7 +9,7 @@ and the trash tools say which pages come back with a page or inside one."""
 
 import pytest
 
-from conftest import login, make_folder, make_label, make_user
+from conftest import doc_props, login, make_folder, make_label, make_user
 from gamma import ai_context
 from gamma.ai_tools import run_agent_tool
 from gamma.db import connect_pages_db
@@ -182,7 +182,7 @@ def test_save_paper_leaves_a_sub_page_filed_where_its_top_is(org):
     c, ids = org
     top = _page(c, "Review", folders=[ids["readout"]])
     r = c.post("/api/blocks", json={"parent_id": "root", "content": "Inner paper", "properties": {
-        "doc_id": "e" * 24, "meta": {"arxiv_id": "2601.07777"}}})
+        **doc_props("e" * 24), "meta": {"arxiv_id": "2601.07777"}}})
     assert r.status_code == 200, r.text
     paper = r.json()["id"]
     r = c.post(f"/api/pages/{paper}/ops", json={"client": "t", "ops": [

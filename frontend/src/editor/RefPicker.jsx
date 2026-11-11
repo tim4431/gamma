@@ -2,9 +2,9 @@
 // then blocks under their section titles, the typed text marked as in
 // Search and Quick Open (MarkedText), and a key-hint footer. useRefPicker.js owns the trigger, the lists
 // (editor/refLists.js) and the keys; `rows` are
-// {kind: "page" | "block", id, title, meta, isPdf}. `partial`: the block
-// search stopped at the server's time budget, so the footer asks for more
-// letters.
+// {kind: "page" | "block", id, title, meta, format} (`format` a page's
+// document's, "" for none). `partial`: the block search stopped at the
+// server's time budget, so the footer asks for more letters.
 import React, { useEffect } from "react";
 import { useCaretAnchored } from "./LatexEditor";
 import { MarkedText } from "../search/SearchPanel";
@@ -27,7 +27,7 @@ export function RefPickerPopup({ rows, selected, anchor, query, partial = false,
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onPick(r)}
           >
-            <span className="refPopupIcon">{r.kind === "page" ? <FileGlyph isPdf={r.isPdf} size={16} /> : <span className="refPopupDot" />}</span>
+            <span className="refPopupIcon">{r.kind === "page" ? <FileGlyph format={r.format} size={16} /> : <span className="refPopupDot" />}</span>
             <span className="refPopupBody">
               <span className="refPopupText"><MarkedText text={r.title} query={query} lead={r.kind === "block" ? 48 : 0} /></span>
               {r.meta ? <span className="refPopupMeta">{r.meta}</span> : null}
