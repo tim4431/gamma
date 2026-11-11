@@ -125,6 +125,7 @@ function server(name, links = [], { zotero = 'list', running: on = true, broken 
       if (routed && routed.failWith) return fails(routed.failWith, routed.body);
       if (routed) return ok(routed);
       if (p === '/api/session') return ok({ user: { id: 'admin', username: 'admin' }, default_workspace: 'mine', workspaces: fake.workspaces });
+      if (p === '/api/sync/changes') return ok({ format: 51, changes: [] });
       if (p === '/api/mirrors') return broken ? fails(500) : ok({ mirrors: [] });
       if (p === '/api/folder-links') return ok({ links: fake.vaults });
       if (p === '/api/zotero/links') {
@@ -681,7 +682,9 @@ test('a third vault of one file in one directory asks first: sync the folder (it
 function opened(here, { zip, missing = false, mine = true, digest = { digest: 'dg1', pages: ['p1'] }, letGo = { ok: true } } = {}) {
   here.fake.routes = (p, init) => {
     if (p === '/api/folder-links/page/p1') return { vault: null, reader: { path: 'C:\\Downloads\\attention.pdf', missing, mine } };
-    if (p === '/api/blocks/p1' && (init.method || 'GET') === 'GET') return { id: 'p1', content: 'Attention', properties: { doc_id: 'd1' } };
+    if (p === '/api/blocks/p1' && (init.method || 'GET') === 'GET') {
+      return { id: 'p1', content: 'Attention', properties: { doc: { format: 'pdf', name: 'attention.pdf', hash: 'd1', ext: '.pdf', at: 'path' } } };
+    }
     if (p === '/api/pages/p1/export') return zip;
     if (p === '/api/folder-links/opened/p1/carried') return (init.method || 'GET') === 'GET' ? digest : letGo;
     return null;

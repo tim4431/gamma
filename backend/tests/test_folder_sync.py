@@ -15,7 +15,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import account_of, fresh_client, login, make_folder, make_label, make_page, make_user, workspace_of
+from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_label, make_page, make_user,
+                      workspace_of)
 from gamma.integrations import create_token
 from test_pdf_export import _blank_pdf, _position
 
@@ -38,7 +39,7 @@ def _pdf_page(c, title, folders, **props):
     data = _blank_pdf(pages=1) + title.encode()
     up = c.post("/api/uploads", files={"file": (f"{title}.pdf", data, "application/pdf")})
     assert up.status_code == 200, up.text
-    page = make_page(c, title, {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
+    page = make_page(c, title, {**doc_props(up.json()["doc_id"], url=up.json()["source_url"]),
                                 "folders": [make_folder(c, f) for f in folders], **props})
     return page, up.json()["doc_id"], data
 
@@ -111,6 +112,17 @@ def test_manifest_lays_the_folder_out_as_a_directory_tree(owner, lab):
     assert by_id[lab["twin1"]["id"]]["stem"] == "Sub/Twin" and by_id[lab["twin2"]["id"]]["stem"] == "Sub/Twin 2"
     assert lab["outside"]["id"] not in by_id
     assert all(":" in p["version"] for p in m["pages"])
+
+
+def test_a_duplicated_page_writes_no_pdf_of_its_own(owner):
+    # a copy shows the original's stored file and owns none: the original's notes sit beside the PDF
+    original, doc, data = _pdf_page(owner, "Copied paper", ["FS copies"])
+    copy = make_page(owner, "Copied paper (copy)",
+                     {**doc_props(url=f"/api/uploads/{doc}.pdf"), "folders": [make_folder(owner, "FS copies")]})
+    by_id = {p["id"]: p for p in _manifest(owner, make_folder(owner, "FS copies"))["pages"]}
+    assert by_id[original["id"]]["pdf"] == "Copied paper.pdf" and by_id[original["id"]]["doc_id"] == doc
+    assert by_id[original["id"]]["pdf_size"] == len(data)
+    assert by_id[copy["id"]]["pdf"] is None and by_id[copy["id"]]["doc_id"] == ""
 
 
 def test_root_is_the_whole_library_and_a_page_is_no_folder(owner, lab):
@@ -300,14 +312,14 @@ def test_pull_writes_gammas_changes_and_pushes_nothing(owner, tmp_path, capsys, 
     capsys.readouterr()
     assert mod.main(["pull", str(dest), "--token", write]) == 0
     out = capsys.readouterr().out
-    assert "sent" not in out and owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == v1
+    assert "sent" not in out and owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc"]["hash"] == v1
     assert "pulled, never pushed" in (dest / "Pulled paper.md").read_text(encoding="utf-8")
     assert mod.doc_of(paper) != v1                                       # the build stays on disk
 
     # sync pushes it, then pulls
     assert mod.main(["sync", str(dest), "--token", write]) == 0
     assert "1 sent" in capsys.readouterr().out
-    assert owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == mod.doc_of(paper)
+    assert owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc"]["hash"] == mod.doc_of(paper)
 
 
 def test_client_sends_pdfs_back_when_asked_and_follows_a_file(owner, token, tmp_path, capsys, monkeypatch):
@@ -326,7 +338,7 @@ def test_client_sends_pdfs_back_when_asked_and_follows_a_file(owner, token, tmp_
     capsys.readouterr()
     assert mod.main(["sync", str(dest), "--token", write]) == 0
     assert "1 sent" in capsys.readouterr().out
-    assert owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == mod.doc_of(paper) != v1
+    assert owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc"]["hash"] == mod.doc_of(paper) != v1
     assert _state(dest)["files"]["Pushed paper.pdf"]["doc"] == mod.doc_of(paper)
 
     # --watch looks at the disk too: a build written meanwhile goes at the next look, though nothing changed in Gamma
@@ -343,7 +355,7 @@ def test_client_sends_pdfs_back_when_asked_and_follows_a_file(owner, token, tmp_
     assert mod.main(["sync", str(dest), "--token", write, "--watch", "60"]) == 130
     rounds = capsys.readouterr().out.splitlines()
     assert rounds[0] == "up to date; 2 unchanged" and "sent Pushed paper.pdf" in rounds and "1 sent" in rounds[-1], rounds
-    assert owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == mod.doc_of(paper)
+    assert owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc"]["hash"] == mod.doc_of(paper)
     monkeypatch.setattr(mod, "time", time)
 
     # a file followed by a build script: sent once, then up to date; a read token or no such page is an error
@@ -360,6 +372,7 @@ def test_client_sends_pdfs_back_when_asked_and_follows_a_file(owner, token, tmp_
     assert mod.main([*args, "--token", write]) == 0
     assert capsys.readouterr().out.strip() == "sent"
     props = owner.get(f"/api/blocks/{draft['id']}").json()["properties"]
-    assert props["doc_id"] == mod.doc_of(build) and props["original_filename"] == "main.pdf"
+    assert props["doc"] == {"format": "pdf", "name": "main.pdf", "hash": mod.doc_of(build), "ext": ".pdf",
+                            "at": "store"}
     assert mod.main([*args, "--token", write]) == 0
     assert capsys.readouterr().out.strip() == "up to date"

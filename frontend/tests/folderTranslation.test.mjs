@@ -12,19 +12,24 @@ const TREE = libraryTree({ folders: { children: [
   { id: "f-other", content: "Other", children: [] },
 ] } });
 const row = (id, props = {}, parent = "") => ({ id, content: id, properties: props, ...(parent && { _parentPage: parent }) });
+// A page's PDF (its `doc`).
+const pdf = (fields) => ({ format: "pdf", name: "", hash: "", ext: ".pdf", at: "store", ...fields });
 
 test("a folder's papers are its pages and those below it that show a stored PDF, a page inside one filed where its top is", () => {
   const pages = pageBlocksOf([
-    row("in-top", { doc_id: "aa", folders: ["f-top"] }),
-    row("in-sub", { doc_id: "bb", folders: ["f-sub"] }),
-    row("inside", { doc_id: "cc", folders: ["f-other"] }, "in-top"),
-    row("elsewhere", { doc_id: "dd", folders: ["f-other"] }),
+    row("in-top", { doc: pdf({ hash: "aa" }), folders: ["f-top"] }),
+    row("in-sub", { doc: pdf({ hash: "bb" }), folders: ["f-sub"] }),
+    row("inside", { doc: pdf({ hash: "cc" }), folders: ["f-other"] }, "in-top"),
+    row("elsewhere", { doc: pdf({ hash: "dd" }), folders: ["f-other"] }),
     row("notes", { folders: ["f-top"] }),
-    row("link-only", { source_url: "https://example.org/a.pdf", folders: ["f-top"] }),
-    row("duplicate", { source_url: "/api/uploads/aa.pdf", folders: ["f-top"] }),
+    row("link-only", { doc: pdf({ at: "url", url: "https://example.org/a.pdf" }), folders: ["f-top"] }),
+    // a duplicated page shows the original's stored PDF
+    row("duplicate", { doc: pdf({ hash: "aa", copy: true }), folders: ["f-top"] }),
+    row("tex", { doc: pdf({ format: "text", name: "main.tex", hash: "ee", ext: ".tex" }), folders: ["f-top"] }),
   ], TREE);
   assert.deepEqual(folderPapers(pages, TREE, "f-top"), [
-    { page_id: "in-top", doc_id: "aa" }, { page_id: "in-sub", doc_id: "bb" }, { page_id: "inside", doc_id: "cc" }]);
+    { page_id: "in-top", doc_id: "aa" }, { page_id: "in-sub", doc_id: "bb" }, { page_id: "inside", doc_id: "cc" },
+    { page_id: "duplicate", doc_id: "aa" }]);
   assert.deepEqual(folderPapers(pages, TREE, "f-sub"), [{ page_id: "in-sub", doc_id: "bb" }]);
   assert.deepEqual(folderPapers(pages, TREE, "nowhere"), []);
 });

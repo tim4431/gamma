@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 import pytest
-from conftest import make_page, require_math_renderer
+from conftest import doc_props, make_page, require_math_renderer
 from fractional_indexing import generate_key_between
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import (ArrayObject, DictionaryObject, FloatObject, NameObject, NumberObject, RectangleObject,
@@ -393,8 +393,7 @@ def test_a_sticky_note_becomes_a_yellow_box_at_its_icon():
 def _upload_pdf(guest, data, title):
     up = guest.post("/api/uploads", files={"file": ("t.pdf", data, "application/pdf")})
     assert up.status_code == 200, up.text
-    return make_page(guest, title, properties={"doc_id": up.json()["doc_id"],
-                                               "source_url": up.json()["source_url"]}), up.json()["doc_id"]
+    return make_page(guest, title, properties=doc_props(up.json()["doc_id"])), up.json()["doc_id"]
 
 
 def _put_children(guest, page_id, tree):
@@ -403,7 +402,7 @@ def _put_children(guest, page_id, tree):
 
 
 def _stored_pdf(guest, page_id):
-    doc_id = guest.get(f"/api/blocks/{page_id}").json()["properties"]["doc_id"]
+    doc_id = guest.get(f"/api/blocks/{page_id}").json()["properties"]["doc"]["hash"]
     return PdfReader(io.BytesIO(guest.get(f"/api/uploads/{doc_id}.pdf").content))
 
 

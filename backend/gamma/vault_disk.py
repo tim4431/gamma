@@ -65,8 +65,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import gamma_sync
+from .documents.formats import IMAGE_MEDIA_TYPES
 from .obsidian_export import unique_name
-from .storage import IMAGE_MEDIA_TYPES
 
 MARKER_DIR = ".gamma"
 MARKER = ".gamma/vault.json"

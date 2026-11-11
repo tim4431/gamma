@@ -25,9 +25,9 @@ from . import note_app_import as app
 from . import notability as nb
 from . import notability_map as nmap
 from . import notability_ntb as ntb
-from .blocks_store import attachment_props
+from .documents.model import document
 from .import_zip import READ_ERRORS
-from .note_app_import import Skip, Stop, compose_pdf
+from .note_app_import import Skip, Stop, compose_pdf, page_kind
 from .storage import content_digest, display_filename, store_pdf
 
 
@@ -169,7 +169,7 @@ class _Import(app.AppImport):
             del data
             if not existed:
                 self.report["pdfs_stored"] += 1
-            props.update(attachment_props(doc_id, "", f"{title}.pdf")[0])
+            props["doc"] = document(doc_id, name=f"{title}.pdf")
             self.progress(item=title)
         groups = (self.store_ink(plan, lambda page, left_out, left: nmap.page_strokes(note, page, left_out, left),
                                  title) if plan.kind != "note" else [])
@@ -197,7 +197,7 @@ class _Import(app.AppImport):
             self.report["pictures_imported"] += counts["pictures"]
             self.report["recordings_imported"] += len(recordings)
             entry["created"] = True
-            entry["kind"] = "pdf" if props.get("doc_id") else "page"
+            entry["kind"] = page_kind(props)
         return written
 
     def _pdf_sources(self, members, note: nb.Note) -> tuple[dict, dict, dict]:

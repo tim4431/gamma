@@ -13,7 +13,7 @@ import zipfile
 import fitz
 import pytest
 
-from conftest import login, make_folder, make_user
+from conftest import doc_props, login, make_folder, make_user
 from gamma import jobs
 from gamma.auth import ShareScope
 from gamma.obsidian_export import anchor_marker
@@ -111,7 +111,7 @@ def world():
 
     folder = make_folder(owner, "SX shared")
     doc = owner.post("/api/uploads", files={"file": ("p.pdf", _blank_pdf(), "application/pdf")}).json()["doc_id"]
-    paper = _page(owner, "Open paper", {"doc_id": doc, "meta": {"title": "Open paper", "year": 2026}}, folders=[folder])
+    paper = _page(owner, "Open paper", {**doc_props(doc), "meta": {"title": "Open paper", "year": 2026}}, folders=[folder])
     other = _page(owner, "Open other", parent_page=paper)
     # One step further: a block of the share naming a block outside it.
     _put(owner, other, [_note(f"{OPEN} with [[{outside}]] in it")])
@@ -267,7 +267,7 @@ def test_a_zip_holds_what_the_share_s_file_route_serves(world, anon):
     assert ink.status_code == 200, ink.text
     ink = ink.json()["url"]
     doc = owner.post("/api/uploads", files={"file": ("q.pdf", _blank_pdf(pages=2), "application/pdf")}).json()["doc_id"]
-    page = _page(owner, "Files page", {"doc_id": doc})
+    page = _page(owner, "Files page", doc_props(doc))
     _put(owner, page, [_note(f"![a]({picture}?ws=other)"), _note("recorded", segments=[{"url": held}]),
                        _note("ink", ink_url=ink)])
     private = world["private_image"]

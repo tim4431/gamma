@@ -20,7 +20,7 @@ from contextlib import closing
 import pymupdf
 import pytest
 
-from conftest import _tree_block, account_of, login, make_folder, make_page, make_user, workspace_of
+from conftest import _tree_block, account_of, doc_props, login, make_folder, make_page, make_user, workspace_of
 from gamma import (config, folder_links, gamma_sync, jobs, linked_files, md_lens, pdf_meta, storage, vault_disk,
                    vault_merge, vault_store, vault_sync)
 from gamma.blocks_store import LABELS, block_kind, new_block_id, newest_change_seq, write_lock
@@ -599,15 +599,15 @@ def test_a_pdf_is_a_page_reading_it_in_place_with_the_note_of_its_stem(vault):
     page = v.page_of("Papers/Attention.pdf")
     assert v.page_of("Papers/Attention.md") == page and v.page_count() == 2
     props = v.blocks(page)[page]["props"]
-    assert props["doc_id"] == storage.content_digest(data) and props["linked_file"] is True
+    assert props["doc"]["hash"] == storage.content_digest(data) and props["doc"]["at"] == "path"
     assert v.texts(page) == ["my reading notes"] and v.info(page).title == "Attention"
-    assert linked_files._in_vault(page) and not storage.exists(v.ws, f"{props['doc_id']}.pdf")
-    assert storage.open_path(v.ws, f"{props['doc_id']}.pdf") == v.root / "Papers" / "Attention.pdf"
+    assert linked_files._in_vault(page) and not storage.exists(v.ws, f"{props['doc']['hash']}.pdf")
+    assert storage.open_path(v.ws, f"{props['doc']['hash']}.pdf") == v.root / "Papers" / "Attention.pdf"
     # new bytes: the page's PDF, the disk winning
     new = _pdf("attention, second edition")
     v.write("Papers/Attention.pdf", new, age=5)
     v.sync()
-    assert v.blocks(page)[page]["props"]["doc_id"] == storage.content_digest(new)
+    assert v.blocks(page)[page]["props"]["doc"]["hash"] == storage.content_digest(new)
     v.quiet()
 
 
@@ -631,14 +631,16 @@ def test_a_stored_pdf_pull_copied_out_is_followed_when_it_changes_on_disk(vault,
     v = vault()
     data = _pdf("stored first")
     r = owner.post("/api/uploads", files={"file": ("paper.pdf", data, "application/pdf")})
-    page = make_page(owner, "Followed", {"folders": [v.folder], "doc_id": r.json()["doc_id"]})["id"]
+    page = make_page(owner, "Followed", {"folders": [v.folder], **doc_props(r.json()["doc_id"])})["id"]
     v.sync()
     assert (v.root / "Followed.pdf").read_bytes() == data
+    assert v.blocks(page)[page]["props"]["doc"]["at"] == "store"
     new = _pdf("rewritten on disk")
     v.write("Followed.pdf", new, age=5)
     v.sync()
-    props = v.blocks(page)[page]["props"]
-    assert props["doc_id"] == storage.content_digest(new) and props["linked_file"] is True
+    props = v.blocks(page)[page]["props"]       # the disk's bytes, read where they are from now on
+    assert props["doc"] == {"format": "pdf", "name": "Followed.pdf", "hash": storage.content_digest(new), "ext": ".pdf",
+                            "at": "path"}
     assert storage.exists(v.ws, f"{r.json()['doc_id']}.pdf")       # the stored copy stays
     v.quiet()
 
@@ -694,7 +696,7 @@ def test_a_page_made_in_gamma_gets_its_file_and_a_stored_pdf_is_copied_beside_it
     v.edit(page, insert(page, "written in Gamma"))
     data = _pdf("stored")
     r = owner.post("/api/uploads", files={"file": ("paper.pdf", data, "application/pdf")})
-    paper = make_page(owner, "Stored paper", {"folders": [v.folder], "doc_id": r.json()["doc_id"]})["id"]
+    paper = make_page(owner, "Stored paper", {"folders": [v.folder], **doc_props(r.json()["doc_id"])})["id"]
     v.sync()
     assert v.text("Sub/A new page.md") == "written in Gamma\n"
     assert (v.root / "Stored paper.pdf").read_bytes() == data
@@ -998,10 +1000,15 @@ def test_a_page_that_leaves_the_vault_stores_its_pdf_first_and_its_files_go_to_t
     v.write("Leaving.md", "notes\n")
     v.sync()
     page = v.page_of("Leaving.pdf")
-    doc = v.blocks(page)[page]["props"]["doc_id"]
+    doc = v.blocks(page)[page]["props"]["doc"]["hash"]
+    assert v.blocks(page)[page]["props"]["doc"] == {"format": "pdf", "name": "Leaving.pdf", "hash": doc, "ext": ".pdf",
+                                                    "at": "path"}
     v.edit(page, {"op": "set", "id": page, "props": {"folders": None}})
     v.sync()
-    assert storage.exists(v.ws, f"{doc}.pdf") and "linked_file" not in v.blocks(page)[page]["props"]
+    # stored, the same file: its hash and name kept
+    assert v.blocks(page)[page]["props"]["doc"] == {"format": "pdf", "name": "Leaving.pdf", "hash": doc, "ext": ".pdf",
+                                                    "at": "store"}
+    assert storage.exists(v.ws, f"{doc}.pdf")
     assert not (v.root / "Leaving.pdf").exists() and not (v.root / "Leaving.md").exists()
     assert v.state(page) == "live" and v.texts(page) == ["notes"] and not v.rows()
     assert sorted(os.listdir(v.root / vault_disk.TRASH / os.listdir(v.root / vault_disk.TRASH)[0])) == ["Leaving.md",
@@ -1063,7 +1070,7 @@ def test_a_callout_with_no_anchor_gamma_knows_is_a_highlight_the_relocation_run_
     v.sync()
     page = v.page_of("Paper.pdf")
     hl = v.find(page, "what I think")
-    job = jobs.latest(v.user, "relocate-highlights", f"{page}:{v.blocks(page)[page]['props']['doc_id']}")
+    job = jobs.latest(v.user, "relocate-highlights", f"{page}:{v.blocks(page)[page]['props']['doc']['hash']}")
     assert job is not None and jobs.wait(job["id"])["state"] == "done"
     props = v.blocks(page)[hl]["props"]
     assert props["quote"] == line and props["pdf_position"]["pageNumber"] == 2
@@ -1090,7 +1097,7 @@ def test_highlights_whose_run_could_not_start_are_asked_again_at_the_next_round(
     assert v.link["state"]["placing"] == [page]
     v.sync()
     assert "placing" not in v.link["state"]
-    job = jobs.latest(v.user, "relocate-highlights", f"{page}:{v.blocks(page)[page]['props']['doc_id']}")
+    job = jobs.latest(v.user, "relocate-highlights", f"{page}:{v.blocks(page)[page]['props']['doc']['hash']}")
     assert jobs.wait(job["id"])["state"] == "done"
     (hl,) = [b for b, block in v.blocks(page).items() if b != page]
     assert v.blocks(page)[hl]["props"]["pdf_position"]["rects"]
@@ -1752,7 +1759,7 @@ def test_a_pdf_attached_in_gamma_to_a_page_of_notes_is_copied_beside_them(vault,
     v.sync()
     page = v.page_of("Reading.md")
     up = owner.post("/api/uploads", files={"file": ("p.pdf", _pdf("attached later"), "application/pdf")}).json()
-    owner.put(f"/api/blocks/{page}", json={"properties": {"folders": [v.folder], "doc_id": up["doc_id"]}}).raise_for_status()
+    owner.put(f"/api/blocks/{page}", json={"properties": {"folders": [v.folder], **doc_props(up["doc_id"])}}).raise_for_status()
     v.sync()
     assert sorted(os.listdir(v.root)) == [".gamma", "Reading.md", "Reading.pdf"]
     assert v.rows()["Reading.pdf"]["page_id"] == page and (v.root / "Reading.pdf").read_bytes()[:4] == b"%PDF"
@@ -2320,7 +2327,7 @@ def test_a_pdf_pull_copied_out_follows_a_replacement_made_in_gamma(vault, owner)
     written: its problem says the page's PDF is another now."""
     v = vault()
     up = owner.post("/api/uploads", files={"file": ("paper.pdf", _pdf("stored first"), "application/pdf")}).json()
-    page = make_page(owner, "Copied", {"folders": [v.folder], "doc_id": up["doc_id"]})["id"]
+    page = make_page(owner, "Copied", {"folders": [v.folder], **doc_props(up["doc_id"])})["id"]
     v.sync()
     second = _pdf("replaced in Gamma, a corrected version")
     up = owner.post("/api/uploads", files={"file": ("paper v2.pdf", second, "application/pdf")}).json()
@@ -2352,7 +2359,7 @@ def test_a_pdf_rewritten_on_disk_keeps_one_linked_row(vault):
         v.sync()
     with connect_vaults_db() as conn:
         names = conn.execute("SELECT name FROM linked_files WHERE path = ?", (str(v.root / "P.pdf"),)).fetchall()
-    assert names == [(f"{v.blocks(page)[page]['props']['doc_id']}.pdf",)]
+    assert names == [(f"{v.blocks(page)[page]['props']['doc']['hash']}.pdf",)]
 
 
 def test_the_vaults_trash_holds_no_file_without_a_row(vault, monkeypatch):

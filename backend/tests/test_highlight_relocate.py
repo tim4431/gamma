@@ -11,7 +11,7 @@ import time
 
 import pymupdf
 import pytest
-from conftest import guest_name, workspace_of
+from conftest import doc_props, guest_name, workspace_of
 
 from gamma import highlight_relocate as hr
 from gamma import jobs, storage
@@ -1871,7 +1871,7 @@ def test_replacing_the_pdf_starts_a_job_that_moves_the_highlights(guest):
     r = guest.put(f"/api/pages/{page_id}/attachment", json={"doc_id": new_doc, "original_filename": "paper-v2.pdf"})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["properties"]["doc_id"] == new_doc and "relocation_error" not in body
+    assert body["properties"]["doc"]["hash"] == new_doc and "relocation_error" not in body
     job = body["job"]
     assert job["params"] == {"page_id": page_id, "title": "Replaced paper", "doc_id": new_doc, **DEFAULTS}
     assert job["title"] == "Placing the highlights of “Replaced paper”"
@@ -1888,7 +1888,7 @@ def test_replacing_the_pdf_starts_a_job_that_moves_the_highlights(guest):
     # the same stored file from another address: the file did not change, so nothing is named and nothing runs
     moved = guest.put(f"/api/pages/{page_id}/attachment",
                       json={"doc_id": new_doc, "source_url": "https://example.org/paper-v2.pdf"}).json()
-    assert moved["properties"]["source_url"] == "https://example.org/paper-v2.pdf"
+    assert moved["properties"]["doc"]["url"] == "https://example.org/paper-v2.pdf"
     assert "job" not in moved and "relocation_error" not in moved
     assert "doc_id" not in _props(guest, hl_a)["pdf_position"] and _props(guest, hl_c)["pdf_position"]["doc_id"] == old_doc
 
@@ -1986,7 +1986,7 @@ def test_a_replacement_names_each_highlight_s_file_and_says_when_its_run_cannot_
         m.setattr(jobs, "MAX_ACTIVE_PER_ACCOUNT", 0)
         doc2, body = _replace(guest, page_id, _pdf([[(72, 300, LINE_A), (72, 314, LINE_B)]]), "v2.pdf")
         # the replacement stands, without a run, and says why
-        assert body["properties"]["doc_id"] == doc2 and "job" not in body
+        assert body["properties"]["doc"]["hash"] == doc2 and "job" not in body
         assert "background tasks" in body["relocation_error"]
         # the same commit named the file each highlight was measured on; one that named its file keeps it
         assert _props(guest, hl_a)["pdf_position"] == {**a_before, "doc_id": doc1}
@@ -2116,13 +2116,14 @@ def test_the_highlights_of_a_page_shown_from_a_url_alone_are_placed_by_their_quo
 
 def _duplicate(client, doc, highlights):
     """A copy of a page carrying ``doc``, made as the library's Duplicate
-    makes one: the stored file shown by its address alone, no doc_id, the
+    makes one: the stored file shown without being owned (``copy``), the
     highlight blocks ``[(quote, position)]`` copied; ``(page_id, [ids])``."""
     r = client.post("/api/blocks", json={"parent_id": "root", "content": "Replaced paper (copy)",
-                                         "properties": {"source_url": f"/api/uploads/{doc}.pdf"}})
+                                         "properties": doc_props(url=f"/api/uploads/{doc}.pdf")})
     assert r.status_code == 200, r.text
     page_id = r.json()["id"]
-    assert _props(client, page_id) == {"source_url": f"/api/uploads/{doc}.pdf"}
+    assert _props(client, page_id) == {"doc": {"format": "pdf", "name": "", "hash": doc, "ext": ".pdf",
+                                               "at": "store", "copy": True}}
     ids = []
     for quote, position in highlights:
         r = client.post("/api/blocks", json={"parent_id": page_id, "content": "",
@@ -2161,7 +2162,7 @@ def test_a_pdf_shown_from_a_url_alone_starts_no_run(guest):
     r = guest.put(f"/api/pages/{page['id']}/attachment", json={"source_url": "https://example.org/paper-v2.pdf"})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["properties"]["source_url"] == "https://example.org/paper-v2.pdf" and "job" not in body
+    assert body["properties"]["doc"]["url"] == "https://example.org/paper-v2.pdf" and "job" not in body
     assert body["relocation_error"] == "the PDF is not stored on the server"
     assert _props(guest, hl)["pdf_position"]["doc_id"] == storage.UNSTORED
 

@@ -130,8 +130,8 @@ def _stored(client, report) -> dict:
             props["folders"] = [folders[f] for f in props["folders"]]
         if "labels" in props:
             props["labels"] = [tags[t] for t in props["labels"]]
-        if "doc_id" in props:
-            props["doc_id"] = True
+        if (props.get("doc") or {}).get("hash"):
+            props["doc"] = {**props["doc"], "hash": True}
         if "parent_page" in props:
             props["parent_page"] = names[props["parent_page"]]
         out[labels[pid]] = {"properties": props, "tree": [named(line) for line in _outline(block)]}
@@ -751,7 +751,8 @@ GOLDEN = {
                  'Lost': {'properties': {'original_filename': 'Lost.md'}, 'tree': ['No paper.']},
                  'Note': {'properties': {'original_filename': 'Note.md'},
                           'tree': ['## Plan', '    A paragraph.', '    - item']},
-                 'Reading': {'properties': {'original_filename': 'Reading.md', 'doc_id': True},
+                 'Reading': {'properties': {'original_filename': 'Reading.md',
+                                            'doc': {'format': 'pdf', 'name': '', 'hash': True, 'ext': '.pdf', 'at': 'store'}},
                              'tree': ['The paper.']},
                  'Note (2)': {'properties': {'original_filename': 'Note.md', 'folders': [['Daily']]},
                               'tree': ['# A title of its own', '    ## Plan', "        The day's plan."]},
@@ -783,12 +784,13 @@ GOLDEN = {
                                                          'authors': ['Ada Lovelace', 'Alan Turing'],
                                                          'year': '2024',
                                                          'source': 'manual'},
-                                                'source_url': 'https://example.org/paper.pdf',
+                                                'doc': {'format': 'pdf', 'name': '', 'hash': '', 'ext': '.pdf',
+                                                        'at': 'url', 'url': 'https://example.org/paper.pdf'},
                                                 'folders': [['Library', 'Reading', '2024']],
                                                 'labels': ['paper']},
                                  'tree': ['p.1 A highlight', '    A comment on it', 'p.2 Another']},
                  'With a PDF': {'properties': {'original_filename': 'With a PDF.md',
-                                               'doc_id': True,
+                                               'doc': {'format': 'pdf', 'name': '', 'hash': True, 'ext': '.pdf', 'at': 'store'},
                                                'folders': [['Library']]},
                                 'tree': ['Read it.']},
                  'Sub page': {'properties': {'original_filename': 'Sub page.md', 'parent_page': 'Paper notes'},

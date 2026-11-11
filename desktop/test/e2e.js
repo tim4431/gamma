@@ -462,7 +462,8 @@ async function main() {
         const u = await up.json();
         const H = { 'Content-Type': 'application/json' };
         const page = await fetch('/api/blocks', { method: 'POST', headers: H, credentials: 'same-origin', body: JSON.stringify({ parent_id: 'root', content: 'E2E paper' }) }).then((r) => r.json());
-        await fetch('/api/blocks/' + page.id, { method: 'PUT', headers: H, credentials: 'same-origin', body: JSON.stringify({ properties: { source_url: u.source_url, doc_id: u.doc_id } }) });
+        const att = await fetch('/api/pages/' + page.id + '/attachment', { method: 'POST', headers: H, credentials: 'same-origin', body: JSON.stringify({ doc_id: u.doc_id }) });
+        if (!att.ok) throw new Error('attach ' + att.status + ' ' + (await att.text()));
         await fetch('/api/blocks', { method: 'POST', headers: H, credentials: 'same-origin', body: JSON.stringify({ parent_id: page.id, content: 'A note with $E = mc^2$ and a table\n\n| a | b |\n|---|---|\n| 1 | 2 |' }) });
         return { pageId: page.id, sourceUrl: u.source_url };
       }, b64);
@@ -654,8 +655,9 @@ async function main() {
       assert.equal(new URL(content.url()).searchParams.get('ws'), lab, 'in the workspace the window showed');
       const page = await serverCall(app, `/api/blocks/${pageId}`, { ws: lab });
       assert.equal(page.content, 'Opened with Gamma', 'titled with the file\'s stem');
-      assert(page.properties.doc_id, 'the page carries the file: ' + JSON.stringify(page.properties));
-      assert.equal(page.properties.linked_file, true, 'read where it is, not stored: ' + JSON.stringify(page.properties));
+      const doc = page.properties.doc || {};
+      assert(doc.hash, 'the page carries the file: ' + JSON.stringify(page.properties));
+      assert.equal(doc.at, 'path', 'read where it is, not stored: ' + JSON.stringify(page.properties));
       assert(page.properties.parent_page, 'inside Opened files');
       const opened = await serverCall(app, `/api/blocks/${page.properties.parent_page}`, { ws: lab });
       assert.equal(opened.properties.opened_files, true, 'the one page Opened files: ' + JSON.stringify(opened.properties));
@@ -667,7 +669,7 @@ async function main() {
       assert.equal(again.page, page.id, 'the same page, not a second one: ' + JSON.stringify(again));
       const twice = await serverCall(app, `/api/blocks/${page.id}/children`, { ws: lab });
       assert.equal(JSON.stringify(twice).split('Saved in another reader').length, blocks.split('Saved in another reader').length, 'the highlight is not imported twice');
-      openedPage = { id: page.id, ws: lab, doc: page.properties.doc_id };
+      openedPage = { id: page.id, ws: lab, doc: doc.hash };
       return `${page.id} in ${lab}`;
     });
 
@@ -689,8 +691,8 @@ async function main() {
         const pdf = await fetch(`/api/uploads/${d}.pdf`, { credentials: 'same-origin' });
         return { props: page.properties, kids, pdf: pdf.status };
       }, [id, doc]);
-      assert.equal(there.props.doc_id, doc, 'the same PDF');
-      assert.equal(there.props.linked_file, undefined, 'no file of this computer read there: ' + JSON.stringify(there.props));
+      assert.equal((there.props.doc || {}).hash, doc, 'the same PDF');
+      assert.equal((there.props.doc || {}).at, 'store', 'no file of this computer read there: ' + JSON.stringify(there.props));
       assert.equal(there.props.parent_page, undefined, 'out of Opened files: ' + JSON.stringify(there.props));
       assert.equal(there.pdf, 200, 'its bytes stored there');
       assert(there.kids.includes('Saved in another reader'), 'its highlight came with it');
@@ -952,9 +954,9 @@ async function main() {
       await waitLoggedIn(content);
       const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000)).current;
       const page = await serverCall(app, '/api/blocks', { ws, method: 'POST', body: { parent_id: 'root', content: 'Followed draft' } });
-      const docOf = async () => (await serverCall(app, `/api/blocks/${page.id}`, { ws })).properties.doc_id || '';
+      const docOf = async () => ((await serverCall(app, `/api/blocks/${page.id}`, { ws })).properties.doc || {}).hash || '';
       // A build's output, dated a while back so that it reads as finished
-      // (settled: a few seconds old, %%EOF at its end): its doc_id.
+      // (settled: a few seconds old, %%EOF at its end): its hash.
       const pdf = path.join(profile, 'build', 'main.pdf');
       fs.mkdirSync(path.dirname(pdf), { recursive: true });
       const build = (text) => {

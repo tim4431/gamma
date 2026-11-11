@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from conftest import account_of, login, make_user
+from conftest import account_of, doc_props, login, make_user
 from zotero_engine import (GROUP, LIB, _by_name, _collection_rows, _edit, _folder_ops, _link, _page,  # noqa: F401
                            _paper, _paths, _queue_entries, _rows, _state, _stored_pdf, _sync, _writes, background,
                            drop_link_row, drop_pending, fake, held, idle, link_row, made, me, owner_id)
@@ -563,7 +563,7 @@ def test_the_preview_pairs_as_the_first_link_does_by_md5_and_standalone_key(me, 
     keys = made["keys"]
     ws = workspaces.create("Preview by file", owner_id)["id"]
     zotero_local.create_page(ws, page_id="zfxByFile", title="attention copy.pdf", actor="zi", client="t",
-                             props={"doc_id": _stored_pdf(ws, pdf_bytes())})  # Zotero's very file, no record
+                             props=doc_props(_stored_pdf(ws, pdf_bytes())))  # Zotero's very file, no record
     zotero_local.create_page(ws, page_id="zfxByKey", title="handout", actor="zi", client="t",
                              props={"zotero_key": item_uri(LIB, keys["standalone_pdf"])})
     preview = zotero_sync.preview(owner_id, LIB, ws)

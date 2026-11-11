@@ -31,7 +31,7 @@ import { progressText, taskTitle } from "../tasks/taskKinds.js";
 import { isActive } from "../tasks/taskModel.js";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
-import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, blockLinkUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, attachmentViewerUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "../shared/lib/utils";
+import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, blockLinkUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "../shared/lib/utils";
 import { ITEM_TYPES, itemTypeFields, itemTypeOf } from "../shared/lib/itemTypes.js";
 import {
   AutoGrowTextarea,
@@ -270,8 +270,6 @@ import {
   topPageOf,
   pageAncestors,
   friendlyApiError,
-  attachmentFile,
-  pageAttachment,
   pageKindLabel,
   defaultPageTitle,
   metadataToDraft,
@@ -285,6 +283,9 @@ import {
   folderMatches,
   folderPathNames,
 } from "../library/libraryUtils";
+import { copyDocument, documentViewerUrl, fileHash, inPlace, isPdf, ownHash, pageDocument, parseUploadUrl, pdfProxyUrl, storedName, uploadUrl } from "../documents/pageDocument.js";
+import { documentView, viewerOf } from "../documents/documentView.js";
+import DocumentPane from "../documents/DocumentPane.jsx";
 import { createLibraryMatcher } from "../library/librarySearch";
 import { prefetchTrash } from "../library/trashList";
 import { batchText, bulkOutcomes, runBatch, runBulk } from "../library/pageBatch.js";
@@ -1001,9 +1002,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const link = parseGammaLink(window.location.href, window.location.origin);
     return link?.kind === "citation" ? link : null;
   });
-  const [docId, setDocId] = useState("");
   const [focusedBlockId, setFocusedBlockId] = useState("");
   const [focusedBlock, setFocusedBlock] = useState(null);
+  // The open page's document (documents/pageDocument.js): THE switch for
+  // layout and page-level affordances. `docId`: the hash of the PDF it owns
+  // ("" for a copy, which shows another page's file).
+  const doc = useMemo(() => pageDocument(focusedBlock), [focusedBlock]);
+  const docId = ownHash(doc);
   // The open page's filing, ids: `properties.labels` / `properties.folders`.
   const [pageLabels, setPageLabels] = useState([]);
   const [pageFolders, setPageFolders] = useState([]);
@@ -1403,15 +1408,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Deep-copy a page: new root block + a subtree clone with fresh block ids
   // (a highlight's id is its block's; same-page references remapped). The copy
-  // shows the same PDF through its source_url but doesn't carry its doc_id:
-  // a PDF has one page, the one "by-doc" lookups and the extension find.
+  // shows the same file as a copy (documents/pageDocument.js copyDocument),
+  // which it does not own: a PDF has one page, the one "by-doc" lookups and
+  // the extension find.
   async function duplicatePage(pageId) {
     const data = await apiJson(`${API}/blocks/${pageId}/subtree`);
     const src = data.block || {};
     // (nor what a Zotero link says of the page it keeps, which a copy is not: docs/dev/zotero_sync.md;
     // nor its Notion id, or an import of that page would find the copy)
-    const { doc_id: pdfId, zotero_pdf: _zoteroPdf, zotero_readonly: _readonly, zotero_author: _author, notion_id: _notionId, ...properties } = src.properties || {};
-    if (pdfId && !properties.source_url) properties.source_url = `/api/uploads/${pdfId}.pdf`;
+    const { doc: _srcDoc, zotero_pdf: _zoteroPdf, zotero_readonly: _readonly, zotero_author: _author, notion_id: _notionId, ...properties } = src.properties || {};
+    const copy = copyDocument(pageDocument(src));
+    if (copy) properties.doc = copy;
     const created = await apiJson(`${API}/blocks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2893,10 +2900,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The latest openBlock call: an earlier open landing after it neither
   // posts nor takes down the "Opening…" of the one the reader is waiting on.
   const openSeqRef = useRef(0);
-  // What each open tab's page carries, for its kind icon (tabs store only
-  // id, title and pinned).
-  const tabKinds = useMemo(() => new Map(homeBlocks.map((b) => [b.id, pageAttachment(b) ? "pdf" : "page"])), [homeBlocks]);
-  const tabKindOf = useCallback((id) => tabKinds.get(id) || "page", [tabKinds]);
+  // The format of the document each listed page carries ("" for none), for
+  // a tab's kind icon (tabs store only id, title and pinned).
+  const tabKinds = useMemo(() => new Map(homeBlocks.map((b) => [b.id, pageDocument(b)?.format || ""])), [homeBlocks]);
+  const tabKindOf = useCallback((id) => tabKinds.get(id) || "", [tabKinds]);
 
   // Background tasks (tasks/useTasks.js, docs/dev/tasks.md): the server's
   // jobs — exports, backups, restores, imports, the search indexer — and
@@ -4145,7 +4152,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setPptCite("");
     resetCopied();
     const b = focusedBlock;
-    if (shareMode || !b?.id || (!b.properties?.meta && !pageAttachment(b))) { setPageMeta(null); setPageBibtex(""); return; }
+    if (shareMode || !b?.id || (!b.properties?.meta && !isPdf(pageDocument(b)))) { setPageMeta(null); setPageBibtex(""); return; }
     if (b.properties.meta) {
       setPageMeta(b.properties.meta);
       setPageBibtex(b.properties.bibtex || "");
@@ -5210,13 +5217,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           if ("ppt_cite" in op.props) setPptCite(props.ppt_cite || "");
           // The page's PDF replaced (attached, detached) in another tab or
           // by another person: the viewer follows, as openBlock shows it.
-          const now = pageAttachment({ properties: props });
-          if ((pageAttachment(b)?.url || "") !== (now?.url || "")) {
+          // (by the address it is read from: a file the library takes in,
+          // read in place before, is still the file the viewer shows)
+          const was = pageDocument(b);
+          const now = pageDocument({ properties: props });
+          if ((was?.url || "") !== (now?.url || "")) {
             // a new version from elsewhere: a file pushed from disk, say
-            if (pageAttachment(b)?.url && now?.url) guideEvents.emit("page.fileReplaced", { id: b.id });
-            setDocId(props.doc_id || "");
+            if (was && now) guideEvents.emit("page.fileReplaced", { id: b.id });
             setInputUrl(now?.url || "");
-            setPdfUrl(attachmentViewerUrl(now?.url, { share: shareMode ? initialShare : "" }));
+            setPdfUrl(documentViewerUrl(now, { share: shareMode ? initialShare : "" }));
           }
         }
         return { ...b, ...(op.content !== undefined ? { content: op.content } : {}), properties: props };
@@ -5763,9 +5772,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     // Uploaded PDFs are already hosted locally — no external resolve or proxy.
     if (url.startsWith(`${API}/uploads/`)) {
-      const m = url.match(/\/([0-9a-f]+)\.pdf$/);
-      const doc_id = m ? m[1] : await getDocIdForUrl(url);
-      return { doc_id, source_url: url, original_filename: "", viewerUrl: `${API}/uploads/${doc_id}.pdf`, note: "" };
+      const own = parseUploadUrl(url);
+      const doc_id = own?.ext === ".pdf" ? own.stem : await getDocIdForUrl(url);
+      return { doc_id, source_url: url, original_filename: "", viewerUrl: uploadUrl(storedName(doc_id, ".pdf")), note: "" };
     }
     const resolved = await resolvePdfUrl(url, oaFallback);
     const source_url = resolved.source_url;
@@ -5783,7 +5792,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   async function renameTitle(newTitle) {
     if (readOnly || !focusedBlockId) return;
     const trimmed = (newTitle || "").trim();
-    const finalTitle = trimmed || defaultPageTitle(pageAttach);
+    const finalTitle = trimmed || defaultPageTitle(doc);
     setPageTitle(finalTitle);
     setFocusedBlock((b) => b ? { ...b, content: finalTitle } : b);
     try {
@@ -6097,7 +6106,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!sourceUrl || shareMode) return;
     // Prefer the saved copy, including its notes and locally cached PDF.
     // Re-resolving an arXiv link needlessly depends on the external source.
-    const existingId = findPageForUrl(sourceUrl, homeBlocks.filter((b) => pageAttachment(b)));
+    const existingId = findPageForUrl(sourceUrl, homeBlocks.filter((b) => isPdf(pageDocument(b))));
     if (existingId) {
       await openBlock(existingId);
       return;
@@ -6244,7 +6253,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // unless another page uses it.
   async function attachPdfToPage({ file, url, replace = false }) {
     const pageId = focusedBlockId;
-    if (!pageId || shareMode || notebook || (!file && !url) || (replace ? !pageAttach || readOnly : pageAttach)) return;
+    if (!pageId || shareMode || notebook || (!file && !url) || (replace ? !doc || readOnly : doc)) return;
     if (file && !isPdfFile(file)) { setStatus(t("Only PDF files can be attached — other files go into a block.")); return; }
     setOpenPopover(null);
     setAttachUrl("");
@@ -6312,11 +6321,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // blocks); the file goes unless another page still carries it.
   function detachPdfFromPage() {
     const pageId = focusedBlockId;
-    if (!pageId || !pageAttach || readOnly) return;
+    if (!pageId || !doc || readOnly) return;
     setOpenPopover(null);
     setConfirmBox({
       title: T("Detach PDF"),
-      message: t("Remove \"{pageAttach}\" from this page? The notes and highlights stay as blocks; the file is deleted unless another page uses it. This can't be undone.", { pageAttach: pageAttach.name || defaultPageTitle(pageAttach) }),
+      message: t("Remove \"{pageAttach}\" from this page? The notes and highlights stay as blocks; the file is deleted unless another page uses it. This can't be undone.", { pageAttach: doc.name || defaultPageTitle(doc) }),
       confirmLabel: t("Detach"),
       danger: true,
       onConfirm: async () => {
@@ -6348,10 +6357,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       let page;
       if (ext === "pdf") {
         page = await post(`/blocks/by-doc/${encodeURIComponent(hash)}`, {
-          default_title: "", source_url: `/api/uploads/${hash}.pdf`, original_filename: name || "", folder,
+          default_title: "", source_url: uploadUrl(storedName(hash, ".pdf")), original_filename: name || "", folder,
         });
       } else {
-        page = (await post("/pages/from-file", { filename: `${hash}.${ext}`, original: name || "", folder })).page;
+        page = (await post("/pages/from-file", { filename: storedName(hash, `.${ext}`), original: name || "", folder })).page;
       }
       rememberDocPage(hash, { id: page.id, title: page.content });
       fetchHomeBlocks();
@@ -6530,18 +6539,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       loadedSeqRef.current = subtreeData.seq ?? null;
     } catch {}
 
-    const props = block.properties || {};
-    const src = pageAttachment(block)?.url || "";
-    const proxiedUrl = attachmentViewerUrl(src, { share: token });
+    const blockDoc = pageDocument(block);
+    const proxiedUrl = isPdf(blockDoc) ? documentViewerUrl(blockDoc, { share: token }) : "";
 
     setFocusedBlockId(block.id);
     setFocusedBlock(block);
     rereadFamily();
     setView(EMPTY_VIEW);
-    setPageTitle(block.content || defaultPageTitle(pageAttachment(block)));
+    setPageTitle(block.content || defaultPageTitle(blockDoc));
     setBlocks(loaded(childBlocks));
-    setDocId(props.doc_id || "");
-    setInputUrl(src);
+    setInputUrl(blockDoc?.url || "");
     setPdfUrl(proxiedUrl);
     // Edit rights arrive with the share (none while its workspace is being
     // deleted, which the pill keeps saying); the autosave effect's suppress
@@ -6617,10 +6624,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // and a PDF's comment margin with them, so none comes a round trip
     // after it. Only for a page the library lists: a link to one that is
     // gone asks for its tree alone.
-    const listed = tabKinds.get(blockId);
+    const listed = tabKinds.has(blockId);
     if (listed && blockId !== focusedBlockId) commentsRef.current.prefetch(blockId);
     if (listed) prefetchFamily(blockId);
-    if (listed === "pdf") preloadCommentMargin();
+    if (tabKinds.get(blockId) === "pdf") preloadCommentMargin();
     // Until the tree lands the page on screen stays, and "Opening…" shows
     // only once the open has kept the reader waiting.
     const switching = !!focusedBlockId;
@@ -6676,14 +6683,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setPageTitle(block.content || t("Untitled"));
       setPageLabels(props.labels || []);
       setPageFolders(props.folders || []);
-      setDocId(props.doc_id || "");
 
       let openedPdfUrl = "";
-      const attachment = pageAttachment(block);
-      if (attachment) {
-        const src = attachment.url;
-        openedPdfUrl = opts?.viewerUrl || attachmentViewerUrl(src);
-        setInputUrl(src);
+      const blockDoc = pageDocument(block);
+      if (isPdf(blockDoc)) {
+        openedPdfUrl = opts?.viewerUrl || documentViewerUrl(blockDoc);
+        setInputUrl(blockDoc.url);
         setPdfUrl(openedPdfUrl);
         setBlocks(loaded(childBlocks));
         preloadCommentMargin();
@@ -6709,7 +6714,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // a text-only page lands on its synced row.
       const has = (id) => !!id && flattenBlocks(childBlocks).some((b) => b.id === id);
       const kept = opts?.restoreScroll ? notesPlaceRef.current[blockId] : null;
-      const notePos = !attachment ? readPosRef.current[blockId] : null;
+      const notePos = !viewerOf(blockDoc?.format) ? readPosRef.current[blockId] : null;
       landingRef.current = opts?.block ? null
         : kept && (!kept.id || has(kept.id)) ? { ...kept, kept: true }
           : { id: notePos?.page === 0 && has(notePos.block) ? notePos.block : "" };
@@ -6758,7 +6763,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // A press on a view of the page brings the zoom the view showed.
       const zoom = opts?.zoom || savedUi?.pdfScale;
       if (zoom) setPdfScale(zoom);
-      else if (!attachment && sheetsOf(childBlocks).length) setPdfScale("page-width");
+      else if (!viewerOf(blockDoc?.format) && sheetsOf(childBlocks).length) setPdfScale("page-width");
       if (opts?.restoreScroll) restorePdfScroll(tabScrollRef.current[blockId], blockId, openedPdfUrl);
       // "Ready." answers an "Opening…" the reader saw, for a page opened
       // where none was (the library, a link): a switch between pages is
@@ -6925,7 +6930,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }
       }
       notesPlaceRef.current[focusedBlockId] = place;
-      if (!shareMode && !pageAttach) recordNotePos(focusedBlockId, place.id);
+      if (!shareMode && !viewerOf(doc?.format)) recordNotePos(focusedBlockId, place.id);
     }
     // A page's sheets keep their place, on whichever view shows them.
     if (focusedBlockId && hasSheets) {
@@ -7063,7 +7068,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setView(EMPTY_VIEW);
     setBlocks(loaded([]));
     setPdfUrl("");
-    setDocId("");
     setInputUrl("");
     setPageTitle("");
     setPageLabels([]);
@@ -7817,9 +7821,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return withId.id;
   }
 
-  // What the open page carries — THE switch for layout and page-level
-  // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
-  const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
   // A page whose PDF Zotero holds and Gamma not yet (its `zotero_pdf`,
   // docs/dev/zotero_sync.md): its card shows in the attach popover, in the
   // prompt's place while something brings that PDF (`zoteroPdfShown`, the
@@ -7827,7 +7828,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // (a linked file, WebDAV, no file access, a failed download, no link any
   // more), so the page takes a copy of its own, which stays in Gamma.
   // Opening the page asks a live link for that PDF first, once.
-  const zoteroPdf = !pageAttach && focusedBlock?.properties?.zotero_pdf || null;
+  const zoteroPdf = !doc && focusedBlock?.properties?.zotero_pdf || null;
   const zoteroSource = shareMode ? "" : zoteroPdfSource(workspace);
   const zoteroLinked = zoteroSource === "zotero";
   const zoteroCard = zoteroPdfCard(zoteroPdf, { source: zoteroSource });
@@ -7846,10 +7847,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // (setNotebookView) — puts them in the viewer's place, with the same ink
   // tools, and lists them in the notes as rows.
   const nbSheets = useMemo(() => (focusedBlockId ? sheetsOf(blocks) : []), [focusedBlockId, blocks]);
-  const hasSheets = !pageAttach && nbSheets.length > 0;
-  const notebook = hasSheets && nbViewPages.has(focusedBlockId);
-  // The viewer is hidden: a PDF closed (never the notebook view's sheets).
-  const viewerHidden = !notebook && pdfHidden;
+  // Which viewer mounts and whether it shows (documents/documentView.js, the
+  // rule a tab group's page shows by too): pdfUrl is only the PDF viewer's
+  // input. A closed PDF stays mounted (div.viewerWrap pdfHidden); a closed
+  // pane never hides the notebook view's sheets.
+  const docView = documentView({ doc, url: pdfUrl, sheets: nbSheets.length,
+    notebook: nbViewPages.has(focusedBlockId), hidden: pdfHidden, open: !!focusedBlockId });
+  const hasSheets = docView.notebookAvailable;
+  const notebook = docView.notebook;
 
   // --- Handwriting ----------------------------------------------------------
   // Strokes live in inkStore drafts and reach the server as an .ink upload
@@ -7958,7 +7963,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // onHaptic); a stroke or an erase pass marks a held squeeze used through
   // noteSqueezeUse.
   const { hostHaptic, noteSqueezeUse } = usePencil({ readOnly,
-    takesInk: ((!!pdfUrl || notebook) && !viewerHidden) || nbSheets.length > 0,
+    takesInk: docView.shown || nbSheets.length > 0,
     inkUi, inkVisible, previousTool, pickInkTool, applyPencilUi, inkSelection, selectionStill, restoreInkSelection,
     stripUndo, inkPencilTap, inkPencilSqueeze, inkHaptics });
   // A native app's own bar above the page (app/useShellBar.js): the View
@@ -8118,7 +8123,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, [attachModeBlockId, moveHighlightId]);
   // Another page, or another file on this one, ends a move: the selection
   // it waits for would be on a PDF the highlight was not picked from.
-  useEffect(() => { setMoveHighlightId(null); }, [focusedBlockId, pageAttach?.id, pageAttach?.url]);
+  useEffect(() => { setMoveHighlightId(null); }, [focusedBlockId, docId, doc?.url]);
 
   // The highlight takes the selection's place, and its text as its quote:
   // a tree edit like any other (ops, undo). Whatever marked it lost or
@@ -8235,10 +8240,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // waits for it; a PDF shown from a URL alone has no stored file to read.
   const relocating = tasks.jobs.some((job) => job.kind === "relocate-highlights" && isActive(job)
     && job.params?.page_id === focusedBlockId);
-  const pdfStored = !!attachmentFile(pageAttach);
+  const pdfStored = !!fileHash(doc);
   // A PDF read where it lies on this computer (gamma/linked_files.py): no
   // other file replaces it from the Document menu.
-  const pdfLinked = !!focusedBlock?.properties?.linked_file;
+  const pdfLinked = inPlace(doc);
   // The page as the PDF translated view sees it (translateState.scopeOf):
   // the page and the PDF it shows, together, since while the next PDF loads
   // the viewer still shows the last one, which this page must not name.
@@ -8247,7 +8252,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // opening text. file: what the server keeps the paper's translations
   // under, the page's file (an upload, a duplicated page's, or for a PDF
   // opened from its link the copy the proxy saves under the link's hash).
-  const pdfTransScope = { url: pdfUrl, pageId: focusedBlockId, stored: !!docIdOf(pdfUrl), file: attachmentFile(pageAttach) };
+  const pdfTransScope = { url: pdfUrl, pageId: focusedBlockId, stored: !!docIdOf(pdfUrl), file: fileHash(doc) };
   // The file "Forget this paper's translations" names: the page's, once the document
   // the viewer reports on (the one on screen) is the page's.
   const pdfTransFile = scopeOf(pdfTransState.url, pdfTransScope).file;
@@ -8270,8 +8275,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The translation the viewer shows over the page's PDF, which the page's
   // annotated PDF writes in place of the original text
   // (pdf/translateExport.js): only for the page's own stored file, the one
-  // the export job reads (the page's `doc_id` names it; exportFile). It is
-  // read under pdfUrl, the address the viewer opens for this page, so a last
+  // the export job reads (the hash of the page's own document names it;
+  // exportFile). It is read under pdfUrl, the address the viewer opens for this page, so a last
   // page's translation still on screen while this one's PDF loads is never
   // read. Never in a share view, which cannot translate. The export reads it
   // as Export is pressed (tasks/useAppJobs.js runExport); the dialog says how
@@ -8281,7 +8286,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // with no model call (translateCtl.seedAll), so the dialog counts the pages
   // the file will hold; until then it names no number and its Export waits.
   // The export seeds again, which reads only what is still unseeded.
-  const translatedFile = () => (shareMode ? "" : exportFile(pdfUrl, pageAttach));
+  const translatedFile = () => (shareMode ? "" : exportFile(pdfUrl, doc));
   async function exportTranslation() {
     const file = translatedFile();
     if (file) await pdfTranslateCtl.current?.seedAll(pdfUrl);
@@ -8319,7 +8324,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     layoutOf: async (paper, signal) => {
       if (openHere(paper)) return exportTranslation();
       const key = folderKeyOf(paper.doc_id);
-      return key && paperLayout({ url: `${API}/uploads/${paper.doc_id}.pdf`, pageId: paper.page_id, key, open: openPdfDocument,
+      return key && paperLayout({ url: uploadUrl(storedName(paper.doc_id, ".pdf")), pageId: paper.page_id, key, open: openPdfDocument,
         signal, lookup: lookupRequest({ lang: langOfKey(key), model: modelOfKey(key) }) });
     },
   });
@@ -8882,7 +8887,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // hides what is translated, or translates the page being read when
     // nothing is, as the button's click. A closed PDF, or a phone's panel over
     // it, starts no job the reader cannot see.
-    translation: !shareMode && !homeMode && pdfUrl && !viewerHidden && !(isPhone && phonePanel) ? {
+    translation: !shareMode && !homeMode && docView.viewer === "pdf" && !docView.hidden && !(isPhone && phonePanel) ? {
       ...pdfTransState,
       toggle: () => {
         if (pdfTransState.pages > 0) pdfTranslateCtl.current?.setShown(!pdfTransState.shown);
@@ -8999,7 +9004,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       },
       show: (surface) => {
         if (surface === "chat" || surface === "windows") showChat();
-        if (surface === "windows" && !homeMode && pageAttach && !pdfHidden) {
+        if (surface === "windows" && !homeMode && doc && !pdfHidden) {
           setNotesVisible(true);
           setCollapsedWins((prev) => ({ ...prev, notes: false }));
         }
@@ -9049,14 +9054,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     synced: { value: tourProgress, set: setTourProgress,
       ready: profileSync.state !== "loading" && profileSync.state !== "signed-out" },
     facts: {
-      view: homeMode ? "home" : pageAttach ? "pdf" : "page", hasPdf: !!pageAttach,
+      view: homeMode ? "home" : isPdf(doc) ? "pdf" : "page", hasPdf: isPdf(doc),
       // unknown (undefined) until /api/ai/models answers, so the AI chat
       // tour picks neither its setup step nor its chat steps too early
       aiConfigured: aiInfo ? !!aiInfo.enabled && !!aiInfo.models?.length : undefined,
       aiEditable: !authUser?.is_guest, // a guest can't store keys
       guest: !!authUser?.is_guest, // no Zotero link, assistant or comments of their own
       desktop: IS_DESKTOP, // the desktop app: files on this computer
-      pdfChatVisible: !!pageAttach && !pdfHidden && !collapsedWins.pdf && !isPhone,
+      pdfChatVisible: isPdf(doc) && !pdfHidden && !collapsedWins.pdf && !isPhone,
       guideAvailable: !settingsOpen,
       // the phone (compact) layout: Home is the bottom bar's Library tab
       phone: !!isPhone,
@@ -9080,7 +9085,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // the open paper's details are unverified (the ⓘ button's red "!"),
       // with the notes header that carries the button on screen
       unverifiedMeta: !!(focusedBlockId && !homeMode && pageMeta && metaSrc?.warn && !metaBusy)
-        && (isPhone ? phonePanel === "notes" : !pageAttach || pdfHidden || (notesVisible && !collapsedWins.notes)),
+        && (isPhone ? phonePanel === "notes" : !doc || pdfHidden || (notesVisible && !collapsedWins.notes)),
       // the first tour was finished before this page load (the Settings hint
       // comes on a later visit, not on top of the finish card)
       firstRunDone: firstRunDoneAtLoad.current === true,
@@ -9096,7 +9101,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // the viewer's left edge (its tool column, outline and full screen)
       // is on screen: a PDF or the notebook view, not closed, and on a
       // phone not under the Notes or Chat panel
-      viewerTools: !!(pdfUrl || notebook) && !viewerHidden && !(isPhone && phonePanel),
+      viewerTools: docView.shown && !(isPhone && phonePanel),
       // this workspace has an offline copy, a publication or a Zotero link, so it has a sync pill
       clonedWorkspace: !!syncKind,
       installable: HOME_SCREEN_INSTALLABLE,
@@ -9256,9 +9261,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (folderFilter && !libTree.folders.has(folderFilter)) openFolder(lib.root);
     else if (labelFilter && labelFilter !== NO_LABEL && !libTree.labels.has(labelFilter)) closeLabel();
   }, [homeLoaded, libTree]); // eslint-disable-line react-hooks/exhaustive-deps
-  // A page with no attachment — the owner's pages and shared pages alike —
-  // puts the notes in the center instead of an empty viewer.
-  const pageOnly = !!focusedBlockId && !pageAttach && !notebook;
   // Phone: navigating to another page (or home) closes any overlay panel.
   useEffect(() => { setPhonePanel(null); }, [focusedBlockId, homeMode]);
   // what each page is filed in (a sub-page in its top's folders), where it
@@ -10206,7 +10208,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The pages among the notes (notebook/NoteSheet.jsx): their marks and the
   // sheet actions (the tools reach them through PageToolsContext), and the
   // strip over the notes when no viewer is there to hold it.
-  const viewerInk = (!!pdfUrl || notebook) && !viewerHidden;
+  const viewerInk = docView.shown;
   // The pen's strip and the text highlighter both take a drag on the page:
   // opening one puts the other away.
   const openInkTools = () => {
@@ -10253,7 +10255,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }}
       onLasso={setInkLassoMode} lassoPictures={inkLassoPictures} onLassoPictures={setInkLassoPictures}
       // the zoom window: on a PDF page in view, never on a phone
-      zoomOpen={!!inkZoom} zoomAvailable={!!pdfUrl && !pdfHidden && !notebook} phone={isPhone} onToggleZoom={toggleInkZoom}
+      zoomOpen={!!inkZoom} zoomAvailable={docView.viewer === "pdf" && !docView.notebook && !pdfHidden} phone={isPhone} onToggleZoom={toggleInkZoom}
       onClose={closeInkStrip}
     />
   );
@@ -10264,9 +10266,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const notesReplayDock = !viewerInk && (playerBar || recordingNow)
     ? <div className="notesReplayDock">{playerBar}<RecordingPill /></div> : null;
 
-  // When no viewer shows (home, page-only, or PDF closed) the notes window
-  // takes the center instead, whether or not the Notes dock is on.
-  const centerNotes = viewerHidden || homeMode || pageOnly;
+  // When no viewer shows (home, a page with no document pane nor its
+  // notebook view, the owner's pages and shared pages alike, or the pane
+  // closed) the notes window takes the center instead of an empty viewer,
+  // whether or not the Notes dock is on.
+  const centerNotes = docView.center || homeMode;
   const notesWindow = notesVisible || centerNotes ? (
     <div className="sidebar" data-guide="dock.notes" ref={liveSidebarRef}>
           {!homeMode && <div className="pageTitleRow">
@@ -10482,25 +10486,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     <NotebookIcon size={16} /> {t("Notebook")}
                   </button>
                 ) : null}
-                {pageAttach || zoteroPdf || (!readOnly && !notebook) ? (
+                {doc || zoteroPdf || (!readOnly && !notebook) ? (
                   <span data-popover="attach" className="popoverAnchor">
                     <button
-                      className={`pageActionBtn ${pageAttach ? "active" : ""}`} data-guide="page.document"
-                      title={pageAttach
-                        ? t("Document: {name}", { name: pageAttach.name || defaultPageTitle(pageAttach) })
+                      className={`pageActionBtn ${doc ? "active" : ""}`} data-guide="page.document"
+                      title={doc
+                        ? t("Document: {name}", { name: doc.name || defaultPageTitle(doc) })
                         : zoteroPdfShown ? zoteroCard.title
                         : t("Attach a PDF as this page's document (URL, arXiv id, DOI, or upload) — it gets the viewer, highlights and metadata. Other files go into blocks.")}
-                      aria-label={pageAttach ? t("Document") : zoteroPdfShown ? t("PDF in Zotero") : t("Attach document")}
-                      aria-haspopup={pageAttach ? "menu" : undefined}
+                      aria-label={doc ? t("Document") : zoteroPdfShown ? t("PDF in Zotero") : t("Attach document")}
+                      aria-haspopup={doc ? "menu" : undefined}
                       aria-expanded={openPopover === "attach"}
                       disabled={loading}
                       onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
                     >{zoteroPdfShown ? <CloudDownloadIcon size={16} /> : <PaperclipIcon size={16} />}</button>
-                    {openPopover === "attach" && pageAttach ? (
+                    {openPopover === "attach" && doc ? (
                       <Popover as={MenuScope} className="addPopover attachPopover" aria-label={t("Document")}>
                         <div className="popoverTitle">{t("Document")}</div>
-                        <div className="popoverHint attachFileName" title={pageAttach.url}>
-                          <PaperclipIcon size={14} /> {pageAttach.name || defaultPageTitle(pageAttach)}
+                        <div className="popoverHint attachFileName" title={doc.url}>
+                          <PaperclipIcon size={14} /> {doc.name || defaultPageTitle(doc)}
                         </div>
                         <MenuItem icon={pdfHidden ? EyeIcon : EyeOffIcon} onClick={() => { setPdfHidden((h) => !h); setOpenPopover(null); }}>
                           {pdfHidden ? t("Show the PDF") : t("Hide the PDF")}
@@ -10527,7 +10531,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         ) : null}
                         {!readOnly ? (
                           <>
-                            {/* A PDF read where it lies on this computer (`linked_file`) has its file:
+                            {/* A PDF read where it lies on this computer (its doc at "path") has its file:
                                 a new one is a new version of that file, which comes by itself, or the
                                 file found again (Locate…); an upload or another file would leave the
                                 page reading the old one. */}
@@ -10607,7 +10611,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onReveal={() => askShell("reveal-on-disk", { page: focusedBlockId })}
                   onAdd={() => vault.setAdding([focusedBlockId])}
                   onEdit={() => vault.setEditing(focusedBlockId)} />
-                {pageAttach || pageMeta ? (
+                {isPdf(doc) || pageMeta ? (
                   <span data-popover="meta" className="popoverAnchor">
                     <button
                       ref={metaBtnRef}
@@ -10816,7 +10820,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               ) : null}
                             </span>
                           </div>
-                          {pageAttach && inputUrl ? (
+                          {doc && inputUrl ? (
                             <div className="metaRow">
                               <span className="metaKey">{t("Source file")}</span>
                               <span className="metaVal metaValEdit">
@@ -10897,9 +10901,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {homeMode && lib.history && recentViewedPages.length > 0 ? (
               <CardCarousel label={t("Recently viewed")} className="recentsCarousel" guide="home.recents">
                 {recentViewedPages.map((b) => (
-                  <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._attachment} />} preview={b._preview}
+                  <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph format={b._doc?.format} />} preview={b._preview}
                     snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
-                    kind={pageKindLabel(b._attachment)} time={formatRelativeTime(b._viewedAt)}
+                    kind={pageKindLabel(b._doc)} time={formatRelativeTime(b._viewedAt)}
                     folders={b._folderChips} labels={b._labelChips} inside={b._path} pages={b._subPages} labelMode={fileLabels}
                     className={`${pageDropClass(b._pageId)} ${selectedPages.has(b._pageId) ? "selected" : ""}`}
                     {...pageDropProps(b._pageId)}
@@ -10940,11 +10944,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     <PageCard
                       key={b._pageId}
                       className={`${pageDropClass(b._pageId)} ${selectedPages.has(b._pageId) ? "selected" : ""}`}
-                      glyph={<FileGlyph isPdf={!!b._attachment} />}
+                      glyph={<FileGlyph format={b._doc?.format} />}
                       preview={b._preview}
                       title={b.content}
                       tip={t("{content}\nClick to select · double-click to open", { content: b.content })}
-                      kind={pageKindLabel(b._attachment)}
+                      kind={pageKindLabel(b._doc)}
                       time={formatRelativeTime(b._updatedAt)}
                       folders={b._folderChips} labels={b._labelChips} inside={b._path} pages={b._subPages} labelMode={fileLabels}
                       draggable
@@ -11200,11 +11204,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           data-motion-key={item.key}
                           className={`${dim} ${pageDropClass(id)} ${selectedPages.has(id) ? "selected" : ""}`}
                           data-guide="home.card"
-                          glyph={<FileGlyph isPdf={!!b._attachment} />}
+                          glyph={<FileGlyph format={b._doc?.format} />}
                           preview={b._preview}
                           title={b.content}
                           tip={t("{content}\nClick to select · double-click to open", { content: b.content })}
-                          kind={pageKindLabel(b._attachment)}
+                          kind={pageKindLabel(b._doc)}
                           time={cardTime(item)}
                           folders={b._folderChips} labels={b._labelChips} inside={b._path} pages={b._subPages} labelMode={fileLabels}
                           renameNode={isEditing ? (
@@ -11371,7 +11375,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           {...menuPress(menu)}
                           title={t("{content}\nClick to select · double-click to open", { content: b.content })}
                         >
-                          <span className="fileRowIcon">{selecting && selectedPages.has(id) ? <SelectCheck /> : <FileGlyph isPdf={!!b._attachment} />}</span>
+                          <span className="fileRowIcon">{selecting && selectedPages.has(id) ? <SelectCheck /> : <FileGlyph format={b._doc?.format} />}</span>
                           {isEditing ? (
                             <input
                               autoFocus
@@ -11390,7 +11394,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           )}
                           <CardLabels className="fileRowLabels" folders={b._folderChips} labels={b._labelChips}
                             inside={b._path} pages={b._subPages} mode={fileLabels} onLabelMenu={(l) => openTagMenu("label", l)} />
-                          {rowColumns(item, pageKindLabel(b._attachment), menu, lib.pin ? (
+                          {rowColumns(item, pageKindLabel(b._doc), menu, lib.pin ? (
                             <button
                               className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`}
                               title={isPinned ? t("Unpin") : t("Pin to top")}
@@ -11457,7 +11461,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onAddSheetAfter: readOnly ? undefined : addSheetAfter,
                   onEnterAttachMode: readOnly ? null : startAttachMode,
                   onUnlinkHighlight: readOnly ? null : unlinkHighlightFromBlock,
-                  onMoveHighlight: readOnly || !pageAttach ? null : startHighlightMove,
+                  onMoveHighlight: readOnly || !isPdf(doc) ? null : startHighlightMove,
                   onOpenLinkTarget: (b) => {
                     const p = b.properties || {};
                     if (p.link_page_id) {
@@ -11963,13 +11967,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           readOnly={shareMode}
           canSave={canWriteWorkspace}
           onClose={onClose}
-          docId={docId} pageAttach={pageAttach} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} libraryTree={libTree} pageTitle={pageTitle}
+          doc={doc} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} libraryTree={libTree} pageTitle={pageTitle}
           openTabs={openTabs} recentViews={recentViews}
           onOpenPage={openPageLink}
           pdfSelections={pdfSelections} setPdfSelections={setPdfSelections}
           chatNotes={chatNotes} setChatNotes={setChatNotes} focusedNote={focusedNote} onSelectionSent={() => setNoteSel(null)}
           chatImages={chatImages} setChatImages={setChatImages} chatPictureBudget={chatPictures}
-          onAttachView={!homeMode && pageAttach && pdfUrl && !pdfHidden ? attachViewToChat : undefined}
+          onAttachView={!homeMode && isPdf(doc) && pdfUrl && !pdfHidden ? attachViewToChat : undefined}
           chatModel={chatSendModel} setChatModel={setChatModel}
           chatEffort={chatEffort} setChatEffort={setChatEffort}
           chatSpeed={chatSpeed} setChatSpeed={setChatSpeed}
@@ -12107,7 +12111,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // keys and all: the way to them without a keyboard.
   const commandRow = (id) => <CommandMenuItem key={id} id={id} ctx={appCmdRef.current} bindings={keybindings} />;
   const viewMenuItems = (menuReadOnly) => {
-    const pdfRow = !homeMode && (!!pageAttach || hasSheets);
+    const pdfRow = !homeMode && (!!doc || docView.notebookAvailable);
     // A window's row: a toggle, checked while the window shows.
     const shown = (on) => ({ role: "menuitemcheckbox", "aria-checked": on, trailing: on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null });
     const exportable = (focusedBlock && !homeMode) || (homeMode && libTree.folders.has(folderFilter));
@@ -12119,7 +12123,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return menuGroups(
       [
         (!isPhone || pdfRow || shellBar) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
-        pdfRow && (pageAttach ? (
+        pdfRow && (doc ? (
           <MenuItem key="pdf" icon={FileIcon} {...shown(!pdfHidden)} onClick={toggleWindow("pdf", !pdfHidden, () => setPdfHidden((v) => !v))}>PDF</MenuItem>
         ) : (
           <MenuItem key="pdf" icon={NotebookIcon} {...shown(notebook)} onClick={() => setNotebookView(focusedBlockId, !notebook)}>{t("Notebook view")}</MenuItem>
@@ -12877,7 +12881,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const highlighterPen = markTools.color;
   const highlighterName = markName(highlightStyle, highlighterPen);
   const stripMenuTools = stripPlaces.filter((x) => x.at === "menu");
-  const toolsMore = !!(pdfUrl || notebook) && !viewerHidden && stripMenuTools.length > 0;
+  const toolsMore = docView.shown && stripMenuTools.length > 0;
   // Each tool's button on the strip, by id: zoom is its three buttons,
   // kept together (the tour points at them).
   const viewerTool = {
@@ -13432,7 +13436,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </div>
         ))}
         live={(
-      <div className={`main ${(viewerHidden || homeMode || pageOnly) ? "pdfHidden" : ""}`}>
+      <div className={`main ${centerNotes ? "pdfHidden" : ""}`}>
         {pillShown ? (
           <div
             className={"statusPill" + (pillShown.fading ? " fading" : "") + (pillShown.error ? " error" : "") + (pillShown.action ? " interactive" : "")}
@@ -13448,9 +13452,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             ) : null}
           </div>
         ) : null}
-        <div className={`viewerWrap ${(viewerHidden || homeMode || pageOnly) ? "pdfHidden" : ""}${inkZoom && pdfUrl ? " inkZoomOpen" : ""}`} ref={viewerWrapRef} data-guide="pdf.pane"
+        <div className={`viewerWrap ${centerNotes ? "pdfHidden" : ""}${inkZoom && pdfUrl ? " inkZoomOpen" : ""}`} ref={viewerWrapRef} data-guide="pdf.pane"
           style={inkZoom && pdfUrl ? { "--ink-zoom-h": `${appPrefs.inkZoomHeight}px` } : undefined}>
-          {(pdfUrl || notebook) && !viewerHidden ? (
+          {docView.shown ? (
             <button
               className="uiClose uiCloseLg pdfCloseBtn"
               onClick={() => {
@@ -13462,7 +13466,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               aria-label={notebook ? t("Back to the notes") : t("Close PDF")}
             ><XIcon size={16} /></button>
           ) : null}
-          {(pdfUrl || notebook) && !viewerHidden ? (
+          {docView.shown ? (
             <div className="pdfCtlBox pdfZoomOverlay" data-guide="viewer.tools" {...customizePress("viewer-tools", stripSpace)}>
               {/* The tools on the strip in their order (viewerTool), then
                   the ⋯ while some that apply here are off it. */}
@@ -13495,7 +13499,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           {viewerInk && inkUi.open && !readOnly ? markupToolbar : null}
           {viewerInk ? <RecordingPill /> : null}
           {viewerInk ? playerBar : null}
-          {(pdfUrl || notebook) && !viewerHidden ? (
+          {docView.shown ? (
             <div className="pdfCtlBox pdfFullscreenBox" data-guide="viewer.fullscreen">
               <button
                 onPointerDown={fullscreenPointerDown}
@@ -13513,7 +13517,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               </button>
             </div>
           ) : null}
-          {pdfUrl ? (
+          {/* The viewer the page's view names (documents/DocumentPane.jsx). */}
+          <DocumentPane view={docView} render={{ pdf: () => (
             <PdfViewer url={pdfUrl} highlights={highlights}
               citation={pdfCitation?.pageId === focusedBlockId ? pdfCitation : null}
               hideEmbeddedAnnots={embAnnots === "hide"}
@@ -13602,7 +13607,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               // a card that went to a highlight: the notes scroll to its block and mark it, as a click on it does
               onReviewWaiting={setReviewWaiting}
               onReviewFollow={(hlId) => { if (findBlock(blocks, hlId)) { scrollToBlock(hlId); reveal(hlId); } }}
-              fileId={attachmentFile(pageAttach)}
+              fileId={fileHash(doc)}
               pageId={focusedBlockId || ""}
               reviewRef={pdfReviewRef}
               onSelectionFinished={readOnly ? undefined : (position, quote, hideTip, extras) => {
@@ -13650,14 +13655,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 }
               }}
             />
-          ) : notebook ? (
+          ), notebook: () => (
             <NotebookViewer key={focusedBlockId} place={tabScrollRef.current[focusedBlockId]?.place}
               sheets={nbSheets} marks={marks} scaleValue={pdfScale} onEffectiveScale={setPdfEffScale}
               onZoomTo={zoomTo} readOnly={readOnly} onAddSheet={readOnly ? undefined : addPageAtEnd}
               onCurrentSheet={setNbCurrent} scrollRef={nbScrollRef} />
-          ) : (
-            <div className="status">{t("No PDF open.")}</div>
-          )}
+          ) }} fallback={<div className="status">{t("No PDF open.")}</div>} />
         </div>
 
 
@@ -13790,8 +13793,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <ExportDialog
           opts={exportOpts}
           setOpts={setExportOpts}
-          hasPdf={(!!pageAttach || hasSheets) && !exportFolder}
-          pdfStored={!!docId || hasSheets}
+          hasPdf={(isPdf(doc) || hasSheets) && !exportFolder}
+          pdfStored={!!fileHash(doc) || hasSheets}
           hasMeta={!!pageMeta || !!pageBibtex}
           pageId={focusedBlock?.id || ""}
           folder={exportFolder}
@@ -14716,7 +14719,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             isOpenPage={!homeMode && propsPop.blockId === focusedBlockId}
             ctx={{ pages: pageBlocks, libTree, lookupBlock: (id) => treeById.get(id), refCache, onFetchRefs,
               // the open page ("" on the library)
-              pageAttachId: attachmentFile(pageAttach), shareMode, pageId: homeMode ? "" : focusedBlockId || "", pageTitle, tree: blocks }}
+              pageFileHash: fileHash(doc), shareMode, pageId: homeMode ? "" : focusedBlockId || "", pageTitle, tree: blocks }}
             nav={{
               openBlockLink, showOnPage, jumpToHighlightId,
               openFolder: (id) => { if (!homeMode) goHome(); openFolder(id); },

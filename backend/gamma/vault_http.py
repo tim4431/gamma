@@ -41,11 +41,12 @@ What a vault over HTTP does otherwise than one of this server:
   relocation run, which a token cannot start: the highlights a callout
   brings with no anchor wait for *Find highlights in this PDF* there.
 - **The account.** The server not answering is ``Unreachable``, and so is a
-  server error on a read the round needs; the token refused or no editor's
-  ``Refused``: the vault waits, never a file's problem. Any other refusal is
-  the file's, a proxy's page in place of JSON among them (a 413 on a body
-  past its limit), and a new file the server refused is sent again once it
-  changes.
+  server error on a read the round needs; the token refused or no editor's,
+  and a server that keeps its pages in another shape than this one
+  (``_check_format``, before any other request), ``Refused``: the vault waits, never a file's problem. Any
+  other refusal is the file's, a proxy's page in place of JSON among them (a
+  413 on a body past its limit), and a new file the server refused is sent
+  again once it changes.
 """
 
 import json
@@ -54,11 +55,13 @@ import urllib.parse
 from dataclasses import replace
 from pathlib import Path
 
-from . import gamma_sync, vault_store, workspaces
-from .blocks_store import FOLDERS, LABELS, LINKED_FILE, PARENT_PAGE, TREES, filing, folder_inserts, label_inserts, top_of
+from . import gamma_sync, migrations, vault_store, workspaces
+from .blocks_store import FOLDERS, LABELS, PARENT_PAGE, TREES, filing, folder_inserts, label_inserts, top_of
 from .blocks_store import with_sub_pages
+from .documents.model import document_at, own_hash, page_document
 from .folder_sync import ROOT
 from .ops import MAX_OPS, OpError
+from .sync_engine import FormatMismatch
 from .sync_tree import snapshot_from_tree
 from .vault_disk import Stopped
 from .vault_sync import (CLIENT, PLAN_TRIES, Changed, Edit, Gone, Info, Layout, Page, Refused, Waiting, left_out,
@@ -150,6 +153,7 @@ class HttpRemote:
         self.ws, self.folder = link["workspace_id"], link["folder_id"]
         self.touched = set()
         self._writer = None     # whether the token may write there: asked once (``may_write``)
+        self._format_ok = False  # the server's pages have this one's shape: asked once (``_check_format``)
         self._listed = None     # the listing, until this remote writes
         self._sent = set()      # the PDFs this remote uploaded
         self._held_by = {}      # block id -> its page, as read: a note's links ask it of each block they name
@@ -163,7 +167,30 @@ class HttpRemote:
         answer, or answers no JSON with a success (a sign-in portal's page), a
         5xx, a 404, a 408 or a 429 (a proxy with no server behind it); no JSON
         with another refusal (a proxy's 413 on a body past its limit) is that
-        request's own, ``{}`` with its status."""
+        request's own, ``{}`` with its status. The first request asks the
+        server's format first (``_check_format``)."""
+        self._check_format()
+        return self._asked(method, path, obj)
+
+    def _check_format(self) -> None:
+        """``Refused`` when the server keeps its pages in another shape than
+        this one (its change feed's ``format``, ``migrations.workspace_format``),
+        as a clone pauses (``sync_engine._feed_all``): asked before this
+        remote reads or writes anything else, so neither side reads what the
+        other wrote, and the vault waits until both run releases that agree.
+        A feed that names no format is taken as it is. Asked once."""
+        if self._format_ok:
+            return
+        status, feed = self._asked("GET", "/api/sync/changes?limit=1")
+        if not 200 <= status < 300:
+            raise _refusal(status, feed, "/api/sync/changes")
+        there, here = feed.get("format"), migrations.workspace_format()
+        if isinstance(there, int) and there != here:
+            raise Refused(str(FormatMismatch(here, there)))
+        self._format_ok = True
+
+    def _asked(self, method: str, path: str, obj=None) -> tuple[int, dict]:
+        """``_ask`` without the format's check."""
         try:
             status, data = self.server.ask(method, path, obj)
         except gamma_sync.Unreachable as e:
@@ -283,7 +310,7 @@ class HttpRemote:
             props, seq = summaries[pid].get("properties") or {}, listed["seqs"].get(pid, 0)
             top_props = summaries.get(top_of(parents, pid), {}).get("properties")
             pages[pid] = Info(pid, summaries[pid].get("content") or "Untitled", seq, filing(top_props, FOLDERS),
-                              str(props.get("doc_id") or ""), False,
+                              own_hash(page_document(props)), False,
                               [names[i] for i in filing(props, LABELS) if i in names], self._aliases_of(pid, seq),
                               parents.get(pid, ""))
         below = {f: entry for f, entry in folders.items() if (inside is None or f in inside) and f != top}
@@ -315,7 +342,7 @@ class HttpRemote:
 
     def doc_of(self, page_id: str) -> str:
         _state, block = self._block(page_id)
-        return str((block.get("properties") or {}).get("doc_id") or "")
+        return own_hash(page_document(block.get("properties") or {}))
 
     def landed(self, page_id: str, token: str, at: int | None = None, since: float = 0.0) -> bool | None:
         """Whether the page's log holds a batch of the vault's named ``token``
@@ -369,6 +396,7 @@ class HttpRemote:
         return set()     # that server's rooms are not seen from here
 
     def read_upload(self, name: str) -> bytes | None:
+        self._check_format()
         try:
             status, data = self.server.ask("GET", f"/api/uploads/{_q(name)}")
         except gamma_sync.Unreachable as e:
@@ -449,10 +477,11 @@ class HttpRemote:
         (a crash or a refusal between leaves a page with none, which the
         journal keeps as the note's page, its blocks merged into it from no
         base: ``Round._made``). A PDF it names was uploaded first
-        (``link_pdf``), and is stored there, never read in place. → its seq.
-        OpError 409 when a block holds the id."""
+        (``link_pdf``), and is stored there, never read in place (its
+        document at ``store``). → its seq. OpError 409 when a block holds the
+        id."""
         self.may_write()
-        props = {k: v for k, v in props.items() if k != LINKED_FILE}
+        props = {**props, "doc": document_at(props["doc"], "store")} if props.get("doc") else dict(props)
         if labels:
             props[LABELS] = self.label_ids(labels)
         self._call("POST", "/api/pages", {"id": page_id, "title": title, "properties": props})
@@ -536,6 +565,7 @@ class HttpRemote:
     # --- files -------------------------------------------------------------------------------
 
     def _upload(self, path: Path, route: str, content_type: str) -> dict:
+        self._check_format()
         try:
             return self.server.upload(path, route, content_type)
         except gamma_sync.Unreachable as e:

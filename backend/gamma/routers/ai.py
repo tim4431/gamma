@@ -124,8 +124,8 @@ class AIChatRequest(BaseModel):
     prompt: str
     # Context is PAGES from the user's knowledge base: `pages` (several — a
     # report across pages) or, when empty, the one page of `page_id` (the
-    # open page; its PDF attachment, if any, is derived server-side via
-    # blocks_store.page_attachment). `doc_id` is the compatibility input:
+    # open page; its PDF, if any, is derived server-side from its document,
+    # documents.model.page_document). `doc_id` is the compatibility input:
     # it resolves to the page carrying that PDF (blocks_store.page_for_doc)
     # and does nothing when no page does — send `page_id`; nothing new may
     # depend on `doc_id`.

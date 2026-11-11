@@ -116,6 +116,7 @@ export const RULES = [
   ["frontend/src/shared/illustrations/**", GUIDES],
   ["frontend/src/shared/**", ALL],
   ["frontend/src/app/**", ALL],
+  ["frontend/src/documents/**", ALL], // the document a page carries decides its layout
   // the tab groups' pure model and the read view of a page in a group that is not live
   ["frontend/src/workspace/tabLayout.js", ["tab-groups"]],
   ["frontend/src/workspace/PagePane.jsx", ["tab-groups"]],

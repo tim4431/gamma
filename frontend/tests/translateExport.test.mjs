@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { segmentPage } from "../src/pdf/pdfTranslate.js";
 import { exportFile, exportLayout, exportPages } from "../src/pdf/translateExport.js";
+import { pageDocument } from "../src/documents/pageDocument.js";
 
 const KEY = "zh-CN|model-a";
 
@@ -125,26 +126,31 @@ test("the dialog's count is the pages the export writes", () => {
   assert.equal(exportPages(null, KEY), 0);
 });
 
-test("the translation goes into the page's own stored file only, the one the job reads", () => {
+test("the translation goes into the page's stored file only, the one the job reads", () => {
   const H = "0123abcdef0123abcdef0123abcdef01";
-  // an upload: the file on screen is the page's doc_id
-  const upload = { kind: "pdf", id: H, url: `/api/uploads/${H}.pdf`, name: "a.pdf" };
+  // The page's document as pageDocument reads it.
+  const view = (doc) => pageDocument({ properties: { doc: { format: "pdf", name: "", ext: ".pdf", ...doc } } });
+  // an upload: the file on screen is the page's stored file
+  const upload = view({ name: "a.pdf", hash: H, at: "store" });
   assert.equal(exportFile(`/api/uploads/${H}.pdf`, upload), H);
   assert.equal(exportFile(`/api/uploads/${H}.pdf?annots=17`, upload), H);
   assert.equal(exportFile("/api/uploads/ffff.pdf", upload), "", "another file than the page's");
-  // a duplicated page: no doc_id, only the upload's address, so its
-  // annotated PDF has no file (the job refuses "page has no PDF") and it
-  // keeps exporting the file it shows
-  const duplicate = { kind: "pdf", id: "", url: `/api/uploads/${H}.pdf`, name: "" };
-  assert.equal(exportFile(`/api/uploads/${H}.pdf`, duplicate), "");
+  // a duplicated page shows the original's stored file, which its annotated
+  // PDF carries as the original's does
+  const duplicate = view({ hash: H, at: "store", copy: true });
+  assert.equal(exportFile(`/api/uploads/${H}.pdf`, duplicate), H);
   assert.equal(exportFile("", null), "");
   // a paper added from its link: read through the proxy, whose copy is
-  // saved under the page's doc_id
+  // saved under the document's hash
   const src = "https://arxiv.org/pdf/2401.00001";
-  const link = { kind: "pdf", id: H, url: src, name: "" };
+  const link = view({ hash: H, at: "url", url: src });
   assert.equal(exportFile(`/api/pdf?source_url=${encodeURIComponent(src)}&save=1`, link), H);
   assert.equal(exportFile(`/api/pdf?source_url=${encodeURIComponent("https://example.org/b.pdf")}`, link), "",
     "the proxy reading another link");
+  // shown from an address alone: no stored file to write into
+  assert.equal(exportFile(`/api/pdf?source_url=${encodeURIComponent(src)}`, view({ hash: "", at: "url", url: src })), "");
+  // a document that is no PDF holds no translated view
+  assert.equal(exportFile(`/api/uploads/${H}.tex`, pageDocument({ properties: { doc: { format: "text", name: "main.tex", hash: H, ext: ".tex", at: "store" } } })), "");
 });
 
 test("a segmented page's formulas and citation markers go out as the segmenter found them", () => {

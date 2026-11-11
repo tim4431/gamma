@@ -12,7 +12,7 @@ round that writes nothing (``zotero_idle``). Accounts are ``zh_…``."""
 import json
 
 import pytest
-from conftest import login
+from conftest import doc_props, login
 from zotero_engine import (GROUP, LIB, WRITES, Crash, _block, _conflicts, _edit, _highlight, _kids, _link,  # noqa: F401
                            _page_of, _rows, _sync, _writes, background, drop_pending, fake, idle, made, me,
                            no_relocation, owner_id)
@@ -229,7 +229,7 @@ def _gamma_changes(ws, owner, keys) -> None:
     doc_id, _ = storage.store_pdf(ws, pdf_bytes("A paper written while receiving only."))
     zotero_local.create_page(ws, page_id="zhNewPaper", title="Written while receiving", actor=owner, client="t",
                              props={"meta": {"title": "Written while receiving", "year": "2025", "source": "manual"},
-                                    "doc_id": doc_id, "original_filename": "receiving.pdf"})
+                                    **doc_props(doc_id, name="receiving.pdf")})
     conference = _page_of(ws, keys["conference"])
     with connect_pages_db(ws) as conn:
         meta = json.loads(conn.execute("SELECT properties FROM unified_blocks WHERE id = ?",
@@ -380,8 +380,8 @@ def test_a_pdf_zotero_already_holds_the_bytes_of_is_recorded_at_its_version_and_
     _sync(me, ws)
     doc_id, _ = storage.store_pdf(ws, pdf_bytes("Supplementary material."))  # the supplement's own bytes
     zotero_local.create_page(ws, page_id="zhSame", title="Same bytes", actor=owner_id, client="t", props={
-        "meta": {"title": "Same bytes", "year": "2024", "source": "manual"}, "doc_id": doc_id,
-        "original_filename": "same.pdf"})
+        "meta": {"title": "Same bytes", "year": "2024", "source": "manual"},
+        **doc_props(doc_id, name="same.pdf")})
     calls = len(fake.calls)
     _sync(me, ws)
     [att] = [k for k, row in _rows(ws, "attachment").items() if row["page_id"] == "zhSame"]
@@ -412,7 +412,7 @@ def test_a_page_purged_before_a_round_saw_it_trashes_its_item_and_a_restore_brin
     _sync(me, ws)
     _sync(me, ws)
     again = _page_of(ws, keys["attention"])
-    assert again != page and _block(ws, again)["props"]["doc_id"]
+    assert again != page and _block(ws, again)["props"]["doc"]["hash"]
     annotations = {k: r for k, r in _rows(ws, "annotation").items() if r["page_id"] == again}
     assert keys["highlight"] in annotations and all(r["state"] == "live" for r in annotations.values())
     assert _rows(ws, "note")[keys["note"]]["page_id"] == again

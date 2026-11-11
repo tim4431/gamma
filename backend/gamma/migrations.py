@@ -71,7 +71,7 @@ from .db import (BUSY_TIMEOUT_S, SCHEMA_VERSION, USERS_SCHEMA, WORKSPACE_PREFS_S
                  workspace_ids, workspace_version, ws_dir)
 from .logbuf import log
 from .normalize import (block_columns, block_fts, folder_blocks, highlight_shape, normalize_data_db, page_changes,
-                        page_ops_batch_id, pages_db_chats)
+                        page_documents, page_ops_batch_id, pages_db_chats)
 
 # The lowest version this release upgrades from: a data directory at it
 # has had the steps up to it, and this release carries the steps after it
@@ -1887,7 +1887,6 @@ def _v50_folder_links_pull(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-
 def _v51_integration_workspaces(conn: sqlite3.Connection) -> None:
     """``integration_tokens`` gains ``workspaces``, the workspaces a read
     token's MCP connection may read beside its own (gamma/integrations.py):
@@ -1897,6 +1896,28 @@ def _v51_integration_workspaces(conn: sqlite3.Connection) -> None:
     if "workspaces" not in _columns(conn, "integration_tokens"):
         conn.execute("ALTER TABLE integration_tokens ADD COLUMN workspaces TEXT NOT NULL DEFAULT ''")
     conn.commit()
+
+
+def _v52_page_documents(ws: str, pages: sqlite3.Connection, data) -> None:
+    """A block's document becomes one property, ``doc``
+    (gamma/documents/model.py, docs/dev/documents.md):
+    ``normalize.page_documents`` rewrites the flat ``doc_id`` /
+    ``source_url`` / ``original_filename`` / ``linked_file`` of every row,
+    and the mirror's stored bases, and ``block_columns`` gives the generated
+    ``doc_id`` column its definition (the hash of the document a row owns),
+    dropping and re-adding ``doc_id``, ``parent_page`` and ``deleted_with``
+    with their indexes. ``block_columns`` commits, the rewrite with it; a
+    rerun finds nothing of the old shape and the columns current. Nothing
+    is stamped or touched: a shape is no edit. Not derived: the stored
+    properties change, so the workspace format moves to 52."""
+    if not _columns(pages, "unified_blocks"):
+        return  # an old copy without the table gets it from the schema statements
+    changed = page_documents(pages)
+    block_columns(pages)
+    if changed:
+        where = f"workspace {ws}" if ws else "a backup's copy"
+        log.info(f"[migrate] {where}: {changed} blocks' documents moved into one doc property")
+
 
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
@@ -1937,6 +1958,7 @@ WORKSPACE_STEPS = [
     (44, "picture_kind", _v44_picture_kind),
     (47, "parent_page", _v47_parent_page),
     (48, "deleted_with", _v48_deleted_with),
+    (52, "page_documents", _v52_page_documents),
 ]
 
 # The workspace steps that only add a column SQLite derives from the rows

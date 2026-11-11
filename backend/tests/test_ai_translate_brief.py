@@ -11,7 +11,7 @@ import time
 import pytest
 
 from ai_fixtures import segmented, text_stream, texts_of
-from conftest import account_of, at_once, login, make_user, together, workspace_of
+from conftest import account_of, at_once, doc_props, login, make_user, together, workspace_of
 
 BRIEF_SYSTEM = "You prepare a translator's brief"
 BRIEF = json.dumps({
@@ -349,7 +349,7 @@ def test_an_unstored_page_is_named_by_its_id_so_a_selection_finds_the_jobs_brief
     c, _ = eve
     calls = _fake(monkeypatch)
     page = c.post("/api/blocks", json={"parent_id": "root", "content": "Source-only paper",
-                                       "properties": {"source_url": "https://example.org/paper.pdf"}}).json()["id"]
+                                       "properties": doc_props(url="https://example.org/paper.pdf")}).json()["id"]
     assert _brief(c, page_id=page, head="Opening text of a source-only paper.", lang="ko")[-1] == {"ready": True}
     _translate(c, ["a job paragraph"], page_id=page, lang="ko")
     _translate(c, ["a selected sentence"], page_id=page, wait_brief=False, lang="ko")

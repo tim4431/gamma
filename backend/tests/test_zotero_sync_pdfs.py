@@ -33,6 +33,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from conftest import doc_props
 from zotero_engine import (LIB, Crash, _block, _conflict_count, _conflicts, _due, _due_now, _edit, _link,  # noqa: F401
                            _page_of, _paper, _queue_entries, _rows, _stored_pdf, _sync, _writes, asked_soon,
                            background, bounded, drop_pending, fake, idle, made, me, no_relocation, owner_id)
@@ -70,11 +71,11 @@ def test_a_file_changed_in_zotero_replaces_the_pages_pdf_and_starts_its_relocati
     ws = _link(me)
     _sync(me, ws)
     page = _page_of(ws, keys["standalone_pdf"])
-    old = _block(ws, page)["props"]["doc_id"]
+    old = _block(ws, page)["props"]["doc"]["hash"]
     fake.add_file(LIB, keys["standalone_pdf"], pdf_bytes("The handout, corrected."))
     calls = len(fake.calls)
     status = _sync(me, ws)
-    new = _block(ws, page)["props"]["doc_id"]
+    new = _block(ws, page)["props"]["doc"]["hash"]
     assert new != old and status["files_pulled"] == 1 and _writes(fake, calls) == []
     row = _rows(ws, "attachment")[keys["standalone_pdf"]]
     assert row["detail"]["md5"] == row["detail"]["gmd5"] == fake.data(LIB, keys["standalone_pdf"])["md5"]
@@ -137,7 +138,7 @@ def test_a_pdf_replaced_on_both_sides_keeps_gammas_and_theirs_brings_zoteros(me,
     kept = json.loads(conflict["base"])["doc_id"]
     assert file_md5(storage.open_path(ws, f"{kept}.pdf")) == zoteros  # Zotero's file kept here, unattached
     r = me.post(f"/api/zotero/links/{ws}/conflicts/{conflict['id']}", json={"choice": "theirs"})
-    assert r.status_code == 200 and _block(ws, page)["props"]["doc_id"] == kept
+    assert r.status_code == 200 and _block(ws, page)["props"]["doc"]["hash"] == kept
     _sync(me, ws)
     assert fake.data(LIB, keys["standalone_pdf"])["md5"] == zoteros  # sent back: both hold Zotero's again
     calls = len(fake.calls)
@@ -165,7 +166,7 @@ def test_a_pdf_replaced_on_both_sides_whose_zotero_copy_cannot_be_read_is_not_se
     assert _uploads(fake, key, calls) == []
     row = _rows(ws)[key]
     assert row["state"] == "waiting" and row["detail"]["file"] == "unavailable"
-    assert _block(ws, page)["props"]["doc_id"] == mine
+    assert _block(ws, page)["props"]["doc"]["hash"] == mine
     calls = len(fake.calls)
     _sync(me, ws)
     assert _uploads(fake, key, calls) == [] and fake.data(LIB, key)["md5"] == zoteros
@@ -199,7 +200,7 @@ def test_a_download_this_servers_full_storage_holds_still_counts_as_held_when_it
     status = _sync(me, ws)
     assert _rows(ws)[key]["state"] == "live" and "storage" not in status["waiting"]["files"]
     page = _page_of(ws, keys["attention"])
-    assert file_md5(storage.open_path(ws, f"{_block(ws, page)['props']['doc_id']}.pdf")) == fake.data(LIB, key)["md5"]
+    assert _page_md5(ws, page) == fake.data(LIB, key)["md5"]
 
 
 def test_a_pdf_replaced_on_both_sides_waits_while_this_servers_storage_is_full(me, made, fake, owner_id,
@@ -273,7 +274,7 @@ def test_a_pdf_replaced_on_both_sides_beside_annotations_that_cannot_move_goes_a
     # Take Zotero's: its file becomes the page's, and goes to Zotero as the page's PDF
     r = me.post(f"/api/zotero/links/{ws}/conflicts/{conflict['id']}", json={"choice": "theirs"})
     assert r.status_code == 200, r.text
-    assert _block(ws, page)["props"]["doc_id"] == base["doc_id"]
+    assert _block(ws, page)["props"]["doc"]["hash"] == base["doc_id"]
     _sync(me, ws)
     [bound] = [k for k, row in _rows(ws, "attachment").items() if row["page_id"] == page]
     assert fake.data(LIB, bound)["md5"] == zoteros
@@ -322,7 +323,7 @@ def test_a_relocation_that_ends_without_writing_still_has_the_pdf_decided_again(
     ws = _link(me)
     _sync(me, ws)
     page = _page_of(ws, keys["attention"])
-    old = _block(ws, page)["props"]["doc_id"]
+    old = _block(ws, page)["props"]["doc"]["hash"]
     release = threading.Event()
 
     def relocate(ws_, page_id, new_doc, **kw):  # a run that moves no highlight and writes nothing
@@ -410,7 +411,7 @@ def _annotation_blocks(ws, page) -> set:
 
 
 def _page_md5(ws, page) -> str:
-    return file_md5(storage.open_path(ws, f"{_block(ws, page)['props']['doc_id']}.pdf"))
+    return file_md5(storage.open_path(ws, f"{_block(ws, page)['props']['doc']['hash']}.pdf"))
 
 
 @pytest.mark.parametrize("waited", [True, False], ids=["while-placing", "placed-before-the-round"])
@@ -920,7 +921,7 @@ def test_when_opened_brings_only_the_newest_pdfs_until_a_page_is_opened(me, made
     ws = _link(me, download="open")
     status = _sync(me, ws)
     with_pdf = [p for p, row in ((row["page_id"], row) for row in _rows(ws, "attachment").values())
-                if "doc_id" in _block(ws, p)["props"]]
+                if "doc" in _block(ws, p)["props"]]
     assert len(with_pdf) == 1 and status["files_pulled"] == 1
     page = _page_of(ws, keys["attention"])
     if page in with_pdf:
@@ -934,7 +935,7 @@ def test_when_opened_brings_only_the_newest_pdfs_until_a_page_is_opened(me, made
     assert r.status_code == 200
     _sync(me, ws)
     props = _block(ws, page)["props"]
-    assert props.get("doc_id") and "zotero_pdf" not in props
+    assert props.get("doc") and "zotero_pdf" not in props
 
 
 def test_download_now_brings_back_a_pdf_the_page_let_go(me, made, fake):
@@ -946,14 +947,14 @@ def test_download_now_brings_back_a_pdf_the_page_let_go(me, made, fake):
     assert r.status_code == 200, r.text
     _sync(me, ws)
     props = _block(ws, page)["props"]
-    assert "doc_id" not in props and props["zotero_pdf"]["state"] == "remote"
+    assert "doc" not in props and props["zotero_pdf"]["state"] == "remote"
     assert fake.data(LIB, keys["standalone_pdf"]).get("md5")  # Zotero keeps its file
     r = me.post(f"/api/zotero/links/{ws}/fetch", json={"page_id": page})
     assert r.status_code == 200
     _sync(me, ws)
     props = _block(ws, page)["props"]
-    assert props.get("doc_id") and "zotero_pdf" not in props
-    assert file_md5(storage.open_path(ws, f"{props['doc_id']}.pdf")) == fake.data(LIB, keys["standalone_pdf"])["md5"]
+    assert props.get("doc") and "zotero_pdf" not in props
+    assert _page_md5(ws, page) == fake.data(LIB, keys["standalone_pdf"])["md5"]
 
 
 # --- full storage, Zotero's and this server's -----------------------------------------------------
@@ -980,7 +981,7 @@ def test_zoteros_full_storage_makes_no_fileless_attachments_and_uploads_resume(m
     for page, key in ((first, item["key"]), (second, key2)):
         [att] = [d for d in fake.items(LIB) if d.get("parentItem") == key]
         assert not att.get("deleted") and att["md5"] == file_md5(storage.open_path(
-            ws, f"{_block(ws, page)['props']['doc_id']}.pdf"))
+            ws, f"{_block(ws, page)['props']['doc']['hash']}.pdf"))
     calls = len(fake.calls)
     _sync(me, ws)
     assert _writes(fake, calls) == []
@@ -1006,7 +1007,7 @@ def test_a_receive_only_round_restores_no_attachment_a_full_storage_trashed(me, 
     _sync(me, ws)
     back = fake.data(LIB, att["key"])
     assert not back.get("deleted") and back.get("md5") == file_md5(storage.open_path(
-        ws, f"{_block(ws, page)['props']['doc_id']}.pdf"))
+        ws, f"{_block(ws, page)['props']['doc']['hash']}.pdf"))
 
 
 def test_this_servers_full_storage_holds_the_downloads_until_it_frees(me, made, fake, monkeypatch):
@@ -1022,7 +1023,7 @@ def test_this_servers_full_storage_holds_the_downloads_until_it_frees(me, made, 
     ws = _link(me)
     status = _sync(me, ws)
     page = _page_of(ws, keys["attention"])
-    assert "doc_id" not in _block(ws, page)["props"]
+    assert "doc" not in _block(ws, page)["props"]
     assert status["waiting"]["files"]["storage"] == 2 and not status.get("last_error")
     mark = _block(ws, page)["props"]["zotero_pdf"]
     assert mark["state"] == "unavailable" and mark["reason"] == "quota"
@@ -1031,7 +1032,7 @@ def test_this_servers_full_storage_holds_the_downloads_until_it_frees(me, made, 
         conn.execute("UPDATE zotero_queue SET next_at = '' WHERE kind = 'file'")
         conn.commit()
     status = _sync(me, ws)
-    assert _block(ws, page)["props"].get("doc_id") and status["waiting"]["files"] == {"linked": 1}
+    assert _block(ws, page)["props"].get("doc") and status["waiting"]["files"] == {"linked": 1}
 
 
 # --- a PDF removed for good in Zotero -------------------------------------------------------------
@@ -1060,13 +1061,13 @@ def test_a_pdf_removed_for_good_in_zotero_stays_here_and_is_not_sent_back(me, ma
         _sync(me, ws)
     assert _pdfs_of(fake, item) == []
     assert not [p for m, p in _writes(fake, calls) if p.endswith("/file")]
-    assert _block(ws, "zfxGonePdf")["props"]["doc_id"] == doc
+    assert _block(ws, "zfxGonePdf")["props"]["doc"]["hash"] == doc
     # Gamma's file changes: it goes again, as a new attachment
     _replace(ws, owner_id, "zfxGonePdf", pdf_bytes("A newer copy of zfxGonePdf."), "newer.pdf")
     _sync(me, ws)
     _sync(me, ws)
     [new] = _pdfs_of(fake, item)
-    newer = _block(ws, "zfxGonePdf")["props"]["doc_id"]
+    newer = _block(ws, "zfxGonePdf")["props"]["doc"]["hash"]
     assert new["md5"] == file_md5(storage.open_path(ws, f"{newer}.pdf"))
 
 
@@ -1093,7 +1094,7 @@ def test_a_standalone_pdf_changed_here_and_removed_for_good_in_zotero_goes_back_
         assert new != key and row["kind"] == "attachment" and not row["parent"] and row["state"] == "live"
         assert data["itemType"] == "attachment" and not data.get("parentItem")
         assert data["title"] == "The handout, renamed here" and data["collections"] == [keys["ml"]]
-        doc = _block(ws, page)["props"]["doc_id"]
+        doc = _block(ws, page)["props"]["doc"]["hash"]
         assert data["md5"] == file_md5(storage.open_path(ws, f"{doc}.pdf"))
         assert _block(ws, page)["props"]["zotero_key"] == item_uri(LIB, new)
     else:  # its rows go: a page of Gamma's from then on
@@ -1121,7 +1122,7 @@ def test_a_pdf_trashed_then_purged_in_zotero_is_not_sent_back_after_an_edit_of_i
     _sync(me, ws)
     assert [d for d in _pdfs_of(fake, item) if not d.get("deleted")] == []
     assert not [p for m, p in _writes(fake, calls) if p.endswith("/file")]
-    assert _block(ws, "zfxPurgedPdf")["props"]["doc_id"] == doc
+    assert _block(ws, "zfxPurgedPdf")["props"]["doc"]["hash"] == doc
 
 
 # --- hashing and transfers ------------------------------------------------------------------------
@@ -1144,7 +1145,7 @@ def test_a_pdf_page_that_never_syncs_is_not_hashed_when_its_page_is_visited(me, 
     ws = _link(me, upload=False)
     _sync(me, ws)
     doc = _stored_pdf(ws, pdf_bytes("A handout no record names."))
-    zotero_local.create_page(ws, page_id="zfxNoRecord", title="handout.pdf", props={"doc_id": doc}, actor="zi",
+    zotero_local.create_page(ws, page_id="zfxNoRecord", title="handout.pdf", props=doc_props(doc), actor="zi",
                              client="t")
     paper = _paper(ws, "zfxNoUpload", "A paper whose PDF stays here", doc_id=_stored_pdf(ws, pdf_bytes("Mine.")),
                    meta={"title": "A paper whose PDF stays here", "year": "2020", "kind": "journalArticle"})

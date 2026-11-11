@@ -19,10 +19,10 @@ import time
 import pymupdf
 import pytest
 
-from conftest import account_of, fresh_client, login, make_folder, make_page, make_user, workspace_of
+from conftest import account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, workspace_of
 from gamma import (collab, config, folder_links, gamma_sync, inbox, pdf_meta, publish, storage, sync_engine, vault_disk,
                    vault_store, vault_sync, workspaces, zotero_sync)
-from gamma.blocks_store import FOLDERS, LINKED_FILE, block_kind, new_block_id
+from gamma.blocks_store import FOLDERS, block_kind, new_block_id
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
 from gamma.integrations import create_token
 from gamma.ops import MAX_CONTENT, commit_ops, delete_page, trash_page
@@ -579,17 +579,17 @@ def _mixed(owner, disk, name):
 def test_removing_a_vault_keeps_its_files_and_pages_and_stores_its_pdfs_first(owner, disk):
     link, root, pages = _mixed(owner, disk, "Keep")
     ws, size = link["workspace_id"], (root / "Paper.pdf").stat().st_size
-    assert _props(link, pages["pdf"])[LINKED_FILE] is True
+    assert _props(link, pages["pdf"])["doc"]["at"] == "path"
     r = owner.get(f"/api/folder-links/{link['id']}/removal")
     assert r.status_code == 200 and r.json() == {"pages": 3, "in_place": 1, "bytes": size}
-    doc = _props(link, pages["pdf"])["doc_id"]
+    doc = _props(link, pages["pdf"])["doc"]["hash"]
     assert not storage.exists(ws, f"{doc}.pdf")
 
     assert owner.delete(f"/api/folder-links/{link['id']}", params={"files": "keep"}).json() == {"ok": True}
     assert folder_links.get_link(link["id"]) is None and vault_store.files(link["id"]) == {}
     assert sorted(p.name for p in root.iterdir() if p.is_file()) == ["Keep from Gamma.md", "Mine.md", "Paper.pdf"]
     assert not (root / vault_disk.MARKER).exists()
-    assert storage.exists(ws, f"{doc}.pdf") and LINKED_FILE not in _props(link, pages["pdf"])
+    assert storage.exists(ws, f"{doc}.pdf") and _props(link, pages["pdf"])["doc"]["at"] == "store"
     with connect_vaults_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM linked_files WHERE ws = ? AND path LIKE ?",
                             (ws, f"{root}%")).fetchone()[0] == 0
@@ -618,7 +618,7 @@ def test_a_removal_that_cannot_store_a_pdf_removes_nothing(owner, disk, monkeypa
     r = owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"})
     assert r.status_code == 409 and "was not removed" in r.json()["detail"]
     assert folder_links.get_link(link["id"]) is not None and (root / vault_disk.MARKER).is_file()
-    assert (root / "Stuck from Gamma.md").is_file() and _props(link, pages["pdf"])[LINKED_FILE] is True
+    assert (root / "Stuck from Gamma.md").is_file() and _props(link, pages["pdf"])["doc"]["at"] == "path"
     assert vault_store.files(link["id"])
 
 
@@ -628,7 +628,7 @@ def test_a_vault_whose_disk_is_gone_is_removed_with_its_pages_reading_their_file
     os.rename(root, away)
     assert owner.delete(f"/api/folder-links/{link['id']}").status_code == 200
     assert folder_links.get_link(link["id"]) is None
-    assert _props(link, pages["pdf"])[LINKED_FILE] is True                    # missing, to be located
+    assert _props(link, pages["pdf"])["doc"]["at"] == "path"                    # missing, to be located
     assert (away / vault_disk.MARKER).is_file()                                # nothing written where it went
 
 
@@ -785,7 +785,7 @@ def test_a_directory_vault_takes_in_the_file_vaults_inside_it(owner, disk):
     root = disk / "Taking"
     f = _put(root / "papers" / "Followed.pdf", _pdf("followed then taken in"))
     up = owner.post("/api/uploads", files={"file": ("f.pdf", f.read_bytes(), "application/pdf")}).json()
-    page = make_page(owner, "VR taken in", {"doc_id": up["doc_id"], "original_filename": "Followed.pdf"})["id"]
+    page = make_page(owner, "VR taken in", doc_props(up["doc_id"], name="Followed.pdf"))["id"]
     file_link = _create(owner, kind="file", page=page, path=str(f))
     link = _create(owner, path=str(root), new_folder=True, push="everything")
     assert folder_links.get_link(file_link["id"]) is None
@@ -820,7 +820,7 @@ def test_a_vault_found_elsewhere_is_relinked_by_its_marker(owner, disk):
     with connect_vaults_db() as conn:
         paths = [p for (p,) in conn.execute("SELECT path FROM linked_files WHERE page_id = ?", (pdf_page,))]
     assert paths == [str(moved.resolve() / "M.pdf")]
-    assert storage.open_path(link["workspace_id"], f"{_props(link, pdf_page)['doc_id']}.pdf") == moved.resolve() / "M.pdf"
+    assert storage.open_path(link["workspace_id"], f"{_props(link, pdf_page)['doc']['hash']}.pdf") == moved.resolve() / "M.pdf"
 
 
 # --- counter-examples, a first set -----------------------------------------------------------------------
@@ -956,10 +956,10 @@ def test_removing_a_vault_whose_marker_went_stores_its_pdfs_first(owner, disk):
     """``git clean -xdf`` took ``.gamma``: the directory answers, so the PDFs
     read in place are stored, and nothing is written there."""
     link, root, pages = _mixed(owner, disk, "Cleaned")
-    ws, doc = link["workspace_id"], _props(link, pages["pdf"])["doc_id"]
+    ws, doc = link["workspace_id"], _props(link, pages["pdf"])["doc"]["hash"]
     shutil.rmtree(root / ".gamma")
     assert owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).status_code == 200
-    assert storage.exists(ws, f"{doc}.pdf") and LINKED_FILE not in _props(link, pages["pdf"])
+    assert storage.exists(ws, f"{doc}.pdf") and _props(link, pages["pdf"])["doc"]["at"] == "store"
     assert not (root / ".gamma").exists() and (root / "Cleaned from Gamma.md").is_file()
 
 
@@ -1330,7 +1330,7 @@ def test_a_member_removed_learns_nothing_of_a_page_from_its_file_vault(lab, disk
         data = _pdf(f"VR the lab's {name} paper")
         doc = storage.content_digest(data)
         storage.put_upload(ws, f"{doc}.pdf", data)
-        page = make_page(alice, f"VR followed {name}", {"doc_id": doc})["id"]
+        page = make_page(alice, f"VR followed {name}", doc_props(doc))["id"]
         held = data if name == "same" else _pdf(f"VR the leaver's {name} file")
         links[name] = (page, _create(leaver, kind="file", page=page, path=str(_put(disk / f"{name}.pdf", held))))
     workspaces.remove_member(ws, account_of("vr_leaver3"))
@@ -1393,7 +1393,7 @@ def test_a_tick_while_a_new_vault_takes_in_its_file_vaults_runs_no_round(owner, 
     root = disk / "Taking busy"
     f = _put(root / "papers" / "Followed.pdf", _pdf("followed, then taken in"))
     up = owner.post("/api/uploads", files={"file": ("f.pdf", f.read_bytes(), "application/pdf")}).json()
-    page = make_page(owner, "VR taken in busy", {"doc_id": up["doc_id"], "original_filename": "Followed.pdf"})["id"]
+    page = make_page(owner, "VR taken in busy", doc_props(up["doc_id"], name="Followed.pdf"))["id"]
     _create(owner, kind="file", page=page, path=str(f))
     due, real = [], folder_links._take_in_one
 
@@ -1458,7 +1458,7 @@ def test_a_directory_vault_takes_in_no_file_vault_of_another_account(lab, disk):
     root = disk / "Shared take"
     f = _put(root / "paper.pdf", _pdf("bob's followed paper"))
     up = bob.post("/api/uploads", files={"file": ("p.pdf", f.read_bytes(), "application/pdf")}).json()
-    page = make_page(bob, "Bob paper", {"doc_id": up["doc_id"], "original_filename": "paper.pdf"})["id"]
+    page = make_page(bob, "Bob paper", doc_props(up["doc_id"], name="paper.pdf"))["id"]
     file_link = _create(bob, kind="file", page=page, path=str(f))
     r = alice.post("/api/folder-links", json={"path": str(root), "new_folder": True, "push": "everything"})
     assert r.status_code == 400 and "another account" in r.json()["detail"]
@@ -1498,7 +1498,7 @@ def test_a_vault_that_purges_a_pdf_another_page_reads_in_place_stores_it_first(o
     reader = owner.post("/api/folder-links/open", json={"path": str(f)}).json()["page"]
     link = _vault(owner, root, {"n.md": "note\n"})
     ws, page = link["workspace_id"], _page_of(link, "x.pdf")
-    doc = _props(link, page)["doc_id"]
+    doc = _props(link, page)["doc"]["hash"]
     assert page != reader and not storage.exists(ws, f"{doc}.pdf")
     with connect_pages_db(ws) as conn:
         trash_page(ws, conn, page, actor=link["created_by"])

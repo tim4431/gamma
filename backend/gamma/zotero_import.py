@@ -704,7 +704,8 @@ def plan_zotero_archive(zf, digests=None, progress=None) -> dict:
     (``.zotero-ft-cache``, its full-text index of a file) and those beside
     an attachment in its files/<id> folder (a web snapshot's page
     resources): one warning per folder."""
-    from .storage import display_filename, upload_extension
+    from .documents.formats import stored_extension
+    from .storage import display_filename
 
     names = zip_name_map(zf)
     rdf_names = [n for n in names if n.lower().endswith(".rdf") and not n.startswith("__MACOSX/")]
@@ -762,7 +763,7 @@ def plan_zotero_archive(zf, digests=None, progress=None) -> dict:
                 found.append(entry)
             else:
                 try:
-                    ext = upload_extension(name)
+                    ext = stored_extension(name)
                 except ValueError:  # an executable: listed as not imported
                     continue
                 if ext == ".ink":  # a Gamma drawing comes in by its own route only

@@ -144,11 +144,12 @@ from . import vault_links, vault_merge, vault_store, workspaces
 from .auth import DISK_CLIENT
 from .folder_links import COUNTS, DIRECTIONS, KEPT_SHOWN
 from .jobs import error_text
-from .blocks_store import (FOLDERS, LABELS, LINKED_FILE, PARENT_PAGE, TRASH, attachment_file, attachment_props, block_kind,
-                           fetch_subtree, filing, folder_inserts, folder_subtree_ids, insert_page_tree, label_inserts,
-                           label_names, load_props, new_block_id, newest_change_seq, page_attachment, page_in_folder,
-                           page_parents, pages_in_folder, top_of, tree_rows, upload_refs, write_lock)
+from .blocks_store import (FOLDERS, LABELS, PARENT_PAGE, TRASH, block_kind, fetch_subtree, filing, folder_inserts,
+                           folder_subtree_ids, insert_page_tree, label_inserts, label_names, load_props, new_block_id,
+                           newest_change_seq, page_in_folder, page_parents, pages_in_folder, top_of, tree_rows,
+                           upload_refs, write_lock)
 from .db import connect_pages_db, connect_vaults_db, page_now, parse_stamp
+from .documents.model import document, document_at, in_place, page_document, pdf_file_hash, stored_name
 from .folder_sync import ID_KEY, ROOT
 from .logbuf import log
 from .markdown_import import block_class
@@ -207,9 +208,10 @@ class Page:
 @dataclass(slots=True)
 class Info:
     """A page below the vault's folder: its title and seq, the folders its
-    top is filed in (in their order), its PDF (``doc_id``; ``linked`` when it
-    reads a file where it is), its labels' names, its aliases, and the page
-    it is a sub-page of (``page_parents``; "" for a library page)."""
+    top is filed in (in their order), its PDF (``doc_id``, the hash of the
+    document it owns: gamma/documents/model.py ``own_hash``; ``linked`` when
+    it reads the file where it is), its labels' names, its aliases, and the
+    page it is a sub-page of (``page_parents``; "" for a library page)."""
     id: str
     title: str
     seq: int
@@ -350,7 +352,7 @@ class LocalRemote:
                 continue
             own = props[page_id]
             pages[page_id] = Info(page_id, row[1] or "Untitled", seqs.get(page_id, 0),
-                                  filing(props.get(tops[page_id], {}), FOLDERS), row[3] or "", bool(own.get(LINKED_FILE)),
+                                  filing(props.get(tops[page_id], {}), FOLDERS), row[3] or "", in_place(page_document(own)),
                                   [names[i] for i in filing(own, LABELS) if i in names],
                                   [str(a) for a in own.get("aliases") or [] if isinstance(a, str)],
                                   parents.get(page_id, ""))
@@ -619,41 +621,49 @@ class LocalRemote:
                     stored, _existed, _size = storage.store_pdf_stream(ws, f)
                 except ValueError as e:
                     raise OSError(str(e)) from e
-            if f"{stored}.pdf" != held:
+            if stored_name(stored, ".pdf") != held:
                 raise OSError("the file is not the bytes its pages read")
 
     def replace_pdf(self, page_id: str, path: str, seen: tuple, filename: str) -> dict:
         """The page takes the bytes ``seen`` at ``path`` as its PDF, read where
         they are: their row first, so the relocation run reads the new file,
-        then ``replace_attachment``, the disk winning and no other page's
-        bytes a refusal (a vault's file is what the disk holds); then the row
-        of the bytes before goes, as ``linked_files._catch_up``'s does: the
-        path no longer holds them."""
+        then ``replace_attachment``, the page reading them in place from then
+        on (``at`` ``path``, a page that stored its PDF too), the disk winning
+        and no other page's bytes a refusal (a vault's file is what the disk
+        holds); then the row of the bytes before goes, as
+        ``linked_files._catch_up``'s does: the path no longer holds them."""
         from .routers.pages import replace_attachment  # local: keep gamma.* free of the routers package
 
         self.may_write()
         before = self.doc_of(page_id)
         self.link_pdf(path, seen, page_id)
         try:
-            done = replace_attachment(self.ws, page_id, seen[0], "", filename, actor=self.user_id, client=CLIENT,
-                                      owner=self.user_id, check_held=False, props={LINKED_FILE: True},
+            done = replace_attachment(self.ws, page_id, seen[0], "", filename, at="path", actor=self.user_id,
+                                      client=CLIENT, owner=self.user_id, check_held=False,
                                       keep_old_days=gamma_sync.KEEP_OLD_DAYS)
         except OpError:
-            self.unlink_pdf(path, f"{seen[0]}.pdf")
+            self.unlink_pdf(path, stored_name(seen[0], ".pdf"))
             raise
         if before and before != seen[0]:
-            self.unlink_pdf(path, f"{before}.pdf")
+            self.unlink_pdf(path, stored_name(before, ".pdf"))
         self.touched.add(page_id)
         return done
 
     def store_pdf(self, path: Path, page_id: str) -> str:
         """The file stored as an upload and the page no longer reading it in
-        place: what a page that leaves the vault keeps."""
+        place (its document at ``store``, the same hash and name): what a page
+        that leaves the vault keeps."""
         try:
             doc_id = folder_links.LocalSink(self.ws, self.user_id).store(path)
         except gamma_sync.SyncError as e:
             raise OSError(str(e)) from e
-        self.set_page(page_id, props={LINKED_FILE: None})
+
+        def build(page, _held):
+            view = page_document(page.blocks[page_id]["props"])
+            if not in_place(view):
+                return Edit([])
+            return Edit([{"op": "set", "id": page_id, "props": {"doc": document_at(view, "store")}}])
+        self.apply(page_id, build)
         return doc_id
 
     def place_highlights(self, page_id: str) -> bool:
@@ -669,7 +679,8 @@ class LocalRemote:
             items = highlight_relocate.page_highlights(conn, page_id, unplaced=True)
             row = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
                                (page_id,)).fetchone()
-        doc_id = attachment_file(page_attachment(load_props(row[1]))) if row else None
+        view = page_document(load_props(row[1])) if row else None
+        doc_id = pdf_file_hash(view)
         if not doc_id or all(props["pdf_position"].get("rects") for _bid, props in items):
             return True
         job, _reason = _start_relocation(self.user_id, self.ws, page_id, row[0], doc_id)
@@ -1359,7 +1370,7 @@ class Round:
                     if not self.pulling or row["problem"] or (found and found.placeholder):
                         ctx.read_only.add(row["page_id"])
                 elif row["kind"] == "pdf" and row["hash"]:
-                    ctx.add_file(rel, f"{row['hash']}.pdf")
+                    ctx.add_file(rel, stored_name(row["hash"], ".pdf"))
                 elif row["kind"] == "picture" and row["hash"]:
                     ctx.add_upload(rel, row["hash"])
             self._ctx = ctx
@@ -1421,7 +1432,7 @@ class Round:
         if row and not row["was"]:
             self.rows[path] = row
             if self._ctx is not None and row["kind"] == "pdf" and row["hash"]:
-                self._ctx.add_file(path, f"{row['hash']}.pdf")
+                self._ctx.add_file(path, stored_name(row["hash"], ".pdf"))
         if row and row["page_id"]:
             self.remote.touched.add(row["page_id"])
 
@@ -2593,8 +2604,7 @@ class Round:
         note_read = self.reads.get(note) if note else None
         doc = md_lens.parse(note_read.text) if note_read and note_read.text is not None else None
         title, props, labels = _front_props(doc.front.fields if doc and doc.front else {}, _stem(note or path))
-        props.update(attachment_props(read.hash, "", path.rsplit("/", 1)[-1])[0])
-        props[LINKED_FILE] = True
+        props["doc"] = document(read.hash, name=path.rsplit("/", 1)[-1], at="path")
         folder = self._folder_for(_dir(path))
         if folder:
             props[FOLDERS] = [folder]
@@ -2604,7 +2614,7 @@ class Round:
                          note=(note, note_read, doc) if note and doc is not None and not doc.problem else None)
         except BaseException:
             if self.remote.state(page_id) is None:
-                self.remote.unlink_pdf(str(self.root / path), f"{read.hash}.pdf")
+                self.remote.unlink_pdf(str(self.root / path), stored_name(read.hash, ".pdf"))
             raise
 
     def _create(self, path: str, read: Read, page_id: str, title: str, props: dict, labels: list, folder: str, *,
@@ -2618,7 +2628,7 @@ class Round:
             notes_path, notes_read, notes_doc = note
             ctx = self._ctx_at(notes_path, page_id, pdf)
             if pdf:
-                ctx.add_file(pdf, f"{read.hash}.pdf")     # its callouts link the paper this page is made of
+                ctx.add_file(pdf, stored_name(read.hash, ".pdf"))     # its callouts link the paper this page is made of
             entries, by_place = [], {}
             for n, node in enumerate(notes_doc.flat):
                 g, memo = vault_links.to_gamma(node.content, {}, ctx)
@@ -2943,7 +2953,7 @@ class Round:
             if at is None or time.time() - at < vault_disk.TRASH_DAYS * 86400:
                 return
             if tomb["kind"] == "pdf" and tomb["hash"]:
-                self.remote.spare(str(self.root / tomb["path"]), f"{tomb['hash']}.pdf", tomb["page_id"])
+                self.remote.spare(str(self.root / tomb["path"]), stored_name(tomb["hash"], ".pdf"), tomb["page_id"])
             vault_disk.purge(self.root, tomb["path"])
         vault_store.forget(self.id, tomb["path"])
 
@@ -3084,7 +3094,7 @@ class Round:
             if held == wanted:
                 self._dirs_made(directory, folder)
             return held, self.rows[held]
-        data = _fetched(self.remote, f"{info.doc_id}.pdf")
+        data = _fetched(self.remote, stored_name(info.doc_id, ".pdf"))
         if data is None:
             return pdf
         path = pdf[0] if pdf else self._free(wanted)

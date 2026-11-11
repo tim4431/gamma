@@ -109,7 +109,8 @@ def test_with_base_false_omits_base_texts():
 
 def test_snapshot_from_tree_and_upload_refs():
     tree = {"id": P, "parent_id": "root", "position": "a0", "content": "T",
-            "properties": {"doc_id": "abcdef0123456789abcdef01"},
+            "properties": {"doc": {"format": "pdf", "name": "", "hash": "abcdef0123456789abcdef01", "ext": ".pdf",
+                                   "at": "store"}},
             "children": [{"id": "x", "parent_id": P, "position": "a0",
                           "content": "![i](/api/uploads/0123456789abcdef01234567.png) and [f](/api/uploads/ffffffffffffffffffffffff.zip)",
                           "properties": {"ink_url": "/api/uploads/aaaaaaaaaaaaaaaaaaaaaaaa.ink"}, "children": []}]}

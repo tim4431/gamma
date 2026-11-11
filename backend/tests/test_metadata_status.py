@@ -1,6 +1,6 @@
 """GET /api/metadata/status — the Settings pane's library-wide health list."""
 
-from conftest import make_page, workspace_of, guest_name
+from conftest import doc_props, make_page, workspace_of, guest_name
 from gamma.db import connect_data_db
 from gamma.pdf_index import store_doc
 from gamma.textnorm import normalize_text
@@ -12,11 +12,11 @@ def _paper(r, block_id):
 
 def test_status_lists_papers_not_notes(guest):
     with_meta = make_page(guest, "Has meta", properties={
-        "doc_id": "a" * 24,
+        **doc_props("a" * 24),
         "meta": {"title": "Proper Title", "source": "arxiv"},
     })
     failed = make_page(guest, "Lookup failed", properties={
-        "source_url": "https://example.org/x.pdf",
+        **doc_props(url="https://example.org/x.pdf"),
         "meta_error": {"at": "2026-01-01T00:00:00Z", "detail": "no arXiv id, DOI, or AI match"},
     })
     note = make_page(guest, "Plain note page")
@@ -48,9 +48,23 @@ def test_status_lists_papers_not_notes(guest):
     assert p1["meta_at"] == "" and p2["meta_error_at"] == "2026-01-01T00:00:00Z"
 
 
+def test_status_names_the_file_a_page_owns(guest):
+    """A duplicated page shows the original's file without owning it: listed,
+    with no doc_id of its own. A PDF read in place is a paper like any
+    other, listed with its file's hash."""
+    copy = make_page(guest, "Copied paper", properties=doc_props(url=f"/api/uploads/{'c' * 24}.pdf"))
+    linked = make_page(guest, "Paper read in place", properties=doc_props("e" * 24, at="path"))
+
+    r = guest.get("/api/metadata/status")
+    shown = _paper(r, copy["id"])
+    assert shown["doc_id"] == "" and shown["has_file"] is False and shown["text_chars"] is None
+    in_place = _paper(r, linked["id"])
+    assert in_place["doc_id"] == "e" * 24 and in_place["has_file"] is False  # its file is not in reach here
+
+
 def test_status_reads_index_state(guest):
     doc = "b" * 24
-    page = make_page(guest, "Indexed paper", properties={"doc_id": doc})
+    page = make_page(guest, "Indexed paper", properties=doc_props(doc))
     text = normalize_text("hello " * 20)
     ws = workspace_of(guest_name())
     with connect_data_db(ws) as conn:

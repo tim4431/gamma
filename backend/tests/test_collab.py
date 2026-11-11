@@ -8,7 +8,8 @@ import pytest
 from fractional_indexing import generate_key_between
 from starlette.websockets import WebSocketDisconnect
 
-from conftest import account_of, fresh_client, guest_name, login, make_page, make_user, recv, recv_hello, workspace_of
+from conftest import (account_of, doc_props, fresh_client, guest_name, login, make_page, make_user, recv, recv_hello,
+                      workspace_of)
 from gamma import version
 
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
@@ -412,7 +413,7 @@ def _share(owner_client, page_id, **settings):
 
 
 def test_ops_share_editor_is_confined_to_the_page(owner, editor, client):
-    page = make_page(owner, "Shared ops", properties={"doc_id": "shared_doc"})
+    page = make_page(owner, "Shared ops", properties=doc_props("shared_doc"))
     other = make_page(owner, "Owner private")
     token = _share(owner, page["id"], audience="list", users=[{"name": "editor_collab", "role": "edit"}])
     q = {"share": token}
@@ -421,9 +422,9 @@ def test_ops_share_editor_is_confined_to_the_page(owner, editor, client):
     assert owner.get(f"/api/pages/{page["id"]}/ops").json()["batches"][-1]["actor"] == account_of("editor_collab")
     # rename yes, page properties no
     assert _ops(editor, page["id"], [{"op": "set", "id": page["id"], "content": "Renamed by editor"}], params=q).status_code == 200
-    r = _ops(editor, page["id"], [{"op": "set", "id": page["id"], "props": {"doc_id": "evil"}}], params=q)
+    r = _ops(editor, page["id"], [{"op": "set", "id": page["id"], "props": doc_props("evil")}], params=q)
     assert r.status_code == 403
-    assert owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == "shared_doc"
+    assert owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc"]["hash"] == "shared_doc"
     # nothing outside the page, with or without naming it
     assert _ops(editor, other["id"], [{"op": "insert", "id": "shB", "parent": other["id"], "content": "x"}], params=q).status_code == 403
     assert _ops(editor, page["id"], [{"op": "set", "id": other["id"], "content": "x"}], params=q).status_code == 403

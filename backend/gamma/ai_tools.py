@@ -83,10 +83,11 @@ from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canon
 from .blocks_store import (BLOCK_ID_RE, FOLDERS, LABELS, PATH_SEP, TRASH, block_kind, block_to_dict, descend,
                            existing_in, fetch_subtree, filed_folders, filing, folder_chain, folder_inserts,
                            folder_paths, folder_subtree_ids, label_by_name, label_inserts, label_names, load_props,
-                           named, page_ancestors, page_attachment, page_descendants, page_in_folder, page_parent,
+                           named, page_ancestors, page_descendants, page_in_folder, page_parent,
                            page_parents, page_root_id, root_pages, top_of, trashed_folders, tree_children,
                            tree_parents, valid_block_id, write_lock)
 from .db import connect_data_db, connect_pages_db
+from .documents.model import page_document, pdf_file_hash
 from .highlights import is_ink
 from .ops import (MAX_OPS, after_commit, after_commits, apply_batches, apply_ops, delete_tree, ensure_filing,
                   move_across_pages, tree_deletion)
@@ -391,7 +392,9 @@ def _load_scoped_page(conn, scope: dict, args: dict, reach=_NO_REACH):
 def _scope_pages(conn, scope: dict) -> dict:
     """Titles and PDF ids for the base scope plus read-only context pages:
     a page chat's page, with the pages inside it for a reading tool
-    (``inside``), or a folder chat's pages."""
+    (``inside``), or a folder chat's pages (``root_pages``). Every page
+    gives the PDF it shows (``pdf_file_hash``), a duplicated page's
+    included."""
     page_ids = list(scope.get("context_pages") or [])
     if scope.get("type") == "page":
         pages = {}
@@ -399,12 +402,18 @@ def _scope_pages(conn, scope: dict) -> dict:
         page_ids[:0] = [page_id] + (page_descendants(conn, page_id) if scope.get("inside") else [])
     else:
         pages = root_pages(conn, _scope_folder(scope))
+        # root_pages answers the PDFs the pages own: a copy's is the file it shows
+        bare = [page_id for page_id, page in pages.items() if not page["doc_id"]]
+        for page_id, raw in conn.execute(
+                "SELECT id, properties FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?)) "
+                "AND instr(properties, '\"copy\"') > 0", (json.dumps(bare),)):
+            pages[page_id]["doc_id"] = pdf_file_hash(page_document(load_props(raw)))
     for page_id in page_ids:
         loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id})
         if not error:
             page_id, title, props, _ = loaded
-            attachment = page_attachment(props)
-            pages[page_id] = {"title": title, "doc_id": attachment["id"] if attachment else ""}
+            view = page_document(props)
+            pages[page_id] = {"title": title, "doc_id": pdf_file_hash(view)}
     return pages
 
 
@@ -514,10 +523,10 @@ def _page_line(paths: dict, names: dict, page_id: str, content, props: dict, fol
     """One list_pages line: the page's id, title, attachments, the page it
     is inside (``parent``, a sub-page's) or else its folder paths, labels,
     cached paper metadata and last-update date."""
-    attachment = page_attachment(props)
+    view = page_document(props)
     bits = [f"id={page_id}",
             f'title="{(content or "Untitled")[:120]}"',
-            f"attachments=[{attachment['kind']}]" if attachment else "attachments=[]"]
+            f"attachments=[{view['format']}]" if view else "attachments=[]"]
     if parent:
         bits.append(f"parent={parent}")
     elif folders:
@@ -849,9 +858,9 @@ def _run_read_page(conn, ws: str, scope: dict, args: dict):
         text += "]"
     # The area highlights' pictures go with the result (the loop moves
     # them onto the tool message, like view_pdf_page's page).
-    attachment = page_attachment(props)
-    images = (render_area_crops(ws, attachment["id"], report["areas"], title, page_id)
-              if attachment and report.get("areas") else [])
+    view = page_document(props)
+    images = (render_area_crops(ws, pdf_file_hash(view), report["areas"], title, page_id)
+              if view and report.get("areas") else [])
     if images:
         chip["images"] = _parts(images)
     return text, chip
@@ -867,14 +876,14 @@ def _run_view_pdf_page(conn, ws: str, scope: dict, args: dict):
     if error:
         return error, None
     page_id, title, props, _ = loaded
-    attachment = page_attachment(props)
-    if not attachment:
+    view = page_document(props)
+    if not view:
         return f'"{title}" has no PDF attachment to look at', None
     try:
         page_no = max(1, int(args.get("pdf_page", 1)))
     except (TypeError, ValueError):
         page_no = 1
-    path = pdf_path(ws, attachment["id"])
+    path = pdf_path(ws, pdf_file_hash(view))
     if not path:
         return "error: the PDF file is not available on this server", None
     image, total = render_page(str(path), page_no, RENDER_MAX_SIDE)
@@ -1058,7 +1067,7 @@ def _plan_clip_region(conn, scope: dict, args: dict):
     if error:
         return None, error
     page_id, title, props, _ = loaded
-    if not page_attachment(props):
+    if not page_document(props):
         return None, f'error: "{title}" has no PDF attachment to clip from'
     try:
         page_no = int(args.get("pdf_page") or 0)

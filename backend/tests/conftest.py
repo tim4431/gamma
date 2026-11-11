@@ -415,6 +415,16 @@ def make_page(guest, title="Test page", properties=None):
     return block
 
 
+def doc_props(hash="", *, url="", name="", at=None, copy=False) -> dict:
+    """The properties of a page whose document is ``hash`` (a PDF): stored,
+    read in place (``at="path"``), at the address ``url``, or a copy;
+    ``documents.model.document``'s canonical doc. ``doc_props(url=
+    "/api/uploads/X.pdf")`` is a copy of X, as a duplicated page stores it."""
+    from gamma.documents.model import document
+
+    return {"doc": document(hash, url, name, at=at, copy=copy)}
+
+
 def files_in(folder):
     """``storage.files`` over a test's own folder: ``name -> Path | None``,
     for a renderer handed its files with no workspace behind them."""

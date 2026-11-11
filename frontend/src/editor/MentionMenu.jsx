@@ -36,7 +36,7 @@ function RowIcon({ row }) {
   if (row.kind === "remind") return <AlarmClockIcon size={16} />;
   if (row.kind === "person") return <PersonAvatar name={row.user} title={row.user} />;
   if (row.kind === "invite") return <UserPlusIcon size={16} />;
-  return <FileGlyph isPdf={row.isPdf} size={16} />;
+  return <FileGlyph format={row.format} size={16} />;
 }
 
 function RowText({ row, query, now }) {

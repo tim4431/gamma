@@ -9,7 +9,7 @@ import json
 import sqlite3
 
 import pytest
-from conftest import make_folder, make_label, make_page, workspace_of, guest_name
+from conftest import doc_props, make_folder, make_label, make_page, workspace_of, guest_name
 from gamma.db import register_functions
 
 
@@ -52,7 +52,7 @@ ARXIV_META = {
 
 def test_label_set_during_fetch_survives(guest, label_during_lookup):
     page = make_page(guest, "Racy page",
-                     properties={"source_url": "https://arxiv.org/abs/2601.00001"})
+                     properties=doc_props(url="https://arxiv.org/abs/2601.00001"))
     quantum = make_label(guest, "quantum")
     label_during_lookup(page["id"], ARXIV_META, quantum)
 
@@ -61,13 +61,13 @@ def test_label_set_during_fetch_survives(guest, label_during_lookup):
     props = guest.get(f"/api/blocks/{page['id']}").json()["properties"]
     assert props["meta"]["title"] == "Fetched Title"
     assert props["labels"] == [quantum]            # not clobbered
-    assert props["source_url"]                     # nor is anything else
+    assert props["doc"]["url"]                     # nor is anything else
 
 
 def test_label_set_during_failed_fetch_survives(guest, label_during_lookup):
     """The negative-cache write is the same read-modify-write hazard."""
     page = make_page(guest, "Racy failing page",
-                     properties={"source_url": "https://arxiv.org/abs/2601.00002"})
+                     properties=doc_props(url="https://arxiv.org/abs/2601.00002"))
     quantum = make_label(guest, "quantum")
     label_during_lookup(page["id"], None, quantum)  # lookup finds nothing, AI unconfigured
 
@@ -80,7 +80,7 @@ def test_label_set_during_failed_fetch_survives(guest, label_during_lookup):
 
 def test_fetch_clears_stale_markers(guest, label_during_lookup):
     page = make_page(guest, "Refetched page", properties={
-        "source_url": "https://arxiv.org/abs/2601.00003",
+        **doc_props(url="https://arxiv.org/abs/2601.00003"),
         "meta_error": {"at": "2026-01-01T00:00:00Z", "detail": "old failure"},
         "ppt_cite": "stale citation",
         "folders": [make_folder(guest, "reading")],
@@ -154,7 +154,7 @@ def test_uploaded_pdf_title_uses_filename_leaf_only(guest):
         "source_url": "/api/uploads/filetitlepath.pdf",
     }).json()
     assert created["content"] == "original-paper.pdf"
-    assert created["properties"]["original_filename"] == "original-paper.pdf"
+    assert created["properties"]["doc"]["name"] == "original-paper.pdf"
     assert created["properties"]["auto_title"] == "original-paper.pdf"
 
 

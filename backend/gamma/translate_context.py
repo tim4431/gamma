@@ -27,8 +27,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 from .ai_client import CallRefused
-from .blocks_store import attachment_file, page_attachment
 from .db import connect_pages_db, safe_doc_id
+from .documents.model import page_document, pdf_file_hash, stored_name
 from .logbuf import log
 from .pdf_text import extract_text, outline
 from .storage import find_upload_file
@@ -341,12 +341,13 @@ def paper_of(ws: str, page_id: str, head: str = "") -> Paper | None:
                 props = {}
             about = _about(props.get("meta"))
             # The file the page shows, as the viewer reads it: a duplicated
-            # page carries only the upload's URL, and is the same paper,
-            # with the same kept translations, as the page it was copied from.
-            doc_id = attachment_file(page_attachment(props))
+            # page shows the stored file of the page it was copied from, and
+            # is the same paper, with the same kept translations.
+            view = page_document(props)
+            doc_id = pdf_file_hash(view)
             if doc_id:
                 try:
-                    found = find_upload_file(f"{safe_doc_id(doc_id)}.pdf", ws)
+                    found = find_upload_file(stored_name(safe_doc_id(doc_id), ".pdf"), ws)
                 except ValueError:
                     found = None
                 path = str(found) if found else ""

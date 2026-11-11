@@ -121,7 +121,7 @@ def test_save_paper_saves_files_and_never_duplicates(org, upstream):
     assert action["kind"] == "save" and action["to"] == "readout" and action["pdf"] and not action["existed"]
     saved = props(c, page)
     assert saved["content"] == "Saved From Chat" and saved["properties"]["folders"] == [ids["readout"]]
-    assert saved["properties"]["doc_id"] and upstream["meta"] == [page]
+    assert saved["properties"]["doc"]["hash"] and upstream["meta"] == [page]
     assert any("arxiv.org/pdf/2601.04321" in u for u in upstream["fetched"])
     # The same paper again, into a subfolder the call makes: filed there
     # (refining the folder above), not duplicated.

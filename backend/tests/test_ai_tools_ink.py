@@ -17,6 +17,7 @@ from gamma.ink_view import CROP_MIN_SIDE, crop_box
 from gamma.pdf_export import page_with_ink
 
 from ai_fixtures import folder, org  # noqa: F401  (org is a fixture)
+from conftest import doc_props, make_folder
 
 PAGE_W, PAGE_H = 300.0, 400.0
 
@@ -127,7 +128,7 @@ def inked(org, tmp_path_factory):
         assert r.status_code == 200, r.text
         return r.json()
 
-    paper = block("root", "inked paper", {"folders": [ids["readout"]], "doc_id": "e" * 24})
+    paper = block("root", "inked paper", {"folders": [ids["readout"]], **doc_props("e" * 24)})
     drawn = upload(_ink())
     group = block(paper, "circled the key result",
                   {"ink_url": drawn["url"], "pdf_position": drawn["pdf_position"], "ink_strokes": 1})
@@ -339,6 +340,26 @@ def test_view_ink_refusals(stored_pdf, monkeypatch):
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda ws, doc: None)
     text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_ink", {"block_id": ids["group"]})
     assert "drawn on blank paper" in text and action["images"]
+
+
+def test_handwriting_on_a_duplicated_page_is_drawn_on_the_pdf_it_shows(inked, monkeypatch):
+    """A duplicated page owns no file but shows the original's: its
+    handwriting is drawn on that PDF's page, not on blank paper."""
+    c, ids = inked
+    asked = []
+    monkeypatch.setattr("gamma.ai_context.pdf_path", lambda ws, doc: asked.append(doc) or ids["pdf"])
+    copies = make_folder(c, "copies")
+    copy = c.post("/api/blocks", json={"parent_id": "root", "content": "inked paper (copy)", "properties": {
+        "folders": [copies], **doc_props(url=f"/api/uploads/{'e' * 24}.pdf")}}).json()["id"]
+    drawn = c.post("/api/upload-ink", json=_ink()).json()
+    r = c.post("/api/blocks", json={"parent_id": copy, "content": "circled on the copy", "properties": {
+        "ink_url": drawn["url"], "pdf_position": drawn["pdf_position"], "ink_strokes": 1}})
+    assert r.status_code == 200, r.text
+    group = r.json()["id"]
+    text, action = run_agent_tool(ids["ws"], folder(copies), "view_ink", {"block_id": group})
+    assert text.startswith(f"Handwriting block [{group}] on PDF page 1"), text
+    assert "blank paper" not in text and action["images"]
+    assert set(asked) == {"e" * 24}
 
 
 def test_a_group_whose_file_is_not_stored_yet_is_still_handwriting(inked, stored_pdf):

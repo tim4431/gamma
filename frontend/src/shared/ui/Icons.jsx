@@ -501,18 +501,20 @@ export function LabelGlyph({ dashed } = {}) {
   );
 }
 
-// Big file glyph — a document sheet with a folded corner. A PDF-backed page
-// gets a small "PDF" tab so it reads as an annotated paper at a glance.
+// Big file glyph — a document sheet with a folded corner. `format` is the
+// page's document's (pageDocument(...).format, "" for none): a PDF gets a
+// small "PDF" tab so it reads as an annotated paper at a glance.
 // `size` draws it as a small kind icon (search results, tabs, Ctrl+P), the
 // "PDF" lettering a solid band there; without it the surface's CSS sizes
 // the tile. A PDF's glyph carries `.pdf`, tinted with --kind-pdf.
 // `label`: a short format stamp on the page (the PDF card's "PDF", the
 // bibliography card's "BIB"); a file-format token, so it is not translated.
-export function FileGlyph({ isPdf, label = "", size }) {
+export function FileGlyph({ format = "", label = "", size }) {
+  const pdf = format === "pdf";
   const small = !!size && size < 24;
-  const stamp = isPdf ? "PDF" : label;
+  const stamp = pdf ? "PDF" : label;
   return (
-    <svg className={`tileGlyph fileGlyph${isPdf ? " pdf" : ""}${size ? " kindGlyph" : ""}`}
+    <svg className={`tileGlyph fileGlyph${pdf ? " pdf" : ""}${size ? " kindGlyph" : ""}`}
       style={size ? { width: size, height: size } : undefined} aria-hidden="true"
       viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={small ? iconStroke(size) : 1.5} strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="var(--bg-raised)" />

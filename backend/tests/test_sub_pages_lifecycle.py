@@ -325,7 +325,7 @@ def test_step_48_indexes_what_went_with_a_page(data_dir):
         old.commit()
     try:
         with connect_pages_db("splOld48") as cx:
-            assert cx.execute("PRAGMA user_version").fetchone()[0] == 48
+            assert cx.execute("PRAGMA user_version").fetchone()[0] == 52  # the newest workspace step
             assert ops._went_with(cx, "splTop48") == ["splKid48"]
             plan = " ".join(str(r[-1]) for r in cx.execute(  # _went_with's own statement
                 f"EXPLAIN QUERY PLAN {ops.WENT_WITH_SQL}", ("splTop48", TRASH)))
@@ -337,7 +337,8 @@ def test_step_48_indexes_what_went_with_a_page(data_dir):
         db.close_workspace_connections("splOld48")
     migrations._v48_deleted_with("", sqlite3.connect(":memory:"), None)  # a copy without the table
     assert (48, "deleted_with", migrations._v48_deleted_with) in migrations.WORKSPACE_STEPS
-    assert 48 in migrations.DERIVED_STEPS and migrations.workspace_format() == 44
+    # a derived column: it moves no workspace format (52 is step 52's documents)
+    assert 48 in migrations.DERIVED_STEPS and migrations.workspace_format() == 52
 
 
 def test_deleting_a_live_page_for_good_takes_its_descendants(owner):

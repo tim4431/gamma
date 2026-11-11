@@ -21,9 +21,10 @@ from typing import NamedTuple
 from . import storage, zotero_local, zotero_merge
 from . import zotero_remote as zr
 from .bibtex import pinned_key
-from .blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, TRASH, attachment_file, block_to_dict, existing_in, filed_folders,
-                           filing, label_names, page_attachment, page_top, trashed_folders, write_lock)
+from .blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, TRASH, block_to_dict, existing_in, filed_folders, filing,
+                           label_names, page_top, trashed_folders, write_lock)
 from .db import connect_pages_db, page_now
+from .documents.model import page_document, pdf_file_hash, stored_name
 from .zotero_annotations import file_md5
 from .zotero_sync_blocks import note_hash, note_page_html
 from .zotero_sync_rows import Round
@@ -70,11 +71,12 @@ class Side(NamedTuple):
     back in, ``trashed_folders``); ``inside``: a live sub-page, which
     carries no folders of its own (Zotero's collections are not applied to
     it, ``zotero_sync_items._Unit._held_collections``); ``doc_id``
-    and ``md5`` of its stored PDF ("" for none; the MD5 read from the file
-    only when asked, ``file_md5``), ``fsig`` the file's ``[size,
-    mtime_ns]`` (``[]``); ``has_pdf``: a PDF, stored or shown from an
-    address; ``note_hash``: a note page's note as Gamma would send it,
-    hashed (read with ``note``)."""
+    and ``md5`` of the PDF file it shows (``pdf_file_hash``, while
+    the file is here: "" for none; the MD5 read from the file only when
+    asked, ``file_md5``), ``fsig`` the file's ``[size, mtime_ns]``
+    (``[]``); ``has_pdf``: a document (``page_document``), stored, read in
+    place or shown from an address; ``note_hash``: a note page's note as
+    Gamma would send it, hashed (read with ``note``)."""
     page_id: str
     block: dict | None
     trashed: bool
@@ -129,7 +131,7 @@ def _fsig(path) -> list:
 def file_sig(ws: str, doc_id: str) -> list:
     """A stored PDF's ``[size, mtime_ns]`` (``[]`` for none), as an
     attachment row keeps it beside the MD5 it read (``_stored_md5``)."""
-    path = storage.open_path(ws, f"{doc_id}.pdf") if doc_id else None
+    path = storage.open_path(ws, stored_name(doc_id, ".pdf")) if doc_id else None
     return _fsig(path) if path else []
 
 
@@ -141,16 +143,16 @@ def page_side(conn, ws: str, page_id: str, *, note: bool = False) -> Side:
     block = block_to_dict(row)
     props = block["properties"] or {}
     known = label_names(conn)
-    attachment = page_attachment(props)
-    doc_id = attachment_file(attachment)
-    path = storage.open_path(ws, f"{doc_id}.pdf") if doc_id else None
+    view = page_document(props)
+    doc_id = pdf_file_hash(view)
+    path = storage.open_path(ws, stored_name(doc_id, ".pdf")) if doc_id else None
     md5, fsig = _stored_md5(conn, page_id, doc_id, path) if path else ("", [])
     trashed = block["parent_id"] == TRASH
     folders = trashed_folders(conn, props) if trashed else filed_folders(conn, page_id)
     return Side(page_id, block, trashed, zotero_local.stamps(conn, [page_id]),
                  {lid: known[lid] for lid in filing(props, LABELS) if lid in known},
                  existing_in(conn, FOLDERS, folders), doc_id if path else "", md5,
-                 attachment is not None, fsig, note_hash(note_page_html(conn, page_id)) if note else "",
+                 view is not None, fsig, note_hash(note_page_html(conn, page_id)) if note else "",
                  not trashed and page_top(conn, page_id) != page_id)
 
 

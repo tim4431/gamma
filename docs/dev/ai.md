@@ -507,9 +507,10 @@ set — some models reject it; see "Reasoning effort" below), optional `speed`
 (the provider's service tier; see "Speed" below), optional `system` override, the message's
 `images` and their budget `max_pictures` ("Pictures" below), and the context PAGES: `pages`
 (several — a report across pages) or, when empty, the one page of `page_id`
-(the open page). A page's PDF attachment is derived server-side
-(`blocks_store.page_attachment`) — `doc_id` is still accepted as a
-compatibility input: it resolves to the page carrying that PDF
+(the open page). A page's PDF attachment is derived server-side from its
+document (`documents.model.page_document`): the stored file it shows
+(`file_hash`), so a duplicated page reads the original's PDF — `doc_id` is
+still accepted as a compatibility input: it resolves to the page carrying that PDF
 (`blocks_store.page_for_doc`) and does nothing when no page does; send
 `page_id`, nothing new may depend on `doc_id`. `stream: true` (the chat UI's
 mode) returns NDJSON lines of
@@ -1348,7 +1349,7 @@ is opened in: `AgentToolPicker` in `settings/AssistantTools.jsx`, grouped
 rows with the same state menus and presets. It is bound to the same map, so
 a change in either place is the same change.
 `ChatDock` derives its kind from its props (`organizeFolder` set → folder;
-else `pageAttach` → pdf; else notes) and sends that kind's map as the
+else a PDF document, `isPdf(doc)` → pdf; else notes) and sends that kind's map as the
 request's `permissions`.
 
 One permission per capability: List pages (`list_pages`, the folder tree

@@ -14,7 +14,7 @@ import zipfile
 
 import pytest
 
-from conftest import login, make_folder, make_page, make_user
+from conftest import doc_props, login, make_folder, make_page, make_user
 
 PAGE_W, PAGE_H = 300, 400
 
@@ -1250,7 +1250,7 @@ def user(client):
 def _pdf_page(c, title, data, **props):
     up = c.post("/api/uploads", files={"file": (f"{title}.pdf", data, "application/pdf")})
     assert up.status_code == 200, up.text
-    page = make_page(c, title, {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"], **props})
+    page = make_page(c, title, {**doc_props(up.json()["doc_id"]), **props})
     return page, up.json()["doc_id"]
 
 

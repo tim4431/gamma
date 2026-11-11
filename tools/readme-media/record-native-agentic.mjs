@@ -156,7 +156,8 @@ try {
 
   // The PDF's text as the viewer's pdf.js reads it, for Gamma's citation matcher.
   const block = await account.api(`/api/blocks/${pageId}`);
-  const pdfUrl = block.properties.source_url || `/api/uploads/${block.properties.doc_id}.pdf`;
+  const doc = block.properties.doc;
+  const pdfUrl = doc.at === 'url' ? doc.url : `/api/uploads/${doc.hash}${doc.ext}`;
   const pdf = await getDocument({ data: new Uint8Array(await (await account.api(pdfUrl, { raw: true })).arrayBuffer()), verbosity: 0 }).promise;
   const runs = [];
   for (let n = 1; n <= pdf.numPages; n++) runs[n] = citationRuns((await (await pdf.getPage(n)).getTextContent()).items);

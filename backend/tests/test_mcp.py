@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from conftest import account_of, login, make_folder, make_page, make_user
+from conftest import account_of, doc_props, login, make_folder, make_page, make_user
 from gamma.ai_tools import agent_tools, mcp_tools, run_agent_tool
 from gamma.db import connect_users_db
 from gamma.integrations import resolve_token
@@ -89,7 +89,7 @@ def _pdf_page(c, title):
     w.write(buf)
     up = c.post("/api/uploads", files={"file": ("p.pdf", buf.getvalue(), "application/pdf")})
     assert up.status_code == 200, up.text
-    page = make_page(c, title, properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+    page = make_page(c, title, properties=doc_props(up.json()["doc_id"]))
     rect = {"x1": 100, "y1": 72, "x2": 300, "y2": 92}
     r = c.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": f"{page['id']}-hl", "content": "McpHighlightNote", "properties": {
@@ -136,7 +136,7 @@ def test_results_carry_links_and_structured_content(client, connection, monkeypa
 
     c, ws, item = connection
     token = item["token"]
-    paper = make_page(c, "Linked paper", properties={"doc_id": "l" * 24})
+    paper = make_page(c, "Linked paper", properties=doc_props("l" * 24))
     note = c.post("/api/blocks", json={"parent_id": paper["id"], "content": "UniqueLinkedNote"}).json()
     # The search index holds the hit; a read extracts the text from the PDF itself.
     pages = ["(page 1) first-page-body " * 5, "(page 2) UniqueLinkedPassage on the second page " * 3]

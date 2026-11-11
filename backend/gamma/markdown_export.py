@@ -16,7 +16,8 @@ import re
 from urllib.parse import quote as urlquote
 
 from . import bibtex as bibtex_mod
-from .blocks_store import TRASH, block_to_dict, page_attachment
+from .blocks_store import TRASH, block_to_dict
+from .documents.model import page_document
 from .highlights import is_highlight, is_ink, is_link, page_of
 from .markdown_import import EMPTY_ITEM_RE
 from .note_markup import obsidian_image_sizes
@@ -125,9 +126,8 @@ def render_readable(page, highlights=True, notes=True, resolve_ref=None, page_fi
         fm.append(f"folder: {front_matter_folder(folder)}")
     if parent:
         fm.append(f"parent: {urlquote(parent)}")
-    attachment = page_attachment(props)
-    if attachment:
-        fm.append(f"source: {attachment['url']}")
+    if view := page_document(props):
+        fm.append(f"source: {view['url']}")
     meta = props.get("meta")
     if isinstance(meta, dict):
         if meta.get("doi"):

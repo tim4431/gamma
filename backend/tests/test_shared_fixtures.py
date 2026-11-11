@@ -840,15 +840,58 @@ def test_passage_texts(case):
         (kept, total) for kept, total in zip(case["kept"], case["total"]) if kept < total]
 
 
-ATTACHMENT = _load("attachment.json")
+DOCUMENT = _load("document.json")
 
 
-@pytest.mark.parametrize("case", ATTACHMENT["cases"], ids=[c["note"] for c in ATTACHMENT["cases"]])
-def test_page_attachment(case):
-    from gamma.blocks_store import attachment_file, page_attachment
-    attachment = page_attachment(case["properties"])
-    assert attachment == case["attachment"]
-    assert attachment_file(attachment) == case["file"]
+@pytest.mark.parametrize("case", DOCUMENT["cases"], ids=[c["note"] for c in DOCUMENT["cases"]])
+def test_page_document(case):
+    from gamma.documents.model import check_document, page_document
+    view = page_document(case["properties"])
+    assert view == case["document"]
+    if view is not None:  # what a writer stores reads back as the same view
+        assert page_document({"doc": check_document(case["properties"]["doc"])}) == view
+
+
+@pytest.mark.parametrize("case", DOCUMENT["legacy"], ids=[c["note"] for c in DOCUMENT["legacy"]])
+def test_document_shape(case):
+    from gamma.normalize import document_shape
+    before = json.loads(json.dumps(case["properties"]))
+    assert document_shape(case["properties"]) == case["migrated"]
+    assert case["properties"] == before  # the input is not modified
+    assert document_shape(case["migrated"]) == case["migrated"]  # a rerun changes nothing
+    if isinstance(case["migrated"].get("doc"), dict):  # every doc it writes is one a writer could
+        assert list(case["migrated"]["doc"]) == [k for k in ("format", "name", "hash", "ext", "at", "url", "size", "copy")
+                                                 if k in case["migrated"]["doc"]]
+
+
+FORMATS = _load("formats.json")
+
+
+@pytest.mark.parametrize("case", FORMATS["names"], ids=[c["name"] for c in FORMATS["names"]])
+def test_format_of_a_name(case):
+    from gamma.documents import formats
+    assert formats.format_of(case["name"]) == (case["format"], case["language"])
+    if case["ext"] is None:
+        with pytest.raises(ValueError):
+            formats.stored_extension(case["name"])
+    else:
+        assert formats.stored_extension(case["name"]) == case["ext"]
+
+
+@pytest.mark.parametrize("case", FORMATS["media"], ids=[c["ext"] or "none" for c in FORMATS["media"]])
+def test_format_media(case):
+    from gamma.documents import formats
+    assert formats.media_type(case["ext"]) == case["media"]
+    assert (case["ext"] in formats.INLINE_EXTENSIONS) == case["inline"]
+    assert (case["ext"] in formats.SANDBOXED_EXTENSIONS) == case["sandboxed"]
+
+
+@pytest.mark.parametrize("case", FORMATS["sniff"], ids=[c["note"] for c in FORMATS["sniff"]])
+def test_format_sniff(case):
+    from gamma.documents import formats
+    head = b"a" * case["pad"] + case["head"].encode("latin-1")
+    assert formats.sniff(head) == (case["format"], case["language"])
+    assert formats.format_of("unknown.xyz", head) == (case["format"], case["language"])
 
 
 FRACTIONALKEYS = _load("fractionalkeys.json")

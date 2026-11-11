@@ -13,7 +13,7 @@ from contextlib import closing
 
 import pytest
 
-from conftest import account_of, fresh_client, login, make_folder, make_label, make_user, workspace_of
+from conftest import account_of, doc_props, fresh_client, login, make_folder, make_label, make_user, workspace_of
 from gamma import blocks_store, db, migrations, seed
 from gamma.auth import ShareScope
 from gamma.blocks_store import (MAX_PAGE_DEPTH, create_page, page_ancestors, page_descendants, page_in_folder,
@@ -249,20 +249,26 @@ def test_the_family_names_the_ancestors_and_the_sub_pages(owner):
 
 
 def test_the_family_says_which_sub_pages_carry_a_pdf(owner):
-    """A sub-page carrying a PDF (blocks_store.page_attachment: a doc_id, or
-    a source_url alone) is marked ``pdf: true``, for its glyph under a share too."""
+    """A sub-page carrying a document (``page_document``: stored, at an
+    address, a copy) is marked with its ``format``, for its glyph under a
+    share too."""
     a = _page(owner, "fampdf A")
     with conn() as cx:
-        stored = create_page(cx, "fampdf stored", {"parent_page": a, "doc_id": "d" * 24}, actor=account_of(USER))["id"]
-        linked = create_page(cx, "fampdf linked", {"parent_page": a, "source_url": "https://example.org/x.pdf"},
+        stored = create_page(cx, "fampdf stored", {"parent_page": a, **doc_props("d" * 24)},
                              actor=account_of(USER))["id"]
+        linked = create_page(cx, "fampdf linked", {"parent_page": a, **doc_props(url="https://example.org/x.pdf")},
+                             actor=account_of(USER))["id"]
+        copy = create_page(cx, "fampdf copy", {"parent_page": a, **doc_props(url=f"/api/uploads/{'d' * 24}.pdf")},
+                           actor=account_of(USER))["id"]
     note = _page(owner, "fampdf note", parent_page=a)
     kids = {x["id"]: x for x in owner.get(f"/api/pages/{a}/family").json()["sub_pages"]}
-    assert kids[stored]["pdf"] is True and kids[linked]["pdf"] is True and "pdf" not in kids[note]
+    assert [kids[k].get("format") for k in (stored, linked, copy, note)] == ["pdf", "pdf", "pdf", None]
+    assert not any("pdf" in kid for kid in kids.values())
     anon = fresh_client()
     share = {"share": owner.post(f"/api/share/{a}", json={"audience": "anyone"}).json()["token"]}
     shared = anon.get(f"/api/pages/{a}/family", params=share).json()["sub_pages"]
-    assert [(x["id"], x.get("pdf", False)) for x in shared] == [(stored, True), (linked, True), (note, False)]
+    assert [(x["id"], x.get("format")) for x in shared] == [(stored, "pdf"), (linked, "pdf"), (copy, "pdf"),
+                                                             (note, None)]
 
 
 def test_a_share_reads_the_family_it_reaches(owner):
@@ -454,7 +460,7 @@ def test_step_47_gives_a_workspace_stamped_46_the_parent_page_column(data_dir):
         with connect_pages_db("spOld") as cx:
             assert cx.execute("SELECT parent_page FROM unified_blocks WHERE id = 'spKid'").fetchone() == ("spTop",)
             assert cx.execute("SELECT 1 FROM sqlite_master WHERE name = 'idx_ub_parent_page'").fetchone()
-            assert cx.execute("PRAGMA user_version").fetchone()[0] == 48
+            assert cx.execute("PRAGMA user_version").fetchone()[0] == 52  # the newest workspace step
             ddl = cx.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0]
             migrations._v47_parent_page("spOld", cx, None)  # re-runnable: nothing to do
             assert cx.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0] == ddl
@@ -465,5 +471,6 @@ def test_step_47_gives_a_workspace_stamped_46_the_parent_page_column(data_dir):
     migrations._v47_parent_page("", sqlite3.connect(":memory:"), None)  # a copy without the table
     assert (47, "parent_page", migrations._v47_parent_page) in migrations.WORKSPACE_STEPS
     assert 47 not in [v for v, _, _ in migrations.STEPS]  # a workspace step only
-    assert migrations.workspace_format() == 44  # a derived column: copies on either side still sync
+    # a derived column: copies on either side still sync (the format, 52, is step 52's documents)
+    assert 47 in migrations.DERIVED_STEPS and migrations.workspace_format() == 52
     assert blocks_store.PARENT_PAGE == "parent_page"

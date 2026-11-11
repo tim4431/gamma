@@ -8,7 +8,7 @@ import re
 
 import pytest
 
-from conftest import account_of, login, make_folder, make_user, workspace_of
+from conftest import account_of, doc_props, login, make_folder, make_user, workspace_of
 from gamma.ai_tools import agent_tools
 
 ALL_TOOLS = agent_tools("folder")  # the full registry, for the wire tests
@@ -53,7 +53,7 @@ def org(client, request):
                "nondestructive": make_folder(c, "readout/nondestructive"),
                "cooling": make_folder(c, "cooling")}
     ids = {
-        "a": page("cavity paper", {"folders": [folders["readout"]], "doc_id": "d" * 24,
+        "a": page("cavity paper", {"folders": [folders["readout"]], **doc_props("d" * 24),
                                    "meta": {"authors": ["Ada One", "Bo Two"], "year": "2019", "venue": "Nature"}}),
         "b": page("qec paper", {"folders": [folders["nondestructive"], folders["cooling"]]}),
         "note": page("loose note", {}),

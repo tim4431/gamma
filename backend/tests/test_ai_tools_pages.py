@@ -6,7 +6,7 @@ id, read inside the chat's folder."""
 import re
 import secrets
 
-from conftest import folder_names, make_folder, make_label
+from conftest import doc_props, folder_names, make_folder, make_label
 from gamma import ai_tools
 from gamma.ai_tools import agent_tools, run_agent_tool
 
@@ -387,7 +387,7 @@ def test_area_highlights_reach_the_model_as_pictures(org, monkeypatch):
     assert area_highlight({"quote": ""}) is None
     assert area_highlight({"ink_url": "/api/uploads/a.ink", "pdf_position": position}) is None  # ink
     page = c.post("/api/blocks", json={"parent_id": "root", "content": "figure notes",
-                                       "properties": {"folders": [ids["readout"]], "doc_id": "a" * 24}}).json()["id"]
+                                       "properties": {"folders": [ids["readout"]], **doc_props("a" * 24)}}).json()["id"]
     ids_made = [c.post("/api/blocks", json={"parent_id": page, "content": f"box {n}" if n == 0 else "",
                                             "properties": props}).json()["id"]
                 for n in range(MAX_AREA_CROPS + 1)]
@@ -445,7 +445,7 @@ def test_text_boxes_are_notes_never_area_highlights(org, monkeypatch):
                                      "rects": [rect], "area": True}}
     assert area_highlight(box) is None and area_highlight(stray) is None
     page = c.post("/api/blocks", json={"parent_id": "root", "content": "boxed paper",
-                                       "properties": {"folders": [ids["readout"]], "doc_id": "b" * 24}}).json()["id"]
+                                       "properties": {"folders": [ids["readout"]], **doc_props("b" * 24)}}).json()["id"]
     c.post("/api/blocks", json={"parent_id": page, "content": "typed on the figure", "properties": stray})
     # Under a sheet the sheet holds a box whatever its pdf_page says; with neither it is on no page.
     sheet = c.post("/api/blocks", json={"parent_id": page, "content": "",
@@ -738,3 +738,39 @@ def test_view_pdf_page_renders_a_picture_for_the_model(org, monkeypatch, tmp_pat
                                   {"page_id": ids["a"], "pdf_page": 1},
                                   allowed_tools={"read_page"})
     assert text.startswith("error") and "not enabled" in text
+
+
+def test_a_duplicated_page_reads_the_pdf_it_shows(org, monkeypatch, tmp_path):
+    """A duplicated page owns no file but shows the original's (a copy,
+    documents.model.file_hash): list_pages says it carries a PDF, read_page
+    reads that PDF's text and view_pdf_page draws its pages, as on the
+    original."""
+    c, ids = org
+    pdf = _blank_pdf(tmp_path / "shown.pdf")
+    asked = []
+    monkeypatch.setattr("gamma.ai_tools.pdf_path", lambda ws, doc: asked.append(doc) or pdf)
+    monkeypatch.setattr("gamma.ai_context.pdf_path", lambda ws, doc: asked.append(doc) or "fake.pdf")
+    monkeypatch.setattr("gamma.ai_context.extract_text_pages",
+                        lambda src, char_limit, empty_page_cap=50, start_page=1, label_pages=False:
+                        ("[PDF page 1]\nTextOfTheOriginalsPdf", 1))
+    copies = make_folder(c, "copies")
+    r = c.post("/api/blocks", json={"parent_id": "root", "content": "cavity paper (copy)", "properties": {
+        "folders": [copies], **doc_props(url=f"/api/uploads/{'d' * 24}.pdf")}})
+    assert r.status_code == 200, r.text
+    copy = r.json()["id"]
+    assert r.json()["properties"]["doc"]["copy"] is True
+    scope = folder(copies)
+    text, _ = run_agent_tool(ids["ws"], scope, "list_pages", {})
+    assert f"id={copy}" in text and "attachments=[pdf]" in text
+    text, _ = run_agent_tool(ids["ws"], scope, "read_page", {"page_id": copy})
+    assert "attachment: PDF" in text and "TextOfTheOriginalsPdf" in text, text
+    text, action = run_agent_tool(ids["ws"], scope, "view_pdf_page", {"page_id": copy, "pdf_page": 2})
+    assert text.startswith("PDF page 2 of 2"), text
+    assert action["images"]
+    assert asked and set(asked) == {"d" * 24}  # the original's file, by its hash
+    # the folder chat's search reads that PDF's text too
+    searched = []
+    monkeypatch.setattr("gamma.ai_tools.search_pdf",
+                        lambda database, match, limit, docs: searched.append(dict(docs)) or [])
+    run_agent_tool(ids["ws"], scope, "search_library", {"query": "TextOfTheOriginalsPdf"})
+    assert searched and searched[0] == {"d" * 24: "cavity paper (copy)"}, searched

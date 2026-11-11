@@ -4,7 +4,7 @@ background job (kind ``metadata``, docs/dev/tasks.md)."""
 import threading
 
 import pytest
-from conftest import make_page
+from conftest import doc_props, make_page
 
 
 ARXIV_META = {
@@ -36,7 +36,7 @@ def arxiv(monkeypatch):
 
 def _paper(guest, title, arxiv_id=""):
     """A page whose lookup finds its arXiv record, or (no id) finds nothing."""
-    props = {"source_url": f"https://arxiv.org/abs/{arxiv_id}"} if arxiv_id else None
+    props = doc_props(url=f"https://arxiv.org/abs/{arxiv_id}") if arxiv_id else None
     return make_page(guest, title, properties=props)["id"]
 
 
@@ -107,7 +107,7 @@ def test_without_force_a_page_keeps_the_record_it_has(guest, arxiv):
     from gamma import jobs
 
     page = make_page(guest, "Already described", properties={
-        "source_url": "https://arxiv.org/abs/2601.00007", "meta": {"title": "Kept Title", "source": "arxiv"}})["id"]
+        **doc_props(url="https://arxiv.org/abs/2601.00007"), "meta": {"title": "Kept Title", "source": "arxiv"}})["id"]
     job = guest.post("/api/jobs/metadata", json={"block_ids": [page], "force": False}).json()
     assert jobs.wait(job["id"])["state"] == "done"
     assert arxiv["calls"] == []

@@ -12,7 +12,7 @@ import zipfile
 
 import pytest
 
-from conftest import login, make_page, make_user, workspace_of
+from conftest import doc_props, login, make_page, make_user, workspace_of
 from gamma import ai_catalog, jobs, migrations, recording
 from gamma.db import BLOCK_HOT_INDEXES, PAGES_SCHEMA, connect_pages_db
 from gamma.markdown_export import render_readable
@@ -161,7 +161,8 @@ def test_step_38_rebuilds_the_kind_column():
     for stmt in BLOCK_HOT_INDEXES:
         conn.execute(stmt)
     conn.execute("INSERT INTO unified_blocks (id, parent_id, position, properties, created_at, updated_at, page_id) "
-                 "VALUES ('p', 'root', 'a0', '{\"doc_id\": \"d1\"}', 't', 't', 'p'), "
+                 "VALUES ('p', 'root', 'a0', '{\"doc\": {\"format\": \"pdf\", \"name\": \"\", \"hash\": \"d1\", "
+                 "\"ext\": \".pdf\", \"at\": \"store\"}}', 't', 't', 'p'), "
                  "('r', 'p', 'a0', '{\"recording\": {\"segments\": []}}', 't', 't', 'p')")
     conn.commit()
     assert conn.execute("SELECT kind FROM unified_blocks WHERE id = 'r'").fetchone() == ("note",)
@@ -263,7 +264,7 @@ def test_the_pdf_exports_take_a_recording(owner):
     w.add_blank_page(width=600, height=780)
     w.write(blank)
     up = owner.post("/api/uploads", files={"file": ("rec.pdf", blank.getvalue(), "application/pdf")}).json()
-    r = owner.put(f"/api/blocks/{page}", json={"properties": {"doc_id": up["doc_id"]}})
+    r = owner.put(f"/api/blocks/{page}", json={"properties": doc_props(up["doc_id"])})
     assert r.status_code == 200, r.text
     r = owner.get(f"/api/pages/{page}/export", params={"mode": "annotated-pdf"})
     assert r.status_code == 200, r.text

@@ -51,11 +51,12 @@ from fractional_indexing import generate_n_keys_between
 
 from .block_index import rebuild
 from .blocks_store import BLOCK_COLUMNS, FOLDERS, LABELS, TRASH, TREES, ensure_reserved, touch_page
-from .db import BLOCK_HOT_COLUMNS, BLOCK_HOT_INDEXES, CHATS_SCHEMA, PAGES_SCHEMA, page_now
+from .db import BLOCK_HOT_COLUMNS, BLOCK_HOT_INDEXES, CHATS_SCHEMA, PAGES_SCHEMA, page_now, safe_doc_id
+from .documents.model import stored_name, upload_url
 from .highlights import from_scaled
 from .note_markup import obsidian_image_sizes
 from .picture import is_picture
-from .storage import display_filename, pdf_url
+from .storage import display_filename
 from .text_box import is_text_box
 
 # The automatic title prefix Gamma used to give uploaded PDFs. Migrated pages
@@ -379,7 +380,7 @@ def _move_bucket(conn: sqlite3.Connection, old: str, new: str) -> None:
 _SHAPE_FILTER = ("properties LIKE '%\"highlight_id\"%' OR properties LIKE '%\"pdf_page\"%' "
                  "OR properties LIKE '%\"pdf_position\"%' OR properties LIKE '%\"link_highlight_id\"%' "
                  "OR properties LIKE '%\"linked_highlight_id\"%' "
-                 "OR (doc_id IS NOT NULL AND properties LIKE '%\"source_url\"%')")
+                 "OR (json_extract(properties, '$.doc_id') IS NOT NULL AND properties LIKE '%\"source_url\"%')")
 
 
 def highlight_shape(conn: sqlite3.Connection) -> bool:
@@ -397,14 +398,16 @@ def highlight_shape(conn: sqlite3.Connection) -> bool:
     that had that highlight id on the page it links to, and a note's
     ``linked_highlight_id`` names the block that had it on the note's own
     page (a block of that id there stays named); one no block there had is
-    dropped. A ``source_url`` that is the row's ``doc_id``'s stored copy
-    goes (blocks_store.page_attachment derives it). What a row becomes
-    depends on the file's rows alone, so two copies of a page upgraded
-    apart agree. A file with nothing of the old shape is left as it is.
-    Returns whether it changed the file."""
+    dropped. A ``source_url`` that is the stored copy of the row's
+    ``doc_id`` (the flat keys a page kept its document in before step 52,
+    read as keys here, not through the generated column) goes. What a row
+    becomes depends on the file's rows alone, so two copies of a page
+    upgraded apart agree. A file with nothing of the old shape is left as
+    it is. Returns whether it changed the file."""
     rows = [(block_id, page_id, doc_id, props) for block_id, page_id, doc_id, props in (
         (r[0], r[1], r[2], _load_props(r[3])) for r in conn.execute(
-            f"SELECT id, page_id, doc_id, properties FROM unified_blocks WHERE {_SHAPE_FILTER} ORDER BY id"))
+            "SELECT id, page_id, json_extract(properties, '$.doc_id'), properties FROM unified_blocks "
+            f"WHERE {_SHAPE_FILTER} ORDER BY id"))
         if props is not None]
     # (page, highlight id) → its block: the block of that id if there is
     # one, else the first by id.
@@ -440,7 +443,7 @@ def highlight_shape(conn: sqlite3.Connection) -> bool:
             target = blocks.get((page_id, old)) or (old if (page_id, old) in placed else None)
             if target:
                 new["linked_highlight_id"] = target
-        if doc_id and new.get("source_url") == pdf_url(doc_id):
+        if doc_id and new.get("source_url") == upload_url(stored_name(doc_id, ".pdf")):
             del new["source_url"]
         if new != props:
             changed.append((json.dumps(new), block_id))
@@ -449,6 +452,122 @@ def highlight_shape(conn: sqlite3.Connection) -> bool:
     with _transaction(conn):
         conn.executemany("UPDATE unified_blocks SET properties = ? WHERE id = ?", changed)
     return True
+
+
+# The flat keys a block kept its document in before step 52 (camelCase
+# ``sourceUrl`` the earliest pages'), and the address of a stored PDF a
+# duplicated page showed its file by: the step's own, not
+# documents.model.parse_upload_url's, so the step answers the same in every
+# release that runs it.
+_FLAT_DOC_KEYS = ("doc_id", "source_url", "sourceUrl", "linked_file")
+_STORED_PDF_URL_RE = re.compile(r"^/api/uploads/([0-9A-Za-z_-]{1,128})\.pdf\Z")
+
+
+def _flat_doc_id(value) -> str:
+    """A flat ``doc_id`` as a stem, "" when it is none (an int is its digits;
+    anything else, or what ``db.safe_doc_id`` refuses, is none)."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        value = str(value)
+    if not isinstance(value, str):
+        return ""
+    try:
+        return safe_doc_id(value)
+    except ValueError:
+        return ""
+
+
+def document_shape(props: dict) -> dict:
+    """One row's properties after step 52, as a new dict (``props`` is
+    left as it is): the flat ``doc_id``, ``source_url`` (or ``sourceUrl``),
+    ``original_filename`` and ``linked_file`` of a block's document become
+    its ``doc`` (gamma/documents/model.py), every one a PDF. Read in place
+    (``linked_file``) when it has a doc id, any address dropped; stored when
+    the address is none (or blank: it is read stripped, as
+    ``documents.model.document`` reads it) or the doc id's own stored copy;
+    else at the address, the doc id kept as the hash it owns. An address alone that is
+    exactly a stored PDF's is a copy of it (a duplicated page), any other
+    one a document at it. ``name`` is ``original_filename`` as it is, which
+    goes with it, but on a page made from a Markdown file
+    (``markdown_import``), where it stays the source's name and the
+    document has none. A ``doc`` there already is kept and the flat keys go;
+    a row without them comes back equal. Builds the doc directly in
+    canonical key order: nothing here raises, and two copies rewritten
+    apart agree."""
+    new = dict(props)
+    flat = {key: new.pop(key) for key in _FLAT_DOC_KEYS if key in new}
+    if isinstance(props.get("doc"), dict):
+        return new
+    doc_id = _flat_doc_id(flat.get("doc_id"))
+    url = next((u.strip() for u in (flat.get("source_url"), flat.get("sourceUrl"))
+                if isinstance(u, str) and u.strip()), "")
+    if not doc_id and not url:
+        return new
+    name = ""
+    if not new.get("markdown_import"):
+        original = new.pop("original_filename", "")
+        name = original if isinstance(original, str) else ""
+    doc = {"format": "pdf", "name": name, "hash": doc_id, "ext": ".pdf"}
+    copy = False
+    if doc_id and flat.get("linked_file"):
+        doc["at"] = "path"
+    elif doc_id and url in ("", upload_url(stored_name(doc_id, ".pdf"))):
+        doc["at"] = "store"
+    elif doc_id:
+        doc["at"], doc["url"] = "url", url
+    elif m := _STORED_PDF_URL_RE.match(url):
+        doc["hash"], doc["at"], copy = m.group(1), "store", True
+    else:
+        doc["at"], doc["url"] = "url", url
+    if copy:
+        doc["copy"] = True
+    new["doc"] = doc
+    return new
+
+
+def page_documents(conn: sqlite3.Connection) -> int:
+    """Step 52's rewrite, without committing: every row that keeps a
+    document in the flat keys gets the ``doc`` ``document_shape`` makes of
+    them (properties alone: no ``updated_at``, no change-log or op-log row;
+    a shape is no edit), and so does every block entry of a mirror's stored
+    bases (``sync_pages``: the page trees of the last round, the key
+    ``sync_engine.PENDING`` of a push in flight left as it is,
+    ``synced_at`` too), so the first round after both sides upgraded sends
+    nothing for the shape. Writes only what changes. Returns the number of
+    block rows changed."""
+    changed = []
+    for block_id, raw in conn.execute(
+            "SELECT id, properties FROM unified_blocks WHERE " + " OR ".join(
+                f"properties LIKE '%\"{key}\"%'" for key in _FLAT_DOC_KEYS)).fetchall():
+        props = _load_props(raw)
+        if props is None:
+            continue
+        new = document_shape(props)
+        if new != props:
+            changed.append((json.dumps(new), block_id))
+    conn.executemany("UPDATE unified_blocks SET properties = ? WHERE id = ?", changed)
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sync_pages'").fetchone():
+        bases = []
+        for page_id, raw in conn.execute(
+                "SELECT page_id, base FROM sync_pages WHERE " + " OR ".join(
+                    f"base LIKE '%\"{key}\"%'" for key in _FLAT_DOC_KEYS)).fetchall():
+            try:
+                base = json.loads(raw or "{}")
+            except ValueError:
+                continue
+            if not isinstance(base, dict):
+                continue
+            moved = False
+            for key, entry in base.items():
+                if key == "~pending" or not isinstance(entry, dict) or not isinstance(entry.get("props"), dict):
+                    continue  # sync_engine.PENDING: a push in flight is resent as it was
+                props = document_shape(entry["props"])
+                if props != entry["props"]:
+                    entry["props"] = props
+                    moved = True
+            if moved:
+                bases.append((json.dumps(base), page_id))
+        conn.executemany("UPDATE sync_pages SET base = ? WHERE page_id = ?", bases)
+    return len(changed)
 
 
 def normalize_pages_db(conn: sqlite3.Connection) -> dict:
@@ -499,19 +618,24 @@ def normalize_pages_db(conn: sqlite3.Connection) -> dict:
             (title, json.dumps(props), now, block_id))
         counts["pdf_notes_title"] += 1
 
-    # (4) Pages whose original_filename kept a directory path (a browser
-    # once leaked a relative path into the file name): the marker becomes
-    # the leaf, and the title follows only while it still equals the
-    # generated one (a user-renamed page cannot match).
+    # (4) Pages whose file name kept a directory path (a browser once leaked
+    # a relative path into the file name): the name (a document's
+    # ``doc.name``; a page made from a Markdown file keeps its source's in
+    # ``original_filename``) becomes the leaf, and the title follows only
+    # while it still equals the generated one (a user-renamed page cannot
+    # match).
     for block_id, content, raw in conn.execute(
             "SELECT id, content, properties FROM unified_blocks WHERE parent_id = 'root' "
-            "AND properties LIKE '%\"original_filename\"%' "
+            "AND (properties LIKE '%\"original_filename\"%' OR properties LIKE '%\"doc\"%') "
             "AND (properties LIKE '%/%' OR properties LIKE '%\\%')"
     ).fetchall():
         props = _load_props(raw)
         if props is None:
             continue
-        original = str(props.get("original_filename") or "").replace("\\", "/").strip()
+        doc = props.get("doc") if not props.get("markdown_import") and isinstance(props.get("doc"), dict) else None
+        named = doc if doc is not None else props
+        key = "name" if doc is not None else "original_filename"
+        original = str(named.get(key) or "").replace("\\", "/").strip()
         leaf = display_filename(original)
         if not leaf or leaf == original:
             continue
@@ -523,7 +647,7 @@ def normalize_pages_db(conn: sqlite3.Connection) -> dict:
         elif props.get("auto_title") == content and display_filename(content) == leaf:
             next_content = leaf
             props["auto_title"] = leaf
-        props["original_filename"] = leaf
+        named[key] = leaf
         conn.execute(
             "UPDATE unified_blocks SET content = ?, properties = ?, updated_at = ? WHERE id = ?",
             (next_content, json.dumps(props), now, block_id))

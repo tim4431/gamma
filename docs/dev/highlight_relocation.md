@@ -35,7 +35,8 @@ Code:
 - `routers/pages.py`: `replace_pdf` over `replace_attachment` (the Zotero
   link's path too), `_start_relocation`,
   `POST /api/jobs/relocate-highlights`.
-- `blocks_store.attachment_file`: the stored file a page shows.
+- `documents.model.file_hash` (over `page_document`): the stored file a
+  page shows.
 
 In the web app:
 
@@ -66,13 +67,13 @@ stamps each highlight with the file it was measured on
 the block. The same file again, or the same stored file from another
 address, stamps nothing and starts no run.
 
-The stored file a page shows is its attachment's `doc_id`, else the upload
-its `source_url` serves when that is exactly `/api/uploads/<doc_id>.pdf`
-(`blocks_store.attachment_file`, `libraryUtils.attachmentFile`). The
-library's Duplicate gives a copy only that address. Its attachment `id`
-stays empty, as gating and lookups by attachment expect.
+The stored file a page shows is its document's hash (`doc.hash`:
+`documents.model.file_hash`, `pageDocument.js` `fileHash`). The library's
+Duplicate gives a copy the same file marked `copy`: it shows that file
+without owning it, so its own hash (`own_hash`) stays empty, as the lookups
+of the page of a file expect.
 
-A PDF shown from another URL with no `doc_id` is no stored file. (A
+A PDF shown from an address with no hash is no stored file. (A
 URL-opened PDF has one, the URL's hash, and is fetched as the indexer
 fetches it.) A replacement by such a URL starts no run and answers
 `relocation_error` "the PDF is not stored on the server" (`NOT_STORED`).
@@ -150,7 +151,7 @@ nothing.
 the page's write lock. It fails, writing nothing, when the page is no
 longer live ("the page was deleted before its highlights were placed —
 restore it and choose Find highlights in this PDF"). It fails too when the
-page no longer carries the file placed for (`attachment_file`: "the page's
+page no longer carries the file placed for (`file_hash`: "the page's
 PDF changed again before the highlights were placed"). A highlight deleted
 since the snapshot, or whose `pdf_position` or `quote` changed, is left
 alone and counted in `changed`. The rest go as `set` ops in batches of at
@@ -165,17 +166,17 @@ writes](#what-a-run-writes)), then the thresholds used.
 
 ## Which file a position was measured on
 
-`pdf_position.doc_id` names the stored file (a page `doc_id`, the content
-hash) a position's rectangles were measured on, when that is not the page's
-PDF. Without it they belong to the current PDF, so the viewer, the imports
-and a move by hand never write the field. The previous file is not enough.
-A run that never wrote, a highlight left lost, or a wrong file replaced
-again leaves rectangles of an older one.
+`pdf_position.doc_id` names the stored file (a page's `doc.hash`, the stem
+it is stored under) a position's rectangles were measured on, when that is
+not the page's PDF. Without it they belong to the current PDF, so the
+viewer, the imports and a move by hand never write the field. The previous
+file is not enough. A run that never wrote, a highlight left lost, or a
+wrong file replaced again leaves rectangles of an older one.
 
 The replacement writes the stamps beside the marks on the blocks imported
 from the old file's annotations, in batches of `MAX_OPS`. Every placed
 highlight naming no file gets the outgoing file's id, on a duplicated page
-the upload its address serves. A page shown from a URL alone gives
+the original's file it shows. A page shown from a URL alone gives
 `unstored` (`storage.UNSTORED`). Uploads are named by content hash, so
 `unstored` names none. A position that names a file keeps it. The same
 write drops a lost highlight's `closest`, a place in the outgoing file that
@@ -721,10 +722,11 @@ and, for an editor, the row of steps (below) follow.
 
 **A lost (hollow) card** has the header "Not found in this version". Its
 **Before** comes from its own position (`lostPlace`). When its `doc_id`
-names a file other than the page's current one (PdfViewer's `fileId`, App's
-`attachmentFile`), the picture is cut from that file. Its rectangles are
-drawn over it, and its stored quote beneath. Otherwise its rectangles are
-drawn hollow right there, and the card shows only the stored quote.
+names a file other than the page's current one (PdfViewer's `fileId`, the
+`fileHash` of App's page document), the picture is cut from that file. Its
+rectangles are drawn over it, and its stored quote beneath. Otherwise its
+rectangles are drawn hollow right there, and the card shows only the stored
+quote.
 
 With a `closest` place, the card adds "Closest match: 72%" with **Show**,
 and the stored quote set against the candidate's text, word by word. That
@@ -1110,7 +1112,7 @@ title is "This page's highlights are being placed — see Background tasks".
     ([research/highlight-anchoring.md](../research/highlight-anchoring.md)).
 - A passage under `exact_chars` characters, or of one word, that the new
   file splits at a page break is not found.
-- A page whose PDF is shown from a URL alone (no `doc_id`, and an address
+- A page whose PDF is shown from a URL alone (no hash, and an address
   that is not an upload's) starts no run. Its highlights stay where they
   were.
 - Ink groups, text boxes and pictures placed on the page
@@ -1284,7 +1286,7 @@ The other web app unit tests:
   `closestPlacement` and `reviewUndone`;
 - `tasks.test.mjs`: `relocationSummary` and `relocationSuperseded`;
 - `settings.test.mjs`: the two thresholds' defaults and clamping;
-- `libraryUtils.test.mjs`: `attachmentFile`.
+- `documents.test.mjs`: the file a page shows (`fileHash`).
 
 The browser suite runs a step by part of its name (`npm run e2e -- --only
 "<part of the name>"`). The steps are in `pdf.mjs`, save the last, which is
