@@ -31,7 +31,12 @@ highlights) into highlight blocks — each a `pdf_position` in the page's
 points (the page box once, the quads as bare rects, `area: true` for a
 /Square or /Circle; [api.md](api.md) "The highlight shape") under a block
 id of its own, which is the highlight's id — idempotent via `properties.imported_annot`
-keys; opacity honors the annotation's `/GammaAlpha`, else its `/CA`, so a
+keys. A /Highlight is the wash; an /Underline, a /Squiggly and a
+/StrikeOut are highlights in that `style` (`underline`, `squiggly`,
+`strikeout`; a Zotero copy's `/GammaStyle` names the line its /Underline
+stands for). Opacity honors the annotation's `/GammaAlpha`, else its `/CA`, and a
+line's colour is its `/GammaColor` when it has one (Gamma's export keeps
+the stored colour there, its `/C` being the line tone), so a
 Gamma export → re-import round-trips exact colors (a Zotero copy keeps its
 alpha in the first, [below](#zotero-rdf-export)), and each channel is rounded, not truncated (an
 app that writes 0.831 means 212); pypdf's `.get()` hands back `IndirectObject`s unresolved, always
@@ -964,8 +969,8 @@ shared `import_embedded_annotations` (reader annotations arrive inside the
 exported PDFs; `strip` follows the client's embedded-annotations preference).
 Zotero writes each of its kinds as a standard annotation
 ([research/zotero-annotations.md](../research/zotero-annotations.md)): a
-highlight and an underline become highlights (Gamma has no underline; the
-quote is the text under it), an image an area highlight, ink handwriting, a
+highlight becomes a highlight and an underline a highlight drawn as an
+underline (`style`; the quote is the text under it), an image an area highlight, ink handwriting, a
 note a text box, and a text annotation a Zotero box, a text box laid out as
 Zotero's reader lays it out ([text_boxes.md](text_boxes.md#zotero-boxes)). A text
 annotation turned in Zotero
@@ -2018,8 +2023,10 @@ Memos.
 
 What Zotero takes from the copies, by its pdf-worker's `readRawAnnotation`
 (Zotero 9.0.6; [research/zotero-annotations.md](../research/zotero-annotations.md)):
-`/Highlight` → highlight, `/Square` → image, `/Ink` → ink, `/FreeText` →
-text (Zotero 7+). A `/Stamp` is drawn from its appearance and imported as
+`/Highlight` → highlight, `/Underline` → underline, `/Square` → image, `/Ink` → ink, `/FreeText` →
+text (Zotero 7+). It drops a `/Squiggly` and a `/StrikeOut`, so the copies
+write a wavy underline and a strikethrough as `/Underline`, with the style
+in `/GammaStyle` for Gamma's own import. A `/Stamp` is drawn from its appearance and imported as
 nothing, so a picture stays part of the PDF. An `/Ink`, `/Square` or
 `/FreeText` without a Zotero id (`/NM` `Zotero-<key>`) is dropped, so each
 carries one from its block id (`zotero_annot_key`); a `/FreeText` also needs

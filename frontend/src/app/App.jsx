@@ -16,8 +16,11 @@ import { useFolderTranslations } from "../pdf/useFolderTranslations.js";
 import { docIdOf } from "../pdf/pdfSource";
 import { discardApplied, discardOutcome, discardStep, discardUndone, noteSummary, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
 import { basePixels } from "../pdf/pageRaster";
-import { DEFAULT_HIGHLIGHT, LINK_COLOR, colorName, highlightColor, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
+import { DEFAULT_HIGHLIGHT, LINK_COLOR, colorName, highlightColor, normalizeColor, pickerColors, swatchMarker } from "../shared/model/palette.js";
+import { isLineStyle, swatchOf, withStyle } from "../shared/model/markStyle.js";
 import { PaletteContext } from "../shared/ui/paletteContext.js";
+import { MarkGlyph } from "../shared/ui/MarkGlyph.jsx";
+import { MarkMenuRows, MarkToolsContext, markName } from "../pdf/MarkTools.jsx";
 import { clampZoom } from "../shared/model/zoom.js";
 import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n.js";
 import { REOPEN_SETTINGS_KEY, resolveSettingsPane } from "../settings/settingsNavigation.js";
@@ -3223,6 +3226,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications,
     topbar, setTopbar, viewerTools, setViewerTools, highlighterColor, setHighlighterColor,
+    highlightStyle, setHighlightStyle, highlightPresets, setHighlightPresets,
     chatEffort, setChatEffort, chatSpeed, setChatSpeed, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
@@ -4510,6 +4514,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // ({x, y} of that menu).
   const [highlighterOn, setHighlighterOn] = useState(false);
   const [highlighterMenu, setHighlighterMenu] = useState(null);
+  // What the highlight tools offer (pdf/MarkTools.jsx): the style and the
+  // colour a new highlight takes (the highlighter's: its last pick, else
+  // the picker's first swatch), the presets, the group the swatches come
+  // from and the way to their settings.
+  const markTools = useMemo(() => ({
+    style: highlightStyle, setStyle: setHighlightStyle,
+    color: highlighterColor || highlightColor(pickerColors(palette, "highlight")[0]),
+    presets: highlightPresets, setPresets: setHighlightPresets,
+    setGroup: (id) => setPalette({ ...palette, pickers: { ...palette.pickers, highlight: id } }),
+    openColors: () => openSettingsPane("colors"),
+  }), [highlightStyle, setHighlightStyle, highlighterColor, highlightPresets, setHighlightPresets, palette, setPalette]);
   // The build fence (ink/buildFence.js): a server updated under this
   // bundle stops the page drawing until it is reloaded (inkStale).
   const { inkStale, noteServerBuild } = useBuildFence({ sessionBuild: authUser?.build, setStatus });
@@ -5273,10 +5288,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setBlocks(removeBlockTree(blocks, id));
   }
 
-  function changeHighlightColor(id, newColor) {
+  // A highlight's colour and how it marks its passage: `color` (as
+  // stored) and `style` (shared/model/markStyle.js), either or both; its
+  // place, quote and notes stay.
+  function changeHighlightMark(id, { color, style } = {}) {
     if (readOnly || !findBlock(blocks, id)) return;
-    const color = normalizeColor(newColor) || DEFAULT_HIGHLIGHT;
-    setBlocks(updateBlockTree(blocks, id, (b) => ({ ...b, properties: { ...b.properties, color } })));
+    setBlocks(updateBlockTree(blocks, id, (b) => {
+      const props = color === undefined ? b.properties : { ...b.properties, color: normalizeColor(color) || DEFAULT_HIGHLIGHT };
+      return { ...b, properties: style === undefined ? props : withStyle(props, style) };
+    }));
   }
 
   // Gamma's own links (chat citations, copied page/block links) open in
@@ -12661,29 +12681,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const translateProgress = Math.round(pdfTransState.progress * 100);
   // A PDF highlight's menu rows (its right-click or held finger, and the
   // Highlight flyout of a translated paragraph's menu, where its rects take no
-  // pointer): its colour, link, reference point, place, comment, properties
-  // and Delete. `close` closes the menu they are in.
-  const highlightRows = (id, close) => {
+  // pointer): its style (a passage's; a style keeps the menu open for a
+  // colour), colour and presets, link, reference point, place, comment,
+  // properties and Delete. `close` closes the menu they are in; `nested`,
+  // they are a flyout's (MarkMenuRows).
+  const highlightRows = (id, close, nested = false) => {
     const h = highlights.find((x) => x.id === id);
+    const own = swatchOf(h?.color);
     return (
       <>
-        <div className="colorRow ctxMenuColors">
-          {pickerColors(palette, "highlight").map((c, i) => (
-            <button
-              key={c.hex + c.alpha + i}
-              type="button"
-              role="menuitem"
-              className="colorBtn"
-              style={{ background: swatchCss(c) }}
-              onClick={() => {
-                changeHighlightColor(id, highlightColor(c));
-                close();
-              }}
-              title={t("Change to {color}", { color: t(colorName(c)) })}
-              aria-label={t("Change to {color}", { color: t(colorName(c)) })}
-            />
-          ))}
-        </div>
+        <MarkMenuRows style={h && !h.position?.area && !h.linkTarget ? h.style : null} color={h?.color} onClose={close} nested={nested}
+          selected={own ? swatchMarker(pickerColors(palette, "highlight"), own.hex, own.alpha) : null}
+          label={(c) => t("Change to {color}", { color: t(colorName(c)) })}
+          onStyle={(style) => changeHighlightMark(id, { style })}
+          onColor={(c) => { changeHighlightMark(id, { color: highlightColor(c) }); close(); }}
+          onPreset={(p) => { changeHighlightMark(id, { color: highlightColor(p.color), style: p.style }); close(); }} />
         <button
           role="menuitem"
           className="ctxMenuItem"
@@ -12862,8 +12874,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     pinned: { ink: inkUi.open, record: !!recordingNow, highlighter: highlighterOn, translate: transLit, paper: paperMenu, selectMode: areaSelectMode },
   }).filter((x) => stripApplies[x.id]);
   // The highlighter's colour: the one used last, else the popup's first.
-  const highlighterPen = highlighterColor || highlightColor(pickerColors(palette, "highlight")[0]);
-  const highlighterName = t(colorName(highlighterPen));
+  const highlighterPen = markTools.color;
+  const highlighterName = markName(highlightStyle, highlighterPen);
   const stripMenuTools = stripPlaces.filter((x) => x.at === "menu");
   const toolsMore = !!(pdfUrl || notebook) && !viewerHidden && stripMenuTools.length > 0;
   // Each tool's button on the strip, by id: zoom is its three buttons,
@@ -12914,12 +12926,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         {...menuPress((e) => { e.preventDefault(); setHighlighterMenu(stripMenuAt(e.currentTarget)); })}
         aria-pressed={highlighterOn}
         title={highlighterOn
-          ? t("Text highlighter: on, in {color} — click to turn it off, right-click for its colour", { color: highlighterName })
-          : t("Text highlighter: what you select is highlighted in {color}, with no popup — right-click for its colour", { color: highlighterName })}
+          ? t("Text highlighter: on, {mark} — click to turn it off, right-click for its style and colour", { mark: highlighterName })
+          : t("Text highlighter: what you select is marked at once ({mark}), with no popup — right-click for its style and colour", { mark: highlighterName })}
         aria-label={t("Text highlighter")}
       >
-        <HighlightIcon size={16} />
-        <span className="inkToolInk" style={{ background: highlighterPen }} />
+        {/* a line style shows itself in its colour; the wash its colour as a bar under the icon */}
+        {isLineStyle(highlightStyle) ? <MarkGlyph style={highlightStyle} color={highlighterPen} /> : (
+          <><HighlightIcon size={16} /><span className="inkToolInk" style={{ background: highlighterPen }} /></>
+        )}
       </button>
     ),
     // While a job runs, the bar under the glyph fills with its progress, in
@@ -13064,6 +13078,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     <PageToolsContext.Provider value={pageTools}>
     <RecordingContext.Provider value={recordingCtx}>
     <PaletteContext.Provider value={palette}>
+    <MarkToolsContext.Provider value={markTools}>
     <MentionContext.Provider value={mentionPeople}>
     <MentionClock.Provider value={reminders.now}>
     <div
@@ -13318,28 +13333,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           {translateRows(() => setTransMenu(null))}
         </ContextMenu>
       )}
-      {/* The highlighter's colours, the selection popup's: a pick is its
-          colour from then on, and turns it on. */}
+      {/* The highlighter's style, colours and presets, the selection
+          popup's: a pick is its style or colour from then on, and turns it
+          on; a style keeps the menu open for a colour. */}
       {highlighterMenu ? (
         <ContextMenu x={highlighterMenu.x} y={highlighterMenu.y} onClose={() => setHighlighterMenu(null)} aria-label={t("Text highlighter")}>
-          <div className="colorRow ctxMenuColors">
-            {pickerColors(palette, "highlight").map((c, i) => {
-              const color = highlightColor(c), on = color === highlighterPen;
-              return (
-                <button
-                  key={c.hex + c.alpha + i}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={on}
-                  className={"colorBtn" + (on ? " selected" : "")}
-                  style={{ background: swatchCss(c) }}
-                  onClick={() => { setHighlighterMenu(null); setHighlighterColor(color); setHighlighter(true); }}
-                  title={t("Highlight in {color}", { color: t(colorName(c)) })}
-                  aria-label={t("Highlight in {color}", { color: t(colorName(c)) })}
-                />
-              );
-            })}
-          </div>
+          <MarkMenuRows style={highlightStyle} color={highlighterPen} onClose={() => setHighlighterMenu(null)} divider={false}
+            selected={(c) => highlightColor(c) === highlighterPen}
+            onStyle={(style) => { setHighlightStyle(style); setHighlighter(true); }}
+            onColor={(c) => { setHighlighterMenu(null); setHighlighterColor(highlightColor(c)); setHighlighter(true); }}
+            onPreset={(p) => {
+              setHighlighterMenu(null); setHighlighterColor(highlightColor(p.color)); setHighlightStyle(p.style); setHighlighter(true);
+            }} />
         </ContextMenu>
       ) : null}
       {/* The strip's ⋯: the tools off it, then the way to their setting. */}
@@ -13613,21 +13618,31 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   return;
                 }
                 // The popup's swatch is a palette colour, which a highlight
-                // stores at the swatch's alpha; the highlighter's is that of
-                // the last swatch picked, and a pick is its colour from now on.
+                // stores at the swatch's alpha, in the style picked beside it
+                // (a preset's both); the highlighter's are those of the last
+                // pick, and a pick is its colour and style from now on. A
+                // comment's passage is the wash, which marks it commented.
                 const color = extras?.highlighter ? highlighterPen : highlightColor(extras?.color) || DEFAULT_HIGHLIGHT;
+                const style = extras?.comment ? "highlight" : extras?.style || highlightStyle;
                 if (extras?.color && !extras.comment) setHighlighterColor(color);
-                const id = addHighlight({ quote, note: extras?.commentText || "", position, color }, { edit: !extras?.comment });
+                if (extras?.style && !extras.comment) setHighlightStyle(extras.style);
+                const id = addHighlight({ quote, note: extras?.commentText || "", position, color, style }, { edit: !extras?.comment });
                 hideTip?.();
                 if (extras?.comment && id) commentOnNewHighlight(id);
                 return id;
               }}
               // the bar over a highlight the highlighter just made: what its menu does to it,
               // a colour picked there the highlighter's from now on
-              onHighlightAction={readOnly ? undefined : (id, action, c) => {
-                if (action === "color") {
-                  changeHighlightColor(id, highlightColor(c));
-                  setHighlighterColor(highlightColor(c));
+              onHighlightAction={readOnly ? undefined : (id, action, value) => {
+                if (action === "mark") {
+                  // a swatch ({color}) or a preset ({color, style})
+                  const color = highlightColor(value.color);
+                  changeHighlightMark(id, { color, style: value.style });
+                  setHighlighterColor(color);
+                  if (value.style) setHighlightStyle(value.style);
+                } else if (action === "style") {
+                  changeHighlightMark(id, { style: value });
+                  setHighlightStyle(value);
                 } else if (action === "comment") {
                   openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
                 } else if (action === "link") {
@@ -14066,6 +14081,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setPdfDarkPage,
           palette,
           setPalette,
+          highlightPresets,
+          setHighlightPresets,
           suggestTours,
           setSuggestTours,
           recentThumbs,
@@ -14651,7 +14668,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               [
                 paraMenu.highlight && highlights.some((h) => h.id === paraMenu.highlight) && (
                   <SubMenuItem key="highlight" id="highlight" icon={HighlightIcon} label={t("Highlight")}>
-                    {highlightRows(paraMenu.highlight, close)}
+                    {highlightRows(paraMenu.highlight, close, true)}
                   </SubMenuItem>
                 ),
               ],
@@ -14719,6 +14736,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     </div>
     </MentionClock.Provider>
     </MentionContext.Provider>
+    </MarkToolsContext.Provider>
     </PaletteContext.Provider>
     </RecordingContext.Provider>
     </PageToolsContext.Provider>

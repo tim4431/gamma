@@ -313,3 +313,22 @@ export function darkPageColor(color, alpha = 0.3) {
   return `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${alpha})`;
 }
 export const darkPageLine = (color) => darkPageColor(color, 0.75);
+
+// --- lines --------------------------------------------------------------------
+
+// The colour a highlight drawn as a line (shared/model/markStyle.js: an
+// underline, a wavy underline, a strikethrough) takes on a light page and
+// in the annotated PDF, `#rrggbb`, opaque: its own colour when that is
+// dark enough to read as a thin line, and for a light one (the wash
+// colours) a deeper tone of the same hue, a gray a darker gray. A flipped
+// page draws the line in darkPageLine instead. gamma/colors.py line_color
+// is the same, held to it by tests/shared/colors.json; null when not a
+// colour.
+const LINE_MAX_LIGHTNESS = 0.6;
+export function lineColor(color) {
+  const c = parseColor(color);
+  if (!c) return null;
+  const [h, s, l] = toHsl(c);
+  const [r, g, b] = l <= LINE_MAX_LIGHTNESS ? c : fromHsl(h, s < 0.15 ? s : Math.max(s, 0.7), 0.42);
+  return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
+}

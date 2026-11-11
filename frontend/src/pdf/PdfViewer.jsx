@@ -44,7 +44,9 @@ import { commentOnlyHighlight } from "../comments/comments.js";
 import { marginLeft as besideMargin, pageLeft } from "../comments/marginLayout.js";
 import { CommentMarginContext, CommentMarginSlot, MarginStackContext, createMarginStack } from "../comments/marginSlot";
 import { useRecentIn } from "../guide/recent.js";
-import { colorName, darkPageColor, darkPageLine, pickerColors, swatchCss } from "../shared/model/palette.js";
+import { darkPageColor, darkPageLine, lineColor, pickerColors } from "../shared/model/palette.js";
+import { isLineStyle } from "../shared/model/markStyle.js";
+import { TipMarks } from "./MarkTools.jsx";
 import { closestPlace, placedToCheck } from "../shared/model/blockModel.js";
 import { HighlightReview, useHighlightReview } from "./HighlightReview.jsx";
 import { pastLastPage, reviewList, waitingForAccept } from "./highlightReview.js";
@@ -223,7 +225,7 @@ function sameHighlights(a, b) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     const x = a[i], y = b[i];
-    if (x.id !== y.id || x.color !== y.color || x.hasNote !== y.hasNote || x.threadCount !== y.threadCount || x.position !== y.position
+    if (x.id !== y.id || x.color !== y.color || x.style !== y.style || x.hasNote !== y.hasNote || x.threadCount !== y.threadCount || x.position !== y.position
       || x.note !== y.note || x.quote !== y.quote
       || x.linkTarget?.url !== y.linkTarget?.url || x.linkTarget?.pageId !== y.linkTarget?.pageId
       || x.linkTarget?.blockId !== y.linkTarget?.blockId) return false;
@@ -2182,9 +2184,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   }
   // The bar over a highlight the highlighter made acts on that highlight.
   const made = selPopup?.kind === "made" ? selPopup.id : null;
-  function madeAction(action, color) {
+  function madeAction(action, value) {
     setSelPopup(null);
-    cbRef.current.onHighlightAction?.(made, action, color);
+    cbRef.current.onHighlightAction?.(made, action, value);
   }
 
   return (
@@ -2309,7 +2311,11 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         <TipFrame anchor={tipAnchor(selPopup)}>
           {/* keyed by the selection: a new one starts with no translation */}
           <PlainTip key={selPopup.kind === "area" ? "area" : made ? `made:${made}` : selPopup.text} recolor={!!made}
-            onConfirm={made ? (_, color) => madeAction("color", color) : handleSelConfirm}
+            area={selPopup.kind === "area"}
+            onDismiss={() => { if (!made) window.getSelection()?.removeAllRanges(); setSelPopup(null); }}
+            onConfirm={made ? (_, color, extra) => madeAction("mark", { color, style: extra?.style }) : handleSelConfirm}
+            // a style pressed on the highlighter's highlight restyles it, the bar staying for a colour
+            onRestyle={made ? (style) => cbRef.current.onHighlightAction?.(made, "style", style) : null}
             onLink={made ? () => madeAction("link") : () => handleSelConfirm("", null, { link: true })}
             onComment={selComment ? (made ? () => madeAction("comment") : (color) => handleSelConfirm("", color, { comment: true })) : null}
             onMove={moveMode ? () => handleSelConfirm("", null) : null}
@@ -3004,6 +3010,12 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
         // title of their own.
         const reviewable = (approx || lost) && !!onReview;
         const color = h.color;
+        // A passage marked by a line (h.style: an underline, a wavy one, a
+        // strikethrough; shared/model/markStyle.js) draws it in --hl-mark,
+        // its colour's line tone, by its data-hl-style (app.css), and no
+        // wash: a faint one while it is the active card's, or hovered. A
+        // link region, a lost highlight and an area keep their own looks.
+        const line = !isLink && !lost && isLineStyle(h.style) ? h.style : "";
         // The colour rides in --hl (the border in --hl-line, defaulting to
         // it) beside its dark-page variant in --hl-dark / --hl-dark-line:
         // a flipped page (Flip page colors, Gamma Dark) draws those instead
@@ -3020,7 +3032,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
           // over a translation drawn: the original's place, taking no pointer
           const passive = !!onTranslation && !!baseW && !!baseH
             && onTranslation(((r.x1 + r.x2) / 2) * baseW / storedW, ((r.y1 + r.y2) / 2) * baseH / storedH);
-          elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id}
+          elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id} data-hl-style={line || undefined}
             data-guide={ri === 0 ? "pdf.highlight" : undefined}
             data-guide-recent={ri === 0 && recentHl === h.id ? "" : undefined}
             className={[flashId === h.id ? "pdfHlFlash" : "", lost ? "pdfHlLost" : ""].filter(Boolean).join(" ") || undefined}
@@ -3033,6 +3045,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
             "--hl": color,
             "--hl-dark": darkPageColor(color),
             "--hl-dark-line": darkPageLine(color),
+            ...(line ? { "--hl-mark": lineColor(color) } : null),
             ...(lost ? {
               boxSizing: "border-box", borderRadius: 2, background: "transparent",
               border: "2px dashed var(--hl-line, var(--hl-dark-line))",
@@ -3040,7 +3053,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
               boxSizing: "border-box", borderRadius: 3,
               border: `2px ${edge} var(--hl-line, var(--hl))`,
               background: `color-mix(in srgb, var(--hl) ${active ? 50 : 25}%, transparent)`,
-            } : commented ? {
+            } : line ? (active ? { backgroundColor: "color-mix(in srgb, var(--hl) 45%, transparent)" } : null) : commented ? {
               background: active ? strong : "color-mix(in srgb, var(--hl) 55%, transparent)",
               borderBottom: "2px solid var(--hl-line, var(--hl-dark-line))", borderRadius: 1,
             } : { background: active ? strong : "var(--hl)" }),
@@ -3259,11 +3272,16 @@ const SEL_TRANSLATE_MAX = 5000;
 // the same model/engine, language and server cache apply. Auto starts it on
 // open; the button starts it, then folds/unfolds the result. `recolor`:
 // the selection is a highlight already (the highlighter's), which the
-// colours change. `copy`: the selection's text, for a Copy button (where
-// the host's own menu, which has one, is off). `menu`: the opener of the
-// paragraph menu of a page that shows its translation, for the ⋯ that is a
-// finger's and a pen's way to it (MenuButton): their hold selects.
-function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null, menu = null, recolor = false }) {
+// colours and presets change and `onRestyle(style)` restyles as the style
+// row is pressed. `area`: a dragged rectangle, which has no style.
+// `onDismiss()` puts the popup and its selection away. The
+// style row, the colours, the presets and the colour fold are TipMarks'
+// (MarkTools.jsx); a pick reaches onConfirm("", swatch, {style}). `copy`:
+// the selection's text, for a Copy button (where the host's own menu,
+// which has one, is off). `menu`: the opener of the paragraph menu of a
+// page that shows its translation, for the ⋯ that is a finger's and a
+// pen's way to it (MenuButton): their hold selects.
+function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null, menu = null, recolor = false, onRestyle = null, area = false, onDismiss = null }) {
   const palette = usePalette();
   const colors = pickerColors(palette, "highlight");
   const [copied, flashCopied] = useCopied(1200);
@@ -3316,19 +3334,8 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null
   }
   return (
     <div className="plainTip">
-      <div className="colorRow">
-        {colors.map((c, i) => (
-          <button
-            key={c.hex + c.alpha + i}
-            className="colorBtn"
-            data-guide="pdf.highlightColor"
-            style={{ background: swatchCss(c) }}
-            {...act(() => onConfirm("", c))}
-            type="button"
-            title={recolor ? t("Change to {color}", { color: t(colorName(c)) }) : t("Highlight in {color}", { color: t(colorName(c)) })}
-            aria-label={recolor ? t("Change to {color}", { color: t(colorName(c)) }) : t("Highlight in {color}", { color: t(colorName(c)) })}
-          />
-        ))}
+      <TipMarks area={area} recolor={recolor} act={act} guide="pdf.highlightColor" onStyle={onRestyle} onLeave={onDismiss}
+        onMark={({ color, style }) => onConfirm("", color, { style })} tools={<>
         {/* the colours, then the tools */}
         {copy || onComment || onLink || translate || menu ? <span className="tipDivider" aria-hidden="true" /> : null}
         {copy ? (
@@ -3381,7 +3388,7 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null
           </button>
         ) : null}
         {menu ? <MenuButton open={menu} label={t("Paragraph actions")} className="colorBtn linkTipBtn" onMouseDown={keep} /> : null}
-      </div>
+      </>} />
       {translate && trans ? <SelTranslation trans={trans} lang={translate.lang} langLabel={translate.langLabel} tooLong={tooLong}
         onToggle={fold} keep={keep} source={source} addTerm={translate.addTerm} /> : null}
     </div>

@@ -456,6 +456,77 @@ def test_a_zotero_copy_reimports_at_the_alpha_it_was_drawn_with():
     assert [f["color"] for f in found] == ["#aaebaaa6", "#9bcdffa6"]
 
 
+LINE_STYLES = {"underline": "/Underline", "squiggly": "/Squiggly", "strikeout": "/StrikeOut"}
+
+
+@pytest.mark.parametrize("style", ["underline", "squiggly", "strikeout"])
+def test_a_highlight_marked_by_a_line_is_that_markup_in_its_line_tone(style):
+    """A highlight whose style is a line is written as the standard markup
+    of that name, over the same quads as a /Highlight, its /C the colour's
+    line tone at full strength (the wash yellow is too pale for a thin line)
+    and the stored colour in /GammaColor; the wash stays a /Highlight."""
+    from pypdf import PdfReader
+    from gamma.colors import line_color
+    from gamma.pdf_export import GAMMA_COLOR, GAMMA_STYLE
+
+    marks = [{"position": _position(), "color": "#ffe28fa6", "note": "n", "style": style},
+             {"position": _position(y1=120, y2=140), "color": "#ffe28fa6", "note": ""}]
+    out, written = annotate_pdf(_blank_pdf(), marks, author="tester")
+    assert written == 2
+    line, wash = (a.get_object() for a in PdfReader(io.BytesIO(out)).pages[0]["/Annots"])
+    assert line["/Subtype"] == LINE_STYLES[style] and wash["/Subtype"] == "/Highlight"
+    assert [float(v) for v in line["/QuadPoints"]] == [float(v) for v in _blank_quads(line)]
+    assert tuple(round(float(v), 4) for v in line["/C"]) == tuple(round(v, 4) for v in parse_css_color(line_color("#ffe28fa6"))[:3])
+    assert float(line["/CA"]) == 1.0 and str(line[GAMMA_COLOR]) == "#ffe28fa6"
+    assert GAMMA_STYLE not in line, "the subtype says the style"
+    assert GAMMA_COLOR not in wash and float(wash["/CA"]) == 0.651  # a6 is 166/255
+
+
+def _blank_quads(annot):
+    """The quads a markup over `annot`'s /Rect would carry (one line)."""
+    x1, y1, x2, y2 = (float(v) for v in annot["/Rect"])
+    return (x1, y2, x2, y2, x1, y1, x2, y1)
+
+
+@pytest.mark.parametrize("style", ["underline", "squiggly", "strikeout"])
+def test_a_line_reimports_in_its_style_and_its_own_colour(style):
+    """The importer reads a markup's subtype as the highlight's style and
+    /GammaColor before /C, so an export comes back as it was drawn; an
+    underline another app wrote, with no /GammaColor, keeps its /C."""
+    from pypdf import PdfReader
+    from gamma.routers.imports import _extract_pdf_annotations
+
+    out, _ = annotate_pdf(_blank_pdf(), [{"position": _position(), "color": "#9bcdff80", "note": "", "style": style}])
+    [found] = _extract_pdf_annotations(PdfReader(io.BytesIO(out)))
+    assert found["style"] == style and found["color"] == "#9bcdff80"
+    other = _pdf_with_annots(b"[6 0 R]", b"<</Type/Annot/Subtype/StrikeOut/Rect[100 700 300 720]"
+                             b"/QuadPoints[100 720 300 720 100 700 300 700]/C[0.8 0.1 0.1]/CA 1>>")
+    [theirs] = _extract_pdf_annotations(PdfReader(io.BytesIO(other)))
+    assert theirs["style"] == "strikeout" and theirs["color"] == "#cc1a1aff"
+    plain, _ = annotate_pdf(_blank_pdf(), [{"position": _position(), "color": "#9bcdff80", "note": ""}])
+    [wash] = _extract_pdf_annotations(PdfReader(io.BytesIO(plain)))
+    assert "style" not in wash
+
+
+def test_a_zotero_copy_writes_the_lines_zotero_drops_as_underlines():
+    """Zotero's reader keeps /Highlight and /Underline only: its copy writes
+    a wavy underline and a strikethrough as /Underline, the style in
+    /GammaStyle, which Gamma's importer reads back; an underline is itself."""
+    from pypdf import PdfReader
+    from gamma.pdf_export import GAMMA_STYLE
+    from gamma.routers.imports import _extract_pdf_annotations
+
+    styles = ["underline", "squiggly", "strikeout"]
+    marks = [{"position": _position(y1=72 + 40 * i, y2=92 + 40 * i), "color": "#aaebaaa6", "note": "", "style": s}
+             for i, s in enumerate(styles)]
+    out, written = annotate_pdf(_blank_pdf(), marks, zotero=True)
+    assert written == 3
+    annots = [a.get_object() for a in PdfReader(io.BytesIO(out)).pages[0]["/Annots"]]
+    assert [a["/Subtype"] for a in annots] == ["/Underline"] * 3
+    assert [str(a.get(GAMMA_STYLE, "")) for a in annots] == ["", "/squiggly", "/strikeout"]
+    assert [f["style"] for f in _extract_pdf_annotations(PdfReader(io.BytesIO(out)))] == styles
+
+
 def test_every_annotation_names_its_author_for_zotero_too():
     """Zotero takes an annotation's author from /Zotero:AuthorName, never
     /T: every kind carries both, in either copy, and neither without an
@@ -495,6 +566,9 @@ def test_export_pdf_endpoint(guest):
             "link_url": "https://example.com",
             "pdf_position": _position(y1=300, y2=320),
         }, "children": []},
+        {"id": "hl2", "content": "", "properties": {
+            "quote": "struck", "color": "#e6b4ffa6", "style": "strikeout", "pdf_position": _position(y1=400, y2=420),
+        }, "children": []},
     ]})
     assert r.status_code == 200, r.text
 
@@ -502,7 +576,11 @@ def test_export_pdf_endpoint(guest):
     assert r.status_code == 200, r.text
     assert r.headers["content-type"] == "application/pdf"
     assert "annotated.pdf" in r.headers["content-disposition"]
-    assert r.headers["x-annotations-written"] == "1"  # link region excluded
+    assert r.headers["x-annotations-written"] == "2"  # link region excluded
+    # a highlight marked by a line is its own markup
+    struck = [a.get_object() for a in PdfReader(io.BytesIO(r.content)).pages[0]["/Annots"]
+              if a.get_object()["/Subtype"] == "/StrikeOut"]
+    assert len(struck) == 1 and str(struck[0]["/GammaColor"]) == "#e6b4ffa6"
 
     obj = next(a.get_object() for a in PdfReader(io.BytesIO(r.content)).pages[0]["/Annots"]
                if a.get_object()["/Subtype"] == "/Highlight")

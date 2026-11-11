@@ -1,5 +1,5 @@
 {
-  "about": "Colours as Gamma stores them (docs/dev/settings.md 'Colors'): gamma/colors.py and frontend/src/shared/model/palette.js. A highlight stores #rrggbbaa; normalize reads every spelling Gamma ever stored (#rgb, #rgba, #rrggbb, #rrggbbaa, rgb(), rgba()) into it, null for anything else. Each byte is the channel times 255 rounded half up, as Math.round rounds (Python's round goes to even), so the tie rows are pinned. with_alpha is a colour at another alpha; nearest the entry of colors closest by the redmean RGB distance, alpha ignored. wash, wash_alpha and default_highlight are the default highlight set. Read by backend/tests/test_shared_fixtures.py and frontend/tests/palette.test.mjs.",
+  "about": "Colours as Gamma stores them (docs/dev/settings.md 'Colors'): gamma/colors.py and frontend/src/shared/model/palette.js. A highlight stores #rrggbbaa; normalize reads every spelling Gamma ever stored (#rgb, #rgba, #rrggbb, #rrggbbaa, rgb(), rgba()) into it, null for anything else. Each byte is the channel times 255 rounded half up, as Math.round rounds (Python's round goes to even), so the tie rows are pinned. with_alpha is a colour at another alpha; nearest the entry of colors closest by the redmean RGB distance, alpha ignored; line the opaque #rrggbb a highlight drawn as a line takes (its own colour when lightness is at most 0.6, else its hue at lightness 0.42, saturation at least 0.7 unless a gray). wash, wash_alpha and default_highlight are the default highlight set. Read by backend/tests/test_shared_fixtures.py and frontend/tests/palette.test.mjs.",
   "wash": ["#ffe28f", "#aaebaa", "#9bcdff", "#e6b4ff"],
   "wash_alpha": 0.65,
   "default_highlight": "#ffe28fa6",
@@ -37,5 +37,19 @@
     {"note": "any spelling", "color": "rgba(170, 235, 170, 0.65)", "colors": ["#ffe28f", "#aaebaa", "#9bcdff", "#e6b4ff"], "out": "#aaebaa"},
     {"note": "not a colour", "color": "nope", "colors": ["#ffe28f"], "out": null},
     {"note": "an empty list", "color": "#ffe28f", "colors": [], "out": null}
+  ],
+  "line": [
+    {"note": "the wash yellow deepens to an amber line", "color": "#ffe28fa6", "out": "#d69f00"},
+    {"note": "the wash green", "color": "#aaebaaa6", "out": "#20b620"},
+    {"note": "the wash blue", "color": "#9bcdffa6", "out": "#006bd6"},
+    {"note": "the wash purple", "color": "#e6b4ffa6", "out": "#8f00d6"},
+    {"note": "a light pink, its alpha dropped", "color": "#f9a8d499", "out": "#c80e73"},
+    {"note": "a pen's blue is dark enough: itself, opaque", "color": "#1d4ed8", "out": "#1d4ed8"},
+    {"note": "a red at the edge stays itself", "color": "#dc2626ff", "out": "#dc2626"},
+    {"note": "black stays black", "color": "#1f1f1f", "out": "#1f1f1f"},
+    {"note": "white becomes a gray", "color": "#ffffff", "out": "#6b6b6b"},
+    {"note": "a light gray keeps its faint hue", "color": "#d4d4d8", "out": "#666670"},
+    {"note": "any spelling", "color": "rgba(255, 226, 143, 0.65)", "out": "#d69f00"},
+    {"note": "not a colour", "color": "red", "out": null}
   ]
 }

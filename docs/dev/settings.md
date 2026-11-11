@@ -7,7 +7,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Layer | Storage | Examples |
 |---|---|---|
 | Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-pen-writes-pdf`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-lasso-pictures`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`) and whether a page's "N pages inside" section is (`gamma-sub-pages-collapsed`, `subPagesCollapsed`; it shows whenever the page has sub-pages, [home_library.md](home_library.md#sub-pages)); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) and the papers this browser left showing their translation (`gamma-translated:<user>@<workspace>`, `pdf/translateRecall.js`, [translation.md](translation.md#a-paper-opened-again)) |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, how a replaced PDF's highlights are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) — the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), the strip's text highlighter's colour (`highlighterColor`: the last swatch picked for a text highlight, as a highlight stores it, set where it acts, [below](#bars-order-and-modes)), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, how a replaced PDF's highlights are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) — the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), the strip's text highlighter's colour (`highlighterColor`: the last swatch picked for a text highlight, as a highlight stores it, set where it acts, [below](#bars-order-and-modes)) and the style new highlights take (`highlightStyle`, set where it acts too), the highlight presets (`highlightPresets`, [Highlight styles and presets](#highlight-styles-and-presets)), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
@@ -342,7 +342,12 @@ Preferences:
   hex alone. A changed swatch is what the pickers offer from then on;
   stored highlights and strokes keep the colour they have. The first
   shape of the preference, `{wash, ink}`, still reads: it becomes the two
-  default groups, **Library**: the live card demo
+  default groups. A group's name, like a preset's, is a `NameInput`
+  (`SettingsKit.jsx`): what is typed stays as typed, spaces and all, and is
+  handed on trimmed when the field loses the focus or on Enter (an empty
+  one keeps the old name, Escape puts it back), since the palette trims a
+  name as it is set. Under the Text highlights row, **Highlight presets**
+  ([below](#highlight-styles-and-presets)), **Library**: the live card demo
   with the thumbnails / folders / labels switches
   ([SettingsLibraryDisplay.jsx](../../frontend/src/settings/SettingsLibraryDisplay.jsx)),
   **Interface** (this browser's): the interface size, the status bar and
@@ -1140,6 +1145,13 @@ does not set it. Opening the pen's strip turns the highlighter off and
 turning it on closes the strip: both take a drag on the page.
 `SECTION_PREFS` holds it under Viewer tools, which shows no row for it.
 
+The highlighter's style is the one new highlights take (`highlightStyle`,
+[below](#highlight-styles-and-presets)): a line style draws its button as
+that style in its colour (`MarkGlyph`) in place of the icon and its bar,
+and its menu is the highlight tools' rows (`MarkMenuRows`): the style row,
+which sets the style and keeps the menu open, the swatches in that style,
+the presets, the colour group as a flyout, and Edit colors and presets….
+
 **Ways to the setting.** A right-click or a held finger (`menuPress`) on
 the topbar's own background or one of its items' buttons, not on a link,
 a tab, another button or a popover, offers "Customize top bar…"; on an
@@ -1196,6 +1208,70 @@ call site), settings-search entries from the registry, and App rendering
 is a registry entry, its icon in the pane's map and its renderer in App.
 `tests/topbarItems.test.mjs` and `tests/viewerToolItems.test.mjs` hold the
 two registries to the model.
+
+## Highlight styles and presets
+
+How a text highlight marks its passage is its style
+([api.md](api.md) "The highlight shape", `shared/model/markStyle.js`):
+the wash, an underline, a wavy underline or a strikethrough, picked apart
+from its colour. A line draws in the colour's line tone
+(`palette.js lineColor`, `gamma/colors.py line_color`, held to the same
+answers by `tests/shared/colors.json`): the colour itself, opaque, when it
+is dark enough to read as a thin line, else a deeper tone of its hue
+(lightness 0.42), since the wash colours are too pale for one; a flipped
+page draws `darkPageLine`. The PDF draws each of the passage's line boxes
+with a `data-hl-style` (app.css): a gradient line at its foot or across
+its middle, or a masked wave, about a tenth of the line's height and 1.5 px
+at the least, and a faint wash under the pointer or while it is the active
+card's. The notes draw a line highlight's marker as its glyph
+(`shared/ui/MarkGlyph.jsx`: a letter A with its line, in that tone) in
+place of the dot.
+
+The tools are `pdf/MarkTools.jsx`'s, on the context App provides
+(`MarkToolsContext`: the style, the highlighter's colour, the presets, the
+group switch, the way to Settings):
+
+- **The selection popup** (`TipMarks` in `PlainTip`): the style row (a
+  segmented control, each style drawn in the colour the highlighter would
+  take; none for an area, which is a box), a line, the Text highlights
+  group's swatches in that style (a line style's as its line tone, named
+  "Underline in Blue"), the fold's palette button, then the popup's tools.
+  A style pressed is the style from then on (`highlightStyle`, account);
+  a swatch makes the highlight in it, and the presets' chips under the
+  row make one in theirs, both setting `highlighterColor` (and the style).
+  On a highlight the highlighter just made (`recolor`), the style row
+  restyles it and the bar stays, a swatch or a preset changes it and
+  closes the bar (PdfViewer's `onHighlightAction` "style" and "mark").
+  The popup's Comment makes the wash, which marks a passage commented.
+- **The fold** (the palette button): the palette's groups with colours as
+  radio rows with their first swatches, which switch the group the popup
+  and the menus show (`palette.pickers.highlight`, the Text highlights
+  row's own setting); Edit colors and presets…, which puts the popup away
+  and opens Settings at Appearance › Colors (the `colors` section entry,
+  `settings/settingsNavigation.js`); and New preset…, a form under it: the
+  style row and the swatches pick its style and colour (the swatches then
+  choose, "Use Blue for the preset", rather than highlight), a name field
+  takes the focus — the popup keeps the PDF selection it opened for, as
+  the glossary form does — and Save adds it.
+- **A highlight's menu** and **the text highlighter's** (`MarkMenuRows`):
+  the style row (not on an area or a link region), the swatches, the
+  presets, the colour group as a flyout (with two groups or more; not in
+  a translated paragraph's Highlight row, a flyout itself, whose own would
+  close it) and Edit colors and presets…. A style keeps the menu open for a colour; a
+  swatch or a preset closes it. The highlight's own colour is marked.
+  Restyling a highlight writes its `style` (the wash removes the key) and
+  keeps the block, its notes, comments and place (App's
+  `changeHighlightMark`).
+
+**Presets** (`highlightPresets`, account; `normalizePresets`): up to 12
+`{id, name, style, color: {hex, alpha}}`, a colour stored as a swatch, so
+a preset makes the highlight a swatch would; names up to 40 characters,
+an unnamed one named by its style. Settings → Appearance › Colors ›
+Highlight presets (`settings/HighlightPresets.jsx`) lists them as cards:
+the look, the name (`NameInput`), up, down, Delete, the style row, the
+Text highlights swatches and Another colour, the `ColorPicker`. Add
+preset makes an underline in the first swatch. A preset is concrete,
+like a swatch: a changed palette leaves it as it is.
 
 ## Chat settings are global
 

@@ -36,6 +36,7 @@
 import { fenceInnerAt } from "../../editor/fences.js";
 import { findMathAtCursor } from "../../editor/latexCompletion.js";
 import { isWholeLine, parseLine, withoutFirstMarker } from "../../editor/mdLines.js";
+import { blockStyle, withStyle } from "./markStyle.js";
 import { DEFAULT_HIGHLIGHT, normalizeColor } from "./palette.js";
 import { wallNow } from "./wallClock.js";
 
@@ -500,23 +501,25 @@ export function addChildBlock(blocks, id) {
 
 // The tree with a new highlight block last at the top level, made of what
 // the viewer took from a selection: its `quote` (empty for an area),
-// `note` (the block's text), `position` (its pdf_position) and `color` in
+// `note` (the block's text), `position` (its pdf_position), `color` in
 // any spelling normalizeColor reads (a picker's, a swatch's), the default
-// when it reads none.
-export function addHighlightAsBlock(blocks, { id, quote = "", note = "", position, color }) {
+// when it reads none, and `style` (markStyle.js: a line is stored, the
+// wash and an area store none).
+export function addHighlightAsBlock(blocks, { id, quote = "", note = "", position, color, style }) {
   const block = makeNewBlock({
     id: id || makeId(),
     content: note || "",
-    properties: { color: normalizeColor(color) || DEFAULT_HIGHLIGHT, quote: quote || "", pdf_position: position },
+    properties: withStyle({ color: normalizeColor(color) || DEFAULT_HIGHLIGHT, quote: quote || "", pdf_position: position }, style),
   });
   return [...(blocks || []), block];
 }
 
 // The viewer's highlights (PdfViewer's `highlights`), one for each
 // highlight block with a position, in document order: {id, quote, note,
-// hasNote, color, position}, `quote` blockQuote's, `note` the block's own
-// text, `color` blockColor's (stored #rrggbbaa, or the default) and
-// `position` blockPosition's.
+// hasNote, color, style, position}, `quote` blockQuote's, `note` the
+// block's own text, `color` blockColor's (stored #rrggbbaa, or the
+// default), `style` markStyle.js blockStyle's and `position`
+// blockPosition's.
 export function blocksToHighlights(blocks) {
   const out = [];
   // A highlight "has a note" when the user typed anything on it: the block's
@@ -533,6 +536,7 @@ export function blocksToHighlights(blocks) {
           note: b.content || "",
           hasNote: (b.content || "").trim() !== "" || hasChildNote(b),
           color: blockColor(b),
+          style: blockStyle(b),
           position: blockPosition(b),
         });
       }

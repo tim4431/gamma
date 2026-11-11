@@ -332,7 +332,13 @@ y1, x2, y2}, rects: [{x1, y1, x2, y2}, …]}`, the 1-based page, the page as
 it was measured when the place was taken (the viewer's page at its zoom
 then, an ink file's page in points, an imported annotation's page box) and
 the rectangles in that frame, top-left origin, `boundingRect` their union;
-`area: true` on an area highlight. After the page's PDF is replaced
+`area: true` on an area highlight. A text highlight may also carry
+`properties.style`, how it marks its passage: `underline`, `squiggly` (a
+wavy underline) or `strikeout`, drawn as a line in its colour's line tone
+(`colors.line_color`, the frontend's `lineColor`) and written to the
+annotated PDF as the markup of that name; no `style` is the wash, and an
+area never has one (`shared/model/markStyle.js`). Changing it keeps the
+block, its notes and its place. After the page's PDF is replaced
 ([highlight_relocation.md](highlight_relocation.md)) a highlight's
 position may also carry `doc_id`, the stored file (a page `doc_id`, the
 content hash; a duplicated page's `/api/uploads/<doc_id>.pdf` address names

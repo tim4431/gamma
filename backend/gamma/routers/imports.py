@@ -46,8 +46,8 @@ from ..note_markup import obsidian_image_sizes
 from ..goodnotes_import import import_goodnotes
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
 from ..pdf_text import GlyphPages, quote_under
-from ..pdf_export import (GAMMA_ALPHA, LOCKED, TEXT_BOX_TYPES, _resolve, annotation_flags, annotation_key,
-                          annotation_shown, copy_pdf, display_size, drop_annotations, first_rect, page_frame,
+from ..pdf_export import (GAMMA_ALPHA, GAMMA_COLOR, GAMMA_STYLE, LOCKED, TEXT_BOX_TYPES, _resolve, annotation_flags,
+                          annotation_key, annotation_shown, copy_pdf, display_size, drop_annotations, first_rect, page_frame,
                           pdf_point_to_viewer, reply_parent)
 from ..pdf_image import DecodeBudget, image_file, stream_data
 from ..text_box import escape_markdown, keep_on_surface, markdown_of, measure, normalize_text_box, plain_text
@@ -697,6 +697,10 @@ def markdown_blocks(payload: MarkdownBlocksRequest, request: Request):
 # highlights, and the kinds below to their own blocks.
 
 _MARKUP_TYPES = {"/Highlight", "/Underline", "/Squiggly", "/StrikeOut"}
+# A markup's subtype → the style its highlight marks the passage with (the
+# block's ``style``; the wash, /Highlight, stores none), the inverse of
+# pdf_export.MARKUP_SUBTYPES.
+_MARKUP_STYLES = {"/Underline": "underline", "/Squiggly": "squiggly", "/StrikeOut": "strikeout"}
 # Typed text and sticky notes → text boxes (gamma/text_box.py), the inverse
 # of the /FreeText pdf_export.py writes.
 _NOTE_TYPES = TEXT_BOX_TYPES
@@ -1305,7 +1309,10 @@ def _mark_from_annotation(obj, subtype, pnum, pw, ph, contents, glyphs):
     """A markup, square or circle annotation → a highlight record, or None
     without a rectangle. The quote is the text under the quads
     (``pdf_text.quote_under`` over ``glyphs``, a ``GlyphPages``; empty when
-    None, or for an area mark)."""
+    None, or for an area mark). An underline, a squiggly or a strikeout is
+    a highlight in that ``style`` (a Zotero copy's /GammaStyle says which
+    line its /Underline is), its colour the /GammaColor Gamma's export
+    keeps beside the line tone in /C, when there is one."""
     # Quad rects in PDF space (origin bottom-left)
     quads = []
     qp = _resolve(obj.get("/QuadPoints"))
@@ -1335,11 +1342,16 @@ def _mark_from_annotation(obj, subtype, pnum, pw, ph, contents, glyphs):
             color = normalize_color(f"rgba({r}, {g}, {b}, {round(alpha, 3)})") or DEFAULT_HIGHLIGHT
     except Exception:
         pass
+    style = _MARKUP_STYLES.get(subtype)
+    if style:
+        color = normalize_color(str(_resolve(obj.get(GAMMA_COLOR)) or "")) or color
+        named = str(_resolve(obj.get(GAMMA_STYLE)) or "").lstrip("/")
+        style = named if named in _MARKUP_STYLES.values() else style
     # Flipped to top-left origin (what the viewer stores), in the page's points
     position = highlight_position(pnum, pw, ph, [(q[0], ph - q[3], q[2], ph - q[1]) for q in quads],
                                   area=subtype in _AREA_TYPES)
     return {"key": annotation_key(pnum, subtype, quads[0]), "content": contents,
-            "quote": quote, "color": color, "position": position}
+            "quote": quote, "color": color, "position": position, **({"style": style} if style else {})}
 
 
 def _strip_embedded_annotations(ws: str, name: str, pdf_path, keep=frozenset()) -> tuple[int, set]:
@@ -1540,7 +1552,7 @@ def import_embedded_annotations(ws: str, block_id: str, name: str, pdf_path, str
                 else:
                     props = {
                         "color": f["color"], "quote": f["quote"], "pdf_position": f["position"],
-                        "imported_annot": f["key"],
+                        "imported_annot": f["key"], **({"style": f["style"]} if f.get("style") else {}),
                     }
                 if f.get("zotero_key"):
                     props["zotero_annotation"] = f["zotero_key"]

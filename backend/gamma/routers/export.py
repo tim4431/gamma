@@ -161,8 +161,8 @@ def _children_by_id(blocks) -> dict:
 def _collect_marks(blocks) -> list[dict]:
     """Highlight blocks (``kind`` ``highlight``: not the link regions,
     Gamma navigation aids, nor ink) → annotate_pdf marks (position, colour,
-    the popup's note). Skips annotations that came from the PDF itself and
-    are STILL embedded in it (``still_embedded``)."""
+    style, the popup's note). Skips annotations that came from the PDF
+    itself and are STILL embedded in it (``still_embedded``)."""
     children_by_id = _children_by_id(blocks)
     marks = []
     for b in blocks:
@@ -172,6 +172,7 @@ def _collect_marks(blocks) -> list[dict]:
         marks.append({
             "position": props["pdf_position"],
             "color": props.get("color"),
+            "style": props.get("style"),
             "note": highlight_note_text(b, children_by_id),
             # For /Square annotations: the deterministic /NM key Zotero
             # requires before it will import an area annotation.
