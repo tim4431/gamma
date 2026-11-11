@@ -248,7 +248,14 @@ the same answers, case by case for each row below and each writer, the
 kind of every refusal included. Over them, `fileRules(page, tree)` and
 `folderRules(tree, folder)` say what the menus, the drops and the open
 page offer, for a row of the page list or a block alike (`refile(folder)`:
-the folders a drop leaves the page in, or the rule's words).
+the folders a drop leaves the page in, or the rule's words). What App's
+menus, drops and open page ask of them about the pages in hand (a
+refusal, what filing leaves out, a page menu's rows, a copy's
+properties, the library requests and their words) is
+`explorer/workFolderActions.js`, pure, and the commands over it, the
+refusals with their status, Add to library, Remove from library and Save
+a copy, and the menus' library rows, are `explorer/useWorkFolderActions.jsx`,
+which App composes.
 
 **Notes follow where the vault pulls.** A person may rename a file that
 *follows* (a note, no document, in a W whose mark pulls), move it between
@@ -578,7 +585,9 @@ Format (`libraryUtils.pageFormat`: its document's, else its name's, a
 text file by its language; `formatLabel` names a format or such a
 `{format, language}`), File size (`doc.size`; a note has none),
 Modified and Comments (its open threads). The sort is the list's own
-(name, format, size or modified), kept in this browser.
+(name, format, size or modified), kept in this browser. The list draws
+its rows itself; what a row does (select, open, its menu, its pin, a
+rename, a drag) is the library's, which App hands in.
 
 ## Pages the listing does not carry
 
