@@ -83,7 +83,7 @@ import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DownloadIcon, ExportIcon,
-  ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph, FolderMinusIcon, HighlightIcon, SquareCheckIcon,
+  ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph, HighlightIcon, SquareCheckIcon,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, IndentIcon, InfoIcon, LabelGlyph, LabelIcon, OutdentIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
@@ -251,7 +251,6 @@ import {
   folderPositions,
   folderNeighbour,
   folderSubtree,
-  folderTargets,
   inFolder,
   labelName,
   libraryTree,
@@ -283,10 +282,12 @@ import {
   folderPathNames,
 } from "../library/libraryUtils";
 import { copyDocument, documentViewerUrl, fileHash, inPlace, isPdf, ownHash, pageDocument, parseUploadUrl, pdfProxyUrl, storedName, uploadUrl } from "../documents/pageDocument.js";
-import { STAMPS, isLibraryPdf, workFolderOf } from "../documents/library.js";
+import { isLibraryPdf, workFolderOf } from "../documents/library.js";
 import { mergeKnown } from "../explorer/knownPages.js";
-import { fileRules, filingTargets, folderRules, isWorkFile, refusalText, treeOf, workOf } from "../explorer/workFolders.js";
-import FolderList, { filterRows } from "../explorer/FolderList.jsx";
+import { fileRules, filingTargets, folderRules, refusalText, treeOf, workOf } from "../explorer/workFolders.js";
+import { directoryMoves, filingOf, libraryCopy, listDirs, listRows, pagesMenu, workCounts } from "../explorer/workFolderActions.js";
+import { useWorkFolderActions } from "../explorer/useWorkFolderActions.jsx";
+import FolderList from "../explorer/FolderList.jsx";
 import { useFolderRows, useWorkSort } from "../explorer/useFolderRows.js";
 import { useSummaries } from "../explorer/useSummaries.js";
 import { documentView, viewerOf } from "../documents/documentView.js";
@@ -1412,7 +1413,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const tt = (text || "").trim();
     const cur = knownBlocks.find((b) => b.id === id)?.content || "";
     if (!tt || tt === cur) return;
-    if (filesRefused([id], (rules) => rules.rename, "named")) return;
+    if (work.refused([id], (rules) => rules.rename, "named")) return;
     const back = (b) => (b.id === id && b.content === tt ? { ...b, content: cur } : b);
     setHomeBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, content: tt } : b)));
     patchKnown(id, { content: tt });
@@ -1438,14 +1439,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const src = data.block || {};
     // (nor what a Zotero link says of the page it keeps, which a copy is not: docs/dev/zotero_sync.md;
     // nor its Notion id, or an import of that page would find the copy)
-    const { doc: _srcDoc, zotero_pdf: _zoteroPdf, zotero_readonly: _readonly, zotero_author: _author, notion_id: _notionId, ...properties } = src.properties || {};
+    const { doc: _srcDoc, zotero_pdf: _zoteroPdf, zotero_readonly: _readonly, zotero_author: _author, notion_id: _notionId, ...own } = src.properties || {};
+    const properties = libraryCopy(own, workTree);
     const copy = copyDocument(pageDocument(src));
     if (copy) properties.doc = copy;
-    if (properties.work_folder) {
-      for (const key of STAMPS) delete properties[key];
-      const folders = (properties.folders || []).filter((f) => libTree.folders.has(f) && !workOf(workTree, f));
-      if (folders.length) properties.folders = folders; else delete properties.folders;
-    }
     const created = await apiJson(`${API}/blocks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1518,7 +1515,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // cascade): the confirmation counts them (deleteConfirm) and their tabs
   // close too.
   function deletePages(ids) {
-    if (filesRefused(ids, (rules) => rules.trash, "trash")) return;
+    if (work.refused(ids, (rules) => rules.trash, "trash")) return;
     const { title, message, inside } = deleteConfirm(pageBlocks, ids);
     setConfirmBox({
       title,
@@ -1629,41 +1626,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // it rather than out of it. One naming an opened PDF moves nothing
   // (addingToLibrary).
   function pickPageParent(picked) {
-    if (addingToLibrary(picked) || filesRefused(picked, (rules) => rules.moveIntoPage)) return;
+    if (addingToLibrary(picked) || work.refused(picked, (rules) => rules.moveIntoPage)) return;
     pickMovePage({ pageIds: topmostPages(pageBlocks, picked) });
-  }
-  // A work folder's file stays where its directory files it, named by its
-  // file, until its file leaves (fileRules): an action on pages that names
-  // one the rule refuses (`may`) is not made, and the status says why in
-  // the rule's words of `kind`. Whether one was refused.
-  function filesRefused(ids, may, kind = "filed") {
-    const refused = ids.some((id) => {
-      const b = pagesById.get(id);
-      return b && isWorkFile(b) && !may(fileRules(b, workTree));
-    });
-    if (refused) setStatus(refusalText(kind));
-    return refused;
-  }
-  // The filing rows a menu has for work folders' files (`files`, rows):
-  // Add to library… while none is in it, Remove from library while all
-  // are, Save a copy to library… for their PDFs (fileRules).
-  function fileLibraryItems(files, close) {
-    const rules = files.map((b) => fileRules(b, workTree));
-    const ids = files.map((b) => b._pageId);
-    return [
-      rules.every((r) => r.addToLibrary) && (
-        <MenuItem key="addfile" icon={FolderPlusIcon} title={t("Add the file's page to the library, filed in a library folder too: it stays in its work folder")}
-          onClick={() => { close(); vault.setAddingFile({ ids }); }}>{t("Add to library…")}</MenuItem>
-      ),
-      rules.every((r) => r.removeFromLibrary) && (
-        <MenuItem key="removefile" icon={FolderMinusIcon} title={t("Take the file's page out of the library: it stays in its work folder, with its notes")}
-          onClick={() => { close(); fileLibraryRoute(ids, "remove"); }}>{t("Remove from library")}</MenuItem>
-      ),
-      rules.every((r) => r.saveCopy) && (
-        <MenuItem key="copyfile" icon={CopyIcon} title={t("Store the PDF as it is now in the library, as a page of its own")}
-          onClick={() => { close(); vault.setAddingFile({ ids, copy: true }); }}>{t("Save a copy to library…")}</MenuItem>
-      ),
-    ];
   }
   // A page whose link, or whose publication, reaches the pages moved in for
   // the first time asks first, saying who will open them (GET
@@ -1759,46 +1723,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     vault.refresh();
     batchStatus(tn("Added {n} PDF to the library.", "Added {n} PDFs to the library.", result.done.length), result, ids.length);
   }
-  // A work folder's files into the library and out of it, and a copy of a
-  // file's PDF saved there (docs/dev/work_folders.md "Add to library, Save
-  // a copy, Remove"): one request a page, POST or DELETE
-  // /pages/{id}/library and POST /pages/{id}/library-copy. A PDF whose bytes
-  // a library page owns already is answered with that page (an add's 409
-  // with `page_id`, a copy's `existed`), which the status names and offers:
-  // no copy was made.
-  async function fileLibraryRoute(ids, how, folder = "") {
-    vault.setAddingFile(null);
-    let owned = null, existed = 0;
-    const result = await runBatch(ids, async (id) => {
-      try {
-        const answer = await apiJson(`${API}/pages/${encodeURIComponent(id)}/${how === "copy" ? "library-copy" : "library"}`, how === "remove"
-          ? { method: "DELETE" }
-          : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(folder ? { folder } : {}) });
-        if (how === "copy" && answer?.existed) { existed += 1; owned = answer.page?.id || owned; }
-      } catch (err) {
-        if (err?.status === 409 && err.data?.page_id) owned = err.data.page_id;
-        throw err;
-      }
-    }, { name: how === "remove" ? t("Remove {n} files from the library", { n: ids.length })
-      : how === "copy" ? t("Save copies of {n} files to the library", { n: ids.length }) : t("Add {n} files to the library", { n: ids.length }), tasks });
-    await fetchHomeBlocks();
-    if (ids.includes(focusedBlockIdRef.current)) loadBlocksForBlock(focusedBlockIdRef.current);
-    if (owned && ids.length === 1) {
-      const title = pagesById.get(owned)?.content || t("Untitled");
-      setConfirmBox({
-        title: T("Already in the library"),
-        message: t("Already in the library as “{title}”.", { title }),
-        confirmLabel: t("Open"),
-        onConfirm: () => openPage(owned),
-      });
-      return;
-    }
-    const copied = result.done.length - existed;
-    batchStatus(how === "remove" ? tn("Removed {n} file from the library.", "Removed {n} files from the library.", result.done.length)
-      : how === "copy" ? [tn("Saved a copy of {n} file to the library.", "Saved copies of {n} files to the library.", copied),
-        existed ? tn("{n} was in the library already.", "{n} were in the library already.", existed) : ""].filter(Boolean).join(" ")
-      : tn("Added {n} file to the library.", "Added {n} files to the library.", result.done.length), result, ids.length);
-  }
 
   // Pin/unpin folders: `properties.pinned` (an ISO time; null unpins) on
   // the folder block, one batch on the folder tree — the workspace's pin,
@@ -1843,24 +1767,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // A page inside another is filed where its top is (its own folders count
-  // for nothing), so filing leaves it out: the library pages of `pageIds`,
-  // and what the status adds about the ones left out ("" for none). Null
-  // when every one is inside a page, which the status says. A work
-  // folder's file not in the library is filed by its directory alone, so
-  // filing leaves it out too.
+  // for nothing), and a work folder's file not in the library by its
+  // directory alone, so filing leaves them out (workFolderActions.filingOf):
+  // the pages of `pageIds` it takes, and what the status adds about the
+  // ones left out ("" for none). Null when it takes none, which the status
+  // says.
   function filablePages(pageIds) {
-    const tops = pageIds.filter((id) => !pagesById.get(id)?._parentPage);
-    const ids = tops.filter((id) => { const b = pagesById.get(id); return !b || !isWorkFile(b) || b._library; });
-    if (!ids.length) {
-      setStatus(tops.length ? refusalText("filed")
-        : t("A page inside another page is filed with it."));
-      return null;
-    }
-    const inside = pageIds.length - tops.length, files = tops.length - ids.length;
-    return { ids, left: [inside ? tn("Left out {n} page inside another page, filed with its top.",
-      "Left out {n} pages inside other pages, filed with their tops.", inside) : "",
-    files ? tn("Left out {n} work folder's file, filed by its directory.", "Left out {n} work folders' files, filed by their directories.", files) : "",
-    ].map((s) => (s ? ` ${s}` : "")).join("") };
+    const filing = filingOf(pagesById, pageIds);
+    if (filing.ids.length) return filing;
+    setStatus(filing.why);
+    return null;
   }
 
   // Add pages to a folder (soft link — their other folders are kept, except
@@ -1872,11 +1788,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const path = folderPath(libTree, folder);
     if (workOf(workTree, folder)) {
       // into a work folder's directory: only its notes that follow move
-      // there (fileRules refile), as pull then moves their files
-      const moves = pageIds.map((id) => [id, pagesById.get(id) ? fileRules(pagesById.get(id), workTree).refile(folder) : null]);
-      const refused = moves.find(([, move]) => !move?.folders);
-      if (refused) { setStatus(refused[1]?.why || refusalText("directories")); return; }
-      const into = new Map(moves.map(([id, move]) => [id, move.folders]));
+      // there (workFolderActions.directoryMoves)
+      const { into, why } = directoryMoves(pagesById, pageIds, folder, workTree);
+      if (!into) { setStatus(why); return; }
       await refilePages(pageIds, ({ folders }, id) => (folders[0] === folder ? null : { folders: into.get(id) }),
         (n) => t("Move {n} pages to “{path}”", { n, path }),
         (n) => (n ? tn("Moved {n} page to “{path}”.", "Moved {n} pages to “{path}”.", n, { path }) : t("Already in “{path}”.", { path })));
@@ -1955,22 +1869,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
-  // A work folder's directories stay where the disk has them, and no folder
-  // goes into a work folder (folderRules): whether a move of `ids` under
-  // `parent` is refused, which the status says.
-  function folderMovesRefused(ids, parent) {
-    const refused = ids.length > 0 && ((parent && workOf(workTree, parent)) || ids.some((id) => !folderRules(workTree, id).move));
-    if (refused) setStatus(refusalText("directories"));
-    return refused;
-  }
   // Move folders (with what is below them) into `parent` ("" = the top
   // level), last there: one `move` each, in one batch on the folder tree. A
   // folder never moves into itself or below itself; its pages stay filed in
-  // it, so they move with it.
+  // it, so they move with it. A work folder's directories stay where the
+  // disk has them, and no folder goes into a work folder (foldersRefused).
   async function moveFolders(ids, parent) {
     const moving = ids.filter((id) => libTree.folders.has(id) && libTree.folders.get(id).parent !== parent
       && !(parent && inFolder(libTree, parent, id)));
-    if (!moving.length || folderMovesRefused(moving, parent)) return;
+    if (!moving.length || work.foldersRefused(moving, parent)) return;
     try {
       await treeOps("folders", moving.map((id) => ({ op: "move", id, parent: parent || "folders" })));
     } catch (err) {
@@ -1994,7 +1901,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const listed = (id) => childFolders(libTree, libTree.folders.get(id).parent).indexOf(id);
     const moving = ids.filter((id) => libTree.folders.has(id) && id !== target && !(parent && inFolder(libTree, parent, id)))
       .sort((a, b) => listed(a) - listed(b));
-    if (!moving.length || folderMovesRefused(moving.filter((id) => libTree.folders.get(id).parent !== parent), parent)) return;
+    if (!moving.length || work.foldersRefused(moving.filter((id) => libTree.folders.get(id).parent !== parent), parent)) return;
     const order = childFolders(libTree, parent).filter((f) => !moving.includes(f));
     const before = after ? order[order.indexOf(target) + 1] || "" : target;
     const positions = folderPositions(libTree, parent, before, moving);
@@ -2111,7 +2018,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // drag let go where it began does nothing. Never into a work folder's
   // file, nor a file into a page (fileRules).
   function dropPagesInto(ids, target, title) {
-    if (filesRefused([target, ...ids], (rules) => rules.moveIntoPage)) return;
+    if (work.refused([target, ...ids], (rules) => rules.moveIntoPage)) return;
     const name = pagesById.get(target)?.content || title || t("Untitled");
     const { refused, moving } = pagesIntoPage(pageBlocks, ids, target);
     if (refused === "inside") setStatus(t("A page can’t go inside a page that is inside it."));
@@ -9016,7 +8923,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // On the home library F2 renames the one selected page in place.
     renameTitle: () => {
       if (homeMode) {
-        if (homePick && !filesRefused([homePick], (rules) => rules.rename, "named")) setHomeEditingId(homePick);
+        if (homePick && !work.refused([homePick], (rules) => rules.rename, "named")) setHomeEditingId(homePick);
         return;
       }
       if (titleLocked) { setStatus(refusalText("named")); return; }
@@ -9469,13 +9376,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const near = new Set([...openTabs.map((tab) => tab.id), ...recentViews.map((r) => r.id)]);
     return knownBlocks.filter((b) => near.has(b.id) || pagesById.get(b.id)?._listed !== false);
   }, [knownBlocks, pagesById, openTabs, recentViews]);
-  // The open page as a work folder's file: its work folder's id ("" for
-  // none), what a person may do with it (fileRules, of its row, else of the
-  // page read), and whether its title is the file's, which only the disk
-  // renames.
-  const focusedFile = workFolderOf(focusedBlock);
-  const openRules = fileRules(pagesById.get(focusedBlockId) || focusedBlock, workTree);
-  const titleLocked = !!focusedFile && !openRules.rename;
+  // What may be done with work folders' files and folders, the menus' rows
+  // for them and Add to library, Remove from library and Save a copy
+  // (explorer/useWorkFolderActions.jsx). The open page as a work folder's
+  // file: its work folder's id ("" for none), what a person may do with it
+  // (fileRules), whether its title is the file's, which only the disk
+  // renames, and whether it is in the library.
+  const work = useWorkFolderActions({
+    tree: workTree, pages: pagesById, focusedId: focusedBlockId, focusedBlock, vault, setStatus, confirm: setConfirmBox, openPage, tasks,
+    reload: async (ids) => {
+      await fetchHomeBlocks();
+      if (ids.includes(focusedBlockIdRef.current)) loadBlocksForBlock(focusedBlockIdRef.current);
+    },
+  });
+  const { work: focusedFile, rules: openRules, titleLocked, inLibrary: openInLibrary } = work.open;
   // Who a note can mention (editor/MentionMenu.jsx MentionContext,
   // docs/dev/mentions.md): the workspace's members, read once per
   // workspace, and the signed-in account. A share view mentions no one.
@@ -9565,11 +9479,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const folderMeta = useMemo(() => {
     const m = {};
     for (const id of libTree.folders.keys()) m[id] = { count: 0, updated: "", created: "", viewed: "" };
-    const inWork = new Set([...libTree.folders.keys()].filter((id) => workOf(workTree, id)));
-    for (const [dir, n] of Object.entries(libTree.workCounts || {})) {
-      if (!inWork.has(dir)) continue;
-      for (const f of folderChain(libTree, dir)) if (inWork.has(f)) m[f].count += n;
-    }
+    const { inWork, counts } = workCounts(workTree);
+    for (const [f, n] of counts) m[f].count += n;
     for (const b of libraryPages) {
       const v = viewedAtById.get(b._pageId) || "";
       const seen = new Set();
@@ -9832,20 +9743,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A work folder's directory (docs/dev/work_folders.md "The folder's list
   // view"), shown as a list whatever the library's view: its directories by
   // name with the files below each, then the files of the page of rows read
-  // (explorer/FolderList.jsx), which the filter box narrows by name. Choose
-  // files… is the desktop app's, for a vault of this server.
-  const workLink = IS_DESKTOP && workFolder ? vault.links.get(workFolder) : null;
-  const chooseFiles = workLink && lib.organize ? () => vault.track(workLink.id) : null;
-  const workDirs = workFolder ? levelFolders.map((id) => ({ id, name: libTree.folders.get(id).name, count: folderMeta[id]?.count || 0 }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })) : [];
-  const workRows = useMemo(() => filterRows(folderRows.rows.filter((r) => pagesById.has(r.id))
-    .map((r) => ({ ...pagesById.get(r.id), open_comments: r.open_comments || 0 })), homeQuery), [folderRows.rows, pagesById, homeQuery]);
-  const chooseButton = chooseFiles ? <button type="button" className="uiBtn sm" onClick={chooseFiles}>{t("Choose files…")}</button> : null;
-  const workEmpty = workLink?.choosing ? <>{t("Choosing files…")} {chooseButton}</>
-    : homeQuery.trim() && folderRows.rows.length ? t("No file here matches “{q}”.", { q: homeQuery.trim() })
-    : folderFilter === workFolder ? <>{t("Nothing tracked yet.")} {chooseButton}</>
-    : homeQuery.trim() ? t("No file here matches “{q}”.", { q: homeQuery.trim() }) : t("No tracked files here.");
-  const workScope = `work|${folderFilter}|${workSort.sort}|${homeQuery}|${Math.ceil(folderRows.rows.length / 200)}`;
+  // (explorer/FolderList.jsx), which the filter box narrows by name.
+  const workDirs = workFolder ? listDirs(levelFolders, workTree, folderMeta) : [];
+  const workRows = useMemo(() => listRows(folderRows.rows, pagesById, homeQuery), [folderRows.rows, pagesById, homeQuery]);
   // Timestamp shown on a library card and in the list's date column follows
   // the active sort: sorted by view time → viewed (falling back to modified,
   // same as the sort), by added → created; modified otherwise (incl. Title
@@ -10579,7 +10479,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     // A name no label has can become one, or a folder at the
                     // path typed (its missing parents made with it), where
                     // the page may be filed in library folders.
-                    const newFolder = !focusedFile || focusedBlock?.properties?.library === true ? folderPathNames(q) : [];
+                    const newFolder = !focusedFile || openInLibrary ? folderPathNames(q) : [];
                     const suggestions = [
                       ...folderSugs.map((f) => ({ kind: "folder", ...f })),
                       ...labelSugs.map((l) => ({ kind: "label", ...l })),
@@ -10853,14 +10753,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <VaultChip state={vaultState} open={openPopover === "vault"} canAdd={lib.organize}
                   onOpenChange={(v) => setOpenPopover(v ? "vault" : null)}
                   onReveal={() => askShell("reveal-on-disk", { page: focusedBlockId })}
-                  onAdd={() => (focusedFile ? vault.setAddingFile({ ids: [focusedBlockId] }) : vault.setAdding([focusedBlockId]))}
-                  onEdit={() => vault.setEditing(focusedBlockId)}
-                  file={focusedFile ? { library: focusedBlock?.properties?.library === true, pdf: isPdf(doc) } : null}
-                  onRemove={() => fileLibraryRoute([focusedBlockId], "remove")}
-                  onCopy={() => vault.setAddingFile({ ids: [focusedBlockId], copy: true })}
-                  onChoose={IS_DESKTOP && vault.links.has(focusedFile) ? () => vault.track(vault.links.get(focusedFile).id) : undefined} />
+                  onEdit={() => vault.setEditing(focusedBlockId)} {...work.chip} />
                 {/* a work folder's file has a record only once it is in the library */}
-                {(isPdf(doc) || pageMeta) && (!focusedFile || focusedBlock?.properties?.library === true) ? (
+                {(isPdf(doc) || pageMeta) && (!focusedFile || openInLibrary) ? (
                   <span data-popover="meta" className="popoverAnchor">
                     <button
                       ref={metaBtnRef}
@@ -11363,62 +11258,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 blank: no "empty" line before the rows, and nothing the rows
                 would push down. */}
             {homeMode && !homeLoaded && !homeFailed ? null : homeMode && workFolder ? (
-                <>
-                  {newPageAllowed ? (
-                    <button className="folderRow folderNewBtn" onClick={() => createPage()} title={t("A new note, written into this directory")}>
-                      <FilePlusIcon size={16} />
-                      <span className="folderName">{t("New page")}</span>
-                    </button>
-                  ) : null}
-                  <FolderList dirs={workDirs} rows={workRows} loaded={folderRows.rows.length} total={folderRows.total} next={folderRows.next}
-                    loading={folderRows.loading} failed={folderRows.failed} onMore={folderRows.more} onRetry={() => fetchHomeBlocks({ still: true })}
-                    empty={workEmpty} listRef={homeListingRef} scope={workScope} still={homeStill || folderRows.still} onBlank={clearSelection}
-                    dirRow={(d) => {
-                      const menu = openTagMenu("folder", d.id);
-                      return {
-                        menu, icon: selecting && selectedFolders.has(d.id) ? <SelectCheck /> : <FolderIcon size={16} />,
-                        props: {
-                          className: `folderRow rowMenuHost ${selectedFolders.has(d.id) ? "selected" : ""}`,
-                          onClick: (e) => handleFolderClick(d.id, e),
-                          onDoubleClick: () => openFolder(d.id),
-                          ...menuPress(menu),
-                          title: t("Click to select · double-click to open"),
-                        },
-                      };
-                    }}
-                    fileRow={(b) => {
-                      const id = b._pageId;
-                      const isPinned = !!b._pinned;
-                      const isEditing = homeEditingId === id;
-                      const menu = openPageMenu(id, b.content);
-                      return {
-                        menu,
-                        icon: selecting && selectedPages.has(id) ? <SelectCheck /> : <FileGlyph format={b._doc?.format} />,
-                        name: isEditing ? (
-                          <input autoFocus className="fileRowRename" defaultValue={b.content} onClick={(e) => e.stopPropagation()}
-                            onKeyDown={(e) => {
-                              if (composing(e)) return;
-                              if (e.key === "Enter") commitPageRename(id, e.currentTarget.value);
-                              else if (e.key === "Escape") setHomeEditingId(null);
-                            }}
-                            onBlur={(e) => commitPageRename(id, e.currentTarget.value)} />
-                        ) : null,
-                        pin: lib.pin ? (
-                          <button className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`} title={isPinned ? t("Unpin") : t("Pin to top")}
-                            onClick={(e) => { e.stopPropagation(); setPagesPinned([id], !isPinned); }}><PinIcon filled={isPinned} size={14} /></button>
-                        ) : null,
-                        props: {
-                          className: `fileRow rowMenuHost ${selectedPages.has(id) ? "selected" : ""}`,
-                          draggable: lib.organize && !isEditing,
-                          onDragStart: (e) => startPageDrag(e, id),
-                          onClick: (e) => handlePageClick(b, e),
-                          onDoubleClick: () => { if (!isEditing) openPage(id); },
-                          ...menuPress(menu),
-                          title: t("{content}\nClick to select · double-click to open", { content: b.content }),
-                        },
-                      };
-                    }} />
-                </>
+                <FolderList dirs={workDirs} rows={workRows} read={folderRows} folderId={folderFilter} sort={workSort.sort} query={homeQuery}
+                  atTop={folderFilter === workFolder} choosing={!!work.linkOf(workFolder)?.choosing} onChoose={lib.organize ? work.chooser(workFolder) : null}
+                  onNewPage={newPageAllowed ? () => createPage() : null} onRetry={() => fetchHomeBlocks({ still: true })}
+                  listRef={homeListingRef} still={homeStill} onBlank={clearSelection}
+                  row={{
+                    selecting, selectedFolders, selectedPages, folderMenu: (id) => openTagMenu("folder", id), pageMenu: openPageMenu, menuPress,
+                    onFolderClick: handleFolderClick, onFolderOpen: openFolder, onPageClick: handlePageClick, onPageOpen: openPage,
+                    editingId: homeEditingId, onRename: commitPageRename, onRenameCancel: () => setHomeEditingId(null),
+                    onPin: lib.pin ? setPagesPinned : null, draggable: lib.organize, onDragStart: startPageDrag,
+                  }} />
             ) : homeMode && homeView === "grid" ? (
                 <>
                   {homeEmptyLine}
@@ -14252,13 +14101,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onClose={() => vault.setAdding(null)} />
         </LazyBoundary>
       ) : null}
-      {vault.addingFile ? (
+      {work.addDialog ? (
         <LazyBoundary>
-          <FolderPickerDialog mode="work" count={vault.addingFile.ids.length} copy={!!vault.addingFile.copy}
-            pdf={vault.addingFile.ids.some((id) => isPdf(pagesById.get(id)?._doc))}
-            folders={[{ id: "", name: t("All files") }, ...folderMenuIds.map((id) => ({ id, name: folderPath(libTree, id) }))]}
-            onPick={(folder) => fileLibraryRoute(vault.addingFile.ids, vault.addingFile.copy ? "copy" : "add", folder)}
-            onClose={() => vault.setAddingFile(null)} />
+          <FolderPickerDialog mode="work" {...work.addDialog}
+            folders={[{ id: "", name: t("All files") }, ...folderMenuIds.map((id) => ({ id, name: folderPath(libTree, id) }))]} />
         </LazyBoundary>
       ) : null}
       {vault.tracking ? (
@@ -14643,8 +14489,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         // another, or out of the one it is in. A work folder's file is never
         // one of them (fileRules): it has its library rows instead.
         const inside = !!pagesById.get(tabMenu.id)?._parentPage;
-        const tabRow = pagesById.get(tabMenu.id);
-        const tabFile = tabRow && isWorkFile(tabRow) ? tabRow : null;
+        const tabFile = work.fileOf(tabMenu.id);
         return (
         <ContextMenu x={tabMenu.x} y={tabMenu.y} onClose={() => setTabMenu(null)}>
           <MenuItem icon={PinIcon} onClick={() => { setTabMenu(null); toggleTabPinned(tabMenu.id); }}>
@@ -14683,7 +14528,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           {lib.organize ? (
             <>
               <MenuDivider />
-              {tabFile ? fileLibraryItems([tabFile], () => setTabMenu(null)) : (
+              {tabFile ? work.libraryItems([tabFile], () => setTabMenu(null)) : (
                 <MenuItem icon={FilePlusIcon} title={t("A blank page inside this one")}
                   onClick={() => { setTabMenu(null); createSubPage(tabMenu.id); }}>{t("New page inside")}</MenuItem>
               )}
@@ -14724,24 +14569,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               // in the library it may be filed in library folders too, never
               // out of its directory; it has its own library rows, and with
               // other pages beside it neither those nor the moves.
-              const files = acted.filter((b) => b && isWorkFile(b));
-              const allFiles = files.length === ids.length;
-              const anyFile = files.length > 0;
-              const ruled = (rule) => files.every((b) => fileRules(b, workTree)[rule]);
-              const filable = acted.filter((b) => b && !b._parentPage && (!isWorkFile(b) || b._library));
-              const leftOut = ids.length - acted.filter((b) => b && !b._parentPage).length;
+              // Folders the acted-on pages already sit in (`ownFolders`) are
+              // offered for removal alongside the current folder view (a
+              // file's directory never: workFolderActions.pagesMenu).
+              const { files, allFiles, anyFile, ruled, filable, leftOut, ownFolders, copied } = pagesMenu(acted, ids, pagesById, workTree);
               const outOf = topmostPages(pageBlocks, ids).filter((id) => pagesById.get(id)?._parentPage);
-              // Folders the acted-on pages already sit in — offered for
-              // removal alongside the current folder view (a file's
-              // directory never).
-              const ownFolders = [...new Set(filable.flatMap((b) => b._folders || []))].filter((f) => !workOf(workTree, f));
               const fromHere = folderFilter && !workFolder ? folderFilter : "";
               // PDFs opened from this computer (inside *Opened files*): all
               // of them, or any among the acted-on pages (addingToLibrary)
               const opened = ids.every(openedPdf);
               const anyOpened = ids.some(openedPdf);
               const allLabelled = (l) => acted.every((b) => b?._labels?.includes(l));
-              const copied = ids.filter((id) => !pagesById.get(id) || fileRules(pagesById.get(id), workTree).duplicate);
               const close = () => setHomeMenu(null);
               // A typed name: the label of that name, else a new one.
               const commitNewLabel = async () => {
@@ -14854,7 +14692,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     <MenuItem key="add" icon={FolderPlusIcon} title={t("Store the PDF in the library and file the page in a folder: its highlights, notes and chat come with it")}
                       onClick={() => { close(); vault.setAdding(ids); }}>{t("Add to library…")}</MenuItem>
                   ),
-                  ...(lib.organize && allFiles ? fileLibraryItems(files, close) : []),
+                  ...(lib.organize && allFiles ? work.libraryItems(files, close) : []),
                   lib.organize && !anyOpened && !anyFile && (
                     <MenuItem key="into" icon={IndentIcon} title={t("Put it inside another page, where it is listed under Pages inside")}
                       onClick={() => { close(); pickPageParent(ids); }}>{t("Move into page…")}</MenuItem>
@@ -14916,14 +14754,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               // folder's lists its directories by name).
               const [up, down] = [folderNeighbour(libTree, id, -1), folderNeighbour(libTree, id, 1)];
               const stepping = lib.organize && homeMode && homeSort === "manual" && folders.length === 1 && !inWork;
-              const workLinkHere = IS_DESKTOP && folders.length === 1 && lib.workFolder(id) === id ? vault.links.get(id) : null;
+              const choose = folders.length === 1 && lib.organizeIn(id).chooseFiles ? work.chooser(id) : null;
+              // Move to: the library's folders every one of them may go
+              // into, in the flyout's order (folderRules moveTargets).
+              const into = folders.map((f) => new Set(lib.organizeIn(f).moveTargets));
               return menuGroups(
                 [
                   <MenuItem key="open" icon={FolderOpenIcon} keys={chordLabel("Enter")}
                     onClick={() => { setHomeMenu(null); if (!homeMode) goHome(); openFolder(id); }}>{t("Open")}</MenuItem>,
-                  workLinkHere && lib.organize && (
+                  choose && (
                     <MenuItem key="track" icon={SquareCheckIcon} title={t("Choose which files of its directory the work folder tracks")}
-                      onClick={() => { setHomeMenu(null); vault.track(workLinkHere.id); }}>{t("Choose files…")}</MenuItem>
+                      onClick={() => { setHomeMenu(null); choose(); }}>{t("Choose files…")}</MenuItem>
                   ),
                 ],
                 [
@@ -14945,7 +14786,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 [
                   ruled("move") && (
                     <SubMenuItem key="move" id="move" icon={FolderIcon} label={t("Move to")}>
-                      {folderMenuRows(["", ...folderTargets(libTree, folders, folderMenuIds)],
+                      {folderMenuRows(["", ...folderMenuIds.filter((f) => into.every((targets) => targets.has(f)))],
                         (f) => folders.every((m) => libTree.folders.get(m)?.parent === f), (f) => moveFolders(folders, f))}
                     </SubMenuItem>
                   ),

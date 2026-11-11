@@ -12,7 +12,7 @@
 // tests/workFolders.test.mjs.
 import { STAMPS, follows as followsMark, workFolderOf } from "../documents/library.js";
 import { inPlace, isPdf, pageDocument } from "../documents/pageDocument.js";
-import { EMPTY_TREE, addToFolder, folderSubtree } from "../library/libraryUtils.js";
+import { EMPTY_TREE, addToFolder, folderSubtree, folderTargets } from "../library/libraryUtils.js";
 import { T, t } from "../shared/i18n/i18n.js";
 
 // The folder tree's pseudo-page: an op names it as a top folder's parent.
@@ -142,11 +142,13 @@ export function fileRules(page, tree) {
 
 // What a person may do with a folder (`folderId`, "" for the library's
 // top): {rename, move, moveTargets (the folders it may go into, the top
-// aside), delete, newSubfolder, newPage, chooseFiles}. Inside a work folder
-// the folder tree is the disk's: W may be renamed and moved out of every
-// work folder, never deleted; its directories are neither renamed, moved nor
-// deleted, and no folder is made in any of them. A page is made in a work
-// folder that pulls (a note, which pull writes), and Choose files… is W's.
+// aside: the library's, none of them below it; the folder menu's Move to),
+// delete, newSubfolder, newPage, chooseFiles (the folder menu's Choose
+// files…)}. Inside a work folder the folder tree is the disk's: W may be
+// renamed and moved out of every work folder, never deleted; its
+// directories are neither renamed, moved nor deleted, and no folder is made
+// in any of them. A page is made in a work folder that pulls (a note, which
+// pull writes), and Choose files… is W's.
 export function folderRules(tree, folderId) {
   const tr = treeOf(tree);
   const w = workOf(tr, folderId);
@@ -159,7 +161,7 @@ export function folderRules(tree, folderId) {
   return {
     rename: known,
     move: known,
-    moveTargets: known ? filingTargets(tr).filter((id) => !inside.has(id)) : [],
+    moveTargets: known ? folderTargets(tr.lib, [folderId], filingTargets(tr)) : [],
     delete: known && !w && ![...tr.marks.keys()].some((root) => inside.has(root)),
     newSubfolder: !w,
     newPage: w ? pulls : true,
