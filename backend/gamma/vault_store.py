@@ -26,7 +26,11 @@ decide, never a base that says what is not so.
 A file whose page went to Recently deleted keeps its row, a **tombstone**
 (``bury``): ``path`` is where the trash holds the file and ``was`` where it
 lived, so that the same file come back finds its page
-(``vault_disk.came_back``) and a restored page finds its file. ``missing_since`` holds a file the scan did not
+(``vault_disk.came_back``) and a restored page finds its file. A work
+folder's file its ``.gammaignore`` leaves out stays where it is, and so does
+a PDF of a work folder whose page went: its tombstone is **in place**
+(``bury_in_place``), ``path`` ``KEPT`` and ``was`` (no file of the trash's,
+none to purge), and ``was`` is where the file is (``on_disk``). ``missing_since`` holds a file the scan did not
 find, which counts as removed only once ``MISSING_S`` later scans agree
 (``missing_long``): a safe save deletes and renames.
 
@@ -54,6 +58,7 @@ MISSING_S = 10                  # a file missing from scans this far apart is re
 HISTORY_EVERY_S = 300           # one entry a path in this long, at most
 HISTORY_BYTES = 32 << 20        # compressed history a vault keeps, at most
 KEEP_HISTORY_DAYS = 7
+KEPT = "\x00kept/"              # an in-place tombstone's path: this, then where its file still is (``bury_in_place``)
 
 _FILE_COLUMNS = ("link_id", "path", "page_id", "kind", "hash", "size", "mtime_ns", "file_id", "read_at", "text",
                  "nodes", "gone", "title", "folder", "seq", "ours", "was", "missing_since", "problem", "pending")
@@ -199,7 +204,8 @@ def drop(link_id: str, path: str, token: str) -> None:
 # --- tombstones, missing files, dropped blocks ------------------------------------------------
 
 def tombstones(link_id: str) -> list:
-    """The rows of files whose pages are in Recently deleted (``bury``)."""
+    """The rows of files whose pages are in Recently deleted (``bury``,
+    ``bury_in_place``)."""
     with connect_vaults_db() as conn:
         rows = conn.execute(f"{_SELECT} WHERE link_id = ? AND was != ''", (link_id,)).fetchall()
     return [_row(r) for r in rows]
@@ -212,6 +218,27 @@ def bury(link_id: str, path: str, trash: str) -> None:
     with connect_vaults_db() as conn:
         conn.execute("UPDATE vault_files SET path = ?, was = ?, missing_since = 0 WHERE link_id = ? AND path = ?",
                      (trash, path, link_id, path))
+
+
+def bury_in_place(link_id: str, path: str) -> None:
+    """The row of ``path`` kept as a tombstone whose file stays where it is:
+    at ``KEPT`` + ``path``, ``was`` ``path``. No pending goes with it: nothing
+    moves, so a round that dies leaves nothing to finish. An older one of
+    that path, a page made of the file since, goes."""
+    with connect_vaults_db() as conn:
+        conn.execute("DELETE FROM vault_files WHERE link_id = ? AND path = ?", (link_id, KEPT + path))
+        conn.execute("UPDATE vault_files SET path = ?, was = ?, missing_since = 0 WHERE link_id = ? AND path = ?",
+                     (KEPT + path, path, link_id, path))
+
+
+def in_place(row: dict) -> bool:
+    """Whether a tombstone is in place (``bury_in_place``)."""
+    return row["path"].startswith(KEPT)
+
+
+def on_disk(row: dict) -> str:
+    """Where a row's file is on the disk: an in-place tombstone's at ``was``."""
+    return row["was"] if in_place(row) else row["path"]
 
 
 def unbury(link_id: str, trash: str, path: str) -> None:

@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 from conftest import (account_of, doc_props, folder_names, label_names, login, make_folder, make_label, make_page,
-                      make_user, workspace_of, guest_name)
+                      make_user, mark_work_folder, workspace_of, guest_name)
 from test_zotero_import import RDF, _annotated_pdf
 
 
@@ -168,6 +168,19 @@ def test_a_review_refuses_a_destination_that_is_no_folder(guest):
     result = guest.post("/api/import/review", data={"source": "markdown-zip", "folder": "no-such-folder"},
                         files={"file": ("n.zip", archive({"n.md": "# n"}), "application/zip")})
     assert result.status_code == 400
+
+
+def test_an_import_refuses_a_work_folder_and_its_directories_up_front():
+    make_user("review-work", "pw-review-work")
+    owner = login("review-work", "pw-review-work")
+    work, directory = make_folder(owner, "Paper"), make_folder(owner, "Paper/figures")
+    mark_work_folder(owner, work)
+    for folder in (work, directory):
+        for url, extra in (("/api/import/review", {"source": "markdown-zip"}), ("/api/import/markdown-zip", {})):
+            result = owner.post(url, data={**extra, "folder": folder},
+                                files={"file": ("n.zip", archive({"n.md": "# n"}), "application/zip")})
+            assert result.status_code == 400 and "follow the disk" in result.json()["detail"], result.text
+    assert owner.get("/api/blocks/root/children").json()["children"] == []
 
 
 def test_markdown_repeat_review_shows_existing_destination(accounts):

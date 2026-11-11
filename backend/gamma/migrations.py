@@ -1908,6 +1908,35 @@ def _v51_page_documents(ws: str, pages: sqlite3.Connection, data) -> None:
         log.info(f"[migrate] {where}: {changed} blocks' documents moved into one doc property")
 
 
+def _v52_folder_links_library(conn: sqlite3.Connection) -> None:
+    """``folder_links`` gains ``library``, a work folder's switch: whether
+    the pages of the files it tracks are library documents too
+    (docs/dev/work_folders.md). It is on for every vault that becomes a work
+    folder at its first round after the upgrade (a folder of this server
+    that pushes everything), so their pages stay in the library; off for
+    every other link. Re-runnable: the column is added only where
+    ``_columns()`` lacks it, and the update sets the same rows again. No
+    workspace is touched: the vault stamps its pages itself, since only
+    this computer knows its links."""
+    if "library" not in _columns(conn, "folder_links"):
+        conn.execute("ALTER TABLE folder_links ADD COLUMN library INTEGER NOT NULL DEFAULT 0")
+    conn.execute("UPDATE folder_links SET library = 1 WHERE kind = 'folder' AND push = 2 AND remote_url = '' "
+                 "AND folder_id != 'root'")
+    conn.commit()
+
+
+def _v52_work_folders(ws: str, pages: sqlite3.Connection, data) -> None:
+    """``unified_blocks`` gains the generated ``work_folder`` (the work
+    folder a page is a file of, its ``properties.work_folder``) and
+    ``first_folder`` (the first of its ``properties.folders``) and the
+    partial indexes ``idx_ub_listing``, ``idx_ub_dir`` and
+    ``idx_ub_work_folder``: ``block_columns`` adds the missing columns after
+    the others, with the indexes, as step 47 does. Nothing is stamped or
+    touched: the columns are derived (``DERIVED_STEPS``)."""
+    if _columns(pages, "unified_blocks"):
+        block_columns(pages)
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1933,6 +1962,7 @@ STEPS = [
     (46, "folder_links_push", _v46_folder_links_push),
     (49, "content_reports", _v49_content_reports),
     (50, "folder_links_pull", _v50_folder_links_pull),
+    (52, "work_folders", _v52_folder_links_library),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,
@@ -1947,9 +1977,10 @@ WORKSPACE_STEPS = [
     (47, "parent_page", _v47_parent_page),
     (48, "deleted_with", _v48_deleted_with),
     (51, "page_documents", _v51_page_documents),
+    (52, "work_folders", _v52_work_folders),
 ]
 
 # The workspace steps that only add a column SQLite derives from the rows
 # stored before them: two copies on either side of one hold the same data,
 # so they leave ``workspace_format`` as it is and a mirror keeps syncing.
-DERIVED_STEPS = {47, 48}
+DERIVED_STEPS = {47, 48, 52}

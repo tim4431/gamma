@@ -16,7 +16,10 @@ from types import SimpleNamespace
 import pytest
 
 from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_label, make_page, make_user,
-                      workspace_of)
+                      mark_work_folder, work_props, workspace_of)
+from gamma.auth import DISK_CLIENT
+from gamma.blocks_store import create_page
+from gamma.db import connect_pages_db
 from gamma.integrations import create_token
 from test_pdf_export import _blank_pdf, _position
 
@@ -133,6 +136,27 @@ def test_root_is_the_whole_library_and_a_page_is_no_folder(owner, lab):
     assert {"FS lab", "FS lab/Sub", "FS lab/Empty", "FS elsewhere"} <= {d["path"] for d in m["dirs"]}
     assert owner.get(f"/api/sync/folders/{lab['top']['id']}").status_code == 404
     assert owner.get(f"/api/sync/folders/{lab['top']['id']}/notes", params={"pages": lab["top"]["id"]}).status_code == 404
+
+
+def test_root_leaves_a_work_folder_out_and_lays_a_file_in_the_library_out_by_its_library_folders(owner):
+    """A whole library's gamma-sync never copies a repository a work folder
+    tracks: neither its directories nor its files, but those added to the
+    library, under their library folders. A folder's manifest of the work
+    folder is that folder's, its files among it."""
+    w, d = make_folder(owner, "FS work"), make_folder(owner, "FS work/dir")
+    shelf = make_folder(owner, "FS shelf")
+    mark_work_folder(owner, w)
+    with connect_pages_db(workspace_of("fs_owner")) as conn:
+        made = {name: create_page(conn, title, props, actor=account_of("fs_owner"), client=DISK_CLIENT)["id"]
+                for name, title, props in (
+                    ("figure", "FS figure", work_props(w, "figure.md", directory=d)),
+                    ("paper", "FS read paper", {**work_props(w, "paper.md", library=True), "folders": [w, shelf]}))}
+    m = _manifest(owner, "root")
+    by_id = {p["id"]: p for p in m["pages"]}
+    assert made["figure"] not in by_id and by_id[made["paper"]]["stem"] == "FS shelf/FS read paper"
+    assert not {"FS work", "FS work/dir"} & {d["path"] for d in m["dirs"]} and "FS shelf" in {d["path"] for d in m["dirs"]}
+    inside = _manifest(owner, w)
+    assert {p["id"] for p in inside["pages"]} == set(made.values()) and [x["path"] for x in inside["dirs"]] == ["dir"]
 
 
 def test_notes_are_vault_pages_of_the_folder_with_the_page_id(owner, lab):

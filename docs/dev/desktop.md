@@ -37,7 +37,10 @@ upgrade its data directory — up either way, and the window then shows that
 server's guidance page, [migrations.md](migrations.md)); `/api/session` +
 `/api/login` for the silent first login; the `/api/folder-links` routes
 (the sync panel, the vault dialog, `POST /hint` when a window gets the
-focus); for a PDF opened with the app, `POST /api/folder-links/open` on a
+focus), a work folder made with `choose` (paused, choosing, no round) and
+the `?ws=<id>&folder=<id>&track=<link id>` URL the shell then loads, on
+which the web app's tracking dialog chooses its files through the server
+([work_folders.md](work_folders.md)); for a PDF opened with the app, `POST /api/folder-links/open` on a
 local server (read where it is, under *Opened files*), or with the
 `openAddsToLibrary` entry of the account's profile on, and in the Mac App
 Store build, the upload routes and `POST /api/blocks/by-doc/<hash>`; `POST

@@ -20,7 +20,8 @@ from contextlib import closing
 import pymupdf
 import pytest
 
-from conftest import _tree_block, account_of, doc_props, login, make_folder, make_page, make_user, workspace_of
+from conftest import (_tree_block, account_of, doc_props, login, make_folder, make_page, make_user,
+                      mark_work_folder, workspace_of)
 from gamma import (config, folder_links, gamma_sync, jobs, linked_files, md_lens, pdf_meta, storage, vault_disk,
                    vault_merge, vault_store, vault_sync)
 from gamma.blocks_store import LABELS, block_kind, new_block_id, newest_change_seq, write_lock
@@ -1474,7 +1475,7 @@ def test_a_vault_with_no_marker_stops_and_one_whose_disk_is_gone_is_offline(vaul
     w = vault("w")
     w.write("M.md", "m\n")
     w.sync()
-    monkeypatch.setattr(vault_disk, "walk", lambda root, ignore=(): (_ for _ in ()).throw(vault_disk.Offline("gone")))
+    monkeypatch.setattr(vault_disk, "walk", lambda root, rules=None: (_ for _ in ()).throw(vault_disk.Offline("gone")))
     for _ in range(2):
         status = w.sync(ok=False)
         assert status["offline"] and w.state(w.page_of("M.md")) == "live"
@@ -1492,8 +1493,8 @@ def test_a_cloud_placeholder_is_never_read_or_removed(vault, monkeypatch):
     page = v.page_of("Cloud.md")
     real = vault_disk.scan
 
-    def placeholders(root, vault_id):
-        found = real(root, vault_id)
+    def placeholders(root, vault_id, rules=None):
+        found = real(root, vault_id, rules)
         for f in found.files.values():
             f.placeholder = True
         return found
@@ -1788,22 +1789,115 @@ def test_a_page_or_folder_whose_name_the_scan_leaves_out_is_written_where_it_see
     v.quiet()
 
 
-def test_a_file_the_scan_leaves_out_but_is_there_is_never_a_removal(vault):
-    """An ignore glob written into the marker since: the file is there, so it
-    never counts as removed, and the guard never holds a vault where nothing
-    went."""
-    v = vault()
+def _work(v, owner):
+    """The vault's folder marked as a work folder's (conftest
+    ``mark_work_folder``): its rounds are a work folder's."""
+    mark_work_folder(owner, v.folder)
+    return v
+
+
+def _seen(path):
+    st = os.stat(path)
+    return path.read_bytes(), st.st_mtime_ns, st.st_ino
+
+
+def test_a_file_its_gammaignore_leaves_out_goes_to_recently_deleted_where_it_is(vault, owner):
+    """A work folder's paper unticked since, its PDF and the notes pull wrote
+    beside it: its page in Recently deleted, its rows in-place tombstones, the
+    files' bytes, time and id untouched; ticked again, the page is back with
+    its notes, whatever the PDF's bytes now."""
+    v = _work(vault(), owner)
+    paper = v.write("Paper.pdf", _pdf("the paper"), age=10)
+    v.write("Note.md", "a note\n")
+    v.sync()
+    page = v.page_of("Paper.pdf")
+    v.edit(page, insert(page, "a thought on the paper"))
+    v.sync()
+    before, notes = _seen(paper), _seen(v.root / "Paper.md")
+    v.write(".gammaignore", "/Paper.*\n")
+    status = v.sync()
+    assert status["counts"]["removed"] == 2 and v.state(page) == "trashed"
+    assert _seen(paper) == before and _seen(v.root / "Paper.md") == notes
+    tombs = vault_store.tombstones(v.link["id"])
+    assert sorted(t["was"] for t in tombs) == ["Paper.md", "Paper.pdf"]
+    assert all(vault_store.in_place(t) and not t["pending"] for t in tombs)
+    assert not (v.root / vault_disk.TRASH).exists() and v.state(v.page_of("Note.md")) == "live"
+    v.quiet()
+
+    v.write("Paper.pdf", _pdf("the paper, built again"), age=5)
+    v.write(".gammaignore", "/Other.pdf\n")
+    v.sync()
+    assert v.state(page) == "live" and v.page_of("Paper.pdf") == page and vault_store.tombstones(v.link["id"]) == []
+    assert "a thought on the paper" in v.texts(page)
+    assert v.blocks(page)[page]["props"]["doc"]["hash"] == v.rows()["Paper.pdf"]["hash"]
+    v.quiet()
+
+
+def test_unticking_half_a_work_folder_is_held_by_the_guard_and_goes_on_when_confirmed(vault, owner):
+    v = _work(vault(), owner)
+    for n in range(12):
+        v.write(f"n{n}.md", f"note {n}\n")
+    v.sync()
+    v.write(".gammaignore", "/n[0-6].md\n")
+    status = v.sync(ok=False)
+    assert status["held"] == {"removals": 7, "total": 12} and all(v.state(v.page_of(f"n{n}.md")) == "live"
+                                                                  for n in range(12))
+    status = v.sync(confirm=True)
+    assert status["counts"]["removed"] == 7 and len(v.rows()) == 5
+    assert all((v.root / f"n{n}.md").exists() for n in range(12))
+
+
+def test_a_kill_between_the_trash_and_the_bury_never_moves_the_file(vault, owner, monkeypatch):
+    """The page goes first: a round that dies then leaves a live row the next
+    deselects again; one whose page the mirror brings back sends it back,
+    the file still where it is."""
+    v = _work(vault(), owner)
+    paper = v.write("Paper.pdf", _pdf("kill"), age=10)
+    v.sync()
+    page = v.page_of("Paper.pdf")
+    before = _seen(paper)
+    v.write(".gammaignore", "/Paper.pdf\n")
+
+    def killed(*_a):
+        raise Killed()
+    with monkeypatch.context() as m:
+        m.setattr(vault_store, "bury_in_place", killed)
+        with pytest.raises(Killed):
+            v.sync(ok=False)
+    assert v.state(page) == "trashed" and "Paper.pdf" in v.rows() and _seen(paper) == before
+    v.sync()
+    assert v.state(page) == "trashed" and vault_store.in_place(vault_store.tombstones(v.link["id"])[0])
+    with connect_pages_db(v.ws) as conn:
+        restore_page(v.ws, conn, page, actor=v.user, client="sync")
+    v.sync()
+    assert v.state(page) == "trashed" and _seen(paper) == before and not (v.root / vault_disk.TRASH).exists()
+
+
+@pytest.mark.parametrize("work", [False, True])
+def test_a_file_a_link_above_leaves_out_is_never_a_removal(vault, owner, tmp_path, work):
+    """The scan does not follow the link, and the file below it is there: no
+    removal, and the guard never holds a vault where nothing went."""
+    v = vault(f"link-{work}")
+    if work:
+        _work(v, owner)
     for n in range(10):
         v.write(f"n{n}.md", f"note {n}\n")
-    v.write("Plan.md", "plan\n")
+    v.write("Sub/Plan.md", "plan\n")
     v.sync()
-    page = v.page_of("Plan.md")
-    marker = json.loads((v.root / vault_disk.MARKER).read_text(encoding="utf-8"))
-    (v.root / vault_disk.MARKER).write_text(json.dumps({**marker, "ignore": ["Plan.md"]}), encoding="utf-8")
-    for _ in range(6):
-        status = v.sync()
-        assert not status.get("held") and status["counts"]["removed"] == 0
-    assert v.state(page) == "live" and not v.rows()["Plan.md"]["missing_since"]
+    page = v.page_of("Sub/Plan.md")
+    outside = tmp_path / f"outside-{work}"
+    shutil.move(str(v.root / "Sub"), str(outside))
+    if sys.platform == "win32":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(v.root / "Sub"), str(outside)], check=True, capture_output=True)
+    else:
+        os.symlink(outside, v.root / "Sub", target_is_directory=True)
+    try:
+        for _ in range(6):
+            status = v.sync(ok=False)
+            assert not status.get("held") and status["counts"]["removed"] == 0
+        assert v.state(page) == "live" and not v.rows()["Sub/Plan.md"]["missing_since"]
+    finally:
+        os.rmdir(v.root / "Sub") if sys.platform == "win32" else os.unlink(v.root / "Sub")
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="a junction is Windows'")

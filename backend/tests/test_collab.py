@@ -1,16 +1,20 @@
 """Collaborative editing: the op batch write (gamma/ops.py), the per-page op
-log and its catch-up read, the page websocket (presence + fan-out), and the
+log and its catch-up read, the writer a batch is made under
+(``auth.writer_client``), the page websocket (presence + fan-out), and the
 server-side writers that must reach a page's room."""
 
 import json
 
 import pytest
 from fractional_indexing import generate_key_between
+from starlette.requests import Request
 from starlette.websockets import WebSocketDisconnect
 
 from conftest import (account_of, doc_props, fresh_client, guest_name, login, make_page, make_user, recv, recv_hello,
                       workspace_of)
 from gamma import version
+from gamma.auth import writer_client
+from gamma.integrations import create_token
 
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
        b"\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
@@ -439,6 +443,45 @@ def test_ops_share_editor_is_confined_to_the_page(owner, editor, client):
     anon = TestClient(app)
     assert _ops(anon, page["id"], [{"op": "set", "id": "shA", "content": "x"}], params=q).status_code == 403
     assert anon.get(f"/api/pages/{page['id']}/ops", params=q).status_code == 200
+
+
+# --- who writes ----------------------------------------------------------------
+
+def _request(header="", *, token=False, share=""):
+    return Request({"type": "http", "method": "POST", "path": "/api/pages/p/ops",
+                    "headers": [(b"x-gamma-client", header.encode())] if header else [],
+                    "query_string": f"share={share}".encode() if share else b"",
+                    "state": {"auth": "token" if token else "session"}})
+
+
+def test_writer_client_takes_the_vault_and_the_mirror_from_a_token_alone():
+    """``auth.writer_client``: the batch's ``client``, else the header, cut
+    to 32 characters; ``disk`` (the vault) and ``sync`` (the mirror), which
+    the work-folder rule lets through, only from an integration token with
+    no share link."""
+    assert writer_client(_request(), "tab-1") == "tab-1"
+    assert writer_client(_request("ai")) == "ai"  # the header, for a route that takes no batch
+    assert writer_client(_request("ai"), "tab-1") == "tab-1"
+    assert writer_client(_request(), "x" * 40) == "x" * 32
+    for name in ("disk", "sync"):
+        assert writer_client(_request(token=True), name) == name
+        assert writer_client(_request(name, token=True)) == name
+        assert writer_client(_request(), name) == writer_client(_request(name)) == ""  # a session is a person
+        assert writer_client(_request(token=True, share="s"), name) == ""  # and so is a share link
+
+
+def test_a_batch_is_logged_under_the_writer_s_client(owner):
+    page = make_page(owner, "Who writes")
+    token = fresh_client()
+    token.headers["Authorization"] = "Bearer " + create_token(account_of("owner_collab"), workspace_of("owner_collab"),
+                                                              "collab-writer", 90, scope="write")["token"]
+    token.headers["X-Gamma-Workspace"] = workspace_of("owner_collab")
+    for i, (client, claimed, logged) in enumerate(((owner, "disk", ""), (owner, "tab", "tab"),
+                                                   (token, "disk", "disk"))):
+        r = _ops(client, page["id"], [{"op": "insert", "id": f"wcl{i}", "parent": page["id"], "content": claimed}],
+                 client_id=claimed)
+        assert r.status_code == 200, r.text
+        assert owner.get(f"/api/pages/{page['id']}/ops").json()["batches"][-1]["client"] == logged
 
 
 # --- the websocket -------------------------------------------------------------

@@ -2,8 +2,9 @@
 // `properties.doc` = {format, name, hash, ext, at, url?, size?, copy?}. This
 // is the one read of what a block carries: every decision on it (layout,
 // card glyph, gating, copy) reads pageDocument, never the raw properties.
-// The twin of gamma/documents/model.py (page_document, the predicates);
-// tests/shared/document.json holds both to the same answers.
+// Whether a page is a paper is the library rule's (library.js), not its
+// document's alone. The twin of gamma/documents/model.py (page_document,
+// the predicates); tests/shared/document.json holds both to the same answers.
 
 import { EXTENSION_RE, FORMATS, languageOf, strip } from "./formats.js";
 

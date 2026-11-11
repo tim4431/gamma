@@ -399,6 +399,43 @@ def test_share_token_never_attaches(bob_page, guest):
     assert anon.post("/api/pages", params={"share": token}, json={"title": "x"}).status_code == 401
 
 
+def test_a_work_folders_document_is_its_vaults(no_grace):
+    """A work folder's file reads its document where it is: a person's
+    attach, replace and detach are refused with the ``locked`` conflict in
+    the rule's words; the vault's own, from a token that names its client
+    (``X-Gamma-Client: disk``), go through."""
+    from conftest import fresh_client, mark_work_folder, work_props
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import create_page
+    from gamma.documents.model import document
+    from gamma.integrations import create_token
+    from gamma.work_folders.filing import refusal_text
+
+    make_user("pages_vault", "pw-pages-vault")
+    owner, ws, account = login("pages_vault", "pw-pages-vault"), workspace_of("pages_vault"), account_of("pages_vault")
+    w = make_folder(owner, "pages-W")
+    mark_work_folder(owner, w)
+    with connect_pages_db(ws) as conn:
+        pdf = create_page(conn, "main", work_props(w, "main.pdf", doc=document("4d" * 12, name="main.pdf", at="path")),
+                          actor=account, client=DISK_CLIENT)["id"]
+        note = create_page(conn, "notes", work_props(w, "notes.md"), actor=account, client=DISK_CLIENT)["id"]
+    new = _upload_pdf(owner, b"%PDF-1.4 the vault's next version\n")
+
+    def refused(r):
+        assert r.status_code == 403 and r.json() == {"detail": refusal_text("document"), "conflict": "locked"}, r.text
+
+    refused(owner.put(f"/api/pages/{pdf}/attachment", json={"doc_id": new}))
+    refused(owner.delete(f"/api/pages/{pdf}/attachment"))
+    refused(owner.post(f"/api/pages/{note}/attachment", json={"doc_id": new}))
+    refused(owner.put(f"/api/pages/{pdf}/attachment", json={"doc_id": new}, headers={"X-Gamma-Client": "disk"}))
+    vault = fresh_client()
+    token = create_token(account, ws, "pages-vault", 90, scope="write")["token"]
+    vault.headers.update({"Authorization": "Bearer " + token, "X-Gamma-Workspace": ws, "X-Gamma-Client": "disk"})
+    r = vault.put(f"/api/pages/{pdf}/attachment", json={"doc_id": new, "original_filename": "main.pdf"})
+    assert r.status_code == 200, r.text
+    assert owner.get(f"/api/blocks/{pdf}").json()["properties"]["doc"]["hash"] == new
+
+
 # --- generic file uploads --------------------------------------------------------------
 
 def _upload_file(client, name, data, ctype="application/octet-stream"):

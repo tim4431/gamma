@@ -349,6 +349,42 @@ def test_a_clip_never_finds_a_copy_or_a_pdf_read_in_place(guest, upstream, meta_
     assert lk["block_id"] == r.json()["block_id"] and lk["doc_id"] == doc_id
 
 
+def test_a_clip_files_in_the_library_never_in_a_work_folder(upstream, meta_calls):
+    """A work folder's file not in the library is no page of its PDF, so a
+    clip of those bytes makes a library page; a clip names a library folder
+    only: an id inside a work folder is refused with the rule's words, and a
+    path that names the work folder makes a library folder of that name."""
+    from conftest import fresh_client, make_folder, mark_work_folder, work_props
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import create_page
+    from gamma.documents.model import document
+    from gamma.work_folders.filing import refusal_text
+
+    c = fresh_client()
+    name = c.post("/api/login-guest").json()["username"]  # a library of its own
+    ws = workspace_of(name)
+    w, d = make_folder(c, "clip-W"), make_folder(c, "clip-W/dir")
+    mark_work_folder(c, w)
+    data = b"%PDF-1.4 a figure of a work folder\n" + b"f" * 500
+    doc_id = c.post("/api/uploads", files={"file": ("fig.pdf", data, "application/pdf")}).json()["doc_id"]
+    with connect_pages_db(ws) as conn:
+        figure = create_page(conn, "fig", work_props(w, "fig.pdf", directory=d, doc=document(
+            doc_id, name="fig.pdf", at="path")), actor=account_of(name), client=DISK_CLIENT)["id"]
+        assert clip_mod.find_page(conn, urls=(f"/api/uploads/{doc_id}.pdf",)) is None
+    r = c.post("/api/clip", json={"doc_id": doc_id, "title": "The figure as a paper"})
+    assert r.status_code == 200, r.text
+    assert r.json()["existed"] is False and r.json()["block_id"] != figure
+    refused = c.post("/api/clip", json={"doc_id": doc_id, "folder": d})
+    assert refused.status_code == 400 and refused.json()["detail"] == refusal_text("directories")
+    r = c.post("/api/clip", json={"source_url": "https://example.org/clip-work-folder", "title": "Filed by path",
+                                  "folder_path": "clip-W/dir"})
+    assert r.status_code == 200, r.text
+    [filed] = r.json()["folders"]
+    assert filed not in (w, d)
+    with connect_pages_db(ws) as conn:
+        assert folder_paths(conn)[filed] == ["clip-W", "dir"]
+
+
 def test_lookup_by_arxiv_and_doi(guest, upstream, meta_calls):
     r = guest.post("/api/clip", json={"source_url": "https://arxiv.org/abs/2601.01234v2", "title": "Arx"})
     assert r.status_code == 200, r.text

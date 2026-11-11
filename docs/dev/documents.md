@@ -95,7 +95,7 @@ doc: {format, name, hash, ext, at, url?, size?, copy?}
 | `ext` | The stored file's extension, lowercase with the dot (`EXTENSION_RE`); `.pdf` for a PDF. The stored name is `hash + ext` (`stored_name`). |
 | `at` | Where the bytes are read from: `store`, the workspace's uploads; `path`, a file on this computer through a `vaults.db` `linked_files` row ([synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)), with a stored copy perhaps; `url`, an address the PDF proxy fetches, with a copy cached under `hash` perhaps. |
 | `url` | Only at `url`, never empty: the address the document is shown from. Never its own stored address (that document is at `store`); it may be another upload's, on a page the Zotero merge gave a PDF of its own while it showed a duplicated one's. |
-| `size` | The file's bytes, a whole number. Reserved: no writer sets it and nothing reads it ("What step 3 adds"). |
+| `size` | The file's bytes, a whole number. Written by a work folder's vault for every PDF it reads, which the work folder's list view shows and sorts by ([work_folders.md](work_folders.md#the-stamps)); no other writer sets it. |
 | `copy` | `true` or absent, only at `store`: the page shows a stored file it does not own, a duplicated page or one attached by the bare address of an upload. |
 
 No other key, and every writer stores the fields in that order, the
@@ -236,6 +236,7 @@ names the one it means:
 | where to fetch it | `view["url"]` | the address, or the stored file's |
 | its shown name | `view["name"]` | `""` when it has none |
 | a stored name, an upload's address | `stored_name(hash, ext)`, `upload_url(name)` | the one place each is built |
+| is the page a library document, a library PDF | `work_folders.library.library_document(props)`, `is_library_pdf(props)` | the library rule, over the page's properties: a work folder's file only when added to the library, any other page unless read in place ([work_folders.md](work_folders.md#the-library-rule)) |
 
 **Identity readers** use `own_hash`, with `is_pdf` where they are about
 PDFs alone: `page_for_doc` and `pages_for_docs`, by-doc and the
@@ -260,13 +261,19 @@ Zotero link's comparison of files, a folder chat's PDF search
 annotated PDF's translation (`translateExport.exportFile`,
 `folderTranslation.folderPapers`) and the chat's PDF ids.
 
-**Read in place** (`in_place`, with `SQL_LIBRARY_PDF` in the statements)
-is asked only where a page read in place is set apart from the library: the one-page-per-document lookups,
-`clip.find_page`, `ws_backup`'s review and merge, `linked_files.open_pdf`
-and its carry, and the client's `duplicable`, `isOpenedPdf` and
-`pdfLinked`. Every other PDF reader takes a PDF stored or read in place
-alike (`is_pdf`, `own_hash`): the metadata lookup and its status, the Paper
-metadata button, `findPageForUrl`, the AI, search and the Zotero link.
+**Read in place** (`in_place`) is asked as itself only where a page read
+in place is set apart for its file: `linked_files.open_pdf` and its carry,
+and the client's `duplicable`, `isOpenedPdf` and `pdfLinked`. The paper
+readers ask the library rule (`library_document`, `is_library_pdf`, and
+`SQL_LIBRARY_PDF` in the statements;
+[work_folders.md](work_folders.md#the-library-rule)), which keeps this
+test of `at` for the pages outside a work folder, so an Opened files PDF
+is none of theirs: the one-page-per-document lookups, `clip.find_page`,
+`ws_backup`'s review and merge, the metadata status and batch, the Zotero
+preview's match and the record lookup on open. Every other PDF reader
+takes a PDF stored or read in place alike (`is_pdf`, `own_hash`): a
+lookup asked by hand (`POST /metadata/fetch`, the Paper metadata button),
+`findPageForUrl`, the AI, search and the Zotero link.
 
 ## In SQL
 
@@ -278,10 +285,14 @@ a `unified_blocks` row:
 - `SQL_IN_PLACE`: it is read in place (`$.doc.at` is `path`): the linked
   files' idle sweep (`linked_files._IDLE`), and the Gamma export, which
   carries the bytes and rewrites its copy's documents to `at: "store"`.
-- `SQL_LIBRARY_PDF`: a PDF that counts for the library's
-  one-page-per-document lookups, one not read in place. It goes with the
-  `doc_id` column, which leaves copies out: `page_for_doc`,
-  `pages_for_docs`, `clip.find_page`, `ws_backup`.
+
+A PDF that counts for the library's one-page-per-document lookups is the
+library rule's `work_folders.library.SQL_LIBRARY_PDF`, over the generated
+`work_folder` column: a work folder's file counts only once added to the
+library, and the `at` test is asked only of the pages outside a work
+folder ([work_folders.md](work_folders.md#the-library-rule)). It goes with
+the `doc_id` column, which leaves copies out: `page_for_doc`,
+`pages_for_docs`, `clip.find_page`, `ws_backup`.
 
 **The generated column.** `unified_blocks.doc_id`
 ([user_db.md](user_db.md) "pages.db") is the hash of the document the row
@@ -503,6 +514,3 @@ and the viewers stop at PDFs.
   route by extension (`sync_engine` `post_parts` and `_push_files`),
   `FileChip.KINDS` (its words are finer than formats), and the hex-only
   parsers `pdfSource.docIdOf` and `FileChip.parseUploadUrl`.
-- **`size`**, written when the work folders' listing reads it, and the
-  library flag of step 1, which takes the place of `SQL_LIBRARY_PDF`'s
-  test of `at`.

@@ -208,6 +208,36 @@ def test_merge_skips_pages_with_same_doc_id(mdonor, mreceiver):
     assert "Donor copy of paper X" not in titles
 
 
+def test_a_work_folders_gamma_export_comes_in_as_library_pages(client):
+    """A work folder exported as a Gamma backup (``mode=gamma``) and merged
+    into another account brings its files as library pages and its folders
+    as plain ones: the stamps and the mark are the exporting computer's
+    vault's."""
+    from conftest import make_folder, mark_work_folder, work_props, workspace_of
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import create_page
+    from gamma.db import connect_pages_db
+
+    _make_user("wfi_donor", "wfidonorpw")
+    _make_user("wfi_receiver", "wfireceiverpw")
+    donor, receiver = _login("wfi_donor", "wfidonorpw"), _login("wfi_receiver", "wfireceiverpw")
+    w, d = make_folder(donor, "wfi-W"), make_folder(donor, "wfi-W/dir")
+    mark_work_folder(donor, w)
+    with connect_pages_db(workspace_of("wfi_donor")) as conn:
+        plan = create_page(conn, "plan", work_props(w, "plan.md", directory=d), actor=account_of("wfi_donor"),
+                           client=DISK_CLIENT)["id"]
+    backup = donor.get(f"/api/folders/{w}/export", params={"mode": "gamma"})
+    assert backup.status_code == 200, backup.text
+    r = receiver.post("/api/import-data?mode=merge", files={"file": ("w.zip", backup.content, "application/zip")})
+    assert r.status_code == 200 and r.json()["pages_added"] == 1, r.text
+    props = receiver.get(f"/api/blocks/{plan}").json()["properties"]
+    assert not {"work_folder", "library", "file_name"} & props.keys() and props["folders"] == [d]
+    folders = receiver.get("/api/blocks/folders/subtree").json()["block"]["children"]
+    top = next(f for f in folders if f["content"] == "wfi-W")
+    assert "vault" not in top["properties"] and top["children"][0]["id"] == d
+    assert plan in [p["id"] for p in receiver.get("/api/blocks/root/children").json()["children"]]
+
+
 def test_merge_never_touches_prefs(mdonor, mreceiver):
     # the tabs live in each workspace's pages.db (workspace_prefs): the
     # donor's export carries none, and the receiver's stay

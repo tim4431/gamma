@@ -18,7 +18,8 @@ page): no lookup of "the page of this file" finds it, and the generated
 ``document`` is the one builder of a stored doc and ``check_document`` the
 check of one a writer supplies; ``page_document`` is the one read of what a
 block carries, a view the predicates below (``own_hash``, ``file_hash``,
-``in_place`` …) answer questions of. Twin of
+``in_place`` …) answer questions of; whether a page is a library document
+is gamma/work_folders/library.py's, over its properties. Twin of
 frontend/src/documents/pageDocument.js; tests/shared/document.json holds
 the two to the same answers.
 """
@@ -37,12 +38,11 @@ FIELDS = ("format", "name", "hash", "ext", "at", "url", "size", "copy")
 FORMAT_EXT = {"pdf": ".pdf"}  # the extension a format implies; any other format names its own
 
 # Conditions on a unified_blocks row, spliced into WHERE clauses: its
-# document is a PDF; it is read in place; it is a PDF that counts for the
-# library's one-page-per-document lookups (one not read in place). Used
-# with the doc_id column, which already leaves copies out.
+# document is a PDF; it is read in place. Which page is a library document
+# is the library rule's (gamma/work_folders/library.py SQL_LIBRARY_PDF and
+# is_library_pdf, a work folder's files included).
 SQL_PDF = "json_extract(properties, '$.doc.format') = 'pdf'"
 SQL_IN_PLACE = "json_extract(properties, '$.doc.at') = 'path'"
-SQL_LIBRARY_PDF = f"({SQL_PDF} AND json_extract(properties, '$.doc.at') IS NOT 'path')"
 
 _UPLOAD_URL_RE = re.compile(r"^/api/uploads/([0-9A-Za-z_-]{1,128})(\.[a-z0-9]{1,12})\Z")
 

@@ -117,9 +117,12 @@ def block_columns(conn: sqlite3.Connection) -> bool:
     walk reaches, its parent gone, keeps ''). A generated column of an
     older definition (``kind`` before step 29's ``folder`` / ``label``
     cases) is dropped with its index and added again, and so is every
-    generated column after it, so the columns keep a fresh table's order. A
-    file that has them as they are is left as it is. Returns whether it
-    changed the file."""
+    generated column after it, so the columns keep a fresh table's order.
+    An index is dropped when its statement names such a column anywhere
+    (``idx_ub_listing`` names ``work_folder`` in its condition); the hot
+    indexes are made again at the end, and any other index dropped is made
+    again from its own statement. A file that has them as they are is left
+    as it is. Returns whether it changed the file."""
     have = {r[1] for r in conn.execute("PRAGMA table_xinfo(unified_blocks)")}
     table_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'unified_blocks'").fetchone()[0]
     generated = [name for name, ddl in BLOCK_HOT_COLUMNS.items() if "GENERATED" in ddl]
@@ -129,11 +132,13 @@ def block_columns(conn: sqlite3.Connection) -> bool:
     if not missing:
         return False
     with _transaction(conn):
+        dropped = {}
         for name in stale:
-            for (index,) in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'unified_blocks' "
-                    "AND sql LIKE ?", (f"%({name})%",)).fetchall():
+            for index, sql in conn.execute(
+                    "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'unified_blocks' "
+                    "AND sql LIKE '%' || ? || '%'", (name,)).fetchall():
                 conn.execute(f"DROP INDEX {index}")
+                dropped[index] = sql
             conn.execute(f"ALTER TABLE unified_blocks DROP COLUMN {name}")
         for name in missing:
             conn.execute(f"ALTER TABLE unified_blocks ADD COLUMN {BLOCK_HOT_COLUMNS[name]}")
@@ -142,6 +147,9 @@ def block_columns(conn: sqlite3.Connection) -> bool:
                          "WHERE unified_blocks.id = walk.id")
         for stmt in BLOCK_HOT_INDEXES:
             conn.execute(stmt)
+        for index, sql in dropped.items():
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", (index,)).fetchone():
+                conn.execute(sql)
     return True
 
 

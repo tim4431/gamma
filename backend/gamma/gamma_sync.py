@@ -180,12 +180,13 @@ class Server:
         return self._json(method, path, {**self._headers(), "Content-Type": "application/json",
                                          "Content-Length": str(len(body))}, body)
 
-    def ask(self, method, path, obj=None) -> tuple[int, bytes]:
-        """``method path``, with ``obj`` as a JSON body when given: ``(status,
-        the answer's bytes)`` whatever the status, for a caller that reads a
-        refusal's own body (the desktop app's synced vault of another server,
+    def ask(self, method, path, obj=None, headers=None) -> tuple[int, bytes]:
+        """``method path``, with ``obj`` as a JSON body when given and
+        ``headers`` beside the client's own: ``(status, the answer's bytes)``
+        whatever the status, for a caller that reads a refusal's own body
+        (the desktop app's synced vault of another server,
         gamma/vault_http.py). ``Unreachable`` as for ``get_json``."""
-        headers, body = self._headers(), None
+        headers, body = {**self._headers(), **(headers or {})}, None
         if obj is not None:
             body = json.dumps(obj).encode("utf-8")
             headers = {**headers, "Content-Type": "application/json", "Content-Length": str(len(body))}

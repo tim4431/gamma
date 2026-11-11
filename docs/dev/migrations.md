@@ -36,7 +36,7 @@ workspace's files), `db.SCHEMA_VERSION` and `db.WS_VERSION_BASE`,
    until both run the step ([mirror.md](mirror.md) "The data format").
    A workspace part that only adds a column SQLite derives from the rows
    stored before it is the exception (`migrations.DERIVED_STEPS`, steps
-   47 and 48): copies on either side of it hold the same data, so
+   47, 48 and 52): copies on either side of it hold the same data, so
    `workspace_format()` passes it by and a mirror keeps syncing.
    An additive table in a workspace's `pages.db` or `data.db` (a new
    table, nothing existing changed) needs its `CREATE ... IF NOT EXISTS`
@@ -129,7 +129,7 @@ workspace's files), `db.SCHEMA_VERSION` and `db.WS_VERSION_BASE`,
    raised past them; a data directory that old must first run the release
    named in `UPGRADE_VIA`, the newest one that still carries them, and the
    refusal says so. The floor is 19: a directory at 19 or later upgrades
-   here (steps 20 to 51). The normalizers are the one exception: they also
+   here (steps 20 to 52). The normalizers are the one exception: they also
    run on a backup restore (`/api/import-data`), because a backup can be
    older than any step, so they stay for as long as such backups are
    accepted. A restored copy stamped below the base goes through the
@@ -199,6 +199,7 @@ has (rule 2).
 | 49 | `content_reports` | A global part only. `users.db` gains `content_reports` (reports of a comment, a page or an AI reply: kind, reason, the reporter's words, the text reported and who wrote it, the page's title, the workspace, page and comment, a published page's link, the reporter's id and name, `open` / `resolved` with when and by whom, and when Gamma Cloud took it or its last failure; [api.md](api.md) "Reports") and its index on `(state, created_at)`, from the step's frozen statements (`_V49_CONTENT_REPORTS`). Re-runnable: both are `IF NOT EXISTS`. No workspace is touched: `SCHEMA_VERSION` is 49, and `workspace_format()` stays at 44 |
 | 50 | `folder_links_pull` | A global part only. `folder_links` gains `pull` (`_v50_folder_links_pull`; [synced_vaults.md](synced_vaults.md#kept-folders-and-the-upgrade)), whether Gamma's changes reach the disk: 1, what a folder link has always done, and 0 on every file link (`kind` `file`), which Gamma never writes. `push` keeps its column and may now say 2, everything (0 off, 1 PDFs). Re-runnable: the column is added only where `_columns()` lacks it, and the update sets a file link's 0 again. A folder link whose directory holds the gamma-sync state file is taken onto the vault engine at its first round, not here (`gamma/vault_upgrade.py`), and `vaults.db`, where the engine keeps what this computer knows, is never migrated: its statements are additive ([user_db.md](user_db.md#data-directory-layout)). No workspace is touched. `SCHEMA_VERSION` is 50, and `workspace_format()` stays at 44 |
 | 51 | `page_documents` | A workspace part only (`users.db` gains just its stamp). A block's document becomes one property, `doc` ([documents.md](documents.md)). `normalize.page_documents` rewrites the flat `doc_id`, `source_url` (or `sourceUrl`), `original_filename` and `linked_file` of every row that has them, nested and in Recently deleted too, through `normalize.document_shape` (each state and what it becomes: [documents.md](documents.md#older-shapes-migration-step-51), pinned by `tests/shared/document.json` `legacy`; `original_filename` stays only on a page made from a Markdown file), and the block entries of the mirror's stored bases (`sync_pages`; a push in flight, `~pending`, is left as it was, and so is `synced_at`). Then `normalize.block_columns` gives the generated `doc_id` its definition, the hash of the document a row owns (`$.doc.hash`; NULL on a copy and on a document shown from an address alone), dropping and adding `doc_id`, `parent_page` and `deleted_with` with their indexes, and commits the rewrite with it. Nothing is stamped or touched (a shape is no edit), so two copies rewritten apart end byte-equal. A rerun finds no flat key and the columns current, and a copy without `unified_blocks` gets the table from the schema statements. Not in `DERIVED_STEPS`: stored properties change, so `SCHEMA_VERSION` is 51 and `workspace_format()` moves from 44 to 51, and a clone and its origin, or a publication and the share host, pause until both have run it ([mirror.md](mirror.md) "The data format"). As the restore's normalizer it converts an older backup and an unstamped scoped Gamma export; `highlight_shape` (step 30) reads the flat `doc_id` itself, since on the global path it runs before this step. Tests: `tests/test_migrations.py` (`test_v51_*`: every state as root, trashed and nested rows, the mirror's bases, two copies rewritten apart, the lazy upgrade) and `tests/test_restore_consistency.py` (backups stamped 50 and 0, an unstamped export) |
+| 52 | `work_folders` | A global part and a workspace part ([work_folders.md](work_folders.md)). The global part (`_v52_folder_links_library`): `folder_links` gains `library`, a work folder's switch (whether the pages of the files it tracks are library documents too), 0 by default and 1 on every link that becomes a work folder at its first round after the upgrade (`kind` `folder`, `push` 2, no `remote_url`, a folder other than `root`), so their pages stay in the library. Re-runnable: the column is added only where `_columns()` lacks it, and the update sets the same rows again. The workspace part (`_v52_work_folders`): `unified_blocks` gains the generated VIRTUAL columns `work_folder` (`properties.work_folder` when it is non-empty text) and `first_folder` (`properties.folders[0]`) and the partial indexes `idx_ub_listing`, `idx_ub_dir` and `idx_ub_work_folder` ([user_db.md](user_db.md) "pages.db"); `normalize.block_columns` adds the missing columns after the others, with the indexes, as step 47 does, and commits them ahead of the stamp. A rerun changes nothing, and a copy without `unified_blocks` gets the table from the schema statements. No stamp of a file is written here: which links exist only the desktop's users.db knows, so the vault stamps its pages at its first round (`gamma/work_folders/takeover.py`). The columns are derived, so the step is in `DERIVED_STEPS`: `SCHEMA_VERSION` is 52, a workspace that ran it is stamped 52, and `workspace_format()` stays at 51. Tests: `tests/test_migrations.py` (`test_v52_*`, and every upgrade path) and `tests/test_work_folders_library.py` (the indexes the listing and a directory's read are planned on) |
 
 ## Backups (`gamma/backups.py`)
 
@@ -367,13 +368,14 @@ SCHEMA_VERSION = 35   # gamma/db.py
   its content is left as it is. From 34 on a step needs no
   normalizer apart from its workspace part. `block_columns`' column
   definitions are `db.BLOCK_HOT_COLUMNS`, and it replaces a generated
-  column whose stored definition is not the current one (drop its index,
-  `ALTER TABLE DROP COLUMN`, add it again, re-index — with every generated
-  column after it, keeping a fresh table's column order): a step that
+  column whose stored definition is not the current one (drop every index
+  whose statement names it, its condition included, `ALTER TABLE DROP
+  COLUMN`, add it again, re-index — with every generated column after it,
+  keeping a fresh table's column order): a step that
   redefines a generated column changes it there and runs `block_columns`
   again (`kind`: steps 29, 30, 38 and 44; `doc_id`: step 51), and a step
   that adds a generated column defines it there and runs `block_columns`
-  (steps 47 and 48). The normalizers read the current definitions on
+  (steps 47, 48 and 52). The normalizers read the current definitions on
   purpose (`folder_blocks` inserts `blocks_store.BLOCK_COLUMNS`,
   `block_columns` adds `BLOCK_HOT_COLUMNS`), and they run on files of every
   older shape, so a step that adds a stored block column defines it in

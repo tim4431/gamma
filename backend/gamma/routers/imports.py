@@ -68,6 +68,7 @@ from ..zotero_export import GAMMA_NOTE_KEY, GAMMA_PAGE_KEY, IMAGE_MIME
 from ..zotero_import import html_note_text, plan_zotero_archive, same_work
 from ..zotero_notes import store_images
 from ..import_review import destination, parse_selection, selected_warnings, validate_selection
+from ..work_folders.library import is_library_pdf
 from ..workspaces import is_guest_workspace
 
 router = APIRouter(prefix="/api", tags=["import"])
@@ -2128,8 +2129,8 @@ def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
                       "parent": parents.get(row[0], ""),
                       "folders": [paths[f] for f in filing(props_of[top_of(parents, row[0])], FOLDERS) if f in paths]}
             by_id[row[0]] = target
-            if own := own_hash(page_document(props)):
-                by_digest.setdefault(own, target)
+            if is_library_pdf(props):  # the pages the commit's page_for_doc finds
+                by_digest.setdefault(own_hash(page_document(props)), target)
             if props.get("zotero_key"):
                 by_key.setdefault(props["zotero_key"], []).append(target)
         for index, item in enumerate(plan["items"]):

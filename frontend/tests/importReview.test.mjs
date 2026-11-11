@@ -1,5 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { allItemIds, filterImportPages, selectItems, buildImportTree, rowItemIds, treeItemIds, treeSize, resultPages, importSummary,
   firstRow, importLinks, orderLikeSource, pageKey, reviewRefused } from "../src/transfers/importReview.js";
 
@@ -161,6 +165,68 @@ test("a sub-page ticked without its parent shows where the import files it then,
   assert.deepEqual(names(filtered.folders.get("Notion")), []);
   assert.deepEqual(names(filtered.folders.get("Notion").folders.get("Top")), ["Mid"]);
   assert.deepEqual(names(filtered.folders.get("Notion").folders.get("Top").files[0].inside), ["Deep"]);
+});
+
+// ImportTree drawn on the server's renderer: the component bundled with
+// React by esbuild (vite's), so the test needs no browser.
+async function renderTree(props) {
+  const { build } = await import("esbuild");
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const entry = [
+    'import React from "react";',
+    'import { renderToStaticMarkup } from "react-dom/server";',
+    'import ImportTree from "./src/transfers/ImportTree.jsx";',
+    "export const render = (props) => renderToStaticMarkup(React.createElement(ImportTree, props));",
+  ].join("\n");
+  const out = await build({ stdin: { contents: entry, resolveDir: root, loader: "js" }, bundle: true, write: false,
+    format: "esm", platform: "node", jsx: "automatic", loader: { ".css": "empty" }, logLevel: "silent",
+    // React's CommonJS asks for node's own modules
+    banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' } });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "import-tree-"));
+  const file = path.join(dir, "tree.mjs");
+  fs.writeFileSync(file, out.outputFiles[0].text);
+  try {
+    return (await import(pathToFileURL(file).href)).render(props);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+const boxes = (html) => [...html.matchAll(/<input[^>]*>/g)].map((m) => m[0]);
+
+test("the import review draws as before when the lazy tree's props are not given", async () => {
+  const tree = buildImportTree([
+    { title: "A", folders: [["ML"]], selection_ids: ["a"] },
+    { title: "B", folders: [["ML"]], selection_ids: ["b"] },
+    { title: "Empty", folders: [["ML", "Sub"]], selection_ids: [] },
+  ], true);
+  const html = await renderTree({ node: tree, library: true, selected: new Set(["a"]), onSelect: () => {} });
+  // a box for each of the two folders and the three pages, none disabled
+  assert.equal(boxes(html).length, 5);
+  assert.ok(boxes(html).every((box) => !/disabled/.test(box)));
+  assert.ok(/<details open="">/.test(html));
+  assert.ok(!html.includes("Reading…"));
+  assert.ok(html.includes(">Page<"));
+});
+
+test("a tree read a directory at a time keeps an unread folder closed and asks each box of the caller", async () => {
+  const folder = { path: "build/", walked: false, reading: true, folders: new Map(), files: [], hint: "git ignores it" };
+  const node = {
+    folders: new Map([["build", folder]]),
+    files: [
+      { path: "main.pdf", name: "main.pdf", size: 2048, hint: "git ignores it", chip: "PDF" },
+      { path: ".env", name: ".env", size: 1, never: "dot" },
+    ],
+  };
+  const asked = [];
+  const html = await renderTree({ node, onSelect: () => {}, onOpenFolder: () => {},
+    boxOf: (n) => { asked.push(n.path); return { checked: n.path === "main.pdf", disabled: !!n.never }; } });
+  assert.deepEqual(asked, ["build/", "main.pdf", ".env"]);
+  assert.ok(/<details>/.test(html), "an unread folder starts closed");
+  assert.ok(html.includes("Reading…") && !html.includes("Empty folder"));
+  assert.ok(html.includes("2 KB · git ignores it") && html.includes(">PDF<"));
+  const [, pdf, dot] = boxes(html);
+  assert.ok(/checked/.test(pdf) && !/disabled/.test(pdf));
+  assert.ok(/disabled/.test(dot) && !/checked/.test(dot));
 });
 
 test("a review's job that failed on the file is refused; one a restart or a bug cut short may be tried again", () => {

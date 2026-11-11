@@ -8,7 +8,9 @@ passageBudget.test.mjs, libraryUtils.test.mjs and blockOps.test.mjs; a case
 added here fails whichever side drifts. Other pytest modules read the rest
 (blockkind.json test_block_columns.py, pastemath.json test_paste_math.py,
 slug.json test_publish.py, zoterotext.json and zoteroshown.json the text box
-tests), and test_every_fixture_is_read_by_both_suites checks that every
+tests, library.json test_work_folders_library.py and workfiling.json
+test_work_folders_filing.py, whose node halves are library.test.mjs and
+workFolders.test.mjs), and test_every_fixture_is_read_by_both_suites checks that every
 fixture has a reader on each side but those ONE_SIDED names. The mirror's
 cases (synctree.json, textmerge.json) have only this Python side; the
 client's recognisers (inkshapes.json, inkscribble.json) have only the node

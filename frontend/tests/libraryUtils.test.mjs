@@ -4,11 +4,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { generateKeyBetween } from "fractional-indexing";
 import {
-  NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, duplicable, filedIn, findNamed, findPageForUrl,
+  NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
   firstFolderPath, folderAtPath, folderChain, folderCompletion, folderEntries, folderInside, folderMatches,
   folderNeighbour, folderPath, folderPathHolds, folderPathNames, folderPosition, folderPositions, folderSubtree, folderTargets,
-  formatFullDate, formatRelativeTime, formatShortDate,
-  inFolder, isFreshLibrary, isLinkInput, labelName, libraryTree, normalizeLinkInput, pageBlocksOf, pageKindLabel,
+  formatFullDate, formatLabel, formatRelativeTime, formatShortDate,
+  inFolder, isFreshLibrary, isLinkInput, labelName, libraryTree, normalizeLinkInput, pageBlocksOf, pageFormat, pageKindLabel,
   siblingFolders,
 } from "../src/library/libraryUtils.js";
 
@@ -28,13 +28,6 @@ const listing = {
   ] },
 };
 
-test("a page reading a file on this computer is left out of what can be duplicated", () => {
-  const doc = (at) => ({ format: "pdf", name: "", hash: "d1", ext: ".pdf", at });
-  const pages = new Map([["paper", { _doc: doc("store") }], ["opened", { _doc: doc("path") }], ["note", { _doc: null }]]);
-  assert.deepEqual(duplicable(["paper", "opened", "note", "unlisted"], pages), ["paper", "note", "unlisted"]);
-  assert.deepEqual(duplicable(["opened"], pages), []);
-});
-
 test("libraryTree reads the folders by nesting and order, the labels flat", () => {
   const tree = libraryTree(listing);
   assert.deepEqual(tree.top, ["phys", "bio"]);
@@ -45,11 +38,23 @@ test("libraryTree reads the folders by nesting and order, the labels flat", () =
   assert.deepEqual(siblingFolders(tree, "phys"), [tree.folders.get("qec")]);
   assert.deepEqual(siblingFolders(tree, "gone"), []);
   assert.deepEqual(tree.folders.get("qec"), { id: "qec", name: "QEC / codes, 2026", parent: "phys", position: k1,
-    pinned: "", created: "2026-10-01T09:00:00Z", path: ["Physics", "QEC / codes, 2026"], children: [] });
+    pinned: "", created: "2026-10-01T09:00:00Z", mark: null, path: ["Physics", "QEC / codes, 2026"], children: [] });
   assert.equal(tree.folders.get("phys").pinned, "2026-09-01T00:00:00Z");
   assert.equal(tree.folders.get("bio").created, "", "no created_at: no date of its own");
   assert.deepEqual([...tree.labels.values()].map((l) => l.name), ["llm", "Review"]);
   assert.equal(libraryTree().folders.size, 0, "no listing yet: empty trees");
+});
+
+test("libraryTree reads a work folder's mark off its folder block, as booleans", () => {
+  const tree = libraryTree({ folders: { children: [
+    { id: "w", content: "paper", properties: { vault: { pull: true, library: 1 } }, children: [
+      { id: "d", content: "figures", properties: {}, children: [] },
+    ] },
+    { id: "odd", content: "odd", properties: { vault: [true] }, children: [] },
+  ] } });
+  assert.deepEqual(tree.folders.get("w").mark, { pull: true, library: false }, "only true is on");
+  assert.equal(tree.folders.get("d").mark, null, "only the root carries it");
+  assert.equal(tree.folders.get("odd").mark, null, "a mark that is no object is none");
 });
 
 test("paths read as names joined, never split; labels by id, No label by its title", () => {
@@ -264,6 +269,56 @@ test("pageBlocksOf gives each row its document; a card says PDF or Page by it", 
   assert.equal(pageKindLabel(a._doc), "PDF");
   assert.equal(pageKindLabel(b._doc), "Page");
   assert.equal(pageKindLabel({ format: "text" }), "Page", "only a PDF is named");
+});
+
+test("pageBlocksOf: a work folder's file, its name and size, and whether the library lists a page", () => {
+  const rows = [
+    { id: "f", content: "main.pdf", _parentPage: "", properties: { work_folder: "W1", file_name: "main.pdf", folders: ["phys"],
+      doc: { format: "pdf", name: "main.pdf", hash: "p1", ext: ".pdf", at: "path", size: 2048 } } },
+    { id: "added", content: "Attention", _parentPage: "", properties: { work_folder: "W1", file_name: "a.md", library: true } },
+    { id: "lib", content: "Paper", _parentPage: "", properties: { folders: ["bio"], file_name: 5 } },
+    { id: "sub", content: "Inside", _parentPage: "lib", properties: {} },
+  ];
+  const [f, added, lib, sub] = pageBlocksOf(rows, libraryTree(listing));
+  assert.deepEqual([f._workFolder, f._library, f._fileName, f._size, f._listed], ["W1", false, "main.pdf", 2048, false]);
+  assert.deepEqual([added._workFolder, added._library, added._fileName, added._size, added._listed], ["W1", true, "a.md", null, true]);
+  assert.deepEqual([lib._workFolder, lib._library, lib._fileName, lib._listed], ["", false, "", true]);
+  assert.deepEqual([sub._listed, sub._folders], [true, ["bio"]], "a sub-page by its top");
+});
+
+test("pageBlocksOf: a page whose top the client does not know keeps its parent, and no folder", () => {
+  const rows = [
+    { id: "mid", content: "Mid", _parentPage: "gone", properties: { folders: ["bio"] } },
+    { id: "low", content: "Low", _parentPage: "mid", properties: {} },
+    { id: "orphan", content: "Orphan", _parentPage: "gone", properties: { folders: ["phys"] } },
+    { id: "x", content: "X", _parentPage: "y", properties: { folders: ["bio"] } },
+    { id: "y", content: "Y", _parentPage: "x", properties: {} },
+  ];
+  const byId = new Map(pageBlocksOf(rows, libraryTree(listing)).map((b) => [b.id, b]));
+  assert.deepEqual([byId.get("orphan")._parentPage, byId.get("orphan")._path, byId.get("orphan")._folders, byId.get("orphan")._listed],
+    ["gone", "", [], true]);
+  assert.deepEqual([byId.get("low")._path, byId.get("low")._folders, byId.get("low")._listed], ["Mid", [], true],
+    "the chain up to what is known");
+  assert.equal(byId.get("mid")._subPages, 1);
+  assert.deepEqual(byId.get("x")._folders, ["bio"], "a loop means no parent, as on the server: its own folders");
+});
+
+test("a file's format as the Format column reads it", () => {
+  assert.equal(formatLabel({ format: "pdf" }), "PDF");
+  assert.equal(formatLabel({ format: "markdown", language: null }), "Markdown");
+  assert.equal(formatLabel({ format: "text", language: "latex" }), "LaTeX");
+  assert.equal(formatLabel({ format: "text", language: "cpp" }), "C++");
+  assert.equal(formatLabel({ format: "text", language: "toString" }), "Text", "a language without a name of its own");
+  assert.equal(formatLabel({ format: "image" }), "Picture");
+  assert.equal(formatLabel({ format: "binary" }), "File");
+  assert.equal(formatLabel({ format: "nonsense" }), "");
+  assert.equal(formatLabel(null), "");
+  assert.deepEqual(["pdf", "markdown", "text", ""].map(formatLabel), ["PDF", "Markdown", "Text", ""], "a format alone");
+  const pdf = { format: "pdf", name: "main.pdf", hash: "p1", ext: ".pdf", at: "path" };
+  assert.equal(pageFormat({ _doc: pdf, _fileName: "main.pdf" }), pdf, "its document's");
+  assert.deepEqual(pageFormat({ _doc: null, _fileName: "refs.bib" }), { format: "text", language: "bibtex" }, "its file name's");
+  assert.deepEqual(pageFormat({ _doc: null, _fileName: "" }), { format: "markdown", language: null }, "a note made in Gamma");
+  assert.equal(formatLabel(pageFormat({ _doc: null, _fileName: "notes.md" })), "Markdown");
 });
 
 test("defaultPageTitle: the document's name, else its address's tail, else Untitled", () => {

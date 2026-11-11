@@ -2,8 +2,11 @@
 // usable by dialogs, home views, and future tests without coupling them to React.
 
 import { generateNKeysBetween } from "fractional-indexing";
-import { inPlace, isPdf, pageDocument, sourceAddress } from "../documents/pageDocument.js";
-import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
+import { formatOf } from "../documents/formats.js";
+import { workFolderOf } from "../documents/library.js";
+import { isPdf, pageDocument, sourceAddress } from "../documents/pageDocument.js";
+import { listedOf } from "../explorer/knownPages.js";
+import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { itemTypeOf } from "../shared/lib/itemTypes.js";
 
 // How a folder's path reads: its names from the top, joined (the server's
@@ -23,16 +26,23 @@ export const NO_LABEL_TITLE = t("No label");
 // carries both (GET /blocks/root/children's `folders` / `labels`: block
 // dicts with their `children`, in order). As lookups:
 //   folders  Map id → {id, name, parent ("" at the top), position, pinned,
-//            created, path: [names from the top], children: [ids, in order]}
+//            created, mark, path: [names from the top], children: [ids, in
+//            order]}, parents before the folders in them
 //   labels   Map id → {id, name}, in order
 //   top      the top-level folder ids, in order
-// A folder share's listing has the shared folder as its one top folder.
+// `mark` is a work folder's root folder's {pull, library} (its block's
+// `vault`, docs/dev/work_folders.md "The mark"), null for any other folder;
+// explorer/workFolders.js reads the work-folder rules off it. A folder
+// share's listing has the shared folder as its one top folder.
 export function libraryTree({ folders, labels } = {}) {
   const tree = { folders: new Map(), labels: new Map(), top: [] };
+  const markOf = (vault) => (vault && typeof vault === "object" && !Array.isArray(vault)
+    ? { pull: vault.pull === true, library: vault.library === true } : null);
   const walk = (nodes, parent, path) => nodes.map((node) => {
     const name = node.content || "";
     const folder = { id: node.id, name, parent, position: node.position || "",
-      pinned: node.properties?.pinned || "", created: node.created_at || "", path: [...path, name], children: [] };
+      pinned: node.properties?.pinned || "", created: node.created_at || "", mark: markOf(node.properties?.vault),
+      path: [...path, name], children: [] };
     tree.folders.set(node.id, folder);
     folder.children = walk(node.children || [], node.id, folder.path);
     return node.id;
@@ -195,9 +205,11 @@ export const MAX_PAGE_DEPTH = 64;
 
 // The pages above `id`, top first, as {id, title}, from `pagesById` (a Map
 // of page blocks by id). The walk stops at a parent the map lacks, as the
-// server's does at one that is not live; a chain that comes back to a page
-// or holds more than MAX_PAGE_DEPTH pages (only a move not yet answered can
-// make one) means no parent, as on the server. [] for a library page.
+// server's does at one that is not live, so a page whose top the client does
+// not know (under a work folder's file the listing leaves out) has the
+// chain up to it; a chain that comes back to a page or holds more than
+// MAX_PAGE_DEPTH pages (only a move not yet answered can make one) means no
+// parent, as on the server. [] for a library page.
 export function pageAncestors(pagesById, id) {
   const chain = [];
   const seen = new Set([id]);
@@ -268,18 +280,26 @@ export function pagesIntoPage(pages, ids, target) {
   return { refused: "", moving: tops.filter((id) => parents.get(id) !== target) };
 }
 
-// App's page list (`pageBlocks`): the listing's rows, `_parentPage` added,
-// as the home view's cards and rows, the [[ and @ pickers and the chips
-// read them: {id, content ("Untitled" when empty), _pageId, _doc,
-// _preview, _folders, _labels (ids the trees have), _folderChips,
-// _labelChips ({id, name}, filingChips), _createdAt, _updatedAt, _pinned,
-// _parentPage, _path, _subPages, _opened}. `_doc` is the page's document
+// App's page list (`pageBlocks`): the rows the client knows
+// (explorer/knownPages.js mergeKnown: the listing's and those read beside
+// it), `_parentPage` added, as the home view's cards and rows, the [[ and @
+// pickers and the chips read them: {id, content ("Untitled" when empty),
+// _pageId, _doc, _preview, _folders, _labels (ids the trees have),
+// _folderChips, _labelChips ({id, name}, filingChips), _createdAt,
+// _updatedAt, _pinned, _parentPage, _path, _subPages, _opened, _workFolder,
+// _library, _fileName, _size, _listed}. `_doc` is the page's document
 // (documents/pageDocument.js), null for none. A page is filed by its top, so
 // a sub-page's folders are its top's (the server's
-// blocks_store.filed_folders) and its labels its own; `_path` is where it is
-// (pagePathLabel, "" for a library page) and `_subPages` how many pages are
-// right inside it. `_opened`: it is *Opened files*, the page the files read
-// in place are inside (vault/vaultState.js isOpenedPdf).
+// blocks_store.filed_folders), none while its top is not known, and its
+// labels its own; `_path` is where it is (pagePathLabel, "" for a library
+// page) and `_subPages` how many pages are right inside it. `_opened`: it is
+// *Opened files*, the page the files read in place are inside
+// (vault/vaultState.js isOpenedPdf). A work folder's file
+// (docs/dev/work_folders.md) has `_workFolder`, its root folder's id ("" for
+// any other page), `_library` whether it is in the library too and
+// `_fileName` its file's name; `_size` is its document's size in bytes
+// (null when unknown); `_listed` whether the library lists the page, by its
+// top (knownPages.listedOf).
 export function pageBlocksOf(rows, tree) {
   const byId = new Map(rows.map((b) => [b.id, b]));
   const chains = rows.map((b) => (b._parentPage ? pageAncestors(byId, b.id) : []));
@@ -292,7 +312,10 @@ export function pageBlocksOf(rows, tree) {
     const chain = chains[i];
     const doc = pageDocument(b);
     const own = filingChips(tree, b.properties);
-    const folders = chain.length ? filingChips(tree, byId.get(chain[0].id).properties).folders : own.folders;
+    const top = chain.length ? byId.get(chain[0].id) : b;
+    const lost = !!top._parentPage && !byId.has(top._parentPage);
+    const folders = lost ? [] : top === b ? own.folders : filingChips(tree, top.properties).folders;
+    const fileName = b.properties?.file_name;
     return {
       id: b.id,
       content: b.content || t("Untitled"),
@@ -310,6 +333,11 @@ export function pageBlocksOf(rows, tree) {
       _path: chain.map((a) => a.title).join(PAGE_PATH_SEP),
       _subPages: inside.get(b.id) || 0,
       _opened: !!b.properties?.opened_files,
+      _workFolder: workFolderOf(b),
+      _library: b.properties?.library === true,
+      _fileName: typeof fileName === "string" ? fileName : "",
+      _size: doc?.size ?? null,
+      _listed: listedOf(b, byId),
     };
   });
 }
@@ -415,19 +443,40 @@ export function formatFullDate(iso) {
   return Number.isNaN(then.getTime()) ? "" : fmtDate(then, { dateStyle: "medium", timeStyle: "short" });
 }
 
-// The ids of a selection a copy can be made of (`pagesById`: the listing's
-// rows). A page reading its PDF from a file on this computer has no stored
-// bytes (gamma/linked_files.py): a copy's address would stop answering when the
-// file changes, and nothing would bring it back. Add to library makes it one
-// that can be copied.
-export function duplicable(ids, pagesById) {
-  return ids.filter((id) => !inPlace(pagesById.get(id)?._doc));
-}
-
 // What a card/row says a page is, from its document (pageDocument): a PDF,
 // else just a page.
 export function pageKindLabel(doc) {
   return isPdf(doc) ? "PDF" : t("Page");
+}
+
+// A file's format as a list's Format column reads it, from `kind`: a format
+// (formats.js FORMATS) or a {format, language} (a document's view, a tracked
+// directory's entry, formats.js formatOf's answer), a text file by its
+// language; "" for none.
+const FORMAT_LABELS = { markdown: T("Markdown"), text: T("Text"), image: T("Picture"), audio: T("Audio"),
+  video: T("Video"), binary: T("File") };
+// The names languages are known by, in every interface language.
+const LANGUAGE_LABELS = {
+  latex: "LaTeX", bibtex: "BibTeX", csv: "CSV", tsv: "TSV", json: "JSON", yaml: "YAML", toml: "TOML", // i18n-ignore
+  xml: "XML", ini: "INI", python: "Python", mathematica: "Mathematica", matlab: "MATLAB", html: "HTML", // i18n-ignore
+  javascript: "JavaScript", typescript: "TypeScript", jsx: "JSX", tsx: "TSX", css: "CSS", scss: "SCSS", // i18n-ignore
+  c: "C", cpp: "C++", rust: "Rust", go: "Go", java: "Java", kotlin: "Kotlin", swift: "Swift", ruby: "Ruby", // i18n-ignore
+  php: "PHP", shell: "Shell", r: "R", julia: "Julia", lua: "Lua", sql: "SQL", perl: "Perl", haskell: "Haskell", // i18n-ignore
+  scala: "Scala", diff: "Diff", rst: "reStructuredText", typst: "Typst", makefile: "Makefile", // i18n-ignore
+  dockerfile: "Dockerfile", cmake: "CMake", // i18n-ignore
+};
+export function formatLabel(kind) {
+  const { format = "", language = "" } = typeof kind === "string" ? { format: kind } : kind || {};
+  if (format === "pdf") return "PDF";
+  if (format === "text" && Object.hasOwn(LANGUAGE_LABELS, language || "")) return LANGUAGE_LABELS[language];
+  return Object.hasOwn(FORMAT_LABELS, format || "") ? t(FORMAT_LABELS[format]) : "";
+}
+// What a page row's file is ({format, language}): its document's, else its
+// file name's, else a note's (a page without a document is its notes, as
+// the server sorts it).
+export function pageFormat(row) {
+  if (row?._doc) return row._doc;
+  return row?._fileName ? formatOf(row._fileName) : { format: "markdown", language: null };
 }
 
 // Title for a page whose title is empty, from its document (pageDocument, or

@@ -114,6 +114,33 @@ def test_without_force_a_page_keeps_the_record_it_has(guest, arxiv):
     assert guest.get(f"/api/blocks/{page}").json()["properties"]["meta"]["title"] == "Kept Title"
 
 
+def test_a_batch_leaves_out_what_is_no_library_document(arxiv):
+    """An opened PDF and a work folder's file not in the library are no
+    papers of the library: left out, and counted as ``skipped``; asked
+    alone, there is nothing to look up."""
+    from conftest import account_of, fresh_client, make_folder, mark_work_folder, work_props, workspace_of
+    from gamma import jobs
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import create_page
+    from gamma.db import connect_pages_db
+    from gamma.documents.model import document
+
+    c = fresh_client()
+    name = c.post("/api/login-guest").json()["username"]  # a library of its own
+    w = make_folder(c, "batch-work")
+    mark_work_folder(c, w)
+    with connect_pages_db(workspace_of(name)) as conn:
+        figure = create_page(conn, "figure", work_props(w, "figure.pdf", doc=document("9" * 24, at="path")),
+                             actor=account_of(name), client=DISK_CLIENT)["id"]
+    opened = make_page(c, "Opened here", properties=doc_props("8" * 24, at="path"))["id"]
+    found = _paper(c, "A paper among files", "2601.00008")
+    job = c.post("/api/jobs/metadata", json={"block_ids": [figure, found, opened]}).json()
+    assert jobs.wait(job["id"])["state"] == "done"
+    assert c.get(f"/api/jobs/{job['id']}").json()["result"] == {"papers": 1, "fetched": 1, "failed": 0, "skipped": 2}
+    assert arxiv["calls"] == ["2601.00008"]
+    assert c.post("/api/jobs/metadata", json={"block_ids": [figure, opened]}).status_code == 400
+
+
 def test_a_batch_needs_papers_of_this_workspace(guest, anon):
     assert guest.post("/api/jobs/metadata", json={"block_ids": ["no-such-page"]}).status_code == 400
     assert anon.post("/api/jobs/metadata", json={"block_ids": ["x"]}).status_code in (401, 403)

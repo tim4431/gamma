@@ -304,6 +304,65 @@ def test_an_upload_dated_before_1980_still_snapshots(owner):
     assert owner.delete(f"/api/workspaces/{ws}/backups/{r.json()['name']}").status_code == 200
 
 
+def test_a_merge_brings_no_work_folder_and_matches_library_documents_only():
+    """A backup merged into another workspace brings its work folder's files
+    as library pages, their stamps dropped, and its folders as plain ones,
+    for the vault that marked them is the backup's computer's; and a page
+    of either side matches one of the same PDF only when both are library
+    documents: the backup's file not in the library matches no page of the
+    workspace, and the workspace's file no page of the backup. The review
+    says what the merge does."""
+    from gamma import ws_backup
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import create_page
+    from gamma.db import connect_pages_db
+    from gamma.documents.model import document
+    from gamma.work_folders.library import STAMPS
+    from conftest import make_folder, mark_work_folder, work_props
+
+    def library(name):
+        make_user(name, f"pw-{name}")
+        c = login(name, f"pw-{name}")
+        return c, workspace_of(name), account_of(name)
+
+    def file_page(ws, account, title, props):
+        with closing(connect_pages_db(ws)) as conn:
+            return create_page(conn, title, props, actor=account, client=DISK_CLIENT)["id"]
+
+    shared, mine = "1a" * 16, "2b" * 16  # a file's PDF on one side, a library page's on the other
+    src, src_ws, src_account = library("bk_wf_from")
+    w, d, lib = make_folder(src, "bk-W"), make_folder(src, "bk-W/dir"), make_folder(src, "bk-L")
+    mark_work_folder(src, w)
+    figure = file_page(src_ws, src_account, "figure", work_props(w, "figure.pdf", directory=d, doc=document(
+        shared, name="figure.pdf", at="path")))
+    paper = file_page(src_ws, src_account, "paper", {**work_props(w, "main.pdf", library=True, doc=document(
+        "3c" * 16, name="main.pdf", at="path")), "folders": [w, lib]})
+    page = make_page(src, "a library paper", properties=doc_props(mine))["id"]
+
+    dst, dst_ws, dst_account = library("bk_wf_to")
+    held = make_page(dst, "the workspace's paper", properties=doc_props(shared))["id"]
+    own_w = make_folder(dst, "bk-W")  # the same name as the backup's work folder
+    mark_work_folder(dst, own_w)
+    own_file = file_page(dst_ws, dst_account, "own figure", work_props(own_w, "fig.pdf", doc=document(
+        mine, name="fig.pdf", at="path")))
+
+    zpath = ws_backup.backup_path(src_ws, ws_backup.create(src_ws, label="work")["name"])
+    planned = {p["id"]: p["action"] for p in ws_backup.preview_zip(dst_ws, zpath)["pages"]}
+    assert (planned[figure], planned[paper], planned[page]) == ("create", "create", "create")
+    merged = ws_backup.restore_zip(dst_ws, zpath, "merge")
+    assert {figure, paper, page} <= set(merged["added"])
+    with closing(connect_pages_db(dst_ws)) as conn:
+        def props_of(block_id):
+            return json.loads(conn.execute("SELECT properties FROM unified_blocks WHERE id = ?",
+                                           (block_id,)).fetchone()[0])
+        assert not any(set(STAMPS) & props_of(p).keys() for p in (figure, paper))
+        assert props_of(figure)["folders"] == [d] and props_of(paper)["folders"] == [w, lib]
+        assert "vault" not in props_of(w) and props_of(own_w)["vault"] == {"pull": True, "library": False}
+        assert props_of(own_file)["work_folder"] == own_w and props_of(held)["doc"]["hash"] == shared
+    listed = {p["id"] for p in dst.get("/api/blocks/root/children").json()["children"]}
+    assert {figure, paper, page, held} <= listed and own_file not in listed
+
+
 def test_dropping_the_snapshots_waits_for_one_being_written(owner):
     # ws_backup.remove_all takes the workspace's snapshot lock: a snapshot
     # half written when the workspace goes finishes first, then its folder

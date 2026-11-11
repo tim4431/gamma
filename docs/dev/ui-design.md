@@ -749,6 +749,22 @@ alone and Settings has the focus back; a second Escape closes Settings and
 the tile has it. Closing Settings closes its editor too, so the next visit
 to the pane never shows the one left open.
 
+**The tracking dialog** (Choose files…, `explorer/TrackDialog.jsx`,
+[work_folders.md](work_folders.md) "The tracking dialog") is the import
+review's shape: a `SubDialog` (`.reportModal.trackDialog`) holding a header
+with the directory's name, a toolbar of format filters that tick (`uiBtn sm`
+with `aria-pressed`, `.on` while every file of theirs is ticked) beside
+Select all and Deselect all, the import review's `ImportTree` with a
+tri-state box per row (`boxOf`) and its folders read as they open
+("Reading…"), a `role="status"` summary line from the server's preview (a
+`<details>` names the pages that leave), the library switch as a
+`Toggle`, and Cancel and Save. A row's muted hint says "git ignores it",
+why it is never tracked, or that Gamma reads it later; its kind chip names
+the format. Cancel of a work folder still being made removes it, so it is
+the one footer Cancel that asks first, with the `settingsUnsaved` row in
+place of the footer ("Cancel making this work folder?"); Choose files…
+asks through its draft once something changed ("Leave without saving?").
+
 Destructive affordances all read from one set of tokens — `--danger`,
 `--danger-bg`, `--danger-border` — so the solid confirm button
 (`.uiBtn.primary.danger`), the outlined one (`.uiBtn.danger`) and a menu's
@@ -1551,6 +1567,19 @@ started elsewhere landing, and the server's view history landing after
 it. Each marks what it sets, and a change is still when all it
 changed was read that way, so a delete right after a load still moves.
 
+A work folder's list (`explorer/FolderList.jsx`, [work_folders.md](work_folders.md)
+"The folder's list view") is the listing's list view in place of either
+view: the same `.fileList` rows (`.workList`), its directories first as
+`folderRow`s, then its files as `fileRow`s, and one column table that draws
+the header and every row (Name, then `fileRowFormat`, `fileRowSize`,
+`fileRowDate`, `fileRowComments`, the pin slot and the ⋯), so they line up;
+a narrow list drops Comments and the date as the library's drops its date.
+The bar keeps the filter box ("Filter by name") and a sort `MenuSelect` of
+its own (Name, Format, File size, Modified), never inherited from the
+library's sort, and hides the view and kind toggles. Its `scope` is the
+folder, sort, filter text and how many pages of rows are loaded, and a read
+again of its rows comes still.
+
 The small lists are on it too. An empty state can be an item of its own
 (its key "empty"), so it fades in as the last item leaves; a section's
 header is one, so it goes with its last row.
@@ -1772,7 +1801,7 @@ page's notes refuse what the single-block action refuses
 | `settings/BackupTasks.jsx` | Settings → Backups' task table and its editor `SubDialog` (scope `Segmented`, workspace and weekday `ToggleGroup`s, frequency and retention `MenuSelect`s, the cron preview); each row's `ActionMenu` ([settings.md](settings.md)) |
 | `settings/SettingsCloudSignIn.jsx` | Settings → Server › Sign-in (the account server, the server client, the unknown-accounts policy) and the Account pane's Gamma Cloud row ([cloud_accounts.md](cloud_accounts.md)) |
 | `transfers/ImportExport.jsx`, `transfers/transferFormats.js`, `shared/illustrations/` | the Import/Export dialogs, their format/source rules (`resolveExport` / `resolveImport`) and the decorative previews ([import_export.md](import_export.md)) |
-| `transfers/ImportReviewDialog.jsx`, `transfers/ImportTree.jsx`, `transfers/importApi.js`, `transfers/importReview.js` | the import review: upload → review → import → summary in one `SubDialog` (filter `Segmented`, source and destination trees with checkboxes), the `/api/jobs/import-preview` and `/api/import/review` calls, and the pure selection/filter/tree helpers ([import_export.md](import_export.md)) |
+| `transfers/ImportReviewDialog.jsx`, `transfers/ImportTree.jsx`, `transfers/importApi.js`, `transfers/importReview.js` | the import review: upload → review → import → summary in one `SubDialog` (filter `Segmented`, source and destination trees with checkboxes), the `/api/jobs/import-preview` and `/api/import/review` calls, and the pure selection/filter/tree helpers ([import_export.md](import_export.md)); `ImportTree` also draws the tracking dialog's tree, whose folders are read as they open (`onOpenFolder`) and whose boxes are its own (`boxOf`) |
 | `shared/lib/xhrUpload.js` | the one multipart upload: progress, a processing callback, abort by function or `AbortSignal`, the workspace and tab-identity headers; behind `FileChip.postFile`, PDF uploads, backup restores and the import review |
 | `shared/lib/keepalive.js` | the page's one ledger of `fetch` `keepalive` requests: each sender asks it for room in the browser's 64 KiB of keepalive bodies by priority (the queued page edits, then the small recoverable requests, then handwriting), and a request that does not fit goes as a plain fetch ([collab.md](collab.md) "Keepalive") |
 | `pdf/noteAnchor.js` | where a highlight's note badge sits: the geometric last line of its rects, not the last stored rect |
@@ -1825,7 +1854,8 @@ page's notes refuse what the single-block action refuses
 | `editor/codeHighlight.js` | the highlight.js (`lib/common`) wrapper and the code card's copy button, shared by editor + renderer; token colors are theme-aware `.hljs-*` rules in app.css. `editor/fences.js` reads `mdCode.codeFences` for the editor: `scanFences` (the source editor's cards, ``` fences at no depth) and `fenceInnerAt` (what Enter, Tab and the popups read as code, [hotkeys.md](hotkeys.md)) |
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |
 | `library/trashList.js` | the Recently deleted list asked for ahead of its dialog, as the pointer or the focus reaches the trash button (`prefetchTrash`, `aheadTrash`, `dropTrash`; [home_library.md](home_library.md) "Recently deleted") |
-| `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder, and "with N pages inside" for a page deleted with its sub-pages) with Restore and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |
+| `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder, and "with N pages inside" for a page deleted with its sub-pages) with Restore (a muted "Comes back when its file is tracked again." in its place for a work folder's file the server says a person may not restore) and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |
+| `explorer/workFolders.js`, `explorer/knownPages.js`, `explorer/useFolderRows.js`, `explorer/useSummaries.js`, `explorer/FolderList.jsx`, `explorer/TrackDialog.jsx`, `explorer/trackSelection.js` | work folders ([work_folders.md](work_folders.md)): the rules a file and a work folder's folders follow (twin of `gamma/work_folders/filing.py`), the page rows the listing does not carry merged into App's (`mergeKnown`), a directory's files read a page of rows at a time and the summaries of files open in tabs or recents, the folder's list view ([Lists that change](#lists-that-change)), and the tracking dialog ([Dialogs](#dialogs)) with its pure choice |
 | `library/libraryUtils.js` | the library's folder and label helpers over the folder and label trees ([home_library.md](home_library.md) "Folders and labels"), where a page sits among pages (`pageAncestors`, `topPageOf`, `pagePathLabel`, `pageDescendants`, [home_library.md](home_library.md#sub-pages)), and the library's page rows (`pageBlocksOf`, each with its document, `_doc`) |
 | `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, tabs that come, go and move through `ListMotion`, and on overflow a "⌄ n" popover listing every tab with a filter); `useMenuTrigger` in Menus is the menus a toolbar's buttons open on the press ([Menus and submenus](#menus-and-submenus)) |
 | `shared/styles/motion.css`, `shared/ui/motion.js` | how things move ([Motion](#motion)): the recipes, keyed by the surfaces' classes and the widgets' markup, on the motion tokens; and the pure side (`reducedMotion`, `textSplit`, `longestMs`, `arriving`, `listGlides`, `sameKeys`; `tests/motion.test.mjs`) |

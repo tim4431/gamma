@@ -46,11 +46,13 @@ export async function vaultScenarios(env) {
       fs.utimesSync(file, before, before);
     };
     // A directory made a vault, its first round run: the directory and the link.
+    // It pushes everything, so it is a work folder (docs/dev/work_folders.md):
+    // its library switch is on, so its pages are in the library's listing too.
     const vaultOf = async (name, files, { pull = true, push = "everything" } = {}) => {
       const dir = path.join(disk, name);
       fs.mkdirSync(dir, { recursive: true });
       for (const [file, text] of Object.entries(files)) write(path.join(dir, file), text);
-      const link = await user.api("/api/folder-links", { method: "POST", body: { path: dir, new_folder: true, pull, push } });
+      const link = await user.api("/api/folder-links", { method: "POST", body: { path: dir, new_folder: true, pull, push, library: true } });
       await user.api(`/api/folder-links/${link.id}/sync?wait=1`, { method: "POST" });
       return { dir, link: await user.api(`/api/folder-links/${link.id}`) };
     };

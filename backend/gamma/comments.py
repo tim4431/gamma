@@ -81,6 +81,21 @@ def thread_of(conn, thread_id: str) -> dict | None:
     return threads[0] if threads else None
 
 
+def open_counts(conn, page_ids) -> dict[str, int]:
+    """``{page id: n}``: how many open threads each of the pages
+    ``page_ids`` shows (a root neither resolved nor deleted, its block
+    there), pages with none left out. One query by the comments' page
+    (``idx_comments_page``): a work folder's list view counts a page of
+    rows with it."""
+    pages = sorted(set(page_ids))
+    if not pages:
+        return {}
+    return dict(conn.execute(
+        "SELECT page_id, COUNT(*) FROM comments WHERE page_id IN (SELECT value FROM json_each(?)) "
+        "AND id = thread_id AND resolved_at IS NULL AND deleted_at IS NULL AND orphaned_at IS NULL "
+        "GROUP BY page_id", (json.dumps(pages),)).fetchall())
+
+
 def _threads(rows, state: str | None) -> list[dict]:
     """``(*COLUMNS, live page id)`` rows, oldest first, folded into threads."""
     names = _names({r[4] for r in rows} | {r[10] for r in rows if r[10]})

@@ -34,10 +34,14 @@ def owner(client):
 def disk(tmp_path, monkeypatch):
     """This server as the desktop app runs it (links kept here), a place on
     "this computer" for the directories, and no background rounds: the tests
-    run them inline with ``?wait=1`` or ``tick()``."""
+    run them inline with ``?wait=1`` or ``tick()``. The links a test leaves
+    go with their rows, so no later test's ``tick()`` runs them."""
     monkeypatch.setenv("GAMMA_FOLDER_LINKS", "1")
     monkeypatch.setattr(folder_links, "run_in_background", lambda link_id, **kw: None)
-    return tmp_path / "disk"
+    yield tmp_path / "disk"
+    for link in folder_links.all_links():
+        if folder_links.inside(link["path"], str(tmp_path)):
+            folder_links._forget(link)
 
 
 def _create(c, **body):

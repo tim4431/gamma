@@ -161,7 +161,14 @@ All state is SQLite + files on disk under a data directory (env
     workspace, `page_id`, the file's path). The direction is `pull`
     (1: Gamma's changes reach the disk; 0 on a file vault, which Gamma
     never writes) and `push` (0 off, 1 PDFs, 2 everything; 1 on a file
-    vault; the API's words `off`, `pdfs`, `everything`). `state` holds the
+    vault; the API's words `off`, `pdfs`, `everything`). A folder vault of
+    this server's folder that pushes everything is a work folder
+    ([work_folders.md](work_folders.md)); `library` is its switch, whether
+    the pages of the files it tracks are library documents too (0 for a new
+    one unless it is made with it on; migration step 52 turned it on for the
+    vaults it found that became work folders, and turning a kept folder's
+    push to everything turns it on, so their pages stay in the library).
+    `state` holds the
     vault marker's id (`state.vault`) for a folder vault and what a file
     vault's rounds know of its file. Each keeps the change-log seq the last
     round saw and its status, and for a folder or page on another Gamma
@@ -276,7 +283,7 @@ All state is SQLite + files on disk under a data directory (env
     from an address alone and on a copy (`doc.copy`, a duplicated page; its
     definition since migration step 51, [documents.md](documents.md#in-sql)).
     "Which page carries this PDF" (`page_for_doc`, with
-    `documents.model.SQL_LIBRARY_PDF`) and "which files are still in use"
+    `work_folders.library.SQL_LIBRARY_PDF`) and "which files are still in use"
     read its partial index (`WHERE doc_id IS NOT NULL`).
   - `parent_page` — generated: `properties.parent_page`, the page a
     sub-page is inside ([home_library.md](home_library.md#sub-pages)),
@@ -293,9 +300,22 @@ All state is SQLite + files on disk under a data directory (env
     `idx_ub_deleted_with` holds those rows alone, so "what went with P"
     (`ops._went_with`: a restore, Delete permanently, the mirror) is an
     indexed read, not a walk of the trash's properties.
+  - `work_folder` — generated: `properties.work_folder` when it is
+    non-empty text, the work folder a page is a file of (its vault stamps
+    it, [work_folders.md](work_folders.md)), NULL on every other row
+    (migration step 52). `first_folder` — generated:
+    `properties.folders[0]`, a file's directory. Three partial indexes read
+    them: `idx_ub_listing` on `(parent_id, position)` over the root pages
+    the library listing carries (`db.SQL_IN_LISTING`, which a query must
+    repeat for SQLite to use it: no work folder, in the library, or
+    pinned), `idx_ub_dir` on `(parent_id, first_folder)` over the root
+    pages with a `work_folder` (a directory's files and their counts), and
+    `idx_ub_work_folder` on `work_folder` (a work folder's files, those in
+    Recently deleted included).
 
   The op log and the mirror carry `properties` alone; nothing writes `kind`,
-  `doc_id`, `parent_page` or `deleted_with`. Next to it:
+  `doc_id`, `parent_page`, `deleted_with`, `work_folder` or `first_folder`.
+  Next to it:
   - `page_ops` — the per-page operation log: one row per applied batch,
     `seq` counting up per page, with the client's name for the batch
     (`batch_id`, unique per page and client where it is set) and the
