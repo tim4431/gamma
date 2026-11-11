@@ -61,6 +61,7 @@ from .db import connect_pages_db, connect_users_db, connect_vaults_db, format_st
 from .documents.model import SQL_IN_PLACE, document, document_at, in_place, own_hash, page_document, stored_name
 from .logbuf import log
 from .ops import after_commits, apply_batches, commit_ops, delete_page, purge_pages, restore_page, trash_page
+from .work_folders import selection
 
 FORGET_DAYS = 90                 # an opened PDF nobody marked or asked about goes after this long untouched
 OPENED_FILES = "opened_files"    # the page property of the page *Opened files*
@@ -435,17 +436,26 @@ def _directory_vault_page(path: str, actor: str) -> dict | None:
     """The page of a file inside a directory vault, ``{workspace, page}``,
     when the vault's round reads the file and ``actor`` has a role in the
     vault's workspace. A vault that makes a page of each new file (it pushes
-    everything) has a round now for a file it has not read yet, and a
-    LinkError when that leaves it no page; inside any other vault a file
-    Gamma did not read is no page of it, and opens as any file does."""
+    everything) has a round now for a file it has not read yet that it
+    tracks, and a LinkError when that leaves it no page; inside any other
+    vault a file Gamma did not read is no page of it, and opens as any file
+    does. A work folder's file it does not track, and any file of a work
+    folder whose files are not chosen yet, is a LinkError: it opens from
+    the work folder once ticked in its tracking dialog."""
     for link in folder_links.all_links():
         if not folder_links.engine(link) or link["remote_url"] or not folder_links.inside(path, link["path"]):
             continue
         if not workspaces.role_of(link["workspace_id"], actor):
             return None
+        if folder_links.choosing(link):
+            raise folder_links.LinkError("Choose what this work folder tracks first.")
         rel = os.path.relpath(path, link["path"]).replace(os.sep, "/")
         page_id = _vault_row_page(link, rel)
         if not page_id and link["push"] == folder_links.PUSH_ALL:
+            if not selection.tracked(folder_links.dest_of(link), rel):
+                if folder_links.work_folder_link(link):
+                    raise folder_links.LinkError(f"{path} is not tracked by its work folder: tick it in Choose files…")
+                return None
             folder_links.run_link(link["id"], wait=True)
             page_id = _vault_row_page(link, rel)
             if not page_id:
@@ -556,6 +566,18 @@ def _store(ws: str, doc_id: str, path: str) -> None:
         raise folder_links.LinkError(f"Cannot read {path}: {e}") from e
     if stored != doc_id:
         raise folder_links.LinkError("The file changed while it was read: try again in a moment.")
+
+
+def store_page_bytes(ws: str, page_id: str, name: str, doc_id: str) -> bool:
+    """The page's PDF, the stored file ``name`` of the bytes ``doc_id``,
+    stored from a path this server reads it at (one of the page's rows that
+    is there). → False when no path here holds it (a vault of another
+    computer); LinkError when the file there is other bytes by now."""
+    path = next((p for n, p, _size, _mtime in _rows_of(ws, page_id) if n == name and storage.linked_stat(p)), "")
+    if not path:
+        return False
+    _store(ws, doc_id, path)
+    return True
 
 
 def add_to_library(ws: str, page_id: str, folder_id: str, keep_pushing: bool, actor: str, workspace: str = "") -> dict:

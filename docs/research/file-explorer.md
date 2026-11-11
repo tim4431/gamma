@@ -11,13 +11,14 @@ local agents (Claude Code, Codex) as structured documents. The owner
 offered a rewrite from the bottom up and asked first whether the idea is
 possible at all.
 
-Status: **a plan; step 0 is built** ("As built (step 0)" under "In
-steps"), the rest is not. This note surveys what the stored model and the
-code assumed before step 0, weighs three shapes a file could take, and
-lays the chosen one out in layers from the bottom, with the steps, the
-decisions still open and the risks. It was revised on 2026-11-11 after
-the owner's answers ("Decided" below). The mechanics as built live in
-[dev/documents.md](../dev/documents.md) (a page's document),
+Status: **a plan; steps 0 and 1 are built** ("As built (step 0)" and "As
+built (step 1)" under "In steps"), the rest is not. This note surveys what
+the stored model and the code assumed before step 0, weighs three shapes a
+file could take, and lays the chosen one out in layers from the bottom,
+with the steps, the decisions still open and the risks. It was revised on
+2026-11-11 after the owner's answers ("Decided" below). The mechanics as
+built live in [dev/documents.md](../dev/documents.md) (a page's document),
+[dev/work_folders.md](../dev/work_folders.md) (work folders),
 [dev/block_centric.md](../dev/block_centric.md),
 [dev/user_db.md](../dev/user_db.md), [dev/home_library.md](../dev/home_library.md),
 [dev/synced_vaults.md](../dev/synced_vaults.md) and
@@ -864,12 +865,142 @@ from the flat keys, on purpose, is this whole list:
 8. A duplicated page's PDF is read by the AI and the exports, as the
    original's is.
 
+**As built (step 1).** Built as its row says
+([dev/work_folders.md](../dev/work_folders.md)). A file's page carries the
+stamps `work_folder`, `library` (true or absent) and `file_name`; W's
+folder block carries the mark `vault: {pull, library}`. Two generated
+columns, `work_folder` and `first_folder`, and three partial indexes
+(`idx_ub_listing`, `idx_ub_dir`, `idx_ub_work_folder`) come with migration
+step 53 (`work_folders`), which also adds `folder_links.library`; the step
+is derived, so the workspace format stays 52. The library rule is
+`gamma/work_folders/library.py` with its client twin, held by
+`tests/shared/library.json`; the op rule is `gamma/work_folders/filing.py`
+with its twin, held by `tests/shared/workfiling.json`, and a refusal is a
+403 with the conflict `locked`. `.gammaignore` is read and written by
+`gamma/work_folders/ignore_rules.py`; the tracking dialog's routes live in
+`routers/folder_links.py` over `work_folders/selection.py` and
+`folder_links.save_selection`; the vaults from before the step are taken
+over by `work_folders/takeover.py` at their first round. On the client,
+`frontend/src/explorer/` holds the rules' twin, the folder's list view,
+the pages the listing does not carry and the tracking dialog. Where it
+differs from the plan above, the whole list:
+
+1. A work folder is a vault of this computer's server that pushes
+   everything, not every vault folder. A vault that only pulls, or pulls
+   and sends PDFs back, makes Gamma its folder's source; a vault of the
+   whole library has no folder to mark; a vault of another server cannot
+   use the dialog yet. These stay kept folders. Turning a kept folder's
+   push to everything makes it a work folder, its pages kept in the
+   library. A vault of the whole library can no longer be made, or turned,
+   to push everything; one that did before goes on as a kept folder. A
+   vault of another server that pushes everything into a folder a work
+   folder marks there runs a work folder's round, as the op rule there
+   asks.
+2. Notes in a work folder that pulls follow Gamma: rename, a move between
+   its directories, trash and restore, and new notes. PDFs, pictures,
+   paper pages and directories follow the disk only. This is "a note
+   through the lens where the vault pulls", and it keeps a taken-over
+   Obsidian-style vault's renames.
+3. Folder operations inside a work folder: its directories follow the disk
+   (no rename, move, delete or new subfolder from Gamma); W itself may be
+   renamed and moved (its name in Gamma only), never deleted.
+4. No sub-pages in a work folder: the takeover flattens them, and the
+   front matter's `parent:` makes none.
+5. One stored flag, two predicates: `library` exists only on files.
+   Outside a work folder the default ("not read in place") keeps Opened
+   files out of the paper rules, so nothing asks about `linked_file`, and
+   `at` is asked only of pages outside work folders. An Opened files PDF
+   therefore has no record looked up when it opens and is left out of the
+   metadata status and its batch, where section 3 kept its lookup; it may
+   still be looked up by hand (the Paper metadata button,
+   `POST /metadata/fetch`).
+6. The listing carries pinned files, marked not listed, so a pin of a file
+   survives without a pins read.
+7. The mark: `vault: {pull, library}` on W's folder block tells every
+   server and client which folders are work folders, protects an empty
+   one, and carries the two switches the op path and the readers need. The
+   plan stored `work_folder` on pages only.
+8. Two selections. With no `.gammaignore` a vault tracks notes, PDFs and
+   pictures, as before. The dialog's preset for a new work folder is PDFs
+   and notes unless they lie inside a directory git ignores: a PDF git
+   ignores by a file pattern alone (a paper's `main.pdf` under `*.pdf`) is
+   ticked and marked "git ignores it". The dialog's tree is not read a
+   folder at a time: it lists the directory whole up to a budget (50,000
+   entries, 3 s), and reads a folder left unwalked (past the budget, or
+   the outermost directory git ignores) when it is opened.
+9. `.gammaignore` is read at the root only, always case-insensitive and
+   NFC, unlike git. A missing file after one existed stops the vault
+   rather than falling back to the default. A vault whose older marker
+   names `ignore` globs gets them written once as its `.gammaignore`, the
+   one file Gamma writes into a directory unasked, and a Save of the
+   dialog always writes a file, a selection equal to the default too.
+10. In a kept folder a deselected file's row is forgotten and its page
+    stays: Gamma is that folder's source. Only a work folder sends a
+    deselected file's page to Recently deleted, with an in-place tombstone
+    that never moves the file.
+11. Removing a work folder sends its files not in the library to Recently
+    deleted, keeps the library ones, and drops directory folders left
+    empty.
+12. A library file's versions are stored, each as it comes, as a library
+    document's bytes are; its document still reads in place.
+13. Add to library sets `auto_title`, so the record may title the paper;
+    Remove resets the title to the file's stem. The route stores the bytes
+    and schedules the PDF's manifest; the record is looked up by the open
+    page, as for any library PDF.
+14. A paper's PDF and its notes are tracked together: the dialog joins
+    pairs, and a hand-edited half is forgotten, not removed.
+15. Save a copy to library is for PDFs; a note has Duplicate.
+16. A hosted plan's page cap counts files.
+17. Known gaps until later steps: quick open finds a file only from tabs
+    and recents (step 5); the search panel's folder chip on a work folder
+    sees known pages only (step 4); label views list library pages only;
+    the dialog's preview and Save walk the whole directory with no budget,
+    only its tree has one ([dev/work_folders.md](../dev/work_folders.md)
+    "Known gaps" has the rest).
+18. A work folder may not lower its push while some file is not in the
+    library.
+19. `MAX_LINKS` stays 10.
+20. The takeover's stamps are quiet: no `updated_at`, so nobody's recents
+    reorder.
+21. The vault's exemption is the op client `disk` on a token request: an
+    integrity rule, not a security boundary.
+22. The two listing indexes lead with `parent_id`
+    (`idx_ub_listing` on `(parent_id, position)`, `idx_ub_dir` on
+    `(parent_id, first_folder)`), or SQLite's planner takes `idx_ub_parent`
+    for the listing and the directory counts. The `work_folder` column is
+    NULL for an empty or non-text value, and the SQL reads `library` as
+    JSON `true`, so the SQL and the predicates answer alike for every case
+    of the fixture.
+23. A work folder made in a new folder, or of a folder with no page, is
+    one from the start; one made of a folder that holds pages (the API
+    allows it while the directory holds no file) is taken over at its
+    first round, as the vaults from before the step are.
+24. The scale check is `backend/tests/test_work_folder_scale.py`, timing
+    tests run with `-m perf`: 20,000 files in one work folder beside 500
+    pages, the listing within 1.5 times its time without them, the first
+    page of a directory of 10,000 files (60 ms, 90 ms sorted by size),
+    `work_counts` (10 ms) and the op rule's read of a tree of 2,000
+    directories (16 ms). Quick open and a vault round are not timed in
+    this step.
+25. The cap of 20,000 files (`selection.MAX_FILES`) is a work folder's:
+    the dialog's Save refuses more, and a round that selects more stops
+    before it writes; a kept folder has none. The takeover raises a
+    vault's cap to the files it already tracks, so no vault stops at the
+    upgrade.
+26. The dialog does not say what leaves the computer yet: a vault of
+    another server is never a work folder in step 1, and one of this
+    server stores a file's bytes only when the person asks (Add to
+    library, then each version; Save a copy) or removes the vault, whose
+    PDFs read in place are stored first, as any vault's are.
+    Besides its notes, pull writes into a work folder that pulls the
+    pictures a note made in Gamma links, where the selection tracks them,
+    as every vault does.
+
 ## Still to decide
 
-1. **Add to library keeps one page** (recommended): the file's page
-   becomes a paper and stays at its path. The other reading is a second,
-   library page that follows the file, which gives one file two sets of
-   comments.
+1. **Add to library keeps one page**: decided in step 1, as recommended.
+   The file's page becomes a paper and stays at its path; Save a copy to
+   library makes the second page, annotated apart, for a version kept.
 2. **Every open thread on a work-folder file is feedback** (recommended),
    with no mark that sets an instruction to the agent apart from a
    remark to oneself. A highlight's own note stays the person's.
@@ -879,8 +1010,9 @@ from the flat keys, on purpose, is this whole list:
 4. **The commented version of a PDF is stored** until its comments are
    resolved (recommended). It costs a copy of the PDF per round of
    comments, and is what lets a comment on a figure survive a rebuild.
-5. **What the dialog ticks to start with**: PDFs and notes (recommended),
-   with the format filters one click away.
+5. **What the dialog ticks to start with**: decided in step 1 (As built,
+   item 8): PDFs and notes outside the directories git ignores, with the
+   format filters one click away.
 6. **Markdown in a repository.** A `README.md` ticked becomes a note
    through the lens, read-only in Gamma while the vault does not pull.
    Whether a file the lens cannot take should open in the code view

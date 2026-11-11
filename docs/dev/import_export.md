@@ -264,7 +264,9 @@ Import → Summary.
   `POST /api/jobs/import-preview` takes the file, its `source` (`zotero`,
   `markdown-zip`, `markdown-file`, `gamma`, `notability`, `goodnotes`), an optional `folder` (the
   destination folder's id, `""` the library's top; 400 when it is no
-  folder, `import_review.destination`) and `strip`.
+  folder, or is a work folder or one of its directories, which follow the
+  disk ([work_folders.md](work_folders.md); `import_review.destination`))
+  and `strip`.
   It stages the upload and starts the job (`import-preview`), which runs
   the source's preview, reporting its items, and keeps the two trees
   beside the upload; `GET /api/import/review/{id}` reads them, with the
@@ -2170,7 +2172,12 @@ imports it through the existing `/api/import-data?mode=merge` — additive
 that block, else the one at the same path, or a label of the same name, else
 it is added there; the pages are filed under the workspace's ids for them
 and the folder chats follow — `ws_backup._merge_trees`, `_refiled`; a
-reviewed import brings only the folders and labels its chosen pages need),
+reviewed import brings only the folders and labels its chosen pages need;
+nothing lands inside a work folder, whose directories are its vault's: a
+folder that would land there stands for the one it would land in, which
+files none of its pages, and the pages come as library pages, a work
+folder's stamps and mark dropped, [work_folders.md](work_folders.md) "The
+readers, classified"),
 deduped by block id / the PDF a page owns (the `doc_id` column, a library
 PDF: `SQL_LIBRARY_PDF`) / conversation / content hash, so re-importing
 adds nothing. A folder's export names its folder in the manifest

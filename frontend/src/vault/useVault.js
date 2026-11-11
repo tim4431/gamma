@@ -6,16 +6,21 @@
 // server answers that route 404: it is not asked again in this window.
 // The owner of App's part of the feature (docs/dev/frontend-refactor.md
 // "New state"): with the standing it holds the page's banner, dismissed or
-// not, and which of the feature's two dialogs is open.
+// not, which of the feature's dialogs is open, and in the desktop app the
+// workspace's folder vaults of this server by folder, which the work
+// folders' Choose files… opens the tracking dialog for
+// (explorer/TrackDialog.jsx, docs/dev/work_folders.md "The tracking dialog").
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API, apiJson, getCurrentWorkspace } from "../shared/lib/utils";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
+import { t } from "../shared/i18n/i18n.js";
 import { bannerKey, readVault, vaultBanner } from "./vaultState.js";
 
 let elsewhere = false;
 
-// `{state, refresh, banner, dismissBanner, adding, setAdding, editing,
-// setEditing}`:
+// `{state, refresh, banner, dismissBanner, adding, setAdding, addingFile,
+// setAddingFile, editing, setEditing, links, refreshLinks, tracking, track,
+// closeTracking, watchRound}`:
 //   state     null for a page of no vault reading no file here, and wherever
 //             the route does not answer (outside the desktop app, a share's
 //             visitor: `enabled` false). The answer is kept with the page it
@@ -30,11 +35,30 @@ let elsewhere = false;
 //             else null
 //   editing   the page whose notes file is edited whole (FileSourceDialog),
 //             else ""
-export function useVault(pageId, enabled) {
+//   addingFile  {ids, copy} while Add to library… (or, with `copy`, Save a
+//             copy to library…) is open for work folders' files, else null
+//   links     in the desktop app, this workspace's folder vaults of this
+//             server that the account made (`mine`: the tracking dialog's
+//             routes are the maker's) by their folder's id (GET
+//             /api/folder-links, read once and by `refreshLinks()`);
+//             elsewhere empty
+//   tracking  {link, fresh} while the tracking dialog is open for the vault
+//             `link` (as GET /api/folder-links/{id} answers it), `fresh`
+//             when the vault is still choosing its
+//             first files, else null: `track(linkId)` opens it, as the boot
+//             parameter `track` (`options.track`, the shell's hand-over)
+//             does once the workspace is known, which also leaves the URL;
+//             a link that cannot be read says so (`options.setStatus`)
+export function useVault(pageId, enabled, { track = "", setStatus = null } = {}) {
+  const onStatus = useRef(setStatus);
+  onStatus.current = setStatus;
   const [held, setHeld] = useState({ pageId: "", state: null });
   const [dismissed, setDismissed] = useState("");
   const [adding, setAdding] = useState(null);
+  const [addingFile, setAddingFile] = useState(null);
   const [editing, setEditing] = useState("");
+  const [links, setLinks] = useState(() => new Map());
+  const [tracking, setTracking] = useState(null);
   const asked = useRef(0);
   const open = useRef({ pageId, enabled });
   open.current = { pageId, enabled };
@@ -51,13 +75,55 @@ export function useVault(pageId, enabled) {
     }
   }, []);
   useEffect(() => { refresh(); }, [pageId, enabled, refresh]);
+  const refreshLinks = useCallback(async () => {
+    if (!IS_DESKTOP || !open.current.enabled) return;
+    const ws = getCurrentWorkspace();
+    try {
+      const { links: all = [] } = await apiJson(`${API}/folder-links`);
+      setLinks(new Map(all.filter((l) => l.kind === "folder" && !l.remote_url && l.workspace_id === ws && l.mine)
+        .map((l) => [l.folder_id, l])));
+    } catch {}
+  }, []);
+  useEffect(() => { refreshLinks(); }, [enabled, refreshLinks]);
+  const trackLink = useCallback(async (linkId) => {
+    try {
+      const link = await apiJson(`${API}/folder-links/${encodeURIComponent(linkId)}`);
+      setTracking({ link, fresh: !!link.choosing });
+    } catch (err) {
+      onStatus.current?.(t("Could not open Choose files…: {message}", { message: err.message }));
+    }
+  }, []);
+  // Once the round of the vault `linkId` started (a Save of its choice) is
+  // over — its status no longer running, asked every 1.5 s for up to two
+  // minutes — `then()` runs: the folder's list is read again then.
+  const watchRound = useCallback(async (linkId, then) => {
+    for (let i = 0; i < 80; i++) {
+      await new Promise((resolve) => { setTimeout(resolve, 1500); });
+      try {
+        const link = await apiJson(`${API}/folder-links/${encodeURIComponent(linkId)}`);
+        if (!link.status?.running) break;
+      } catch { break; }
+    }
+    then();
+  }, []);
+  const booted = useRef(false);
+  useEffect(() => {
+    if (!track || !enabled || booted.current) return;
+    booted.current = true;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("track");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+    trackLink(track);
+  }, [track, enabled, trackLink]);
   const state = held.pageId === pageId ? held.state : null;
   const banner = vaultBanner(state);
   const key = bannerKey(pageId, banner);
   const dismissBanner = useCallback(() => setDismissed(key), [key]);
+  const closeTracking = useCallback(() => setTracking(null), []);
   return {
     state, refresh, banner: key !== dismissed ? banner : null, dismissBanner,
-    adding, setAdding, editing, setEditing,
+    adding, setAdding, addingFile, setAddingFile, editing, setEditing,
+    links, refreshLinks, tracking, track: trackLink, closeTracking, watchRound,
   };
 }
 

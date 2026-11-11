@@ -102,7 +102,8 @@ export function editsFile(state) {
   return !!vault && vault.push === "everything" && /\.(md|markdown)$/i.test(vault.path || "");
 }
 
-// Whether the page is an opened PDF that Add to library… takes in.
+// Whether Add to library… takes the page in as an opened PDF (a work
+// folder's file is fileRules' addToLibrary, explorer/workFolders.js).
 export function addsToLibrary(state) {
   return !!state?.reader && !state.vault;
 }

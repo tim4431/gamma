@@ -743,6 +743,33 @@ def test_preview_collapses_same_pdf_into_one_destination(guest):
     assert all(p["action"] == "merge" for p in again["pages"])
 
 
+def test_a_work_folders_file_of_the_same_pdf_is_no_page_of_the_item():
+    """A work folder's file not in the library is no paper of the library:
+    an item whose PDF has its bytes gets a page of its own, and the preview
+    says so as the import does."""
+    from conftest import account_of, mark_work_folder, work_props
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import create_page
+    from gamma.db import connect_pages_db
+    from gamma.documents.model import document
+    from gamma.storage import content_digest
+
+    c, ws = _library()
+    w = make_folder(c, "zotero-work")
+    mark_work_folder(c, w)
+    pdf = _annotated_pdf(b"The same bytes as a figure of the work folder")
+    with connect_pages_db(ws) as conn:
+        figure = create_page(conn, "figure", work_props(w, "figure.pdf", doc=document(
+            content_digest(pdf), name="figure.pdf", at="path")), actor=account_of(c.get("/api/session").json()["user"]),
+            client=DISK_CLIENT)["id"]
+    rdf = RDF.replace("s41586-000-00000-0", "work-folder-figure")
+    data = _custom_zip(rdf, {"files/3/Vaswani - 2017 - Attention.pdf": pdf})
+    [planned] = [p for p in _send(c, data, preview=True).json()["pages"] if p["kind"] == "pdf"]
+    assert planned["action"] == "create" and planned.get("existing_id") != figure
+    made = [p["id"] for p in _send(c, data).json()["pages"] if p["kind"] == "pdf"]
+    assert made and figure not in made
+
+
 def test_one_export_imported_twice_at_once_makes_each_page_once(guest, monkeypatch):
     """A double-clicked import, or two tabs: each item's page is looked for
     again under the write lock before it is made, so the later import merges

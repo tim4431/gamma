@@ -64,6 +64,7 @@ from .folder_sync import ROOT
 from .logbuf import log
 from .obsidian_export import page_dir
 from .vault_sync import BOTH_PDF, UNREAD, _gamma_id
+from .work_folders import ignore_rules
 
 UPGRADED = "upgraded_at"   # the state's key, and the status's, of when the folder was taken onto the engine
 
@@ -201,11 +202,17 @@ def _found(root: Path, link: dict, remote) -> dict:
     vault they are, so that pull writes none a second time beside them. A
     note whose ``gamma_id`` names a page has a base that names none of its
     blocks and no hash, kept as one changed on disk until a force decides; a
-    PDF holding a page's bytes is that page's, as pull wrote it."""
+    PDF holding a page's bytes is that page's, as pull wrote it. The walk
+    reads what the directory's ``.gammaignore`` tracks, as its rounds will;
+    one that cannot be read stops the upgrade (``Stopped``)."""
+    try:
+        rules = ignore_rules.read(root)
+    except ignore_rules.Unreadable as e:
+        raise vault_disk.Stopped(f"its .gammaignore cannot be read: {e.why}") from e
     pages = remote.layout().pages
     docs = {info.doc_id: page_id for page_id, info in pages.items() if info.doc_id}
     out, now = {}, time.time()
-    for path, found in vault_disk.walk(root).files.items():
+    for path, found in vault_disk.walk(root, rules).files.items():
         if found.placeholder:
             continue
         target = vault_disk.path(root, path)

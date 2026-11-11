@@ -101,6 +101,9 @@ from .picture import caption_text, is_picture, normalize_picture
 from .storage import exists as _upload_exists, upload_refs
 from .text_box import is_text_box
 from .trash import KEEP_DAYS, list_trash
+from .work_folders import filing as work_filing
+from .work_folders.library import listed, work_folder_of
+from .work_folders.marks import Tree
 
 # Runaway guards for the tool loop, not workload caps: MAX_TOOL_ACTIONS bounds
 # the real work (mutations only), while the round limit stops a loop that
@@ -289,14 +292,17 @@ def _not_a_folder(conn, text: str) -> str | None:
     return None
 
 
-def _resolve_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
+def _resolve_folder(conn, scope: dict, raw, *, write: bool = False) -> tuple[dict | None, str | None]:
     """The folder a tool's ``folder`` argument names: a folder id, or a path
     as the tools show it ("Physics / QEC"; "Physics/QEC" too, where that is
     no folder's name). A folder chat reads it inside its folder — a path
     that starts with the folder's own path from there, any other as a path
     below it — and "" is the chat's folder itself; a page chat reads it from
     the top, "" being the library root. Each name matches exactly, else
-    ignoring case (``blocks_store.named``).
+    ignoring case (``blocks_store.named``). For a ``write`` (a page filed,
+    a folder made) a path passes by every work folder with its directories
+    (``descend``'s ``works``), so a name they share makes a library folder;
+    a read reaches them.
 
     Returns ``(target, error)``: ``{"id", "path"}`` for a folder that exists
     (id "" = the library root), ``{"id": "", "path", "under", "names"}``
@@ -306,6 +312,7 @@ def _resolve_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
     no folder's (``_not_a_folder``)."""
     base = _scope_folder(scope)
     kids, paths = tree_children(conn, FOLDERS), folder_paths(conn)
+    works = set(Tree.read(conn).roots()) if write else ()
     text = str(raw or "").strip()
     if not text:
         return {"id": base, "path": PATH_SEP.join(paths.get(base, []))}, None
@@ -319,7 +326,7 @@ def _resolve_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
                                for sep in (PATH_SEP, "/")):
         if own and [n.lower() for n in names[:len(own)]] == own:
             names = names[len(own):]  # the chat's own path, then below it
-        level, rest = descend(kids, base or FOLDERS, names)
+        level, rest = descend(kids, base or FOLDERS, names, works=works)
         if len(level) > 1:
             return None, (f'error: "{text}" names {len(level)} folders — pass the one you mean by its id: '
                           + ", ".join(f'{f} ("{PATH_SEP.join(paths[f])}")' for f in level))
@@ -556,7 +563,11 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
     ``list_labels`` lists the labels with their page counts instead, the
     busiest ``limit`` of them. A sub-page is filed where its top page is
     (blocks_store's filing rule), so the folder filters and the chat's
-    folder reach it through that page."""
+    folder reach it through that page. At the library root the pages are
+    those the library lists (``work_folders.library.listed``, by the top):
+    a work folder's files come only where the chat's folder or ``folder``
+    names one they are filed in, and the label counts and ``label=`` count
+    listed pages."""
     reach = _reach(conn, scope)
     paths, names = folder_paths(conn), label_names(conn)
     path = PATH_SEP.join(paths.get(_scope_folder(scope), []))
@@ -602,8 +613,12 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
     matches, earlier = [], 0
     for page_id, content, _, updated, position in rows:
         props = props_of[page_id]
-        folders = [f for f in filing(props_of[top_of(parents, page_id)], FOLDERS) if f in paths]
+        top = props_of[top_of(parents, page_id)]
+        folders = [f for f in filing(top, FOLDERS) if f in paths]
         if page_id not in context and not _filed_in(reach, folders):
+            continue
+        # a file the library does not list: only where a folder named (the chat's, or `folder`) files it
+        if page_id not in context and reach is None and not listed(top) and not (below and below & set(folders)):
             continue
         page_labels = [lab for lab in filing(props, LABELS) if lab in names]
         if want_labels:
@@ -647,7 +662,7 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
                           else f"Listed {total} page{'s' if total != 1 else ''} in {where_full}")}
     if not total:
         no = ("No pages match those filters." if (label or title_q or parent)
-              else "The folder is empty." if (sub or path) else "The library is empty.")
+              else "The folder is empty." if (sub or path) else "The library lists no page.")
         return no, action
     if not shown:
         return f"No pages come after that one in {where_full} — it was the last of {total}.", action
@@ -2485,7 +2500,7 @@ def _save_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
     page chat from the top, else the open page's first folder — where the
     reply's Save to library files it."""
     if scope.get("type") == "folder" or str(raw or "").strip():
-        return _resolve_folder(conn, scope, raw)
+        return _resolve_folder(conn, scope, raw, write=True)
     loaded, _ = _load_scoped_page(conn, scope, {"page_id": scope.get("page_id")})
     paths = folder_paths(conn)
     first = next((f for f in (loaded[3] if loaded else []) if f in paths), "")
@@ -2851,20 +2866,37 @@ def _batch_text(head: str, plans: list, batch: dict, *, links: bool = False) -> 
     return text
 
 
-def _plan_rename_one(conn, scope: dict, page_id: str, title: str, reach) -> tuple:
+def _work_refusal(check) -> str | None:
+    """What the work-folder rule (gamma/work_folders/filing.py) answers a
+    change ``check()`` asks it of, as a tool answers it: "error: " and the
+    words the op path refuses it with, None when it passes. The tools ask
+    up front, as a person (``client`` "ai"), so the model reads why."""
+    try:
+        check()
+    except work_filing.Refused as e:
+        return f"error: {e.detail}"
+    return None
+
+
+def _plan_rename_one(conn, scope: dict, page_id: str, title: str, reach, tree: Tree) -> tuple:
     """One page of a rename_page call: ``({page_id, title, before, to,
     after}, None)`` — its title now as it reads, as it is stored
     (``before``: "" for an untitled page, which a revert gives back) and
-    the new one — or ``(None, answer)`` for a page it does not change."""
+    the new one — or ``(None, answer)`` for a page it does not change, and
+    for a work folder's file named by its file (``tree``, the folders as
+    the rule reads them)."""
     loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id}, reach)
     if error:
         return None, error
-    page_id, old, _, _ = loaded
+    page_id, old, props, _ = loaded
     new = _one_line(title)
     if not new:
         return None, "error: empty title"
     if new == old:
         return None, "ok — title already is that"
+    refused = _work_refusal(lambda: work_filing.root_patch(tree, props, None, new, "person"))
+    if refused:
+        return None, refused
     raw = old if old != "Untitled" else (conn.execute(
         "SELECT content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()[0] or "")
     return {"page_id": page_id, "title": old, "before": raw, "to": new, "after": new}, None
@@ -2878,12 +2910,12 @@ def _plan_rename_page(conn, scope: dict, args: dict):
     pairs, error = _renames_arg(args)
     if error:
         return None, error
-    reach, times = _reach(conn, scope), Counter(page_id for page_id, _ in pairs)
+    reach, times, tree = _reach(conn, scope), Counter(page_id for page_id, _ in pairs), Tree.read(conn)
 
     def one(pair):
         if times[pair[0]] > 1:
             return None, "error: named twice with different titles — send it once"
-        return _plan_rename_one(conn, scope, pair[0], pair[1], reach)
+        return _plan_rename_one(conn, scope, pair[0], pair[1], reach, tree)
     return (None, _batch(pairs, one)), None
 
 
@@ -2931,28 +2963,47 @@ def _run_rename_page(conn, ws: str, scope: dict, args: dict):
              "revert": revert})
 
 
-def _plan_move_one(conn, scope: dict, page_id: str, target: dict, reach, chain: set) -> tuple:
+def _moved_into(p: dict, folder_id: str) -> list:
+    """The folders a move_page leaves a page in (``folder_id`` the target,
+    "" the library root): those it stays in, then the target — first for a
+    work folder's file moved to another directory of its work folder
+    (``lead``), whose directory leads its folders."""
+    target = [folder_id] if folder_id else []
+    return target + p["stays"] if p.get("lead") else p["stays"] + target
+
+
+def _plan_move_one(conn, scope: dict, page_id: str, target: dict, reach, chain: set, tree: Tree) -> tuple:
     """One page of a move_page call: ``({page_id, title, folders, stays,
-    before, after}, None)`` — the folders it is in now (ids that still are
-    folders; ``before`` too) and the ones it stays in beside the target:
-    those outside the chat's folder, less any above the target (``chain``:
-    the target's folders from the top), which give way as ``refiled`` has
-    them — or ``(None, answer)`` for a page already there, and for a
-    sub-page, which is filed where the page it is inside is."""
+    lead, before, after}, None)`` — the folders it is in now (ids that
+    still are folders; ``before`` too) and the ones it stays in beside the
+    target: those outside the chat's folder, less any above the target
+    (``chain``: the target's folders from the top), which give way as
+    ``refiled`` has them, and a work folder's file its directory, unless
+    the target is another directory of its work folder (``lead``) — or
+    ``(None, answer)`` for a page already there, for a sub-page, which is
+    filed where the page it is inside is, and for a move the work-folder
+    rule refuses (``tree``, the folders as it reads them)."""
     loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id}, reach)
     if error:
         return None, error
-    page_id, title, _, folders = loaded
+    page_id, title, props, folders = loaded
     parent = page_parent(conn, page_id)
     if parent:
         return None, (f"error: that page is inside page {parent} and is filed where that page is — "
                       "move the outermost page instead")
     folders = existing_in(conn, FOLDERS, folders)
     stays = [f for f in folders if reach is not None and f not in reach and f not in chain]
+    work = work_folder_of(props)
+    lead = bool(work and target["id"] and tree.work_of(target["id"]) == work)
+    if work and folders and not lead:
+        stays = [folders[0], *(f for f in stays if f != folders[0])]
     if not target.get("names") and set(stays + ([target["id"]] if target["id"] else [])) == set(folders):
         return None, "ok — page is already there"
-    return {"page_id": page_id, "title": title, "folders": folders, "stays": stays, "before": folders,
-            "after": stays}, None
+    plan = {"page_id": page_id, "title": title, "folders": folders, "stays": stays, "lead": lead, "before": folders,
+            "after": stays}
+    refused = _work_refusal(lambda: work_filing.root_patch(tree, props, {FOLDERS: _moved_into(plan, target["id"])},
+                                                           None, "person"))
+    return (None, refused) if refused else (plan, None)
 
 
 def _plan_move_page(conn, scope: dict, args: dict):
@@ -2965,13 +3016,16 @@ def _plan_move_page(conn, scope: dict, args: dict):
     ids, error = _page_ids_arg(args)
     if error:
         return None, error
-    target, error = _resolve_folder(conn, scope, args.get("folder"))
+    target, error = _resolve_folder(conn, scope, args.get("folder"), write=True)
     if error:
         return None, error
-    reach = _reach(conn, scope)
+    reach, tree = _reach(conn, scope), Tree.read(conn)
+    if target.get("names") and tree.work_of(target["under"]):
+        return None, f"error: {work_filing.refusal_text('directories')}"
     # A folder to make sits below `under`: its chain is under's, plus itself (no page is in it yet).
     chain = set(folder_chain(conn, target["id"] or target.get("under") or ""))
-    return (target, _batch(ids, lambda page_id: _plan_move_one(conn, scope, page_id, target, reach, chain))), None
+    return (target, _batch(ids, lambda page_id: _plan_move_one(conn, scope, page_id, target, reach, chain,
+                                                               tree))), None
 
 
 def _move_digest(target: dict, plans: list) -> str:
@@ -3024,7 +3078,7 @@ def _run_move_page(conn, ws: str, scope: dict, args: dict):
             if tree_ops:
                 results += apply_batches(conn, [(FOLDERS, tree_ops)], actor=actor, client="ai")
             folder_id = made[tuple(target["names"])]
-        afters = [p["stays"] + ([folder_id] if folder_id else []) for p in plans]  # = refiled(kept, folder_id)
+        afters = [_moved_into(p, folder_id) for p in plans]  # = refiled(kept, folder_id)
         results += apply_batches(conn, [(p["page_id"], [{"op": "set", "id": p["page_id"], "props": {FOLDERS: after}}])
                                         for p, after in zip(plans, afters)], actor=actor, client="ai")
         return results, (paths, afters)
@@ -3083,11 +3137,13 @@ def _back_with(n: int) -> str:
     return "the page inside it comes back with it" if n == 1 else f"the {n} pages inside it come back with it"
 
 
-def _plan_restore_one(conn, trash: dict, reach, page_id: str) -> tuple:
+def _plan_restore_one(conn, trash: dict, reach, page_id: str, tree: Tree) -> tuple:
     """One page of a restore_page call: ``(entry, None)`` — its Recently
     deleted entry (``trash.list_trash``'s) with ``page_id``, ``before``
     (when it was deleted) and ``after`` (the folders it goes back to) — or
-    ``(None, answer)`` for a page it cannot restore."""
+    ``(None, answer)`` for a page it cannot restore: a work folder's file
+    comes back with its file (``tree``, the folders as the rule reads
+    them)."""
     page = trash.get(page_id)
     if page is None:
         if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'", (page_id,)).fetchone():
@@ -3095,6 +3151,10 @@ def _plan_restore_one(conn, trash: dict, reach, page_id: str) -> tuple:
         return None, "error: no such page in Recently deleted — use ids from list_deleted"
     if not _filed_in(reach, page["folders"]):
         return None, "error: that page was not filed in this chat's folder — restore it from the library root"
+    props = load_props(conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()[0])
+    refused = _work_refusal(lambda: work_filing.may_restore(tree, props, "person"))
+    if refused:
+        return None, refused
     return {**page, "page_id": page["id"], "before": page["deleted_at"], "after": page["folders"]}, None
 
 
@@ -3104,8 +3164,8 @@ def _plan_restore_page(conn, scope: dict, args: dict):
     ids, error = _page_ids_arg(args, "list_deleted")
     if error:
         return None, error
-    trash, reach = {p["id"]: p for p in list_trash(conn)}, _reach(conn, scope)
-    return _batch(ids, lambda page_id: _plan_restore_one(conn, trash, reach, page_id)), None
+    trash, reach, tree = {p["id"]: p for p in list_trash(conn)}, _reach(conn, scope), Tree.read(conn)
+    return _batch(ids, lambda page_id: _plan_restore_one(conn, trash, reach, page_id, tree)), None
 
 
 def _preview_restore_page(conn, scope: dict, args: dict):
@@ -3174,19 +3234,24 @@ def _run_restore_page(conn, ws: str, scope: dict, args: dict):
              "items": items, "revert": revert})
 
 
-def _plan_trash_one(conn, scope: dict, page_id: str, reach) -> tuple:
+def _plan_trash_one(conn, scope: dict, page_id: str, reach, tree: Tree) -> tuple:
     """One page of a delete_page call: ``({page_id, title, inside, before,
     after}, None)`` — its title and the pages inside it, which go to
     Recently deleted with it (``inside``: ids, ``page_descendants``), both
     held by the digest (``before``) — or ``(None, answer)``: a page in
-    Recently deleted already, one outside the chat's reach, no page."""
+    Recently deleted already, one outside the chat's reach, no page, a
+    work folder's file that leaves with its file (``tree``, the folders as
+    the rule reads them)."""
     loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id}, reach)
     if error:
         if error == _NO_PAGE and conn.execute(
                 "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = ?", (page_id, TRASH)).fetchone():
             return None, "ok — that page is in Recently deleted already"
         return None, error
-    page_id, title, _, _ = loaded
+    page_id, title, props, _ = loaded
+    refused = _work_refusal(lambda: work_filing.may_trash(tree, props, "person"))
+    if refused:
+        return None, refused
     inside = page_descendants(conn, page_id)
     return {"page_id": page_id, "title": title, "inside": inside, "before": [title, inside], "after": TRASH}, None
 
@@ -3199,8 +3264,8 @@ def _plan_delete_page(conn, scope: dict, args: dict):
     ids, error = _page_ids_arg(args)
     if error:
         return None, error
-    reach = _reach(conn, scope)
-    batch = _batch(ids, lambda page_id: _plan_trash_one(conn, scope, page_id, reach))
+    reach, tree = _reach(conn, scope), Tree.read(conn)
+    batch = _batch(ids, lambda page_id: _plan_trash_one(conn, scope, page_id, reach, tree))
     outer = {sub: p["page_id"] for p in batch["plans"] for sub in p["inside"]}
     for p in [p for p in batch["plans"] if p["page_id"] in outer]:
         batch["plans"].remove(p)
@@ -3409,7 +3474,8 @@ def _plan_rename_folder(conn, scope: dict, args: dict):
     """``(plan, None)``: the folder (``id``, ``path``) and its path after the
     rename (``to``); ``(None, answer)`` for a call that changes nothing. The
     server does not keep sibling names apart, so this does, the way the
-    app's rename does (``named``: exactly, else ignoring case)."""
+    app's rename does (``named``: exactly, else ignoring case). A work
+    folder's directories are named by the disk (the work-folder rule)."""
     found, error = _find_folder(conn, scope, args.get("folder"))
     if error:
         return None, error
@@ -3425,6 +3491,10 @@ def _plan_rename_folder(conn, scope: dict, args: dict):
     paths = folder_paths(conn)
     if new == paths[folder_id][-1]:
         return None, "ok — the folder already has that name"
+    refused = _work_refusal(lambda: work_filing.tree_op(Tree.read(conn), {"op": "set", "id": folder_id, "content": new},
+                                                        "person"))
+    if refused:
+        return None, refused
     parent = tree_parents(conn, FOLDERS)[folder_id]
     if named([c for c in tree_children(conn, FOLDERS).get(parent, []) if c[0] != folder_id], new):
         where = PATH_SEP.join(paths.get(parent, [])) or "the top level"
@@ -3701,7 +3771,8 @@ def _plan_delete_folder(conn, scope: dict, args: dict):
     chat's own folder (one above it is out of reach already), a folder
     outside the chat's reach, a folder with a share link anywhere in it —
     the deletion would stop the link for good, so the user stops sharing
-    first — and one too large to record for a revert."""
+    first — one too large to record for a revert, and a work folder's
+    directory or root, or a folder with one inside (the work-folder rule)."""
     from .routers.shares import shared_folders  # local: keep gamma.* free of the routers package
 
     found, error = _find_folder(conn, scope, args.get("folder"))
@@ -3713,6 +3784,9 @@ def _plan_delete_folder(conn, scope: dict, args: dict):
     if folder_id == _scope_folder(scope):
         return None, (f'error: "{path}" is this chat\'s own folder — it can be deleted only from the folder '
                       "above it or from the library chat")
+    refused = _work_refusal(lambda: work_filing.tree_op(Tree.read(conn), {"op": "delete", "id": folder_id}, "person"))
+    if refused:
+        return None, refused
     rows, carried, _ = tree_deletion(conn, FOLDERS, folder_id)
     ids, paths = {r[0] for r in rows}, folder_paths(conn)
     shared = shared_folders(scope["ws"], ids)

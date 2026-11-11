@@ -145,8 +145,11 @@ do: [the bundle note](../research/bundle.md#a-month-later-november-2026).
 Built, like the lazy boundaries. A feature's new state, and the effects
 that keep it, go into an owner module beside the feature, never into
 `app/App.jsx`. The owner is a `use…` hook, as the `ink/` owners,
-`comments/useComments.js`, `inbox/useInbox.js` and `vault/useVault.js` (a
-page's synced-vault standing, its banner and the two vault dialogs) are. State that must
+`comments/useComments.js`, `inbox/useInbox.js`, `vault/useVault.js` (a
+page's synced-vault standing, its banner, the vault dialogs and, on the
+desktop, the workspace's folder vaults and the tracking dialog) and
+`explorer/useFolderRows.js` / `useSummaries.js` (a work folder's rows and
+the pages the listing leaves out) are. State that must
 outlive a component, or be read outside React, is a store with listeners
 that components read through `useSyncExternalStore` (`pdf/translateState.js`,
 `recording/recorderStore.js`, `replay/playback.js`,
@@ -156,7 +159,8 @@ that components read through `useSyncExternalStore` (`pdf/translateState.js`,
   since the frontend has no component tests: `ink/stripState.js` under
   `useInkStrip.js`, `ink/inkSaver.js` under `useInkSave.js`,
   `inbox/inboxText.js` under `useInbox.js`, `vault/vaultState.js` under
-  `useVault.js`.
+  `useVault.js`, `explorer/knownPages.js` beside `useSummaries.js` and
+  `explorer/trackSelection.js` under `TrackDialog.jsx`.
 - **An owner is narrow.** It takes the few inputs it reads and returns
   state and stable commands. A hook that takes App's variables wholesale
   moves code without giving it an owner.
@@ -271,6 +275,7 @@ and the tab groups of the `workspace/` row.
 | `collaboration/` (existing: `usePageCollab.js`) | Queued writes, debounce, retries, explicit flush, unload handling — the live session hook `usePageCollab` ([collab.md](collab.md)); App keeps the transition effect and the remote-apply glue | `commit`, `flush`, `onRemoteOps` |
 | `editor/` | Block editing, caret/focus, undo, and notes rendering | Existing editor files, `editTail`, notes-window markup and editor actions |
 | `library/` | Listing derivation, selection, page/folder/label operations, and library UI | `pageBlocks` through `homeItems`, click handlers, filing, rename/move/delete, carousels |
+| `explorer/` (built: `workFolders.js`, `knownPages.js`, `trackSelection.js`, `useFolderRows.js`, `useSummaries.js`, `FolderList.jsx`, `TrackDialog.jsx`, [work_folders.md](work_folders.md)) | Work folders: the rules a file and the folders of one follow, a directory's list view read a page of rows at a time, the pages the listing does not carry, the tracking dialog | Extracted: the rules (node-tested twins of the server's) and the two reads; App merges the rows into `knownBlocks` and wires the menus, drops and the list view to the rules |
 | `workspace/` (built: the tab groups, `tabLayout.js`, `TabGroups.jsx`, `PagePane.jsx`, [tab_groups.md](tab_groups.md); the dock arrangement itself is still App's) | Dock arrangement, visibility, panel sizes, drag geometry, and phone presentation; the open tabs' groups side by side | `moveWindow`, `startWindowDock`, `renderSlotGroup`, per-page layout snapshots |
 | `documents/` (built: `pageDocument.js`, `documentView.js`, `DocumentPane.jsx`, `formats.js`) | What a page carries and which viewer it shows: one rule for the live page and a tab group's (`documentView`), the pane that mounts the viewer it names | Extracted: the viewer decision (App reads it as `docView`) and the viewer switch; App keeps the viewers' props |
 | `pdf/` | Viewer controls, PDF/notes jumps, scroll restoration, translation, and snapshots | Existing viewer/translation files, `restorePdfScroll`, zoom and capture logic |

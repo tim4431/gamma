@@ -1,29 +1,33 @@
-"""Page-first endpoints (/api/pages*): create a page, look pages up by file,
-make a page from a stored markdown file, attach, replace or detach a
-page's PDF. A
+"""Page-first endpoints (/api/pages*): create a page, look pages up by file
+or by id, make a page from a stored markdown file, attach, replace or
+detach a page's PDF, and put a work folder's file in the library or take it
+out. A
 page is a root block that may CARRY a PDF; the PDF is an action on an
 existing page, not the way pages come into being. (``POST
 /api/blocks/by-doc/{doc_id}`` is the lookup-or-create BY ATTACHMENT path for
 PDF ingest and the extension's dedup.)
 
-Every endpoint but ``by-docs`` (any member), ``family`` (any member, or
-a share that reaches the page) and ``POST /pages`` needs an editor of the
-workspace (``require_ws(write=True)``): a share token never changes a
-page's attachment (page properties stay the owner's, same rule as PUT
-/blocks/{id} under a share). ``POST /pages`` also takes an edit share's
-token, for a page inside a page the share reaches and nothing else.
+Every endpoint but ``by-docs`` and ``summaries`` (any member, or for
+``summaries`` a share, which reads the pages it reaches), ``family`` (any
+member, or a share that reaches the page) and ``POST /pages`` needs an
+editor of the workspace (``require_ws(write=True)``): a share token never
+changes a page's attachment (page properties stay the owner's, same rule
+as PUT /blocks/{id} under a share). ``POST /pages`` also takes an edit
+share's token, for a page inside a page the share reaches and nothing else.
 """
 
 import json
+import os
 import re
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import highlight_relocate, jobs, pdf_index, publish, upload_gc
+from .. import config, folder_links, highlight_relocate, jobs, linked_files, pdf_index, pdf_meta, publish, storage, \
+    upload_gc
 from ..auth import (actor_of, link_ratelimit, require_user_id, require_ws, require_ws_writer, resolve_ws,
-                    share_scope)
+                    share_scope, writer_client)
 from ..blocks_store import (
     BLOCK_COLUMNS,
     FOLDERS,
@@ -32,9 +36,12 @@ from ..blocks_store import (
     assert_block_in_scope,
     block_to_dict,
     create_page,
+    filing,
+    get_or_create_doc_page,
     load_props,
     page_ancestors,
     page_for_doc,
+    page_parents,
     page_root_id,
     pages_for_docs,
     sub_pages,
@@ -44,10 +51,14 @@ from ..blocks_store import (
 from ..db import connect_pages_db, connect_users_db, get_profile, safe_doc_id
 from ..documents.model import (document, document_props, document_title, file_hash, in_place, is_pdf, own_hash,
                                page_document, stored_name)
+from ..json_response import OrjsonResponse
 from ..markdown_zip_import import markdown_page
 from ..logbuf import log
 from ..storage import UNSTORED, find_upload_file
 from ..ops import MAX_OPS, OpError, after_commit, after_commits, apply_batches, apply_ops, props_patch
+from ..work_folders.library import work_folder_of
+from ..work_folders.marks import Tree, filing_targets
+from .blocks import SUMMARY_COLUMNS, op_refusal, page_preview, page_summary
 from .imports import originals_gone
 
 router = APIRouter(prefix="/api", tags=["pages"])
@@ -85,9 +96,12 @@ class HeldElsewhere(OpError):
     """The refusal of a ``doc_id`` another page carries already (409):
     ``page_id`` names that page, so a client can offer to open it."""
 
-    def __init__(self, page_id: str):
-        super().__init__(409, "attachment belongs to another page")
+    def __init__(self, page_id: str, detail: str = "attachment belongs to another page"):
+        super().__init__(409, detail)
         self.page_id = page_id
+
+    def answer(self) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": self.detail, "page_id": self.page_id})
 
 
 def _page(conn, page_id: str) -> dict:
@@ -172,7 +186,11 @@ def create_page_endpoint(payload: PageCreate, request: Request):
         refusal = publish.cap_refusal(ws)  # only a new page counts
         if refusal:
             return JSONResponse(status_code=402, content=refusal)
-        return create_page(conn, payload.title, props, actor=actor_of(request), block_id=payload.id)
+        try:  # judged by the work-folder rule as the writer the request names (blocks_store.create_page)
+            return create_page(conn, payload.title, props, actor=actor_of(request), client=writer_client(request),
+                               block_id=payload.id)
+        except OpError as e:
+            return op_refusal(e)
 
 
 @router.get("/pages/{page_id}/family")
@@ -224,6 +242,42 @@ def pages_by_docs(payload: DocsLookup, request: Request):
     ids = [d for d in dict.fromkeys(payload.doc_ids[:500]) if d]
     with connect_pages_db(ws) as conn:
         return {"pages": pages_for_docs(conn, ids)}
+
+
+class SummariesLookup(BaseModel):
+    ids: list[str] = []
+
+
+MAX_SUMMARIES = 500  # the pages one POST /pages/summaries names; 413 past it
+
+
+@router.post("/pages/summaries")
+def page_summaries(payload: SummariesLookup, request: Request):
+    """The pages ``ids`` as the library listing has them: ``{ids: [page
+    id, …]}`` → ``{"pages": [page_summary]}`` (routers/blocks.py, its
+    preview and parent included), in the order asked, for the live pages
+    among them: an unknown id, a block that is no page and a page in
+    Recently deleted are left out, and through a share link every page it
+    does not reach. The open tabs, the recents and the focused page
+    ask this for the pages the listing does not carry (a
+    work folder's files). Any member, or a share; 413 past
+    ``MAX_SUMMARIES``. A read, though a POST."""
+    if len(payload.ids) > MAX_SUMMARIES:
+        raise HTTPException(status_code=413, detail=f"at most {MAX_SUMMARIES} pages in one request")
+    ids = [i for i in dict.fromkeys(payload.ids) if i]
+    scope = share_scope(request)
+    with connect_pages_db(resolve_ws(request)) as conn:
+        if not conn.in_transaction:
+            conn.execute("BEGIN")  # one read snapshot for the rows, their previews and parents
+        found = {r[0]: r for r in conn.execute(
+            f"SELECT {SUMMARY_COLUMNS} FROM unified_blocks WHERE parent_id = 'root' "
+            "AND id IN (SELECT value FROM json_each(?))", (json.dumps(ids),))}
+        if scope is not None:
+            found = {i: r for i, r in found.items() if scope.allows_page(conn, i)}
+        parents = page_parents(conn) if found else {}
+        pages = [page_summary(found[i], page_preview(conn, i), parents.get(i, "")) for i in ids if i in found]
+        conn.rollback()
+    return OrjsonResponse({"pages": pages})
 
 
 class FromFile(BaseModel):
@@ -286,8 +340,9 @@ def _held_elsewhere(conn, doc_id: str):
     """The 409 for a ``doc_id`` a page carries already (``{"detail",
     "page_id"}``, so the client can offer to open that page), else None.
     Callers ask only for a ``doc_id`` the page itself does not carry, so
-    any page found is another. A page reading those bytes from a file on
-    this computer refuses nothing (``page_for_doc`` leaves it out)."""
+    any page found is another. A page that is no library document (one
+    reading those bytes from a file on this computer, a work folder's file
+    not in the library) refuses nothing (``page_for_doc`` leaves it out)."""
     other = page_for_doc(conn, doc_id) if doc_id else None
     if other:
         return JSONResponse(status_code=409, content={
@@ -394,7 +449,11 @@ def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
         if refusal == "":  # a Zotero mark nothing honours any more goes with the attach
             props.pop("zotero_pdf", None)
             op["props"] = props_patch(page["properties"], props)
-        result = after_commit(ws, conn, apply_ops(conn, page_id, [op], actor=actor_of(request)))
+        try:
+            result = after_commit(ws, conn, apply_ops(conn, page_id, [op], actor=actor_of(request),
+                                                      client=writer_client(request)))
+        except OpError as e:
+            return op_refusal(e)
     return {**page, "content": content, "properties": props, "updated_at": result["at"]}
 
 
@@ -418,12 +477,12 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
     doc_id, source_url = _attachment_body(payload)
     try:
         done = replace_attachment(ws, page_id, doc_id, source_url, payload.original_filename,
-                                  actor=actor_of(request), owner=request.state.user_id,
+                                  actor=actor_of(request), client=writer_client(request), owner=request.state.user_id,
                                   keep_old_days=payload.keep_old_days)
     except HeldElsewhere as e:
-        return JSONResponse(status_code=409, content={"detail": e.detail, "page_id": e.page_id})
+        return e.answer()
     except OpError as e:
-        raise HTTPException(status_code=e.status, detail=e.detail)
+        return op_refusal(e)
     return replaced_answer(done)
 
 
@@ -696,8 +755,197 @@ def detach_pdf(page_id: str, request: Request):
             raise HTTPException(status_code=404, detail="page has no attachment")
         for key in ATTACHMENT_KEYS:
             props.pop(key, None)
-        result = after_commit(ws, conn, apply_ops(
-            conn, page_id, [{"op": "set", "id": page_id,
-                             "props": props_patch(page["properties"], props)}], actor=actor_of(request)))
+        try:
+            result = after_commit(ws, conn, apply_ops(
+                conn, page_id, [{"op": "set", "id": page_id, "props": props_patch(page["properties"], props)}],
+                actor=actor_of(request), client=writer_client(request)))
+        except OpError as e:
+            return op_refusal(e)
         pdf_index.purge_unused(ws, conn)
     return {"ok": True, "block": {**page, "properties": props, "updated_at": result["at"]}}
+
+
+# --- a work folder's file and the library ---------------------------------------
+# (docs/dev/work_folders.md "Add to library, Save a copy, Remove"). A file is
+# in the library or not (``library``, work_folders/library.py); these three
+# are the person's ways in and out, ops on the page like any other, so a NAS
+# serves them too. A file's bytes come from this computer's path (its
+# ``linked_files`` row: the vault's round reads it there) or are stored
+# already.
+
+NOT_HERE = "Its bytes are on another computer."
+FILE_CHANGED = "The file changed: try again after the next sync."
+
+
+class LibraryFiling(BaseModel):
+    folder: str = ""  # a library folder (a filing target) to file it in as well; "" for none
+
+
+def _work_file(conn, page_id: str) -> dict:
+    """The live page ``page_id`` (``_load_page``: 404, 400 for no page),
+    400 unless it is a work folder's file."""
+    page = _load_page(conn, page_id)
+    if not work_folder_of(page["properties"]):
+        raise HTTPException(status_code=400, detail="not a work folder's file")
+    return page
+
+
+def _in_library(page: dict) -> bool:
+    return page["properties"].get("library") is True
+
+
+def _stem(page: dict) -> str:
+    """The file's name without its extension ("main" of ``main.pdf``), ""
+    while the vault has written none."""
+    name = page["properties"].get("file_name")
+    return (os.path.splitext(name)[0] or name) if isinstance(name, str) else ""
+
+
+def _library_folder(conn, folder: str) -> None:
+    """400 for a ``folder`` that is no filing target (``marks.filing_targets``:
+    a folder in no work folder)."""
+    if folder and folder not in filing_targets(Tree.read(conn)):
+        raise HTTPException(status_code=400, detail="that is no folder of the library")
+
+
+def _held_by_library(conn, page: dict) -> None:
+    """``HeldElsewhere`` (409, with its ``page_id``) when another library
+    page owns the file's PDF (``page_for_doc``: the library rule's)."""
+    other = page_for_doc(conn, own_hash(page_document(page["properties"])), "id, content")
+    if other and other[0] != page["id"]:
+        raise HeldElsewhere(other[0], f"Already in the library as “{other[1] or 'Untitled'}”.")
+
+
+def _store_bytes(ws: str, page: dict) -> None:
+    """The file's PDF stored here when it is not yet, from the path this
+    server reads it at (``linked_files.store_page_bytes``: the bytes its hash
+    names). 409 ``NOT_HERE`` when no path here holds it (a vault of another
+    computer), ``FILE_CHANGED`` when the file there is other bytes by now. A
+    note, or a PDF stored already, needs nothing."""
+    view = page_document(page["properties"])
+    if view is None or storage.exists(ws, view["file"]):
+        return
+    try:
+        stored = is_pdf(view) and config.folder_links_enabled() and linked_files.store_page_bytes(
+            ws, page["id"], view["file"], own_hash(view))
+    except folder_links.LinkError:
+        raise HTTPException(status_code=409, detail=FILE_CHANGED)
+    if not stored:
+        raise HTTPException(status_code=409, detail=NOT_HERE)
+
+
+def _summary(conn, page_id: str) -> dict:
+    """The page as the library listing has it (``page_summary``)."""
+    row = conn.execute(f"SELECT {SUMMARY_COLUMNS} FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    return page_summary(row, page_preview(conn, page_id), page_parents(conn).get(page_id, ""))
+
+
+def _addable(conn, page_id: str, folder: str) -> dict:
+    """The file an Add takes, checked: a work folder's file not in the
+    library yet (400), ``folder`` a library folder (400), its PDF owned by
+    no library page (``HeldElsewhere``)."""
+    page = _work_file(conn, page_id)
+    if _in_library(page):
+        raise HTTPException(status_code=400, detail="the file is in the library already")
+    _library_folder(conn, folder)
+    _held_by_library(conn, page)
+    return page
+
+
+@router.post("/pages/{page_id}/library")
+def add_file_to_library(page_id: str, payload: LibraryFiling, request: Request):
+    """*Add to library…* on a work folder's file: it becomes a library
+    document as well, the same page at its path. Its PDF's bytes are stored
+    first (``_store_bytes``), then one op on the page sets ``library`` and
+    files it in its directory and in ``folder`` (a library folder) when one
+    is given, and a PDF's title turns automatic (``auto_title``), so its
+    record may title it as an upload's does; the PDF's manifest is
+    scheduled (``pdf_meta.schedule``). → ``{page}``, its ``page_summary``.
+    400 for a page that is no file or is in the library already, or a
+    ``folder`` that is no library folder; 409 with ``page_id`` when a
+    library page owns those bytes already ("Already in the library as …"),
+    409 when the bytes cannot be had (``NOT_HERE``, ``FILE_CHANGED``).
+    Workspace editors."""
+    ws = require_ws(request, write=True)
+    folder = payload.folder.strip()
+    try:
+        with connect_pages_db(ws) as conn:  # the refusals before a file is read
+            page = _addable(conn, page_id, folder)
+        _store_bytes(ws, page)
+        with connect_pages_db(ws) as conn:
+            write_lock(conn)  # the checks again and the write as one step
+            page = _addable(conn, page_id, folder)
+            view = page_document(page["properties"])
+            props = {"library": True, FOLDERS: filing(page["properties"], FOLDERS)[:1] + ([folder] if folder else [])}
+            if is_pdf(view):
+                props["auto_title"] = page["content"]
+            after_commit(ws, conn, apply_ops(conn, page_id, [{"op": "set", "id": page_id, "props": props}],
+                                             actor=actor_of(request)))
+            out = _summary(conn, page_id)
+    except HeldElsewhere as e:
+        return e.answer()
+    except OpError as e:
+        return op_refusal(e)
+    if is_pdf(view):
+        pdf_meta.schedule(ws, own_hash(view))
+    return {"page": out}
+
+
+@router.delete("/pages/{page_id}/library")
+def remove_file_from_library(page_id: str, request: Request):
+    """*Remove from library* on a work folder's file in the library: one op
+    on the page drops ``library`` (and with it the library folders it was
+    filed in, ``work_folders.filing.root_patch``) and ``auto_title``, and
+    gives it its file's name for a title (the stem of ``file_name``). Its
+    stored bytes stay while the page shows them. → ``{page}``. 400 for a
+    page that is no file or not in the library. Workspace editors."""
+    ws = require_ws(request, write=True)
+    with connect_pages_db(ws) as conn:
+        write_lock(conn)
+        page = _work_file(conn, page_id)
+        if not _in_library(page):
+            raise HTTPException(status_code=400, detail="the file is not in the library")
+        op = {"op": "set", "id": page_id, "props": {"library": None, "auto_title": None}}
+        if _stem(page) and _stem(page) != page["content"]:
+            op["content"] = _stem(page)
+        try:
+            after_commit(ws, conn, apply_ops(conn, page_id, [op], actor=actor_of(request)))
+        except OpError as e:
+            return op_refusal(e)
+        return {"page": _summary(conn, page_id)}
+
+
+@router.post("/pages/{page_id}/library-copy")
+def copy_file_to_library(page_id: str, payload: LibraryFiling, request: Request):
+    """*Save a copy to library…* on a work folder's PDF: its bytes as they
+    are now stored (``_store_bytes``) and a library page made of them
+    (``get_or_create_doc_page``: titled by the file's name, filed in
+    ``folder``, a library folder), with no blocks, comments or stamps of the
+    file's: it is annotated apart. A library page that owns those bytes
+    already (the file once added, an earlier copy) answers instead. →
+    ``{page, existed}``; the manifest is scheduled for a page made. 400 for
+    a page that is no file with a PDF, or a ``folder`` that is no library
+    folder; 409 when the bytes cannot be had. Workspace editors."""
+    ws = require_ws(request, write=True)
+    folder = payload.folder.strip()
+    with connect_pages_db(ws) as conn:
+        page = _work_file(conn, page_id)
+        view = page_document(page["properties"])
+        if not is_pdf(view) or not own_hash(view):
+            raise HTTPException(status_code=400, detail="only a work folder's PDF is copied to the library")
+        _library_folder(conn, folder)
+    _store_bytes(ws, page)
+    doc_id = own_hash(view)
+    with connect_pages_db(ws) as conn:
+        write_lock(conn)  # whether the PDF has a library page, and its making, as one step
+        _library_folder(conn, folder)
+        existed = page_for_doc(conn, doc_id) is not None
+        try:
+            block = get_or_create_doc_page(conn, doc_id, _stem(page), original_filename=view["name"], folder=folder,
+                                           ws=ws, actor=actor_of(request))
+        except OpError as e:
+            return op_refusal(e)
+        out = _summary(conn, block["id"])
+    if not existed:
+        pdf_meta.schedule(ws, doc_id)
+    return {"page": out, "existed": existed}

@@ -425,6 +425,40 @@ def doc_props(hash="", *, url="", name="", at=None, copy=False) -> dict:
     return {"doc": document(hash, url, name, at=at, copy=copy)}
 
 
+def mark_work_folder(owner, folder_id, *, pull=True, library=False) -> dict:
+    """Make the folder ``folder_id`` of the client ``owner``'s workspace (its
+    ``X-Gamma-Workspace``, else the account's own) a work folder's root, as
+    its vault does: the mark ``properties.vault = {pull, library}`` set on
+    the folder block as ``DISK_CLIENT``, the one writer a person's op may
+    not stand in for (docs/dev/work_folders.md "The mark"). Returns the
+    mark."""
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import FOLDERS
+    from gamma.ops import commit_ops
+
+    session = owner.get("/api/session").json()
+    ws = owner.headers.get("X-Gamma-Workspace") or session["default_workspace"]
+    mark = {"pull": pull, "library": library}
+    commit_ops(ws, FOLDERS, [{"op": "set", "id": folder_id, "props": {"vault": mark}}],
+               actor=account_of(session["user"]), client=DISK_CLIENT)
+    return mark
+
+
+def work_props(folder_id, file_name, *, library=False, doc=None, directory="") -> dict:
+    """The properties of a work folder's file as its vault stamps them: a
+    file of the work folder ``folder_id`` named ``file_name``, filed in its
+    directory's folder (``directory``, else the work folder's top), in the
+    library when ``library``, with the document ``doc`` (a canonical doc,
+    ``documents.model.document``) when it has one. A person's write drops
+    the stamps: make such a page as the vault (``DISK_CLIENT``)."""
+    props = {"work_folder": folder_id, "file_name": file_name, "folders": [directory or folder_id]}
+    if library:
+        props["library"] = True
+    if doc is not None:
+        props["doc"] = doc
+    return props
+
+
 def files_in(folder):
     """``storage.files`` over a test's own folder: ``name -> Path | None``,
     for a renderer handed its files with no workspace behind them."""

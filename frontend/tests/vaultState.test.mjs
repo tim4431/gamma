@@ -2,8 +2,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  addsToLibrary, bannerKey, baseName, carriesToServer, directionText, editsFile, isOpenedPdf, libraryWorkspaces, notesLocked,
-  openedHere, readVault, vaultBanner, vaultChip, vaultConflictsPath,
+  addsToLibrary, bannerKey, baseName, carriesToServer, directionText, editsFile, isOpenedPdf, libraryWorkspaces,
+  notesLocked, openedHere, readVault, vaultBanner, vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
 
@@ -104,6 +104,7 @@ test("Add to library… is an opened PDF's, and another server's library one who
   assert.equal(carriesToServer(folder()), false);
   assert.equal(carriesToServer(null), false);
 });
+
 
 test("an opened file is this account's unless the server says another account opened it", () => {
   assert.equal(openedHere(opened({ mine: true })), true);

@@ -389,7 +389,10 @@ the live rows on a restore, and no export, clone or merge carries it.
   account (`''`, `link:<name>`, `mirror`, `zotero`), the folder and label
   trees, and the batches of `ops.UNFOLLOWED` (an offline copy's `sync`, a
   Zotero link's `zotero`, a synced vault's `disk`: typed elsewhere; the
-  paper-metadata worker's `meta`: no one's keystrokes) follow nothing. The
+  paper-metadata worker's `meta`: no one's keystrokes) follow nothing, nor
+  do the pages those writers make (`create_page` and `insert_page_tree`
+  take the writer's `client`: a work folder's files, which its vault
+  makes, are followed by whoever then edits or comments on them). The
   AI's batches are the chat owner's, so the owner follows what the AI edits.
 - **Without a row.** The owner of a personal workspace follows every page of
   it (`inbox._default_level`): the library is theirs, and its pages from

@@ -56,6 +56,7 @@ from ..pdf_text import PDF_EXTRACT_FAILED
 from ..pdf_text import page_count as _page_count
 from ..pdf_text import title_guess as _title_guess
 from ..textnorm import INDEX_VERSION, normalize_text, plain_text
+from ..work_folders.library import library_document, work_folder_of
 from .ai import CITE_PROMPT, METADATA_PROMPT, _resolve_model
 from .pdf import ARXIV_ID, CONTACT_EMAIL
 from .translate import _translate_effort
@@ -79,6 +80,10 @@ _ARXIV_NS = "{http://arxiv.org/schemas/atom}"
 # the browser suite): every lookup fails at once and finds nothing, instead
 # of waiting out its timeout.
 METADATA_LOOKUP = os.environ.get("GAMMA_METADATA_LOOKUP", "").strip().lower() not in ("0", "off", "false", "no")
+
+# Why a work folder's file that is not in the library gets no lookup
+# (docs/dev/work_folders.md "The library rule": no paper until it is added).
+NO_RECORD = "A work folder's file has no record: add it to the library to look one up."
 
 
 def _http_get(url: str, accept: str = "", timeout: int = 20, headers: dict | None = None) -> bytes:
@@ -1249,7 +1254,9 @@ def _save_props(ws: str, block_id: str, updates: dict | None = None, remove: tup
 def metadata_status(request: Request):
     """Library-wide health for the Settings "Paper metadata" pane: which pages
     have metadata, which yielded extractable text, and whether the search index
-    covers them. Listed: every page with a PDF attachment, plus pages that carry
+    covers them. Listed: every library document (``work_folders.library``: a
+    work folder's file only once it is in the library) with a PDF attachment,
+    plus those that carry
     ``properties.meta`` without one (a note about a paper whose PDF you don't
     own — it still cites; ``has_file`` is false, index fields stay unknown).
     Text/index state comes from the FTS index (data.db) — pages=0 rows are
@@ -1272,6 +1279,8 @@ def metadata_status(request: Request):
         view = page_document(props)
         if not view and not props.get("meta"):
             continue  # a plain note page: nothing to fetch metadata or text for
+        if not library_document(props):
+            continue  # an opened PDF, a work folder's file: no paper of the library
         doc_id = own_hash(view) if is_pdf(view) else ""
         entry = index.get(doc_id)
         meta = props.get("meta") or None
@@ -1414,8 +1423,12 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     A successful lookup also generates the slide citation (when AI is
     configured) so it is ready the moment the metadata is — not the first
     time someone opens the share popover. Raises HTTPException(404) when
-    nothing was found (after negative-caching it)."""
+    nothing was found (after negative-caching it), 409 (``NO_RECORD``) for a
+    work folder's file that is not in the library: a figure or a build is
+    no paper until it is added."""
     content, props = _load_page(ws, block_id)
+    if work_folder_of(props) and not library_document(props):
+        raise HTTPException(status_code=409, detail=NO_RECORD)
     if props.get("meta") and not force:
         return {"meta": props["meta"], "bibtex": bibtex_mod.page_entry(props),
                 "ppt_cite": props.get("ppt_cite", ""), "cite_key": props.get("cite_key", ""),
@@ -1710,7 +1723,8 @@ class _Batch:
     in the order asked. A start while the batch is open adds its papers to
     it; the run takes them one at a time and closes the batch once none is
     left. Both happen under ``_batches_lock``, so a paper is never added to
-    a batch whose run already ended."""
+    a batch whose run already ended. ``skipped`` counts the pages asked for
+    that are no library documents, which ``metadata_batch`` leaves out."""
 
     def __init__(self, key: tuple[str, str]):
         self.key = key
@@ -1718,8 +1732,10 @@ class _Batch:
         self.items: list[list] = []      # [block_id, title, force, options]
         self.waiting: dict[str, int] = {}  # block_id → its item, while not taken yet
         self.taken = 0
+        self.skipped = 0
 
-    def add(self, papers: list[tuple[str, str]], force: bool, options: dict) -> None:
+    def add(self, papers: list[tuple[str, str]], force: bool, options: dict, skipped: int = 0) -> None:
+        self.skipped += skipped
         for block_id, title in papers:
             at = self.waiting.get(block_id)
             if at is not None and at >= self.taken:  # asked again before its turn
@@ -1757,7 +1773,8 @@ class _Batch:
             with _batches_lock:
                 self._close()
         job.progress(done=len(self.items), total=len(self.items), unit="papers", item="")
-        return {"papers": len(self.items), "fetched": fetched, "failed": failed}
+        return {"papers": len(self.items), "fetched": fetched, "failed": failed,
+                **({"skipped": self.skipped} if self.skipped else {})}
 
 
 _batches: dict[tuple[str, str], _Batch] = {}  # (account, workspace) → its open batch
@@ -1773,11 +1790,13 @@ def metadata_batch(payload: MetaBatchRequest, request: Request):
     PDFs (``force: false``). An account has one batch per workspace: a start
     while it is queued or running adds its papers to it and answers that
     job. A paper nothing is found for is counted, not fatal; a stop lands
-    between two papers."""
+    between two papers. A page that is no library document (an opened PDF,
+    a work folder's file not in the library: ``library_document``) is left
+    out and counted (the result's ``skipped``)."""
     user_id = require_user_id(request)
     ws = require_ws(request, write=True)
     wanted = list(dict.fromkeys(i for i in payload.block_ids if i))
-    titles = {}
+    titles, skipped = {}, 0
     with connect_pages_db(ws) as conn:
         for start in range(0, len(wanted), 500):
             chunk = wanted[start:start + 500]
@@ -1785,7 +1804,11 @@ def metadata_batch(payload: MetaBatchRequest, request: Request):
                 "SELECT id, content, properties FROM unified_blocks WHERE parent_id = 'root' "
                 f"AND id IN ({', '.join('?' for _ in chunk)})", chunk).fetchall()
             for block_id, content, props_json in rows:
-                meta = json.loads(props_json or "{}").get("meta") or {}
+                props = json.loads(props_json or "{}")
+                if not library_document(props):
+                    skipped += 1
+                    continue
+                meta = props.get("meta") or {}
                 titles[block_id] = meta.get("title") or content or "Untitled"
     papers = [(i, titles[i]) for i in wanted if i in titles]  # own pages only, in the order asked
     if not papers:
@@ -1798,11 +1821,11 @@ def metadata_batch(payload: MetaBatchRequest, request: Request):
         if batch is not None:
             job = jobs.get(batch.job_id)
             if job and job["state"] in jobs.ACTIVE and not job["stopping"]:
-                batch.add(papers, payload.force, options)
+                batch.add(papers, payload.force, options, skipped)
                 return job
             del _batches[key]  # stopped (while queued, its run never started): it takes no more
         batch = _Batch(key)
-        batch.add(papers, payload.force, options)
+        batch.add(papers, payload.force, options, skipped)
         job = jobs.start("metadata", owner=user_id, ws=ws, run=lambda job: batch.run(job, ws, user_id),
                          title="Paper metadata lookup", params={"papers": len(papers)}, writes=True)
         batch.job_id = job["id"]

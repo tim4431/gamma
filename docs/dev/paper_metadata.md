@@ -398,9 +398,19 @@ is configured.
 `GET /api/metadata/status` reports library-wide health (per paper: metadata
 present/failed + source/kind, extracted-text chars and index state from the
 FTS tables; the chars are the count the indexer kept per paper, a lookup).
-It lists every page with a document or a record; a paper's `doc_id` is the
-PDF it owns, as for the lookup (`""` on a duplicated page; a PDF read in
-place is listed like a stored one). It feeds the Settings → Maintenance
+It lists every library document with a document or a record; a paper's
+`doc_id` is the PDF it owns, as for the lookup (`""` on a duplicated page).
+A library document is the library's paper
+([work_folders.md](work_folders.md) "The library rule",
+`work_folders.library.library_document`): a page outside every work folder
+unless its PDF is read in place, and a work folder's file once it is added
+to the library. So an opened PDF read where it is, and a figure or a build
+of a work folder, are no paper of the library: not listed, and a batch
+leaves them out, counted as `skipped`. A work folder's file not in the
+library has no record at all: `metadata/fetch` answers it 409 ("A work
+folder's file has no record: add it to the library to look one up."), and
+the open page does not ask; an opened PDF may still be looked up by hand.
+It feeds the Settings → Maintenance
 pane's status table and its adaptive batch retry (selected, else missing + unverified; plus "Refetch
 all"/"Refetch shown"). The batch is the `metadata` background job (`POST
 /api/jobs/metadata`, [tasks.md](tasks.md)): the server looks the papers up
@@ -427,7 +437,10 @@ the metadata button's state, so a lookup run elsewhere (this job, the
 extension's clip) shows without a reload.
 The page stores an `auto_title` compare-and-swap marker: a successful lookup may
 replace that filename with the paper title only while the page title still
-matches the marker, and only with a record that is not unverified: the
+matches the marker, and only with a record that is not unverified (a work
+folder's PDF added to the library gets the marker on its title as it
+stands then, its file's stem as a rule, and Remove from library gives it
+the stem back): the
 marker waits for a confirmed record, a typed identifier or a hand edit. Any explicit rename clears it, so a slow lookup cannot
 overwrite the user's edit. The fetch response always carries `page_title`,
 the page's title as it stands after the write (`title_updated` says whether

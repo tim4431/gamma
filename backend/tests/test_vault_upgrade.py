@@ -423,6 +423,31 @@ def test_a_folder_kept_before_whose_state_file_is_gone_writes_nothing_beside_its
         owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
+def test_the_upgrade_takes_what_the_directorys_gammaignore_tracks(owner, disk, over_http, settled):
+    """With no state file, the upgrade's pass reads the files its rounds
+    will: one the directory's ``.gammaignore`` leaves out is no file of the
+    vault, and one that cannot be read stops the upgrade before it takes
+    anything."""
+    lab, dest = _lab(owner, "UP ignored"), disk / "Ignored"
+    _kept(lab, dest, _token()["token"])
+    link = _create(owner, folder=lab["folder"], path=str(dest))
+    (dest / gamma_sync.STATE).unlink()
+    (dest / ".gammaignore").mkdir()
+    try:
+        status = _sync(owner, link["id"])
+        assert "cannot be read" in status["last_error"] and vault_store.files(link["id"]) == {}, status
+        assert folder_links.older(folder_links.get_link(link["id"]))
+        (dest / ".gammaignore").rmdir()
+        (dest / ".gammaignore").write_text("/UP plain/\n", encoding="utf-8")
+        status = _sync(owner, link["id"])
+        assert status["upgraded_at"] and not status["last_error"], status
+        rows = vault_store.files(link["id"])
+        assert rows["UP paper.pdf"]["page_id"] == lab["paper"] and rows["UP plain.md"]["page_id"] == lab["plain"]
+        assert not [p for p in rows if p.startswith("UP plain/")] and (dest / "UP plain/UP child.md").exists()
+    finally:
+        owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
 def test_a_scan_sweeps_no_state_file_below_the_vaults_root(owner, disk, over_http, settled, monkeypatch):
     """The sweep of Gamma's temporary names took any
     ``.gamma-sync.json`` below the vault, a nested older link's before its

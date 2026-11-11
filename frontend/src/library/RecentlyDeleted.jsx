@@ -19,7 +19,11 @@ import { aheadTrash, dropTrash } from "./trashList.js";
 // comes back inside (`parent`, its path with it). The list
 // asked for ahead, as the pointer or the focus reached the trash button
 // (trashList.js), shows at once; without it the list comes into focus once
-// it is in (Reveal).
+// it is in (Reveal). A work folder's file has no Restore unless the server
+// says a person's restore passes (`restorable`, gamma/trash.py): a note of a
+// work folder that pulls, sent there from Gamma. One its vault sent (its
+// file deleted or untracked) comes back with its file
+// (docs/dev/work_folders.md).
 export default function RecentlyDeleted({ onClose, confirm, onRestored, setStatus, tree, pages: pagesById }) {
   const [ahead] = useState(aheadTrash);
   const [list, setList] = useState(ahead?.value || null); // {pages, keep_days} | {error}
@@ -112,9 +116,11 @@ export default function RecentlyDeleted({ onClose, confirm, onRestored, setStatu
               </span>
             </span>
             <span className="aiProvActions">
-              <button className="uiBtn sm" disabled={busy} onClick={() => restore(page)}>
-                <UndoIcon size={16} />{t("Restore")}
-              </button>
+              {page.restorable !== false ? (
+                <button className="uiBtn sm" disabled={busy} onClick={() => restore(page)}>
+                  <UndoIcon size={16} />{t("Restore")}
+                </button>
+              ) : <span className="aiProvDesc">{t("Comes back when its file is tracked again.")}</span>}
               <button className="uiBtn sm iconSq danger" disabled={busy} onClick={() => deleteForGood(page)}
                 title={t("Delete permanently")} aria-label={t("Delete “{title}” permanently", { title: page.title })}>
                 <Trash2Icon size={16} />

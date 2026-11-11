@@ -25,7 +25,7 @@ from gamma import (collab, config, folder_links, gamma_sync, inbox, pdf_meta, pu
 from gamma.blocks_store import FOLDERS, block_kind, new_block_id
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
 from gamma.integrations import create_token
-from gamma.ops import MAX_CONTENT, commit_ops, delete_page, trash_page
+from gamma.ops import MAX_CONTENT, SYNC_CLIENT, commit_ops, delete_page, trash_page
 from gamma.publisher_sessions import seal
 from test_folder_links import over_http  # noqa: F401: the over_http fixture
 
@@ -113,6 +113,15 @@ def _page_of(link, rel) -> str:
     return vault_store.files(link["id"])[rel]["page_id"]
 
 
+def _made_in(c, title, folder) -> str:
+    """A page made in Gamma filed in ``folder``, a directory of a work folder
+    that pulls: the server stamps it as the work folder's note (a person may
+    not file an existing page there)."""
+    r = c.post("/api/blocks", json={"parent_id": "root", "content": title, "properties": {"folders": [folder]}})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
 def _blocks(link, page_id) -> dict:
     return vault_sync.LocalRemote(link["workspace_id"], link["folder_id"], link["created_by"]).page(page_id).blocks
 
@@ -159,10 +168,14 @@ def test_a_vault_made_from_a_directory_writes_only_its_marker_into_a_new_folder(
     assert r.status_code == 200, r.text
     seen = r.json()
     assert seen == {"path": str(root.resolve()), "notes": 2, "pdfs": 0, "pictures": 1, "untracked": 0, "empty": False,
-                    "marker": None, "refusal": "", "pages": 0, "will_write": [".gamma/"]}
+                    "marker": None, "refusal": "", "pages": 0, "will_write": [".gamma/"],
+                    "gammaignore": {"exists": False, "ours": False}}
     assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*")) == before      # nothing written
     (disk / "Empty").mkdir(parents=True)
     assert owner.post("/api/folder-links/preview", json={"path": str(disk / "Empty")}).json()["empty"] is True
+    _put(disk / "Sources" / "main.tex", "\\documentclass{article}\n")   # the default reads no source
+    sources = owner.post("/api/folder-links/preview", json={"path": str(disk / "Sources")}).json()
+    assert (sources["untracked"], sources["empty"]) == (1, False)
 
     same_name = make_folder(owner, "Lab notes")       # a folder of the name: never the one a directory fills
     link = _create(owner, path=str(root), new_folder=True, push="everything")
@@ -183,7 +196,9 @@ def test_a_vault_made_from_a_directory_writes_only_its_marker_into_a_new_folder(
     assert _texts(link, ideas) == ["# Ideas", "a first idea"]
     assert _state(owner, ideas) == {"vault": {"id": link["id"], "name": "Lab notes", "scope": "folder",
                                               "path": str(root.resolve() / "Ideas.md"), "pull": True,
-                                              "push": "everything", "problem": "", "conflicts": 0, "paused": False},
+                                              "push": "everything", "problem": "", "conflicts": 0, "paused": False,
+                                              "work_folder": True, "choosing": False, "library": False,
+                                              "page": {"library": False, "file_name": "Ideas.md"}},
                                     "reader": None}
     assert owner.get(f"/api/folder-links/{link['id']}").json()["status"]["folder_path"] == ["Lab notes"]
 
@@ -302,15 +317,17 @@ def test_vaults_that_push_do_not_share_a_folder_and_the_newer_of_two_that_came_t
     r = owner.patch(f"/api/folder-links/{pulled['id']}", json={"push": "pdfs"})
     assert r.status_code == 400 and "pushes into too" in r.json()["detail"]
 
-    # the folder of the older one moved below the newer one's: the newer stops, the older goes on
-    commit_ops(workspace_of(OWNER), FOLDERS, [{"op": "move", "id": below, "parent": side}], actor=account_of(OWNER))
+    # the folder of the older one moved below the newer one's (a mirror's merge: no person files a folder in a work
+    # folder): the newer stops, the older goes on
+    commit_ops(workspace_of(OWNER), FOLDERS, [{"op": "move", "id": below, "parent": side}], actor=account_of(OWNER),
+               client=SYNC_CLIENT)
     status = _sync(owner, second["id"])
     assert "pushes into too" in status["stopped"] and status["last_error"] == status["stopped"] and status["failed_at"]
     assert _sync(owner, first["id"])["last_error"] == ""
 
 
 def test_a_change_of_direction_passes_the_same_refusals(owner, disk):
-    link = _vault(owner, disk / "Turning", {"t.md": "t\n"})
+    link = _vault(owner, disk / "Turning", {"t.md": "t\n"}, library=True)    # its files in the library: its push may come down
     url = f"/api/folder-links/{link['id']}"
     assert owner.patch(url, json={"pull": False}).json()["pull"] is False             # a vault that only pushes
     r = owner.patch(url, json={"push": "off"})
@@ -565,10 +582,11 @@ def test_the_collab_rooms_say_which_pages_are_open_and_where_the_carets_are():
 
 def _mixed(owner, disk, name):
     """A vault with a note of the person's, a page made in Gamma (its file
-    the vault's), and a PDF read where it is: ``(link, root, pages)``."""
+    the vault's), and a PDF read where it is, all in the library (the vault's
+    switch on): ``(link, root, pages)``."""
     root = disk / name
-    link = _vault(owner, root, {"Mine.md": "my own note\n", "Paper.pdf": _pdf(f"{name} paper")})
-    page = make_page(owner, f"{name} from Gamma", {"folders": [link["folder_id"]]})["id"]
+    link = _vault(owner, root, {"Mine.md": "my own note\n", "Paper.pdf": _pdf(f"{name} paper")}, library=True)
+    page = _made_in(owner, f"{name} from Gamma", link["folder_id"])
     commit_ops(link["workspace_id"], page, [{"op": "insert", "id": new_block_id(), "parent": page,
                                              "content": "written in gamma", "props": {}}], actor=link["created_by"])
     _sync(owner, link["id"])
@@ -581,7 +599,7 @@ def test_removing_a_vault_keeps_its_files_and_pages_and_stores_its_pdfs_first(ow
     ws, size = link["workspace_id"], (root / "Paper.pdf").stat().st_size
     assert _props(link, pages["pdf"])["doc"]["at"] == "path"
     r = owner.get(f"/api/folder-links/{link['id']}/removal")
-    assert r.status_code == 200 and r.json() == {"pages": 3, "in_place": 1, "bytes": size}
+    assert r.status_code == 200 and r.json() == {"pages": 3, "in_place": 1, "bytes": size, "files": 0, "in_library": 3}
     doc = _props(link, pages["pdf"])["doc"]["hash"]
     assert not storage.exists(ws, f"{doc}.pdf")
 
@@ -595,6 +613,33 @@ def test_removing_a_vault_keeps_its_files_and_pages_and_stores_its_pdfs_first(ow
                             (ws, f"{root}%")).fetchone()[0] == 0
     remote = vault_sync.LocalRemote(ws, link["folder_id"], link["created_by"])
     assert all(remote.state(p) == "live" for p in pages.values())
+    assert not any(key in _props(link, p) for p in pages.values() for key in ("work_folder", "library", "file_name"))
+    assert remote.mark() is None                                                   # library pages, filed as they were
+
+
+def test_removing_a_work_folder_sends_its_files_out_of_the_library_to_recently_deleted(owner, disk):
+    """Its files not in the library go to Recently deleted, those in it stay
+    library pages, and the directory folders that leaves empty go: they stood
+    for directories, and nothing is filed there now."""
+    root = disk / "Leaving"
+    link = _vault(owner, root, {"a.md": "a\n", "deep/b.md": "b\n", "kept/c.md": "c\n", "Paper.pdf": _pdf("leaving")})
+    ws, pages = link["workspace_id"], {rel: _page_of(link, rel) for rel in ("a.md", "deep/b.md", "kept/c.md", "Paper.pdf")}
+    kept = pages["kept/c.md"]
+    commit_ops(ws, kept, [{"op": "set", "id": kept, "props": {"library": True}}], actor=link["created_by"])
+    folders = {d: row["folder_id"] for d, row in vault_store.dirs(link["id"]).items()}
+    r = owner.get(f"/api/folder-links/{link['id']}/removal")
+    assert r.json() | {"bytes": 0} == {"pages": 4, "in_place": 1, "bytes": 0, "files": 3, "in_library": 1}
+
+    assert owner.delete(f"/api/folder-links/{link['id']}").status_code == 200
+    remote = vault_sync.LocalRemote(ws, link["folder_id"], link["created_by"])
+    assert {rel: remote.state(p) for rel, p in pages.items()} == {"a.md": "trashed", "deep/b.md": "trashed",
+                                                                  "kept/c.md": "live", "Paper.pdf": "trashed"}
+    assert not any(key in _props(link, kept) for key in ("work_folder", "library", "file_name"))
+    with connect_pages_db(ws) as conn:
+        left = {r[0] for r in conn.execute("SELECT id FROM unified_blocks WHERE page_id = ?", (FOLDERS,))}
+    assert folders["kept"] in left and link["folder_id"] in left and folders["deep"] not in left
+    assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*.*") if ".gamma" not in p.parts) == [
+        "Paper.pdf", "a.md", "deep/b.md", "kept/c.md"]                             # the disk as it was
 
 
 def test_removing_a_vault_with_its_files_trashes_only_those_its_pulls_made(owner, disk):
@@ -636,7 +681,7 @@ def test_a_vault_whose_disk_is_gone_is_removed_with_its_pages_reading_their_file
 
 def test_a_notes_file_is_read_and_written_from_gamma_through_the_write_path(owner, disk):
     root = disk / "Edited"
-    link = _vault(owner, root, {"E.md": "# Title\n\nline one\n", "Paper.pdf": _pdf("edited paper")})
+    link = _vault(owner, root, {"E.md": "# Title\n\nline one\n", "Paper.pdf": _pdf("edited paper")}, library=True)
     page = _page_of(link, "E.md")
     url = f"/api/folder-links/page/{page}/file"
     got = owner.get(url).json()
@@ -713,7 +758,8 @@ def test_a_page_of_no_vault_and_a_page_of_a_followed_file(owner, disk):
     link = _create(owner, kind="file", page=followed, path=str(f))
     vault = _state(owner, followed)["vault"]
     assert vault == {"id": link["id"], "name": "follows.pdf", "scope": "file", "path": str(f.resolve()), "pull": False,
-                     "push": "pdfs", "problem": "", "conflicts": 0, "paused": False}
+                     "push": "pdfs", "problem": "", "conflicts": 0, "paused": False, "work_folder": False,
+                     "choosing": False, "library": False, "page": {"library": False, "file_name": ""}}
     folder = make_folder(owner, "VR kept")
     kept = make_page(owner, "VR kept page", {"folders": [folder]})["id"]
     older = _create(owner, folder=folder, path=str(disk / "Kept"))
@@ -794,7 +840,9 @@ def test_a_directory_vault_takes_in_the_file_vaults_inside_it(owner, disk):
     with connect_pages_db(link["workspace_id"]) as conn:
         papers = conn.execute("SELECT id FROM unified_blocks WHERE page_id = ? AND parent_id = ? AND content = 'papers'",
                               (FOLDERS, link["folder_id"])).fetchone()[0]
-    assert _props(link, page)[FOLDERS][0] == papers
+    props = _props(link, page)
+    assert props[FOLDERS][0] == papers                              # a work folder's file now, in the library as it was
+    assert (props["work_folder"], props["library"], props["file_name"]) == (link["folder_id"], True, "Followed.pdf")
     status = _sync(owner, link["id"])
     assert status["last_error"] == ""
     assert [r["page_id"] for p, r in vault_store.files(link["id"]).items() if r["kind"] == "pdf"] == [page]
@@ -943,7 +991,7 @@ def test_removing_a_vault_with_its_files_keeps_a_pulled_file_the_person_wrote_in
     pushed = root / "Written in from Gamma.md"
     _put(pushed, "written in gamma\n\nand a chapter the person wrote\n")
     _sync(owner, link["id"])                                  # pushed: the person's file now
-    later = make_page(owner, "Changed later", {"folders": [link["folder_id"]]})["id"]
+    later = _made_in(owner, "Changed later", link["folder_id"])
     commit_ops(link["workspace_id"], later, [{"op": "insert", "id": new_block_id(), "parent": later,
                                               "content": "from gamma", "props": {}}], actor=link["created_by"])
     _sync(owner, link["id"])
@@ -966,10 +1014,10 @@ def test_removing_a_vault_whose_marker_went_stores_its_pdfs_first(owner, disk):
 def test_a_vault_whose_trash_was_emptied_can_be_removed(owner, disk):
     link, root, pages = _mixed(owner, disk, "Emptied")
     ws = link["workspace_id"]
-    with connect_pages_db(ws) as conn:
-        trash_page(ws, conn, pages["pdf"], actor=link["created_by"])
+    with connect_pages_db(ws) as conn:            # a note follows Gamma where its work folder pulls: to the vault's trash
+        trash_page(ws, conn, pages["mine"], actor=link["created_by"])
     _sync(owner, link["id"])
-    assert not (root / "Paper.pdf").exists()
+    assert not (root / "Mine.md").exists()
     shutil.rmtree(root / ".gamma" / "trash")
     assert owner.delete(f"/api/folder-links/{link['id']}", params={"files": "keep"}).status_code == 200
 
@@ -1212,7 +1260,8 @@ def test_a_folder_that_only_pulls_takes_no_page_from_a_vault(owner, disk):
     reading = make_folder(owner, "VR reading list")
     _create(owner, folder=reading, path=str(disk / "Reading mirror"))                 # pulls only, made first
     root = disk / "Pushing"
-    link = _vault(owner, root, {"top.md": "top\n", "Projects/plan.md": "the person's plan\n", "idea.md": "an idea\n"})
+    link = _vault(owner, root, {"top.md": "top\n", "Projects/plan.md": "the person's plan\n", "idea.md": "an idea\n"},
+                  library=True)                       # its files in the library, filed in library folders too
     _create(owner, folder=vault_store.dirs(link["id"])["Projects"]["folder_id"], path=str(disk / "Mirror"))  # below
     idea = _page_of(link, "idea.md")
     commit_ops(link["workspace_id"], idea, [{"op": "set", "id": idea, "props": {
@@ -1276,7 +1325,7 @@ def test_a_member_removed_is_told_nothing_of_the_workspace_by_its_vault_s_refusa
     ws, alice, bob, _vera = lab
     leaver = _member(ws, "vr_leaver2")
     top, side = make_folder(alice, "VR top"), make_folder(alice, "VR side")
-    bobs = _create(bob, folder=top, path=str(disk / "Bob's notes"), push="everything")
+    bobs = _create(bob, folder=top, path=str(disk / "Bob's notes"), push="pdfs")
     mine = _create(leaver, folder=side, path=str(disk / "Leaver's papers"), push="pdfs")
     assert _sync(leaver, mine["id"])["last_error"] == ""
     workspaces.remove_member(ws, account_of("vr_leaver2"))
@@ -1298,7 +1347,7 @@ def test_a_maker_who_only_views_now_is_told_no_other_vault_s_place(lab, disk):
     ws, alice, bob, _vera = lab
     maker = _member(ws, "vr_demoted")
     top, side = make_folder(alice, "VR demoted top"), make_folder(alice, "VR demoted side")
-    _create(bob, folder=top, path=str(disk / "Bob's shelf"), push="everything")
+    _create(bob, folder=top, path=str(disk / "Bob's shelf"), push="pdfs")
     mine = _create(maker, folder=side, path=str(disk / "Demoted papers"), push="pdfs")
     assert _sync(maker, mine["id"])["last_error"] == ""
     commit_ops(ws, FOLDERS, [{"op": "move", "id": side, "parent": top}], actor=account_of(OWNER))
@@ -1410,7 +1459,7 @@ def test_an_open_page_whose_kept_note_moved_has_a_round_once_not_every_tick(owne
     """A note kept (changed elsewhere, not pushed) keeps its row's stat, so its
     open page had a round every 2 s for as long as it stayed open."""
     root = disk / "Kept open"
-    link = _vault(owner, root, {"k.md": "k\n", "other.md": "o\n"})
+    link = _vault(owner, root, {"k.md": "k\n", "other.md": "o\n"}, library=True)
     owner.patch(f"/api/folder-links/{link['id']}", json={"push": "pdfs"}).raise_for_status()
     page = _page_of(link, "k.md")
     _put(root / "k.md", "k, changed in another editor\n", age=5)
@@ -1487,10 +1536,12 @@ def test_the_file_of_a_vault_that_pushes_no_notes_is_read_on_its_makers_computer
     assert "own aside" in alice.get(f"/api/folder-links/page/{page}/file").json()["text"]
 
 
-def test_a_vault_that_purges_a_pdf_another_page_reads_in_place_stores_it_first(owner, disk, monkeypatch):
+def test_a_vault_that_purges_a_pdf_another_page_reads_in_place_leaves_it_there(owner, disk, monkeypatch):
     """A PDF opened with *Open with* (a reader page, never stored) and later
     inside a vault: the vault's page of it went to Recently deleted and was
-    purged, and the sweep took the reader page's only copy from the disk."""
+    purged, and the sweep took the reader page's only copy from the disk. A
+    work folder's PDF is the disk's: its page in Recently deleted (a mirror
+    sent it there) keeps the file where it is, and the purge forgets it."""
     from gamma import trash
 
     root = disk / "Papers"
@@ -1498,17 +1549,15 @@ def test_a_vault_that_purges_a_pdf_another_page_reads_in_place_stores_it_first(o
     reader = owner.post("/api/folder-links/open", json={"path": str(f)}).json()["page"]
     link = _vault(owner, root, {"n.md": "note\n"})
     ws, page = link["workspace_id"], _page_of(link, "x.pdf")
-    doc = _props(link, page)["doc"]["hash"]
-    assert page != reader and not storage.exists(ws, f"{doc}.pdf")
+    assert page != reader
     with connect_pages_db(ws) as conn:
-        trash_page(ws, conn, page, actor=link["created_by"])
+        trash_page(ws, conn, page, actor=link["created_by"], client=SYNC_CLIENT)
     _sync(owner, link["id"])
     trash.purge(ws, page, actor=link["created_by"])
-    _sync(owner, link["id"])
-    assert list(root.rglob("*.pdf"))                                   # the trash keeps it thirty days
     monkeypatch.setattr(vault_disk, "TRASH_DAYS", 0)                   # thirty days later
-    _sync(owner, link["id"])
-    assert not list(root.rglob("*.pdf")) and storage.exists(ws, f"{doc}.pdf")
+    for _ in range(2):
+        _sync(owner, link["id"])
+    assert [p.relative_to(root).as_posix() for p in root.rglob("*.pdf")] == ["x.pdf"] and f.read_bytes()
     assert _state(owner, reader)["reader"]["missing"] is False
 
 
@@ -1532,7 +1581,7 @@ def test_an_older_copy_of_the_vault_at_its_place_stops_it_until_relinked(owner, 
     shutil.copytree(root, backup)
     page = _page_of(link, "n0.md")
     _edit(link, page, _find(link, page, "note 0 as it was"), "a week of work typed in gamma")
-    newer = make_page(owner, "Written after the backup", {"folders": [link["folder_id"]]})["id"]
+    newer = _made_in(owner, "Written after the backup", link["folder_id"])
     _insert(link, newer, "new since the backup")
     _sync(owner, link["id"])
     os.rename(root, disk / "E unplugged")

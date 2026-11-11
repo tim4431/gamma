@@ -52,7 +52,7 @@ from ..blocks_store import (
     write_lock,
 )
 from ..db import connect_pages_db, get_pref, safe_doc_id
-from ..documents.model import SQL_LIBRARY_PDF, own_hash, page_document, stored_name, upload_url, url_hash
+from ..documents.model import own_hash, page_document, stored_name, upload_url, url_hash
 from ..logbuf import log
 from ..markdown_import import TooManyBlocks
 from ..net_guard import browsing_session
@@ -61,6 +61,9 @@ from ..server_settings import can_store
 from .. import pdf_meta, storage, upload_gc
 from ..storage import put_upload, url_filename
 from ..web_clip import MAX_HTML_CHARS, article_blocks
+from ..work_folders.filing import refusal_text
+from ..work_folders.library import SQL_LIBRARY_PDF, SQL_LISTED
+from ..work_folders.marks import Tree, filing_targets
 from .metadata import fetch_page_metadata, registry_record, web_names_a_work, web_record
 from .pdf import ARXIV_ID, download_pdf, resolve_source
 
@@ -97,8 +100,9 @@ def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict
     """Lookup BY ATTACHMENT: the page whose PDF attachment is this paper, by
     DOI, arXiv id, or any of its URLs — only pages that own a PDF (the
     ``doc_id`` column) are candidates (a clip dedups against files, not
-    titles), and a page reading its PDF from this computer is none
-    (``SQL_LIBRARY_PDF``). Identifier matches come from the metadata cache
+    titles), and only library documents (``SQL_LIBRARY_PDF``: a page reading
+    its PDF from this computer is none, nor is a work folder's file not in
+    the library). Identifier matches come from the metadata cache
     (properties.meta), the identifiers the web page it was saved from
     carried in its tags (properties.web_meta, there before the lookup lands
     and after one that failed; never a DOI only seen in that page's text)
@@ -152,14 +156,18 @@ def find_web_page(conn, url: str) -> dict | None:
 
 def _filing(ws: str, actor: str, payload: "ClipRequest") -> tuple[str, list[str]]:
     """Where a clip files its page: ``(folder id or "", label ids)`` — the
-    request's ``folder`` (an id; 400 when it is no folder), else its
-    ``folder_path`` (names split on "/"), and its label names, each folder
-    or label made when it is missing (``ops.ensure_filing``)."""
+    request's ``folder`` (an id; 400 when it is no folder, or one of a work
+    folder's, whose files come from its directory), else its
+    ``folder_path`` (names split on "/", a work folder passed by), and its
+    label names, each folder or label made when it is missing
+    (``ops.ensure_filing``)."""
     names = split_path(payload.folder_path or "")
     labels = [str(label).strip() for label in (payload.labels or [])[:50] if str(label).strip()]
     with connect_pages_db(ws) as conn:
         if payload.folder and not folder_chain(conn, payload.folder):
             raise HTTPException(status_code=400, detail="no such folder")
+        if payload.folder and Tree.read(conn).work_of(payload.folder):
+            raise HTTPException(status_code=400, detail=refusal_text("directories"))
         folder_ids, label_ids = ensure_filing(ws, conn, paths=[names] if names and not payload.folder else [],
                                               labels=labels, actor=actor)
     return payload.folder or folder_ids.get(tuple(names), ""), list(dict.fromkeys(label_ids[n] for n in labels))
@@ -537,10 +545,11 @@ def library_preview(request: Request, doi: str = "", arxiv_id: str = "", url: st
 @router.get("/library/folders")
 def library_folders(request: Request):
     """The popup's pickers: ``{folders: [{id, path}], labels: [{id,
-    name}]}`` — every folder (``path`` its names from the top), recently
-    viewed first, and every label by name. A page counts for the folders it
-    is filed in, a page inside another page for its top's
-    (``blocks_store.filed_folders``' rule)."""
+    name}]}`` — every folder a clip may be filed in (``path`` its names
+    from the top; a work folder's are its vault's, ``marks.filing_targets``),
+    recently viewed first, and every label by name. A page the library lists
+    counts for the folders it is filed in, a page inside another page for
+    its top's (``blocks_store.filed_folders``' rule)."""
     user_id = require_user_id(request)
     ws = require_ws(request)
     recent_views, _ = get_pref(user_id, "recent-views", ws)
@@ -551,11 +560,12 @@ def library_folders(request: Request):
         and isinstance(entry.get("at"), str)
     }
     with connect_pages_db(ws) as conn:
-        paths = folder_paths(conn)
+        targets = set(filing_targets(Tree.read(conn)))
+        paths = {f: names for f, names in folder_paths(conn).items() if f in targets}
         parents = tree_parents(conn, FOLDERS)
         labels = label_names(conn)
         rows = conn.execute("SELECT id, updated_at, json_extract(properties, '$.folders') FROM unified_blocks "
-                            "WHERE parent_id = 'root'").fetchall()
+                            f"WHERE parent_id = 'root' AND {SQL_LISTED}").fetchall()
         tops = page_parents(conn)
     filed_in = {page_id: filing({FOLDERS: json.loads(filed or "[]")}, FOLDERS) for page_id, _, filed in rows}
     times = dict.fromkeys(paths, ("", ""))

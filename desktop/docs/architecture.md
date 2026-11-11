@@ -198,9 +198,11 @@ the host runs).
    answers what it found, the marker it holds, the folder's pages and any
    refusal. For a remote folder the host cannot count the pages, so the
    shell reads them from the remote (`GET /api/sync/folders/<id>`).
-4. The dialog (below) starts with Pull on, and Push off while the folder
-   has pages; an empty folder and a directory with notes or PDFs start
-   pushing everything (`firstPush`; never a remote's folder).
+4. An empty folder of a local server synced with a directory of notes or
+   PDFs would push everything (`firstPush`): it becomes a **work folder**
+   (below), and the bar asks nothing. Any other asks the dialog (below),
+   which starts with Pull on and Push off: a folder with pages, a
+   directory with no notes or PDFs, a remote's folder, the whole library.
 5. On *Sync*: on a local server `POST /api/folder-links {folder, path,
    notes, pull, push, adopt}` in the folder's workspace. `adopt` takes up
    the marker of a vault no link holds any more, which the preview reported.
@@ -211,15 +213,31 @@ the host runs).
    `token_id`; a vault that fails to be made revokes the token.
 
 **A directory's vault** (`addDirectoryVault`): the picked directory
-becomes a new folder named after it (`new_folder`), the dialog starting
-with Pull on and Push everything. It needs no open server. It lands
-(`vaultPlace`, `openFiles.readerPlace`) on the open local server, through
-the window's session, in the workspace the window shows when the account
-writes there, it is no clone and no one else sees it, or else in the
-account's own workspace there; otherwise on the host, started and signed
-into in its own session, in the account's personal workspace. A shared
-workspace takes a directory through its folder's *Sync with this
-computer…*, which names it.
+becomes a work folder (below) in a new folder named after it
+(`new_folder`). It needs no open server. It lands (`vaultPlace`,
+`openFiles.readerPlace`) on the open local server, through the window's
+session, in the workspace the window shows when the account writes there,
+it is no clone and no one else sees it, or else in the account's own
+workspace there; otherwise on the host, started and signed into in its own
+session, in the account's personal workspace. A shared workspace takes a
+directory through its folder's *Sync with this computer…*, which names it.
+
+**A work folder** (`makeWorkFolder`; [docs/dev/work_folders.md](../../docs/dev/work_folders.md))
+is a vault of a local server's folder that pushes everything, whose files
+the person chooses in the web app's tracking dialog. The shell asks nothing
+of its own: a refusal the preview tells (a marker another vault holds) is
+said in the bar and nothing is made; else it posts `POST /api/folder-links
+{path, new_folder | folder, pull: true, push: "everything", choose: true,
+adopt}` with the shell's word, which makes the vault paused and *choosing*,
+its marker written and no round run. Then it hands over: the server's window
+(opened when another shows) goes to the vault's folder with its dialog,
+`openGammaWorkspace(ws, {folder, track: <link id>})`, which loads
+`?ws=…&folder=…&track=…`. That is all the shell gives the page: the dialog
+lists, previews and saves through the server's routes, which take the link
+by its id and never a path, so still nothing passes from the shell to the
+page. Its Save writes the `.gammaignore` and runs the first round; its
+Cancel removes the vault and what making it made. The panel's *Choose
+files…* (`choose`) navigates the same way for a work folder there is.
 
 **A file's vault** (`addFileVault`) pushes, never pulls: each new version
 of the file becomes the page's PDF, as *Replace the PDF…* makes it, and the
@@ -233,10 +251,12 @@ workspace already sit in the picked file's directory, and a directory's
 vault there would land in that very workspace, it asks "3 files in
 D:\Papers are synced one by one. Sync the folder instead?" *Sync the
 folder…* runs `addDirectoryVault` on that directory with no picker, and
-the new vault takes the files' pages in; *Push this file only* goes on.
+the new work folder takes the files' pages in when its dialog saves;
+*Push this file only* goes on.
 
 Each flow ends with a notice in the bar, offers background mode while it
-is off (all of them sync only while Gamma runs), and reads the panel again.
+is off (all of them sync only while Gamma runs), and reads the panel again;
+a work folder's ends on its tracking dialog instead of a notice.
 
 **The vault dialog** is a view of the sync panel in `ui/bar.html`, as the
 folder chooser is, not a native dialog (`askVault`, the shell state's
@@ -244,11 +264,14 @@ folder chooser is, not a native dialog (`askVault`, the shell state's
 folder, or "a new folder “name”"), *Found* (the preview's notes, PDFs,
 pictures and untracked files, or an empty directory), the switch **Pull**,
 **Push** as *off / PDFs / everything* (*everything* shut for a remote's
-folder), one sentence saying what the first round does, and *Cancel* and
-*Sync*. The sentences are `keeping.firstRound`'s, made in `main.js` for
-each setting of the two switches before the dialog shows. One that is not
-`ok` says why and shuts *Sync*: both switches off, a remote's folder asked
-to push everything or not to pull, the preview's refusal, a folder with
+folder and for the whole library, which starts pulling only), one sentence
+saying what the first round does, and *Cancel* and *Sync*. The sentences
+are `keeping.firstRound`'s, made in `main.js` for each setting of the two
+switches before the dialog shows. One that is not `ok` says why and shuts
+*Sync*: both switches off, a remote's folder asked to push everything or
+not to pull, the whole library asked to push everything
+(`keeping.WHOLE_RULE`: a work folder needs a folder of its own), the
+preview's refusal, a folder with
 pages and a directory with files that would push everything into each
 other. `answerVault` takes only an answer whose sentence is `ok`. While the
 dialog is up the bar stays expanded on it (`setBarExpanded`), so a look at
@@ -379,7 +402,10 @@ other asks for a directory (`shell:add-folder-vault` → `addFolderVault`).
 and *State* (the state's tooltip on it), and for a folder's vault the two
 switches as the dialog has them: a remote's folder keeps *Pull* on and
 *everything* shut (`keeping.REMOTE_RULE`, which `setPull` and `setPush`
-refuse too). Its everyday actions follow as a bar of round buttons
+refuse too). A work folder adds the switch *Add its PDFs and notes to the
+library* (`setLibrary`, `PATCH {library}`): whether the files it finds from
+now on are library documents too; the files it holds keep theirs. Its
+everyday actions follow as a bar of round buttons
 (`.vaultBar`: *Sync now*, *Pull now*, *Push now*, *Pause* or *Resume*, and
 the directory), each named by its tooltip; the rare and the grave ones
 keep their rows, where their words warn. Each goes through
@@ -388,15 +414,16 @@ keep their rows, where their words warn. Each goes through
 
 | Action | Shown | Does |
 |---|---|---|
-| *Sync now* (*Push now* for a file) | always | `POST …/sync?direction=both`, followed to its end |
+| *Sync now* (*Push now* for a file) | but while a work folder chooses its files | `POST …/sync?direction=both`, followed to its end |
 | *Pull now*, *Push now* | a folder's vault; shut while that switch is off | `…?direction=pull`, `…?direction=push` |
-| *Pause*, *Resume* | always | `PATCH {paused}` |
+| *Pause*, *Resume* | always; no *Resume* while a work folder chooses its files | `PATCH {paused}` |
+| *Choose files…* | a work folder | its tracking dialog in the window (`chooseFiles`, as a work folder's making hands over) |
 | *Go on…* | a vault held by its guard | the question `keeping.goOnAsk`, then `…?confirm=1` |
 | *Locate…* (*Locate the file…*) | a stopped vault or one whose directory is not there; a file's vault always | the picker, then `POST …/relink {path}` with the shell's word; the directory's marker must be the vault's |
 | *Open the directory*, *Show in folder* | always | `openDirectory`, `revealFile` |
 | *Force pull…*, *Force push…* | a folder's vault | the page count from `GET …/removal`, a warning (`keeping.forceAsk`), then `…?force=pull` or `force=push` |
 | *Remove the vault…* | always | the counts from `GET …/removal`, the question `keeping.removalAsk`, then `DELETE …?files=keep` or `files=trash` |
-| the switches | a folder's vault | `PATCH {pull}`, `PATCH {push}` (`setPush`, above) |
+| the switches | a folder's vault | `PATCH {pull}`, `PATCH {push}` (`setPush`, above), a work folder's `PATCH {library}` |
 
 The changes and the rounds (*pause*, *resume*, *sync*, *Pull now*, *Push
 now* and the switches) leave the panel open on the new state
@@ -406,10 +433,14 @@ something. *Remove the vault…* offers *Remove, keep the files* and
 `.gamma/trash`; files the user added or changed stay). A vault of one file,
 a vault whose directory is not there and a stopped one (its marker gone or
 another's) offer only *Remove the vault*, which touches nothing on disk.
-The pages stay in every case. A remote's vault then has its token revoked
-(`releaseRemote`).
+The pages stay in every case but a work folder's files that are not in the
+library, which go to Recently deleted; the question says both numbers
+(`removal`'s `files` and `in_library`). A remote's vault then has its token
+revoked (`releaseRemote`).
 
-A folder's vault reads, worst first: *Syncing 30 / 120* while a round
+A folder's vault reads, worst first: *Choosing files* for a work folder
+whose files are not chosen yet (drawn as pending; its row has *Choose
+files…* in place of *pause*, and *sync* shut); *Syncing 30 / 120* while a round
 runs, the files push has taken and the pages pull has looked at, of those
 the round knows so far (the status's `progress`, written as the round goes),
 its tooltip the bytes of the PDFs it pushes and the file at hand, or

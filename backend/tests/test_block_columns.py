@@ -2,18 +2,22 @@
 ``page_id`` kept by every writer — op inserts, moves within and across
 pages, a subtree replace, imports, Recently deleted and back — and the
 generated ``kind`` / ``doc_id`` the readers filter on; the block dict
-carrying both read-only; the library listing's page summaries. The suite's
+carrying both read-only; the library listing's page summaries; a
+generated column of an older definition rebuilt with every index that
+names it (normalize.block_columns). The suite's
 autouse ``_page_ids_kept`` checks every written workspace against the
 parent walk as well; here each writer is checked by name."""
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
 
 from conftest import doc_props, login, make_folder, make_label, make_user, page_id_drift, workspace_of
 from gamma.blocks_store import BLOCK_COLUMNS, block_kind, fetch_subtree, page_for_doc, page_root_id, trash_entry
-from gamma.db import connect_pages_db
+from gamma.db import BLOCK_HOT_COLUMNS, BLOCK_HOT_INDEXES, PAGES_SCHEMA, connect_pages_db
+from gamma.normalize import block_columns
 from gamma.highlights import is_highlight, is_ink, is_link
 from gamma.picture import is_picture
 from gamma.routers import blocks as blocks_router
@@ -265,3 +269,29 @@ def test_a_page_subtree_by_page_id_is_the_recursive_walk(owner):
     tree = owner.get(f"/api/blocks/{page['id']}/subtree").json()["block"]
     assert [c["id"] for c in tree["children"]] == ["bcW1", "bcW4"]
     assert tree["children"][0]["children"][0]["children"][0]["id"] == "bcW3"
+
+
+def test_a_stale_column_takes_every_index_that_names_it_and_gets_them_back():
+    """``normalize.block_columns`` over a ``work_folder`` of an older
+    definition: the indexes that name it anywhere, in their condition or
+    after another column (``idx_ub_listing``, ``idx_ub_dir``,
+    ``idx_ub_work_folder``, and one of no hot list), are dropped before the
+    column and made again after it; a rerun changes nothing."""
+    older = "work_folder TEXT GENERATED ALWAYS AS (json_extract(properties, '$.work_folder')) VIRTUAL"
+    table = next(s for s in PAGES_SCHEMA if s.startswith("CREATE TABLE IF NOT EXISTS unified_blocks"))
+    conn = sqlite3.connect(":memory:")
+    conn.execute(table.replace(BLOCK_HOT_COLUMNS["work_folder"], older))
+    for stmt in BLOCK_HOT_INDEXES:
+        conn.execute(stmt)
+    conn.execute("CREATE INDEX idx_other ON unified_blocks(created_at) WHERE work_folder IS NOT NULL")
+    conn.execute("INSERT INTO unified_blocks (id, parent_id, position, properties, created_at, updated_at, page_id) "
+                 "VALUES ('p', 'root', 'a0', '{\"work_folder\": \"\", \"folders\": [\"L1\"]}', 't', 't', 'p')")
+    conn.commit()
+    assert conn.execute("SELECT work_folder FROM unified_blocks").fetchone() == ("",)
+    assert block_columns(conn)
+    assert conn.execute("SELECT work_folder, first_folder FROM unified_blocks").fetchone() == (None, "L1")
+    indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert {"idx_ub_listing", "idx_ub_dir", "idx_ub_work_folder", "idx_ub_deleted_with", "idx_other"} <= indexes
+    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0]
+    assert BLOCK_HOT_COLUMNS["work_folder"] in ddl and older not in ddl
+    assert not block_columns(conn)

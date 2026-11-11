@@ -20,10 +20,12 @@ import zlib
 import pymupdf
 import pytest
 
-from conftest import account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, workspace_of
+from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, mark_work_folder,
+                      work_props, workspace_of)
 from gamma import folder_links, gamma_sync, vault_http, vault_store, vault_sync
 from gamma import ops as ops_module
-from gamma.blocks_store import block_kind
+from gamma.auth import CLIENT_HEADER
+from gamma.blocks_store import block_kind, new_block_id
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
 from gamma.integrations import create_token
 from test_folder_links import _create, _sync, disk, over_http  # noqa: F401: the disk and over_http fixtures
@@ -888,3 +890,61 @@ def test_a_new_token_given_to_a_vault_replaces_the_revoked_one_or_is_refused(own
     assert r.status_code == 400 and "may write" in r.json()["detail"]
     assert folder_links.get_link(pushing["id"], with_token=True)["token"] != reader["token"]
     owner.delete(f"/api/folder-links/{pushing['id']}").raise_for_status()
+
+
+@pytest.mark.parametrize("honoured", [True, False])
+def test_a_vault_reads_its_folders_pages_whether_the_library_lists_them_or_not(owner, disk, over_http, monkeypatch,
+                                                                              honoured):
+    """The listing a vault reads is its folder's (``?within=``), so a work
+    folder's file the library does not list is among its pages; a server from
+    before work folders, which knows no such parameter and keeps no such
+    file, lists the library, read the same."""
+    folder = make_folder(owner, f"VH within {honoured}")
+    make_page(owner, f"VH elsewhere {honoured}")
+    mark_work_folder(owner, folder)
+    vault_sync.LocalRemote(workspace_of(OWNER), folder, account_of(OWNER)).create(
+        new_block_id(), f"VH file {honoured}", work_props(folder, "file.md"),
+        [{"id": new_block_id(), "content": "a file's words", "properties": {}, "children": []}])
+    real, asked = gamma_sync.Server._send, []
+
+    def send(srv, method, path, headers, body=None):
+        if path.startswith("/api/blocks/root/children"):
+            asked.append(path)
+            path = path if honoured else "/api/blocks/root/children"
+        return real(srv, method, path, headers, body)
+    monkeypatch.setattr(gamma_sync.Server, "_send", send)
+    root = disk / f"VH within {honoured}"
+    link = _remote_vault(owner, over_http, folder, root, _token())
+    assert asked and set(asked) == {f"/api/blocks/root/children?within={folder}"}
+    assert sorted(p.name for p in root.glob("*.md")) == ([f"VH file {honoured}.md"] if honoured else [])
+    if honoured:
+        assert (root / f"VH file {honoured}.md").read_text(encoding="utf-8") == "a file's words\n"
+    _quiet(owner, link["id"])
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
+def test_each_request_names_the_vaults_client(owner, disk, over_http, monkeypatch):
+    """A write of a route whose body takes no op client (a page made, its
+    blocks, the trash) is the vault's to the work-folder rule there
+    (gamma/auth.py ``writer_client``): each request says so in
+    ``X-Gamma-Client``."""
+    real, sent = gamma_sync.Server._send, []
+
+    def send(srv, method, path, headers, body=None):
+        sent.append((method, path.split("?")[0], headers.get(CLIENT_HEADER)))
+        return real(srv, method, path, headers, body)
+    monkeypatch.setattr(gamma_sync.Server, "_send", send)
+    folder = make_folder(owner, "VH client")
+    root = disk / "VH client"
+    link = _remote_vault(owner, over_http, folder, root, _token("write"), push="everything")
+    _put(root / "Made.md", "made over http\n")
+    _sync(owner, link["id"])
+    page = _page_of(link, "Made.md")
+    (root / "Made.md").unlink()
+    _sync(owner, link["id"])
+    _sync(owner, link["id"])
+    assert owner.get(f"/api/blocks/{page}").json()["trashed"]
+    writes = {(m, p) for m, p, _c in sent if m != "GET"}
+    assert {("POST", "/api/pages"), ("PUT", f"/api/blocks/{page}/children"), ("DELETE", f"/api/blocks/{page}")} <= writes
+    assert {c for m, p, c in sent if m != "GET" and not p.startswith("/api/uploads")} == {vault_sync.CLIENT}
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()

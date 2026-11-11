@@ -1025,7 +1025,7 @@ async function main() {
       return 'pdfs, then off';
     });
 
-    await step('"Add a synced vault…" in the launcher: a directory of notes becomes a new folder of the host\'s own workspace, pushed and pulled, its marker written', async () => {
+    await step('"Add a synced vault…" in the launcher: a directory becomes a work folder of the host\'s own workspace, its marker written and nothing tracked until its tracking dialog saves; the window goes to that dialog', async () => {
       const dir = path.join(profile, 'Reading');
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'Idea.md'), '# Idea\n\n- a first thought\n- a second one\n');
@@ -1033,23 +1033,33 @@ async function main() {
       await hook(app, (s) => s.loadLauncher());
       content = await findPage(app, isLauncher);
       await content.click('#btnAddVault');
-      const said = await syncInDialog(bar, /^Push 1 note from .+ into a new folder “Reading”; from then on both sides are kept in step\./);
-      await menuClosed(bar);
       await waitFor(() => fs.existsSync(path.join(dir, '.gamma', 'vault.json')), 'the marker is written', 30_000, 500);
       const vault = await waitFor(async () => {
         await hook(app, (s) => s.refreshKeeping());
         return hook(app, (s) => s.keeping().items.find((i) => i.kind === 'vault' && i.name === 'Reading'));
       }, 'the vault in the panel', 30_000);
-      assert.deepEqual([vault.scope, vault.pull, vault.push], ['folder', true, 'everything']);
+      assert.deepEqual([vault.scope, vault.pull, vault.push, vault.work, vault.choosing, vault.text],
+        ['folder', true, 'everything', true, true, 'Choosing files']);
       assert.equal(vault.server, ids.alpha, 'on the host, the first local server');
-      await waitFor(async () => /Reading is synced with .+: a folder of .+ on Alpha\./.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      assert.equal(await bar.locator('#syncPanel #vaultAsk').count(), 0, 'the bar asks nothing: the tracking dialog does');
+      content = await findPage(app, (u) => u.startsWith('http://127.0.0.1') && new URL(u).searchParams.get('track') === vault.id);
+      assert(!fs.existsSync(path.join(dir, '.gammaignore')), 'nothing chosen yet');
+      // its Save, as the page sends it: the preset, its notes and PDFs added to the library
+      const saved = await content.evaluate((id) => fetch(`/api/folder-links/${id}/selection`, {
+        method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selection: { base: 'preset', changes: [] }, base_hash: '', library: true }),
+      }).then(async (r) => ({ status: r.status, body: await r.json() })), vault.id);
+      assert.equal(saved.status, 200, JSON.stringify(saved.body));
+      assert.deepEqual([saved.body.choosing, saved.body.library], [false, true]);
+      assert(fs.readFileSync(path.join(dir, '.gammaignore'), 'utf8').startsWith('# What Gamma tracks in this folder'), 'its .gammaignore');
+      await waitFor(async () => (await rootTitles(content)).includes('Idea'), 'its note in the library', 30_000, 500);
       await hook(app, (s, [server, id]) => s.removeVault(server, id, 'keep'), [vault.server, vault.id]);
       assert(fs.existsSync(path.join(dir, 'Idea.md')), 'the note stays');
       assert(!fs.existsSync(path.join(dir, '.gamma', 'vault.json')), 'the marker goes with the vault');
       await hook(app, (s) => { delete process.env.GAMMA_SHELL_PICK_DIR; });
       await hook(app, (s, id) => s.openServer(id), ids.alpha); // the steps after start from Alpha
       await waitLoggedIn(content);
-      return said;
+      return `${vault.dest}: its files chosen in Gamma, its note in the library`;
     });
 
     await step('background: with "keep running" on, closing the window leaves the servers up and the tray in place; Window → Show Gamma and the Dock icon bring it back over the same server', async () => {

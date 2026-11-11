@@ -94,6 +94,7 @@ These describe the implementation unless explicitly marked as plans.
 | Background jobs, the tasks tray, and adding a kind of long work | [Background tasks](tasks.md) |
 | Folders and labels, pages inside pages, page cards, recents, and trash | [Home library](home_library.md) |
 | A page's document, the `doc` property: the format registry, the stored shape and its rules, the one read and its predicates (the file a page owns, the file it shows, read in place, a library PDF), migration step 52, the shared fixtures, and which viewer a page shows | [Documents](documents.md) |
+| Work folders: a synced vault's folder whose tracked files are pages that follow the disk, the library rule (what the library lists, what is a paper), the op rule (who may refile, rename or trash a file), `.gammaignore` and the tracking dialog, the takeover of older vaults, Add to library and Save a copy, migration step 53, and every root-page reader classified | [Work folders](work_folders.md) |
 | Pages side by side: the open tabs arranged into two panes, each with its strip, its page buttons and its page, split by a tab's menu, the topbar's right-click or a drag onto a side of the page; the ringed live pane and the view of the other, drawn as the page itself, with the docked windows around the groups; this browser's arrangement over the synced tabs | [Tab groups](tab_groups.md) |
 | Provider configuration, chat, and the library agent | [AI](ai.md) |
 | Agent tools and guardrails | [AI tools](ai_tools.md) |
@@ -134,8 +135,9 @@ These describe the implementation unless explicitly marked as plans.
   sub-pages, as pages that name the page they are inside; the block
   zoom-in is the open item. The stored shapes as built are in
   [storage](user_db.md) and [home library](home_library.md).
-- [Any file as a page](../research/file-explorer.md): a plan whose step 0
-  is built ([documents](documents.md)). A page's document of any format,
+- [Any file as a page](../research/file-explorer.md): a plan whose steps 0
+  and 1 are built ([documents](documents.md),
+  [work folders](work_folders.md)). A page's document of any format,
   work folders through synced vaults whose tracked files are chosen,
   comment threads as feedback a local agent acts on, and a Files window;
   its steps and what is still to decide.

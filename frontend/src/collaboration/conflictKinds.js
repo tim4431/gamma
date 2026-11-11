@@ -10,8 +10,10 @@
 // kind whose `result` is the row's own sentence, not a text, says so
 // (`says`); one whose Gamma side a receive-only link keeps here alone has
 // a sentence for that row too (`kept`, `keptHere`). A synced vault's kind,
-// whose sides are this file and Gamma, says so (`vault`). Pure:
-// tests/conflictKinds.test.mjs.
+// whose sides are this file and Gamma, says so (`vault`). Beside the rows,
+// the words of an op the server refused with a conflict that has its own
+// (`refusalWords`). Pure: tests/conflictKinds.test.mjs.
+import { WORDS, refusalText } from "../explorer/workFolders.js";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 
 export const MERGE_KIND = {
@@ -42,6 +44,18 @@ export const MERGE_KIND = {
   // text before either edit.
   file_won: { short: T("Changed in the file and in Gamma"), long: T("The file and Gamma both changed this block since the last sync; the file's text was kept, and Gamma's is here."), icon: "alert", textual: true, two: true, vault: true },
 };
+
+// The words of an op the page's session saw refused, by the refusal's own
+// `conflict` (gamma/ops.py), where it has some: "locked", the work-folder
+// rule's (docs/dev/work_folders.md "The op rule"), says the server's
+// `detail`, in this language where it is one of the rule's words
+// (workFolders.WORDS), and a fixed sentence when it sent none. "" for any
+// other: the session says what it says of a block gone or moved.
+export function refusalWords(conflict, detail = "") {
+  if (conflict !== "locked") return "";
+  const kind = Object.keys(WORDS).find((key) => WORDS[key] === detail);
+  return kind ? refusalText(kind) : detail || t("That file's name and place follow its work folder.");
+}
 
 // The rows of a Zotero collection: their page is the folders tree
 // (blocks_store.FOLDERS), their block the folder; the labels tree's the same.

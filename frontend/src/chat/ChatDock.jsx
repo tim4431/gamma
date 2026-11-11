@@ -454,7 +454,12 @@ export default function ChatDock({
   // history, New chat starts over locally). App's session saves nothing then.
   canSave = true,
   // The open page's document (documents/pageDocument.js pageDocument).
-  doc, focusedBlockId, homeBlocks, libraryTree, pageTitle, openTabs,
+  // `homeBlocks`: every page row App knows, the listing's and those read
+  // beside it (a work folder's files: explorer/knownPages.js), which the
+  // chips and the context name; `pickerPages` the ones the @ and context
+  // pickers list (App's pickerPages: the library's, and the files of the
+  // open tabs and recents).
+  doc, focusedBlockId, homeBlocks, pickerPages = homeBlocks, libraryTree, pageTitle, openTabs,
   // App's recents queue ([{id, at}]): with the open tabs, what the page
   // pickers list first (rankLibraryPages).
   recentViews,
@@ -2425,7 +2430,7 @@ export default function ChatDock({
         <>
         <PaperMentionInput
           key={chatKey}
-          pages={homeBlocks} tree={libraryTree} recentViews={recentViews} openTabs={openTabs}
+          pages={pickerPages} tree={libraryTree} recentViews={recentViews} openTabs={openTabs}
           currentPageId={focusedBlockId} selected={chatDocs}
           onAttach={(id) => setChatDocs((prev) => prev.includes(id) ? prev : [...prev, id])}
           onSend={sendChatMessage}
@@ -2641,10 +2646,10 @@ export default function ChatDock({
               {(() => {
                 // Every page can be context — a page of notes as much as a
                 // paper; the server adds PDF text for pages that carry one.
-                if (!homeBlocks.length) return <div className="popoverHint">{t("No pages yet — create one first.")}</div>;
+                if (!pickerPages.length) return <div className="popoverHint">{t("No pages yet — create one first.")}</div>;
                 // Quick open's ranking, as the @ picker's: the query's matches,
                 // or recents, open tabs and the rest under their headings.
-                const rows = rankLibraryPages(homeBlocks, libraryTree, docPickerQuery, { recentViews, openTabs, limit: Infinity });
+                const rows = rankLibraryPages(pickerPages, libraryTree, docPickerQuery, { recentViews, openTabs, limit: Infinity });
                 if (!rows.length) return <div className="popoverHint">{t("No pages match “{docPickerQuery}”.", { docPickerQuery: docPickerQuery.trim() })}</div>;
                 const sectionTitle = recencySections();
                 // A sub-page's row names the pages it is in after its title.

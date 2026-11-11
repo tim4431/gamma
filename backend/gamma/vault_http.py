@@ -3,14 +3,16 @@
 gamma/vault_sync.py reads and writes Gamma through, ``HttpRemote``, in place
 of ``vault_sync.LocalRemote``'s reads and writes in-process. It speaks to that
 server with the link's token (``gamma_sync.Server``), through the routes the
-browser uses: the library listing (``GET /api/blocks/root/children``: the
-pages with their filing, the folder and label trees) and the change feed
-(``GET /api/sync/changes``: each page's seq, and the cursor the tick asks it
-about), a page's own block for its aliases (once a seq), its subtree, a block,
-a stored file; ops (``POST /api/pages/{id}/ops``, client ``disk``, each batch
-named), a page made (``POST /api/pages``, then its blocks, ``PUT
-/api/blocks/{id}/children``), the folder and label trees' ops, the trash and
-a restore, uploads and the attachment replaced; and one route of its own, a
+browser uses: the listing of the vault's folder (``GET
+/api/blocks/root/children?within=<folder>``: its pages, whether the library
+lists them or not, with their filing, the folder and label trees) and the
+change feed (``GET /api/sync/changes``: each page's seq, and the cursor the
+tick asks it about), a page's own block for its aliases (once a seq), its
+subtree, a block, a stored file; ops (``POST /api/pages/{id}/ops``, client
+``disk``, each batch named), a page made (``POST /api/pages``, then its
+blocks, ``PUT /api/blocks/{id}/children``), the folder and label trees' ops,
+the trash and a restore, uploads and the attachment replaced, each request
+naming the vault's client in ``X-Gamma-Client``; and one route of its own, a
 page's plan (``POST /api/pages/{id}/plan``, gamma/ops.py ``commit_plan``). A
 token that may read pulls; pushing takes one that may write, of an editor.
 
@@ -56,6 +58,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from . import gamma_sync, migrations, vault_store, workspaces
+from .auth import CLIENT_HEADER
 from .blocks_store import FOLDERS, LABELS, PARENT_PAGE, TREES, filing, folder_inserts, label_inserts, top_of
 from .blocks_store import with_sub_pages
 from .documents.model import document_at, own_hash, page_document
@@ -64,8 +67,10 @@ from .ops import MAX_OPS, OpError
 from .sync_engine import FormatMismatch
 from .sync_tree import snapshot_from_tree
 from .vault_disk import Stopped
-from .vault_sync import (CLIENT, PLAN_TRIES, Changed, Edit, Gone, Info, Layout, Page, Refused, Waiting, left_out,
-                         set_page)
+from .vault_sync import (CLIENT, PLAN_TRIES, Changed, Edit, Gone, Info, Layout, Page, Refused, Waiting, info_stamps,
+                         left_out, set_page)
+from .work_folders import marks
+from .work_folders.library import work_folder_of
 
 FEED_LIMIT = 2000      # the change feed's entries a request reads (routers/sync.py MAX_LIMIT)
 _aliases: dict = {}    # (server, workspace, page) -> (its seq, its aliases): a page's own block read once a seq
@@ -111,6 +116,17 @@ def _tree(node: dict) -> dict:
     while pending:
         n = pending.pop()
         out[n["id"]] = (n.get("parent_id") or "", n.get("content") or "")
+        pending.extend(reversed(n.get("children") or []))
+    return out
+
+
+def _tree_rows(node: dict) -> list:
+    """``(id, parent id, name, properties)`` of a tree's blocks, as
+    ``marks.Tree.of`` reads them."""
+    out, pending = [], list(reversed(node.get("children") or []))
+    while pending:
+        n = pending.pop()
+        out.append((n["id"], n.get("parent_id") or "", n.get("content") or "", n.get("properties") or {}))
         pending.extend(reversed(n.get("children") or []))
     return out
 
@@ -190,9 +206,13 @@ class HttpRemote:
         self._format_ok = True
 
     def _asked(self, method: str, path: str, obj=None) -> tuple[int, dict]:
-        """``_ask`` without the format's check."""
+        """``_ask`` without the format's check. Each request names the vault's
+        op client in ``X-Gamma-Client``, so that a write of a route that takes
+        none in its body (a page made, its blocks, the trash, a restore, a
+        folder deleted, the attachment replaced) is the vault's to the
+        server's work-folder rule (gamma/auth.py ``writer_client``)."""
         try:
-            status, data = self.server.ask(method, path, obj)
+            status, data = self.server.ask(method, path, obj, headers={CLIENT_HEADER: CLIENT})
         except gamma_sync.Unreachable as e:
             raise Unreachable(str(e)) from e
         answer = _decoded(data)
@@ -244,11 +264,15 @@ class HttpRemote:
             raise Refused("the link's token may not write in that workspace: pushing takes a token that may write")
 
     def _listing(self) -> dict:
-        """The feed's seqs and cursor (read first), then the library listing:
-        ``{seqs, cursor, pages (summaries, in library order), folders
-        (``_tree``), labels ({id: name}), labels_seq}``. A feed that says
-        there is more but does not move its cursor (a cache that ignores the
-        query) is ``Unreachable``, never a loop holding the link."""
+        """The feed's seqs and cursor (read first), then the library listing
+        of the vault's folder's pages, whether the library lists them or not
+        (``within``; a server that does not know the parameter lists the
+        library, which ``_filed`` reads the same): ``{seqs, cursor, pages
+        (summaries, in library order), folders (``_tree``), tree (the folder
+        tree as the work-folder rules read it), labels ({id: name}),
+        labels_seq}``. A feed that says there is more but does not move its
+        cursor (a cache that ignores the query) is ``Unreachable``, never a
+        loop holding the link."""
         if self._listed is None:
             seqs, since = {}, ""
             while True:
@@ -261,10 +285,12 @@ class HttpRemote:
                     break
                 if since == was:
                     raise Unreachable("the other server's change feed says there is more but does not move")
-            root = self._call("GET", "/api/blocks/root/children")
+            within = "" if self.folder == ROOT else f"?within={_q(self.folder)}"
+            root = self._call("GET", f"/api/blocks/root/children{within}")
             labels = root.get(LABELS) or {}
             self._listed = {"seqs": seqs, "cursor": int(since) if since.isdigit() else 0,
                             "pages": root.get("children") or [], "folders": _tree(root.get(FOLDERS) or {}),
+                            "tree": marks.Tree.of(_tree_rows(root.get(FOLDERS) or {})),
                             "labels": {i: name for i, (_p, name) in _tree(labels).items()},
                             "labels_seq": int(labels.get("seq") or 0)}
         return self._listed
@@ -286,8 +312,9 @@ class HttpRemote:
         The pages of the vaults of this computer that may take a page from it
         in that workspace are left out, as on this server
         (``vault_sync.left_out``), and those of a vault beside it reported
-        (``Layout.shared``). ``Stopped`` when the vault's folder is gone
-        there."""
+        (``Layout.shared``), and so is a file of another work folder filed
+        there too; the folder's mark is the layout's ``work``. ``Stopped``
+        when the vault's folder is gone there."""
         listed = self._listing()
         folders = listed["folders"]
         top = None if self.folder == ROOT else self.folder
@@ -308,13 +335,24 @@ class HttpRemote:
         names, pages = listed["labels"], {}
         for pid in ids:
             props, seq = summaries[pid].get("properties") or {}, listed["seqs"].get(pid, 0)
+            if work_folder_of(props) not in ("", self.folder):
+                continue
             top_props = summaries.get(top_of(parents, pid), {}).get("properties")
             pages[pid] = Info(pid, summaries[pid].get("content") or "Untitled", seq, filing(top_props, FOLDERS),
                               own_hash(page_document(props)), False,
                               [names[i] for i in filing(props, LABELS) if i in names], self._aliases_of(pid, seq),
-                              parents.get(pid, ""))
+                              parents.get(pid, ""), **info_stamps(props))
         below = {f: entry for f, entry in folders.items() if (inside is None or f in inside) and f != top}
-        return Layout(pages, below, listed["cursor"], listed["labels_seq"], shared)
+        return Layout(pages, below, listed["cursor"], listed["labels_seq"], shared, self.mark())
+
+    def mark(self) -> dict | None:
+        """The mark the vault's folder carries there, from the listing's
+        folder tree."""
+        return None if self.folder == ROOT else self._listing()["tree"].mark(self.folder)
+
+    def work_tree(self):
+        """The folder tree there as the work-folder rules read it."""
+        return self._listing()["tree"]
 
     def page(self, page_id: str) -> Page | None:
         """The page's seq and its blocks, read together; one in Recently
@@ -384,7 +422,13 @@ class HttpRemote:
         return self._held_by[block_id]
 
     def title_of(self, page_id: str) -> str:
+        """A page's title: from the listing for one of the vault's, else its
+        own block (a page outside the vault, which the listing of the
+        vault's folder does not carry)."""
         found = next((p for p in self._listing()["pages"] if p["id"] == page_id), None)
+        if found is None:
+            state, block = self._block(page_id)
+            found = block if state == "live" and block.get("parent_id") == "root" else None
         return (found.get("content") or "") if found else ""
 
     def address(self) -> str:

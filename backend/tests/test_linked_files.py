@@ -872,9 +872,10 @@ def test_a_file_out_of_reach_is_not_stamped_indexed_and_has_no_file_for_now(owne
             return conn.execute("SELECT pages FROM pdf_fts_docs WHERE doc_id = ?", (doc,)).fetchone()
 
     def has_file():
-        papers = owner.get("/api/metadata/status").json()["papers"]
-        return next(p["has_file"] for p in papers if p["id"] == page)
+        return storage.readable(ws, f"{doc}.pdf")
 
+    # read where it is outside a work folder: no library document, so no paper with a record to look up
+    assert page not in {p["id"] for p in owner.get("/api/metadata/status").json()["papers"]}
     assert has_file() is True
     away = f.with_suffix(".away")
     f.rename(away)
