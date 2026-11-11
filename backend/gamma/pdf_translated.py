@@ -787,7 +787,9 @@ def _filtered(mupdf, pdf, resources, stream, cull):
     low = mupdf.mupdf
     factory = _CULLER[1](cull)
     options = low.PdfFilterOptions()
-    options.instance_forms = 1
+    # PyMuPDF 1.28's constructor leaves no_update as the memory had it; set,
+    # the forms it copies would keep no content.
+    options.instance_forms, options.no_update = 1, 0
     options.add_factory(factory.internal())
     identity, buffer = low.FzMatrix(), low.fz_new_buffer(1024)
     out = low.ll_pdf_new_buffer_processor(buffer.m_internal, 0, 0)

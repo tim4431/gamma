@@ -46,10 +46,13 @@ def test_initialize_and_read_tools(client, connection):
     tools = rpc(client, item["token"], "tools/list").json()["result"]["tools"]
     # The library's reading tools come from the registry by rule (ai_tools.mcp_tools:
     # a new one is offered without touching the adapter); the literal makes growth visible.
-    assert {t["name"] for t in tools} == mcp_tools() | {"read_gamma_link", "export_page"}
+    assert {t["name"] for t in tools} == mcp_tools() | {"list_workspaces", "read_gamma_link", "export_page"}
     assert {t["name"] for t in tools} == {"list_pages", "list_folders", "read_page", "read_block", "read_chats",
                                           "view_pdf_page", "view_ink", "view_image", "cite", "search_library",
-                                          "read_gamma_link", "export_page"}
+                                          "list_workspaces", "read_gamma_link", "export_page"}
+    # every tool but the workspace list and a link (which names its own) can be pointed at a workspace
+    assert all("workspace" in t["inputSchema"]["properties"] for t in tools
+               if t["name"] not in ("list_workspaces", "read_gamma_link"))
     assert all(t["annotations"]["readOnlyHint"] for t in tools)
     assert all(t["icons"] == init.json()["result"]["serverInfo"]["icons"] for t in tools)
     for name, arguments, expected in [
@@ -293,7 +296,7 @@ def test_tokens_are_hashed_private_and_revocable(client, connection):
     assert rpc(client, item["token"], "tools/list").status_code == 401
 
 
-def test_connection_listing_stays_scoped_to_current_workspace(client, connection):
+def test_connection_listing_is_the_accounts(client, connection):
     from gamma import workspaces
     from gamma.integrations import create_token
 
@@ -302,13 +305,21 @@ def test_connection_listing_stays_scoped_to_current_workspace(client, connection
     other = create_token(account_of("mcp-reader"), second["id"], "Codex second", 90)
     foreign_ws = make_user("another-reader", "pw")
     foreign = create_token(account_of("another-reader"), foreign_ws, "Private connection", 90)
-    result = c.get("/api/integrations/tokens")
-    data = result.json()
-    assert data["workspace_id"] == ws
-    assert [t["id"] for t in data["tokens"]] == [item["id"]]
-    assert all(private not in result.text for private in (item["token"], other["token"], other["id"], foreign["token"], foreign["id"]))
-    second_listing = c.get(f"/api/integrations/tokens?ws={second['id']}").json()
-    assert [t["id"] for t in second_listing["tokens"]] == [other["id"]]
+    try:
+        result = c.get("/api/integrations/tokens")
+        data = result.json()
+        assert data["workspace_id"] == ws
+        # every connection of the account, whichever workspace is open, each naming what it reads
+        listed = {t["id"]: t for t in data["tokens"]}
+        assert set(listed) == {item["id"], other["id"]}
+        assert listed[item["id"]]["workspaces"] == [ws] and not listed[item["id"]]["all_workspaces"]
+        assert listed[other["id"]]["workspaces"] == [second["id"]]
+        assert {w["id"] for w in data["workspaces"]} >= {ws, second["id"]}
+        assert all(private not in result.text for private in (item["token"], other["token"], foreign["token"], foreign["id"]))
+        assert {t["id"] for t in c.get(f"/api/integrations/tokens?ws={second['id']}").json()["tokens"]} == set(listed)
+    finally:
+        c.delete(f"/api/integrations/tokens/{other['id']}")
+        workspaces.delete(second["id"])
 
 
 def test_expiration_and_membership_loss(client, connection):
@@ -363,3 +374,132 @@ def test_shared_dispatch_enforces_permissions(connection):
     assert action["error"] and "not enabled" in result
     assert all(s["name"] not in {"rename_page", "move_page", "edit_block", "create_block", "move_block"}
                for s in agent_tools("folder", can_write=False))
+
+
+def _page_with_note(c, ws, title, note):
+    page = c.post(f"/api/blocks?ws={ws}", json={"parent_id": "root", "content": title})
+    assert page.status_code == 200, page.text
+    assert c.post(f"/api/blocks?ws={ws}", json={"parent_id": page.json()["id"], "content": note}).status_code == 200
+    return page.json()
+
+
+def test_one_connection_reads_several_workspaces(client, connection):
+    from gamma import workspaces
+
+    c, ws, _ = connection
+    lab = workspaces.create("Lab notebook", account_of("mcp-reader"))["id"]
+    hidden = workspaces.create("Hidden drafts", account_of("mcp-reader"))["id"]
+    try:
+        home_page = _page_with_note(c, ws, "Home spectra paper", "McpSpectraEvidence at home")
+        lab_page = _page_with_note(c, lab, "Lab spectra paper", "McpSpectraEvidence in the lab")
+        hidden_page = _page_with_note(c, hidden, "Hidden spectra paper", "McpSpectraEvidence kept hidden")
+        made = c.post("/api/integrations/tokens", json={"name": "Two", "workspaces": [ws, lab]})
+        assert made.status_code == 201, made.text
+        assert made.json()["workspaces"] == [ws, lab]
+        token = made.json()["token"]
+        listed = call(client, token, "list_workspaces", {})
+        assert [w["id"] for w in listed["structuredContent"]["workspaces"]] == [ws, lab]
+        assert "Lab notebook" in listed["content"][0]["text"] and hidden not in listed["content"][0]["text"]
+        # an id finds its own workspace
+        read = call(client, token, "read_page", {"page_id": lab_page["id"]})
+        assert not read["isError"], read
+        assert "McpSpectraEvidence in the lab" in read["content"][0]["text"]
+        assert f"?ws={lab}&page={lab_page['id']}" in read["content"][0]["text"]
+        assert read["structuredContent"]["workspace_id"] == lab
+        # a search covers every connected workspace, one section each, and no other
+        found = call(client, token, "search_library", {"query": "McpSpectraEvidence"})["content"][0]["text"]
+        assert home_page["id"] in found and lab_page["id"] in found and hidden_page["id"] not in found
+        assert "Workspace Lab notebook" in found
+        # a listing reads the default workspace, or the one named, by id or name
+        assert lab_page["id"] not in call(client, token, "list_pages", {})["content"][0]["text"]
+        for name in (lab, "lab NOTEBOOK"):
+            text = call(client, token, "list_pages", {"workspace": name})["content"][0]["text"]
+            assert lab_page["id"] in text and home_page["id"] not in text
+        assert call(client, token, "list_pages", {"workspace": hidden})["isError"]
+        refused = call(client, token, "read_page", {"page_id": hidden_page["id"]})
+        assert refused["isError"] and "McpSpectraEvidence" not in str(refused)
+        # a link reads in its own workspace, among the connection's only
+        link = call(client, token, "read_gamma_link", {"url": f"http://localhost/?ws={lab}&page={lab_page['id']}"})
+        assert not link["isError"] and link["structuredContent"]["workspace_id"] == lab
+        refused = call(client, token, "read_gamma_link",
+                       {"url": f"http://localhost/?ws={hidden}&page={hidden_page['id']}"})
+        assert refused["isError"] and "McpSpectraEvidence" not in str(refused)
+        # the HTTP API keeps the token to its own workspace
+        bearer = {"Authorization": f"Bearer {token}"}
+        assert client.get(f"/api/blocks/{lab_page['id']}?ws={lab}", headers=bearer).status_code == 403
+    finally:
+        workspaces.delete(lab)
+        workspaces.delete(hidden)
+
+
+def test_access_changes_and_follows_the_workspaces(client, connection):
+    from gamma import workspaces
+
+    c, ws, item = connection
+    lab = workspaces.create("Changing lab", account_of("mcp-reader"))["id"]
+    later = None
+    try:
+        lab_page = _page_with_note(c, lab, "Changing lab paper", "McpChangingEvidence")
+        assert call(client, item["token"], "read_page", {"page_id": lab_page["id"]})["isError"]
+        changed = c.patch(f"/api/integrations/tokens/{item['id']}", json={"workspaces": [ws, lab]})
+        assert changed.status_code == 200, changed.text
+        assert not call(client, item["token"], "read_page", {"page_id": lab_page["id"]})["isError"]
+        # every workspace, including one made afterwards
+        assert c.patch(f"/api/integrations/tokens/{item['id']}", json={"all_workspaces": True}).json()["all_workspaces"]
+        later = workspaces.create("Later lab", account_of("mcp-reader"))["id"]
+        names = [w["id"] for w in call(client, item["token"], "list_workspaces", {})["structuredContent"]["workspaces"]]
+        assert names[0] == ws and {lab, later} <= set(names)
+        # only workspaces the account can open (none named: the current one), never a write token's second
+        foreign_ws = make_user("mcp-foreign", "pw")
+        assert c.patch(f"/api/integrations/tokens/{item['id']}", json={"workspaces": [foreign_ws]}).status_code == 403
+        assert c.patch(f"/api/integrations/tokens/{item['id']}", json={"workspaces": []}).json()["workspaces"] == [ws]
+        write = c.post("/api/integrations/tokens", json={"name": "Mirror", "scope": "write"}).json()
+        assert write["workspaces"] == [ws]
+        assert c.patch(f"/api/integrations/tokens/{write['id']}", json={"workspaces": [ws, lab]}).status_code == 400
+        c.delete(f"/api/integrations/tokens/{write['id']}")
+        # a deleted workspace leaves the grant; the connection keeps the rest
+        assert c.patch(f"/api/integrations/tokens/{item['id']}", json={"workspaces": [lab, ws]}).status_code == 200
+        workspaces.delete(lab)
+        lab = None
+        row = next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["id"] == item["id"])
+        assert row["workspaces"] == [ws] and row["workspace_id"] == ws
+        assert rpc(client, item["token"], "tools/list").status_code == 200
+    finally:
+        for gone in (lab, later):
+            if gone:
+                workspaces.delete(gone)
+
+
+def test_setup_code_is_claimed_once_for_a_token(client, anon, connection):
+    from gamma import workspaces
+
+    c, ws, _ = connection
+    lab = workspaces.create("Setup lab", account_of("mcp-reader"))["id"]
+    try:
+        assert anon.post("/api/integrations/setup-codes", json={"name": "DeepSeek Harness"}).status_code == 401
+        made = c.post("/api/integrations/setup-codes", json={"name": "DeepSeek Harness", "workspaces": [ws, lab]})
+        assert made.status_code == 201, made.text
+        code = made.json()["code"]
+        assert made.json()["expires_in"] == 600
+        # no connection until the setup command claims it
+        assert all(t["name"] != "DeepSeek Harness" for t in c.get("/api/integrations/tokens").json()["tokens"])
+        claimed = anon.post("/api/integrations/claim", json={"code": code})
+        assert claimed.status_code == 200, claimed.text
+        assert claimed.headers["cache-control"] == "no-store"
+        token = claimed.json()["token"]
+        names = [w["id"] for w in call(client, token, "list_workspaces", {})["structuredContent"]["workspaces"]]
+        assert names == [ws, lab]
+        row = next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["name"] == "DeepSeek Harness")
+        assert row["scope"] == "read" and row["workspaces"] == [ws, lab]
+        assert anon.post("/api/integrations/claim", json={"code": code}).status_code == 400
+        assert anon.post("/api/integrations/claim", json={"code": "x" * 43}).status_code == 400
+        c.delete(f"/api/integrations/tokens/{row['id']}")
+        # signing out ends the codes that session asked for
+        make_user("mcp-setup-out", "pw")
+        leaving = login("mcp-setup-out", "pw")
+        late = leaving.post("/api/integrations/setup-codes", json={"name": "DeepSeek Harness"}).json()["code"]
+        leaving.post("/api/logout")
+        assert anon.post("/api/integrations/claim", json={"code": late}).status_code == 400
+        leaving.close()
+    finally:
+        workspaces.delete(lab)

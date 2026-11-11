@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 52
+SCHEMA_VERSION = 53
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -142,7 +142,8 @@ USERS_SCHEMA = [
         name TEXT NOT NULL,
         created_at TEXT NOT NULL,
         expires_at INTEGER NOT NULL,
-        scope TEXT NOT NULL DEFAULT 'read'
+        scope TEXT NOT NULL DEFAULT 'read',
+        workspaces TEXT NOT NULL DEFAULT ''
     )""",
     # mirrors = local workspaces that are offline copies of a workspace on
     # another Gamma server (gamma/sync_engine.py): where it lives, the
@@ -486,8 +487,9 @@ USERS_SCHEMA = [
     )""",
     # inbox_items = each account's Inbox (docs/dev/comments.md "The
     # inbox"): one row per event that concerns the account (`user_id`, the
-    # recipient) — `kind` mention / comment_mention / reply / resolved /
-    # shared / invited, `actor` who did it (an account id), where it
+    # recipient) — `kind` mention / comment_mention / reply / comment /
+    # resolved / shared / invited / join_request, `actor` who did it (an
+    # account id), where it
     # happened (the workspace, page, block, thread and comment; '' where
     # the kind has none; a folder share's folder in `block_id`),
     # `share_token` when the recipient reaches the page only through a
@@ -819,6 +821,21 @@ COMMENTS_SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_comments_thread ON comments(thread_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_comments_page ON comments(page_id)",
     "CREATE INDEX IF NOT EXISTS idx_comments_orphaned ON comments(orphaned_at) WHERE orphaned_at IS NOT NULL",
+    # page_follows = whom a comment on a page tells beyond the people it
+    # names and the thread's own (docs/dev/comments.md "Following a page",
+    # Notion's Notify me): a row per page and account, `level` `all` (every
+    # comment) or `replies` (replies and @mentions only), `at` when it was
+    # set. A person who creates, edits or comments on a page follows it
+    # (`blocks_store.follow_page`, which keeps a row there already); the
+    # account's own choice replaces the row. Goes with the page deleted for
+    # good. Additive: no step (docs/dev/migrations.md rule 2).
+    """CREATE TABLE IF NOT EXISTS page_follows (
+        page_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        level TEXT NOT NULL,
+        at TEXT NOT NULL,
+        PRIMARY KEY (page_id, user_id)
+    ) WITHOUT ROWID""",
 ]
 _CHAT_COLUMNS = {"chats": "bucket, messages, updated_at, title",
                  "chat_history": "id, bucket, title, messages, created_at, updated_at"}
@@ -1729,12 +1746,14 @@ def restamp_pref(user_id: str, key: str, old: str, new: str, ws: str = "") -> bo
 
 
 def delete_workspace_prefs(ws: str, user_id: str) -> int:
-    """Delete the account's prefs kept in the workspace (``workspace_prefs``):
-    its membership ended, or the account is deleted. Returns how many went;
-    a workspace without a pages.db has none (none is created)."""
+    """Delete the account's prefs kept in the workspace (``workspace_prefs``)
+    and the pages it follows there (``page_follows``): its membership ended,
+    or the account is deleted. Returns how many prefs went; a workspace
+    without a pages.db has none (none is created)."""
     if not os.path.isfile(ws_db_path(ws, "pages.db")):
         return 0
     with connect_pages_db(ws) as db:
+        db.execute("DELETE FROM page_follows WHERE user_id = ?", (user_id,))
         return db.execute("DELETE FROM workspace_prefs WHERE user_id = ?", (user_id,)).rowcount
 
 

@@ -32,6 +32,23 @@ def test_read_block_outline_with_ids(notes):
     assert text.startswith("error: no such block")
 
 
+def test_read_block_names_how_a_passage_is_marked(notes):
+    """A highlight marked by a line reads as that line, so the model knows a
+    struck-out passage from an underlined one; the wash is a highlight."""
+    c, ids = notes
+    page = c.post("/api/blocks", json={"parent_id": "root", "content": "marked passages"}).json()["id"]
+    assert c.put(f"/api/blocks/{page}", json={"properties": {"folders": [ids["sandbox"]]}}).status_code == 200
+    made = {}
+    for style in ("underline", "squiggly", "strikeout", None):
+        made[style] = c.post("/api/blocks", json={"parent_id": page, "content": "", "properties": {
+            "pdf_position": {"pageNumber": 1}, "quote": f"passage {style}", **({"style": style} if style else {})}}).json()["id"]
+    text, _ = run_agent_tool(ids["ws"], folder(ids["sandbox"]), "read_block", {"block_id": page})
+    assert f'[{made["underline"]}] (underline: "passage underline")' in text
+    assert f'[{made["squiggly"]}] (wavy underline: "passage squiggly")' in text
+    assert f'[{made["strikeout"]}] (strikethrough: "passage strikeout")' in text
+    assert f'[{made[None]}] (highlight: "passage None")' in text
+
+
 def test_edit_block(notes):
     c, ids = notes
     scope = folder(ids["sandbox"])

@@ -481,7 +481,7 @@ def test_step_47_gives_a_workspace_stamped_46_the_parent_page_column(data_dir):
         db.register_functions(old)
         for index in ("listing", "dir", "work_folder", "deleted_with", "parent_page"):
             old.execute(f"DROP INDEX idx_ub_{index}")
-        for column in ("first_folder", "work_folder", "deleted_with", "parent_page"):  # (48's and 52's came after)
+        for column in ("first_folder", "work_folder", "deleted_with", "parent_page"):  # (48's and 53's came after)
             old.execute(f"ALTER TABLE unified_blocks DROP COLUMN {column}")
         old.execute("INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, "
                     "updated_at, page_id) VALUES ('spKid', 'root', 'a5', 'kid', '{\"parent_page\": \"spTop\"}', "
@@ -507,6 +507,6 @@ def test_step_47_gives_a_workspace_stamped_46_the_parent_page_column(data_dir):
     migrations._v47_parent_page("", sqlite3.connect(":memory:"), None)  # a copy without the table
     assert (47, "parent_page", migrations._v47_parent_page) in migrations.WORKSPACE_STEPS
     assert 47 not in [v for v, _, _ in migrations.STEPS]  # a workspace step only
-    # a derived column: copies on either side still sync (the format, 51, is step 51's documents)
-    assert 47 in migrations.DERIVED_STEPS and migrations.workspace_format() == 51
+    # a derived column: copies on either side still sync (the format, 52, is step 52's documents)
+    assert 47 in migrations.DERIVED_STEPS and migrations.workspace_format() == 52
     assert blocks_store.PARENT_PAGE == "parent_page"

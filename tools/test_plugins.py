@@ -113,10 +113,10 @@ class SharedPluginTest(unittest.TestCase):
                 self.assertEqual(bundle.extractfile("package/skills/gamma/SKILL.md").read(),
                                  (source / "skills/gamma/SKILL.md").read_bytes())
                 patch = bundle.extractfile("package/cordis.patch.yml").read().decode()
-            # No per-user values: the address and token come from the environment.
-            self.assertIn("process.env.GAMMA_URL", patch)
-            self.assertIn("process.env.GAMMA_TOKEN", patch)
+            # No per-user values: dsh-gamma.js reads the saved connection when dsh starts.
+            self.assertIn("name: ./dsh-gamma.js", patch)
             self.assertNotIn("://", patch)
+            self.assertNotIn("gamma_", patch)
             # A rebuild is byte-identical, so a checksum can pin the release.
             again = release(Path(tmp) / "again", "1.2.3", "example/Gamma")
             self.assertEqual(versioned.read_bytes(), next(p for p in again if p.name == versioned.name).read_bytes())

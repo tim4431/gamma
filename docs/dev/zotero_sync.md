@@ -1549,7 +1549,7 @@ files differ and comes with the PDF. The reasons are counted in
 
 | Zotero | Gamma |
 |---|---|
-| `highlight`, `underline` | a highlight (an underline stays one: the row's type is sent back) |
+| `highlight`, `underline` | a highlight; an underline is one drawn as an underline (`style`), and a new highlight drawn as any line (an underline, a wavy underline, a strikethrough: Zotero has only the first) goes as an `underline`. An item keeps the type it was made with: a style changed later stays Gamma's |
 | `image` | an area highlight (`pdf_position.area`) |
 | `ink` | an ink group; one item per look |
 | `text` | a Zotero box ([Text boxes](#text-boxes)), its rect the box, upright on the annotation's centre at its font size |

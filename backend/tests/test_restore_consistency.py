@@ -333,7 +333,7 @@ def test_a_backup_from_before_the_highlight_shape_is_converted_on_restore(tmp_pa
     through step 30's rewrite on a replace and on a merge
     (``normalize.highlight_shape``), after the content normalizers: the
     oldest pages' ``sourceUrl`` becomes a ``source_url``, which goes when
-    it is the stored copy's. Step 51, which every copy below it runs,
+    it is the stored copy's. Step 52, which every copy below it runs,
     gives the pages their doc: the camelCase page's is its stored copy,
     and a file name that kept a directory path is leafed after it, the
     automatic title with it."""
@@ -370,13 +370,13 @@ def test_a_backup_from_before_the_highlight_shape_is_converted_on_restore(tmp_pa
 
 
 def _flat_backup(tmp_path, name, stamp):
-    """A backup zip of a workspace as release 50 made it (the generated
+    """A backup zip of a workspace as release 51 made it (the generated
     doc_id of the flat keys, the pages keeping their document in them),
-    stamped ``stamp``: 50, or 0 as a scoped Gamma export from before step
-    51 is (it carries no stamp). Its pages: a stored PDF with its name, a
+    stamped ``stamp``: 51, or 0 as a scoped Gamma export from before step
+    52 is (it carries no stamp). Its pages: a stored PDF with its name, a
     duplicate of it, a PDF read in place, one shown from its address, and
     a nested block with a doc id."""
-    from test_migrations import _at_50
+    from test_migrations import _at_51
 
     ws, c = _account(name)
     pages = {title: _page(c, title) for title in ("paper.pdf", "A copy", "Linked", "Proxied")}
@@ -391,7 +391,7 @@ def _flat_backup(tmp_path, name, stamp):
         live.backup(out)
     with closing(sqlite3.connect(str(copy))) as conn:
         register_functions(conn)
-        _at_50(conn)
+        _at_51(conn)
         conn.executemany("UPDATE unified_blocks SET properties = ? WHERE id = ?",
                          [(json.dumps(p), bid) for bid, p in flat.items()])
         conn.execute(f"PRAGMA user_version = {stamp}")
@@ -402,9 +402,9 @@ def _flat_backup(tmp_path, name, stamp):
     return zpath, pages, f"{name}File"
 
 
-@pytest.mark.parametrize("stamp", [50, 0])
+@pytest.mark.parametrize("stamp", [51, 0])
 def test_a_backup_from_before_page_documents_is_converted_on_restore(tmp_path, stamp):
-    """A backup from before step 51 (stamped 50, or unstamped as a scoped
+    """A backup from before step 52 (stamped 51, or unstamped as a scoped
     Gamma export) comes back on a replace and on a merge with every
     document as one doc property (ws_backup._normalize_copies runs the
     workspace steps above its stamp): stored, a copy, read in place, at an

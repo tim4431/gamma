@@ -157,8 +157,8 @@ export const ANCHORS = {
   "zotero.dialog": { view: "settings", settings: "workspaces", open: ["settings.zoteroLink"], description: "The Link a Zotero library dialog" },
   "zotero.connect": { view: "settings", settings: "workspaces", open: ["settings.zoteroLink"], surface: "zotero.dialog", description: "The link dialog's Connect Zotero and Use an API key…, while no account is connected" },
   "zotero.link": { view: "settings", settings: "workspaces", open: ["settings.zoteroLink"], surface: "zotero.dialog", description: "The link dialog's Link button" },
-  "settings.assistantSetup": { view: "settings", settings: "integrations", description: "Settings → Integrations › Connect an assistant: each assistant's setup command" },
-  "settings.assistantAccess": { view: "settings", settings: "integrations", description: "Settings → Integrations › Workspace access: the assistants connected, each to disconnect" },
+  "settings.assistantSetup": { view: "settings", settings: "integrations", description: "Settings → Integrations › Connect an assistant: each assistant's setup steps" },
+  "settings.assistantAccess": { view: "settings", settings: "integrations", description: "Settings → Integrations › Connected assistants: each connection, the workspaces it reads, to change or disconnect" },
 };
 
 export const ATTR = "data-guide";

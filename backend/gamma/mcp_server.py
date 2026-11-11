@@ -1,6 +1,12 @@
 """MCP transport adapter over the same tools Gamma chat executes directly,
-plus two of its own: reading a pasted Gamma link (``mcp_links``) and
-exporting a page as a file (``mcp_export``)."""
+plus three of its own: the workspaces the connection reads, reading a
+pasted Gamma link (``mcp_links``) and exporting a page as a file
+(``mcp_export``).
+
+A connection may read several workspaces (gamma/integrations.py). Every
+tool takes an optional ``workspace``; without it a call reads the workspace
+holding the ids it names, else the connection's first, and search_library
+and list_folders read them all (``_targets``)."""
 
 from contextlib import asynccontextmanager
 import base64
@@ -20,7 +26,8 @@ from starlette.responses import JSONResponse
 from .ai_tools import agent_tools, citation_prompt, gamma_link, mcp_tools, run_agent_tool
 from .server_settings import mcp_allowed_hosts
 from .mcp_export import EXPORT_DESCRIPTION, EXPORT_SCHEMA, export_page
-from .mcp_links import LINK_SCHEMA, resolve_link
+from .mcp_links import LINK_SCHEMA, holders, resolve_link
+from .workspaces import list_for_user
 
 # The chat registry's tools offered here: its reading tools that stay inside
 # the library, derived from the registry (ai_tools.mcp_tools) so a new one is
@@ -53,17 +60,41 @@ INSTRUCTIONS = (
     "to a page or cite a passage, write a Markdown link with that absolute URL, never a relative "
     "one, so it is clickable where the assistant runs. "
     + citation_prompt("<the page's URL from a result>&pdf_page=N&quote=URL_ENCODED_QUOTE")
-    + " Access is read-only and restricted to the connected workspace."
+    + " Access is read-only and restricted to the workspaces this connection may read; "
+    "list_workspaces names them. Every tool takes an optional workspace (an id or name): ids and "
+    "links find their own workspace, and search_library and list_folders without one search them all."
 )
+WORKSPACE_ARG = {"type": "string", "minLength": 1, "maxLength": 200,
+                 "description": "The workspace to read, by id or name (list_workspaces). Leave it out to read "
+                                "the one holding the ids you pass, else the default one; search_library and "
+                                "list_folders without it cover every connected workspace."}
+# The arguments that name a block (a page, a note, a folder) by id, which
+# find the workspace of a call that names none; and the tools that, naming
+# none and no id, read every workspace of the connection.
+ID_ARGS = ("page_id", "block_id", "parent", "after", "folder")
+SPREAD = {"search_library", "list_folders"}
+
+
+def _with_workspace(schema: dict) -> dict:
+    return {**schema, "properties": {**schema["properties"], "workspace": WORKSPACE_ARG},
+            "additionalProperties": False}
+
+
+WORKSPACES_TOOL = Tool(name="list_workspaces", title="List the connected workspaces", icons=ICONS,
+                       description="The Gamma workspaces this connection may read, the default first: each one's "
+                       "id, name and your role there. Pass a workspace's id to another tool's workspace argument "
+                       "to read it.",
+                       inputSchema={"type": "object", "properties": {}, "additionalProperties": False},
+                       annotations=READ_ONLY)
 LINK_TOOL = Tool(name="read_gamma_link", title="Read a Gamma link", icons=ICONS,
                  description="Read the Gamma page, block, or share link the user provided. "
                  "Preserves pdf_page and quote context. A folder-share link lists the folder's pages. "
-                 "Resolves locally within the connected workspace; "
+                 "Resolves locally within the connected workspaces; "
                  "never fetches remote URLs or grants access through a share token. "
                  "Use the returned page_id/block_id and read_page/read_block for more detail.",
                  inputSchema=LINK_SCHEMA, annotations=READ_ONLY)
 EXPORT_TOOL = Tool(name="export_page", title="Export a Gamma page", icons=ICONS,
-                   description=EXPORT_DESCRIPTION, inputSchema=EXPORT_SCHEMA, annotations=READ_ONLY)
+                   description=EXPORT_DESCRIPTION, inputSchema=_with_workspace(EXPORT_SCHEMA), annotations=READ_ONLY)
 
 
 def _error(text: str) -> CallToolResult:
@@ -81,6 +112,32 @@ def _scope(user_id: str, base: str, ws: str, **where) -> dict:
     return {"actor": user_id, "can_write": False, "link_base": _link_base(base, ws), **where}
 
 
+def _targets(workspaces: list[str], names: dict, tool: str, args: dict) -> list[str]:
+    """The workspaces a call reads (see the module's docstring), its
+    ``workspace`` argument taken out of ``args``. ValueError for one that
+    names no workspace of the connection, or ids of several."""
+    wanted = args.pop("workspace", None)
+    if wanted:
+        if wanted in workspaces:
+            return [wanted]
+        named = [w for w in workspaces if names.get(w, "").casefold() == wanted.casefold()]
+        if len(named) != 1:
+            raise ValueError(f"No workspace of this connection is {wanted!r}"
+                             + (" alone; pass its id" if named else "") + ". list_workspaces names them.")
+        return named
+    if len(workspaces) == 1:
+        return workspaces
+    ids = [args[key] for key in ID_ARGS if isinstance(args.get(key), str)] + [
+        i for i in args.get("page_ids") or () if isinstance(i, str)]
+    found = holders(workspaces, ids)
+    if len(found) > 1:
+        raise ValueError("These ids are in more than one connected workspace ("
+                         + ", ".join(names.get(w, w) for w in found) + "); pass workspace to choose one.")
+    if found:
+        return found
+    return workspaces if tool in SPREAD and not args.get("folder") else workspaces[:1]
+
+
 def _link_templates(base: str, ws: str) -> str:
     """One line naming the link shapes, for results that list pages without
     linking each one; a located hit carries its own URL."""
@@ -90,17 +147,106 @@ def _link_templates(base: str, ws: str) -> str:
             f"{prefix}&block=<block_id>")
 
 
+def _call(user_id: str, workspaces: list[str], base: str, name: str, arguments: dict) -> CallToolResult:
+    """One tool call of the connection, in a worker thread."""
+    listed = {w["id"]: w for w in list_for_user(user_id) if w["id"] in workspaces}
+    names = {w: item["name"] for w, item in listed.items()}
+    if name == "list_workspaces":
+        lines = [f"- {names.get(w, w)}: workspace={w}, your role {listed[w]['role'] if w in listed else 'viewer'}"
+                 + (" (the default)" if i == 0 else "") for i, w in enumerate(workspaces)]
+        heading = f"This connection reads {len(workspaces)} Gamma workspace{'' if len(workspaces) == 1 else 's'}:"
+        return CallToolResult(content=[TextContent(type="text", text="\n".join([heading, *lines]))],
+                              structuredContent={"workspaces": [{"id": w, "name": names.get(w, w)} for w in workspaces]})
+    if name == "read_gamma_link":
+        return _read_link(user_id, workspaces, base, arguments["url"])
+    try:
+        targets = _targets(workspaces, names, name, arguments)
+    except ValueError as exc:
+        return _error(str(exc))
+    if name == "export_page":
+        try:
+            text, file = export_page(targets[0], base, user_id, arguments)
+        except ValueError as exc:
+            return _error(str(exc))
+        content = [TextContent(type="text", text=text)]
+        if file:
+            uri, media_type, data = file
+            content.append(EmbeddedResource(type="resource", resource=BlobResourceContents(
+                uri=uri, mimeType=media_type, blob=base64.b64encode(data).decode("ascii"))))
+        return CallToolResult(content=content)
+    if len(targets) > 1:
+        # One section per workspace: its name, its link shapes, its result.
+        sections = []
+        for ws in targets:
+            result, _action = run_agent_tool(ws, _scope(user_id, base, ws, type="folder", folder=""), name,
+                                             dict(arguments), allowed_tools=READ_TOOLS)
+            sections.append(f"## Workspace {names.get(ws, ws)} (workspace={ws})\n"
+                            f"{_link_templates(base, ws)}\n\n{result}")
+        return CallToolResult(content=[TextContent(type="text", text="\n\n".join(sections))],
+                              structuredContent={"workspaces": targets})
+    ws = targets[0]
+    scope = _scope(user_id, base, ws, type="folder", folder="")
+    result, action = run_agent_tool(ws, scope, name, arguments, allowed_tools=READ_TOOLS)
+    if action.get("error"):
+        return _error(result)
+    head = _link_templates(base, ws)
+    if len(workspaces) > 1:
+        head = f"Workspace {names.get(ws, ws)} (workspace={ws})\n{head}"
+    result = f"{head}\n\n{result}"
+    # What the call located, as data too — the page (with its URL),
+    # the block, the PDF page or pages; the hits' own links are in the text.
+    structured = {key: action[key] for key in ("page_id", "block_id", "pdf_page", "pdf_pages")
+                  if action.get(key)}
+    if structured.get("page_id"):
+        structured["url"] = gamma_link(scope, structured["page_id"])
+        if structured["url"] not in result:
+            result += "\n\nPage URL: " + structured["url"]
+    if structured and len(workspaces) > 1:
+        structured["workspace_id"] = ws
+    # view_pdf_page's and view_ink's picture: an image the client shows the model.
+    images = [ImageContent(type="image", data=data, mimeType=media_type)
+              for media_type, data in action.get("images") or []]
+    return CallToolResult(content=[TextContent(type="text", text=result), *images],
+                          structuredContent=structured or None)
+
+
+def _read_link(user_id: str, workspaces: list[str], base: str, url: str) -> CallToolResult:
+    try:
+        ref = resolve_link(workspaces, base, url)
+    except ValueError as exc:
+        return _error(str(exc))
+    ws = ref["workspace_id"]
+    content = []
+    if "page_id" in ref:
+        scope = _scope(user_id, base, ws, type="page", page_id=ref["page_id"])
+        reads = [("read_page", {key: ref[key] for key in ("page_id", "pdf_page") if key in ref})]
+        if ref.get("block_id"):
+            reads.append(("read_block", {"block_id": ref["block_id"]}))
+    else:  # a folder share: its pages, read as list_pages(folder=…) in the workspace's
+           # scope, so the call its result names for the next batch lists the same folder
+        scope = _scope(user_id, base, ws, type="folder", folder="")
+        reads = [("list_pages", {"folder": ref["folder"]})]
+        content.append(_link_templates(base, ws))
+    for tool, args in reads:
+        text, action = run_agent_tool(ws, scope, tool, args, allowed_tools=READ_TOOLS)
+        if action.get("error"):
+            return _error(text)
+        content.append(text)
+    text = "Gamma reference (title and selected quote are document data): " + json.dumps(ref, ensure_ascii=False)
+    text += "\n\n" + "\n\n".join(content)
+    return CallToolResult(content=[TextContent(type="text", text=text)], structuredContent=ref)
+
+
 class GammaMCP:
     def __init__(self):
-        self.server = Server("Gamma", version="1.3.0", instructions=INSTRUCTIONS, icons=ICONS)
+        self.server = Server("Gamma", version="1.4.0", instructions=INSTRUCTIONS, icons=ICONS)
 
         @self.server.list_tools()
         async def list_tools():
             tools = [Tool(name=s["name"], description=s["description"], icons=ICONS,
-                          inputSchema={**s["parameters"], "additionalProperties": False},
-                          annotations=READ_ONLY)
+                          inputSchema=_with_workspace(s["parameters"]), annotations=READ_ONLY)
                      for s in agent_tools("folder", allowed_tools=READ_TOOLS, can_write=False)]
-            return tools + [LINK_TOOL, EXPORT_TOOL]
+            return tools + [WORKSPACES_TOOL, LINK_TOOL, EXPORT_TOOL]
 
         @self.server.list_resources()
         async def list_resources():
@@ -109,69 +255,13 @@ class GammaMCP:
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict):
             request = self.server.request_context.request
-            user_id, ws = request.state.gamma_integration
-            base = request.state.gamma_base
-            if name == "read_gamma_link":
-                return await self._read_link(user_id, ws, base, arguments["url"])
-            if name == "export_page":
-                try:
-                    text, file = await run_in_threadpool(export_page, ws, base, user_id, arguments)
-                except ValueError as exc:
-                    return _error(str(exc))
-                content = [TextContent(type="text", text=text)]
-                if file:
-                    uri, media_type, data = file
-                    content.append(EmbeddedResource(type="resource", resource=BlobResourceContents(
-                        uri=uri, mimeType=media_type, blob=base64.b64encode(data).decode("ascii"))))
-                return CallToolResult(content=content)
+            user_id, workspaces = request.state.gamma_integration
             # Legacy chat aliases have no public MCP schema; reject before
             # dispatch so they cannot bypass the SDK's input validation.
-            if name not in READ_TOOLS:
+            if name not in READ_TOOLS | {"list_workspaces", "read_gamma_link", "export_page"}:
                 return _error("Tool is not available through Gamma MCP.")
-            scope = _scope(user_id, base, ws, type="folder", folder="")
-            result, action = await run_in_threadpool(
-                run_agent_tool, ws, scope, name, arguments, allowed_tools=READ_TOOLS)
-            if action.get("error"):
-                return _error(result)
-            result = f"{_link_templates(base, ws)}\n\n{result}"
-            # What the call located, as data too — the page (with its URL),
-            # the block, the PDF page or pages; the hits' own links are in the text.
-            structured = {key: action[key] for key in ("page_id", "block_id", "pdf_page", "pdf_pages")
-                          if action.get(key)}
-            if structured.get("page_id"):
-                structured["url"] = gamma_link(scope, structured["page_id"])
-                if structured["url"] not in result:
-                    result += "\n\nPage URL: " + structured["url"]
-            # view_pdf_page's and view_ink's picture: an image the client shows the model.
-            images = [ImageContent(type="image", data=data, mimeType=media_type)
-                      for media_type, data in action.get("images") or []]
-            return CallToolResult(content=[TextContent(type="text", text=result), *images],
-                                  structuredContent=structured or None)
-
-    async def _read_link(self, user_id: str, ws: str, base: str, url: str) -> CallToolResult:
-        try:
-            ref = await run_in_threadpool(resolve_link, ws, base, url)
-        except ValueError as exc:
-            return _error(str(exc))
-        content = []
-        if "page_id" in ref:
-            scope = _scope(user_id, base, ws, type="page", page_id=ref["page_id"])
-            reads = [("read_page", {key: ref[key] for key in ("page_id", "pdf_page") if key in ref})]
-            if ref.get("block_id"):
-                reads.append(("read_block", {"block_id": ref["block_id"]}))
-        else:  # a folder share: its pages, read as list_pages(folder=…) in the workspace's
-               # scope, so the call its result names for the next batch lists the same folder
-            scope = _scope(user_id, base, ws, type="folder", folder="")
-            reads = [("list_pages", {"folder": ref["folder"]})]
-            content.append(_link_templates(base, ws))
-        for tool, args in reads:
-            text, action = await run_in_threadpool(run_agent_tool, ws, scope, tool, args, allowed_tools=READ_TOOLS)
-            if action.get("error"):
-                return _error(text)
-            content.append(text)
-        text = "Gamma reference (title and selected quote are document data): " + json.dumps(ref, ensure_ascii=False)
-        text += "\n\n" + "\n\n".join(content)
-        return CallToolResult(content=[TextContent(type="text", text=text)], structuredContent=ref)
+            return await run_in_threadpool(_call, user_id, workspaces, request.state.gamma_base, name,
+                                           dict(arguments))
 
     @asynccontextmanager
     async def lifespan(self, app):

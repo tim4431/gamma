@@ -785,6 +785,11 @@ button.aiModelTag:disabled { cursor: default; }
 .paletteEditorSide .uiBtn { align-self: flex-start; }
 .paletteEditor > .uiClose { margin-left: auto; }
 @media (max-width: 560px) { .paletteEditor { flex-wrap: wrap; } }
+/* A highlight preset (HighlightPresets.jsx): its look, its name, up, down
+   and Delete over its style row and its colours. */
+.presetCard { display: flex; flex-direction: column; gap: 8px; margin: 4px 8px; }
+.presetHead { display: flex; align-items: center; gap: 6px; }
+.presetLook { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 
 /* The colour picker (shared/ui/ColorPicker.jsx): the square, the two bars
    and the fields. Its gradients are inline styles. */
@@ -828,6 +833,8 @@ button.aiModelTag:disabled { cursor: default; }
 .barLayoutList { position: relative; display: flex; flex-direction: column; }
 .barLayoutRow { display: flex; align-items: center; gap: 2px; flex-shrink: 0; transition: opacity var(--dur-fast); }
 .barLayoutList .barLayoutRow > .setRow { flex: 1 1 0; min-width: 0; padding-left: 4px; }
+/* A row's mode, then its place while pages are side by side (the top bar's). */
+.barLayoutChoices { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .barLayoutGrip {
   width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn); flex-shrink: 0; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -876,6 +883,9 @@ button.aiModelTag:disabled { cursor: default; }
 .integrationDetails .setStep { margin-bottom: 4px; }
 /* Four assistants no longer fit one line on a phone. */
 .integrationDetails [role="group"] > .segGroup { flex-shrink: 1; flex-wrap: wrap; row-gap: 4px; }
+/* The workspaces a connection may read: a checklist under a step or a row. */
+.integrationSpaces { min-height: 0; max-height: 240px; }
+.integrationEdit { padding: 0 0 12px 36px; }
 .integrationCreateControls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .integrationCreateControls .aiKeyInput { flex: 1; width: 100px; min-width: 0; margin: 0; }
 
@@ -889,6 +899,8 @@ button.aiModelTag:disabled { cursor: default; }
   .setRow:has(> .switch) > .settingText { padding-right: 60px; grid-column: 2; grid-row: 1; }
   .setRow:has(> .toggleGroup) { grid-template-columns: 28px minmax(0, 1fr); }
   .setRow > .segGroup { grid-column: 1 / -1 !important; flex-wrap: wrap; row-gap: 4px; }
+  .setRow > .barLayoutChoices { grid-column: 1 / -1 !important; justify-content: flex-start; }
+  .setRow > .barLayoutChoices > .segGroup { flex-shrink: 1; flex-wrap: wrap; row-gap: 4px; }
   .setSlider .setRange { width: min(160px, 35vw); }
   .setPictureChoices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .setPictureChoice.uiBtn { flex-direction: column; gap: 4px; }

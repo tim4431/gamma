@@ -12,25 +12,32 @@ servers, and connecting Codex does not invoke Gamma's AI provider.
 | `gamma/mcp_oauth.py`, `gamma/mcp_oauth_provider.py` | discovery, dynamic registration, PKCE authorization and token exchange, the consent API (`/api/integrations/oauth/*`), `public_base`; the provider issues the 90-day token through `integrations.create_token` |
 | `gamma/mcp_links.py` | local page/block/share link resolution within the connected workspace |
 | `gamma/mcp_export.py` | `export_page`: a page as Markdown text or an embedded PDF, over `routers/export.py` |
-| `gamma/integrations.py` | integration tokens (`integration_tokens` table, hashes only) and their resolution |
+| `gamma/integrations.py` | integration tokens (`integration_tokens` table, hashes only), the workspaces each may read (`grant`, `resolve_connection`) and their resolution |
 | `gamma/server_settings.py` | the admin-confirmed public URL and the MCP host allowlist |
-| `gamma/routers/integrations.py` | the session-only token management API |
-| `users.db` tables `integration_tokens`, `mcp_oauth` | part of the baseline schema (steps 0–19 are folded into it, [migrations.md](migrations.md) "Versions") |
-| `frontend/src/settings/SettingsIntegrations.jsx`, `frontend/src/auth/McpConsent.jsx` | the Integrations pane, the consent screen |
-| `plugins/gamma/`, `tools/package_plugins.py`, `tools/release_plugins.py`, `.github/workflows/codex-plugin.yml` | the shared Codex / Claude Code plugin, the DeepSeek Harness bundle in the same directory, and their packaging |
+| `gamma/routers/integrations.py` | the session-only connection management API, account-wide; the one-time setup codes a token-only client claims |
+| `users.db` tables `integration_tokens`, `mcp_oauth` | part of the baseline schema (steps 0–19 are folded into it); `integration_tokens.workspaces` is step 51 ([migrations.md](migrations.md) "Versions") |
+| `frontend/src/settings/SettingsIntegrations.jsx`, `frontend/src/settings/WorkspacePicker.jsx`, `frontend/src/auth/McpConsent.jsx` | the Integrations pane, the workspace checklist it and the consent screen share, the consent screen |
+| `plugins/gamma/`, `tools/package_plugins.py`, `tools/release_plugins.py`, `tools/install-gamma-*.{ps1,sh}`, `.github/workflows/codex-plugin.yml` | the shared Codex / Claude Code plugin, the DeepSeek Harness bundle in the same directory, their setup scripts and packaging |
 
 ## Connect
 
-Open Gamma in your browser and go to **Settings → Integrations**.
-Copy its server URL into your assistant's MCP settings and choose its sign-in
-option. Select **Codex CLI** in the panel for commands using your actual URL:
+Open Gamma in your browser and go to **Settings → AI → Integrations**. The
+pane is the account's, whichever workspace is open: **Connect an assistant**
+has a tab per assistant (Claude Code, Codex, DeepSeek Harness, Other) with its
+steps, **Connected assistants** lists every connection with the workspaces it
+reads, and **Tokens (advanced)** makes a token by hand. One connection may read
+several workspaces: they are ticked at sign-in (the consent screen's
+checklist, the open workspace ticked to start) or in the DeepSeek Harness tab,
+and changed later from the connection's row (**Choose workspaces**) without
+connecting again. **All workspaces, and those added later** grants every
+workspace the account can open, now and to come. The Codex tab's command:
 
 ```text
 codex mcp add gamma --url https://gamma.example.com/mcp
 ```
 
 Codex opens the browser. If sign-in is interrupted, run `codex mcp login gamma`
-to retry. Sign in with your Gamma account, choose the workspace,
+to retry. Sign in with your Gamma account, tick the workspaces,
 and approve read-only access. Start a new Codex chat. There is no token to copy
 and no environment variable to set. This works with local browser-based Gamma
 and self-hosted servers; the Gamma desktop app is not required. Local installations
@@ -44,23 +51,25 @@ your computer.
 
 ### Claude Code
 
-Open **Settings → Integrations → Claude Code**. The connection command uses this
-Gamma server's MCP URL, with quoting for the selected terminal platform:
+**Settings → AI → Integrations → Claude Code** (the pane's first tab). The
+connection command uses this Gamma server's MCP URL, with quoting for the
+selected terminal platform:
 
 ```text
 claude mcp add --transport http --scope user gamma https://gamma.example.com/mcp
 ```
 
-The same tab explains how to invoke the plugin (`/gamma:gamma`) and, under
-**Install the plugin (once)**, how to install it from an extracted release. Expand
-**Changed the server address?** for commands that replace the user-scoped MCP
-connection without reinstalling the plugin. Confirm a changed remote public URL
-in **Settings → Server** first, then reopen the setup tab and sign in again.
-Frontend command generation lives in `frontend/src/settings/assistantSetup.js`;
-both clients share shell-literal quoting.
+The same tab's **Optional: the /gamma:gamma workflow** explains how to install
+the plugin from an extracted release, and **Changed the server address?** gives
+commands that replace the user-scoped MCP connection without reinstalling the
+plugin. Confirm a changed remote public URL in **Settings → Server** first, then
+reopen the tab and sign in again. Frontend command generation lives in
+`frontend/src/settings/assistantSetup.js`; every command shares its
+shell-literal quoting, and the Codex and DeepSeek Harness ones its
+download-then-run form (`releaseScript`).
 
 Start Claude Code and open `/mcp`. Select `gamma` and authenticate in your browser;
-sign in to Gamma and approve the workspace. Start a new session. Check `/mcp` or
+sign in to Gamma and tick the workspaces. Start a new session. Check `/mcp` or
 `claude mcp get gamma` if tools are unavailable. Each assistant maintains its own
 connection and authorization; an existing Codex login does not connect Claude Code.
 See the [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp).
@@ -94,54 +103,86 @@ Claude Code plugin:
 
 | File | Role |
 |---|---|
-| `package.json` | name `dsh-gamma`, the bundle declaration, `files`; version and description kept equal to the plugin manifests (the builder checks) |
-| `cordis.patch.yml` | inserts two rows: `gamma-mcp` (`@deepseek-ai/dsh-mcp-client`, Streamable HTTP, `url` from `GAMMA_URL`, `Authorization: Bearer` from `GAMMA_TOKEN`) and `gamma-skill` |
-| `dsh-skill.js` | mounts dsh's filesystem skill provider (`@deepseek-ai/dsh-skill-filesystem`, a peer dependency the running dsh supplies) on this package's `skills/` |
+| `package.json` | name `dsh-gamma`, the bundle declaration, `files`, the peer dependencies the running dsh supplies (`@deepseek-ai/dsh-mcp-client`, `@deepseek-ai/dsh-skill-filesystem`); version and description kept equal to the plugin manifests (the builder checks) |
+| `cordis.patch.yml` | inserts one row, `gamma`, naming `./dsh-gamma.js` |
+| `dsh-gamma.js` | mounts dsh's filesystem skill provider on this package's `skills/` and, when this computer is connected, dsh's MCP client on Gamma (Streamable HTTP, `Authorization: Bearer`) |
 
 dsh's MCP client sends fixed headers and has no OAuth, so it connects with a
-manual token. The address and token are read when dsh starts, so the package
-holds no per-user values. Without `GAMMA_URL` the `gamma-mcp` row is disabled
-(`disabled: !!js "!process.env.GAMMA_URL"`): an undefined `url` fails the MCP
-client's config check, and a failing row stops dsh from booting at all. A patch
-row can name only a plugin module relative to the bundle, not a folder, which is
-why the skill needs `dsh-skill.js` rather than a config value.
+token, and its config takes only literal values or `!!js` expressions. A patch
+row can name only a plugin module relative to the bundle, so `dsh-gamma.js`
+reads the connection itself when dsh starts: `$DSH_HOME/gamma.json`
+(`{"url": ".../mcp", "token": "gamma_..."}`, default home `~/.dsh`), which the
+setup script writes, or `GAMMA_URL` / `GAMMA_TOKEN` in the environment, which
+take its place. One file serves every profile and every way of starting dsh,
+and the package holds no per-user values. Without a connection the module logs
+a warning and mounts the skill alone, so dsh still boots (a failing row would
+stop it).
 
-**Setup.** **Settings → Integrations → DeepSeek Harness** has three steps: create
-a read-only token named "DeepSeek Harness" (shown once), run the install command
-(`dshInstallCommand` in `frontend/src/settings/assistantSetup.js`), run the start
-command (`dshStartCommand`: sets `GAMMA_URL`, prompts for `GAMMA_TOKEN` so it
-never enters shell history, runs `npx @deepseek-ai/dsh web`). The install command
-downloads `releases/latest/download/dsh-gamma.tgz` to `$DSH_HOME/dsh-gamma.tgz`
-(default `~/.dsh`) and adds that file to the `web` profile; running it again
-updates in place. It deliberately does not pass the URL to `dsh plugin add`:
-pnpm 10 cannot reuse a remote tarball it has already resolved (a second profile
-or a re-add fails with `ERR_PNPM_MISSING_TARBALL_INTEGRITY`), while a local file
-installs into any number of profiles and updates. pnpm warns about the
-unresolved peer dependency on install; that is expected, the running dsh
-provides it. The tab exists only where browser sign-in is available, like the
-other tabs; elsewhere, create the token under **Manual setup** and use the same
-commands.
+**Setup.** **Settings → AI → Integrations → DeepSeek Harness** has three steps:
+tick the workspaces (shown when the account has more than one), show the setup
+command, and open DeepSeek Harness. **Show the setup command** asks
+`POST /api/integrations/setup-codes` for a one-time code (ten minutes, while the
+asking session lasts) and shows `dshSetupCommand` (`assistantSetup.js`), which
+downloads `install-gamma-dsh.ps1` / `.sh` from the latest release and runs it
+with this server's MCP URL and the code. The script:
 
-The tools appear as `mcp__gamma__<tool>` and the skill as `gamma`. An unset,
-expired or revoked token shows in Gamma's log as a 401
-`authentication-required` on `/mcp`; dsh then starts without the tools.
+1. finds the dsh CLIs: the desktop app's own
+   (`%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd`,
+   `/Applications/DeepSeek Harness.app/…/cli/bin/dsh`, `/opt/DeepSeek Harness/…`),
+   a `dsh` on `PATH`, or `npx @deepseek-ai/dsh`;
+2. picks the profiles: the desktop app's `desktop` profile where the app is
+   installed, `web` where that profile exists, else `web` (`-Profiles` / extra
+   arguments name others). The desktop profile belongs to the app: only its own
+   CLI manages it, after the app has initialized it once and while the app is
+   fully quit (dsh refuses otherwise; the script says so);
+3. adds the plugin to each profile whose `node_modules/dsh-gamma` is missing or
+   another version: the release's pinned `dsh-gamma-X.Y.Z.tgz`, checked against
+   its SHA-256 and saved as `$DSH_HOME/dsh-gamma.tgz`, the one file every
+   profile names. pnpm cannot add a remote tarball it resolved before (a second
+   profile or a re-add fails with `ERR_PNPM_MISSING_TARBALL_INTEGRITY`); a local
+   file installs into any number of profiles and updates in place. pnpm warns
+   about the unresolved peer dependencies; the running dsh provides them;
+4. claims the code (`POST /api/integrations/claim`) for the connection's read
+   token and writes `gamma.json` (no byte-order mark: dsh parses it as JSON;
+   mode 600 on macOS / Linux).
 
-**Build.** `tools/release_plugins.py` writes `dsh-gamma-X.Y.Z.tgz` and a
-byte-identical `dsh-gamma.tgz` (the stable name the install command fetches)
-with `gamma-dsh-SHA256SUMS.txt`. `write_dsh_bundle` in `tools/package_plugins.py`
+A failure in steps 1–3 leaves the code unused, so the same command can run
+again; a used or expired code asks for a new command. Connecting again (a new
+token, other workspaces) finds the plugin in place and only saves the new
+connection, so the app need not be quit; it reads the file at its next start.
+`-Bundle <tarball>` (`GAMMA_DSH_BUNDLE` for the sh script) installs a local
+build instead of the release's, for development; `-Remove` undoes the setup
+("Remove Gamma from an assistant" below). The tab works without browser
+sign-in, since it needs none.
+
+The tools appear as `mcp__gamma__<tool>` and the skill as `gamma`. An expired or
+revoked token shows in Gamma's log as a 401 `authentication-required` on `/mcp`;
+dsh then starts without the tools.
+
+**Build.** `tools/release_plugins.py` writes `dsh-gamma-X.Y.Z.tgz`, a
+byte-identical `dsh-gamma.tgz`, the two setup scripts with that version, its
+download URL and digest pinned in (`__GAMMA_DSH_*__`), and
+`gamma-dsh-SHA256SUMS.txt`. `write_dsh_bundle` in `tools/package_plugins.py`
 builds the tarball in Python (npm layout, `package/` prefix, fixed timestamps,
-reproducible), stamping the release version into `package.json`. For local
-development, `dsh plugin --profile web add ./plugins/gamma` links the checkout;
-that needs dsh 0.1.7 or later, since 0.1.5 does not supply the peer dependency to
-a linked package (use a tarball from `tools/release_plugins.py` there). Verified
-against dsh 0.1.5-rc.3 and 0.1.7-rc.1: tools `mcp__gamma__*`, the `gamma` skill,
-and a clean boot without `GAMMA_URL`.
+reproducible), stamping the release version into `package.json`.
+`tools/test_release_dsh_plugin.py` runs the real scripts (PowerShell on
+Windows, sh elsewhere) with only the download, the claim and the dsh CLI
+stubbed. For local development, `dsh plugin --profile web add ./plugins/gamma`
+links the checkout (dsh 0.1.7 or later), or run the setup script from
+`tools/` with `-Bundle` and a tarball from `write_dsh_bundle`. Verified against
+dsh 0.2.2-rc.1 (the Windows desktop app's CLI and pnpm 11): the plugin added to
+a desktop profile, the code claimed, a booted profile reading `gamma.json`,
+initializing with Gamma and listing its tools, and `-Remove` taking the plugin
+out of a desktop and a web profile; earlier, 0.1.5-rc.3 and
+0.1.7-rc.1 with the environment variables.
 
-### Manual tokens (advanced)
+### Tokens (advanced)
 
-For other clients without OAuth, expand **Manual setup (advanced)** in the same panel,
-create a named token, and copy it once. Guests cannot create connections. Set `GAMMA_TOKEN` in the environment
-of the process launching Codex. For a temporary PowerShell session:
+For other clients without OAuth, or a script, expand **Tokens (advanced)** in
+the same pane, name the token, tick the workspaces it may read (a read and
+write token is for the open workspace alone), and copy it once. Guests cannot
+create connections. The client sends it as `Authorization: Bearer <token>`.
+Codex, for example, reads one from the environment:
 
 ```powershell
 $gammaSecret = Read-Host 'Gamma token' -AsSecureString
@@ -153,7 +194,21 @@ codex
 Replace the address/port with the one shown in Gamma. A desktop Codex process
 must inherit the variable; restarting an app launched elsewhere may not inherit
 a terminal's variables. Never put tokens in prompts, screenshots, source control,
-or plugin packages. The panel also provides a manual `config.toml` snippet.
+or plugin packages.
+
+### Remove Gamma from an assistant
+
+Each tab ends with **Remove Gamma from …**, folded: the commands that undo its
+setup on that computer (`claudeRemoveCommands`, `codexRemoveCommands`,
+`dshRemoveCommand` in `assistantSetup.js`). Removing them ends nothing on
+Gamma's side, so the tab says to disconnect the connection under **Connected
+assistants** too, which revokes its token.
+
+| Assistant | Commands |
+|---|---|
+| Claude Code | `claude mcp remove gamma --scope user`; for the plugin, `claude plugin uninstall gamma@gamma-local --scope user` and `claude plugin marketplace remove gamma-local` |
+| Codex | `codex mcp remove gamma`, `codex plugin remove gamma@gamma-local`, `codex plugin marketplace remove gamma-local`; the plugin source under `%LOCALAPPDATA%/Gamma/codex-plugin` (`~/.local/share/gamma/codex-plugin`) can then be deleted |
+| DeepSeek Harness | the setup script with `-Remove` (`--remove` for sh), with the app quit: `dsh plugin --profile <p> remove dsh-gamma` for every profile whose `package.json` names `dsh-gamma` (or those `-Profiles` names), which drops the package and its entry in `dsh.profile.bundles`, then deletes `$DSH_HOME/gamma.json` and `dsh-gamma.tgz`. A profile without it is left alone: pnpm refuses to remove what a profile lacks. A failed removal keeps the connection file, so the command can run again |
 
 Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 
@@ -169,6 +224,7 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | `view_ink` | The user's handwriting as an image: a group's strokes on their PDF page or sheet of paper, or a whole page with all its handwriting |
 | `view_image` | The pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), all or one by index |
 | `cite` | The citation records kept with pages: the paper metadata, its BibTeX, the slide citation |
+| `list_workspaces` | The workspaces the connection reads, the default first: each one's id, name and the account's role |
 | `read_gamma_link` | Resolve and read a page, block, or share URL, including PDF page context; a folder-share URL lists the folder's pages |
 | `export_page` | One page as Markdown text, or as a PDF file: the annotated paper or the notes typeset; with `sub_pages`, the pages inside it too |
 
@@ -184,9 +240,32 @@ and restoring is a change; `update_plan`, which has no permission and only
 goes with the changes; and every write tool, because the connection is
 read-only. The chat's tool permissions (Settings → AI → Tool usage) do not
 govern this connection: the token is its own grant, created and revoked in
-Integrations. `read_gamma_link` and `export_page` exist only here.
+Integrations. `list_workspaces`, `read_gamma_link` and `export_page` exist only here.
 `view_pdf_page`'s, `view_ink`'s and `view_image`'s pictures go out as MCP `image` items,
 which the client shows the model as images.
+
+### Several workspaces
+
+A connection reads the workspaces its token grants that the account can still
+open (`integrations.resolve_connection`), its own workspace first: the
+default. Every tool but `list_workspaces` and `read_gamma_link` takes an
+optional `workspace`, an id or a name (`mcp_server._targets`). Without one:
+
+- a call naming a block by id (`page_id`, `block_id`, `parent`, `after`,
+  `folder`, `page_ids`) reads the workspace holding it
+  (`mcp_links.holders`); ids in two workspaces are refused with their names,
+  asking for `workspace`;
+- `search_library`, and `list_folders` without a `folder`, read every
+  workspace, one section each, headed by its name and id with its link
+  shapes;
+- anything else reads the default workspace.
+
+With more than one workspace, a single-workspace result starts with the
+workspace's name and id, and its `structuredContent` carries `workspace_id`.
+A pasted link reads in the workspace it names (`?ws=`, a share token's
+prefix), else in the one holding its page or block; one in a workspace the
+connection does not read is refused. A connection of one workspace answers as
+before, without the extra line.
 
 ### Links in results
 
@@ -281,9 +360,9 @@ with `&page=` a page inside it (the address the share view writes for a
 sub-page), by the same scope rule; a page outside it, an ancestor
 included, is refused as naming different pages.
 
-Links never grant extra MCP access. Share tokens resolve only inside the already
-authorized workspace, including restricted shares whose workspace the user can
-already read. A token names its workspace (`<workspace id>.<secret>`,
+Links never grant extra MCP access. Share tokens resolve only inside the
+workspaces the connection already reads, including restricted shares whose
+workspace the user can already read. A token names its workspace (`<workspace id>.<secret>`,
 [api.md](api.md) "Auth model"), so one whose prefix is another workspace is
 refused before any lookup, and a link minted before schema version 32 (a bare
 secret) resolves nothing. Revoked, unknown, mismatched, or cross-workspace references fail
@@ -332,7 +411,9 @@ Gamma provides OAuth authorization-server discovery, protected-resource discover
 dynamic public-client registration, and authorization-code exchange with S256
 PKCE. The SDK validates client identity, redirect matching, and PKCE. Gamma adds:
 
-- resource binding and an explicit workspace approval screen;
+- resource binding and an explicit approval screen, where the user ticks the
+  workspaces the assistant may read (or all of them, those added later too);
+  the code carries the grant, rechecked against the account at the exchange;
 - session-bound consent, rate and body limits;
 - persistent expiring records and atomic single-use codes.
 
@@ -355,8 +436,8 @@ manual tokens in **Integrations**, where users can revoke them.
 
 ## Permissions and credentials
 
-- Integration tokens grant access to exactly one workspace: `read` (the default; the MCP endpoint and the HTTP API's reads) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers). On the HTTP API a manual token is a bearer credential — the account behind it, confined to its workspace, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included). `POST /api/ai/chat` through it arms the reading tools only (`auth.can_write`), so its agent cannot rename, move or edit either. Tool arguments,
-  `?ws=`, and `X-Gamma-Workspace` cannot select another workspace.
+- An integration token belongs to one workspace, its `workspace_id`: `read` (the default; the MCP endpoint and the HTTP API's reads) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers). A read token's MCP connection may read more, its `workspaces` (`integrations.grant`): `''` for its own workspace alone (every token from before step 51), `'*'` for every workspace the account can open, now and later, or a JSON list of ids, its own first. A write token is always its workspace alone. On the HTTP API a manual token is a bearer credential — the account behind it, confined to its own workspace whatever it grants MCP, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included). `POST /api/ai/chat` through it arms the reading tools only (`auth.can_write`), so its agent cannot rename, move or edit either. On MCP, a tool's `workspace` argument reaches only the connection's workspaces; on the HTTP API,
+  `?ws=` and `X-Gamma-Workspace` cannot select another workspace.
 - Only token SHA-256 hashes are stored in `users.db`. Tokens contain 256 random bits.
 - HTTP share URLs also stay within the integration token's workspace and
   write scope: neither `?share=` nor `/api/share/{token}` can borrow the
@@ -365,35 +446,49 @@ manual tokens in **Integrations**, where users can revoke them.
   to the link resolver and the shared data endpoints.
 - Tokens expire after 90 days by default (API range: 1–365 days); accounts may
   have at most 20 unexpired tokens. Revoke a connection in the same settings panel.
-- Each request checks the account still exists and can access the workspace.
-  Removing access, expiration, or revocation denies subsequent requests. A request
-  already running may finish. Public workspace access follows Gamma's existing rules.
-- Account/workspace deletion removes the associated tokens. Account rename preserves
-  them; password changes through the admin API or `manage.py set-password`
-  revoke them along with sessions.
+- Each request checks the account still exists and can access the workspace:
+  an MCP connection reads only those of its workspaces the account can still
+  open, and none left denies it. Removing access, expiration, or revocation
+  denies subsequent requests. A request already running may finish. Public
+  workspace access follows Gamma's existing rules.
+- Account deletion removes the account's tokens. Deleting a workspace removes
+  the tokens of it alone and takes it out of the others' lists
+  (`integrations.forget_workspace`); a list left empty goes with its token.
+  Account rename preserves them; password changes through the admin API or
+  `manage.py set-password` revoke them along with sessions.
 - MCP always disables writes and external web tools. The allowlist is enforced on
   every dispatch, independent of which tools the client was offered. Deprecated chat
   aliases are not accepted by the MCP transport.
 - Token management requires a normal Gamma session and never accepts an integration
   token. A browser session alone cannot authenticate to `/mcp`.
 
-Management API (session authenticated; current workspace selected as usual):
+Management API (session authenticated; account-wide, the current workspace is
+the default grant and a write token's workspace):
 
 ```text
-GET    /api/integrations/tokens
-POST   /api/integrations/tokens       {"name":"Codex","expires_in_days":90}
+GET    /api/integrations/tokens                 the account's connections, its workspaces
+POST   /api/integrations/tokens       {"name":"Codex","expires_in_days":90,"workspaces":[…]}
+PATCH  /api/integrations/tokens/{id}  {"workspaces":[…]} or {"all_workspaces":true}
 DELETE /api/integrations/tokens/{id}
+POST   /api/integrations/setup-codes  {"name":"DeepSeek Harness","workspaces":[…]}
+POST   /api/integrations/claim        {"code":"…"}   no session: the code is the credential
 ```
+
+A setup code is a token-only client's connection waiting to be claimed: the
+signed-in browser asks for one, the setup command claims it once within ten
+minutes (rate-limited per address) and gets the read token, minted then, so the
+connection appears only once something has it. Signing out of the session that
+asked ends its codes. The code may sit in shell history; the token never does.
 
 ## Codex plugin and distribution
 
 ### Install from a Gamma release
 
-Open **Settings → Integrations → Codex CLI** in browser or self-hosted
+Open **Settings → AI → Integrations → Codex** in browser or self-hosted
 Gamma (the same walkthrough ships in `plugins/gamma/README.md`). Select **Windows PowerShell** or **macOS / Linux**, copy the setup command,
 and run it on the computer where you use Codex. The Codex CLI must already be
 installed. Setup installs **Gamma PDF**, adds this server's MCP URL, and opens
-browser sign-in. Approve a workspace and start a new chat. No Gamma desktop app
+browser sign-in. Tick the workspaces and start a new chat. No Gamma desktop app
 is needed.
 
 The command downloads a script from Gamma's latest GitHub release. Each script
@@ -473,11 +568,13 @@ the computed release version and publishes these assets on the same `vX.Y.Z` rel
 - `gamma-codex-SHA256SUMS.txt`
 - `gamma-claude-code-plugin-X.Y.Z.zip`
 - `gamma-claude-code-SHA256SUMS.txt`
-- `dsh-gamma-X.Y.Z.tgz`, `dsh-gamma.tgz` and `gamma-dsh-SHA256SUMS.txt`
+- `dsh-gamma-X.Y.Z.tgz`, `dsh-gamma.tgz`, `install-gamma-dsh.ps1` and
+  `install-gamma-dsh.sh`, and `gamma-dsh-SHA256SUMS.txt`
 
 Both ZIPs contain identical bytes; separate names make the client downloads easy
 to find while keeping one build. The Codex installers retain their published names
-and behavior.
+and behavior. The DeepSeek Harness tab's command fetches its setup script from
+the latest release, so it works once a release carries the scripts.
 
 Build-only runs keep them as CI artifacts. Keeping them on the existing
 release preserves the desktop updater's latest-release convention. Preview the
@@ -507,8 +604,14 @@ Official references: [Codex MCP configuration](https://learn.chatgpt.com/docs/ex
   managed policy. Ask the workspace administrator to permit the Gamma MCP
   connection; reinstalling the plugin or signing in again cannot override policy.
 - **401:** sign in again if OAuth access expired or was revoked. For a manual token,
-  confirm the Codex process inherited the variable. Account/workspace access must
-  still exist. OAuth tokens are bound to the exact server URL used when signing in.
+  confirm the Codex process inherited the variable. Access to at least one of the
+  connection's workspaces must still exist. OAuth tokens are bound to the exact
+  server URL used when signing in.
+- **DeepSeek Harness has no Gamma tools:** the plugin is in the profile the app
+  starts (the desktop app's is `desktop`; `dsh web` is `web`) and
+  `$DSH_HOME/gamma.json` exists; a profile added to later needs the setup
+  command again. dsh logs `gamma: not connected` when neither the file nor
+  `GAMMA_URL` is there. Restart the app after connecting.
 - **421:** the request's host is neither loopback nor the confirmed public
   server URL (Settings → Server); confirm the address first.
 - **503:** the ASGI lifespan is not running.
@@ -524,14 +627,21 @@ Official references: [Codex MCP configuration](https://learn.chatgpt.com/docs/ex
 tool list, real tool reads (the folder tree, a page's chat, a PDF page and
 handwriting as images, a citation record), the links and structured content
 results carry, the three export formats and their refusals, input validation,
-workspace isolation, permissions, expiration, and revocation.
-`test_mcp_oauth.py` covers discovery, approval, PKCE, resource/client/redirect
-binding, expiration, replay prevention, revocation, and streamed body limits.
+workspace isolation, permissions, expiration, and revocation; one connection
+reading several workspaces (ids finding theirs, a search across them, a named
+one, a link's own, the ones it may not read refused, the HTTP API kept to the
+first), changing a connection's workspaces, all of them following a new one, a
+deleted one leaving the grant, and a setup code claimed once.
+`test_mcp_oauth.py` covers discovery, approval (several workspaces, or all),
+PKCE, resource/client/redirect binding, expiration, replay prevention,
+revocation, and streamed body limits.
 It also covers HTTPS proxy consent with saved and environment-configured public
 URLs, including approval, cancellation, and rejection of foreign origins.
 `test_integration_lifecycle.py` covers manual and OAuth tokens across account
 rename, password changes through the admin API and CLI, workspace deletion,
 and account deletion through the admin API and `manage.py delete-user`.
 `test_migrations.py` covers
-schema upgrades. Browser scenarios cover sign-in, approval, cancellation, and MCP
-reads as well as manual-token creation and revocation.
+schema upgrades. Browser scenarios cover sign-in, ticking a second workspace,
+approval, cancellation, and MCP reads, each assistant's tab, a token's
+workspaces and changing them, the account-wide list and revocation, and the
+DeepSeek Harness setup command and its code claimed once.

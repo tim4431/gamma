@@ -697,14 +697,15 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const r = await tip.evaluate((el) => { const b = el.getBoundingClientRect(); return { left: b.left, top: b.top }; });
     assert(Math.hypot(r.left - release.x, r.top - release.y) < 40,
       `the popup opens by the pointer: its corner (${r.left}, ${r.top}), the release (${release.x}, ${release.y})`);
-    // the colours, the line, then the tools: Comment, Link
+    // the styles, a line, the colours and their fold, a line, then the tools: Comment, Link
     const row = await tip.evaluate((el) => [...el.querySelector(".colorRow").children].map((c) => ({
-      kind: c.classList.contains("tipDivider") ? "line" : c.classList.contains("linkTipBtn") ? "tool" : "colour",
+      kind: c.classList.contains("tipDivider") ? "line" : c.classList.contains("markStyles") ? "styles"
+        : c.classList.contains("markFoldBtn") ? "fold" : c.classList.contains("linkTipBtn") ? "tool" : "colour",
       label: c.getAttribute("aria-label") || c.getAttribute("title") || "", left: c.getBoundingClientRect().left, right: c.getBoundingClientRect().right,
     })));
-    const line = row.findIndex((c) => c.kind === "line");
-    assert(line > 0 && row.slice(0, line).every((c) => c.kind === "colour") && row.slice(line + 1).every((c) => c.kind === "tool"),
-      `colours | tools: ${row.map((c) => c.kind).join(" ")}`);
+    const kinds = row.map((c) => c.kind).join(" ");
+    assert(/^styles line (colour )+fold line (tool ?)+$/.test(kinds), `styles | colours | tools: ${kinds}`);
+    const line = row.findLastIndex((c) => c.kind === "line");
     assert(row[line - 1].right < row[line].left && row[line].right < row[line + 1].left, "the line sits between them");
     assertEq(row[line + 1].label, "Comment on this passage", "Comment is the first tool");
     assert(row[line + 2].label.startsWith("Link this reference"), `then Link: ${row[line + 2].label}`);

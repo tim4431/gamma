@@ -1569,7 +1569,7 @@ What differs from a vault of this server:
   mirror's sentence
   (`sync_engine.FormatMismatch`: "sync is paused until … is updated"). The
   vault waits until both run releases that agree, as a clone does
-  ([mirror.md](mirror.md)). Format 51 is one such change: a page's
+  ([mirror.md](mirror.md)). Format 52 is one such change: a page's
   document became one property, `doc`.
 
 **The token.** It is checked on creation (`/api/sync/whoami` names its
@@ -1822,11 +1822,11 @@ takes three more calls, each an editor's and so a write token's: `POST
 the document it owns and its name, `RemoteSink.current`). Before that last
 read the client asks the change feed once (`GET /api/sync/changes?limit=1`,
 `Server.check_format`): a server whose `format` is missing or below
-`DOCUMENT_FORMAT` (51, the release where a page's document became one
+`DOCUMENT_FORMAT` (52, the release where a page's document became one
 property) keeps its pages' PDFs in properties this client does not read,
 and the push is kept with "the server runs an older Gamma (workspace data
 format N): update it to use this gamma_sync". An older gamma_sync against a
-server of format 51 reads every page as showing no PDF; nothing on the
+server of format 52 reads every page as showing no PDF; nothing on the
 server can tell it, so **update gamma_sync together with the server**.
 
 ### Its round

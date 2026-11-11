@@ -318,8 +318,9 @@ export async function settingsScenarios(env) {
       await until(async () => (await caps(del)) === "Ctrl Shift K", { what: "reset" });
       assertEq(await caps(ren), "F2", "the clash is gone with the reset");
       await page.getByRole("searchbox", { name: "Filter shortcuts" }).fill("duplicate");
-      // Duplicate block above / below, and the handwriting group's Duplicate handwriting.
-      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 3, { what: "filtered to the three duplicate rows" });
+      // Duplicate block above / below, the handwriting group's Duplicate handwriting, and the
+      // built-in row of the selected notes' keys (copy, cut, duplicate).
+      await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 4, { what: "filtered to the four duplicate rows" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -682,31 +683,33 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("settings: external assistant token creation, hiding, and revocation", async () => {
+  await step("settings: connecting an assistant, and the workspaces each connection reads", async () => {
     const { ctx, page } = await setup();
+    const second = await user.api("/api/workspaces", { method: "POST", body: { name: "Other assistant workspace" } });
     try {
       await openSettings(page);
       await nav(page, "Integrations").click();
-      const serverUrl = page.getByRole("textbox", { name: "Gamma MCP server URL" });
-      await serverUrl.waitFor();
-      assertEq(await serverUrl.inputValue(), `${server.base}/mcp`);
-      assert(!await page.getByRole("textbox", { name: "Codex MCP configuration" }).isVisible(), "manual setup starts collapsed");
-      assert(!await page.getByRole("textbox", { name: "Codex setup command", exact: true }).isVisible(), "only the selected method is shown");
-      await page.getByRole("button", { name: "Copy server URL", exact: true }).click();
-      await page.getByText("Copied. You can paste it now.", { exact: true }).waitFor();
-      if (process.env.GAMMA_MCP_SCREENSHOTS) {
-        fs.mkdirSync(process.env.GAMMA_MCP_SCREENSHOTS, { recursive: true });
-        await page.screenshot({ path: path.join(process.env.GAMMA_MCP_SCREENSHOTS, "settings-desktop.png") });
-        await page.setViewportSize({ width: 390, height: 844 });
-        await page.screenshot({ path: path.join(process.env.GAMMA_MCP_SCREENSHOTS, "settings-mobile.png"), fullPage: true });
-        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no horizontal overflow");
-        await page.setViewportSize({ width: 1280, height: 860 });
-      }
-      await page.getByRole("button", { name: "Codex CLI", exact: true }).click();
-      await page.getByRole("button", { name: "Windows PowerShell", exact: true }).click();
-      const commandField = page.getByRole("textbox", { name: "Codex setup command", exact: true });
+      // Claude Code is the first tab: one command, then sign-in from /mcp
+      const claudeCommand = page.getByRole("textbox", { name: "Claude Code connection command", exact: true });
+      await claudeCommand.waitFor();
       // the commands themselves are pinned by assistantSetup.test.mjs;
       // here: each field carries this server's URL and follows the platform switch
+      assert((await claudeCommand.inputValue()).includes(`'${server.base}/mcp'`), "the connection command names this server");
+      await page.getByRole("button", { name: "Copy connection command", exact: true }).click();
+      await page.getByText("Copied. You can paste it now.", { exact: true }).waitFor();
+      await page.getByText(/run \/mcp, select gamma and choose Authenticate/).waitFor();
+      assert(!await page.getByRole("textbox", { name: "Codex setup command", exact: true }).isVisible(), "only the selected assistant is shown");
+      await page.getByText("Changed the server address?", { exact: true }).click();
+      assert((await page.getByRole("textbox", { name: "Claude Code change server commands", exact: true }).inputValue())
+        .includes(`'${server.base}/mcp'`), "the change-server commands name this server");
+      await page.getByText("Optional: the /gamma:gamma workflow", { exact: true }).click();
+      await page.getByRole("textbox", { name: "Claude Code plugin install commands", exact: true }).waitFor();
+      await page.getByText("Remove Gamma from Claude Code", { exact: true }).click();
+      assert((await page.getByRole("textbox", { name: "Claude Code remove commands", exact: true }).inputValue())
+        .startsWith("claude mcp remove gamma"), "the removal undoes the connection");
+      await page.getByRole("button", { name: "Codex", exact: true }).click();
+      await page.getByRole("button", { name: "Windows PowerShell", exact: true }).click();
+      const commandField = page.getByRole("textbox", { name: "Codex setup command", exact: true });
       const windowsCommand = await commandField.inputValue();
       assert(windowsCommand.includes(`'${server.base}/mcp'`), "the setup command names this server");
       await page.getByRole("button", { name: "macOS / Linux", exact: true }).click();
@@ -717,46 +720,46 @@ export async function settingsScenarios(env) {
       await commandField.scrollIntoViewIfNeeded();
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "setup command fits a narrow viewport");
       if (process.env.GAMMA_MCP_SCREENSHOTS) {
+        fs.mkdirSync(process.env.GAMMA_MCP_SCREENSHOTS, { recursive: true });
         await page.screenshot({ path: path.join(process.env.GAMMA_MCP_SCREENSHOTS, "codex-setup-mobile.png"), fullPage: true });
       }
       await page.setViewportSize({ width: 1280, height: 860 });
-      await page.getByRole("button", { name: "Claude Code", exact: true }).click();
-      assert(!await commandField.isVisible(), "Codex command is hidden in the Claude Code tab");
-      const claudeCommand = page.getByRole("textbox", { name: "Claude Code connection command", exact: true });
-      assert((await claudeCommand.inputValue()).includes(`'${server.base}/mcp'`), "the connection command names this server");
-      await page.getByRole("button", { name: "Copy connection command", exact: true }).click();
+      await page.getByRole("button", { name: "Other", exact: true }).click();
+      const serverUrl = page.getByRole("textbox", { name: "Gamma MCP server URL" });
+      assertEq(await serverUrl.inputValue(), `${server.base}/mcp`);
+      await page.getByRole("button", { name: "Copy server URL", exact: true }).click();
       await page.getByText("Copied. You can paste it now.", { exact: true }).waitFor();
-      await page.getByText(/Start Claude Code, run \/mcp/).waitFor();
-      await page.getByText(/\/gamma:gamma starts the workflow/).waitFor();
-      await page.getByText("Install the plugin (once)", { exact: true }).click();
-      await page.getByRole("textbox", { name: "Claude Code plugin install commands", exact: true }).waitFor();
-      await page.getByText("Changed the server address?", { exact: true }).click();
-      const reconnect = await page.getByRole("textbox", { name: "Claude Code change server commands", exact: true }).inputValue();
-      assert(reconnect.includes(`'${server.base}/mcp'`), "the change-server commands name this server");
-      if (process.env.GAMMA_MCP_SCREENSHOTS) {
-        await page.screenshot({ path: path.join(process.env.GAMMA_MCP_SCREENSHOTS, "claude-setup-desktop.png"), fullPage: true });
-      }
-      await page.setViewportSize({ width: 390, height: 844 });
-      await claudeCommand.scrollIntoViewIfNeeded();
-      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Claude setup fits a narrow viewport");
-      if (process.env.GAMMA_MCP_SCREENSHOTS) {
-        await page.screenshot({ path: path.join(process.env.GAMMA_MCP_SCREENSHOTS, "claude-setup-mobile.png"), fullPage: true });
-      }
-      await page.setViewportSize({ width: 1280, height: 860 });
-      await page.getByText("Manual setup (advanced)", { exact: true }).click();
-      const config = page.getByRole("textbox", { name: "Codex MCP configuration" });
-      await config.waitFor();
-      assert((await config.inputValue()).includes(`${server.base}/mcp`));
-      await page.getByRole("textbox", { name: "Connection name" }).fill("Codex test");
+      // A token is the advanced way: collapsed, and it reads the workspaces ticked
+      const nameField = page.getByRole("textbox", { name: "Connection name" });
+      assert(!await nameField.isVisible(), "tokens start collapsed");
+      await page.getByText("Tokens (advanced)", { exact: true }).click();
+      await nameField.fill("Codex test");
+      const tokenSpaces = page.getByRole("group", { name: "Workspaces the token may read" });
+      const otherSpace = tokenSpaces.getByRole("checkbox", { name: "Other assistant workspace", exact: true });
+      assert(!await otherSpace.isChecked(), "a token starts with the open workspace only");
+      await otherSpace.check();
       await page.getByRole("button", { name: "Create token", exact: true }).click();
       const secret = page.getByRole("textbox", { name: "New integration token" });
       await secret.waitFor();
       assert((await secret.inputValue()).startsWith("gamma_"));
-      const connections = await user.api("/api/integrations/tokens");
+      let connections = await user.api("/api/integrations/tokens");
       assertEq(connections.tokens.length, 1);
+      assertEq(JSON.stringify(connections.tokens[0].workspaces), JSON.stringify([user.ws, second.id]));
       assert(!JSON.stringify(connections).includes(await secret.inputValue()), "token is never returned in listings");
+      await page.getByText(/Reads .*Other assistant workspace/).waitFor();
+      if (process.env.GAMMA_MCP_SCREENSHOTS) {
+        await page.screenshot({ path: path.join(process.env.GAMMA_MCP_SCREENSHOTS, "settings-desktop.png"), fullPage: true });
+      }
       await page.getByRole("button", { name: "Done", exact: true }).click();
       await secret.waitFor({ state: "detached" });
+      // Change what the connection reads, without connecting again
+      await page.getByRole("button", { name: "Choose workspaces", exact: true }).click();
+      const editor = page.getByRole("group", { name: "Workspaces Codex test may read" });
+      await editor.getByRole("checkbox", { name: "Other assistant workspace", exact: true }).uncheck();
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await editor.waitFor({ state: "detached" });
+      connections = await user.api("/api/integrations/tokens");
+      assertEq(JSON.stringify(connections.tokens[0].workspaces), JSON.stringify([user.ws]));
       // Separate authorizations can have the same name. Revoking one must
       // leave the other visible, without claiming the assistant lost access.
       const duplicate = await user.api("/api/integrations/tokens", { method: "POST", body: { name: "Codex test" } });
@@ -790,73 +793,87 @@ export async function settingsScenarios(env) {
       const remaining = (await user.api("/api/integrations/tokens")).tokens;
       assertEq(remaining.length, 1);
       assert(remaining[0].id !== duplicate.id, "only the selected connection was revoked");
-      // Reconnecting in another tab clears the old notice on window focus.
-      const reconnected = await user.api("/api/integrations/tokens", { method: "POST", body: { name: "Codex reconnected" } });
+      // A connection made in another workspace is the account's too: listed here.
+      const elsewhere = await user.api(`/api/integrations/tokens?ws=${second.id}`, { method: "POST", body: { name: "Codex elsewhere" } });
       await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-      await page.getByText("Codex reconnected", { exact: true }).waitFor();
+      await page.getByText("Codex elsewhere", { exact: true }).waitFor();
       await revoked.waitFor({ state: "detached" });
-      await user.api(`/api/integrations/tokens/${reconnected.id}`, { method: "DELETE" });
+      await page.getByText("Reads Other assistant workspace", { exact: false }).waitFor();
+      await user.api(`/api/integrations/tokens/${elsewhere.id}`, { method: "DELETE" });
       await page.getByRole("button", { name: "Refresh connections", exact: true }).click();
       await until(() => page.getByRole("button", { name: "Disconnect", exact: true }).count().then((n) => n === 1));
       await page.getByRole("button", { name: "Disconnect", exact: true }).click();
-      await page.getByText("No assistants have access to this workspace yet.", { exact: true }).waitFor();
+      await page.getByText("No assistant is connected yet.", { exact: true }).waitFor();
       assertEq((await user.api("/api/integrations/tokens")).tokens.length, 0);
-      const second = await user.api("/api/workspaces", { method: "POST", body: { name: "Other assistant workspace" } });
-      const elsewhere = await user.api(`/api/integrations/tokens?ws=${second.id}`, { method: "POST", body: { name: "Codex elsewhere" } });
-      const refreshed = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/api/integrations/tokens") && response.request().method() === "GET");
-      await page.getByRole("button", { name: "Refresh connections", exact: true }).click();
-      assertEq((await (await refreshed).json()).tokens.length, 0);
-      await revoked.waitFor({ state: "detached" });
-      assertEq(await page.getByText("Codex elsewhere", { exact: true }).count(), 0, "other workspace connections stay out of this panel");
-      assert(await page.getByText("No assistants have access to this workspace yet.", { exact: true }).isVisible());
-      assertEq(await page.getByRole("button", { name: "Disconnect", exact: true }).count(), 0, "other workspace connections are not managed as current workspace access");
-      await user.api(`/api/integrations/tokens/${elsewhere.id}?ws=${second.id}`, { method: "DELETE" });
       assertNoProblems(page);
-    } finally { await ctx.close(); }
+    } finally {
+      await ctx.close();
+      await user.api(`/api/workspaces/${second.id}`, { method: "DELETE" });
+    }
   });
 
-  await step("settings: DeepSeek Harness connects with a token made in its own tab", async () => {
+  await step("settings: DeepSeek Harness connects with a one-time setup command", async () => {
     const { ctx, page } = await setup();
+    const second = await user.api("/api/workspaces", { method: "POST", body: { name: "Harness workspace" } });
     try {
       await openSettings(page);
       await nav(page, "Integrations").click();
       await page.getByRole("button", { name: "DeepSeek Harness", exact: true }).click();
-      const start = page.getByRole("textbox", { name: "DeepSeek Harness start command", exact: true });
+      await page.getByRole("group", { name: "Workspaces DeepSeek Harness may read" })
+        .getByRole("checkbox", { name: "All workspaces, and those added later", exact: true }).check();
       await page.getByRole("button", { name: "macOS / Linux", exact: true }).click();
+      await page.getByRole("button", { name: "Show the setup command", exact: true }).click();
+      const command = page.getByRole("textbox", { name: "DeepSeek Harness setup command", exact: true });
       // the commands themselves are pinned by assistantSetup.test.mjs
-      const unixStart = await start.inputValue();
-      assert(unixStart.includes(`'${server.base}/mcp'`), "the start command names this server");
-      await page.getByRole("textbox", { name: "DeepSeek Harness plugin install command", exact: true }).waitFor();
-      await page.getByRole("button", { name: "Create token", exact: true }).click();
-      const secret = page.getByRole("textbox", { name: "New integration token" });
-      await secret.waitFor();
-      const token = await secret.inputValue();
-      assert(!(await start.inputValue()).includes(token), "the token is typed at a prompt, never copied into a command");
+      const unix = await command.inputValue();
+      assert(unix.includes(`'${server.base}/mcp'`), "the setup command names this server");
+      const code = unix.match(/'([A-Za-z0-9_-]{40,})'\)$/)?.[1];
+      assert(code, "the command carries its one-time code");
+      assertEq((await user.api("/api/integrations/tokens")).tokens.length, 0, "nothing is connected until the command runs");
+      // What the setup command does once the plugin is in: claim the code for the token.
+      const claimed = await fetch(`${server.base}/api/integrations/claim`, { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+      assertEq(claimed.status, 200);
+      const { token } = await claimed.json();
+      assert(!unix.includes(token), "the token never appears in the command");
+      // Back in the browser, the connection is listed and the spent command goes.
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
       await until(() => page.getByRole("button", { name: "Disconnect", exact: true }).count().then((n) => n === 1));
-      const [made] = (await user.api("/api/integrations/tokens")).tokens.filter((t) => t.name === "DeepSeek Harness");
-      assertEq(made.scope, "read");
+      await command.waitFor({ state: "detached" });
+      await page.getByText(/Reads all workspaces/).waitFor();
+      const [made] = (await user.api("/api/integrations/tokens")).tokens;
+      assertEq(made.name, "DeepSeek Harness");
+      assert(made.all_workspaces && made.scope === "read", "a read-only connection to every workspace");
       // What dsh sends on startup: an initialize with the bearer header.
       const init = await fetch(`${server.base}/mcp`, { method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize",
           params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "dsh-e2e", version: "0" } } }) });
       assertEq(init.status, 200);
-      await page.getByText("Manual setup (advanced)", { exact: true }).click();
-      assertEq(await secret.count(), 1, "the one-time token shows only in the tab that made it");
+      const again = await fetch(`${server.base}/api/integrations/claim`, { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+      assertEq(again.status, 400, "a setup code works once");
       await page.getByRole("button", { name: "Windows PowerShell", exact: true }).click();
-      await until(async () => (await start.inputValue()) !== unixStart, { what: "the start command follows the platform" });
+      await page.getByRole("button", { name: "Show the setup command", exact: true }).click();
+      assert((await command.inputValue()).startsWith("& ([scriptblock]::Create("), "the command follows the platform");
+      await page.getByText("Remove Gamma from DeepSeek Harness", { exact: true }).click();
+      const removeCommand = page.getByRole("textbox", { name: "DeepSeek Harness remove command", exact: true });
+      assert((await removeCommand.inputValue()).endsWith(" -Remove"), "the removal runs the same script");
+      await page.getByRole("button", { name: "macOS / Linux", exact: true }).click();
+      await until(async () => (await removeCommand.inputValue()).endsWith(" --remove)"), { what: "the removal follows the platform" });
       await page.setViewportSize({ width: 390, height: 844 });
-      await start.scrollIntoViewIfNeeded();
+      await command.scrollIntoViewIfNeeded();
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "four assistant tabs fit a narrow viewport");
       if (process.env.GAMMA_MCP_SCREENSHOTS) {
         await page.screenshot({ path: path.join(process.env.GAMMA_MCP_SCREENSHOTS, "dsh-setup-mobile.png"), fullPage: true });
       }
       await page.setViewportSize({ width: 1280, height: 860 });
-      await page.getByRole("button", { name: "Done", exact: true }).click();
-      await secret.waitFor({ state: "detached" });
       await user.api(`/api/integrations/tokens/${made.id}`, { method: "DELETE" });
       assertNoProblems(page);
-    } finally { await ctx.close(); }
+    } finally {
+      await ctx.close();
+      await user.api(`/api/workspaces/${second.id}`, { method: "DELETE" });
+    }
   });
 
   await step("settings: section tags say where settings live and whether each section's settings are saved", async () => {
@@ -1141,7 +1158,7 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("settings: a right-click on the top bar's empty space offers Customize top bar…, which opens its section", async () => {
+  await step("settings: a right-click on the top bar's empty space or one of its items offers Customize top bar…, which opens its section", async () => {
     const { ctx, page } = await setup();
     try {
       // a point of the bar that is none of its buttons, tabs or fields
@@ -1160,11 +1177,17 @@ export async function settingsScenarios(env) {
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       await until(() => page.evaluate(() => document.activeElement?.dataset.setting === "Top bar"), { what: "the Top bar section focused" });
       assertEq(await nav(page, "Appearance").getAttribute("aria-current"), "page");
-      // a right-click on a button is that button's, not the bar's
+      // a right-click on a button that is not one of the bar's items is that button's, not the bar's
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
-      await page.locator('[data-guide="header.add"]').click({ button: "right" });
+      await page.locator('[data-guide="header.home"]').click({ button: "right" });
       await sleep(300);
-      assertEq(await page.getByRole("menuitem", { name: "Customize top bar…", exact: true }).count(), 0, "no Customize… on a button");
+      assertEq(await page.getByRole("menuitem", { name: "Customize top bar…", exact: true }).count(), 0, "no Customize… on Home");
+      // on one of its items, the bar's menu, first with where the item stands while pages are side by side
+      await page.locator('[data-guide="header.add"]').click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Customize top bar…", exact: true }).waitFor();
+      assertEq(await page.getByRole("menuitemradio", { name: "Show on the top bar" }).getAttribute("aria-checked"), "true", "Add stands on top by default");
+      assertEq(await page.getByRole("menuitemradio", { name: "Show in each pane" }).getAttribute("aria-checked"), "false");
+      await page.keyboard.press("Escape");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -1298,17 +1321,22 @@ export async function settingsScenarios(env) {
       await until(async () => (await palette())?.groups?.[0]?.colors?.length === 4);
       await page.getByRole("button", { name: "Add group", exact: true }).click();
       await until(async () => (await palette())?.groups?.length === 4);
-      await group("New group").getByRole("textbox", { name: "Group name", exact: true }).fill("Work");
-      await until(async () => (await palette())?.groups?.[3]?.name === "Work");
+      // a name is typed as typed, its space too, and saved as the field is left
+      const name = group("New group").getByRole("textbox", { name: "Group name", exact: true });
+      await name.fill("");
+      await name.pressSequentially("Deep work");
+      assertEq(await name.inputValue(), "Deep work", "the space before the next word stays");
+      await name.press("Enter");
+      await until(async () => (await palette())?.groups?.[3]?.name === "Deep work", { what: "the name saved on Enter" });
       // each picker row is a dropdown of the groups; the new one becomes the text highlights' group
       const pickerRow = row(page, "Text highlights");
       assertEq(await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).innerText(), "Highlight");
       await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).click();
-      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Work", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Deep work", exact: true }).click();
       await until(async () => { const p = await palette(); return p?.pickers?.highlight === p?.groups?.[3]?.id; });
-      assertEq(await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).innerText(), "Work");
+      assertEq(await pickerRow.getByRole("button", { name: "Text highlights", exact: true }).innerText(), "Deep work");
       // deleting the chosen group sends the picker back to its default group
-      await group("Work").getByRole("button", { name: "Delete group Work", exact: true }).click();
+      await group("Deep work").getByRole("button", { name: "Delete group Deep work", exact: true }).click();
       await until(async () => (await palette())?.groups?.length === 3 && (await palette())?.pickers?.highlight === "highlight");
       await reset.click();
       await until(async () => (await palette())?.groups?.[0]?.colors?.[0]?.hex === "#ffe28f");

@@ -20,6 +20,14 @@
 // phone's bottom bar has no room for the items marked `phone: false`: they
 // are rows of its More sheet whatever their mode.
 //
+// While the page's place is split into two panes (docs/dev/tab_groups.md)
+// an item shown stands on the top bar or at the end of each pane's tab
+// strip, its `places` (the first its default), and a press on one in a pane
+// acts on that pane's page. The page's own buttons (Search, Share, the View
+// menu) go to the panes; the rest stay on top. The sync pill has no pane
+// place: the panes hold the tabs and what acts on their pages, and the pill
+// reports the workspace's sync as much as the page's.
+//
 // Home, Back, the tabs and Account & settings are not items and keep their
 // places (Account last): the account menu is where the others go, and the
 // way back to this setting.
@@ -31,19 +39,20 @@ import { defineBar } from "../shared/model/barLayout.js";
 // `keywords` (English synonyms for the settings search), `modes` (the
 // choices offered, the first its default), and per mode its own word
 // (`labels`, where the generic Shown / Hidden would read wrong; every item
-// offering auto names it) and tooltip (`tips`).
+// offering auto names it) and tooltip (`tips`); `places`, where it stands
+// while split.
 export const TOPBAR_ITEMS = Object.freeze([
   {
     id: "add", popover: "add", label: T("Add"),
     hint: T("New pages and notebooks, uploads, a paper by its link."),
     keywords: "plus new page notebook upload URL DOI arXiv",
-    modes: ["always", "hidden"],
+    modes: ["always", "hidden"], places: ["top", "pane"],
   },
   {
     id: "tasks", popover: "downloads", label: T("Background tasks"),
     hint: T("Exports, backups, imports, downloads and uploads."),
     keywords: "auto tasks progress activity spinner",
-    modes: ["always", "auto", "hidden"], phone: false,
+    modes: ["always", "auto", "hidden"], phone: false, places: ["top", "pane"],
     labels: { auto: T("When active") },
     tips: { auto: T("While a task runs, or one failed or has a file to download") },
   },
@@ -51,13 +60,13 @@ export const TOPBAR_ITEMS = Object.freeze([
     id: "search", popover: "search", label: T("Search"),
     hint: T("Its shortcut opens it either way."),
     keywords: "find magnifier",
-    modes: ["always", "hidden"],
+    modes: ["always", "hidden"], places: ["pane", "top"],
   },
   {
     id: "share", popover: "share", label: T("Share"),
     hint: T("The open page's link, or the open folder's."),
     keywords: "link sharing",
-    modes: ["always", "hidden"],
+    modes: ["always", "hidden"], places: ["pane", "top"],
   },
   {
     id: "sync", popover: "mirror", label: T("Sync pill"),
@@ -74,7 +83,7 @@ export const TOPBAR_ITEMS = Object.freeze([
     id: "inbox", popover: "inbox", label: T("Inbox"),
     hint: T("Mentions, replies, shares and invitations."),
     keywords: "auto bell unread notifications",
-    modes: ["always", "auto", "hidden"], phone: false,
+    modes: ["always", "auto", "hidden"], phone: false, places: ["top", "pane"],
     labels: { auto: T("When unread") },
     tips: { auto: T("Only while something is unread") },
   },
@@ -82,7 +91,7 @@ export const TOPBAR_ITEMS = Object.freeze([
     id: "view", popover: "menu", label: T("View menu"),
     hint: T("Windows, undo and redo, the palettes, import and export."),
     keywords: "hamburger windows import export",
-    modes: ["always", "hidden"], phone: false,
+    modes: ["always", "hidden"], phone: false, places: ["pane", "top"],
   },
 ]);
 
@@ -90,4 +99,9 @@ export const TOPBAR_ITEMS = Object.freeze([
 // the edits its Settings rows make, and where each item goes.
 export const TOPBAR = defineBar(TOPBAR_ITEMS, {
   tips: { hidden: T("A row of the account menu instead (More, on a phone)") },
+  placeLabels: { top: T("Top bar"), pane: T("Each pane") },
+  placeTips: {
+    top: T("While pages are side by side, on the top bar"),
+    pane: T("While pages are side by side, at the end of each pane's tabs, acting on that pane's page"),
+  },
 });

@@ -442,7 +442,7 @@ def test_rounds_reuse_whoami_until_one_fails(monkeypatch):
 def test_a_remote_with_another_data_format_pauses_the_round(monkeypatch):
     """A remote whose feed names another workspace data format than this
     server's (one of the two runs a release with a workspace migration step
-    the other lacks: a server from before step 51, which put a page's
+    the other lacks: a server from before step 52, which put a page's
     document in one property, names 44) neither gives nor gets anything:
     the round stops before any write, its status says which side to update,
     local edits wait, and the next round once the two agree carries both
@@ -481,12 +481,12 @@ def test_a_remote_with_another_data_format_pauses_the_round(monkeypatch):
     assert local.texts(page["id"]) == remote.texts(page["id"]) == {"fm1": "text (remote)", "fm2": "made here"}
 
 
-# The generated doc_id of release 50: a page's flat doc_id.
-DOC_ID_50 = "doc_id TEXT GENERATED ALWAYS AS (json_extract(properties, '$.doc_id')) VIRTUAL"
+# The generated doc_id of release 51: a page's flat doc_id.
+DOC_ID_51 = "doc_id TEXT GENERATED ALWAYS AS (json_extract(properties, '$.doc_id')) VIRTUAL"
 
 
 def _flat(props: dict) -> dict:
-    """``props`` as release 50 kept a page's document: in ``doc_id``,
+    """``props`` as release 51 kept a page's document: in ``doc_id``,
     ``source_url`` and ``original_filename`` (a duplicated page's as the
     address of its original's file)."""
     doc = props.get("doc")
@@ -504,8 +504,8 @@ def _flat(props: dict) -> dict:
     return out
 
 
-def _as_release_50(ws: str) -> None:
-    """The workspace's pages.db put back as release 50 left it: its rows'
+def _as_release_51(ws: str) -> None:
+    """The workspace's pages.db put back as release 51 left it: its rows'
     and its mirror bases' documents in the flat keys, the old generated
     doc_id, stamp 50."""
     from unittest import mock
@@ -516,7 +516,7 @@ def _as_release_50(ws: str) -> None:
     db.close_workspace_connections(ws)
     with closing(sqlite3.connect(str(db.ws_dir(ws) / "pages.db"))) as conn:
         db.register_functions(conn)
-        with mock.patch.dict(db.BLOCK_HOT_COLUMNS, {"doc_id": DOC_ID_50}):
+        with mock.patch.dict(db.BLOCK_HOT_COLUMNS, {"doc_id": DOC_ID_51}):
             block_columns(conn)
         for bid, raw in conn.execute("SELECT id, properties FROM unified_blocks WHERE properties LIKE '%\"doc\"%'"
                                      ).fetchall():
@@ -528,25 +528,25 @@ def _as_release_50(ws: str) -> None:
                     if key != "~pending":
                         entry["props"] = _flat(entry.get("props") or {})
                 conn.execute("UPDATE sync_pages SET base = ? WHERE page_id = ?", (json.dumps(base), page_id))
-        conn.execute("PRAGMA user_version = 50")
+        conn.execute("PRAGMA user_version = 51")
         conn.commit()
 
 
 def _upgraded(ws: str) -> None:
-    """The workspace steps above 50 run on its pages.db, as its first open
+    """The workspace steps above 51 run on its pages.db, as its first open
     after the upgrade runs them (migrations.upgrade_workspace, less the
     snapshot)."""
     from gamma import db
 
     with closing(sqlite3.connect(str(db.ws_dir(ws) / "pages.db"))) as conn:
         db.register_functions(conn)
-        migrations.run_workspace_steps(ws, conn, None, migrations.workspace_steps_after(50))
+        migrations.run_workspace_steps(ws, conn, None, migrations.workspace_steps_after(51))
 
 
 def test_a_pair_upgraded_across_the_documents_step_has_nothing_to_send_for_the_shape(monkeypatch):
-    """A remote and its copy that synced on release 50 (a page's document in
+    """A remote and its copy that synced on release 51 (a page's document in
     the flat keys, in the rows and in the copy's bases) both upgraded: step
-    51 gives the rows and the bases the same doc, so the pages read as they
+    52 gives the rows and the bases the same doc, so the pages read as they
     did and the next round, with an edit on each side, carries the edits
     and nothing of the page's document."""
     remote, local, _ = _pair()
@@ -566,7 +566,7 @@ def test_a_pair_upgraded_across_the_documents_step_has_nothing_to_send_for_the_s
     assert before == props_of(remote)
     assert before[paper["id"]]["doc"]["hash"] == up["doc_id"] and before[copy["id"]]["doc"]["copy"] is True
     for ws in (remote.ws, local.ws):
-        _as_release_50(ws)
+        _as_release_51(ws)
         _upgraded(ws)
     assert props_of(remote) == props_of(local) == before
     with connect_pages_db(local.ws) as conn:

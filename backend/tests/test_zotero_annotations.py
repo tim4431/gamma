@@ -393,6 +393,16 @@ def test_to_items_writes_a_highlight_as_the_reader_would(framed):
     (under,) = za.to_items(_highlight_block(page), page, zotero_type="underline")
     assert under.fields["annotationType"] == "underline"
     assert "annotationAuthorName" not in under.fields
+    # a highlight marked by a line goes as an underline (Zotero has no wavy
+    # one, no strikethrough); an item keeps the type it was made with
+    for style in ("underline", "squiggly", "strikeout"):
+        block = _highlight_block(page)
+        block["properties"]["style"] = style
+        (line,) = za.to_items(block, page)
+        assert line.fields["annotationType"] == "underline", style
+        assert line.fields["annotationText"] == f["annotationText"]
+        (kept,) = za.to_items(block, page, zotero_type="highlight")
+        assert kept.fields["annotationType"] == "highlight", style
 
 
 def test_to_items_writes_an_area_as_an_image_without_text(framed):
@@ -513,7 +523,8 @@ def test_from_item_reads_every_kind(framed):
     assert (pos["width"], pos["height"], pos["pageNumber"]) == (round(w, 2), round(h, 2), 1)
     rect0 = json.loads(items["highlight"]["annotationPosition"])["rects"][0]
     assert hl["props"]["imported_annot"] == annotation_key(1, "/Highlight", rect0)
-    assert made["underline"]["kind"] == "highlight"
+    assert made["underline"]["kind"] == "highlight" and made["underline"]["props"]["style"] == "underline"
+    assert "style" not in hl["props"], "a highlight is the wash"
     assert made["image"]["props"]["pdf_position"]["area"] is True and made["image"]["props"]["quote"] == ""
     k = made["ink"]
     assert k["kind"] == "ink" and k["slot"] == "0" and k["stroke_ids"] == ("zKKKKKKK2-0", "zKKKKKKK2-1")

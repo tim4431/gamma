@@ -15,6 +15,7 @@ masked GET /api/translate/engines.
 
 import hashlib
 import json
+import re
 import threading
 import time
 import uuid
@@ -238,25 +239,56 @@ def credentials(user_id: str, engine: str) -> dict:
 
 
 # --- translation --------------------------------------------------------------
+# The viewer sends a paragraph's formulas, citation markers and URLs as {v1},
+# {v2}… (translate_context.TOKEN_RE), and a translation must keep each once.
+# Nothing tells a service so, and Microsoft drops or rewrites {vN} in about
+# one text in ten into Japanese or Korean, mostly where a text opens on the
+# end of a sentence a column break cut ("droplets,{v1} but…" loses both). So
+# the tokens go out as {1}, {2}…, the placeholder of software's own message
+# catalogs, which Microsoft kept in all of 128 texts in eight languages where
+# it broke {vN} in 12. A text whose tokens a service still broke is asked
+# again with them as [v1] (routers/translate.py), which breaks in other
+# texts (docs/research/translation-reliability.md "Services and tokens").
+# Each form: how a token goes out, and how it is read back, spaced or in
+# full-width brackets as services write it.
+TOKEN_FORMS = (
+    ("{%s}", re.compile(r"[{｛]\s*(\d+)\s*[}｝]")),
+    ("[v%s]", re.compile(r"[\[［]\s*[vV]\s*(\d+)\s*[\]］]")),
+)
+_TOKEN = re.compile(r"\{v(\d+)\}")
 
-def translate(engine: str, conf: dict, texts: list, lang: str, user_id: str) -> list:
+
+def _wire(text: str, form: int) -> str | None:
+    """``text`` with its tokens in TOKEN_FORMS[``form``]; None for a text that
+    holds that form's shape already (a paper's own "{1}"), which reading the
+    reply back would take for a token: it goes as it is."""
+    out, back = TOKEN_FORMS[form]
+    if back.search(text):
+        return None
+    return _TOKEN.sub(lambda m: out % m.group(1), text)
+
+
+def translate(engine: str, conf: dict, texts: list, lang: str, user_id: str, form: int = 0) -> list:
     """``texts`` translated into ``lang`` (a TRANSLATE_LANGS code), same length
-    and order, for ``user_id`` (the free service's health counts per account).
-    Split into the engine's batch limits; raises EngineError."""
+    and order, for ``user_id`` (the free service's health counts per account),
+    their tokens sent in TOKEN_FORMS[``form``] and returned as {vN}. Split into
+    the engine's batch limits; raises EngineError."""
     e = ENGINES[engine]
     target = e["langs"].get(lang)
     if not target:
         raise EngineError(f"{e['label']} does not translate into {lang}")
     call = {"microsoft": _microsoft, "google": _google, "youdao": _youdao}[engine]
+    wired = [_wire(t, form) for t in texts]
     out = []
     try:
-        for batch in _batches(texts, *e["batch"]):
+        for batch in _batches([t if w is None else w for t, w in zip(texts, wired)], *e["batch"]):
             out.extend(call(conf, batch, target))
     except EngineError as err:
         _note_outcome(engine, user_id, str(err))
         raise
     _note_outcome(engine, user_id, None)
-    return out
+    back = TOKEN_FORMS[form][1]
+    return [t if w is None else back.sub(lambda m: "{v" + m.group(1) + "}", t) for t, w in zip(out, wired)]
 
 
 def _batches(texts: list, max_n: int, max_chars: int):

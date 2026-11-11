@@ -407,7 +407,7 @@ def highlight_shape(conn: sqlite3.Connection) -> bool:
     ``linked_highlight_id`` names the block that had it on the note's own
     page (a block of that id there stays named); one no block there had is
     dropped. A ``source_url`` that is the stored copy of the row's
-    ``doc_id`` (the flat keys a page kept its document in before step 51,
+    ``doc_id`` (the flat keys a page kept its document in before step 52,
     read as keys here, not through the generated column) goes. What a row
     becomes depends on the file's rows alone, so two copies of a page
     upgraded apart agree. A file with nothing of the old shape is left as
@@ -462,7 +462,7 @@ def highlight_shape(conn: sqlite3.Connection) -> bool:
     return True
 
 
-# The flat keys a block kept its document in before step 51 (camelCase
+# The flat keys a block kept its document in before step 52 (camelCase
 # ``sourceUrl`` the earliest pages'), and the address of a stored PDF a
 # duplicated page showed its file by: the step's own, not
 # documents.model.parse_upload_url's, so the step answers the same in every
@@ -485,7 +485,7 @@ def _flat_doc_id(value) -> str:
 
 
 def document_shape(props: dict) -> dict:
-    """One row's properties after step 51, as a new dict (``props`` is
+    """One row's properties after step 52, as a new dict (``props`` is
     left as it is): the flat ``doc_id``, ``source_url`` (or ``sourceUrl``),
     ``original_filename`` and ``linked_file`` of a block's document become
     its ``doc`` (gamma/documents/model.py), every one a PDF. Read in place
@@ -533,7 +533,7 @@ def document_shape(props: dict) -> dict:
 
 
 def page_documents(conn: sqlite3.Connection) -> int:
-    """Step 51's rewrite, without committing: every row that keeps a
+    """Step 52's rewrite, without committing: every row that keeps a
     document in the flat keys gets the ``doc`` ``document_shape`` makes of
     them (properties alone: no ``updated_at``, no change-log or op-log row;
     a shape is no edit), and so does every block entry of a mirror's stored

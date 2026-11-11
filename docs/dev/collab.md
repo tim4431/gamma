@@ -388,7 +388,9 @@ is the workspace-wide log the per-page op log lacks: one row per page that
 exists or ever existed, `kind` `live` or `deleted`. Every write to a page
 calls `blocks_store.touch_page(conn, page_id, actor, kind)` inside its own
 transaction: the row takes the next seq of the workspace (`MAX(seq) + 1`),
-and a `live` touch also stamps the root's `updated_at`. The writers that
+and a `live` touch also stamps the root's `updated_at` and makes the writer
+follow the page (`follow_page`, [comments.md](comments.md) "Following a
+page"). The writers that
 touch `live` are `apply_ops` (once per batch, a tree's batch touching the
 tree), `record_ops` (a cross-page
 move's source), `log_reload` (a subtree replace, an import into an existing

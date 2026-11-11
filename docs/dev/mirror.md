@@ -322,7 +322,7 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
   `pending_local` and go with the first round after the update, an
   ordinary three-way merge. The upgrade itself sends nothing: a workspace
   step rewrites both copies alike without touching their pages
-  ([migrations.md](migrations.md) steps 29, 30 and 51).
+  ([migrations.md](migrations.md) steps 29, 30 and 52).
 - **The status** keeps `version_gap: {here, remote}` beside `last_error`
   until a round gets past the check. Every surface reads it through
   `versionGap` (state `outdated`, an amber dot): *Paused · update Gamma*
@@ -368,10 +368,10 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
   generated `deleted_with` column and its index the same way
   (`DERIVED_STEPS`), and the stamp it reads is a property of rows in
   Recently deleted, which no round sends.
-- **Step 51** (`page_documents`) moves the format from 44 to 51. It
+- **Step 52** (`page_documents`) moves the format from 44 to 52. It
   rewrites a block's document from the flat `doc_id`, `source_url`,
   `original_filename` and `linked_file` into one property, `doc`
-  ([documents.md](documents.md#older-shapes-migration-step-51)), so a pair
+  ([documents.md](documents.md#older-shapes-migration-step-52)), so a pair
   pauses until both sides have run it, and so does a publication. The step
   rewrites the copy's stored bases (`sync_pages`) the same way, so the
   first round after both upgraded sends nothing for the shape; a push in

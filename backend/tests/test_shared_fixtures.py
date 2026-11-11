@@ -793,6 +793,12 @@ def test_color_nearest(case):
     assert colors.nearest(case["color"], case["colors"]) == case["out"]
 
 
+@pytest.mark.parametrize("case", COLORS["line"], ids=[c["note"] for c in COLORS["line"]])
+def test_color_line(case):
+    from gamma import colors
+    assert colors.line_color(case["color"]) == case["out"]
+
+
 LINKNAME = _load("linkname.json")
 
 

@@ -501,28 +501,60 @@ def write_lock(conn) -> None:
         conn.execute("BEGIN IMMEDIATE")
 
 
-def touch_page(conn, page_id: str, actor: str, kind: str = "live", *, now: str = "", quiet: bool = False) -> None:
+def touch_page(conn, page_id: str, actor: str, kind: str = "live", *, now: str = "", quiet: bool = False,
+               follow: bool = True) -> None:
     """Record a write to the page ``page_id`` in the workspace's change log
     (``page_changes``): its row takes the next seq of the workspace, so the
     change feed (routers/sync.py) lists the page once to any cursor below
     it. ``live`` (an edit, a creation, a restore) also stamps the page's
     own row ``updated_at`` (``now``, the writer's stamp, or the time),
     unless ``quiet`` (a vault's stamps, which leave the recent pages'
-    order: ops ``set``'s ``quiet``); a page that went (``deleted``: moved to
-    Recently deleted, or deleted for good) keeps its row as it is. Every
-    writer of a page calls it once per write, inside its transaction: under
-    the write lock (``write_lock``, or the transaction's first write), so
-    seqs are handed out in commit order and never twice. The caller
-    commits."""
+    order: ops ``set``'s ``quiet``), and the writer follows the page
+    (``follow_page``) unless ``follow`` is False (a batch that is no one's
+    keystrokes: ops' ``UNFOLLOWED`` clients) or the write is quiet; a page
+    that went (``deleted``: moved to Recently deleted, or deleted for good)
+    keeps its row as it is. Every writer of a page calls it once per write,
+    inside its transaction: under the write lock (``write_lock``, or the
+    transaction's first write), so seqs are handed out in commit order and
+    never twice. The caller commits."""
     now = now or page_now()
     if kind == "live" and not quiet:
         conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, page_id))
+        if follow:
+            follow_page(conn, page_id, actor, now=now)
     conn.execute(
         "INSERT INTO page_changes (page_id, seq, kind, at, actor) "
         "VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM page_changes), ?, ?, ?) "
         "ON CONFLICT (page_id) DO UPDATE SET seq = excluded.seq, kind = excluded.kind, "
         "at = excluded.at, actor = excluded.actor",
         (page_id, kind, now, actor))
+
+
+def follow_page(conn, page_id: str, actor: str, *, now: str = "") -> None:
+    """The person ``actor`` follows the page ``page_id``: every comment on
+    it reaches their Inbox (``page_follows`` level ``all``,
+    docs/dev/comments.md "Following a page"), unless the page has their
+    row already — their own choice, or an earlier follow. Called inside the
+    writer's transaction by ``touch_page`` (a creation, an edit) and by a
+    new comment. A writer that is no account (the server's own ``''``, a
+    link visitor, a mirror's or a Zotero link's round) and the folder and
+    label trees follow nothing."""
+    from .auth import LINK_ACTOR_PREFIX, MIRROR_ACTOR, ZOTERO_ACTOR  # local: auth imports this module
+
+    if (not actor or actor in (MIRROR_ACTOR, ZOTERO_ACTOR) or actor.startswith(LINK_ACTOR_PREFIX)
+            or page_id in RESERVED):
+        return
+    conn.execute("INSERT OR IGNORE INTO page_follows (page_id, user_id, level, at) VALUES (?, ?, 'all', ?)",
+                 (page_id, actor, now or page_now()))
+
+
+def _followed_by(client: str) -> bool:
+    """Whether a page the writer ``client`` names makes is followed by its
+    actor: not one a batch of it would leave unfollowed (ops'
+    ``UNFOLLOWED``: a synced vault's file, a mirror's page)."""
+    from .ops import UNFOLLOWED  # ops imports this module
+
+    return client not in UNFOLLOWED
 
 
 def newest_change_seq(conn) -> int:
@@ -1119,7 +1151,7 @@ def create_page(conn, title: str, props: dict | None = None, *, actor: str, clie
         f"INSERT INTO unified_blocks ({BLOCK_COLUMNS}) VALUES (?, 'root', ?, ?, ?, ?, ?, ?)",
         (block_id, new_pos, title, json.dumps(props), now, now, block_id),
     )
-    touch_page(conn, block_id, actor, now=now)
+    touch_page(conn, block_id, actor, now=now, follow=_followed_by(client))
     upload_gc.claim(conn, upload_refs(title, props))  # its PDF is in use (again)
     conn.commit()
     return block_to_dict(conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?",
@@ -1165,7 +1197,7 @@ def insert_page_tree(conn, page_id: str, title: str, props: dict, tree: list, ac
             written += 1
             if node.get("children"):
                 pending.append((child_id, node["children"]))
-    touch_page(conn, page_id, actor, now=now)
+    touch_page(conn, page_id, actor, now=now, follow=_followed_by(client))
     return written
 
 

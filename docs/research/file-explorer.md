@@ -406,7 +406,7 @@ copy: the lookups by document, the record, the Zotero item) or the file
 it **shows** (`file_hash`, the original's on a copy: whatever reads the
 bytes).
 
-One numbered workspace step, 51, rewrites each page that carries a
+One numbered workspace step, 52, rewrites each page that carries a
 document and points the generated `doc_id` column at the hash a row owns
 (`doc.hash`, copies left out; [dev/migrations.md](../dev/migrations.md)).
 It moves the workspace's format, so a clone and its origin pause until
@@ -825,11 +825,11 @@ the two can run side by side.
 ([dev/documents.md](../dev/documents.md)). The registry is
 `gamma/documents/formats.py` with its client twin, held by
 `tests/shared/formats.json`. A page's document is `doc`, and migration
-step 51 (`page_documents`, a workspace part only) rewrites every older row
-and the mirror's bases. It moves the workspace format from 44 to 51, so a
+step 52 (`page_documents`, a workspace part only) rewrites every older row
+and the mirror's bases. It moves the workspace format from 44 to 52, so a
 clone and a publication pause until both sides have run it, a desktop
 vault on another server refuses a server of another format, `gamma_sync`
-refuses one below 51, and an older `gamma_sync` is updated with the
+refuses one below 52, and an older `gamma_sync` is updated with the
 server. `page_document` and `pageDocument` take the place of
 `page_attachment`, `attachment_file` and their twins, held by
 `tests/shared/document.json`, and every reader names one of the
@@ -871,8 +871,8 @@ stamps `work_folder`, `library` (true or absent) and `file_name`; W's
 folder block carries the mark `vault: {pull, library}`. Two generated
 columns, `work_folder` and `first_folder`, and three partial indexes
 (`idx_ub_listing`, `idx_ub_dir`, `idx_ub_work_folder`) come with migration
-step 52 (`work_folders`), which also adds `folder_links.library`; the step
-is derived, so the workspace format stays 51. The library rule is
+step 53 (`work_folders`), which also adds `folder_links.library`; the step
+is derived, so the workspace format stays 52. The library rule is
 `gamma/work_folders/library.py` with its client twin, held by
 `tests/shared/library.json`; the op rule is `gamma/work_folders/filing.py`
 with its twin, held by `tests/shared/workfiling.json`, and a refusal is a

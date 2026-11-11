@@ -1,17 +1,19 @@
 import React from "react";
-import { PaneHead, Section, Row, Toggle, Stepper, PictureChoices } from "./SettingsKit";
+import { NameInput, PaneHead, Section, Row, Toggle, Stepper, PictureChoices } from "./SettingsKit";
+import { HighlightPresets } from "./HighlightPresets";
 import { MenuSelect } from "../shared/ui/Menus";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
 import { BarLayoutSection } from "./BarLayoutSection";
 import {
-  ActivityIcon, BellIcon, CloudIcon, ContrastIcon, CopyIcon, FileTextIcon, HelpCircleIcon, HighlightIcon, LanguagesIcon, LayoutIcon, LinkIcon,
-  MaximizeIcon, MenuIcon, MicIcon, MoonIcon, PaletteIcon, PenIcon, PlusIcon, SearchIcon, SheetIcon, TextCursorIcon, TrashIcon, TypeIcon, XIcon,
+  BellIcon, ContrastIcon, CopyIcon, FileTextIcon, HelpCircleIcon, HighlightIcon, LanguagesIcon, LayoutIcon,
+  MaximizeIcon, MicIcon, MoonIcon, PaletteIcon, PenIcon, PlusIcon, SheetIcon, TextCursorIcon, TrashIcon, TypeIcon, XIcon,
   ZoomInIcon,
 } from "../shared/ui/Icons";
 import { ThemePreview, PdfPreview } from "../shared/illustrations";
 import { UI_SCALE, themeScheme } from "../app/prefs";
 import { TOPBAR } from "../app/topbarItems.js";
+import { TOPBAR_ICONS } from "../app/topbarIcons.js";
 import { VIEWER_TOOLS } from "../app/viewerToolItems.js";
 import {
   DEFAULT_PALETTE, MAX_GROUPS, MAX_GROUP_COLORS, MAX_GROUP_NAME, WASH_ALPHA, WASH_COLORS,
@@ -52,9 +54,8 @@ function PaletteGroup({ group, canAdd, canDelete, onChange, onDelete, onDuplicat
   return (
     <div className="setCard paletteGroup" data-setting={group.name}>
       <div className="paletteGroupHead">
-        <input className="paletteGroupName" value={group.name} maxLength={MAX_GROUP_NAME} aria-label={t("Group name")}
-          onChange={(e) => onChange({ ...group, name: e.target.value })}
-          onBlur={(e) => { if (!e.target.value.trim()) onChange({ ...group, name: t("Group") }); }} />
+        <NameInput className="paletteGroupName" value={group.name} maxLength={MAX_GROUP_NAME} aria-label={t("Group name")}
+          onCommit={(name) => onChange({ ...group, name })} />
         <span className="paletteGroupCount">{tn("{n} color", "{n} colors", group.colors.length)}</span>
         <button type="button" className="uiClose uiCloseSm" title={t("Duplicate group")} aria-label={t("Duplicate group {name}", { name: group.name })}
           disabled={!canAdd} onClick={onDuplicate}><CopyIcon size={14} /></button>
@@ -114,7 +115,7 @@ function InboxNotifications({ value }) {
 // and app/viewerToolItems.js, the ones the bars draw; a new item there is a
 // new row here, given its glyph below. The Inbox's row is only for an
 // account that has one.
-const TOPBAR_ICONS = { add: PlusIcon, tasks: ActivityIcon, search: SearchIcon, share: LinkIcon, sync: CloudIcon, inbox: BellIcon, view: MenuIcon };
+
 const VIEWER_TOOL_ICONS = {
   zoom: ZoomInIcon, ink: PenIcon, record: MicIcon, highlighter: HighlightIcon, translate: LanguagesIcon, paper: SheetIcon, notesView: FileTextIcon,
   selectMode: TextCursorIcon,
@@ -173,9 +174,10 @@ export function AppearanceSettings({ value, diagnostics }) {
           <PaletteGroup key={g.id} group={g} canAdd={palette.groups.length < MAX_GROUPS} canDelete={palette.groups.length > 1}
             onChange={(group) => setGroup(g.id, group)} onDelete={() => deleteGroup(g.id)} onDuplicate={() => addGroup(g)} />
         ))}
-        <Row icon={HighlightIcon} label={t("Text highlights")} hint={t("Highlighting selected PDF text, and recolouring a highlight from its menu.")}>
+        <Row icon={HighlightIcon} label={t("Text highlights")} hint={t("Highlighting selected PDF text, and recolouring a highlight from its menu; the selection popup switches it too.")}>
           <MenuSelect label={t("Text highlights")} value={palette.pickers.highlight} onChange={setPicker("highlight")} options={groupOptions} />
         </Row>
+        <HighlightPresets presets={value.highlightPresets} onChange={value.setHighlightPresets} palette={palette} />
         <Row icon={HighlightIcon} label={t("Ink highlights")} hint={t("A highlighter pen in the handwriting tool strip: the colours its options row offers.")}>
           <MenuSelect label={t("Ink highlights")} value={palette.pickers.highlighter} onChange={setPicker("highlighter")} options={groupOptions} />
         </Row>
@@ -208,7 +210,7 @@ export function AppearanceSettings({ value, diagnostics }) {
       <BarLayoutSection title={t("Top bar")} scope="account" prefs={SECTION_PREFS.appearance["Top bar"]}
         bar={TOPBAR} value={value.topbar} onChange={value.setTopbar} icons={TOPBAR_ICONS}
         filter={(item) => item.id !== "inbox" || value.hasInbox}
-        resetTitle={t("Every button back on the bar in the default order, the sync pill on synced pages")} />
+        resetTitle={t("Every button back on the bar in the default order, the sync pill on synced pages, and the page's own buttons in each pane while pages are side by side")} />
 
       <BarLayoutSection title={t("Viewer tools")} scope="account" prefs={SECTION_PREFS.appearance["Viewer tools"]}
         bar={VIEWER_TOOLS} value={value.viewerTools} onChange={value.setViewerTools} icons={VIEWER_TOOL_ICONS}

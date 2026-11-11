@@ -14,13 +14,13 @@ lookups of "the page of this file" never count one.
 Code: `gamma/documents/formats.py` (the format registry),
 `gamma/documents/model.py` (the stored shape, its builder, its read and the
 predicates), `gamma/normalize.py` `document_shape` and `page_documents`
-(older rows rewritten, migration step 51), `db.BLOCK_HOT_COLUMNS["doc_id"]`
+(older rows rewritten, migration step 52), `db.BLOCK_HOT_COLUMNS["doc_id"]`
 (the generated column), and on the client `frontend/src/documents/`:
 `formats.js` and `pageDocument.js`, the twins, and `documentView.js` and
 `DocumentPane.jsx`, which decide and draw the viewer a page shows. Tests:
 `backend/tests/test_documents.py`, `test_shared_fixtures.py`,
-`test_migrations.py` (`test_v51_*`), `test_restore_consistency.py` (a
-backup from before step 51), `frontend/tests/documents.test.mjs` and
+`test_migrations.py` (`test_v52_*`), `test_restore_consistency.py` (a
+backup from before step 52), `frontend/tests/documents.test.mjs` and
 `libraryUtils.test.mjs`, over the fixtures `tests/shared/formats.json` and
 `tests/shared/document.json` ("Fixtures" below).
 
@@ -108,7 +108,7 @@ A stored doc holds to these rules, and `document` refuses anything else:
 4. A PDF's extension is `.pdf`.
 
 Two more hold across the shape's history. The hash of every page that had
-a doc id before step 51 is that doc id, so every record keyed by a file's
+a doc id before step 52 is that doc id, so every record keyed by a file's
 hash stays valid untouched: `data.db`'s `pdf_docs`, `pdf_fts*` and
 `pdf_translations*`, highlights' `pdf_position.doc_id` and `prev.doc_id`,
 `vaults.db`'s `linked_files` and `vault_files`, the Zotero link's
@@ -161,7 +161,7 @@ eight fields or some of them, each of its type) and rebuilds it through
 `document`. `document_props(props, patch=False, refuse=True)` is every
 writer's rule for properties: a `doc` is rebuilt by `check_document`, a
 `null` one dropped (kept in a `patch`, where it removes the key), a flat
-key a document was kept in before step 51 (`LEGACY_KEYS`: `doc_id`,
+key a document was kept in before step 52 (`LEGACY_KEYS`: `doc_id`,
 `source_url`, `linked_file`) dropped when `null` and refused with a value.
 It raises with the reason, or with `refuse` false drops what it would
 refuse.
@@ -186,7 +186,7 @@ Where a document is written:
   owns (`page_for_doc`), or one read in place whose file another page
   reads in place, is stored as the copy a duplicate writes
   (`model.copy_document`, the twin of the client's `copyDocument`). That
-  is the request an open tab from before step 51 sends when it duplicates
+  is the request an open tab from before step 52 sends when it duplicates
   a page: the properties read fresh, `doc` among them, `doc_id` taken out.
 - **The page writers inside the server** go through
   `blocks_store.page_root_props` (`create_page`, `insert_page_tree`, a page
@@ -305,7 +305,7 @@ doc_id TEXT GENERATED ALWAYS AS (CASE WHEN json_extract(properties, '$.doc.copy'
 
 NULL on a row without a document, on one shown from an address alone and
 on a copy. It covers every row, nested and trashed ones included, with the
-partial index `idx_ub_doc`. Its name is the column's from before step 51,
+partial index `idx_ub_doc`. Its name is the column's from before step 52,
 so the statements that read it (`page_for_doc`, the upload references,
 the PDF index purge) read it as they did. The share checks
 (`routers/uploads.py`) read `doc.hash` and `doc.ext` instead, of any
@@ -327,12 +327,12 @@ with a field a later release adds) never lets its file go, though it shows
 none. The orphan pass (`upload_gc`) reads the blocks whose properties name
 `"doc"`.
 
-## Older shapes: migration step 51
+## Older shapes: migration step 52
 
-Before step 51 a page kept its document in flat keys: `doc_id` (the hash),
+Before step 52 a page kept its document in flat keys: `doc_id` (the hash),
 `source_url` (an address, stored only when the file came from elsewhere; a
 duplicated page kept an upload's address alone), `original_filename` and
-`linked_file: true` (read in place). Step 51 (`page_documents`, a workspace
+`linked_file: true` (read in place). Step 52 (`page_documents`, a workspace
 part alone, [migrations.md](migrations.md)) rewrites every row, nested
 and in Recently deleted too, through `normalize.document_shape`, then
 gives the generated `doc_id` column the definition above (`block_columns`
@@ -378,7 +378,7 @@ agree. Every state the rows held, by the letters
 | J | `doc_id` `""`, `source_url` `""` | older tabs and peers | no document |
 | K | `sourceUrl` | the earliest pages | read as `source_url` |
 | N | a `doc_id` `safe_doc_id` refuses, or no string | raw writers | as if absent (an int is its digits) |
-| O | a `doc` already | rows written after the step, an export from a server at 51 | kept; the flat keys go |
+| O | a `doc` already | rows written after the step, an export from a server at 52 | kept; the flat keys go |
 
 The step is pure: no disk reads, no `updated_at`, no op-log or change-log
 row (a shape is no edit). It rewrites the mirror's stored bases as well
@@ -387,30 +387,30 @@ is resent as it was), so the first round after both sides upgraded sends
 nothing for the shape.
 
 It is not in `migrations.DERIVED_STEPS`: stored properties change, so
-`workspace_format()` moves from 44 to 51 ([mirror.md](mirror.md) "The data
+`workspace_format()` moves from 44 to 52 ([mirror.md](mirror.md) "The data
 format"), and a mirror pair or a publish pauses until both sides have run
 it. The other readers of another server's pages hold the same line: a
 desktop vault on another server (`vault_http.HttpRemote`) refuses a feed of
 another format, as the mirror does, and `gamma_sync` refuses a server
-below format 51 (`Server.check_format`, `DOCUMENT_FORMAT`;
+below format 52 (`Server.check_format`, `DOCUMENT_FORMAT`;
 [synced_vaults.md](synced_vaults.md#the-client)). An older gamma_sync
-cannot be told from the server: it finds no document on a server at 51,
+cannot be told from the server: it finds no document on a server at 52,
 and is updated with it. An open tab from before the upgrade keeps the flat
 shape until it reloads; its one document write, a duplicate, sends the
 page's `doc` read fresh, which the server stores as a copy of the
 original's file ("A new page a client writes whole" above).
 
 As the restore's normalizer ([migrations.md](migrations.md) rule 6), the
-step runs on every backup or scoped Gamma export stamped below 51, an
-unstamped export (every scoped export before release 51) counting as the
+step runs on every backup or scoped Gamma export stamped below 52, an
+unstamped export (every scoped export before release 52) counting as the
 base; rows already in this shape pass by rule 1. A scoped export is
-stamped with its release (`_GammaBuilder`), so a release before 51 refuses
+stamped with its release (`_GammaBuilder`), so a release before 52 refuses
 one as "made by a newer Gamma" rather than merging pages whose document it
 cannot read. On a copy stamped below the base the content normalizers run after
 the steps: `normalize_pages_db` reduces a `doc.name` with a path to its
 leaf (the step copies `original_filename` as it is), and `highlight_shape`
 (step 30) reads the flat `doc_id` key itself, so it finds nothing on rows
-step 51 has rewritten.
+step 52 has rewritten.
 
 ## The client
 

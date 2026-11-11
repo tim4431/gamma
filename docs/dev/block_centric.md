@@ -45,7 +45,7 @@ code keeps them apart (decided 2026-09-13, see *Files and documents* below):
   Each reader names the file it means: the one the page owns
   (`own_hash` / `ownHash`; a duplicated page owns none) or the one it shows
   (`file_hash` / `fileHash`; a duplicated page's is the original's). Until
-  migration step 51 the document was flat keys (`doc_id`, `source_url`,
+  migration step 52 the document was flat keys (`doc_id`, `source_url`,
   `original_filename`, `linked_file`, and a duplicated page's bare upload
   address), read through `page_attachment` / `pageAttachment` and held by
   `tests/shared/attachment.json`; `original_filename` stays only as the
@@ -123,7 +123,7 @@ block's subtree is another thing and is still open (below).
 The entries keep the names of their time. The helpers they name
 (`page_attachment`, `pageAttachment`, `attachment_props`) gave way to
 `page_document`, `pageDocument` and `document` when the document became one
-property, `doc` (migration step 51, [documents.md](documents.md)).
+property, `doc` (migration step 52, [documents.md](documents.md)).
 
 Backend
 - `blocks_store.get_or_create_doc_page` + `GET/POST /blocks/by-doc/{doc_id}`
@@ -207,7 +207,7 @@ every renamed property or syntax lived twice in the code. The block-centric
 work replaced that with ONE idempotent normalization pass,
 `gamma/normalize.py`, which a restore applies to imported files stamped
 below the base: a backup from before the workspace stamps, a scoped Gamma
-export from before release 51 (`ws_backup._normalize_copies`). The versioned migration runner
+export from before release 52 (`ws_backup._normalize_copies`). The versioned migration runner
 ([migrations.md](migrations.md)) ran it in its baseline migration too,
 until that migration was dropped with every one below `MIN_UPGRADABLE`; a
 new content shape is rewritten by a function there that a numbered step's
@@ -222,8 +222,8 @@ Per-workspace `pages.db`
   key is removed.
 - The flat keys of a page's document (`doc_id`, `source_url`,
   `original_filename`, `linked_file`) → one property, `doc`: migration step
-  51's workspace part (`normalize.document_shape`, the states and what each
-  becomes in [documents.md](documents.md#older-shapes-migration-step-51)),
+  52's workspace part (`normalize.document_shape`, the states and what each
+  becomes in [documents.md](documents.md#older-shapes-migration-step-52)),
   which a restore runs on every older copy before the content
   normalizers. It reads `sourceUrl` as well, so on a restore the bullet
   above finds nothing left.

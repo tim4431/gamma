@@ -11,7 +11,8 @@ page export all restore the same way. Every database copy is quick-checked
 on the way in and out (``gamma/integrity.py``): a snapshot records the
 result in its manifest, a restore refuses a damaged backup before touching
 anything. What is each account's own in the workspace (``PRIVATE_TABLES``:
-the members' open tabs, recents and reading positions) is no library
+the members' open tabs, recents and reading positions, the pages they
+follow) is no library
 content: the zip's pages.db has those tables emptied, and a restore keeps
 the live rows.
 
@@ -65,8 +66,9 @@ from .zotero_sync_rows import CONFLICT_KINDS
 
 FORMAT = "gamma-backup-1"
 # pages.db tables that hold each account's own state, not the library's
-# (db.WORKSPACE_PREFS_SCHEMA): empty in every zip, never replaced by a restore.
-PRIVATE_TABLES = ("workspace_prefs",)
+# (db.WORKSPACE_PREFS_SCHEMA, the pages it follows: page_follows): empty in
+# every zip, never replaced by a restore.
+PRIVATE_TABLES = ("workspace_prefs", "page_follows")
 SCRUB_CHUNK = 64 << 20             # bytes of zeros per row when a copy's free pages are overwritten
 MAX_PER_WORKSPACE = 20             # manual snapshots per workspace
 MAX_SCHEDULED_PER_WORKSPACE = 100  # scheduled ones per workspace, every task together
@@ -352,7 +354,7 @@ def _normalize_copies(tdir: Path) -> None:
     reads them or anything live is touched. pages.db, in this order: a copy
     stamped below the base (``migrations.WS_VERSION_BASE``; 0, a backup
     from before the stamps, can be of any age up to it, and so can a scoped
-    Gamma export from before release 51, which carried none) goes through the normalizers of the steps that
+    Gamma export from before release 52, which carried none) goes through the normalizers of the steps that
     walked every workspace: the block table's hot fields
     (``normalize.block_columns``, step 26), the change log
     (``page_changes``, step 27), the chats its data.db held
@@ -495,8 +497,8 @@ def _replace(ws: str, root: Path, tdir: Path, by: str) -> dict:
                              CONFLICT_KINDS)
             pages = [r[0] for r in live.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root'")] + [
                 tree for tree in TREES if live.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (tree,)).fetchone()]
-            for page in pages:
-                ops.log_reload(live, page, by, after=live_seqs.get(page, 0))
+            for page in pages:  # who follows the pages stays the live rows' (PRIVATE_TABLES)
+                ops.log_reload(live, page, by, after=live_seqs.get(page, 0), follow=False)
             removed = sorted(live_pages - set(pages))
             unpaged = {r[0] for r in live.execute(  # no page of the library now, and not deleted yet
                 "SELECT page_id FROM page_changes WHERE kind = 'live' UNION "

@@ -8,15 +8,15 @@ from fastapi.concurrency import run_in_threadpool
 from mcp.server.auth.provider import AuthorizationCode, AuthorizationParams, AuthorizeError, TokenError
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
-from . import workspaces
 from .db import connect_users_db
-from .integrations import create_token, token_digest
+from .integrations import create_token, grant, granted, token_digest
 from .mcp_oauth import SCOPE, TTL, load, store
 
 
 class GammaCode(AuthorizationCode):
     user_id: str
     workspace_id: str
+    workspaces: str = ""  # the stored grant (integrations.grant): "", "*" or a JSON list
     session_hash: str
 
 
@@ -63,13 +63,14 @@ class Provider:
         with connect_users_db() as conn:
             user = conn.execute("SELECT is_guest FROM users WHERE id = ?", (value["user_id"],)).fetchone()
             sessions = conn.execute("SELECT token FROM sessions WHERE user_id = ?", (value["user_id"],)).fetchall()
-        if (not user or user[0] or not any(token_digest(s[0]) == value["session_hash"] for s in sessions)
-                or not workspaces.role_of(value["workspace_id"], value["user_id"])):
+        if not user or user[0] or not any(token_digest(s[0]) == value["session_hash"] for s in sessions):
             raise TokenError("invalid_grant", "Workspace access is no longer available.")
         try:
-            issued = create_token(value["user_id"], value["workspace_id"],
+            wanted = granted(value["workspace_id"], value.get("workspaces", ""))
+            primary, stored = grant(value["user_id"], wanted)
+            issued = create_token(value["user_id"], primary,
                                   (client.client_name or "MCP assistant")[:65] + " (OAuth)", 90,
-                                  oauth_resource=self.resource)
+                                  oauth_resource=self.resource, workspaces=stored)
         except HTTPException as exc:
             raise TokenError("invalid_grant", str(exc.detail)) from exc
         return OAuthToken(access_token=issued["token"], expires_in=TTL, scope=SCOPE)

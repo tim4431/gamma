@@ -16,8 +16,11 @@ import { useFolderTranslations } from "../pdf/useFolderTranslations.js";
 import { docIdOf } from "../pdf/pdfSource";
 import { discardApplied, discardOutcome, discardStep, discardUndone, noteSummary, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
 import { basePixels } from "../pdf/pageRaster";
-import { DEFAULT_HIGHLIGHT, LINK_COLOR, colorName, highlightColor, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
+import { DEFAULT_HIGHLIGHT, LINK_COLOR, colorName, highlightColor, normalizeColor, pickerColors, swatchMarker } from "../shared/model/palette.js";
+import { isLineStyle, swatchOf, withStyle } from "../shared/model/markStyle.js";
 import { PaletteContext } from "../shared/ui/paletteContext.js";
+import { MarkGlyph } from "../shared/ui/MarkGlyph.jsx";
+import { MarkMenuRows, MarkToolsContext, markName } from "../pdf/MarkTools.jsx";
 import { clampZoom } from "../shared/model/zoom.js";
 import { fmtDate, getLocale, resolveLocale, t, T, tn } from "../shared/i18n/i18n.js";
 import { REOPEN_SETTINGS_KEY, resolveSettingsPane } from "../settings/settingsNavigation.js";
@@ -85,7 +88,7 @@ import {
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
-  PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, SplitRowsIcon, OnePaneIcon,
+  PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, OnePaneIcon,
   StopIcon, GlobeIcon, ChevronRightIcon, FlagIcon,
 } from "../shared/ui/Icons";
 import ReportContentHost from "../support/ReportContentHost";
@@ -152,7 +155,9 @@ import { LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailableP
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
 import { TRANSLATE_LANGS, preloadPrefs, readPref, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
-import { TOPBAR } from "./topbarItems.js";
+import { TOPBAR, TOPBAR_ITEMS } from "./topbarItems.js";
+import { TOPBAR_ICONS } from "./topbarIcons.js";
+import { BAR_PLACES } from "../shared/model/barLayout.js";
 import { VIEWER_TOOLS } from "./viewerToolItems.js";
 import { adoptAccountLook, takeBootRead } from "./boot.js";
 import { applyTheme } from "./theme.js";
@@ -2573,7 +2578,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // title or the labels: the open takes this press's target instead
     if (next === prev) {
       const want = activeGroup(next)?.active || "";
-      const aimed = target?.edit || target?.title || target?.labels;
+      const aimed = target?.edit || target?.title || target?.labels || target?.then;
       if (aimed && want && want === tabPick && want !== focusedBlockId) selectTab(want, target);
       return;
     }
@@ -2592,8 +2597,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const activateTabGroup = (groupId, tabId, target) => applyLayout(activateGroupIn(tabLayoutRef.current, groupId, tabId), target);
   const moveTabToGroup = (tabId, groupId, index) => applyLayout(moveTab(tabLayoutRef.current, tabId, groupId, index));
   const splitTabGroup = (groupId, side, tabId) => applyLayout(splitGroup(tabLayoutRef.current, groupId, side, tabId));
-  // A tab into a group of its own beside the one it is in: the tab menu's
-  // and the palette's Split right and Split down. The only tab of a group
+  // A tab into a group of its own beside the one it is in: the tab menu's,
+  // the bar menu's and the palette's Split right. The only tab of a group
   // opens an empty group beside it instead, where the library shows to
   // pick that group's page.
   const splitTab = (tabId, side) => {
@@ -2601,6 +2606,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (g) splitTabGroup(g.id, side, g.tabs.length === 1 ? null : tabId);
   };
   const joinTabGroups = () => applyLayout(joinAll(tabLayoutRef.current));
+  // The pane a tab is not in, while there are two (the tab menu's Move to
+  // the other pane).
+  const otherPane = (tabId) => {
+    const groups = groupsOf(tabLayoutRef.current);
+    return groups.length === 2 ? groups.find((g) => !g.tabs.includes(tabId)) || null : null;
+  };
   const closeTabGroup = (groupId) => applyLayout(removeGroup(tabLayoutRef.current, groupId));
   const resizeTabSplit = (splitId, sizes) => {
     const next = resizeSplit(tabLayoutRef.current, splitId, sizes);
@@ -3309,6 +3320,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  // The mouse's back button is Back too, and with no jump left to unwind it
+  // goes to the library. Its default, the window's history, would leave
+  // Gamma: the app moves by replaceState, so the entry before it is what
+  // came before (the desktop app's launcher). Not while a dialog is open, as
+  // Alt+← is not. A share view keeps the default: its history is its
+  // navigation (goSharedPage). The pointerup, not the mouseup: a pointerdown
+  // whose default a surface takes away (the palette does) sends no mouseup
+  // at all, and Chromium went back. In the capture phase, before a layer
+  // can stop it on its way up.
+  useEffect(() => {
+    function onUp(e) {
+      const c = appCmdRef.current;
+      if (e.button !== 3 || !c || c.shareMode) return;
+      e.preventDefault();
+      if (liveAppCommands().some((cmd) => cmd.id === "app.back")) c.mouseBack();
+    }
+    window.addEventListener("pointerup", onUp, true);
+    return () => window.removeEventListener("pointerup", onUp, true);
+  }, []);
   const [pdfHidden, setPdfHidden] = useState(false);
   const [pdfScale, setPdfScale] = useState("page-width");
   // Every localStorage-backed user preference (the Settings dialog's state)
@@ -3362,6 +3392,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications,
     topbar, setTopbar, viewerTools, setViewerTools, highlighterColor, setHighlighterColor,
+    highlightStyle, setHighlightStyle, highlightPresets, setHighlightPresets,
     chatEffort, setChatEffort, chatSpeed, setChatSpeed, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
@@ -4651,6 +4682,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // ({x, y} of that menu).
   const [highlighterOn, setHighlighterOn] = useState(false);
   const [highlighterMenu, setHighlighterMenu] = useState(null);
+  // What the highlight tools offer (pdf/MarkTools.jsx): the style and the
+  // colour a new highlight takes (the highlighter's: its last pick, else
+  // the picker's first swatch), the presets, the group the swatches come
+  // from and the way to their settings.
+  const markTools = useMemo(() => ({
+    style: highlightStyle, setStyle: setHighlightStyle,
+    color: highlighterColor || highlightColor(pickerColors(palette, "highlight")[0]),
+    presets: highlightPresets, setPresets: setHighlightPresets,
+    setGroup: (id) => setPalette({ ...palette, pickers: { ...palette.pickers, highlight: id } }),
+    openColors: () => openSettingsPane("colors"),
+  }), [highlightStyle, setHighlightStyle, highlighterColor, highlightPresets, setHighlightPresets, palette, setPalette]);
   // The build fence (ink/buildFence.js): a server updated under this
   // bundle stops the page drawing until it is reloaded (inkStale).
   const { inkStale, noteServerBuild } = useBuildFence({ sessionBuild: authUser?.build, setStatus });
@@ -5106,6 +5148,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // not a link visitor without one, nor a guest account through a link.
   const commentMe = shareMode ? (shareInfo?.viewerIsGuest ? "" : shareInfo?.viewer || "") : authUser?.user || "";
   const canComment = !!commentMe;
+  // Whose Inbox the page's comments may reach, so the Comments window
+  // offers its Notify me: a commenter who is no guest account.
+  const canFollow = canComment && (shareMode || !authUser?.is_guest);
   // The workspace's owner deletes anyone's comment; not through a share link.
   const commentOwner = !shareMode && workspace?.role === "owner";
   const comments = useComments({ pageId: focusedBlockId, enabled: !!focusedBlockId, me: commentMe, onStatus: (msg) => setStatus(msg),
@@ -5413,10 +5458,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setBlocks(removeBlockTree(blocks, id));
   }
 
-  function changeHighlightColor(id, newColor) {
+  // A highlight's colour and how it marks its passage: `color` (as
+  // stored) and `style` (shared/model/markStyle.js), either or both; its
+  // place, quote and notes stay.
+  function changeHighlightMark(id, { color, style } = {}) {
     if (readOnly || !findBlock(blocks, id)) return;
-    const color = normalizeColor(newColor) || DEFAULT_HIGHLIGHT;
-    setBlocks(updateBlockTree(blocks, id, (b) => ({ ...b, properties: { ...b.properties, color } })));
+    setBlocks(updateBlockTree(blocks, id, (b) => {
+      const props = color === undefined ? b.properties : { ...b.properties, color: normalizeColor(color) || DEFAULT_HIGHLIGHT };
+      return { ...b, properties: style === undefined ? props : withStyle(props, style) };
+    }));
   }
 
   // Gamma's own links (chat citations, copied page/block links) open in
@@ -5446,9 +5496,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       landOnBlock(id);
     } else {
       // block-ref click = link jump to another page, which Back returns from
-      const rootId = pageId || refCache[id]?.page_root_id;
+      const rootId = pageId || await pageOfBlock(id);
       if (rootId && rootId !== id) await openBlock(rootId, { pushNav: true, link: true, block: id });
       else await openBlock(id, { pushNav: true, link: true });
+    }
+  }
+
+  // The page a block is on: the ref cache's, else the server's. A card's
+  // link is pressable before its label lands, and the block opened as a
+  // page would land on none of it. "" when neither knows (the block itself
+  // is then opened).
+  async function pageOfBlock(id) {
+    const cached = refCacheRef.current[id]?.page_root_id;
+    if (cached) return cached;
+    try {
+      const data = await apiJson(`${API}/block-search?ids=${encodeURIComponent(id)}`);
+      return data.blocks?.[0]?.page_root_id || "";
+    } catch {
+      return "";
     }
   }
 
@@ -5528,18 +5593,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     else if (shareMode) return; // a page host's address that names no shared page: "not found" is up
     else if (initialBlockId) {
       (async () => {
-        try {
-          const data = await apiJson(`${API}/block-search?ids=${encodeURIComponent(initialBlockId)}`);
-          const block = data.blocks?.[0];
-          const rootId = block?.page_root_id;
-          if (rootId && rootId !== initialBlockId) {
-            openBlock(rootId, { link: true, block: initialBlockId });
-          } else {
-            openBlock(initialBlockId, { link: true });
-          }
-        } catch {
-          openBlock(initialBlockId, { link: true });
-        }
+        const rootId = await pageOfBlock(initialBlockId);
+        if (rootId && rootId !== initialBlockId) openBlock(rootId, { link: true, block: initialBlockId });
+        else openBlock(initialBlockId, { link: true });
       })();
     }
     else if (initialUrl) openPdf(initialUrl);
@@ -6917,7 +6973,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function selectTab(id, target) {
     if (id === focusedBlockId) { dropTabPick(); return undefined; }
     setTabPick(id);
-    const then = target?.title ? "title" : target?.labels ? "labels" : undefined;
+    const then = target?.then || (target?.title ? "title" : target?.labels ? "labels" : undefined);
     return openBlock(id, { restoreScroll: true, edit: target?.edit, folds: target?.folds, zoom: target?.zoom, then });
   }
   // The pending open of a picked tab let go: neither its landing nor its
@@ -7571,6 +7627,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setLabelInput("");
       setLabelSuggestionIdx(-1);
       setLabelEditing(true);
+    } else if (TOPBAR.item(pending.action)) {
+      // a topbar item pressed in a pane whose page was a view (paneStandIns):
+      // its popover, under the pane now live
+      setOpenPopover(TOPBAR.item(pending.action).popover);
     }
   }, [focusedBlockId]); // eslint-disable-line react-hooks/exhaustive-deps
   // Share a folder: the same popover under the topbar's link button, which
@@ -8939,6 +8999,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setQuickOpen((v) => (v && v.prefix === prefix ? null : { prefix }));
     },
     back: () => goBackNavRef.current?.(),
+    mouseBack: () => {
+      if (navStackLen) goBackNavRef.current?.();
+      else if (!homeMode) goHome();
+    },
     undo: (redo) => {
       const active = document.activeElement;
       const inEditor = !!active?.closest?.(".cm-editor");
@@ -12286,6 +12350,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onClose={onClose}
             threads={comments.threads}
             pageId={focusedBlockId}
+            notify={canFollow && commentsOn}
+            onStatus={setStatus}
             // what a thread is on: a highlight's quote, else the note's text
             anchorText={(id) => { const b = treeById.get(id); return b ? blockQuote(b) || b.content || "" : ""; }}
             labelOf={(id) => { const rb = treeById.get(id) || refCache[id]; return rb ? refLabelOf(rb) : null; }}
@@ -12482,48 +12548,54 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Search, a page's Share and the sync pill). An item off the bar keeps
   // its popover anchor where its button would be (`.offBar`), so its row,
   // its shortcut or App opens the popover in the same place. A tour or a
-  // hint on screen shows them all.
+  // hint on screen shows them all. While pages stand side by side, an item
+  // shown whose place is the panes stands at the end of each pane's strip
+  // instead (paneLiveBar and paneStandIns, below).
   const topbarLayout = TOPBAR.read(topbar);
+  const paneSplit = !isPhone && !isSingle(tabLayout);
   const barPlaces = TOPBAR.place(topbarLayout, {
     phone: isPhone,
+    split: paneSplit,
     guide: guide.running || !!guide.offer,
     open: openPopover,
     active: { tasks: !!tasks.badge, inbox: inbox.unread > 0, sync: true },
   });
   const barAt = Object.fromEntries(barPlaces.map((x) => [x.id, x.at]));
-  const onBar = (id) => barAt[id] === "bar";
-  const offBar = (id) => (onBar(id) ? "" : "offBar");
+  // An item has a button, on the bar or on the panes' strips; else it is a
+  // row of the account menu.
+  const hasButton = (id) => barAt[id] !== "menu";
+  const offBar = (id) => (hasButton(id) ? "" : "offBar");
   const folderShareable = homeMode && lib.organize && libTree.folders.has(folderFilter) && !labelFilter;
   // the open page's Share, or the open folder's; a folder's is a row on a phone
   const sharesPage = !!focusedBlockId && !homeMode;
-  const shareOnBar = onBar("share") && (sharesPage || !isPhone);
+  const shareHasButton = hasButton("share") && (sharesPage || !isPhone);
   const syncs = !!authUser?.user && !!syncKind;
   const phoneMainActive = phonePanel === null || (phonePanel === "notes" && centerNotes);
   // An item's row in the account menu while it is off the bar (the View
   // menu's rows are the menu's last group, below).
   const barMenuRow = {
-    add: () => !onBar("add") && (
+    add: () => !hasButton("add") && (
       <MenuItem key="add" icon={PlusIcon} onClick={() => setOpenPopover("add")}
         title={t("Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files")}>{t("Add…")}</MenuItem>
     ),
-    tasks: () => !onBar("tasks") && (
+    tasks: () => !hasButton("tasks") && (
       <MenuItem key="tasks" icon={ActivityIcon} onClick={() => setOpenPopover("downloads")}
         title={t("Background tasks — exports, backups, imports, downloads and uploads")}
         trailing={<TaskBadge badge={tasks.badge} inline />}>
         {t("Background tasks")}
       </MenuItem>
     ),
-    search: () => !onBar("search") && (
+    search: () => !hasButton("search") && (
       <CommandMenuItem key="search" id="app.search" ctx={appCmdRef.current} bindings={keybindings}
         onClick={() => setOpenPopover("search")} />
     ),
-    share: () => !shareOnBar && (sharesPage ? commandRow("app.share") : folderShareable && (
+    share: () => !shareHasButton && (sharesPage ? commandRow("app.share") : folderShareable && (
       <MenuItem key="share" icon={LinkIcon} onClick={() => openFolderShare(folderFilter)}>{t("Share this folder")}</MenuItem>
     )),
-    sync: () => !onBar("sync") && syncs && (
+    sync: () => !hasButton("sync") && syncs && (
       <MenuItem key="sync" icon={CloudIcon} onClick={() => setOpenPopover("mirror")}>{t("Sync status")}</MenuItem>
     ),
-    inbox: () => !onBar("inbox") && inbox.enabled && (
+    inbox: () => !hasButton("inbox") && inbox.enabled && (
       <MenuItem key="inbox" icon={BellIcon} onPointerEnter={InboxPanel.preload} onClick={() => setOpenPopover("inbox")}
         trailing={<InboxBadge unread={inbox.unread} inline />}>
         {t("Inbox")}
@@ -12545,7 +12617,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return (
       <>
         {rows.length ? <><MenuDivider />{rows}</> : null}
-        {onBar("view") ? null : <><MenuDivider />{viewMenuItems(false)}</>}
+        {hasButton("view") ? null : <><MenuDivider />{viewMenuItems(false)}</>}
       </>
     );
   };
@@ -12557,7 +12629,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const topbarItem = {
     add: () => (
       <span data-popover="add" className={`popoverAnchor ${offBar("add")}`}>
-        {onBar("add") ? (
+        {hasButton("add") ? (
           <button
             className={`iconBtn addBtn ${openPopover === "add" ? "activeIcon" : ""}`}
             onClick={() => setOpenPopover((p) => (p === "add" ? null : "add"))}
@@ -12614,7 +12686,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             download leaves no broken page behind, so this is the sign it
             happened; AI lookups are quiet) or an accent dot for a file
             waiting to be downloaded (tasks/TasksTray.jsx). */}
-        {onBar("tasks") ? (
+        {hasButton("tasks") ? (
           <TasksButton tasks={tasks} open={openPopover === "downloads"}
             onToggle={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))} />
         ) : null}
@@ -12625,7 +12697,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       <SearchPanel
         open={openPopover === "search"}
         onOpenChange={(v) => setOpenPopover(v ? "search" : null)}
-        button={onBar("search")}
+        button={hasButton("search")}
         detailsDefault={focusedBlockId ? searchDetailsPaper : searchDetailsHome}
         focusedBlockId={focusedBlockId}
         homeBlocks={homeBlocks}
@@ -12642,8 +12714,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       />
     ),
     share: () => (sharesPage ? (
-      <span data-popover="share" className={`popoverAnchor ${shareOnBar ? "" : "offBar"}`}>
-        {shareOnBar ? (
+      <span data-popover="share" className={`popoverAnchor ${shareHasButton ? "" : "offBar"}`}>
+        {shareHasButton ? (
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openPageShare(focusedBlockId); }}
@@ -12663,8 +12735,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     ) : folderShareable ? (
       // The same button for the open folder: one link for every page filed
       // in it. On a phone the More sheet offers it instead.
-      <span data-popover="share" className={`popoverAnchor ${shareOnBar ? "" : "offBar"}`}>
-        {shareOnBar ? (
+      <span data-popover="share" className={`popoverAnchor ${shareHasButton ? "" : "offBar"}`}>
+        {shareHasButton ? (
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openFolderShare(folderFilter); }}
@@ -12689,7 +12761,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         publication={syncKind === "mirror" && !workspace.mirror_of && !!workspace.publishing}
         pageId={focusedBlockId}
         everyPage={topbarLayout.modes.sync === "always"}
-        button={onBar("sync")}
+        button={hasButton("sync")}
         open={openPopover === "mirror"}
         onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
         jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
@@ -12708,7 +12780,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // The Inbox: off the bar (always on a phone), a row of the account
       // menu opens the panel.
       <span data-popover="inbox" className={`popoverAnchor ${offBar("inbox")}`}>
-        {onBar("inbox") ? (
+        {hasButton("inbox") ? (
           <InboxButton unread={inbox.unread} open={openPopover === "inbox"} onPreload={InboxPanel.preload}
             onToggle={() => setOpenPopover((p) => (p === "inbox" ? null : "inbox"))} />
         ) : null}
@@ -12719,7 +12791,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         ) : null}
       </span>
     ) : null),
-    view: () => (onBar("view") ? renderOverflowMenu(false) : null),
+    view: () => (hasButton("view") ? renderOverflowMenu(false) : null),
   };
 
   // Account & settings is no item: it stays last, the menu the items off
@@ -12874,10 +12946,40 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // There each carries its word under the icon (.barLabel, hidden elsewhere).
   const topbarActions = (
     <>
-      {barPlaces.map(({ id }) => <React.Fragment key={id}>{topbarItem[id]()}</React.Fragment>)}
+      {barPlaces.filter((x) => x.at !== "pane").map(({ id }) => <React.Fragment key={id}>{topbarItem[id]()}</React.Fragment>)}
       {accountButton}
     </>
   );
+  // The topbar items placed in the panes while pages stand side by side, at
+  // the end of each pane's strip (TabGroups). The live pane's bar is the
+  // items themselves, popovers and all, drawn once (`liveBar`) and moved
+  // with the live pane. Another pane's page is a view, so its buttons stand
+  // for them: a press makes that pane live and, once its page has opened,
+  // opens the item there (selectTab's `then`), as a press on the view edits
+  // there. A pane with nothing open has no page to share.
+  const paneItems = barPlaces.filter((x) => x.at === "pane");
+  const wakePaneItem = (group, id) => {
+    if (group.active) activateTabGroup(group.id, undefined, { then: id });
+    else { activateTabGroup(group.id); setOpenPopover(TOPBAR.item(id).popover); }
+  };
+  const paneLiveBar = paneItems.length ? (
+    <div className="topbar paneBar">
+      {paneItems.map(({ id }) => <React.Fragment key={id}>{topbarItem[id]()}</React.Fragment>)}
+    </div>
+  ) : null;
+  const paneStandIns = (group) => (paneItems.length ? (
+    <div className="topbar paneBar">
+      {paneItems.filter(({ id }) => (id !== "share" || group.active) && (id !== "inbox" || inbox.enabled)).map(({ id, item }) => {
+        const Icon = TOPBAR_ICONS[id];
+        return (
+          <button key={id} type="button" className="iconBtn" data-bar-item={id} title={t(item.label)} aria-label={t(item.label)}
+            onClick={() => wakePaneItem(group, id)}>
+            <Icon size={16} />
+          </button>
+        );
+      })}
+    </div>
+  ) : null);
 
   // The viewer's side strip, the PDF's and the notebook's (app/viewerToolItems.js,
   // Settings → Appearance › Viewer tools): its tools in the user's order,
@@ -12908,29 +13010,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const translateProgress = Math.round(pdfTransState.progress * 100);
   // A PDF highlight's menu rows (its right-click or held finger, and the
   // Highlight flyout of a translated paragraph's menu, where its rects take no
-  // pointer): its colour, link, reference point, place, comment, properties
-  // and Delete. `close` closes the menu they are in.
-  const highlightRows = (id, close) => {
+  // pointer): its style (a passage's; a style keeps the menu open for a
+  // colour), colour and presets, link, reference point, place, comment,
+  // properties and Delete. `close` closes the menu they are in; `nested`,
+  // they are a flyout's (MarkMenuRows).
+  const highlightRows = (id, close, nested = false) => {
     const h = highlights.find((x) => x.id === id);
+    const own = swatchOf(h?.color);
     return (
       <>
-        <div className="colorRow ctxMenuColors">
-          {pickerColors(palette, "highlight").map((c, i) => (
-            <button
-              key={c.hex + c.alpha + i}
-              type="button"
-              role="menuitem"
-              className="colorBtn"
-              style={{ background: swatchCss(c) }}
-              onClick={() => {
-                changeHighlightColor(id, highlightColor(c));
-                close();
-              }}
-              title={t("Change to {color}", { color: t(colorName(c)) })}
-              aria-label={t("Change to {color}", { color: t(colorName(c)) })}
-            />
-          ))}
-        </div>
+        <MarkMenuRows style={h && !h.position?.area && !h.linkTarget ? h.style : null} color={h?.color} onClose={close} nested={nested}
+          selected={own ? swatchMarker(pickerColors(palette, "highlight"), own.hex, own.alpha) : null}
+          label={(c) => t("Change to {color}", { color: t(colorName(c)) })}
+          onStyle={(style) => changeHighlightMark(id, { style })}
+          onColor={(c) => { changeHighlightMark(id, { color: highlightColor(c) }); close(); }}
+          onPreset={(p) => { changeHighlightMark(id, { color: highlightColor(p.color), style: p.style }); close(); }} />
         <button
           role="menuitem"
           className="ctxMenuItem"
@@ -13109,8 +13203,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     pinned: { ink: inkUi.open, record: !!recordingNow, highlighter: highlighterOn, translate: transLit, paper: paperMenu, selectMode: areaSelectMode },
   }).filter((x) => stripApplies[x.id]);
   // The highlighter's colour: the one used last, else the popup's first.
-  const highlighterPen = highlighterColor || highlightColor(pickerColors(palette, "highlight")[0]);
-  const highlighterName = t(colorName(highlighterPen));
+  const highlighterPen = markTools.color;
+  const highlighterName = markName(highlightStyle, highlighterPen);
   const stripMenuTools = stripPlaces.filter((x) => x.at === "menu");
   const toolsMore = docView.shown && stripMenuTools.length > 0;
   // Each tool's button on the strip, by id: zoom is its three buttons,
@@ -13161,12 +13255,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         {...menuPress((e) => { e.preventDefault(); setHighlighterMenu(stripMenuAt(e.currentTarget)); })}
         aria-pressed={highlighterOn}
         title={highlighterOn
-          ? t("Text highlighter: on, in {color} — click to turn it off, right-click for its colour", { color: highlighterName })
-          : t("Text highlighter: what you select is highlighted in {color}, with no popup — right-click for its colour", { color: highlighterName })}
+          ? t("Text highlighter: on, {mark} — click to turn it off, right-click for its style and colour", { mark: highlighterName })
+          : t("Text highlighter: what you select is marked at once ({mark}), with no popup — right-click for its style and colour", { mark: highlighterName })}
         aria-label={t("Text highlighter")}
       >
-        <HighlightIcon size={16} />
-        <span className="inkToolInk" style={{ background: highlighterPen }} />
+        {/* a line style shows itself in its colour; the wash its colour as a bar under the icon */}
+        {isLineStyle(highlightStyle) ? <MarkGlyph style={highlightStyle} color={highlighterPen} /> : (
+          <><HighlightIcon size={16} /><span className="inkToolInk" style={{ background: highlighterPen }} /></>
+        )}
       </button>
     ),
     // While a job runs, the bar under the glyph fills with its progress, in
@@ -13276,15 +13372,31 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // the bar's shows (a popover's menu) is not the bar. The bar is no
   // [data-press]: that would keep the text of the popovers it holds from
   // being selected by a finger.
+  // On the top bar (and a pane's strip) the press may be on an item's
+  // button, whose place the menu then offers to change (barItemAt; a held
+  // finger's press names the bar, so the item is the one at its point).
   const customizePress = (pane, space = () => true) => {
-    const { "data-press": _, ...press } = menuPress((e) => { e.preventDefault(); setBarMenu({ pane, x: e.clientX, y: e.clientY }); });
+    const { "data-press": _, ...press } = menuPress((e) => {
+      e.preventDefault();
+      const at = pane === "topbar" ? document.elementFromPoint(e.clientX, e.clientY) || e.target : null;
+      setBarMenu({ pane, x: e.clientX, y: e.clientY, item: at ? barItemAt(at) : null });
+    });
     const mine = (e) => !e.defaultPrevented && e.currentTarget.contains(e.target) && space(e.target);
     return {
       onContextMenu: (e) => { if (mine(e)) press.onContextMenu(e); },
       onPointerDown: (e) => { if (mine(e)) press.onPointerDown(e); },
     };
   };
-  const topbarSpace = (el) => !el.closest("button, a, input, [role='tab'], [data-popover]");
+  // The topbar item a press is on: a pane's stand-in button, or the button
+  // of an item's anchor (named by its popover), never its open popover.
+  const barItemAt = (el) => {
+    if (el.closest(".popover")) return null;
+    const standIn = el.closest("[data-bar-item]");
+    if (standIn) return standIn.dataset.barItem;
+    const anchor = el.closest("[data-popover]");
+    return (anchor && TOPBAR_ITEMS.find((x) => x.popover === anchor.dataset.popover)?.id) || null;
+  };
+  const topbarSpace = (el) => !!barItemAt(el) || !el.closest("button, a, input, [role='tab'], [data-popover]");
   // The strip's ⋯ opens its menu on the press, so the strip leaves that
   // press alone: a held finger there would open both menus. (The translate
   // button's own menuPress answers before the strip's.)
@@ -13295,6 +13407,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     <PageToolsContext.Provider value={pageTools}>
     <RecordingContext.Provider value={recordingCtx}>
     <PaletteContext.Provider value={palette}>
+    <MarkToolsContext.Provider value={markTools}>
     <MentionContext.Provider value={mentionPeople}>
     <MentionClock.Provider value={reminders.now}>
     <div
@@ -13553,28 +13666,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           {translateRows(() => setTransMenu(null))}
         </ContextMenu>
       )}
-      {/* The highlighter's colours, the selection popup's: a pick is its
-          colour from then on, and turns it on. */}
+      {/* The highlighter's style, colours and presets, the selection
+          popup's: a pick is its style or colour from then on, and turns it
+          on; a style keeps the menu open for a colour. */}
       {highlighterMenu ? (
         <ContextMenu x={highlighterMenu.x} y={highlighterMenu.y} onClose={() => setHighlighterMenu(null)} aria-label={t("Text highlighter")}>
-          <div className="colorRow ctxMenuColors">
-            {pickerColors(palette, "highlight").map((c, i) => {
-              const color = highlightColor(c), on = color === highlighterPen;
-              return (
-                <button
-                  key={c.hex + c.alpha + i}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={on}
-                  className={"colorBtn" + (on ? " selected" : "")}
-                  style={{ background: swatchCss(c) }}
-                  onClick={() => { setHighlighterMenu(null); setHighlighterColor(color); setHighlighter(true); }}
-                  title={t("Highlight in {color}", { color: t(colorName(c)) })}
-                  aria-label={t("Highlight in {color}", { color: t(colorName(c)) })}
-                />
-              );
-            })}
-          </div>
+          <MarkMenuRows style={highlightStyle} color={highlighterPen} onClose={() => setHighlighterMenu(null)} divider={false}
+            selected={(c) => highlightColor(c) === highlighterPen}
+            onStyle={(style) => { setHighlightStyle(style); setHighlighter(true); }}
+            onColor={(c) => { setHighlighterMenu(null); setHighlighterColor(highlightColor(c)); setHighlighter(true); }}
+            onPreset={(p) => {
+              setHighlighterMenu(null); setHighlighterColor(highlightColor(p.color)); setHighlightStyle(p.style); setHighlighter(true);
+            }} />
         </ContextMenu>
       ) : null}
       {/* The strip's ⋯: the tools off it, then the way to their setting. */}
@@ -13589,7 +13692,37 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </ContextMenu>
       ) : null}
       {barMenu ? (
+        // The bar's menu: on an item that offers places, where it stands
+        // while pages are side by side; on the top bar or a pane's strip,
+        // the split itself; then Customize….
         <ContextMenu x={barMenu.x} y={barMenu.y} onClose={() => setBarMenu(null)}>
+          {TOPBAR.item(barMenu.item)?.places ? (
+            <>
+              {BAR_PLACES.map((where) => {
+                const on = topbarLayout.places[barMenu.item] === where;
+                return (
+                  <MenuItem key={where} role="menuitemradio" aria-checked={on} title={t(TOPBAR.placeTip(where))}
+                    trailing={on ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
+                    onClick={() => { setBarMenu(null); setTopbar(TOPBAR.setPlace(topbar, barMenu.item, where)); }}>
+                    {where === "top" ? t("Show on the top bar") : t("Show in each pane")}
+                  </MenuItem>
+                );
+              })}
+              <MenuDivider />
+            </>
+          ) : null}
+          {barMenu.pane === "topbar" && !isPhone && !shareMode && (paneSplit || focusedBlockId) ? (
+            <>
+              {paneSplit ? (
+                <MenuItem icon={OnePaneIcon} title={t("Every tab back in one group")}
+                  onClick={() => { setBarMenu(null); joinTabGroups(); }}>{t("Join tab groups")}</MenuItem>
+              ) : (
+                <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a group of its own, to the right")}
+                  onClick={() => { setBarMenu(null); splitTab(focusedBlockId, "right"); }}>{t("Split right")}</MenuItem>
+              )}
+              <MenuDivider />
+            </>
+          ) : null}
           <MenuItem icon={SettingsIcon} onClick={() => { setBarMenu(null); openSettingsPane(barMenu.pane); }}>
             {barMenu.pane === "topbar" ? t("Customize top bar…") : t("Customize viewer tools…")}
           </MenuItem>
@@ -13610,6 +13743,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       <PanelGroup direction="vertical" autoSaveId="gamma-work-v" ref={(h) => { panelGroupRefs.current["work-v"] = h; }}>
       <Panel id="slot-main" order={1} minSize={20} className="dockSlot">
       <TabGroups layout={tabLayout} liveId={shownGroupId} single={isPhone} tabsOf={groupTabs} activeTabId={tabPick || focusedBlockId}
+        liveBar={paneLiveBar}
         onActivate={activateTabGroup} onMoveTab={moveTabToGroup} onSplit={splitTabGroup} onResize={resizeTabSplit}
         sashMargins={SASH_MARGINS}
         strip={{
@@ -13618,6 +13752,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onMenuOpenChange: (groupId) => setOpenPopover(groupId ? `tabs:${groupId}` : null),
           onReorder: reorderGroupTabs, onClose: closeTab, onTogglePin: toggleTabPinned,
           onContext: (tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); },
+          actions: paneStandIns, headPress: () => customizePress("topbar", topbarSpace),
         }}
         renderPane={(group) => (group.active ? (
           <PagePane key={group.active} {...paneProps(group.active)}
@@ -13817,21 +13952,31 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   return;
                 }
                 // The popup's swatch is a palette colour, which a highlight
-                // stores at the swatch's alpha; the highlighter's is that of
-                // the last swatch picked, and a pick is its colour from now on.
+                // stores at the swatch's alpha, in the style picked beside it
+                // (a preset's both); the highlighter's are those of the last
+                // pick, and a pick is its colour and style from now on. A
+                // comment's passage is the wash, which marks it commented.
                 const color = extras?.highlighter ? highlighterPen : highlightColor(extras?.color) || DEFAULT_HIGHLIGHT;
+                const style = extras?.comment ? "highlight" : extras?.style || highlightStyle;
                 if (extras?.color && !extras.comment) setHighlighterColor(color);
-                const id = addHighlight({ quote, note: extras?.commentText || "", position, color }, { edit: !extras?.comment });
+                if (extras?.style && !extras.comment) setHighlightStyle(extras.style);
+                const id = addHighlight({ quote, note: extras?.commentText || "", position, color, style }, { edit: !extras?.comment });
                 hideTip?.();
                 if (extras?.comment && id) commentOnNewHighlight(id);
                 return id;
               }}
               // the bar over a highlight the highlighter just made: what its menu does to it,
               // a colour picked there the highlighter's from now on
-              onHighlightAction={readOnly ? undefined : (id, action, c) => {
-                if (action === "color") {
-                  changeHighlightColor(id, highlightColor(c));
-                  setHighlighterColor(highlightColor(c));
+              onHighlightAction={readOnly ? undefined : (id, action, value) => {
+                if (action === "mark") {
+                  // a swatch ({color}) or a preset ({color, style})
+                  const color = highlightColor(value.color);
+                  changeHighlightMark(id, { color, style: value.style });
+                  setHighlighterColor(color);
+                  if (value.style) setHighlightStyle(value.style);
+                } else if (action === "style") {
+                  changeHighlightMark(id, { style: value });
+                  setHighlightStyle(value);
                 } else if (action === "comment") {
                   openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
                 } else if (action === "link") {
@@ -14298,6 +14443,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setPdfDarkPage,
           palette,
           setPalette,
+          highlightPresets,
+          setHighlightPresets,
           suggestTours,
           setSuggestTours,
           recentThumbs,
@@ -14512,19 +14659,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {t("Page properties")}
           </MenuItem>
           {!isPhone ? (
-            // Tab groups (docs/dev/tab_groups.md): this tab into a group of its
-            // own beside its group (the only tab of a group: an empty group
-            // beside it), and every tab back into one group.
+            // Tab groups (docs/dev/tab_groups.md): one group splits once, this
+            // tab into a pane of its own on the right (the only tab of the
+            // group: an empty pane beside it); split, the tab moves to the
+            // other pane, or every tab goes back into one group.
             <>
               <MenuDivider />
-              <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a group of its own, to the right")}
-                onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "right"); }}>{t("Split right")}</MenuItem>
-              <MenuItem icon={SplitRowsIcon} title={t("Show this page in a group of its own, below")}
-                onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "bottom"); }}>{t("Split down")}</MenuItem>
-              {!isSingle(tabLayout) ? (
-                <MenuItem icon={OnePaneIcon} title={t("Every tab back in one group")}
-                  onClick={() => { setTabMenu(null); joinTabGroups(); }}>{t("Join tab groups")}</MenuItem>
-              ) : null}
+              {isSingle(tabLayout) ? (
+                <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a group of its own, to the right")}
+                  onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "right"); }}>{t("Split right")}</MenuItem>
+              ) : (
+                <>
+                  {otherPane(tabMenu.id) ? (
+                    <MenuItem icon={SplitColumnsIcon} title={t("Show this page in the other pane")}
+                      onClick={() => { setTabMenu(null); moveTabToGroup(tabMenu.id, otherPane(tabMenu.id).id); }}>{t("Move to the other pane")}</MenuItem>
+                  ) : null}
+                  <MenuItem icon={OnePaneIcon} title={t("Every tab back in one group")}
+                    onClick={() => { setTabMenu(null); joinTabGroups(); }}>{t("Join tab groups")}</MenuItem>
+                </>
+              )}
             </>
           ) : null}
           {lib.organize ? (
@@ -14904,7 +15057,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               [
                 paraMenu.highlight && highlights.some((h) => h.id === paraMenu.highlight) && (
                   <SubMenuItem key="highlight" id="highlight" icon={HighlightIcon} label={t("Highlight")}>
-                    {highlightRows(paraMenu.highlight, close)}
+                    {highlightRows(paraMenu.highlight, close, true)}
                   </SubMenuItem>
                 ),
               ],
@@ -14972,6 +15125,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     </div>
     </MentionClock.Provider>
     </MentionContext.Provider>
+    </MarkToolsContext.Provider>
     </PaletteContext.Provider>
     </RecordingContext.Provider>
     </PageToolsContext.Provider>

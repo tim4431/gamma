@@ -514,7 +514,7 @@ with the backend's media types and first-bytes rule), sibling keys
 (`fractionalkeys.json`: the npm and PyPI fractional-indexing libraries) and
 pasted math (`pastemath.json`: `gamma/paste_math.py` ↔
 `editor/pasteMath.js`). The kinds are run against the column by
-`test_block_columns.py`, the older documents through migration step 51 by
+`test_block_columns.py`, the older documents through migration step 52 by
 `test_migrations.py`, the pasted math by `test_paste_math.py` and the
 slugs by `test_publish.py`. Add a case there when a rule changes; whichever
 side drifts fails. `test_every_fixture_is_read_by_both_suites` fails a

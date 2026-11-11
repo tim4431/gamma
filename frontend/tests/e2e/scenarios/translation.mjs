@@ -949,10 +949,11 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     const boxes = page.locator('[data-page="1"] .pdfTransPara .pdfTransText');
     await until(async () => (await boxes.allTextContents()).some((t) => t.startsWith("译:A willing")),
       { what: "the willing paragraph, translated after the wait" });
-    assertEq(requests.length - start, 2, "refused once, then asked again");
-    assert(asked[1] - asked[0] >= 900, `asked again after the server's Retry-After, not at once: ${asked[1] - asked[0]} ms`);
     const pill = page.locator(".statusPill", { hasText: "1 paragraph could not be translated" });
     await pill.waitFor({ timeout: 5000 });
+    assertEq(requests.length - start, 3, "refused once, asked again, and once more at the queue's end for the stubborn paragraph");
+    assert(asked[1] - asked[0] >= 900, `asked again after the server's Retry-After, not at once: ${asked[1] - asked[0]} ms`);
+    assertEq(JSON.stringify(requests[start + 2].texts), JSON.stringify(requests[start + 1].texts), "its chunk, asked once more");
     assert(!(await boxes.allTextContents()).some((t) => t.includes("stubborn")), "the stubborn paragraph shows its original");
     // A quiet mark beside it stays once the pill has gone, and opens its menu.
     const mark = page.locator('[data-page="1"] .pdfTransFailed');
@@ -973,7 +974,7 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     await menu.getByRole("menuitem", { name: "Translate this paragraph", exact: true }).click();
     const alone = page.locator(".statusPill", { hasText: "This paragraph could not be translated." });
     await alone.waitFor({ timeout: 5000 });
-    const focused = requests.slice(start + 2);
+    const focused = requests.slice(start + 3);
     assertEq(focused.length, 1, "one request");
     assertEq(JSON.stringify(focused[0].texts.map((t) => t.slice(0, 11))), JSON.stringify(["A stubborn "]), "for the stubborn paragraph alone");
     assertEq(focused[0].fresh, true);
@@ -983,7 +984,7 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     await alone.locator(".pillRetryBtn", { hasText: "Try again" }).click();
     await until(async () => (await boxes.allTextContents()).some((t) => t.startsWith("译:A stubborn")),
       { what: "the stubborn paragraph, translated on the second try" });
-    const again = requests.slice(start + 3);
+    const again = requests.slice(start + 4);
     assertEq(again.length, 1, "one request");
     assertEq(JSON.stringify(again[0].texts.map((t) => t.slice(0, 11))), JSON.stringify(["A stubborn "]), "for the stubborn paragraph alone");
     await mark.waitFor({ state: "detached" });
@@ -1549,6 +1550,9 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     const [first, second] = await page.evaluate(() => window.transRequests.map((r) => r.texts));
     await land(0, first.map((t) => `译:${t} ${t}`));
     await land(1, second.map((t) => `译:${t} ${t}`), [0]); // one the server could not translate
+    // Its chunk is asked once more at the queue's end, and it still cannot.
+    await until(() => page.evaluate(() => window.transRequests.length === 3), { what: "its chunk asked once more" });
+    await land(2, second.map((t) => `译:${t} ${t}`), [0]);
     await page.locator(".pdfTransBar").waitFor({ state: "detached" });
     const cap = await layerCap();
     assert(cap && Number(cap) < 1, `the page settled under a cap: ${cap}`);
@@ -1556,7 +1560,7 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
 
     // The page is not done: a click asks for that paragraph, and the job works.
     await page.getByRole("button", { name: "Translate", exact: true }).click();
-    await until(() => page.evaluate(() => window.transRequests.length === 3), { what: "the paragraph asked again" });
+    await until(() => page.evaluate(() => window.transRequests.length === 4), { what: "the paragraph asked again" });
     const menu = async (item) => {
       await page.getByRole("button", { name: "Stop translating", exact: true }).click({ button: "right" });
       // The toggle's row carries its key after its name.
@@ -1568,8 +1572,8 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     await page.locator('[data-page="1"] .pdfTransPara .pdfTransText').first().waitFor();
     assertEq(await layerCap(), cap, "a layer mounted while the job works writes the cap the page settled at");
     assertEq(await bodySizes(), sizes, "and nothing that had landed moves");
-    const third = await page.evaluate(() => window.transRequests[2].texts);
-    await land(2, third.map((t) => `译:${t}`));
+    const third = await page.evaluate(() => window.transRequests[3].texts);
+    await land(3, third.map((t) => `译:${t}`));
     await page.locator(".pdfTransBar").waitFor({ state: "detached" });
     assertNoProblems(page);
   });

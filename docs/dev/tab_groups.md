@@ -1,26 +1,31 @@
 # Tab groups
 
 Pages side by side. The open tabs are arranged into groups, each group a
-frame with its own tab strip over its page, split left and right or top
-and bottom, as VS Code's editor groups and SiYuan's panes are
-([the survey](../research/tab-groups.md)). A reader keeps a PDF in one
-group and a notes page of their own in another, and edits the notes while
-the paper stays in view (issue #153). With one group nothing of this
-shows: the strip stays in the topbar and the page fills the work area as
-it always did.
+frame with its own tab strip over its page, as VS Code's editor groups
+and SiYuan's panes are ([the survey](../research/tab-groups.md)). The
+page's place splits once, into two panes left and right, each with its
+own tabs and its own page buttons ([the design](../research/split-panes.md)).
+A reader keeps a PDF in one pane and a notes page of their own in the
+other, and edits the notes while the paper stays in view (issue #153).
+With one group nothing of this shows: the strip stays in the topbar and
+the page fills the work area as it always did.
 
 ## What the user sees
 
-- **Splitting.** A tab's right-click menu offers *Split right* and *Split
-  down*: the tab goes into a group of its own beside its group. A tab
-  dragged onto a group's page shows where it would land: a band over the
-  left, right, top or bottom half splits the group on that side, the
-  middle takes the tab into the group. Dragged onto another group's strip
-  it joins that group where the bar between its tabs shows. The command
-  palette has *Split right*, *Split down* and *Join tab groups* (unbound
-  until the account gives them keys). A tab that is alone in its group
-  splits off an empty group instead, which shows the library to pick its
-  page.
+- **Splitting.** A tab's right-click menu offers *Split right*: the tab
+  goes into a pane of its own on the right. A right-click on the topbar's
+  own background offers it for the page on screen. A tab dragged onto the
+  page shows where it would land: a band over the left or right half
+  splits on that side, the middle is where the tab already is. Once split
+  there is no second split: a tab's menu offers *Move to the other pane*
+  instead, a tab dragged onto the other pane's page lights the whole pane
+  and moves into it, and one dragged onto its strip joins it where the bar
+  between its tabs shows. The command palette has *Split right* while
+  there is one group, and *Join tab groups* (both unbound until the
+  account gives them keys). A tab that is alone in its group splits off an
+  empty pane instead, which shows the library to pick its page. A layout
+  kept in another shape (stacked, or more than two groups) is drawn as it
+  was kept; nothing makes one any more.
 - **What splits.** The groups share the page's place, the middle of the
   work area. The docked windows (Notes, Chat, Comments) stand around the
   groups as they stand around the page with one group, at their own
@@ -36,10 +41,24 @@ it always did.
   moves: the groups, the windows, the paper's place and zoom and the
   notes' rows stay where they were, and only the tools of the page being
   edited come and go. A press on a note opens that note's editor with the
-  caret where the press was, on the title the title's. The active tab of
-  a group that is not live reads quieter. The library and a page opened
-  from it, from a link or from the palette land in the live group; a page
-  already open in another group brings that group forward.
+  caret where the press was, on the title the title's. The live pane is
+  ringed in the focus colour, round its strip and its page, and the active
+  tab of the other reads quieter. The library and a page opened from it,
+  from a link or from the palette land in the live group; a page already
+  open in another group brings that group forward.
+- **A pane's buttons.** While split, the topbar's page buttons stand at
+  the end of each pane's strip and act on that pane's page: by default
+  Search, Share and the View menu. Add, Background tasks and the Inbox
+  stay on the top bar unless moved, and the sync pill always does, as the
+  panes hold the tabs and what acts on their pages. In the live pane they
+  are the buttons themselves, their panels hung from them. In the other,
+  whose page is a view, a press makes that pane live and opens the
+  button's panel there once its page is open: one press, as a press on a
+  note edits it. Where each button stands while split is the user's: a
+  right-click (or a held finger) on it offers *Show on the top bar* and
+  *Show in each pane*, and Settings → Appearance › Top bar has the same
+  choice per row ([settings.md](settings.md#bars-order-and-modes)). A
+  right-click on a pane's strip offers *Join tab groups*.
 - **The Notes window.** It shows the notes of the page on screen when that
   page has a PDF (or a notebook). While the page on screen has its notes
   in its own group (a page without a PDF, or the library), it keeps the
@@ -123,11 +142,26 @@ ids, so a split that gained or lost a child lays out afresh from the
 layout's sizes rather than the panels' remembered ones, and its
 `onLayout` reports a drag back as `onResize(splitId, sizes)`. A group is
 a `GroupFrame`: its strip (`OpenTabs`, the topbar's component, with
-`groupId` so a drag knows where it came from) over its body. Another
-group's body holds `renderPane(group)`. The live group's body holds an
-empty slot, and `live`, App's page view (`div.main`), is drawn once
-beside the tree, in a host laid over that slot and clipped at its edge
-as a group's panel clips a view (`useLiveHost`: placed after every
+`groupId` so a drag knows where it came from) over its body. At the end
+of a strip that is not live stands `strip.actions(group)`, App's buttons
+standing in for the topbar items placed in the panes; the live strip
+keeps a slot there instead, and `liveBar`, the items themselves, is drawn
+once on the page's body over it (`useLiveBar`, as `live` is drawn once
+over the live body): a change of live pane moves the bar and remounts
+nothing in it, so the search keeps its query and a pinned hit, and its
+popovers hang from the bar's right end unclipped by the dock's panels and
+no wider than the room left of it (`--bar-right`). The slot takes the
+bar's width, and a strip too narrow for it hides the bar.
+`strip.headPress()` is a strip's right-click, on the bar too. The tab
+split's panels do not clip (their own style does): the strip's *All open
+tabs* menu may reach over the other pane, and each body clips its page
+instead. The live frame draws its ring as a pseudo-element
+over the whole frame, above the host and the viewer's controls and under
+a drag's drop layers (`.tabGroup.framed.live::after`, `--focus-ring`).
+Another group's body holds `renderPane(group)`. The live group's body
+holds an empty slot, and `live`, App's page view (`div.main`), is drawn
+once beside the tree, in a host laid over that slot and clipped at its
+edge as a group's body clips a view (`useLiveHost`: placed after every
 render of the groups, on every resize of the slot or the root from a
 resize observer, and on every move of a sash between groups from the
 split's `onLayout`, through `HostPlacer`, in the commit of the panels'
@@ -147,13 +181,13 @@ phone the live group's).
 `dragstart` also records the tab in `shared/ui/tabDrag.js`, a small
 store every strip and frame reads (the drag's data cannot be read while
 it passes over, only on the drop). While a drag is on, each frame covers
-its body with a drop layer; `dropZoneAt` reads the zone from the pointer
-in the body: an edge band (the lesser of 30% of the side and 220 px
-across or 160 px down; the band the pointer is deeper into wins a
-corner) or the middle, drawn as a band over the half the tab would take,
-or the whole body. The drop calls `onSplit(groupId, side, tabId)` or
-`onMoveTab(tabId, groupId, end)`. The dragged tab's own group offers no
-middle, and no edge when the tab is its only one. A strip under a tab
+its body with a drop layer. With one group, `dropZoneAt` reads the zone
+from the pointer in the body: a side band (the lesser of 30% of the
+width and 220 px) or the middle, drawn as a band over the half the tab
+would take; split, the zone is the whole body. The drop calls
+`onSplit(groupId, side, tabId)` or `onMoveTab(tabId, groupId, end)`. The
+dragged tab's own group offers no middle, and no side when the tab is
+its only one. A strip under a tab
 from another group shows a bar before the tab the pointer is over (or
 after the last) and takes it on the drop at that place. The store ends
 the drag on the source's `dragend`, and on the window's `drop` and
@@ -248,7 +282,9 @@ crumbs over its title, comment counts, the translated view, and changes
 made elsewhere since it was read (it has no live socket). Making every group live at once is the page-session
 extraction of [frontend-refactor.md](frontend-refactor.md); the model,
 the frames and the host need no change for it, and `renderPane` is the
-seam.
+seam. The two-pane design, what it took from VS Code and Notability and
+what it leaves for later, is
+[research/split-panes.md](../research/split-panes.md).
 
 ## App's side
 
@@ -281,7 +317,8 @@ over: the group of the page App holds, else (the library) the live one.
 A press on another group's view makes that group live at once, but its
 view and the page on screen stay where they are until the pressed page's
 tree lands, and the two change places in that commit, so neither shows
-the other's page meanwhile. With pages side by side `openBlock` brings
+the other's page meanwhile. The ring follows `shownGroupId`, so it moves
+with the page and not with the press. With pages side by side `openBlock` brings
 back only what belongs to the page (its PDF closed or shown, its zoom),
 never the page's saved window arrangement and sizes: the windows are the
 groups' together. Leaving a page then keeps the arrangement it has saved
@@ -301,10 +338,35 @@ The topbar renders the strip while the layout is one group (or on a
 phone), else an empty strip for the actions to stand right of; each
 framed group's strip is `TabGroups`'s. A strip's *All open tabs* menu is
 `openPopover` `"tabs"` in the topbar and `"tabs:<groupId>"` in a frame.
-The tab menu's *Split right*, *Split down* and *Join tab groups* rows and
-the `app.splitRight`, `app.splitDown` and `app.joinGroups` commands
-(`app/appCommands.js`, group View; the context's `phone`, `groups`,
-`splitTab(side)`, `joinGroups()`) call `splitTab` and `joinTabGroups`.
+The tab menu's *Split right* (one group), *Move to the other pane* and
+*Join tab groups* (split) rows, the bar menu's *Split right* and *Join
+tab groups*, and the `app.splitRight` (fewer than two groups) and
+`app.joinGroups` commands (`app/appCommands.js`, group View; the
+context's `phone`, `groups`, `splitTab(side)`, `joinGroups()`) call
+`splitTab`, `moveTabToGroup` and `joinTabGroups`.
+
+**A pane's buttons.** `TOPBAR.place` takes `split` (`paneSplit`: two
+groups or more, not a phone) and answers `"pane"` for an item shown whose
+place is the panes ([settings.md](settings.md#bars-order-and-modes)). The
+topbar renders the items at `"bar"` and `"menu"`, as before, and the
+`"pane"` ones stand in a `div.topbar.paneBar` (the topbar's class, as
+the phone's bottom bar keeps it, so the buttons' styles hold). The
+live pane's bar, `paneLiveBar`, is the items' own renderers, popovers and
+all, handed to `TabGroups` as `liveBar`, so each item is drawn once and
+its state (the search's query, the share target) is the live page's.
+Another pane's, `paneStandIns(group)`, are stand-ins
+(`data-bar-item`, the item's icon from `app/topbarIcons.js`, no
+`data-guide`, so a tour points at the live one): a press calls
+`activateTabGroup(groupId, undefined, { then: id })`, which `selectTab`
+hands to `openBlock` as the page's `then` action, and the pending-action
+effect opens the item's popover (Share through `openPageShare`) once the
+page is on screen, under the pane then live; an empty pane is made live
+and the popover opened at once. A pane with nothing open shows no Share.
+The bar menu (`barMenu`, from `customizePress("topbar", topbarSpace)` on
+the topbar and on each pane's head) names the item the press was on
+(`barItemAt`: a stand-in's `data-bar-item`, or the anchor's popover
+name; a held finger's press is read at its point), and offers its places
+first.
 
 ## Tests
 
@@ -320,9 +382,17 @@ and its place, the notes' row, list and title) and the Notes window on
 the paper's notes throughout, presses a note and finds its editor open,
 unfolds a note in a view and presses its child and finds the child's
 editor open where it was pressed, keeps the arrangement across a reload,
-finds a drag's drop layer over the live group's page, drops a tab on a
-group's bottom edge and sees the groups stacked, closes a group with
-its last tab, opens an empty group with the library in it and closes it
-from its view, and leaves a view's group as it is on a right-click or a
-scrollbar press. `select.mjs` runs it for the model and the pane, and
-every group for the frames.
+finds a drag's drop layer over the live group's page, drags a tab over
+the other pane's lower edge and finds the whole pane lit and the tab
+moved into it, closes a group with its last tab, splits from the topbar's
+right-click and finds the live pane alone ringed, Search, Share and the
+View menu at each strip and not on the top bar, opens the other pane's
+Search and finds that pane live with the search under it and the bar
+moved over its strip, finds a query typed there kept when the other pane
+is made live, moves Search to the top bar and back from its right-click, finds no second split in a
+tab's menu while split, joins from a pane strip's right-click, opens an
+empty group with the library in it and closes it from its view, and
+leaves a view's group as it is on a right-click or a scrollbar press.
+`tests/barLayout.test.mjs` and `tests/topbarItems.test.mjs` cover the
+places. `select.mjs` runs it for the model and the pane, and every group
+for the frames.

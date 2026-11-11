@@ -20,7 +20,7 @@ the tracking dialog's tree, preview and file, `takeover.py` the vaults
 from before step 1), `gamma/folder_links.py` (which vaults are work
 folders; making, saving, cancelling and removing one), `gamma/db.py`
 (`BLOCK_HOT_COLUMNS`, `SQL_IN_LISTING`, `BLOCK_HOT_INDEXES`,
-`folder_links.library`), migration step 52, and on the client
+`folder_links.library`), migration step 53, and on the client
 `frontend/src/documents/library.js` and `frontend/src/explorer/`. Tests:
 `backend/tests/test_work_folders_library.py` and
 `test_work_folders_filing.py` over the fixtures `tests/shared/library.json`
@@ -163,14 +163,14 @@ it). `normalize.block_columns` drops every index whose statement names a
 stale column anywhere, its condition included, and after the column makes
 the hot ones again, and any other it dropped from its own statement.
 
-### Migration step 52
+### Migration step 53
 
 `work_folders` ([migrations.md](migrations.md)). The global part adds
 `folder_links.library` and turns it on for every vault that becomes a work
 folder at its first round (a folder of this server, not `root`, that
 pushes everything), so their pages stay in the library. The workspace part adds
 the two columns and three indexes through `block_columns`. The step is in
-`DERIVED_STEPS`: `SCHEMA_VERSION` is 52 and `workspace_format()` stays 51,
+`DERIVED_STEPS`: `SCHEMA_VERSION` is 53 and `workspace_format()` stays 52,
 so mirrors and vaults of another server keep working across versions. No
 stamp is written by the migration: which links exist only the desktop's
 users.db knows, so the vault stamps its pages at its first round (the

@@ -1,7 +1,9 @@
 """Burn Gamma highlight blocks into a PDF as standard annotations — text
-highlights as /Highlight, area notes (Ctrl+drag rectangles, position carries
-``area: true``) as /Square — so the exported file shows them (with notes as
-annotation popups) in Acrobat, SumatraPDF, Preview, browsers, etc.
+highlights as /Highlight, or as /Underline, /Squiggly or /StrikeOut when
+the block marks its passage with a line (its ``style``), area notes
+(Ctrl+drag rectangles, position carries ``area: true``) as /Square — so the
+exported file shows them (with notes as annotation popups) in Acrobat,
+SumatraPDF, Preview, browsers, etc.
 
 Coordinate round-trip: the viewer stores rects in top-left-origin page-render
 pixels together with the render size (the position's ``width``/``height``,
@@ -12,7 +14,12 @@ the exact reverse of what routers/imports.py does when reading embedded
 annotations (which come straight from PDF user space).
 
 /Highlight carries no appearance stream (/AP) — every mainstream viewer
-synthesizes the marker look from /QuadPoints + /C. /Square does: synthesized
+synthesizes the marker look from /QuadPoints + /C — and nor do the three
+line markups, which pdf.js and MuPDF draw the same way. A line's /C is the colour's line tone
+(``colors.line_color``: the wash colours are too pale for a thin line),
+opaque, as the viewer draws it, and the stored colour rides in the private
+``/GammaColor``, which the importer reads before /C, so a re-import keeps
+the highlight's own colour and alpha. /Square does: synthesized
 from /Rect + /C + /BS it would be a bare outline, and the viewer's area note
 also has a faint fill.
 
@@ -36,7 +43,10 @@ own opacity on top), so Gamma's highlights and area notes reached it paler
 than drawn. The copies in a Zotero RDF export (``annotate_pdf(zotero=True)``)
 therefore give their /Highlight and /Square no /CA, as Zotero's own carry
 none, and keep Gamma's alpha in the private ``/GammaAlpha``, which the
-importer reads before /CA. The /Square's appearance stream keeps the alpha,
+importer reads before /CA. Zotero's reader keeps a /Highlight and an
+/Underline and drops the other markups, so a Zotero copy writes a wavy
+underline and a strikethrough as /Underline, the style kept in the private
+``/GammaStyle`` for Gamma's own importer. The /Square's appearance stream keeps the alpha,
 so other viewers draw it as before; a /Highlight, which has no appearance,
 they draw from /C at full strength. Ink, text boxes and pictures are written
 the same in both. Every annotation names its author as /T and as
@@ -65,6 +75,15 @@ DEFAULT_COLOR = (1.0, 226 / 255, 143 / 255, 0.65)  # the viewer's yellow
 # Where a Zotero copy's highlights and area notes keep their alpha instead of
 # /CA (module docstring); routers/imports.py reads it first.
 GAMMA_ALPHA = "/GammaAlpha"
+# Where a line markup keeps the highlight's stored colour, its /C being the
+# line tone, and where a Zotero copy keeps a style its subtype does not say
+# (module docstring); routers/imports.py reads both first.
+GAMMA_COLOR = "/GammaColor"
+GAMMA_STYLE = "/GammaStyle"
+# A highlight's style (the block's ``style``) → the markup it is written as;
+# the wash, the default, is /Highlight. The importer reads them back.
+MARKUP_SUBTYPES = {"highlight": "/Highlight", "underline": "/Underline", "squiggly": "/Squiggly",
+                   "strikeout": "/StrikeOut"}
 
 
 def parse_css_color(value):
@@ -327,7 +346,16 @@ def _finish_annotation(annot, color, note, author, zotero=False):
     return annot
 
 
-def _highlight_annotation(rects, color, note, author, zotero=False):
+def _highlight_annotation(rects, color, note, author, zotero=False, style="highlight", stored=None):
+    """A text highlight as a markup annotation over ``rects`` (PDF space):
+    /Highlight for the wash, the line's own markup for a ``style`` that is
+    one (``MARKUP_SUBTYPES``), its /C the line tone at full strength and the
+    ``stored`` colour in /GammaColor. A Zotero copy writes the lines Zotero
+    drops as /Underline, the style in /GammaStyle."""
+    subtype = MARKUP_SUBTYPES.get(style, "/Highlight")
+    line = subtype != "/Highlight"
+    if zotero and subtype in ("/Squiggly", "/StrikeOut"):
+        subtype = "/Underline"
     quads, xs, ys = [], [], []
     for x1, y1, x2, y2 in rects:
         # Quad order: upper-left, upper-right, lower-left, lower-right.
@@ -336,12 +364,18 @@ def _highlight_annotation(rects, color, note, author, zotero=False):
         ys.extend((y1, y2))
     annot = DictionaryObject({
         NameObject("/Type"): NameObject("/Annot"),
-        NameObject("/Subtype"): NameObject("/Highlight"),
+        NameObject("/Subtype"): NameObject(subtype),
         NameObject("/Rect"): ArrayObject(
             FloatObject(v) for v in (min(xs), min(ys), max(xs), max(ys))
         ),
         NameObject("/QuadPoints"): ArrayObject(FloatObject(v) for v in quads),
     })
+    if line:
+        own = colors.normalize_color(stored) or colors.DEFAULT_HIGHLIGHT
+        annot[NameObject(GAMMA_COLOR)] = TextStringObject(own)
+        if MARKUP_SUBTYPES[style] != subtype:
+            annot[NameObject(GAMMA_STYLE)] = NameObject("/" + style)
+        color = parse_css_color(colors.line_color(own))  # #rrggbb: opaque
     return _finish_annotation(annot, color, note, author, zotero)
 
 
@@ -748,7 +782,8 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
     the boxes.
 
     ``highlights``: [{position: <pdf_position dict>, color: <css string>,
-    note: <str>, id: <highlight block id, optional>}]. Positions with no
+    note: <str>, id: <highlight block id, optional>, style: <the block's
+    style, optional>}]. Positions with no
     usable rects or an out-of-range page are skipped rather than failing the
     whole export. ``ink``: [{ink: <gamma.ink.InkFile>, note, id}], the
     handwriting groups, written as ``/Ink`` (``_ink_annotations``).
@@ -793,7 +828,8 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
             annot = _square_annotation(writer, pdf_rects, color, h.get("note") or "",
                                        author, block_id=h.get("id") or "", zotero=zotero)
         else:
-            annot = _highlight_annotation(pdf_rects, color, h.get("note") or "", author, zotero)
+            annot = _highlight_annotation(pdf_rects, color, h.get("note") or "", author, zotero,
+                                          style=h.get("style") or "highlight", stored=h.get("color"))
         writer.add_annotation(page_number=page_num - 1, annotation=annot)
         written += 1
     images = XObjectStore(writer, stored)

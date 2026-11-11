@@ -587,7 +587,7 @@ def test_a_feed_that_says_more_and_never_moves_stops_the_round(owner, disk, faul
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
-@pytest.mark.parametrize("there", [44, 52])
+@pytest.mark.parametrize("there", [44, 53])
 def test_a_server_that_keeps_its_pages_in_another_format_pauses_the_vault_before_anything(owner, disk, faulty, there):
     """A server of an older or a newer release, whose pages have another
     shape (its feed's ``format``, ``migrations.workspace_format``), as a

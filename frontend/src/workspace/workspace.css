@@ -8,6 +8,18 @@
 .tabGroupsTree > [data-panel-group], .tabSplitPanel > [data-panel-group] { flex: 1; }
 .tabSplitPanel { display: flex; min-width: 0; min-height: 0; }
 .tabGroup { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+/* The live pane, while there are two: a ring round its strip and its page,
+   drawn over the host the page is in (which lies over the body, outside
+   the frame) and the viewer's controls, under a drag's drop layers. */
+.tabGroup.framed.live::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: calc(var(--z-dock) + 1);
+  border: 2px solid var(--focus-ring);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+}
 /* The strip over a group: the topbar's chrome and geometry, so the active
    tab's band joins the page under it as it does in the topbar. */
 .tabGroupHead {
@@ -20,6 +32,21 @@
   flex-shrink: 0;
 }
 .tabGroupHead .tabStrip { padding-top: 3px; }
+/* The topbar items placed in the panes, at the strip's end: the topbar's
+   own buttons (.topbar, as the phone's bottom bar keeps it), without the
+   bar's frame. A pane that is not live holds buttons standing in for them,
+   cut off where the pane is too narrow. The live pane's strip keeps a slot
+   as wide as its bar, and the bar is drawn over it from the page's body
+   (TabGroups useLiveBar), above the panes and under the topbar's popovers;
+   its popovers hang from its right end, no wider than the window leaves
+   room for to the left of it. */
+.topbar.paneBar { padding: 0; border: 0; background: none; }
+.tabGroupHead > .topbar.paneBar { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.tabLiveBarSlot { align-self: stretch; flex: 0 1 auto; min-width: 0; }
+.tabLiveBar { position: fixed; left: 0; top: 0; display: flex; z-index: calc(var(--z-popover) - 1); }
+.tabLiveBar > .topbar.paneBar { flex: 1; }
+.tabLiveBar .popoverAnchor { position: static; }
+.tabLiveBar .popover { top: 100%; max-width: calc(var(--bar-right, 100vw) - 16px); }
 .tabGroupHead .tabStrip.dropEnd { box-shadow: inset -2px 0 0 var(--accent-fill); }
 /* Where a tab dragged from another group would go: a bar at the edge of the
    tab it would stand before (or after the last). */
@@ -29,10 +56,10 @@
    it is a view and not the one being worked on. */
 .tabGroup:not(.live) .tabGroupHead .tab.active { color: var(--text-muted); }
 .tabGroup:not(.live) .tabGroupHead .tab.active .tabTitle { opacity: 0.75; }
-.tabGroupBody { display: flex; flex: 1; min-width: 0; min-height: 0; position: relative; }
+.tabGroupBody { display: flex; flex: 1; min-width: 0; min-height: 0; position: relative; overflow: hidden; }
 /* The live group's body holds only the slot the host is laid over. The
    host is placed on it by TabGroups (left, top, width, height), clips what
-   it holds at the group's edge as the group's panel clips a view (the notes
+   it holds at the group's edge as the group's body clips a view (the notes
    keep a least width, app.css .sidebar), and stacks under a drag's drop
    layers, which have a z-index of their own. The page in it sized itself to
    the window (app.css .main); here it fills the host. */
@@ -41,7 +68,7 @@
 .tabLiveHost > .main { flex: 1; min-width: 0; height: auto !important; }
 /* While a tab is dragged, each group's body is covered by a layer that reads
    where it would land; the zone it names is drawn over the half it would
-   take (an edge: a split), or the whole body (the middle: into the group). */
+   take (a side: a split), or the whole body (into the group). */
 .tabDropLayer { position: absolute; inset: 0; z-index: calc(var(--z-dock) + 2); }
 .tabDropZone {
   position: absolute;
@@ -54,8 +81,6 @@
 }
 .tabDropZone.zone-left { inset: 0 50% 0 0; }
 .tabDropZone.zone-right { inset: 0 0 0 50%; }
-.tabDropZone.zone-top { inset: 0 0 50% 0; }
-.tabDropZone.zone-bottom { inset: 50% 0 0 0; }
 
 /* The view of a page in a group that is not live (PagePane.jsx): its PDF,
    its notebook, or its notes in the live notes' own markup (div.main

@@ -76,7 +76,7 @@ CHUNK = 1 << 20             # bytes read from disk at a time
 NOT_WHOLE = "not a whole PDF yet"   # ``settled``'s answer for a file at rest that does not end as a PDF ends
 WRITING = "still being written"     # ``settled``'s answer for a file written less than SETTLE_S ago
 NOT_THERE = "the file is not there"  # ``settled``'s, and a followed file's wait while it is gone
-DOCUMENT_FORMAT = 51        # the oldest workspace data format whose pages this client reads (``doc``)
+DOCUMENT_FORMAT = 52        # the oldest workspace data format whose pages this client reads (``doc``)
 default_open = None         # tests: (method, path, headers, body) → (status, headers, body stream)
 
 

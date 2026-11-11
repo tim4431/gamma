@@ -35,12 +35,15 @@ def disk(tmp_path, monkeypatch):
     """This server as the desktop app runs it (links kept here), a place on
     "this computer" for the directories, and no background rounds: the tests
     run them inline with ``?wait=1`` or ``tick()``. The links a test leaves
-    go with their rows, so no later test's ``tick()`` runs them."""
+    go with it: the data directory is the worker's, and a later file's
+    ``tick()`` would run them (test_disk_push and test_linked_files take this
+    fixture too)."""
     monkeypatch.setenv("GAMMA_FOLDER_LINKS", "1")
     monkeypatch.setattr(folder_links, "run_in_background", lambda link_id, **kw: None)
+    before = {link["id"] for link in folder_links.all_links()}
     yield tmp_path / "disk"
     for link in folder_links.all_links():
-        if folder_links.inside(link["path"], str(tmp_path)):
+        if link["id"] not in before:
             folder_links._forget(link)
 
 

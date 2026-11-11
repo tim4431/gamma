@@ -3,7 +3,8 @@
 Codex asset names and installers remain compatible with published setup commands.
 The Claude Code ZIP is an identical package with its own discoverable asset name.
 The DeepSeek Harness bundle ships twice with identical bytes: versioned, and as
-dsh-gamma.tgz, the stable name Gamma's setup command installs from /releases/latest.
+dsh-gamma.tgz, the stable name; its two installers, which Gamma's setup command
+runs from /releases/latest, pin the versioned one.
 """
 
 import argparse
@@ -58,10 +59,20 @@ def release(output: Path, version: str, repo: str = REPO) -> list[Path]:
     dsh = write_dsh_bundle(output / f"dsh-gamma-{version}.tgz", version)
     dsh_latest = output / "dsh-gamma.tgz"
     shutil.copy2(dsh, dsh_latest)
+    dsh_assets = [dsh, dsh_latest]
+    digest = hashlib.sha256(dsh.read_bytes()).hexdigest()
+    for name in ("install-gamma-dsh.ps1", "install-gamma-dsh.sh"):
+        script = Path(__file__).with_name(name).read_text(encoding="utf-8")
+        script = script.replace("__GAMMA_DSH_VERSION__", version)
+        script = script.replace("__GAMMA_DSH_URL__", f"https://github.com/{repo}/releases/download/v{version}/{dsh.name}")
+        script = script.replace("__GAMMA_DSH_SHA256__", digest)
+        dest = output / name
+        dest.write_text(script, encoding="utf-8", newline="\n")
+        dsh_assets.append(dest)
     dsh_checksums = output / "gamma-dsh-SHA256SUMS.txt"
     dsh_checksums.write_text("".join(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n"
-                                     for p in (dsh, dsh_latest)), encoding="utf-8")
-    return [*assets, archive, checksums, dsh, dsh_latest, dsh_checksums]
+                                     for p in dsh_assets), encoding="utf-8")
+    return [*assets, archive, checksums, *dsh_assets, dsh_checksums]
 
 
 if __name__ == "__main__":

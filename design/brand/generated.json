@@ -2,11 +2,12 @@
   "inputs": {
     "design/brand/android/ic_launcher.xml": "d912f735e69e03e7c9ddbcb395173b49e35dc4ca2fdfa2ec006e4529fc5a6da4",
     "design/brand/android/ic_launcher_background.xml": "a66dc9e852dd747920ad9d8ab04cc47c0e3e5bff4e42f8dcb45f48783367eca3",
+    "design/brand/compositions/banner-light-zh.svg": "a271e914f6b9bd096a6f5c5e0be47b3e0b4f58b1a2b15d91056b8b964600e042",
     "design/brand/compositions/banner-light.svg": "adfa93ae281dbdb544a881fdf419f3df31a7812bbaf9039075d659d48ed6e119",
     "design/brand/compositions/hero-light.svg": "10ded132b2433a84fd12cc91dc2f7f4a2e550880f9738384a918b677e8212584",
     "design/brand/compositions/logo.svg": "14872e644f9397c2ef2468d9e170b0910833931b4df92c88a2115cfe2393379a",
     "design/brand/marks/favicon.svg": "aa87ab7a445627b7cb8ffa71b63b36ceb6848815549233a0c6f6d8bd48a2002b",
-    "design/brand/outputs.json": "fc74f3ef69ad0881318f6a85c241a719c5565f48c1cd63b153fb4460b99afa75",
+    "design/brand/outputs.json": "d92021ae03f190eaa98ef273298256b9eae36cbae658fdabf7d7ae801eb9aec8",
     "design/brand/tokens.json": "8778598768aefb172e4dc17f43e060fff18f87717ffa00977b64494e341c397f",
     "frontend/package-lock.json": "7c242c90a7bfc1af8cfa40bf2876f283a75df18db618f7b40d749c891b357168",
     "frontend/src/shared/illustrations/brands/LICENSE.md": "9046848b63a5c92bff14e4accca80bd987e0623b74adf9226ce5198d312b79d5",
@@ -96,6 +97,15 @@
         700
       ],
       "sha256": "eac84f0b80d84bd11e75ba7c3ec0dcd7cebd140bcd8153c964b6da7c1705e0d1"
+    },
+    "docs/assets/branding/gamma-banner-crop-light-zh.svg": {
+      "source": "compositions/banner-light-zh.svg",
+      "variant": "crop",
+      "size": [
+        1420,
+        700
+      ],
+      "sha256": "ece6bb8aa9c8364c350a07ff8079efa4dfb522cc472fdda5b7da5413d664076f"
     },
     "docs/assets/branding/gamma-logo.svg": {
       "source": "compositions/logo.svg",
@@ -978,6 +988,15 @@
         1400
       ],
       "sha256": "6ef1d7107e9cf184dcd251471efb87ec2a53a49d3991a5198847205d4d7560ac"
+    },
+    "docs/assets/branding/gamma-banner-crop-light-zh.png": {
+      "source": "docs/assets/branding/gamma-banner-crop-light-zh.svg",
+      "variant": "light",
+      "size": [
+        2840,
+        1400
+      ],
+      "sha256": "41de11c2634e88d687dc4f9ce1030ea056796200f77ae351848edc76bd2cf608"
     },
     "docs/assets/branding/gamma-logo.png": {
       "source": "docs/assets/branding/gamma-logo.svg",

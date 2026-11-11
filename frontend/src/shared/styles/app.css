@@ -1453,6 +1453,117 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 }
 .plainTip .colorBtn.rowMenuBtn:hover { background: var(--bg-hover); }
 
+/* How a highlight marks its passage (pdf/MarkTools.jsx): the four styles
+   as one segmented control, each drawn in the colour it would take
+   (MarkGlyph), before the swatches of the popup and the menus. */
+.markGlyph { display: block; flex: none; }
+.markStyles {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--bg-block);
+}
+.markStyleBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 18px; /* with the group's padding and border, a swatch tall */
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.markStyleBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.markStyleBtn.selected {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--border-hover);
+}
+/* The presets: chips of a style in a colour and a name, under the row. */
+.markPresets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.markMenu .markPresets { margin-top: 0; }
+.markPreset {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 170px;
+  height: 24px;
+  padding: 0 8px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.markPreset:hover { background: var(--bg-hover); }
+.markPreset.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.markPresetName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The presets and the popup's colour fold (the groups the swatches come
+   from, the way to Settings, a new preset) take the row's width and wrap
+   in it, never widening the popup (no width of their own to give it); an
+   open fold makes it room enough for a group's name. */
+.markPresets, .markFold { width: 0; min-width: 100%; }
+.plainTip:has(.markFold) { min-width: 260px; }
+.markFold {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+.markFoldHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+.markFoldNew { justify-self: start; }
+.markGroups { display: grid; gap: 1px; }
+.markGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.markGroup:hover { background: var(--bg-hover); }
+.markGroup.selected { background: var(--bg-active); }
+.markGroupDots { display: inline-flex; gap: 3px; flex: none; }
+.markGroupDots > span {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-full);
+}
+.markGroupName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.markGroupMore { color: var(--text-dim); font-size: var(--fs-2xs); }
+.markDraft { display: grid; gap: 6px; }
+.markDraftRow { display: flex; align-items: center; gap: 6px; }
+.markDraftRow input { flex: 1; min-width: 0; }
+/* A menu's marking rows (a highlight's, the text highlighter's). */
+.markMenu {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 8px 12px 6px;
+}
+
 /* The selection translator under the color row (PdfViewer SelTranslation):
    a fold-out header, then the selectable translated text. */
 .plainTip:has(.selTrans) { width: min(420px, calc(100vw - 16px)); }
@@ -1572,6 +1683,9 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   align-items: center;
   justify-content: center;
 }
+/* A passage marked by a line: its style in its colour (MarkGlyph), the
+   letter in the notes' own ink. */
+.highlightDotBtn .markGlyph { color: var(--text-secondary); }
 
 .highlightDot {
   display: inline-block;
@@ -5729,7 +5843,34 @@ a.shareBrand:hover { background: var(--bg-hover); }
   mix-blend-mode: normal !important;
   --hl: var(--hl-dark) !important;
   --hl-line: var(--hl-dark-line);
+  --hl-mark: var(--hl-dark-line) !important;
 }
+/* A passage marked by a line (a highlight's style, shared/model/markStyle.js;
+   PdfViewer sets data-hl-style and the line's colour in --hl-mark,
+   palette.js lineColor, the dark-page line tone above): no wash, the line
+   at the foot of each of its line boxes (underline), wavy there
+   (squiggly) or across their middle (strikeout), about a tenth of the
+   line's height and 1.5 px at the least, so it scales with the text and
+   the zoom. Under the pointer a faint wash shows the passage it marks;
+   the active card's draws it a little stronger (inline). */
+.pdfPageWrap [data-hl-style="underline"] {
+  background: linear-gradient(var(--hl-mark), var(--hl-mark)) left bottom / 100% max(1.5px, 9%) no-repeat;
+}
+.pdfPageWrap [data-hl-style="strikeout"] {
+  background: linear-gradient(var(--hl-mark), var(--hl-mark)) left 56% / 100% max(1.5px, 8%) no-repeat;
+}
+.pdfPageWrap [data-hl-style="squiggly"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: max(3px, 24%);
+  background: var(--hl-mark);
+  /* one period of the wave, its width twice its height, repeated along */
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 4'%3E%3Cpath d='M0 2Q2 .4 4 2T8 2' fill='none' stroke='black' stroke-width='1.3'/%3E%3C/svg%3E") left bottom / auto 100% repeat-x;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 4'%3E%3Cpath d='M0 2Q2 .4 4 2T8 2' fill='none' stroke='black' stroke-width='1.3'/%3E%3C/svg%3E") left bottom / auto 100% repeat-x;
+  pointer-events: none;
+}
+.pdfPageWrap [data-hl-style]:hover { background-color: color-mix(in srgb, var(--hl) 35%, transparent); }
 /* A lost highlight's closest match while its review card shows it
    (pdf/HighlightReview.jsx Show): a dotted line in its colour's line tone
    over a faint wash, taking no pointer; the dark-tuned colour on a flipped
@@ -6314,11 +6455,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   z-index: var(--z-ctxmenu);
   padding: 4px 0;
   min-width: 160px;
-}
-.ctxMenuColors {
-  padding: 8px 12px 6px;
-  margin: 0;
-  border-bottom: 1px solid var(--border-subtle);
 }
 .ctxMenuItem {
   display: block;

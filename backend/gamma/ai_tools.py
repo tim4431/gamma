@@ -138,6 +138,10 @@ _BLOCK_CONTENT_MAX = 100_000
 # What read_block puts where it snipped a long child (see _run_read_block):
 # a replace carrying it was built from the snippet, not the block.
 _TRUNCATED_MARK = "[truncated — read_block("
+# How a passage is marked, as a page's outline names it: a highlight block's
+# style (frontend shared/model/markStyle.js) → its word; the wash, no style,
+# is a highlight.
+_MARK_WORDS = {"underline": "underline", "squiggly": "wavy underline", "strikeout": "strikethrough"}
 # The zero-hit search retry: drop glue words shorter than this, keep at most
 # this many of the longest remaining terms.
 _RELAX_MIN_TERM_LEN = 3
@@ -1228,7 +1232,8 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
         text = (picture_text(props, text) or text) + more
         bits = [f"[{block_id}]"]
         if quote:
-            bits.append(f'(highlight: "{quote[:200]}")')
+            # how the reader marked it: a wash, or a line (the block's style)
+            bits.append(f'({_MARK_WORDS.get(props.get("style"), "highlight")}: "{quote[:200]}")')
         elif area := area_highlight(props):
             page, box = area
             per_page[page] = per_page.get(page, 0) + 1

@@ -331,13 +331,13 @@ def test_a_pdf_read_in_place_travels_as_a_stored_one(gdonor):
 
 
 def test_an_export_from_before_page_documents_merges_in_the_new_shape(gdonor, greceiver):
-    """A Gamma export a server made before step 51 (``migrations``): its
+    """A Gamma export a server made before step 52 (``migrations``): its
     pages keep their document in the flat keys and it carries no stamp, as
     every scoped export did then. Merged in, ``ws_backup._normalize_copies``
     runs the workspace steps on it, so the page comes in with its ``doc``
     and the generated column owns its hash; the bytes come along."""
     from gamma import db, migrations
-    from test_migrations import _at_50
+    from test_migrations import _at_51
 
     up = gdonor.post("/api/uploads", files={"file": ("old.pdf", _blank_pdf_bytes(width=615), "application/pdf")}).json()
     page = make_page(gdonor, "Gx before documents", properties=doc_props(up["doc_id"], name="old.pdf"))
@@ -352,7 +352,7 @@ def test_an_export_from_before_page_documents_merges_in_the_new_shape(gdonor, gr
             assert conn.execute("PRAGMA user_version").fetchone()[0] == migrations.SCHEMA_VERSION
             conn.execute("PRAGMA user_version = 0")
             db.register_functions(conn)
-            _at_50(conn)
+            _at_51(conn)
             conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps({
                 "doc_id": up["doc_id"], "source_url": up["source_url"], "original_filename": "old.pdf"}), page["id"]))
             conn.commit()

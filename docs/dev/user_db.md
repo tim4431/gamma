@@ -134,8 +134,9 @@ All state is SQLite + files on disk under a data directory (env
   - `publisher_sessions` — encrypted publisher cookie snapshots per
     `(user_id, host)`, each sealed with its account's id, imported by the
     Connector ([extension.md](extension.md));
-  - `integration_tokens` — hashed assistant tokens per account and workspace
-    (with a `scope`, read or write), and `mcp_oauth` — the OAuth flow's
+  - `integration_tokens` — hashed assistant tokens per account, each of one
+    workspace (with a `scope`, read or write, and `workspaces`, what a read
+    token's MCP connection reads beside it: `''`, `'*'` or a JSON list), and `mcp_oauth` — the OAuth flow's
     expiring records ([mcp.md](mcp.md));
   - `mirrors` — the offline copies of remote workspaces: the local workspace,
     the remote's address and workspace, the write token (Fernet-encrypted
@@ -165,7 +166,7 @@ All state is SQLite + files on disk under a data directory (env
     this server's folder that pushes everything is a work folder
     ([work_folders.md](work_folders.md)); `library` is its switch, whether
     the pages of the files it tracks are library documents too (0 for a new
-    one unless it is made with it on; migration step 52 turned it on for the
+    one unless it is made with it on; migration step 53 turned it on for the
     vaults it found that became work folders, and turning a kept folder's
     push to everything turns it on, so their pages stay in the library).
     `state` holds the
@@ -281,7 +282,7 @@ All state is SQLite + files on disk under a data directory (env
   - `doc_id` — generated: the hash of the document the row owns,
     `properties.doc.hash`, NULL on a row without one, on a document shown
     from an address alone and on a copy (`doc.copy`, a duplicated page; its
-    definition since migration step 51, [documents.md](documents.md#in-sql)).
+    definition since migration step 52, [documents.md](documents.md#in-sql)).
     "Which page carries this PDF" (`page_for_doc`, with
     `work_folders.library.SQL_LIBRARY_PDF`) and "which files are still in use"
     read its partial index (`WHERE doc_id IS NOT NULL`).
@@ -303,7 +304,7 @@ All state is SQLite + files on disk under a data directory (env
   - `work_folder` — generated: `properties.work_folder` when it is
     non-empty text, the work folder a page is a file of (its vault stamps
     it, [work_folders.md](work_folders.md)), NULL on every other row
-    (migration step 52). `first_folder` — generated:
+    (migration step 53). `first_folder` — generated:
     `properties.folders[0]`, a file's directory. Three partial indexes read
     them: `idx_ub_listing` on `(parent_id, position)` over the root pages
     the library listing carries (`db.SQL_IN_LISTING`, which a query must
@@ -377,6 +378,14 @@ All state is SQLite + files on disk under a data directory (env
     in them, so no block reader skips them; a backup and a Gamma export
     carry them, a page deleted for good takes its own with it, and a
     comment write touches no page;
+  - `page_follows` — who hears of every comment on a page
+    ([comments.md](comments.md) "Following a page"): a row per page and
+    account, `level` `all` or `replies`, `at`. A person who creates, edits
+    or comments on a page gets a row at `all` unless they have one; their
+    own choice replaces it. Each account's own state, like
+    `workspace_prefs`: no zip carries it, a restore keeps the live rows,
+    and it goes with the page deleted for good and with the member who
+    leaves;
   - `translation_terms` — the workspace's glossary for the PDF translated
     view ([translation.md](translation.md) "The glossary"): per target
     language (`lang`), one translation (`target`) per source term

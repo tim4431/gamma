@@ -449,7 +449,7 @@ def test_gamma_selection_keeps_page_dependencies_and_excludes_other_pages(accoun
 
 def test_a_gamma_review_upgrades_the_workspace_it_reads_first(client, tmp_path):
     """The review of a Gamma import reads the workspace the one way
-    (``connect_pages_db``): one at stamp 50 that nobody has opened since the
+    (``connect_pages_db``): one at stamp 51 that nobody has opened since the
     server's upgrade is upgraded first, so its library PDF is found and the
     backup's page of the same PDF, under another id, is that page, skipped."""
     import json
@@ -457,31 +457,31 @@ def test_a_gamma_review_upgrades_the_workspace_it_reads_first(client, tmp_path):
     from contextlib import closing
 
     from gamma import config, db, ws_backup
-    from test_migrations import _at_50
+    from test_migrations import _at_51
 
-    ws = make_user("review-doc50", "test-password")
-    paper = make_page(login("review-doc50", "test-password"), "Live paper", doc_props("d" * 24))
+    ws = make_user("review-doc51", "test-password")
+    paper = make_page(login("review-doc51", "test-password"), "Live paper", doc_props("d" * 24))
     db.close_workspace_connections(ws)
     pages_db, copy = config.WORKSPACES_DIR / ws / "pages.db", tmp_path / "pages.db"
     with closing(sqlite3.connect(str(pages_db))) as live, closing(sqlite3.connect(str(copy))) as out:
         live.backup(out)
     with closing(sqlite3.connect(str(copy))) as conn:  # the backup: the same PDF on a page of another id
         db.register_functions(conn)
-        conn.execute("UPDATE unified_blocks SET id = 'review-doc50-backup', page_id = 'review-doc50-backup' "
+        conn.execute("UPDATE unified_blocks SET id = 'review-doc51-backup', page_id = 'review-doc51-backup' "
                      "WHERE id = ?", (paper["id"],))
         conn.commit()
-    with closing(sqlite3.connect(str(pages_db))) as conn:  # the workspace as release 50 left it
+    with closing(sqlite3.connect(str(pages_db))) as conn:  # the workspace as release 51 left it
         db.register_functions(conn)
-        _at_50(conn)
+        _at_51(conn)
         conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps({"doc_id": "d" * 24}),
                                                                               paper["id"]))
-        conn.execute("PRAGMA user_version = 50")
+        conn.execute("PRAGMA user_version = 51")
         conn.commit()
     zpath = tmp_path / "backup.zip"
     with zipfile.ZipFile(zpath, "w") as z:
         z.write(copy, "pages.db")
     plan = ws_backup.preview_zip(ws, zpath)
-    entry = next(p for p in plan["pages"] if p["selection_ids"] == ["page:review-doc50-backup"])
+    entry = next(p for p in plan["pages"] if p["selection_ids"] == ["page:review-doc51-backup"])
     assert (entry["id"], entry["action"], entry["kind"]) == (paper["id"], "skip", "pdf")
     db.close_workspace_connections(ws)
     with closing(sqlite3.connect(str(pages_db))) as conn:

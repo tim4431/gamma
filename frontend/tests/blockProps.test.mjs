@@ -435,7 +435,7 @@ test("every key of docs/research/block-properties.md's catalog has an entry, wit
   const catalog = doc.slice(doc.indexOf("## The catalog"), doc.indexOf("## Is it well defined?"));
   const named = new Set([...catalog.matchAll(/`([a-z_][A-Za-z0-9_]*)[`:]/g)].map((m) => m[1]));
   const keys = ["ink_url", "ink_strokes", "text_box", "picture", "sheet", "recording", "link_url", "link_page_id", "link_block_id",
-    "pdf_position", "pdf_page", "quote", "color", "linked_highlight_id", "imported_annot", "annot_stripped", "t0", "transcript",
+    "pdf_position", "pdf_page", "quote", "color", "style", "linked_highlight_id", "imported_annot", "annot_stripped", "t0", "transcript",
     "collapsed", "zotero_readonly", "zotero_author", "original_filename", "folders", "labels", "pinned",
     "meta", "meta_error", "auto_title", "bibtex", "cite_key", "ppt_cite", "web_url", "web_meta", "web_clips", "markdown_import",
     "notion_id", "aliases", "notability_import", "goodnotes_import", "zotero_key", "zotero_pdf", "zotero_note", "zotero_rdf",

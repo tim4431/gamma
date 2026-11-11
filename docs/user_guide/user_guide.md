@@ -11,7 +11,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Notebooks](#notebooks) | Sheets of paper to write on |
 | [Follow links and translate](#follow-links-and-translate) | Citations, Back, translation in place |
 | [Notes](#notes) | Markdown and math that render as you type |
-| [Pages side by side](#pages-side-by-side) | A paper in one group, your notes in another; split, drag, join |
+| [Pages side by side](#pages-side-by-side) | A paper in one pane, your notes in the other; split, drag, join |
 | [Outline and links between pages](#outline-and-links-between-pages) | Nesting, moving notes, `[[` links, `@` mentions and reminders |
 | [AI chat](#ai-chat) | Ask about the paper, with clickable citations; every AI service you can connect |
 | [The library agent](#the-library-agent) | Let the AI organize and edit, with your approval; what each tool does |
@@ -46,9 +46,13 @@ A new account starts with a **Welcome** page to practise on, and a **Sketchbook*
 <img alt="One line of a paper is selected and turns yellow, appears as a block in the notes with a note typed under it; then a circle is drawn around a figure and becomes an ink block" src="assets/annotate.svg" width="100%">
 
 - **Highlight**: select text, and pick one of four colors in the bar that opens beside the pointer as you move the mouse on. The highlight becomes a note block, ready for your note. The tools after the colors comment on the passage, link it to a paper and translate it.
-- **Highlight as you read**: the **text highlighter** in the viewer's zoom column (the marker with a colored bar under it) skips the bar. While it is on, what you select with the mouse is highlighted as soon as you let go, in the color you used last: the last one picked in the bar, or in the highlighter's own colors, which a right-click (or long press) on it opens. Its note opens for typing, as it does from the bar. Move the mouse on and the bar opens over the new highlight: a color there changes it (and is the highlighter's from then on), and its tools comment on it, link it and translate it. Click the highlighter again to turn it off. A selection made with a finger still gets the bar, since its handles may still be moving. Opening the pen's strip turns the highlighter off, and turning it on closes the strip.
+- **Underline, wavy line, strikethrough**: the four buttons at the start of the bar pick how a passage is marked, apart from its color: a highlight, an underline, a wavy underline or a strikethrough, each drawn in the color it will get. Use them to tell definitions, open questions and statements you dispute apart. The style you pick stays for the next passages, and for the text highlighter. A line is drawn in a deeper shade of the color, so the light highlight colors stay readable as a thin line. In the notes, such a highlight shows its style in place of the colored dot. To change a highlight's style later, right-click it: the style buttons at the top of its menu restyle it in place, keeping its notes, comments and place, and the menu stays open for a color.
+- **Presets**: a preset is a named style and color, such as *Definition* as a blue underline or *Question* as a red wavy line. Your presets show as chips under the colors in the bar, in a highlight's menu and in the text highlighter's menu, and one click marks the passage with both. To make one while reading, click the palette button after the colors, then **New preset…**: pick its style and color in the bar, name it and save. Settings → Appearance › Colors › Highlight presets lists them, to rename, restyle, recolor, reorder or delete.
+- **Color groups**: the palette button after the colors also switches the group of colors the bar offers, between the groups you keep in Settings → Appearance › Colors, and **Edit colors and presets…** opens that page. A highlight's menu and the highlighter's offer the same switch as **Color group**.
+- **Highlight as you read**: the **text highlighter** in the viewer's zoom column (the marker with a colored bar under it, or the style it marks with, in its color) skips the bar. While it is on, what you select with the mouse is marked as soon as you let go, in the style and color you used last: the last ones picked in the bar, or in the highlighter's own menu of styles, colors and presets, which a right-click (or long press) on it opens. Its note opens for typing, as it does from the bar. Move the mouse on and the bar opens over the new highlight: a color there changes it (and is the highlighter's from then on), and its tools comment on it, link it and translate it. Click the highlighter again to turn it off. A selection made with a finger still gets the bar, since its handles may still be moving. Opening the pen's strip turns the highlighter off, and turning it on closes the strip.
 - **Area screenshot**: hold **Ctrl** and drag a rectangle. The region goes to the AI chat as an image, and a color keeps it as an area highlight.
-- **Click a highlight** to jump to its note; click the note to jump back. **Right-click** to recolor, link, comment on, see the properties of, or delete it.
+- **Click a highlight** to jump to its note; click the note to jump back. **Right-click** to restyle, recolor, link, comment on, see the properties of, or delete it.
+- **Export → Annotated PDF** writes underlines, wavy underlines and strikethroughs as the PDF's own underline, squiggly and strikeout annotations, which other PDF readers show and edit; importing the PDF again brings them back in their style and color, as it does those another PDF app made.
 - Highlights, drawings, typed notes and image stamps made in other PDF apps are imported when the paper is added. An image stamp becomes a picture on the page.
 - **A new version of the PDF**: the paperclip menu's *Replace the PDF…* swaps the file and finds each highlight's text in the new one, moving the highlight there (an area highlight follows the caption or figure the PDF draws inside it). *Find highlights in this PDF* in the same menu runs the search again at any time, and places the highlights when the status says they were not placed. In the desktop app, *Push from a file on this computer…* in the same menu does the replacing for you each time a PDF on your disk changes, such as a LaTeX build's `main.pdf` (a [synced vault](#synced-vaults) of one file).
 - **A dashed highlight** is one whose text changed a little in the new version (a renumbered citation, a reworded phrase), or an area whose place is an estimate: it sits where the closest match is, for you to check. Hover it (tap it on a touch screen) to see how closely it matched, a picture of where it was in the previous version (on a page opened through a share link, its old text instead) and the words that changed, with the note it carries (and how many notes are under it and comments on it). **Accept** keeps it where it is and draws it solid, **Move…** puts it on your next selection, and **Discard** takes it off the PDF (below). If you replace the PDF again before checking it, the highlight is looked for again by the text it had before it turned dashed, not by its dashed guess: it turns solid where that text is word for word, and hollow where it was then when that text is gone. An area whose place is an estimate stays dashed wherever its text or picture turns up, unless you put back the very PDF it was last solid on: then it turns solid where it was. Right-clicking a dashed highlight offers *Accept* too. How alike a changed passage must read to be moved, and how short a passage must match exactly, are set in Settings → Reading & editing › Replacing a PDF.
@@ -123,13 +127,13 @@ A notebook is a page with sheets of paper to write on, and any page can hold the
 <img alt="A citation in the paper is clicked, a popover offers Fetch into Gamma, the cited paper opens in a new tab, and Back returns to the first paper at the same spot" src="assets/links.svg" width="100%">
 
 - **Citations are clickable**: a paper already in your library opens; otherwise choose *Fetch into Gamma* or *Open in browser*.
-- **Back** (**Alt+←**) unwinds jumps with their exact scroll positions, across papers too.
+- **Back** (**Alt+←**) unwinds jumps with their exact scroll positions, across papers too. The mouse's back button does the same, and once there is no jump left it goes to the library; it never takes you out of Gamma.
 
 <img alt="The translate button is clicked and the paragraphs are redrawn in another language over the original while the figure stays; holding Alt peeks at the original" src="assets/translate.svg" width="100%">
 
 - The **文A button** translates the page you are reading, in place, and then switches between the original and the translation of every page. Hold **Alt** (⌥ on a Mac, or the key set in Settings → Keyboard) to peek at the original. Right-click it for the whole document, the language and the translation settings. **Ctrl+Shift+O** shows the original or the translation from the keyboard while the PDF is open, and the command palette has **Translate this page** and **Translate whole document**. With Settings → Language and Translation › **Translation button** off, its row in the viewer's **⋯** menu opens the same menu.
 - While a page translates, a bar under the 文A button fills up; pressing the button then stops the translation.
-- The first paragraphs appear at once. The rest wait while Gamma reads the paper, so its terms are translated the same way throughout. The first ones are redone with those terms at the end when they went without them.
+- The first paragraphs appear at once. The rest wait while Gamma reads the paper, so its terms are translated the same way throughout. The first ones are redone with those terms at the end when they went without them, and paragraphs that failed along the way are tried once more then.
 - A whole-document translation goes on when you open another page. **Background tasks** shows how far it is and can stop it, and the PDF shows its translation when you come back.
 - Formulas, citations and links keep their printed look inside the translation, and a paragraph that runs on into the next column is translated as one, as is one that runs over a page break when you translate the whole document.
 - The reference list and the labels inside figures stay in the original: names and journals read as printed, and a plot keeps its marks. Once a translation has left a reference list in the original, right-click the 文A button and choose **Translate references too** to translate the references, or right-click one label or entry for **Translate this paragraph**.
@@ -160,13 +164,14 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 
 ## Pages side by side
 
-Read a paper on one side while you write up your notes on the other, each in a tab group of its own.
+Read a paper on one side while you write up your notes on the other, each in a pane of its own with its own tabs.
 
-- **Split**: right-click a tab → **Split right** or **Split down**, and the page gets a group of its own beside the others, with its own tab strip. Or drag a tab onto the edge of a page: the band that lights up is where it lands (the left, right, top or bottom half splits the group; the middle joins it). Drag a tab onto another group's strip to move it there. **Split right**, **Split down** and **Join tab groups** are in the command palette too.
-- **Only the pages split.** The Notes, Chat and Comments windows stay where you docked them, beside the groups, at their own size.
-- **One group is live**: the page you are working on, with its tools. The other groups show their page as it is, with its highlights, handwriting and notes, where you left it and at its zoom. Click into one of them, or its tab, to work on it there: nothing moves, and a click on a note opens that note with the cursor where you clicked. Opening a page from the library, a link or Ctrl+P puts it in the live group, and a page already open in another group brings that group forward.
+- **Split**: right-click a tab → **Split right**, or right-click an empty part of the top bar → **Split right**, and the page gets a pane of its own on the right, with its own tab strip. Or drag a tab onto the left or right side of the page: the half that lights up is where it lands. The screen splits once, into two panes: once split, right-click a tab → **Move to the other pane**, or drag it onto the other pane's page or strip. **Split right** and **Join tab groups** are in the command palette too.
+- **Only the pages split.** The Notes, Chat and Comments windows stay where you docked them, beside the panes, at their own size.
+- **One pane is live**, the one with the coloured outline: the page you are working on, with its tools. The other pane shows its page as it is, with its highlights, handwriting and notes, where you left it and at its zoom. Click into it, or its tab, to work on it there: nothing moves, and a click on a note opens that note with the cursor where you clicked. Opening a page from the library, a link or Ctrl+P puts it in the live pane, and a page already open in the other pane brings that pane forward.
+- **Each pane has its own buttons**: Search, Share and the View menu sit at the right end of each pane's tabs and act on that pane's page. Pressing one in the other pane makes that pane live and opens it there in one go. Right-click a button → **Show on the top bar** or **Show in each pane** to choose where it goes; Add, Background tasks and the Inbox can move into the panes the same way, and the sync status always stays on the top bar.
 - **The Notes window** shows the notes of the paper on screen. While you write in a page of notes beside a paper, it keeps showing that paper's notes and highlights.
-- **Resize** by dragging the bar between groups. Close a group's last tab and the group goes; **Join tab groups** puts every tab back in one strip. A tab alone in its group splits off an empty group, with the library in it, to pick a page for.
+- **Resize** by dragging the bar between the panes. Close a pane's last tab and the pane goes; **Join tab groups** (in a tab's menu, or a right-click on a pane's strip) puts every tab back in one strip. A tab alone in its strip splits off an empty pane, with the library in it, to pick a page for.
 - Your open tabs still follow your account. How they are arranged is this browser's, like your window layout; another device shows the same tabs in one strip until you split them there. A phone shows one page at a time.
 
 ## Outline and links between pages
@@ -482,7 +487,7 @@ Settings → Workspaces › Clones and Zotero links → **Link a Zotero library�
 | A note from Zotero, as blocks in the notes | That note | Block by block |
 | The paper's other notes | One note, *Notes from Gamma* | Sent once the page has been still for a minute |
 | A note page from Zotero | A standalone note | Note pages made in Gamma stay in Gamma |
-| Highlights, area highlights | Highlights (an underline comes in as a highlight), image annotations | Colour, place and text; a highlight's notes are its comment, bold and italic kept |
+| Highlights, area highlights | Highlights (an underline comes in as an underline; a wavy underline or a strikethrough goes to Zotero as an underline), image annotations | Colour, place and text; a highlight's notes are its comment, bold and italic kept |
 | Handwriting on a PDF page | Ink annotations | One per colour and width, without pressure or timing |
 | Text boxes on a PDF page | Text annotations (a sticky note comes in as a yellow box) | The text, without Markdown |
 | Recently deleted | Zotero's trash | Both ways |
@@ -531,6 +536,7 @@ Settings → Workspaces › Clones and Zotero links → **Link a Zotero library�
 The browser extension saves the paper you are reading in one click: PDF, metadata, folder and labels. Add it from the [Chrome Web Store](https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn) (Chrome, Edge and other Chromium browsers), then click its toolbar button and enter your Gamma's address. Each [release](https://github.com/tim4431/Gamma/releases/latest) also carries it as a zip to load unpacked at `chrome://extensions`.
 
 - The badge lights up on a page with a paper. Click it, pick a folder and labels, **Save to Gamma**. The folder field opens your folders as a tree: a folder's arrow shows what is inside it, its **+** makes a subfolder there, and **New folder…** makes one at the top. Type in either field to find a folder or label, or to name a new one; **New label…** names one too. **Ctrl+Shift+S** saves with the default folder.
+- On a page that isn't a paper (a blog post, an article, an issue), choose **Save as**: **Article** keeps its text, headings, pictures and math as notes, without the site's menus; **Selection** keeps the text you selected; **Link** keeps only the link.
 - Right-click to save a link, a page, or clip a selection as a quote.
 - With several libraries, pick which one saves go to in the popup's **Workspace** row.
 - **Publisher sign-ins**: the cookie button sends your browser's sign-in for that journal to your server, so it can fetch that publisher's PDFs by itself from then on.
@@ -539,20 +545,22 @@ The browser extension saves the paper you are reading in one click: PDF, metadat
 
 <img alt="In a terminal an @Gamma question is typed, the assistant searches the library and reads the page, and answers with a page number while Gamma highlights the passage" src="assets/assistant.svg" width="100%">
 
-Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your papers, notes, highlights and PDF text, read-only, for one workspace you approve. Gamma runs an MCP server at `<your Gamma>/mcp`; the assistant connects to it and brings its own model. Gamma's own chat does not connect to outside MCP servers.
+Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your papers, notes, highlights and PDF text, read-only, in the workspaces you choose. Gamma runs an MCP server at `<your Gamma>/mcp`; the assistant connects to it and brings its own model. Gamma's own chat does not connect to outside MCP servers.
 
-- Settings → AI → Integrations shows the setup for each assistant: run it where you use the assistant, approve the workspace in the browser, then ask: *"@Gamma, in the blockade paper, how is the blockade radius measured?"*
-- Paste a Gamma page, block or share link into the question and the assistant reads that page.
-- A remotely hosted Gamma needs its **Public server URL** confirmed once in Settings → Server. A connection expires after 90 days; the same pane disconnects one.
+- Settings → AI → Integrations shows the setup for each assistant: run it where you use the assistant, tick the workspaces it may read, then ask: *"@Gamma, in the blockade paper, how is the blockade radius measured?"*
+- One connection can read several workspaces, or all of them (those you add later too). A search covers them all; the **Choose workspaces** button on a connection's row changes them without connecting again.
+- To remove Gamma from an assistant, open **Remove Gamma from …** at the end of its tab and run the commands there (for DeepSeek Harness, with the app quit: it takes the plugin out and deletes the saved connection), then **Disconnect** the connection under **Connected assistants**.
+- Paste a Gamma page, block or share link into the question and the assistant reads that page, in whichever of the connection's workspaces it is.
+- A remotely hosted Gamma needs its **Public server URL** confirmed once in Settings → Server. A connection expires after 90 days; the same pane lists every connection of your account and disconnects one.
 
 ### Connect an assistant
 
 | Assistant | How it connects |
 |---|---|
-| **Codex CLI** | One setup command from the Codex CLI tab: it installs the Gamma plugin and opens the browser sign-in. By hand: `codex mcp add gamma --url <your Gamma>/mcp`, then `codex mcp login gamma` |
-| **Claude Code** | `claude mcp add --transport http --scope user gamma <your Gamma>/mcp`, then `/mcp` → **gamma** → sign in. The optional plugin from a [release](https://github.com/tim4431/Gamma/releases/latest) adds the `/gamma:gamma` workflow |
-| **DeepSeek Harness** | No browser sign-in: create a read-only token in its tab, run the install command once, then the start command, which asks for the token |
-| **Any other MCP client** | Add the MCP URL with the client's sign-in option (OAuth in the browser). A client without OAuth gets a token from **Manual setup (advanced)** and sends it as a bearer token |
+| **Claude Code** | `claude mcp add --transport http --scope user gamma <your Gamma>/mcp`, then `/mcp` → **gamma** → **Authenticate**, and tick the workspaces in the browser. The optional plugin from a [release](https://github.com/tim4431/Gamma/releases/latest) adds the `/gamma:gamma` workflow |
+| **Codex** | One setup command from the Codex tab: it installs the Gamma plugin and opens the browser sign-in. By hand: `codex mcp add gamma --url <your Gamma>/mcp`, then `codex mcp login gamma` |
+| **DeepSeek Harness** | No browser sign-in: tick the workspaces in its tab, quit DeepSeek Harness, and run the setup command it shows once. The command adds the Gamma plugin to the DeepSeek Harness app (and `dsh web`) and saves the connection, so it is there every time DeepSeek Harness starts |
+| **Any other MCP client** | Add the MCP URL with the client's sign-in option (OAuth in the browser). A client without OAuth gets a token from **Tokens (advanced)** and sends it as a bearer token |
 
 ### What an assistant can use
 
@@ -568,10 +576,11 @@ Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your
 | `view_ink` | Your handwriting as a picture |
 | `view_image` | The pictures a note embeds, or a picture placed on a page |
 | `cite` | The citation record kept with a page: metadata and BibTeX |
+| `list_workspaces` | The workspaces the connection may read |
 | `read_gamma_link` | A pasted page, block or share link, read in place; a folder share lists its pages |
 | `export_page` | A page as Markdown, or as a PDF: the annotated paper or the notes typeset |
 
-The first ten are the chat's own reading tools. An assistant never gets the write tools or the web tools: the connection is read-only, and the assistant has web access of its own.
+The first ten are the chat's own reading tools; each takes an optional workspace. An assistant never gets the write tools or the web tools: the connection is read-only, and the assistant has web access of its own.
 
 ## Import and export
 
@@ -621,7 +630,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Users, Server (administrators) | Accounts and invitations by e-mail, public URL, Gamma Cloud sign-in and requests to join, shared workspaces, server backups, the log |
 | Help & diagnostics | Session log, **Report a problem…** (adds what a maintainer needs, never your notes) |
 
-**Top bar** in Appearance hides a button you never use, or shows Background tasks and the Inbox only when they have news. A hidden button becomes a row of the account menu, and its shortcut still works. **Viewer tools** does the same for the column of buttons beside a PDF or a notebook: a hidden tool moves into the **⋯** at the column's end, and one you are using (a recording, a translation, the pen's strip, the text highlighter) stays on the column until you are done. In both lists, drag a row by its **⋮⋮** grip to change the order, or focus the grip and press ↑ / ↓; **Reset** puts the default order and buttons back. To get there from the bar itself, right-click (or long-press) an empty part of the top bar, or the viewer's column, and choose **Customize top bar…** or **Customize viewer tools…**.
+**Top bar** in Appearance hides a button you never use, or shows Background tasks and the Inbox only when they have news. A hidden button becomes a row of the account menu, and its shortcut still works. **Viewer tools** does the same for the column of buttons beside a PDF or a notebook: a hidden tool moves into the **⋯** at the column's end, and one you are using (a recording, a translation, the pen's strip, the text highlighter) stays on the column until you are done. In both lists, drag a row by its **⋮⋮** grip to change the order, or focus the grip and press ↑ / ↓; **Reset** puts the default order and buttons back. To get there from the bar itself, right-click (or long-press) an empty part of the top bar, a button on it, or the viewer's column, and choose **Customize top bar…** or **Customize viewer tools…**. Each top bar row also says where the button stands while [pages are side by side](#pages-side-by-side): on the **Top bar**, or in **Each pane**.
 
 **Invite by e-mail…** in Users mails someone who has no account yet a link to make a free Gamma Cloud account, or sign in with theirs, and join this server. The **Invitations** list under the accounts sends one again or withdraws it.
 
