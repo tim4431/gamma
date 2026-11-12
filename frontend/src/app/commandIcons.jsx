@@ -54,6 +54,8 @@ const COMMAND_ICONS = {
   "pdf.areaDrag": RectSelectIcon, // as the viewer's rectangle mode
   "pdf.peekOriginal": LanguagesIcon, // as the 文A button
   "pdf.toggleTranslation": LanguagesIcon,
+  "pdf.textHighlighter": HighlightIcon, // as the strip's highlighters
+  "pdf.nextHighlighter": HighlightIcon,
   "pdf.translatePage": FileIcon, // as the translate menu's rows
   "pdf.translateDocument": BookIcon,
   "block.up": ChevronUpIcon,

@@ -219,6 +219,10 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
   - The pill says "Blue pen hidden." with *Show*. *Hidden tools* in any
     preset's ⋯ menu brings it back where it was.
   - Keys `1`–`9` always count the visible presets in row order.
+- The **text highlighters** on the viewer's strip are built on the same
+  pattern (a tap arms one, its menu edits, duplicates and hides it; which
+  is armed stays with the session, the list follows the account):
+  [settings.md](settings.md#text-highlighters).
 - **Presets follow the account.** `inkTools` lives in the profile
   ([settings.md](settings.md) "Reading & editing"): a browser that signs
   in takes the account's list, and an account without one is seeded from
