@@ -14,6 +14,7 @@ gamma/zotero_sync_rows.py.
 from . import storage, zotero_fields, zotero_local
 from .blocks_store import BLOCK_COLUMNS, FOLDERS, block_to_dict
 from .db import connect_pages_db
+from .documents.model import stored_name
 from .zotero_sync_reads import flat_fields
 from .zotero_sync_rows import ACTOR, MOVED_ON, get_link, json_dict, read_rows
 
@@ -106,7 +107,7 @@ def resolve_file(ws: str, row: dict, choice: str) -> None:
         raise ValueError("this conflict offers keep or theirs")
     base = json_dict(row["base"])
     doc_id = base.get("doc_id")
-    if not isinstance(doc_id, str) or not doc_id or not storage.open_path(ws, f"{doc_id}.pdf"):
+    if not isinstance(doc_id, str) or not doc_id or not storage.open_path(ws, stored_name(doc_id, ".pdf")):
         raise ValueError("Zotero's copy of the file is no longer kept here")
     if base.get("key") and base.get("synced"):  # Zotero's file as synced once Gamma's went: moved on since?
         with connect_pages_db(ws) as conn:

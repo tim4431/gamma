@@ -21,6 +21,7 @@ import re
 from dataclasses import replace
 from datetime import datetime
 
+from .documents.formats import IMAGE_MEDIA_TYPES
 from .markdown_import import _LIST_RE
 from .note_markup import ALT_SIZE_RE, BARE_URL, LINK_TARGET, LITERAL_SPANS, alt_and_width
 from .notion_blocks import (_LIST_ITEMS, Block, _on_a_line, callout_color, callout_type, color_name, gamma_leaves,
@@ -321,9 +322,7 @@ _BARE_ITEM_RE = re.compile(r"[ \t]*(?:[-*+]|\d{1,4}[.)])")
 # Notion's two languages of two words, one of them its name for none; any
 # other fence's language is the first word of its info.
 _SPACED_LANGUAGES = {"visual basic": "visual basic", "plain text": ""}
-# storage.IMAGE_MEDIA_TYPES's, repeated since that module reaches the database
-# and this one is pure.
-_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
+_IMAGE_SUFFIXES = tuple(IMAGE_MEDIA_TYPES)
 
 
 def _trim(rich: list) -> list:

@@ -12,16 +12,24 @@ marker gone by the end is ``Offline``, never a partial scan that would read as
 files removed. A round never makes the root: ``mkdir`` on an empty mount point
 would hide a disk that is not plugged in.
 
-**The scan** (``walk``) follows no link or junction and leaves out
-dot-directories, ``node_modules``, the marker's ``ignore`` globs and the
-temporary names of editors and of Gamma (``.gamma-*``, ``*.gamma-sync-part``,
-``~$*``, ``.~lock.*``, macOS's ``._*``); a round reads and writes nothing it
-would not see either (``path``: no ``..``, nothing below a link). One stat a file: notes (``.md``,
-``.markdown``) and papers (``.pdf``) are listed, pictures and the rest only
-counted. A name Windows refuses, and two names one directory holds that differ
-only by case, are reported and left. A cloud placeholder (Windows' offline and
-recall-on-access attributes, macOS's dataless flag, an iCloud ``.x.icloud``
-stub standing for ``x``) is listed as one: never read, never removed.
+**The scan** (``walk``) follows no link or junction. Its fixed rules come
+first, and no line of a vault's undoes them: dot-directories,
+``node_modules``, the temporary names of editors and of Gamma (``.gamma-*``,
+``*.gamma-sync-part``, ``~$*``, ``.~lock.*``, macOS's ``._*``) and
+``.gammaignore`` itself are never listed. Then the vault's ``.gammaignore``
+(gamma/work_folders/ignore_rules.py; the default where there is none: notes,
+PDFs and pictures) says what else it leaves out (``Scan.excluded``), a
+directory left out never entered. A round reads and writes nothing it would
+not see either (``path``: no ``..``, nothing below a link). One stat a file:
+notes (``.md``, ``.markdown``) and papers (``.pdf``) are listed, pictures and
+the files of no class the rules take only counted. A link, a name Windows
+refuses, and two names one directory holds that differ only by case, are
+reported and left, unless the rules leave them out first (a link decided as
+the directory it may stand for, so the default reports every one). A cloud
+placeholder (Windows' offline and recall-on-access attributes, macOS's
+dataless flag, an iCloud ``.x.icloud`` stub standing for ``x``, the rules
+deciding by the name it stands for) is listed as one: never read, never
+removed.
 
 **A move** is told by evidence (``pair_moves``), in this order: the same file
 id with the same size, hash, PDF ``/ID`` or a similar text; a hash no other file
@@ -47,7 +55,6 @@ vault name is (``free_name``).
 import calendar
 import ctypes
 import difflib
-import fnmatch
 import hashlib
 import heapq
 import itertools
@@ -65,8 +72,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import gamma_sync
+from .documents.formats import IMAGE_MEDIA_TYPES
 from .obsidian_export import unique_name
-from .storage import IMAGE_MEDIA_TYPES
+from .work_folders import ignore_rules
 
 MARKER_DIR = ".gamma"
 MARKER = ".gamma/vault.json"
@@ -129,10 +137,12 @@ class Found:
 class Scan:
     """One walk of a vault: its notes and papers (``files``), its directories
     with their file ids (``dirs``), paths relative to the root with ``/``;
-    how many pictures and other files it holds, and where the pictures are
-    (``images``, for the links of its notes); what it left and why
-    (``refused``, ``(path, why)``); and Gamma's temporary files it met, for
-    ``clean_temps``."""
+    how many pictures and files of no class the rules take (``untracked``:
+    chosen, read once Gamma reads any file), and where the pictures are
+    (``images``, for the links of its notes); what the rules (``rules``) left
+    out (``excluded``, a directory with a ``/`` at its end); what it left and
+    why (``refused``, ``(path, why)``); and Gamma's temporary files it met,
+    for ``clean_temps``."""
     files: dict = field(default_factory=dict)
     dirs: dict = field(default_factory=dict)
     pictures: int = 0
@@ -140,6 +150,8 @@ class Scan:
     refused: list = field(default_factory=list)
     temps: list = field(default_factory=list)
     images: list = field(default_factory=list)
+    excluded: set = field(default_factory=set)
+    rules: ignore_rules.Rules = field(default_factory=lambda: ignore_rules.DEFAULT)
 
 
 @dataclass(slots=True)
@@ -187,7 +199,9 @@ def read_marker(root: Path) -> dict | None:
     the root is not there or does not answer; ``Stopped`` for a marker that
     cannot be read. A ``notes_folder`` that leaves the vault (absolute, a
     drive, ``..``: a marker that came with a directory names what it likes)
-    is none. No message names the directory: a viewer of the vault reads them."""
+    is none. An older marker's ``ignore`` globs are left out (the vault's
+    ``.gammaignore`` says what it tracks). No message names the directory: a
+    viewer of the vault reads them."""
     try:
         if not root.is_dir():
             raise Offline("the vault's directory is not there")
@@ -202,10 +216,9 @@ def read_marker(root: Path) -> dict | None:
         marker = None
     if not isinstance(marker, dict) or marker.get("format") != FORMAT or not isinstance(marker.get("id"), str):
         raise Stopped("the vault's marker cannot be read")
-    ignore = marker.get("ignore")
     folder = str(marker.get("notes_folder") or "").replace("\\", "/")
     folder = "" if _leaves(folder) else folder.strip("/")
-    return {**marker, "notes_folder": folder, "ignore": [str(g) for g in ignore] if isinstance(ignore, list) else []}
+    return {**{k: v for k, v in marker.items() if k != "ignore"}, "notes_folder": folder}
 
 
 def _leaves(rel: str) -> bool:
@@ -214,13 +227,13 @@ def _leaves(rel: str) -> bool:
     return rel.startswith("/") or os.path.isabs(rel) or bool(re.match(r"[A-Za-z]:", rel)) or ".." in rel.split("/")
 
 
-def make_marker(root: Path, notes_folder: str = "", ignore=()) -> dict:
+def make_marker(root: Path, notes_folder: str = "") -> dict:
     """A new vault's marker, written once, with a new id, in a hidden
     ``.gamma``: the root is made when it is not there (making the vault is the
     one time it may be). FileExistsError when the directory has a marker."""
     if (root / MARKER).exists():
         raise FileExistsError(f"{root} is a vault already")
-    marker = {"format": FORMAT, "id": secrets.token_hex(16), "notes_folder": notes_folder, "ignore": list(ignore)}
+    marker = {"format": FORMAT, "id": secrets.token_hex(16), "notes_folder": notes_folder}
     folder = root / MARKER_DIR
     folder.mkdir(parents=True, exist_ok=True)
     hide(folder)
@@ -306,24 +319,25 @@ def _temp_of_gamma(rel: str, name: str) -> bool:
 
 
 def listed(name: str, directory: bool = False) -> bool:
-    """Whether the scan lists an entry of this name (``walk``): no temporary
-    name, and for a directory no dot directory or ``node_modules``. A name pull
-    writes must be one, or its own scan would never see the file."""
-    return not (temporary(name) or directory and (name.startswith(".") or name == "node_modules"))
+    """Whether the scan's fixed rules list an entry of this name (``walk``):
+    no temporary name, for a directory no dot directory or ``node_modules``,
+    for a file not ``.gammaignore``, whatever its case. A name pull writes
+    must be one, or its own scan would never see the file."""
+    if temporary(name):
+        return False
+    if directory:
+        return not (name.startswith(".") or name == "node_modules")
+    return name.casefold() != ignore_rules.NAME
 
 
-def _ignored(path: str, name: str, ignore) -> bool:
-    """Whether a glob of the marker's ``ignore`` takes the entry: one with a
-    ``/`` matched against its path in the vault, else against its name."""
-    for glob in ignore:
-        glob = glob.strip().strip("/")
-        if glob and fnmatch.fnmatch(path if "/" in glob else name, glob):
-            return True
-    return False
+# The dotted and dotless I, which casefold keeps apart from "i" and the
+# .gammaignore matcher reads as it (ignore_rules._LIKE_ASCII): two names
+# that differ by them alone are a case clash, as one line would take both.
+_ALIKE = str.maketrans({"İ": "i", "ı": "i"})
 
 
 def _fold(name: str) -> str:
-    return unicodedata.normalize("NFC", name).casefold()
+    return unicodedata.normalize("NFC", name).translate(_ALIKE).casefold()
 
 
 def _entries(directory: Path) -> list:
@@ -394,11 +408,14 @@ def _junction(entry) -> bool:
     return tag == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
 
 
-def walk(root: Path, ignore=()) -> Scan:
-    """What the directory ``root`` holds, as the module doc says: ``Offline``
-    for any error of the walk, so that what it returns is all of it. A file
-    gone between its listing and its stat is gone."""
-    out, pending = Scan(), [("", root)]
+def walk(root: Path, rules: ignore_rules.Rules | None = None) -> Scan:
+    """What the directory ``root`` holds under ``rules`` (None:
+    ``ignore_rules.DEFAULT``), as the module doc says: ``Offline`` for any
+    error of the walk, so that what it returns is all of it. A file gone
+    between its listing and its stat is gone."""
+    if rules is None:
+        rules = ignore_rules.DEFAULT
+    out, pending = Scan(rules=rules), [("", root)]
     while pending:
         rel, here = pending.pop()
         try:
@@ -421,7 +438,11 @@ def walk(root: Path, ignore=()) -> Scan:
                 if not stub and _temp_of_gamma(rel, name):
                     out.temps.append(f"{rel}{name}")
                 continue
-            if not _ignored(f"{rel}{shown}", shown, ignore):
+            if not directory and not listed(shown):
+                continue
+            if rules.decide(f"{rel}{shown}", directory or link):
+                out.excluded.add(f"{rel}{shown}/" if directory else f"{rel}{shown}")
+            else:
                 kept.append((entry, shown, link, directory, bool(stub)))
         names = Counter(_fold(shown) for _entry, shown, *_ in kept)
         for entry, shown, link, directory, stub in kept:
@@ -443,7 +464,7 @@ def walk(root: Path, ignore=()) -> Scan:
 
 
 def _count(out: Scan, entry, path: str, stub: bool, root: Path) -> None:
-    """A file of the walk, listed or counted."""
+    """A file of the walk the rules take, listed or counted."""
     kind = kind_of(path)
     if kind == "picture":
         out.pictures += 1
@@ -466,12 +487,12 @@ def _count(out: Scan, entry, path: str, stub: bool, root: Path) -> None:
     out.files[path] = Found(kind, 0 if stub else st.st_size, 0 if stub else st.st_mtime_ns, file_id, placeholder)
 
 
-def scan(root: Path, vault_id: str) -> Scan:
-    """The vault ``vault_id``'s directory walked, its marker checked before
-    (``check_marker``) and after: one gone by the end means the disk went
-    during the walk, ``Offline``."""
-    marker = check_marker(root, vault_id)
-    found = walk(root, marker["ignore"])
+def scan(root: Path, vault_id: str, rules: ignore_rules.Rules | None = None) -> Scan:
+    """The vault ``vault_id``'s directory walked under ``rules`` (``walk``),
+    its marker checked before (``check_marker``) and after: one gone by the
+    end means the disk went during the walk, ``Offline``."""
+    check_marker(root, vault_id)
+    found = walk(root, rules)
     after = read_marker(root)
     if after is None:
         raise Offline("the vault's directory lost its marker during the scan")

@@ -9,6 +9,7 @@ import json
 import random
 
 import pytest
+from conftest import doc_props
 
 from gamma import zotero_merge as zm
 from gamma.zotero_merge import (Merge, annotation_line, bases_after, colour_name, fetchable, field_line,
@@ -1001,7 +1002,7 @@ def test_a_paper_is_a_page_with_a_titled_record():
 def test_a_pdf_page_waits_for_its_lookup_then_goes_only_with_a_record_or_as_a_document():
     young = "2026-10-28T11:59:30.000000Z"
     old = "2026-10-28T11:50:00.000000Z"
-    pdf = {"doc_id": "abc"}
+    pdf = doc_props("abc")
     assert wants_item({"meta": {"title": "T"}, **pdf}, now=NOW, send_unrecorded=False) == zm.WANT_PAPER
     assert wants_item(pdf, now=NOW, send_unrecorded=True, created_at=young) == zm.WANT_WAIT
     assert wants_item(pdf, now=NOW, send_unrecorded=True, created_at=old) == zm.WANT_DOCUMENT
@@ -1012,6 +1013,19 @@ def test_a_pdf_page_waits_for_its_lookup_then_goes_only_with_a_record_or_as_a_do
     from datetime import datetime, timezone
     assert wants_item(pdf, now=datetime(2026, 10, 28, 12, 0, tzinfo=timezone.utc), send_unrecorded=True,
                       created_at=young) == zm.WANT_WAIT
+
+
+def test_a_page_of_a_pdf_of_its_own_is_a_document_and_a_duplicated_one_is_not():
+    """The PDF a page owns makes it a document item: one cached from its
+    address and one read in place alike; a duplicated page shows its
+    original's file and owns none, and one shown from an address alone has
+    no file to send."""
+    old = "2026-10-28T11:50:00.000000Z"
+    for props in (doc_props("abc", url="https://example.org/a.pdf"), doc_props("abc", at="path")):
+        assert wants_item(props, now=NOW, send_unrecorded=True, created_at=old) == zm.WANT_DOCUMENT, props
+    for props in (doc_props(url="/api/uploads/abc.pdf"), doc_props(url="https://example.org/a.pdf"),
+                  {"doc": "abc"}):
+        assert wants_item(props, now=NOW, send_unrecorded=True, created_at=old) == "", props
 
 
 def test_a_standalone_pdf_gets_a_parent_only_from_a_person_made_record():
@@ -1074,7 +1088,7 @@ def test_a_comment_line_reads_its_text():
 
 
 def test_a_record_without_a_title_is_no_paper_and_waits_no_more():
-    props = {"doc_id": "abc", "meta": {"doi": "10.1234/x"}}
+    props = {**doc_props("abc"), "meta": {"doi": "10.1234/x"}}
     assert not is_paper(props)
     assert wants_item(props, now=NOW, send_unrecorded=True, created_at=NOW) == zm.WANT_DOCUMENT
-    assert wants_item({"doc_id": "abc"}, now=NOW, send_unrecorded=False, created_at="garbled") == ""
+    assert wants_item(doc_props("abc"), now=NOW, send_unrecorded=False, created_at="garbled") == ""

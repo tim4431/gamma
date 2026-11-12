@@ -145,8 +145,13 @@ do: [the bundle note](../research/bundle.md#a-month-later-november-2026).
 Built, like the lazy boundaries. A feature's new state, and the effects
 that keep it, go into an owner module beside the feature, never into
 `app/App.jsx`. The owner is a `use…` hook, as the `ink/` owners,
-`comments/useComments.js`, `inbox/useInbox.js` and `vault/useVault.js` (a
-page's synced-vault standing, its banner and the two vault dialogs) are. State that must
+`comments/useComments.js`, `inbox/useInbox.js`, `vault/useVault.js` (a
+page's synced-vault standing, its banner, the vault dialogs and, on the
+desktop, the workspace's folder vaults and the tracking dialog) and
+`explorer/useFolderRows.js` / `useSummaries.js` (a work folder's rows and
+the pages the listing leaves out) and `explorer/useWorkFolderActions.jsx`
+(what may be done with a work folder's files and folders, and the library
+requests and menu rows for its files) are. State that must
 outlive a component, or be read outside React, is a store with listeners
 that components read through `useSyncExternalStore` (`pdf/translateState.js`,
 `recording/recorderStore.js`, `replay/playback.js`,
@@ -156,7 +161,9 @@ that components read through `useSyncExternalStore` (`pdf/translateState.js`,
   since the frontend has no component tests: `ink/stripState.js` under
   `useInkStrip.js`, `ink/inkSaver.js` under `useInkSave.js`,
   `inbox/inboxText.js` under `useInbox.js`, `vault/vaultState.js` under
-  `useVault.js`.
+  `useVault.js`, `explorer/knownPages.js` beside `useSummaries.js`,
+  `explorer/workFolderActions.js` under `useWorkFolderActions.jsx` and
+  `explorer/trackSelection.js` under `TrackDialog.jsx`.
 - **An owner is narrow.** It takes the few inputs it reads and returns
   state and stable commands. A hook that takes App's variables wholesale
   moves code without giving it an owner.
@@ -252,14 +259,14 @@ Extraction should remove coupled responsibilities, not merely move long
 sections into hooks that accept every variable from App. Keep the existing
 React stack, URL formats, API contracts, and stored preference keys. Follow
 the [block-centric model](block_centric.md): a page owns its block tree and
-may carry a PDF attachment.
+may carry a document (`properties.doc`, [documents.md](documents.md)).
 
 ## Proposed ownership
 
 Paths below are relative to `frontend/src/`. The folders exist except
 `app/preferences/` and `pages/`; the hooks and state owners in this table
-are proposals, but for the `ink/` row's, which are built, and the tab
-groups of the `workspace/` row.
+are proposals, but for the `ink/` and `documents/` rows', which are built,
+and the tab groups of the `workspace/` row.
 
 | Module or area | Responsibility | Existing code to extract |
 |---|---|---|
@@ -271,7 +278,9 @@ groups of the `workspace/` row.
 | `collaboration/` (existing: `usePageCollab.js`) | Queued writes, debounce, retries, explicit flush, unload handling — the live session hook `usePageCollab` ([collab.md](collab.md)); App keeps the transition effect and the remote-apply glue | `commit`, `flush`, `onRemoteOps` |
 | `editor/` | Block editing, caret/focus, undo, and notes rendering | Existing editor files, `editTail`, notes-window markup and editor actions |
 | `library/` | Listing derivation, selection, page/folder/label operations, and library UI | `pageBlocks` through `homeItems`, click handlers, filing, rename/move/delete, carousels |
+| `explorer/` (built: `workFolders.js`, `workFolderActions.js`, `knownPages.js`, `trackSelection.js`, `useFolderRows.js`, `useSummaries.js`, `useWorkFolderActions.jsx`, `FolderList.jsx`, `TrackDialog.jsx`, [work_folders.md](work_folders.md)) | Work folders: the rules a file and the folders of one follow, what the menus, drops and open page ask of them, Add to library, Remove from library and Save a copy, a directory's list view read a page of rows at a time, the pages the listing does not carry, the tracking dialog | Extracted: the rules (node-tested twins of the server's), what App asks of them (`workFolderActions.js`, node-tested), the commands and the menus' library rows (`useWorkFolderActions.jsx`), the list view's rows and the two reads; App merges the rows into `knownBlocks`, hands the list view the library's row actions and gates its own menus and drops on the answers |
 | `workspace/` (built: the tab groups, `tabLayout.js`, `TabGroups.jsx`, `PagePane.jsx`, [tab_groups.md](tab_groups.md); the dock arrangement itself is still App's) | Dock arrangement, visibility, panel sizes, drag geometry, and phone presentation; the open tabs' groups side by side | `moveWindow`, `startWindowDock`, `renderSlotGroup`, per-page layout snapshots |
+| `documents/` (built: `pageDocument.js`, `documentView.js`, `DocumentPane.jsx`, `formats.js`) | What a page carries and which viewer it shows: one rule for the live page and a tab group's (`documentView`), the pane that mounts the viewer it names | Extracted: the viewer decision (App reads it as `docView`) and the viewer switch; App keeps the viewers' props |
 | `pdf/` | Viewer controls, PDF/notes jumps, scroll restoration, translation, and snapshots | Existing viewer/translation files, `restorePdfScroll`, zoom and capture logic |
 | `ink/` (built: `buildFence.js`, `useInkStrip.js`, `useInkLive.js`, `useInkSave.js` over `inkSaver.js`, `useInkSurfaces.js`, `useInkDocument.js`, `useInkStrokes.js`, `useInkSelection.js`, `useInkRuler.js`, `useInkZoom.js`, `useStripKeys.js`, `usePencil.js`) | The strip's tools, a page's ink edits and history, saving, the lasso and clipboard, ruler, zoom window, strip keys, Pencil | Extracted: the build fence; `inkUi` with its presets and commands; live co-drawing; `flushInk` and `scheduleInk` (the save as a node-tested factory); the ink by surface and `pasteTarget`; `applyInk`, the stroke history and the erasers; `handleInkStroke` and `handleInkStrokes`; the lasso selection, its actions and the clipboard; the ruler; the zoom window; the strip's key handler; the Pencil's gestures and haptics; their pure parts, node-tested (`stripState.js`, `inkHistory.js`, `inkEdits.js`, `selectionEdits.js`, `inkSurfaces.js`, `inkCommands.js`). App keeps the composition, the page tools, navigation, the chat half of Transcribe ([handwriting.md](handwriting.md) "Client") |
 | `transfers/` | Upload/import/export operations | `uploadFiles`, format imports, backup transfer functions (the Background tasks store, tray and the job handlers in `useAppJobs.js` already live in `tasks/`) |
@@ -283,8 +292,8 @@ groups of the `workspace/` row.
 Split the larger areas into focused files as their state owners emerge.
 For example, library listing selectors, selection state, mutations, and
 `LibraryView` should be separate; do not create one giant `useLibrary` hook.
-Existing helpers such as `pageAttachment` and `useBlockHistory` remain the
-source of truth throughout the moves.
+Existing helpers such as `pageDocument`, `documentView` and `useBlockHistory`
+remain the source of truth throughout the moves.
 
 ## Logic cleanup to do with the extraction
 
@@ -344,8 +353,8 @@ Make all retry timers cancellable on navigation and unmount.
 
 Phone overlays should derive from the same visible-window model while retaining
 the desktop arrangement for the switch back to a wider viewport. Preserve
-notes in the center for pages without a PDF attachment and layout inheritance
-for pages without a saved arrangement.
+notes in the center for pages without a document pane (`documentView`'s
+`center`) and layout inheritance for pages without a saved arrangement.
 
 ### 4. Preference synchronization
 

@@ -48,11 +48,13 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from PIL import Image, ImageOps
 
-from .blocks_store import page_attachment, page_root_id
+from .blocks_store import page_root_id
+from .documents.formats import IMAGE_EXTENSIONS, IMAGE_MEDIA_TYPES
+from .documents.model import page_document, pdf_file_hash
 from .logbuf import log
 from .pdf_image import svg_png
 from .pdf_text import RENDER_MAX_SIDE, image_part, render_page
-from .storage import IMAGE_EXTENSIONS, IMAGE_MEDIA_TYPES, UPLOAD_REF_RE, find_upload_file, store_file
+from .storage import UPLOAD_REF_RE, find_upload_file, store_file
 
 DEFAULT_BUDGET = 12   # pictures per message (and newest earlier pictures kept)
 MAX_BUDGET = 64
@@ -237,15 +239,16 @@ def parse_box(value) -> tuple | None:
 
 
 def page_doc_id(conn, page_id: str) -> str:
-    """The id of the PDF attached to the page ``page_id``, "" for a page
-    without one (or no such page)."""
+    """The hash of the PDF the page ``page_id`` shows (``file_hash``: a
+    duplicated page's is the original's), "" for a page without one (or no
+    such page)."""
     row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
                        (page_id,)).fetchone()
     try:
-        attachment = page_attachment(json.loads(row[0] or "{}")) if row else None
+        view = page_document(json.loads(row[0] or "{}")) if row else None
     except ValueError:
-        attachment = None
-    return attachment["id"] if attachment else ""
+        view = None
+    return pdf_file_hash(view)
 
 
 def page_pdf_path(ws: str, conn, page_id: str):

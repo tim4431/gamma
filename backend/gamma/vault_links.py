@@ -49,6 +49,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .blocks_store import BLOCK_ID_RE
+from .documents.formats import IMAGE_MEDIA_TYPES, media_type
 from .markdown_export import _BLOCK_REF_RE
 from .markdown_import import _FENCE_LINE_RE, _fence_marks, shuts_fence
 from .markdown_zip_links import (_IMAGE_SIZE_RE, _LINK_RE, _MD_EXTS, _WIKILINK_RE, _norm_heading, _split_ext,
@@ -56,7 +57,7 @@ from .markdown_zip_links import (_IMAGE_SIZE_RE, _LINK_RE, _MD_EXTS, _WIKILINK_R
 from .md_lens import _ESCAPED_ANCHOR_RE, _opcodes, flatten
 from .note_markup import LITERAL_SPANS
 from .obsidian_export import anchor_marker
-from .storage import IMAGE_MEDIA_TYPES, UPLOAD_REF_RE, upload_media_type
+from .storage import UPLOAD_REF_RE
 
 FORMATS = ("shortest", "relative", "absolute")   # Obsidian's ``newLinkFormat``
 # Where a vault with no ``.obsidian/app.json`` keeps a pasted picture: the
@@ -278,12 +279,12 @@ class LinkContext:
     def _file_path(self, name):
         """The vault path of Gamma's upload ``name``, placed in the attachment
         folder when the vault does not hold it yet; None for a kind of file
-        Gamma never stores or serves (``storage.upload_media_type``: an
+        Gamma never stores or serves (``documents.formats.media_type``: an
         executable a .gamma import or another server holds), which goes into
         no vault."""
         path = self.names.get(name)
         if path is None:
-            if upload_media_type(posixpath.splitext(name)[1].lower()) is None:
+            if media_type(posixpath.splitext(name)[1].lower()) is None:
                 return None
             path = posixpath.join(self._attachments(), name)
             self.add_file(path, name)

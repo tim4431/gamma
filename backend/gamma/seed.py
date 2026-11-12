@@ -133,7 +133,8 @@ def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
     against the plan's cap). A PDF the writer or the storage limits refuse
     leaves the page without one."""
     from . import cloud_auth
-    from .blocks_store import attachment_props, create_page
+    from .blocks_store import create_page
+    from .documents.model import document
     from .ops import after_commit, apply_ops
     from .storage import store_file
 
@@ -143,7 +144,7 @@ def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
     fields, tree = welcome_source(text)
     if not tree:
         return None
-    title, document = _welcome_titles(fields)
+    title, doc_title = _welcome_titles(fields)
     if guest:
         tree = [*tree, {"content": _guest_note(), "children": []}]
     try:
@@ -158,12 +159,11 @@ def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
                 # data.db open when a guest who just arrived logs out (which
                 # deletes the workspace); /api/pdf-info makes it on first open.
                 filename, _existed = store_file(ws, welcome_pdf(text), ".pdf")
-                doc_id = filename[:-len(".pdf")]
-                attachment, _auto = attachment_props(doc_id, original_filename=_WELCOME_PDF_NAME)
                 # A record of its own, so opening the page looks nothing up
                 # (the tour works offline) and asks no AI for a citation.
-                props.update(attachment, meta={"title": document, "kind": "document", "source": "manual"},
-                             ppt_cite=f"Gamma, *{document}*")
+                props.update(doc=document(filename.removesuffix(".pdf"), name=_WELCOME_PDF_NAME),
+                             meta={"title": doc_title, "kind": "document", "source": "manual"},
+                             ppt_cite=f"Gamma, *{doc_title}*")
             except Exception as e:  # noqa: BLE001 — the notes still make a Welcome page
                 log.warning(f"[seed] welcome PDF skipped: {e}")
             page = create_page(conn, title, props, actor=actor,

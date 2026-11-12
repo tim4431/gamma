@@ -12,8 +12,8 @@ import re
 import unicodedata
 from urllib.parse import unquote
 
+from .documents.formats import IMAGE_MEDIA_TYPES
 from .note_markup import LITERAL_SPANS
-from .storage import IMAGE_MEDIA_TYPES
 
 _MD_EXTS = (".md", ".markdown")
 _NOTION_ID_RE = re.compile(r"(?<!\s)\s+[0-9a-f]{32}$", re.I)

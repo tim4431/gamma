@@ -1,15 +1,14 @@
 // Pure library rules: the folder and label trees of the listing, then the
-// dates, attachments and links.
+// dates, the pages' documents and links.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { generateKeyBetween } from "fractional-indexing";
 import {
-  NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, duplicable, filedIn, findNamed, findPageForUrl,
+  NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
   firstFolderPath, folderAtPath, folderChain, folderCompletion, folderEntries, folderInside, folderMatches,
   folderNeighbour, folderPath, folderPathHolds, folderPathNames, folderPosition, folderPositions, folderSubtree, folderTargets,
-  formatFullDate, formatRelativeTime, formatShortDate,
-  attachmentFile, inFolder, isFreshLibrary, isLinkInput, labelName, libraryTree, normalizeLinkInput, pageAttachment,
+  formatFullDate, formatLabel, formatRelativeTime, formatShortDate,
+  inFolder, isFreshLibrary, isLinkInput, labelName, libraryTree, normalizeLinkInput, pageBlocksOf, pageFormat, pageKindLabel,
   siblingFolders,
 } from "../src/library/libraryUtils.js";
 
@@ -29,12 +28,6 @@ const listing = {
   ] },
 };
 
-test("a page reading a file on this computer is left out of what can be duplicated", () => {
-  const pages = new Map([["paper", { _linkedFile: false }], ["opened", { _linkedFile: true }]]);
-  assert.deepEqual(duplicable(["paper", "opened", "unlisted"], pages), ["paper", "unlisted"]);
-  assert.deepEqual(duplicable(["opened"], pages), []);
-});
-
 test("libraryTree reads the folders by nesting and order, the labels flat", () => {
   const tree = libraryTree(listing);
   assert.deepEqual(tree.top, ["phys", "bio"]);
@@ -45,11 +38,23 @@ test("libraryTree reads the folders by nesting and order, the labels flat", () =
   assert.deepEqual(siblingFolders(tree, "phys"), [tree.folders.get("qec")]);
   assert.deepEqual(siblingFolders(tree, "gone"), []);
   assert.deepEqual(tree.folders.get("qec"), { id: "qec", name: "QEC / codes, 2026", parent: "phys", position: k1,
-    pinned: "", created: "2026-10-01T09:00:00Z", path: ["Physics", "QEC / codes, 2026"], children: [] });
+    pinned: "", created: "2026-10-01T09:00:00Z", mark: null, path: ["Physics", "QEC / codes, 2026"], children: [] });
   assert.equal(tree.folders.get("phys").pinned, "2026-09-01T00:00:00Z");
   assert.equal(tree.folders.get("bio").created, "", "no created_at: no date of its own");
   assert.deepEqual([...tree.labels.values()].map((l) => l.name), ["llm", "Review"]);
   assert.equal(libraryTree().folders.size, 0, "no listing yet: empty trees");
+});
+
+test("libraryTree reads a work folder's mark off its folder block, as booleans", () => {
+  const tree = libraryTree({ folders: { children: [
+    { id: "w", content: "paper", properties: { vault: { pull: true, library: 1 } }, children: [
+      { id: "d", content: "figures", properties: {}, children: [] },
+    ] },
+    { id: "odd", content: "odd", properties: { vault: [true] }, children: [] },
+  ] } });
+  assert.deepEqual(tree.folders.get("w").mark, { pull: true, library: false }, "only true is on");
+  assert.equal(tree.folders.get("d").mark, null, "only the root carries it");
+  assert.equal(tree.folders.get("odd").mark, null, "a mark that is no object is none");
 });
 
 test("paths read as names joined, never split; labels by id, No label by its title", () => {
@@ -204,15 +209,20 @@ test("formatRelativeTime picks the coarsest unit and reads bare timestamps as UT
 });
 
 test("findPageForUrl resolves a DOI or arXiv id against the library", () => {
+  const at = (url, hash = "") => ({ doc: { format: "pdf", name: "", hash, ext: ".pdf", at: "url", url } });
   const pages = [
     { id: "p1", properties: { meta: { doi: "10.1000/ABC.1" } } },
-    { id: "p2", properties: { source_url: "https://arxiv.org/pdf/2101.00001v2.pdf" } },
+    { id: "p2", properties: at("https://arxiv.org/pdf/2101.00001v2.pdf", "u1") },
     { id: "p3", properties: { meta: { arxiv_id: "2202.02222" } } },
+    { id: "p4", properties: at("https://doi.org/10.2000/XYZ.9") },
+    { id: "p5", properties: { doc: { format: "pdf", name: "2303.03333.pdf", hash: "d5", ext: ".pdf", at: "store" } } },
   ];
   assert.equal(findPageForUrl("https://doi.org/10.1000/abc.1", pages), "p1");
   assert.equal(findPageForUrl("https://doi.org/10.1000/abc.1.", pages), "p1", "trailing punctuation dropped");
   assert.equal(findPageForUrl("https://arxiv.org/abs/2101.00001", pages), "p2");
   assert.equal(findPageForUrl("arXiv:2202.02222", pages), "p3");
+  assert.equal(findPageForUrl("https://doi.org/10.2000/xyz.9", pages), "p4", "a DOI in the address it is read from");
+  assert.equal(findPageForUrl("https://arxiv.org/abs/2303.03333", pages), null, "a stored file's name is no address");
   assert.equal(findPageForUrl("https://example.com/paper.pdf", pages), null);
   assert.equal(findPageForUrl("", pages), null);
 });
@@ -246,19 +256,75 @@ test("isLinkInput tells a link from a search", () => {
   }
 });
 
-// What a page carries is gamma/blocks_store.py page_attachment's rule too:
-// tests/shared/attachment.json holds both to the same answers.
-const ATTACHMENTS = JSON.parse(readFileSync(new URL("../../tests/shared/attachment.json", import.meta.url), "utf8"));
+// What a page carries (documents/pageDocument.js), on its listing row.
+test("pageBlocksOf gives each row its document; a card says PDF or Page by it", () => {
+  const rows = [
+    { id: "a", content: "", properties: { doc: { format: "pdf", name: "a.pdf", hash: "d1", ext: ".pdf", at: "path" } } },
+    { id: "b", content: "Notes", properties: {} },
+  ];
+  const [a, b] = pageBlocksOf(rows, libraryTree());
+  assert.deepEqual(a._doc, { format: "pdf", language: null, name: "a.pdf", hash: "d1", ext: ".pdf", size: null, at: "path",
+    url: "/api/uploads/d1.pdf", file: "d1.pdf", copy: false });
+  assert.equal(b._doc, null);
+  assert.equal(pageKindLabel(a._doc), "PDF");
+  assert.equal(pageKindLabel(b._doc), "Page");
+  assert.equal(pageKindLabel({ format: "text" }), "Page", "only a PDF is named");
+});
 
-test("pageAttachment, attachmentFile and defaultPageTitle", () => {
-  for (const c of ATTACHMENTS.cases) {
-    const attachment = pageAttachment({ properties: c.properties });
-    assert.deepEqual(attachment, c.attachment, c.note);
-    assert.equal(attachmentFile(attachment), c.file, c.note);
-  }
-  assert.equal(pageAttachment({}), null);
+test("pageBlocksOf: a work folder's file, its name and size, and whether the library lists a page", () => {
+  const rows = [
+    { id: "f", content: "main.pdf", _parentPage: "", properties: { work_folder: "W1", file_name: "main.pdf", folders: ["phys"],
+      doc: { format: "pdf", name: "main.pdf", hash: "p1", ext: ".pdf", at: "path", size: 2048 } } },
+    { id: "added", content: "Attention", _parentPage: "", properties: { work_folder: "W1", file_name: "a.md", library: true } },
+    { id: "lib", content: "Paper", _parentPage: "", properties: { folders: ["bio"], file_name: 5 } },
+    { id: "sub", content: "Inside", _parentPage: "lib", properties: {} },
+  ];
+  const [f, added, lib, sub] = pageBlocksOf(rows, libraryTree(listing));
+  assert.deepEqual([f._workFolder, f._library, f._fileName, f._size, f._listed], ["W1", false, "main.pdf", 2048, false]);
+  assert.deepEqual([added._workFolder, added._library, added._fileName, added._size, added._listed], ["W1", true, "a.md", null, true]);
+  assert.deepEqual([lib._workFolder, lib._library, lib._fileName, lib._listed], ["", false, "", true]);
+  assert.deepEqual([sub._listed, sub._folders], [true, ["bio"]], "a sub-page by its top");
+});
+
+test("pageBlocksOf: a page whose top the client does not know keeps its parent, and no folder", () => {
+  const rows = [
+    { id: "mid", content: "Mid", _parentPage: "gone", properties: { folders: ["bio"] } },
+    { id: "low", content: "Low", _parentPage: "mid", properties: {} },
+    { id: "orphan", content: "Orphan", _parentPage: "gone", properties: { folders: ["phys"] } },
+    { id: "x", content: "X", _parentPage: "y", properties: { folders: ["bio"] } },
+    { id: "y", content: "Y", _parentPage: "x", properties: {} },
+  ];
+  const byId = new Map(pageBlocksOf(rows, libraryTree(listing)).map((b) => [b.id, b]));
+  assert.deepEqual([byId.get("orphan")._parentPage, byId.get("orphan")._path, byId.get("orphan")._folders, byId.get("orphan")._listed],
+    ["gone", "", [], true]);
+  assert.deepEqual([byId.get("low")._path, byId.get("low")._folders, byId.get("low")._listed], ["Mid", [], true],
+    "the chain up to what is known");
+  assert.equal(byId.get("mid")._subPages, 1);
+  assert.deepEqual(byId.get("x")._folders, ["bio"], "a loop means no parent, as on the server: its own folders");
+});
+
+test("a file's format as the Format column reads it", () => {
+  assert.equal(formatLabel({ format: "pdf" }), "PDF");
+  assert.equal(formatLabel({ format: "markdown", language: null }), "Markdown");
+  assert.equal(formatLabel({ format: "text", language: "latex" }), "LaTeX");
+  assert.equal(formatLabel({ format: "text", language: "cpp" }), "C++");
+  assert.equal(formatLabel({ format: "text", language: "toString" }), "Text", "a language without a name of its own");
+  assert.equal(formatLabel({ format: "image" }), "Picture");
+  assert.equal(formatLabel({ format: "binary" }), "File");
+  assert.equal(formatLabel({ format: "nonsense" }), "");
+  assert.equal(formatLabel(null), "");
+  assert.deepEqual(["pdf", "markdown", "text", ""].map(formatLabel), ["PDF", "Markdown", "Text", ""], "a format alone");
+  const pdf = { format: "pdf", name: "main.pdf", hash: "p1", ext: ".pdf", at: "path" };
+  assert.equal(pageFormat({ _doc: pdf, _fileName: "main.pdf" }), pdf, "its document's");
+  assert.deepEqual(pageFormat({ _doc: null, _fileName: "refs.bib" }), { format: "text", language: "bibtex" }, "its file name's");
+  assert.deepEqual(pageFormat({ _doc: null, _fileName: "" }), { format: "markdown", language: null }, "a note made in Gamma");
+  assert.equal(formatLabel(pageFormat({ _doc: null, _fileName: "notes.md" })), "Markdown");
+});
+
+test("defaultPageTitle: the document's name, else its address's tail, else Untitled", () => {
   assert.equal(defaultPageTitle(null), "Untitled");
   assert.equal(defaultPageTitle({ name: "paper.pdf" }), "paper.pdf");
   assert.equal(defaultPageTitle({ url: "https://x.test/dir/a%20b.pdf" }), "a b.pdf");
   assert.equal(defaultPageTitle({ url: "https://x.test/dir/" }), "Untitled");
+  assert.equal(defaultPageTitle({ name: "", url: "/api/uploads/d1.pdf" }), "d1.pdf", "a stored file without a name");
 });

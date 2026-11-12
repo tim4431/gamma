@@ -250,7 +250,11 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // (their entry's `force`: changed here, never pushed); `left` counts the
 // rest (a PDF a push could not deliver, a file in the way) and the names
 // its scan refused (`status.refused`: two names that differ only by case,
-// a name Windows refuses, a link), which never become pages.
+// a name Windows refuses, a link), which never become pages. `whole`: a
+// vault of the whole library. `work`: a work folder (a folder of the
+// server's own that pushes everything, docs/dev/work_folders.md), with its
+// library switch (`library`) and whether its files wait to be chosen in
+// Gamma (`choosing`).
 //
 // `roles` is the workspaces the server's account may open, as its `GET
 // /api/session` lists them (`[{id, role}]`; null: not read). The server
@@ -280,6 +284,9 @@ function vault(server, link, servers, roles = null) {
     paused: Boolean(s.paused_at), stopped: s.stopped || '', offline: Boolean(s.offline), held: s.held || null,
     changed, left: left.length, untracked: s.untracked || 0,
     away: Boolean(roles && !link.remote_url && !roles.some((w) => w.id === link.workspace_id)), seen: !link.dest,
+    whole: scope === 'folder' && link.folder_id === 'root',
+    work: scope === 'folder' && !link.remote_url && link.folder_id !== 'root' && pushWord(link.push) === 'everything',
+    library: Boolean(link.library), choosing: Boolean(link.choosing),
   };
   const stated = scope === 'file' ? fileState(item, s) : folderState(item, s, left);
   return item.seen ? { ...stated, title: `${stated.title} ${SEEN}` } : stated;
@@ -306,15 +313,21 @@ function directions(item) {
 // A sentence the server wrote, as the tooltip ends one.
 const said = (text) => `${capital(text)}${/[.!?]$/.test(text) ? '' : '.'}`;
 
-// A directory's vault, worst first: a round running, paused, stopped (its
-// marker gone or another's: Locate… says where it is), held by its guard
-// (Go on), its directory not there, a problem, never synced, up to date.
+// A directory's vault, worst first: a work folder whose files are not chosen
+// yet (Choose files… opens its dialog in Gamma), a round running, paused,
+// stopped (its marker gone or another's: Locate… says where it is), held by
+// its guard (Go on), its directory not there, a problem, never synced, up to
+// date.
 // Up to date, it also says what its last round left (`left`: not synced),
 // why its push was turned off when it was taken onto synced vaults
 // (`push_off`), the pages filed in it that an older vault beside it keeps
 // (`shared`), and when a folder kept before became a vault (`upgraded_at`).
 function folderState(item, s, left) {
   const counts = s.counts || {};
+  if (item.choosing) {
+    return { ...item, state: 'pending', text: 'Choosing files',
+      title: 'Nothing is tracked yet: Choose files… opens its tracking dialog in Gamma, and the first round runs once you save it.' };
+  }
   if (s.running) return { ...item, state: 'busy', ...folderRun(s.progress) };
   if (item.paused) {
     return { ...item, state: 'paused', text: `Paused · ${clock(s.paused_at)}`, title: 'Nothing is pulled or pushed until you resume it; Sync now runs one round.' };
@@ -410,19 +423,29 @@ function summarize(items) {
 // view and the shell's switches (main.js setPull, changePush) keep to it.
 const REMOTE_RULE = 'A vault of another server pulls, and pushes PDFs at most, for now.';
 
+// What a vault of the whole library may not be: a work folder, which needs
+// a folder of its own (the server's words, gamma/folder_links.py). One that
+// pushed everything before goes on as it is.
+const WHOLE_RULE = 'A vault of the whole library cannot push everything: make one of a folder.';
+
 // The dialog's sentence: what the first round of a vault would do, from
 // what `POST /api/folder-links/preview` found in the directory `path` and
 // the two switches (`pull`, `push`), into the folder named `folder` (a new
 // one with `newFolder`). `{ ok, text }`: not ok, the text says why and Sync
-// is shut. A vault of another server (`remote`) keeps to REMOTE_RULE. The
-// refusals the server would answer are said here first where the preview
-// tells them (its `refusal`; a folder with pages and a directory with files
-// that would push everything into each other).
-function firstRound({ path: dir, preview = {}, pull, push, folder, newFolder = false, remote = false }) {
+// is shut. A vault of another server (`remote`) keeps to REMOTE_RULE, and
+// one of the whole library (`whole`) to WHOLE_RULE. The refusals the server
+// would answer are said here first where the preview tells them (its
+// `refusal`; a folder with pages and a directory with files that would push
+// everything into each other). A work folder is not asked about here: its
+// tracking dialog in Gamma says what it tracks (main.js makeWorkFolder), and
+// this dialog is for the other vaults, a folder with pages, a vault of
+// another server and the whole library.
+function firstRound({ path: dir, preview = {}, pull, push, folder, newFolder = false, remote = false, whole = false }) {
   const no = (text) => ({ ok: false, text });
   const p = preview || {};
   if (!pull && push === 'off') return no('A vault pulls, pushes, or both: turn one of them on.');
   if (remote && (push === 'everything' || !pull)) return no(REMOTE_RULE);
+  if (whole && push === 'everything') return no(WHOLE_RULE);
   if (p.refusal) return no(p.refusal);
   const notes = p.notes || 0;
   const pdfs = p.pdfs || 0;
@@ -461,11 +484,13 @@ function firstRound({ path: dir, preview = {}, pull, push, folder, newFolder = f
 }
 
 // The question before removing a vault, with `GET .../removal`'s counts
-// (`{pages, in_place, bytes}`): `{ message, detail, buttons, choices }`,
-// `choices[i]` the `files=` of button i (null: cancel). A file's vault
-// never touches its file; a vault whose directory is not there, or is no
-// longer its own (stopped: the marker gone or another vault's), is
-// forgotten without touching the disk.
+// (`{pages, in_place, bytes, files, in_library}`): `{ message, detail,
+// buttons, choices }`, `choices[i]` the `files=` of button i (null: cancel).
+// A file's vault never touches its file; a vault whose directory is not
+// there, or is no longer its own (stopped: the marker gone or another
+// vault's), is forgotten without touching the disk. A work folder's files
+// not in the library go to Recently deleted, and those in it stay: both are
+// said.
 function removalAsk(item, removal = {}) {
   if (item.scope === 'file') {
     return { message: `Remove the synced vault of “${item.name}”?`,
@@ -473,8 +498,14 @@ function removalAsk(item, removal = {}) {
       buttons: ['Remove the vault', 'Cancel'], choices: ['keep', null] };
   }
   const pages = removal.pages || 0;
+  const files = removal.files || 0;
+  const kept = removal.in_library || 0;
   const inPlace = removal.in_place || 0;
-  const stays = (pages ? `${pages === 1 ? 'Its page stays' : `Its ${pages} pages stay`} in Gamma` : 'It holds no pages yet') +
+  const pagesSaid = files
+    ? `${files === 1 ? 'Its file not in the library goes' : `Its ${files} files not in the library go`} to Recently deleted` +
+      (kept ? `; ${kept === 1 ? 'its page in the library stays' : `its ${kept} pages in the library stay`}` : '')
+    : pages ? `${pages === 1 ? 'Its page stays' : `Its ${pages} pages stay`} in Gamma` : 'It holds no pages yet';
+  const stays = pagesSaid +
     (inPlace ? `; ${plural(inPlace, 'PDF')} read where ${inPlace === 1 ? 'it is' : 'they are'} (${bytesText(removal.bytes)}) ${isAre(inPlace)} stored in Gamma first` : '') + '.';
   const message = `Remove the synced vault “${item.name}”?`;
   if (item.offline) {
@@ -534,4 +565,5 @@ function roundSaid(item, status) {
   return `${item.name} is up to date${parts.length ? `: ${parts.join(', ')}` : ''}.`;
 }
 
-module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, firstRound, removalAsk, forceAsk, goOnAsk, roundSaid };
+module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, WHOLE_RULE, firstRound, removalAsk, forceAsk,
+  goOnAsk, roundSaid };

@@ -6,6 +6,7 @@
 // the viewer's export lays it out (translateExport.exportLayout). The
 // layouts go with the job as `translations`, one per paper by its page.
 // Pure but for what is handed in, so the tests run it in Node.
+import { pdfFileHash } from "../documents/pageDocument.js";
 import { folderSubtree } from "../library/libraryUtils.js";
 import { exportLayout } from "./translateExport.js";
 import { seedDetached } from "./translateState.js";
@@ -14,15 +15,16 @@ import { langOfKey } from "./translateRecall.js";
 // The papers of a folder's export that may carry a translation: the pages
 // filed in `folder` or below it (`tree`, libraryUtils.libraryTree), a page
 // inside another filed where its top is, as the server walks them
-// (blocks_store.pages_in_folder), each with the stored PDF it shows. `pages`
-// are the library's rows (libraryUtils.pageBlocksOf). A page with no doc_id
-// (a duplicated page, a link page whose copy was not kept) has no file the
-// job writes a translation into (translateExport.exportFile).
+// (blocks_store.pages_in_folder), each with the stored PDF it shows (its
+// document's pdfFileHash, `doc_id` as the job names it). `pages` are the
+// library's rows (libraryUtils.pageBlocksOf). A page shown from an address
+// alone has no stored file the job writes a translation into
+// (translateExport.exportFile).
 export function folderPapers(pages, tree, folder) {
   const below = folderSubtree(tree, folder);
   if (!below.size) return [];
-  return (pages || []).filter((p) => p._attachment?.id && (p._folders || []).some((f) => below.has(f)))
-    .map((p) => ({ page_id: p.id, doc_id: p._attachment.id }));
+  return (pages || []).filter((p) => pdfFileHash(p._doc) && (p._folders || []).some((f) => below.has(f)))
+    .map((p) => ({ page_id: p.id, doc_id: pdfFileHash(p._doc) }));
 }
 
 // What the server takes of a job's translations, all papers together

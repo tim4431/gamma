@@ -135,8 +135,8 @@ def test_a_note_on_its_own_pdf_keeps_the_pdf(accounts):
     result = imported(owner, data, "Original PDF note.note")
     assert result["pages_created"] == 1 and result["pdfs_stored"] == 1 and result["pictures_imported"] == 1
     page = subtree(owner, result["pages"][0]["id"])
-    assert page["properties"]["doc_id"] == storage.content_digest(pdf)
-    assert page["properties"]["original_filename"] == "Original PDF note.pdf"
+    assert page["properties"]["doc"]["hash"] == storage.content_digest(pdf)
+    assert page["properties"]["doc"]["name"] == "Original PDF note.pdf"
     assert "auto_title" not in page["properties"] and page["content"] == "Original PDF note"
     groups = [c for c in page["children"] if c["properties"].get("ink_url")]
     assert sorted(g["properties"]["pdf_position"]["pageNumber"] for g in groups) == [1, 2]
@@ -164,7 +164,7 @@ def test_a_mixed_note_is_one_composed_pdf():
                 files={f"PDFs/{PDF}": source})
     result = imported(owner, data, "Mixed.note")
     page = subtree(owner, result["pages"][0]["id"])
-    composed = PdfReader(io.BytesIO(stored(ws, page["properties"]["doc_id"] + ".pdf")))
+    composed = PdfReader(io.BytesIO(stored(ws, page["properties"]["doc"]["hash"] + ".pdf")))
     sizes = [(float(p.mediabox.width), float(p.mediabox.height)) for p in composed.pages]
     assert sizes == [(612, 803.25), (PAGE_W, PAGE_H), (PAGE_W, PAGE_H)]  # the page used twice is there twice
     paint = composed.pages[0].get_contents().get_data()
@@ -183,7 +183,7 @@ def test_a_paper_note_becomes_a_notebook():
                 flow=[{"text": "Typed on the page"}])
     result = imported(owner, data, "Paper.note")
     page = subtree(owner, result["pages"][0]["id"])
-    assert "doc_id" not in page["properties"]
+    assert "doc" not in page["properties"]
     flow, *sheets = page["children"]
     assert flow["content"] == "Typed on the page" and len(sheets) == 2
     for sheet in sheets:
@@ -208,7 +208,7 @@ def test_the_sample_note_has_what_the_browser_suite_checks(accounts):
     result = imported(owner, fx.sample_note(), "E2E Notability note.note")
     assert result["pages_created"] == 1 and result["recordings_imported"] == 1, result
     page = subtree(owner, result["pages"][0]["id"])
-    assert page["properties"].get("doc_id") and page["content"] == "E2E Notability note"
+    assert page["properties"].get("doc") and page["content"] == "E2E Notability note"
     groups = [c for c in page["children"] if c["properties"].get("ink_url")]
     files = [ink_of(ws, g) for g in groups]
     assert len(groups) == 2 and all(f["version"] == 2 and f["space"]["kind"] == "pdf-page" for f in files)
@@ -732,7 +732,7 @@ def test_an_ntb_on_a_pdf_keeps_it(accounts):
     result = imported(owner, data, "Annotated.ntb")
     assert (result["pages_created"], result["pdfs_stored"], result["pages"][0]["kind"]) == (1, 1, "pdf")
     page = subtree(owner, result["pages"][0]["id"])
-    assert page["properties"]["doc_id"] == storage.content_digest(pdf)
+    assert page["properties"]["doc"]["hash"] == storage.content_digest(pdf)
     (group,) = [c for c in page["children"] if c["properties"].get("ink_url")]
     assert group["properties"]["pdf_position"]["pageNumber"] == 2
     stroke = ink_of(ws, group)["strokes"][0]

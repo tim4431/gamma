@@ -12,7 +12,7 @@ from contextlib import closing
 
 import pytest
 
-from conftest import (folder_names, label_names, login as _login, make_folder, make_label, make_page,
+from conftest import (doc_props, folder_names, label_names, login as _login, make_folder, make_label, make_page,
                       make_user as _make_user, workspace_of)
 
 
@@ -50,7 +50,7 @@ def _donor_library(gdonor):
         "gxtop/gxfolder", "gxtop/gxfolder/sub", "gxtop/gxfolder/empty", "gxfolderish")}
     label = make_label(gdonor, "gxtag")
     paper = make_page(gdonor, "Gx paper", properties={
-        "doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
+        **doc_props(up.json()["doc_id"]),
         "folders": [folders["gxtop/gxfolder/sub"], folders["gxfolderish"]], "labels": [label],
         "meta": {"title": "Gx paper", "authors": ["Ada"], "year": "2024"},
     })
@@ -219,7 +219,7 @@ def test_gamma_export_delete_reimport_is_near_identical(gdonor):
     assert up.status_code == 200, up.text
     pdf_name = up.json()["source_url"].rsplit("/", 1)[-1]
     paper = make_page(gdonor, "Rt paper", properties={
-        "doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
+        **doc_props(up.json()["doc_id"]),
         "folders": [make_folder(gdonor, "rtfolder/deep")], "labels": [make_label(gdonor, "rt")],
         "meta": {"title": "Rt paper", "year": "2025"},
     })
@@ -303,6 +303,73 @@ def test_gamma_single_page_export(gdonor):
         with closing(sqlite3.connect(f"{td}/pages.db")) as conn:
             trees = conn.execute("SELECT content FROM unified_blocks WHERE page_id IN ('folders', 'labels')").fetchall()
     assert trees == [("solo",)]  # its label travels, no folder
+
+
+def _rows(z) -> dict:
+    """``{id: (properties, the generated doc_id)}`` of a Gamma export's pages.db."""
+    with tempfile.TemporaryDirectory() as td:
+        with open(f"{td}/pages.db", "wb") as out:
+            out.write(z.read("pages.db"))
+        with closing(sqlite3.connect(f"{td}/pages.db")) as conn:
+            return {r[0]: (json.loads(r[1]), r[2]) for r in conn.execute("SELECT id, properties, doc_id FROM unified_blocks")}
+
+
+def test_a_pdf_read_in_place_travels_as_a_stored_one(gdonor):
+    """Where an export of a page that reads its PDF on this computer
+    (``doc.at`` "path") lands, it is a page like any other: its pages.db
+    has the document stored, its name and hash kept, and the bytes ride
+    along in uploads/."""
+    up = gdonor.post("/api/uploads", files={"file": ("ip.pdf", _blank_pdf_bytes(width=614), "application/pdf")}).json()
+    page = make_page(gdonor, "Gx in place", properties=doc_props(up["doc_id"], name="here.pdf", at="path"))
+    assert gdonor.get(f"/api/blocks/{page['id']}").json()["properties"]["doc"]["at"] == "path"
+    r = gdonor.get(f"/api/pages/{page['id']}/export", params={"mode": "gamma"})
+    assert r.status_code == 200, r.text
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    assert f"uploads/{up['doc_id']}.pdf" in z.namelist()
+    assert _rows(z)[page["id"]] == ({"doc": {"format": "pdf", "name": "here.pdf", "hash": up["doc_id"],
+                                             "ext": ".pdf", "at": "store"}}, up["doc_id"])
+
+
+def test_an_export_from_before_page_documents_merges_in_the_new_shape(gdonor, greceiver):
+    """A Gamma export a server made before step 52 (``migrations``): its
+    pages keep their document in the flat keys and it carries no stamp, as
+    every scoped export did then. Merged in, ``ws_backup._normalize_copies``
+    runs the workspace steps on it, so the page comes in with its ``doc``
+    and the generated column owns its hash; the bytes come along."""
+    from gamma import db, migrations
+    from test_migrations import _at_51
+
+    up = gdonor.post("/api/uploads", files={"file": ("old.pdf", _blank_pdf_bytes(width=615), "application/pdf")}).json()
+    page = make_page(gdonor, "Gx before documents", properties=doc_props(up["doc_id"], name="old.pdf"))
+    r = gdonor.get(f"/api/pages/{page['id']}/export", params={"mode": "gamma"})
+    assert r.status_code == 200, r.text
+    src = zipfile.ZipFile(io.BytesIO(r.content))
+    with tempfile.TemporaryDirectory() as td:
+        path = f"{td}/pages.db"
+        with open(path, "wb") as out:
+            out.write(src.read("pages.db"))
+        with closing(sqlite3.connect(path)) as conn:
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == migrations.SCHEMA_VERSION
+            conn.execute("PRAGMA user_version = 0")
+            db.register_functions(conn)
+            _at_51(conn)
+            conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps({
+                "doc_id": up["doc_id"], "source_url": up["source_url"], "original_filename": "old.pdf"}), page["id"]))
+            conn.commit()
+        with open(path, "rb") as f:
+            old = f.read()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as out:
+        for name in src.namelist():
+            out.writestr(name, old if name == "pages.db" else src.read(name))
+    d = _merge(greceiver, buf.getvalue())
+    assert d["pages_added"] == 1 and d["uploads_added"] == 1
+    got = greceiver.get(f"/api/blocks/{page['id']}").json()["properties"]
+    assert got["doc"] == {"format": "pdf", "name": "old.pdf", "hash": up["doc_id"], "ext": ".pdf", "at": "store"}
+    assert not {"doc_id", "source_url", "original_filename"} & set(got)
+    with db.connect_pages_db(workspace_of("greceiver")) as conn:
+        assert conn.execute("SELECT doc_id FROM unified_blocks WHERE id = ?", (page["id"],)).fetchone() == (up["doc_id"],)
+    assert greceiver.get(up["source_url"]).status_code == 200
 
 
 def test_unknown_mode_rejected(gdonor):

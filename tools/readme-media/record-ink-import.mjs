@@ -79,7 +79,7 @@ try {
   await checker.api('/api/import/notability', { method: 'POST', form: fd });
   const trial = (await checker.api('/api/blocks/root/children')).children.find((p) => p.content === note.title);
   const trialInk = trial && counts(await inkByPage(checker, trial.id));
-  take.check('trialImport', trial?.properties?.doc_id && sameCounts(trialInk, note.pages), { trialInk, want: note.pages });
+  take.check('trialImport', trial?.properties?.doc?.format === 'pdf' && sameCounts(trialInk, note.pages), { trialInk, want: note.pages });
 
   browser = await launchRetina();
   // Automatic paper-metadata lookup is off (Settings → PDFs): the harness server
@@ -201,7 +201,7 @@ try {
 
   // The page the import made: the note's PDF and its strokes on the right pages.
   const imported = (await account.api('/api/blocks/root/children')).children.find((p) => p.content === note.title);
-  take.check('importedPdf', !!imported?.properties?.doc_id, imported?.properties);
+  take.check('importedPdf', imported?.properties?.doc?.format === 'pdf', imported?.properties);
   const importedInk = imported ? counts(await inkByPage(account, imported.id)) : {};
   take.check('importedStrokes', sameCounts(importedInk, note.pages), { importedInk, want: note.pages });
 

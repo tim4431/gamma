@@ -24,9 +24,9 @@ from . import goodnotes as gn
 from . import goodnotes_map as gmap
 from . import note_app_import as app
 from . import notability as nb
-from .blocks_store import attachment_props
+from .documents.model import document
 from .logbuf import log
-from .note_app_import import Skip, Stop, compose_pdf
+from .note_app_import import Skip, Stop, compose_pdf, page_kind
 from .pdf_text import page_raster
 from .storage import display_filename, store_pdf
 
@@ -135,7 +135,7 @@ class _Import(app.AppImport):
             del data
             if not existed:
                 self.report["pdfs_stored"] += 1
-            props.update(attachment_props(doc_id, "", f"{title}.pdf")[0])
+            props["doc"] = document(doc_id, name=f"{title}.pdf")
             self.progress(item=title)
         groups = self.store_ink(plan, self._strokes(members, notebook), title)
         sides = {}  # each picture file's longer side at its largest frame, in canvas units: a sticker is drawn for it
@@ -169,7 +169,7 @@ class _Import(app.AppImport):
             self.report["pictures_imported"] += counts["pictures"]
             self.report["recordings_imported"] += len(recordings)
             entry["created"] = True
-            entry["kind"] = "pdf" if props.get("doc_id") else "page"
+            entry["kind"] = page_kind(props)
         return written
 
     def _pdfs(self, members, notebook: gn.Notebook) -> tuple[dict, dict, dict, dict]:

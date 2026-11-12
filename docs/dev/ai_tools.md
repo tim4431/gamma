@@ -109,7 +109,7 @@ to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
-| `list_pages` | List pages | folder | List the folder's pages: id, title, attachments (`[pdf]` when the page carries a PDF, `[]` for text-only), folder paths or, for a sub-page, the page it is inside (`parent=`), labels, cached metadata (first author, year, venue), last-update date, most recently added first (library order), in batches (`limit`, `after`) |
+| `list_pages` | List pages | folder | List the folder's pages (at the library root, the pages the library lists): id, title, attachments (`[pdf]` when the page carries a PDF, `[]` for text-only), folder paths or, for a sub-page, the page it is inside (`parent=`), labels, cached metadata (first author, year, venue), last-update date, most recently added first (library order), in batches (`limit`, `after`) |
 | `list_folders` | List pages | folder | The folder tree below the chat's folder: every path with its implied parents, subfolders indented, library pages filed directly and in total; the pages in no folder at the root |
 | `read_page` | Read pages | folder + page | Read one page: title, the pages it is inside and the pages inside it, properties, the user's highlights and notes, and — when it carries a PDF — a windowed excerpt of the attachment's extracted text |
 | `read_block` | Read note blocks | folder + page | Read a page's notes as an id-prefixed outline — the ids the editing tools take |
@@ -159,6 +159,28 @@ the pages right inside that page, which is how the agent walks a page
 tree past what `read_page`'s header names; it rides along in the
 next-batch call, the summary reads "… inside page <id>", and a listing
 with nothing in it says "No pages match those filters."
+
+At the library root the pages are those the library lists
+([work_folders.md](work_folders.md) "The library rule",
+`work_folders.library.listed`, by a sub-page's top): a work folder's file
+not in the library is listed only where a folder named files it, the
+chat's own folder or the `folder` filter (a directory of the work folder,
+or the work folder itself), and the root's label counts and `label=`
+count listed pages alone. A page in the chat's context is listed whatever
+it is. An empty root reads "The library lists no page." The tools that
+change a page or a folder ask the work-folder rule up front, as a person
+(client `ai`), and answer what it refuses in its words: `rename_page` of
+a file named by its file, `move_page` of a file filed by its directory
+(a note of a work folder that pulls moves between its directories, its
+directory leading its folders), `move_page` of a library page into a work
+folder, `delete_page` and `restore_page` of a file that leaves and comes
+back with its file, `rename_folder` of a work folder's directory (its
+root takes a new name in Gamma), and `delete_folder` of a directory, of
+the root, or of a folder holding one ([work_folders.md](work_folders.md)
+"The op rule"). A folder named by its path for a write (`move_page`,
+`save_paper`) passes by every work folder from the top, so a name it
+shares makes a library folder; by its id, or in a reading tool, a work
+folder's directory is reached, and a write there goes by the rule.
 
 Pages come most recently added first: library order backwards
 (`position`). No op moves a page, so renaming, filing, labelling or

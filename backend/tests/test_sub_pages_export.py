@@ -19,7 +19,7 @@ from urllib.parse import quote, unquote
 import pytest
 from pypdf import PdfReader
 
-from conftest import account_of, login, make_folder, make_user, workspace_of
+from conftest import account_of, doc_props, login, make_folder, make_user, workspace_of
 from gamma import bibtex, blocks_store
 from gamma.integrations import create_token
 from gamma.markdown_export import slugify
@@ -153,7 +153,7 @@ def test_annotated_pdfs_nest_a_sub_page_inside_its_parents_directory(owner):
         up = owner.post("/api/uploads", files={"file": (f"{title}.pdf", _blank_pdf(pages=1) + title.encode(),
                                                         "application/pdf")})
         assert up.status_code == 200, up.text
-        return _page(owner, title, properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]},
+        return _page(owner, title, properties=doc_props(up.json()["doc_id"]),
                      **body)
 
     review = paper("Review", folders=[folder])
@@ -343,7 +343,7 @@ def _paper(c, title, **body):
                                                 "application/pdf")})
     assert up.status_code == 200, up.text
     record = {"title": title, "authors": ["Ada Lovelace"], "year": "1843", "venue": "Notes"}
-    page = _page(c, title, properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
+    page = _page(c, title, properties={**doc_props(up.json()["doc_id"]),
                                        "meta": record, "bibtex": bibtex.build_entry(record, title.lower())},
                  **body)
     _children(c, page, [f"{title} notes"])

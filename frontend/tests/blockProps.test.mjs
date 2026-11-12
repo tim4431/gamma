@@ -126,15 +126,17 @@ test("a page's record: Document, Paper record and Filing, a dangling folder show
   const libTree = { folders: new Map([["f1", { id: "f1", name: "Clocks", path: ["Lab", "Clocks"], children: [] }]]),
     labels: new Map([["l1", { id: "l1", name: "to-read" }]]), top: ["f1"] };
   const page = { id: "pA", parent_id: "root", content: "Ramsey (2024)", properties: {
-    doc_id: "d".repeat(24), original_filename: "ramsey.pdf",
+    doc: { format: "pdf", name: "ramsey.pdf", hash: "d".repeat(24), ext: ".pdf", at: "store" },
     meta: { title: "Ramsey fringes", authors: ["A. Author", "B. Author"], venue: "PRL", year: "2024", doi: "10.1103/PhysRevLett.1", source: "doi", match: "source" },
     bibtex: "@article{ramsey2024,\n title={x}\n}",
     folders: ["f1", "gone"], labels: ["l1"], pinned: "2026-11-03T12:00:00" } };
   const sections = propertySections(page, { ctx: { now: NOW, libTree, isOpenPage: true } });
   assert.deepEqual(ids(sections), ["document", "paper", "filing", "block"]);
-  assert.equal(row(sections, "original_filename").display.icon, "paperclip");
-  assert.equal(row(sections, "doc_id").display.short, "dddddd…dddd");
-  assert.deepEqual(row(sections, "doc_id").nav, { action: "openPdf", url: `/api/uploads/${"d".repeat(24)}.pdf`, label: "Open PDF" });
+  assert.equal(row(sections, "doc.name").display.icon, "paperclip");
+  assert.equal(row(sections, "doc.name").label, "File name");
+  assert.equal(row(sections, "doc.hash").display.short, "dddddd…dddd");
+  assert.equal(row(sections, "doc.hash").label, "Stored copy");
+  assert.deepEqual(row(sections, "doc.hash").nav, { action: "openPdf", url: `/api/uploads/${"d".repeat(24)}.pdf`, label: "Open PDF" });
   assert.equal(row(sections, "meta.title").display.text, "Ramsey fringes");
   assert.equal(row(sections, "meta.authors").display.text, "A. Author, B. Author");
   assert.equal(row(sections, "meta.doi").display.url, "https://doi.org/10.1103/PhysRevLett.1");
@@ -179,6 +181,42 @@ test("a page's record: Document, Paper record and Filing, a dangling folder show
     assert.equal(r.step, "pA");
     assert.deepEqual(r.nav, { action: "openPage", id: "pA", label: "Open page" });
   }
+});
+
+test("a page's document: its name, stored copy and address in the catalog's words, its other fields under their own names", () => {
+  const H = "e".repeat(24);
+  const sections = (doc, extra = {}) => propertySections({ id: "pD", parent_id: "root", content: "Paper", properties: { doc, ...extra } },
+    { ctx: { now: NOW } });
+  const keys = (s) => section(s, "document")?.rows.map((r) => r.key) || [];
+  // stored: the worded rows first, then the rest as stored, raw names and no tag
+  const stored = sections({ format: "pdf", name: "a.pdf", hash: H, ext: ".pdf", at: "store" });
+  assert.deepEqual(keys(stored), ["doc.name", "doc.hash", "doc.format", "doc.ext", "doc.at"]);
+  assert.deepEqual([row(stored, "doc.at").label, row(stored, "doc.at").display.text, row(stored, "doc.at").tags], ["doc.at", "store", undefined]);
+  assert.equal(row(stored, "doc.at").sqlPath, "json_extract(properties, '$.doc.at')");
+  assert.ok(!section(stored, "other"), "doc is no key outside the catalog");
+  // read from an address: its address opens as a link; no name, no row
+  const link = sections({ format: "pdf", name: "", hash: H, ext: ".pdf", at: "url", url: "https://arxiv.org/pdf/2401.00001" });
+  assert.deepEqual(keys(link), ["doc.hash", "doc.url", "doc.format", "doc.ext", "doc.at"]);
+  assert.equal(row(link, "doc.url").label, "Source address");
+  assert.deepEqual(row(link, "doc.url").nav, { action: "openUrl", url: "https://arxiv.org/pdf/2401.00001", label: "Open link" });
+  assert.equal(row(link, "doc.hash").nav.url, `/api/uploads/${H}.pdf`);
+  // an address alone has no stored copy
+  assert.deepEqual(keys(sections({ format: "pdf", name: "", hash: "", ext: ".pdf", at: "url", url: "https://x/y.pdf" })),
+    ["doc.url", "doc.format", "doc.ext", "doc.at"]);
+  // a copy opens the stored file it shows, and says it is a copy
+  const copy = sections({ format: "pdf", name: "", hash: H, ext: ".pdf", at: "store", copy: true });
+  assert.equal(row(copy, "doc.hash").nav.url, `/api/uploads/${H}.pdf`);
+  assert.equal(row(copy, "doc.copy").display.text, "Yes");
+  // a document that is no PDF, or one that cannot be read, opens no PDF
+  assert.equal(row(sections({ format: "text", name: "main.tex", hash: H, ext: ".tex", at: "path" }), "doc.hash").nav, undefined);
+  assert.equal(row(sections({ format: "pdf", name: "", hash: H, ext: ".png", at: "store" }), "doc.hash").nav, undefined);
+  // a doc that is no record shows as it is; none shows nothing
+  assert.deepEqual(keys(sections("x")), ["doc"]);
+  assert.deepEqual(keys(sections(null)), []);
+  // the Markdown file a page was imported from is where it came from
+  const md = sections(undefined, { original_filename: "Reading.md", markdown_import: "abc123" });
+  assert.deepEqual(section(md, "imported").rows.map((r) => r.key), ["original_filename", "markdown_import"]);
+  assert.ok(!section(md, "document"));
 });
 
 test("the Block section: server fields, parent, order, the saved state", () => {
@@ -376,7 +414,7 @@ test("status chips: pending and differing, unsaved, deleted, the place's, Zotero
   assert.deepEqual(statusChips(null, null, { status: 404, data: { trashed: { id: "p" } } }).map((c) => c.id), ["deleted"]);
   assert.deepEqual(statusChips({ properties: { deleted_at: "2026-11-01" } }, null, null).map((c) => c.id), ["deleted"]);
   assert.deepEqual(statusChips(server, null, { status: 503 }), [{ id: "failed", tone: "failed", action: "retry", text: "Couldn't load from the server" }]);
-  assert.deepEqual(statusChips({ properties: { pdf_position: { ...pos, doc_id: "old" } } }, null, null, { pageAttachId: "new" }).map((c) => c.id), ["older"]);
+  assert.deepEqual(statusChips({ properties: { pdf_position: { ...pos, doc_id: "old" } } }, null, null, { pageFileHash: "new" }).map((c) => c.id), ["older"]);
   assert.deepEqual(statusChips(server, server, null, { gone: true }).map((c) => c.id), ["gone"]);
   // deleted for good while open: gone, not unsaved; a 404 after the server had it is not unsaved either
   assert.deepEqual(statusChips(live, server, { status: 404, data: {} }, { gone: true }).map((c) => c.id), ["gone", "check", "zotero", "transcript"]);
@@ -398,7 +436,7 @@ test("every key of docs/research/block-properties.md's catalog has an entry, wit
   const named = new Set([...catalog.matchAll(/`([a-z_][A-Za-z0-9_]*)[`:]/g)].map((m) => m[1]));
   const keys = ["ink_url", "ink_strokes", "text_box", "picture", "sheet", "recording", "link_url", "link_page_id", "link_block_id",
     "pdf_position", "pdf_page", "quote", "color", "style", "linked_highlight_id", "imported_annot", "annot_stripped", "t0", "transcript",
-    "collapsed", "zotero_readonly", "zotero_author", "doc_id", "source_url", "original_filename", "folders", "labels", "pinned",
+    "collapsed", "zotero_readonly", "zotero_author", "original_filename", "folders", "labels", "pinned",
     "meta", "meta_error", "auto_title", "bibtex", "cite_key", "ppt_cite", "web_url", "web_meta", "web_clips", "markdown_import",
     "notion_id", "aliases", "notability_import", "goodnotes_import", "zotero_key", "zotero_pdf", "zotero_note", "zotero_rdf",
     "zotero_annotation", "zotero_attachments", "zotero_attachment", "seeded", "deleted_at", "deleted_by", "parent_page", "deleted_with",
@@ -408,7 +446,7 @@ test("every key of docs/research/block-properties.md's catalog has an entry, wit
     assert.ok(CATALOG[key]?.label && CATALOG[key].hint && CATALOG[key].section, `${key} has a catalog entry`);
   }
   for (const key of ["pdf_position.pageNumber", "pdf_position.rects", "pdf_position.approx", "pdf_position.closest",
-    "recording.started", "recording.segments", "recording.dur", "recording.by", "recording.at"]) {
+    "recording.started", "recording.segments", "recording.dur", "recording.by", "recording.at", "doc.name", "doc.hash", "doc.url"]) {
     assert.ok(CATALOG[key]?.label && CATALOG[key].hint, key);
   }
   for (const key of ["summary", "guide_demo"]) {

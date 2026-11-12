@@ -14,7 +14,8 @@ import pytest
 from fastapi.testclient import TestClient
 from fractional_indexing import generate_key_between
 
-from conftest import account_of, folder_names, label_names, login, make_user, recv, slowed, together, workspace_of
+from conftest import (account_of, doc_props, folder_names, label_names, login, make_user, recv, slowed, together,
+                      workspace_of)
 from gamma import blocks_store
 from gamma.ai_context import notes_focus_section
 from gamma.ai_tools import _NOTE_SNIPPET, run_agent_tool
@@ -169,7 +170,7 @@ def _pages_carrying(ws, doc_id):
     with connect_pages_db(ws) as conn:
         return [r[0] for r in conn.execute(
             "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
-            "AND json_extract(properties, '$.doc_id') = ?", (doc_id,))]
+            "AND json_extract(properties, '$.doc.hash') = ?", (doc_id,))]
 
 
 def test_concurrent_get_or_create_makes_one_page_per_pdf(owner, monkeypatch):
@@ -216,7 +217,7 @@ def test_concurrent_attach_of_one_pdf_gives_it_one_page(owner, monkeypatch):
     c, ws = owner
     doc_id = _upload(c, "attach-race")
     targets = iter([_page(c, "Attach A"), _page(c, "Attach B")])
-    slowed(monkeypatch, pages_mod, "attachment_props", 0.15, before=True)  # between the check and the write
+    slowed(monkeypatch, pages_mod, "document", 0.15, before=True)  # between the check and the write
     clients = iter([TestClient(app, cookies=c.cookies) for _ in range(2)])
     lock = threading.Lock()
 
@@ -239,7 +240,7 @@ def test_page_for_doc_answers_the_oldest_page(owner):
             position = generate_key_between(blocks_store.last_child_position(conn, "root"), None)
             conn.execute("INSERT INTO unified_blocks (id, parent_id, position, content, properties, "
                          "created_at, updated_at, page_id) VALUES (?, 'root', ?, 't', ?, ?, ?, ?)",
-                         (page_id, position, json.dumps({"doc_id": doc_id}), created, created, page_id))
+                         (page_id, position, json.dumps(doc_props(doc_id)), created, created, page_id))
             blocks_store.touch_page(conn, page_id, "")
         conn.commit()
         assert blocks_store.page_for_doc(conn, doc_id)[0] == "wrOlder"

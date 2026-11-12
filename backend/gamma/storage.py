@@ -44,110 +44,16 @@ from stat import S_ISREG  # not ``import stat``: the module's own stat() would s
 
 from . import config, pdf_meta
 from .db import connect_vaults_db, ws_uploads_dir
+from .documents.formats import EXTENSION_RE
+from .documents.model import page_document, stored_name
 from .logbuf import log
 from .server_settings import check_upload_allowed
 
-ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"}
-IMAGE_EXTENSIONS = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "image/svg+xml": ".svg"}
-IMAGE_MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml"}
-
-# Generic (non-image, non-PDF) files blocks reference as
-# ``[name](/api/uploads/<hash>.<ext>)`` file blocks. POST /api/upload-file
-# takes ANY extension except BLOCKED_EXTENSIONS (a lab shares notebooks, data
-# files, packages — an allowlist can never be complete); this table only picks
-# a better media type than ``application/octet-stream`` for the common ones.
-# Everything outside INLINE_EXTENSIONS is served as a download anyway.
-FILE_MEDIA_TYPES = {
-    ".md": "text/markdown; charset=utf-8",
-    ".txt": "text/plain; charset=utf-8",
-    ".csv": "text/csv; charset=utf-8",
-    ".json": "application/json",
-    ".ink": "application/json",   # handwriting groups (gamma/ink.py)
-    ".yaml": "application/yaml",
-    ".yml": "application/yaml",
-    ".toml": "application/toml",
-    ".xml": "application/xml",
-    ".tex": "application/x-tex",
-    ".bib": "application/x-bibtex",
-    ".py": "text/x-python; charset=utf-8",
-    ".ipynb": "application/x-ipynb+json",
-    ".nb": "application/mathematica",
-    ".m": "text/plain; charset=utf-8",
-    ".html": "text/html; charset=utf-8",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    ".doc": "application/msword",
-    ".xls": "application/vnd.ms-excel",
-    ".ppt": "application/vnd.ms-powerpoint",
-    ".odt": "application/vnd.oasis.opendocument.text",
-    ".ods": "application/vnd.oasis.opendocument.spreadsheet",
-    ".zip": "application/zip",
-    ".gz": "application/gzip",
-    ".tgz": "application/gzip",
-    ".tar": "application/x-tar",
-    ".7z": "application/x-7z-compressed",
-    ".whl": "application/zip",
-    ".h5": "application/x-hdf5",
-    ".hdf5": "application/x-hdf5",
-    ".mp4": "video/mp4",
-    ".mp3": "audio/mpeg",
-    ".wav": "audio/wav",
-    ".webm": "audio/webm",   # a recording's segments (gamma/recording.py): what MediaRecorder gives
-    ".m4a": "audio/mp4",
-    ".ogg": "audio/ogg",
-    ".opus": "audio/ogg",
-}
-# Audio an <audio> element plays straight from /api/uploads/ (a recording's
-# segments, an audio file chip), so it is served inline.
-AUDIO_EXTENSIONS = {".webm", ".m4a", ".mp3", ".ogg", ".opus", ".wav"}
-# Files an OS runs as code when opened — the one kind Gamma refuses to host,
-# on upload and (belt and braces) on serving. Archives and package formats
-# (zip, whl, dmg, deb …) are fine: a lab shares software.
-BLOCKED_EXTENSIONS = {
-    ".exe", ".com", ".scr", ".pif", ".bat", ".cmd", ".msi", ".msix", ".appx",
-    ".dll", ".cpl", ".sys", ".vbs", ".vbe", ".jse", ".wsf", ".wsh", ".hta",
-    ".ps1", ".psm1", ".reg", ".lnk", ".jar", ".app",
-}
-# A stored extension is ``.`` + 1-12 lowercase letters/digits; a name with
-# none (or an odd one) is stored as ``.bin``.
-EXTENSION_RE = re.compile(r"^\.[a-z0-9]{1,12}$")
-# Served inline (rendered by the browser on navigation); everything else gets
-# ``Content-Disposition: attachment``. An SVG opened as a top-level document
-# would run its inline <script> in this origin (stored XSS), so it downloads
-# like html — <img>/<object> embedding still works, inline note images and
-# SVG pictures on a page are unaffected. SANDBOXED_EXTENSIONS additionally
-# get a sandboxing CSP in case a browser renders them anyway.
-INLINE_EXTENSIONS = {".pdf", ".txt", ".md", *(e for e in IMAGE_MEDIA_TYPES if e != ".svg"), *AUDIO_EXTENSIONS}
-SANDBOXED_EXTENSIONS = {".svg", ".html"}
-
-
-def upload_media_type(ext: str) -> str | None:
-    """Media type for a stored upload's extension (lowercase, with the dot),
-    or None when Gamma never stores that kind of file (blocked, malformed).
-    Unknown but well-formed extensions are ``application/octet-stream``."""
-    if ext == ".pdf":
-        return "application/pdf"
-    if ext in BLOCKED_EXTENSIONS or not EXTENSION_RE.match(ext):
-        return None
-    return IMAGE_MEDIA_TYPES.get(ext) or FILE_MEDIA_TYPES.get(ext) or "application/octet-stream"
-
-
-def upload_extension(name: str) -> str:
-    """The stored extension for an uploaded file name: its last suffix,
-    lowercased (``Data.CSV`` → ``.csv``; ``pkg.tar.gz`` → ``.gz``, the full
-    name stays in the link text), ``.bin`` when there is none or it is
-    malformed. Raises ValueError for BLOCKED_EXTENSIONS."""
-    dot = name.rfind(".")
-    ext = name[dot:].lower() if dot > 0 else ""
-    if ext in BLOCKED_EXTENSIONS:
-        raise ValueError(f"{ext} files are not accepted (executable)")
-    return ext if EXTENSION_RE.match(ext) else ".bin"
-
 
 # How a block names a stored file: ``/api/uploads/<name>`` anywhere in its
-# content or properties (an image, a file chip, ``ink_url``, a page's
-# ``source_url``), a page's ``doc_id`` (its PDF, ``<doc_id>.pdf``), and a
+# content or properties (an image, a file chip, ``ink_url``, a document's
+# address), a block's ``doc`` (``stored_name(hash, ext)``: the file it
+# stores, reads in place, caches or shows as a copy), and a
 # highlight's ``pdf_position.doc_id`` and ``pdf_position.prev.doc_id``: the
 # file its rectangles were measured on, which a relocation run reads them
 # from, and the one a dashed placement's review card shows as Before
@@ -161,49 +67,72 @@ def upload_extension(name: str) -> str:
 # (``held=False``). A name is the whole ``<stem>.<ext>`` run: what follows it
 # ("….png." ending a sentence, "?ws=…", "#page=2") is not part of it.
 UPLOAD_REF_RE = re.compile(r"/api/uploads/([0-9A-Za-z_-]+\.[0-9A-Za-z]{1,12})(?![0-9A-Za-z])")
-_DOC_STEM_RE = re.compile(r"^[0-9A-Za-z_-]{1,128}$")
+_DOC_STEM_RE = re.compile(r"^[0-9A-Za-z_-]{1,128}\Z")
 # The doc_id a PDF replacement (routers/pages.py) writes on the highlights
-# of a page that showed its file from a URL alone (blocks_store.attachment_file
-# gives ""; a duplicated page's /api/uploads/ address is its stored file): no
-# stored file to read them from, and no upload has this name (uploads are
-# named by content hash), so it is no reference, and the relocation run
-# places them by their quotes, as for a stored file that is gone
-# (gamma/highlight_relocate.py).
+# of a page that showed its file from an address alone (a doc at ``url``
+# without a hash; a copy's file is its stored file): no stored file to read
+# them from, and no upload has this name (uploads are named by content
+# hash), so it is no reference, and the relocation run places them by their
+# quotes, as for a stored file that is gone (gamma/highlight_relocate.py).
 UNSTORED = "unstored"
 
 
 def upload_refs(content: str, props, *, held: bool = True) -> set[str]:
     """The stored file names one block references. ``props`` is the
     properties dict or its stored JSON text. ``held=False`` leaves out the
-    files a highlight's position holds (``_doc_ids``): only what the block
-    shows."""
+    files a highlight's position holds (``_position_ids``), and the stored
+    name of a ``doc`` that does not check (``_unread_doc_file``): only what
+    the block shows."""
     raw = props if isinstance(props, str) else json.dumps(props or {})
     names = set(UPLOAD_REF_RE.findall(content or "")) if "/api/uploads/" in (content or "") else set()
     if "/api/uploads/" in raw:
         names.update(UPLOAD_REF_RE.findall(raw))
-    if '"doc_id"' in raw:
+    if '"doc"' in raw or '"doc_id"' in raw:
         if isinstance(props, str):
             try:
                 props = json.loads(props)
             except ValueError:
                 props = {}
         if isinstance(props, dict):
-            names.update(f"{doc}.pdf" for doc in _doc_ids(props, held))
+            view = page_document(props)
+            if view and _DOC_STEM_RE.match(view["hash"]):
+                names.add(view["file"])
+            elif view is None and held:
+                names.update(_unread_doc_file(props.get("doc")))
+            names.update(stored_name(doc, ".pdf") for doc in _position_ids(props, held))
     return names
 
 
-def _doc_ids(props: dict, held: bool = True):
-    """The stored PDFs a block's properties name by id: a page's
-    ``doc_id``, and (``held``) a highlight's ``pdf_position.doc_id`` and
-    ``pdf_position.prev.doc_id``. Malformed ids and ``UNSTORED`` name
-    none."""
+def _unread_doc_file(doc):
+    """The stored name a ``doc`` that does not check still names (its
+    ``hash`` and ``ext``, ``.pdf`` when it has none, as a stored file's):
+    held, so a doc no reader can read (a raw writer's, or one with a field
+    a later release adds) never lets its file go."""
+    if not isinstance(doc, dict):
+        return
+    hash, ext = doc.get("hash"), doc.get("ext") or ".pdf"
+    if isinstance(hash, str) and _DOC_STEM_RE.match(hash) and isinstance(ext, str) and EXTENSION_RE.match(ext):
+        yield stored_name(hash, ext)
+
+
+def _position_ids(props: dict, held: bool = True):
+    """The stored PDFs a highlight's position holds (``held``): its
+    ``pdf_position.doc_id`` and ``pdf_position.prev.doc_id``. Malformed ids
+    and ``UNSTORED`` name none."""
     position = props.get("pdf_position") if held else None
     position = position if isinstance(position, dict) else {}
     prev = position.get("prev")
     prev = prev if isinstance(prev, dict) else {}
-    for doc in (props.get("doc_id"), position.get("doc_id"), prev.get("doc_id")):
-        if isinstance(doc, str) and doc != UNSTORED and _DOC_STEM_RE.match(doc):
+    for doc in (position.get("doc_id"), prev.get("doc_id")):
+        if stored_pdf_stem(doc):
             yield doc
+
+
+def stored_pdf_stem(value) -> str:
+    """``value`` when it names a stored PDF by its stem (a highlight's
+    ``pdf_position.doc_id``, a Zotero conflict's kept file), else "":
+    malformed ones and ``UNSTORED`` name none."""
+    return value if isinstance(value, str) and value != UNSTORED and _DOC_STEM_RE.match(value) else ""
 
 
 # Upload filenames are the content sha256 truncated to this many hex chars
@@ -216,7 +145,7 @@ def display_filename(name: str, fallback: str = "") -> str:
 
     Directory pickers may put a relative path in the multipart filename on
     some browsers. Folder placement is carried separately, so neither POSIX
-    nor Windows separators belong in a page title or original_filename.
+    nor Windows separators belong in a page title or a document's name.
     """
     raw = str(name or "").replace("\x00", "").strip().replace("\\", "/")
     leaf = raw.rsplit("/", 1)[-1].strip()
@@ -448,31 +377,13 @@ def put_upload(ws: str, name: str, data: bytes) -> None:
     put(ws, name, data)
 
 
-def pdf_url(doc_id: str) -> str:
-    """Where the stored PDF ``doc_id`` is served: what a page carrying it
-    shows unless it stores a ``source_url`` of its own
-    (blocks_store.page_attachment)."""
-    return f"/api/uploads/{doc_id}.pdf"
-
-
-_PDF_URL_RE = re.compile(r"/api/uploads/([0-9A-Za-z_-]{1,128})\.pdf")
-
-
-def pdf_url_doc_id(url: str) -> str:
-    """The doc id of the stored PDF ``url`` serves when it is exactly
-    ``pdf_url``'s form (a duplicated page shows its file so, by its
-    ``source_url`` alone), else ``""``."""
-    m = _PDF_URL_RE.fullmatch(url or "")
-    return m.group(1) if m else ""
-
-
 def store_pdf(ws: str, data: bytes) -> tuple[str, bool]:
     """Store PDF bytes under their content hash in the workspace (callers
     validate with :func:`is_pdf` first). Returns ``(doc_id,
-    already_existed)``; the file is at ``pdf_url(doc_id)``. Dedup first: a
-    re-upload of a stored file adds no bytes."""
+    already_existed)``; the file is ``stored_name(doc_id, ".pdf")``. Dedup
+    first: a re-upload of a stored file adds no bytes."""
     doc_id = content_digest(data)
-    already_existed = _store(ws, f"{doc_id}.pdf", data)
+    already_existed = _store(ws, stored_name(doc_id, ".pdf"), data)
     pdf_meta.schedule(ws, doc_id)  # the viewer's manifest, ready before the first open
     return doc_id, already_existed
 
@@ -483,7 +394,7 @@ def store_pdf_path(ws: str, path: Path, size: int, doc_id: str) -> tuple[str, bo
     ``size`` bytes whose content digest is ``doc_id`` (the caller hashed
     them as they arrived and checked the PDF header), so storing it is a
     rename, never a copy. ``path`` is consumed either way."""
-    already_existed = _store_path(ws, f"{doc_id}.pdf", path, size)
+    already_existed = _store_path(ws, stored_name(doc_id, ".pdf"), path, size)
     pdf_meta.schedule(ws, doc_id)
     return doc_id, already_existed
 
@@ -577,7 +488,7 @@ def store_file(ws: str, data: bytes, ext: str) -> tuple[str, bool]:
     """Store any upload under its content hash as ``<sha24><ext>`` (``ext``
     lowercase with the dot, already validated by the caller). Returns
     ``(filename, already_existed)``."""
-    filename = f"{content_digest(data)}{ext}"
+    filename = stored_name(content_digest(data), ext)
     return filename, _store(ws, filename, data)
 
 
@@ -585,7 +496,7 @@ def store_file_path(ws: str, path: Path, size: int, digest: str, ext: str) -> tu
     """:func:`store_file` for a file assembled on disk (an upload in parts,
     gamma/upload_parts.py) whose content digest is ``digest``: stored as
     ``<digest><ext>`` by a rename; ``path`` is consumed either way."""
-    filename = f"{digest}{ext}"
+    filename = stored_name(digest, ext)
     return filename, _store_path(ws, filename, path, size)
 
 

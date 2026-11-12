@@ -246,7 +246,7 @@ _MD5_MAX = 512
 def file_md5(src) -> str:
     """The MD5 of a stored PDF (a path) or of PDF bytes, lowercase hex, as
     Zotero's attachment ``md5`` spells it; "" for a file that can't be
-    read. A path's is kept by (path, size, mtime_ns), never by doc id: a
+    read. A path's is kept by (path, size, mtime_ns), never by hash: a
     strip rewrites a stored file in place under the same name."""
     if isinstance(src, (bytes, bytearray)):
         return hashlib.md5(src).hexdigest()

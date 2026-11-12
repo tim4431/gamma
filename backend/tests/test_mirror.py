@@ -5,6 +5,7 @@ an in-process TestClient carrying the write token."""
 
 import io
 import json
+import sqlite3
 import time
 from contextlib import closing
 
@@ -12,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 from fractional_indexing import generate_key_between
 
-from conftest import account_of, login, make_user
+from conftest import account_of, doc_props, login, make_user
 from gamma import migrations, sync_engine
 from gamma.db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
 from gamma.integrations import create_token
@@ -311,7 +312,7 @@ def test_files_travel_by_hash():
     page = remote.client.post(f"/api/blocks/by-doc/{up['doc_id']}", json={"default_title": "paper.pdf"}).json()
     _sync(local)
     assert (ws_uploads_dir(local.ws) / f"{up['doc_id']}.pdf").read_bytes() == PDF
-    assert local.pages()[page["id"]]["properties"]["doc_id"] == up["doc_id"]
+    assert local.pages()[page["id"]]["properties"]["doc"]["hash"] == up["doc_id"]
     # a file added on the local copy reaches the remote when its block does
     img = local.client.post("/api/upload-file", files={"file": ("pic.png", io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"p" * 100), "image/png")}).json()
     name = img["url"].rsplit("/", 1)[1]
@@ -441,9 +442,11 @@ def test_rounds_reuse_whoami_until_one_fails(monkeypatch):
 def test_a_remote_with_another_data_format_pauses_the_round(monkeypatch):
     """A remote whose feed names another workspace data format than this
     server's (one of the two runs a release with a workspace migration step
-    the other lacks) neither gives nor gets anything: the round stops before
-    any write, its status says which side to update, local edits wait, and
-    the next round once the two agree carries both sides' changes."""
+    the other lacks: a server from before step 52, which put a page's
+    document in one property, names 44) neither gives nor gets anything:
+    the round stops before any write, its status says which side to update,
+    local edits wait, and the next round once the two agree carries both
+    sides' changes."""
     remote, local, _ = _pair()
     page = remote.page("Formats")
     remote.insert(page["id"], "fm1", "text")
@@ -463,7 +466,7 @@ def test_a_remote_with_another_data_format_pauses_the_round(monkeypatch):
     monkeypatch.setattr(sync_engine, "default_fetch", fetch)
     remote.ops(page["id"], [{"op": "set", "id": "fm1", "content": "text (remote)"}])
     local.insert(page["id"], "fm2", "made here")
-    for there, update in ((here + 1, "this server is updated"), (here - 1, "the remote is updated")):
+    for there, update in ((here + 1, "this server is updated"), (44, "the remote is updated")):
         told[0] = there
         status = local.client.post(f"/api/mirrors/{local.ws}/sync?wait=1").json()["status"]
         assert status["version_gap"] == {"here": here, "remote": there}
@@ -476,6 +479,116 @@ def test_a_remote_with_another_data_format_pauses_the_round(monkeypatch):
     status = _sync(local)
     assert "version_gap" not in status
     assert local.texts(page["id"]) == remote.texts(page["id"]) == {"fm1": "text (remote)", "fm2": "made here"}
+
+
+# The generated doc_id of release 51: a page's flat doc_id.
+DOC_ID_51 = "doc_id TEXT GENERATED ALWAYS AS (json_extract(properties, '$.doc_id')) VIRTUAL"
+
+
+def _flat(props: dict) -> dict:
+    """``props`` as release 51 kept a page's document: in ``doc_id``,
+    ``source_url`` and ``original_filename`` (a duplicated page's as the
+    address of its original's file)."""
+    doc = props.get("doc")
+    if not isinstance(doc, dict):
+        return props
+    out = {k: v for k, v in props.items() if k != "doc"}
+    if doc.get("copy"):
+        out["source_url"] = f"/api/uploads/{doc['hash']}{doc['ext']}"
+    elif doc["hash"]:
+        out["doc_id"] = doc["hash"]
+    if doc.get("url"):
+        out["source_url"] = doc["url"]
+    if doc["name"]:
+        out["original_filename"] = doc["name"]
+    return out
+
+
+def _as_release_51(ws: str) -> None:
+    """The workspace's pages.db put back as release 51 left it: its rows'
+    and its mirror bases' documents in the flat keys, the old generated
+    doc_id, stamp 50."""
+    from unittest import mock
+
+    from gamma import db
+    from gamma.normalize import block_columns
+
+    db.close_workspace_connections(ws)
+    with closing(sqlite3.connect(str(db.ws_dir(ws) / "pages.db"))) as conn:
+        db.register_functions(conn)
+        with mock.patch.dict(db.BLOCK_HOT_COLUMNS, {"doc_id": DOC_ID_51}):
+            block_columns(conn)
+        for bid, raw in conn.execute("SELECT id, properties FROM unified_blocks WHERE properties LIKE '%\"doc\"%'"
+                                     ).fetchall():
+            conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps(_flat(json.loads(raw))), bid))
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'sync_pages'").fetchone():
+            for page_id, raw in conn.execute("SELECT page_id, base FROM sync_pages").fetchall():
+                base = json.loads(raw)
+                for key, entry in base.items():
+                    if key != "~pending":
+                        entry["props"] = _flat(entry.get("props") or {})
+                conn.execute("UPDATE sync_pages SET base = ? WHERE page_id = ?", (json.dumps(base), page_id))
+        conn.execute("PRAGMA user_version = 51")
+        conn.commit()
+
+
+def _upgraded(ws: str) -> None:
+    """The workspace steps above 51 run on its pages.db, as its first open
+    after the upgrade runs them (migrations.upgrade_workspace, less the
+    snapshot)."""
+    from gamma import db
+
+    with closing(sqlite3.connect(str(db.ws_dir(ws) / "pages.db"))) as conn:
+        db.register_functions(conn)
+        migrations.run_workspace_steps(ws, conn, None, migrations.workspace_steps_after(51))
+
+
+def test_a_pair_upgraded_across_the_documents_step_has_nothing_to_send_for_the_shape(monkeypatch):
+    """A remote and its copy that synced on release 51 (a page's document in
+    the flat keys, in the rows and in the copy's bases) both upgraded: step
+    52 gives the rows and the bases the same doc, so the pages read as they
+    did and the next round, with an edit on each side, carries the edits
+    and nothing of the page's document."""
+    remote, local, _ = _pair()
+    up = remote.client.post("/api/uploads", files={"file": ("paper.pdf", io.BytesIO(PDF), "application/pdf")}).json()
+    paper = remote.client.post(f"/api/blocks/by-doc/{up['doc_id']}",
+                               json={"default_title": "paper.pdf", "original_filename": "paper.pdf"}).json()
+    copy = remote.page("A copy", **doc_props(url=f"/api/uploads/{up['doc_id']}.pdf"))
+    web = remote.page("From the web", **doc_props(url="https://example.org/mr-doc.pdf"))
+    remote.insert(paper["id"], "mrDoc1", "a note")
+    _sync(local)
+    ids = (paper["id"], copy["id"], web["id"])
+
+    def props_of(side):
+        return {pid: side.client.get(f"/api/blocks/{pid}").json()["properties"] for pid in ids}
+
+    before = props_of(local)
+    assert before == props_of(remote)
+    assert before[paper["id"]]["doc"]["hash"] == up["doc_id"] and before[copy["id"]]["doc"]["copy"] is True
+    for ws in (remote.ws, local.ws):
+        _as_release_51(ws)
+        _upgraded(ws)
+    assert props_of(remote) == props_of(local) == before
+    with connect_pages_db(local.ws) as conn:
+        bases = {pid: json.loads(conn.execute("SELECT base FROM sync_pages WHERE page_id = ?", (pid,)).fetchone()[0])
+                 for pid in ids}
+    assert {pid: bases[pid][pid]["props"] for pid in ids} == before  # the bases rewritten with the rows
+    pushed, inner = [], sync_engine.default_fetch
+
+    def fetch(method, path, body, headers):
+        if method == "POST" and path.startswith("/api/pages/") and path.endswith("/ops"):
+            pushed.extend(json.loads(body)["ops"])
+        return inner(method, path, body, headers)
+
+    monkeypatch.setattr(sync_engine, "default_fetch", fetch)
+    remote.ops(paper["id"], [{"op": "set", "id": "mrDoc1", "content": "a note (remote)"}])
+    local.insert(paper["id"], "mrDoc2", "made here")
+    _sync(local)
+    assert pushed and not [op for op in pushed if "props" in op and op.get("id") in ids]
+    assert local.texts(paper["id"]) == remote.texts(paper["id"]) == {"mrDoc1": "a note (remote)",
+                                                                       "mrDoc2": "made here"}
+    assert props_of(remote) == props_of(local) == before
+    assert local.client.get(f"/api/mirrors/{local.ws}").json()["conflicts_open"] == 0
 
 
 def test_pull_only_with_a_read_token():

@@ -50,8 +50,8 @@ export function useRefPicker({ editorRef, excludeId, pages, rootId, lookupBlock,
     const [np, nb] = pickerCounts(pageHits.length, blockHits.length);
     return [
       ...pageHits.slice(0, np).map((p) => ({
-        kind: "page", id: p.id, title: p.content, isPdf: !!p._attachment,
-        meta: [pageKindLabel(p._attachment), p._path || p._folderChips?.[0]?.name].filter(Boolean).join(" · "),
+        kind: "page", id: p.id, title: p.content, format: p._doc?.format || "",
+        meta: [pageKindLabel(p._doc), p._path || p._folderChips?.[0]?.name].filter(Boolean).join(" · "),
       })),
       ...blockHits.slice(0, nb).map((b) => ({
         kind: "block", id: b.id, title: refBlockText(b.content, labelOf) || t("(empty)"), meta: refBlockPath(b), block: b,

@@ -9,7 +9,7 @@ indexing job."""
 
 import sqlite3
 
-from conftest import login, make_folder, make_label, make_page, make_user, workspace_of
+from conftest import doc_props, login, make_folder, make_label, make_page, make_user, workspace_of
 from gamma.db import connect_data_db, connect_pages_db
 from gamma.pdf_index import store_doc
 from gamma.textnorm import normalize_text
@@ -38,7 +38,7 @@ def _search(c, q, **params):
 def test_search_mixes_notes_and_pdf_hits():
     make_user("searcher", "pw")
     c = login("searcher", "pw")
-    paper = make_page(c, "Wombat paper", properties={"doc_id": "srchdoc001", "folders": [make_folder(c, "zoo")]})
+    paper = make_page(c, "Wombat paper", properties={**doc_props("srchdoc001"), "folders": [make_folder(c, "zoo")]})
     _index_pdf("searcher", "srchdoc001", [(4, "the wombat considered superconducting qubits")])
     notes = make_page(c, "Field notes", properties={"folders": [make_folder(c, "zoo/trips")]})
     top = _block(c, notes["id"], "saw a wombat at dusk")
@@ -260,11 +260,11 @@ def test_pdf_search_post_keeps_to_the_pages_it_names():
     as the GET has them, and ``indexing`` over those pages alone."""
     make_user("srch_pdfpost", "pw")
     c = login("srch_pdfpost", "pw")
-    book = make_page(c, "Big book", properties={"doc_id": "ppbook001"})
+    book = make_page(c, "Big book", properties=doc_props("ppbook001"))
     _index_pdf("srch_pdfpost", "ppbook001", [(p, f"axolotl axolotl on page {p}") for p in range(1, 11)])
-    paper = make_page(c, "Paper", properties={"doc_id": "pppaper01"})
+    paper = make_page(c, "Paper", properties=doc_props("pppaper01"))
     _index_pdf("srch_pdfpost", "pppaper01", [(1, "an axolotl in the paper")])
-    unindexed = make_page(c, "Not indexed", properties={"doc_id": "ppmissing1"})
+    unindexed = make_page(c, "Not indexed", properties=doc_props("ppmissing1"))
 
     def hits(status=200, **body):
         r = c.post("/api/pdf-search", json={"q": "axolotl", **body})
@@ -294,7 +294,7 @@ def test_pdf_search_post_keeps_to_the_pages_it_names():
 
 def test_pdf_search_hits_indexed_docs(guest):
     user = guest.get("/api/session").json()["user"]
-    make_page(guest, "FTS paper", properties={"doc_id": "ftsdoc001"})
+    make_page(guest, "FTS paper", properties=doc_props("ftsdoc001"))
     _index_pdf(user, "ftsdoc001", [(3, "the wombat considered superconducting qubits carefully")])
 
     r = guest.get("/api/pdf-search", params={"q": "wombat superconducting"})
@@ -312,7 +312,7 @@ def test_pdf_search_is_separator_tolerant(guest):
     """"3000" must find "3,000-qubit": the index stores normalized text and
     the query is normalized the same way."""
     user = guest.get("/api/session").json()["user"]
-    make_page(guest, "Qubit paper", properties={"doc_id": "ftsdoc002"})
+    make_page(guest, "Qubit paper", properties=doc_props("ftsdoc002"))
     _index_pdf(user, "ftsdoc002",
                 [(1, "Continuous operation of a coherent 3,000-qubit system")])
 
@@ -331,13 +331,13 @@ def test_pdf_search_scope_pages_and_per_paper_cap():
     c = login("srch_pdfpages", "pw")
     user = "srch_pdfpages"
     folder, label = make_folder(c, "zoo"), make_label(c, "amphibians")
-    book = make_page(c, "Big book", properties={"doc_id": "pgbook001"})
+    book = make_page(c, "Big book", properties=doc_props("pgbook001"))
     _index_pdf(user, "pgbook001", [(p, f"axolotl axolotl on page {p}") for p in range(1, 41)])
     for n in range(6):
-        make_page(c, f"Paper {n}", properties={"doc_id": f"pgpaper00{n}"})
+        make_page(c, f"Paper {n}", properties=doc_props(f"pgpaper00{n}"))
         _index_pdf(user, f"pgpaper00{n}", [(1, f"an axolotl in paper {n} among many other words here"),
                                            (2, f"one more axolotl in paper {n} with yet more words around it")])
-    filed = make_page(c, "Filed paper", properties={"doc_id": "pgfiled01", "folders": [folder], "labels": [label]})
+    filed = make_page(c, "Filed paper", properties={**doc_props("pgfiled01"), "folders": [folder], "labels": [label]})
     _index_pdf(user, "pgfiled01", [(7, "a lone axolotl " + "and plenty of unrelated words " * 20)])
 
     def hits(**params):
@@ -377,7 +377,7 @@ def test_stale_index_version_counts_as_missing(guest):
     from gamma.pdf_index import ensure_schema
 
     user = guest.get("/api/session").json()["user"]
-    make_page(guest, "Stale paper", properties={"doc_id": "ftsdoc003"})
+    make_page(guest, "Stale paper", properties=doc_props("ftsdoc003"))
     with sqlite3.connect(ws_db_path(workspace_of(user), "data.db")) as conn:
         ensure_schema(conn)
         conn.execute("INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) "
@@ -393,7 +393,7 @@ def test_search_reindex_marks_everything_stale(guest):
     from gamma.textnorm import INDEX_VERSION
 
     user = guest.get("/api/session").json()["user"]
-    make_page(guest, "Rebuild me", properties={"doc_id": "ftsdoc004"})
+    make_page(guest, "Rebuild me", properties=doc_props("ftsdoc004"))
     _index_pdf(user, "ftsdoc004", [(1, "some indexed text")])
 
     r = guest.post("/api/search-reindex")
@@ -415,8 +415,8 @@ def test_search_reindex_targeted_single_doc(guest):
     from gamma.textnorm import INDEX_VERSION
 
     user = guest.get("/api/session").json()["user"]
-    make_page(guest, "Keep me", properties={"doc_id": "ftsdoc005"})
-    make_page(guest, "Reindex me", properties={"doc_id": "ftsdoc006"})
+    make_page(guest, "Keep me", properties=doc_props("ftsdoc005"))
+    make_page(guest, "Reindex me", properties=doc_props("ftsdoc006"))
     _index_pdf(user, "ftsdoc005", [(1, "already indexed text")])
 
     r = guest.post("/api/search-reindex", json={"doc_ids": ["ftsdoc006", "not-my-doc"]})
@@ -443,7 +443,7 @@ def test_indexing_is_the_workspaces_job(guest):
     papers counted, one row per workspace however often it runs."""
     from gamma import jobs
 
-    make_page(guest, "Indexed as a job", properties={"doc_id": "ftsjob001"})
+    make_page(guest, "Indexed as a job", properties=doc_props("ftsjob001"))
     for _ in range(2):
         for job in _indexing_jobs(guest):
             jobs.wait(job["id"])
@@ -468,7 +468,7 @@ def test_a_running_indexer_is_stopped_between_papers(guest, monkeypatch):
     user = guest.get("/api/session").json()["user"]
     ids = [f"ftsstop00{i}" for i in range(3)]
     for doc_id in ids:
-        make_page(guest, f"Stop at {doc_id}", properties={"doc_id": doc_id})
+        make_page(guest, f"Stop at {doc_id}", properties=doc_props(doc_id))
     reached, release, seen = threading.Event(), threading.Event(), []
 
     def slow(ws, doc_id):

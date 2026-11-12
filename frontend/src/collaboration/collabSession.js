@@ -43,8 +43,9 @@
 //     out again ahead of the batch, where this tab has it, rather than the
 //     whole queue being dropped and the page reloaded without our edits;
 //   - survives a batch the page changed under (the server's `conflict`: a
-//     block gone, moved to another page, a move making a cycle): the op it
-//     names and every op depending on that block are dropped, the rest goes
+//     block gone, moved to another page, a move making a cycle) or with an
+//     op only a work folder's vault makes (`locked`): the op it names, and
+//     for a block gone every op depending on it, are dropped, the rest goes
 //     out again and the page is refetched; every fetched tree gets this
 //     tab's unsaved edits laid over it (`overlay`), so a reload never shows
 //     — or bases a diff on — a page without them;
@@ -65,6 +66,7 @@ import {
   PLACED, applyOps, diffTrees, indexTree, propsPatch, pushOp, seedPositions, someNode, withMerges, withTexts,
 } from "../shared/model/blockOps.js";
 import { t } from "../shared/i18n/i18n.js";
+import { refusalWords } from "./conflictKinds.js";
 
 export const TYPING_DEBOUNCE_MS = 350;
 export const STRUCTURAL_DEBOUNCE_MS = 80;
@@ -659,14 +661,15 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     const failed = batch.ops[data.index];
     if (data.conflict && failed) {
       // The page changed under the batch (the block is gone, lives in
-      // another page, the move would make a cycle): that op no longer
-      // applies, nor does any op of the batch or the queue behind it on a
-      // vanished block (its subtree) — they all go at once, not one per
-      // round trip. The rest goes out again — text edits keep the base they
-      // were made from, so the server merges them — and the page is
+      // another page, the move would make a cycle), or the op is one only a
+      // work folder's vault makes (`locked`): that op no longer applies,
+      // nor, for a vanished block, does any op of the batch or the queue
+      // behind it on that block (its subtree) — they all go at once, not one
+      // per round trip. The rest goes out again — text edits keep the base
+      // they were made from, so the server merges them — and the page is
       // refetched: this screen still shows the refused change.
       let rest = batch.ops.filter((_, i) => i !== data.index), dropped = [failed];
-      if (data.conflict !== "cycle") {
+      if (data.conflict !== "cycle" && data.conflict !== "locked") {
         const named = /^(block|parent) (\S+) is outside this page/.exec(err?.message || "");
         const gone = new Set([data.missing || named?.[2] || failed.id]);
         if (failed.op === "insert") gone.add(failed.id);
@@ -679,9 +682,10 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       }
       forget(s, dropped);
       s.out = rest.length ? { ...batch, id: nextBatchId(), ops: rest } : null;
-      if (dropped.some((op) => op.op !== "delete" && op.op !== "move")) {
+      const own = refusalWords(data.conflict, typeof data.detail === "string" ? data.detail : "");
+      if (own || dropped.some((op) => op.op !== "delete" && op.op !== "move")) {
         // Text or a new note that can't be saved any more: never silently.
-        const text = t("Someone else deleted or moved a note you were editing — that edit couldn't be saved.");
+        const text = own || t("Someone else deleted or moved a note you were editing — that edit couldn't be saved.");
         o().onStatus?.(text);
         o().onSaveNotice?.(text, "rejected");
       }

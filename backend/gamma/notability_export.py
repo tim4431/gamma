@@ -36,6 +36,8 @@ from . import ink as inkmod
 from . import notability as nb
 from . import notability_map as nmap
 from . import notability_write as nw
+from .documents.formats import IMAGE_EXTENSIONS
+from .documents.model import page_document, pdf_file_hash, stored_name
 from .note_markup import alt_and_width
 from .notebook import DEFAULT_PAPER, normalize_paper, sheets_of
 from .pdf_image import svg_png
@@ -43,7 +45,6 @@ from .pdf_export import display_size, page_frame
 from .pdf_typeset import BOLD, ITALIC, LINK, MARK, MONO, STRIKE, UNDERLINE
 from .picture import (MIN_SIDE, URL_RE, caption_text, image_size, is_picture, normalize_picture, picture_page,
                       picture_type, stack_order)
-from .storage import IMAGE_EXTENSIONS
 from .text_box import PAD, box_page, normalize_text_box, plain_text
 
 PRIVATE_FORMAT = "gamma-notability"
@@ -197,7 +198,8 @@ class _Page:
         props = self.root.get("properties") or {}
         title = nb.note_title("", self.root.get("content") or "", None, "")
         created = _stamp(self.root.get("created_at")) or datetime.now(UTC)
-        doc_id = props.get("doc_id")
+        view = page_document(props)
+        doc_id = pdf_file_hash(view)  # the stored PDF it shows, a duplicated page's too
         sheets = [] if doc_id else sheets_of(self.blocks, self.page_id)
         on_sheet = {b["id"]: n for n, sheet in enumerate(sheets) for b in sheet["blocks"]}
         if doc_id:
@@ -288,11 +290,7 @@ class _Page:
     def _pdf(self, doc_id: str, title: str, created) -> list:
         """A PDF page's note: the PDF, all of its pages in order; W the
         first page's width, so its points are document units."""
-        from .db import safe_doc_id
-        try:
-            path = self.stored(f"{safe_doc_id(doc_id)}.pdf")
-        except ValueError:
-            raise ExportError("invalid document id") from None
+        path = self.stored(stored_name(doc_id, ".pdf"))
         if path is None:
             raise ExportError("PDF not stored on the server")
         try:

@@ -21,6 +21,7 @@ import threading
 
 from . import pdf_text
 from .db import connect_data_db, page_now, safe_doc_id
+from .documents.model import stored_name
 from .logbuf import log
 
 # Bump when the stored shape changes; older rows are recomputed lazily.
@@ -77,7 +78,7 @@ def _compute(ws: str, doc_id: str) -> dict | None:
     from .storage import find_upload_file, is_linked  # local: storage imports this module
 
     try:
-        name = f"{safe_doc_id(doc_id)}.pdf"
+        name = stored_name(safe_doc_id(doc_id), ".pdf")
     except ValueError:
         return None
     path = find_upload_file(name, ws)

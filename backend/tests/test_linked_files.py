@@ -23,7 +23,8 @@ import pytest
 
 import pymupdf
 
-from conftest import account_of, fresh_client, login, make_folder, make_label, make_page, make_user, workspace_of
+from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_label, make_page, make_user,
+                      workspace_of)
 from gamma import (ai_tools, app as app_mod, backups, config, db, db_maintenance, folder_links, gamma_sync, integrity, jobs,
                    linked_files, offsite, pdf_index, pdf_meta, seed, storage, upload_gc, workspaces, ws_backup)
 from gamma.ai_context import pdf_path
@@ -125,7 +126,7 @@ def test_a_pdf_opened_is_read_where_it_is_and_copied_nowhere(owner, ws, disk):
     assert answer["workspace"] == ws and answer["created"] is True and answer["title"] == "Wombats 2024"
     page = answer["page"]
     props = _props(owner, page)
-    assert props["doc_id"] == doc and props["linked_file"] is True and props["original_filename"] == "Wombats 2024.pdf"
+    assert props["doc"] == {"format": "pdf", "name": "Wombats 2024.pdf", "hash": doc, "ext": ".pdf", "at": "path"}
     assert "auto_title" not in props and props["parent_page"] == _opened_files(ws)
     assert page in _inside(owner, ws)
     assert _state(owner, page) == {"vault": None, "reader": {"path": str(f.resolve()), "missing": False, "mine": True}}
@@ -171,7 +172,7 @@ def test_opening_a_file_again_opens_its_page_and_brings_it_to_the_top(owner, ws,
 
     # touched since, the same bytes: the same page, and it reads again
     _write(first_file, first_file.read_bytes(), age=20)
-    name = f"{_props(owner, first)['doc_id']}.pdf"
+    name = f"{_props(owner, first)['doc']['hash']}.pdf"
     assert owner.get(f"/api/uploads/{name}").status_code == 404
     assert _opened(owner, first_file)["page"] == first
     assert owner.get(f"/api/uploads/{name}").status_code == 200
@@ -183,8 +184,8 @@ def test_a_file_changed_since_it_was_read_is_taken_when_it_is_opened_again(owner
     _write(f, _pdf("LF the next draft"), age=20)
     again = _opened(owner, f)
     assert again["page"] == page and again["created"] is False
-    assert _props(owner, page)["doc_id"] == storage.content_digest(f.read_bytes())
-    assert _rows(ws, page) == [(f"{_props(owner, page)['doc_id']}.pdf", str(f.resolve()))]
+    assert _props(owner, page)["doc"]["hash"] == storage.content_digest(f.read_bytes())
+    assert _rows(ws, page) == [(f"{_props(owner, page)['doc']['hash']}.pdf", str(f.resolve()))]
 
 
 def test_the_same_bytes_in_two_places_are_two_pages_and_either_path_reads(owner, ws, disk):
@@ -205,8 +206,8 @@ def test_the_same_bytes_in_two_places_are_two_pages_and_either_path_reads(owner,
     _write(b, _pdf("LF the copy moved on"), age=20)
     assert storage.open_path(ws, name) is None
     linked_files.follow(ws, name)
-    assert _props(owner, second["page"])["doc_id"] == storage.content_digest(b.read_bytes())
-    assert _props(owner, first["page"])["doc_id"] == name[:-4]          # the other one stays what it was
+    assert _props(owner, second["page"])["doc"]["hash"] == storage.content_digest(b.read_bytes())
+    assert _props(owner, first["page"])["doc"]["hash"] == name[:-4]          # the other one stays what it was
 
 
 def test_a_file_that_is_a_vault_opens_the_vault_s_page(owner, ws, disk):
@@ -234,10 +235,10 @@ def test_bytes_the_workspace_stores_open_their_page(owner, disk):
     f, data, doc = _disk_pdf(disk, "stored.pdf", "LF in the library already")
     up = owner.post("/api/uploads", files={"file": ("paper.pdf", data, "application/pdf")})
     assert up.json()["doc_id"] == doc
-    page = make_page(owner, "LF library paper", {"doc_id": doc})
+    page = make_page(owner, "LF library paper", doc_props(doc))
     answer = _opened(owner, f)
     assert answer["page"] == page["id"] and answer["created"] is False and answer["title"] == "LF library paper"
-    assert "linked_file" not in _props(owner, page["id"])
+    assert _props(owner, page["id"])["doc"]["at"] == "store"
 
 
 def test_a_clone_takes_no_new_opened_file(disk):
@@ -275,7 +276,7 @@ def test_a_file_changed_while_its_page_was_deleted_is_taken_when_it_is_opened(ow
 
     again = _opened(owner, f)
     assert again["page"] == page and again["created"] is False
-    assert _props(owner, page)["doc_id"] == storage.content_digest(new)
+    assert _props(owner, page)["doc"]["hash"] == storage.content_digest(new)
     assert _rows(ws, page) == [(f"{storage.content_digest(new)}.pdf", str(f.resolve()))]
 
 
@@ -290,7 +291,7 @@ def test_locate_is_refused_a_file_a_page_has_not_caught_up_with(owner, ws, disk)
     r = owner.post(f"/api/folder-links/opened/{seeker}/locate", json={"path": str(f)})
     assert r.status_code == 400 and "Another opened page" in r.json()["detail"]
     linked_files.follow(ws, f"{old}.pdf")
-    assert _props(owner, behind)["doc_id"] == storage.content_digest(new)
+    assert _props(owner, behind)["doc"]["hash"] == storage.content_digest(new)
     assert _rows(ws, seeker) == seeker_rows
 
 
@@ -312,7 +313,7 @@ def test_a_page_given_another_pdf_keeps_it_when_its_old_file_is_opened(owner, ws
     _write(f, _pdf("LF the old file changed since"), age=20)
     changed = _opened(owner, f)
     assert changed["created"] is True and changed["page"] != page
-    assert _props(owner, page)["doc_id"] == mine and storage.exists(ws, f"{mine}.pdf")
+    assert _props(owner, page)["doc"]["hash"] == mine and storage.exists(ws, f"{mine}.pdf")
     assert _rows(ws, page) == []
     with connect_pages_db(ws) as conn:                                     # and no short life for it
         assert not conn.execute("SELECT 1 FROM upload_retention WHERE name = ?", (f"{mine}.pdf",)).fetchone()
@@ -338,7 +339,7 @@ def test_a_library_pdf_added_never_finds_a_linked_page(owner, disk):
     made = owner.post(f"/api/blocks/by-doc/{doc}", json={"default_title": "paper"})
     assert made.status_code == 200 and made.json()["id"] != linked
     assert owner.get(f"/api/blocks/by-doc/{doc}").json()["id"] == made.json()["id"]
-    assert _props(owner, linked)["linked_file"] is True
+    assert _props(owner, linked)["doc"]["at"] == "path"
 
 
 @pytest.mark.parametrize("attach", ["post", "put"])
@@ -348,7 +349,7 @@ def test_bytes_a_linked_page_holds_are_refused_to_no_other_page(owner, disk, att
     page = make_page(owner, f"LF attach {attach}")
     r = getattr(owner, attach)(f"/api/pages/{page['id']}/attachment", json={"doc_id": doc})
     assert r.status_code == 200, r.text
-    assert _props(owner, page["id"])["doc_id"] == doc
+    assert _props(owner, page["id"])["doc"]["hash"] == doc
 
 
 def test_a_gamma_merge_adds_its_page_beside_a_linked_page_of_the_same_bytes(owner, ws, disk, tmp_path):
@@ -356,7 +357,7 @@ def test_a_gamma_merge_adds_its_page_beside_a_linked_page_of_the_same_bytes(owne
     donor = login("lf_donor", "pw")
     data = _pdf("LF a paper with notes elsewhere")
     doc = donor.post("/api/uploads", files={"file": ("p.pdf", data, "application/pdf")}).json()["doc_id"]
-    page = make_page(donor, "LF the donor's paper", {"doc_id": doc})
+    page = make_page(donor, "LF the donor's paper", doc_props(doc))
     donor.post("/api/blocks", json={"parent_id": page["id"], "content": "the donor's note"}).raise_for_status()
     bundle = donor.get(f"/api/pages/{page['id']}/export", params={"mode": "gamma"}).content
 
@@ -374,7 +375,7 @@ def test_a_gamma_merge_adds_its_page_beside_a_linked_page_of_the_same_bytes(owne
     assert r.json()["pages_added"] == 1 and r.json()["pages_skipped"] == 0
     merged = owner.get(f"/api/blocks/by-doc/{doc}").json()
     assert merged["id"] != linked and merged["content"] == "LF the donor's paper"
-    assert _props(owner, linked)["linked_file"] is True
+    assert _props(owner, linked)["doc"]["at"] == "path"
 
 
 def test_a_chip_and_a_clip_never_find_a_linked_page(owner, ws, disk):
@@ -388,7 +389,7 @@ def test_a_chip_and_a_clip_never_find_a_linked_page(owner, ws, disk):
         assert pages_for_docs(conn, [doc]) == {}
         assert find_page(conn, doi="10.1/lf") is None and find_page(conn, urls=(source,)) is None
     stored = owner.post("/api/uploads", files={"file": ("c.pdf", data, "application/pdf")}).json()["doc_id"]
-    library = make_page(owner, "LF the library's copy", {"doc_id": stored})
+    library = make_page(owner, "LF the library's copy", doc_props(stored))
     with connect_pages_db(ws) as conn:
         assert pages_for_docs(conn, [doc])[doc]["id"] == library["id"]
 
@@ -410,11 +411,11 @@ def test_a_file_changed_on_disk_becomes_the_page_s_new_pdf(owner, ws, disk, monk
     monkeypatch.setattr(storage, "linked_moved", [lambda ws, name: heard.append((ws, name))])
     _write(f, new_bytes)
     assert owner.get(f"/api/uploads/{old}.pdf").status_code == 404          # the old name, meanwhile
-    assert set(heard) == {(ws, f"{old}.pdf")} and _props(owner, page)["doc_id"] == old   # told, and nothing done in the read
+    assert set(heard) == {(ws, f"{old}.pdf")} and _props(owner, page)["doc"]["hash"] == old   # told, and nothing done in the read
 
     linked_files.follow(ws, f"{old}.pdf")
     props = _props(owner, page)
-    assert props["doc_id"] == new and props["linked_file"] is True and props["original_filename"] == "build.pdf"
+    assert props["doc"]["hash"] == new and props["doc"]["at"] == "path" and props["doc"]["name"] == "build.pdf"
     assert owner.get(f"/api/uploads/{new}.pdf").content == new_bytes
     assert owner.get(f"/api/uploads/{old}.pdf").status_code == 404
     assert _rows(ws, page) == [(f"{new}.pdf", str(f.resolve()))] and not storage.exists(ws, f"{new}.pdf")
@@ -442,7 +443,7 @@ def test_a_replacement_whose_highlights_could_not_be_placed_says_so(owner, ws, d
         patch.setattr(pages_mod, "_start_relocation", lambda *a, **kw: (None, reason))
         _write(f, moved, age=20)
         linked_files.follow(ws, f"{old}.pdf")
-        assert _props(owner, page)["doc_id"] == new                       # the replacement stands
+        assert _props(owner, page)["doc"]["hash"] == new                       # the replacement stands
         assert _state(owner, page)["reader"]["relocation_error"] == reason
 
         os.utime(f, (time.time() - 30, time.time() - 30))                  # only touched: still not placed
@@ -461,9 +462,9 @@ def test_the_worker_takes_a_moved_name_off_the_queue(owner, ws, disk, monkeypatc
     _write(f, _pdf("LF after the queue"))
     assert owner.get(f"/api/uploads/{doc}.pdf").status_code == 404
     deadline = time.time() + 15
-    while _props(owner, page)["doc_id"] == doc and time.time() < deadline:
+    while _props(owner, page)["doc"]["hash"] == doc and time.time() < deadline:
         time.sleep(0.05)
-    assert _props(owner, page)["doc_id"] == storage.content_digest(f.read_bytes())
+    assert _props(owner, page)["doc"]["hash"] == storage.content_digest(f.read_bytes())
 
 
 def test_a_file_touched_with_the_same_bytes_only_refreshes_its_stat(owner, ws, disk):
@@ -482,11 +483,11 @@ def test_a_file_still_being_written_waits_for_a_later_look(owner, ws, disk, monk
     page = _opened(owner, f)["page"]
     _write(f, _pdf("LF written a moment ago"), age=0)
     linked_files.follow(ws, f"{doc}.pdf")
-    assert _props(owner, page)["doc_id"] == doc
+    assert _props(owner, page)["doc"]["hash"] == doc
 
     _write(f, b"%PDF-1.7\n1 0 obj\n<< >>\n" + b"x" * 3000)              # at rest, cut off before its end
     linked_files.follow(ws, f"{doc}.pdf")
-    assert _props(owner, page)["doc_id"] == doc
+    assert _props(owner, page)["doc"]["hash"] == doc
 
     new = _pdf("LF written whole")
     _write(f, new)
@@ -495,7 +496,7 @@ def test_a_file_still_being_written_waits_for_a_later_look(owner, ws, disk, monk
     linked_files.sweep()                                                # no read needed: an open viewer does none
     assert (ws, f"{doc}.pdf") in queued
     linked_files.follow(ws, f"{doc}.pdf")
-    assert _props(owner, page)["doc_id"] == storage.content_digest(new)
+    assert _props(owner, page)["doc"]["hash"] == storage.content_digest(new)
 
 
 def _worked(monkeypatch):
@@ -520,7 +521,7 @@ def test_new_bytes_answer_404_only_when_the_page_has_them(owner, ws, disk, monke
     new = _pdf("LF the version after")
     _write(f, new)
     assert owner.get(f"/api/uploads/{doc}.pdf").status_code == 404
-    assert _props(owner, page)["doc_id"] == storage.content_digest(new)   # the ops have gone out already
+    assert _props(owner, page)["doc"]["hash"] == storage.content_digest(new)   # the ops have gone out already
 
 
 def test_a_build_is_looked_at_again_and_taken_once_it_has_settled(owner, ws, disk, monkeypatch):
@@ -533,7 +534,7 @@ def test_a_build_is_looked_at_again_and_taken_once_it_has_settled(owner, ws, dis
     new = _pdf("LF this build")
     _write(f, new, age=0)
     assert owner.get(f"/api/uploads/{doc}.pdf").status_code == 404
-    assert _props(owner, page)["doc_id"] == storage.content_digest(new)
+    assert _props(owner, page)["doc"]["hash"] == storage.content_digest(new)
 
 
 def test_a_file_that_stopped_short_is_left_to_the_sweep(owner, ws, disk, monkeypatch):
@@ -593,13 +594,13 @@ def test_a_file_a_vault_s_round_reads_goes_to_the_round_only(owner, ws, disk):
     assert owner.get(f"/api/uploads/{doc}.pdf").status_code == 404        # moved, as for any reader
 
     linked_files.follow(ws, f"{doc}.pdf")
-    assert _props(owner, page)["doc_id"] == doc and _rows(ws, page) == rows
+    assert _props(owner, page)["doc"]["hash"] == doc and _rows(ws, page) == rows
     assert _opened(owner, f)["page"] == page                              # opened again, nothing taken
-    assert _props(owner, page)["doc_id"] == doc and _rows(ws, page) == rows
+    assert _props(owner, page)["doc"]["hash"] == doc and _rows(ws, page) == rows
     for action, body in (("locate", {"path": str(f)}), ("add", {})):
         r = owner.post(f"/api/folder-links/opened/{page}/{action}", json=body)
         assert r.status_code == 400 and "synced vault" in r.json()["detail"]
-    assert _props(owner, page)["doc_id"] == doc and _rows(ws, page) == rows
+    assert _props(owner, page)["doc"]["hash"] == doc and _rows(ws, page) == rows
 
 
 def test_a_note_in_a_vault_leaves_a_page_s_pdf_to_the_reader(owner, ws, disk):
@@ -609,7 +610,7 @@ def test_a_note_in_a_vault_leaves_a_page_s_pdf_to_the_reader(owner, ws, disk):
     new = _pdf("LF the reader takes this one")
     _write(f, new, age=20)
     linked_files.follow(ws, f"{doc}.pdf")
-    assert _props(owner, page)["doc_id"] == storage.content_digest(new)
+    assert _props(owner, page)["doc"]["hash"] == storage.content_digest(new)
 
 
 def test_a_new_file_of_bytes_the_library_holds_is_still_the_page_s(owner, ws, disk):
@@ -617,10 +618,10 @@ def test_a_new_file_of_bytes_the_library_holds_is_still_the_page_s(owner, ws, di
     page = _opened(owner, f)["page"]
     same = _pdf("LF the library's bytes")
     library = owner.post("/api/uploads", files={"file": ("l.pdf", same, "application/pdf")}).json()["doc_id"]
-    held = make_page(owner, "LF the library's page", {"doc_id": library})
+    held = make_page(owner, "LF the library's page", doc_props(library))
     _write(f, same)
     linked_files.follow(ws, f"{doc}.pdf")
-    assert _props(owner, page)["doc_id"] == library
+    assert _props(owner, page)["doc"]["hash"] == library
     assert owner.get(f"/api/blocks/by-doc/{library}").json()["id"] == held["id"]
 
 
@@ -654,7 +655,7 @@ def test_a_file_that_is_gone_reads_as_missing_and_is_located(owner, ws, disk):
     moved = disk / "moved" / "found.pdf"
     _write(moved, data)
     r = owner.post(f"/api/folder-links/opened/{page}/locate", json={"path": str(moved)})
-    assert r.status_code == 200 and r.json()["id"] == page and r.json()["properties"]["doc_id"] == doc
+    assert r.status_code == 200 and r.json()["id"] == page and r.json()["properties"]["doc"]["hash"] == doc
     assert owner.get(f"/api/uploads/{doc}.pdf").content == data
     assert _state(owner, page)["reader"] == {"path": str(moved.resolve()), "missing": False, "mine": True}
 
@@ -664,7 +665,7 @@ def test_a_file_that_is_gone_reads_as_missing_and_is_located(owner, ws, disk):
     other = _pdf("LF a newer version found")
     _write(newer, other)
     r = owner.post(f"/api/folder-links/opened/{page}/locate", json={"path": str(newer)})
-    assert r.status_code == 200 and r.json()["properties"]["doc_id"] == storage.content_digest(other)
+    assert r.status_code == 200 and r.json()["properties"]["doc"]["hash"] == storage.content_digest(other)
     assert _rows(ws, page) == [(f"{storage.content_digest(other)}.pdf", str(newer.resolve()))]
     assert owner.get(f"/api/blocks/{page}").json()["content"] == "gone"  # the title is the page's
 
@@ -696,7 +697,7 @@ def test_a_stored_copy_is_no_missing_file(owner, ws, disk):
     assert r.status_code == 400 and "gone" in r.json()["detail"]          # there is no file to go on pushing
     r = owner.post(f"/api/folder-links/opened/{page}/add", json={})
     assert r.status_code == 200, r.text
-    assert "linked_file" not in r.json()["properties"] and _rows(ws, page) == []
+    assert r.json()["properties"]["doc"]["at"] == "store" and _rows(ws, page) == []
 
 
 def test_a_copy_of_the_file_elsewhere_does_not_hide_that_this_page_lost_its_own(owner, ws, disk):
@@ -871,9 +872,10 @@ def test_a_file_out_of_reach_is_not_stamped_indexed_and_has_no_file_for_now(owne
             return conn.execute("SELECT pages FROM pdf_fts_docs WHERE doc_id = ?", (doc,)).fetchone()
 
     def has_file():
-        papers = owner.get("/api/metadata/status").json()["papers"]
-        return next(p["has_file"] for p in papers if p["id"] == page)
+        return storage.readable(ws, f"{doc}.pdf")
 
+    # read where it is outside a work folder: no library document, so no paper with a record to look up
+    assert page not in {p["id"] for p in owner.get("/api/metadata/status").json()["papers"]}
     assert has_file() is True
     away = f.with_suffix(".away")
     f.rename(away)
@@ -894,8 +896,8 @@ def test_add_to_library_stores_the_bytes_and_the_page_leaves_opened_files(owner,
     updated = owner.post(f"/api/folder-links/opened/{page}/add", json={"folder": folder})
     assert updated.status_code == 200, updated.text
     props = updated.json()["properties"]
-    assert updated.json()["id"] == page and props["doc_id"] == doc and props["folders"] == [folder]
-    assert "linked_file" not in props and "parent_page" not in props
+    assert updated.json()["id"] == page and props["doc"]["hash"] == doc and props["folders"] == [folder]
+    assert props["doc"]["at"] == "store" and "parent_page" not in props
     assert storage.exists(ws, f"{doc}.pdf") and _rows(ws, page) == []
     assert _state(owner, page) == {"vault": None, "reader": None} and page not in _inside(owner, ws)
     assert owner.get(f"/api/blocks/by-doc/{doc}").json()["id"] == page
@@ -920,7 +922,7 @@ def test_add_to_library_keeping_on_pushing_makes_a_vault_of_one_file(owner, ws, 
     v2 = _pdf("LF a manuscript v2")
     _write(f, v2, age=20)
     assert _sync(owner, links[0]["id"])["counts"]["sent"] == 1
-    assert _props(owner, page)["doc_id"] == storage.content_digest(v2)
+    assert _props(owner, page)["doc"]["hash"] == storage.content_digest(v2)
     assert storage.exists(ws, f"{storage.content_digest(v2)}.pdf")      # a file vault's push stores
     assert _opened(owner, f)["page"] == page                             # and the reader opens the vault's page
     owner.delete(f"/api/folder-links/{links[0]['id']}").raise_for_status()
@@ -934,7 +936,7 @@ def test_add_to_library_is_refused_a_missing_file_and_an_unknown_folder(owner, w
     f.unlink()
     r = owner.post(f"/api/folder-links/opened/{page}/add", json={})
     assert r.status_code == 400 and "gone" in r.json()["detail"]
-    assert not storage.exists(ws, f"{doc}.pdf") and _props(owner, page)["linked_file"] is True
+    assert not storage.exists(ws, f"{doc}.pdf") and _props(owner, page)["doc"]["at"] == "path"
 
 
 def test_add_to_library_of_another_workspace_carries_the_page_with_everything_on_it(owner, ws, disk, lab):
@@ -959,8 +961,8 @@ def test_add_to_library_of_another_workspace_carries_the_page_with_everything_on
     r = owner.post(f"/api/folder-links/opened/{page}/add", json={"workspace": lab_ws, "folder": folder})
     assert r.status_code == 200, r.text
     props = r.json()["properties"]
-    assert r.json()["id"] == page and props["doc_id"] == doc and props["folders"] == [folder]
-    assert "linked_file" not in props and "parent_page" not in props
+    assert r.json()["id"] == page and props["doc"]["hash"] == doc and props["folders"] == [folder]
+    assert props["doc"]["at"] == "store" and "parent_page" not in props
     assert storage.exists(lab_ws, f"{doc}.pdf") and lab_owner.get(f"/api/uploads/{doc}.pdf").content == data
     (mark,) = lab_owner.get(f"/api/blocks/{page}/children").json()["children"]
     assert mark["id"] == hl and mark["content"] == "my note" and mark["properties"]["quote"] == OLD_LINE
@@ -993,7 +995,7 @@ def test_add_to_library_of_another_workspace_keeping_on_pushing_makes_the_vault_
     assert len(links) == 1 and links[0]["workspace_id"] == lab_ws and links[0]["kind"] == "file"
     _write(f, _pdf("LF the lab's manuscript v2"), age=20)
     assert _sync(lab_owner, links[0]["id"])["counts"]["sent"] == 1
-    assert lab_owner.get(f"/api/blocks/{page}").json()["properties"]["doc_id"] != doc
+    assert lab_owner.get(f"/api/blocks/{page}").json()["properties"]["doc"]["hash"] != doc
     lab_owner.delete(f"/api/folder-links/{links[0]['id']}").raise_for_status()
 
 
@@ -1009,11 +1011,11 @@ def test_add_to_library_of_another_workspace_is_refused_what_that_workspace_cann
     r = owner.post(f"/api/folder-links/opened/{page}/add", json={"workspace": lab_ws, "folder": "nosuchfolder"})
     assert r.status_code == 400 and "folder" in r.json()["detail"]
     storage.put_upload(lab_ws, f"{doc}.pdf", data)
-    lab_owner.post("/api/blocks", json={"parent_id": "root", "content": "LF the lab's own copy", "properties": {
-        "doc_id": doc}}).raise_for_status()
+    lab_owner.post("/api/blocks", json={"parent_id": "root", "content": "LF the lab's own copy",
+                                        "properties": doc_props(doc)}).raise_for_status()
     r = owner.post(f"/api/folder-links/opened/{page}/add", json={"workspace": lab_ws})
     assert r.status_code == 400 and "already" in r.json()["detail"]
-    assert _props(owner, page)["linked_file"] is True and _rows(ws, page)          # nothing done
+    assert _props(owner, page)["doc"]["at"] == "path" and _rows(ws, page)          # nothing done
 
 
 def test_add_to_library_of_another_workspace_takes_nothing_when_a_page_inside_it_is_there(owner, ws, disk, lab,
@@ -1029,14 +1031,14 @@ def test_add_to_library_of_another_workspace_takes_nothing_when_a_page_inside_it
     inner_doc = storage.content_digest(inner_data)
     storage.put_upload(ws, f"{inner_doc}.pdf", inner_data)
     inner = owner.post("/api/pages", json={"title": "LF inner", "parent_page": page}).json()["id"]
-    owner.put(f"/api/blocks/{inner}", json={"properties": {"doc_id": inner_doc}}).raise_for_status()
+    owner.put(f"/api/blocks/{inner}", json={"properties": doc_props(inner_doc)}).raise_for_status()
     storage.put_upload(lab_ws, f"{inner_doc}.pdf", inner_data)
     lab_owner.post("/api/blocks", json={"parent_id": "root", "content": "LF the lab's copy of the inner paper",
-                                        "properties": {"doc_id": inner_doc}}).raise_for_status()
+                                        "properties": doc_props(inner_doc)}).raise_for_status()
 
     r = owner.post(f"/api/folder-links/opened/{page}/add", json={"workspace": lab_ws})
     assert r.status_code == 400 and "already" in r.json()["detail"], r.text
-    assert _props(owner, page)["linked_file"] is True and _rows(ws, page)
+    assert _props(owner, page)["doc"]["at"] == "path" and _rows(ws, page)
     assert owner.get(f"/api/blocks/{inner}").status_code == 200
     assert lab_owner.get(f"/api/blocks/{page}").status_code == 404
 
@@ -1053,7 +1055,7 @@ def test_add_to_library_of_another_workspace_takes_nothing_when_a_page_inside_it
     assert r.status_code == 400 and "already" in r.json()["detail"], r.text
     assert inner_doc in asked
     assert lab_owner.get(f"/api/blocks/{page}").status_code == 404                  # what arrived went back out
-    assert _props(owner, page)["linked_file"] is True and owner.get(f"/api/blocks/{inner}").status_code == 200
+    assert _props(owner, page)["doc"]["at"] == "path" and owner.get(f"/api/blocks/{inner}").status_code == 200
 
 
 def test_a_carry_whose_merge_finds_the_page_there_takes_back_only_what_it_brought(owner, ws, disk, lab, monkeypatch):
@@ -1075,7 +1077,7 @@ def test_a_carry_whose_merge_finds_the_page_there_takes_back_only_what_it_brough
     r = owner.post(f"/api/folder-links/opened/{page}/add", json={"workspace": lab_ws})
     assert r.status_code == 400 and "already" in r.json()["detail"], r.text
     assert [c["content"] for c in lab_owner.get(f"/api/blocks/{page}/children").json()["children"]] == ["LF a note on it"]
-    assert _props(owner, page)["linked_file"] is True and _rows(ws, page)
+    assert _props(owner, page)["doc"]["at"] == "path" and _rows(ws, page)
 
 
 def _notes(c, page_id) -> list:
@@ -1107,7 +1109,7 @@ def test_a_carry_taken_back_leaves_a_page_inside_it_that_came_another_way(owner,
     assert r.status_code == 400 and "already" in r.json()["detail"], r.text
     assert lab_owner.get(f"/api/blocks/{page}").status_code == 404
     assert _notes(lab_owner, inner) == ["LF the inner note", "LF bob's note there"]
-    assert _props(owner, page)["linked_file"] is True and _notes(owner, inner) == ["LF the inner note"]
+    assert _props(owner, page)["doc"]["at"] == "path" and _notes(owner, inner) == ["LF the inner note"]
 
 
 def test_a_page_written_on_while_it_is_carried_stays_here(owner, ws, disk, lab, monkeypatch):
@@ -1134,7 +1136,7 @@ def test_a_page_written_on_while_it_is_carried_stays_here(owner, ws, disk, lab, 
         r = owner.post(f"/api/folder-links/opened/{page}/add", json={"workspace": lab_ws, "keep_pushing": True})
     assert r.status_code == 400 and "while" in r.json()["detail"], r.text
     assert _notes(owner, page) == ["LF before", "LF meanwhile"] and _notes(owner, made["sub"]) == ["LF its note"]
-    assert _props(owner, page)["linked_file"] is True and _rows(ws, page)
+    assert _props(owner, page)["doc"]["at"] == "path" and _rows(ws, page)
     assert lab_owner.get(f"/api/blocks/{page}").status_code == 404
     assert lab_owner.get(f"/api/blocks/{made['sub']}").status_code == 404
     assert not [l for l in lab_owner.get("/api/folder-links").json()["links"] if l["page_id"] == page]
@@ -1168,7 +1170,7 @@ def test_a_carry_taken_back_keeps_what_someone_wrote_there_meanwhile(owner, ws, 
     assert r.status_code == 400 and "both workspaces" in r.json()["detail"], r.text
     assert _notes(lab_owner, page) == ["LF before", "LF bob's note there"]
     assert _notes(owner, page) == ["LF before", "LF meanwhile here"]
-    assert _props(owner, page)["linked_file"] is True and _rows(ws, page)
+    assert _props(owner, page)["doc"]["at"] == "path" and _rows(ws, page)
     assert not [l for l in lab_owner.get("/api/folder-links").json()["links"] if l["page_id"] == page]
 
 
@@ -1229,7 +1231,7 @@ def test_a_carry_takes_nothing_while_a_page_inside_it_has_not_its_file_at_hand(o
     assert r.status_code == 400 and "gone" in r.json()["detail"] and "inside" in r.json()["detail"], r.text
     assert lab_owner.get(f"/api/blocks/{page}").status_code == 404 and lab_owner.get(f"/api/blocks/{inner}").status_code == 404
     assert not storage.exists(lab_ws, f"{doc}.pdf") and not storage.exists(lab_ws, f"{inner_doc}.pdf")
-    assert _props(owner, page)["linked_file"] is True and _rows(ws, page) and _rows(ws, inner)
+    assert _props(owner, page)["doc"]["at"] == "path" and _rows(ws, page) and _rows(ws, inner)
     assert _notes(owner, inner) == ["LF the inner note"]
 
     owner.post(f"/api/folder-links/opened/{inner}/locate", json={"path": str(moved)}).raise_for_status()
@@ -1244,8 +1246,8 @@ def test_a_carry_takes_nothing_while_a_page_inside_it_has_not_its_file_at_hand(o
     r = owner.post(f"/api/folder-links/opened/{page}/add", json={"workspace": lab_ws})
     assert r.status_code == 200, r.text
     assert lab_owner.get(f"/api/uploads/{doc}.pdf").content == data
-    assert _props(lab_owner, inner)["doc_id"] == newer_doc and lab_owner.get(f"/api/uploads/{newer_doc}.pdf").content == newer
-    assert _notes(lab_owner, inner) == ["LF the inner note"] and "linked_file" not in _props(lab_owner, inner)
+    assert _props(lab_owner, inner)["doc"]["hash"] == newer_doc and lab_owner.get(f"/api/uploads/{newer_doc}.pdf").content == newer
+    assert _notes(lab_owner, inner) == ["LF the inner note"] and _props(lab_owner, inner)["doc"]["at"] == "store"
     assert _rows(ws, page) == [] and _rows(ws, inner) == []
 
 
@@ -1339,7 +1341,7 @@ def test_a_carry_taken_back_takes_back_the_folders_and_labels_its_merge_made(own
     assert lab_owner.get(f"/api/blocks/{page}").status_code == 404 and lab_owner.get(f"/api/blocks/{inner}").status_code == 404
     assert {"LF private shelf", "LF deeper"} <= _tree_names(lab_ws, "folders")           # in use there: they stay
     assert _tree_names(lab_ws, "labels") == labels_before                                 # and only they
-    assert _props(lab_owner, kept)["folders"] and _props(owner, page)["linked_file"] is True
+    assert _props(lab_owner, kept)["folders"] and _props(owner, page)["doc"]["at"] == "path"
 
 
 def test_a_carry_brings_no_folder_of_the_filing_it_replaces(owner, ws, disk, lab):
@@ -1440,7 +1442,7 @@ def test_a_page_written_on_since_its_digest_is_not_let_go(owner, ws, disk):
         change()
         r = _let_go(owner, page, digest)
         assert r.status_code == 409 and r.json()["detail"] == linked_files.CHANGED_SINCE, r.text
-        assert _props(owner, page)["linked_file"] is True and _rows(ws, page) and page in _inside(owner, ws)
+        assert _props(owner, page)["doc"]["at"] == "path" and _rows(ws, page) and page in _inside(owner, ws)
         assert page not in {p["id"] for p in owner.get("/api/trash").json()["pages"]}
     assert _notes(owner, page) == ["LF before", "LF meanwhile"] and owner.get(f"/api/blocks/{made['sub']}").status_code == 200
     assert _let_go(owner, page, "not the digest").status_code == 409
@@ -1473,7 +1475,7 @@ def test_a_file_changed_just_as_it_is_added_stores_nothing_as_the_page_s(owner, 
     monkeypatch.setattr(storage, "store_pdf_stream", lambda ws, stream: ("f" * 24, False, 1))
     r = owner.post(f"/api/folder-links/opened/{page}/add", json={})
     assert r.status_code == 400 and "changed" in r.json()["detail"]
-    assert _props(owner, page)["linked_file"] is True and _rows(ws, page)
+    assert _props(owner, page)["doc"]["at"] == "path" and _rows(ws, page)
 
 
 # --- what never sees such a file ---------------------------------------------------------
@@ -1524,7 +1526,7 @@ def test_a_gamma_export_carries_the_bytes(owner, disk, tmp_path):
     copy.write_bytes(pages)
     with closing(sqlite3.connect(copy)) as conn:
         props = json.loads(conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page,)).fetchone()[0])
-    assert props["doc_id"] == doc and "linked_file" not in props           # stored, where it lands
+    assert props["doc"]["hash"] == doc and props["doc"]["at"] == "store"           # stored, where it lands
 
 
 def test_embedded_annotations_are_read_and_the_file_is_never_written(owner, ws, disk):
@@ -1597,7 +1599,7 @@ def test_only_the_account_that_opened_a_file_keeps_it_pushing_or_takes_it_to_ano
                  {"keep_pushing": True}):
         r = bob.post(f"/api/folder-links/opened/{page}/add", json=body)
         assert r.status_code == 400 and "opened" in r.json()["detail"], (body, r.text)
-    assert _props(alice, page)["linked_file"] is True and _rows(lab_ws, page)
+    assert _props(alice, page)["doc"]["at"] == "path" and _rows(lab_ws, page)
     assert not [l for l in folder_links.all_links() if l["page_id"] == page]
     r = bob.post(f"/api/folder-links/opened/{page}/add", json={})      # stored in the library here: no path follows
     assert r.status_code == 200 and _rows(lab_ws, page) == []
@@ -1640,7 +1642,7 @@ def test_only_the_account_that_opened_a_file_lets_it_go_after_a_carry_to_another
         assert r.status_code == 400 and "opened" in r.json()["detail"], r.text
     assert vera.get(f"/api/folder-links/opened/{page}/carried").status_code == 403
     assert _let_go(vera, page, digest).status_code == 403
-    assert _props(alice, page)["linked_file"] is True and _rows(lab_ws, page)
+    assert _props(alice, page)["doc"]["at"] == "path" and _rows(lab_ws, page)
     assert _let_go(alice, page, digest).status_code == 200
     assert alice.get(f"/api/blocks/{page}").status_code == 404 and _rows(lab_ws, page) == []
 
@@ -1727,9 +1729,9 @@ def test_a_change_on_disk_nobody_may_write_waits_for_the_next_look(owner, ws, di
     with monkeypatch.context() as m:
         m.setattr(folder_links, "may_edit", lambda ws, user_id: False)
         linked_files.follow(ws, f"{doc}.pdf")
-    assert _props(owner, page)["doc_id"] == doc and [name for name, _path in _rows(ws, page)] == [f"{doc}.pdf"]
+    assert _props(owner, page)["doc"]["hash"] == doc and [name for name, _path in _rows(ws, page)] == [f"{doc}.pdf"]
     linked_files.follow(ws, f"{doc}.pdf")
-    assert _props(owner, page)["doc_id"] == storage.content_digest(changed)
+    assert _props(owner, page)["doc"]["hash"] == storage.content_digest(changed)
 
 
 def test_a_change_the_owner_wrote_for_an_opener_leaves_the_file_the_openers(lab, disk):
@@ -1870,7 +1872,7 @@ def test_a_file_its_writer_has_locked_is_refused_and_left_for_later(owner, ws, d
 
             os.utime(f, (time.time() - 30, time.time() - 30))             # the stat moved: a look finds it locked
             linked_files.follow(ws, f"{doc}.pdf")
-            assert _props(owner, page)["doc_id"] == doc
+            assert _props(owner, page)["doc"]["hash"] == doc
         finally:
             msvcrt.locking(held.fileno(), msvcrt.LK_UNLCK, len(data))
             msvcrt.locking(also.fileno(), msvcrt.LK_UNLCK, len(other_data))

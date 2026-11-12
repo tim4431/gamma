@@ -76,8 +76,9 @@ any pairing with a paper, and so is one pull finds where the page's new notes
 would go, or where the client kept a sub-page's, beside its parent's.
 A page in Recently deleted whose file changed comes back, and so does one
 whose file is back where it lived or with its file id (``vault_disk.came_back``).
-A file the scan leaves out (an ignore glob, a link above it) but is there is
-never a removal. The base is then the
+A file the scan leaves out for a fixed rule (a link above it, a case clash)
+but is there is never a removal; one the vault's ``.gammaignore`` leaves out
+is deselected (below). The base is then the
 file, and its seq the page's only when the page says what the file says, its
 front matter too, so that pull writes the rest.
 
@@ -112,6 +113,21 @@ disk whose page left the vault stays where it is, no longer synced. A vault
 without notes files (an older folder kept with its PDFs alone) writes PDFs
 only.
 
+**What a vault tracks** is its ``.gammaignore`` (gamma/work_folders/
+ignore_rules.py), else the default (notes, PDFs and pictures): one gone
+since a round read it stops the vault, and pull writes nothing it leaves out.
+**A work folder** (docs/dev/work_folders.md) is a vault that pushes
+everything into a folder that carries the mark (``Layout.work``): its
+directory is the source. Its new pages are stamped as its files, a move on
+disk files a page first in its new directory's folder and names it, pull
+renames or moves only a note that follows Gamma (no document, where the
+vault pulls) and copies no PDF out, and a file the selection leaves out, or
+a PDF whose page left, stays where it is: its page to Recently deleted
+first, then its row an in-place tombstone (``vault_store.bury_in_place``),
+which nothing moves or purges. In a kept folder a file left out is
+forgotten, its page staying. A whole round of a work folder holds to its cap
+of files and writes its mark again where the folder lost it.
+
 **Force**: ``pull`` makes every file its page, where the file is now (the
 rows follow the disk's moves first, Gamma keeping its places), ``push`` every
 page's blocks with a span its file; both record what they replaced, written resolved, and a
@@ -121,7 +137,8 @@ everything, refused where that is (``folder_links.forced``).
 
 Errors are a file's (its row's ``problem``, the status's ``kept``), never the
 vault's, which stops only for its marker (``vault_disk.Stopped``, a copy of
-the vault at its place too), its disk (``Offline``) and its account
+the vault at its place too; its ``.gammaignore`` gone or unreadable, and a
+work folder past its cap, the same way), its disk (``Offline``) and its account
 (``Refused``). Nothing here writes vaults.db while it holds a workspace's
 write lock.
 
@@ -130,6 +147,7 @@ for one page's files: no scan, so nothing is removed, and nothing is made or
 moved in a directory the disk changed since the last scan.
 """
 
+import fnmatch
 import json
 import os
 import secrets
@@ -144,11 +162,12 @@ from . import vault_links, vault_merge, vault_store, workspaces
 from .auth import DISK_CLIENT
 from .folder_links import COUNTS, DIRECTIONS, KEPT_SHOWN
 from .jobs import error_text
-from .blocks_store import (FOLDERS, LABELS, LINKED_FILE, PARENT_PAGE, TRASH, attachment_file, attachment_props, block_kind,
-                           fetch_subtree, filing, folder_inserts, folder_subtree_ids, insert_page_tree, label_inserts,
-                           label_names, load_props, new_block_id, newest_change_seq, page_attachment, page_in_folder,
-                           page_parents, pages_in_folder, top_of, tree_rows, upload_refs, write_lock)
+from .blocks_store import (FOLDERS, LABELS, PARENT_PAGE, TRASH, block_kind, fetch_subtree, filing, folder_inserts,
+                           folder_subtree_ids, insert_page_tree, label_inserts, label_names, live_pages, load_props,
+                           new_block_id, newest_change_seq, page_in_folder, page_parents, pages_in_folder, top_of,
+                           tree_rows, upload_refs, write_lock)
 from .db import connect_pages_db, connect_vaults_db, page_now, parse_stamp
+from .documents.model import document, document_at, in_place, page_document, pdf_file_hash, stored_name
 from .folder_sync import ID_KEY, ROOT
 from .logbuf import log
 from .markdown_import import block_class
@@ -156,6 +175,9 @@ from .obsidian_export import anchor_marker, vault_name
 from .ops import (CYCLE, MAX_CONTENT, MAX_OPS, OpError, after_commits, apply_batches, delete_tree, notify_commit,
                   restore_page, trash_page)
 from .sync_tree import snapshot_from_rows
+from .work_folders import ignore_rules, marks, selection, takeover
+from .work_folders.library import work_folder_of
+from .work_folders.selection import MAX_FILES
 
 CLIENT = DISK_CLIENT       # what a vault's writes are logged as: no Inbox item, no hot round of their own
 CONFLICT = "file_won"      # the conflict kind of a clash the file won
@@ -165,6 +187,8 @@ REMOVE_FLOOR = 10          # of this many files at least
 PLAN_TRIES = 3             # a push planned again this often when Gamma's edits land between its plan and the lock
 FORCES = ("pull", "push")
 PLACE = "marker_file"      # the state's key of the marker's file id (``Round._same_place``)
+SELECTION = "selection"    # the state's key of the hash of the .gammaignore a whole round read ("" for none)
+LEFT_OUT = "left out by .gammaignore; its page keeps its other file"
 UNKNOWN = ("changed on this computer, and Gamma does not know which of its blocks the note held: a force pull "
            "writes Gamma's page here, a force push makes the page this file")
 BOTH_PDF = ("changed on this computer and in Gamma: a force pull writes Gamma's PDF here, a force push makes this "
@@ -207,9 +231,12 @@ class Page:
 @dataclass(slots=True)
 class Info:
     """A page below the vault's folder: its title and seq, the folders its
-    top is filed in (in their order), its PDF (``doc_id``; ``linked`` when it
-    reads a file where it is), its labels' names, its aliases, and the page
-    it is a sub-page of (``page_parents``; "" for a library page)."""
+    top is filed in (in their order), its PDF (``doc_id``, the hash of the
+    document it owns: gamma/documents/model.py ``own_hash``; ``linked`` when
+    it reads the file where it is), its labels' names, its aliases, the
+    page it is a sub-page of (``page_parents``; "" for a library page), and
+    a work folder's stamps: the work folder it is a file of ("" for none),
+    whether it is in the library too, its file's name."""
     id: str
     title: str
     seq: int
@@ -219,6 +246,9 @@ class Info:
     labels: list = field(default_factory=list)
     aliases: list = field(default_factory=list)
     parent: str = ""
+    work_folder: str = ""
+    library: bool = False
+    file_name: str = ""
 
 
 @dataclass(slots=True)
@@ -227,13 +257,23 @@ class Layout:
     library order), ``folders`` (id → ``(parent id, name)``, below the vault's
     folder, which is left out), the change log's ``cursor``, read first, the
     labels tree's seq (``labels``: a label renamed moves it, and no page's),
-    and ``shared``, ``(page id, title)`` of the pages filed here too that a
-    vault beside this one, made before it, keeps (left out of ``pages``)."""
+    ``shared``, ``(page id, title)`` of the pages filed here too that a
+    vault beside this one, made before it, keeps (left out of ``pages``),
+    and ``work``, the mark the vault's folder carries (``{pull, library}``:
+    a work folder's; None for none, gamma/work_folders/marks.py)."""
     pages: dict
     folders: dict
     cursor: int
     labels: int = 0
     shared: list = field(default_factory=list)
+    work: dict | None = None
+
+
+def info_stamps(props: dict) -> dict:
+    """``Info``'s fields of a page's work-folder stamps."""
+    name = props.get("file_name")
+    return {"work_folder": work_folder_of(props), "library": props.get("library") is True,
+            "file_name": name if isinstance(name, str) else ""}
 
 
 @dataclass(slots=True)
@@ -300,15 +340,24 @@ class LocalRemote:
         """The cursor, then the pages below the folder (their rows and their
         seqs one query each) and the folders below it; with ``page_id`` that
         page alone, when it is one of them (a page's round reads no other).
-        ``Refused`` when the account has no role there any more."""
+        A file of another work folder filed here too is that one's, and so
+        are another work folder's directories, a W moved into this folder
+        included. The
+        folder's mark is the layout's ``work``. ``Refused`` when the account
+        has no role there any more."""
         if not workspaces.role_of(self.ws, self.user_id):
             raise Refused(NO_ACCESS)
         with connect_pages_db(self.ws) as conn:
             cursor = newest_change_seq(conn)
             parents = page_parents(conn)
             top = None if self.folder == ROOT else self.folder
-            if top and not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND page_id = ?", (top, FOLDERS)).fetchone():
-                raise vault_disk.Stopped("the vault's folder is no longer in Gamma")   # never read as every page gone
+            mark = None
+            if top:
+                found = conn.execute("SELECT properties FROM unified_blocks WHERE id = ? AND page_id = ?",
+                                     (top, FOLDERS)).fetchone()
+                if not found:
+                    raise vault_disk.Stopped("the vault's folder is no longer in Gamma")   # never read as every page gone
+                mark = marks.mark_of(load_props(found[0]))
             shared = []
             if page_id:
                 live = conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
@@ -320,7 +369,7 @@ class LocalRemote:
                 away = set().union(*held.values())
                 beside = {page for other in self.siblings for page in held[other]}
                 ids, shared = [], []
-                for pid in pages_in_folder(conn, top, parents):
+                for pid in pages_in_folder(conn, top, parents) if top else live_pages(conn, parents):
                     if pid not in away:
                         ids.append(pid)
                     elif pid in beside:
@@ -340,21 +389,46 @@ class LocalRemote:
                                              "(SELECT value FROM json_each(?))", (json.dumps(missing),)):
                 props[page_id] = load_props(raw)
             inside = folder_subtree_ids(conn, top) if top else None
-            folders = {block_id: (parent, name or "") for block_id, parent, name, _props in tree_rows(conn, FOLDERS)
-                       if (inside is None or block_id in inside) and block_id != top}
+            tree = tree_rows(conn, FOLDERS)
+            works = marks.Tree.of(tree)
+            folders = {block_id: (parent, name or "") for block_id, parent, name, _props in tree
+                       if (inside is None or block_id in inside) and block_id != top
+                       and works.work_of(block_id) in ("", self.folder)}
         by_id = {r[0]: r for r in rows}
         pages = {}
         for page_id in ids:
             row = by_id.get(page_id)
-            if row is None:
+            own = props.get(page_id)
+            if row is None or work_folder_of(own) not in ("", self.folder):
                 continue
-            own = props[page_id]
             pages[page_id] = Info(page_id, row[1] or "Untitled", seqs.get(page_id, 0),
-                                  filing(props.get(tops[page_id], {}), FOLDERS), row[3] or "", bool(own.get(LINKED_FILE)),
+                                  filing(props.get(tops[page_id], {}), FOLDERS), row[3] or "", in_place(page_document(own)),
                                   [names[i] for i in filing(own, LABELS) if i in names],
                                   [str(a) for a in own.get("aliases") or [] if isinstance(a, str)],
-                                  parents.get(page_id, ""))
-        return Layout(pages, folders, cursor, seqs.get(LABELS, 0), shared)
+                                  parents.get(page_id, ""), **info_stamps(own))
+        return Layout(pages, folders, cursor, seqs.get(LABELS, 0), shared, mark)
+
+    def mark(self) -> dict | None:
+        """The mark the vault's folder carries (``Layout.work``), None for
+        none or no folder."""
+        if self.folder == ROOT:
+            return None
+        with connect_pages_db(self.ws) as conn:
+            found = conn.execute("SELECT properties FROM unified_blocks WHERE id = ? AND page_id = ?",
+                                 (self.folder, FOLDERS)).fetchone()
+        return marks.mark_of(load_props(found[0])) if found else None
+
+    def work_tree(self) -> marks.Tree:
+        """The folder tree as the work-folder rules read it."""
+        with connect_pages_db(self.ws) as conn:
+            return marks.Tree.read(conn)
+
+    def work_pages(self) -> dict:
+        """``{page id: properties}`` of the live files of the vault's work
+        folder (``idx_ub_work_folder``)."""
+        with connect_pages_db(self.ws) as conn:
+            return {r[0]: load_props(r[1]) for r in conn.execute(
+                "SELECT id, properties FROM unified_blocks WHERE work_folder = ? AND +parent_id = 'root'", (self.folder,))}
 
     def page(self, page_id: str) -> Page | None:
         """The page's seq, then its blocks; None for a page gone for good."""
@@ -487,7 +561,7 @@ class LocalRemote:
             try:
                 if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (page_id,)).fetchone():
                     raise OpError(409, "a block with that id exists")
-                insert_page_tree(conn, page_id, title, props, tree, self.user_id)
+                insert_page_tree(conn, page_id, title, props, tree, self.user_id, client=CLIENT)
                 upload_gc.claim(conn, _tree_refs(title, props, tree))
                 seq = conn.execute("SELECT seq FROM page_changes WHERE page_id = ?", (page_id,)).fetchone()
                 conn.commit()
@@ -500,6 +574,40 @@ class LocalRemote:
 
     def set_page(self, page_id: str, *, title=None, props=None) -> tuple[int, int]:
         return set_page(self, page_id, title=title, props=props)
+
+    def stamp(self, ids, plan) -> dict:
+        """The live pages ``ids``' root properties patched quietly (no
+        ``updated_at``: gamma/work_folders/takeover.py), ``plan(page id,
+        properties)`` giving each patch (None: none) under the write lock, a
+        transaction a ``MAX_OPS`` pages, logged as ``CLIENT``. → ``{page id:
+        (seq before, seq after)}`` of the pages written."""
+        self.may_write()
+        ids, out = list(ids), {}
+        for i in range(0, len(ids), MAX_OPS):
+            chunk = json.dumps(ids[i:i + MAX_OPS])
+            with connect_pages_db(self.ws) as conn:
+                write_lock(conn)
+                try:
+                    batches = []
+                    for page_id, raw in conn.execute("SELECT id, properties FROM unified_blocks WHERE id IN (SELECT "
+                                                     "value FROM json_each(?)) AND parent_id = 'root'", (chunk,)).fetchall():
+                        patch = plan(page_id, load_props(raw))
+                        if patch:
+                            batches.append((page_id, [{"op": "set", "id": page_id, "props": patch, "quiet": True}]))
+                    seqs = "SELECT page_id, seq FROM page_changes WHERE page_id IN (SELECT value FROM json_each(?))"
+                    written = json.dumps([page_id for page_id, _ops in batches])
+                    before = dict(conn.execute(seqs, (written,)).fetchall())
+                    results = apply_batches(conn, batches, actor=self.user_id, client=CLIENT) if batches else []
+                    after = dict(conn.execute(seqs, (written,)).fetchall())
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                after_commits(self.ws, conn, results)
+            for page_id, _ops in batches:
+                out[page_id] = (before.get(page_id, 0), after.get(page_id, 0))
+                self.touched.add(page_id)
+        return out
 
     def label_ids(self, names) -> list:
         """The labels of ``names``' ids, made where missing."""
@@ -552,8 +660,8 @@ class LocalRemote:
         """The folders at ``paths`` (names from the vault's folder down), made
         where missing (``folder_inserts`` reuses one of the name). →
         ``{tuple(names): folder id}``."""
-        under = "" if self.folder == ROOT else self.folder
-        return self._in_tree(FOLDERS, lambda conn: folder_inserts(conn, [list(p) for p in paths], under))
+        under, work = ("", False) if self.folder == ROOT else (self.folder, self.mark() is not None)
+        return self._in_tree(FOLDERS, lambda conn: folder_inserts(conn, [list(p) for p in paths], under, into_work=work))
 
     def folder_op(self, op: dict) -> None:
         """One op on the folder tree: a ``set`` of a name or a ``move``, a
@@ -619,41 +727,62 @@ class LocalRemote:
                     stored, _existed, _size = storage.store_pdf_stream(ws, f)
                 except ValueError as e:
                     raise OSError(str(e)) from e
-            if f"{stored}.pdf" != held:
+            if stored_name(stored, ".pdf") != held:
                 raise OSError("the file is not the bytes its pages read")
 
     def replace_pdf(self, page_id: str, path: str, seen: tuple, filename: str) -> dict:
         """The page takes the bytes ``seen`` at ``path`` as its PDF, read where
         they are: their row first, so the relocation run reads the new file,
-        then ``replace_attachment``, the disk winning and no other page's
-        bytes a refusal (a vault's file is what the disk holds); then the row
-        of the bytes before goes, as ``linked_files._catch_up``'s does: the
-        path no longer holds them."""
+        then ``replace_attachment``, the page reading them in place from then
+        on (``at`` ``path``, a page that stored its PDF too), the disk winning
+        and no other page's bytes a refusal (a vault's file is what the disk
+        holds); then the row of the bytes before goes, as
+        ``linked_files._catch_up``'s does: the path no longer holds them. A
+        work folder's file gets the size on its document, and one in the
+        library has each version stored as it comes, as a library document's
+        bytes are, reading it in place all the same."""
         from .routers.pages import replace_attachment  # local: keep gamma.* free of the routers package
 
         self.may_write()
-        before = self.doc_of(page_id)
+        with connect_pages_db(self.ws) as conn:
+            row = conn.execute("SELECT doc_id, properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+        before, own = ((row[0] or ""), load_props(row[1])) if row else ("", {})
+        extra = None
+        if work_folder_of(own):
+            if own.get("library") is True:
+                try:
+                    folder_links.LocalSink(self.ws, self.user_id).store(Path(path))
+                except gamma_sync.SyncError as e:
+                    raise OSError(str(e)) from e
+            extra = {"doc": document(seen[0], name=filename, at="path", size=seen[1])}
         self.link_pdf(path, seen, page_id)
         try:
-            done = replace_attachment(self.ws, page_id, seen[0], "", filename, actor=self.user_id, client=CLIENT,
-                                      owner=self.user_id, check_held=False, props={LINKED_FILE: True},
+            done = replace_attachment(self.ws, page_id, seen[0], "", filename, at="path", actor=self.user_id,
+                                      client=CLIENT, owner=self.user_id, check_held=False, props=extra,
                                       keep_old_days=gamma_sync.KEEP_OLD_DAYS)
         except OpError:
-            self.unlink_pdf(path, f"{seen[0]}.pdf")
+            self.unlink_pdf(path, stored_name(seen[0], ".pdf"))
             raise
         if before and before != seen[0]:
-            self.unlink_pdf(path, f"{before}.pdf")
+            self.unlink_pdf(path, stored_name(before, ".pdf"))
         self.touched.add(page_id)
         return done
 
     def store_pdf(self, path: Path, page_id: str) -> str:
         """The file stored as an upload and the page no longer reading it in
-        place: what a page that leaves the vault keeps."""
+        place (its document at ``store``, the same hash and name): what a page
+        that leaves the vault keeps."""
         try:
             doc_id = folder_links.LocalSink(self.ws, self.user_id).store(path)
         except gamma_sync.SyncError as e:
             raise OSError(str(e)) from e
-        self.set_page(page_id, props={LINKED_FILE: None})
+
+        def build(page, _held):
+            view = page_document(page.blocks[page_id]["props"])
+            if not in_place(view):
+                return Edit([])
+            return Edit([{"op": "set", "id": page_id, "props": {"doc": document_at(view, "store")}}])
+        self.apply(page_id, build)
         return doc_id
 
     def place_highlights(self, page_id: str) -> bool:
@@ -669,7 +798,8 @@ class LocalRemote:
             items = highlight_relocate.page_highlights(conn, page_id, unplaced=True)
             row = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
                                (page_id,)).fetchone()
-        doc_id = attachment_file(page_attachment(load_props(row[1]))) if row else None
+        view = page_document(load_props(row[1])) if row else None
+        doc_id = pdf_file_hash(view)
         if not doc_id or all(props["pdf_position"].get("rects") for _bid, props in items):
             return True
         job, _reason = _start_relocation(self.user_id, self.ws, page_id, row[0], doc_id)
@@ -1163,8 +1293,10 @@ class Round:
         self.unsettled = []         # (path, pending) of pull's writes the journal waits on the scan for
         self.refiles = []           # (path, where it was, token) of moves the journal says a page is not filed by yet
         self.unplaced = []          # the same, of moves whose page is in Recently deleted this round
-        self.buried = set()         # pages whose file a tombstone waits for a scan to read back
+        self.buried = set()         # pages whose file a tombstone keeps this round: a scan reads it back, or it is left
         self.parents = {}           # a new note -> the ``parent`` its front matter names (``_sub_page``)
+        self.work = None            # the mark of the vault's folder, {pull, library}: a work folder's round
+        self.rules = None           # what the vault tracks (its .gammaignore, else the default), read in ``_open``
         self.relabelled = False     # the labels tree changed since the last round: a note's tags may be stale
         self.layout = None
         self.cursor = None
@@ -1210,20 +1342,114 @@ class Round:
         return status
 
     def _open(self) -> None:
-        """The marker, the journal settled (it may move files), then the scan;
-        one page's round reads the marker alone."""
+        """The marker, the mark of the vault's folder (a work folder's whole
+        round writes it again where it is not the link's, after a restore or
+        a mirror's merge; a vault that does not push everything, of another
+        server's work folder, keeps a kept folder's round), what the vault
+        tracks (``_read_rules``), the journal settled (it may move files),
+        then the scan, which a work folder's round holds to its cap
+        (``_capped``); one page's round reads no scan."""
         vault_id = self.state.get("vault") or ""
         self.marker = vault_disk.check_marker(self.root, vault_id)
         self._same_place()
+        self.work = self.remote.mark() if self.link.get("push") == folder_links.PUSH_ALL else None
+        if not self.only and self.state.get(takeover.TAKEN_OVER) and folder_links.work_folder_link(self.link):
+            self.work = takeover.write_mark(self.link, self.remote)
+        self.rules = self._read_rules()
         self._recover()
         if not self.only:
-            self.scan = vault_disk.scan(self.root, vault_id)
+            self.scan = vault_disk.scan(self.root, vault_id, self.rules)
+            self._capped()
             vault_disk.clean_temps(self.root, self.scan.temps)
             self._recover_moved()
         self.rows = _Rows(vault_store.files(self.id))
         for path, old, token in self.refiles:
             if path in self.rows:
                 self._each(path, self._refile, path, old, token)
+
+    def _read_rules(self):
+        """What the vault tracks: its ``.gammaignore`` (gamma/work_folders/
+        ignore_rules.py), else the default. One gone since a whole round read
+        it (the state's ``SELECTION``, its hash) stops the vault rather than
+        reading every note and PDF anew, and so does one that cannot be read;
+        one edited by hand is read as it is, its removals going through the
+        guard. A whole round keeps the hash it read. The first whole round of
+        a vault whose marker names an older app's ignore globs writes them
+        once as its ``.gammaignore`` (``_globs_written``)."""
+        try:
+            rules = ignore_rules.read(self.root)
+        except ignore_rules.Unreadable as e:
+            raise vault_disk.Stopped(f"its .gammaignore cannot be read: {e.why}") from e
+        known = self.state.get(SELECTION)
+        if not rules.exists and known:
+            raise vault_disk.Stopped("its .gammaignore is gone: put it back, or choose its files again")
+        if self.only:
+            return rules
+        if not rules.exists and known is None:
+            rules = self._globs_written() or rules
+        self.state[SELECTION] = rules.hash
+        return rules
+
+    def _globs_written(self):
+        """The marker's ``ignore`` globs, which an older app read, written as
+        the vault's ``.gammaignore``: the default, then each glob left out (one
+        with a ``/`` anchored at the root, as it matched the path from there).
+        Where git's reading of a glob, always case-insensitive, takes other
+        entries of the directory than the old ``fnmatch`` did (case-sensitive
+        on macOS and Linux), lines that name those entries follow it, so the
+        file leaves out what the old scan left out, no more and no less.
+        → the rules read back; None when the marker names none."""
+        try:
+            raw = json.loads((self.root / vault_disk.MARKER).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        globs = raw.get("ignore") if isinstance(raw, dict) else None
+        globs = [g for g in (str(g).strip().strip("/") for g in globs or ()) if g] if isinstance(globs, list) else []
+        if not globs:
+            return None
+        lines = [ignore_rules.HEADER, *(line for line in ignore_rules.DEFAULT_TEXT.splitlines()
+                                        if line != ignore_rules.HEADER)]
+        found = selection.walk(self.root)
+        entries = [(d, True) for d in found.dirs] + [(f, False) for f in found.files]
+        for glob in globs:
+            line = f"\\{glob}" if glob[0] in "!#" else glob
+            line = f"/{line}" if "/" in glob else line
+            one = ignore_rules.Rules.parse(line)
+            old = {(p, d) for p, d in entries if fnmatch.fnmatch(p if "/" in glob else p.rpartition("/")[2], glob)}
+            new = {(p, d) for p, d in entries if one.decide(p, d)}
+            lines.append(line)
+            lines += [f"!{ignore_rules.anchored(p, d)}" for p, d in sorted(new - old)
+                      if d or ignore_rules.DEFAULT.decide(p, False) is not True]
+            lines += [ignore_rules.anchored(p, d) for p, d in sorted(old - new)]
+        try:
+            vault_disk.write_new(self.root, ignore_rules.NAME, ("\n".join(lines) + "\n").encode("utf-8"))
+        except FileExistsError:
+            pass            # one written meanwhile is read as it is
+        return ignore_rules.read(self.root)
+
+    def _capped(self) -> None:
+        """``Stopped`` before a work folder's round writes anything when its
+        scan selects more files than its cap (the state's ``cap``, else
+        ``MAX_FILES``), the status saying how many (``too_many``)."""
+        if not self.work:
+            return
+        files = len(self.scan.files) + self.scan.pictures + self.scan.untracked
+        cap = int(self.state.get("cap") or MAX_FILES)
+        if files > cap:
+            self.status["too_many"] = {"files": files, "cap": cap}
+            what = "its .gammaignore tracks" if self.rules.exists else "it tracks"
+            raise vault_disk.Stopped(f"{what} {files:,} files, more than {cap:,}: choose fewer")
+
+    def _tracked(self, rel: str) -> bool:
+        """Whether the vault tracks ``rel``, a path pull would write."""
+        return ignore_rules.tracks(self.rules, rel)
+
+    def _not_tracked(self, rel: str, page_id: str = "") -> None:
+        """A path pull would write that the vault's rules leave out: not
+        written, said, and tried again next round."""
+        self._keep(rel, f"not written: .gammaignore leaves out {rel}; tick its folder whole in Choose files…")
+        if page_id:
+            self.remote.touched.add(page_id)
 
     def _same_place(self) -> None:
         """``Stopped`` for a copy of the vault at its place (a backup disk given
@@ -1359,7 +1585,7 @@ class Round:
                     if not self.pulling or row["problem"] or (found and found.placeholder):
                         ctx.read_only.add(row["page_id"])
                 elif row["kind"] == "pdf" and row["hash"]:
-                    ctx.add_file(rel, f"{row['hash']}.pdf")
+                    ctx.add_file(rel, stored_name(row["hash"], ".pdf"))
                 elif row["kind"] == "picture" and row["hash"]:
                     ctx.add_upload(rel, row["hash"])
             self._ctx = ctx
@@ -1383,7 +1609,7 @@ class Round:
         """The vault's pictures, for a page's round, which has no scan: the
         directory walked once, when its note links one the round does not
         know (one put there since the last scan)."""
-        return vault_disk.walk(self.root, self.marker.get("ignore") or ()).images
+        return vault_disk.walk(self.root, self.rules).images
 
     def _hold(self, path: str) -> None:
         """A note pull leaves as it is this round (``kept_paths``): no new
@@ -1421,7 +1647,7 @@ class Round:
         if row and not row["was"]:
             self.rows[path] = row
             if self._ctx is not None and row["kind"] == "pdf" and row["hash"]:
-                self._ctx.add_file(path, f"{row['hash']}.pdf")
+                self._ctx.add_file(path, stored_name(row["hash"], ".pdf"))
         if row and row["page_id"]:
             self.remote.touched.add(row["page_id"])
 
@@ -1626,7 +1852,7 @@ class Round:
                     self._each(path, self._push_one, path)
             return True
         plan = self._classify()
-        if any(plan[k] for k in ("renames", "moves", "changed", "new", "removed")):
+        if any(plan[k] for k in ("renames", "moves", "changed", "new", "removed", "deselected")):
             self.remote.layout()      # ``Stopped`` when the vault's folder went: nothing is filed into it
         if self._held(plan):
             return False
@@ -1642,6 +1868,7 @@ class Round:
             self._each(new, self._refile, new, old, token)
         self._push_new(plan["new"])
         self._apply_removals(plan)
+        self._apply_deselections(plan)
         self._report()
         return True
 
@@ -1685,7 +1912,10 @@ class Round:
         file of its kind waits to be read: that file may be it, moved. A vault
         that does not push everything makes and removes nothing: its rows
         follow the files moved, a new file read only to find one, and a note
-        gone is said, Gamma's changes to it waiting for a force pull."""
+        gone is said, Gamma's changes to it waiting for a force pull. A file
+        there that the vault's rules leave out is ``deselected``; one the scan
+        leaves out for another reason (a link above it, a case clash, a name
+        Windows refuses) is no removal at all."""
         found = self.scan.files
         renames = self._dir_renames()
 
@@ -1699,11 +1929,16 @@ class Round:
         changed = [p for p in found if p in known and not found[p].placeholder
                    and (self.force == "push" or vault_disk.moved(known[p], found[p]))
                    and (self.push_pdfs or known[p]["kind"] == "notes")]      # push off: a PDF changed is not read
-        gone, left_out = [], []     # a file the scan leaves out that is there all the same is never a removal
+        gone, left_out, deselected = [], [], []     # a file the scan leaves out that is there is never a removal
         listed = {p.casefold() for p in found}      # Note.md found as note.md is renamed, not left out
         for p in known:
             if p not in found:
-                (left_out if p.casefold() not in listed and self._there(p) else gone).append(p)
+                if not self._tracked(p) and self._there(p):
+                    deselected.append(p)
+                elif p.casefold() not in listed and self._there(p):
+                    left_out.append(p)
+                else:
+                    gone.append(p)
         new = [p for p in found if p not in known and not found[p].placeholder]
         if not self.push_all:
             new = [p for p in new if found[p].kind in {known[g]["kind"] for g in gone}]
@@ -1755,10 +1990,10 @@ class Round:
                     changed.remove(p)
                 elif not vault_store.missing_long(row, now):
                     changed.remove(p)
-        back = [p for p in [*found, *left_out] if p in known and known[p]["missing_since"] and p not in empty]
+        back = [p for p in [*found, *left_out, *deselected] if p in known and known[p]["missing_since"] and p not in empty]
         return {"renames": renames, "moves": [(f, pairs[f]) for f in moving], "changed": changed,
                 "new": new if self.push_all else [], "removed": removed, "missing": missing, "back": back,
-                "emptied": sorted(empty & set(changed))}
+                "emptied": sorted(empty & set(changed)), "deselected": sorted(deselected)}
 
     def _recased(self, gone: list, new: list, known: dict) -> dict:
         """``{new path: gone path}`` of files renamed only in case: one file,
@@ -1879,9 +2114,11 @@ class Round:
 
     def _held(self, plan: dict) -> bool:
         """Whether the round stops before it writes anything: its removals, a
-        note emptied counting as one, and those since the last quiet round
-        pass ``REMOVE_SHARE`` of the files the vault had then, ``REMOVE_FLOOR``
-        or more. A file missing for the first time is noted all the same."""
+        note emptied counting as one, and in a work folder each page whose
+        files its ``.gammaignore`` leaves out, and those since the last quiet
+        round pass ``REMOVE_SHARE`` of the files the vault had then,
+        ``REMOVE_FLOOR`` or more. A file missing for the first time is noted
+        all the same."""
         origin = self.origin
         if plan["missing"]:
             vault_store.mark_missing(self.id, [origin.get(p, p) for p in plan["missing"]])
@@ -1890,7 +2127,8 @@ class Round:
         back = {origin.get(p, p) for p in plan["back"]}
         waiting = plan["missing"] or [p for p, r in self.rows.items() if r["missing_since"] and p not in back]
         total = self.state.get("total") or len(self.rows)
-        going = len(plan["removed"]) + len(plan["emptied"])
+        leaving = {self.rows[origin.get(p, p)]["page_id"] or p for p in plan["deselected"]} if self.work else set()
+        going = len(plan["removed"]) + len(plan["emptied"]) + len(leaving)
         removals = self.state.get("removed", 0) + going
         if going and not self.confirm and total >= REMOVE_FLOOR and removals > REMOVE_SHARE * total:
             self.status["held"] = {"removals": removals, "total": total}
@@ -2029,7 +2267,11 @@ class Round:
         deleted whose file changed comes back first (``_push_note``'s rule),
         so it is named and filed by it too; one whose file did not waits
         there: False. Where the vault does not push everything, and in a
-        force pull, only the rows follow: Gamma keeps its places."""
+        force pull, only the rows follow: Gamma keeps its places. A work
+        folder's file is filed first in its new directory's folder, whatever
+        moved, then in its folders outside every work folder, and takes the
+        file's name; its title follows the stem only while it is not in the
+        library, whose paper's title is free."""
         row = self.rows[new]
         if row["kind"] == "pdf":
             self.remote.relink(str(self.root / old), str(self.root / new))
@@ -2042,8 +2284,18 @@ class Round:
             state = "live"
         if state != "live":
             return state is None
-        props, folder = {}, row["folder"] or ""
-        if _dir(new) != _dir(old):
+        props, folder, free = {}, row["folder"] or "", False
+        if self.work:
+            folders, parent = self.remote.filing(page_id)
+            layout, tree = self.remote.layout(page_id), self.remote.work_tree()
+            props[FOLDERS] = [self._folder_for(_dir(new))] + [f for f in folders if not tree.work_of(f)]
+            if parent:
+                props[PARENT_PAGE] = None
+            if row["kind"] == "pdf" or "pdf" not in self.rows.of(page_id):
+                props["file_name"] = new.rsplit("/", 1)[-1]
+            folder = self._first(props[FOLDERS], layout.folders)
+            free = page_id in layout.pages and layout.pages[page_id].library
+        elif _dir(new) != _dir(old):
             folders, parent = self.remote.filing(page_id)
             was, now = self._folder_for(_dir(old)), self._folder_for(_dir(new))
             filed = list(folders)
@@ -2057,7 +2309,7 @@ class Round:
             folder = self._first(props[FOLDERS] or [], self.remote.layout(page_id).folders)
         title = row["title"]
         notes = self.rows.of(page_id).get("notes")
-        if _stem(new) != _stem(old) and (row["kind"] == "notes" or not notes):
+        if _stem(new) != _stem(old) and (row["kind"] == "notes" or not notes) and not free:
             if not (row["kind"] == "notes" and _fields(row["text"]).get("title")):
                 title = _stem(new)
         before, after = self.remote.set_page(page_id, title=title if title != row["title"] else None, props=props or None)
@@ -2402,11 +2654,21 @@ class Round:
         page is that page's before any pairing: one an older client wrote
         beside its paper (its notes turned off since) holds the page's blocks
         already, and merged from no base it would add each again. A file the
-        remote refuses waits until it changes (``_making``)."""
+        remote refuses waits until it changes (``_making``). A file at the
+        place of an in-place tombstone (a file the selection left, ticked
+        again) is that page back first, whatever its bytes."""
         tombs = [t for t in vault_store.tombstones(self.id) if t["page_id"] and not t["pending"]]
-        back = vault_disk.came_back([self._known(t["was"], t) for t in tombs],
-                                    [self._known_read(self.reads[p]) for p in paths]) if tombs else {}
+        kept = {t["was"].casefold(): t for t in tombs if vault_store.in_place(t)}
         restored = set()
+        for path in paths:
+            tomb = kept.get(path.casefold())
+            if tomb is not None and self.remote.state(tomb["page_id"]) is not None:
+                self._counted(path, self._unbury, path, tomb)
+                restored.add(path)
+        tombs = [t for t in tombs if not vault_store.in_place(t)]
+        left = [p for p in paths if p not in restored]
+        back = vault_disk.came_back([self._known(t["was"], t) for t in tombs],
+                                    [self._known_read(self.reads[p]) for p in left]) if tombs else {}
         for path, k in back.items():
             page_id = tombs[k]["page_id"]
             state = self.remote.state(page_id)
@@ -2484,15 +2746,32 @@ class Round:
         self.remote.restore(tomb["page_id"])
         vault_store.unbury(self.id, tomb["path"], path)
         if tomb["kind"] == "pdf":
-            self.remote.relink(str(self.root / tomb["path"]), str(self.root / path))
+            self.remote.relink(str(self.root / vault_store.on_disk(tomb)), str(self.root / path))
         if tomb["path"].startswith(f"{vault_disk.TRASH}/") and self._there(tomb["path"]):
             if tomb["hash"] == self.reads[path].hash:
                 vault_disk.purge(self.root, tomb["path"])
             else:
                 vault_store.put(self.id, tomb["path"], kind=tomb["kind"], hash=tomb["hash"], was=tomb["was"])
         self.rows = _Rows(vault_store.files(self.id))
+        if self.work:
+            self._filed_back(tomb["page_id"], path)
         self._push_file(path, self.scan.files[path])
         self.counts["sent"] += 1
+
+    def _filed_back(self, page_id: str, path: str) -> None:
+        """A work folder's page come back with its file ``path``: filed first in
+        that file's directory's folder, made where missing (a directory gone
+        with its pages, back with them), then in its folders outside every
+        work folder that are still there, as ``_moved`` files it."""
+        folders, _parent = self.remote.filing(page_id)
+        tree = self.remote.work_tree()
+        want = [self._folder_for(_dir(path))] + [f for f in folders if f in tree and not tree.work_of(f)]
+        if want == list(folders):
+            return
+        before, after = self.remote.set_page(page_id, props={FOLDERS: want})
+        folder = self._first(want, self.remote.layout(page_id).folders)
+        for at, at_row in self.rows.of(page_id).values():
+            self._put(at, at_row, folder=folder, seq=after if at_row["seq"] == before else at_row["seq"])
 
     def _pdf_of(self, note: str, pdfs: list) -> str:
         """The PDF a new note is the notes of: the one its front matter's
@@ -2593,8 +2872,7 @@ class Round:
         note_read = self.reads.get(note) if note else None
         doc = md_lens.parse(note_read.text) if note_read and note_read.text is not None else None
         title, props, labels = _front_props(doc.front.fields if doc and doc.front else {}, _stem(note or path))
-        props.update(attachment_props(read.hash, "", path.rsplit("/", 1)[-1])[0])
-        props[LINKED_FILE] = True
+        props["doc"] = document(read.hash, name=path.rsplit("/", 1)[-1], at="path", size=read.size if self.work else None)
         folder = self._folder_for(_dir(path))
         if folder:
             props[FOLDERS] = [folder]
@@ -2604,21 +2882,28 @@ class Round:
                          note=(note, note_read, doc) if note and doc is not None and not doc.problem else None)
         except BaseException:
             if self.remote.state(page_id) is None:
-                self.remote.unlink_pdf(str(self.root / path), f"{read.hash}.pdf")
+                self.remote.unlink_pdf(str(self.root / path), stored_name(read.hash, ".pdf"))
             raise
 
     def _create(self, path: str, read: Read, page_id: str, title: str, props: dict, labels: list, folder: str, *,
                 note=None, problem: str = "") -> None:
         """A new page, in the journal first: the file ``path`` its note or its
-        PDF, ``note`` (path, read, doc) the note that pairs with a PDF."""
+        PDF, ``note`` (path, read, doc) the note that pairs with a PDF. A work
+        folder's is its file: stamped with the work folder and the file's
+        name, in the library while the vault's switch says so, and never a
+        sub-page."""
         token = _token()
         tree, nodes = [], []
         pdf = path if read.kind == "pdf" else ""
+        if self.work:
+            props = {**props, "work_folder": self.link["folder_id"], "file_name": path.rsplit("/", 1)[-1]}
+            if self.work["library"]:
+                props["library"] = True
         if note is not None:
             notes_path, notes_read, notes_doc = note
             ctx = self._ctx_at(notes_path, page_id, pdf)
             if pdf:
-                ctx.add_file(pdf, f"{read.hash}.pdf")     # its callouts link the paper this page is made of
+                ctx.add_file(pdf, stored_name(read.hash, ".pdf"))     # its callouts link the paper this page is made of
             entries, by_place = [], {}
             for n, node in enumerate(notes_doc.flat):
                 g, memo = vault_links.to_gamma(node.content, {}, ctx)
@@ -2629,7 +2914,7 @@ class Round:
             ids = [f"{token}{n:x}" for n in range(len(notes_doc.flat))]
             tree = [_insertable(node) for node in _gamma_tree(notes_doc, entries, ids, by_place)]
             nodes = [{"id": block_id, **entry} for block_id, entry in zip(ids, entries)]
-            if notes_doc.front and notes_doc.front.fields.get("parent"):
+            if notes_doc.front and notes_doc.front.fields.get("parent") and not self.work:
                 self.parents[notes_path] = notes_doc.front.fields["parent"]     # once every new page is made
         files = {path: (read, read.text if read.kind == "notes" else read.pdf_id)}
         if note is not None and note[0] != path:
@@ -2672,7 +2957,8 @@ class Round:
         every file went goes to Recently deleted, its rows kept as tombstones;
         a PDF gone leaves its page reading a missing file; a paper's notes gone
         take their plain blocks, its highlights staying. A directory gone goes
-        as a folder only when no page is filed in it."""
+        as a folder only when no page is filed in it; a work folder's
+        directory its ``.gammaignore`` leaves out is not gone."""
         by_page = {}
         for path in plan["removed"]:
             if not self._gone(path):
@@ -2686,7 +2972,7 @@ class Round:
         recorded = vault_store.dirs(self.id)
         live = list(vault_store.files(self.id))
         for directory in sorted((d for d in recorded if d not in self.scan.dirs), key=len, reverse=True):
-            if any(p.startswith(f"{directory}/") for p in live):
+            if any(p.startswith(f"{directory}/") for p in live) or self.work and self._there(directory):
                 continue
             folder_id = recorded[directory]["folder_id"]
             if not folder_id or self.remote.drop_folder(folder_id):
@@ -2721,6 +3007,51 @@ class Round:
             vault_store.forget(self.id, path)
             self.counts["removed"] += 1
 
+    def _apply_deselections(self, plan: dict) -> None:
+        """Files there that the vault's ``.gammaignore`` leaves out now: in a
+        work folder each page whose files all left goes to Recently deleted,
+        its files where they are (``_deselected``); in a kept folder, whose
+        source Gamma is, the row is forgotten and the page stays."""
+        by_page = {}
+        for path in plan["deselected"]:
+            row = self.rows.get(path)
+            if row is None:
+                continue
+            if not self.work:
+                vault_store.forget(self.id, path)
+                self.rows.pop(path, None)
+                continue
+            by_page.setdefault(row["page_id"], []).append(path)
+        for page_id, paths in by_page.items():
+            self._each(paths[0], self._deselected, page_id, paths)
+
+    def _deselected(self, page_id: str, paths: list) -> None:
+        """A work folder's page whose files ``paths`` the selection left: with
+        every file of the page gone, the page to Recently deleted first, then
+        each row an in-place tombstone (``vault_store.bury_in_place``), the
+        file never moved, so that a round that dies in between leaves a live
+        row the next deselects again, or a tombstone of a live page, which
+        ``_restore_file`` sends back. One of two files left out (a hand edit:
+        the dialog keeps a paper's two together) is forgotten, its page
+        keeping the other."""
+        stays = [p for _kind, (p, _row) in self.rows.of(page_id).items() if p not in paths]
+        if page_id and stays:
+            for path in paths:
+                vault_store.forget(self.id, path)
+                self.rows.pop(path, None)
+                self._keep(path, LEFT_OUT)
+            return
+        if page_id and self.remote.state(page_id) is not None:
+            self.remote.trash(page_id)
+            for path in paths:
+                vault_store.bury_in_place(self.id, path)
+                self.rows.pop(path, None)
+        else:
+            for path in paths:
+                vault_store.forget(self.id, path)
+                self.rows.pop(path, None)
+        self.counts["removed"] += len(paths)
+
     def _notes_gone(self, page_id: str, row: dict) -> None:
         """A paper's notes file gone, its PDF left: the plain blocks the file
         held, unchanged since, go (kept in the PDF's row's ``gone``), the
@@ -2754,11 +3085,11 @@ class Round:
     # --- pull: Gamma's changes ---------------------------------------------------------------------
 
     def _pull(self) -> None:
-        """Gamma's changes onto the disk: folders renamed, pages that left or
-        went to Recently deleted or came back, each page that changed (and,
-        once the labels tree changed, each note with tags: a label renamed
-        moves no page's seq), and the pages a link asked an anchor of, once
-        more."""
+        """Gamma's changes onto the disk: folders renamed (never in a work
+        folder, whose directories follow the disk), pages that left or went
+        to Recently deleted or came back, each page that changed (and, once
+        the labels tree changed, each note with tags: a label renamed moves no
+        page's seq), and the pages a link asked an anchor of, once more."""
         self.layout = self.remote.layout(self.only)
         if self.only:
             if self.only in self.layout.pages:
@@ -2773,7 +3104,8 @@ class Round:
                                      for page_id, title in self.layout.shared[:KEPT_SHOWN]]
         self.relabelled = self.state.get("labels") != self.layout.labels
         self.state["labels"] = self.layout.labels
-        self._pull_dirs()
+        if not self.work:
+            self._pull_dirs()
         for page_id in sorted({row["page_id"] for row in self.rows.values() if row["page_id"]} - set(self.layout.pages)):
             self._each(self._name_of(page_id), self._left, page_id)
         self._tombstones(set(self.layout.pages))
@@ -2857,7 +3189,11 @@ class Round:
         A PDF changed on disk since its base (a person's annotated copy in a
         vault that does not push it) is the person's: it stays where it is,
         no longer synced, and is reported (``LEFT``), as the older client
-        left one; never moved or deleted."""
+        left one; never moved or deleted. In a work folder only the tracked
+        note of a page that follows goes to the trash (a note a person
+        trashed where the vault pulls); any other file, a paper's notes among
+        them, stays where it is, its row an in-place tombstone: Gamma never
+        moves a file the disk made."""
         rows = self.rows.of(page_id)
         if not rows:
             return
@@ -2880,7 +3216,15 @@ class Round:
         if pdf and self.remote.state(page_id) == "live":
             if os.path.isfile(self.root / pdf[0]) and self.remote.doc_of(page_id) == pdf[1]["hash"]:
                 self.remote.store_pdf(self.root / pdf[0], page_id)
-        self._to_trash([p for p, _row in self.rows.of(page_id).values()])
+        paths = [p for p, _row in self.rows.of(page_id).values()]
+        if self.work:
+            follows = self.work["pull"] and "pdf" not in self.rows.of(page_id)
+            for path in [p for p in paths if self.rows[p]["kind"] != "notes" or not follows or not self._tracked(p)]:
+                vault_store.bury_in_place(self.id, path)
+                self.rows.pop(path, None)
+                paths.remove(path)
+                self.counts["removed"] += 1
+        self._to_trash(paths)
 
     def _pdf_changed(self, path: str, row: dict) -> bool:
         """Whether the vault's PDF at ``path`` holds other bytes than its base
@@ -2937,13 +3281,18 @@ class Round:
         """A tombstone whose page went for good (or that has none: a copy a
         file come back left, ``_unbury``), its file in the trash with it once
         the trash has held it ``vault_disk.TRASH_DAYS`` (a stamp that says no
-        time never: the file stays)."""
-        if tomb["path"].startswith(f"{vault_disk.TRASH}/") and self._there(tomb["path"]):
+        time never: the file stays). An in-place tombstone's file stays where
+        it is; a PDF its row read for another page too is stored for that one
+        first, as one the trash takes is."""
+        if vault_store.in_place(tomb):
+            if tomb["kind"] == "pdf" and tomb["hash"] and self._there(tomb["was"]):
+                self.remote.spare(str(self.root / tomb["was"]), stored_name(tomb["hash"], ".pdf"), tomb["page_id"])
+        elif tomb["path"].startswith(f"{vault_disk.TRASH}/") and self._there(tomb["path"]):
             at = vault_disk.trashed_at(tomb["path"])
             if at is None or time.time() - at < vault_disk.TRASH_DAYS * 86400:
                 return
             if tomb["kind"] == "pdf" and tomb["hash"]:
-                self.remote.spare(str(self.root / tomb["path"]), f"{tomb['hash']}.pdf", tomb["page_id"])
+                self.remote.spare(str(self.root / tomb["path"]), stored_name(tomb["hash"], ".pdf"), tomb["page_id"])
             vault_disk.purge(self.root, tomb["path"])
         vault_store.forget(self.id, tomb["path"])
 
@@ -2954,12 +3303,35 @@ class Round:
         it (a page's round, or one of pull alone, in a vault that pushes
         everything): that may be the page's own, so the page waits for a
         round that reads the disk (``buried``), never writing another file
-        beside it."""
+        beside it. An in-place tombstone's file is where it was: tracked, its
+        row is that file's again, nothing moved. Untracked, in a work folder
+        whose page has no other file tracked and there, the page goes back to
+        Recently deleted, where a work folder's page whose file the vault
+        does not track is; one with its other file is kept by that one, and in
+        a kept folder (a work folder's push lowered since) the page stays
+        Gamma's: either way the tombstone is forgotten. A place the rules
+        leave out is not written to."""
+        if vault_store.in_place(tomb):
+            page_id, was = tomb["page_id"], tomb["was"]
+            if self._tracked(was) and self._there(was):
+                vault_store.unbury(self.id, tomb["path"], was)
+                self.rows = _Rows(vault_store.files(self.id))
+            elif self.work and not self._kept_by(page_id, tomb["path"]):
+                self.remote.trash(page_id)
+                self.buried.add(page_id)
+            else:
+                vault_store.forget(self.id, tomb["path"])
+                if self.work:
+                    self._keep(was, LEFT_OUT)
+            return
         if self._gone(tomb["path"]):
             if self.push_all and (self.scan is None or not self.pushing) and self._there(tomb["was"]):
                 self.buried.add(tomb["page_id"])
                 raise Waiting("a file is back where its page's lived; the next round reads it")
             vault_store.forget(self.id, tomb["path"])
+            return
+        if not self._tracked(tomb["was"]):
+            self._not_tracked(tomb["was"], tomb["page_id"])
             return
         target = self._free(tomb["was"])
         vault_store.put(self.id, tomb["path"], pending={"op": "restore", "token": _token(), "path": target})
@@ -2970,6 +3342,16 @@ class Round:
         self.rows = _Rows(vault_store.files(self.id))
         self.counts["added"] += 1
 
+    def _kept_by(self, page_id: str, tomb_path: str) -> bool:
+        """Whether a page keeps a file other than the in-place tombstone at
+        ``tomb_path``: a row of it, or another in-place tombstone of it whose
+        file is tracked and there, which this round reads back."""
+        if self.rows.of(page_id):
+            return True
+        return any(t["page_id"] == page_id and t["path"] != tomb_path and vault_store.in_place(t)
+                   and self._tracked(t["was"]) and self._there(t["was"])
+                   for t in vault_store.tombstones(self.id))
+
     # --- pull: one page ---------------------------------------------------------------------------
 
     def _pull_page(self, info: Info, again: bool = False) -> None:
@@ -2978,7 +3360,9 @@ class Round:
         copied out (a page made in Gamma, a PDF attached there to a page of
         notes) or has replaced since, then its notes. A PDF of the disk's that
         Gamma replaced is that file's problem: pull never writes it. A page
-        whose file a tombstone waits to read back (``buried``) waits too."""
+        whose file a tombstone waits to read back (``buried``) waits too. A
+        work folder's PDFs are the disk's: pull copies none out, and says so
+        of a stored PDF filed there."""
         if info.id in self.buried:
             return
         folder = self._first(info.folders, self.layout.folders)
@@ -2993,7 +3377,9 @@ class Round:
             self.counts["unchanged"] += 1
             return
         if info.doc_id and (not pdf or pdf[1]["hash"] != info.doc_id):
-            if not pdf and not info.linked or pdf and pdf[1]["ours"]:
+            if self.work and not pdf:
+                self._keep(self._name_of(info.id), "a PDF filed here in Gamma is not written into the directory")
+            elif not self.work and (not pdf and not info.linked or pdf and pdf[1]["ours"]):
                 pdf = self._copy_pdf(info, folder, notes, pdf)
             elif pdf:
                 self._problem(pdf[0], "its page's PDF was replaced in Gamma, and this file is the one before")
@@ -3010,28 +3396,48 @@ class Round:
         """The page's files where its title and first filing put them: a new
         title renames the note (a ``title:`` key is patched by the write
         instead), a new first filing moves it, and a PDF goes with the note
-        only when it is the note's stem beside it: one alone is the disk's."""
+        only when it is the note's stem beside it: one alone is the disk's.
+        In a work folder only a note that follows Gamma (no document, where
+        the vault pulls) is renamed or moved, alone, and its file's name
+        written; anything else's title and filing are only recorded (a
+        library file's title is free, its file keeping its name). A place
+        the rules leave out is not moved to."""
         notes, pdf = rows.get("notes"), rows.get("pdf")
         path, row = notes or pdf
         moved = row["folder"] is not None and folder != row["folder"]      # none: an older folder's, recorded at its write
         renamed = row["title"] is not None and info.title != row["title"]
         if not moved and not renamed:
             return
-        if notes:
+        follows = not info.doc_id and bool(self.work and self.work["pull"])
+        if notes and (follows or not self.work):
             if notes[0] in self.kept_paths:
                 return               # changed on disk and not pushed: placed once it is the base again
             directory = self._dir_of(folder) if moved else _dir(path)
             titled = bool(_fields(notes[1]["text"]).get("title"))
             stem = _name(info.title, ".md") if renamed and not titled else _stem(notes[0])
             for kind, (at, at_row) in rows.items():
-                if kind == "pdf" and not (_stem(at) == _stem(notes[0]) and _dir(at) == _dir(notes[0])):
+                if kind == "pdf" and (self.work or not (_stem(at) == _stem(notes[0]) and _dir(at) == _dir(notes[0]))):
                     continue
-                want = self._free(_join(directory, stem + os.path.splitext(at)[1]), own=at)
+                wanted = _join(directory, stem + os.path.splitext(at)[1])
+                if wanted != at and not self._tracked(wanted):
+                    self._not_tracked(wanted, info.id)
+                    return
+                want = self._free(wanted, own=at)
                 if want != at:
                     self._rename(at, want, at_row)
                     self._dirs_made(_dir(want), folder)
+                    if self.work and info.work_folder:
+                        self._file_named(info.id, want)
         for _kind, (at, at_row) in self.rows.of(info.id).items():
             self._put(at, at_row, title=info.title, folder=folder)
+
+    def _file_named(self, page_id: str, path: str) -> None:
+        """A work folder's file's name written (``file_name``) after pull
+        wrote or renamed its note, its rows' seq following where level."""
+        before, after = self.remote.set_page(page_id, props={"file_name": path.rsplit("/", 1)[-1]})
+        for at, at_row in self.rows.of(page_id).values():
+            if at_row["seq"] == before:
+                self._put(at, at_row, seq=after)
 
     def _rename(self, at: str, want: str, row: dict) -> None:
         """A file renamed or moved by pull, in the journal first."""
@@ -3077,14 +3483,18 @@ class Round:
         directory = _dir(notes[0]) if notes else self._dir_of(folder)
         wanted = _join(directory, f"{_stem(notes[0]) if notes else _name(info.title, '.pdf')}.pdf")
         beside = "" if notes or pdf else self._beside_parent(info, ".pdf")
-        held = next((at for at in (wanted, beside) if at and self._holds_doc(at, info.doc_id)), "") if not pdf else ""
+        held = next((at for at in (wanted, beside) if at and self._tracked(at) and self._holds_doc(at, info.doc_id)),
+                    "") if not pdf else ""
         if held:
             self._take(held, "pdf", info.id, {"hash": info.doc_id, "text": "", "title": info.title, "folder": folder,
                                               "seq": 0, "problem": ""})
             if held == wanted:
                 self._dirs_made(directory, folder)
             return held, self.rows[held]
-        data = _fetched(self.remote, f"{info.doc_id}.pdf")
+        if not pdf and not self._tracked(wanted):
+            self._not_tracked(wanted, info.id)
+            return pdf
+        data = _fetched(self.remote, stored_name(info.doc_id, ".pdf"))
         if data is None:
             return pdf
         path = pdf[0] if pdf else self._free(wanted)
@@ -3174,8 +3584,8 @@ class Round:
         """Whether the note at ``path``, which no row holds, names the page by
         its ``gamma_id``: an older client's note, kept beside its paper while
         the vault's notes were off. It is that page's notes, never one written
-        beside it (``_adopt``)."""
-        if path in self.rows:
+        beside it (``_adopt``); one the vault's rules leave out is none."""
+        if path in self.rows or not self._tracked(path):
             return False
         try:
             st = vault_disk.lstat(self.root, path)
@@ -3197,13 +3607,16 @@ class Round:
         puts it or where the gamma-sync client kept a sub-page's
         (``_beside_parent``), is taken (``_take``). A vault without notes (a
         folder kept before with its PDFs alone) writes none, its PDF level
-        with the page."""
+        with the page. Pull writes no note where the vault's rules leave it
+        out; a work folder's note made in Gamma takes its file's name once
+        written."""
         if not self.notes:
             if pdf:
                 self._put(*pdf, seq=info.seq, title=info.title, folder=folder)
             return
         forced = self.force == "pull"
-        if notes and ((notes[0] in self.kept_paths and not forced) or notes[1]["text"] is None):
+        if notes and ((notes[0] in self.kept_paths and not forced) or notes[1]["text"] is None
+                      or not self._tracked(notes[0])):
             return
         found = (self.scan.files.get(notes[0]) if self.scan else self._stat(notes[0])) if notes else None
         if found and found.placeholder:
@@ -3224,6 +3637,9 @@ class Round:
             wanted, row, base = self._notes_path(info, pdf, folder), None, None
             beside = "" if pdf else self._beside_parent(info, ".md")
             if any(self._older_note(at, info.id) for at in (wanted, beside) if at):
+                return
+            if not self._tracked(wanted):
+                self._not_tracked(wanted, info.id)
                 return
             path = self._free(wanted)
         current = self._current(path) if row is not None else None
@@ -3255,7 +3671,8 @@ class Round:
         self._new_files(ctx)
         data = text.encode("utf-8", "surrogatepass")
         stamp = {"seq": seq if level else (row["seq"] if row else 0), "title": info.title, "folder": folder, "problem": ""}
-        held = next((at for at in (wanted, beside) if at and at != path and self._holds(at, data)), "") if row is None else ""
+        held = next((at for at in (wanted, beside) if at and at != path and self._tracked(at) and self._holds(at, data)),
+                    "") if row is None else ""
         if held:
             path = held
             self._take(path, "notes", info.id, {"hash": vault_disk.sha(data), "text": text, "nodes": nodes, **stamp})
@@ -3274,6 +3691,8 @@ class Round:
                 self._dirs_made(_dir(path), folder)
         if pdf and path in self.rows:        # a paper's two files are level with its page together
             self._put(*pdf, seq=self.rows[path]["seq"])
+        elif row is None and info.work_folder and self.work and path in self.rows:
+            self._file_named(info.id, path)
 
     def _first_read(self, path: str, row: dict, current: str) -> None:
         """An older client's note taken while a cloud placeholder held it
@@ -3429,8 +3848,11 @@ class Round:
 
     def _new_files(self, ctx) -> None:
         """Pictures a note's links put in the vault: copied there and read in
-        place from then on."""
+        place from then on, where the vault's rules track them."""
         for rel, name in list(ctx.new_files.items()):
+            if not self._there(rel) and not self._tracked(rel):
+                self._not_tracked(rel)
+                continue
             data = None if self._there(rel) else _fetched(self.remote, name)
             if data is None:
                 continue

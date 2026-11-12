@@ -141,16 +141,19 @@ function ViewToggle({ view, onChange }) {
 
 // What the listing shows: folders + files, folders only, files only, or the
 // labels in scope (labels browse exactly like folders — see LabelRow/openLabel
-// in App.jsx).
-function KindToggle({ value, onChange, scopeLabel }) {
+// in App.jsx). `kinds` names the buttons a view offers, all four by default;
+// an empty list draws nothing (a work folder's list shows its files only).
+const KINDS = ["all", "folders", "files", "labels"];
+function KindToggle({ value, onChange, scopeLabel, kinds: offered = KINDS }) {
   const kinds = [
     ["all", t("Folders & files"), FolderFilesIcon],
     ["folders", t("Folders only"), FolderIcon],
     ["files", t("Files only"), FileIcon],
     ["labels", t("Labels"), LabelIcon],
-  ];
+  ].filter(([val]) => offered.includes(val));
   const ref = React.useRef(null);
   useSlidingPill(ref, value);
+  if (!kinds.length) return null;
   return (
     <div className="homeViewToggle" role="group" aria-label={scopeLabel || t("Shown items")} title={scopeLabel || undefined} ref={ref}>
       <span className="slidePill" aria-hidden="true" />
@@ -175,9 +178,10 @@ function KindToggle({ value, onChange, scopeLabel }) {
 // nothing, the listing is already memoized. It matches titles and folder /
 // label chips only, and says so; `onEnter` (Enter with nothing matched)
 // hands the query to the full search. `keyLabel` is its shortcut, shown in
-// the hover title.
-function ListFindBox({ value, onChange, onEnter, keyLabel }) {
-  const label = t("Filter by title or label");
+// the hover title. `byName`: a work folder's list, whose box filters the
+// files it has loaded by name.
+function ListFindBox({ value, onChange, onEnter, keyLabel, byName = false }) {
+  const label = byName ? t("Filter by name") : t("Filter by title or label");
   return (
     <div className={`homeFindBox ${value ? "active" : ""}`} data-guide="home.filter">
       <SearchIcon size={14} />
@@ -186,7 +190,7 @@ function ListFindBox({ value, onChange, onEnter, keyLabel }) {
         value={value}
         placeholder={label}
         title={keyLabel ? `${label} (${keyLabel})` : label}
-        aria-label={t("Filter this listing by title or label")}
+        aria-label={byName ? t("Filter this list by name") : t("Filter this listing by title or label")}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if (composing(e)) return;

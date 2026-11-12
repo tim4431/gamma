@@ -1091,8 +1091,9 @@ def _pull_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
 
 def missing_uploads(ws: str, pages=None) -> set[str]:
     """The upload names the workspace's blocks show (content, props, a
-    page's ``doc_id``; not the files highlights hold) that it does not store (one listing of its files,
-    ``storage.list``); only those of ``pages`` (page ids) when given."""
+    block's ``doc``; not the files highlights hold) that it does not store
+    (one listing of its files, ``storage.list``); only those of ``pages``
+    (page ids) when given."""
     with connect_pages_db(ws) as conn:
         if pages is None:
             rows = conn.execute("SELECT content, properties FROM unified_blocks").fetchall()
@@ -1854,7 +1855,7 @@ def _pull_whole(ws: str, remote: Remote, page_id: str, remote_tree: dict, seq: i
     place in the library when no page here holds that key."""
     _pull_files(ws, remote, upload_refs(remote_tree.values(), held=False), report)
     with connect_pages_db(ws) as conn:
-        create_page(conn, remote_tree[page_id]["content"], remote_tree[page_id]["props"], actor=ACTOR,
+        create_page(conn, remote_tree[page_id]["content"], remote_tree[page_id]["props"], actor=ACTOR, client=CLIENT,
                     block_id=page_id, position=_free_page_key(conn, remote_tree[page_id]["position"]))
         _save_state(conn, page_id, UNKNOWN_SEQ, {page_id: remote_tree[page_id]})
     _apply_local(ws, page_id, diff({page_id: remote_tree[page_id]}, remote_tree, page_id, with_base=False),

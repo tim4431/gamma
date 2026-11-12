@@ -11,6 +11,7 @@ import threading
 import zipfile
 from contextlib import closing
 
+import pytest
 from fastapi.testclient import TestClient
 
 from conftest import login, make_user
@@ -332,7 +333,10 @@ def test_a_backup_from_before_the_highlight_shape_is_converted_on_restore(tmp_pa
     through step 30's rewrite on a replace and on a merge
     (``normalize.highlight_shape``), after the content normalizers: the
     oldest pages' ``sourceUrl`` becomes a ``source_url``, which goes when
-    it is the stored copy's."""
+    it is the stored copy's. Step 52, which every copy below it runs,
+    gives the pages their doc: the camelCase page's is its stored copy,
+    and a file name that kept a directory path is leafed after it, the
+    automatic title with it."""
     from test_migrations import _v29_highlights_db, assert_highlight_shape
 
     doc = "c" * 24
@@ -343,6 +347,10 @@ def test_a_backup_from_before_the_highlight_shape_is_converted_on_restore(tmp_pa
         conn.execute("INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at, "
                      "page_id) VALUES ('camel', 'root', 'a1', 'Oldest', ?, ?, ?, 'camel')",
                      (json.dumps({"doc_id": "b" * 24, "sourceUrl": f"/api/uploads/{'b' * 24}.pdf"}), OLD, OLD))
+        conn.execute("INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, updated_at, "
+                     "page_id) VALUES ('pathy', 'root', 'a2', 'Lab\\paper.pdf', ?, ?, ?, 'pathy')",
+                     (json.dumps({"doc_id": "a" * 24, "original_filename": "Lab\\paper.pdf",
+                                  "auto_title": "Lab\\paper.pdf"}), OLD, OLD))
         conn.commit()
     zpath = tmp_path / "old-highlights.zip"
     with zipfile.ZipFile(zpath, "w") as z:
@@ -352,9 +360,75 @@ def test_a_backup_from_before_the_highlight_shape_is_converted_on_restore(tmp_pa
         ws_backup.restore_zip(ws, zpath, mode)
         with _conn(ws) as conn:
             props = {r[0]: json.loads(r[1]) for r in conn.execute("SELECT id, properties FROM unified_blocks")}
+            titles = dict(conn.execute("SELECT id, content FROM unified_blocks WHERE id IN ('camel', 'pathy')"))
             assert conn.execute("SELECT kind FROM unified_blocks WHERE id = 'hl'").fetchone()[0] == "highlight"
-        assert_highlight_shape(props, doc)
-        assert props["camel"] == {"doc_id": "b" * 24}
+        assert_highlight_shape(props, doc, documents=True)
+        pdf = {"format": "pdf", "name": "", "ext": ".pdf", "at": "store"}
+        assert props["camel"] == {"doc": {**pdf, "hash": "b" * 24}}
+        assert props["pathy"] == {"doc": {**pdf, "name": "paper.pdf", "hash": "a" * 24}, "auto_title": "paper.pdf"}
+        assert titles == {"camel": "Oldest", "pathy": "paper.pdf"}
+
+
+def _flat_backup(tmp_path, name, stamp):
+    """A backup zip of a workspace as release 51 made it (the generated
+    doc_id of the flat keys, the pages keeping their document in them),
+    stamped ``stamp``: 51, or 0 as a scoped Gamma export from before step
+    52 is (it carries no stamp). Its pages: a stored PDF with its name, a
+    duplicate of it, a PDF read in place, one shown from its address, and
+    a nested block with a doc id."""
+    from test_migrations import _at_51
+
+    ws, c = _account(name)
+    pages = {title: _page(c, title) for title in ("paper.pdf", "A copy", "Linked", "Proxied")}
+    _insert(c, pages["paper.pdf"], f"{name}File", "a file block")
+    flat = {pages["paper.pdf"]: {"doc_id": "a" * 24, "original_filename": "paper.pdf", "auto_title": "paper.pdf"},
+            pages["A copy"]: {"source_url": f"/api/uploads/{'a' * 24}.pdf"},
+            pages["Linked"]: {"doc_id": "b" * 24, "linked_file": True, "original_filename": "linked.pdf"},
+            pages["Proxied"]: {"doc_id": "c" * 24, "source_url": "https://x.test/p.pdf"},
+            f"{name}File": {"doc_id": "e" * 24}}
+    copy = tmp_path / f"{name}.db"
+    with _conn(ws) as live, closing(sqlite3.connect(str(copy))) as out:
+        live.backup(out)
+    with closing(sqlite3.connect(str(copy))) as conn:
+        register_functions(conn)
+        _at_51(conn)
+        conn.executemany("UPDATE unified_blocks SET properties = ? WHERE id = ?",
+                         [(json.dumps(p), bid) for bid, p in flat.items()])
+        conn.execute(f"PRAGMA user_version = {stamp}")
+        conn.commit()
+    zpath = tmp_path / f"{name}.zip"
+    with zipfile.ZipFile(zpath, "w") as z:
+        z.write(copy, "pages.db")
+    return zpath, pages, f"{name}File"
+
+
+@pytest.mark.parametrize("stamp", [51, 0])
+def test_a_backup_from_before_page_documents_is_converted_on_restore(tmp_path, stamp):
+    """A backup from before step 52 (stamped 51, or unstamped as a scoped
+    Gamma export) comes back on a replace and on a merge with every
+    document as one doc property (ws_backup._normalize_copies runs the
+    workspace steps above its stamp): stored, a copy, read in place, at an
+    address, and on a nested block; the generated column holds the hash
+    each row owns."""
+    zpath, pages, nested = _flat_backup(tmp_path, f"rc_doc{stamp}", stamp)
+    pdf = {"format": "pdf", "name": "", "ext": ".pdf"}
+    want = {pages["paper.pdf"]: {"doc": {**pdf, "name": "paper.pdf", "hash": "a" * 24, "at": "store"},
+                                 "auto_title": "paper.pdf"},
+            pages["A copy"]: {"doc": {**pdf, "hash": "a" * 24, "at": "store", "copy": True}},
+            pages["Linked"]: {"doc": {**pdf, "name": "linked.pdf", "hash": "b" * 24, "at": "path"}},
+            pages["Proxied"]: {"doc": {**pdf, "hash": "c" * 24, "at": "url", "url": "https://x.test/p.pdf"}},
+            nested: {"doc": {**pdf, "hash": "e" * 24, "at": "store"}}}
+    columns = {pages["paper.pdf"]: "a" * 24, pages["A copy"]: None, pages["Linked"]: "b" * 24,
+               pages["Proxied"]: "c" * 24, nested: "e" * 24}
+    for name, mode in ((f"rc_doc{stamp}_replace", "replace"), (f"rc_doc{stamp}_merge", "merge")):
+        ws, _c = _account(name)
+        ws_backup.restore_zip(ws, zpath, mode)
+        with _conn(ws) as conn:
+            got = {r[0]: (json.loads(r[1]), r[2]) for r in conn.execute(
+                "SELECT id, properties, doc_id FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
+                (json.dumps(list(want)),))}
+        assert {bid: g[0] for bid, g in got.items()} == want, mode
+        assert {bid: g[1] for bid, g in got.items()} == columns, mode
 
 
 def test_a_restore_keeps_what_a_pdf_replacement_wrote_on_the_highlights():

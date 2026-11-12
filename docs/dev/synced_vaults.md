@@ -114,29 +114,36 @@ Gamma's server is the **remote**, the directory or the file here is
 | **sync** | push, then pull, each where its switch is on: the disk's changes are read first |
 | **up to date** | nothing to pull or push |
 | **conflict** (冲突) | a block changed on both sides since the last sync: the file's text won, Gamma's is kept |
-| **untracked** | a file in the directory a vault does not read (any kind but notes, PDFs and pictures) |
+| **untracked** | a file in the directory a vault does not read: one its `.gammaignore` leaves out (with none, any kind but notes, PDFs and pictures), or one it takes of a kind Gamma does not read yet |
+| **work folder** (工作文件夹) | a vault of a folder of this server that pushes everything: the files its directory holds and it tracks are pages that follow the disk ([work folders](work_folders.md)) |
+| **Choose files…** (选择文件…) | what a work folder tracks, chosen in a dialog and kept as its `.gammaignore` |
 | **force pull**, **force push** | one side made the other's, after a count and a confirmation |
 | **remove the vault** | the link goes; its pages stay; its files stay, or the ones pull made go to its trash |
 
 *Clone* (a workspace of another server), *commit*, *branch*, *fetch* and
 *stash* are never shown. Where the words show:
 
-- A library folder's menu: *Sync with this computer…*. A page's Document
-  menu: *Push from a file on this computer…*. The launcher and the sync
-  panel: *Add a synced vault…*, which starts from a directory. The
-  desktop app's Server menu: *Open a PDF…*.
+- A library folder's menu: *Sync with this computer…*; a work folder's:
+  *Choose files…*. A page's Document menu: *Push from a file on this
+  computer…*. The launcher and the sync panel: *Add a synced vault…*,
+  which starts from a directory. The desktop app's Server menu: *Open a
+  PDF…*.
 - The sync panel: a row per vault with its name, its direction and its
   state, its place and its remote in the row's tooltip. Its *…* opens the
-  vault's view: the switches *Pull* and *Push*, then *Sync now*, *Pull
-  now*, *Push now*, *Pause* and the directory as a bar of buttons named by
-  their tooltips, and *Go on…* for a held vault, *Locate…* for a stopped
-  one, *Force pull…*, *Force push…* and *Remove the vault…* as rows.
+  vault's view: the switches *Pull* and *Push* (a work folder's *Add its
+  PDFs and notes to the library* too), then *Sync now*, *Pull now*, *Push
+  now*, *Pause* and the directory as a bar of buttons named by their
+  tooltips, and *Choose files…* for a work folder, *Go on…* for a held
+  vault, *Locate…* for a stopped one, *Force pull…*, *Force push…* and
+  *Remove the vault…* as rows.
 - A page of a vault: a chip among the page header's buttons, one icon for
   how the page stands: kept in step, pushed from a file of its own,
   paused, or something to see to. Its tooltip says it in words, *Synced:
   Attention.md* (*Pushed from: main.pdf* for a vault of one file). Its
   card holds the path, the direction (*Pull: on · Push: everything*),
-  *Show in folder* and *Edit the file*. A banner, *Not written to disk:
+  *Show in folder* and *Edit the file*; a work folder's file's adds *Add
+  to library…* or *Remove from library*, *Save a copy to library…* for a
+  PDF, and *Choose files…*. A banner, *Not written to disk:
   …*, shows when the last write was refused or the vault reaches no file
   now (stopped, offline, held, failed). An opened PDF: a disk, *On this
   computer*, or the alert icon and *File missing*.
@@ -152,7 +159,7 @@ they make no Inbox item and wake no round of their own.
 
 | Scope | In Gamma | On this computer | Pull | Push |
 |---|---|---|---|---|
-| `folder` | a folder, or `root` (the whole library) | a directory | on or off | off, PDFs or everything |
+| `folder` | a folder, or `root` (the whole library) | a directory | on or off | off, PDFs or everything (not the whole library, but one that pushed everything before work folders) |
 | `file` | one page of the library | one `.pdf` | never | its PDF, always |
 
 A vault pulls, pushes, or both: one switch stays on. A folder vault that
@@ -168,8 +175,9 @@ rule.
 ```text
 <vault>/
   .gamma/
-    vault.json              the marker: format, id, notes_folder, ignore
+    vault.json              the marker: format, id, notes_folder
     trash/<stamp>/<path>    the files of pages that left the vault
+  .gammaignore              what the vault tracks, where one says (Choose files… writes it)
   Sub/                      a folder below the vault's folder
     A paper.pdf             a paper, read where it is
     A paper.md              its notes and highlights
@@ -178,18 +186,18 @@ rule.
 ```
 
 **The marker**, `.gamma/vault.json`, is `{"format": "gamma-vault-1", "id":
-<random hex>, "notes_folder": "", "ignore": []}`. It is written once, when
+<random hex>, "notes_folder": ""}`. It is written once, when
 the vault is made (`vault_disk.make_marker`), in a hidden directory (the
 hidden attribute on Windows, the dot elsewhere); no round changes it. Its
 id is the row's `state.vault`, and each round checks it before and after
 its scan: it is what tells an unplugged disk or an empty mount point from
 an emptied vault, and a copy of the directory from the vault. A round never
 makes the vault's root, since `mkdir` on an empty mount point would hide a
-disk that is not there; only making the vault does. `ignore` holds globs
-the scan leaves out (one with a `/` matched against the path, else against
-the name), and `notes_folder` a directory where new notes of papers go; no
-route sets either, so they are what a person wrote in the file. A vault of
-one file writes nothing on disk, ever.
+disk that is not there; only making the vault does. `notes_folder` names a
+directory where new notes of papers go; no route sets it, so it is what a
+person wrote in the file. An older marker's `ignore` globs are read once,
+written as the vault's `.gammaignore` ("A work folder's round"), and never
+again. A vault of one file writes nothing on disk, ever.
 
 **The files.** Each folder below the vault's folder is a directory, named
 after the folder (`obsidian_export.vault_name`; a name the scan would leave
@@ -226,9 +234,9 @@ workspace's files: a workspace backup that carried a path could make a
 restored server read an arbitrary file of the computer it lands on. Its
 tables ([user_db.md](user_db.md) has the columns):
 
-- `linked_files`: a stored name (`<doc_id>.pdf`, or a picture's upload
-  name) and the path that holds it, the size, time and file id when last
-  read, the page (`''` for a vault's picture), the account that opened the
+- `linked_files`: a stored name (`<hash>.pdf`, `documents.model.stored_name`,
+  or a picture's upload name) and the path that holds it, the size, time
+  and file id when last read, the page (`''` for a vault's picture), the account that opened the
   file, whom a change of it is made as (`actor`), and why the last replacement placed no
   highlights (`relocation_error`).
 - `vault_files`: a vault's files as its last round left them, one row a
@@ -242,11 +250,13 @@ vaults.db never holds every writer of a workspace.
 
 ## A PDF read where it is
 
-A page whose PDF stays at a path on this computer carries `linked_file:
-true` and a stored name like any other, `<doc_id>.pdf`, the SHA-256 prefix
-the bytes would get if stored; a `linked_files` row says which path holds
-that name. Nothing is copied, and nothing is ever written into the file or
-beside it.
+A page whose PDF stays at a path on this computer has its document read in
+place (`doc.at` is `path`, `documents.model.in_place`; the document's shape
+is in `gamma/documents/model.py`, [documents.md](documents.md)) and a
+stored name like any other,
+`<hash>.pdf` (`stored_name`), its hash the SHA-256 prefix the bytes would
+get if stored; a `linked_files` row says which path holds that name.
+Nothing is copied, and nothing is ever written into the file or beside it.
 
 **The read.** `storage.open_path` answers a name from the uploads directory,
 else from a linked file (`_linked`, only where vaults are kept): the first
@@ -303,10 +313,12 @@ has nobody else to look at it again.
 quota, the orphan purge, backups, the off-site copy and a mirror;
 `readable` asks "can this be read at all". A lookup by attachment
 (`blocks_store.page_for_doc`, the clipper's match, a backup's merge) leaves
-linked pages out (`NOT_LINKED`): their bytes stand for no page of the
-library. A Gamma export drops `linked_file`, so the page lands elsewhere
-with its bytes and no path. Importing a PDF's embedded annotations never
-strips a linked file. The search indexer leaves out a linked file it
+linked pages out, and a work folder's files not in the library
+(`work_folders.library.SQL_LIBRARY_PDF`): their bytes stand for no page of
+the library. A Gamma export carries the document as stored
+(`at` `store`), so the page lands elsewhere with its bytes and no path.
+Importing a PDF's embedded annotations never strips a linked file. The
+search indexer leaves out a linked file it
 cannot read now, so the pending count comes down. An error a job or a
 round reports says what went wrong without the path an `OSError` or MuPDF
 names (`jobs.error_text`): the path is the person's own.
@@ -329,9 +341,10 @@ metadata lookup is scheduled. A clone's workspace takes no new page. One
 open or locate runs at a time, so a path has one page.
 
 - **Add to library…** (`POST /opened/{id}/add`, `add_to_library`): the
-  bytes are stored (the same hash, so the page keeps its `doc_id`), the
-  page leaves *Opened files* for a folder or the library's top, and it no
-  longer reads the file. `keep_pushing` makes the file a vault of one file,
+  bytes are stored (the same hash, so the page's document keeps its hash
+  and name), the page leaves *Opened files* for a folder or the library's
+  top, and it no longer reads the file (its document at `store`,
+  `document_at`). `keep_pushing` makes the file a vault of one file,
   made before the page moves, so that a refusal leaves the page as it was.
   With `workspace`, another workspace of this server the account edits,
   the page goes there with everything on it (`_carry`): exported as a Gamma
@@ -623,7 +636,7 @@ folder under its upload's name (`LinkContext.new_files`): `attachments/`
 when the vault has no `.obsidian/app.json`, the vault's root when it has
 one without the key, as Obsidian does. Pull writes it once and it is read
 in place from then on. An upload of a kind Gamma never stores or serves
-(`storage.upload_media_type` refuses it: an executable a .gamma import or
+(`documents.formats.media_type` refuses it: an executable a .gamma import or
 another server holds) goes into no vault: its link stays as Gamma wrote
 it (`LinkContext._file_path`). A picture of the vault a note links is read where it
 is, under its content digest's name (`LocalRemote.link_file`: a
@@ -682,22 +695,30 @@ another id, **stops** the vault (`status.stopped`); a directory that does
 not answer is **offline** (`status.offline`). The marker file's file id
 is kept in the state at the first round (`marker_file`), and another one
 later, a backup disk given the vault's drive letter or a copy restored over
-it, stops the vault too, until a relink takes the copy. Then the journal
-is settled (below), then the scan, and Gamma's temporary files older than
-`STALE_TEMP_S` (60 s) are swept.
+it, stops the vault too, until a relink takes the copy. Then the mark of the
+vault's folder is read (a work folder's, below), and what the vault tracks:
+its `.gammaignore`, else the default ("A work folder's round"). Then the
+journal is settled (below), then the scan, and Gamma's temporary files
+older than `STALE_TEMP_S` (60 s) are swept.
 
 **The scan** (`vault_disk.scan`, `walk`) walks the directory with
 `os.scandir`, one stat a file, and follows no symbolic link or junction;
 nothing below one is read or written either (`vault_disk.path` refuses
-it). It leaves out dot directories, `node_modules`, the marker's `ignore`
-globs and temporary names (Gamma's `.gamma-*` and `*.gamma-sync-part`,
-Office's `~$*`, LibreOffice's `.~lock.*`, macOS's `._*`). Notes (`.md`,
-`.markdown`) and papers (`.pdf`) are listed, pictures listed for the links
-and counted, the rest counted as untracked. A name Windows refuses, and two
-names in one directory that differ only by case, are reported
-(`status.refused`) and left. A cloud placeholder (Windows' offline and
-recall-on-access attributes, macOS's dataless flag, an iCloud `.x.icloud`
-stub standing for `x`) is listed as one, never read and never removed.
+it). It leaves out dot directories, `node_modules`, temporary names
+(Gamma's `.gamma-*` and `*.gamma-sync-part`, Office's `~$*`, LibreOffice's
+`.~lock.*`, macOS's `._*`) and `.gammaignore` itself, whatever the rules
+say, then what the vault's `.gammaignore` leaves out (`Scan.excluded`, a
+directory left out never entered; [work folders](work_folders.md)). Notes
+(`.md`, `.markdown`) and papers (`.pdf`) are listed, pictures listed for
+the links and counted, and the files of no class that the rules take
+counted as untracked (the default takes none: it leaves them out). A link
+or a junction, a name Windows refuses, and two names in one directory that
+differ only by case, are reported (`status.refused`) and left, unless the
+rules leave them out first (a link is decided as a directory). A cloud
+placeholder (Windows' offline and recall-on-access attributes, macOS's
+dataless flag, an iCloud `.x.icloud` stub standing for `x`, the rules
+deciding by the name it stands for) is listed as one, never read and never
+removed.
 **A walk that fails anywhere, or a marker gone by its end, is offline**:
 what it read stands for nothing, and never reads as files removed.
 
@@ -783,8 +804,10 @@ hashes the new and changed files and writes nothing):
   rewrite of the rows below it (`vault_store.repath`), never a refiling per
   file. Where Gamma meanwhile moved the folder below the one the disk moved
   it into, the disk's places win.
-- **New**, **missing**, **removed** (below). A file the scan leaves out (an
-  ignore glob, a link above it) but that is there is never a removal.
+- **New**, **missing**, **removed** (below). A file the scan leaves out for
+  a fixed rule (a link above it, a case clash, a name Windows refuses) but
+  that is there is never a removal; one there that the vault's
+  `.gammaignore` leaves out is **deselected** ("A work folder's round").
 
 Then, in order, the guard, directories, moves, changed files, new files and
 removals.
@@ -798,7 +821,8 @@ note emptied (blanks, line ends, a byte-order mark) whose base had text is
 held the same way.
 
 **The guard** (`_held`): when the removals since the last quiet round, the
-notes emptied counting, pass `REMOVE_SHARE` (half) of the files the vault
+notes emptied counting and, in a work folder, each page whose files the
+`.gammaignore` left out, pass `REMOVE_SHARE` (half) of the files the vault
 had then, and it had `REMOVE_FLOOR` (10) or more, the round stops before it
 writes anything, `status.held = {removals, total}`, until `?confirm=1`
 (the panel's *Go on…*). A branch switched, a directory half synced by
@@ -827,9 +851,10 @@ switched and switched back loses nothing. Otherwise:
   it: `tags` (labels), `aliases`, `doi`, `authors`, `year` (the paper's
   record), and `parent`, which makes it a sub-page of the note it names once
   the round's new pages are made;
-- a new PDF is a page reading it where it is (`linked_file`), with the note
-  it pairs with: the one whose front matter's `source` names it, else the
-  one of its stem beside it, else one of its stem in `notes_folder`;
+- a new PDF is a page reading it where it is (its document at `path`,
+  named by the file's leaf), with the note it pairs with: the one whose
+  front matter's `source` names it, else the one of its stem beside it,
+  else one of its stem in `notes_folder`;
 - a new PDF that pairs with a note already a page without a PDF is that
   page's file; a new note of a paper whose page has its PDF already is
   merged into that page from no base;
@@ -893,9 +918,10 @@ rest.
 
 **PDFs.** A PDF with new bytes is its page's, read where it is (the disk
 wins; `LocalRemote.replace_pdf`: its `linked_files` row first, then
-`replace_attachment` with `check_held=False`, the highlights relocated). A
-library page's PDF filed in the vault keeps its stored copy, and the copy
-pull wrote is followed. A PDF replaced in Gamma stands until the file
+`replace_attachment` with `at="path"` and `check_held=False`, the
+highlights relocated). A library page's PDF filed in the vault keeps its
+stored copy, and the copy pull wrote is followed: its first new bytes make
+the page read in place. A PDF replaced in Gamma stands until the file
 changes again.
 
 **A vault that does not push everything** makes, merges and removes
@@ -984,7 +1010,8 @@ deleted for good), moves its files to the vault's trash (`_left`,
 `_to_trash`): the row becomes a tombstone at its trash path, written first,
 then the file moves (`.gamma/trash/<UTC stamp>/<path>`, on the vault's
 volume so that a delete is a rename). A PDF read in place is stored first
-when its page lives on. A note changed on disk that push has not read yet
+when its page lives on, its document at `store` with its hash and name
+(`LocalRemote.store_pdf`). A note changed on disk that push has not read yet
 stays where it is, kept, so that push brings the page back with it; a PDF
 changed on disk whose page left stays where it is, no longer synced, and is
 reported. A page brought back brings its files back from the trash under a
@@ -992,6 +1019,109 @@ free name. A file is swept from the trash only once its page is purged and
 the trash has held it `TRASH_DAYS` (30) at least, after any other page that
 reads those bytes in place has them stored (`LocalRemote.spare`). Nothing
 of a vault but its trash is ever deleted for good (`vault_disk.purge`).
+
+### A work folder's round
+
+A vault of a folder of this server that pushes everything is a **work
+folder** ([work folders](work_folders.md)): its directory is the source, and
+Gamma shows the files it chooses. A round is a work folder's when the
+vault pushes everything and its folder carries the mark (`vault: {pull,
+library}`), read from the folder's row by `remote.mark()` (`HttpRemote`
+from the listing's folder tree; `Layout.work` carries it too) and kept as
+`Round.work`. A whole round of
+a work-folder link writes the mark again where the folder carries another
+or none (a restore, a mirror's merge). A test that builds a `Round` on an
+unmarked folder gets the round above, unchanged. In a work folder:
+
+- **The layout** leaves out a page whose `work_folder` names another work
+  folder than the vault's own (a library file of it filed here too).
+- **New pages** are its files: `work_folder`, `file_name` (the file's leaf,
+  the PDF's for a paper), `library: true` while the vault's switch says so,
+  and the PDF's `doc.size` (`Round._create`, `_new_pdf`). The front
+  matter's `parent:` makes no sub-page.
+- **A move or rename on disk** (`_moved`) files the page first in the new
+  directory's folder, whatever moved, then in its folders outside every
+  work folder, and sets `file_name`; the title follows the stem only for a
+  file not in the library (a library file's title is the paper's, free)
+  whose note has no `title:`. `parent_page` goes.
+- **The folder tree follows the disk.** The op path refuses a person's
+  rename, move, delete or new folder below the work folder's root (its
+  rule, [work folders](work_folders.md) "The op rule"), so `_pull_dirs`,
+  `_move_dir` and `_drop_dirs` never follow Gamma there; `_drop_dirs` still
+  takes a directory folder the vault dropped, but never one whose directory
+  is there and left out by the selection. `folder_inserts(into_work=True)`
+  makes a directory's folder below the root, where an import's walk never
+  files.
+- **Pull** moves or renames a file only for a note that follows Gamma (no
+  document, where the vault pulls): the `.md` alone, never a PDF beside it,
+  then `file_name`. Anything else's title and filing are only recorded. A
+  note made in Gamma in one of its directories (the server stamps it) is
+  written at `<dir>/<title>.md`, then named (`_file_named`, the rows' seq
+  following where level). Pull copies no PDF out (`_copy_pdf` runs only in
+  kept folders): a stored PDF filed here is reported "a PDF filed here in
+  Gamma is not written into the directory".
+- **The trash.** A note a person trashed where the vault pulls goes to
+  `.gamma/trash` as above; any other file of a page that left stays where it
+  is, its row an in-place tombstone (below).
+- **A library file's versions** are stored as they come (`LocalSink.store`
+  before `replace_attachment`), its document still at `path`.
+
+**The selection.** `.gammaignore` at the vault's root says what it tracks;
+none is the default, notes, PDFs and pictures (`ignore_rules.DEFAULT_TEXT`).
+`Round._read_rules` reads it once a round, a page's round too. The state's
+`selection` holds the hash of the text the last whole round read (`""` for
+none): a file gone since **stops** the vault ("its .gammaignore is gone: put
+it back, or choose its files again") rather than reading every note and PDF
+anew, and so does one that cannot be read; a hand edit is read as it is,
+its removals through the guard. A work folder's round whose scan selects
+more files than the state's `cap` (`selection.MAX_FILES`, 20,000, or the
+files tracked at the takeover) stops before it writes, `status.too_many =
+{files, cap}`. A marker from before with `ignore` globs and no
+`.gammaignore` gets one written at the first whole round: the header, the
+default, then each glob as an exclusion (one with a `/` anchored at the
+root); later rounds read only the file.
+
+A file the selection leaves out while it is on disk is **deselected**
+(`_classify`, `_apply_deselections`):
+
+- in a work folder, a page whose files all left goes to Recently deleted
+  first (`deleted_by_vault`), then each row becomes an **in-place
+  tombstone** (`vault_store.bury_in_place`: `path` is `KEPT` + the path,
+  `was` the path, no pending): **the file is never moved**. A round that
+  dies between the two leaves a live row the next deselects again, or a
+  tombstone of a live page, which `_restore_file` sends back. One of a
+  page's two files left out (a hand edit; the dialog keeps a paper's two
+  together) is forgotten, the page keeping the other, and reported ("left
+  out by .gammaignore; its page keeps its other file").
+- in a kept folder, whose source Gamma is, the row is forgotten and the
+  page stays.
+
+An in-place tombstone is listed with the others but never seen by
+`_recover_trash` (it has no pending) and never purged. Its file tracked
+again (`_push_new`, before `came_back`) is that page back whatever its
+bytes, nothing moved (`_unbury`). Its page live again while the file is
+still left out (the mirror, a crash) goes back to Recently deleted
+(`_restore_file`): a work folder's page whose file is untracked is there.
+Once the page is purged the sweep forgets the row, a PDF stored first for
+any other page that reads those bytes in place (`spare`), as for one the
+trash takes.
+
+**Pull respects the selection** (`Round._tracked`): a new note, a rename or
+move's target, a picture a note links, a PDF copied out, a file restored
+from the trash, and a file pull would take as a page's (`_older_note`,
+`_take`) are written or taken only where the rules track the path. One left
+out is not written, its page reported ("not written: .gammaignore leaves
+out {path}; tick its folder whole in Choose files…"), and tried again next
+round.
+
+**The takeover.** A work-folder link from before work folders, one made
+of a folder that already held pages, and a kept folder whose push was
+turned to everything are taken over at their first round as one,
+before the round, by `takeover.take_over` (the mark, then each page of its
+layout stamped quietly, filed by its row's directory first, sub-pages
+flattened), its state's `work_folder_at` the commit point;
+`takeover.release` lets one go whose push came down. Both are in
+[work folders](work_folders.md) "The takeover".
 
 ### History
 
@@ -1079,9 +1209,10 @@ user's: a round's status never overwrites it.
 
 A folder vault's `status`: `{running, started_at, last_sync, last_error,
 failed_at?, counts, kept, untracked, refused?, held?, stopped?, offline?,
-shared?, capped?, upgraded_at?, push_off?, paused_at?, progress?,
-folder_path}`, with `counts` `{added, updated, renamed, removed, kept,
-unchanged, sent, waiting, read, conflicts}` and `kept` the first
+shared?, capped?, upgraded_at?, work_folder_at?, too_many?, push_off?,
+paused_at?, progress?, folder_path}`, with `counts` `{added, updated,
+renamed, removed, kept, unchanged, sent, waiting, read, conflicts}` and
+`kept` the first
 `KEPT_SHOWN` (50) files kept, `{path, why, force}` (`force`: a force pull
 would replace it). `shared` lists the pages filed in it that an older
 vault beside it keeps.
@@ -1112,10 +1243,13 @@ token that may write), and nothing else: no marker, no scan, no pull. What
 it knows of the file is the row's `state`, `{doc, size, mtime, seen?,
 title}`.
 
-**Identity decides.** A stored PDF's `doc_id` is the first 24 hex
-characters of its SHA-256, so `gamma_sync.doc_of` hashes a file and knows
-without a byte sent whether it is Gamma's file. A file is looked at only
-when its size or time differ from what is known (`modified`). Then:
+**Identity decides.** A stored PDF's hash (its page's `doc.hash`) is the
+first 24 hex characters of its SHA-256, so `gamma_sync.doc_of` hashes a
+file and knows without a byte sent whether it is Gamma's file. A sink's
+`current` answers the hash of the document the page owns (none for a
+duplicated page, whose `doc.copy` shows another's file) and that
+document's name. A file is looked at only when its size or time differ
+from what is known (`modified`). Then:
 
 - Not **settled** (`settled`): written less than `SETTLE_S` (3 s) ago (a
   time ahead of this clock counts as long ago), not open for reading
@@ -1132,7 +1266,8 @@ when its size or time differ from what is known (`modified`). Then:
 - The bytes the page shows already: the stat is taken, nothing travels.
 - The page gone: *kept*, "the page is no longer in Gamma".
 - Otherwise the file is **sent**: stored, then the page's PDF replaced by
-  it under the page's own `original_filename`, or the file's name. A file
+  it under the name of the page's document, or the file's name; a page
+  that read its PDF in place goes on reading it in place. A file
   whose bytes or stat changed while it was stored waits for the next pass
   instead (`gamma_sync.Changed` over HTTP), without `seen`.
 
@@ -1204,6 +1339,12 @@ As built:
 - **Tombstones and the trash**: a deleted page's files go to `.gamma/trash`,
   never deleted until the page is purged and 30 days passed, and a file come
   back brings its page back.
+- **A work folder never moves a file the disk made**: a file its
+  `.gammaignore` leaves out, and a PDF whose page left, stay where they are,
+  their rows in-place tombstones with no pending, so no crash recovery moves
+  or trashes them; the page goes to Recently deleted before the row is
+  buried, and either half alone heals at the next round. A `.gammaignore`
+  gone stops the vault; pull writes no path the selection leaves out.
 - **Pull writes only over the base**: always hashed first; a file changed
   since is pushed first or kept. Pull never writes a page that did not
   change, nor a PDF it did not put there, nor over a cloud placeholder.
@@ -1288,7 +1429,9 @@ As built:
 - **Removing the vault** (`delete_link`) leaves its pages as they are. The
   PDFs and pictures it reads in place are stored first (`GET /removal`
   counts them and their size), and one that cannot be stored stops the
-  removal before anything is undone. Then, with `files=keep`, the marker
+  removal before anything is undone; its live pages' documents are then at
+  `store`, and a page in Recently deleted reads in place still, its copy
+  stored (`_store_in_place`). Then, with `files=keep`, the marker
   goes and the files stay; with `files=trash`, the files its pulls made and
   nobody wrote in since (`ours`, still as their base) move to its trash
   first, and only the marker goes, never the trash. A vault whose disk is
@@ -1331,7 +1474,9 @@ at any point, the row's state being the commit point:
    that finds its bytes, `UNREAD`). A file not there is not taken (pull
    writes it again), but a pass during which the disk went is offline, as a
    scan's is. A directory whose state file is gone has its files taken by
-   what they say: a note by its `gamma_id`, a PDF by its bytes. No title or
+   what they say: a note by its `gamma_id`, a PDF by its bytes, the walk
+   reading what the directory's `.gammaignore` tracks (one that cannot be
+   read stops the upgrade). No title or
    filing is recorded, so pull renames and moves nothing until Gamma
    changes them.
 3. The row's state names the marker.
@@ -1363,14 +1508,22 @@ data directory's key like the mirrors' tokens) and the token's id
 (`token_id`, for whoever revokes it there), and `workspace_id` is the
 workspace there. Its rounds are the same engine's through `HttpRemote`,
 which speaks to that server with the token through the routes the browser
-uses: the change feed for each page's seq and the cursor, the library
-listing for the pages, their filing and the folder and label trees, a
-page's subtree, a block, a stored file; ops for the folder and label
-trees, a page made (`POST /api/pages`, then `PUT /api/blocks/{id}/children`),
-the trash and a restore, uploads and the attachment replaced; and one
-route of its own, a page's plan (`POST /api/pages/{id}/plan`,
-`ops.commit_plan`). A token that may read pulls; pushing takes one that
-may write, of an editor.
+uses: the change feed for each page's seq and the cursor, the listing of
+the vault's folder (`GET /api/blocks/root/children?within=<folder>`: its
+pages whether the library lists them or not, their filing and the folder
+and label trees; a server that knows no `within` lists the library, read
+the same), a page's subtree, a block, a stored file; ops for the folder
+and label trees, a page made (`POST /api/pages`, then `PUT
+/api/blocks/{id}/children`), the trash and a restore, uploads and the
+attachment replaced, each of these API requests naming the vault's op
+client in `X-Gamma-Client` so that the work-folder rule there reads the
+writes of routes with no client in their body as the vault's (a file's
+upload and download go without it); and one route of its
+own, a page's plan (`POST /api/pages/{id}/plan`, `ops.commit_plan`). A
+token that may read pulls; pushing takes one that may write, of an editor.
+A vault of another server is never a work folder itself (it writes no
+mark), but one that pushes everything into a folder there that carries a
+mark runs a work folder's round, as the op rule there asks.
 
 What differs from a vault of this server:
 
@@ -1387,8 +1540,9 @@ What differs from a vault of this server:
   under the page's notes before the plan goes, and counted in
   `counts.conflicts`.
 - **PDFs are stored there**: a new paper's bytes are uploaded before its
-  page is made, a new version's before the attachment is replaced, and a
-  picture a note links is an upload there too.
+  page is made (its document at `store` there, never `path`), a new
+  version's before the attachment is replaced, and a picture a note links
+  is an upload there too.
 - **Not seen from here**: the carets in that server's rooms (a shape op may
   land on a block someone is typing in, which that editor merges), and the
   relocation run, which a token cannot start: the highlights a callout
@@ -1406,6 +1560,17 @@ What differs from a vault of this server:
   waits, never a file's problem. Any other refusal is the file's: a 404 in
   JSON, a write's 5xx, a proxy's 413 on a body past its limit among them. A server's
   answer that echoes the token has it left out (`gamma_sync.scrubbed`).
+- **The data format.** That server's pages must have this one's shape: its
+  change feed names its workspace data format (`format`,
+  `migrations.workspace_format`), and one that differs, an older or a newer
+  release, is `Refused` (`HttpRemote._check_format`, asked once before the
+  remote's first request of any kind: a page's round of the hot loop pushes
+  before it reads a listing) before anything is read or written, with the
+  mirror's sentence
+  (`sync_engine.FormatMismatch`: "sync is paused until … is updated"). The
+  vault waits until both run releases that agree, as a clone does
+  ([mirror.md](mirror.md)). Format 52 is one such change: a page's
+  document became one property, `doc`.
 
 **The token.** It is checked on creation (`/api/sync/whoami` names its
 workspace, which must be the request's `workspace` when one is given, and
@@ -1604,7 +1769,10 @@ all on the server (`folder_sync.layout`):
 - **A page appears once**, under its first folder below the linked one in
   the page's own filing order (`obsidian_export.Filing.folder`). Linking
   `root` takes the whole library: pages at the library root go to the top
-  directory.
+  directory. The whole library is what the library lists: a work folder's
+  file only once it is in the library, laid out by its library folders,
+  and no work folder's directories ([work folders](work_folders.md)), so
+  a repository is never copied this way.
 - **A page inside a page** ([home_library.md](home_library.md#sub-pages))
   is filed where its top page is, its files in a directory named for its
   parent beside the parent's files (`<dir>/Parent/Child`,
@@ -1650,7 +1818,16 @@ share links do not. All three are in `routers/sync.py`:
 The PDFs and pictures come from `GET /api/uploads/<name>`. Pushing a PDF
 takes three more calls, each an editor's and so a write token's: `POST
 /api/uploads`, `PUT /api/pages/{id}/attachment` with `keep_old_days`, and
-`GET /api/blocks/{id}` for what the page shows now.
+`GET /api/blocks/{id}` for what the page shows now (its `doc`: the hash of
+the document it owns and its name, `RemoteSink.current`). Before that last
+read the client asks the change feed once (`GET /api/sync/changes?limit=1`,
+`Server.check_format`): a server whose `format` is missing or below
+`DOCUMENT_FORMAT` (52, the release where a page's document became one
+property) keeps its pages' PDFs in properties this client does not read,
+and the push is kept with "the server runs an older Gamma (workspace data
+format N): update it to use this gamma_sync". An older gamma_sync against a
+server of format 52 reads every page as showing no PDF; nothing on the
+server can tell it, so **update gamma_sync together with the server**.
 
 ### Its round
 

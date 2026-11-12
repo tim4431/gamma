@@ -24,7 +24,7 @@ import time
 
 import pytest
 
-from conftest import account_of, login, make_folder, make_page, make_user, workspace_of
+from conftest import account_of, doc_props, login, make_folder, make_page, make_user, workspace_of
 from gamma import folder_links, gamma_sync, md_lens, vault_disk, vault_store, vault_sync
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.integrations import create_token
@@ -70,7 +70,7 @@ def _lab(c, name) -> dict:
     folder, sub = make_folder(c, name), make_folder(c, f"{name}/Sub")
     pdf = _blank_pdf(pages=1) + name.encode()
     up = c.post("/api/uploads", files={"file": ("p.pdf", pdf, "application/pdf")}).json()
-    paper = make_page(c, "UP paper", {"doc_id": up["doc_id"], "original_filename": "p.pdf", "folders": [folder]})
+    paper = make_page(c, "UP paper", {**doc_props(up["doc_id"], name="p.pdf"), "folders": [folder]})
     _children(c, paper["id"], [
         {"id": f"up-hl-{paper['id']}", "content": "why it matters", "children": [],
          "properties": {"quote": "the quoted words", "color": "rgba(255, 226, 143, 0.65)", "pdf_position": _position()}},
@@ -423,6 +423,31 @@ def test_a_folder_kept_before_whose_state_file_is_gone_writes_nothing_beside_its
         owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
+def test_the_upgrade_takes_what_the_directorys_gammaignore_tracks(owner, disk, over_http, settled):
+    """With no state file, the upgrade's pass reads the files its rounds
+    will: one the directory's ``.gammaignore`` leaves out is no file of the
+    vault, and one that cannot be read stops the upgrade before it takes
+    anything."""
+    lab, dest = _lab(owner, "UP ignored"), disk / "Ignored"
+    _kept(lab, dest, _token()["token"])
+    link = _create(owner, folder=lab["folder"], path=str(dest))
+    (dest / gamma_sync.STATE).unlink()
+    (dest / ".gammaignore").mkdir()
+    try:
+        status = _sync(owner, link["id"])
+        assert "cannot be read" in status["last_error"] and vault_store.files(link["id"]) == {}, status
+        assert folder_links.older(folder_links.get_link(link["id"]))
+        (dest / ".gammaignore").rmdir()
+        (dest / ".gammaignore").write_text("/UP plain/\n", encoding="utf-8")
+        status = _sync(owner, link["id"])
+        assert status["upgraded_at"] and not status["last_error"], status
+        rows = vault_store.files(link["id"])
+        assert rows["UP paper.pdf"]["page_id"] == lab["paper"] and rows["UP plain.md"]["page_id"] == lab["plain"]
+        assert not [p for p in rows if p.startswith("UP plain/")] and (dest / "UP plain/UP child.md").exists()
+    finally:
+        owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
 def test_a_scan_sweeps_no_state_file_below_the_vaults_root(owner, disk, over_http, settled, monkeypatch):
     """The sweep of Gamma's temporary names took any
     ``.gamma-sync.json`` below the vault, a nested older link's before its
@@ -505,7 +530,7 @@ def test_a_pdf_changed_on_disk_and_in_gamma_is_kept_until_a_force_decides(owner,
         assert {"path": "UP paper.pdf", "why": vault_sync.BOTH_PDF, "force": True} in status["kept"]
         assert _sync(owner, link["id"])["counts"]["sent"] == 0       # the page's chip says why from then on
         assert vault_store.files(link["id"])["UP paper.pdf"]["problem"] == vault_sync.BOTH_PDF
-        assert owner.get(f"/api/blocks/{lab['paper']}").json()["properties"]["doc_id"] == up["doc_id"]
+        assert owner.get(f"/api/blocks/{lab['paper']}").json()["properties"]["doc"]["hash"] == up["doc_id"]
         assert (dest / "UP paper.pdf").read_bytes() == disk_pdf
         _sync(owner, link["id"], force="pull", confirm=1)
         assert gamma_sync.doc_of(dest / "UP paper.pdf") == up["doc_id"]

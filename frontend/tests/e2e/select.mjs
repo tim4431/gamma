@@ -59,6 +59,7 @@ export const GROUPS = [
   { id: "translation", files: ["translation.mjs"], s: 10 },
   { id: "recording", files: ["recording.mjs"], s: 10 },
   { id: "vaults", files: ["vaults.mjs"], s: 20 },
+  { id: "work-folders", files: ["workFolders.mjs"], s: 30 },
   { id: "mirror", files: ["mirror.mjs"], s: 7 },
   { id: "ink-zoom", files: ["inkZoom.mjs"], s: 7 },
   { id: "trash", files: ["trash.mjs"], s: 5 },
@@ -116,6 +117,7 @@ export const RULES = [
   ["frontend/src/shared/illustrations/**", GUIDES],
   ["frontend/src/shared/**", ALL],
   ["frontend/src/app/**", ALL],
+  ["frontend/src/documents/**", ALL], // the document a page carries decides its layout
   // the tab groups' pure model and the read view of a page in a group that is not live
   ["frontend/src/workspace/tabLayout.js", ["tab-groups"]],
   ["frontend/src/workspace/PagePane.jsx", ["tab-groups"]],
@@ -183,7 +185,13 @@ export const RULES = [
   ["frontend/src/collaboration/zoteroLink.css", ["zotero-link"]],
   ["frontend/src/collaboration/**", ALL], // the page's live session carries every edit
   // a page's standing with this computer in the desktop app: the chip, its card and dialogs, the banner, the notes lock
-  ["frontend/src/vault/**", ["vaults"]],
+  ["frontend/src/vault/**", ["vaults", "work-folders"]],
+  // the pages the listing does not carry, merged into every page list the app has
+  ["frontend/src/explorer/knownPages.js", ALL],
+  // the work-folder rules every page and folder menu, drop and the open page's title ask
+  ["frontend/src/explorer/workFolders.js", ["work-folders", "vaults", "folders", "sub-pages", "trash", "files", "quick-open"]],
+  // a work folder's list view and the tracking dialog
+  ["frontend/src/explorer/**", ["work-folders", "vaults"]],
   ["frontend/src/library/QuickOpen.jsx", ["quick-open", "sub-pages"]],
   ["frontend/src/library/RecentlyDeleted.jsx", ["trash", "sub-pages"]],
   // the library's bulk actions: delete (a folder's pages too), file and label, move into a page, duplicate
@@ -233,11 +241,13 @@ export const RULES = [
   ["backend/gamma/routers/integrations.py", ["mcp", "mirror", "settings"]],
   // synced vaults and PDFs read where they are: the routes a page reads and the engine behind them
   // (the vaults scenario; the shell's side is the desktop app's suite, desktop/test/e2e.js)
-  ["backend/gamma/folder_links.py", ["vaults"]],
-  ["backend/gamma/routers/folder_links.py", ["vaults"]],
-  ["backend/gamma/linked_files.py", ["vaults"]],
-  ["backend/gamma/vault_*.py", ["vaults"]],
+  ["backend/gamma/folder_links.py", ["vaults", "work-folders"]],
+  ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders"]],
+  ["backend/gamma/linked_files.py", ["vaults", "work-folders"]],
+  ["backend/gamma/vault_*.py", ["vaults", "work-folders"]],
   ["backend/gamma/md_lens.py", ["vaults"]],
+  // work folders: the library rule, the op rule, .gammaignore, the takeover (docs/dev/work_folders.md)
+  ["backend/gamma/work_folders/**", ["work-folders", "vaults"]],
   ["backend/gamma/folder_sync.py", []],
   ["backend/gamma/gamma_sync.py", []],
   // the clones' engine and the clock the Zotero link's rounds run on (sync_clock.py), its conflicts and log tables (sync_engine.py)

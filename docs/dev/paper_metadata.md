@@ -7,7 +7,10 @@ stored PDF. Code: `gamma/routers/metadata.py`, `gamma/routers/pdf.py`.
 
 `/api/metadata/fetch` resolves a page's paper and caches result + BibTeX +
 the slide citation on the page block (`properties.meta` / `properties.bibtex`
-/ `properties.ppt_cite`). The lookup chain, in order:
+/ `properties.ppt_cite`). The PDF it reads is the one the page owns
+(`documents.model.own_hash` of its document, stored or read in place; a
+duplicated page owns none), and its source URL is the address the document
+is shown from (`source_address`). The lookup chain, in order:
 
 1. **arXiv API** — id from the source URL, the web page's tags
    (`web_meta`, below) or the PDF text (new- and old-style ids). The record is a `preprint`, or a `journalArticle` when arXiv gives a
@@ -167,8 +170,8 @@ before, so an older thesis record holds the university as its venue.
 short registry title can be a phrase of a longer one, and AI output can be
 a plausible hallucination):
 
-- Identifiers with **URL-level trust** are accepted outright: the stored
-  `source_url`, the `web_url` the extension clipped from, the `doi` and
+- Identifiers with **URL-level trust** are accepted outright: the source
+  URL (`doc.url`), the `web_url` the extension clipped from, the `doi` and
   `arxiv_id` of `web_meta` (what `detect.js` read off the publisher page's
   own meta tags), and a DOI or arXiv id the user types into the popover
   (below). A `web_meta.text_doi` is not: the page may only cite that paper,
@@ -394,8 +397,21 @@ is configured.
 
 `GET /api/metadata/status` reports library-wide health (per paper: metadata
 present/failed + source/kind, extracted-text chars and index state from the
-FTS tables; the chars are the count the indexer kept per paper, a lookup) — it feeds the Settings → Maintenance pane's status table and its
-adaptive batch retry (selected, else missing + unverified; plus "Refetch
+FTS tables; the chars are the count the indexer kept per paper, a lookup).
+It lists every library document with a document or a record; a paper's
+`doc_id` is the PDF it owns, as for the lookup (`""` on a duplicated page).
+A library document is the library's paper
+([work_folders.md](work_folders.md) "The library rule",
+`work_folders.library.library_document`): a page outside every work folder
+unless its PDF is read in place, and a work folder's file once it is added
+to the library. So an opened PDF read where it is, and a figure or a build
+of a work folder, are no paper of the library: not listed, and a batch
+leaves them out, counted as `skipped`. A work folder's file not in the
+library has no record at all: `metadata/fetch` answers it 409 ("A work
+folder's file has no record: add it to the library to look one up."), and
+the open page does not ask; an opened PDF may still be looked up by hand.
+It feeds the Settings → Maintenance
+pane's status table and its adaptive batch retry (selected, else missing + unverified; plus "Refetch
 all"/"Refetch shown"). The batch is the `metadata` background job (`POST
 /api/jobs/metadata`, [tasks.md](tasks.md)): the server looks the papers up
 one after the other with `force`, through the same `fetch_page_metadata` as
@@ -421,7 +437,10 @@ the metadata button's state, so a lookup run elsewhere (this job, the
 extension's clip) shows without a reload.
 The page stores an `auto_title` compare-and-swap marker: a successful lookup may
 replace that filename with the paper title only while the page title still
-matches the marker, and only with a record that is not unverified: the
+matches the marker, and only with a record that is not unverified (a work
+folder's PDF added to the library gets the marker on its title as it
+stands then, its file's stem as a rule, and Remove from library gives it
+the stem back): the
 marker waits for a confirmed record, a typed identifier or a hand edit. Any explicit rename clears it, so a slow lookup cannot
 overwrite the user's edit. The fetch response always carries `page_title`,
 the page's title as it stands after the write (`title_updated` says whether

@@ -14,6 +14,12 @@
 // list: the app asks which, or says it knows none. `opener` false: another
 // account opened the file (vaultState.js openedHere), so neither another
 // workspace nor keeping on pushing is offered, which are the opener's alone.
+// `mode` "work": the same choice for work folders' files (POST
+// /api/pages/{id}/library, docs/dev/work_folders.md "Add to library, Save a
+// copy, Remove"), which stay in their work folder and this workspace, so
+// neither the workspace row nor the switch shows (`pdf` false: notes, with
+// no bytes to store); with `copy`, Save a copy to library…, whose copy of
+// the PDF is a page of its own.
 import React from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { composing } from "../shared/lib/hotkeys.js";
@@ -26,8 +32,9 @@ import { Row, Toggle } from "../settings/SettingsKit";
 import "./vault.css";
 
 export default function FolderPickerDialog({ count = 1, workspaces: offered = [], workspace = "", opener = true, folders, readFolders, onPick,
-  onCarry, onClose }) {
-  const workspaces = opener ? offered : offered.filter((w) => w.id === workspace);
+  onCarry, onClose, mode = "opened", copy = false, pdf = true }) {
+  const work = mode === "work";
+  const workspaces = work ? [] : opener ? offered : offered.filter((w) => w.id === workspace);
   const [query, setQuery] = React.useState("");
   const [keep, setKeep] = React.useState(false);
   const [ws, setWs] = React.useState(workspace);
@@ -46,18 +53,25 @@ export default function FolderPickerDialog({ count = 1, workspaces: offered = []
   const matches = (q ? shown.filter((f) => f.name.toLowerCase().includes(q)) : shown).slice(0, 12);
   const name = workspaces.find((w) => w.id === ws)?.name || "";
   const pick = (folder) => onPick(folder, keep, ws);
+  const title = copy ? t("Save a copy to library") : t("Add to library");
   return (
     <DialogOverlay {...backdropPress(onClose)}>
-      <div className="reportModal confirmModal folderPicker" role="dialog" aria-label={t("Add to library")}
+      <div className="reportModal confirmModal folderPicker" role="dialog" aria-label={title}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === "Escape") { e.stopPropagation(); onClose(); return; }
           stepList(e, e.currentTarget.querySelector("[data-find]"), [...e.currentTarget.querySelectorAll(".folderPickerList .ctxMenuItem")]);
         }}>
-        <div className="reportModalTitle">{t("Add to library")}</div>
+        <div className="reportModalTitle">{title}</div>
         <div className="reportModalHint confirmMessage">
-          {tn("The PDF is stored in the library and filed in the folder you pick, with its highlights, notes and chat.",
-            "The {n} PDFs are stored in the library and filed in the folder you pick, with their highlights, notes and chat.", count)}
+          {copy ? tn("A copy of the PDF as it is now is stored in the library and filed in the folder you pick, as a page of its own; the file's page stays as it is.",
+            "Copies of the {n} PDFs as they are now are stored in the library and filed in the folder you pick, each a page of its own; the files' pages stay as they are.", count)
+            : work && pdf ? tn("The PDF is stored in the library and filed in the folder you pick; its page stays in its work folder and follows its file.",
+              "The {n} PDFs are stored in the library and filed in the folder you pick; their pages stay in their work folder and follow their files.", count)
+            : work ? tn("The page joins the library, filed in the folder you pick; it stays in its work folder and follows its file.",
+              "The {n} pages join the library, filed in the folder you pick; they stay in their work folder and follow their files.", count)
+            : tn("The PDF is stored in the library and filed in the folder you pick, with its highlights, notes and chat.",
+              "The {n} PDFs are stored in the library and filed in the folder you pick, with their highlights, notes and chat.", count)}
           {here ? null : ` ${tn("It leaves this workspace for {workspace}, and opens there.",
             "They leave this workspace for {workspace}, and the first opens there.", count, { workspace: name })}`}
         </div>
@@ -87,7 +101,7 @@ export default function FolderPickerDialog({ count = 1, workspaces: offered = []
             : !here && !read[ws] ? <div className="confirmMessage">{t("Reading the folders…")}</div>
             : !matches.length ? <div className="confirmMessage">{t("No matching folder.")}</div> : null}
         </div>
-        {opener ? (
+        {work ? null : opener ? (
           <div className="folderPickerKeep">
             <Toggle label={t("Keep pushing from the file")}
               hint={t("Each new version of the file on this computer becomes the page's PDF")}

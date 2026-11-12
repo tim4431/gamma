@@ -126,7 +126,7 @@ def test_a_notebook_of_papers_becomes_sheets(accounts):
     assert [result[k] for k in ("pages_created", "strokes_imported", "text_boxes_imported", "pictures_imported")] == [
         1, 1, 1, 1]
     page = subtree(owner, result["pages"][0]["id"])
-    assert "doc_id" not in page["properties"] and page["content"] == "Paper notebook"
+    assert "doc" not in page["properties"] and page["content"] == "Paper notebook"
     cover_sheet, ruled = page["children"]
     assert cover_sheet["properties"]["sheet"]["color"] == "#51d7f5" and cover_sheet["children"] == []
     assert ruled["properties"]["sheet"]["pattern"] == "ruled" and ruled["properties"]["sheet"]["spacing"] == 25
@@ -148,7 +148,7 @@ def test_a_notebook_on_one_pdf_keeps_it(accounts):
     result = imported(owner, n.bytes(), "PDF notebook.goodnotes")
     assert result["pages_created"] == 1 and result["pdfs_stored"] == 1
     page = subtree(owner, result["pages"][0]["id"])
-    assert page["properties"]["doc_id"] == storage.content_digest(pdf)
+    assert page["properties"]["doc"]["hash"] == storage.content_digest(pdf)
     groups = [c for c in page["children"] if c["properties"].get("ink_url")]
     assert [ink_of(ws, g)["space"] for g in groups] == [{"kind": "pdf-page", "page": k, "width": 612, "height": 792}
                                                          for k in (1, 2)]
@@ -165,7 +165,7 @@ def test_a_mixed_notebook_is_one_composed_pdf(accounts):
     result = imported(owner, n.bytes(), "Mixed.goodnotes")
     assert "A page names no paper: it is blank paper" in reasons(result)
     page = subtree(owner, result["pages"][0]["id"])
-    composed = PdfReader(io.BytesIO(stored(ws, page["properties"]["doc_id"] + ".pdf")))
+    composed = PdfReader(io.BytesIO(stored(ws, page["properties"]["doc"]["hash"] + ".pdf")))
     sizes = [(round(float(p.mediabox.width), 2), round(float(p.mediabox.height), 2)) for p in composed.pages]
     assert sizes == [(455.04, 588.45), (300, 400), (455.04, 588.45)]
     assert b"0.8156863 0.8235294 0.8274510 scn" in composed.pages[0]["/Resources"]["/XObject"]["/xo0"].get_data()

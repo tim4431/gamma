@@ -302,11 +302,12 @@ function remindTargets(rest, people, me) {
 //   people  {kind: "person", user, you} — `people` ([{username}], the
 //           workspace's; `me` first, "(You)"), then {kind: "invite"} when
 //           `canInvite`
-//   pages   {kind: "page", id, title, isPdf, path} — `pages` (App's page
+//   pages   {kind: "page", id, title, format, path} — `pages` (App's page
 //           list, libraryUtils.pageBlocksOf) by title, chips and path
 //           (rankRefPages: the recent ones before anything is typed), not
-//           the open page (`rootId`); `path` is where the page is: a
-//           sub-page's pages above it (`_path`), else its first folder
+//           the open page (`rootId`); `format` is its document's ("" for
+//           none, FileGlyph's); `path` is where the page is: a sub-page's
+//           pages above it (`_path`), else its first folder
 // Every row has a `key` and its `section`. Empty when nothing answers,
 // which closes the menu.
 export function mentionRows({ query = "", people = [], me = "", pages = [], rootId = "", canInvite = false, now = new Date() }) {
@@ -341,7 +342,7 @@ export function mentionRows({ query = "", people = [], me = "", pages = [], root
 
   // Link to page.
   rankRefPages(pages, q, rootId).slice(0, PAGE_ROWS).forEach((p) => add("pages", {
-    kind: "page", key: `page:${p.id}`, id: p.id, title: p.content, isPdf: !!p._attachment,
+    kind: "page", key: `page:${p.id}`, id: p.id, title: p.content, format: p._doc?.format || "",
     path: p._path || p._folderChips?.[0]?.name || "",
   }));
   return rows;

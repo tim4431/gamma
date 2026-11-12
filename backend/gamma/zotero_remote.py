@@ -42,6 +42,7 @@ from fastapi import HTTPException
 
 from . import storage
 from .db import format_stamp, parse_stamp
+from .documents.formats import IMAGE_EXTENSIONS
 from .logbuf import log
 from .zotero_account import AccountError
 from .zotero_merge import LINKED, NO_ACCESS, PDF_TYPE, UNAVAILABLE, is_pdf_attachment
@@ -865,15 +866,15 @@ def _check_room(ws: str, nbytes: int) -> None:
 def download_pdf(ws: str, client: ZoteroClient, library: str, key: str, *, md5: str, tick=None,
                  link_mode: str = "", size: int = 0) -> str:
     """Download the attachment ``key``'s PDF into the workspace's store; its
-    doc id (the stored file is ``storage.pdf_url(doc_id)``, referenced by
-    nothing yet). The file is spooled to disk and hashed as it arrives,
-    this server's storage limits asked every few MB (and first, for
-    ``size`` bytes when the caller knows them), checked against ``md5``
-    and for a PDF header, then stored by a rename; nothing is left behind
-    on any failure. ``tick(bytes so far)`` follows the transfer and may
-    raise to stop it. ``link_mode`` "linked_file" or no ``md5`` is
-    FileUnavailable at once. FileUnavailable for what keeps this file
-    from coming; any other error (Zotero unreachable or busy, the key
+    hash (the stored file is ``documents.model.stored_name(hash,
+    ".pdf")``, referenced by nothing yet). The file is spooled to disk and
+    hashed as it arrives, this server's storage limits asked every few MB
+    (and first, for ``size`` bytes when the caller knows them), checked
+    against ``md5`` and for a PDF header, then stored by a rename; nothing
+    is left behind on any failure. ``tick(bytes so far)`` follows the
+    transfer and may raise to stop it. ``link_mode`` "linked_file" or no
+    ``md5`` is FileUnavailable at once. FileUnavailable for what keeps this
+    file from coming; any other error (Zotero unreachable or busy, the key
     refused, a stop) as it is."""
     if link_mode == "linked_file":
         raise FileUnavailable(LINKED, "a linked file: it lies on the computer that linked it, not in Zotero Storage")
@@ -959,7 +960,7 @@ def download_image(ws: str, client: ZoteroClient, library: str, key: str, *, md5
             raise
         raise unavailable from e
     data = sink.getvalue()
-    ext = storage.IMAGE_EXTENSIONS.get(sniff(data))
+    ext = IMAGE_EXTENSIONS.get(sniff(data))
     if not ext:
         raise FileUnavailable(UNAVAILABLE, "Zotero's file for this picture is no picture Gamma shows")
     try:

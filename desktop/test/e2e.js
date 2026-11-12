@@ -462,7 +462,8 @@ async function main() {
         const u = await up.json();
         const H = { 'Content-Type': 'application/json' };
         const page = await fetch('/api/blocks', { method: 'POST', headers: H, credentials: 'same-origin', body: JSON.stringify({ parent_id: 'root', content: 'E2E paper' }) }).then((r) => r.json());
-        await fetch('/api/blocks/' + page.id, { method: 'PUT', headers: H, credentials: 'same-origin', body: JSON.stringify({ properties: { source_url: u.source_url, doc_id: u.doc_id } }) });
+        const att = await fetch('/api/pages/' + page.id + '/attachment', { method: 'POST', headers: H, credentials: 'same-origin', body: JSON.stringify({ doc_id: u.doc_id }) });
+        if (!att.ok) throw new Error('attach ' + att.status + ' ' + (await att.text()));
         await fetch('/api/blocks', { method: 'POST', headers: H, credentials: 'same-origin', body: JSON.stringify({ parent_id: page.id, content: 'A note with $E = mc^2$ and a table\n\n| a | b |\n|---|---|\n| 1 | 2 |' }) });
         return { pageId: page.id, sourceUrl: u.source_url };
       }, b64);
@@ -654,8 +655,9 @@ async function main() {
       assert.equal(new URL(content.url()).searchParams.get('ws'), lab, 'in the workspace the window showed');
       const page = await serverCall(app, `/api/blocks/${pageId}`, { ws: lab });
       assert.equal(page.content, 'Opened with Gamma', 'titled with the file\'s stem');
-      assert(page.properties.doc_id, 'the page carries the file: ' + JSON.stringify(page.properties));
-      assert.equal(page.properties.linked_file, true, 'read where it is, not stored: ' + JSON.stringify(page.properties));
+      const doc = page.properties.doc || {};
+      assert(doc.hash, 'the page carries the file: ' + JSON.stringify(page.properties));
+      assert.equal(doc.at, 'path', 'read where it is, not stored: ' + JSON.stringify(page.properties));
       assert(page.properties.parent_page, 'inside Opened files');
       const opened = await serverCall(app, `/api/blocks/${page.properties.parent_page}`, { ws: lab });
       assert.equal(opened.properties.opened_files, true, 'the one page Opened files: ' + JSON.stringify(opened.properties));
@@ -667,7 +669,7 @@ async function main() {
       assert.equal(again.page, page.id, 'the same page, not a second one: ' + JSON.stringify(again));
       const twice = await serverCall(app, `/api/blocks/${page.id}/children`, { ws: lab });
       assert.equal(JSON.stringify(twice).split('Saved in another reader').length, blocks.split('Saved in another reader').length, 'the highlight is not imported twice');
-      openedPage = { id: page.id, ws: lab, doc: page.properties.doc_id };
+      openedPage = { id: page.id, ws: lab, doc: doc.hash };
       return `${page.id} in ${lab}`;
     });
 
@@ -689,8 +691,8 @@ async function main() {
         const pdf = await fetch(`/api/uploads/${d}.pdf`, { credentials: 'same-origin' });
         return { props: page.properties, kids, pdf: pdf.status };
       }, [id, doc]);
-      assert.equal(there.props.doc_id, doc, 'the same PDF');
-      assert.equal(there.props.linked_file, undefined, 'no file of this computer read there: ' + JSON.stringify(there.props));
+      assert.equal((there.props.doc || {}).hash, doc, 'the same PDF');
+      assert.equal((there.props.doc || {}).at, 'store', 'no file of this computer read there: ' + JSON.stringify(there.props));
       assert.equal(there.props.parent_page, undefined, 'out of Opened files: ' + JSON.stringify(there.props));
       assert.equal(there.pdf, 200, 'its bytes stored there');
       assert(there.kids.includes('Saved in another reader'), 'its highlight came with it');
@@ -952,9 +954,9 @@ async function main() {
       await waitLoggedIn(content);
       const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000)).current;
       const page = await serverCall(app, '/api/blocks', { ws, method: 'POST', body: { parent_id: 'root', content: 'Followed draft' } });
-      const docOf = async () => (await serverCall(app, `/api/blocks/${page.id}`, { ws })).properties.doc_id || '';
+      const docOf = async () => ((await serverCall(app, `/api/blocks/${page.id}`, { ws })).properties.doc || {}).hash || '';
       // A build's output, dated a while back so that it reads as finished
-      // (settled: a few seconds old, %%EOF at its end): its doc_id.
+      // (settled: a few seconds old, %%EOF at its end): its hash.
       const pdf = path.join(profile, 'build', 'main.pdf');
       fs.mkdirSync(path.dirname(pdf), { recursive: true });
       const build = (text) => {
@@ -1023,7 +1025,7 @@ async function main() {
       return 'pdfs, then off';
     });
 
-    await step('"Add a synced vault…" in the launcher: a directory of notes becomes a new folder of the host\'s own workspace, pushed and pulled, its marker written', async () => {
+    await step('"Add a synced vault…" in the launcher: a directory becomes a work folder of the host\'s own workspace, its marker written and nothing tracked until its tracking dialog saves; the window goes to that dialog', async () => {
       const dir = path.join(profile, 'Reading');
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'Idea.md'), '# Idea\n\n- a first thought\n- a second one\n');
@@ -1031,23 +1033,33 @@ async function main() {
       await hook(app, (s) => s.loadLauncher());
       content = await findPage(app, isLauncher);
       await content.click('#btnAddVault');
-      const said = await syncInDialog(bar, /^Push 1 note from .+ into a new folder “Reading”; from then on both sides are kept in step\./);
-      await menuClosed(bar);
       await waitFor(() => fs.existsSync(path.join(dir, '.gamma', 'vault.json')), 'the marker is written', 30_000, 500);
       const vault = await waitFor(async () => {
         await hook(app, (s) => s.refreshKeeping());
         return hook(app, (s) => s.keeping().items.find((i) => i.kind === 'vault' && i.name === 'Reading'));
       }, 'the vault in the panel', 30_000);
-      assert.deepEqual([vault.scope, vault.pull, vault.push], ['folder', true, 'everything']);
+      assert.deepEqual([vault.scope, vault.pull, vault.push, vault.work, vault.choosing, vault.text],
+        ['folder', true, 'everything', true, true, 'Choosing files']);
       assert.equal(vault.server, ids.alpha, 'on the host, the first local server');
-      await waitFor(async () => /Reading is synced with .+: a folder of .+ on Alpha\./.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      assert.equal(await bar.locator('#syncPanel #vaultAsk').count(), 0, 'the bar asks nothing: the tracking dialog does');
+      content = await findPage(app, (u) => u.startsWith('http://127.0.0.1') && new URL(u).searchParams.get('track') === vault.id);
+      assert(!fs.existsSync(path.join(dir, '.gammaignore')), 'nothing chosen yet');
+      // its Save, as the page sends it: the preset, its notes and PDFs added to the library
+      const saved = await content.evaluate((id) => fetch(`/api/folder-links/${id}/selection`, {
+        method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selection: { base: 'preset', changes: [] }, base_hash: '', library: true }),
+      }).then(async (r) => ({ status: r.status, body: await r.json() })), vault.id);
+      assert.equal(saved.status, 200, JSON.stringify(saved.body));
+      assert.deepEqual([saved.body.choosing, saved.body.library], [false, true]);
+      assert(fs.readFileSync(path.join(dir, '.gammaignore'), 'utf8').startsWith('# What Gamma tracks in this folder'), 'its .gammaignore');
+      await waitFor(async () => (await rootTitles(content)).includes('Idea'), 'its note in the library', 30_000, 500);
       await hook(app, (s, [server, id]) => s.removeVault(server, id, 'keep'), [vault.server, vault.id]);
       assert(fs.existsSync(path.join(dir, 'Idea.md')), 'the note stays');
       assert(!fs.existsSync(path.join(dir, '.gamma', 'vault.json')), 'the marker goes with the vault');
       await hook(app, (s) => { delete process.env.GAMMA_SHELL_PICK_DIR; });
       await hook(app, (s, id) => s.openServer(id), ids.alpha); // the steps after start from Alpha
       await waitLoggedIn(content);
-      return said;
+      return `${vault.dest}: its files chosen in Gamma, its note in the library`;
     });
 
     await step('background: with "keep running" on, closing the window leaves the servers up and the tray in place; Window → Show Gamma and the Dock icon bring it back over the same server', async () => {

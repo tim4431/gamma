@@ -38,7 +38,8 @@ import re
 
 from . import bibtex as bibtex_mod
 from .blocks_store import (FOLDERS, LABELS, PATH_SEP, filing, folder_paths, folder_subtree_ids, label_names,
-                           load_props, page_attachment, page_parents, top_of)
+                           load_props, page_parents, top_of)
+from .documents.model import page_document
 from .highlights import is_highlight, is_link, page_of
 from .markdown_export import _BLOCK_REF_RE, _link_label, block_text, resolve_block_links
 from .markdown_import import _FENCE_LINE_RE, EMPTY_ITEM_RE, LIST_BLOCK_RE, item_rest, yaml_list, yaml_text
@@ -165,7 +166,7 @@ class VaultContext:
         self.include_pdf = include_pdf
         self.page_file = {}     # page id → arcname (dir/Title.md)
         self.link_text = {}     # page id → [[link text]] (Title or dir/Title)
-        self.pdf_name = {}      # page id → (the PDF's arcname, doc_id)
+        self.pdf_name = {}      # page id → (the PDF's arcname, its doc.hash)
         self.anchors = {}       # block id → ^marker (blocks linked from the export)
         self.parents = {}       # sub-page id → its parent, for the sub-pages filed inside their parent's directory
         self.id_key = None      # a front-matter key to write the page's id under (the folder sync's)
@@ -189,7 +190,8 @@ class VaultContext:
         self.link_text.update(link_texts(self.page_file))
 
     def name_pdf(self, page_id, title, doc_id):
-        """The bundled PDF's arcname for a page (shared by pages of one document)."""
+        """The bundled PDF's arcname for a page (shared by the pages that
+        show one file, ``doc_id`` its hash)."""
         for pid, arc in self.pdf_name.items():
             if arc[1] == doc_id:
                 self.pdf_name[page_id] = arc
@@ -307,8 +309,8 @@ def render_vault_page(page, ctx: VaultContext, tags=(), highlights=True, notes=T
     pdf_leaf = ctx.pdf_leaf(page_id)
     if pdf_leaf:
         fm.append(f'source: "[[{pdf_leaf}]]"')
-    elif attachment := page_attachment(props):
-        fm.append(f"source: {yaml_text(attachment['url'])}")
+    elif view := page_document(props):
+        fm.append(f"source: {yaml_text(view['url'])}")
     meta = props.get("meta")
     if isinstance(meta, dict):
         if meta.get("doi"):

@@ -95,7 +95,8 @@ the frontend changes: editing a mirror is editing a workspace.
   same folder alike (`normalize.tree_block_id`, derived from the path), so
   a mirror and its remote upgraded separately find the same tree.
 - **Files**: every upload a page references (`/api/uploads/<hash>.<ext>` in
-  content or properties, a page's `doc_id`), by content hash — fetched when
+  content or properties, the stored file of a block's document, `doc`:
+  [documents.md](documents.md)), by content hash — fetched when
   missing on the copy, uploaded when missing on the original. A re-run
   never duplicates. A file past 32 MiB goes up in parts of 8 MiB over the
   remote's `/api/uploads/parts` (a PDF as `kind: pdf`, anything else as
@@ -321,7 +322,7 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
   `pending_local` and go with the first round after the update, an
   ordinary three-way merge. The upgrade itself sends nothing: a workspace
   step rewrites both copies alike without touching their pages
-  ([migrations.md](migrations.md) steps 29 and 30).
+  ([migrations.md](migrations.md) steps 29, 30 and 52).
 - **The status** keeps `version_gap: {here, remote}` beside `last_error`
   until a round gets past the check. Every surface reads it through
   `versionGap` (state `outdated`, an amber dot): *Paused · update Gamma*
@@ -367,6 +368,20 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
   generated `deleted_with` column and its index the same way
   (`DERIVED_STEPS`), and the stamp it reads is a property of rows in
   Recently deleted, which no round sends.
+- **Step 52** (`page_documents`) moves the format from 44 to 52. It
+  rewrites a block's document from the flat `doc_id`, `source_url`,
+  `original_filename` and `linked_file` into one property, `doc`
+  ([documents.md](documents.md#older-shapes-migration-step-52)), so a pair
+  pauses until both sides have run it, and so does a publication. The step
+  rewrites the copy's stored bases (`sync_pages`) the same way, so the
+  first round after both upgraded sends nothing for the shape; a push in
+  flight from before the upgrade (`~pending`) is resent as it was stored,
+  the remote refuses an op that carries a flat key with a value (400),
+  `_confirm_push` logs it (what landed stays), and the edit is worked out
+  again from the base and the page. The root properties merge one key at
+  a time (`props_patch`), so `doc` travels and merges as one value. A
+  desktop vault on another server and `gamma_sync` check the format too
+  ([synced_vaults.md](synced_vaults.md#a-vault-on-another-server)).
 
 ## One round, one page (`sync_engine._sync_page`)
 

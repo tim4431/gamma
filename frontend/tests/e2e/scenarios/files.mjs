@@ -95,13 +95,13 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     const doc = await account.api(`/api/blocks/${docPageId}`);
     assertEq(doc.parent_id, "root", "a root page");
     assertEq(JSON.stringify(doc.properties.folders), JSON.stringify([rydberg]), "filed with the project");
-    assert(doc.properties.doc_id, "carries the PDF as its document");
+    assert(doc.properties.doc?.hash, "carries the PDF as its document");
     // the header paperclip is the document's own popover
     await page.click("button[aria-label='Document']");
     await page.waitForSelector(".attachPopover .popoverTitle:has-text('Document')");
     await page.keyboard.press("Escape");
     // the same hash again is the same page (no duplicate)
-    const again = await account.api(`/api/blocks/by-doc/${doc.properties.doc_id}`, { method: "POST", body: { default_title: "" } });
+    const again = await account.api(`/api/blocks/by-doc/${doc.properties.doc.hash}`, { method: "POST", body: { default_title: "" } });
     assertEq(again.id, docPageId, "by-doc finds the page");
     assertNoProblems(page);
   });
@@ -133,10 +133,11 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     await copyRow.waitFor({ timeout: 8000 });
     const pages = (await account.api("/api/blocks/root/children")).children;
     const copy = pages.find((p) => p.content === "supplement.pdf (copy)");
-    assert(copy && !copy.properties.doc_id, "the copy doesn't carry the PDF's doc_id");
+    assert(copy && !("doc_id" in copy.properties), "the copy carries no flat document keys");
+    assert(copy.properties.doc?.copy === true, "the copy shows the PDF as a copy, which it does not own");
     assert(!copy.properties.notion_id, "nor a Notion id: an import of that page would find the copy");
-    assertEq(copy.properties.source_url, `/api/uploads/${original.properties.doc_id}.pdf`, "it shows the same file");
-    const byDoc = await account.api(`/api/blocks/by-doc/${original.properties.doc_id}`);
+    assertEq(copy.properties.doc.hash, original.properties.doc.hash, "it shows the same file");
+    const byDoc = await account.api(`/api/blocks/by-doc/${original.properties.doc.hash}`);
     assertEq(byDoc.id, docPageId, "the PDF's page is still the original");
     await copyRow.dblclick();
     await until(async () => new URL(page.url()).searchParams.get("block") === copy.id, { what: "the copy opened" });
@@ -160,7 +161,7 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     const noteId = new URL(page.url()).searchParams.get("block");
     const note = await account.api(`/api/blocks/${noteId}`);
     assertEq(JSON.stringify(note.properties.folders), JSON.stringify([rydberg]), "filed with the project");
-    assert(!note.properties.doc_id, "a note page, not a document page");
+    assert(!note.properties.doc, "a note page, not a document page");
     assert((await page.$$(".pdfViewer")).length === 0, "no viewer for a note page");
     await page.locator(".blockRow", { hasText: "first point" }).waitFor();
     // editing the note leaves the file as it was
@@ -331,9 +332,9 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
       { what: "the viewer shows the new file" });
 
     const after = await account.api(`/api/blocks/${doc.id}`);
-    assert(after.properties.doc_id && after.properties.doc_id !== up.doc_id, "the page carries the new file");
+    assert(after.properties.doc?.hash && after.properties.doc.hash !== up.doc_id, "the page carries the new file");
     assertEq(after.content, "thesis.pdf", "the title stays the first file's name");
-    assertEq(after.properties.original_filename, "thesis-v2.pdf", "the file name is the new file's");
+    assertEq(after.properties.doc?.name, "thesis-v2.pdf", "the file name is the new file's");
     // the job the replacement started finds the highlight's text in the new file and says so: one word
     // changed, so it is matched roughly, drawn dashed for the person to check
     const summary = "Highlights placed in the PDF: 0 moved, 1 matched roughly or estimated, 0 stayed in place, 0 not found. "

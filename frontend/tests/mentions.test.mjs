@@ -97,7 +97,8 @@ test("the trigger: a fresh @ starts a word; an open menu's query may hold spaces
 const PEOPLE = [{ username: "alice" }, { username: "bob.k" }, { username: "carol" }];
 const PAGES = [
   { id: "p1", content: "Powerloss", _updatedAt: "2026-10-08", _folderChips: [{ id: "f", name: "General / Docs" }] },
-  { id: "p2", content: "The Design", _updatedAt: "2026-10-07", _attachment: { kind: "pdf" } },
+  { id: "p2", content: "The Design", _updatedAt: "2026-10-07",
+    _doc: { format: "pdf", name: "", hash: "d1", ext: ".pdf", at: "store", url: "/api/uploads/d1.pdf", file: "d1.pdf", copy: false } },
   { id: "open", content: "This page", _updatedAt: "2026-10-09" },
 ];
 const rows = (query, extra = {}) => mentionRows({ query, people: PEOPLE, me: "carol", pages: PAGES, rootId: "open", canInvite: true, now: NOW, ...extra });
@@ -127,6 +128,10 @@ test("a query narrows every section", () => {
   assert.deepEqual(summary(rows("k")), ["people:person:bob.k"], "a part of a name");
   assert.deepEqual(summary(rows("inv")), ["people:invite"]);
   assert.deepEqual(summary(rows("design")), ["pages:page:p2"]);
+  // a page row names its document's format for its glyph, "" for none
+  const page = (q) => rows(q).find((r) => r.kind === "page");
+  assert.equal(page("design").format, "pdf");
+  assert.equal(page("powerloss").format, "");
   assert.deepEqual(rows("zzzz"), [], "nothing answers: the menu closes");
 });
 

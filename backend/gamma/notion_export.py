@@ -28,7 +28,7 @@ import re
 from urllib.parse import quote
 
 from . import bibtex as bibtex_mod
-from .blocks_store import page_attachment
+from .documents.model import page_document
 from .export_walk import walk
 from .markdown_export import UPLOAD_RE
 from .notion_blocks import Block, lower_for_file
@@ -138,9 +138,9 @@ def _head(props: dict, title: str, links: PageLinks, tags, body: list) -> list:
     record = [("DOI", meta.get("doi")), ("Authors", authors), ("Year", meta.get("year")),
               ("Tags", ", ".join(dict.fromkeys(tags)))]
     head += [_text(f"{key}: {value}") for key, value in record if value]
-    if attachment := page_attachment(props):
-        head.append(Block("file", [("text", attachment.get("name") or "", {})] if attachment.get("name") else [],
-                          attrs={"url": attachment["url"], "media": "pdf"}))
+    if view := page_document(props):
+        head.append(Block("file", [("text", view["name"], {})] if view["name"] else [],
+                          attrs={"url": view["url"], "media": view["format"]}))
     if links.stem.rpartition("/")[2] != title or _opens_with_h1(head + body):
         head.insert(0, Block("heading", [("text", title, {})], attrs={"level": 1}))
     return head

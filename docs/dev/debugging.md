@@ -505,12 +505,17 @@ share-link names (`linkname.json`: `auth.link_name` ↔
 `collaboration/linkName.js`), person colours (`personcolor.json`:
 `pdf_cards.person_color` ↔ `collaboration/personColor.js`), the chat's
 passage budget (`passages.json`: `ai_context.fair_shares` ↔
-`chat/passageBudget.js`), what a page carries (`attachment.json`:
-`blocks_store.page_attachment` ↔ `library/libraryUtils.js`), sibling keys
+`chat/passageBudget.js`), what a page carries (`document.json`:
+`documents.model.page_document` ↔ `documents/pageDocument.js`, with the
+backend's rewrite of older rows and the client's copy of a duplicated
+page; [documents.md](documents.md#fixtures)), a file's format by its name
+(`formats.json`: `gamma/documents/formats.py` ↔ `documents/formats.js`,
+with the backend's media types and first-bytes rule), sibling keys
 (`fractionalkeys.json`: the npm and PyPI fractional-indexing libraries) and
 pasted math (`pastemath.json`: `gamma/paste_math.py` ↔
 `editor/pasteMath.js`). The kinds are run against the column by
-`test_block_columns.py`, the pasted math by `test_paste_math.py` and the
+`test_block_columns.py`, the older documents through migration step 52 by
+`test_migrations.py`, the pasted math by `test_paste_math.py` and the
 slugs by `test_publish.py`. Add a case there when a rule changes; whichever
 side drifts fails. `test_every_fixture_is_read_by_both_suites` fails a
 fixture that no node test or no pytest module reads, except those in its

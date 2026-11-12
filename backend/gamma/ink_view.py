@@ -17,7 +17,8 @@ as the user sees it. ``pdf_text.render_page`` rasterizes either.
 from . import ink as inkmod
 from . import storage
 from .ai_pictures import page_pdf_path
-from .blocks_store import block_to_dict, fetch_subtree, page_attachment
+from .blocks_store import block_to_dict, fetch_subtree
+from .documents.model import file_hash, is_pdf, page_document
 from .highlights import is_ink
 from .logbuf import log
 from .notebook import is_sheet, normalize_paper, notebook_pdf, sheet_pictures, sheet_text_boxes, sheets_of
@@ -137,8 +138,8 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False, ink
     from .pdf_export import page_with_ink, still_embedded
 
     page_no = ink.space.page
-    attachment = page_attachment(by_id[page_id]["properties"])
-    path = pdf_path(ws, attachment["id"]) if attachment else None
+    view = page_document(by_id[page_id]["properties"])
+    path = pdf_path(ws, file_hash(view)) if is_pdf(view) else None
     # What is added to the page: ink still embedded in the PDF is drawn by
     # the file itself (a selection's strokes are drawn all the same).
     if whole:

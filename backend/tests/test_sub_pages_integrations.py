@@ -15,7 +15,7 @@ import pytest
 from pypdf import PdfReader, PdfWriter
 
 import notability_fixtures as fx
-from conftest import folder_names, login, make_folder, make_user
+from conftest import doc_props, folder_names, login, make_folder, make_user
 from test_import_review import commit, report, review
 from test_mcp import call
 from test_zotero_import import _custom_zip, _rdf, _send
@@ -149,7 +149,7 @@ def _pdf(width: int) -> bytes:
 
 def _upload(c, pdf: bytes) -> dict:
     up = c.post("/api/uploads", files={"file": ("paper.pdf", pdf, "application/pdf")}).json()
-    return {"doc_id": up["doc_id"], "source_url": up["source_url"]}
+    return doc_props(up["doc_id"], url=up["source_url"])
 
 
 def _paper(c, title, **body):

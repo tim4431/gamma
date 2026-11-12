@@ -11,6 +11,7 @@
 // "" for a member who cannot act on the vault: where its files lie is the
 // reading of whoever made it. Pure: tests/vaultState.test.mjs.
 import { t, tn } from "../shared/i18n/i18n.js";
+import { inPlace } from "../documents/pageDocument.js";
 
 // The answer, kept only when it says something: null for a page of no vault
 // that reads no file here.
@@ -101,7 +102,8 @@ export function editsFile(state) {
   return !!vault && vault.push === "everything" && /\.(md|markdown)$/i.test(vault.path || "");
 }
 
-// Whether the page is an opened PDF that Add to library… takes in.
+// Whether Add to library… takes the page in as an opened PDF (a work
+// folder's file is fileRules' addToLibrary, explorer/workFolders.js).
 export function addsToLibrary(state) {
   return !!state?.reader && !state.vault;
 }
@@ -130,13 +132,14 @@ export function vaultConflictsPath(state) {
   return vault?.id && vault.scope !== "file" ? `/folder-links/${encodeURIComponent(vault.id)}` : "";
 }
 
-// Whether a library row (App's pageBlocks: `_linkedFile`, `_parentPage`,
-// `_opened`) is a PDF opened from this computer, inside *Opened files*: the
-// page Move to library and Move into page… take to Add to library…
-// instead, since its bytes must be stored before it leaves.
+// Whether a library row (App's pageBlocks: `_doc`, `_parentPage`, `_opened`)
+// is a PDF opened from this computer, one whose document is read in place,
+// inside *Opened files*: the page Move to library and Move into page… take
+// to Add to library… instead, since its bytes must be stored before it
+// leaves.
 export function isOpenedPdf(id, pagesById) {
   const row = pagesById?.get(id);
-  return !!row?._linkedFile && !!row._parentPage && !!pagesById.get(row._parentPage)?._opened;
+  return inPlace(row?._doc) && !!row._parentPage && !!pagesById.get(row._parentPage)?._opened;
 }
 
 // The workspaces Add to library… offers (`workspaces`: the session's list,

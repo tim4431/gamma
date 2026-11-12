@@ -2,6 +2,7 @@
 detach a PDF, generic file uploads + serving, and the root listing's text preview."""
 
 import io
+import json
 from contextlib import closing
 
 import pytest
@@ -50,6 +51,22 @@ def test_create_page_defaults_and_folder(guest):
     assert page["id"] in ids
 
 
+def test_create_page_keeps_a_document_in_its_doc_only(guest):
+    # the flat keys a document was kept in are refused; a doc is stored in canonical form
+    for legacy in ({"doc_id": "d" * 24}, {"source_url": "https://example.org/a.pdf"}, {"linked_file": True}):
+        r = guest.post("/api/pages", json={"title": "Old shape", "properties": legacy})
+        assert r.status_code == 400 and "no longer a block property" in r.json()["detail"], legacy
+    r = guest.post("/api/pages", json={"title": "Bad doc", "properties": {"doc": {"format": "pdf", "at": "store"}}})
+    assert r.status_code == 400
+    # a removal of an old key is no document (an older client's stale base)
+    assert guest.post("/api/pages", json={"title": "x", "properties": {"doc_id": None}}).status_code == 200
+    doc = {"at": "store", "hash": "d" * 24, "name": "dir/a.pdf", "format": "pdf"}
+    page = guest.post("/api/pages", json={"title": "New shape", "properties": {"doc": doc}}).json()
+    assert page["properties"]["doc"] == {"format": "pdf", "name": "a.pdf", "hash": "d" * 24, "ext": ".pdf",
+                                         "at": "store"}
+    assert list(page["properties"]["doc"]) == ["format", "name", "hash", "ext", "at"]
+
+
 def test_create_page_needs_a_session():
     from gamma.app import app
     assert TestClient(app).post("/api/pages", json={"title": "x"}).status_code == 401
@@ -65,9 +82,9 @@ def test_attach_stored_pdf_sets_attachment_and_automatic_title(guest):
     assert r.status_code == 200, r.text
     body = r.json()
     props = body["properties"]
-    assert props["doc_id"] == doc_id
-    assert "source_url" not in props  # the stored copy's URL is derived from doc_id
-    assert props["original_filename"] == "My Paper.pdf"
+    # the stored copy's address is derived from its hash, and the name is a leaf
+    assert props["doc"] == {"format": "pdf", "name": "My Paper.pdf", "hash": doc_id, "ext": ".pdf", "at": "store"}
+    assert not any(k in props for k in ("doc_id", "source_url", "original_filename"))
     # "Untitled" was automatic → the file name, marked for the metadata worker
     assert body["content"] == "My Paper.pdf" and props["auto_title"] == "My Paper.pdf"
     assert guest.get(f"/api/blocks/{page['id']}").json()["content"] == "My Paper.pdf"
@@ -92,13 +109,15 @@ def test_attach_by_url_only_is_lazy(guest):
     r = guest.post(f"/api/pages/{page['id']}/attachment", json={"doc_id": doc_id, "source_url": url})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["properties"]["doc_id"] == doc_id
-    assert body["properties"]["source_url"] == url
+    assert body["properties"]["doc"] == {"format": "pdf", "name": "", "hash": doc_id, "ext": ".pdf", "at": "url",
+                                         "url": url}
     assert body["content"] == "lazy one.pdf"  # URL tail while the title is automatic
 
     page2 = guest.post("/api/pages", json={}).json()
     r = guest.post(f"/api/pages/{page2['id']}/attachment", json={"source_url": "https://example.org/x.pdf"})
-    assert r.status_code == 200 and "doc_id" not in r.json()["properties"]
+    assert r.status_code == 200
+    assert r.json()["properties"]["doc"] == {"format": "pdf", "name": "", "hash": "", "ext": ".pdf", "at": "url",
+                                             "url": "https://example.org/x.pdf"}
 
 
 def test_attach_validation(guest):
@@ -126,7 +145,7 @@ def test_attach_a_doc_another_page_owns_names_that_page(guest):
     assert r.status_code == 409, r.text
     assert r.json() == {"detail": "attachment belongs to another page", "page_id": owner["id"]}
     # the page stayed text-only
-    assert "doc_id" not in guest.get(f"/api/blocks/{page['id']}").json()["properties"]
+    assert "doc" not in guest.get(f"/api/blocks/{page['id']}").json()["properties"]
 
 
 def _orphans(ws):
@@ -154,7 +173,8 @@ def test_detach_clears_attachment_and_keeps_the_file(guest, no_grace):
     assert body["ok"] and "removed_uploads" not in body
     assert (ws_uploads_dir(ws) / f"{doc_id}.pdf").is_file() and f"{doc_id}.pdf" in _orphans(ws)
     props = body["block"]["properties"]
-    assert not any(k in props for k in ("doc_id", "source_url", "original_filename"))
+    assert not any(k in props for k in ("doc", "original_filename"))
+    assert guest.get(f"/api/blocks/{page['id']}").json()["properties"] == props
     assert guest.get(f"/api/blocks/{hl['id']}").json()["properties"]["pdf_position"] == {"pageNumber": 1}
     assert guest.get(f"/api/blocks/by-doc/{doc_id}").status_code == 404
     # nothing left to detach
@@ -163,6 +183,49 @@ def test_detach_clears_attachment_and_keeps_the_file(guest, no_grace):
     assert guest.post(f"/api/pages/{page['id']}/attachment", json={"doc_id": doc_id}).status_code == 200
     assert f"{doc_id}.pdf" not in _orphans(ws)
     assert guest.get(f"/api/uploads/{doc_id}.pdf").status_code == 200
+
+
+def test_attach_and_detach_take_the_markdown_source_name_along(guest):
+    # a page made from a Markdown file with a PDF keeps the .md name beside its doc;
+    # replacing or removing the PDF drops both, the import's own key stays
+    doc_id = _upload_pdf(guest, PDF_BYTES + b"md-source")
+    props = {"original_filename": "Reading.md", "markdown_import": "m" * 24,
+             "doc": {"format": "pdf", "name": "", "hash": doc_id, "ext": ".pdf", "at": "store"}}
+    page = guest.post("/api/pages", json={"title": "Reading", "properties": props}).json()
+    assert page["properties"]["original_filename"] == "Reading.md"
+    body = guest.delete(f"/api/pages/{page['id']}/attachment").json()
+    assert body["block"]["properties"] == {"markdown_import": "m" * 24}
+    other = guest.post("/api/pages", json={"title": "Reading 2", "properties": {**props, "doc": None}}).json()
+    assert other["properties"] == {"original_filename": "Reading.md", "markdown_import": "m" * 24}
+    # (the first page let it go, so the PDF is no other page's)
+    attached = guest.post(f"/api/pages/{other['id']}/attachment",
+                          json={"doc_id": doc_id, "original_filename": "r.pdf"}).json()
+    assert "original_filename" not in attached["properties"] and attached["properties"]["doc"]["name"] == "r.pdf"
+
+
+def test_replace_keeps_a_pdf_read_in_place_there_unless_it_comes_from_an_address(guest):
+    # a page reading its PDF from a file on this computer (doc.at "path", gamma/linked_files.py)
+    # reads the new bytes there too; a URL makes it one shown from that address
+    old = "1" * 24
+    page = guest.post("/api/pages", json={"title": "On disk", "properties": {
+        "doc": {"format": "pdf", "name": "thesis.pdf", "hash": old, "ext": ".pdf", "at": "path"}}}).json()
+    new = _upload_pdf(guest, PDF_BYTES + b"in-place")
+    r = guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new, "original_filename": "thesis.pdf"})
+    assert r.status_code == 200, r.text
+    assert r.json()["properties"]["doc"] == {"format": "pdf", "name": "thesis.pdf", "hash": new, "ext": ".pdf",
+                                             "at": "path"}
+    # read in place, it is no library page of those bytes
+    assert guest.get(f"/api/blocks/by-doc/{new}").status_code == 404
+    url = "https://example.org/thesis.pdf"
+    r = guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": "2" * 24, "source_url": url})
+    assert r.json()["properties"]["doc"] == {"format": "pdf", "name": "", "hash": "2" * 24, "ext": ".pdf",
+                                             "at": "url", "url": url}
+    # a stored page stays stored
+    stored = guest.post("/api/pages", json={"title": "Stored"}).json()
+    guest.post(f"/api/pages/{stored['id']}/attachment", json={"doc_id": _upload_pdf(guest, PDF_BYTES + b"s1")})
+    again = _upload_pdf(guest, PDF_BYTES + b"s2")
+    assert guest.put(f"/api/pages/{stored['id']}/attachment",
+                     json={"doc_id": again}).json()["properties"]["doc"]["at"] == "store"
 
 
 def test_detach_keeps_a_file_another_page_still_uses(guest, no_grace):
@@ -211,8 +274,8 @@ def test_replace_swaps_the_pdf_and_keeps_the_page(guest, no_grace):
     body = r.json()
     assert body["id"] == page["id"] and body["content"] == "My paper"
     props = body["properties"]
-    # the stored copy's URL is derived, never stored (page_attachment)
-    assert props["doc_id"] == new and "source_url" not in props and props["original_filename"] == "main-v2.pdf"
+    # the stored copy's address is derived, never stored (documents.model.document)
+    assert props["doc"] == {"format": "pdf", "name": "main-v2.pdf", "hash": new, "ext": ".pdf", "at": "store"}
     assert guest.get(f"/api/blocks/{page['id']}").json()["properties"] == props
     # the highlight keeps its place, now naming the file it was measured on
     # (gamma/highlight_relocate.py; the run that would move it cannot read these bytes)
@@ -231,14 +294,14 @@ def test_replace_swaps_the_pdf_and_keeps_the_page(guest, no_grace):
     assert old not in _indexed(ws) and pdf_meta.get(ws, old) is None
 
 
-def test_replace_a_proxied_pdf_with_an_upload_drops_its_source_url(guest):
+def test_replace_a_proxied_pdf_with_an_upload_drops_its_address(guest):
     page = guest.post("/api/pages", json={"title": "Linked"}).json()
     r = guest.post(f"/api/pages/{page['id']}/attachment",
                    json={"doc_id": "c" * 24, "source_url": "https://example.org/paper.pdf"})
-    assert r.json()["properties"]["source_url"] == "https://example.org/paper.pdf"
+    assert r.json()["properties"]["doc"]["url"] == "https://example.org/paper.pdf"
     new = _upload_pdf(guest, PDF_BYTES + b"r3")
     props = guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new}).json()["properties"]
-    assert props["doc_id"] == new and "source_url" not in props
+    assert props["doc"] == {"format": "pdf", "name": "", "hash": new, "ext": ".pdf", "at": "store"}
 
 
 def test_replace_refuses_a_pdf_another_page_carries(guest):
@@ -251,7 +314,7 @@ def test_replace_refuses_a_pdf_another_page_carries(guest):
     r = guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": taken})
     assert r.status_code == 409
     assert r.json() == {"detail": "attachment belongs to another page", "page_id": owner["id"]}
-    assert guest.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == mine
+    assert guest.get(f"/api/blocks/{page['id']}").json()["properties"]["doc"]["hash"] == mine
 
 
 def test_replace_with_the_same_pdf_changes_nothing(guest):
@@ -290,7 +353,7 @@ def test_replace_on_a_page_without_a_pdf_attaches_it(guest):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["content"] == "notes.pdf" and body["properties"]["auto_title"] == "notes.pdf"
-    assert body["properties"]["doc_id"] == doc_id
+    assert body["properties"]["doc"]["hash"] == doc_id
 
 
 def test_replace_rejects_bad_input(guest):
@@ -332,8 +395,45 @@ def test_share_token_never_attaches(bob_page, guest):
                     json={"doc_id": "a" * 24}).status_code == 401
     assert carol.put(f"/api/pages/{page['id']}/attachment", params={"share": token},
                      json={"doc_id": "a" * 24}).status_code == 404
-    assert "doc_id" not in bob.get(f"/api/blocks/{page['id']}").json()["properties"]
+    assert "doc" not in bob.get(f"/api/blocks/{page['id']}").json()["properties"]
     assert anon.post("/api/pages", params={"share": token}, json={"title": "x"}).status_code == 401
+
+
+def test_a_work_folders_document_is_its_vaults(no_grace):
+    """A work folder's file reads its document where it is: a person's
+    attach, replace and detach are refused with the ``locked`` conflict in
+    the rule's words; the vault's own, from a token that names its client
+    (``X-Gamma-Client: disk``), go through."""
+    from conftest import fresh_client, mark_work_folder, work_props
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import create_page
+    from gamma.documents.model import document
+    from gamma.integrations import create_token
+    from gamma.work_folders.filing import refusal_text
+
+    make_user("pages_vault", "pw-pages-vault")
+    owner, ws, account = login("pages_vault", "pw-pages-vault"), workspace_of("pages_vault"), account_of("pages_vault")
+    w = make_folder(owner, "pages-W")
+    mark_work_folder(owner, w)
+    with connect_pages_db(ws) as conn:
+        pdf = create_page(conn, "main", work_props(w, "main.pdf", doc=document("4d" * 12, name="main.pdf", at="path")),
+                          actor=account, client=DISK_CLIENT)["id"]
+        note = create_page(conn, "notes", work_props(w, "notes.md"), actor=account, client=DISK_CLIENT)["id"]
+    new = _upload_pdf(owner, b"%PDF-1.4 the vault's next version\n")
+
+    def refused(r):
+        assert r.status_code == 403 and r.json() == {"detail": refusal_text("document"), "conflict": "locked"}, r.text
+
+    refused(owner.put(f"/api/pages/{pdf}/attachment", json={"doc_id": new}))
+    refused(owner.delete(f"/api/pages/{pdf}/attachment"))
+    refused(owner.post(f"/api/pages/{note}/attachment", json={"doc_id": new}))
+    refused(owner.put(f"/api/pages/{pdf}/attachment", json={"doc_id": new}, headers={"X-Gamma-Client": "disk"}))
+    vault = fresh_client()
+    token = create_token(account, ws, "pages-vault", 90, scope="write")["token"]
+    vault.headers.update({"Authorization": "Bearer " + token, "X-Gamma-Workspace": ws, "X-Gamma-Client": "disk"})
+    r = vault.put(f"/api/pages/{pdf}/attachment", json={"doc_id": new, "original_filename": "main.pdf"})
+    assert r.status_code == 200, r.text
+    assert owner.get(f"/api/blocks/{pdf}").json()["properties"]["doc"]["hash"] == new
 
 
 # --- generic file uploads --------------------------------------------------------------
@@ -392,7 +492,10 @@ def test_pdf_file_block_promotes_to_a_document_page(guest, no_grace):
     assert r.status_code == 200, r.text
     page = r.json()
     assert page["parent_id"] == "root" and page["content"] == "Supplement.pdf"
-    assert page["properties"]["doc_id"] == doc_id and page["properties"]["folders"] == [rydberg]
+    # the file's own address is no address: the page stores it
+    assert page["properties"]["doc"] == {"format": "pdf", "name": "Supplement.pdf", "hash": doc_id, "ext": ".pdf",
+                                         "at": "store"}
+    assert page["properties"]["folders"] == [rydberg]
     assert page["properties"]["auto_title"] == "Supplement.pdf"
     # a second promotion finds the page; the folder of an existing page is left alone
     again = guest.post(f"/api/blocks/by-doc/{doc_id}", json={"default_title": "",
@@ -474,7 +577,7 @@ def test_markdown_file_block_promotes_to_a_note_page(guest):
     assert body["created"] is True and body["imported"] == 4
     assert page["parent_id"] == "root" and page["content"] == "Squeezing notes"
     assert page["properties"]["folders"] == [rydberg]
-    assert page["properties"]["markdown_import"] == stem and "doc_id" not in page["properties"]
+    assert page["properties"]["markdown_import"] == stem and "doc" not in page["properties"]
     tree = guest.get(f"/api/blocks/{page['id']}/subtree").json()["block"]["children"]
     assert [b["content"] for b in tree] == ["# Setup", "- first point", "- second point"] or tree[0]["content"].startswith("#")
     # the lookup now names the page, and a second promotion returns it unchanged
@@ -550,19 +653,20 @@ def test_root_listing_is_a_pure_read(guest):
     from gamma.normalize import normalize_pages_db
 
     page = make_page(guest, "dir/leaked.pdf")
+    leaked = {"format": "pdf", "name": "dir/leaked.pdf", "hash": "l" * 24, "ext": ".pdf", "at": "store"}
     with _pages_conn() as conn:
         conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?",
-                     ('{"original_filename": "dir/leaked.pdf", "auto_title": "dir/leaked.pdf"}', page["id"]))
+                     (json.dumps({"doc": leaked, "auto_title": "dir/leaked.pdf"}), page["id"]))
         conn.commit()
     listed = {b["id"]: b for b in guest.get("/api/blocks/root/children").json()["children"]}
     assert listed[page["id"]]["content"] == "dir/leaked.pdf"
-    assert listed[page["id"]]["properties"]["original_filename"] == "dir/leaked.pdf"
+    assert listed[page["id"]]["properties"]["doc"] == leaked
     with _pages_conn() as conn:
         assert normalize_pages_db(conn)["upload_path_titles"] == 1
         touch_page(conn, page["id"], "")  # as the restore that runs it touches what it puts back
         conn.commit()
     fixed = guest.get(f"/api/blocks/{page['id']}").json()
-    assert fixed["content"] == "leaked.pdf" and fixed["properties"]["original_filename"] == "leaked.pdf"
+    assert fixed["content"] == "leaked.pdf" and fixed["properties"]["doc"] == {**leaked, "name": "leaked.pdf"}
 
 
 def test_deleting_a_page_for_good_marks_it_deleted_and_drops_its_op_log(guest):
@@ -595,9 +699,21 @@ def test_by_doc_backfill_on_an_existing_page_is_an_op(guest):
     seq0 = guest.get(f"/api/blocks/{page['id']}/subtree").json()["seq"]
     again = guest.post(f"/api/blocks/by-doc/{doc_id}", json={
         "default_title": "paper.pdf", "original_filename": "paper.pdf"}).json()
-    assert again["id"] == page["id"] and again["properties"]["original_filename"] == "paper.pdf"
+    named = {"format": "pdf", "name": "paper.pdf", "hash": doc_id, "ext": ".pdf", "at": "store"}
+    assert again["id"] == page["id"] and again["properties"]["doc"] == named
     log = guest.get(f"/api/pages/{page['id']}/ops?since={seq0}").json()
     assert len(log["batches"]) == 1
     (op,) = log["batches"][0]["ops"]
-    assert op["op"] == "set" and op["id"] == page["id"] and op["props"] == {"original_filename": "paper.pdf"}
+    assert op["op"] == "set" and op["id"] == page["id"] and op["props"] == {"doc": named}
     assert log["batches"][0]["actor"] == account_of(guest_name())
+    # an address that came later is backfilled the same way; the name stays
+    seq1 = guest.get(f"/api/blocks/{page['id']}/subtree").json()["seq"]
+    url = "https://example.org/paper.pdf"
+    again = guest.post(f"/api/blocks/by-doc/{doc_id}", json={"default_title": "paper.pdf", "source_url": url}).json()
+    assert again["properties"]["doc"] == {**named, "at": "url", "url": url}
+    (op,) = guest.get(f"/api/pages/{page['id']}/ops?since={seq1}").json()["batches"][0]["ops"]
+    assert op["props"] == {"doc": {**named, "at": "url", "url": url}}
+    # and nothing is written when nothing is missing
+    seq2 = guest.get(f"/api/blocks/{page['id']}/subtree").json()["seq"]
+    guest.post(f"/api/blocks/by-doc/{doc_id}", json={"default_title": "paper.pdf", "original_filename": "other.pdf"})
+    assert guest.get(f"/api/blocks/{page['id']}/subtree").json()["seq"] == seq2

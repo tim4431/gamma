@@ -35,9 +35,10 @@ from .ai_client import check_allowance, upstream_detail
 from .ai_settings import transcriber_for
 from .blocks_store import load_json, new_block_id, page_root_id, write_lock
 from .db import connect_pages_db
+from .documents.formats import media_type
 from .logbuf import log
 from .ops import MAX_OPS, after_commit, apply_ops
-from .storage import UPLOAD_REF_RE, find_upload_file, upload_media_type
+from .storage import UPLOAD_REF_RE, find_upload_file
 
 TRANSCRIBE_MAX_BYTES = 25 * 1024 * 1024  # OpenAI's audio upload limit
 MP4_MAX_BOXES = 64                       # boxes read at each level of an MP4 file (mp4_duration_ms)
@@ -219,7 +220,7 @@ def _transcribe(proto, conf, models: list[str], language: str, name: str, audio:
     detail = ""
     for model in models:
         check_allowance(conf)  # read fresh: a long recording stops at the limit
-        req = proto.transcription_request(conf, model, language, name, upload_media_type(name[name.rfind("."):]),
+        req = proto.transcription_request(conf, model, language, name, media_type(name[name.rfind("."):]),
                                           audio, timestamps=True)
         try:
             with urlopen(req, timeout=TRANSCRIBE_TIMEOUT_S) as resp:

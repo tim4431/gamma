@@ -17,8 +17,9 @@ import sqlite3
 from contextlib import contextmanager
 
 from . import pdf_meta, storage, translate_store
-from .blocks_store import attachment_file, load_props, page_attachment
+from .blocks_store import load_props
 from .db import connect_data_db, page_now
+from .documents.model import file_hash, page_document, stored_name
 from .logbuf import log
 from .textnorm import INDEX_VERSION
 
@@ -134,12 +135,13 @@ def drop_docs(conn: sqlite3.Connection, doc_ids) -> None:
 
 def _live_docs(pages_conn: sqlite3.Connection) -> set:
     """The stored papers the workspace's blocks carry, Recently deleted
-    included: by ``doc_id``, or by the upload address alone, which is all a
-    duplicated page holds (``attachment_file``)."""
+    included: by the ``doc_id`` column (the document a block owns), or by
+    the file a copy shows (a duplicated page, ``file_hash``), which the
+    column leaves out."""
     live = {r[0] for r in pages_conn.execute(
         "SELECT DISTINCT doc_id FROM unified_blocks WHERE doc_id IS NOT NULL")}
-    for row in pages_conn.execute("""SELECT properties FROM unified_blocks WHERE instr(properties, '"source_url"')"""):
-        live.add(attachment_file(page_attachment(load_props(row[0]))))
+    for row in pages_conn.execute("""SELECT properties FROM unified_blocks WHERE instr(properties, '"copy"')"""):
+        live.add(file_hash(page_document(load_props(row[0]))))
     live.discard("")
     return live
 
@@ -206,7 +208,7 @@ def pdf_pending(ws: str, data_conn: sqlite3.Connection, doc_ids) -> list[str]:
     start on every search and the count would never come down. It is back
     when it is within reach again, or under a new name."""
     return [d for d in pdf_missing(data_conn, doc_ids)
-            if storage.readable(ws, f"{d}.pdf") or not storage.is_linked(ws, f"{d}.pdf")]
+            if storage.readable(ws, stored_name(d, ".pdf")) or not storage.is_linked(ws, stored_name(d, ".pdf"))]
 
 
 def search_pdf(data_conn: sqlite3.Connection, match: str, limit: int,

@@ -2,14 +2,14 @@
 pdf_position — the page and its size once, the rects bare — written by
 every writer that places a block on a PDF page (the annotation and Logseq
 importers, ink), the block id as the highlight's id, and a page's PDF URL
-derived from its doc_id rather than stored (attach, by-doc, the op path,
+derived from its doc rather than stored (attach, by-doc, the op path,
 page creation, the clip and its lookup)."""
 
 import io
 
 import pytest
 
-from conftest import login, make_page, make_user
+from conftest import doc_props, login, make_page, make_user
 from gamma.highlights import PREV_MAX_QUOTE, PREV_MAX_RECTS, from_scaled, is_highlight, page_of, position, previous_place
 from gamma.pdf_export import annotate_pdf
 from test_pdf_export import PAGE_H, PAGE_W, _blank_pdf
@@ -210,23 +210,29 @@ def test_the_logseq_importer_writes_the_shape(owner):
 # --- the PDF's URL ---------------------------------------------------------------------
 
 def test_a_pages_pdf_url_is_derived_from_its_doc_id(owner):
-    """No writer stores the stored copy's URL: by-doc and the op path drop
-    it (an older client may send it), a page created with it too; a URL of
-    its own stays."""
+    """No writer stores the stored copy's URL: a document's own stored
+    address is no address (documents.model.document), on by-doc, the op
+    path and a page created with it; an address of its own stays. An older
+    client's flat source_url is refused."""
     up = _upload(owner, b"%PDF-1.4 the derived url\n")
     doc, url = up["doc_id"], up["source_url"]
     assert url == f"/api/uploads/{doc}.pdf"  # the upload still answers where its file is
+    stored = {"format": "pdf", "name": "", "hash": doc, "ext": ".pdf", "at": "store"}
     page = owner.post(f"/api/blocks/by-doc/{doc}", json={"default_title": "By doc", "source_url": url}).json()
-    assert "source_url" not in page["properties"] and page["content"] == "By doc"
+    assert page["properties"]["doc"] == stored and page["content"] == "By doc"
     r = owner.post(f"/api/pages/{page['id']}/ops", json={"client": "old", "ops": [
         {"op": "set", "id": page["id"], "props": {"source_url": url}}]})
-    assert r.status_code == 200 and r.json()["ops"][0]["props"] == {"source_url": None}, r.text
-    assert "source_url" not in owner.get(f"/api/blocks/{page['id']}").json()["properties"]
-    made = owner.post("/api/pages", json={"title": "Made", "properties": {"doc_id": "a" * 24,
-                                                                         "source_url": f"/api/uploads/{'a' * 24}.pdf"}})
-    assert made.status_code == 200 and made.json()["properties"] == {"doc_id": "a" * 24}, made.text
-    own = make_page(owner, "Proxied", properties={"doc_id": "b" * 24, "source_url": "https://x.test/p.pdf"})
-    assert owner.get(f"/api/blocks/{own['id']}").json()["properties"]["source_url"] == "https://x.test/p.pdf"
+    assert r.status_code == 400, r.text
+    r = owner.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [
+        {"op": "set", "id": page["id"], "props": {"doc": {**stored, "at": "url", "url": url}}}]})
+    assert r.status_code == 200 and r.json()["ops"][0]["props"] == {"doc": stored}, r.text
+    assert owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc"] == stored
+    a = {**stored, "hash": "a" * 24}
+    made = owner.post("/api/pages", json={"title": "Made", "properties": {
+        "doc": {**a, "at": "url", "url": f"/api/uploads/{'a' * 24}.pdf"}}})
+    assert made.status_code == 200 and made.json()["properties"] == {"doc": a}, made.text
+    own = make_page(owner, "Proxied", properties=doc_props("b" * 24, url="https://x.test/p.pdf"))
+    assert owner.get(f"/api/blocks/{own['id']}").json()["properties"]["doc"]["url"] == "https://x.test/p.pdf"
 
 
 def test_a_lookup_by_the_stored_copys_url_still_finds_the_page(owner):

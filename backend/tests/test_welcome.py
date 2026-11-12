@@ -63,8 +63,10 @@ def test_a_new_account_starts_with_the_welcome_page_and_its_pdf():
     props = page["properties"]
     assert page["content"] == "Welcome" and props["seeded"] == "welcome"
     # the sample PDF, stored by content hash like any upload
-    doc_id = props["doc_id"]
-    assert "source_url" not in props  # seeded in the current shape: the URL is derived
+    doc_id = props["doc"]["hash"]
+    # seeded in the current shape: a stored PDF, its address derived
+    assert props["doc"] == {"format": "pdf", "name": "Welcome to Gamma.pdf", "hash": doc_id, "ext": ".pdf",
+                            "at": "store"}
     data = find_upload_file(f"{doc_id}.pdf", ws).read_bytes()
     assert is_pdf(data)
     text = _pdf_text(data)
@@ -92,7 +94,7 @@ def test_the_account_sees_it_in_its_library():
     assert [b["content"] for b in children] == ["Welcome", "Sketchbook"]
     welcome = children[0]
     assert welcome["properties"]["seeded"] == "welcome"
-    pdf = c.get(f"/api/uploads/{welcome['properties']['doc_id']}.pdf")
+    pdf = c.get(f"/api/uploads/{welcome['properties']['doc']['hash']}.pdf")
     assert pdf.status_code == 200 and pdf.content[:4] == b"%PDF"
 
 
@@ -106,7 +108,7 @@ def test_every_workspace_stores_the_same_pdf():
     from gamma import seed
     a = seed.create_account("wl_same_a", None)
     b = seed.create_account("wl_same_b", None)
-    assert _seeded(a, "welcome")["properties"]["doc_id"] == _seeded(b, "welcome")["properties"]["doc_id"]
+    assert _seeded(a, "welcome")["properties"]["doc"] == _seeded(b, "welcome")["properties"]["doc"]
 
 
 def test_the_sketchbook_is_a_notebook_beside_it():
@@ -209,7 +211,7 @@ def test_a_broken_drawing_still_leaves_the_welcome_page(monkeypatch):
     monkeypatch.setattr(sketchbook, "blocks", broken)
     ws = seed.create_account("wl_broken", None)
     [page] = _pages(ws)
-    assert page["properties"]["seeded"] == "welcome" and page["properties"]["doc_id"]
+    assert page["properties"]["seeded"] == "welcome" and page["properties"]["doc"]["hash"]
 
 
 def test_a_share_host_seeds_nothing(monkeypatch):

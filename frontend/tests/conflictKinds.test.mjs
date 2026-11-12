@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { KEPT_HERE_END, MERGE_KIND, conflictPlace, inkMergeLines, isTextual, isVaultConflict, isZotero, keptHere, kindOf, zoteroReason } from "../src/collaboration/conflictKinds.js";
+import { KEPT_HERE_END, MERGE_KIND, conflictPlace, inkMergeLines, isTextual, isVaultConflict, isZotero, keptHere, kindOf, refusalWords, zoteroReason } from "../src/collaboration/conflictKinds.js";
 
 // The Zotero link's kinds: the engine's literal CONFLICT_KINDS tuple, in
 // gamma/zotero_sync.py or whichever zotero_sync_*.py module it is split into.
@@ -143,4 +143,11 @@ test("a drawing the remote merged says what each side lost, counted", () => {
   assert.deepEqual(inkMergeLines(row({ clean: false, lost_ours: [], returned: [] })), plain);
   assert.deepEqual(inkMergeLines({ kind: "ink_merged", theirs: "not a report" }), plain);
   assert.deepEqual(inkMergeLines({ kind: "ink_merged", theirs: "" }), plain);
+});
+
+test("a locked refusal says the server's words, the rule's in this language, a fixed sentence when it sent none", () => {
+  assert.equal(refusalWords("locked", "A work folder's directories follow the disk."), "A work folder's directories follow the disk.");
+  assert.equal(refusalWords("locked", "Its bytes are on another computer."), "Its bytes are on another computer.");
+  assert.equal(refusalWords("locked"), "That file's name and place follow its work folder.");
+  assert.equal(refusalWords("cycle", "anything"), "");
 });

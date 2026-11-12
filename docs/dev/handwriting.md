@@ -4845,7 +4845,8 @@ reach.
     `.ink` only when it is a valid version 2 drawing. Both routes refuse a
     bad file through `parse_upload` (`routers/ink.py`).
   - Editors and edit shares may upload (`require_ws_writer`).
-  - `.ink` is in `storage.FILE_MEDIA_TYPES` (`application/json`), so `GET
+  - `.ink` has its row in `documents.formats.EXTENSIONS` (`application/json`,
+    [documents.md](documents.md#formats)), so `GET
     /api/uploads/<hash>.ink` is the ordinary upload route with its share
     scoping and cache headers.
 - Interchange ([import_export.md](import_export.md),

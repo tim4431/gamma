@@ -3,7 +3,8 @@ index seek per listed page instead of a window query over every child of
 every page — and the same text the window query gave, for every page shape:
 more than five children, leading highlights, empty and whitespace-only
 blocks, nested blocks (not counted), long text cut at PREVIEW_CHARS, no
-children at all, and a folder share's listing."""
+children at all, a folder share's listing, and the summaries of pages the
+listing leaves out (POST /api/pages/summaries)."""
 
 import inspect
 from contextlib import closing
@@ -90,6 +91,15 @@ def test_a_folder_share_lists_its_pages_with_the_same_previews(owner, anon):
     assert set(titles) == {"Many children", "Leading highlights"}
     assert titles["Leading highlights"] == "first real note · second real note"
     assert titles["Many children"] == " · ".join(f"note number {i}" for i in range(5))
+
+
+def test_summaries_carry_the_listings_previews(owner):
+    """POST /api/pages/summaries answers a page as the listing has it, its
+    preview the same text."""
+    listed = owner.get("/api/blocks/root/children").json()["children"]
+    r = owner.post("/api/pages/summaries", json={"ids": [p["id"] for p in reversed(listed)]})
+    assert r.status_code == 200, r.text
+    assert r.json()["pages"] == list(reversed(listed))
 
 
 def test_previews_seek_the_parent_index():

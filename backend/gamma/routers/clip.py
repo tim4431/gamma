@@ -18,7 +18,6 @@ pickers) and
 Session-only — never share-token readable. Design: docs/dev/extension.md.
 """
 
-import hashlib
 import json
 import re
 import threading
@@ -32,7 +31,6 @@ from ..blocks_store import (
     BLOCK_COLUMNS,
     FOLDERS,
     LABELS,
-    NOT_LINKED,
     block_to_dict,
     create_page,
     existing_in,
@@ -44,7 +42,6 @@ from ..blocks_store import (
     insert_page_tree,
     label_names,
     new_block_id,
-    page_attachment,
     page_for_doc,
     page_parents,
     page_top,
@@ -55,14 +52,18 @@ from ..blocks_store import (
     write_lock,
 )
 from ..db import connect_pages_db, get_pref, safe_doc_id
+from ..documents.model import own_hash, page_document, stored_name, upload_url, url_hash
 from ..logbuf import log
 from ..markdown_import import TooManyBlocks
 from ..net_guard import browsing_session
 from ..ops import after_commit, apply_ops, ensure_filing
 from ..server_settings import can_store
 from .. import pdf_meta, storage, upload_gc
-from ..storage import DIGEST_CHARS, pdf_url as stored_pdf_url, put_upload, url_filename
+from ..storage import put_upload, url_filename
 from ..web_clip import MAX_HTML_CHARS, article_blocks
+from ..work_folders.filing import refusal_text
+from ..work_folders.library import SQL_LIBRARY_PDF, SQL_LISTED
+from ..work_folders.marks import Tree, filing_targets
 from .metadata import fetch_page_metadata, registry_record, web_names_a_work, web_record
 from .pdf import ARXIV_ID, download_pdf, resolve_source
 
@@ -95,35 +96,37 @@ def norm_arxiv(text: str) -> str:
     return m.group(1) if m else ""
 
 
-def url_doc_id(source_url: str) -> str:
-    """The proxy cache id for an external PDF URL (mirrors /api/pdf)."""
-    return hashlib.sha256(source_url.encode()).hexdigest()[:DIGEST_CHARS]
-
-
 def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict | None:
     """Lookup BY ATTACHMENT: the page whose PDF attachment is this paper, by
-    DOI, arXiv id, or any of its URLs — only pages carrying a ``doc_id`` are
-    candidates (a clip dedups against files, not titles), and a page reading
-    its PDF from this computer is none (``NOT_LINKED``). Identifier matches
-    come from the metadata cache (properties.meta), the identifiers the web
-    page it was saved from carried in its tags (properties.web_meta, there
-    before the lookup lands and after one that failed; never a DOI only
-    seen in that page's text) and the source URL; URL matches from the
-    proxy-cache hash, the attachment's URL (the stored source_url, else the
-    stored copy's), or the web page the extension saved it from (web_url)."""
+    DOI, arXiv id, or any of its URLs — only pages that own a PDF (the
+    ``doc_id`` column) are candidates (a clip dedups against files, not
+    titles), and only library documents (``SQL_LIBRARY_PDF``: a page reading
+    its PDF from this computer is none, nor is a work folder's file not in
+    the library). Identifier matches come from the metadata cache
+    (properties.meta), the identifiers the web page it was saved from
+    carried in its tags (properties.web_meta, there before the lookup lands
+    and after one that failed; never a DOI only seen in that page's text)
+    and the source URL; URL matches from the proxy-cache hash
+    (``url_hash``), the document's address (where it is shown from, else
+    its stored file's), or the web page the extension saved it from
+    (web_url)."""
     doi = (doi or "").lower()
     urls = tuple(u for u in urls if u)
-    url_ids = {url_doc_id(u) for u in urls}
+    url_ids = {url_hash(u) for u in urls}
     rows = conn.execute(
-        f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' AND {NOT_LINKED}"
+        f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' "
+        f"AND {SQL_LIBRARY_PDF}"
     ).fetchall()
     for row in rows:
         props = json.loads(row[4] or "{}")
+        view = page_document(props)
+        if view is None:
+            continue
         meta = props.get("meta") or {}
         tags = props.get("web_meta") if isinstance(props.get("web_meta"), dict) else {}
-        src = page_attachment(props)["url"]
+        src = view["url"]
         web = str(props.get("web_url") or "")
-        if props.get("doc_id") in url_ids or (urls and (src in urls or web in urls)):
+        if own_hash(view) in url_ids or (urls and (src in urls or web in urls)):
             return block_to_dict(row)
         if doi and (doi in (str(meta.get("doi") or "").lower(), str(tags.get("doi") or "").lower())
                     or doi in src.lower() or norm_doi(web) == doi):
@@ -137,7 +140,7 @@ def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict
 
 def find_web_page(conn, url: str) -> dict | None:
     """The page a web clip (no PDF) made from ``url`` — a root page whose
-    ``web_url`` is that URL and that carries no attachment. Pages WITH a PDF
+    ``web_url`` is that URL and that carries no document. Pages WITH a PDF
     are find_page's business (they dedup by identifier too)."""
     url = (url or "").strip()
     if not url:
@@ -146,21 +149,25 @@ def find_web_page(conn, url: str) -> dict | None:
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = 'root' "
             "AND json_extract(properties, '$.web_url') = ?", (url,)).fetchall():
         props = json.loads(row[4] or "{}")
-        if not page_attachment(props):
+        if not page_document(props):
             return block_to_dict(row)
     return None
 
 
 def _filing(ws: str, actor: str, payload: "ClipRequest") -> tuple[str, list[str]]:
     """Where a clip files its page: ``(folder id or "", label ids)`` — the
-    request's ``folder`` (an id; 400 when it is no folder), else its
-    ``folder_path`` (names split on "/"), and its label names, each folder
-    or label made when it is missing (``ops.ensure_filing``)."""
+    request's ``folder`` (an id; 400 when it is no folder, or one of a work
+    folder's, whose files come from its directory), else its
+    ``folder_path`` (names split on "/", a work folder passed by), and its
+    label names, each folder or label made when it is missing
+    (``ops.ensure_filing``)."""
     names = split_path(payload.folder_path or "")
     labels = [str(label).strip() for label in (payload.labels or [])[:50] if str(label).strip()]
     with connect_pages_db(ws) as conn:
         if payload.folder and not folder_chain(conn, payload.folder):
             raise HTTPException(status_code=400, detail="no such folder")
+        if payload.folder and Tree.read(conn).work_of(payload.folder):
+            raise HTTPException(status_code=400, detail=refusal_text("directories"))
         folder_ids, label_ids = ensure_filing(ws, conn, paths=[names] if names and not payload.folder else [],
                                               labels=labels, actor=actor)
     return payload.folder or folder_ids.get(tuple(names), ""), list(dict.fromkeys(label_ids[n] for n in labels))
@@ -249,12 +256,13 @@ def _quote_content(text: str, source_url: str, title: str) -> str:
 
 
 def _result(conn, block: dict, existed: bool, note: str = "") -> dict:
-    """What a clip or a lookup answers about the page ``block``: ``folders``
+    """What a clip or a lookup answers about the page ``block``: ``doc_id``
+    the hash of the PDF it owns ("" for none, ``own_hash``), ``folders``
     the ones it is listed in (``filed_folders``: a sub-page's are its
     top's), ``labels`` its own."""
     props = block.get("properties") or {}
     out = {
-        "block_id": block["id"], "doc_id": props.get("doc_id", ""),
+        "block_id": block["id"], "doc_id": own_hash(page_document(props)),
         "title": block.get("content", ""), "existed": existed,
         "open_url": f"/?block={urllib.parse.quote(block['id'])}",
         "folders": filed_folders(conn, block["id"]), "labels": filing(props, LABELS),
@@ -383,7 +391,7 @@ def _maybe_start_metadata(ws: str, actor: str, payload: ClipRequest, block: dict
     from the web page's text or a citation record (``web_names_a_work``)."""
     props = block.get("properties") or {}
     if payload.fetch_metadata and not props.get("meta") and (
-            props.get("doc_id") or web_names_a_work(props.get("web_meta"))):
+            own_hash(page_document(props)) or web_names_a_work(props.get("web_meta"))):
         _start_metadata(ws, actor, block["id"])
 
 
@@ -441,9 +449,9 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
             doc_id = safe_doc_id(payload.doc_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="invalid doc_id")
-        if not storage.exists(ws, f"{doc_id}.pdf"):
+        if not storage.exists(ws, stored_name(doc_id, ".pdf")):
             raise HTTPException(status_code=404, detail="no uploaded PDF with this doc_id — upload it first")
-        page_source = stored_pdf_url(doc_id)
+        page_source = upload_url(stored_name(doc_id, ".pdf"))
     else:
         # 2b. Resolve the best identifier to a fetchable PDF URL, then make
         #     sure it really delivers a PDF before any PDF page exists. A
@@ -459,13 +467,13 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
                 resolved = resolve_source(candidate, payload.allow_oa)
                 page_source = resolved["source_url"]
                 note = resolved.get("note", "")
-                doc_id = url_doc_id(page_source)
-                if not storage.exists(ws, f"{doc_id}.pdf"):
+                doc_id = url_hash(page_source)
+                if not storage.exists(ws, stored_name(doc_id, ".pdf")):
                     _, data = download_pdf(page_source, want_bytes=payload.save_copy,
                                            referer=resolved.get("referer", ""))
                     if payload.save_copy:
                         if can_store(ws, len(data)):
-                            put_upload(ws, f"{doc_id}.pdf", data)
+                            put_upload(ws, stored_name(doc_id, ".pdf"), data)
                             pdf_meta.schedule(ws, doc_id)
                         else:
                             log.info(f"[clip] not caching {doc_id} ({len(data)} bytes): over storage limits")
@@ -483,7 +491,7 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
     # 3. The page, filed and tagged.
     with connect_pages_db(ws) as conn:
         # No tab title: the page is named after the URL's file name, else the
-        # doc id (attachment_props), marked auto_title for the metadata lookup.
+        # doc id (document_title), marked auto_title for the metadata lookup.
         write_lock(conn)  # whether the PDF has a page, and its creation, as one step
         existed = page_for_doc(conn, doc_id) is not None
         block = get_or_create_doc_page(conn, doc_id, title, page_source, ws=ws, actor=actor)
@@ -537,10 +545,11 @@ def library_preview(request: Request, doi: str = "", arxiv_id: str = "", url: st
 @router.get("/library/folders")
 def library_folders(request: Request):
     """The popup's pickers: ``{folders: [{id, path}], labels: [{id,
-    name}]}`` — every folder (``path`` its names from the top), recently
-    viewed first, and every label by name. A page counts for the folders it
-    is filed in, a page inside another page for its top's
-    (``blocks_store.filed_folders``' rule)."""
+    name}]}`` — every folder a clip may be filed in (``path`` its names
+    from the top; a work folder's are its vault's, ``marks.filing_targets``),
+    recently viewed first, and every label by name. A page the library lists
+    counts for the folders it is filed in, a page inside another page for
+    its top's (``blocks_store.filed_folders``' rule)."""
     user_id = require_user_id(request)
     ws = require_ws(request)
     recent_views, _ = get_pref(user_id, "recent-views", ws)
@@ -551,11 +560,12 @@ def library_folders(request: Request):
         and isinstance(entry.get("at"), str)
     }
     with connect_pages_db(ws) as conn:
-        paths = folder_paths(conn)
+        targets = set(filing_targets(Tree.read(conn)))
+        paths = {f: names for f, names in folder_paths(conn).items() if f in targets}
         parents = tree_parents(conn, FOLDERS)
         labels = label_names(conn)
         rows = conn.execute("SELECT id, updated_at, json_extract(properties, '$.folders') FROM unified_blocks "
-                            "WHERE parent_id = 'root'").fetchall()
+                            f"WHERE parent_id = 'root' AND {SQL_LISTED}").fetchall()
         tops = page_parents(conn)
     filed_in = {page_id: filing({FOLDERS: json.loads(filed or "[]")}, FOLDERS) for page_id, _, filed in rows}
     times = dict.fromkeys(paths, ("", ""))

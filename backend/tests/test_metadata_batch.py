@@ -4,7 +4,7 @@ background job (kind ``metadata``, docs/dev/tasks.md)."""
 import threading
 
 import pytest
-from conftest import make_page
+from conftest import doc_props, make_page
 
 
 ARXIV_META = {
@@ -36,7 +36,7 @@ def arxiv(monkeypatch):
 
 def _paper(guest, title, arxiv_id=""):
     """A page whose lookup finds its arXiv record, or (no id) finds nothing."""
-    props = {"source_url": f"https://arxiv.org/abs/{arxiv_id}"} if arxiv_id else None
+    props = doc_props(url=f"https://arxiv.org/abs/{arxiv_id}") if arxiv_id else None
     return make_page(guest, title, properties=props)["id"]
 
 
@@ -107,11 +107,38 @@ def test_without_force_a_page_keeps_the_record_it_has(guest, arxiv):
     from gamma import jobs
 
     page = make_page(guest, "Already described", properties={
-        "source_url": "https://arxiv.org/abs/2601.00007", "meta": {"title": "Kept Title", "source": "arxiv"}})["id"]
+        **doc_props(url="https://arxiv.org/abs/2601.00007"), "meta": {"title": "Kept Title", "source": "arxiv"}})["id"]
     job = guest.post("/api/jobs/metadata", json={"block_ids": [page], "force": False}).json()
     assert jobs.wait(job["id"])["state"] == "done"
     assert arxiv["calls"] == []
     assert guest.get(f"/api/blocks/{page}").json()["properties"]["meta"]["title"] == "Kept Title"
+
+
+def test_a_batch_leaves_out_what_is_no_library_document(arxiv):
+    """An opened PDF and a work folder's file not in the library are no
+    papers of the library: left out, and counted as ``skipped``; asked
+    alone, there is nothing to look up."""
+    from conftest import account_of, fresh_client, make_folder, mark_work_folder, work_props, workspace_of
+    from gamma import jobs
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import create_page
+    from gamma.db import connect_pages_db
+    from gamma.documents.model import document
+
+    c = fresh_client()
+    name = c.post("/api/login-guest").json()["username"]  # a library of its own
+    w = make_folder(c, "batch-work")
+    mark_work_folder(c, w)
+    with connect_pages_db(workspace_of(name)) as conn:
+        figure = create_page(conn, "figure", work_props(w, "figure.pdf", doc=document("9" * 24, at="path")),
+                             actor=account_of(name), client=DISK_CLIENT)["id"]
+    opened = make_page(c, "Opened here", properties=doc_props("8" * 24, at="path"))["id"]
+    found = _paper(c, "A paper among files", "2601.00008")
+    job = c.post("/api/jobs/metadata", json={"block_ids": [figure, found, opened]}).json()
+    assert jobs.wait(job["id"])["state"] == "done"
+    assert c.get(f"/api/jobs/{job['id']}").json()["result"] == {"papers": 1, "fetched": 1, "failed": 0, "skipped": 2}
+    assert arxiv["calls"] == ["2601.00008"]
+    assert c.post("/api/jobs/metadata", json={"block_ids": [figure, opened]}).status_code == 400
 
 
 def test_a_batch_needs_papers_of_this_workspace(guest, anon):

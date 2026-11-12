@@ -1,19 +1,28 @@
 """The agent's library tools beyond reading and filing: cite (the citation
 records kept with pages), save_paper (the clip ingest, as the reply's Save
-to library runs it) and Recently deleted (list_deleted, restore_page,
-delete_page, and the revert of a deletion or a restore).
+to library runs it), Recently deleted (list_deleted, restore_page,
+delete_page, and the revert of a deletion or a restore) and a work
+folder's files (list_pages at the root lists what the library lists; the
+tools refuse what the work-folder rule refuses, in its words).
 Upstream fetches are faked and the metadata thread is stubbed out."""
 
 import io
 import json
+from types import SimpleNamespace
 
 import pytest
 
 import gamma.routers.clip as clip_mod
 import gamma.routers.pdf as pdf_mod
-from conftest import make_folder
+from conftest import account_of, login, make_folder, make_label, make_user, mark_work_folder, work_props, workspace_of
 from gamma.ai_tools import MAX_SAVES, Tally, approval_preview, run_agent_tool
+from gamma.auth import DISK_CLIENT
+from gamma.blocks_store import create_page, folder_paths
 from gamma.db import connect_pages_db
+from gamma.documents.model import document
+from gamma.ops import trash_page
+from gamma.work_folders.filing import refusal_text
+from gamma.work_folders.marks import Tree
 
 from ai_fixtures import FakeResp, ai_provider, folder, org, props  # noqa: F401  (fixtures)
 
@@ -121,7 +130,7 @@ def test_save_paper_saves_files_and_never_duplicates(org, upstream):
     assert action["kind"] == "save" and action["to"] == "readout" and action["pdf"] and not action["existed"]
     saved = props(c, page)
     assert saved["content"] == "Saved From Chat" and saved["properties"]["folders"] == [ids["readout"]]
-    assert saved["properties"]["doc_id"] and upstream["meta"] == [page]
+    assert saved["properties"]["doc"]["hash"] and upstream["meta"] == [page]
     assert any("arxiv.org/pdf/2601.04321" in u for u in upstream["fetched"])
     # The same paper again, into a subfolder the call makes: filed there
     # (refining the folder above), not duplicated.
@@ -393,3 +402,76 @@ def test_recently_deleted_is_a_folder_chat_tool(org):
     assert "unknown tool" in text and action["error"]
     text, _ = run_agent_tool(ids["ws"], folder(""), "list_deleted", {}, allowed_tools={"list_pages"})
     assert "not enabled" in text
+
+
+# --- a work folder's files ------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def work():
+    """A library of its own with a work folder W that pulls (its directory
+    D), a library folder L and a label: a PDF of D, a note of W (it follows
+    Gamma) and a library page in L, the PDF and the page labelled."""
+    make_user("ait_work", "pw-ait-work")
+    c, ws, account = login("ait_work", "pw-ait-work"), workspace_of("ait_work"), account_of("ait_work")
+    ids = {name: make_folder(c, path) for name, path in (("W", "ait-W"), ("D", "ait-W/dir"), ("L", "ait-L"))}
+    mark_work_folder(c, ids["W"])
+    label = make_label(c, "ait-label")
+    doc = document("f1" * 16, name="fig.pdf", at="path")
+    with connect_pages_db(ws) as conn:
+        fig = create_page(conn, "fig", {**work_props(ids["W"], "fig.pdf", directory=ids["D"], doc=doc),
+                                        "labels": [label]}, actor=account, client=DISK_CLIENT)["id"]
+        note = create_page(conn, "notes", work_props(ids["W"], "notes.md"), actor=account, client=DISK_CLIENT)["id"]
+    page = _page(c, "a library page", {"folders": [ids["L"]], "labels": [label]})
+    return SimpleNamespace(c=c, ws=ws, account=account, fig=fig, note=note, page=page, **ids)
+
+
+def test_list_pages_at_the_root_lists_what_the_library_lists(work):
+    text, _ = run_agent_tool(work.ws, folder(""), "list_pages", {})
+    assert work.page in text and work.fig not in text and work.note not in text
+    text, _ = run_agent_tool(work.ws, folder(""), "list_pages", {"folder": work.W})
+    assert work.fig in text and work.note in text and work.page not in text
+    text, _ = run_agent_tool(work.ws, folder(work.D), "list_pages", {})  # a chat of the directory
+    assert work.fig in text and work.note not in text
+    text, _ = run_agent_tool(work.ws, folder(""), "list_pages", {"label": "ait-label"})
+    assert work.page in text and work.fig not in text
+    text, _ = run_agent_tool(work.ws, folder(""), "list_pages", {"list_labels": True})
+    assert '- label "ait-label": 1 page\n' in text + "\n"
+
+
+def test_the_tools_refuse_a_files_place_and_name_up_front(work):
+    def answer(name, args):
+        text, _ = run_agent_tool(work.ws, folder(""), name, args)
+        return text
+
+    assert refusal_text("named") in answer("rename_page", {"page_id": work.fig, "title": "Figure 1"})
+    assert refusal_text("filed") in answer("move_page", {"page_ids": [work.fig], "folder": work.L})
+    assert refusal_text("trash") in answer("delete_page", {"page_ids": [work.fig]})
+    assert refusal_text("directories") in answer("move_page", {"page_ids": [work.page], "folder": work.D})
+    assert refusal_text("directories") in answer("rename_folder", {"folder": work.D, "name": "figures"})
+    assert refusal_text("directories") in answer("delete_folder", {"folder": work.D})
+    assert refusal_text("remove") in answer("delete_folder", {"folder": work.W})
+    fig = props(work.c, work.fig)
+    assert fig["content"] == "fig" and fig["properties"]["folders"] == [work.D]
+    with connect_pages_db(work.ws) as conn:
+        trash_page(work.ws, conn, work.fig, actor=work.account, client=DISK_CLIENT)  # its file was untracked
+    assert refusal_text("restore") in answer("restore_page", {"page_id": work.fig})
+
+
+def test_a_path_from_the_top_passes_by_a_work_folder_and_makes_a_library_folder(work):
+    page = _page(work.c, "a page moved by path", {})
+    text, _ = run_agent_tool(work.ws, folder(""), "move_page", {"page_ids": [page], "folder": "ait-W / dir / new"})
+    assert text.startswith("ok"), text
+    [made] = props(work.c, page)["properties"]["folders"]
+    with connect_pages_db(work.ws) as conn:
+        tree = Tree.read(conn)
+        assert made not in (work.W, work.D) and tree.work_of(made) == ""
+        assert folder_paths(conn)[made] == ["ait-W", "dir", "new"]
+
+
+def test_a_note_that_follows_moves_between_its_directories_and_is_renamed(work):
+    text, _ = run_agent_tool(work.ws, folder(""), "move_page", {"page_ids": [work.note], "folder": work.D})
+    assert text.startswith("ok"), text
+    assert props(work.c, work.note)["properties"]["folders"] == [work.D]
+    text, _ = run_agent_tool(work.ws, folder(""), "rename_page", {"page_id": work.note, "title": "plan"})
+    assert text.startswith("ok"), text
+    assert props(work.c, work.note)["content"] == "plan"

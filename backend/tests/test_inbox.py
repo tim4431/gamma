@@ -20,6 +20,7 @@ import pytest
 from conftest import account_of, login, make_folder, make_page, make_user, recv, recv_hello, workspace_of
 
 from gamma import comments, hosted, inbox, ops, workspaces
+from gamma.blocks_store import create_page, insert_page_tree, new_block_id
 from gamma.db import connect_pages_db, connect_users_db, page_now
 from gamma.seed import insert_account
 
@@ -393,6 +394,23 @@ def test_a_batch_typed_elsewhere_or_by_no_account_follows_nothing(own, lab):
         ops.commit_ops(lab, page, [{"op": "insert", "id": f"ibUna{i}", "parent": page, "content": "x"}], actor=actor)
     assert _follows(lab, page) == {account_of("ib_own"): "all"}
     assert sorted(ops.UNFOLLOWED) == sorted((inbox.SYNC_CLIENT, inbox.ZOTERO_CLIENT, inbox.DISK_CLIENT, "meta"))
+
+
+def test_a_page_made_elsewhere_follows_nothing(lab):
+    """A page such a writer makes, on its own (``create_page``) or with its
+    blocks (``insert_page_tree``, a synced vault's new file), is followed by
+    no one, as its batches are; a person's own new page is."""
+    by = account_of("ib_vie")
+    made = []
+    with connect_pages_db(lab) as conn:
+        for client in ops.UNFOLLOWED:
+            made.append(create_page(conn, f"Made by {client}", {}, actor=by, client=client)["id"])
+            made.append(new_block_id())
+            insert_page_tree(conn, made[-1], f"Tree by {client}", {}, [{"content": "x"}], by, client=client)
+            conn.commit()
+        typed = create_page(conn, "Made by a person", {}, actor=by)["id"]
+    assert [_follows(lab, page) for page in made] == [{}] * len(made)
+    assert _follows(lab, typed) == {by: "all"}
 
 
 def test_who_leaves_a_workspace_follows_nothing_there(own, lab):

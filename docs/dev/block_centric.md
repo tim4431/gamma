@@ -30,33 +30,38 @@ code keeps them apart (decided 2026-09-13, see *Files and documents* below):
   per page, download or open in a tab, no semantics. Whether it is still in
   use follows the textual reference; one nothing references is kept 30
   days, then purged ([user_db.md](user_db.md) "Stored files").
-- A **document** is the ONE PDF a page *carries*: `properties.doc_id`
-  (content hash → `uploads/<doc_id>.pdf`) plus `source_url` /
-  `original_filename` / `web_url` describing where it came from. A page
-  stores `source_url` only when the file is fetched from elsewhere (a
-  proxied URL, a copy without the `doc_id`): the stored copy's
-  `/api/uploads/<doc_id>.pdf` is derived by the helpers below, and no
-  writer stores it (`attachment_props`, `create_page`, the op path). The viewer,
-  highlights, metadata, the PDF search index, AI context and `by-doc` dedup
-  all key on it. Code reads it through ONE helper on each side —
-  `page_attachment(props)` (backend) / `pageAttachment(block)` (frontend)
-  returning `{kind: "pdf", id, url, name} | null`, held to the same answers
-  by `tests/shared/attachment.json`. Nothing else may read
-  `doc_id`/`source_url` off a page directly to decide *what the page is*.
-  Code that reads the file itself takes the stored file the attachment
-  shows from `attachment_file(attachment)` / `attachmentFile(attachment)`:
-  its `id`, else the upload a copy's `/api/uploads/<doc_id>.pdf` address
-  serves, else none.
+- A **document** is the ONE file a page *carries*, a PDF so far: one
+  property, `properties.doc` (`{format, name, hash, ext, at, url?, size?,
+  copy?}`; the stored file is `uploads/<hash><ext>`, and `at` says whether
+  the bytes are read from there, from a path on this computer or from an
+  address; [documents.md](documents.md)), with `web_url` beside it for
+  the page a clip came from. The viewer, highlights, metadata, the PDF
+  search index, AI context and `by-doc` dedup all key on it. Code reads it
+  through ONE function on each side — `documents.model.page_document(props)`
+  (backend) / `pageDocument(block)` (frontend) — returning the view
+  `{format, language, name, hash, ext, size, at, url, file, copy}` or
+  null, held to the same answers by `tests/shared/document.json`. Nothing
+  else may read `doc` off a page directly to decide *what the page is*.
+  Each reader names the file it means: the one the page owns
+  (`own_hash` / `ownHash`; a duplicated page owns none) or the one it shows
+  (`file_hash` / `fileHash`; a duplicated page's is the original's). Until
+  migration step 52 the document was flat keys (`doc_id`, `source_url`,
+  `original_filename`, `linked_file`, and a duplicated page's bare upload
+  address), read through `page_attachment` / `pageAttachment` and held by
+  `tests/shared/attachment.json`; `original_filename` stays only as the
+  name of the Markdown file a page was made from.
 
 A page is the only container: at most one document, any number of files in
 its body, and optionally a bibliographic record (`meta`). There are no page
 types.
 
-**Reading window.** Opening a page whose attachment is a PDF shows the viewer
+**Reading window.** Opening a page whose document is a PDF shows the viewer
 beside the notes; a page without one centers the notes. Same page component,
 same dock, only the presence of a viewer differs — and the viewer is
-collapsible (`pdfHidden`) rather than a mode. Layout derives from
-`pageAttachment(page)`, never from a `pdfUrl` state variable.
+collapsible (`pdfHidden`) rather than a mode. Layout derives from the
+page's document (`documentView` over `pageDocument(page)`,
+[documents.md](documents.md#which-viewer-a-page-shows)), never from a
+`pdfUrl` state variable.
 
 **Kinds.** No page-type enum: the block table's `kind` calls every page
 `page`. Cards, badges and AI listings describe a page by what it carries
@@ -114,6 +119,11 @@ crumbs, never a page tree in a sidebar. A Logseq-style zoom-in on a
 block's subtree is another thing and is still open (below).
 
 ## Where the code still says "page = PDF" (inventory, 2026-09-02)
+
+The entries keep the names of their time. The helpers they name
+(`page_attachment`, `pageAttachment`, `attachment_props`) gave way to
+`page_document`, `pageDocument` and `document` when the document became one
+property, `doc` (migration step 52, [documents.md](documents.md)).
 
 Backend
 - `blocks_store.get_or_create_doc_page` + `GET/POST /blocks/by-doc/{doc_id}`
@@ -197,7 +207,7 @@ every renamed property or syntax lived twice in the code. The block-centric
 work replaced that with ONE idempotent normalization pass,
 `gamma/normalize.py`, which a restore applies to imported files stamped
 below the base: a backup from before the workspace stamps, a scoped Gamma
-export (`ws_backup._normalize_copies`). The versioned migration runner
+export from before release 52 (`ws_backup._normalize_copies`). The versioned migration runner
 ([migrations.md](migrations.md)) ran it in its baseline migration too,
 until that migration was dropped with every one below `MIN_UPGRADABLE`; a
 new content shape is rewritten by a function there that a numbered step's
@@ -210,6 +220,13 @@ longer lazy `ALTER TABLE` on connect.
 Per-workspace `pages.db`
 - `properties.sourceUrl` (camelCase, earliest pages) → `source_url`; the old
   key is removed.
+- The flat keys of a page's document (`doc_id`, `source_url`,
+  `original_filename`, `linked_file`) → one property, `doc`: migration step
+  52's workspace part (`normalize.document_shape`, the states and what each
+  becomes in [documents.md](documents.md#older-shapes-migration-step-52)),
+  which a restore runs on every older copy before the content
+  normalizers. It reads `sourceUrl` as well, so on a restore the bullet
+  above finds nothing left.
 - Logseq image size `![alt](url){:width N}` in block content, outside
   code → Obsidian `![alt|N](url)`.
 - Pages still titled `PDF Notes - <name>` with no `auto_title` marker: title
@@ -246,7 +263,9 @@ backup restore only (`tests/test_restore_consistency.py`).
 ## Roadmap
 
 Each stage is independently shippable and leaves the app working. No schema
-change until stage 4.
+change until stage 4. The stages are history and name the helpers of their
+time; what a page carries is read as [documents.md](documents.md)
+describes.
 
 ### Stage 0 — one source of truth for "what does this page carry"
 *(frontend done 2026-09-02: `pageAttachment`/`pageKindLabel`/`defaultPageTitle`

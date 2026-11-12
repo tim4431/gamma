@@ -661,6 +661,28 @@ ZOTERO_CLIENT = "zotero"  # ...and the op-log client its writes carry (zotero_sy
 DISK_CLIENT = "disk"  # the op-log client of a synced vault's writes (gamma/vault_sync.py), as the account that made it
 LINK_NAME_MAX = 40
 ANONYMOUS_NAME = "Anonymous"
+# The writer a route that takes no op batch names itself by (a vault of
+# another computer, gamma/vault_http.py; the mirror): ``writer_client``.
+CLIENT_HEADER = "x-gamma-client"
+# The op clients the work-folder rule trusts (gamma/work_folders/filing.py
+# ``writer_of``): the vault's, and the mirror's (ops.SYNC_CLIENT).
+_RULED_CLIENTS = (DISK_CLIENT, "sync")
+
+
+def writer_client(request: Request, claimed: str = "") -> str:
+    """The op client a write is made under: ``claimed`` (a batch's
+    ``client``), else the ``X-Gamma-Client`` header, cut to 32 characters.
+    The vault's ``disk`` and the mirror's ``sync``, which the work-folder
+    rule lets change a work folder's files, are taken only from an
+    integration token on a request with no ``?share=``, and are "" from
+    anyone else; any other name is the writer's own (a tab's id). A token
+    that claims ``disk`` is trusted as a vault: an integrity rule for the
+    app's own writers, not a guard against a script that holds a token
+    (docs/dev/work_folders.md)."""
+    client = (claimed or request.headers.get(CLIENT_HEADER, ""))[:32]
+    if client in _RULED_CLIENTS and not (is_token(request) and not request.query_params.get("share")):
+        return ""
+    return client
 
 
 def link_name(raw) -> str:

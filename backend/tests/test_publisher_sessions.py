@@ -7,7 +7,7 @@ from urllib.request import Request
 import pytest
 
 from ai_fixtures import FakeResp
-from conftest import account_of, guest_name, login, make_user, make_page
+from conftest import account_of, doc_props, guest_name, login, make_user, make_page
 from gamma import ai_web
 from gamma import publisher_sessions as sessions
 from gamma.db import connect_users_db
@@ -182,7 +182,7 @@ def test_connected_cookies_in_pdf_flow_but_not_share(accounts, transport):
     bob.get("/api/pdf", params={"source_url": pdf})
     assert seen == [(pdf, None)]
     seen.clear()
-    page = make_page(alice, "Session paper", properties={"source_url": pdf, "doc_id": "publisher-test"})
+    page = make_page(alice, "Session paper", properties=doc_props("publisher-test", url=pdf))
     share = alice.post(f"/api/share/{page['id']}").json()["token"]
     alice.get("/api/pdf", params={"source_url": pdf, "share": share})
     assert seen == [(pdf, None)]

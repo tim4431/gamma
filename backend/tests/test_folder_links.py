@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from conftest import account_of, fresh_client, login, make_folder, make_page, make_user, workspace_of
+from conftest import account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, workspace_of
 from gamma import config, folder_links, gamma_sync, vault_disk, vault_sync
 from gamma.db import connect_users_db
 from gamma.integrations import create_token
@@ -496,7 +496,7 @@ def _paper_pdf(text):
 def test_a_vault_goes_one_way_when_asked(owner, disk):
     folder = make_folder(owner, "FL one way")
     up = owner.post("/api/uploads", files={"file": ("p.pdf", _paper_pdf("FL one way v1"), "application/pdf")}).json()
-    paper = make_page(owner, "FL way paper", {"doc_id": up["doc_id"], "original_filename": "p.pdf", "folders": [folder]})
+    paper = make_page(owner, "FL way paper", {**doc_props(up["doc_id"], name="p.pdf"), "folders": [folder]})
     _note(owner, paper["id"], "a first note")
     dest = disk / "One way"
     link = _create(owner, folder=folder, path=str(dest), push="pdfs")
@@ -511,7 +511,7 @@ def test_a_vault_goes_one_way_when_asked(owner, disk):
     status = _sync(owner, link["id"], direction="push")             # only pushed
     assert status["counts"]["sent"] == 1 and status["counts"]["added"] == 0 and status["counts"]["updated"] == 0
     assert "a thought to pull" not in (dest / "FL way paper.md").read_text(encoding="utf-8")
-    assert owner.get(f"/api/blocks/{paper['id']}").json()["properties"]["doc_id"] != up["doc_id"]
+    assert owner.get(f"/api/blocks/{paper['id']}").json()["properties"]["doc"]["hash"] != up["doc_id"]
     status = _sync(owner, link["id"], direction="pull")             # only pulled
     assert status["counts"]["sent"] == 0 and "a thought to pull" in (dest / "FL way paper.md").read_text(encoding="utf-8")
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()

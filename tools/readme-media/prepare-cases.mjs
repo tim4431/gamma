@@ -16,7 +16,7 @@ if (requested.has('notes')) {
 if (requested.has('metadata') || requested.has('reference-links')) {
   const { children } = await account.api('/api/blocks/root/children');
   for (const p of children) {
-    const source = p.properties?.source_url || '';
+    const source = p.properties?.doc?.url || '';
     const arxiv = p.properties?.meta?.arxiv_id;
     const remove = (requested.has('metadata') && (arxiv === '2312.03982' || source.includes('2312.03982')))
       || (requested.has('reference-links') && (arxiv === '0904.2557' || source.includes('0904.2557')));
