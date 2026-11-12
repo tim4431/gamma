@@ -541,15 +541,18 @@ export async function openPdfDocument(url) {
 // highlight's id, when it made one.
 // selComment: the selection popup offers Comment (the reader may comment on
 // the page); a press reaches onSelectionFinished with {comment: true}.
-// highlighter: the strip's text highlighter is on, in this colour ("" off):
-// a text selection the mouse or the pen lets go of reaches
-// onSelectionFinished at once with {highlighter: true}, no popup, and the
-// selection is drawn in that colour while it is made. A finger's selection
-// has no such end (its handles are still being dragged), so it gets the
-// popup, and so does one that places a highlight waiting to be moved.
-// onHighlightAction(id, action, color): the bar over a highlight the
-// highlighter just made, `action` "color" (with the swatch picked),
-// "comment" or "link"; without it that bar is not offered.
+// highlighter: a text highlighter is armed, its selection tint this colour
+// ("" off; markStyle.js selectionTint): a text selection the mouse or the
+// pen lets go of reaches onSelectionFinished at once with {highlighter:
+// true}, no popup, and the selection is drawn in that tint while it is
+// made. A finger's selection has no such end (its handles are still being
+// dragged), so it gets the popup, the armed highlighter ringed in it, and
+// so does one that places a highlight waiting to be moved.
+// onHighlightAction(id, action, value): the bar over a highlight the
+// highlighter just made, `action` "mark" ({color, style}: a swatch's colour
+// with no style, a highlighter's look), "style" (the style), "save" (its
+// look, kept as a highlighter), "remove", "comment" or "link"; without it
+// that bar is not offered.
 // moveMode: a highlight waits to be moved (App's moveHighlightId): the
 // selection popup offers only Move here, and highlights let the pointer
 // through, so the text under them can be selected.
@@ -2184,6 +2187,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   }
   // The bar over a highlight the highlighter made acts on that highlight.
   const made = selPopup?.kind === "made" ? selPopup.id : null;
+  // its look, which the bar's swatches keep the style of and Save look keeps
+  const madeHl = made ? highlights.find((h) => h.id === made) : null;
+  const madeLook = madeHl ? { style: madeHl.style || "highlight", color: madeHl.color } : null;
   function madeAction(action, value) {
     setSelPopup(null);
     cbRef.current.onHighlightAction?.(made, action, value);
@@ -2311,8 +2317,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         <TipFrame anchor={tipAnchor(selPopup)}>
           {/* keyed by the selection: a new one starts with no translation */}
           <PlainTip key={selPopup.kind === "area" ? "area" : made ? `made:${made}` : selPopup.text} recolor={!!made}
-            area={selPopup.kind === "area"}
+            area={selPopup.kind === "area"} own={made ? madeLook : null}
+            onSave={made ? () => madeAction("save", madeLook) : null} onRemove={made ? () => madeAction("remove") : null}
             onDismiss={() => { if (!made) window.getSelection()?.removeAllRanges(); setSelPopup(null); }}
+            // on the bar over a highlight: a swatch its colour alone, a highlighter its look
             onConfirm={made ? (_, color, extra) => madeAction("mark", { color, style: extra?.style }) : handleSelConfirm}
             // a style pressed on the highlighter's highlight restyles it, the bar staying for a colour
             onRestyle={made ? (style) => cbRef.current.onHighlightAction?.(made, "style", style) : null}
@@ -3271,17 +3279,20 @@ const SEL_TRANSLATE_MAX = 5000;
 // ({translations, failed}) | null, addTerm (SelTranslation) | null} — run is the page translator's request, so
 // the same model/engine, language and server cache apply. Auto starts it on
 // open; the button starts it, then folds/unfolds the result. `recolor`:
-// the selection is a highlight already (the highlighter's), which the
-// colours and presets change and `onRestyle(style)` restyles as the style
-// row is pressed. `area`: a dragged rectangle, which has no style.
-// `onDismiss()` puts the popup and its selection away. The
-// style row, the colours, the presets and the colour fold are TipMarks'
-// (MarkTools.jsx); a pick reaches onConfirm("", swatch, {style}). `copy`:
+// the selection is a highlight already (the highlighter's), its look `own`
+// ({style, color}), which the swatches recolour (onConfirm("", swatch),
+// its style kept), the highlighters restyle and recolour, the fold's Style
+// row restyles (`onRestyle(style)`), `onSave()` keeps as a highlighter and
+// `onRemove()` deletes. `area`: a dragged rectangle, which has no style.
+// `onDismiss()` puts the popup and its selection away. The swatches, the
+// highlighters and the fold are TipMarks' (MarkTools.jsx); a pick reaches
+// onConfirm("", swatch, {style}). `copy`:
 // the selection's text, for a Copy button (where the host's own menu,
 // which has one, is off). `menu`: the opener of the paragraph menu of a
 // page that shows its translation, for the ⋯ that is a finger's and a
 // pen's way to it (MenuButton): their hold selects.
-function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null, menu = null, recolor = false, onRestyle = null, area = false, onDismiss = null }) {
+function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null, menu = null, recolor = false, onRestyle = null, area = false, onDismiss = null,
+  own = null, onSave = null, onRemove = null }) {
   const palette = usePalette();
   const colors = pickerColors(palette, "highlight");
   const [copied, flashCopied] = useCopied(1200);
@@ -3334,7 +3345,8 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null
   }
   return (
     <div className="plainTip">
-      <TipMarks area={area} recolor={recolor} act={act} guide="pdf.highlightColor" onStyle={onRestyle} onLeave={onDismiss}
+      <TipMarks area={area} made={recolor} own={own} act={act} guide="pdf.highlightColor" onStyle={onRestyle} onLeave={onDismiss}
+        onSave={onSave} onRemove={onRemove}
         onMark={({ color, style }) => onConfirm("", color, { style })} tools={<>
         {/* the colours, then the tools */}
         {copy || onComment || onLink || translate || menu ? <span className="tipDivider" aria-hidden="true" /> : null}

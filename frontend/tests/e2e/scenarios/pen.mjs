@@ -78,7 +78,7 @@ export async function penScenarios({ server, browser, alice, makePdf, step, unti
   });
 
   await step("pen: with the text highlighter on the selection is highlighted at its lift, and the bar it gets stays", async () => {
-    const button = page.getByRole("button", { name: "Text highlighter", exact: true });
+    const button = page.locator('[data-guide="viewer.highlighter"] button').first();
     await button.click();
     await sleep(50); // a mouse's release reads the selection 10 ms on: that of this click, not the pen's
     await penOver("zeta eta");
@@ -100,7 +100,7 @@ export async function penScenarios({ server, browser, alice, makePdf, step, unti
   });
 
   await step("pen: a lift with a frame still queued leaves the highlight alone, and a palm mid-drag does not stop it; the chat gets the passage", async () => {
-    const button = page.getByRole("button", { name: "Text highlighter", exact: true });
+    const button = page.locator('[data-guide="viewer.highlighter"] button').first();
     const highlights = async (quote) => ((await account.api(`/api/blocks/${doc.id}/subtree`)).block.children || []).filter((b) => b.properties?.quote === quote).length;
     await button.click();
     // one task: the move's frame is still queued at the lift, which falls just past the selection
@@ -415,7 +415,7 @@ export async function penScenarios({ server, browser, alice, makePdf, step, unti
   });
 
   await step("pen: a drag the system cancels keeps its selection and gets the popup, without the highlighter's commit", async () => {
-    const button = page.getByRole("button", { name: "Text highlighter", exact: true });
+    const button = page.locator('[data-guide="viewer.highlighter"] button').first();
     await button.click();
     await sleep(50); // a mouse's release reads the selection 10 ms on: that of this click, not the pen's
     const at = await textAt("Alpha beta");
