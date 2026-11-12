@@ -647,7 +647,17 @@ Pinned strip, and the chat's pickers offer it.
   still on disk and tracked is made again from the file at the next round,
   as any new file is.
 - **A library file's versions** are stored as they come, as a library
-  document's bytes are; its document still reads in place here.
+  document's bytes are; so are a file's while a comment thread on it is
+  open (`feedback.kept.keeps_bytes`, the one predicate at the replacement:
+  the version a thread was opened on is held until it is resolved,
+  [feedback.md](feedback.md) "The commented version kept"); its document
+  still reads in place here.
+- **The feedback files.** Every whole round writes the work folder's
+  `.gamma/feedback/` after its sync (`open.json`, `open.md`, the pictures,
+  a file per Send; the summary in `status.feedback`), and the hot loop
+  writes them within a pass of a comment, a reply, a resolve, a relocation
+  or a Send ([feedback.md](feedback.md) "The files"); a paused or choosing
+  vault writes none.
 - **Opening a file with the app** (`linked_files.open_pdf`) inside a work
   folder that does not track it, or one still choosing, is refused: it
   opens from the work folder once ticked in Choose files….
@@ -696,7 +706,11 @@ a restore has its bytes), releases W with `trash_files`: library files
 stay as library pages and every other file goes to Recently deleted. Then
 the directory folders below W that hold no live page are deleted, deepest
 first, and W with them when it is empty. A link that was a work folder and
-has not been let go yet is let go the same way. `removal(link)` says both
+has not been let go yet is let go the same way. The feedback files
+(`.gamma/feedback/`) are deleted with the marker, whatever becomes of the
+other files, and when a work folder is let go at its round because its
+push came down: they are Gamma's own and regenerable, never trashed
+([feedback.md](feedback.md) "The files"). `removal(link)` says both
 numbers: the files that go to Recently deleted and those that stay in the
 library.
 

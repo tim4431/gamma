@@ -1,7 +1,8 @@
 """PDFs read where they are on this computer (docs/research/vaults.md "Reading
 a PDF where it is"): a page of a workspace whose PDF stays at a path, nothing
-copied and nothing ever written into it or beside it. Only the desktop app's
-own server has them (``config.folder_links_enabled``).
+copied (but the versions shown while a comment thread on the page is open,
+gamma/feedback/kept.py) and nothing ever written into it or beside it. Only
+the desktop app's own server has them (``config.folder_links_enabled``).
 
 Such a page's document is read in place (``doc.at`` ``path``,
 gamma/documents/model.py) and has a stored name like any other
@@ -53,12 +54,13 @@ from pathlib import Path
 
 from fractional_indexing import generate_key_between
 
-from . import collab, comments, folder_links, gamma_sync, pdf_meta, storage, workspaces, ws_backup
+from . import collab, comments, config, folder_links, gamma_sync, pdf_meta, storage, workspaces, ws_backup
 from .blocks_store import (BLOCK_COLUMNS, FOLDERS, PARENT_PAGE, TRASH, TREES, block_to_dict, create_page, folder_paths,
                            free_position, load_props, page_for_doc, page_root_id, touch_page, with_sub_pages,
                            write_lock)
 from .db import connect_pages_db, connect_users_db, connect_vaults_db, format_stamp
 from .documents.model import SQL_IN_PLACE, document, document_at, in_place, own_hash, page_document, stored_name
+from .feedback import kept
 from .logbuf import log
 from .ops import after_commits, apply_batches, commit_ops, delete_page, purge_pages, restore_page, trash_page
 from .work_folders import selection
@@ -241,16 +243,22 @@ def _take_bytes(sink: folder_links.LocalSink, page_id: str, filename: str, path:
                 opener: str = "") -> None:
     """The page takes the bytes ``seen`` at ``path`` as its PDF, as ``sink``'s
     account: its row under the new name first, naming ``opener`` (``sink``'s
-    account when none), so the relocation run reads the new file, then the
-    replacement a file vault's push makes. The bytes may be a library page's
-    too: the disk is what it is. SyncError when the page does not take them,
-    and the row is gone again. A replacement stands without its relocation
-    run (past the account's background tasks): nobody is there to hear why,
-    so the row keeps it for the page (``reader``), and Find highlights in
-    this PDF places them later."""
+    account when none), so the relocation run reads the new file, the bytes
+    stored while the page keeps them (``kept.keeps_bytes``: an open comment
+    thread holds the version it was opened on, so the outgoing one, stored
+    at the open or at the replacement before, is the run's reference), then
+    the replacement a file vault's push makes. The bytes may be a library
+    page's too: the disk is what it is. SyncError when the page does not
+    take them or they cannot be stored, and the row is gone again. A
+    replacement stands without its relocation run (past the account's
+    background tasks): nobody is there to hear why, so the row keeps it for
+    the page (``reader``), and Find highlights in this PDF places them
+    later."""
     ws, name = sink.ws, stored_name(seen[0], ".pdf")
     _put_row(ws, path, seen, page_id, opener or sink.user_id)
     try:
+        if kept.keeps_bytes(ws, page_id) and sink.store(Path(path)) != seen[0]:
+            raise gamma_sync.SyncError("the file changed while it was read")
         answer = sink.replace(page_id, seen[0], filename, check_held=False)
     except gamma_sync.SyncError:
         _drop_row(ws, name, path)
@@ -572,7 +580,10 @@ def store_page_bytes(ws: str, page_id: str, name: str, doc_id: str) -> bool:
     """The page's PDF, the stored file ``name`` of the bytes ``doc_id``,
     stored from a path this server reads it at (one of the page's rows that
     is there). → False when no path here holds it (a vault of another
-    computer); LinkError when the file there is other bytes by now."""
+    computer, a server that keeps no links: vaults.db is never made for
+    the asking); LinkError when the file there is other bytes by now."""
+    if not config.folder_links_enabled():
+        return False
     path = next((p for n, p, _size, _mtime in _rows_of(ws, page_id) if n == name and storage.linked_stat(p)), "")
     if not path:
         return False
@@ -990,19 +1001,23 @@ def _forget(ws: str, page_ids: list[str]) -> None:
 
 def sweep() -> None:
     """A round of the links' tick (``folder_links.tick``, so only where links
-    are kept): per workspace with rows what ``_forget`` lets go, the rows of a
-    workspace that is gone, then every row's stat, a moved one queued as a
-    read would queue it. A read may never come for a file an open viewer
-    holds, and a file that was still being written has nobody else to look
-    at it again. A row without a page is a vault's to keep. A workspace that
-    cannot be opened stops neither the others nor the stat pass."""
+    are kept): per workspace with rows what ``_forget`` lets go and the
+    bytes of a page with an open comment thread that are not stored yet
+    (``kept.repair``), the rows of a workspace that is gone, then every
+    row's stat, a moved one queued as a read would queue it. A read may
+    never come for a file an open viewer holds, and a file that was still
+    being written has nobody else to look at it again. A row without a page
+    is a vault's to keep. A workspace that cannot be opened stops neither
+    the others nor the stat pass."""
     with connect_vaults_db() as conn:
         rows = conn.execute("SELECT ws, name, path, size, mtime_ns, page_id FROM linked_files WHERE page_id != ''"
                             ).fetchall()
     for ws in sorted({row[0] for row in rows}):
         try:
             if workspaces.get(ws):
-                _forget(ws, sorted({row[5] for row in rows if row[0] == ws}))
+                pages = sorted({row[5] for row in rows if row[0] == ws})
+                _forget(ws, pages)
+                kept.repair(ws, pages)
             else:
                 with connect_vaults_db() as conn:
                     conn.execute("DELETE FROM linked_files WHERE ws = ?", (ws,))

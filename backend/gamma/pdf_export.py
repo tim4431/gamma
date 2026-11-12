@@ -769,6 +769,29 @@ def _picture_annotation(writer, images, pic, rotation, crop, author, resolve_ref
     return annot
 
 
+def _mark_annotation(writer, page_index: int, h, author: str = "", zotero: bool = False) -> bool:
+    """Write the mark ``h`` (one of ``annotate_pdf``'s ``highlights``) on
+    the page ``page_index`` of ``writer``: an area note as /Square, a text
+    highlight as the markup of its style, mapped through that page's frame.
+    False, and nothing written, for a position with no usable rects."""
+    pos = h.get("position") or {}
+    viewer_rects = [r for r in pos.get("rects") or [] if r and r.get("x1") is not None]
+    if not viewer_rects:
+        return False
+    crop, rotation = page_frame(writer.pages[page_index])
+    size = (pos.get("width"), pos.get("height"))
+    pdf_rects = [viewer_rect_to_pdf(r, size, rotation, crop) for r in viewer_rects]
+    color = parse_css_color(h.get("color"))
+    if pos.get("area"):
+        annot = _square_annotation(writer, pdf_rects, color, h.get("note") or "",
+                                   author, block_id=h.get("id") or "", zotero=zotero)
+    else:
+        annot = _highlight_annotation(pdf_rects, color, h.get("note") or "", author, zotero,
+                                      style=h.get("style") or "highlight", stored=h.get("color"))
+    writer.add_annotation(page_number=page_index, annotation=annot)
+    return True
+
+
 def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
                  text_boxes=(), replaced=(), resolve_ref=None, pictures=(), stored=None,
                  zotero: bool = False) -> tuple[bytes, int]:
@@ -813,25 +836,9 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
 
     written = 0
     for h in highlights:
-        pos = h.get("position") or {}
-        page_num = pos.get("pageNumber")
-        if not page_num or page_num < 1 or page_num > len(writer.pages):
-            continue
-        viewer_rects = [r for r in pos.get("rects") or [] if r and r.get("x1") is not None]
-        if not viewer_rects:
-            continue
-        crop, rotation = page_frame(writer.pages[page_num - 1])
-        size = (pos.get("width"), pos.get("height"))
-        pdf_rects = [viewer_rect_to_pdf(r, size, rotation, crop) for r in viewer_rects]
-        color = parse_css_color(h.get("color"))
-        if pos.get("area"):
-            annot = _square_annotation(writer, pdf_rects, color, h.get("note") or "",
-                                       author, block_id=h.get("id") or "", zotero=zotero)
-        else:
-            annot = _highlight_annotation(pdf_rects, color, h.get("note") or "", author, zotero,
-                                          style=h.get("style") or "highlight", stored=h.get("color"))
-        writer.add_annotation(page_number=page_num - 1, annotation=annot)
-        written += 1
+        page_num = (h.get("position") or {}).get("pageNumber")
+        if page_num and 1 <= page_num <= len(writer.pages) and _mark_annotation(writer, page_num - 1, h, author, zotero):
+            written += 1
     images = XObjectStore(writer, stored)
     for pic in pictures:
         if not 1 <= pic["page"] <= len(writer.pages):
@@ -874,19 +881,23 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
 
 
 def page_with_ink(src, page_no: int, inks, *, pictures=(), text_boxes=(), replaced=(), stored=None,
-                  resolve_ref=None) -> tuple[bytes, int]:
+                  resolve_ref=None, highlights=()) -> tuple[bytes, int]:
     """Page ``page_no`` (1-based) of the PDF ``src`` (a path or bytes) on
     its own, as the page shows it: its pictures and text boxes
     (``annotate_pdf``'s ``pictures`` found through ``stored`` and
     ``text_boxes``, those on this page) drawn into its content
     (``_stamp_placed``), then the handwriting groups ``inks``
     (``gamma.ink.InkFile``s drawn on that page) over them (``_stamp_ink``),
-    every look as drawn → ``(pdf bytes, the source's page count)``; ``b""``
-    for a page past the end. The originals of the boxes and pictures
-    imported from the file and still embedded in it (``replaced``, as for
-    ``annotate_pdf``) leave the copy first, so each is drawn once. The
-    agent's view_ink and its pictures of the page as the user sees it
-    render it (gamma/ink_view.py)."""
+    every look as drawn, and the marks ``highlights`` of that page
+    (``annotate_pdf``'s, ``_mark_annotation``) as annotations over it all,
+    which a renderer draws as the viewer does: a text highlight's wash
+    multiplied onto what is under it, an area note's border and faint fill
+    → ``(pdf bytes, the source's page count)``; ``b""`` for a page past the
+    end. The originals of the boxes and pictures imported from the file and
+    still embedded in it (``replaced``, as for ``annotate_pdf``) leave the
+    copy first, so each is drawn once. The agent's view_ink, its pictures of
+    the page as the user sees it and a feedback thread's region picture
+    render it (gamma/ink_view.py, gamma/feedback/pictures.py)."""
     reader = PdfReader(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src))
     pages = len(reader.pages)
     if not 1 <= page_no <= pages:
@@ -900,6 +911,9 @@ def page_with_ink(src, page_no: int, inks, *, pictures=(), text_boxes=(), replac
     _stamp_placed(writer, page, [p for p in pictures if p["page"] == page_no],
                   [b for b in text_boxes if b["page"] == page_no], rotation, crop, stored, resolve_ref)
     _stamp_ink(writer, page, inks, rotation, crop)
+    for h in highlights:
+        if (h.get("position") or {}).get("pageNumber") == page_no:
+            _mark_annotation(writer, 0, h)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue(), pages

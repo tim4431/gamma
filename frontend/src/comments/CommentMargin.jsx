@@ -1,10 +1,12 @@
 // One page's comment margin beside the PDF (docs/dev/comments.md "The PDF
-// margin"): a card per open thread of each highlight on the page, level
-// with the highlight's first line, stacked so none overlaps, across the
-// pages too: a page's cards start under the last card of the pages above
-// (marginLayout.js stackCards, marginSlot.jsx createMarginStack). A card at rest shows its thread's first
-// comment, clamped, and how many replies follow; the active one is the
-// whole thread as the popover draws it (Thread.jsx), with its reply field.
+// margin"): a card per open thread of each anchor on the page (a highlight
+// or an ink group), level with its first line, stacked so none overlaps,
+// across the pages too: a page's cards start under the last card of the
+// pages above (marginLayout.js stackCards, marginSlot.jsx
+// createMarginStack). A card at rest shows its thread's first comment,
+// clamped, with the chip of a Send waiting on it, and how many replies
+// follow; the active one is the whole thread as the popover draws it
+// (Thread.jsx), with its reply field.
 // A new comment opens as a card of its own, its field focused. A card
 // that comes grows in where it stands and one that goes shrinks away there
 // (ListMotion); the others move to their new places through their `top`.
@@ -55,7 +57,7 @@ function ThreadCard({ thread, active, margin, onActivate, onEscape }) {
   );
 }
 
-// A new thread on the highlight: its field, focused. Sent, the comment
+// A new thread on the anchor: its field, focused. Sent, the comment
 // shows above the emptied field while it is on its way (`pending`, read
 // only), and once stored the thread's own card takes this one's place as
 // the active one; refused, the field gets its text back.
@@ -79,13 +81,13 @@ function NewCard({ blockId, pending, margin, onEscape }) {
   );
 }
 
-// `anchors`: the page's highlights that have cards, {id, top} (px from the
+// `anchors`: the page's anchors that have cards, {id, top} (px from the
 // page's top); `pageTop`: the page's top, px from the first page's top.
 // `margin`: the context App provides (marginSlot.jsx).
 export default function CommentMargin({ margin, anchors, pageNumber, pageTop = 0 }) {
   const { threadsByBlock, target } = margin;
   // A new comment stored hands its card to its thread's: while the new card
-  // stands on its highlight, a thread there that was not shown when it came
+  // stands on its anchor, a thread there that was not shown when it came
   // (the one on its way) has no card of its own, so the two never stand
   // together, the new card above the other: the new card shows it. Once
   // stored, the thread's card takes the new card's place as the active one,
@@ -167,14 +169,14 @@ export default function CommentMargin({ margin, anchors, pageNumber, pageTop = 0
 
   const close = useLatestHandler(margin.onClose);
   const activate = useLatestHandler(margin.onActivate);
-  // A press outside the margin (and off the card's own highlight), or
-  // Escape, makes no card active.
+  // A press outside the margin (and off the card's own highlight or ink
+  // group), or Escape, makes no card active.
   useEffect(() => {
     if (!hasActive) return undefined;
-    const own = target.blockId;
+    const own = CSS.escape(target.blockId);
     const down = (e) => {
       const el = e.target;
-      if (el.closest?.(INSIDE) || el.closest?.(`[data-hl-id="${CSS.escape(own)}"]`)) return;
+      if (el.closest?.(INSIDE) || el.closest?.(`[data-hl-id="${own}"], [data-ink-id="${own}"]`)) return;
       close();
     };
     const key = (e) => { if (e.key === "Escape" && !e.defaultPrevented) close(); };

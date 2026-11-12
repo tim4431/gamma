@@ -23,7 +23,9 @@ shown in Gamma's **Settings → AI → Integrations**. Use HTTPS for remote serv
 HTTP localhost is supported.
 
 Start Claude Code, open `/mcp`, select `gamma`, and authenticate. Sign in to Gamma
-in the browser and approve read-only access to your chosen workspace. Start a new
+in the browser and approve read-only access to your chosen workspaces; the consent
+page can also let Claude Code answer your comments on a work folder's files
+(reply and resolve), and nothing else. Start a new
 session and run `/gamma:gamma`, or ask Claude to find your Gamma notes. If tools
 are missing, inspect `/mcp` or `claude mcp get gamma` before retrying sign-in.
 Copy the Gamma page URL from your browser and paste it with your question.
@@ -86,7 +88,9 @@ is not required. To connect manually or install a development package:
    ```
 
    If sign-in is interrupted, retry with `codex mcp login gamma`.
-   Tick the workspaces and approve read-only access in your browser. No manual token
+   Tick the workspaces and approve read-only access in your browser; the consent
+   page can also let Codex answer your comments on a work folder's files (reply
+   and resolve), and nothing else. No manual token
    or environment variable is needed. HTTPS is required for remote servers;
    HTTP localhost is supported. Manual tokens remain available for other clients.
 

@@ -26,6 +26,8 @@ import { createContext, useContext } from "react";
 // line, x0} in page points (ink/zoomWindow.js), or null. ink.aiWork: the
 // handwriting Redraw as shapes or Convert to text is working on, {page,
 // box, landed?} in the surface's points (ink/useInkSelection.js), or null.
+// ink.canComment: the reader may comment on the page, so the lasso's menu
+// on a PDF page offers Comment (comments/useInkThreads.js).
 // text.armed: the
 // Text tool is armed; text.style: the style of new boxes ({size, color, bg});
 // text.zotero: the workspace has a live Zotero link, so a new box on a PDF

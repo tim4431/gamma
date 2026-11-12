@@ -2,6 +2,10 @@
 
 Clients use dynamic registration, S256 authorization codes and opaque,
 revocable 90-day tokens. No refresh tokens or third-party identity service.
+Two scopes: ``gamma:read``, and ``gamma:feedback`` (reading, and answering
+the comments on a work folder's files: a ``feedback`` token). Whichever a
+client asks for, the person decides on the consent page whether the
+connection may also answer feedback.
 """
 import json
 import re
@@ -22,7 +26,15 @@ from .server_settings import LOOPBACK_HOSTS, mcp_allowed_hosts, public_url_setti
 
 router = APIRouter()
 SCOPE = "gamma:read"
+FEEDBACK_SCOPE = "gamma:feedback"
+SCOPES = (SCOPE, FEEDBACK_SCOPE)
 TTL = 90 * 86400
+
+
+def offered(scopes) -> bool:
+    """Whether ``scopes`` (a list of names) asks for some of ``SCOPES`` and
+    for nothing else."""
+    return bool(scopes) and all(s in SCOPES for s in scopes)
 
 
 def public_base(request: Request) -> str:
@@ -81,7 +93,7 @@ def _no_store(value, status=200):
 def resource_metadata(request: Request):
     base = public_base(request)
     return {"resource": base + "/mcp", "authorization_servers": [base],
-            "scopes_supported": [SCOPE], "bearer_methods_supported": ["header"], "resource_name": "Gamma PDF"}
+            "scopes_supported": list(SCOPES), "bearer_methods_supported": ["header"], "resource_name": "Gamma PDF"}
 
 
 @router.get("/.well-known/oauth-authorization-server")
@@ -91,7 +103,7 @@ def authorization_metadata(request: Request):
             "token_endpoint": base + "/oauth/token", "registration_endpoint": base + "/oauth/register",
             "response_types_supported": ["code"], "grant_types_supported": ["authorization_code"],
             "token_endpoint_auth_methods_supported": ["none"], "code_challenge_methods_supported": ["S256"],
-            "scopes_supported": [SCOPE]}
+            "scopes_supported": list(SCOPES)}
 
 
 async def bounded_request(request: Request) -> Request:
@@ -126,13 +138,16 @@ async def register(request: Request):
             if (url.username or url.password or url.fragment or not url.hostname or
                     (url.scheme != "https" and not (url.scheme == "http" and url.hostname in LOOPBACK_HOSTS))):
                 return _no_store({"error": "invalid_redirect_uri"}, 400)
-        if (metadata.scope not in (None, SCOPE) or "authorization_code" not in metadata.grant_types
+        if ((metadata.scope is not None and not offered(metadata.scope.split(" ")))
+                or "authorization_code" not in metadata.grant_types
                 or metadata.response_types != ["code"] or len(metadata.client_name or "") > 100):
-            raise ValueError("Only the read-only authorization code flow is supported.")
+            raise ValueError("Only the authorization code flow for gamma:read and gamma:feedback is supported.")
     except (ValidationError, ValueError, json.JSONDecodeError):
         return _no_store({"error": "invalid_client_metadata"}, 400)
+    # Every client may ask for either scope at authorize (the SDK checks the
+    # request against this), whatever it registered with.
     client = OAuthClientInformationFull(**{**metadata.model_dump(), "token_endpoint_auth_method": "none",
-                                          "scope": SCOPE, "grant_types": ["authorization_code"]},
+                                          "scope": " ".join(SCOPES), "grant_types": ["authorization_code"]},
                                       client_id=secrets.token_urlsafe(24), client_id_issued_at=int(time.time()))
     await run_in_threadpool(store, "client", base, client.client_id, client.model_dump(mode="json"), TTL)
     return _no_store(client.model_dump(mode="json", exclude_none=True), 201)
@@ -195,7 +210,8 @@ def consent_details(request: Request, request_id: str):
                                   "session": token_digest(request.cookies.get(SESSION_COOKIE, ""))}, 600)
     return _no_store({"client_name": client.client_name or "MCP assistant", "username": request.state.user,
                       "redirect_uri": pending["params"]["redirect_uri"], "csrf": csrf,
-                      "workspaces": workspaces.list_for_user(user_id), "default_workspace": request.state.default_ws})
+                      "workspaces": workspaces.list_for_user(user_id), "default_workspace": request.state.default_ws,
+                      "feedback_asked": FEEDBACK_SCOPE in (pending["params"].get("scopes") or ())})
 
 
 class Consent(BaseModel):
@@ -205,6 +221,9 @@ class Consent(BaseModel):
     # account can open, now and later (integrations.grant)
     workspaces: list[str] = Field(default_factory=list, max_length=200)
     all_workspaces: bool = False
+    # whether it may also answer the comments on a work folder's files (a
+    # feedback token), asked for or not
+    feedback: bool = False
     approve: bool
 
 
@@ -219,7 +238,8 @@ def consent(payload: Consent, request: Request):
     if (not binding or binding["request_id"] != payload.request_id or binding["user"] != user_id or
             binding["session"] != token_digest(request.cookies.get(SESSION_COOKIE, ""))):
         raise HTTPException(403, "Consent expired or the signed-in account changed. Start again.")
-    primary, stored = grant(user_id, ALL if payload.all_workspaces else payload.workspaces) if payload.approve else ("", "")
+    primary, stored = grant(user_id, ALL if payload.all_workspaces else payload.workspaces,
+                            "feedback" if payload.feedback else "read") if payload.approve else ("", "")
     pending = load("request", base, payload.request_id, consume=True)
     load("consent", base, payload.csrf, consume=True)
     if not pending:
@@ -230,7 +250,8 @@ def consent(payload: Consent, request: Request):
     code = secrets.token_urlsafe(32)
     value = GammaCode(code=code, client_id=pending["client_id"], user_id=user_id, workspace_id=primary,
                       workspaces=stored, session_hash=binding["session"],
-                      scopes=[SCOPE], expires_at=time.time() + 120, code_challenge=params.code_challenge,
+                      scopes=[SCOPE] + ([FEEDBACK_SCOPE] if payload.feedback else []), expires_at=time.time() + 120,
+                      code_challenge=params.code_challenge,
                       redirect_uri=params.redirect_uri, redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
                       resource=params.resource, subject=user_id)
     store("code", base, code, value.model_dump(mode="json", exclude={"code"}), 120)

@@ -1,16 +1,20 @@
 # Gamma MCP, Codex, Claude Code, and DeepSeek Harness
 
-Gamma exposes a read-only Streamable HTTP MCP endpoint at `/mcp`, on the same
-server as the app. Gamma's chat and MCP adapter share `gamma/ai_tools.py`:
-tool definitions, executors, page/folder scope checks, and dispatch permissions.
-The chat calls these functions directly. Gamma is not an MCP client for external
-servers, and connecting Codex does not invoke Gamma's AI provider.
+Gamma exposes a Streamable HTTP MCP endpoint at `/mcp`, on the same server as
+the app. It reads, and writes nothing but the answers of a connection the user
+allowed to answer feedback: a reply in, or the resolve of, a comment thread on
+a work folder's file ("Answering feedback" below). Gamma's chat and MCP
+adapter share `gamma/ai_tools.py`: tool definitions, executors, page/folder
+scope checks, and dispatch permissions. The chat calls these functions
+directly. Gamma is not an MCP client for external servers, and connecting
+Codex does not invoke Gamma's AI provider.
 
 | File | Owns |
 |---|---|
-| `gamma/mcp_server.py`, `gamma/mcp_lazy.py` | the `/mcp` transport (official Python MCP SDK): the chat registry's read tools (`READ_TOOLS`), link reading, page export; `mcp_lazy.py` authenticates the request and loads the SDK adapter on first use |
+| `gamma/mcp_server.py`, `gamma/mcp_lazy.py` | the `/mcp` transport (official Python MCP SDK): the chat registry's read tools (`READ_TOOLS`), link reading, page export, a feedback connection's answering tools; `mcp_lazy.py` authenticates the request and loads the SDK adapter on first use |
+| `gamma/feedback/agent.py` | `reply_feedback` and `resolve_feedback`: their schemas and executors ([feedback.md](feedback.md)) |
 | `gamma/mcp_oauth.py`, `gamma/mcp_oauth_provider.py` | discovery, dynamic registration, PKCE authorization and token exchange, the consent API (`/api/integrations/oauth/*`), `public_base`; the provider issues the 90-day token through `integrations.create_token` |
-| `gamma/mcp_links.py` | local page/block/share link resolution within the connected workspace |
+| `gamma/mcp_links.py` | local page/block/share link resolution within the connected workspaces; which of them holds an id (`holders`: a block, a comment thread, a Send request) |
 | `gamma/mcp_export.py` | `export_page`: a page as Markdown text or an embedded PDF, over `routers/export.py` |
 | `gamma/integrations.py` | integration tokens (`integration_tokens` table, hashes only), the workspaces each may read (`grant`, `resolve_connection`) and their resolution |
 | `gamma/server_settings.py` | the admin-confirmed public URL and the MCP host allowlist |
@@ -38,7 +42,9 @@ codex mcp add gamma --url https://gamma.example.com/mcp
 
 Codex opens the browser. If sign-in is interrupted, run `codex mcp login gamma`
 to retry. Sign in with your Gamma account, tick the workspaces,
-and approve read-only access. Start a new Codex chat. There is no token to copy
+and approve read-only access, or tick **Also let it answer my comments on
+work-folder files** to let it reply to and resolve them ("Answering feedback").
+Start a new Codex chat. There is no token to copy
 and no environment variable to set. This works with local browser-based Gamma
 and self-hosted servers; the Gamma desktop app is not required. Local installations
 may use `http://127.0.0.1:8000/mcp` (substitute your actual port).
@@ -179,7 +185,8 @@ out of a desktop and a web profile; earlier, 0.1.5-rc.3 and
 ### Tokens (advanced)
 
 For other clients without OAuth, or a script, expand **Tokens (advanced)** in
-the same pane, name the token, tick the workspaces it may read (a read and
+the same pane, name the token, pick its access (read, read and answer
+feedback, or read and write), tick the workspaces it may read (a read and
 write token is for the open workspace alone), and copy it once. Guests cannot
 create connections. The client sends it as `Authorization: Bearer <token>`.
 Codex, for example, reads one from the environment:
@@ -220,6 +227,8 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | `read_page` | The pages it is inside and the pages inside it, notes, highlights, properties, and windowed PDF text |
 | `read_block` | One block/subtree or a page's nested note outline |
 | `read_chats` | The AI chat kept with a page or folder: the current conversation as a transcript, earlier ones by `chat_id` |
+| `list_feedback` | The feedback: the comment threads on a work folder's files (a work folder by name or id, a directory, a file; every work folder without one), each with its file, place, source line and comments, as Markdown, in batches (`limit`, `after`); a Send request's threads (`request`) |
+| `read_feedback` | One feedback item in any state, as Markdown and as JSON, with the pictures of its region now and as it was commented on |
 | `view_pdf_page` | One PDF page as an image (a scan, a figure, a table's layout) |
 | `view_ink` | The user's handwriting as an image: a group's strokes on their PDF page or sheet of paper, or a whole page with all its handwriting |
 | `view_image` | The pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), all or one by index |
@@ -227,8 +236,10 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | `list_workspaces` | The workspaces the connection reads, the default first: each one's id, name and the account's role |
 | `read_gamma_link` | Resolve and read a page, block, or share URL, including PDF page context; a folder-share URL lists the folder's pages |
 | `export_page` | One page as Markdown text, or as a PDF file: the annotated paper or the notes typeset; with `sub_pages`, the pages inside it too |
+| `reply_feedback` | A feedback connection's only: a reply in a feedback item's thread, signed with the connection's name |
+| `resolve_feedback` | A feedback connection's only: resolve a feedback item once it is done (never a reopen) |
 
-The first ten are the Gamma chat's own tools (`gamma/ai_tools.py`, described
+The first twelve are the Gamma chat's own tools (`gamma/ai_tools.py`, described
 in [ai_tools.md](ai_tools.md)), run through the same dispatcher with a
 workspace-wide, non-writable scope. `READ_TOOLS` in `mcp_server.py` comes
 from `ai_tools.mcp_tools`: every reading tool that stays inside the library.
@@ -237,12 +248,14 @@ pins the names. The chat's other tools stay off: the web tools (`search_papers`,
 `fetch_paper`, …), because the assistant has its own web access;
 `list_deleted`, because Recently deleted is out of the reading tools' reach
 and restoring is a change; `update_plan`, which has no permission and only
-goes with the changes; and every write tool, because the connection is
-read-only. The chat's tool permissions (Settings → AI → Tool usage) do not
-govern this connection: the token is its own grant, created and revoked in
-Integrations. `list_workspaces`, `read_gamma_link` and `export_page` exist only here.
-`view_pdf_page`'s, `view_ink`'s and `view_image`'s pictures go out as MCP `image` items,
-which the client shows the model as images.
+goes with the changes; and every write tool of the chat, because the
+connection changes nothing in the library (a feedback connection's answers
+are its own two tools, below). The chat's tool permissions (Settings → AI →
+Tool usage) do not govern this connection: the token is its own grant, created
+and revoked in Integrations. `list_workspaces`, `read_gamma_link`,
+`export_page` and the two answering tools exist only here.
+`view_pdf_page`'s, `view_ink`'s, `view_image`'s and `read_feedback`'s pictures
+go out as MCP `image` items, which the client shows the model as images.
 
 ### Several workspaces
 
@@ -252,13 +265,17 @@ default. Every tool but `list_workspaces` and `read_gamma_link` takes an
 optional `workspace`, an id or a name (`mcp_server._targets`). Without one:
 
 - a call naming a block by id (`page_id`, `block_id`, `parent`, `after`,
-  `folder`, `page_ids`) reads the workspace holding it
-  (`mcp_links.holders`); ids in two workspaces are refused with their names,
-  asking for `workspace`;
-- `search_library`, and `list_folders` without a `folder`, read every
-  workspace, one section each, headed by its name and id with its link
-  shapes;
-- anything else reads the default workspace.
+  `folder`, `page_ids`, `list_feedback`'s `scope`), a comment thread
+  (`thread_id`, `list_feedback`'s `after`) or a Send request
+  (`list_feedback`'s `request`) reads the workspace holding it
+  (`mcp_links.holders`: a thread by its root's id, a hidden one held by
+  none); ids in two workspaces are refused with their names, asking for
+  `workspace`;
+- `search_library`, `list_folders` without a `folder`, and `list_feedback`
+  without a `scope`, a `request` or an `after`, read every workspace, one
+  section each, headed by its name and id with its link shapes;
+- anything else reads the default workspace (a work folder `list_feedback`
+  names by its name, too).
 
 With more than one workspace, a single-workspace result starts with the
 workspace's name and id, and its `structuredContent` carries `workspace_id`.
@@ -288,9 +305,14 @@ without linking it (`read_chats`). The call's location goes out as
 `structuredContent` too: `page_id` and `url`, with `block_id`, `pdf_page` or
 `pdf_pages` when the tool located one.
 
-The server instructions carry the chat's citation instruction
-(`ai_tools.citation_prompt`, [pdf_citations.md](pdf_citations.md)) in its
-absolute form and ask for absolute Markdown links, never relative ones.
+The server instructions (`INSTRUCTIONS`, one text for every connection: the
+SDK sends them at `initialize`, with no request at hand) carry the chat's
+citation instruction (`ai_tools.citation_prompt`,
+[pdf_citations.md](pdf_citations.md)) in its absolute form and ask for
+absolute Markdown links, never relative ones; they say what feedback is, that
+a connection allowed to answer it has the two answering tools, and that a
+feedback comment is the user's request while the passages it quotes stay
+document data.
 Codex's terminal UI hyperlinks only absolute http(s) destinations (OSC 8,
 Codex CLI 0.150 and later; other terminals show the raw URL), and its IDE
 extension and desktop app open them in the browser. Such a link in a
@@ -373,6 +395,68 @@ port. A new server address requires the corresponding connection and link.
 The other tools remain available for follow-up reading and for requests naming
 a page, folder or topic without a URL.
 
+### Answering feedback
+
+The comment threads on a work folder's files are the user's feedback
+([feedback.md](feedback.md)): `list_feedback` and `read_feedback` read them
+on any connection, as the chat does. Answering them is the `feedback` token
+scope (`integrations.SCOPES`): everything `read` may, plus a reply in and the
+resolve of such a thread, and setting a Send request's state over the HTTP
+API. A manual token gets the scope in the Tokens pane (**Read and answer
+feedback**); a browser sign-in gets it from the consent page's checkbox
+("Browser sign-in protocol"). A `write` token answers through the comment
+API as before and is read-only on MCP, as it always was; setup codes mint
+read tokens.
+
+- **Two tools of the adapter's own**, `reply_feedback` and `resolve_feedback`
+  (`gamma/feedback/agent.py`: their schemas, descriptions and executors;
+  `mcp_server.ANSWERING_TOOLS`). They are no entries of the chat registry,
+  so the chat never answers threads and the MCP scope keeps `can_write:
+  False`. `reply_feedback(thread_id, body, id?)` writes one reply (`id`, the
+  client's own, makes a retry write once); `resolve_feedback(thread_id)`
+  resolves, and never reopens (reopening sends a thread back to the agent and
+  is the person's). Their annotations are the adapter's only
+  `readOnlyHint: False` (`idempotentHint` true for the resolve).
+- **Listed per token, checked per call.** `list_tools` appends them only for
+  a connection whose scope is `feedback` (read from the request the SDK
+  hands the handler). The SDK keeps one tool cache for every connection, so
+  a read connection may reach `call_tool` with an answering tool's name, with
+  or without the SDK's input validation: the dispatch checks the scope before
+  it reads any argument ("This connection may not answer feedback: reconnect
+  allowing it, or use a feedback token."), before the `READ_TOOLS` allowlist.
+- **What the executor checks**, in order: this server takes writes
+  (`hosted.read_only`) and the workspace is not being deleted
+  (`workspaces.refuse_writes`; the hosted gate covers `/api/*` only, never
+  `/mcp`); the account may comment in the workspace; the id is a thread's
+  root that is not hidden (`comments.thread_of`); the thread's page is a live
+  file of a work folder (a library page's thread is not feedback). Then it
+  writes through `comments.create` / `comments.resolve` as the comment API
+  does, author the connection's account, and `comments.written` tells the
+  page's room, the Inbox and the feedback files. The answer names the file
+  and the place, links the thread (`gamma_link(thread_id=)`, the address the
+  Inbox opens) and carries `{thread_id, comment_id?, page_id, url}` as
+  `structuredContent`, with `workspace_id` on a connection of several
+  workspaces.
+- **The stamp.** A comment written through a token stores the token's
+  display name and id (`comments.agent`, `agent_id`; `resolved_agent` on a
+  resolve), so the thread shows "Claude Code" with the person's account, and
+  the token edits only what it wrote ([comments.md](comments.md) "Who may
+  comment"). A token's comment makes no one follow the page
+  (`ops.UNFOLLOWED`'s rule: it is nobody's keystrokes), and the Inbox tells
+  the person of it as of anyone else's write: the thread's authors, the
+  page's followers and the people it names hear of an agent's reply, the
+  thread's author of its resolve, each item naming the agent.
+- **Which workspace.** The thread id finds its workspace
+  (`mcp_links.holders(threads=)`, "Several workspaces"); one held by two
+  connected workspaces is refused naming both until `workspace` chooses.
+
+The plugin skill's "Feedback on a work folder" section (`plugins/gamma/skills/gamma/SKILL.md`)
+tells the agent the loop: find the items (the repository's
+`.gamma/feedback/open.md`, or `list_feedback`), read each with its source
+line, change the sources and rebuild, reply with what changed and resolve
+what is done, act on the owner's comments and ask about anyone else's, and
+without the answering tools say so in the terminal.
+
 ## Self-hosted and remote connections
 
 Open Gamma at its public HTTPS address, then sign in as an administrator and
@@ -417,7 +501,18 @@ PKCE. The SDK validates client identity, redirect matching, and PKCE. Gamma adds
 - session-bound consent, rate and body limits;
 - persistent expiring records and atomic single-use codes.
 
-Only `gamma:read` is supported. Callback URLs must be HTTPS or HTTP loopback.
+Two scopes exist, `gamma:read` and `gamma:feedback` (`mcp_oauth.SCOPES`): a
+client may register with and ask for either or both, every client is stored
+with both, and the 401 challenge still names `gamma:read` alone, so a client
+that reads it asks to read. What the connection may do is decided on the
+consent page, not by the request: its checkbox **Also let it answer my
+comments on work-folder files** is ticked when the client asked for
+`gamma:feedback`, and the person may tick or untick it either way. Ticked,
+the code carries both scopes, the token is made with the `feedback` scope
+and the token response says `gamma:read gamma:feedback`; unticked, a read
+token as before. `gamma:write` is refused at registration
+(`invalid_client_metadata`) and at authorize (`invalid_scope`). Callback URLs
+must be HTTPS or HTTP loopback.
 
 ```text
 GET  /.well-known/oauth-protected-resource/mcp
@@ -436,7 +531,7 @@ manual tokens in **Integrations**, where users can revoke them.
 
 ## Permissions and credentials
 
-- An integration token belongs to one workspace, its `workspace_id`: `read` (the default; the MCP endpoint and the HTTP API's reads) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers). A read token's MCP connection may read more, its `workspaces` (`integrations.grant`): `''` for its own workspace alone (every token from before step 51), `'*'` for every workspace the account can open, now and later, or a JSON list of ids, its own first. A write token is always its workspace alone. On the HTTP API a manual token is a bearer credential — the account behind it, confined to its own workspace whatever it grants MCP, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included). `POST /api/ai/chat` through it arms the reading tools only (`auth.can_write`), so its agent cannot rename, move or edit either. On MCP, a tool's `workspace` argument reaches only the connection's workspaces; on the HTTP API,
+- An integration token belongs to one workspace, its `workspace_id`: `read` (the default; the MCP endpoint and the HTTP API's reads), `feedback` (everything `read` may, plus replying to and resolving the comment threads on a work folder's files and setting a Send request's state, [feedback.md](feedback.md); a viewer may make one, since viewers comment) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers). A read or feedback token's MCP connection may read more, its `workspaces` (`integrations.grant`): `''` for its own workspace alone (every token from before step 51), `'*'` for every workspace the account can open, now and later, or a JSON list of ids, its own first. A write token is always its workspace alone. On the HTTP API a manual token is a bearer credential — the account behind it, confined to its own workspace whatever it grants MCP, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included); a `feedback` token the same, but for its answers (`auth.require_commenter`'s `answer`), which it gives in its own workspace alone, whatever else its MCP connection reads. `POST /api/ai/chat` through either arms the reading tools only (`auth.can_write`), so its agent cannot rename, move or edit either. On MCP, a tool's `workspace` argument reaches only the connection's workspaces; on the HTTP API,
   `?ws=` and `X-Gamma-Workspace` cannot select another workspace.
 - Only token SHA-256 hashes are stored in `users.db`. Tokens contain 256 random bits.
 - HTTP share URLs also stay within the integration token's workspace and
@@ -456,9 +551,11 @@ manual tokens in **Integrations**, where users can revoke them.
   (`integrations.forget_workspace`); a list left empty goes with its token.
   Account rename preserves them; password changes through the admin API or
   `manage.py set-password` revoke them along with sessions.
-- MCP always disables writes and external web tools. The allowlist is enforced on
-  every dispatch, independent of which tools the client was offered. Deprecated chat
-  aliases are not accepted by the MCP transport.
+- MCP always disables the chat's writes and external web tools; the only
+  writes are a feedback connection's two answering tools ("Answering
+  feedback"). The allowlist is enforced on every dispatch, independent of
+  which tools the client was offered. Deprecated chat aliases are not accepted
+  by the MCP transport.
 - Token management requires a normal Gamma session and never accepts an integration
   token. A browser session alone cannot authenticate to `/mcp`.
 
@@ -467,8 +564,9 @@ the default grant and a write token's workspace):
 
 ```text
 GET    /api/integrations/tokens                 the account's connections, its workspaces
-POST   /api/integrations/tokens       {"name":"Codex","expires_in_days":90,"workspaces":[…]}
-PATCH  /api/integrations/tokens/{id}  {"workspaces":[…]} or {"all_workspaces":true}
+POST   /api/integrations/tokens       {"name":"Codex","expires_in_days":90,"scope":"read","workspaces":[…]}
+                                      scope: read (the default), feedback or write (the current workspace alone)
+PATCH  /api/integrations/tokens/{id}  {"workspaces":[…]} or {"all_workspaces":true}   a read or feedback token
 DELETE /api/integrations/tokens/{id}
 POST   /api/integrations/setup-codes  {"name":"DeepSeek Harness","workspaces":[…]}
 POST   /api/integrations/claim        {"code":"…"}   no session: the code is the credential
@@ -631,8 +729,22 @@ workspace isolation, permissions, expiration, and revocation; one connection
 reading several workspaces (ids finding theirs, a search across them, a named
 one, a link's own, the ones it may not read refused, the HTTP API kept to the
 first), changing a connection's workspaces, all of them following a new one, a
-deleted one leaving the grant, and a setup code claimed once.
-`test_mcp_oauth.py` covers discovery, approval (several workspaces, or all),
+deleted one leaving the grant, and a setup code claimed once; a feedback
+connection's answering tools (listed for it alone, refused to a read
+connection even right after a feedback one listed them, a reply with its
+stamp, the room and the Inbox told, a retried id written once, a resolve
+repeated idempotently and never a reopen, a library page's thread and a
+read-only server refused), and a thread id finding its workspace on a
+connection of two, or refused when both hold it. `test_feedback_tools.py`
+covers `list_feedback` and `read_feedback` in the chat's scopes (a section per
+work folder, a directory, a file, a name, a Send request, batches, a page
+chat, a library page, the item's JSON and pictures); `test_mcp_links.py`
+`holders` by thread and request. `test_token_api.py` covers the Tokens
+pane's `feedback` scope (a viewer's, several workspaces, all of them, its
+PATCH) and the token's HTTP reads kept to its first workspace.
+`test_mcp_oauth.py` covers discovery, approval (several workspaces, or all;
+the consent's "answer feedback" ticked or not, for a client that asked for
+`gamma:feedback` and for one that did not; `gamma:write` refused),
 PKCE, resource/client/redirect binding, expiration, replay prevention,
 revocation, and streamed body limits.
 It also covers HTTPS proxy consent with saved and environment-configured public

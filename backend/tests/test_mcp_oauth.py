@@ -37,13 +37,20 @@ def start(c, **overrides):
     return client_id, response
 
 
-def pending(c):
-    client_id, response = start(c)
+def pending(c, **overrides):
+    client_id, value, _ = asked(c, **overrides)
+    return client_id, value
+
+
+def asked(c, **overrides):
+    """A sign-in waiting on the consent page: the client's id, what the
+    consent posts back, and what the page shows."""
+    client_id, response = start(c, **overrides)
     assert response.status_code == 302, response.text
     request_id = parse_qs(urlsplit(response.headers["location"]).query)["gamma_oauth"][0]
     details = c.get("/api/integrations/oauth/request", params={"request_id": request_id})
     assert details.status_code == 200, details.text
-    return client_id, {"request_id": request_id, "csrf": details.json()["csrf"]}
+    return client_id, {"request_id": request_id, "csrf": details.json()["csrf"]}, details.json()
 
 
 def approve(c, ws):
@@ -329,7 +336,7 @@ def test_signin_approves_several_workspaces_or_all(browser):
         result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "workspaces": [lab, ws]})
         code = parse_qs(urlsplit(result.json()["redirect_url"]).query)["code"][0]
         token = exchange(c, client_id, code).json()["access_token"]
-        assert resolve_connection(token, BASE + "/mcp") == (account_of("oauth-reader"), [lab, ws])
+        assert resolve_connection(token, BASE + "/mcp")[:2] == (account_of("oauth-reader"), [lab, ws])
         client_id, value = pending(c)
         result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "all_workspaces": True})
         code = parse_qs(urlsplit(result.json()["redirect_url"]).query)["code"][0]
@@ -344,3 +351,63 @@ def test_signin_approves_several_workspaces_or_all(browser):
         for t in c.get("/api/integrations/tokens").json()["tokens"]:
             c.delete("/api/integrations/tokens/" + t["id"])
         workspaces.delete(lab)
+
+
+def _tool_names(c, token):
+    listed = c.post("/mcp", headers={"Authorization": f"Bearer {token}", "Accept": "application/json, text/event-stream"},
+                    json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert listed.status_code == 200, listed.text
+    return {tool["name"] for tool in listed.json()["result"]["tools"]}
+
+
+@pytest.mark.parametrize("ticked", [True, False])
+def test_signin_may_allow_answering_feedback(browser, ticked):
+    """A client asking for gamma:feedback has the consent page's "answer my
+    comments" ticked; the person decides, and the token's scope follows
+    what they approved: a feedback token with the two answering tools, or
+    a read one."""
+    from gamma.integrations import resolve_connection
+
+    c, ws = browser
+    assert c.get("/.well-known/oauth-protected-resource/mcp").json()["scopes_supported"] == [
+        "gamma:read", "gamma:feedback"]
+    assert c.get("/.well-known/oauth-authorization-server").json()["scopes_supported"] == [
+        "gamma:read", "gamma:feedback"]
+    assert 'scope="gamma:read"' in c.get("/mcp").headers["www-authenticate"]  # the challenge still asks to read
+    assert asked(c)[2]["feedback_asked"] is False
+    client_id, value, shown = asked(c, scope="gamma:feedback gamma:read")
+    assert shown["feedback_asked"] is True
+    result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "workspaces": [ws],
+                                                             "feedback": ticked})
+    assert result.status_code == 200, result.text
+    tokens = exchange(c, client_id, parse_qs(urlsplit(result.json()["redirect_url"]).query)["code"][0])
+    assert tokens.status_code == 200, tokens.text
+    assert tokens.json()["scope"] == ("gamma:read gamma:feedback" if ticked else "gamma:read")
+    token = tokens.json()["access_token"]
+    assert resolve_connection(token, BASE + "/mcp").scope == ("feedback" if ticked else "read")
+    names = _tool_names(c, token)
+    assert ({"reply_feedback", "resolve_feedback"} <= names) is ticked and "list_feedback" in names
+    # a read sign-in may be given the answering too
+    if ticked:
+        client_id, value = pending(c)
+        result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "workspaces": [ws],
+                                                                 "feedback": True})
+        tokens = exchange(c, client_id, parse_qs(urlsplit(result.json()["redirect_url"]).query)["code"][0])
+        assert tokens.json()["scope"] == "gamma:read gamma:feedback"
+        assert "reply_feedback" in _tool_names(c, tokens.json()["access_token"])
+    for t in c.get("/api/integrations/tokens").json()["tokens"]:
+        c.delete("/api/integrations/tokens/" + t["id"])
+
+
+def test_other_scopes_are_refused(browser):
+    c, _ = browser
+    for scope in ("gamma:write", "gamma:read gamma:write", "", "gamma:read  gamma:feedback"):
+        registered = c.post("/oauth/register", json={"client_name": "Writer", "redirect_uris": [REDIRECT],
+                                                     "token_endpoint_auth_method": "none", "scope": scope})
+        assert registered.status_code == 400 and registered.json()["error"] == "invalid_client_metadata", scope
+    for scope in ("gamma:read gamma:feedback", "gamma:feedback"):
+        registered = c.post("/oauth/register", json={"client_name": "Answerer", "redirect_uris": [REDIRECT],
+                                                     "token_endpoint_auth_method": "none", "scope": scope})
+        assert registered.status_code == 201 and registered.json()["scope"] == "gamma:read gamma:feedback"
+    _, response = start(c, scope="gamma:write")
+    assert response.status_code == 302 and "error=invalid_scope" in response.headers["location"]

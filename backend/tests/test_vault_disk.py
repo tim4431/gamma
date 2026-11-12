@@ -14,9 +14,10 @@ from types import SimpleNamespace
 import pytest
 
 from gamma import vault_disk
-from gamma.vault_disk import (MARKER, TRASH, Found, Known, Offline, Stopped, check_marker, clean_temps, free_name,
-                              make_marker, move, moved, pair_moves, pdf_id, purge, racy, read_marker, refusal,
-                              replace_note, scan, similarity, trash_path, walk, write_new)
+from gamma.vault_disk import (MARKER, TRASH, Found, Known, Offline, Outside, Stopped, check_marker, clean_temps,
+                              free_name, make_marker, move, moved, pair_moves, pdf_id, purge, racy, read_marker,
+                              refusal, replace_note, scan, similarity, sweep_own, trash_path, walk, write_new,
+                              write_own)
 from gamma.work_folders import ignore_rules
 from gamma.work_folders.ignore_rules import Rules
 
@@ -614,6 +615,60 @@ def test_stale_temps_go_and_a_write_going_on_stays(tmp_path):
     write(root, "~$theirs.md", "z")
     assert clean_temps(root, scan(root, vault_id).temps) == 1
     assert not old.exists() and young.exists() and (root / "~$theirs.md").exists()
+
+
+def test_write_own_writes_gammas_file_below_gamma_over_whatever_is_there(tmp_path, monkeypatch):
+    root, _id = vault(tmp_path)
+    assert write_own(root, ".gamma/feedback/open.json", b"{}\n") is True
+    assert (root / ".gamma/feedback/open.json").read_bytes() == b"{}\n" and leftovers(root) == []
+    assert write_own(root, ".gamma/feedback/open.json", b"[]\n") is True
+    assert (root / ".gamma/feedback/open.json").read_bytes() == b"[]\n" and leftovers(root) == []
+    with pytest.raises(ValueError):
+        write_own(root, "notes/open.json", b"x")
+    with pytest.raises(Outside):
+        write_own(root, ".gamma/../open.json", b"x")
+    assert not (root / "notes").exists() and not (tmp_path / "open.json").exists()
+    if WINDOWS:   # a reader holding it to the last try: nothing written, no temporary left, False
+        monkeypatch.setattr(vault_disk, "REPLACE_RETRY_S", 0.01)
+        with open(root / ".gamma/feedback/open.json", "rb"):
+            assert write_own(root, ".gamma/feedback/open.json", b"{}\n") is False
+        assert (root / ".gamma/feedback/open.json").read_bytes() == b"[]\n" and leftovers(root) == []
+    gone = tmp_path / "unplugged"   # an empty mount point: nothing made
+    gone.mkdir()
+    with pytest.raises(Offline):
+        write_own(gone, ".gamma/feedback/open.json", b"x")
+    assert list(gone.iterdir()) == []
+
+
+def test_write_own_never_writes_below_a_junction(tmp_path):
+    root, _id = vault(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    if WINDOWS:
+        import _winapi
+
+        _winapi.CreateJunction(str(elsewhere), str(root / ".gamma" / "feedback"))
+    else:
+        try:
+            os.symlink(elsewhere, root / ".gamma" / "feedback", target_is_directory=True)
+        except OSError:
+            pytest.skip("this account may not make symlinks")
+    with pytest.raises(Outside):
+        write_own(root, ".gamma/feedback/open.json", b"x")
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_sweep_own_takes_gammas_stale_temps_of_a_directory_the_scan_never_enters(tmp_path):
+    root, vault_id = vault(tmp_path)
+    then = time.time() - 3600
+    old, young = write(root, ".gamma/feedback/.gamma-old.tmp", "x"), write(root, ".gamma/feedback/.gamma-young.tmp", "y")
+    theirs = write(root, ".gamma/feedback/~$theirs.md", "z")
+    for path in (old, theirs):
+        os.utime(path, (then, then))
+    assert scan(root, vault_id).temps == []
+    assert sweep_own(root, ".gamma/feedback") == 1
+    assert not old.exists() and young.exists() and theirs.exists()
+    assert sweep_own(root, ".gamma/feedback/img") == 0
 
 
 # --- names, moves and the trash ---------------------------------------------------------

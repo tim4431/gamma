@@ -1,5 +1,6 @@
 """Session-only management of external assistant connections, account-wide:
-each connection names the workspaces it may read.
+each connection names the workspaces it may read (a write token, its one
+workspace; gamma/integrations.py).
 
 A client that cannot sign in through the browser (DeepSeek Harness) is
 connected with a setup code: the signed-in browser asks for one, and the
@@ -45,7 +46,9 @@ class Access(BaseModel):
 class TokenCreate(Access):
     name: str = Field(default="Codex", min_length=1, max_length=80)
     expires_in_days: int = Field(default=90, ge=1, le=365)
-    scope: str = Field(default="read", pattern="^(read|write)$")  # write: a mirror's push credential
+    # write: a mirror's push credential; feedback: a read token that also
+    # answers the comments on a work folder's files
+    scope: str = Field(default="read", pattern="^(read|write|feedback)$")
 
 
 def _access(primary: str, value: str) -> dict:
@@ -85,8 +88,9 @@ def new_token(payload: TokenCreate, request: Request, response: Response):
         if ws_role(request) == "viewer":
             raise HTTPException(403, "You can only view this workspace, so a write token cannot be made for it.")
         return {**create_token(user_id, ws, name, payload.expires_in_days, scope="write"), **_access(ws, "")}
-    primary, value = grant(user_id, payload.wanted(ws))
-    item = create_token(user_id, primary, name, payload.expires_in_days, workspaces=value)
+    # A read or feedback token, a viewer's too (viewers comment): the workspaces it was given.
+    primary, value = grant(user_id, payload.wanted(ws), payload.scope)
+    item = create_token(user_id, primary, name, payload.expires_in_days, scope=payload.scope, workspaces=value)
     return {**item, **_access(primary, value)}
 
 

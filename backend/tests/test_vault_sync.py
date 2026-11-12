@@ -21,11 +21,12 @@ import pymupdf
 import pytest
 
 from conftest import (_tree_block, account_of, doc_props, login, make_folder, make_page, make_user,
-                      mark_work_folder, workspace_of)
-from gamma import (config, folder_links, gamma_sync, jobs, linked_files, md_lens, pdf_meta, storage, vault_disk,
-                   vault_merge, vault_store, vault_sync)
+                      mark_work_folder, thread_on, workspace_of)
+from gamma import (comments, config, folder_links, gamma_sync, jobs, linked_files, md_lens, pdf_meta, storage,
+                   vault_disk, vault_merge, vault_store, vault_sync)
 from gamma.blocks_store import LABELS, block_kind, new_block_id, newest_change_seq, write_lock
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
+from gamma.feedback import kept
 from gamma.ops import commit_ops, move_across_pages, restore_page, trash_page
 from gamma.routers import pages as pages_mod
 from gamma.routers.pages import replace_attachment
@@ -609,6 +610,31 @@ def test_a_pdf_is_a_page_reading_it_in_place_with_the_note_of_its_stem(vault):
     v.write("Papers/Attention.pdf", new, age=5)
     v.sync()
     assert v.blocks(page)[page]["props"]["doc"]["hash"] == storage.content_digest(new)
+    v.quiet()
+
+
+def test_a_pdf_with_an_open_thread_has_each_version_stored_as_it_comes(vault, owner, monkeypatch):
+    """A comment thread on a vault's PDF keeps the bytes it shows stored
+    (gamma/feedback/kept.py): stored at its open, every new file stored by
+    the round as it comes, read in place all the same; once resolved, the
+    next is read in place alone."""
+    monkeypatch.setattr(comments, "write_listeners", [kept.after_comment])
+    v = vault()
+    first, second, third = _pdf("commented first"), _pdf("commented second"), _pdf("commented third")
+    v.write("Paper.pdf", first, age=30)
+    v.sync()
+    page = v.page_of("Paper.pdf")
+    thread = thread_on(owner, page, page, "the whole paper")
+    assert kept.wait() and storage.exists(v.ws, f"{storage.content_digest(first)}.pdf")
+    v.write("Paper.pdf", second, age=20)
+    v.sync()
+    doc = v.blocks(page)[page]["props"]["doc"]
+    assert doc["hash"] == storage.content_digest(second) and doc["at"] == "path"
+    assert storage.exists(v.ws, f"{doc['hash']}.pdf") and storage.exists(v.ws, f"{storage.content_digest(first)}.pdf")
+    owner.post(f"/api/comments/{thread['id']}/resolve", json={"resolved": True}).raise_for_status()
+    v.write("Paper.pdf", third, age=10)
+    v.sync()
+    assert not storage.exists(v.ws, f"{storage.content_digest(third)}.pdf")
     v.quiet()
 
 

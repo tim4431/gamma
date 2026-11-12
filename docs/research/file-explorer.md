@@ -11,8 +11,9 @@ local agents (Claude Code, Codex) as structured documents. The owner
 offered a rewrite from the bottom up and asked first whether the idea is
 possible at all.
 
-Status: **a plan; steps 0 and 1 are built** ("As built (step 0)" and "As
-built (step 1)" under "In steps"), the rest is not. This note surveys what
+Status: **a plan; steps 0, 1 and 2 are built** ("As built (step 0)", "As
+built (step 1)" and "As built (step 2)" under "In steps"), the rest is
+not. This note surveys what
 the stored model and the code assumed before step 0, weighs three shapes a
 file could take, and lays the chosen one out in layers from the bottom,
 with the steps, the decisions still open and the risks. It was revised on
@@ -996,20 +997,96 @@ differs from the plan above, the whole list:
     pictures a note made in Gamma links, where the selection tracks them,
     as every vault does.
 
+**As built (step 2).** Built as its row says
+([dev/feedback.md](../dev/feedback.md)). A thread's root stores where it
+was opened (`comments.anchor`: the kind, the block, the file it was
+measured on, the page, the rects, the quote, the picture's crop and the
+source recorded then), and every comment the token that wrote it (`agent`,
+`agent_id`; `resolved_agent` on a resolve), with migration step 54
+(`feedback`), which is local (`LOCAL_STEPS`), so the workspace format
+stays 52. The reader is `gamma/feedback/` (`entries` the scopes, entries
+and document; `markdown` the Markdown form; `pictures` the region
+pictures, cached in data.db; `kept` the commented version held;
+`synctex` and `sources` the SyncTeX map; `requests` a Send's store and
+states; `files` the files below `.gamma/feedback/`; `listeners` what
+marks them; `agent` the answering tools), its routes `routers/feedback.py`
+under `/api/feedback`, its MCP tools `list_feedback`, `read_feedback`,
+`reply_feedback` and `resolve_feedback`, and the token scope `feedback`
+(`gamma:feedback` on OAuth, through a consent checkbox). On the client,
+`frontend/src/feedback/` holds the dialog and Send, `comments/` the ink
+threads and the Sent chip. Where it differs from the plan above, the
+whole list:
+
+1. The step is 54, after dev's 51 (`integration_workspaces`), step 0's 52
+   and step 1's 53.
+2. The entry is wider than the plan's example: `source` gains `end` and
+   `version` (`current` or `commented`); `where` gains `box`, `placed`,
+   `match` and `note`; the entry gains `kind`, `page_id`, `block_id`,
+   `before`, `state`, `sent` and `link`; comments gain `id`, `agent` and
+   `deleted`; the document gains `owner` and `answer`.
+3. Pictures are `.jpg`, drawn at 1568 px, never uploads.
+4. Every build shown while a thread is open is stored, not one copy per
+   round of comments: a second rebuild would otherwise lose the area's own
+   file. A stored copy of a file read in place never goes to a mirror, a
+   share export or a publication; backups and the off-site copy carry it,
+   and the quota counts it.
+5. The reader covers work-folder files only; a library page's threads are
+   not feedback.
+6. Ink threads are not relocated: after a rebuild an ink entry reads
+   `placed: "earlier"` and leads with its `before` picture.
+7. The source is recorded at the thread's open (`anchor.source`), because
+   the `.synctex.gz` on disk describes only the newest build; a live source
+   needs this computer's disk, so the NAS, a clone or a vault of another
+   server show recorded ones only.
+8. The files are written at every whole round and within a hot pass (about
+   2–4 s) of a change, not by the rounds alone; a paused or choosing vault
+   writes none; `.gamma/feedback/` has its own `.gitignore`. A new work
+   folder's first round writes an empty document.
+9. A token is named on what it writes, and a token edits and deletes only
+   its own comments; a session cannot edit an agent's comment. A token's
+   comment makes no one follow the page, and counts as someone else's
+   write for the Inbox, a `write` token's script included: its items go
+   to the thread's authors, the page's followers and the people it names.
+10. The answering tools are MCP-only and listed for a `feedback`
+    connection alone; a `write` token answers through the HTTP API, as
+    before, and so does a `feedback` token, in its own workspace. The 401
+    challenge still names `gamma:read`.
+11. Requests have four states (`sent`, `running`, `done`, `failed`); the
+    requester may withdraw; a request file is `requests/<id>.json`,
+    rewritten on each change, its images shared with `img/`. The requests'
+    sweep runs on the comments' timer.
+12. Comments by other people are feedback too; the skill acts on the
+    owner's and asks about the rest.
+13. Comments made on another server (the NAS, a phone's clone) never reach
+    the desktop's files or its agent: comments do not travel.
+14. Not built: a figure's own file mapped to the line that includes it;
+    widening an `\end{…}` line to its `\begin{…}`; the `\includegraphics`
+    path in `source`; re-finding a vector figure by its SyncTeX line after
+    a rebuild; an Inbox item when a request is done; a palette command for
+    Feedback. An area is found again by the picture inside it only for
+    raster images.
+15. A split made for an abandoned Comment on handwriting stays split.
+16. The feedback view is one dialog with Send, opened from the list view's
+    bar, the Comments window and the VaultChip card; it polls while open.
+17. The Markdown files are in English (they are for agents); everything a
+    person reads in the app is translated.
+
 ## Still to decide
 
 1. **Add to library keeps one page**: decided in step 1, as recommended.
    The file's page becomes a paper and stays at its path; Save a copy to
    library makes the second page, annotated apart, for a version kept.
-2. **Every open thread on a work-folder file is feedback** (recommended),
-   with no mark that sets an instruction to the agent apart from a
-   remark to oneself. A highlight's own note stays the person's.
-3. **The feedback files live in `.gamma/feedback/`** (recommended):
-   hidden, beside the marker, out of the way of the repository. A visible
-   directory is the other choice, if agents should find it unprompted.
+2. **Every open thread on a work-folder file is feedback**: decided in
+   step 2, as recommended, with no mark that sets an instruction to the
+   agent apart from a remark to oneself. A highlight's own note stays the
+   person's.
+3. **The feedback files live in `.gamma/feedback/`**: decided in step 2,
+   as recommended: hidden, beside the marker, out of the way of the
+   repository, with a `.gitignore` of their own.
 4. **The commented version of a PDF is stored** until its comments are
-   resolved (recommended). It costs a copy of the PDF per round of
-   comments, and is what lets a comment on a figure survive a rebuild.
+   resolved: decided in step 2, as recommended, every build shown while a
+   thread is open (As built, item 4); it is what lets a comment on a figure
+   survive a rebuild.
 5. **What the dialog ticks to start with**: decided in step 1 (As built,
    item 8): PDFs and notes outside the directories git ignores, with the
    format filters one click away.

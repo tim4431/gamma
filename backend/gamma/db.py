@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 53
+SCHEMA_VERSION = 54
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -494,8 +494,10 @@ USERS_SCHEMA = [
     # the kind has none; a folder share's folder in `block_id`),
     # `share_token` when the recipient reaches the page only through a
     # share, `snippet` (at most 200 characters of the text at the time),
-    # `at`, and the recipient's `read_at` / `archived_at`. Written when the
-    # event happens; no unique index, the producers dedupe.
+    # `at`, the recipient's `read_at` / `archived_at`, and `agent`, the
+    # display name of the integration token whose write made the item (''
+    # for a person's; step 54). Written when the event happens; no unique
+    # index, the producers dedupe.
     """CREATE TABLE IF NOT EXISTS inbox_items (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
@@ -510,7 +512,8 @@ USERS_SCHEMA = [
         snippet TEXT NOT NULL DEFAULT '',
         at TEXT NOT NULL,
         read_at TEXT,
-        archived_at TEXT
+        archived_at TEXT,
+        agent TEXT NOT NULL DEFAULT ''
     )""",
     "CREATE INDEX IF NOT EXISTS idx_inbox_user ON inbox_items(user_id, at)",
     "CREATE INDEX IF NOT EXISTS idx_inbox_unread ON inbox_items(user_id) WHERE read_at IS NULL AND archived_at IS NULL",
@@ -799,8 +802,13 @@ CHATS_SCHEMA = [
 # `resolved_at` / `resolved_by` are on the root only; `deleted_at` marks a
 # root deleted while it still has replies (a tombstone); `orphaned_at` is
 # set when the anchor block is deleted, cleared when it comes back, and
-# the sweep deletes the row seven days on. Never part of a block, so no
-# block reader has to skip them; a comment write touches no page.
+# the sweep deletes the row seven days on. `agent` / `agent_id` name the
+# integration token that wrote the comment (its display name and id, ''
+# for a session), `resolved_agent` the one that resolved a root (cleared
+# on reopen); `anchor` (JSON, the root only, NULL on a reply and on a root
+# from before step 54) is the place the thread was opened on
+# (gamma/feedback/anchors.py). Never part of a block, so no block reader
+# has to skip them; a comment write touches no page.
 COMMENTS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS comments (
         id TEXT PRIMARY KEY,
@@ -815,7 +823,11 @@ COMMENTS_SCHEMA = [
         resolved_at TEXT,
         resolved_by TEXT,
         deleted_at TEXT,
-        orphaned_at TEXT
+        orphaned_at TEXT,
+        agent TEXT NOT NULL DEFAULT '',
+        agent_id TEXT NOT NULL DEFAULT '',
+        resolved_agent TEXT NOT NULL DEFAULT '',
+        anchor TEXT
     )""",
     "CREATE INDEX IF NOT EXISTS idx_comments_block ON comments(block_id)",
     "CREATE INDEX IF NOT EXISTS idx_comments_thread ON comments(thread_id, created_at)",
@@ -836,6 +848,46 @@ COMMENTS_SCHEMA = [
         at TEXT NOT NULL,
         PRIMARY KEY (page_id, user_id)
     ) WITHOUT ROWID""",
+]
+# feedback_requests = the Sends of a work folder's feedback
+# (gamma/feedback/requests.py, docs/dev/feedback.md): `id` a block id's
+# shape (the client may mint it), `rev` the listing's cursor (MAX + 1 at
+# the insert and at every state change), `work_folder` and the `scope` the
+# requester sent (`scope_kind` file or folder), `by` / `by_name` the
+# requester, `note` their line of instruction, `state` sent / running /
+# done / failed with `state_at`, `state_by` (a token's display name or the
+# requester's username) and `detail` (a failure's reason, a line of
+# progress). feedback_request_threads = the threads each one names, with
+# `answered_at` once a token or another account replied or resolved after
+# it. Neither travels (as comments): no mirror, publication, share export,
+# backup merge or Gamma export carries them. Additive: no step
+# (docs/dev/migrations.md rule 2).
+FEEDBACK_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS feedback_requests (
+        id TEXT PRIMARY KEY,
+        rev INTEGER NOT NULL,
+        work_folder TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        scope_kind TEXT NOT NULL,
+        by TEXT NOT NULL,
+        by_name TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT 'sent',
+        state_at TEXT NOT NULL,
+        state_by TEXT NOT NULL DEFAULT '',
+        detail TEXT NOT NULL DEFAULT ''
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_feedback_requests_rev ON feedback_requests(rev)",
+    "CREATE INDEX IF NOT EXISTS idx_feedback_requests_folder ON feedback_requests(work_folder, rev)",
+    """CREATE TABLE IF NOT EXISTS feedback_request_threads (
+        request_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        answered_at TEXT,
+        PRIMARY KEY (request_id, thread_id)
+    ) WITHOUT ROWID""",
+    "CREATE INDEX IF NOT EXISTS idx_feedback_waiting ON feedback_request_threads(thread_id) "
+    "WHERE answered_at IS NULL",
 ]
 _CHAT_COLUMNS = {"chats": "bucket, messages, updated_at, title",
                  "chat_history": "id, bucket, title, messages, created_at, updated_at"}
@@ -1075,6 +1127,7 @@ PAGES_SCHEMA = [
     WORKSPACE_PREFS_SCHEMA,
     *CHATS_SCHEMA,
     *COMMENTS_SCHEMA,
+    *FEEDBACK_SCHEMA,
     *BLOCK_FTS_SCHEMA,
 ]
 
@@ -1110,6 +1163,11 @@ DATA_SCHEMA = [
     "CREATE TABLE IF NOT EXISTS pdf_translation_briefs (doc_id TEXT NOT NULL, lang TEXT NOT NULL, "
     "model TEXT NOT NULL, brief TEXT NOT NULL, at TEXT NOT NULL, "
     "PRIMARY KEY (doc_id, lang, model)) WITHOUT ROWID",
+    # feedback_pictures = the region pictures of a work folder's comment
+    # threads (gamma/feedback/pictures.py): JPEG bytes by their key, at
+    # most 48 MB in all, the oldest `at` going first.
+    "CREATE TABLE IF NOT EXISTS feedback_pictures (key TEXT PRIMARY KEY, data BLOB NOT NULL, "
+    "bytes INTEGER NOT NULL, at TEXT NOT NULL)",
 ]
 
 # Snapshots exist only to cover the (24-entry) recents queue; keep a few

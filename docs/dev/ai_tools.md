@@ -104,8 +104,11 @@ set. MCP passes `mcp_tools`: every reading tool that stays inside the
 library, without the web tools, the change tools, `list_deleted` or
 `update_plan`. Its
 scope is read-only, and its `link_base` makes results carry absolute links
-to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
-[mcp.md](mcp.md) "Links in results").
+to pages, PDF pages, blocks and comment threads (`gamma_link`; the chat's
+results carry none, [mcp.md](mcp.md) "Links in results"). The two tools
+that answer feedback are the adapter's own, not the registry's
+([mcp.md](mcp.md) "Answering feedback"): the chat reads threads and never
+answers them.
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
@@ -114,6 +117,8 @@ to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
 | `read_page` | Read pages | folder + page | Read one page: title, the pages it is inside and the pages inside it, properties, the user's highlights and notes, and — when it carries a PDF — a windowed excerpt of the attachment's extracted text |
 | `read_block` | Read note blocks | folder + page | Read a page's notes as an id-prefixed outline — the ids the editing tools take |
 | `read_chats` | Read pages | folder + page | Read the AI chat kept with a page or folder: the current conversation as a numbered transcript, the earlier ones by `chat_id` |
+| `list_feedback` | Read pages | folder + page | The user's feedback: the comment threads on a work folder's files (a work folder by name or id, a directory, a file; every work folder the chat reaches without one; a Send request's threads), each with its file, place, source line and comments, as Markdown, in batches (`limit`, `after`) |
+| `read_feedback` | Read pages | folder + page | One feedback item in any state, as Markdown and as JSON, with the pictures of its region now and as it was commented on |
 | `view_pdf_page` | View pages and handwriting | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
 | `view_ink` | View pages and handwriting | folder + page | Look at the user's handwriting as a picture: a group's strokes on their PDF page or page of paper, cropped to them, or the whole page with all its handwriting |
 | `view_image` | View pages and handwriting | folder + page | Look at the pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), or a picture block's own, all of them or one by index |
@@ -362,6 +367,48 @@ windowed by whole messages within the read budget (the "Read window"
 preference); the transcript ends by naming the `start` to continue from. The
 spec tells the model that replies in it are an AI's earlier answers, not the
 page's content. Shares the "Read pages" permission with `read_page`.
+
+### list_feedback and read_feedback (both scopes)
+
+The comment threads on a work folder's files, read as the user's feedback
+([feedback.md](feedback.md): the entries, their places, sources and
+pictures are `gamma/feedback/entries.py`'s, the text `markdown.render`'s).
+Both share the "Read pages" permission and reach MCP by `mcp_tools`' rule.
+The reader's modules load on the first call, since they bring SyncTeX and
+the region pictures.
+
+`list_feedback` lists the threads of a scope in the Markdown form the
+feedback files use (`pictures="tool"`: no image, a `Picture:
+read_feedback(thread_id=…)` line instead), a section per work folder, each
+headed `# Feedback on <name>`, a batch at a time (`limit`, default 20, at
+most 50; `after` the thread the previous batch ended at, and the result
+names the next call when more are left; a thread answered or resolved since
+its batch still marks where the listing goes on). `scope` is a work folder
+by id or by name (casefold, exactly one), a directory's folder id or a
+file's page id; `state` open (the default), resolved or all; `request` a
+Send request's id, whose instruction line and state head its threads. In a
+folder chat without `scope` it lists every work folder the chat reaches
+(the chat's folder itself when that is a directory of one); a chat in a
+library folder reaches none and says so. A page chat lists its own page's
+threads and no other's, and on a library page answers "This page is no work
+folder's file: its comments are not feedback." (no error: nothing to list).
+The document's `owner` is the chat's account, which an agent uses to tell
+the person's comments from other members'. The action carries `page_id`
+when the scope is one file.
+
+`read_feedback(thread_id)` reads one item in any state: its Markdown form,
+then the entry as JSON (with the `picture_url` / `before_url` routes), and
+its pictures — the region now, then, after a rebuild, as it was commented
+on — on the action's `images` as `view_pdf_page` carries its picture,
+unless the model reads text only (`scope["pictures"] is False`; the tool is
+not in `PICTURE_TOOLS`, its text being useful alone). The action carries
+`page_id`, `block_id` and `pdf_page`, so MCP's `structuredContent` locates
+the thread. A reply's id, a hidden thread, a library page's thread and an
+unknown id are "no feedback item has that id".
+
+`gamma_link(scope, page_id, *, thread_id=…)` links a thread
+(`&page=&block=&thread=`, the address the Inbox opens), so an MCP entry
+links its card; in the chat the entries' links are their queries alone.
 
 ### view_pdf_page (both scopes)
 

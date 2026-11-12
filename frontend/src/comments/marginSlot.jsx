@@ -8,6 +8,7 @@
 // where its last card ends, and a later page's cards start under that.
 import React, { createContext, useContext } from "react";
 import { LazyBoundary, lazySurface } from "../shared/ui/lazy";
+import { anchorTop } from "./comments.js";
 
 export const CommentMarginContext = createContext(null);
 export const MarginStackContext = createContext(null);
@@ -42,31 +43,22 @@ export function createMarginStack() {
 const CommentMargin = lazySurface(() => import("./CommentMargin"));
 export const preloadCommentMargin = () => CommentMargin.preload();
 
-// The top of a highlight's first line on its page, in px of the page box
-// `pageH` tall (its rects are in the frame of `position.height`).
-export function highlightTop(h, pageH) {
-  const pos = h.position || {};
-  let top = Infinity;
-  for (const r of pos.rects || []) top = Math.min(top, r.y1);
-  if (!Number.isFinite(top)) top = pos.boundingRect?.y1 || 0;
-  return top * pageH / (pos.height || 1);
-}
-
-// `highlights`: the page's (App's highlight objects, with `threadCount`);
+// `anchors`: the page's comment anchors (the viewer's, app/treeDerived.js
+// commentAnchors: its highlights and ink groups, with `threadCount`);
 // `pageH`: the page box's height at the current zoom; `pageTop`: its top,
 // in px from the first page's top. The column stands while it has no card
 // too, so a page's first card grows in and its last one shrinks away.
-export function CommentMarginSlot({ pageNumber, highlights, pageH, pageTop }) {
+export function CommentMarginSlot({ pageNumber, anchors, pageH, pageTop }) {
   const margin = useContext(CommentMarginContext);
   if (!margin) return null;
   const composing = margin.target?.compose ? margin.target.blockId : "";
-  const anchors = [];
-  for (const h of highlights) {
-    if ((h.threadCount || 0) > 0 || h.id === composing) anchors.push({ id: h.id, top: highlightTop(h, pageH) });
+  const carded = [];
+  for (const a of anchors) {
+    if (a.threadCount > 0 || a.id === composing) carded.push({ id: a.id, top: anchorTop(a, pageH) });
   }
   return (
     <LazyBoundary>
-      <CommentMargin margin={margin} anchors={anchors} pageNumber={pageNumber} pageTop={pageTop} />
+      <CommentMargin margin={margin} anchors={carded} pageNumber={pageNumber} pageTop={pageTop} />
     </LazyBoundary>
   );
 }

@@ -108,7 +108,8 @@ These describe the implementation unless explicitly marked as plans.
 | Themes, controls, menus, dialogs, and editor interactions | [UI design](ui-design.md) |
 | Command catalogs, dispatch, and keybindings | [Hotkeys](hotkeys.md) |
 | The note editor's @ menu: dates, people and page links as chips, reminders and their delivery | [Mentions and reminders](mentions.md) |
-| Comment threads on notes, pages and highlights: storage, who may comment, the API, following the blocks; each account's Inbox and its live delivery | [Comments](comments.md) |
+| Comment threads on notes, pages, highlights and handwriting: storage, who may comment, the API, following the blocks; each account's Inbox and its live delivery | [Comments](comments.md) |
+| Feedback: the comment threads on a work folder's files as entries an agent acts on, with the place each was opened on, the source line SyncTeX maps it to, a picture of its region, the version kept while it is open, Send and its requests, the files below `.gamma/feedback/`, the routes, the feedback token scope and the MCP tools, the seam for a connector | [Feedback](feedback.md) |
 | LaTeX pairing, completion, caret behavior, preview, and pasted `\( \)` / `\[ \]` math | [LaTeX editing](latex_editing.md) |
 | Mermaid and SVG diagrams: rendering, sanitizing, sizing and editing | [Diagrams](diagrams.md) |
 | Interface translations and catalogs | [Internationalization](i18n.md) |

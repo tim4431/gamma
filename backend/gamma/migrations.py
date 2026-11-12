@@ -142,9 +142,10 @@ def workspace_format() -> int:
     """The shape of what a workspace's files hold: the newest step with a
     workspace part (WS_VERSION_BASE below them). Two servers keeping copies
     of one workspace in step must agree on it (gamma/sync_engine.py); a step
-    with a global part only leaves it as it is, and so does one that only
-    derives a column (``DERIVED_STEPS``)."""
-    return max([WS_VERSION_BASE, *(v for v, _, _ in WORKSPACE_STEPS if v not in DERIVED_STEPS)])
+    with a global part only leaves it as it is, and so do one that only
+    derives a column (``DERIVED_STEPS``) and one that only changes tables no
+    copy keeps in step with another (``LOCAL_STEPS``)."""
+    return max([WS_VERSION_BASE, *(v for v, _, _ in WORKSPACE_STEPS if v not in DERIVED_STEPS | LOCAL_STEPS)])
 
 
 def status() -> dict:
@@ -1948,6 +1949,39 @@ def _v53_work_folders(ws: str, pages: sqlite3.Connection, data) -> None:
         block_columns(pages)
 
 
+def _v54_inbox_agent(conn: sqlite3.Connection) -> None:
+    """``inbox_items`` gains ``agent``, the display name of the integration
+    token whose write made an item (docs/dev/comments.md "The inbox"):
+    ``''`` on every item so far, a person's. Re-runnable: the column is
+    added only where ``_columns()`` lacks it. No workspace is touched."""
+    columns = _columns(conn, "inbox_items")
+    if columns and "agent" not in columns:
+        conn.execute("ALTER TABLE inbox_items ADD COLUMN agent TEXT NOT NULL DEFAULT ''")
+    conn.commit()
+
+
+# The columns step 54 adds to ``comments``, in order, as it adds them.
+_V54_COMMENT_COLUMNS = (("agent", "TEXT NOT NULL DEFAULT ''"), ("agent_id", "TEXT NOT NULL DEFAULT ''"),
+                        ("resolved_agent", "TEXT NOT NULL DEFAULT ''"), ("anchor", "TEXT"))
+
+
+def _v54_comment_agents(ws: str, pages: sqlite3.Connection, data) -> None:
+    """``comments`` gains ``agent``, ``agent_id`` and ``resolved_agent`` (the
+    integration token that wrote a comment or resolved a thread, ``''`` on
+    every comment so far) and ``anchor`` (the place a thread was opened on,
+    gamma/feedback/anchors.py), each added where ``_columns()`` lacks it, in
+    that order. No anchor is filled in: a thread from before the step reads
+    its place from its block. Nothing is stamped or touched, and the format
+    stays: comments never leave the workspace's own copy (``LOCAL_STEPS``).
+    An old copy without the table gets it from the schema statements."""
+    columns = _columns(pages, "comments")
+    if not columns:
+        return
+    for name, definition in _V54_COMMENT_COLUMNS:
+        if name not in columns:
+            pages.execute(f"ALTER TABLE comments ADD COLUMN {name} {definition}")
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1975,6 +2009,7 @@ STEPS = [
     (50, "folder_links_pull", _v50_folder_links_pull),
     (51, "integration_workspaces", _v51_integration_workspaces),
     (53, "work_folders", _v53_folder_links_library),
+    (54, "feedback", _v54_inbox_agent),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,
@@ -1990,9 +2025,15 @@ WORKSPACE_STEPS = [
     (48, "deleted_with", _v48_deleted_with),
     (52, "page_documents", _v52_page_documents),
     (53, "work_folders", _v53_work_folders),
+    (54, "feedback", _v54_comment_agents),
 ]
 
 # The workspace steps that only add a column SQLite derives from the rows
 # stored before them: two copies on either side of one hold the same data,
 # so they leave ``workspace_format`` as it is and a mirror keeps syncing.
 DERIVED_STEPS = {47, 48, 53}
+
+# The workspace steps that change only tables no copy of the workspace keeps
+# in step with another (comments, the Inbox's rows): a mirror never sends
+# them, so two copies on either side of one still agree.
+LOCAL_STEPS = {54}

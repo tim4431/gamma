@@ -1,23 +1,25 @@
 // The Comments window: the open page's threads, Open or Resolved, the
 // latest activity first, each with what it is on (the note's words, the
-// highlight's quote, or the page). A click scrolls to the anchor, flashes
-// it and opens its thread popover (App's onOpen). A dock window like Notes
+// highlight's quote, the handwriting's page, or the page) and the chip of a
+// Send waiting on it. A click scrolls to the anchor, flashes it and opens
+// its thread popover (App's onOpen). A dock window like Notes
 // and Chat, loaded on first use (shared/ui/lazy.jsx;
 // docs/dev/comments.md "In the app"). The list moves as it changes
 // (ListMotion): a thread that comes rises into place, and one with a new
 // reply glides to the top as the others make room. The bell in its header
-// is the page's Notify me.
+// is the page's Notify me, and on a work folder's file Feedback opens the
+// feedback view (docs/dev/feedback.md).
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ListMotion from "../shared/ui/ListMotion";
 import { DockWindow } from "../shared/ui/Widgets";
 import { Empty, Segmented } from "../settings/SettingsKit";
 import { MenuSelect } from "../shared/ui/Menus";
-import { BellIcon, CheckIcon, MessageSquareIcon } from "../shared/ui/Icons";
+import { BellIcon, BotIcon, CheckIcon, MessageSquareIcon } from "../shared/ui/Icons";
 import { PersonAvatar } from "../collaboration/Presence";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { API, apiJson } from "../shared/lib/utils";
 import { formatRelativeTime } from "../library/libraryUtils";
-import { anchorSnippet, threadsIn } from "./comments.js";
+import { anchorSnippet, authorLabel, authorTitle, sentChip, threadsIn } from "./comments.js";
 
 const notifyUrl = (page) => `${API}/pages/${encodeURIComponent(page)}/notify`;
 
@@ -51,12 +53,14 @@ function useNotifyLevel(pageId, enabled, onStatus) {
 
 // common: the dock window's grip, fold and collapse (App's renderWindow).
 // `threads`: the page's, open and resolved. anchorText(blockId): the words
-// of the block a thread is on ("" when the page does not show it);
-// `pageId`: the page's own thread reads "This page". labelOf(id): a
-// [[link]]'s label, so a line names the page it links to. `notify`: the
-// reader has an Inbox (a signed-in account, no guest), so the header has
-// the page's Notify me; onStatus(text) says a choice the server refused.
-export default function CommentsPanel({ threads, pageId, anchorText, labelOf, onOpen, onClose, notify = false, onStatus, ...common }) {
+// of the block a thread is on (comments.js anchorWords; "" when the page
+// does not show it); `pageId`: the page's own thread reads "This page".
+// labelOf(id): a [[link]]'s label, so a line names the page it links to.
+// `notify`: the reader has an Inbox (a signed-in account, no guest), so the
+// header has the page's Notify me; onStatus(text) says a choice the server
+// refused. onFeedback(), when given (a work folder's file, a reader who may
+// edit), is the header's Feedback.
+export default function CommentsPanel({ threads, pageId, anchorText, labelOf, onOpen, onClose, notify = false, onStatus, onFeedback, ...common }) {
   const [filter, setFilter] = useState("open");
   const [level, setLevel] = useNotifyLevel(pageId, notify, onStatus);
   const list = threadsIn(threads || [], filter);
@@ -76,25 +80,32 @@ export default function CommentsPanel({ threads, pageId, anchorText, labelOf, on
           <MenuSelect icon={BellIcon} label={t("Notify me")} heading={t("Notify me")} value={level} onChange={setLevel}
             disabled={!level} options={[["all", t("All comments")], ["replies", t("Replies and @mentions")]]} />
         ) : null}
+        {onFeedback ? (
+          <button type="button" className="ctlBtn" onClick={onFeedback} aria-label={t("Feedback")}
+            title={t("Feedback: this file's open comments, to send to an agent")}><BotIcon size={16} /></button>
+        ) : null}
       </>}>
       <div className="commentsPanel">
         <ListMotion keys={list.map((th) => th.id)} scope={`${pageId}:${filter}`} enter="rise" still={!had.current}>
           {list.length ? list.map((th) => {
             const first = th.comments[0];
+            const who = first ? authorLabel(first) : "";
             const replies = th.comments.length - 1;
             const anchor = th.block_id === pageId ? t("This page") : anchorSnippet(anchorText(th.block_id), 80, labelOf) || t("A note");
+            const chip = sentChip(th);
             return (
               <button key={th.id} type="button" className={`commentsPanelRow${filter === "resolved" ? " resolved" : ""}`}
                 data-motion-key={th.id} data-thread-id={th.id} onClick={() => onOpen(th)}>
                 <span className="commentsPanelAnchor">{anchor}</span>
                 <span className="commentsPanelFirst">
-                  <PersonAvatar name={first?.author || "?"} title={first?.author} />
+                  <PersonAvatar name={who || "?"} title={first ? authorTitle(first) : undefined} />
                   <span className="commentsPanelText">
-                    <span className="commentAuthor">{first?.author}</span>{" "}
+                    <span className="commentAuthor">{who}</span>{" "}
                     {first?.deleted ? <em>{t("Comment deleted")}</em> : anchorSnippet(first?.body, 140, labelOf)}
                   </span>
                 </span>
                 <span className="commentsPanelMeta">
+                  {chip ? <span className={`uiTag ${chip.tone}`} data-sent={chip.state} title={chip.title}>{chip.label}</span> : null}
                   {replies ? <span>{tn("{n} reply", "{n} replies", replies)}</span> : null}
                   <span>{formatRelativeTime(th.last_at)}</span>
                 </span>

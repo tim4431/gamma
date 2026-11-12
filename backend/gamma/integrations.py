@@ -1,11 +1,14 @@
 """Revocable credentials for one account: ``read`` tokens (an assistant's
-MCP connection, the HTTP API's reads) and ``write`` tokens (a mirror
-pushing its edits, docs/dev/mirror.md).
+MCP connection, the HTTP API's reads), ``write`` tokens (a mirror pushing
+its edits, docs/dev/mirror.md) and ``feedback`` tokens (a read token that
+may also reply to and resolve the comment threads on a work folder's files,
+docs/dev/feedback.md).
 
 A token belongs to one workspace, ``workspace_id``, the one the HTTP API
-reads. A read token's MCP connection may read more (``workspaces``): ``""``
-for that workspace alone, ``"*"`` for every workspace the account can open,
-now and later, or a JSON list of ids (``workspace_id`` first).
+reads. A read or feedback token's MCP connection may read more
+(``workspaces``): ``""`` for that workspace alone, ``"*"`` for every
+workspace the account can open, now and later, or a JSON list of ids
+(``workspace_id`` first).
 
 Only token hashes are stored. Recheck the account and workspace access on
 every request, so removing membership also removes integration access.
@@ -15,6 +18,7 @@ import hashlib
 import json
 import secrets
 import time
+from typing import NamedTuple
 
 from fastapi import HTTPException
 
@@ -26,8 +30,40 @@ def token_digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-SCOPES = ("read", "write")
+SCOPES = ("read", "write", "feedback")
 ALL = "*"
+DISPLAY_NAME_CHARS = 80
+
+
+class Grant(NamedTuple):
+    """The HTTP API's credential (``resolve_token_scope``)."""
+    user_id: str
+    username: str
+    workspace_id: str
+    scope: str
+    token_id: str
+    name: str
+
+
+class Connection(NamedTuple):
+    """An MCP connection (``resolve_connection``): ``user_id`` and
+    ``workspaces`` first, as the pair it once was."""
+    user_id: str
+    workspaces: list
+    scope: str
+    token_id: str
+    name: str
+    username: str
+
+
+def display_name(name: str) -> str:
+    """What a comment a token wrote is signed with: the token's name, an
+    OAuth client's without its " (OAuth)", whitespace collapsed, at most
+    ``DISPLAY_NAME_CHARS`` characters; "an agent" for none."""
+    words = (name or "").split()
+    if words and words[-1] == "(OAuth)":
+        words.pop()
+    return " ".join(words)[:DISPLAY_NAME_CHARS] or "an agent"
 
 
 def grant(user_id: str, workspaces, scope: str = "read") -> tuple[str, str]:
@@ -35,7 +71,7 @@ def grant(user_id: str, workspaces, scope: str = "read") -> tuple[str, str]:
     may read: ``"*"`` or a list of ids, each one the account can open (a
     write token: exactly one). HTTPException 400/403 otherwise."""
     if workspaces == ALL:
-        if scope != "read":
+        if scope == "write":
             raise HTTPException(400, "A read and write token is for one workspace.")
         opened = [w for w in list_for_user(user_id) if not w["deleting"]]
         if not opened:
@@ -44,7 +80,7 @@ def grant(user_id: str, workspaces, scope: str = "read") -> tuple[str, str]:
     ids = list(dict.fromkeys(w for w in workspaces or () if isinstance(w, str) and w))
     if not ids:
         raise HTTPException(400, "Choose at least one workspace.")
-    if scope != "read" and len(ids) > 1:
+    if scope == "write" and len(ids) > 1:
         raise HTTPException(400, "A read and write token is for one workspace.")
     if len(ids) > 200 or not all(role_of(w, user_id) for w in ids):
         raise HTTPException(403, "You cannot connect this workspace.")
@@ -67,7 +103,7 @@ def create_token(user_id: str, ws: str, name: str, days: int, *, oauth_resource:
     """A new token of ``ws``; ``workspaces`` is the stored grant ``grant``
     made (``""``: that workspace alone)."""
     if scope not in SCOPES:
-        raise HTTPException(400, "scope must be read or write")
+        raise HTTPException(400, "scope must be read, write or feedback")
     now = int(time.time())
     token = ("gamma_oauth_" if oauth_resource else "gamma_") + secrets.token_urlsafe(32)
     item = {"id": secrets.token_hex(16), "name": name, "workspace_id": ws, "scope": scope,
@@ -90,16 +126,16 @@ def create_token(user_id: str, ws: str, name: str, days: int, *, oauth_resource:
 
 
 def set_workspaces(user_id: str, token_id: str, workspaces) -> tuple[str, str]:
-    """Change which workspaces one of the account's read tokens may read;
-    the stored ``(workspace_id, workspaces)``."""
+    """Change which workspaces one of the account's read or feedback
+    tokens may read; the stored ``(workspace_id, workspaces)``."""
     with connect_users_db() as conn:
         row = conn.execute("SELECT scope FROM integration_tokens WHERE id = ? AND user_id = ?",
                            (token_id, user_id)).fetchone()
     if not row:
         raise HTTPException(404, "This connection is gone.")
-    if row[0] != "read":
+    if row[0] == "write":
         raise HTTPException(400, "A read and write token is for one workspace.")
-    ws, value = grant(user_id, workspaces)
+    ws, value = grant(user_id, workspaces, row[0])
     with connect_users_db() as conn:
         conn.execute("UPDATE integration_tokens SET workspace_id = ?, workspaces = ? WHERE id = ? AND user_id = ?",
                      (ws, value, token_id, user_id))
@@ -123,8 +159,8 @@ def forget_workspace(conn, ws: str) -> None:
 
 def _row(token: str, resource: str | None):
     """The live token's ``(user_id, username, workspace_id, scope,
-    workspaces)``, else None. ``resource`` is the MCP URL an OAuth token
-    must be bound to."""
+    workspaces, id, name)``, else None. ``resource`` is the MCP URL an OAuth
+    token must be bound to."""
     if not token.startswith("gamma_") or len(token) > 128:
         return None
     with connect_users_db() as conn:
@@ -134,7 +170,8 @@ def _row(token: str, resource: str | None):
             if not audience or json.loads(audience[0]).get("resource") != resource:
                 return None
         return conn.execute(
-            "SELECT t.user_id, u.username, t.workspace_id, t.scope, t.workspaces FROM integration_tokens t "
+            "SELECT t.user_id, u.username, t.workspace_id, t.scope, t.workspaces, t.id, t.name "
+            "FROM integration_tokens t "
             "JOIN users u ON u.id = t.user_id "
             "WHERE t.token_hash = ? AND t.expires_at > ? AND u.is_guest = 0",
             (token_digest(token), int(time.time()))).fetchone()
@@ -147,27 +184,33 @@ def resolve_token(token: str, resource: str | None = None) -> tuple[str, str] | 
     return (found[0], found[2]) if found else None
 
 
-def resolve_token_scope(token: str, resource: str | None = None) -> tuple[str, str, str, str] | None:
-    """Like ``resolve_token`` plus the account's username and the token's
-    scope: ``(user_id, username, workspace_id, scope)``. The HTTP API's
-    credential: its own workspace only."""
+def _scope(value: str) -> str:
+    """A stored scope, an unknown one read as ``read``."""
+    return value if value in SCOPES else "read"
+
+
+def resolve_token_scope(token: str, resource: str | None = None) -> Grant | None:
+    """Like ``resolve_token`` plus the account's username, the token's
+    scope, id and name: a ``Grant``. The HTTP API's credential: its own
+    workspace only."""
     row = _row(token, resource)
     if not row or not role_of(row[2], row[0]):
         return None
-    return row[0], row[1], row[2], row[3] if row[3] in SCOPES else "read"
+    return Grant(row[0], row[1], row[2], _scope(row[3]), row[5], row[6])
 
 
-def resolve_connection(token: str, resource: str | None = None) -> tuple[str, list[str]] | None:
-    """The MCP connection's ``(user_id, workspaces)``: every workspace the
-    token may read that its account can still open, its own first (the
-    default for a call that names none), else None."""
+def resolve_connection(token: str, resource: str | None = None) -> Connection | None:
+    """The MCP connection: every workspace the token may read that its
+    account can still open, its own first (the default for a call that
+    names none), with the token's scope, id and name and the account's
+    username; None when it reads none."""
     row = _row(token, resource)
     if not row:
         return None
-    user_id, _name, primary, _scope, value = row
+    user_id, username, primary, scope, value, token_id, name = row
     wanted = granted(primary, value)
     if wanted == ALL:
         wanted = [w["id"] for w in list_for_user(user_id) if not w["deleting"]]
     ordered = [primary] + [w for w in wanted if w != primary] if primary in wanted else wanted
     readable = [w for w in ordered if role_of(w, user_id)]
-    return (user_id, readable) if readable else None
+    return Connection(user_id, readable, _scope(scope), token_id, name, username) if readable else None

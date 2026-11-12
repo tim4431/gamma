@@ -205,6 +205,38 @@ def test_text_under_a_highlighter_stays_legible(tmp_path):
     assert r > 240 and b < 200 and lit(32, 160) == (255, 255, 255)
 
 
+def test_the_page_s_marks_are_drawn_over_it_as_the_viewer_draws_them(tmp_path):
+    """page_with_ink's ``highlights``: a text highlight's wash multiplies
+    onto the text under it (every glyph pixel stays dark, the paper around
+    them turns its colour), an area note draws its border and a faint fill,
+    as annotations over the stamped content, and a mark on another page is
+    not drawn."""
+    path = _text_pdf(tmp_path / "text.pdf")
+    bare = _raster(page_with_ink(path, 1, [])[0])
+    glyphs = [(x, y) for x in range(40, 280) for y in range(74, 100) if max(bare(x, y)) < 60]
+
+    def mark(rect, color, page=1, area=False):
+        return {"position": {"pageNumber": page, "width": PAGE_W, "height": PAGE_H, "area": area,
+                             "rects": [dict(zip(("x1", "y1", "x2", "y2"), rect))]}, "color": color, "id": "m"}
+    marks = [mark((30, 66, 290, 106), "#ffe066"), mark((60, 200, 240, 320), "#0000ff", area=True),
+             mark((0, 0, 300, 400), "#ff0000", page=2)]
+    data, _ = page_with_ink(path, 1, [], highlights=marks)
+    lit = _raster(data)
+    assert all(max(lit(x, y)) < 80 for x, y in glyphs)
+    r, g, b = lit(32, 88)                                     # paper under the wash, left of the text
+    assert r > 240 and b < 140
+    r, g, b = lit(61, 260)                                    # the area's border
+    assert b > 200 and r < 60 and g < 60
+    r, g, b = lit(150, 260)                                   # its faint fill
+    assert b > 240 and 150 < r < 230 and abs(r - g) < 8
+    assert lit(150, 360) == (255, 255, 255)                   # nothing of the mark on page 2
+    doc = pymupdf.open(stream=data, filetype="pdf")
+    try:
+        assert sorted(a.type[1] for a in doc[0].annots()) == ["Highlight", "Square"]
+    finally:
+        doc.close()
+
+
 def test_a_pen_stays_over_a_highlighter_drawn_after_it(tmp_path):
     """Band 0 is drawn first across the page's groups, as on screen."""
     path = _pdf(tmp_path / "blank.pdf")

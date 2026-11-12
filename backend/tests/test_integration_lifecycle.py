@@ -1,4 +1,5 @@
-"""Account/workspace operations preserve or revoke manual and OAuth tokens."""
+"""Account/workspace operations preserve or revoke manual and OAuth tokens;
+the scopes' workspaces, and the credentials naming the token."""
 
 import os
 from pathlib import Path
@@ -7,6 +8,7 @@ import subprocess
 import sys
 
 import pytest
+from fastapi import HTTPException
 
 from conftest import account_of, login, make_user
 from gamma import workspaces
@@ -122,3 +124,58 @@ def test_account_deletion_removes_tokens_in_retained_workspaces(account, admin, 
     assert workspaces.get(ws) is None
     assert workspaces.get(shared) is not None
     assert resolve_token(retained["token"], resource) == (other, shared)
+
+
+def test_a_feedback_token_reads_several_workspaces_and_a_write_token_one(account):
+    from gamma.integrations import ALL, grant, set_workspaces
+
+    username, ws, _browser = account
+    user_id = account_of(username)
+    lab = workspaces.create("Feedback lab " + secrets.token_hex(3), user_id, kind="shared")["id"]
+    assert grant(user_id, [ws, lab], "feedback") == (ws, f'["{ws}", "{lab}"]')
+    assert grant(user_id, ALL, "feedback") == (ws, ALL)
+    assert grant(user_id, [ws, lab], "read")[1] == f'["{ws}", "{lab}"]'
+    for wanted in ([ws, lab], ALL):
+        with pytest.raises(HTTPException) as e:
+            grant(user_id, wanted, "write")
+        assert e.value.detail == "A read and write token is for one workspace."
+    item = create_token(user_id, ws, "Agent", 90, scope="feedback")
+    assert set_workspaces(user_id, item["id"], [lab, ws]) == (lab, f'["{lab}", "{ws}"]')
+    pushed = create_token(user_id, ws, "Mirror", 90, scope="write")
+    with pytest.raises(HTTPException):
+        set_workspaces(user_id, pushed["id"], [ws])
+    with pytest.raises(HTTPException) as e:
+        create_token(user_id, ws, "Other", 90, scope="admin")
+    assert e.value.detail == "scope must be read, write or feedback"
+
+
+def test_the_credentials_name_the_token(account, resource):
+    from gamma.integrations import Connection, Grant, resolve_connection, resolve_token_scope
+
+    username, ws, _browser = account
+    user_id = account_of(username)
+    lab = workspaces.create("Named lab " + secrets.token_hex(3), user_id, kind="shared")["id"]
+    item = create_token(user_id, ws, "Claude Code (OAuth)", 90, oauth_resource=resource, scope="feedback",
+                        workspaces=f'["{ws}", "{lab}"]')
+    if resource is None:  # the HTTP API takes no OAuth token
+        grant_ = resolve_token_scope(item["token"])
+        assert isinstance(grant_, Grant)
+        assert grant_ == (user_id, username, ws, "feedback", item["id"], "Claude Code (OAuth)")
+        assert (grant_.token_id, grant_.name) == (item["id"], "Claude Code (OAuth)")
+    connection = resolve_connection(item["token"], resource)
+    assert isinstance(connection, Connection)
+    assert connection == Connection(user_id, [ws, lab], "feedback", item["id"], "Claude Code (OAuth)", username)
+    assert connection[:2] == (user_id, [ws, lab]) and connection[1] == [ws, lab]
+    # a scope this server does not know reads as read
+    with connect_users_db() as conn:
+        conn.execute("UPDATE integration_tokens SET scope = 'later' WHERE id = ?", (item["id"],))
+    assert resolve_connection(item["token"], resource).scope == "read"
+
+
+def test_display_name():
+    from gamma.integrations import display_name
+
+    assert display_name("Claude Code (OAuth)") == "Claude Code"
+    assert display_name("  Codex \n on   my laptop ") == "Codex on my laptop"
+    assert display_name("x" * 200) == "x" * 80
+    assert display_name("") == display_name("   ") == display_name(" (OAuth)") == "an agent"

@@ -39,6 +39,7 @@ from ..blocks_store import (
     sub_pages as pages_right_inside, tree_parents, tree_rows, with_sub_pages)
 from ..documents.model import SQL_IN_PLACE, is_pdf, page_document, pdf_file_hash, stored_name
 from ..db import connect_pages_db
+from ..feedback.kept import held_files
 from ..db import (
     PAGES_SCHEMA,
     copy_chats,
@@ -1016,6 +1017,8 @@ class _GammaBuilder(_Builder):
                            [json.dumps(self.page_ids + sorted(subtree))])
             # the threads shown on the pages; their authors' names travel with them (author_name)
             comments.copy_rows(self.db, comments.rows_of_pages(src, self.page_ids))
+            if share is None:  # and the versions the open ones were opened on, held as a highlight's are
+                self.upload_names |= held_files(src, self.page_ids)
         # A PDF read from a file on this computer travels as bytes: where the
         # export lands it is a page like any other, with no path to read from.
         self.db.execute(f"UPDATE unified_blocks SET properties = json_set(properties, '$.doc.at', 'store') "

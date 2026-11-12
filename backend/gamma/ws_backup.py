@@ -54,6 +54,7 @@ from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_PAGE, LABELS, PARENT_PAGE,
                            named, new_block_id, page_parents, top_of, touch_page, tree_children, tree_parents,
                            tree_rows, write_lock)
 from .documents.model import own_hash, page_document
+from .feedback.kept import held_files
 from .db import (DATA_SCHEMA, PAGES_SCHEMA, account_names, connect_pages_db, connect_users_db, copy_chats,
                  page_now, register_functions, safe_ws_id, ws_dir)
 from .logbuf import log
@@ -621,6 +622,8 @@ def _review_import(ws, tdir, upload_names):
             uploads = upload_refs([{"content": b[3], "props": json.loads(b[4] or "{}")} for b in blocks]
                                   + [{"content": messages} for c in page_chats for _, messages in chats[c]])
             missing = uploads - available
+            # the versions its open threads were opened on come along where the backup has them
+            uploads |= held_files(src, [row[0]]) & available
             selection_id = f"page:{row[0]}"
             warnings = [{"title": row[3], "reason": f"Missing attachment: {name}", "selection_id": selection_id}
                         for name in sorted(missing)]

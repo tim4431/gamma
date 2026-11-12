@@ -3,15 +3,17 @@ uploads/ directory. Its calls keep files where the rest of the app looks
 for them, accept only one-segment names, write whole or not at all, sweep
 what a dead write left in .partial/, store a file assembled there by a
 rename, and keep the usage total current without walking the directory on
-every read. The uploads route serves a stored file from there."""
+every read. The uploads route serves a stored file from there. What travels
+with a page leaves a work folder's build out."""
 
 import io
+import json
 import os
 import time
 
 import pytest
 
-from conftest import login, make_user
+from conftest import doc_props, login, make_user
 from gamma import storage
 from gamma.db import ws_uploads_dir
 
@@ -58,6 +60,30 @@ def test_a_stored_file_is_reached_by_name_through_a_callable(local_ws):
     assert storage.files(local_ws)(name) == ws_uploads_dir(local_ws) / name
     find = storage.files(local_ws)
     assert find("none.pdf") is None and find(f"../{name}") is None and find(".partial") is None
+
+
+def test_a_work_folder_s_build_is_held_but_never_leaves_the_computer():
+    """What travels with a page (``upload_refs(held=False)``: a mirror, a
+    share's export, a publication) leaves out the document of a work
+    folder's file read in place that is no library document; a library
+    file's versions travel, and so does an Opened file's or any page's
+    outside a work folder, read in place or not. Every one of them is
+    still held (``held=True``), so nothing is purged."""
+    def file_of(doc, **more):
+        return {**doc, "work_folder": "wf" + "0" * 22, "file_name": "main.pdf", **more}
+    build = file_of(doc_props("b1", at="path"))
+    library = file_of(doc_props("l1", at="path"), library=True)
+    stored_file = file_of(doc_props("s1"))
+    opened = doc_props("o1", at="path")
+    assert storage.upload_refs("", build, held=False) == set() == storage.upload_refs("", json.dumps(build), held=False)
+    assert storage.upload_refs("", library, held=False) == {"l1.pdf"}
+    assert storage.upload_refs("", stored_file, held=False) == {"s1.pdf"}
+    assert storage.upload_refs("", opened, held=False) == {"o1.pdf"}
+    assert storage.upload_refs("", file_of(doc_props("b1", at="path"), library="yes"), held=False) == set()
+    for props, name in ((build, "b1.pdf"), (library, "l1.pdf"), (stored_file, "s1.pdf"), (opened, "o1.pdf")):
+        assert storage.upload_refs("", props) == {name} == storage.upload_refs("", json.dumps(props))
+    # a picture on the build's page still travels
+    assert storage.upload_refs("![f](/api/uploads/p1.png)", build, held=False) == {"p1.png"}
 
 
 def test_a_name_is_one_path_segment(local_ws):

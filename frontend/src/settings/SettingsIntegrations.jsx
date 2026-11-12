@@ -13,7 +13,9 @@ const timeOf = (value) => new Date(value).toLocaleTimeString(undefined, { hour: 
 const ASSISTANTS = [["claude", t("Claude Code")], ["codex", t("Codex")], ["dsh", t("DeepSeek Harness")], ["other", t("Other")]];
 const PLATFORMS = [["windows", t("Windows PowerShell")], ["unix", t("macOS / Linux")]];
 
-// One connected assistant: how it signed in, what it may read, when it was
+// One connected assistant: how it signed in, what it may read (and whether
+// it answers feedback: a `feedback` connection replies to and resolves the
+// comments on work folders' files, docs/dev/feedback.md), when it was
 // connected and when its access lapses. OAuth connections are minted with an
 // " (OAuth)" suffix on the client's name (mcp_oauth_provider.py).
 function ConnectionRow({ item, names, busy, onEdit, onRevoke }) {
@@ -26,11 +28,12 @@ function ConnectionRow({ item, names, busy, onEdit, onRevoke }) {
   const reads = item.all_workspaces ? t("Reads all workspaces")
     : spaces.length ? t("Reads {workspaces}", { workspaces: spaces.join(", ") }) : t("Reads no workspace");
   const parts = [oauth ? t("Browser sign-in") : t("Token"), item.scope === "write" ? t("Read and write") : reads,
+    item.scope === "feedback" ? t("answers feedback") : null,
     item.created_at ? t("Connected {date}", { date: dateOf(item.created_at) }) : null, expiry].filter(Boolean);
   return <Row icon={oauth ? LinkIcon : KeyIcon} label={name}
     hint={<>{parts.join(" · ")}{daysLeft <= 0 ? <span className="uiTag warn">{t("Expired")}</span> : null}</>}>
     <div className="integrationActions">
-      {item.scope === "read" ? <button type="button" className="uiBtn sm iconSq" disabled={busy} aria-label={t("Choose workspaces")}
+      {item.scope !== "write" ? <button type="button" className="uiBtn sm iconSq" disabled={busy} aria-label={t("Choose workspaces")}
         title={t("Choose the workspaces {name} may read", { name })} onClick={() => onEdit(item)}>
         <FoldersIcon size={16} />
       </button> : null}
@@ -97,8 +100,10 @@ export function IntegrationSettings({ workspaceId }) {
     try { await work(); } catch (err) { setMessage(err.message); } finally { setBusy(false); }
   };
   const post = (url, body) => apiJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  // A read or feedback token reads the workspaces ticked; a write token is
+  // the open workspace's alone.
   const create = () => run(async () => {
-    setSecret(await post(endpoint, { name: name.trim(), scope, ...(scope === "read" ? accessBody(access) : {}) }));
+    setSecret(await post(endpoint, { name: name.trim(), scope, ...(scope !== "write" ? accessBody(access) : {}) }));
     await refresh();
   });
   const makeSetup = () => run(async () => {
@@ -258,15 +263,18 @@ export function IntegrationSettings({ workspaceId }) {
           <div className="integrationCreateControls">
             <input className="aiKeyInput" aria-label={t("Connection name")} value={name} maxLength={80}
               onChange={(event) => setName(event.target.value)} />
-            <button className="uiBtn" disabled={busy || !data || !name.trim() || !!secret || (scope === "read" && !chosen)} onClick={create}>{t("Create token")}</button>
+            <button className="uiBtn" disabled={busy || !data || !name.trim() || !!secret || (scope !== "write" && !chosen)} onClick={create}>{t("Create token")}</button>
           </div>
         </Row>
         <Row icon={ShieldIcon} label={t("Scope")} hint={scope === "write"
-          ? t("Read and write: what an offline copy of this workspace on another Gamma (Settings → Workspaces → Clones and Zotero links there) signs in with. Assistants only need read.") : t("Read-only: assistants and scripts. Choose “Read and write” for an offline copy of this workspace on another Gamma.")}>
-          <Segmented value={scope} onChange={setScope} options={[["read", t("Read-only")], ["write", t("Read and write")]]} />
+          ? t("Read and write: what an offline copy of this workspace on another Gamma (Settings → Workspaces → Clones and Zotero links there) signs in with. Assistants only need read.")
+          : scope === "feedback"
+            ? t("For a local agent or script that replies to and resolves comments on your work folders' files. It can change nothing else. The HTTP API answers in the first workspace.")
+            : t("Read-only: assistants and scripts. Choose “Read and write” for an offline copy of this workspace on another Gamma.")}>
+          <Segmented value={scope} onChange={setScope} options={[["read", t("Read-only")], ["feedback", t("Read and answer feedback")], ["write", t("Read and write")]]} />
         </Row>
-        {scope === "read" && picking ? <Row icon={FoldersIcon} label={t("Workspaces")} hint={t("What an assistant with this token may read. The HTTP API reads the first one.")} /> : null}
-        {scope === "read" && picking ? picker(t("Workspaces the token may read")) : null}
+        {scope !== "write" && picking ? <Row icon={FoldersIcon} label={t("Workspaces")} hint={t("What an assistant with this token may read. The HTTP API reads the first one.")} /> : null}
+        {scope !== "write" && picking ? picker(t("Workspaces the token may read")) : null}
         {secret ? <div className="integrationDetails">
           <p>{t("Copy this token now. Gamma will not show it again. Keep it private.")}</p>
           <CopyField label={t("New integration token")} value={secret.token} action="Copy token" />

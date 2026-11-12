@@ -17,8 +17,9 @@ import time
 import pytest
 
 from conftest import account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, workspace_of
-from gamma import config, folder_links, gamma_sync, vault_disk, vault_sync
+from gamma import config, folder_links, gamma_sync, vault_disk, vault_store, vault_sync
 from gamma.db import connect_users_db
+from gamma.feedback import files as feedback_files
 from gamma.integrations import create_token
 
 REAL_BACKGROUND = folder_links.run_in_background  # before ``disk`` stubs it
@@ -546,3 +547,63 @@ def test_the_hot_loop_gives_a_pulled_page_a_round_of_its_own(owner, disk, monkey
     assert "a hot thought" in (disk / "Hot" / "FL hot paper.md").read_text(encoding="utf-8")
     assert key not in folder_links._dirty
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
+def test_the_hot_loop_writes_a_marked_work_folders_feedback_files_under_its_lock(owner, disk, monkeypatch):
+    """The feedback pass of the hot loop, the writer stood in for
+    (gamma/feedback/files.py has its own tests): a work folder marked has
+    its files written under its lock and the mark settled; a lock a round
+    holds keeps the mark, as does a pass that left something for the next;
+    a paused link drops it; a page of no work folder marks nothing; every
+    whole round writes, and the removal takes the files. The app's own hot
+    loop runs beside the tests (``HOT_S`` apart), so the pass is driven
+    directly but for the tick's one check."""
+    dest = disk / "FL feedback"
+    dest.mkdir(parents=True)
+    (dest / "Thoughts.md").write_text("a thought\n", encoding="utf-8")
+    then = time.time() - 10
+    os.utime(dest / "Thoughts.md", (then, then))
+    link = _create(owner, path=str(dest), new_folder=True, push="everything")
+    assert _sync(owner, link["id"])["feedback"] == {"open": 0}
+    assert (dest / feedback_files.DIR / "open.json").is_file()
+    ws, w = workspace_of("fl_owner"), link["folder_id"]
+    page = vault_store.files(link["id"])["Thoughts.md"]["page_id"]
+    written, answer = [], {"open": 0}
+
+    def write(marked):
+        written.append((marked["id"], folder_links._lock(marked["id"]).locked()))
+        return dict(answer)
+
+    def feedback_pass():
+        links = {l["id"]: l for l in folder_links.all_links() if folder_links.engine(l) and not l["remote_url"]}
+        for marked_ws, marked_w in feedback_files.due(0):
+            folder_links._feedback_pass(marked_ws, marked_w, links, feedback_files)
+    monkeypatch.setattr(feedback_files, "write", write)
+    feedback_files.mark(ws, page)                      # a page's mark is its work folder's; the tick finds it
+    with pytest.MonkeyPatch.context() as hot:
+        hot.setattr(folder_links, "HOT_S", 0)
+        folder_links.hot_tick()
+    assert written and set(written) == {(link["id"], True)} and (ws, w) not in feedback_files.due(0)
+    n = len(written)
+    feedback_files.mark_folder(ws, w)
+    lock = folder_links._lock(link["id"])
+    assert lock.acquire(blocking=False)                # a round holds the vault: the mark waits
+    try:
+        feedback_pass()
+        assert len(written) == n and (ws, w) in feedback_files.due(0)
+    finally:
+        folder_links._let_go(link["id"], lock)
+    answer["left"] = 1                                 # a pass that left something keeps the mark
+    feedback_pass()
+    assert len(written) == n + 1 and (ws, w) in feedback_files.due(0)
+    del answer["left"]
+    feedback_pass()
+    assert len(written) == n + 2 and (ws, w) not in feedback_files.due(0)
+    owner.patch(f"/api/folder-links/{link['id']}", json={"paused": True}).raise_for_status()
+    feedback_files.mark_folder(ws, w)                  # paused: dropped, nothing written
+    feedback_pass()
+    assert len(written) == n + 2 and (ws, w) not in feedback_files.due(0)
+    feedback_files.mark(ws, "no-such-page")
+    assert (ws, w) not in feedback_files.due(0)
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+    assert not (dest / feedback_files.DIR).exists() and (dest / vault_disk.MARKER_DIR).is_dir()

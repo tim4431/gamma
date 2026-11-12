@@ -177,6 +177,7 @@ rule.
   .gamma/
     vault.json              the marker: format, id, notes_folder
     trash/<stamp>/<path>    the files of pages that left the vault
+    feedback/               a work folder's feedback files: open.json, open.md, img/, requests/ (feedback.md "The files")
   .gammaignore              what the vault tracks, where one says (Choose files… writes it)
   Sub/                      a folder below the vault's folder
     A paper.pdf             a paper, read where it is
@@ -259,9 +260,9 @@ get if stored; a `linked_files` row says which path holds that name.
 Nothing is copied, and nothing is ever written into the file or beside it.
 
 **The read.** `storage.open_path` answers a name from the uploads directory,
-else from a linked file (`_linked`, only where vaults are kept): the first
-of the name's paths whose size and time are as recorded, so what is read is
-what was hashed. A path whose stat moved reads as nothing, and the
+else from a linked file (`linked_path`, only where vaults are kept): the
+first of the name's paths whose size and time are as recorded, so what is
+read is what was hashed. A path whose stat moved reads as nothing, and the
 listeners of `storage.linked_moved` hear of it; one that is gone reads as
 nothing and is the page's missing file. The read never hashes and never
 waits: it runs on every request, HEAD and range request. `linked_stat`
@@ -302,11 +303,24 @@ failure. A linked file is served `Cache-Control: no-cache`, with
 FileResponse's ETag of its size and time: unlike a stored name, which is
 `immutable`, its path can hold other bytes tomorrow.
 
+**A version kept while its comments are open.** A page read in place
+that has an open comment thread keeps the bytes it shows stored
+(`uploads/<hash>.pdf`, the name a `linked_files` row holds too), and the
+version each thread was opened on is held until the thread is resolved:
+the relocation run and the feedback reader go on reading it after the
+next build at the path takes the file's bytes away. The thread's open
+stores the current bytes, a replacement while a thread is open stores the
+incoming ones first (`feedback.kept.keeps_bytes`, the one predicate with a
+library file's versions, "A work folder's round"), and the sweep below
+stores what was left unstored ([feedback.md](feedback.md) "The commented
+version kept").
+
 **The sweep** (`linked_files.sweep`, from each tick): the opened pages to
-forget (below), the rows of workspaces that are gone, then every row's
-stat, a moved one queued as a read would queue it. A read may never come
-for a file an open viewer holds, and a file that was still being written
-has nobody else to look at it again.
+forget (below), the bytes of a page with an open thread not stored yet
+(`feedback.kept.repair`), the rows of workspaces that are gone, then every
+row's stat, a moved one queued as a read would queue it. A read may never
+come for a file an open viewer holds, and a file that was still being
+written has nobody else to look at it again.
 
 **What never sees a linked file.** `storage.exists`, `size`, `stat`,
 `touch` and `list` mean "stored here", which keeps linked files out of the
@@ -1064,7 +1078,18 @@ unmarked folder gets the round above, unchanged. In a work folder:
   `.gamma/trash` as above; any other file of a page that left stays where it
   is, its row an in-place tombstone (below).
 - **A library file's versions** are stored as they come (`LocalSink.store`
-  before `replace_attachment`), its document still at `path`.
+  before `replace_attachment`), its document still at `path`; so are any
+  file's while a comment thread on it is open (`feedback.kept.keeps_bytes`,
+  the one predicate at the replacement; [feedback.md](feedback.md) "The
+  commented version kept").
+- **The feedback files.** After its sync a whole round writes the work
+  folder's `.gamma/feedback/` (`folder_links._vault_round`, the summary in
+  `status.feedback`; [feedback.md](feedback.md) "The files"), a held round
+  too, unless the marker, the disk or the account stopped it; the hot loop
+  writes them within a pass of a change ("When rounds run"). A paused or
+  choosing vault writes none, and the files go with the vault
+  (`_remove_vault`) and when it is let go (`_work_turn`): they are Gamma's
+  own, deleted directly, never through the trash.
 
 **The selection.** `.gammaignore` at the vault's root says what it tracks;
 none is the default, notes, PDFs and pictures (`ignore_rules.DEFAULT_TEXT`).
@@ -1175,7 +1200,14 @@ app counts and confirms first, and only the vault's maker may ask.
   nothing, makes or moves nothing in a directory the disk changed since the
   last scan (`_steady`, by its file id), and keeps no state. A mark stays
   until a round covered its page: a vault whose round runs leaves it for
-  the next tick, as does a file still being written.
+  the next tick, as does a file still being written. The same tick then
+  writes the feedback files of the work folders a comment write, an op
+  commit or a Send marked `HOT_S` ago or more (`feedback.files.due`,
+  `_feedback_pass`, under the link's lock): a lock a round holds keeps the
+  mark for the next tick, as does a pass that left a file a reader held or
+  pictures past its cap; a paused, failed or choosing link, or none, drops
+  it, its next whole round writing ([feedback.md](feedback.md) "The
+  files").
 - **The hint** (`POST /hint`): a window of the app got the focus; a tick
   runs now, in the background. There is no file watcher: the tick, the hot
   loop's stat of open pages and the focus cover it.
@@ -1203,19 +1235,23 @@ first. From the moment it is kept until it ends, the vault reads `running`
 client following Sync now never takes the round before it for its own. A round marks
 each page it wrote (`collab.publish(ws, page, {"t": "vault"})`), and the
 page's chip reads its standing again. A paused vault (`PATCH {paused}`,
-`status.paused_at`) is left out of the tick and the hot loop; a sync asked
-for still runs it, and a round already running finishes. The pause is the
-user's: a round's status never overwrites it.
+`status.paused_at`) is left out of the tick and the hot loop, its feedback
+files waiting until it syncs again; a sync asked for still runs it, and a
+round already running finishes. The pause is the user's: a round's status
+never overwrites it.
 
 A folder vault's `status`: `{running, started_at, last_sync, last_error,
 failed_at?, counts, kept, untracked, refused?, held?, stopped?, offline?,
 shared?, capped?, upgraded_at?, work_folder_at?, too_many?, push_off?,
-paused_at?, progress?, folder_path}`, with `counts` `{added, updated,
+feedback?, paused_at?, progress?, folder_path}`, with `counts` `{added, updated,
 renamed, removed, kept, unchanged, sent, waiting, read, conflicts}` and
 `kept` the first
 `KEPT_SHOWN` (50) files kept, `{path, why, force}` (`force`: a force pull
 would replace it). `shared` lists the pages filed in it that an older
-vault beside it keeps.
+vault beside it keeps. `feedback` is a work folder's feedback files as the
+round left them, `{open, left?, error?}`: the open threads, what waits for
+the next pass, or why nothing was written ([feedback.md](feedback.md) "The
+files").
 
 While it runs, a folder vault's round writes how far it is into the status
 as `progress` (`folder_links._progress_writer`, from `Round`'s `progress`

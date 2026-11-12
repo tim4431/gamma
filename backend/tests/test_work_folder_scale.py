@@ -2,9 +2,11 @@
 classified"): 20,000 files of one work folder beside 500 library pages
 leave the library listing as fast as it was (the listing index holds what
 the library lists), a directory of 10,000 files reads its first page of
-rows at once, the directories' counts come from one indexed read, and the
-op rule's read of a folder tree of 2,000 directories stays small. The rows
-are inserted directly, as a vault's would stand.
+rows at once, the directories' counts come from one indexed read, the op
+rule's read of a folder tree of 2,000 directories stays small, and the
+feedback document of 50 open threads among the files reads at once
+(docs/dev/feedback.md). The rows are inserted directly, as a vault's would
+stand.
 
 Timed like tests/test_perf.py, and marked ``perf`` with it: ``python -m
 pytest tests/test_work_folder_scale.py -m perf -q`` from backend/, alone, on
@@ -20,8 +22,10 @@ from types import SimpleNamespace
 import pytest
 
 from conftest import account_of, login, make_folder, make_page, make_user, mark_work_folder, workspace_of
+from gamma import comments
 from gamma.blocks_store import BLOCK_COLUMNS, FOLDERS, touch_page
 from gamma.db import connect_pages_db, page_now
+from gamma.feedback import entries
 from gamma.routers import blocks as blocks_router
 from gamma.work_folders.marks import Tree
 from test_perf import budget, measure
@@ -145,3 +149,25 @@ def test_the_op_rule_reads_a_tree_of_2000_directories(big, request):
     tree = read(None)
     assert len(tree.parent) > TREE_DIRS and tree.work_of(tree.order[-1]) == big.w
     budget(request, measure(read), 16)
+
+
+def test_the_feedback_document_of_50_open_threads_reads_at_once(big, request):
+    """50 open threads on files of W among its 20,000: ``entries.document``
+    for W, the whole work folder, without the pictures drawn and without
+    the SyncTeX map (no vault of this computer keeps W)."""
+    with connect_pages_db(big.ws) as conn:
+        pages = [r[0] for r in conn.execute(
+            "SELECT id FROM unified_blocks WHERE work_folder = ? AND parent_id = 'root' "
+            "AND json_extract(properties, '$.file_name') LIKE '%.pdf' ORDER BY content LIMIT 50", (big.w,))]
+        assert len(pages) == 50
+        for page_id in pages:
+            comments.create(conn, page_id, block_id=page_id, body="a thought on this file", author=account_of(USER),
+                            author_name=USER)
+
+    def read(_):
+        with connect_pages_db(big.ws) as conn:
+            return entries.document(big.ws, conn, entries.resolve_scope(conn, big.w), owner=USER, sources=False)
+
+    doc = read(None)
+    assert doc["count"] == 50 and {e["kind"] for e in doc["entries"]} == {"file"}
+    budget(request, measure(read), 300)

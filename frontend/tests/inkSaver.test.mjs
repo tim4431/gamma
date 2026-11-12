@@ -62,8 +62,9 @@ function answer(req, nextUrl) {
 // in full in `statuses`). `drafts`: [{id, ink, base, baseIds, upload}], all
 // dirty; `blocks`: the page's tree, by default each draft's block naming
 // its base. `room`: what keepaliveRoom answers (its asks in `ka.asked`).
+// `keeps`: the saver's (a group with a comment thread), none by default.
 // `stop()`: no request is answered from then on (withMockTimers).
-function setup({ drafts = [], blocks = null, reply = answer, room = 56 * KiB } = {}) {
+function setup({ drafts = [], blocks = null, reply = answer, room = 56 * KiB, keeps } = {}) {
   const log = [], statuses = [], sent = [];
   const idOf = new Map(drafts.map((d) => [d.ink, d.id]));
   let uploads = 0, stopped = false;
@@ -108,6 +109,7 @@ function setup({ drafts = [], blocks = null, reply = answer, room = 56 * KiB } =
     apiJson,
     API: "/api",
     keepaliveRoom: (priority) => { ka.asked.push(priority); return ka.room; },
+    keeps,
   });
   const env = { saver, store, log, statuses, sent, ka, stop: () => { stopped = true; } };
   savers.push(env);
@@ -215,6 +217,18 @@ test("a group erased empty with no caption and no notes is DELETEd, then markDel
       "markSaved g1 /api/uploads/u1.ink /api/uploads/u1.ink", "liveSaved g1"]);
     assert.equal(JSON.parse(kept.sent[1].init.body).properties.ink_strokes, 0);
   }
+}));
+
+test("a group with a comment thread erased empty keeps its block, saved as an empty drawing; one without goes", () => withMockTimers(async () => {
+  const drafts = [{ id: "g1", ink: emptyDrawing(), base: "/api/uploads/old.ink" }, { id: "g2", ink: emptyDrawing(), base: "/api/uploads/two.ink" }];
+  const env = setup({ drafts, keeps: (id) => id === "g1" });
+  await env.saver.flushInk();
+  assert.deepEqual(env.log.filter((line) => !line.startsWith("status")).sort(), [
+    "DELETE /api/blocks/g2", "POST /api/upload-ink", "PUT /api/blocks/g1",
+    "markDeleted g2 /api/uploads/two.ink", "markSaved g1 /api/uploads/u1.ink /api/uploads/u1.ink", "markSending g1 /api/uploads/u1.ink",
+    "liveSaved g1",
+  ].sort());
+  assert.equal(JSON.parse(env.sent.find((r) => r.init.method === "PUT").init.body).properties.ink_strokes, 0);
 }));
 
 test("a 5xx, a network error or a 404 (the block's insert still queued) says the handwriting is not saved yet and tries again 2 s later, only when no save waits already", () => withMockTimers(async () => {

@@ -51,7 +51,9 @@ export async function mcpScenarios(env) {
       await ctx.close();
     }
   });
-  async function request() {
+  // An authorization request, for reading alone or (`scope` with
+  // gamma:feedback) also answering the user's feedback.
+  async function request(scope = "gamma:read") {
     const redirect = "https://client.example/callback";
     const verifier = randomBytes(32).toString("base64url");
     const registered = await fetch(`${server.base}/oauth/register`, { method: "POST",
@@ -61,9 +63,10 @@ export async function mcpScenarios(env) {
     const client = await registered.json();
     const params = new URLSearchParams({ response_type: "code", client_id: client.client_id, redirect_uri: redirect,
       resource: `${server.base}/mcp`, code_challenge: createHash("sha256").update(verifier).digest("base64url"),
-      code_challenge_method: "S256", state: "browser-test", scope: "gamma:read" });
+      code_challenge_method: "S256", state: "browser-test", scope });
     return { url: `${server.base}/oauth/authorize?${params}`, client, redirect, verifier };
   }
+  const FEEDBACK_BOX = "Also let it answer my comments on work-folder files (reply and resolve)";
 
   await step("mcp: browser login, workspace approval, token exchange and revocation", async () => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
@@ -87,6 +90,8 @@ export async function mcpScenarios(env) {
       assert(await page.getByRole("button", { name: "Allow read-only access" }).isDisabled(), "a connection reads at least one workspace");
       await home.check();
       await other.check();
+      // a client asking to read alone: the feedback box starts unticked, and the connection is read-only
+      assert(!await page.getByRole("checkbox", { name: FEEDBACK_BOX }).isChecked(), "answering feedback is not asked for");
       if (process.env.GAMMA_MCP_SCREENSHOTS) {
         fs.mkdirSync(process.env.GAMMA_MCP_SCREENSHOTS, { recursive: true });
         await page.screenshot({ path: path.join(process.env.GAMMA_MCP_SCREENSHOTS, "consent-desktop.png") });
@@ -121,6 +126,43 @@ export async function mcpScenarios(env) {
       await ctx.close();
       await alice.api(`/api/workspaces/${second.id}`, { method: "DELETE" });
     }
+  });
+
+  await step("mcp: a client asking for gamma:feedback gets the consent box ticked, and the connection allowed may answer feedback", async () => {
+    const ctx = await alice.context(browser);
+    try {
+      await ctx.route("https://client.example/callback**", (route) => route.fulfill({ status: 200, contentType: "text/plain", body: "Connection approved." }));
+      const flow = await request("gamma:read gamma:feedback");
+      const page = await openPage(ctx, flow.url);
+      const box = page.getByRole("checkbox", { name: FEEDBACK_BOX });
+      await box.waitFor();
+      assert(await box.isChecked(), "asked for, the box starts ticked");
+      await page.getByText("Read and answer feedback", { exact: true }).waitFor();
+      // unticked, the page reads as a read-only connection's; ticked again, as one that answers
+      await box.uncheck();
+      await page.getByRole("button", { name: "Allow read-only access" }).waitFor();
+      await box.check();
+      await page.getByRole("button", { name: "Allow reading and answering" }).click();
+      await page.waitForURL("https://client.example/callback**");
+      const callback = new URL(page.url());
+      const response = await fetch(`${server.base}/oauth/token`, { method: "POST", body: new URLSearchParams({
+        grant_type: "authorization_code", client_id: flow.client.client_id, code: callback.searchParams.get("code"),
+        code_verifier: flow.verifier, redirect_uri: flow.redirect, resource: `${server.base}/mcp`,
+      }) });
+      assertEq(response.status, 200);
+      const granted = await response.json();
+      assert(granted.scope.split(" ").includes("gamma:feedback"), `the token's scope: ${granted.scope}`);
+      const listed = await fetch(`${server.base}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${granted.access_token}`,
+        "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
+      assertEq(listed.status, 200);
+      const names = (await listed.json()).result.tools.map((tool) => tool.name);
+      assert(names.includes("reply_feedback") && names.includes("resolve_feedback"), `the answering tools are listed: ${names.join(", ")}`);
+      const connection = (await alice.api("/api/integrations/tokens")).tokens.find((t) => t.name === "Codex browser test (OAuth)");
+      assertEq(connection?.scope, "feedback", "a feedback connection in settings");
+      await alice.api(`/api/integrations/tokens/${connection.id}`, { method: "DELETE" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
   });
 
   await step("mcp: a saved library page cannot dismiss authorization", async () => {

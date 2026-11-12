@@ -13,7 +13,7 @@ import {
 } from "../src/ink/ink.js";
 import {
   actionEdit, centredOn, clipOf, duplicatePlan, editPictures, inkChips, mergePlan, pasteShift, removePictures, selectAllItems,
-  selectedPictures, selectedStrokes, selectionBox, selectionChanges, selectionStill, splitPlan, transcribeGroups,
+  selectedPictures, selectedStrokes, selectionBox, selectionChanges, selectionStill, splitPlan, transcribeGroups, wholeGroup,
 } from "../src/ink/selectionEdits.js";
 import { reshapeInk } from "../src/ink/shapes.js";
 import { mirrorPicture, movePicture, normalizePicture, picturesBySurface, transformPicture, turnedBox } from "../src/markup/picture.js";
@@ -223,6 +223,31 @@ test("Merge into note appends a whole group to the previous one on its surface, 
   const atCap = { ...groups, g1: page(...many(MAX_STROKES - 2)) };
   assert.equal(mergePlan(whole("g2"), groupsOf(atCap), tree, surfaces).changes[0].after.strokes.length, MAX_STROKES,
     "a merge that ends exactly at the cap goes through");
+});
+
+test("Merge into note leaves a group with a comment thread as it is: never merged away, never merged into", () => {
+  const groups = { g1: page(stroke("a")), g2: page(stroke("b", 50)), g3: page(stroke("d", 200)) };
+  const inkOf = groupsOf(groups);
+  const surfaces = new Map([[1, [{ id: "g1" }, { id: "g2" }, { id: "g3" }]]]);
+  const tree = ["g1", "g2", "g3"].map((id) => ({ id, content: "", properties: {}, children: [] }));
+  const whole = (id) => ({ page: 1, items: [{ id, ids: ids(groups[id]) }] });
+  const threaded = (id) => id === "g2";
+  assert.deepEqual(mergePlan(whole("g2"), inkOf, tree, surfaces, threaded), { refused: "Not merged: this handwriting has comments." });
+  assert.equal(mergePlan(whole("g3"), inkOf, tree, surfaces, threaded).changes[0].id, "g1", "the one before it has a thread: the next one before");
+  assert.equal(mergePlan(whole("g1"), inkOf, tree, surfaces, threaded).changes[0].id, "g3", "the first after it with none");
+  assert.equal(mergePlan(whole("g1"), inkOf, tree, surfaces, (id) => id !== "g1"), null, "every other group has one");
+  assert.equal(mergePlan(whole("g2"), inkOf, tree, surfaces).changes[0].id, "g1", "no threads by default");
+});
+
+test("wholeGroup: the one group a selection takes every stroke of, else null", () => {
+  const inkOf = groupsOf({ g1: page(stroke("a"), stroke("b", 50)), g2: page(stroke("c")), g0: page() });
+  assert.equal(wholeGroup({ page: 1, items: [{ id: "g1", ids: ["b", "a"] }] }, inkOf), "g1");
+  assert.equal(wholeGroup({ page: 1, items: [{ id: "g1", ids: ["a"] }] }, inkOf), null, "part of it");
+  assert.equal(wholeGroup({ page: 1, items: [{ id: "g1", ids: ["a", "x"] }] }, inkOf), null, "a stroke it no longer holds");
+  assert.equal(wholeGroup({ page: 1, items: [{ id: "g1", ids: ["a", "b"] }, { id: "g2", ids: ["c"] }] }, inkOf), null, "two groups");
+  assert.equal(wholeGroup({ page: 1, items: [{ id: "g0", ids: [] }] }, inkOf), null, "an empty group");
+  assert.equal(wholeGroup({ page: 1, items: [], pictures: ["p"] }, inkOf), null, "pictures alone");
+  assert.equal(wholeGroup(null, inkOf), null);
 });
 
 test("select all takes every stroke of the surface's groups, a group with none left out", () => {

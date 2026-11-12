@@ -459,6 +459,25 @@ def work_props(folder_id, file_name, *, library=False, doc=None, directory="") -
     return props
 
 
+def token_for(owner, scope="write", name="Script") -> str:
+    """A token the account of the client ``owner`` makes by hand (Settings →
+    AI → Integrations → Tokens, ``POST /api/integrations/tokens``) for the
+    workspace it has open (its ``X-Gamma-Workspace``, else its own), of
+    ``scope`` and named ``name``: what a script or a local agent holds."""
+    r = owner.post("/api/integrations/tokens", json={"name": name, "scope": scope})
+    assert r.status_code == 201, r.text
+    return r.json()["token"]
+
+
+def thread_on(owner, page_id, block_id, body="A comment", **more) -> dict:
+    """A new thread the client ``owner`` opens on the block ``block_id`` of
+    the page ``page_id`` (the page itself when they are one) in the
+    workspace it has open; the thread as the API answers it."""
+    r = owner.post(f"/api/pages/{page_id}/comments", json={"block_id": block_id, "body": body, **more})
+    assert r.status_code == 201, r.text
+    return r.json()["thread"]
+
+
 def files_in(folder):
     """``storage.files`` over a test's own folder: ``name -> Path | None``,
     for a renderer handed its files with no workspace behind them."""

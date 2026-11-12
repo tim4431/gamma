@@ -197,8 +197,22 @@ is looked for.
 A file not stored logs
 `[relocate] <page>: the file <id> is no longer stored; its highlights are placed by their quotes`,
 and they are, without context. That happens on a copy that never received
-the file (a mirror, a share's export), or after it was removed outside the
-orphan bookkeeping.
+the file (a mirror, a share's export), after it was removed outside the
+orphan bookkeeping, and on a page that reads its PDF in place (a work
+folder's build, an opened PDF, a vault's PDF) with no comment thread open:
+the outgoing bytes were never stored, and the path holds the new ones.
+
+While a thread on such a page is open, every build it shows is stored
+(`feedback/kept.py`, [feedback.md](feedback.md) "The commented version
+kept"): the bytes at the thread's open, then the incoming ones first at
+each replacement (`vault_sync.LocalRemote.replace_pdf`,
+`linked_files._take_bytes`). So the outgoing file the stamps name is in
+the store, which `find_upload_file` reads before a linked path, the run
+places an area by the text inside it however many builds follow, and the
+replacement's `keep_old_days` applies to it once nothing holds it. The
+thread's own version is held until its resolve. A highlight made on a
+build that was replaced before its thread was opened is placed by its
+quote, as without a thread: nothing is stored at the first highlight.
 
 The stamp and a `prev`'s `doc_id` are references (`storage.upload_refs`).
 So a pending highlight holds the file it is matched from through any number

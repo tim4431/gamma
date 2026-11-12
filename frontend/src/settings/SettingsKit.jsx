@@ -304,13 +304,13 @@ export function SubDialog({ title, onClose, children, draft, guard = null, class
     if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
     return () => previous?.focus?.();
   }, []);
-  // The question gone (answered, or what it asked about over) took the
-  // focused button with it: the dialog takes the focus back, so Escape
-  // and Tab stay its own.
-  const asked = Boolean(asking);
+  // The focused control gone (the question answered, or what it asked
+  // about over; a button disabled while its work runs): the dialog takes
+  // the focus back, so Escape and Tab stay its own.
   React.useEffect(() => {
-    if (!asked && !ref.current?.contains(document.activeElement)) ref.current?.focus();
-  }, [asked]);
+    const active = document.activeElement;
+    if (!active || active === document.body || active.disabled) ref.current?.focus({ preventScroll: true });
+  });
   return (
     <DialogOverlay className="subDialog" {...backdrop} onClick={(event) => { event.stopPropagation(); backdrop.onClick(event); }}>
       <div className={`reportModal ${className}`} role="dialog" aria-modal="true" aria-label={title} data-guide={guide}

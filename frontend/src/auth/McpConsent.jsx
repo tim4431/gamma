@@ -68,9 +68,14 @@ export function McpAuthorization({ requestId }) {
   return <McpConsent key={`${requestId}:${user}`} requestId={requestId} />;
 }
 
+// The consent page: the workspaces the connection may read, and whether it
+// may also answer the user's comments on work-folder files (reply and
+// resolve: the `feedback` scope, docs/dev/feedback.md "Tokens and MCP"),
+// ticked when the client asked for gamma:feedback.
 export default function McpConsent({ requestId }) {
   const [details, setDetails] = React.useState(null);
   const [access, setAccess] = React.useState({ all: false, ids: [] });
+  const [feedback, setFeedback] = React.useState(false);
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   React.useEffect(() => {
@@ -80,6 +85,7 @@ export default function McpConsent({ requestId }) {
         if (!active) return;
         setDetails(data);
         setAccess({ all: false, ids: [data.default_workspace || data.workspaces[0]?.id].filter(Boolean) });
+        setFeedback(!!data.feedback_asked);
       }).catch((err) => { if (active) setError(err.message); });
     return () => { active = false; };
   }, [requestId]);
@@ -88,7 +94,7 @@ export default function McpConsent({ requestId }) {
     try {
       const result = await apiJson(`${API}/integrations/oauth/consent`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ request_id: requestId, csrf: details.csrf, ...accessBody(access), approve }),
+        body: JSON.stringify({ request_id: requestId, csrf: details.csrf, ...accessBody(access), feedback, approve }),
       });
       window.location.assign(result.redirect_url);
     } catch (err) { setError(err.message); setBusy(false); }
@@ -111,10 +117,19 @@ export default function McpConsent({ requestId }) {
       <label>{t("Workspaces it may read")}</label>
       <WorkspacePicker workspaces={details.workspaces} value={access} onChange={setAccess} disabled={busy}
         label={t("Workspaces it may read")} />
+      <label className="mcpFeedback">
+        <input type="checkbox" checked={feedback} disabled={busy} onChange={(e) => setFeedback(e.target.checked)} />
+        {" "}{t("Also let it answer my comments on work-folder files (reply and resolve)")}
+      </label>
       <div className="mcpPermissions">
-        <strong>{t("Read-only access")}</strong>
-        <ul><li>{t("Read pages, notes, highlights, and PDF text.")}</li>
-          <li>{t("Cannot edit or delete your library.")}</li></ul>
+        {feedback ? <>
+          <strong>{t("Read and answer feedback")}</strong>
+          <ul><li>{t("Reads your library and answers comments on your work folders' files. Cannot edit or delete anything else.")}</li></ul>
+        </> : <>
+          <strong>{t("Read-only access")}</strong>
+          <ul><li>{t("Read pages, notes, highlights, and PDF text.")}</li>
+            <li>{t("Cannot edit or delete your library.")}</li></ul>
+        </>}
         <p className="loginConflictHint">{t("Content the assistant reads is shared with its provider.")}</p>
       </div>
       <p className="loginConflictHint">{t("Access lasts 90 days. Change the workspaces or disconnect any time in Settings → AI → Integrations.")}</p>
@@ -124,7 +139,7 @@ export default function McpConsent({ requestId }) {
       </details>
       <div className="mcpConsentActions">
       <button className="loginBtn" disabled={busy || !(access.all || access.ids.length)} onClick={() => decide(true)}>
-        <MorphText>{busy ? t("Connecting…") : t("Allow read-only access")}</MorphText>
+        <MorphText>{busy ? t("Connecting…") : feedback ? t("Allow reading and answering") : t("Allow read-only access")}</MorphText>
       </button>
       <button className="loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>
       </div>

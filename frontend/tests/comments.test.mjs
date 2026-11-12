@@ -4,9 +4,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  abandonedCommentHighlight, addComment, anchorSnippet, canDeleteComment, canEditComment, canReportComment, commentOnlyHighlight, deleteComment,
-  EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, keepThreads, laterComments, popoverThreads, resolveThread, shortCount, threadLink, threadsIn,
-  upsertThread,
+  abandonedCommentHighlight, addComment, anchorSnippet, anchorWords, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment,
+  commentOnlyHighlight, deleteComment, EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, isWithdrawn, keepThreads,
+  laterComments, popoverThreads, resolveThread, sentChip, shortCount, threadLink, threadPlace, threadsIn, upsertThread,
 } from "../src/comments/comments.js";
 
 const c = (id, thread, author, at, extra = {}) => ({
@@ -128,6 +128,72 @@ test("who may edit and delete: the author, and for deleting the owner too; a tom
   assert.ok(canDeleteComment(mine, "ben", true), "the owner deletes anyone's");
   assert.ok(!canDeleteComment(mine, "ben"));
   assert.ok(!canDeleteComment({ ...mine, deleted: true }, "ann", true));
+});
+
+test("an agent's comment: its name on the line and the connection in the title; the person deletes it, never edits it", () => {
+  const agents = c("x", "x", "ann", "t", { agent: "Claude Code" });
+  assert.equal(authorLabel(agents), "Claude Code");
+  assert.equal(authorTitle(agents), "Written by Claude Code with ann's connection");
+  assert.equal(authorTitle({ ...agents, author: "" }), "Written by Claude Code with Someone's connection", "an account gone");
+  const own = c("y", "y", "ann", "t", { agent: "" });
+  assert.equal(authorLabel(own), "ann");
+  assert.equal(authorTitle(own), "ann");
+  assert.ok(!canEditComment(agents, "ann"), "the agent's to change");
+  assert.ok(canEditComment(own, "ann"));
+  assert.ok(canDeleteComment(agents, "ann"), "the person's to delete");
+  assert.ok(canDeleteComment(agents, "ben", true), "the owner's, any");
+  assert.ok(!canDeleteComment(agents, "ben"), "another's, none");
+  assert.ok(!canDeleteComment(agents, ""), "a link visitor's, none");
+  assert.ok(!canDeleteComment({ ...agents, deleted: true }, "ann"));
+});
+
+test("a thread resolved here names no agent; an agent's resolve is the server's", () => {
+  const list = page().map((x) => (x.id === "t3" ? { ...x, resolved_agent: "Claude Code" } : x));
+  const reopened = resolveThread(list, "t3", false, "ann", "2026-10-10T00:00:00.000000Z");
+  assert.equal(reopened.find((x) => x.id === "t3").resolved_agent, "");
+  const again = resolveThread(list, "t3", true, "ann", "2026-10-10T00:00:00.000000Z");
+  assert.equal(again.find((x) => x.id === "t3").resolved_agent, "");
+});
+
+test("what a thread is on, in words: the quote, the text, else a caption-less ink group's page", () => {
+  const pos = { pageNumber: 4, width: 612, height: 792, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [] };
+  assert.equal(anchorWords({ id: "h", content: "my note", properties: { quote: "the quote", pdf_position: pos } }), "the quote");
+  assert.equal(anchorWords({ id: "n", content: "a note", properties: {} }), "a note");
+  assert.equal(anchorWords({ id: "g", content: "", properties: { ink_url: "/api/uploads/a.ink", pdf_position: pos } }), "Handwriting on page 4");
+  assert.equal(anchorWords({ id: "g", content: "the arrow", properties: { ink_url: "/api/uploads/a.ink", pdf_position: pos } }), "the arrow",
+    "a caption");
+  assert.equal(anchorWords({ id: "g", content: "", properties: { ink_url: "/api/uploads/a.ink" } }), "", "a group on a sheet");
+  assert.equal(anchorWords(undefined), "", "a block the page does not show");
+});
+
+test("the Send chip: Sent while the request waits, the agent at work, Failed with its reason; none without one, or withdrawn", () => {
+  const on = (state, detail = "") => ({ ...page()[0], sent: { request_id: "r1", state, at: "2026-11-10T13:59:00.000000Z", detail } });
+  assert.deepEqual(sentChip(on("sent")), { state: "sent", label: "Sent", title: "Waiting for the agent", tone: "pending" });
+  assert.deepEqual(sentChip(on("running", "Editing sections/method.tex")),
+    { state: "running", label: "The agent is working", title: "Editing sections/method.tex", tone: "pending" });
+  assert.equal(sentChip(on("running")).title, "The agent is working");
+  assert.deepEqual(sentChip(on("failed", "the build failed")), { state: "failed", label: "Failed", title: "Failed: the build failed", tone: "failed" });
+  assert.equal(sentChip(on("failed")).title, "Failed");
+  assert.ok(isWithdrawn(on("failed", "withdrawn").sent));
+  assert.ok(!isWithdrawn(on("running", "withdrawn").sent));
+  assert.equal(sentChip(on("failed", "withdrawn")), null, "the person took it back");
+  assert.equal(sentChip({ ...page()[0], sent: null }), null);
+  assert.equal(sentChip(page()[0]), null);
+});
+
+test("what became of a thread's place after a rebuild: a highlight moved or lost, ink drawn on an earlier build", () => {
+  const pos = (extra = {}) => ({ pageNumber: 1, width: 612, height: 792, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [], ...extra });
+  const hl = (extra) => ({ id: "h", content: "", properties: { quote: "q", pdf_position: pos(extra) } });
+  assert.equal(threadPlace({ made_on: "a" }, hl(), "b"), "", "a highlight placed again exactly");
+  assert.equal(threadPlace({ made_on: "a" }, hl({ approx: true, match: 0.8 }), "b"), "moved");
+  assert.equal(threadPlace({ made_on: "a" }, hl({ approx: true, lost: true }), "b"), "lost");
+  const ink = { id: "g", content: "", properties: { ink_url: "/api/uploads/a.ink", pdf_position: pos() } };
+  assert.equal(threadPlace({ made_on: "a" }, ink, "b"), "earlier");
+  assert.equal(threadPlace({ made_on: "b" }, ink, "b"), "", "the build it was drawn on");
+  assert.equal(threadPlace({ made_on: "" }, ink, "b"), "", "a thread from before the file was named");
+  assert.equal(threadPlace({ made_on: "a" }, ink, ""), "", "a page that shows no file");
+  assert.equal(threadPlace({ made_on: "a" }, { id: "n", content: "a note", properties: {} }, "b"), "", "a note");
+  assert.equal(threadPlace({ made_on: "a" }, undefined, "b"), "", "a block the page no longer shows");
 });
 
 test("who may report: anyone but the author, a link visitor too; a tombstone no one", () => {

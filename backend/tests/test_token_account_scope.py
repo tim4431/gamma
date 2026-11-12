@@ -31,7 +31,7 @@ def owner():
     return c
 
 
-@pytest.mark.parametrize("scope", ["read", "write"])
+@pytest.mark.parametrize("scope", ["read", "write", "feedback"])
 def test_a_token_never_changes_the_account(owner, scope):
     ws = workspace_of("tas_owner")
     entry = next(e for e in ai_settings.load_provider_entries(account_of("tas_owner")))

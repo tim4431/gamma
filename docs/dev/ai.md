@@ -1237,6 +1237,16 @@ data URL decoded, a drawn one drawn as its route draws it. That is how the
 conversation export packs them
 ([chat_history.md](chat_history.md#exporting-a-conversation)).
 
+**Highlights drawn.** None of the chat's pictures draws Gamma's highlights.
+A feedback thread's region picture does ([feedback.md](feedback.md) "The
+pictures", `feedback/pictures.py`): the same page as
+`ink_view.page_with_handwriting` makes it, its `marks` being the page's
+highlights measured on the file drawn, which `pdf_export.page_with_ink(highlights=…)`
+adds as the export writes them (`_mark_annotation`) and MuPDF draws as the
+viewer does (the wash multiplied onto the text, an area's border and faint
+fill). It is rendered at `RENDER_MAX_SIDE` like the chat's regions, and
+kept in data.db by its content key, never as an upload.
+
 **The store and the upload GC.** A chat's pictures are stored uploads like a
 note's, and the saved conversation points at them, so `upload_gc.referenced`
 reads the `chats` and `chat_history` rows for `/api/uploads/` names beside

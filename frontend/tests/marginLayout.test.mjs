@@ -1,9 +1,11 @@
-// The PDF's comment margin: where the page stands beside its column, and
-// how the cards stack (src/comments/marginLayout.js, docs/dev/comments.md
+// The PDF's comment margin: where the page stands beside its column, where
+// a card stands by its anchor and how the cards stack
+// (src/comments/marginLayout.js, comments.js anchorTop, docs/dev/comments.md
 // "The PDF margin").
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CARD_GAP, CARD_W, COLUMN_GAP, EDGE, marginLeft, pageLeft, stackCards } from "../src/comments/marginLayout.js";
+import { anchorTop } from "../src/comments/comments.js";
 
 const tops = (items, opts) => Object.fromEntries(stackCards(items, opts));
 const overlaps = (items, placed) => {
@@ -26,6 +28,16 @@ test("pageLeft is the centred page without a margin, and the page beside its col
   assert.equal(pageLeft(1500, 600, true), marginLeft(1500, 600));
   assert.equal(pageLeft(900, 600, true), 150, "no room for the column: centred as before");
   assert.equal(pageLeft(800, 1200, true), 0, "a page wider than the viewer starts at its left");
+});
+
+test("a card stands level with its anchor's first line: a highlight's highest rect, an ink group's box, at the page's zoom", () => {
+  const passage = { position: { height: 792, boundingRect: { y1: 100 }, rects: [{ y1: 300 }, { y1: 120 }] } };
+  assert.equal(anchorTop(passage, 1584), 240, "the highest rect, in the page box's px");
+  // an ink group's position: its box in its file's frame, the box its one rect too
+  const ink = { kind: "ink", position: { height: 400, boundingRect: { x1: 5, y1: 50, x2: 90, y2: 80 }, rects: [{ x1: 5, y1: 50, x2: 90, y2: 80 }] } };
+  assert.equal(anchorTop(ink, 800), 100);
+  assert.equal(anchorTop({ position: { height: 200, boundingRect: { y1: 50 }, rects: [] } }, 400), 100, "no rects: the box's top");
+  assert.equal(anchorTop({ position: {} }, 400), 0);
 });
 
 test("stackCards puts each card level with its highlight while they do not meet", () => {

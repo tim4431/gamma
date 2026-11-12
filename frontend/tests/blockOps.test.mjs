@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { PLACED, applyOps, diffTrees, displacedRow, propsPatch, pushOp, seedPositions, withMerges } from "../src/shared/model/blockOps.js";
-import { blockPage, isHighlightBlock } from "../src/shared/model/blockModel.js";
+import { blockPage, isHighlightBlock, pdfAnchorOf } from "../src/shared/model/blockModel.js";
 import { mergePicture } from "../src/markup/picture.js";
 import { mergeTextBox } from "../src/markup/textBox.js";
 
@@ -260,6 +260,19 @@ test("a position, a text box and a sheet are objects, never arrays, as the serve
   assert.equal(isHighlightBlock(N("h", "", [], { sheet: {}, pdf_position: pos })), false);
   assert.equal(blockPage(N("h", "", [], { text_box: [], pdf_page: 5, pdf_position: pos })), 2, "placed by its position");
   assert.equal(blockPage(N("h", "", [], { text_box: { x: 1 }, pdf_page: 5, pdf_position: pos })), 5);
+});
+
+test("a comment thread stands on the PDF on a highlight, a link region or an ink group with a position", () => {
+  const pos = { pageNumber: 2, width: 612, height: 792, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [] };
+  assert.deepEqual(pdfAnchorOf(N("h", "", [], { pdf_position: pos, quote: "q" })), { page: 2, position: pos });
+  assert.deepEqual(pdfAnchorOf(N("l", "", [], { pdf_position: pos, link_url: "https://example.org" })), { page: 2, position: pos });
+  assert.deepEqual(pdfAnchorOf(N("g", "", [], { ink_url: "/api/uploads/a.ink", pdf_position: pos })), { page: 2, position: pos });
+  assert.equal(pdfAnchorOf(N("g", "", [], { ink_url: "/api/uploads/a.ink" })), null, "a group on a sheet");
+  assert.equal(pdfAnchorOf(N("b", "", [], { text_box: { x: 1 }, pdf_page: 2, pdf_position: pos })), null, "a text box");
+  assert.equal(pdfAnchorOf(N("i", "", [], { picture: PIC, pdf_page: 5, pdf_position: pos })), null, "a picture");
+  assert.equal(pdfAnchorOf(N("n", "a note")), null);
+  assert.equal(pdfAnchorOf(N("h", "", [], { pdf_position: [] })), null, "an array is no position");
+  assert.deepEqual(pdfAnchorOf(N("h", "", [], { pdf_position: { boundingRect: pos.boundingRect } })).page, null, "no page");
 });
 
 test("a diff of a large flat reorder stays minimal", () => {
