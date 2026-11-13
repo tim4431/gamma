@@ -19,12 +19,14 @@
 // the press would get; outside, Escape, a window blur or a pointercancel
 // leaves the order, and outside `bar` is null, so no slot shows where a
 // release would not land. onStatus says "Drop to reorder." as a drag begins.
+// A pen's press whose lift never came (press.js penLifted: the pen hovering,
+// or down again) leaves the order as a cancel does.
 //
 // `keyProps(id)` moves the focused item a slot with the arrow keys along
 // `axis` (Up / Down, or Left / Right), or to either end with Home / End,
 // through the same onMove(id, to).
 import { useCallback, useEffect, useRef, useState } from "react";
-import { HOLD_MS, HOLD_SLOP, swallowClick } from "./press.js";
+import { HOLD_MS, HOLD_SLOP, penLifted, swallowClick } from "./press.js";
 import { t } from "../i18n/i18n.js";
 
 export const DRAG_PX = 6;
@@ -80,14 +82,28 @@ export function useDragOrder({ containerRef, axis = "x", start = "hold", onMove,
   };
   useEffect(() => {
     const escape = (e) => { if (e.key === "Escape" && press.current?.live) { e.stopPropagation(); end(); } };
+    const lost = (e) => {
+      const p = press.current;
+      if (!p?.pen || !penLifted(e, p.pointerId)) return;
+      if (p.live) swallowClick();
+      end();
+    };
     window.addEventListener("keydown", escape, true);
     window.addEventListener("blur", end);
-    return () => { window.removeEventListener("keydown", escape, true); window.removeEventListener("blur", end); end(); };
+    window.addEventListener("pointerdown", lost, true);
+    window.addEventListener("pointermove", lost, true);
+    return () => {
+      window.removeEventListener("keydown", escape, true);
+      window.removeEventListener("blur", end);
+      window.removeEventListener("pointerdown", lost, true);
+      window.removeEventListener("pointermove", lost, true);
+      end();
+    };
   }, [end]);
   const sourceProps = (id) => ({
     onPointerDown: (e) => {
       if (press.current || !e.isPrimary || (e.pointerType === "mouse" && e.button !== 0)) return;
-      const p = { id, pointerId: e.pointerId, el: e.currentTarget, x: e.clientX, y: e.clientY, timer: 0, live: false, moved: false };
+      const p = { id, pointerId: e.pointerId, pen: e.pointerType === "pen", el: e.currentTarget, x: e.clientX, y: e.clientY, timer: 0, live: false, moved: false };
       press.current = p;
       try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
       if (start === "hold" && e.pointerType !== "mouse") p.timer = setTimeout(() => { if (press.current === p) begin(p); }, HOLD_MS);

@@ -634,19 +634,24 @@ AI:
   ([mcp.md](mcp.md)). **Connect an assistant** is a `Segmented` of Claude
   Code, Codex, DeepSeek Harness and Other, each tab numbered `Step`s: Claude
   Code's connection command (with the optional plugin and the address-change
-  commands folded under it), Codex's setup command, DeepSeek Harness's
-  workspaces and its one-time setup command (shown on a button press, gone
-  once a new connection is listed), and the MCP URL for any other client.
+  commands folded under it), Codex's and DeepSeek Harness's setup commands
+  (DeepSeek Harness's signs in for it, opening the consent page with a code
+  to check, [mcp.md](mcp.md) "A setup command's sign-in"), and the MCP URL
+  for any other client.
   The last step of the first three folds **Remove Gamma from …**: the
   commands that undo the setup, then a reminder to disconnect. The
   three that sign in through the browser show the public-URL notice instead
   while browser sign-in is unavailable. **Connected assistants** lists each
   connection: how it signed in (browser sign-in — the `(OAuth)` suffix the
   provider mints — or token), what it reads ("Reads A, B", all workspaces, or
-  read and write for a token's workspace; a feedback connection adds
-  "answers feedback"), the connected and expiry dates, an
+  read and write for a token's workspace), where it edits notes ("edits
+  notes in Lab", "edits notes wherever you edit") and "changes without
+  asking" once it no longer asks first, "answers feedback" for a
+  feedback connection, the connected and expiry dates, an
   icon-only **Choose workspaces** (read and feedback connections) that opens
-  the checklist under the row with Save and Cancel, and an icon-only
+  the checklist under the row, with View or Edit on each workspace ticked,
+  **Ask me before each change it makes** once one is Edit, and Save and
+  Cancel, and an icon-only
   Disconnect. **Tokens (advanced)**, folded, makes a token by hand: its name,
   its scope as a `Segmented` (read-only for assistants; read and answer
   feedback for an agent or script that replies to and resolves the comments
@@ -656,7 +661,11 @@ AI:
   checklist (`WorkspacePicker.jsx`, the page
   picker's `.docPickerItem` rows) leads with **All workspaces, and those added
   later**; the pane shows it only to an account with more than one workspace,
-  the MCP consent screen always. Each command box carries its copy button in
+  the MCP consent screen always. With `roles` (a connection's editor and the
+  consent screen) each ticked row, or "All workspaces", ends in the share
+  popover's View / Edit `Segmented` (eye and pen): Edit lets the connection
+  change notes there ([mcp.md](mcp.md) "Editing notes"); a workspace the
+  account only views says *view only* instead. Each command box carries its copy button in
   its corner (a check for two seconds after a copy).
 
 Library:

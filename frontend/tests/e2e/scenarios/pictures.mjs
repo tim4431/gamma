@@ -42,7 +42,10 @@
 // nothing. Then the lasso: it takes a picture with the strokes it circles
 // and leaves a locked one, a drag carries both, one undo takes both back
 // and one redo brings both, and with its row's Pictures off it takes the
-// strokes alone. The rules behind it are
+// strokes alone. Select all takes the page's unlocked pictures too, a tap
+// with the lasso the picture under it where no stroke is, and Copy, Cut
+// and Paste carry them with the strokes, one step each, onto another
+// paper as well. The rules behind it are
 // frontend/tests/picture.test.mjs, pictureEdits.test.mjs, blockHistory.test.mjs,
 // selectionEdits.test.mjs, collabSession.test.mjs and
 // backend/tests/test_picture.py, test_picture_merge.py.
@@ -1482,6 +1485,203 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     await lassoTool.click();
     await pictures.click();
     assertEq(await L.evaluate(() => localStorage.getItem("gamma-ink-lasso-pictures")), "1", "on again");
+    assertNoProblems(L);
+    await lctx.close();
+  });
+
+  // A paper for the lasso's Select all, tap and clipboard steps, opened with
+  // the lasso armed: on page 1 picture `freeId` (`${tag}Free`), captioned, at
+  // 100, 300 (120 × 60), `heldId` locked at 320, 300, and stroke `over`
+  // across the free one's left half at y 330, from x 60 to 160. Its helpers
+  // read the page in points.
+  const lassoPaper = async (title, tag) => {
+    const freeId = `${tag}Free`, heldId = `${tag}Held`, noteId = `${tag}Note`;
+    const up = await account.upload("/api/uploads", makePdf([[title]]), "lasso-clip.pdf", "application/pdf");
+    const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: title, source_url: up.source_url } });
+    const { url } = await account.upload("/api/upload-image", png(200, 100), "lasso-clip.png", "image/png");
+    const free = normalizePicture({ url, x: 100, y: 300, w: 120, h: 60 });
+    const held = normalizePicture({ url, x: 320, y: 300, w: 120, h: 60, locked: true });
+    await account.api(`/api/pages/${paper.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: freeId, parent: paper.id, content: "A caption", props: { picture: free, pdf_page: 1 } },
+      { op: "insert", id: noteId, parent: freeId, content: "A note under it" },
+      { op: "insert", id: heldId, parent: paper.id, content: "", props: { picture: held, pdf_page: 1 } }] } });
+    const ink = { ...newInk(1, 612, 792), strokes: [encodeStroke({ id: "over", color: "#1f1f1f", size: 2, ch: "xypt", t0: 1000,
+      samples: Array.from({ length: 11 }, (_, i) => ({ x: 60 + i * 10, y: 330, p: 0.5, t: i * 8 })) })] };
+    const file = await account.api("/api/upload-ink", { method: "POST", body: ink });
+    await account.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: "",
+      properties: { ink_url: file.url, pdf_position: file.pdf_position, ink_strokes: 1 } } });
+    const lctx = await account.context(browser);
+    const L = await openPage(lctx, `${server.base}/?page=${paper.id}&ws=${account.ws}`);
+    await waitForPdf(L, 1);
+    await L.locator(`[data-picture-id="${freeId}"]`).waitFor({ timeout: 30000 });
+    await until(async () => (await L.locator('[data-page="1"] .inkLayer path').count()) > 0, { what: "the stroke drawn" });
+    await L.click("button[aria-label='Handwriting tools']");
+    await L.waitForSelector(".pdfInkBar");
+    const lassoTool = L.getByRole("button", { name: /^Lasso \(L\)/ });
+    await lassoTool.click();
+    const k = (await L.locator('[data-page="1"]').boundingBox()).width / 612;
+    const at = async (x, y) => {
+      const r = await L.locator('[data-page="1"]').boundingBox();
+      return { x: r.x + x * k, y: r.y + y * k };
+    };
+    const tap = async (x, y) => {
+      const p = await at(x, y);
+      await L.mouse.click(p.x, p.y);
+    };
+    // the selection's box in page points (its rect stands 4 out), null with none
+    const selBox = async () => {
+      const rect = L.locator('[data-page="1"] .inkSelRect');
+      if (!(await rect.count())) return null;
+      return rect.evaluate((r) => {
+        const [x, y, w, h] = ["x", "y", "width", "height"].map((a) => Number(r.getAttribute(a)));
+        return [x + 4, y + 4, x + w - 4, y + h - 4];
+      });
+    };
+    const menu = L.getByRole("toolbar", { name: "Edit handwriting", exact: true });
+    const pill = async () => (await L.locator(".statusPill").allInnerTexts().catch(() => [])).join(" | ");
+    // a page's picture blocks and ink blocks with their strokes, as stored
+    const blocksOf = async (id = paper.id) => (await account.api(`/api/blocks/${id}/subtree`)).block.children || [];
+    const picturesOn = async (id) => (await blocksOf(id)).filter((b) => b.properties?.picture);
+    const strokesOn = async (id) => {
+      const out = [];
+      for (const b of (await blocksOf(id)).filter((c) => c.properties?.ink_url)) out.push(...(await account.api(b.properties.ink_url)).strokes);
+      return out;
+    };
+    return { paper, url, free, held, freeId, heldId, noteId, lctx, L, lassoTool, k, at, tap, selBox, menu, pill, blocksOf, picturesOn, strokesOn };
+  };
+
+  await step("picture: Select all with the lasso takes the page's unlocked pictures with its strokes, Ctrl+A and More's alike; with the lasso's Pictures off, the strokes alone", async () => {
+    const { free, held, lctx, L, lassoTool, selBox, menu } = await lassoPaper("Select all with pictures", "selAll");
+    await L.keyboard.press("Control+a");
+    await menu.waitFor();
+    const box = await until(selBox, { what: "the selection's box" });
+    near(box[1], free.y, "from the picture's top");
+    near(box[2], free.x + free.w, "to its right");
+    assert(box[0] < 61 && box[3] > 329, `round the stroke: ${box}`);
+    assert(box[2] < held.x, `and not round the locked picture: ${box}`);
+    assert(!(await menu.getByRole("button", { name: "Copy", exact: true }).isDisabled()), "Copy takes them");
+    await L.keyboard.press("Escape");
+    await until(async () => !(await selBox()), { what: "the selection let go" });
+    // More → Select all handwriting on this page does the same
+    await L.getByRole("button", { name: "More handwriting tools" }).click();
+    await L.locator(".inkStripMenu [data-command='ink.selectAll']").click();
+    near((await until(selBox, { what: "More's selection" }))[1], free.y, "More's takes the picture too");
+    await L.keyboard.press("Escape");
+    // the lasso's row: Pictures off, and Select all takes the stroke alone
+    const pictures = L.locator('[data-ink-options="select"]').getByRole("button", { name: "Pictures", exact: true });
+    await lassoTool.click();
+    if (!(await pictures.count())) await lassoTool.click();
+    await pictures.click();
+    assertEq(await pictures.getAttribute("aria-pressed"), "false");
+    await L.keyboard.press("Control+a");
+    const strokesOnly = await until(selBox, { what: "the strokes' selection" });
+    assert(strokesOnly[1] > 320 && strokesOnly[2] < 165, `the box round the stroke alone: ${strokesOnly}`);
+    await L.keyboard.press("Escape");
+    await lassoTool.click();
+    if (!(await pictures.count())) await lassoTool.click();
+    await pictures.click();
+    assertEq(await L.evaluate(() => localStorage.getItem("gamma-ink-lasso-pictures")), "1", "on again");
+    assertNoProblems(L);
+    await lctx.close();
+  });
+
+  await step("picture: a tap with the lasso takes the picture under it where no stroke is; a stroke over it wins, and a locked picture is not taken", async () => {
+    const { free, freeId, lctx, L, tap, selBox, menu } = await lassoPaper("A tap on a picture", "tapped");
+    await tap(200, 345);
+    await menu.waitFor();
+    const box = await until(selBox, { what: "the picture selected" });
+    near(box[0], free.x, "the box is the picture's frame");
+    near(box[3], free.y + free.h, "down to its bottom");
+    assert(await menu.getByRole("button", { name: "Color", exact: true }).isDisabled(), "a picture alone: Color greyed");
+    assertEq(await L.locator(`[data-picture-id="${freeId}"].selected`).count(), 0, "the lasso's, not the picture's own selection");
+    assertEq(await L.getByRole("toolbar", { name: "Edit picture", exact: true }).count(), 0, "no picture menu");
+    // the stroke lies over the picture: a tap on it takes the stroke alone
+    // (once the selection is let go: a press inside its box moves it)
+    await L.keyboard.press("Escape");
+    await until(async () => !(await selBox()), { what: "the selection let go" });
+    await tap(120, 330);
+    await until(async () => (await selBox())?.[1] > 320, { what: "the stroke over the picture selected" });
+    assert(!(await menu.getByRole("button", { name: "Color", exact: true }).isDisabled()), "a stroke: Color applies");
+    // the locked picture: nothing, and a tap there lets go of the selection
+    await tap(380, 345);
+    await until(async () => !(await selBox()), { what: "a tap on the locked picture selects nothing" });
+    // with the hand armed a click still selects the picture itself, its menu its own
+    await L.click(".pdfInkBar button[aria-label='Hand']");
+    await tap(200, 345);
+    await L.getByRole("toolbar", { name: "Edit picture", exact: true }).waitFor();
+    assertEq(await selBox(), null, "no lasso selection");
+    assertNoProblems(L);
+    await lctx.close();
+  });
+
+  await step("picture: Copy and Paste with the lasso carry a picture with the strokes, placed as they were, one undo for both; Cut takes both as one step, the notes under the picture left; a paste on another paper names the same upload", async () => {
+    // another paper of the workspace, there before the tab opens so quick open lists it
+    const up = await account.upload("/api/uploads", makePdf([["Another paper for the paste"]]), "lasso-other.pdf", "application/pdf");
+    const other = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Another paper for the paste", source_url: up.source_url } });
+    const { paper, url, free, freeId, heldId, noteId, lctx, L, selBox, menu, pill, blocksOf, picturesOn, strokesOn } = await lassoPaper("Copy a picture", "copied");
+    const copies = async (id = paper.id) => (await picturesOn(id)).filter((b) => ![freeId, heldId].includes(b.id));
+    const pastedStrokes = async (id = paper.id) => (await strokesOn(id)).filter((s) => s.id !== "over");
+    const original = strokeBounds((await strokesOn(paper.id)).find((s) => s.id === "over"));
+    await L.keyboard.press("Control+a");
+    await menu.waitFor();
+    await L.keyboard.press("Control+c");
+    await until(async () => (await pill()).includes("Copied 1 stroke and 1 picture."), { what: "the copy's pill" });
+    await L.keyboard.press("Control+v");
+    const [copy] = await until(async () => {
+      const got = await copies();
+      return got.length && (await pastedStrokes()).length ? got : null;
+    }, { what: "the paste stored, the picture and the stroke" });
+    assertEq(copy.properties.picture.url, url, "the same upload");
+    assertEq(copy.content, "A caption", "its caption with it");
+    assertEq((copy.children || []).length, 0, "not the notes under it");
+    assertEq(copy.properties.pdf_page, 1);
+    const pasted = strokeBounds((await pastedStrokes())[0]);
+    near(copy.properties.picture.x - pasted[0], free.x - original[0], "the picture as far from the stroke as before", 0.05);
+    near(copy.properties.picture.y - pasted[1], free.y - original[1], "down too", 0.05);
+    // the copied box centred on the page: from the stroke's left to the picture's right, the picture's top to its bottom
+    near((pasted[0] + copy.properties.picture.x + free.w) / 2, 306, "centred across", 1);
+    near(copy.properties.picture.y + free.h / 2, 396, "and down", 1);
+    const box = await until(selBox, { what: "the pasted copies selected" });
+    near(box[1], copy.properties.picture.y, "the selection is the copies, the picture with them");
+    // one undo takes both away, one redo brings both
+    await L.click(".pdfInkBar button[aria-label='Undo ink']");
+    await until(async () => !(await copies()).length && !(await pastedStrokes()).length, { what: "the paste undone, both halves" });
+    assert((await pill()).includes("Undone: selection paste"), `the pill names the step: ${await pill()}`);
+    await L.click(".pdfInkBar button[aria-label='Redo ink']");
+    await until(async () => (await copies()).length === 1 && (await pastedStrokes()).length === 1, { what: "the paste redone, both halves" });
+    // the original selected and cut: both go as one step, and come back as one
+    await L.keyboard.press("Control+a");
+    await menu.waitFor();
+    const cut = menu.getByRole("button", { name: "Cut", exact: true });
+    if (!(await cut.count())) await menu.getByRole("button", { name: "More", exact: true }).click();
+    await cut.click();
+    await until(async () => (await pill()).includes("Cut 2 strokes and 2 pictures."), { what: "the cut's pill" });
+    await until(async () => !(await copies()).length && !(await picturesOn(paper.id)).some((b) => b.id === freeId)
+      && !(await strokesOn(paper.id)).length, { what: "the cut stored: the pictures and the strokes gone, the locked picture left" });
+    assertEq((await picturesOn(paper.id)).map((b) => b.id).join(), heldId);
+    assert((await blocksOf()).some((b) => b.id === noteId), "the note under the cut picture left in its place");
+    await L.click(".pdfInkBar button[aria-label='Undo ink']");
+    await until(async () => (await copies()).length === 1 && (await picturesOn(paper.id)).some((b) => b.id === freeId)
+      && (await strokesOn(paper.id)).length === 2, { what: "the cut undone, both halves" });
+    assert((await blocksOf()).find((b) => b.id === freeId).children.some((c) => c.id === noteId), "the note under the picture again");
+    assert((await pill()).includes("Undone: selection cut"), `the pill names the step: ${await pill()}`);
+    // the other paper, opened in the tab: the paste names the same upload, which it shows
+    await L.keyboard.press("Control+p");
+    const palette = L.getByRole("dialog", { name: "Open a page" });
+    await palette.waitFor();
+    await palette.getByRole("textbox", { name: "Search pages by title or label" }).fill("Another paper for the paste");
+    await palette.locator('[role="option"][data-kind="page"]', { hasText: "Another paper for the paste" }).click();
+    await until(() => new URL(L.url()).searchParams.get("block") === other.id, { what: "the other paper open" });
+    await L.locator('[data-page="1"] .textLayer span', { hasText: "Another paper" }).waitFor({ timeout: 15000 });
+    await L.keyboard.press("l");
+    await L.keyboard.press("Control+v");
+    const [there] = await until(async () => {
+      const got = await picturesOn(other.id);
+      return got.length && (await strokesOn(other.id)).length === 2 ? got : null;
+    }, { what: "the paste on the other paper", timeout: 15000 });
+    assertEq(there.properties.picture.url, url, "the same upload");
+    await until(async () => L.locator(`[data-picture-id="${there.id}"] img`).evaluate((img) => img.complete && img.naturalWidth > 0),
+      { what: "its image shown" });
     assertNoProblems(L);
     await lctx.close();
   });

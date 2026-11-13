@@ -124,6 +124,7 @@ def test_a_preview_names_the_change_and_changes_nothing(notes):
     assert (preview["page_id"], preview["block_id"], preview["mode"], preview["title"]) == (
         ids["page"], ids["top"], "append", "notes playground")
     assert preview["diff"] == [["ctx", "top-level idea"], ["ins", "\nmore"]]
+    assert preview["text"] == "top-level idea\nmore", "the whole new text, for the note's own diff"
     assert props(c, ids["top"])["content"] == "top-level idea", "a preview changes nothing"
     renamed, _ = approval_preview(ws, scope, "rename_page",
                                   {"page_id": ids["page"], "title": "notes playground v2"})

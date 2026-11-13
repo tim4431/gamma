@@ -1679,6 +1679,42 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   animation: aiCaretBlink 0.9s steps(1) infinite;
 }
 @keyframes aiCaretBlink { 50% { opacity: 0; } }
+/* An AI's change drawn in its note as tracked changes (editor/mdDiff.js,
+   chat/noteReview.js). The words' marks are the word diff's (del.mdDiff,
+   ins.mdDiff, with the approval card's below); a code block or display
+   formula that went or came is marked whole, by a bar at its side and the
+   tint; a note the AI made is all new, its text as it renders on the
+   inserted tint. Under it, the bar of editor/NoteReviewBar.jsx. */
+/* In a note's own reading size what went reads as gone: its line the full
+   red (the tint under it would swallow a paler one in a dark theme), its
+   words a step quieter, a little room before what came, bold or not. */
+.mdDiffView del.mdDiff { margin-right: var(--space-1); color: var(--text-secondary); text-decoration-color: var(--danger); }
+/* A line through crosses no formula or picture: what went of those fades. */
+del.mdDiff :is(img, .katex) { opacity: 0.55; }
+:is(del, ins).mdDiff img { outline: 2px solid color-mix(in srgb, var(--danger) 60%, transparent); outline-offset: 2px; }
+ins.mdDiff img { outline-color: color-mix(in srgb, var(--ok) 60%, transparent); }
+.mdDiffBlock { margin: var(--space-2) 0; padding-left: var(--space-3); border-left: 3px solid; border-radius: var(--radius-xs); }
+.mdDiffBlock.del { border-color: var(--danger); background: var(--danger-bg); }
+.mdDiffBlock.del > * { opacity: 0.6; }
+.mdDiffBlock.ins { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.mdDiffBlock.mixed { border-color: var(--warn); background: var(--warn-bg); }
+.blockRendered.mdDiffNew {
+  padding-left: var(--space-3);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+.noteReviewBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+.noteReviewLabel { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+.noteReviewLabel svg { flex: none; color: var(--accent); }
 /* Whole-page read (read_page / read_block on the page id): the outline's
    left edge breathes once. */
 .blockList.aiPageRead { animation: aiPageReadPulse 1.6s ease-in-out 2; }
@@ -4006,15 +4042,17 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-/* A word diff's marks, here and on a highlight's review card (.hlReviewDiff,
-   pdf/HighlightReview.jsx): what went struck out, what came tinted. */
-:is(.chatApprovalDiff, .hlReviewDiff) :is(del, ins) { color: var(--text-primary); border-radius: 2px; }
-:is(.chatApprovalDiff, .hlReviewDiff) del {
+/* A word diff's marks, here, on a highlight's review card (.hlReviewDiff,
+   pdf/HighlightReview.jsx) and in a note showing an AI's change (.mdDiff,
+   editor/mdDiff.js; a note's own ~~strikethrough~~ is a plain <del>): what
+   went struck out, what came tinted. */
+:is(.chatApprovalDiff, .hlReviewDiff) :is(del, ins), :is(del, ins).mdDiff { color: var(--text-primary); border-radius: 2px; }
+:is(.chatApprovalDiff, .hlReviewDiff) del, del.mdDiff {
   background: var(--danger-bg);
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--danger) 60%, transparent);
 }
-:is(.chatApprovalDiff, .hlReviewDiff) ins { background: color-mix(in srgb, var(--ok) 16%, transparent); text-decoration: none; }
+:is(.chatApprovalDiff, .hlReviewDiff) ins, ins.mdDiff { background: color-mix(in srgb, var(--ok) 16%, transparent); text-decoration: none; }
 .chatApprovalArg { color: var(--text-muted); }
 .chatApprovalActions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
 .chatApprovalSpacer { flex: 1; }
@@ -7573,6 +7611,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .mcpConsentPage { overflow: auto; }
 .mcpConsent p { line-height: 1.5; }
 .mcpCallback { overflow-wrap: anywhere; }
+.mcpDeviceCode strong { font-family: var(--font-mono); letter-spacing: 0.08em; white-space: nowrap; }
 .mcpPermissions { margin: 8px 0 16px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
 .mcpPermissions ul { padding-left: 18px; margin: 10px 0; line-height: 1.6; font-size: var(--fs-sm); }
 .mcpPermissions p { margin-bottom: 0; }

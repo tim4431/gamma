@@ -16,9 +16,10 @@ import FetchHandoffCards, { LiveHandoffCards } from "./FetchHandoffCards";
 import ReplyPapers from "./ReplyPapers";
 import ApprovalCard from "./ApprovalCard";
 import PlanCard from "./PlanCard";
-import AgentChanges, { ACTION_ICONS } from "./AgentChanges";
+import AgentChanges, { ACTION_ICONS, refusalCopy, sendRevert } from "./AgentChanges";
 import RevertChanges from "./RevertChanges";
-import { forReplay, markReverted, revertible } from "./aiRevert.js";
+import { forReplay, markReverted, revertRefusal, revertible } from "./aiRevert.js";
+import { changeSteps, noteReview } from "./noteReview.js";
 import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, heldSummary, readGrants, waitsForPapers, withGrant,
   withoutGrants, withoutPaperWait, writeGrants } from "./approvals.js";
 import { approvePlanPrompt, canActOnPlan, continuesPlanning, planStatus, replyPlan, sentPlanning } from "./plan.js";
@@ -622,9 +623,10 @@ export default function ChatDock({
     writeGrants(next);
     return next;
   });
-  // Approvals answered here: the steps pill names the running call again
-  // while it runs, instead of waiting.
-  const [answeredApprovals, setAnsweredApprovals] = useState(() => new Set());
+  // Approvals answered here, id → decision: the steps pill names the running
+  // call again while it runs, instead of waiting, and a card answered from
+  // the note its edit is drawn in says so as if answered on it.
+  const [answeredApprovals, setAnsweredApprovals] = useState(() => new Map());
   const toggleTools = () => setAgentEnabled(!agentEnabled);
   // What the agent may do here after applying the shared permissions.
   const agentReads = READ_TOOLS.some(perm);
@@ -664,17 +666,24 @@ export default function ChatDock({
   // conversation leave their card under the reply instead of holding it.
   const neverWaitHere = () =>
     updateGrants((store) => withoutPaperWait(store, activeUser(), conversationId(chatMessages)));
-  // The user's answer on an approval card: the server runs the call or
+  // The user's answer on an approval card, or on the bar of the note the
+  // card's edit is drawn in (chat/noteReview.js): the server runs the call or
   // leaves it; "Allow in this chat" is kept for the conversation and
   // "Always allow" sets the permission in Settings — once the server took it.
   async function decideApproval(approval, decision, note = "") {
     await apiJson(`${API}/ai/approvals/${encodeURIComponent(approval.id)}`, {
       method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ decision, ...(note ? { note } : {}) }),
     });
-    setAnsweredApprovals((done) => new Set(done).add(approval.id));
+    setAnsweredApprovals((done) => new Map(done).set(approval.id, decision));
+    noteReview.settle(approval.id);
     if (decision === "chat") updateGrants((store) => withGrant(store, activeUser(), conversationId(chatMessages), approval.perm));
     if (decision === "always") changePermission(setAgentPerms, chatKind, approval.perm, "allow");
   }
+  // The note's bar answers through the latest render's, as the card does:
+  // the reply's own closure would file a grant under the conversation as it
+  // stood before its first message.
+  const decideRef = useRef(decideApproval);
+  decideRef.current = decideApproval;
   // The block the user's cursor is on shows as a "Cursor" chip (like a PDF
   // selection) and rides with the message as focus_block_id; its × leaves it
   // out for that block until the cursor moves.
@@ -838,7 +847,37 @@ export default function ChatDock({
     const pages = [...new Set([answer?.page_id, ...touched].filter(Boolean))];
     if (pages.length) onNotesChange?.(pages);
     if (indexes.some((i) => message?.actions?.[i] && changePlace(message.actions[i]) === "library")) onLibraryChange?.();
+    // A note showing the change as tracked changes stops: the row says it now.
+    for (const i of indexes) if (message?.actions?.[i]?.block_id) noteReview.forget(message.actions[i].block_id);
   };
+  // The bar under a note that shows the AI's change (chat/noteReview.js)
+  // reverts one step of it as a row of its reply does, and marks it in the
+  // conversation the reply belongs to, whichever the dock shows now. A
+  // refusal comes back as the row would say it; one whose row would show
+  // what reverting anyway writes sends the user there.
+  const notesChangeRef = useRef(onNotesChange);
+  notesChangeRef.current = onNotesChange;
+  useEffect(() => noteReview.connect(async (step, { force }) => {
+    let answer;
+    try {
+      answer = await sendRevert(step.action, { force });
+    } catch (err) {
+      const refusal = revertRefusal(err);
+      if (refusal.preview?.diff?.length) {
+        return { text: t("The note changed since. Its row in the chat shows what reverting anyway would do."), force: "" };
+      }
+      const copy = refusalCopy(refusal, false);
+      return { text: copy.text, force: copy.force || "" };
+    }
+    const messages = session.getSnapshot().replies.get(step.key)?.messages
+      || (chatKeyRef.current === step.key ? loadedRef.current : null);
+    const next = messages && markReverted(messages, step.reply, [step.index], true);
+    if (next && next !== messages) {
+      session.edit(step.key, next)?.catch((err) => setStatus(t("Couldn't save the conversation: {message}", { message: err.message })));
+    }
+    notesChangeRef.current?.([answer?.page_id || step.action.page_id].filter(Boolean));
+    return null;
+  }), [session]); // eslint-disable-line react-hooks/exhaustive-deps -- the latest state is read through refs
 
   // Show a conversation that came from the server (bucket switch, or a
   // history entry opened). PDF button: on for a conversation without
@@ -1427,6 +1466,7 @@ export default function ChatDock({
     chatStickRef.current = true; // sending always snaps back to the bottom
     const ctrl = new AbortController();
     if (!session.start(sendKey, [...prevMessages, userMsg], chatTitle, ctrl)) return;
+    noteReview.replying(sendKey, true);
     // Under Unlimited a reply runs until it is done or stopped. A row in
     // Background tasks shows it, and its Stop reaches it from any folder or
     // page (stopChat only stops the conversation on screen). The row follows
@@ -1502,6 +1542,11 @@ export default function ChatDock({
             helpers = withHelper(helpers, ev.helper);
           } else if (ev.approval) {
             approval = ev.approval;
+            // A note edit's card: the note draws the edit too, and its bar
+            // answers the card with the card's four answers.
+            const asked = ev.approval;
+            noteReview.ask(asked, (decision) => decideRef.current(asked, decision),
+              { permission: permissionLabel(asked.perm), kind: chatKindLabel });
           } else if (ev.handoff) {
             // A fetch met a wall: the reply waits on this card until the
             // user's browser sends the PDF, or they skip it.
@@ -1509,11 +1554,15 @@ export default function ChatDock({
           } else if (ev.action) {
             running = null;
             helpers = [];
+            if (approval) noteReview.settle(approval.id);
             approval = null;
             actions.push(ev.action);
             // Live: the notes panel lights up the block the agent just
-            // read/edited (and reloads the tree for an applied edit).
+            // read/edited (and reloads the tree for an applied edit), and the
+            // note shows what an edit changed until the user keeps or
+            // reverts it (chat/noteReview.js).
             onAgentEvent?.({ type: "action", action: ev.action });
+            noteReview.landed({ action: ev.action, key: sendKey, reply: replyId, index: actions.length - 1 });
           } else if (ev.progress) {
             // The agent is still writing a note edit — the block types it in.
             onAgentEvent?.({ type: "progress", ...ev.progress });
@@ -1581,6 +1630,9 @@ export default function ChatDock({
       if (taskId) removeTask?.(taskId);
       session.finish(sendKey);
       onAgentEvent?.({ type: "done", key: sendKey });
+      // A card the reply left waiting (stopped, or the stream failed) goes from its note too.
+      if (approval) noteReview.settle(approval.id);
+      noteReview.replying(sendKey, false);
       // Agent tools changed the library — reload the home feed. Read-only
       // tool calls (list/read/search) render as chips but change nothing.
       if (actions.some(isChange)) onLibraryChange?.();
@@ -2238,7 +2290,8 @@ export default function ChatDock({
                     {!isUser && m.actions?.length ? (
                       <AgentChanges actions={m.actions} onOpenPage={onOpenPage} busy={busyHere}
                         onReverted={!readOnly && m.id ? (indexes, answer, reverted) => changesReverted(m.id, indexes, answer, reverted) : undefined}
-                        onRevertMany={!readOnly && m.id && revertibleCount > 1 ? () => setRevertFrom(m.id) : undefined} />
+                        onRevertMany={!readOnly && m.id && revertibleCount > 1 ? () => setRevertFrom(m.id) : undefined}
+                        onShowChange={m.id ? (i) => noteReview.show(changeSteps(chatMessages, m.id, i, chatKey)) : undefined} />
                     ) : null}
                     {isUser && m.contextPages?.length ? <div className="chatMsgPdfs">
                       {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={14} /><span className="linkChipText">{p.title}</span></button>)}
@@ -2255,7 +2308,7 @@ export default function ChatDock({
                     ) : null}
                     {isResponding && m.approval ? (
                       <ApprovalCard key={m.approval.id} approval={m.approval} kindLabel={chatKindLabel}
-                        titleOf={pageTitleOf} onDecide={decideApproval} />
+                        titleOf={pageTitleOf} onDecide={decideApproval} answered={answeredApprovals.get(m.approval.id) || ""} />
                     ) : null}
                     {isResponding && m.handoffs?.length ? (
                       <LiveHandoffCards handoffs={m.handoffs} readOnly={readOnly || aiOff}

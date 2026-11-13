@@ -11,8 +11,10 @@
 // fails between two good ones breaks the pair.
 // A contact whose lift never arrives (iPad Safari drops one now and then,
 // and a finger a native gesture swallows gets no pointerup) is forgotten
-// once it is CONTACT_STALE_MS old, so it never pins every later chord.
-import { DOUBLE_MS, DOUBLE_SLOP } from "../shared/ui/press.js";
+// once it is CONTACT_STALE_MS old, so it never pins every later chord; a
+// pen's, once the pen is plainly up (press.js penLifted), so its palm rule
+// never voids every later chord.
+import { DOUBLE_MS, DOUBLE_SLOP, penLifted } from "../shared/ui/press.js";
 
 export { DOUBLE_MS, DOUBLE_SLOP };
 export const CHORD_START_MS = 80;
@@ -31,6 +33,7 @@ export function makeChordDetector({ onChord, mode = "off", now = () => Date.now(
   let chord = null;             // {start, members: [ids], live: count still down, voided}
   let previous = null;          // in 'double' mode, the chord before: {n, t, x, y}
   const at = (e) => (e && e.timeStamp != null ? e.timeStamp : now());
+  const forgetLifted = (e) => { for (const id of pens) if (penLifted(e, id)) pens.delete(id); };
 
   const endChord = () => { chord = null; };
   const voidChord = () => { if (chord) chord.voided = true; };
@@ -67,7 +70,7 @@ export function makeChordDetector({ onChord, mode = "off", now = () => Date.now(
   return {
     down(e) {
       const time = at(e);
-      if (e.pointerType === "pen") { pens.add(e.pointerId); voidChord(); return; }
+      if (e.pointerType === "pen") { forgetLifted(e); pens.add(e.pointerId); voidChord(); return; }
       if (e.pointerType !== "touch") return;
       forgetStale(time);
       const contact = { x: e.clientX, y: e.clientY, t: time, chord: null };
@@ -80,6 +83,7 @@ export function makeChordDetector({ onChord, mode = "off", now = () => Date.now(
       if (pens.size) chord.voided = true;
     },
     move(e) {
+      forgetLifted(e);
       const c = contacts.get(e.pointerId);
       if (!c) return;
       if (Math.hypot(e.clientX - c.x, e.clientY - c.y) > CHORD_SLOP) c.chord.voided = true;

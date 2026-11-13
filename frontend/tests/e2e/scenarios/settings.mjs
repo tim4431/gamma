@@ -774,10 +774,20 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Choose workspaces", exact: true }).click();
       const editor = page.getByRole("group", { name: "Workspaces Codex test may read" });
       await editor.getByRole("checkbox", { name: "Other assistant workspace", exact: true }).uncheck();
+      // and let it edit the notes of the one it keeps, as a share's person is given Edit
+      assertEq(await editor.getByRole("button", { name: "Edit", exact: true }).count(), 1, "a role for each workspace ticked");
+      await editor.getByRole("button", { name: "Edit", exact: true }).click();
+      // it asks before each change unless told not to
+      const asking = page.getByRole("checkbox", { name: /Ask me before each change it makes/ });
+      assert(await asking.isChecked(), "a connection that edits asks first");
+      await asking.uncheck();
       await page.getByRole("button", { name: "Save", exact: true }).click();
       await editor.waitFor({ state: "detached" });
       connections = await user.api("/api/integrations/tokens");
       assertEq(JSON.stringify(connections.tokens[0].workspaces), JSON.stringify([user.ws]));
+      assertEq(JSON.stringify(connections.tokens[0].edit_workspaces), JSON.stringify([user.ws]));
+      assertEq(connections.tokens[0].asks, false);
+      await page.getByText(/edits notes in .* · changes without asking/).waitFor();
       // Separate authorizations can have the same name. Revoking one must
       // leave the other visible, without claiming the assistant lost access.
       const duplicate = await user.api("/api/integrations/tokens", { method: "POST", body: { name: "Codex test" } });
@@ -830,34 +840,41 @@ export async function settingsScenarios(env) {
     }
   });
 
-  await step("settings: DeepSeek Harness connects with a one-time setup command", async () => {
+  await step("settings: DeepSeek Harness's setup command signs in through the browser", async () => {
     const { ctx, page } = await setup();
     const second = await user.api("/api/workspaces", { method: "POST", body: { name: "Harness workspace" } });
     try {
       await openSettings(page);
       await nav(page, "Integrations").click();
       await page.getByRole("button", { name: "DeepSeek Harness", exact: true }).click();
-      await page.getByRole("group", { name: "Workspaces DeepSeek Harness may read" })
-        .getByRole("checkbox", { name: "All workspaces, and those added later", exact: true }).check();
       await page.getByRole("button", { name: "macOS / Linux", exact: true }).click();
-      await page.getByRole("button", { name: "Show the setup command", exact: true }).click();
+      // shown at once: it names this server and carries nothing secret
       const command = page.getByRole("textbox", { name: "DeepSeek Harness setup command", exact: true });
-      // the commands themselves are pinned by assistantSetup.test.mjs
       const unix = await command.inputValue();
-      assert(unix.includes(`'${server.base}/mcp'`), "the setup command names this server");
-      const code = unix.match(/'([A-Za-z0-9_-]{40,})'\)$/)?.[1];
-      assert(code, "the command carries its one-time code");
-      assertEq((await user.api("/api/integrations/tokens")).tokens.length, 0, "nothing is connected until the command runs");
-      // What the setup command does once the plugin is in: claim the code for the token.
-      const claimed = await fetch(`${server.base}/api/integrations/claim`, { method: "POST",
-        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+      // the commands themselves are pinned by assistantSetup.test.mjs
+      assert(unix.endsWith(`'${server.base}/mcp')`), "the setup command names this server alone");
+      // What the script does once the plugin is in: ask for a sign-in and open it.
+      const post = (path, body) => fetch(`${server.base}/api/integrations/${path}`, { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const started = await post("device", { name: "DeepSeek Harness" });
+      assertEq(started.status, 201);
+      const { device_code: deviceCode, user_code: userCode } = await started.json();
+      assertEq((await post("device/token", { device_code: deviceCode })).status, 202, "waiting for the browser");
+      const signIn = await ctx.newPage();
+      await signIn.goto(`${server.base}/?gamma_device=${userCode}`);
+      await signIn.getByText(userCode, { exact: true }).waitFor();
+      await signIn.getByRole("group", { name: "Workspaces it may read" })
+        .getByRole("checkbox", { name: "All workspaces, and those added later", exact: true }).check();
+      await signIn.getByRole("button", { name: "Allow read-only access" }).click();
+      await signIn.getByText(/DeepSeek Harness is connected\. Go back to your terminal/).waitFor();
+      const claimed = await post("device/token", { device_code: deviceCode });
       assertEq(claimed.status, 200);
       const { token } = await claimed.json();
-      assert(!unix.includes(token), "the token never appears in the command");
-      // Back in the browser, the connection is listed and the spent command goes.
+      assertEq((await post("device/token", { device_code: deviceCode })).status, 400, "the token is collected once");
+      await signIn.close();
+      // Back in settings, the connection is listed.
       await page.evaluate(() => window.dispatchEvent(new Event("focus")));
       await until(() => page.getByRole("button", { name: "Disconnect", exact: true }).count().then((n) => n === 1));
-      await command.waitFor({ state: "detached" });
       await page.getByText(/Reads all workspaces/).waitFor();
       const [made] = (await user.api("/api/integrations/tokens")).tokens;
       assertEq(made.name, "DeepSeek Harness");
@@ -868,11 +885,7 @@ export async function settingsScenarios(env) {
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize",
           params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "dsh-e2e", version: "0" } } }) });
       assertEq(init.status, 200);
-      const again = await fetch(`${server.base}/api/integrations/claim`, { method: "POST",
-        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
-      assertEq(again.status, 400, "a setup code works once");
       await page.getByRole("button", { name: "Windows PowerShell", exact: true }).click();
-      await page.getByRole("button", { name: "Show the setup command", exact: true }).click();
       assert((await command.inputValue()).startsWith("& ([scriptblock]::Create("), "the command follows the platform");
       await page.getByText("Remove Gamma from DeepSeek Harness", { exact: true }).click();
       const removeCommand = page.getByRole("textbox", { name: "DeepSeek Harness remove command", exact: true });

@@ -22,7 +22,7 @@ const reads = {};
 
 export function startBootReads() {
   const params = new URLSearchParams(window.location.search);
-  if (params.get("share") || params.get("gamma_oauth")) return reads;
+  if (params.get("share") || params.get("gamma_oauth") || params.get("gamma_device")) return reads;
   reads.config = getJson("/api/server-config");
   reads.session = getJson("/api/session");
   return reads;

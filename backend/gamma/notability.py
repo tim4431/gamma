@@ -183,6 +183,7 @@ class Bundle:
     size: int                       # the .note file's size, or its folder's members summed
     packed: ZipEntry | None = None  # a .note file in the upload: opened only while it is read
     members: Members | None = None  # an unzipped note's files, found in the upload's own walk
+    folder: str | None = None       # an unzipped note's folder in the upload ("" its top)
 
 
 @dataclass
@@ -459,7 +460,8 @@ def find_bundles(entries: list[ZipEntry], upload_name: str) -> list[Bundle]:
         members = Members(found)
         single = upload_name.lower().endswith(".note") and "/" not in folder and tops == {folder}
         path = (upload_name or "Untitled.note") if not folder or single else folder
-        bundles.append(Bundle(path=path, size=sum(e.size for e in members.entries.values()), members=members))
+        bundles.append(Bundle(path=path, size=sum(e.size for e in members.entries.values()), members=members,
+                              folder=folder))
     bundles += [Bundle(path=e.path, size=e.size, packed=e) for e in outside
                 if _leaf(e.path).lower().endswith((".note", ".ntb"))]
     bundles.sort(key=lambda b: b.path)

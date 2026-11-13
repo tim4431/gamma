@@ -1714,6 +1714,10 @@ stays. A reverted row has a redo button that puts the change back. Pages
 renamed, moved, labelled, deleted or restored by the agent — one or many in
 one call — and a deleted folder or label have one under "Changed in your
 library". To take back several at once, "Revert…" opens a dialog (below).
+A note that shows an edit or a new note made without asking as tracked
+changes has a Revert of its own on the bar under it, the same revert as the row's (`sendRevert`,
+marked in the conversation the same way), its steps newest first
+([ai.md](ai.md#watching-the-agent-work-live-footprint)).
 
 The note tools record what undoing and redoing their change needs, as
 `revert` on the action:

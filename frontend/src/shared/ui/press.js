@@ -109,6 +109,23 @@ export function clickAt(x, y) {
   document.elementFromPoint(x, y)?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window, detail: 1, button: 0, clientX: x, clientY: y }));
 }
 
+// --- a pen's lift that never came ---------------------------------------------------
+
+// A pen drag ends on its pointer's pointerup or pointercancel, and the iPad's
+// WebKit now and then sends neither for the Apple Pencil (docs/dev/ipad.md
+// "The pen"). Whatever holds a pen's contact across the page (an ink layer's
+// drag, the PDF's pen selection, a region, a strip button, the finger
+// chords' palms) also ends it, as its lift would, when the pen is plainly
+// up: `e`, seen while pen `pointerId` is held down, is the pen hovering (a
+// move with no button pressed: WebKit sends the Pencil's hover so) or the
+// pen going down again, a new contact the old one ended before (one pen to
+// a screen; a desktop's pen keeps its pointer id).
+export function penLifted(e, pointerId) {
+  if (e?.pointerType !== "pen" || pointerId == null) return false;
+  if (e.type === "pointerdown") return true;
+  return e.type === "pointermove" && e.buttons === 0;
+}
+
 // --- a menu button ---------------------------------------------------------------------
 
 // A button's menu opens on the press, as a native menu does, not on the

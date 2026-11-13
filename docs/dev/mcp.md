@@ -18,7 +18,7 @@ Codex does not invoke Gamma's AI provider.
 | `gamma/mcp_export.py` | `export_page`: a page as Markdown text or an embedded PDF, over `routers/export.py` |
 | `gamma/integrations.py` | integration tokens (`integration_tokens` table, hashes only), the workspaces each may read (`grant`, `resolve_connection`) and their resolution |
 | `gamma/server_settings.py` | the admin-confirmed public URL and the MCP host allowlist |
-| `gamma/routers/integrations.py` | the session-only connection management API, account-wide; the one-time setup codes a token-only client claims |
+| `gamma/routers/integrations.py` | the session-only connection management API, account-wide; a setup command's sign-in for a client without its own |
 | `users.db` tables `integration_tokens`, `mcp_oauth` | part of the baseline schema (steps 0–19 are folded into it); `integration_tokens.workspaces` is step 51 ([migrations.md](migrations.md) "Versions") |
 | `frontend/src/settings/SettingsIntegrations.jsx`, `frontend/src/settings/WorkspacePicker.jsx`, `frontend/src/auth/McpConsent.jsx` | the Integrations pane, the workspace checklist it and the consent screen share, the consent screen |
 | `plugins/gamma/`, `tools/package_plugins.py`, `tools/release_plugins.py`, `tools/install-gamma-*.{ps1,sh}`, `.github/workflows/codex-plugin.yml` | the shared Codex / Claude Code plugin, the DeepSeek Harness bundle in the same directory, their setup scripts and packaging |
@@ -41,9 +41,10 @@ codex mcp add gamma --url https://gamma.example.com/mcp
 ```
 
 Codex opens the browser. If sign-in is interrupted, run `codex mcp login gamma`
-to retry. Sign in with your Gamma account, tick the workspaces,
-and approve read-only access, or tick **Also let it answer my comments on
-work-folder files** to let it reply to and resolve them ("Answering feedback").
+to retry. Sign in with your Gamma account, tick the workspaces, mark any
+whose notes it may also edit **Edit** ("Editing notes"), and approve, or tick
+**Also let it answer my comments on work-folder files** to let it reply to
+and resolve them ("Answering feedback").
 Start a new Codex chat. There is no token to copy
 and no environment variable to set. This works with local browser-based Gamma
 and self-hosted servers; the Gamma desktop app is not required. Local installations
@@ -124,13 +125,12 @@ and the package holds no per-user values. Without a connection the module logs
 a warning and mounts the skill alone, so dsh still boots (a failing row would
 stop it).
 
-**Setup.** **Settings → AI → Integrations → DeepSeek Harness** has three steps:
-tick the workspaces (shown when the account has more than one), show the setup
-command, and open DeepSeek Harness. **Show the setup command** asks
-`POST /api/integrations/setup-codes` for a one-time code (ten minutes, while the
-asking session lasts) and shows `dshSetupCommand` (`assistantSetup.js`), which
-downloads `install-gamma-dsh.ps1` / `.sh` from the latest release and runs it
-with this server's MCP URL and the code. The script:
+**Setup.** **Settings → AI → Integrations → DeepSeek Harness** has the same
+three steps as Codex: run the setup command, choose what it may read in the
+browser, and open DeepSeek Harness. The command, `dshSetupCommand`
+(`assistantSetup.js`), names only this server's MCP URL, so the tab shows it
+at once: it downloads `install-gamma-dsh.ps1` / `.sh` from the latest release
+and runs it with that URL. The script:
 
 1. finds the dsh CLIs: the desktop app's own
    (`%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd`,
@@ -148,18 +148,27 @@ with this server's MCP URL and the code. The script:
    profile or a re-add fails with `ERR_PNPM_MISSING_TARBALL_INTEGRITY`); a local
    file installs into any number of profiles and updates in place. pnpm warns
    about the unresolved peer dependencies; the running dsh provides them;
-4. claims the code (`POST /api/integrations/claim`) for the connection's read
-   token and writes `gamma.json` (no byte-order mark: dsh parses it as JSON;
-   mode 600 on macOS / Linux).
+4. signs in for dsh, which has no browser sign-in of its own ("A setup
+   command's sign-in" below): it asks Gamma for a sign-in, prints its code,
+   opens `/?gamma_device=<code>` in the browser (an address it builds itself,
+   never one from the reply), where the user checks the code, ticks the
+   workspaces and allows it, and asks every two seconds until it may collect
+   the connection's token;
+5. writes the token to `gamma.json` (no byte-order mark: dsh parses it as
+   JSON; mode 600 on macOS / Linux).
 
-A failure in steps 1–3 leaves the code unused, so the same command can run
-again; a used or expired code asks for a new command. Connecting again (a new
+A failure in steps 1–3 asks nothing of Gamma, so the same command can run
+again; so can one whose sign-in expired or was cancelled. A command from a
+Gamma before this sign-in passes a one-time setup code (`-SetupCode`, the sh
+script's second argument), which the script still claims
+(`POST /api/integrations/claim` on that server). Connecting again (a new
 token, other workspaces) finds the plugin in place and only saves the new
 connection, so the app need not be quit; it reads the file at its next start.
 `-Bundle <tarball>` (`GAMMA_DSH_BUNDLE` for the sh script) installs a local
 build instead of the release's, for development; `-Remove` undoes the setup
-("Remove Gamma from an assistant" below). The tab works without browser
-sign-in, since it needs none.
+("Remove Gamma from an assistant" below). The tab works without the
+confirmed public address the other assistants' browser sign-in needs: the
+sign-in is the account's own session on the page the script opened.
 
 The tools appear as `mcp__gamma__<tool>` and the skill as `gamma`. An expired or
 revoked token shows in Gamma's log as a 401 `authentication-required` on `/mcp`;
@@ -172,8 +181,9 @@ download URL and digest pinned in (`__GAMMA_DSH_*__`), and
 builds the tarball in Python (npm layout, `package/` prefix, fixed timestamps,
 reproducible), stamping the release version into `package.json`.
 `tools/test_release_dsh_plugin.py` runs the real scripts (PowerShell on
-Windows, sh elsewhere) with only the download, the claim and the dsh CLI
-stubbed. For local development, `dsh plugin --profile web add ./plugins/gamma`
+Windows, sh elsewhere) with only the download, Gamma's replies (a sign-in
+that waits once, then is allowed or cancelled; an older Gamma's claim), the
+browser and the dsh CLI stubbed. For local development, `dsh plugin --profile web add ./plugins/gamma`
 links the checkout (dsh 0.1.7 or later), or run the setup script from
 `tools/` with `-Bundle` and a tarball from `write_dsh_bundle`. Verified against
 dsh 0.2.2-rc.1 (the Windows desktop app's CLI and pnpm 11): the plugin added to
@@ -248,12 +258,13 @@ pins the names. The chat's other tools stay off: the web tools (`search_papers`,
 `fetch_paper`, …), because the assistant has its own web access;
 `list_deleted`, because Recently deleted is out of the reading tools' reach
 and restoring is a change; `update_plan`, which has no permission and only
-goes with the changes; and every write tool of the chat, because the
-connection changes nothing in the library (a feedback connection's answers
-are its own two tools, below). The chat's tool permissions (Settings → AI →
-Tool usage) do not govern this connection: the token is its own grant, created
-and revoked in Integrations. `list_workspaces`, `read_gamma_link`,
-`export_page` and the two answering tools exist only here.
+goes with the changes; and every write tool of the chat but the four note
+tools a connection gets where the user let it edit ("Editing notes"; a
+feedback connection's answers are its own two tools, below). The chat's tool
+permissions (Settings → AI → Tool usage) do not govern this connection: the
+token is its own grant, created, changed and revoked in Integrations.
+`list_workspaces`, `read_gamma_link`, `export_page` and the two answering
+tools exist only here.
 `view_pdf_page`'s, `view_ink`'s, `view_image`'s and `read_feedback`'s pictures
 go out as MCP `image` items, which the client shows the model as images.
 
@@ -422,8 +433,8 @@ resolve of such a thread, and setting a Send request's state over the HTTP
 API. A manual token gets the scope in the Tokens pane (**Read and answer
 feedback**); a browser sign-in gets it from the consent page's checkbox
 ("Browser sign-in protocol"). A `write` token answers through the comment
-API as before and is read-only on MCP, as it always was; setup codes mint
-read tokens.
+API as before and is read-only on MCP, as it always was. A setup command's
+sign-in gets it from the same checkbox.
 
 - **Two tools of the adapter's own**, `reply_feedback` and `resolve_feedback`
   (`gamma/feedback/agent.py`: their schemas, descriptions and executors;
@@ -432,8 +443,8 @@ read tokens.
   False`. `reply_feedback(thread_id, body, id?)` writes one reply (`id`, the
   client's own, makes a retry write once); `resolve_feedback(thread_id)`
   resolves, and never reopens (reopening sends a thread back to the agent and
-  is the person's). Their annotations are the adapter's only
-  `readOnlyHint: False` (`idempotentHint` true for the resolve).
+  is the person's). Their annotations are `readOnlyHint: False`
+  (`idempotentHint` true for the resolve), as the note tools' are.
 - **Listed per token, checked per call.** `list_tools` appends them only for
   a connection whose scope is `feedback` (read from the request the SDK
   hands the handler). The SDK keeps one tool cache for every connection, so
@@ -474,6 +485,94 @@ line, change the sources and rebuild, reply with what changed and resolve
 what is done, act on the owner's comments and ask about anyone else's, and
 without the answering tools say so in the terminal.
 
+### Editing notes
+
+A connection may also change the notes of some of the workspaces it reads:
+each is View or Edit, as a share's people are given (the same `Segmented`,
+eye and pen). The token's `edits` names them (`integrations.edit_grant`,
+schema step 56): `''` none, `'*'` every workspace it reads, now and later,
+or a JSON list of ids, each one it reads. Edit is the account's own to give:
+a workspace the account only views is refused (403) and its row says *view
+only*, and every request rechecks the role, so an account made a viewer
+since edits there no more (`resolve_connection`'s `editable`). A deleted
+workspace leaves the list (`forget_workspace`). The grant is MCP's alone:
+the HTTP API still answers such a token's writes 403, as any read token's.
+
+- **The tools.** Where it may edit, the connection gets four of the chat's
+  note tools (`mcp_server.EDIT_TOOLS`): `edit_block`, `create_block`,
+  `move_block` and `clip_region` (a picture of a PDF region or of
+  handwriting, for a note to embed). Never `delete_block`, and nothing of
+  pages, folders, labels or settings. They run through
+  `ai_tools.run_agent_tool` with `can_write` on, as the chat's agent's do:
+  written as the account with client `ai`, planned and checked as in the
+  chat (the edit's three-way merge with what the user typed meanwhile, the
+  picture checks, the write lock), refused in a workspace being deleted.
+  `list_tools` adds them only for a connection that edits somewhere, with
+  `readOnlyHint: False` (`destructiveHint` true for `edit_block`, whose
+  replace overwrites a note's text); `call_tool` refuses them to one that
+  edits nothing before reading any argument, as the answering tools are
+  refused, and `_call` refuses one aimed at a workspace it only reads,
+  naming those it edits. `parent_id` and `after_id` find the call's
+  workspace, as the reading tools' ids do ("Several workspaces");
+  `list_workspaces` says where it edits (`editable` in its structured
+  content).
+- **What it read.** An `edit_block` replace must start from a full read of
+  the note (`ai_tools.notes_seen`, the merge base), which the chat keeps for
+  one turn. MCP has no turn, every call its own request, so a connection's
+  reads in a workspace it edits are kept in memory while the server runs
+  (`mcp_server._seen`: the latest 2,000 notes per connection and workspace,
+  for 64 connections): `read_block` then `edit_block` works across calls,
+  and a replace of a note it never read is refused as in the chat. Two
+  sessions of one client share the token, and so share what it read.
+- **Where it is set.** The consent page (an MCP client's sign-in and a setup
+  command's) shows the eye and pen on each ticked workspace and on "All
+  workspaces"; its summary becomes **Read and edit notes** and its button
+  **Allow reading and editing**. Afterwards, a connection's **Choose
+  workspaces** under Connected assistants changes both, and its row says
+  where it edits ("edits notes in Lab", "edits notes wherever you edit").
+  Not a scope: no client asks for it, the person gives it.
+
+#### Asking first
+
+A connection that edits asks the person before each change, by default
+(`integration_tokens.asks`, schema step 57), as the chat's Ask permission
+does: through the client, with MCP elicitation, in Gamma's words. Why this
+way and not the client's own prompt or a step-up sign-in:
+[research/mcp-elicitation.md](../research/mcp-elicitation.md).
+
+- **The question** (`GammaMCP._ask`). The call is planned first with the
+  tool's approval preview (`ai_tools.approval_preview`, the chat card's), in
+  a worker thread; a call that could change nothing gets its answer and asks
+  nobody. Then `elicit_form` sends the client the question (`_question`):
+  who asks, what and where ("Codex wants to add a note to “Paper”, under
+  “Methods”:"), the change as a word diff (`[-removed-]{+added+}`) and the
+  page's URL, with one field, `remember` ("Don't ask again for this
+  connection"). Accept runs the call with the preview's digest
+  (`run_agent_tool(approved=)`), as the chat's gate does; accept with
+  `remember` also turns asking off for the connection (`set_asks`). Decline
+  or cancel, or no answer within the chat card's ten minutes
+  (`ai_permissions.APPROVAL_TIMEOUT`), changes nothing, and the model hears
+  `DECLINED` or `UNANSWERED`, worded as the chat's.
+- **Two transports** (`GammaMCP.__call__`). The question needs a stateful
+  session answered over SSE: the SDK's JSON mode drops a server request made
+  during a call, and a stateless request has no session for the answer to
+  come back to. So every client stays on the stateless JSON manager, and a
+  second, stateful manager (SSE, 30 minutes idle, at most 1,000 sessions)
+  takes the `initialize` of a connection that edits somewhere whose client
+  can show a form (`capabilities.elicitation` empty or with `form`:
+  `_opens_session`, reading the body once and handing it on). The session's
+  id is noted as that token's (`owners`, from the response's
+  `Mcp-Session-Id`); a request naming a session answers only the token that
+  opened it, else 404, which tells a client to open another.
+- **When it cannot ask.** A client on the stateless transport (it cannot
+  show a question, or it connected before the connection could edit) gets
+  `CANNOT_ASK`: nothing changed, and the steps to restart it or to turn
+  asking off. So does one whose `elicit_form` fails.
+- **Where it is set.** On the consent page, **Ask me before each change it
+  makes** under the workspaces once one is Edit (ticked; its summary says
+  which way); in a connection's **Choose workspaces**, the same box; the
+  connection's row adds "changes without asking" once it is off.
+
 ## Self-hosted and remote connections
 
 Open Gamma at its public HTTPS address, then sign in as an administrator and
@@ -513,7 +612,8 @@ dynamic public-client registration, and authorization-code exchange with S256
 PKCE. The SDK validates client identity, redirect matching, and PKCE. Gamma adds:
 
 - resource binding and an explicit approval screen, where the user ticks the
-  workspaces the assistant may read (or all of them, those added later too);
+  workspaces the assistant may read (or all of them, those added later too)
+  and marks those whose notes it may also edit ("Editing notes");
   the code carries the grant, rechecked against the account at the exchange;
 - session-bound consent, rate and body limits;
 - persistent expiring records and atomic single-use codes.
@@ -548,7 +648,7 @@ manual tokens in **Integrations**, where users can revoke them.
 
 ## Permissions and credentials
 
-- An integration token belongs to one workspace, its `workspace_id`: `read` (the default; the MCP endpoint and the HTTP API's reads), `feedback` (everything `read` may, plus replying to and resolving the comment threads on a work folder's files and setting a Send request's state, [feedback.md](feedback.md); a viewer may make one, since viewers comment) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers). A read or feedback token's MCP connection may read more, its `workspaces` (`integrations.grant`): `''` for its own workspace alone (every token from before step 51), `'*'` for every workspace the account can open, now and later, or a JSON list of ids, its own first. A write token is always its workspace alone. On the HTTP API a manual token is a bearer credential — the account behind it, confined to its own workspace whatever it grants MCP, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included); a `feedback` token the same, but for its answers (`auth.require_commenter`'s `answer`), which it gives in its own workspace alone, whatever else its MCP connection reads. `POST /api/ai/chat` through either arms the reading tools only (`auth.can_write`), so its agent cannot rename, move or edit either. On MCP, a tool's `workspace` argument reaches only the connection's workspaces; on the HTTP API,
+- An integration token belongs to one workspace, its `workspace_id`: `read` (the default; the MCP endpoint and the HTTP API's reads), `feedback` (everything `read` may, plus replying to and resolving the comment threads on a work folder's files and setting a Send request's state, [feedback.md](feedback.md); a viewer may make one, since viewers comment) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers). A read or feedback token's MCP connection may read more, its `workspaces` (`integrations.grant`): `''` for its own workspace alone (every token from before step 51), `'*'` for every workspace the account can open, now and later, or a JSON list of ids, its own first; and of those, the ones whose notes it may also edit, its `edits` (`integrations.edit_grant`, "Editing notes": `''`, `'*'` or a list), only where the account edits. A write token is always its workspace alone. On the HTTP API a manual token is a bearer credential — the account behind it, confined to its own workspace whatever it grants MCP, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included); a `feedback` token the same, but for its answers (`auth.require_commenter`'s `answer`), which it gives in its own workspace alone, whatever else its MCP connection reads. `POST /api/ai/chat` through either arms the reading tools only (`auth.can_write`), so its agent cannot rename, move or edit either. On MCP, a tool's `workspace` argument reaches only the connection's workspaces; on the HTTP API,
   `?ws=` and `X-Gamma-Workspace` cannot select another workspace.
 - Only token SHA-256 hashes are stored in `users.db`. Tokens contain 256 random bits.
 - HTTP share URLs also stay within the integration token's workspace and
@@ -568,9 +668,10 @@ manual tokens in **Integrations**, where users can revoke them.
   (`integrations.forget_workspace`); a list left empty goes with its token.
   Account rename preserves them; password changes through the admin API or
   `manage.py set-password` revoke them along with sessions.
-- MCP always disables the chat's writes and external web tools; the only
-  writes are a feedback connection's two answering tools ("Answering
-  feedback"). The allowlist is enforced on every dispatch, independent of
+- MCP always disables the chat's external web tools and its writes, but
+  for a feedback connection's two answering tools ("Answering feedback")
+  and the four note tools in the workspaces a connection may edit
+  ("Editing notes"). The allowlist is enforced on every dispatch, independent of
   which tools the client was offered. Deprecated chat aliases are not accepted
   by the MCP transport.
 - Token management requires a normal Gamma session and never accepts an integration
@@ -581,19 +682,41 @@ the default grant and a write token's workspace):
 
 ```text
 GET    /api/integrations/tokens                 the account's connections, its workspaces
-POST   /api/integrations/tokens       {"name":"Codex","expires_in_days":90,"scope":"read","workspaces":[…]}
+POST   /api/integrations/tokens       {"name":"Codex","expires_in_days":90,"scope":"read","workspaces":[…],"edit_workspaces":[…]}
                                       scope: read (the default), feedback or write (the current workspace alone)
-PATCH  /api/integrations/tokens/{id}  {"workspaces":[…]} or {"all_workspaces":true}   a read or feedback token
+PATCH  /api/integrations/tokens/{id}  {"workspaces":[…]} or {"all_workspaces":true}   a read or feedback token,
+                                      with "edit_workspaces":[…] (of those) or "edit_all":true: the ones it may edit,
+                                      and "asks": whether each change asks first (left out: as it was)
 DELETE /api/integrations/tokens/{id}
-POST   /api/integrations/setup-codes  {"name":"DeepSeek Harness","workspaces":[…]}
-POST   /api/integrations/claim        {"code":"…"}   no session: the code is the credential
 ```
 
-A setup code is a token-only client's connection waiting to be claimed: the
-signed-in browser asks for one, the setup command claims it once within ten
-minutes (rate-limited per address) and gets the read token, minted then, so the
-connection appears only once something has it. Signing out of the session that
-asked ends its codes. The code may sit in shell history; the token never does.
+### A setup command's sign-in
+
+A client without browser sign-in of its own (DeepSeek Harness) is signed in
+by its setup command, the way a TV or a CLI signs in: OAuth's device flow
+(RFC 8628) in Gamma's own shape, on its own endpoints, not advertised in the
+OAuth metadata. The command holds nothing secret, so the tab shows it at once.
+
+```text
+POST /api/integrations/device          {"name":"DeepSeek Harness"}   no session; rate-limited per address
+     → {device_code, user_code: "BCDF-GHJK", expires_in: 600, interval: 2}
+GET  /api/integrations/device/request?user_code=…   session: who asks, the code, the workspaces, a csrf
+POST /api/integrations/device/consent  {user_code, csrf, workspaces | all_workspaces, feedback, approve}
+POST /api/integrations/device/token    {device_code}   no session: 202 {"status":"pending"} while it waits,
+     then {token, name, expires_at} once; 403 cancelled; 400 expired, used or signed out
+```
+
+The command opens `/?gamma_device=<user_code>`, which App routes to the
+consent page (`McpConsent.jsx`) as it does `?gamma_oauth=`: sign in if need
+be, the same workspace checklist and feedback checkbox, and the code to check
+against the terminal's, since a sign-in someone else started would show
+another. Allowed, the page says to go back to the terminal; the token is
+minted only when the command collects it, so the connection appears only
+once something has it, and only while the session that allowed it is still
+signed in. The user code is eight letters without vowels, read in any case
+and with or without its dash; the device code, the command's credential,
+never leaves the terminal. Each step is a record of `mcp_oauth`'s store
+(ten minutes) and is spent once.
 
 ## Codex plugin and distribution
 
@@ -746,7 +869,16 @@ workspace isolation, permissions, expiration, and revocation; one connection
 reading several workspaces (ids finding theirs, a search across them, a named
 one, a link's own, the ones it may not read refused, the HTTP API kept to the
 first), changing a connection's workspaces, all of them following a new one, a
-deleted one leaving the grant, and a setup code claimed once; a feedback
+deleted one leaving the grant, and a setup command's sign-in (pending,
+allowed, cancelled, spent once, ended by signing out); editing notes (the
+grant only of workspaces it reads and the account edits, every one of them,
+the four tools listed only where it edits and none of them a deletion, a
+note added and appended to as client `ai`, a rewrite refused until a read
+in an earlier call, a workspace it only reads refused, a deleted one
+leaving the grant; `test_mcp_oauth.py` the consent's grant); asking first
+(a stateless client refused until asking is off; a stateful session only for
+a client that edits and can be asked, answering over SSE, refused to another
+token and gone once deleted); a feedback
 connection's answering tools (listed for it alone, refused to a read
 connection even right after a feedback one listed them, a reply with its
 stamp, the room and the Inbox told, a retried id written once, a resolve
@@ -773,4 +905,8 @@ and account deletion through the admin API and `manage.py delete-user`.
 schema upgrades. Browser scenarios cover sign-in, ticking a second workspace,
 approval, cancellation, and MCP reads, each assistant's tab, a token's
 workspaces and changing them, the account-wide list and revocation, and the
-DeepSeek Harness setup command and its code claimed once.
+DeepSeek Harness setup command, shown at once, and its sign-in allowed in the
+browser and collected once; a workspace marked Edit, and asking turned off,
+in a connection's editor and on the consent page; and Gamma's question about
+a change streamed to a client over a real session and answered: allowed,
+declined, allowed with "don't ask again", then not asked.

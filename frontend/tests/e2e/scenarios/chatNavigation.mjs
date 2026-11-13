@@ -1467,6 +1467,143 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
+  await step("chat navigation: the AI's note edits show in their notes as tracked changes — one waiting on its card answered there with the card's answers, one that ran without asking a record to hide or revert", async () => {
+    const notesPage = await alice.api("/api/pages", { method: "POST", body: { title: "Tracked page" } });
+    const one = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "The cavity has a Q of 1e6." } });
+    const two = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "Energy $E = mc$ here.", before: one.position } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatBodies = [];
+      window.approvalAnswers = [];
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/api/ai/chat")) {
+          window.chatBodies.push(JSON.parse(init.body));
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = {
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        if (url.includes("/api/ai/approvals/")) {
+          window.approvalAnswers.push({ id: decodeURIComponent(url.split("/").pop()), ...JSON.parse(init.body) });
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${notesPage.id}`);
+    const push = (event) => page.evaluate((e) => window.chatStream.push(e), event);
+    const input = page.getByRole("combobox", { name: "Message AI" });
+    const row = (block) => page.locator(`.blockRowWrap[data-block-id="${block.id}"]`);
+    const noteText = (block) => alice.api(`/api/blocks/${block.id}`).then((b) => b.content);
+    // What the agent's edit_block call wrote, and the action it reported.
+    const edited = async (block, before, after, extra = {}) => {
+      await alice.api(`/api/blocks/${block.id}`, { method: "PUT", body: { content: after } });
+      return { action: { kind: "edit", tool: "edit_block", mode: "replace", page_id: notesPage.id, block_id: block.id,
+        title: "Tracked page", summary: "Edited a note in “Tracked page”", args: { block_id: block.id },
+        result: `ok — block [${block.id}] updated`, revert: { before, after }, ...extra } };
+    };
+    const send = async (text, n) => {
+      await input.fill(text);
+      await input.press("Enter");
+      await until(() => page.evaluate((count) => window.chatBodies.length === count && !!window.chatStream, n), { what: `message ${n} is sent` });
+    };
+    const finish = async (text) => {
+      await page.evaluate((delta) => { window.chatStream.push({ delta }); window.chatStream.finish(); window.chatStream = null; }, text);
+      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()), { what: "the reply ends" });
+    };
+    try {
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      await send("Tighten both notes", 1);
+
+      // 1. An edit that ran without asking: struck out where the old words stood, the new ones tinted, the formula set whole.
+      await push(await edited(one, "The cavity has a Q of 1e6.", "The cavity had a Q of 1e6."));
+      await row(one).locator(".mdDiffView del.mdDiff", { hasText: "has" }).waitFor();
+      assertEq(await row(one).locator(".mdDiffView ins.mdDiff").innerText(), "had");
+      await row(one).locator(".noteReviewBar", { hasText: "Edited by AI" }).waitFor();
+      await push(await edited(two, "Energy $E = mc$ here.", "Energy $E = mc^2$ here."));
+      await row(two).locator(".mdDiffView del.mdDiff .katex").waitFor();
+      await row(two).locator(".mdDiffView ins.mdDiff .katex").waitFor();
+      assertEq(await row(two).locator(".katex-error").count(), 0, "both formulas set");
+      if (flags.keep) await page.locator(".blockList").screenshot({ path: `${server.dir}/tracked-changes.png`, animations: "disabled" });
+      // A record, nothing waits on it: no Keep. Two changes on the page: each bar offers Hide all.
+      // Revert waits for the reply, as its row does.
+      assertEq(await row(one).getByRole("button", { name: "Keep", exact: true }).count(), 0, "nothing to approve");
+      assertEq(await row(one).getByRole("button", { name: "Hide all", exact: true }).count(), 1);
+      assert(await row(two).getByRole("button", { name: "Revert", exact: true }).isDisabled(), "no revert while the reply streams");
+      await finish("Tightened both.");
+      await until(() => row(two).getByRole("button", { name: "Revert", exact: true }).isEnabled(), { what: "Revert once the reply ended" });
+
+      // 2. Hide: the note shows its text as it is now.
+      await row(one).getByRole("button", { name: "Hide", exact: true }).click();
+      await until(async () => !(await row(one).locator(".mdDiffView").count()), { what: "a hidden change no longer shows" });
+      assertEq((await row(one).locator(".blockRendered").innerText()).trim(), "The cavity had a Q of 1e6.");
+      assertEq(await row(two).getByRole("button", { name: "Hide all", exact: true }).count(), 0, "one change left: no Hide all");
+      // Its link in the chat draws it again, and opens it.
+      const changeRows = page.locator(".chatChanges", { hasText: "Changed in your notes" }).locator(".chatChange");
+      await changeRows.nth(0).locator(".chatChangeLink").click();
+      await row(one).locator(".mdDiffView del.mdDiff", { hasText: "has" }).waitFor();
+      await row(one).getByRole("button", { name: "Hide", exact: true }).click();
+      await until(async () => !(await row(one).locator(".mdDiffView").count()), { what: "hidden again" });
+
+      // 3. Revert: taken back on the server like the reply's row, which shows it reverted.
+      await row(two).getByRole("button", { name: "Revert", exact: true }).click();
+      await until(async () => (await noteText(two)) === "Energy $E = mc$ here.", { what: "the edit is reverted" });
+      await until(async () => !(await row(two).locator(".mdDiffView, .noteReviewBar").count()), { what: "a reverted change no longer shows" });
+      const changes = page.locator(".chatChanges", { hasText: "Changed in your notes" });
+      await changes.locator(".chatChange.reverted").waitFor();
+      assertEq(await changes.locator(".chatChange.reverted").count(), 1, "only the reverted one is marked");
+      const marked = await until(async () => {
+        const chat = await alice.api(`/api/chats/${notesPage.id}`);
+        const marks = chat.messages.find((m) => m.role === "ai")?.actions?.map((a) => !!a.reverted) || [];
+        return JSON.stringify(marks) === JSON.stringify([false, true]) && marks;
+      }, { what: "the revert from the note is saved on its action, as a row's is" });
+      assert(marked, "saved");
+
+      // 4. An edit waiting on its card: drawn in its note against what it says now, answered there with the
+      //    card's four answers; Allow in this chat is the card's, and is not asked about again.
+      await send("Round the Q up", 2);
+      await push({ step: { id: "c-t1", tool: "edit_block", args: { block_id: one.id, mode: "patch" } } });
+      await push({ approval: { id: "t1", call_id: "c-t1", tool: "edit_block", perm: "block_edit", timeout: 600,
+        args: { block_id: one.id, mode: "patch" },
+        preview: { page_id: notesPage.id, title: "Tracked page", block_id: one.id, mode: "patch",
+          diff: [["ctx", "The cavity had a Q of "], ["del", "1e6."], ["ins", "2e6."]], text: "The cavity had a Q of 2e6." } } });
+      const card = page.locator(".chatApproval");
+      await card.waitFor();
+      await row(one).locator(".mdDiffView ins.mdDiff", { hasText: "2e6." }).waitFor();
+      assertEq(await row(one).locator(".mdDiffView del.mdDiff").innerText(), "1e6.");
+      const asking = row(one).locator(".noteReviewBar", { hasText: "Waiting for your approval" });
+      assertEq(JSON.stringify(await asking.getByRole("button").allInnerTexts()),
+        JSON.stringify(["Allow once", "Allow in this chat", "Always allow", "Don't allow"]), "the card's answers");
+      await asking.getByRole("button", { name: "Allow in this chat", exact: true }).click();
+      await card.getByText("Allowed. The assistant goes on…").waitFor();
+      assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "t1", decision: "chat" }]));
+      await until(async () => !(await row(one).locator(".noteReviewBar").count()), { what: "the answered card leaves its note" });
+      // Allowed after the user saw it: when it lands it is not marked again.
+      await push(await edited(one, "The cavity had a Q of 1e6.", "The cavity had a Q of 2e6.", { mode: "patch", approval: "chat" }));
+      await until(async () => (await row(one).locator(".blockRendered").innerText()).trim() === "The cavity had a Q of 2e6.",
+        { what: "the allowed edit lands" });
+      assertEq(await row(one).locator(".mdDiffView").count(), 0, "an edit allowed on its card is not shown again");
+      // The chat's later edits run without a card: each lands as a record.
+      await push(await edited(two, "Energy $E = mc$ here.", "Energy $E = mc^2$ here."));
+      await row(two).locator(".noteReviewBar", { hasText: "Edited by AI" }).getByRole("button", { name: "Hide", exact: true }).waitFor();
+      await finish("Rounded it.");
+      await page.getByRole("button", { name: "Allowed in this chat: Edit note blocks. Ask again", exact: true }).waitFor();
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/chats/${notesPage.id}`, { method: "PUT", body: { messages: [] } });
+    }
+  });
+
   await step("chat navigation: a plan is proposed read-only, approved, tracked, continued and revised", async () => {
     const { title: homeTitle } = await alice.api("/api/chats/home");
     await alice.api("/api/chats/home", { method: "PUT", body: { title: "", messages: [] } });

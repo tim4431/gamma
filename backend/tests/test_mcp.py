@@ -1,6 +1,8 @@
 """Exercise the real SDK transport, scoped credentials, and shared dispatch;
 a feedback connection's answering tools (gamma/feedback/agent.py)."""
 
+import json
+import re
 import time
 
 import pytest
@@ -506,20 +508,46 @@ def test_access_changes_and_follows_the_workspaces(client, connection):
                 workspaces.delete(gone)
 
 
-def test_setup_code_is_claimed_once_for_a_token(client, anon, connection):
+def _device(anon):
+    """A setup command's sign-in, as it starts it: ``(device_code, user_code)``."""
+    started = anon.post("/api/integrations/device", json={"name": "DeepSeek Harness"})
+    assert started.status_code == 201, started.text
+    body = started.json()
+    assert body["expires_in"] == 600 and body["interval"] == 2
+    assert re.fullmatch(r"[A-Z]{4}-[A-Z]{4}", body["user_code"])
+    return body["device_code"], body["user_code"]
+
+
+def _allow(c, user_code, approve=True, **access):
+    details = c.get("/api/integrations/device/request", params={"user_code": user_code})
+    assert details.status_code == 200, details.text
+    assert details.json()["client_name"] == "DeepSeek Harness"
+    assert details.json()["user_code"] == user_code.upper()[:4] + "-" + user_code.upper().replace("-", "")[4:]
+    return c.post("/api/integrations/device/consent", json={"user_code": user_code, "csrf": details.json()["csrf"],
+                                                            "approve": approve, **access})
+
+
+def test_setup_command_signs_in_through_the_browser(client, anon, connection):
     from gamma import workspaces
 
     c, ws, _ = connection
     lab = workspaces.create("Setup lab", account_of("mcp-reader"))["id"]
+    poll = lambda code: anon.post("/api/integrations/device/token", json={"device_code": code})  # noqa: E731
     try:
-        assert anon.post("/api/integrations/setup-codes", json={"name": "DeepSeek Harness"}).status_code == 401
-        made = c.post("/api/integrations/setup-codes", json={"name": "DeepSeek Harness", "workspaces": [ws, lab]})
-        assert made.status_code == 201, made.text
-        code = made.json()["code"]
-        assert made.json()["expires_in"] == 600
-        # no connection until the setup command claims it
+        device_code, user_code = _device(anon)
+        # waiting: nothing granted, and the page needs a session
+        assert poll(device_code).status_code == 202
+        assert anon.get("/api/integrations/device/request", params={"user_code": user_code}).status_code == 401
         assert all(t["name"] != "DeepSeek Harness" for t in c.get("/api/integrations/tokens").json()["tokens"])
-        claimed = anon.post("/api/integrations/claim", json={"code": code})
+        # a consent bound to another sign-in's csrf is refused
+        other_device, other_code = _device(anon)
+        csrf = c.get("/api/integrations/device/request", params={"user_code": other_code}).json()["csrf"]
+        refused = c.post("/api/integrations/device/consent", json={"user_code": user_code, "csrf": csrf, "approve": True})
+        assert refused.status_code == 403
+        # the code is read in any case, with or without its dash
+        allowed = _allow(c, user_code.lower().replace("-", ""), workspaces=[ws, lab])
+        assert allowed.status_code == 200, allowed.text
+        claimed = poll(device_code)
         assert claimed.status_code == 200, claimed.text
         assert claimed.headers["cache-control"] == "no-store"
         token = claimed.json()["token"]
@@ -527,18 +555,176 @@ def test_setup_code_is_claimed_once_for_a_token(client, anon, connection):
         assert names == [ws, lab]
         row = next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["name"] == "DeepSeek Harness")
         assert row["scope"] == "read" and row["workspaces"] == [ws, lab]
-        assert anon.post("/api/integrations/claim", json={"code": code}).status_code == 400
-        assert anon.post("/api/integrations/claim", json={"code": "x" * 43}).status_code == 400
+        # once: the token, the consent and an unknown code are all spent
+        assert poll(device_code).status_code == 400
+        assert c.get("/api/integrations/device/request", params={"user_code": user_code}).status_code == 400
+        assert poll("x" * 43).status_code == 400
         c.delete(f"/api/integrations/tokens/{row['id']}")
-        # signing out ends the codes that session asked for
+        # cancelled: the command hears so, and nothing is connected
+        assert _allow(c, other_code, approve=False).status_code == 200
+        assert poll(other_device).status_code == 403
+        assert poll(other_device).status_code == 400
+        assert all(t["name"] != "DeepSeek Harness" for t in c.get("/api/integrations/tokens").json()["tokens"])
+        # signing out before the command collects ends the sign-in
         make_user("mcp-setup-out", "pw")
         leaving = login("mcp-setup-out", "pw")
-        late = leaving.post("/api/integrations/setup-codes", json={"name": "DeepSeek Harness"}).json()["code"]
+        late_device, late_code = _device(anon)
+        assert _allow(leaving, late_code).status_code == 200
         leaving.post("/api/logout")
-        assert anon.post("/api/integrations/claim", json={"code": late}).status_code == 400
+        assert poll(late_device).status_code == 400
         leaving.close()
     finally:
         workspaces.delete(lab)
+
+
+# --- editing notes --------------------------------------------------------------------
+
+EDITING = {"edit_block", "create_block", "move_block", "clip_region"}
+
+
+def _text(ws, block_id):
+    with connect_pages_db(ws) as conn:
+        row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
+    return row[0] if row else None
+
+
+def _child(ws, parent_id, content):
+    with connect_pages_db(ws) as conn:
+        return conn.execute("SELECT id FROM unified_blocks WHERE parent_id = ? AND content = ?",
+                            (parent_id, content)).fetchone()[0]
+
+
+def test_a_connection_edits_notes_only_where_it_may(client, connection):
+    from gamma import workspaces
+
+    c, ws, item = connection
+    lab = workspaces.create("Edit lab", account_of("mcp-reader"))["id"]
+    make_user("mcp-edit-owner", "pw")
+    owned = workspaces.create("Viewed lab", account_of("mcp-edit-owner"), kind="shared")["id"]
+    workspaces.set_member(owned, account_of("mcp-reader"), "viewer", account_of("mcp-edit-owner"))
+    patch = lambda **body: c.patch(f"/api/integrations/tokens/{item['id']}", json=body)  # noqa: E731
+    try:
+        home = _page_with_note(c, ws, "Home notes", "McpHomeNote")
+        lab_page = _page_with_note(c, lab, "Lab notes", "McpLabNote")
+        tools = {t["name"]: t for t in rpc(client, item["token"], "tools/list").json()["result"]["tools"]}
+        assert not EDITING & set(tools)
+        refused = call(client, item["token"], "create_block", {"parent_id": lab_page["id"], "content": "x"})
+        assert refused["isError"] and "may only read" in refused["content"][0]["text"]
+        # edits only what it reads, only where the account edits
+        assert patch(workspaces=[ws, lab], edit_workspaces=[owned]).status_code == 400
+        assert patch(workspaces=[ws, lab, owned], edit_workspaces=[owned]).status_code == 403
+        changed = patch(workspaces=[ws, lab, owned], edit_workspaces=[lab])
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["edit_workspaces"] == [lab] and not changed.json()["edit_all"]
+        row = next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["id"] == item["id"])
+        assert row["edit_workspaces"] == [lab]
+        tools = {t["name"]: t for t in rpc(client, item["token"], "tools/list").json()["result"]["tools"]}
+        assert EDITING <= set(tools) and "delete_block" not in tools
+        assert tools["edit_block"]["annotations"]["destructiveHint"] is True
+        assert tools["create_block"]["annotations"]["readOnlyHint"] is False
+        spaces = call(client, item["token"], "list_workspaces", {})["structuredContent"]["workspaces"]
+        assert [w["editable"] for w in spaces] == [False, True, False]
+        # it asks before each change, and a client on the stateless transport cannot be asked
+        assert row["asks"] is True
+        unasked = call(client, item["token"], "create_block", {"parent_id": lab_page["id"], "content": "McpAddedNote"})
+        assert unasked["isError"] and "cannot show its question" in unasked["content"][0]["text"]
+        assert patch(workspaces=[ws, lab, owned], edit_workspaces=[lab], asks=False).status_code == 200
+        assert next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["id"] == item["id"])["asks"] is False
+        # a note added and appended to in the workspace it edits, as the account through the chat's tools
+        made = call(client, item["token"], "create_block", {"parent_id": lab_page["id"], "content": "McpAddedNote"})
+        assert not made["isError"], made
+        assert _child(lab, lab_page["id"], "McpAddedNote")
+        lab_note = _child(lab, lab_page["id"], "McpLabNote")
+        appended = call(client, item["token"], "edit_block",
+                        {"block_id": lab_note, "content": " McpAppended", "mode": "append"})
+        assert not appended["isError"], appended
+        assert _text(lab, lab_note).endswith("McpAppended")
+        with connect_pages_db(lab) as conn:
+            assert conn.execute("SELECT client FROM page_ops WHERE page_id = ? ORDER BY seq DESC LIMIT 1",
+                                (lab_page["id"],)).fetchone()[0] == "ai"
+        # a whole rewrite needs a read first, which an earlier call counts for
+        rewrite = {"block_id": lab_note, "content": "McpRewritten", "mode": "replace"}
+        unread = call(client, item["token"], "edit_block", rewrite)
+        assert unread["isError"] and "read the block first" in unread["content"][0]["text"]
+        assert not call(client, item["token"], "read_block", {"block_id": lab_note})["isError"]
+        assert not call(client, item["token"], "edit_block", rewrite)["isError"]
+        assert _text(lab, lab_note) == "McpRewritten"
+        # never in a workspace it only reads, never a deletion
+        home_note = _child(ws, home["id"], "McpHomeNote")
+        elsewhere = call(client, item["token"], "edit_block", {"block_id": home_note, "content": " x", "mode": "append"})
+        assert elsewhere["isError"] and "may only read the workspace" in elsewhere["content"][0]["text"]
+        assert _text(ws, home_note) == "McpHomeNote"
+        assert call(client, item["token"], "delete_block", {"block_id": lab_note})["isError"]
+        # every workspace: those the account edits, never the one it views
+        assert patch(all_workspaces=True, edit_all=True).json()["edit_all"]
+        spaces = call(client, item["token"], "list_workspaces", {})["structuredContent"]["workspaces"]
+        assert {w["id"]: w["editable"] for w in spaces} == {ws: True, lab: True, owned: False}
+        assert patch(workspaces=[ws], edit_all=True).status_code == 400
+        # a deleted workspace leaves the edits too
+        assert patch(workspaces=[ws, lab], edit_workspaces=[ws, lab]).status_code == 200
+        workspaces.delete(lab)
+        lab = None
+        row = next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["id"] == item["id"])
+        assert row["edit_workspaces"] == [ws]
+    finally:
+        for gone in (lab, owned):
+            if gone:
+                workspaces.delete(gone)
+
+
+def _events(response):
+    """The JSON-RPC messages of an SSE answer."""
+    return [json.loads(line[5:]) for line in response.text.splitlines() if line.startswith("data:") and line[5:].strip()]
+
+
+def _initialize(client, token, capabilities):
+    return client.post("/mcp", headers={"Host": "localhost", "Authorization": f"Bearer {token}",
+                                        "Accept": "application/json, text/event-stream"},
+                       json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                           "protocolVersion": "2025-11-25", "capabilities": capabilities,
+                           "clientInfo": {"name": "asked", "version": "0"}}})
+
+
+def test_a_client_that_can_be_asked_gets_a_session_of_its_own(client, connection):
+    """A connection that edits and whose client can show a question
+    (elicitation) gets a stateful session at initialize, answering over SSE,
+    which only its own token may use; every other client stays on the
+    stateless JSON transport. The question itself goes out and comes back in
+    the browser suite's MCP group (a real server streams it)."""
+    c, ws, item = connection
+    other = c.post("/api/integrations/tokens", json={"name": "Other"}).json()
+    try:
+        # reading only: no session, whatever the client can show
+        plain = _initialize(client, item["token"], {"elicitation": {"form": {}}})
+        assert plain.status_code == 200 and "mcp-session-id" not in plain.headers
+        assert plain.headers["content-type"].startswith("application/json")
+        assert c.patch(f"/api/integrations/tokens/{item['id']}", json={"workspaces": [ws], "edit_workspaces": [ws]}).status_code == 200
+        # editing, but a client that cannot be asked: no session either
+        for capabilities in ({}, {"elicitation": {"url": {}}}):
+            unasked = _initialize(client, item["token"], capabilities)
+            assert unasked.status_code == 200 and "mcp-session-id" not in unasked.headers
+        opened = _initialize(client, item["token"], {"elicitation": {}})
+        assert opened.status_code == 200, opened.text
+        session = opened.headers["mcp-session-id"]
+        assert opened.headers["content-type"].startswith("text/event-stream")
+        assert _events(opened)[0]["result"]["serverInfo"]["name"] == "Gamma"
+        headers = {"Host": "localhost", "Accept": "application/json, text/event-stream", "Mcp-Session-Id": session,
+                   "MCP-Protocol-Version": "2025-11-25"}
+        mine = {**headers, "Authorization": f"Bearer {item['token']}"}
+        ready = client.post("/mcp", headers=mine, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        assert ready.status_code == 202, ready.text
+        listed = client.post("/mcp", headers=mine, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        assert listed.status_code == 200
+        assert "edit_block" in {t["name"] for t in _events(listed)[0]["result"]["tools"]}
+        # another token, or a session no token opened, finds none
+        theirs = {**headers, "Authorization": f"Bearer {other['token']}"}
+        assert client.post("/mcp", headers=theirs, json={"jsonrpc": "2.0", "id": 3, "method": "tools/list"}).status_code == 404
+        assert client.post("/mcp", headers={**mine, "Mcp-Session-Id": "f" * 32},
+                           json={"jsonrpc": "2.0", "id": 4, "method": "tools/list"}).status_code == 404
+        assert client.delete("/mcp", headers=mine).status_code == 200
+        assert client.post("/mcp", headers=mine, json={"jsonrpc": "2.0", "id": 5, "method": "tools/list"}).status_code == 404
+    finally:
+        c.delete(f"/api/integrations/tokens/{other['id']}")
 
 
 # --- answering feedback ---------------------------------------------------------------

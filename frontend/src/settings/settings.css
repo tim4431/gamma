@@ -902,6 +902,13 @@ button.aiModelTag:disabled { cursor: default; }
 .integrationDetails [role="group"] > .segGroup { flex-shrink: 1; flex-wrap: wrap; row-gap: 4px; }
 /* The workspaces a connection may read: a checklist under a step or a row. */
 .integrationSpaces { min-height: 0; max-height: 240px; }
+/* A workspace row: the checkbox and name as one label, then what the connection may do there. */
+.integrationSpace { cursor: default; }
+.integrationSpace > label { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; cursor: pointer; }
+/* Whether a connection that edits asks before each change: its box, then the line and what it means. */
+.integrationAsk { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.integrationAsk input { margin-top: 3px; flex-shrink: 0; }
+.integrationAsk .settingDesc { display: block; }
 .integrationEdit { padding: 0 0 12px 36px; }
 .integrationCreateControls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .integrationCreateControls .aiKeyInput { flex: 1; width: 100px; min-width: 0; margin: 0; }

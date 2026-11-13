@@ -5,9 +5,9 @@
 // paper, CC BY, with pencil and highlighter marks), written as Notability's
 // own export writes one, so Gamma's real reader parses it. The story, on an
 // isolated server holding the curated export:
-//   1. library home → ≡ View → Import… → "Notability notes" → Choose files…
+//   1. library home → ≡ View → Import… → "Notability & GoodNotes" → Choose files…
 //      (the picker is answered by setFiles and never shows) → "Review
-//      Notability import" with the note under "Library after import" (PDF)
+//      Notability & GoodNotes import" with the note under "Library after import" (PDF)
 //      → Import to library → "Import complete" → Done
 //   2. the new page: the paper with the pencil marks on it, their ink card in Notes
 //   3. Handwriting tools → Blue pen: a ring round "neutral atom arrays" and a
@@ -122,7 +122,7 @@ try {
       review: !!document.querySelector('section[aria-label="Library after import"] .importKind'),
       complete: !!dialog('Import complete'),
       // The import job's small progress card (its Stop button) in place of the review.
-      working: [...(dialog('Review Notability import')?.querySelectorAll('button') || [])].some((b) => b.textContent.trim() === 'Stop'),
+      working: [...(dialog('Review Notability & GoodNotes import')?.querySelectorAll('button') || [])].some((b) => b.textContent.trim() === 'Stop'),
       inkShown: document.querySelectorAll('[data-page="1"] .inkLayer path').length >= 10 && !!document.querySelector('.blockInkCard'),
       pdfText: document.querySelectorAll('[data-page="1"] .textLayer span').length > 100 && document.querySelectorAll('[data-page="1"] .inkLayer path').length >= 10,
       newCard: document.querySelectorAll('.blockInkCard').length >= 3,
@@ -145,7 +145,7 @@ try {
   if (!INSPECT) await take.frame('importDialog', dialog);
   await snap(page, 'import-dialog');
   take.mark('card', clock());
-  await pointer.click(dialog.getByRole('button', { name: 'Notability notes', exact: true }), 460);
+  await pointer.click(dialog.getByRole('button', { name: 'Notability & GoodNotes', exact: true }), 460);
   // The dialog grows and re-centres; the eye catches up before the pointer moves on.
   await sleep(350);
   await snap(page, 'card');
@@ -159,7 +159,7 @@ try {
   await pointer.press();
   await (await chooser).setFiles(notePath);
   take.mark('picked', clock());
-  const review = page.getByRole('dialog', { name: 'Review Notability import', exact: true });
+  const review = page.getByRole('dialog', { name: 'Review Notability & GoodNotes import', exact: true });
   const after = review.getByRole('region', { name: 'Library after import', exact: true });
   await after.getByText(note.title, { exact: true }).waitFor({ timeout: 60000 });
   const kind = (await after.locator('.importKind').allTextContents()).join(',');

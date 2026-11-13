@@ -161,7 +161,10 @@ bash ipad/scripts/build-python.sh --check   # only check that every pin resolves
   the same Mac shows errors meanwhile. The script runs `npm ci` first
   when `node_modules` is missing or older than the lockfile, and adds
   Homebrew's folders to the `PATH`, which Xcode's build scripts lack.
-  Without Node, a copy built before is kept with a warning.
+  Without Node, a copy built before is kept with a warning. A Node outside
+  those folders (fnm's, nvm's) counts as none in an Xcode build, so a Mac
+  takes Homebrew's, linked
+  ([docs/dev/debugging.md "Setting up a Mac"](../docs/dev/debugging.md#setting-up-a-mac)).
 
 In the build, a post-build phase copies the server code, the web app and
 the platform's wheels into the bundle, then runs the support package's

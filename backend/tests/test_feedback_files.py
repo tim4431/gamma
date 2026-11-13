@@ -332,7 +332,8 @@ def test_nothing_is_written_where_the_directory_is_not_the_vaults_below_a_juncti
     written = files.write(row)
     assert written["open"] == 1 and "below a link" in written["error"]
     assert list(elsewhere.iterdir()) == []
-    os.rmdir(here)
+    # rmdir takes a junction away; a symlink is a file to rmdir (ENOTDIR)
+    os.rmdir(here) if WINDOWS else os.unlink(here)
     _pass()
     assert _open(root)["count"] == 1
 

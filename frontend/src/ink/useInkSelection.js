@@ -3,12 +3,13 @@
 // lasso; its edits, each one applyInk across its groups (a move, Delete,
 // the selection menu's actions), and those that take its pictures one step
 // with their half in the block history (docs/dev/pictures.md "The lasso");
-// copy, cut and paste through the clipboard, a ref a paste reads with the
-// system clipboard written beside it; Ctrl+D, select all, the ink half
-// of Transcribe, and the Convert menu's others: Redraw as shapes and
-// Convert to text, which ask the AI and apply its answer, and Copy as SVG
-// and Download SVG (docs/dev/handwriting_ai.md). Their pure parts are
-// selectionEdits.js and inkAi.js. App composes it after the strokes.
+// copy, cut and paste of the strokes and the pictures through the
+// clipboard, a ref a paste reads with the system clipboard written beside
+// it; Ctrl+D, select all, the ink half of Transcribe, and the Convert
+// menu's others: Redraw as shapes and Convert to text, which ask the AI
+// and apply its answer, and Copy as SVG and Download SVG
+// (docs/dev/handwriting_ai.md). Their pure parts are selectionEdits.js and
+// inkAi.js. App composes it after the strokes.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { guideEvents } from "../guide/events.js";
 import { duplicatePicture, movePicture, picturesBySurface } from "../markup/picture.js";
@@ -25,9 +26,9 @@ import { askInkAi } from "./inkAiClient.js";
 import { inkSvg } from "./inkSvg.js";
 import * as inkStore from "./inkStore";
 import {
-  actionEdit, centredOn, clipOf, duplicatePlan, editPictures, inkChips, mergePlan, pasteShift, removePictures, selectAllItems,
-  selectedPictures, selectedStrokes, selectionBox, selectionChanges, selectionStill as stillOf, splitPlan, transcribeGroups,
-  wholeGroup,
+  actionEdit, centredOn, clipOf, clipStatus, duplicatePlan, editPictures, inkChips, mergePlan, pasteShift, pastePictures, removePictures,
+  selectAllItems, selectAllPictures, selectedPictures, selectedStrokes, selectionBox, selectionChanges, selectionStill as stillOf, splitPlan,
+  transcribeGroups, wholeGroup,
 } from "./selectionEdits.js";
 // Duplicate's 12 css px, as the selection's surface measures them, and the
 // surface's size, which the pictures an edit carries stay on
@@ -59,6 +60,8 @@ function writeInkClipboard(clip) {
 // focusedBlockId: the open page; leaving it drops the selection.
 // readOnly: nothing is selected or edited. inkUi: the strip's state
 // (useInkStrip.js); a tool other than the lasso drops the selection.
+// lassoPictures: whether the lasso takes pictures (its row's Pictures),
+// which select all honours.
 // blocksRef: the page's tree, read when an action runs. inkOf, applyInk:
 // a group's strokes now, and the edit (useInkDocument.js). flushInk: the
 // save (useInkSave.js), awaited before whole groups are transcribed.
@@ -82,17 +85,21 @@ function writeInkClipboard(clip) {
 // onComment(groupId): a new comment thread on that group, the menu's
 // Comment; threaded(groupId): the group has a thread, so no merge takes
 // its strokes away nor adds to them (comments/useInkThreads.js).
-export function useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, inkOf, applyInk, flushInk,
+export function useInkSelection({ focusedBlockId, readOnly, inkUi, lassoPictures, blocksRef, inkOf, applyInk, flushInk,
   handleInkStrokes, pickInkTool, revealInkStrip, inkBySurface, pasteTarget, onBoxDeselect, showInNotes,
   transcribe, ai, stepBlocks, touchTextBox, setStatus, undoableInkStatus, onComment, threaded = () => false }) {
   // The lasso selection {page, items, pictures?}.
   const [inkSelection, setInkSelection] = useState(null);
   // The handwriting clipboard (docs/dev/handwriting.md "Copy, cut and
   // paste"): {type: "gamma/ink", version: 2, space, box: {x1, y1, x2, y2},
-  // strokes} — the file's space, the selection's box in points and the raw
-  // stroke objects. The ref is the one source a paste reads (a ClipboardItem
-  // is written beside it, best effort, for other apps); `inkClip` mirrors
-  // whether it holds strokes, for the command guards and the layers.
+  // strokes, pictures?} — the file's space, the selection's box in points,
+  // the raw stroke objects and the pictures with their captions
+  // (selectionEdits.js clipOf). The ref is the one source a paste reads (a
+  // ClipboardItem is written beside it, best effort, for other apps); it
+  // lives as long as the tab, and a switch of workspace reloads the tab,
+  // so a paste is always in the workspace whose uploads its pictures name.
+  // `inkClip` mirrors whether it holds anything, for the command guards
+  // and the layers.
   const inkClipRef = useRef(null);
   const [inkClip, setInkClip] = useState(false);
   // The selection's commands for App and the other owners: let go of it
@@ -175,10 +182,18 @@ export function useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, in
   }
   // Delete (the menu's, the strip's key): the strokes and the pictures.
   function deleteInkSelection() {
+    removeInkSelection(t("ink deletion"), T("selection deletion"));
+  }
+  // The selection taken off the page as one step, `label` its entry's
+  // label, or `both` when it held pictures: Delete's and Cut's, which
+  // keeps the notes under the pictures (`keepNotes`, removePictures). A
+  // removal needs no surface size, so it takes the pictures a cut copies
+  // (clipOf) even while no layer shows their surface.
+  function removeInkSelection(label, both, keepNotes = false) {
     if (readOnly || !inkSelection) return;
-    const { ids } = takenPictures();
-    stepSelection(selectionChanges(inkSelection, inkOf, removeStrokes), t("ink deletion"), T("selection deletion"),
-      ids.length ? (tree) => removePictures(tree, ids) : null);
+    const ids = selectedPictures(inkSelection, surfacePictures()).map((p) => p.id);
+    stepSelection(selectionChanges(inkSelection, inkOf, removeStrokes), label, both,
+      ids.length ? (tree) => removePictures(tree, ids, keepNotes) : null);
     setInkSelection(null);
   }
   // A selection kept aside while a held E or squeeze armed another tool,
@@ -187,10 +202,10 @@ export function useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, in
   function selectionStill(selection) {
     return stillOf(selection, inkOf);
   }
-  // The selection menu's actions. A turn, a resize, a flip, Delete and
-  // Duplicate take the selection's pictures too. The rest act on its
-  // strokes alone: Copy and Cut leave the pictures on the page, and Select
-  // note, New note and Merge into note keep them selected beside them.
+  // The selection menu's actions. A turn, a resize, a flip, Delete,
+  // Duplicate, Copy and Cut take the selection's pictures too. The rest act
+  // on its strokes alone: Select note, New note and Merge into note keep
+  // them selected beside them.
   function handleInkAction(action, value) {
     if (readOnly || !inkSelection) return;
     // A style, a shape handle's drag, a turn or a resize, and a flip about
@@ -233,43 +248,48 @@ export function useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, in
     else if (action === "merge") mergeInkSelection();
     else if (action === "comment") commentInkSelection();
   }
-  // The selected strokes with their box and space, null with none.
-  function selectedInk() {
-    return selectedStrokes(inkSelection, inkOf);
-  }
-  // Copy (Ctrl+C, the menu) keeps the selection on the handwriting
-  // clipboard; cut (Ctrl+X) deletes it as well, the entry "ink cut". The
-  // pill offers Paste, the way to paste without a keyboard.
+  // Copy (Ctrl+C, the menu) keeps the selection, its strokes and its
+  // pictures, on the handwriting clipboard; cut (Ctrl+X) deletes it as
+  // well, one step as Delete's is, "ink cut" or "selection cut". The pill
+  // offers Paste, the way to paste without a keyboard.
   function copyInkSelection(cut) {
-    if (readOnly) return false;
-    const sel = selectedInk();
-    if (!sel) return false;
-    const clip = clipOf(sel);
+    if (readOnly || !inkSelection) return false;
+    const clip = clipOf(inkSelection, inkOf, surfacePictures());
+    if (!clip) return false;
     inkClipRef.current = clip;
     setInkClip(true);
     writeInkClipboard(clip);
-    const n = sel.strokes.length;
-    if (cut) {
-      editInkSelection(removeStrokes, T("ink cut"));
-      setInkSelection(null);
-    }
-    setStatus(cut ? tn("Cut {n} stroke.", "Cut {n} strokes.", n) : tn("Copied {n} stroke.", "Copied {n} strokes.", n),
-      { label: t("Paste"), run: () => pasteAtCentre() });
+    if (cut) removeInkSelection(T("ink cut"), T("selection cut"), true);
+    setStatus(clipStatus(clip, cut), { label: t("Paste"), run: () => pasteAtCentre() });
     return true;
   }
-  // The clipboard's strokes onto `page` ({width, height} in points): fresh
-  // copies with the copied box's top-left at `at` and the box kept inside
-  // the surface (one too small for it keeps the top-left corner on), at
-  // the same point size whatever the surface. They become the selection,
-  // the lasso armed.
+  // The clipboard onto `page` ({width, height} in points): fresh copies of
+  // its strokes with the copied box's top-left at `at` and the box kept
+  // inside the surface (one too small for it keeps the top-left corner
+  // on), at the same point size whatever the surface. Its pictures come as
+  // new blocks naming the same uploads, as far off as the strokes
+  // (pastePictures), one step of both histories with them as a lasso
+  // step's is: "selection paste", else "ink paste". The link is made only
+  // when the pictures land on the tree as it is (a sheet gone takes none),
+  // as stepSelection's is. They become the selection, the lasso armed.
   async function pasteInk(page, at, size) {
     const clip = inkClipRef.current;
-    if (!clip?.strokes?.length || readOnly || !size) return;
-    const { dx, dy } = pasteShift(clip, at, size);
-    const landed = await handleInkStrokes(page, cloneStrokes(clip.strokes, dx, dy), size);
-    if (!landed) return;
+    if (!clip || readOnly || !size) return;
+    const shift = pasteShift(clip, at, size), t0 = wallNow();
+    const ids = (clip.pictures || []).map(() => makeId()), now = blocksRef.current;
+    const blocks = (tree) => pastePictures(tree, clip, page, ids, shift, size, t0);
+    const pictures = ids.length && blocks(now) !== now ? ids : [];
+    const link = pictures.length ? { id: makeId(), page } : null;
+    const label = link ? T("selection paste") : T("ink paste");
+    let items = [];
+    if (clip.strokes.length) {
+      const landed = await handleInkStrokes(page, cloneStrokes(clip.strokes, shift.dx, shift.dy), size, { label, link });
+      if (!landed) return;
+      items = [{ id: landed.id, ids: landed.ids }];
+    } else if (!link || !applyInk([], { label, link })) return;
+    if (link) stepBlocks(link.id, blocks);
     pickInkTool("select");
-    handleInkSelect(page, [{ id: landed.id, ids: landed.ids }]);
+    handleInkSelect(page, items, pictures);
   }
   // Ctrl+V, the pill's Paste and More → Paste handwriting: the copied box
   // centred on the surface in view.
@@ -285,14 +305,16 @@ export function useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, in
     if (inkSelection) handleInkAction("duplicate", duplicateOffset(inkSelection.page));
   }
   // Ctrl+A, More → Select all: every stroke of every group on the
-  // selection's surface, else the one in view, the lasso armed.
+  // selection's surface, else the one in view, and its unlocked pictures
+  // unless the lasso's row leaves them out, the lasso armed.
   function selectAllInk() {
     const page = inkSelection?.page ?? pasteTarget()?.page;
     if (page == null) return false;
     const items = selectAllItems(inkBySurface.get(page), inkOf);
-    if (!items.length) return false;
+    const pictures = lassoPictures ? selectAllPictures(picturesBySurface(blocksRef.current).get(page)) : [];
+    if (!items.length && !pictures.length) return false;
     pickInkTool("select");
-    handleInkSelect(page, items);
+    handleInkSelect(page, items, pictures);
     return true;
   }
   // Transcribe in the chat (the Convert menu, in the selection menu's first
@@ -328,7 +350,7 @@ export function useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, in
   // colour as its ground: the ink there is written light, which a
   // transparent picture pasted on white would lose (inkSvg's `background`).
   function selectionSvg() {
-    const sel = selectedInk();
+    const sel = selectedStrokes(inkSelection, inkOf);
     if (!sel) return null;
     const tree = blocksRef.current, sheetId = sheetOfBlock(tree, inkSelection.items[0]?.id);
     const paper = sheetId ? normalizePaper(findBlock(tree, sheetId)?.properties?.sheet) : null;

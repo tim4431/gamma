@@ -214,8 +214,12 @@ export function useAppJobs({
       return;
     }
     if (job.kind === "import") {
-      // a setup guide's import step (Notability), or its offer (a Zotero library)
-      if (job.state === "done" && started) guideEvents.emit("import.finished", { source: job.params?.source || "" });
+      // a setup guide's import step (Notability), or its offer (a Zotero
+      // library); the note apps' import tells of each app it brought notes
+      // of (params.apps), so a GoodNotes import offers no Notability guide
+      if (job.state === "done" && started) {
+        for (const source of job.params?.apps || [job.params?.source || ""]) guideEvents.emit("import.finished", { source });
+      }
       if (job.state === "done" && here) {
         refreshQuota?.();
         // this tab's import brings its pages in; one from elsewhere is

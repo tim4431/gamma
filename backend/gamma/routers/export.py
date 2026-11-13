@@ -24,9 +24,8 @@ from pathlib import Path
 from typing import Annotated, Union
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
-from starlette.background import BackgroundTask
 
 from .. import bibtex as bibtex_mod
 from .. import ink as inkmod
@@ -46,6 +45,7 @@ from ..db import (
     page_now,
     register_functions,
 )
+from ..downloads import TempFileResponse, temp_file
 from ..logseq_graph_export import (
     CONFIG_EDN,
     collect_highlights,
@@ -443,19 +443,17 @@ class _Builder:
             self.discard()
         return f"{self.base}{self.suffix}", "application/zip"
 
-    def response(self) -> FileResponse:
+    def response(self) -> TempFileResponse:
         """The export as the answer to the request (a temporary file,
-        deleted once it is sent)."""
-        tmp = tempfile.NamedTemporaryFile(suffix=self.suffix, delete=False)
-        tmp.close()
+        deleted once the answer ends: ``downloads``)."""
         try:
-            name, media_type = self.save(tmp.name)
+            with temp_file(self.suffix) as tmp:
+                name, media_type = self.save(tmp)
         except BaseException:
-            os.unlink(tmp.name)
+            self.discard()  # ``save`` does, but not when the file could not be made
             raise
-        return FileResponse(tmp.name, media_type=media_type,
-                            headers={"Content-Disposition": attachment_disposition(name)},
-                            background=BackgroundTask(os.unlink, tmp.name))
+        return TempFileResponse(tmp, media_type=media_type,
+                                headers={"Content-Disposition": attachment_disposition(name)})
 
     def directory(self, page) -> str:
         """The directory a page's file goes in where each page is a file of

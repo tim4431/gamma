@@ -56,7 +56,7 @@ export const EVENTS = [
   "search.results",   // {pdf, text}: a search's answers all came; pdf — some are text inside PDFs, text — some are lines of text files
   "search.filtered",  // {kind: folder | label}: a filter chip was made in the search box
   "comment.created",  // {reply}: a comment was stored; reply — in a thread that was there
-  "import.finished",  // {source}: this tab's import finished (the server's name for it, importApi.js FORMATS' endpoint)
+  "import.finished",  // {source}: this tab's import finished (the server's name for it, importApi.js FORMATS' endpoint; the note apps' import sends one per app it brought notes of, "notability" / "goodnotes")
   "page.fileReplaced", // {id}: the open page's PDF was replaced from elsewhere (a file pushed from disk, another tab)
   "zotero.connected", // the Zotero account is connected: just now, or seen so by the link dialog
   "zotero.linked",    // {workspace}: a Zotero library was linked (the app then opens its workspace)

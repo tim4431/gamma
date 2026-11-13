@@ -12,6 +12,7 @@ import { answersOffer, canOffer, createGuideProgress, createGuideTicks, factsMat
   setupDone, setupIndex, setupTicks, stepApplies } from "../src/guide/triggers.js";
 import { ACCOUNT_PREFS, readProfile } from "../src/app/prefDefs.js";
 import { keyNames, keyText, resolveKey } from "../src/guide/keys.js";
+import { chordLabel } from "../src/shared/lib/hotkeys.js";
 import { createRunLog, madeItems, recordEvent } from "../src/guide/finish.js";
 import { CARD_W, placeCard } from "../src/guide/place.js";
 import { MEDIA, mediaRatio } from "../src/guide/media.js";
@@ -709,7 +710,9 @@ test("a {key:…} follows the account's keybindings", () => {
   assert.match(resolveKey("app.quickOpen", { "app.quickOpen": null }).text, /^“.+”$/, "an unbound command falls back to its palette name");
   assert.deepEqual(resolveKey("Tab", {}), { chord: "Tab" });
   assert.equal(resolveKey("app.noSuchCommand", {}), null);
-  assert.equal(keyText("Press {key:app.quickOpen} or {key:Tab}", { "app.quickOpen": "Mod-Shift-o" }), "Press Ctrl+Shift+O or Tab");
+  // The platform's own label: Node defines navigator.platform, so on a Mac
+  // the chord reads ⇧⌘O and elsewhere Ctrl+Shift+O (hotkeys.js IS_MAC).
+  assert.equal(keyText("Press {key:app.quickOpen} or {key:Tab}", { "app.quickOpen": "Mod-Shift-o" }), `Press ${chordLabel("Mod-Shift-o")} or Tab`);
 });
 
 // An offer says what just happened and why the tour is worth it; both lines

@@ -2,10 +2,13 @@
 # Connect DeepSeek Harness on this computer to a Gamma server: add the Gamma
 # plugin to the dsh profiles here and save the connection, which the plugin
 # reads whenever dsh starts. Gamma's Settings > AI > Integrations > DeepSeek
-# Harness gives the command that runs this with a one-time setup code; the
-# code is exchanged for the connection's token, which is never shown.
-#   sh install-gamma-dsh.sh <server>/mcp <setup code> [profile...]
+# Harness gives the command that runs this with the server's address; it
+# opens Gamma's sign-in in the browser, where the user allows the connection,
+# and collects its token, which is never shown.
+#   sh install-gamma-dsh.sh <server>/mcp [profile...]
 #   sh install-gamma-dsh.sh --remove [profile...]
+# A command from a Gamma without this sign-in passes a one-time setup code
+# after the address, which is claimed instead.
 # --remove undoes it: the plugin leaves every profile that has it (or those
 # named), and the saved connection is deleted.
 # GAMMA_DSH_BUNDLE=<file> installs that dsh-gamma tarball instead of the
@@ -66,19 +69,18 @@ if [ "${1:-}" = --remove ]; then
 fi
 
 gamma_server=${1:?Copy the setup command from Gamma: Settings > AI > Integrations > DeepSeek Harness.}
-gamma_code=${2:?Copy the whole setup command from Gamma again.}
-shift 2
+shift
 case "$gamma_server" in
     *'@'*|*'?'*|*'#'*|*' '*|*'"'*|*'\'*) printf 'Copy the setup command from Gamma again.\n' >&2; exit 1 ;;
     http://*/mcp|https://*/mcp) ;;
     *) printf 'Copy the setup command from Gamma again.\n' >&2; exit 1 ;;
 esac
-case "$gamma_code" in
-    *[!A-Za-z0-9_-]*|'') gamma_code= ;;
+# An older Gamma's setup code: 20 to 128 of these characters, no profile's name.
+gamma_code=""
+case "${1:-}" in
+    *[!A-Za-z0-9_-]*|'') ;;
+    *) if [ "${#1}" -ge 20 ] && [ "${#1}" -le 128 ]; then gamma_code=$1; shift; fi ;;
 esac
-if [ "${#gamma_code}" -lt 20 ] || [ "${#gamma_code}" -gt 128 ]; then
-    printf 'Copy the whole setup command from Gamma again.\n' >&2; exit 1
-fi
 command -v curl >/dev/null 2>&1 || { printf 'Install curl first.\n' >&2; exit 1; }
 
 gamma_profiles="$*"
@@ -133,17 +135,62 @@ if [ -n "$gamma_pending" ]; then
     done
 fi
 
-printf 'Connecting to Gamma...\n'
 gamma_base=${gamma_server%/mcp}
-gamma_reply=$(curl --silent --show-error --location -X POST -H 'Content-Type: application/json' \
-    --data "{\"code\":\"$gamma_code\"}" "$gamma_base/api/integrations/claim") || {
-    printf 'Could not reach Gamma at %s.\n' "$gamma_base" >&2; exit 1
+gamma_post() {  # path, JSON body: Gamma's reply
+    curl --silent --show-error --location -X POST -H 'Content-Type: application/json' \
+        --data "$2" "$gamma_base$1" || { printf 'Could not reach Gamma at %s.\n' "$gamma_base" >&2; exit 1; }
 }
-gamma_token=$(printf '%s' "$gamma_reply" | sed -n 's/.*"token":"\(gamma_[A-Za-z0-9_-]*\)".*/\1/p')
-if [ -z "$gamma_token" ]; then
-    gamma_detail=$(printf '%s' "$gamma_reply" | sed -n 's/.*"detail":"\([^"]*\)".*/\1/p')
-    printf '%s\n' "${gamma_detail:-Gamma did not accept the setup code. Copy a new command from Gamma.}" >&2
-    exit 1
+gamma_field() {  # JSON reply, name: that field's value
+    printf '%s' "$1" | sed -n "s/.*\"$2\": *\"\\{0,1\\}\\([^\",}]*\\).*/\\1/p" | head -n 1
+}
+gamma_token_of() {  # JSON reply: its token, else nothing
+    printf '%s' "$1" | sed -n 's/.*"token": *"\(gamma_[A-Za-z0-9_-]*\)".*/\1/p'
+}
+gamma_fail() {  # JSON reply, what to say without Gamma's own words
+    gamma_detail=$(printf '%s' "$1" | sed -n 's/.*"detail": *"\([^"]*\)".*/\1/p')
+    printf '%s\n' "${gamma_detail:-$2}" >&2; exit 1
+}
+
+printf 'Connecting to Gamma...\n'
+if [ -n "$gamma_code" ]; then
+    gamma_reply=$(gamma_post /api/integrations/claim "{\"code\":\"$gamma_code\"}") || exit 1
+    gamma_token=$(gamma_token_of "$gamma_reply")
+    [ -n "$gamma_token" ] || gamma_fail "$gamma_reply" 'Gamma did not accept the setup code. Copy a new command from Gamma.'
+else
+    # The browser sign-in: the page shows the code printed here, and the
+    # user ticks the workspaces DeepSeek Harness may read and allows it.
+    gamma_reply=$(gamma_post /api/integrations/device '{"name":"DeepSeek Harness"}') || exit 1
+    gamma_device=$(gamma_field "$gamma_reply" device_code)
+    gamma_user=$(gamma_field "$gamma_reply" user_code)
+    case "$gamma_device" in
+        *[!A-Za-z0-9_-]*|'') gamma_fail "$gamma_reply" 'Gamma did not start a sign-in. Copy the command from Gamma again.' ;;
+    esac
+    case "$gamma_user" in
+        [A-Z][A-Z][A-Z][A-Z]-[A-Z][A-Z][A-Z][A-Z]) ;;
+        *) gamma_fail "$gamma_reply" 'Gamma did not start a sign-in. Copy the command from Gamma again.' ;;
+    esac
+    # The address is built here, never taken from the reply, since it is opened.
+    gamma_signin="$gamma_base/?gamma_device=$gamma_user"
+    printf 'Allow DeepSeek Harness in Gamma, in your browser. Check that the page shows %s.\n' "$gamma_user"
+    printf 'If no browser opens, go to %s\n' "$gamma_signin"
+    if [ "$(uname 2>/dev/null)" = Darwin ]; then open "$gamma_signin" >/dev/null 2>&1 || true
+    elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$gamma_signin" >/dev/null 2>&1 || true
+    fi
+    gamma_interval=$(gamma_field "$gamma_reply" interval)
+    case "$gamma_interval" in [1-9]|10) ;; *) gamma_interval=2 ;; esac
+    gamma_left=$(gamma_field "$gamma_reply" expires_in)
+    case "$gamma_left" in ''|*[!0-9]*) gamma_left=600 ;; esac
+    gamma_token=""
+    while [ -z "$gamma_token" ]; do
+        if [ "$gamma_left" -le 0 ]; then printf 'The sign-in expired. Run the command again.\n' >&2; exit 1; fi
+        sleep "$gamma_interval"
+        gamma_left=$((gamma_left - gamma_interval))
+        gamma_reply=$(gamma_post /api/integrations/device/token "{\"device_code\":\"$gamma_device\"}") || exit 1
+        gamma_token=$(gamma_token_of "$gamma_reply")
+        if [ -z "$gamma_token" ] && [ "$(gamma_field "$gamma_reply" status)" != pending ]; then
+            gamma_fail "$gamma_reply" 'Gamma did not connect DeepSeek Harness. Run the command again.'
+        fi
+    done
 fi
 mkdir -p "$dsh_home"
 (umask 077 && printf '{"url": "%s", "token": "%s"}\n' "$gamma_server" "$gamma_token" > "$dsh_home/gamma.json")
