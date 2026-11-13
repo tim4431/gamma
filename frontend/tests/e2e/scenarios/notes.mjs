@@ -4,7 +4,7 @@
 // (todos, images) and the workspace on browser-fetched upload URLs. Runs in
 // a NON-default workspace: every request must name it explicitly, which is
 // where plumbing bugs show.
-import { assertOpensInPlace } from "../harness.mjs";
+import { arrived, assertOpensInPlace, keyLabel } from "../harness.mjs";
 
 export const PNG_1PX = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
 
@@ -163,7 +163,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await page.keyboard.press("Shift+Enter");
     await page.keyboard.type("line two");
     await until(async () => JSON.stringify(await tree(alice2, pageId)).includes("third\\nline two"), { what: "line break saved" });
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await page.getByText(/^Undone: note text edit:/).waitFor();
     await closeEditor(page);
     await saved([{ content: "first", children: [{ content: "second", children: [] }] }, { content: "third", children: [] }], "undo saved");
@@ -211,7 +211,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
     try {
       await editRow(p2, "Steps");
-      await p2.keyboard.press("Control+End");
+      await p2.keyboard.press("ControlOrMeta+End");
       await p2.keyboard.press("Shift+Enter");
       await p2.keyboard.type("two");
       await p2.keyboard.press("Shift+Enter");
@@ -238,11 +238,11 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       // From the end of "third" up into "second": three lines selected.
       await p2.keyboard.press("Shift+ArrowUp");
       await p2.keyboard.press("Shift+ArrowUp");
-      await p2.keyboard.press("Control+Shift+Period");
+      await p2.keyboard.press("ControlOrMeta+Shift+Period");
       await until(async () => (await content(0)) === quoted, { what: "Ctrl+Shift+. quoted the selected lines, the blank one with a bare >" });
       // Lines copied out of a quote keep their marks; pasted into this one
       // they join it rather than make a quote inside it.
-      await p2.keyboard.press("Control+End");
+      await p2.keyboard.press("ControlOrMeta+End");
       await p2.keyboard.press("Shift+Enter");
       await pasteText("> 1. this\n> 2. second");
       await until(async () => (await content(0)) === `${quoted}\n> 1. this\n> 2. second`, { what: "the copied quote's lines at the box's level" });
@@ -257,11 +257,11 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       for (const word of ["after the list", "first", "second", "third", "this"]) assert(boxText.includes(word), `"${word}" is in the box`);
 
       await editRow(p2, "alpha");
-      await p2.keyboard.press("Control+End");
-      await p2.keyboard.press("Control+Shift+Home");
-      await p2.keyboard.press("Control+Shift+Period");
+      await p2.keyboard.press("ControlOrMeta+End");
+      await p2.keyboard.press("ControlOrMeta+Shift+Home");
+      await p2.keyboard.press("ControlOrMeta+Shift+Period");
       await until(async () => (await content(1)) === "> alpha\n>\n> beta", { what: "the whole block quoted" });
-      await p2.keyboard.press("Control+Shift+Period");
+      await p2.keyboard.press("ControlOrMeta+Shift+Period");
       await until(async () => (await content(1)) === "alpha\n\nbeta", { what: "and unquoted again" });
       await closeEditor(p2);
       assertNoProblems(p2);
@@ -292,7 +292,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       const rows = async () => (await items.allTextContents()).join("|");
 
       await editRow(p2, "Inline");
-      await p2.keyboard.press("Control+End");
+      await p2.keyboard.press("ControlOrMeta+End");
       await pasteText(" where \\( x^2 \\) holds");
       await until(async () => (await content(0)) === "Inline where $x^2$ holds", { what: "the inline formula stored with dollars" });
       await until(async () => /^Math.*\|As copied/.test(await rows()), { what: "the chooser offers the text as copied" });
@@ -301,7 +301,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await closeEditor(p2);
 
       await editRow(p2, "Energy");
-      await p2.keyboard.press("Control+End");
+      await p2.keyboard.press("ControlOrMeta+End");
       await pasteText("\\[\nE = mc^2\n\\]\nwhere \\( m \\) is the mass");
       await until(async () => (await content(1)) === "Energy:\n$$\nE = mc^2\n$$\nwhere $m$ is the mass", { what: "the display formula on lines of its own" });
       await until(async () => /^Text.*\|As copied.*\|Blocks/.test(await rows()), { what: "the placements, the text as copied, and Blocks" });
@@ -312,7 +312,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       assertEq(await energy.locator(".katex").count(), 2, "the display formula and the inline one render");
 
       await editRow(p2, "Cited");
-      await p2.keyboard.press("Control+End");
+      await p2.keyboard.press("ControlOrMeta+End");
       await pasteText(" as shown \\[1\\]");
       await until(async () => (await content(2)) === "Cited as shown \\[1\\]", { what: "an escaped bracket pastes as it is" });
       await sleep(300);
@@ -322,7 +322,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
 
       // In a quote the formula keeps the quote's marks and renders as display math in it.
       await editRow(p2, "Key result");
-      await p2.keyboard.press("Control+End");
+      await p2.keyboard.press("ControlOrMeta+End");
       await pasteText("\\[\nE = mc^2\n\\]");
       await until(async () => (await content(3)) === "> Key result:\n> $$\n> E = mc^2\n> $$", { what: "the display formula on the quote's lines" });
       await p2.keyboard.press("Escape");
@@ -419,7 +419,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       const box = dialog.getByRole("textbox", { name: "Move block to page…" });
       await box.waitFor();
       // Ctrl+Z and F2 belong to the page behind the dialog: neither acts.
-      await p2.keyboard.press("Control+z");
+      await p2.keyboard.press("ControlOrMeta+z");
       await p2.keyboard.press("F2");
       await sleep(500); // an undo would have saved by now
       assertEq(await p2.locator(".titleEdit").count(), 0, "F2 does not rename behind the dialog");
@@ -460,7 +460,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   await step("notes: block commands from the palette (new above, move down) and the keys Ctrl+Shift+K, F2", async () => {
     // Unbound block commands run from Ctrl+Shift+P on the focused row.
     await editRow(page, "third");
-    await page.keyboard.press("Control+Shift+p");
+    await page.keyboard.press("ControlOrMeta+Shift+p");
     const palette = page.getByRole("dialog", { name: "Command palette" });
     await palette.waitFor();
     await palette.getByRole("textbox").fill(">new block above");
@@ -477,7 +477,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }), { what: "the new block's editor focused, caret at its start" });
     await page.keyboard.type("before");
     await saved([{ content: "first", children: [{ content: "second", children: [] }] }, { content: "before", children: [] }, { content: "third", children: [] }], "new block above");
-    await page.keyboard.press("Control+Shift+p");
+    await page.keyboard.press("ControlOrMeta+Shift+p");
     await palette.waitFor();
     await palette.getByRole("textbox").fill(">move block down");
     await until(async () => /Move block down/.test(await palette.locator('[role="option"][aria-selected="true"]').textContent()));
@@ -485,7 +485,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await saved([{ content: "first", children: [{ content: "second", children: [] }] }, { content: "third", children: [] }, { content: "before", children: [] }], "moved down");
     // Ctrl+Shift+K deletes the (one-line) block; the caret lands at the end of the block above.
     await editRow(page, "before");
-    await page.keyboard.press("Control+Shift+k");
+    await page.keyboard.press("ControlOrMeta+Shift+k");
     await saved([{ content: "first", children: [{ content: "second", children: [] }] }, { content: "third", children: [] }], "line deleted");
     await until(() => page.evaluate(() => document.activeElement?.closest(".cm-content")?.textContent === "third"), { what: "the caret moves to the block above" });
     await closeEditor(page);
@@ -580,17 +580,21 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await savedHere([n("alpha", [n("bravo", [n("bravo kid")]), n("charlie"), n("delta")]), n("echo")], "Tab indented the three under alpha");
       await p2.keyboard.press("Shift+Tab");
       await savedHere(start, "Shift+Tab put them back");
-      await p2.keyboard.press("Control+Shift+ArrowUp");
+      await p2.keyboard.press("ControlOrMeta+Shift+ArrowUp");
       await savedHere([n("bravo", [n("bravo kid")]), n("charlie"), n("delta"), n("alpha"), n("echo")], "moved up as one");
-      await p2.keyboard.press("Control+Shift+ArrowDown");
+      await p2.keyboard.press("ControlOrMeta+Shift+ArrowDown");
       await savedHere(start, "moved back down");
       await p2.keyboard.press("Delete");
       await savedHere([n("alpha"), n("echo")], "Delete removed the three and what is under them");
       assertEq((await picked()).length, 0, "nothing stays selected");
-      await p2.keyboard.press("Control+z");
+      await p2.keyboard.press("ControlOrMeta+z");
       await savedHere(start, "one undo brings them all back");
 
       // A drag from the blank beside the notes draws a box; Esc lets go.
+      // The undo put three notes back and the rows below glide to their
+      // places (shared/ui/ListMotion.jsx): they are measured at rest, or
+      // the box starts beside delta and touches it alone.
+      await arrived(p2.locator(".blockList"));
       const blank = await p2.evaluate(() => {
         const BLANK = ["blockList", "listMotion", "sortableBlockWrap", "rowHandles", "blockFold", "blockChildren"];
         const rows = [...document.querySelectorAll(".blockList .blockRowWrap")];
@@ -621,7 +625,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await wrapC.locator(".dragHandle").click();
       await p2.locator(".ctxMenuItem", { hasText: "Delete 3 blocks" }).click();
       await savedHere([n("delta"), n("echo")], "the menu deleted the three");
-      await p2.keyboard.press("Control+z");
+      await p2.keyboard.press("ControlOrMeta+z");
       await savedHere(start, "and one undo brought them back");
 
       // Esc in a note selects it, Alt+Shift+click adds one, and a selected
@@ -636,7 +640,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       const drag = await startDrag(p2, handleE, "charlie");
       await drag.finish("drop");
       await savedHere([n("bravo", [n("bravo kid")]), n("alpha"), n("echo"), n("charlie"), n("delta")], "both moved above charlie, in order");
-      await p2.keyboard.press("Control+z");
+      await p2.keyboard.press("ControlOrMeta+z");
       await savedHere(start, "one undo for the drop");
       assertNoProblems(p2);
     } finally {
@@ -728,8 +732,8 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       const imgs = await widgets();
       return imgs.length === 1 && imgs[0][0].includes(`ws=${second.id}`) && imgs[0][1] === 1;
     }, { what: "image widget in the editor" });
-    await page.keyboard.press("Control+Home");
-    await page.keyboard.press("Control+End"); // back to the image's end: still a picture
+    await page.keyboard.press("ControlOrMeta+Home");
+    await page.keyboard.press("ControlOrMeta+End"); // back to the image's end: still a picture
     assertEq((await widgets()).length, 1, "the caret at the image's end keeps the picture");
     await page.locator(".blockEditorCm .cmImgWidget").click({ button: "right" });
     await until(async () => {
@@ -756,7 +760,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
 
   await step("notes: colored text via the / menu and a foldable [!note]- callout", async () => {
     await editRow(page, "after gap");
-    await page.keyboard.press("Control+End");
+    await page.keyboard.press("ControlOrMeta+End");
     await page.keyboard.press("Shift+Enter");
     // The bare "/" list comes in groups, the footer hints at the colours;
     // a typed query is one ranked list, fuzzy, its letters marked where
@@ -809,7 +813,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
 
   await step("notes: the selection toolbar formats selected text — bold, underline, a color — and waits for a mouse selection's release", async () => {
     await editRow(page, "Proof");
-    await page.keyboard.press("Control+End");
+    await page.keyboard.press("ControlOrMeta+End");
     await page.keyboard.press("Enter");
     await page.keyboard.type("make this bold now");
     // A keyboard selection shows the bar at once, above the selected line.
@@ -819,7 +823,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     const bold = bar.locator('[data-command="block.bold"]');
     await bar.waitFor();
     assertEq(await bold.getAttribute("aria-pressed"), "false", "Bold starts unpressed");
-    assertEq(await bold.getAttribute("title"), "Bold (Ctrl+B)", "the title names the chord");
+    assertEq(await bold.getAttribute("title"), `Bold (${keyLabel("Mod-b")})`, "the title names the chord");
     const barBox = await bar.boundingBox();
     const selTop = await page.evaluate(() => getSelection().getRangeAt(0).getBoundingClientRect().top);
     assert(barBox.y + barBox.height <= selTop + 1, `the bar (bottom ${barBox.y + barBox.height}) sits above the selection (top ${selTop})`);
@@ -862,7 +866,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     // Ctrl+U is the toolbar's Underline from the keyboard.
     await page.keyboard.press("End");
     for (let i = 0; i < 3; i++) await page.keyboard.press("Shift+ArrowLeft");
-    await page.keyboard.press("Control+u");
+    await page.keyboard.press("ControlOrMeta+u");
     await closeEditor(page);
     const want = 'make this **<u><span style="color:#e5484d">bold</span></u>** <u>now</u>';
     const contents = (nodes) => nodes.flatMap((n) => [n.content, ...contents(n.children)]);
@@ -876,7 +880,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   await step("notes: images centre with a grip each side; a click opens the editor on the clicked character", async () => {
     const up = await alice2.upload("/api/upload-image", PNG_1PX, "dot3.png", "image/png");
     await editRow(page, "second");
-    await page.keyboard.press("Control+End");
+    await page.keyboard.press("ControlOrMeta+End");
     await page.keyboard.press("Enter");
     // Headings, a table and a list all render shorter than their source, so
     // the text below them sits lower in the editor than it did rendered.
@@ -915,7 +919,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
 
   await step("notes: the gap line between two adjacent $$ formulas opens the editor on a new line between them", async () => {
     await editRow(page, "second");
-    await page.keyboard.press("Control+End");
+    await page.keyboard.press("ControlOrMeta+End");
     await page.keyboard.press("Enter");
     await page.keyboard.insertText("$$x+1$$\n$$y+2$$");
     await closeEditor(page);
@@ -1126,7 +1130,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     const edit = async (id) => {
       await p.locator(`.blockRowWrap[data-block-id="${id}"] > .blockRow .blockBody`).click();
       await p.waitForFunction((id) => document.activeElement?.closest(".blockRowWrap")?.dataset.blockId === id, id, { timeout: 5000 });
-      await p.keyboard.press("Control+End");
+      await p.keyboard.press("ControlOrMeta+End");
     };
     const left = async (n) => { for (let i = 0; i < n; i++) await p.keyboard.press("ArrowLeft"); };
     const editing = () => p.evaluate(() => document.activeElement?.closest(".blockRowWrap")?.dataset.blockId || null);
@@ -1154,21 +1158,21 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await newBlock();
       await p.keyboard.type("X");
       await held([["ab"], ["Xcd"], ...others], "split at the caret, the caret at the new block's start");
-      await p.keyboard.press("Control+z");
+      await p.keyboard.press("ControlOrMeta+z");
       await held([["ab"], ["cd"], ...others], "undo takes the typing back");
-      await p.keyboard.press("Control+z");
+      await p.keyboard.press("ControlOrMeta+z");
       await held([["abcd"], ...others], "one more takes the split back, whole");
       await until(async () => (await editing()) === "ks1", { what: "the first block's editor back" });
       await p.keyboard.type("Y");
       await held([["abYcd"], ...others], "the caret back where the split was");
 
       // At the start of the text: the new block is above and the caret stays.
-      await p.keyboard.press("Control+Home");
+      await p.keyboard.press("ControlOrMeta+Home");
       await p.keyboard.press("Enter");
       await p.keyboard.type("Z");
       await held([[""], ["ZabYcd"], ...others], "a block above, no focus change");
-      await p.keyboard.press("Control+z");
-      await p.keyboard.press("Control+z");
+      await p.keyboard.press("ControlOrMeta+z");
+      await p.keyboard.press("ControlOrMeta+z");
       await held([["abYcd"], ...others], "that is one step too");
 
       await edit("ks2");
@@ -1224,8 +1228,8 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await newBlock();
       await p.keyboard.type("after");
       await held([["- ab"], ["- next"], ["para"], ["3. three"], ["4. four"], ["- [x] done"], ["- [ ] open"], ["- c"], ["- d"], ["- a\n- b"], ["after"], ["- a\n- b"]], "the list ends in a new paragraph");
-      await p.keyboard.press("Control+z");
-      await p.keyboard.press("Control+z");
+      await p.keyboard.press("ControlOrMeta+z");
+      await p.keyboard.press("ControlOrMeta+z");
       await held([["- ab"], ["- next"], ["para"], ["3. three"], ["4. four"], ["- [x] done"], ["- [ ] open"], ["- c"], ["- d"], ["- a\n- b\n- "], ["- a\n- b"]], "one undo step brings the empty item back");
 
       // Between two lines: each item keeps its own marker.
@@ -1291,7 +1295,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       ["- stays"], ["before"], ["open thread"], ["resolved thread"], ["```\ncode\n```"], ["under code"],
       ["text"], ["> quoted"], ["folded", ["hidden"]], ["under the fold"],
     ];
-    const start = async (rowId) => { await edit(rowId); await p.keyboard.press("Control+Home"); };
+    const start = async (rowId) => { await edit(rowId); await p.keyboard.press("ControlOrMeta+Home"); };
     try {
       await alice2.api(`/api/pages/${id}/comments`, { method: "POST", body: { block_id: "kc1", body: "A question" } });
       const shut = await alice2.api(`/api/pages/${id}/comments`, { method: "POST", body: { block_id: "kc2", body: "An answer" } });
@@ -1305,8 +1309,8 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await until(async () => (await editing()) === "km1", { what: "the editor on the block above" });
       await p.keyboard.type("X");
       await held([["oneXtwo\n- rest"], ["parent", ["child", ["grand"]], ["next"]], [""], ...tail], "the caret at the seam");
-      await p.keyboard.press("Control+z");
-      await p.keyboard.press("Control+z");
+      await p.keyboard.press("ControlOrMeta+z");
+      await p.keyboard.press("ControlOrMeta+z");
       await held([["one"], ["- two\n- rest"], ["parent", ["child", ["grand"]], ["next"]], [""], ...tail], "one undo step");
       await until(async () => (await editing()) === "km2", { what: "the editor back on the merged block" });
       await p.keyboard.type("Y");
@@ -1570,7 +1574,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
         const rows = await tree(alice2, id);
         return rows.length === 2 && rows[0].content !== raw;
       }, { what: "the table pretty-printed and the new block saved" });
-      await p.keyboard.press("Control+z");
+      await p.keyboard.press("ControlOrMeta+z");
       await held([[raw]], "one undo takes back the block and the print together");
       assertNoProblems(p);
     } finally {
@@ -1840,7 +1844,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       assertEq(await p2.locator(".blockEditorCm").count(), 1, "the editor stays open on the long text");
       assertEq((await tree(alice2, pg.id))[0].content, "short", "the long text is not saved");
       await p2.locator(".blockEditorCm .cm-content").click();
-      await p2.keyboard.press("Control+a");
+      await p2.keyboard.press("ControlOrMeta+a");
       await p2.keyboard.insertText("short again");
       await notice.waitFor({ state: "detached" });
       await until(async () => (await tree(alice2, pg.id))[0].content === "short again", { what: "the shortened text saved" });
@@ -2036,7 +2040,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await frameOf(landing.id, "image").click({ button: "right", position: { x: 2, y: 2 } });
     await p.getByRole("menuitem", { name: "Edit markdown source" }).click();
     await p.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
-    await p.keyboard.press("Control+End");
+    await p.keyboard.press("ControlOrMeta+End");
     const widget = p.locator(".blockEditorCm .cmImgWidget");
     await widget.waitFor();
     // First within the block being edited: onto the top of its first line —
@@ -2055,7 +2059,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await p.mouse.up();
       await until(async () => (await content(landing.id)) === `${imgMd}\n\npara one\n\npara two`, { what: "the picture moved to the top of the block being edited, once" });
     }
-    await p.keyboard.press("Control+End");
+    await p.keyboard.press("ControlOrMeta+End");
     await widget.waitFor();
     const wb = await widget.boundingBox();
     const tb = await p.locator(`.blockRowWrap[data-block-id="${withImage.id}"]`).boundingBox();
@@ -2107,7 +2111,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await p.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
     assertEq(await p.locator(".blockEditorCm .cmTableWidget").count(), 0, "the source shows with the caret inside the table");
     assert((await p.$eval(".blockEditorCm .cm-content", (el) => el.textContent)).includes("| a"), "raw table text in the editor");
-    await p.keyboard.press("Control+End");
+    await p.keyboard.press("ControlOrMeta+End");
     await p.locator(".blockEditorCm .cmTableWidget").waitFor();
     await dragTo(".blockEditorCm .cmTableWidget", landing.id, "top");
     await p.locator(".dropIndicator").waitFor({ timeout: 3000 }); // a drag from the editor's widget shows the line too

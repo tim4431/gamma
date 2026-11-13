@@ -35,7 +35,7 @@
 // reader sees the glossary without its edit controls.
 import fs from "node:fs";
 import http from "node:http";
-import { Account, FAKE_AI_MODELS, assertMenuFrom, assertMenuRoles, embeddedWidth, fakeAiModels, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, assertMenuFrom, assertMenuRoles, embeddedWidth, fakeAiModels, keyLabel, wanted } from "../harness.mjs";
 import { dragSelectPdfText, waitForPdf } from "./pdf.mjs";
 
 // A paragraph on a tinted panel with a formula in it, one on plain paper right
@@ -1038,7 +1038,7 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
       const whole = menu.getByRole("menuitem", { name: "Translate whole document" });
       assert(await whole.isDisabled(), "nothing left to translate");
       assertEq(await whole.getAttribute("title"), "Every page is translated");
-      assertEq(await menu.getByRole("menuitem", { name: /^Show original/ }).locator(".ctxMenuKey").innerText(), "Ctrl+Shift+O", "the toggle's key");
+      assertEq(await menu.getByRole("menuitem", { name: /^Show original/ }).locator(".ctxMenuKey").innerText(), keyLabel("Mod-Shift-o"), "the toggle's key");
       const forget = menu.getByRole("menuitem", { name: "Forget this paper's translations…" });
       assert(await forget.evaluate((el) => el.classList.contains("danger") && el.previousElementSibling?.getAttribute("role") === "separator"),
         "a danger row in a group of its own");
@@ -1081,21 +1081,21 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     const button = strip.locator('[data-guide="viewer.translate"]');
     const top = async () => (await strip.boundingBox()).y;
     const before = await top();
-    await page.keyboard.press("Control+Shift+O");
+    await page.keyboard.press("ControlOrMeta+Shift+O");
     await until(async () => (await boxes.count()) === 0, { what: "the original shown" });
     await until(async () => (await button.getAttribute("aria-label")) === "Show translation", { what: "the button names its next click" });
-    await page.keyboard.press("Control+Shift+O");
+    await page.keyboard.press("ControlOrMeta+Shift+O");
     await until(async () => (await boxes.count()) > 0, { what: "the translation shown again" });
     await until(async () => (await button.getAttribute("aria-label")) === "Show original", { what: "the button names its next click" });
     assertEq(await top(), before, "the strip did not move");
     // The palette lists the three, the toggle with its key; the page and the
     // document are translated already, so they are left out.
-    await page.keyboard.press("Control+Shift+p");
+    await page.keyboard.press("ControlOrMeta+Shift+p");
     const dialog = page.getByRole("dialog", { name: "Command palette" });
     await dialog.getByRole("textbox", { name: "Type a command" }).fill(">translat");
     const toggle = dialog.getByRole("option", { name: /Show or hide the translation/ });
     await toggle.waitFor();
-    assert((await toggle.textContent()).includes("Ctrl+Shift+O"), await toggle.textContent());
+    assert((await toggle.textContent()).includes(keyLabel("Mod-Shift-o")), await toggle.textContent());
     assertEq(await dialog.getByRole("option", { name: /Translate whole document/ }).count(), 0, "nothing left to translate");
     await page.keyboard.press("Escape");
     await dialog.waitFor({ state: "detached" });
@@ -1110,7 +1110,7 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     await buttonSetting(false);
     try {
       await button.waitFor({ state: "visible" });
-      await page.keyboard.press("Control+Shift+O");
+      await page.keyboard.press("ControlOrMeta+Shift+O");
       await until(async () => (await boxes.count()) === 0, { what: "the original shown" });
       await button.waitFor({ state: "detached" });
       await strip.getByRole("button", { name: "More tools", exact: true }).click();
@@ -1590,7 +1590,7 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     await page.getByRole("link", { name: "p. 1", exact: true }).click();
     await page.locator('[data-page="1"] .pdfCitationMark').first().waitFor();
     const palette = async () => {
-      await page.keyboard.press("Control+Shift+P");
+      await page.keyboard.press("ControlOrMeta+Shift+P");
       const box = page.getByRole("textbox", { name: "Type a command" });
       await box.waitFor();
       await box.fill(">Show or hide the PDF");
@@ -1606,7 +1606,7 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     await until(() => page.locator('[data-page="1"] .pdfTransPara:not(.streaming) .pdfTransText').count().then((n) => n === 12), { what: "every paragraph landed, unseen" });
     // The translation's key does nothing to a PDF that is not on screen.
     const asked = await page.evaluate(() => window.transRequests.length);
-    await page.keyboard.press("Control+Shift+O");
+    await page.keyboard.press("ControlOrMeta+Shift+O");
     await page.waitForTimeout(200);
     assertEq(await page.locator('[data-page="1"] .pdfTransLayer').count(), 1, "Ctrl+Shift+O hides nothing while the PDF is closed");
     assertEq(await page.evaluate(() => window.transRequests.length), asked, "nor asks for anything");

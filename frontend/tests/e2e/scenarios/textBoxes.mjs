@@ -145,7 +145,7 @@ async function typeInBox(page) {
   await page.waitForSelector(".textBox.editing .cm-content", { timeout: 5000 });
   await page.keyboard.type("Hello bold");
   for (let i = 0; i < 4; i++) await page.keyboard.press("Shift+ArrowLeft");
-  await page.keyboard.press("Control+b");
+  await page.keyboard.press("ControlOrMeta+b");
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
   await page.keyboard.type("second line");
@@ -250,7 +250,7 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
     await until(async () => (await page.$$('[data-page="1"] .textBox')).length === 1, { what: "the empty box gone" });
     await page.keyboard.press("Escape"); // closes the strip: Ctrl+Z is the notes' again
     await until(async () => !(await page.$(".pdfInkBar")), { what: "the strip closed" });
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await until(async () => (await page.locator(".statusPill").innerText().catch(() => "")).includes("Nothing to undo in notes"),
       { what: "nothing to undo: the abandoned box left no entry" });
     assertEq((await page.$$('[data-page="1"] .textBox')).length, 1, "the first box stays");
@@ -262,7 +262,7 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
     const y0 = (await stored(firstId)).properties.text_box.y;
     await page.keyboard.press("ArrowDown");
     await until(async () => (await stored(firstId)).properties.text_box.y === y0 + 1, { what: "the nudge" });
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await until(async () => (await stored(firstId)).properties.text_box.y === y0, { what: "the nudge undone" });
     await page.keyboard.press("Escape");
     await page.click("button[aria-label='Handwriting tools']");
@@ -275,10 +275,10 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
     await until(async () => (await fresh.evaluate((el) => el.style.getPropertyValue("--tb-size"))) === "36", { what: "the new box restyled" });
     await page.keyboard.press("Escape");
     await until(async () => (await page.$$('[data-page="1"] .textBox')).length === 1, { what: "the restyled empty box gone" });
-    await page.keyboard.press("Control+Shift+z");
+    await page.keyboard.press("ControlOrMeta+Shift+z");
     await until(async () => (await stored(firstId)).properties.text_box.y === y0 + 1, { what: "the nudge redone: the redo step was kept" });
     assert((await status()).includes("Redone: text box move"), `the redo names the nudge (${await status()})`);
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await until(async () => (await stored(firstId)).properties.text_box.y === y0, { what: "and undone again" });
     await page.click(".pdfInkBar [data-ink-options='text'] button[aria-label='Text size 12 pt']"); // new boxes at 12 pt again
     // A new box whose notes row is clicked before it is typed in: the row's
@@ -340,7 +340,7 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
       const tb = (await stored(firstId)).properties.text_box;
       return tb.x === round(moved.x + 1) && tb.y === round(moved.y + 10);
     }, { what: "nudged 1 pt right and 10 pt down" });
-    await page.keyboard.press("Control+z"); // a run of nudges (a held arrow key) undoes as one step
+    await page.keyboard.press("ControlOrMeta+z"); // a run of nudges (a held arrow key) undoes as one step
     await until(async () => (await status()).includes("Undone: text box move."), { what: "the undo names the move" });
     await until(async () => {
       const tb = (await stored(firstId)).properties.text_box;
@@ -455,7 +455,7 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
     assert(!(await page.$(".textBox.selected")), "nothing selected");
     await page.keyboard.press("t"); // the Text tool: Ctrl+Z is the block history's
     await page.waitForSelector(".pdfInkBar button[title^='Text (T)'].modeActive", { timeout: 5000 });
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await until(async () => !!(await stored(copy.id)), { what: "the copy back on the server" });
     assert((await status()).includes("Undone: text box deletion"), `the undo names the deletion (${await status()})`);
     await page.locator(".pdfInkBar button[aria-label='Undo']").click(); // the strip's Undo, the same history
@@ -586,13 +586,13 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
     await page.keyboard.press("1"); // a pen again: the box lets go, Ctrl+Z is the strokes'
     await until(async () => !(await page.$(".textBox.selected")), { what: "arming a pen lets go of the box" });
     assert(await page.$(".pdfInkBar button[aria-label='Undo ink']"), "the strip's Undo is the strokes'");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await until(async () => (await page.locator(paths).count()) === 0, { what: "the stroke undone" });
     assert((await status()).includes("Undone: ink stroke"), `the stroke history's undo (${await status()})`);
     assert((await stored(fixedId)).properties.text_box.y !== before.y, "the box stays where it was nudged");
     await page.keyboard.press("t");
     await page.waitForSelector(".pdfInkBar button[aria-label='Undo']", { timeout: 5000 });
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await until(async () => (await stored(fixedId)).properties.text_box.y === before.y, { what: "the nudge undone" });
     assertEq(await page.locator(paths).count(), 0, "the stroke stays undone");
     await until(async () => !(await subtree(pageId)).children.some((c) => c.properties?.ink_url !== undefined),
@@ -740,7 +740,7 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
     await menu().waitFor({ timeout: 5000 });
     await menu().getByRole("button", { name: "Delete", exact: true }).click();
     await until(async () => !(await stored(id, nbId)), { what: "the box deleted" });
-    await page.keyboard.press("Control+z"); // no strip: the notes' undo, as ever
+    await page.keyboard.press("ControlOrMeta+z"); // no strip: the notes' undo, as ever
     await until(async () => (await stored(id, nbId))?.properties.text_box.bg === "#dcecff", { what: "the box back, as it was" });
     await page.waitForSelector(`.nbSheet [data-box-id="${id}"]`, { timeout: 5000 });
     assertNoProblems(page);
@@ -886,7 +886,7 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
       }, { what: `the box where alice put it, with bob's text, on ${who}'s screen` });
     }
     // alice's Ctrl+Z (her box is selected) takes her move back, not bob's typing
-    await A.keyboard.press("Control+z");
+    await A.keyboard.press("ControlOrMeta+z");
     await until(async () => (await shared()).properties.text_box.x === box0.x, { what: "alice's move undone" });
     const after = await shared();
     assertEq(after.content, "Hello world, typed meanwhile", "bob's text stays");

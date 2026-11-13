@@ -12,8 +12,24 @@ import { promisify } from "node:util";
 import { chromium, firefox, webkit } from "playwright";
 import headed from "../../../tools/headed.cjs";
 import { WEBKIT_TOUCH_NOTE, cancelledLoad, clickAfterCancelledTap, touchPoints } from "./webkit.mjs";
+import { chordLabel, chordParts } from "../../src/shared/lib/hotkeys.js";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+
+// The browser runs on this machine's platform, so the page is on a Mac when
+// the suite is: Mod is ⌘ there and the page labels keys as a Mac does. A
+// step presses the page's Mod as "ControlOrMeta" (Playwright's Meta on a Mac,
+// Control elsewhere) and keeps "Control" for the Ctrl key itself, as a
+// pinch's Ctrl+wheel is on every platform. keyLabel is a chord as the page
+// labels it here: "Mod-v" reads Ctrl+V on Windows and Linux and ⌘V on a Mac.
+// keyParts is its key caps: ["Ctrl", "Shift", "K"], or ["⇧", "⌘", "K"].
+export const MAC = process.platform === "darwin";
+export const keyLabel = (chord) => chordLabel(chord, MAC);
+export const keyParts = (chord) => chordParts(chord, MAC);
+// The key that puts a text field's caret at the end of its line: End, and
+// ⌘→ on a Mac, where End scrolls and leaves the caret where it is. The
+// notes' editor binds End itself on every platform.
+export const FIELD_END = MAC ? "Meta+ArrowRight" : "End";
 const BACKEND = path.join(ROOT, "backend");
 // A private build keeps concurrent development builds from replacing assets
 // while a browser scenario is reloading the application.

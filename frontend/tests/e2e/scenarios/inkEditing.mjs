@@ -102,7 +102,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     assertEq(await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label"), pen);
     assertEq(await page.locator(paths).count(), 2);
     assert(await page.locator('[aria-label="Undo ink"]').isDisabled(), "selection is not an edit");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await page.getByText("Nothing to undo in handwriting.", { exact: true }).waitFor();
     assertEq(await page.locator(paths).count(), 2, "empty ink history does not fall through to note undo");
     // Row one is fixed (Comment while the person may comment); More adds the second row, every button a 36 px target.
@@ -181,10 +181,10 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     }
     await tapInk();
     const original = (await stored()).strokes[0];
-    await page.keyboard.press("Control+c");
+    await page.keyboard.press("ControlOrMeta+c");
     await page.getByText("Copied 1 stroke.", { exact: true }).waitFor();
     assertEq((await inkBlocks()).length, 2, "copy adds nothing");
-    await page.keyboard.press("Control+v");
+    await page.keyboard.press("ControlOrMeta+v");
     // No group is current on the page (nothing was drawn here), so the paste
     // starts one: a third ink block holding the copy.
     await until(async () => (await inkBlocks()).length === 3, { what: "the paste lands in a group of its own" });
@@ -197,10 +197,10 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     assert(Math.abs((b[0] + b[2]) / 2 - 306) < 1 && Math.abs((b[1] + b[3]) / 2 - 396) < 1, `the copied box is centred on the page: ${b}`);
     await menu().waitFor();
     assert(/^Lasso/.test(await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label")), "the pasted strokes are selected with the lasso");
-    await page.keyboard.press("Control+x");
+    await page.keyboard.press("ControlOrMeta+x");
     await page.getByText("Cut 1 stroke.", { exact: true }).waitFor();
     await until(async () => (await inkBlocks()).length === 2, { what: "the cut empties its group, whose block goes" });
-    await page.keyboard.press("Control+v");
+    await page.keyboard.press("ControlOrMeta+v");
     await until(async () => (await inkBlocks()).length === 3, { what: "the cut strokes paste back" });
     const again = (await inkBlocks()).find((b) => ![noteId, secondId].includes(b.id));
     assert(again.ink.strokes[0].id !== pasted.id && again.ink.strokes[0].id !== "thin", "another fresh id");
@@ -335,7 +335,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     const pasteHere = page.getByRole("menuitem", { name: "Paste here", exact: true });
     await page.getByRole("button", { name: / pen · .* · key 1\b/ }).tap();
     await tapInk();
-    await page.keyboard.press("Control+c");
+    await page.keyboard.press("ControlOrMeta+c");
     await page.getByText("Copied 1 stroke.", { exact: true }).waitFor();
     const blank = await point(300, 500);
     await page.mouse.click(blank.x, blank.y, { button: "right" });
@@ -799,7 +799,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     const duplicates = async () => {
       if (await menu().count()) await dropSelection();
       await tapInk();
-      await page.keyboard.press("Control+d");
+      await page.keyboard.press("ControlOrMeta+d");
       await until(async () => (await stored())?.strokes.length === 2, { what: "Ctrl+D's copy" });
       const key = await offset();
       await undoCopy();
@@ -857,7 +857,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
       // the pen armed on the strip, Ctrl+A: every stroke of the group selected
       await fpage.getByRole("button", { name: "Handwriting tools", exact: true }).click();
       await fpage.waitForSelector(".pdfInkBar");
-      await fpage.keyboard.press("Control+a");
+      await fpage.keyboard.press("ControlOrMeta+a");
       await fmenu.waitFor();
       // what the pill says, as it changes: a final message is up a second, which a long task can outlast
       await fpage.evaluate(() => {
@@ -928,7 +928,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
         assertEq(JSON.stringify(await savedFiles()), JSON.stringify(files), `${what}: the groups' files as they were`);
       };
       // Ctrl+A: both groups; New note of them all
-      await fpage.keyboard.press("Control+a");
+      await fpage.keyboard.press("ControlOrMeta+a");
       await fmenu.waitFor();
       await moreRow();
       await fmenu.getByRole("button", { name: "New note", exact: true }).click();
@@ -996,7 +996,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
         await vpage.mouse.click(at.x, at.y);
         return vmenu.waitFor({ timeout: 2000 }).then(() => true, () => false);
       }, { timeout: 10000, what: "the stroke on page 3 selected" });
-      await vpage.keyboard.press("Control+c");
+      await vpage.keyboard.press("ControlOrMeta+c");
       await vpage.getByText("Copied 1 stroke.", { exact: true }).waitFor();
       // the next paper, its manifest and its bytes held back
       let release;
@@ -1004,7 +1004,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
       const hold = async (route) => { await held; await route.continue(); };
       await vctx.route("**/api/pdf-info/**", hold);
       await vctx.route(`**${next.source}*`, hold);
-      await vpage.keyboard.press("Control+p");
+      await vpage.keyboard.press("ControlOrMeta+p");
       const palette = vpage.getByRole("dialog", { name: "Open a page" });
       await palette.waitFor();
       await palette.getByRole("textbox", { name: "Search pages by title or label" }).fill("Slow to load");
@@ -1013,12 +1013,12 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
       // the strip stays open with nothing armed: the pen, then Ctrl+V
       await vpage.keyboard.press("1");
       await until(async () => (await vpage.locator(".pdfInkBar .inkToolBtn.modeActive").count()) === 1, { what: "the pen armed" });
-      await vpage.keyboard.press("Control+v");
+      await vpage.keyboard.press("ControlOrMeta+v");
       await vpage.waitForTimeout(2500);
       assertEq(JSON.stringify(await groupPages()), "[]", "nothing pasted while the paper loads");
       release();
       await vpage.locator('[data-page="1"] .textLayer span', { hasText: "the slow paper" }).waitFor({ timeout: 15000 });
-      await vpage.keyboard.press("Control+v");
+      await vpage.keyboard.press("ControlOrMeta+v");
       await until(async () => JSON.stringify(await groupPages()) === "[1]", { what: "the paste on the next paper's page 1", timeout: 15000 });
       assertNoProblems(vpage);
     } finally { await vctx.close(); }

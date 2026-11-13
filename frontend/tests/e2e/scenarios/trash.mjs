@@ -101,7 +101,7 @@ export async function trashScenarios(env) {
       assertEq(await notice.count(), 0, "the notice goes");
 
       // Ctrl+Shift+P → Recently deleted, then the page deleted for good
-      await page.keyboard.press("Control+Shift+p");
+      await page.keyboard.press("ControlOrMeta+Shift+p");
       const palette = page.getByRole("dialog", { name: "Command palette" });
       await palette.getByRole("textbox").fill(">recently deleted");
       await page.keyboard.press("Enter");

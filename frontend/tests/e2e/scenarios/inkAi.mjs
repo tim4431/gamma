@@ -142,7 +142,7 @@ export async function inkAiScenarios({ server, browser, alice, bob, makePdf, ste
       const box = await page.locator(".pdfViewer .inkSelRect").evaluate((el) => [el.x.baseVal.value, el.y.baseVal.value, el.width.baseVal.value, el.height.baseVal.value]);
       return Math.abs(box[0] + 4 - x0) < 0.6 && Math.abs(box[1] + 4 - y0) < 0.6 && Math.abs(box[2] - 8 - (x1 - x0)) < 0.6 && Math.abs(box[3] - 8 - (y1 - y0)) < 0.6;
     }, { what: "the rect selected" });
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await pill("Undone: ink redraw as shapes (page 1).").waitFor();
     await until(async () => (await ids()) === "box,word", { what: "the drawn box saved back" });
     assertNoProblems(page);
@@ -229,7 +229,7 @@ export async function inkAiScenarios({ server, browser, alice, bob, makePdf, ste
     assertEq(tb.color, "#2563eb", "in the ink's colour");
     assertEq(tb.auto, true);
     await until(async () => (await ids()) === "box", { what: "the converted stroke gone" });
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await pill("Undone: ink conversion to text (page 1).").waitFor();
     await until(async () => !(await page.locator('.pdfViewer [data-page="1"] .textBox').count()), { what: "the box gone from the page" });
     await until(async () => !(await subtree()).some((b) => b.properties?.text_box), { what: "the box gone from the notes" });

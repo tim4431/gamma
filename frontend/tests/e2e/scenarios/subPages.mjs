@@ -111,7 +111,7 @@ export async function subPageScenarios(env) {
     const page = await openPage(ctx, at(loose.id));
     try {
       await page.locator(".blockList").first().waitFor();
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
       await dialog.getByRole("textbox", { name: "Search pages by title or label" }).fill("Child one");
@@ -497,7 +497,7 @@ export async function subPageScenarios(env) {
 
       // Quick open: the top's folder and the title; the folder it carries
       // neither shows on its row nor finds it
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
       const query = dialog.getByRole("textbox", { name: "Search pages by title or label" });
@@ -555,7 +555,7 @@ export async function subPageScenarios(env) {
       await page.locator(".homeFindInput").fill("Sel");
       await fileRow(page, "Sel inner").waitFor({ timeout: 15000 });
       await fileRow(page, "Sel outer").click();
-      await fileRow(page, "Sel inner").click({ modifiers: ["Control"] });
+      await fileRow(page, "Sel inner").click({ modifiers: ["ControlOrMeta"] });
       await fileRow(page, "Sel inner").click({ button: "right" });
     };
     try {

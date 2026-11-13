@@ -290,7 +290,7 @@ export async function workFolderScenarios(env) {
         const title = page.locator(".titleText");
         await title.waitFor({ timeout: 15000 });
         await title.click();
-        await page.keyboard.press("Control+A");
+        await page.keyboard.press("ControlOrMeta+A");
         await page.keyboard.type("Plan");
         await page.keyboard.press("Enter");
         await until(async () => (await user.api(`/api/blocks/${ids.notes}`)).content === "Plan", { what: "the title saved" });

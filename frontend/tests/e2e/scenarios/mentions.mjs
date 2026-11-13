@@ -249,12 +249,12 @@ export async function mentionScenarios(env) {
         const b = r.getBoundingClientRect();
         return { x0: a.left + 1, x1: b.right - 1, y: (a.top + a.bottom) / 2 };
       });
-      await page.keyboard.down("Control");
+      await page.keyboard.down("ControlOrMeta");
       await page.mouse.move(span.x0, span.y);
       await page.mouse.down();
       await page.mouse.move(span.x1, span.y, { steps: 5 });
       await page.mouse.up();
-      await page.keyboard.up("Control");
+      await page.keyboard.up("ControlOrMeta");
       const noteChip = page.locator(".chatSelChips .isNote");
       await noteChip.waitFor({ timeout: 5000 });
       // Chips say what they are in words; one the user attached is solid.
