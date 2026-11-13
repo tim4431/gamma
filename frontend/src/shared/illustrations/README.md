@@ -7,7 +7,7 @@ Import them through `index.js`.
 | --- | --- |
 | `AppearanceIllustrations.jsx` | Theme swatches (each painted from its theme's tokens) and PDF color sample |
 | `TransferPreview.jsx` | Live import/export examples driven by the selected options |
-| `FormatIllustration.jsx` | App marks for app formats, a labelled file glyph for one whose mark `brands/` does not carry (Notability's NOTE); shared PDF, notes and Markdown icons for document formats |
+| `FormatIllustration.jsx` | App marks for app formats, a labelled file glyph for one whose mark `brands/` does not carry (Notability's NOTE; the note apps' import card overlaps NOTE and GoodNotes' GN); shared PDF, notes and Markdown icons for document formats |
 | `brands/` | Local app icons and their source/license notes |
 | `library-page.svg` | Static sample thumbnail for the real library `PageCard` |
 | `illustrations.css` | Illustration-specific drawing and color rules |

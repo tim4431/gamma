@@ -60,20 +60,18 @@ export function doneWithOpenedFile(id) {
 
 // What an opened file becomes: "picture" (a JPEG, PNG, GIF, WebP, HEIC, HEIF
 // or SVG, the image types the app declares, to the page in view as a picked
-// picture goes), "notability" (a .note or .ntb, to the Notability import's
-// review), "goodnotes" (a .goodnotes, to the GoodNotes import's review),
-// "archive" (a .zip, whose kind the import dialog asks), "" (an executable,
-// which the server refuses), else "page": a PDF, a Markdown note or a file of
-// any other format, as the library's upload makes one (transfers/
-// fileRouting.js routeFile).
+// picture goes), "noteapps" (a .note, .ntb or .goodnotes, to the Notability &
+// GoodNotes import's review), "archive" (a .zip, whose kind the import dialog
+// asks), "" (an executable, which the server refuses), else "page": a PDF, a
+// Markdown note or a file of any other format, as the library's upload makes
+// one (transfers/fileRouting.js routeFile).
 export function openedKind(file) {
   const name = file?.name || "";
   const type = file?.type || "";
   const routed = routeFile(file);
   if (routed === "pdf" || routed === "markdown") return "page";
   if (/\.(?:jpe?g|png|gif|webp|hei[cf]|svg)$/i.test(name) || /^image\/(?:jpeg|png|gif|webp|hei[cf]|svg\+xml)$/i.test(type)) return "picture";
-  if (/\.(?:note|ntb)$/i.test(name)) return "notability";
-  if (/\.goodnotes$/i.test(name)) return "goodnotes";
+  if (/\.(?:note|ntb|goodnotes)$/i.test(name)) return "noteapps";
   if (/\.zip$/i.test(name) || /^application\/(?:x-)?zip(?:-compressed)?$/i.test(type)) return "archive";
   return routed ? "page" : "";
 }

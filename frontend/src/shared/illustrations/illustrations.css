@@ -2,6 +2,9 @@
    ds-allow-start: a drawing of a paper and its notes, in its own fixed colours and sizes */
 .formatIllustration { color: var(--text-secondary); }
 .formatIllustration svg { width: 48px; height: 48px; }
+.formatGlyphPair { display: flex; }
+.formatGlyphPair svg { width: 42px; height: 42px; }
+.formatGlyphPair svg + svg { margin: 6px 0 0 -18px; }
 .formatAppIcon { width: 48px; height: 48px; background: currentColor; mask: var(--app-icon) center / contain no-repeat; -webkit-mask: var(--app-icon) center / contain no-repeat; }
 .formatAppImage { width: 48px; height: 48px; object-fit: contain; filter: grayscale(1); }
 .transferPreview { margin: 0; min-width: 0; }

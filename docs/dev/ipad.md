@@ -825,12 +825,12 @@ before a reload waits until a page can take it. The web half is
    file takes. A PDF or a Markdown note becomes a page at the library's
    top, as *Upload files…* makes one, and a single one opens. A PDF keeps
    the upload's rules: an already-known file opens its page, and the
-   annotations another reader saved in it are imported. A `.note` or
-   `.ntb` opens the Notability import's review, several of them as one
-   `.zip`, as the picker sends them, and a `.goodnotes` the GoodNotes
-   import's the same way. A `.zip` opens the Import dialog with the file
+   annotations another reader saved in it are imported. A `.note`, `.ntb`
+   or `.goodnotes` opens the Notability & GoodNotes import's review,
+   several of them, either app's, as one `.zip`, as the picker sends them.
+   A `.zip` opens the Import dialog with the file
    already chosen. It asks which export it is, offering the sources that
-   read an archive (Zotero, Markdown, Notability, GoodNotes, Notion, Gamma), and
+   read an archive (Zotero, Markdown, Notability & GoodNotes, Notion, Gamma), and
    goes on to that source's review with no picker.
    An image becomes a picture where the Picture button puts one: the
    surface in view, else the sheet among the notes that shows the most of
@@ -838,10 +838,8 @@ before a reload waits until a page can take it. The web half is
    land before the share's PDFs are uploaded, since a page that opens
    would stop their placing.
 3. **What it cannot.** One import dialog shows at a time. With
-   Notability notes in the same share, the review takes them, and a
-   `.goodnotes` or a `.zip` with them is named in the status, to be
-   opened again; GoodNotes notebooks without Notability notes take the
-   review the same way. A second
+   notes of either app in the same share, the review takes them all, and
+   a `.zip` with them is named in the status, to be opened again. A second
    `.zip` is named the same way. A file Gamma does not open is let go,
    and the status names it. So is an image with no surface in view, as
    the Picture button asks for a page first. Nothing keeps it for a later
@@ -1364,7 +1362,7 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   holds opened files, read in 1000-byte chunks. A PDF held when the page
   loads becomes its page at the library's top and opens. Files handed
   while the page is up, with `filesOpened`, follow: a Markdown note
-  becomes a page, an `.ntb` goes through the Notability review, a `.zip`
+  becomes a page, an `.ntb` goes through the note apps' review, a `.zip`
   opens the Import dialog without Logseq and imports as Markdown, and a
   `.txt` is let go with a status. In a shared workspace the question
   shows: *Cancel* adds nothing, and the personal workspace's button

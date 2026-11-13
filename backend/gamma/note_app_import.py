@@ -13,7 +13,9 @@ notes before in the upload, and again under the write lock; a note's PDF
 ink page by page, its pictures (picture blocks, ``store_picture``) and its
 recordings stored, then its folder and page written in one short
 transaction. What a note holds and where it lands on a page is each app's
-own module.
+own module. The Import dialog's one card for both apps
+(``import_note_apps``) finds either app's notes in one walk of the upload,
+each read by its own app's import into one report.
 
 The upload is untrusted:
 
@@ -55,6 +57,7 @@ from fastapi import HTTPException
 from pypdf import PdfReader
 
 from . import config, jobs
+from . import goodnotes as gn
 from . import ink as inkmod
 from . import notability as nb
 from . import notability_map as nmap
@@ -72,12 +75,14 @@ from .ops import after_commit, apply_batches
 from .pdf_export import copyable, display_size, page_frame
 from .picture import image_size, picture_type
 from .recording import mp4_duration_ms
-from .storage import is_pdf, store_file, store_file_stream
+from .storage import display_filename, is_pdf, store_file, store_file_stream
 
 MAX_DIRECTORY_BYTES = 16 << 20   # a zip's central directory (the upload's, each note's): about 100,000 files
 MAX_HELD_BYTES = 256 << 20       # a note's PDF or picture: read whole into memory, parsed and composed
 MAX_NOTE_SAMPLES = 20_000_000    # flattened samples in one note (a thousand pages of dense writing)
 MAX_WARNINGS = 200
+NO_NOTES_REASON = ("No Notability notes or GoodNotes notebooks in this file. Gamma reads Notability's “Note” and "
+                   "“NTB” exports and GoodNotes' own: .note, .ntb and .goodnotes files, or a .zip of them.")
 _CONVERTED = ("TIFF", "BMP", "AVIF")  # Pillow's formats of the picture files a picture block holds as PNG
 _PNG_MODES = ("1", "L", "LA", "I;16", "I;16B", "P", "RGB", "RGBA")  # Pillow's modes a PNG holds as they are
 
@@ -168,6 +173,42 @@ def markup(plan, groups: list, boxes: list) -> list[dict]:
         elif plan.kind in ("original", "composed"):
             tree += inks + [{**block, "properties": {**block["properties"], "pdf_page": k}} for block in placed]
     return tree
+
+
+def import_note_apps(ws: str, data, conn, folder: str = "", *, name: str = "", actor: str = "",
+                     preview: bool = False, selected: set[str] | None = None, progress=None) -> dict:
+    """Import the Notability notes and the GoodNotes notebooks in the upload
+    ``data``, in one review: one .note, .ntb or .goodnotes, several picked
+    together, or a .zip holding either or both. Each is found and read by
+    its own app's import (``notability_import.import_notes``,
+    ``goodnotes_import.import_goodnotes``, whose parameters, report and
+    refusals these are), over one walk of the upload. A preview's
+    ``stage`` names each note's app (``note_apps``: path → "notability" or
+    "goodnotes"), which the import job's params carry for the setup guide."""
+    from . import goodnotes_import, notability_import  # they import this module
+
+    name = display_filename(name)
+    notes = notability_import.Import(ws, conn, folder, actor, preview, progress)
+    books = goodnotes_import.Import(ws, conn, folder, actor, preview, progress)
+    report = notes.run_upload(data, selected, refused=NO_NOTES_REASON, refuse=notability_import.supernote,
+                              find=lambda entries: nb.find_bundles(entries, name), nested=nb.nested_zip,
+                              others=[(books, lambda entries: gn.find_notebooks(entries, name))])
+    if preview:
+        report["stage"] = {"note_apps": {e["path"]: notes.readers.get(e["path"], notes).TAG
+                                         for e in report["entries"] if e["status"] == "source"}}
+    return report
+
+
+def _holds(outer: nb.Bundle, inner: nb.Bundle, strict: bool = False) -> bool:
+    """Whether ``inner`` lies in the unzipped note ``outer`` (its folder, or
+    a packed note among its files); ``strict``: below it, not at it, so of
+    two apps' notes unzipped in one folder the first app's stays."""
+    if outer.folder is None:
+        return False
+    at = inner.folder if inner.folder is not None else inner.path
+    if strict and at == outer.folder:
+        return False
+    return not outer.folder or at == outer.folder or at.startswith(outer.folder + "/")
 
 
 def note_dirs(bundles: list[nb.Bundle]) -> dict[str, list[str]]:
@@ -272,16 +313,21 @@ class AppImport:
         self.seen = {}     # key → the page entry of a note earlier in this upload
         self.paths = {}    # folder id → its names from the top
         self.dirs = {}     # bundle path → its folder path below the destination
+        self.readers = {}  # bundle path → the other app's import that reads it (``run``)
 
     def warn(self, title: str, reason: str) -> None:
         if len(self.report["warnings"]) < MAX_WARNINGS:
             self.report["warnings"].append({"title": title, "reason": reason, "selection_id": self.selection})
 
-    def run_upload(self, data, selected, *, refused: str, find, nested, refuse=None) -> dict:
+    def run_upload(self, data, selected, *, refused: str, find, nested, refuse=None, others=()) -> dict:
         """Run over the upload ``data``: opened (``open_upload``: ``refused``
         and ``refuse`` its reasons), walked with ``nested`` saying which zips
         open in place, its notes the ones ``find(entries)`` names (none: a
-        400 with ``refused``), ``selected`` the ones imported."""
+        400 with ``refused``), ``selected`` the ones imported. ``others``:
+        ``(import, find)`` of other apps whose notes the same upload holds,
+        each found in the same walk and read by its own import
+        (``import_note_apps``); a note of one app that lies in an unzipped
+        note of another is that note's file (``_holds``), not a note."""
         zf = open_upload(data, refused, refuse)
         with zf, contextlib.ExitStack() as stack:
             walk = new_walk(stack, max_directory=MAX_DIRECTORY_BYTES)
@@ -289,24 +335,34 @@ class AppImport:
             walk_zip(zf, "", entries, walk, nested=nested)
             check_ratio(walk)
             bundles = find(entries)
+            readers = {}
+            for reader, found in others:
+                theirs = [b for b in found(entries) if not any(_holds(mine, b) for mine in bundles)]
+                bundles = [b for b in bundles if not any(_holds(other, b, strict=True) for other in theirs)]
+                readers.update((b.path, reader) for b in theirs)
+                bundles += theirs
             if not bundles:
                 raise HTTPException(status_code=400, detail=refused)
-            return self.run(bundles, entries, walk["left_out"], selected)
+            bundles.sort(key=lambda b: b.path)
+            return self.run(bundles, entries, walk["left_out"], selected, readers)
 
-    def run(self, bundles, entries, left_out, selected) -> dict:
+    def run(self, bundles, entries, left_out, selected, readers=None) -> dict:
+        """The notes ``bundles`` imported, ``selected`` the ones chosen;
+        ``readers``: the import of another app that reads a note (by its
+        path) in place of this one, sharing this run's report and
+        destination."""
         self.under, self.under_path = destination(self.conn, self.folder)
         validate_selection(selected, (b.path for b in bundles))
         report = self.report
         report["entries"] = source_entries(bundles, entries)
         for path, reason in left_out:
             self.warn(path, reason)
-        found = (f"SELECT id, properties, content FROM unified_blocks WHERE parent_id = 'root' "
-                 f"AND json_extract(properties, '$.{self.KEY}') IS NOT NULL")
-        for page_id, raw, title in self.conn.execute(found):
-            props = load_props(raw)
-            self.library.setdefault(props.get(self.KEY), (page_id, title, props))
         self.paths = folder_paths(self.conn)
         self.dirs = note_dirs(bundles)
+        self.readers = readers = readers or {}
+        for reader in {id(r): r for r in readers.values()}.values():
+            reader.join(self)
+        self.load_library()
         chosen = [b for b in bundles if selected is None or b.path in selected]
         stopped = ""
         for n, bundle in enumerate(chosen):
@@ -314,19 +370,36 @@ class AppImport:
             if stopped:
                 report["skipped"].append({"title": bundle.path, "reason": stopped})
                 continue
-            self.selection = bundle.path
+            reader = readers.get(bundle.path, self)
+            reader.selection = bundle.path
             try:
                 with contextlib.ExitStack() as note_stack:  # a packed note's temporary file
-                    self.note(bundle, note_stack)
+                    reader.note(bundle, note_stack)
             except Stop as stop:
                 stopped = str(stop)
                 report["skipped"].append({"title": stop.title or bundle.path, "reason": stopped})
             finally:
-                self.selection = None
+                reader.selection = None
         log.info(f"[{self.TAG}] {report['pages_created']} pages, {report['pages_skipped']} skipped, "
                  f"{len(report['skipped'])} not imported, {report['strokes_imported']} strokes, "
                  f"{report['pdfs_stored']} PDFs{' (preview)' if self.preview else ''}")
         return report
+
+    def load_library(self) -> None:
+        """The pages imported before, by this app's key."""
+        found = (f"SELECT id, properties, content FROM unified_blocks WHERE parent_id = 'root' "
+                 f"AND json_extract(properties, '$.{self.KEY}') IS NOT NULL")
+        for page_id, raw, title in self.conn.execute(found):
+            props = load_props(raw)
+            self.library.setdefault(props.get(self.KEY), (page_id, title, props))
+
+    def join(self, run: "AppImport") -> None:
+        """Read notes for ``run``, another app's import over the same
+        upload: its report, its destination and its folders are this one's;
+        the library is looked for by this app's key."""
+        self.report, self.seen, self.paths, self.dirs = run.report, run.seen, run.paths, run.dirs
+        self.under, self.under_path = run.under, run.under_path
+        self.load_library()
 
     def note(self, bundle: nb.Bundle, stack: contextlib.ExitStack) -> None:
         raise NotImplementedError

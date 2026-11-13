@@ -46,6 +46,7 @@ from ..markdown_zip_import import import_markdown_zip, markdown_page
 from ..notability_import import import_notes
 from ..note_markup import obsidian_image_sizes
 from ..goodnotes_import import import_goodnotes
+from ..note_app_import import import_note_apps
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
 from ..pdf_text import GlyphPages, quote_under
 from ..pdf_export import (GAMMA_ALPHA, GAMMA_COLOR, GAMMA_STYLE, LOCKED, TEXT_BOX_TYPES, _resolve, annotation_flags,
@@ -95,6 +96,7 @@ def _review_source(source):
         "markdown-file": (_preview_markdown_file, _commit_markdown_file),
         "notability": (_preview_notability, _commit_notability),
         "goodnotes": (_preview_goodnotes, _commit_goodnotes),
+        "note-apps": (_preview_note_apps, _commit_note_apps),
         "gamma": (_preview_gamma, _commit_gamma),
     }
     if source not in sources:
@@ -362,7 +364,7 @@ def start_import_job(payload: ImportJob, request: Request):
                              title=f"Import {metadata['filename']}",
                              params={"review_id": token, "source": metadata["source"], "filename": metadata["filename"],
                                      "folder": metadata["folder"], "size": upload.stat().st_size,
-                                     "selected": len(selection), "digest": digest})
+                                     "selected": len(selection), "digest": digest, **_apps(metadata, selection)})
     except jobs.Busy as busy:  # a second start raced this one
         return same_review(busy.job)
     if preview is not None:  # the import's row stands for the review from here on
@@ -542,10 +544,28 @@ def _note_app(import_fn, ws, data, meta, *, actor="", preview=False, selection=N
     """A note app's export → a page per note: Notability notes (one .note or
     .ntb, or a .zip of them; ``import_notes``, gamma/notability_import.py) or
     GoodNotes notebooks (one .goodnotes, or a .zip of them;
-    ``import_goodnotes``, gamma/goodnotes_import.py)."""
+    ``import_goodnotes``, gamma/goodnotes_import.py), or either or both in
+    one upload, the Import dialog's card (``import_note_apps``,
+    gamma/note_app_import.py)."""
     with connect_pages_db(ws) as conn:  # the import commits note by note
         return {"ok": True, **import_fn(ws, data, conn, meta.get("folder", ""), name=meta.get("filename", ""),
                                         actor=actor, preview=preview, selected=selection, progress=progress)}
+
+
+def _preview_note_apps(ws, data, meta, progress=jobs.no_progress):
+    return _note_app(import_note_apps, ws, data, meta, preview=True, progress=progress)
+
+
+def _commit_note_apps(ws, actor, data, meta, selection, progress=jobs.no_progress):
+    return _note_app(import_note_apps, ws, data, meta, actor=actor, selection=selection, progress=progress)
+
+
+def _apps(metadata, selection) -> dict:
+    """``{"apps": [...]}``, the note apps of the selected notes of a
+    combined review (its preview's ``note_apps`` stage), for the setup
+    guide that waits on a Notability import (useAppJobs); else nothing."""
+    apps = metadata.get("note_apps")
+    return {"apps": sorted({apps[s] for s in selection if s in apps})} if apps else {}
 
 
 def _preview_notability(ws, data, meta, progress=jobs.no_progress):
@@ -645,6 +665,24 @@ def import_notability(request: Request, file: UploadFile = File(...), folder: st
     ``notability``)."""
     ws = require_ws(request, write=True)
     return _commit_notability(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))
+
+
+@router.post("/import/note-apps/preview")
+def preview_note_apps(request: Request, file: UploadFile = File(...), folder: str = Form("")):
+    report = _preview_note_apps(require_ws(request, write=True), file.file, _meta(file, folder))
+    report.pop("stage", None)  # no review to keep it for
+    return report
+
+
+@router.post("/import/note-apps")
+def import_note_apps_endpoint(request: Request, file: UploadFile = File(...), folder: str = Form(""),
+                              selected: str | None = Form(None)):
+    """Notability notes and GoodNotes notebooks, either or both in one
+    upload (.note, .ntb, .goodnotes, or a .zip of them) → a page each; the
+    web app goes through the review (``/import/review``, source
+    ``note-apps``)."""
+    ws = require_ws(request, write=True)
+    return _commit_note_apps(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))
 
 
 @router.post("/import/goodnotes/preview")

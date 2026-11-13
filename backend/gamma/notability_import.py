@@ -50,16 +50,16 @@ def import_notes(ws: str, data, conn, folder: str = "", *, name: str = "", actor
     file, a bad destination or selection), 413 (a central directory or an
     archive past the limits) or 507 (no disk to unpack)."""
     name = display_filename(name)  # a browser may send a relative path
-    run = _Import(ws, conn, folder, actor, preview, progress)
-    return run.run_upload(data, selected, refused=nb.NO_NOTES_REASON, refuse=_supernote,
+    run = Import(ws, conn, folder, actor, preview, progress)
+    return run.run_upload(data, selected, refused=nb.NO_NOTES_REASON, refuse=supernote,
                           find=lambda entries: nb.find_bundles(entries, name), nested=nb.nested_zip)
 
 
-def _supernote(head: bytes) -> str | None:
+def supernote(head: bytes) -> str | None:
     return nb.SUPERNOTE_REASON if head.startswith(nb.SUPERNOTE_MAGIC) else None
 
 
-class _Import(app.AppImport):
+class Import(app.AppImport):
     KEY = "notability_import"
     TAG = "notability"
 

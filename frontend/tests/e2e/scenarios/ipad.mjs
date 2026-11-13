@@ -280,7 +280,7 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
   });
 
   // --- the shell: files the system opened in the app (docs/dev/ipad.md "Opened files") ---
-  await step("ipad shell: files the app was given open as picked ones do: a PDF its page, Markdown a note, an .ntb the Notability review, a .goodnotes the GoodNotes review, a .zip the Import dialog, a text file its page, an executable let go; a workspace others see asks first, a read-only one sends them to the personal workspace; images alone stay in the workspace shown, and with no page in view are let go before any question", async () => {
+  await step("ipad shell: files the app was given open as picked ones do: a PDF its page, Markdown a note, an .ntb or a .goodnotes the Notability & GoodNotes review, a .zip the Import dialog, a text file its page, an executable let go; a workspace others see asks first, a read-only one sends them to the personal workspace; images alone stay in the workspace shown, and with no page in view are let go before any question", async () => {
     // Accounts of its own: the workspaces it shares, and the notices they
     // bring, stay out of the steps that follow. A server admin makes the
     // shared workspaces, then stops being one.
@@ -335,10 +335,10 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       await page.getByText("Written in another app.").first().waitFor();
       assert((await pages()).some((p) => p.content === "Handed note"), `the Markdown is a note page: ${(await pages()).map((p) => p.content).join(" | ")}`);
 
-      // A Notability .ntb: the Notability import's review, as Import → Notability opens it.
+      // A Notability .ntb: the note apps import's review, as Import → Notability & GoodNotes opens it.
       await hand(page, { id: "F3", name: "Handed.ntb", type: "", b64: b64(fs.readFileSync(ntbPath)) });
       await fileDone(page, "F3");
-      let review = page.getByRole("dialog", { name: "Review Notability import", exact: true });
+      let review = page.getByRole("dialog", { name: "Review Notability & GoodNotes import", exact: true });
       await review.getByRole("region", { name: "Library after import", exact: true }).getByText("Handed NTB note", { exact: true }).waitFor();
       await review.getByRole("button", { name: "Import to library", exact: true }).click();
       let report = page.getByRole("dialog", { name: "Import complete", exact: true });
@@ -346,10 +346,10 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       await report.getByRole("button", { name: "Done", exact: true }).click();
       assert((await pages()).some((p) => p.content === "Handed NTB note"), "the note is a page");
 
-      // A .goodnotes: the GoodNotes import's review, as Import → GoodNotes opens it.
+      // A .goodnotes: the note apps import's review, as Import → Notability & GoodNotes opens it.
       await hand(page, { id: "F6", name: "Handed.goodnotes", type: "", b64: b64(fs.readFileSync(goodnotesPath)) });
       await fileDone(page, "F6");
-      review = page.getByRole("dialog", { name: "Review GoodNotes import", exact: true });
+      review = page.getByRole("dialog", { name: "Review Notability & GoodNotes import", exact: true });
       await review.getByRole("region", { name: "Library after import", exact: true })
         .getByText("Handed GoodNotes notebook", { exact: true }).waitFor();
       await review.getByRole("button", { name: "Import to library", exact: true }).click();
