@@ -58,14 +58,15 @@ A root comment keeps where its thread was opened, `comments.anchor`, JSON
 
 ```text
 {"v": 1,
- "kind":   "passage" | "area" | "ink" | "region" | "note" | "file",
+ "kind":   "passage" | "area" | "ink" | "region" | "lines" | "note" | "file",
  "block":  "<the block the place is read from>",
  "doc_id": "<24 hex>" | "",          # the file the place was measured on
  "ext":    ".pdf" | ".png" | …,      # the page's document's extension when the thread opened; "" for none
- "page":   3 | null,                 # the 1-based PDF page; null for a region of a picture
+ "page":   3 | null,                 # the 1-based PDF page; null for a region of a picture and a range
  "rects":  [[x1, y1, x2, y2], …],    # fractions of the page (or the picture) as shown, top-left origin, 4 dp, at most 200
  "quote":  "…",                      # at most 1000 characters; "" for an area, ink, a region, a note, the file
  "box":    [x0, y0, x1, y1] | null,  # the region picture's crop, fractions, 4 dp
+ "lines":  [118, 120],               # a range's alone: its first and last line when the thread opened
  "source": {…}}                      # added after the commit by the kept worker; absent until then
 ```
 
@@ -89,8 +90,16 @@ A root comment keeps where its thread was opened, `comments.anchor`, JSON
   on (`image_position.hash`, else the page's), `page` null, `rects` its
   one rectangle as fractions of that version (`highlights.region_box`),
   `quote` "".
+- **lines**: a highlight or link block with a `text_position` whose span
+  reads (`highlights.text_span`), a range of a text file
+  ([api.md](api.md) "The highlight shape"; a block with a PDF or picture
+  position too is placed by that one). `doc_id` is the version its lines
+  were measured on (`text_position.hash`, else the page's), `page` null, no
+  `rects` and no `box`, `quote` the block's, and `lines` its `[line, end]`:
+  a key only this kind carries, so the other kinds' keys and their order
+  stand. A malformed `text_position` places nothing (the block is a note).
 - **note**: anything else. The nearest ancestor below the page that is a
-  highlight, a link region, an ink group or a region with a position gives
+  highlight, a link region, an ink group, a region or a range with a position gives
   the place: `kind` becomes that ancestor's and `block` its id (the
   annotated export's rule for a note under a highlight). Without one the
   thread is a `note` on the block itself, with the page's `doc_id` and no
@@ -111,12 +120,21 @@ which the reader compares with the block now. A reply holds none. Nothing
 is backfilled for a root from before migration step 54
 ([migrations.md](migrations.md)): its place is read from its block. The
 module's pure helpers: `parse(text)` (a stored anchor as an object, None
-for NULL or a malformed one; a dict passes through), `held_file(text)`
+for NULL or a malformed one, a `lines` anchor without two whole lines
+included; a dict passes through), `held_file(text)`
 (`stored_name(doc_id, ext)`, the stem through `storage.stored_pdf_stem`,
 "" for none: the hold, "The commented version kept"; an anchor written
 before step 3 has no `ext` and holds a PDF, one whose `ext` is no
-extension holds nothing) and `top(anchor)` (the place's top: the highest
-rectangle's, else the box's, else 0: the order of a page's threads).
+extension holds nothing, nor does a `lines` anchor), `top(anchor)` (the
+place's top: the highest rectangle's, else the box's, else 0: the order of
+a page's threads) and `place_words(anchor)`, the place in words the
+feedback tools' answers and the chat's thread lines use: `the whole file`,
+`a region of the picture`, `page 3, “…”`, `page 5, an area`, `page 2,
+handwriting`, `lines 118–120, “…”` / `line 118` (`line_words`), `a note`.
+A range's anchor keeps the lines it was opened on; `following(conn,
+page_id, anchor)` gives the lines its block holds now while it is still a
+range, which both of those name (the entry and the agent's prompt read
+the block's lines too).
 
 ## The entry and the document
 
@@ -179,9 +197,10 @@ the names are the disk's. Separators are `/`.
  "format":   "pdf",                        # the document's format; "markdown" for a note page without one
  "page_id":  "…",
  "block_id": "…",                          # the block the thread hangs on
- "kind":     "passage" | "area" | "ink" | "region" | "note" | "file",
+ "kind":     "passage" | "area" | "ink" | "region" | "lines" | "note" | "file",
  "where":    {"page": 3, "quote": "…", "box": […], "rect": [x1, y1, x2, y2], "size": [w, h],
               "placed": "exact", "match": 0.82, "note": "…"},
+             # a range: {"line": 118, "end": 120, "quote": "…", "placed": "rough", "match": 0.86, "was": "…", "note": "…"}
  "source":   {"file": "sections/method.tex", "line": 118, "end": 120, "version": "current"} | null,
  "picture":  "img/<key>.jpg" | null,
  "before":   "img/<key>.jpg" | null,
@@ -230,12 +249,37 @@ The keys come in that order, and a `where` key with no value is left out.
     `earlier` when another (it stays where it was; the viewer draws it
     dashed), `lost` when the page's document is no longer a picture.
     Nothing for the file.
+  - a range of a text file (`lines`, and a note under one) follows its
+    block, as a passage does: `line` and `end` (left out when equal to
+    `line`) are the block's lines now while it is placed on the page's
+    current file (`placed` `exact` or `rough`: the run's result, or the
+    version it was made on), else the anchor's `lines` (a lost or pending
+    range, or one whose block is gone, keeps the lines it was commented
+    at); `quote` the block's (respelled by a rough placement) when the
+    block is there, else the anchor's; `placed` reads the same ladder by
+    `text_position.hash` in place of `doc_id`: `exact`, `rough` with
+    `match`, `lost`, `pending` (measured on another version, the run not
+    done) — never `estimate` or `earlier` (a text run writes no `approx`
+    without `match`, and ranges are always placed again); and when it is
+    `rough`, **`was`**, the text the comment was made on (the quote the
+    thread's anchor recorded, given when the range reads otherwise now; for
+    a thread without one, `text_position.prev.quote`, the text last
+    confirmed there), so an agent that rewrote the sentence sees what was
+    commented as well as what stands there now (a PDF entry has its
+    `before` picture for this). On a secrets file
+    (`anchors.text_kept`: `documents.text.is_secret`) neither quote is
+    given, the lines alone, here and so in the files, the tools and the
+    local agent's prompt.
 - **`source`**: live (`version: "current"`) when the place is on a PDF
   page of the page's current file (`placed` is `exact`, `rough` or
   `estimate`) and the SyncTeX map answers on this computer ("SyncTeX");
   else the one recorded at the thread's open (`anchor.source`, `version:
   "commented"`); else null. `end` comes only when it differs from `line`. A
-  region of a picture has none.
+  region of a picture has none. A range of a text file is its own source,
+  never SyncTeX's: `{"file": <the entry's file>, "line", "end"?, "version"}`
+  from `where`, `current` while it is `exact` or `rough`, else `commented`
+  (the lines it was commented at); `kept._record_source` never runs for it
+  (it has no page).
 - **`picture`** and **`before`**: "The pictures". HTTP and MCP add
   `picture_url` and `before_url` after them (`entries.with_urls`).
 - **`sent`**: the newest Send waiting on the thread (`comments._sent`: a
@@ -262,8 +306,8 @@ The keys come in that order, and a `where` key with no value is left out.
 Files by name (case folded, then as it is); in a file the whole file's
 threads first, then by `where.page`, `anchors.top`, the box's left edge
 (else the rectangles'), the threads without a page after those with one: a
-picture's regions by top and left edge, then the notes; ties by
-`created_at`, then id.
+picture's regions by top and left edge, a text file's ranges by
+`where.line`, then the notes; ties by `created_at`, then id.
 
 ### The document
 
@@ -316,7 +360,7 @@ and `read_feedback` give. Exactly:
 ```markdown
 # Feedback on paper
 
-2 open comments · owner tim · updated 2026-11-10 13:58
+5 open comments · owner tim · updated 2026-11-10 13:58
 
 Each item is a comment thread on a file of this work folder. Answer it in Gamma: reply with what you
 changed and where, resolve it when it is done (see "How to answer" at the end).
@@ -357,6 +401,25 @@ changed and where, resolve it when it is done (see "How to answer" at the end).
 > **tim** · …
 > use the viridis palette.
 
+## main.tex
+
+### 4. Line 17 · “This note measures how much it helps”
+
+- id: `5e0b…` · lines · placed exactly
+- source: `main.tex`, line 17
+
+> **tim** · 2026-11-10 13:56
+> say by how much.
+
+### 5. Lines 26–27 · “Training and test loss per epoch, without any weight decay.”
+
+- id: `6a1c…` · lines · placed roughly (0.91)
+- was: “Training and test loss per epoch, with no weight decay.”
+- source: `main.tex`, lines 26–27
+
+> **tim** · 2026-11-10 13:55
+> name the dataset.
+
 ---
 
 ## How to answer
@@ -373,12 +436,18 @@ passage), `Page {n} · area`, `Page {n} · handwriting`, `Page {n} · note on
 “{quote}”` (a note under a passage, `note on an area` and `note on
 handwriting` under those), `Region · {w}×{h} px at ({x1}, {y1})` (a region
 of a picture, by `where.rect`; `Note on a region · …` under one; `Region`
-alone when the block is gone), `A note` (one without a place), `The whole
+alone when the block is gone), `Lines {line}–{end} · “{quote}”` / `Line
+{line} · “{quote}”` (a range of a text file; `note on “…”` under one,
+`passage` for an empty quote), `A note` (one without a place), `The whole
 file`.
 `placed` reads `placed exactly` / `placed roughly ({match})` / `placed by
-estimate` / `not found in this build` / `not placed yet` / `drawn on an
-earlier build`, and for a region `placed exactly` / `drawn on an earlier
-version of the picture` / `the file is no longer a picture`; an item with a
+estimate` / `not found in the current version` / `not placed yet` / `drawn
+on an earlier version` — one vocabulary for every format, a build's PDF and
+a source file alike, as the app's thread card says it — and for a region
+`placed exactly` / `drawn on an earlier
+version of the picture` / `the file is no longer a picture`; a rough range
+adds the line `- was: “{the text it was made on, at most 80 characters}”`
+after the note; an item with a
 `before` picture adds `the figure was rebuilt` (an area), `the PDF was
 rebuilt` (a passage) or `the picture was rebuilt` (a thread on a picture's
 page); a resolved item says so. The source line reads `lines a–b` when
@@ -406,7 +475,9 @@ hangs on, cut out of its PDF page as the page shows it; the region of a
 picture a thread hangs on, cut out of the picture; the whole picture for a
 thread on a picture's page. A passage, an area, ink, a region and a note
 under one of those get pictures, and the page's thread when the page shows
-a picture; a note alone and a PDF's whole file none.
+a picture; a note alone, a PDF's whole file and a text file (a range of
+lines, a note on one, the whole file: its entry names its lines, and its
+`was` stands for `before`) none.
 
 - **`picture`**, the region as the person sees it now: `pictures.now(conn,
   page_id, props, anchor, memo=)` when `placed` is `exact`, `rough` or
@@ -545,7 +616,8 @@ the `before` picture from it. `gamma/feedback/kept.py`:
   longer describes. A thread opened on another server's page records none,
   nor does one on a picture.
 - **At every replacement while it holds** (`keeps_bytes(ws, page_id,
-  props)`: the page is a library file, or has an open thread) the incoming
+  props)`: the page is a library file, or a PDF or a picture with an open
+  thread, below) the incoming
   bytes are stored first (`vault.local_remote.LocalRemote.replace_doc`,
   `linked_files._take_bytes`), so the outgoing ones, stored at the open or at
   the replacement before, are the run's reference and get the replacement's
@@ -573,6 +645,18 @@ the `before` picture from it. `gamma/feedback/kept.py`:
 A highlight made on a build replaced before its thread was opened is placed
 by its quote, as any highlight on a file read in place: nothing is stored at
 the first highlight.
+
+Only a PDF's and a picture's versions are kept: `kept.KEPT_FORMATS = ("pdf",
+"image")`, the formats whose threads need the version they were opened on
+(the PDF run reads the text under rectangles from it, the pictures draw
+`before`). A range of a text file carries its own context, its quote and
+the text around it ([api.md](api.md) "The highlight shape"), so its run
+reads nothing of the old version and it has no picture: a thread on a
+`.tex` stores nothing at its open (`_unstored` asks the format, so `repair`
+follows) nor at a replacement (`keeps_bytes`' open-thread case asks it,
+whether the caller passes the properties or not), and a `lines` anchor
+holds no file. A work folder's file in the library keeps its bytes whatever
+its format, as a library document does.
 
 ## Requests and their states
 
@@ -931,7 +1015,7 @@ with a thread takes no new strokes, is never deleted by the saver and
 refuses a merge, [handwriting.md](handwriting.md)); a thread's card shows
 its agent's comments under the token's name, a Sent chip while a request
 waits on it, and whether its passage moved or was not found in the new
-build; the Feedback dialog (`frontend/src/feedback/`: `FeedbackDialog.jsx`
+version; the Feedback dialog (`frontend/src/feedback/`: `FeedbackDialog.jsx`
 over the pure `feedbackView.js`, `tests/feedbackView.test.mjs`; its state
 a module store, `useFeedback.js`, that each opener calls and
 `FeedbackHost.jsx` renders; the words in `feedbackText.js`), opened from
@@ -975,13 +1059,21 @@ guide's "Comments and inbox" says it for people.
   about 89 Mpx) or past `STORED_MAX_BYTES` draws no picture, and there is no
   setting for either. The chat's region picture of a picture page shows
   nothing until the image branch of `/api/ai/page-image` answers.
+- A range of a text file has no picture and no `before`: a rough one's
+  `was` is the text it was made on, a lost one keeps its quote and the
+  lines it was commented at. A `file` or `note` anchor on a text page still
+  names the page's version (`held_file` holds `<hash>.tex`), which is never
+  stored for it, so the hold costs nothing but a stored library text
+  document's old version kept while the thread is open.
 
 ## Tests
 
 - `tests/test_feedback_anchors.py`: the anchor of each kind, a region's and
-  the extension held.
+  the extension held, a range's lines and the words they are named by.
 - `tests/test_feedback_entries.py`: every kind's `where` and `placed`, a
-  picture's regions and the whole picture through a rebuild, the file's
+  picture's regions and the whole picture through a rebuild, a text file's
+  ranges by their own lines through a change (exact, rough with `was`,
+  lost, pending, the block gone), the file's
   name from the vault's rows and from the tree, the order, `sent`, a
   tombstone, the cut, the scopes and their refusals, the states, a root from
   before step 54, the source live or as commented, the pictures' keys; the
@@ -999,8 +1091,9 @@ guide's "Comments and inbox" says it for people.
   the room publish, the listeners, the sweep, `claim`, `only_from` and the
   `change_listeners`. An agent on this computer has its own suites,
   `tests/test_local_agents_*.py` ([local_agents.md](local_agents.md#tests)).
-- `tests/test_feedback_pictures.py`, `test_feedback_kept.py`,
-  `test_synctex.py`, `test_feedback_sources.py`, `test_feedback_files.py`,
+- `tests/test_feedback_pictures.py`, `test_feedback_kept.py` (a text file's
+  thread keeps no version), `test_synctex.py`, `test_feedback_sources.py`,
+  `test_feedback_files.py` (an entry on lines of a tracked `.tex`),
   `test_feedback_tools.py`, and the gate `test_feedback_loop.py` (a work
   folder with a paper, two comments, a Send, a feedback token's state and
   answers, a rebuild, the Inbox, `open.json` empty at the end).

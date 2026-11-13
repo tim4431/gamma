@@ -46,6 +46,7 @@ import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors"
 import { BLOCK_TOOLS, changePlace, chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
+import { linesLabel } from "../shared/model/blockModel.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
 import { AgentToolPicker, changePermission, chatKindName, permissionLabel } from "../settings/AssistantTools";
 import { aiServiceTiles } from "../settings/providerEditor.js";
@@ -2440,9 +2441,10 @@ export default function ChatDock({
             ) : null}
             {pdfSelections.map((s, i) => (
               <SelChip key={`p${i}`} text={s.text} icon="passage"
-                label={pdfSelections.length > 1 ? t("PDF passage {i}", { i: i + 1 }) : t("PDF passage")}
-                note={s.page ? t("p. {page}", { page: s.page }) : ""} cut={keptOf(s)}
-                title={[s.text.slice(0, 2000), keptHint(s), t("Hold Ctrl while selecting in the PDF to add more passages")].filter(Boolean).join("\n\n")}
+                label={s.line ? linesLabel(s.line, s.end)
+                  : pdfSelections.length > 1 ? t("PDF passage {i}", { i: i + 1 }) : t("PDF passage")}
+                note={s.file || (s.page ? t("p. {page}", { page: s.page }) : "")} cut={keptOf(s)}
+                title={[s.text.slice(0, 2000), keptHint(s), t("Hold Ctrl while selecting to add more passages")].filter(Boolean).join("\n\n")}
                 onRemove={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
                 removeTitle={t("Remove this passage")} />
             ))}

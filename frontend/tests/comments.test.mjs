@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  abandonedCommentHighlight, addComment, anchorSnippet, anchorWords, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment,
+  abandonedCommentHighlight, addComment, anchorSnippet, anchorWords, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, cardedAnchors,
   commentOnlyHighlight, deleteComment, EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, isWithdrawn, keepThreads,
   laterComments, mentionHint, popoverThreads, resolveThread, sendRefusal, sentChip, shortCount, threadLink, threadPlace, threadsIn, upsertThread,
 } from "../src/comments/comments.js";
@@ -242,6 +242,27 @@ test("what became of a thread's place after a rebuild: a highlight moved or lost
   assert.equal(threadPlace({ made_on: "a" }, ink, ""), "", "a page that shows no file");
   assert.equal(threadPlace({ made_on: "a" }, { id: "n", content: "a note", properties: {} }, "b"), "", "a note");
   assert.equal(threadPlace({ made_on: "a" }, undefined, "b"), "", "a block the page no longer shows");
+});
+
+test("a text file's range: moved or lost by its flags, nothing while pending; its lines when it has no words", () => {
+  const range = (extra = {}) => ({ id: "t", content: "", properties: { quote: "q",
+    text_position: { line: 14, col: 0, end: 16, end_col: 3, prefix: "", suffix: "", hash: "f1", ...extra } } });
+  assert.equal(threadPlace({ made_on: "f0" }, range(), "f1"), "", "placed exactly");
+  assert.equal(threadPlace({ made_on: "f0" }, range({ approx: true, match: 0.86, hash: "f2" }), "f2"), "moved");
+  assert.equal(threadPlace({ made_on: "f0" }, range({ lost: true }), "f2"), "lost");
+  assert.equal(threadPlace({ made_on: "f0" }, range({ hash: "f0" }), "f2"), "", "pending says nothing, as a PDF's does");
+  assert.equal(anchorWords(range()), "q");
+  const bare = (span) => ({ id: "t", content: "", properties: { text_position: { prefix: "", suffix: "", hash: "f1", ...span } } });
+  assert.equal(anchorWords(bare({ line: 14, col: 0, end: 16, end_col: 3 })), "Lines 14–16 of the file");
+  assert.equal(anchorWords(bare({ line: 14, col: 0, end: 14, end_col: 3 })), "Line 14 of the file");
+  assert.equal(anchorWords(bare({ line: 0 })), "", "a malformed one names no lines");
+});
+
+test("the cards a margin draws: anchors with threads and the one being written on, each at its top", () => {
+  const anchors = [{ id: "a", threadCount: 2, position: { line: 3 } }, { id: "b", threadCount: 0, position: { line: 9 } },
+    { id: "c", threadCount: 0, position: { line: 12 } }];
+  assert.deepEqual(cardedAnchors(anchors, "c", (a) => a.position.line * 20), [{ id: "a", top: 60 }, { id: "c", top: 240 }]);
+  assert.deepEqual(cardedAnchors(anchors, "", () => 0), [{ id: "a", top: 0 }]);
 });
 
 test("who may report: anyone but the author, a link visitor too; a tombstone no one", () => {

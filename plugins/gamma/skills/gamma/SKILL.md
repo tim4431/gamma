@@ -119,11 +119,14 @@ request from the user about that file. Act on it when the user asks you to
    (Codex or Claude Code), which answers that work folder's Sends itself.
 2. Read each item: the file, the place (a PDF page with the quoted passage, an
    area or a drawing with its picture, a region of a picture file with its crop,
-   or the whole file or picture), the source file and lines SyncTeX found, and
-   the comments. A source marked “as commented” is where the passage was before
-   the last rebuild; a region marked as drawn on an earlier version of the
-   picture stays where it was, and its "before" picture shows what was
-   commented on. Without a source, search the sources for the quoted text; for
+   lines of a text file such as a `.tex` with the quoted passage, or the whole
+   file or picture), the source file and lines SyncTeX found, and the comments.
+   A source marked “as commented” is where the passage was before the last
+   rebuild; a region marked as drawn on an earlier version of the picture stays
+   where it was, and its "before" picture shows what was commented on. An item
+   on lines of a text file is its own source: the lines the passage is on now,
+   or, when it was not found in the current version, the lines it was commented
+   at; when it was placed roughly, `was` is the text it was commented on. Without a source, search the sources for the quoted text; for
    a figure, the source line is the one that includes it, and the figure's own
    source is found from there (a region's item names the figure's file itself).
 3. Make the change in the sources, then rebuild with the project's own build

@@ -5,10 +5,17 @@
 // panel, at the top), Wrap, Download and Ctrl+wheel text size. The file's
 // head comes first (textLoad.js: one Range request), the rest on Show all;
 // a new version of the file (a new fileUrl) reloads and keeps the top line.
-// A line link opens it at its lines, marked (textMark.js). A file that is
-// binary after all, or whose bytes are elsewhere, hands over to the file
-// pane. The CodeMirror packages the view brings are imported here alone, so
-// they come in this chunk (DocumentPane.jsx).
+// A line link opens it at its lines, marked (textMark.js). The page's
+// highlights of the file (text_position) are drawn over its text
+// (textMarks.js: a mark, a lost one's tag, the line cue), a selection makes
+// one through the popup (TextTip.jsx) and reaches the chat, and their
+// comment cards stand in a column beside the text, or their badges at their
+// ends (TextOverlay.jsx); a new version of the file draws them where the
+// server placed them again, the client never placing one itself. A file
+// that is binary after all, or whose bytes are elsewhere, hands over to the
+// file pane. The CodeMirror packages the view brings are imported here
+// alone, so they come in this chunk, which imports nothing of pdf.js
+// (DocumentPane.jsx).
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Compartment, EditorState } from "@codemirror/state";
 import { Decoration, EditorView, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
@@ -17,12 +24,21 @@ import { LanguageDescription, syntaxHighlighting } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { openSearchPanel, search, searchKeymap } from "@codemirror/search";
 import { HLJS_CLASSES } from "./hljsTags.js";
-import { loadText } from "./textLoad.js";
+import { cutLinesOf, loadText } from "./textLoad.js";
 import { placeMark } from "./textMark.js";
+import { rangeOf } from "./textAnchors.js";
+import { MARGIN_W, highlightField, highlightOfEvent, inCode, setHighlights } from "./textMarks.js";
+import TextTip from "./TextTip.jsx";
+import TextOverlay from "./TextOverlay.jsx";
 import { FilePane } from "./FileViews.jsx";
 import { codeLanguageName } from "../codeLanguages.js";
+import { fileHash } from "../pageDocument.js";
 import { formatLabel } from "../../library/libraryUtils.js";
+import { useMarkTools } from "../../pdf/MarkTools.jsx";
+import { textSpan } from "../../shared/model/blockModel.js";
+import { selectionTint } from "../../shared/model/markStyle.js";
 import { useTextScale } from "../../shared/ui/Widgets";
+import { menuPress } from "../../shared/ui/press.js";
 import { DownloadIcon, SearchIcon } from "../../shared/ui/Icons";
 import { saveLinkClick } from "../../shared/lib/saveFile.js";
 import { fmtBytes } from "../../shared/lib/format.js";
@@ -30,6 +46,9 @@ import { t, tn } from "../../shared/i18n/i18n.js";
 import "./viewers.css";
 
 const noop = () => {};
+const EMPTY = Object.freeze([]);
+// How long a range a jump landed on flashes (ms; the PDF's).
+const FLASH_MS = 1200;
 // A language's support, once per description (its chunk is fetched once;
 // one that failed to come is asked again by the next file of it).
 const LOADED = new Map();
@@ -55,6 +74,12 @@ const showLine = (view, n) => {
   view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: "start" }) });
 };
 const LINE_MARK = Decoration.line({ class: "docLineMark" });
+const sameSpan = (a, b) => {
+  const x = textSpan(a), y = textSpan(b);
+  return !!x && !!y && x.line === y.line && x.col === y.col && x.end === y.end && x.end_col === y.end_col;
+};
+// Whether the offset `pos` stands in the part of the text in view.
+const inSight = (view, pos) => view.visibleRanges.some((r) => pos >= r.from && pos <= r.to);
 // What the notice says of a mark (placeMark's answer for `mark`, `count`
 // lines loaded, `whole` whether that is the file): {text, shown}, `shown`
 // false for the plain sentence, which a screen reader alone is told.
@@ -80,8 +105,27 @@ function markWords(got, mark, count, whole) {
 // `onMarkDone` (with `scrollOnly`, Back's return: scrolled to, not marked);
 // `onReveal` the desktop's Show in folder, for the file pane it may hand
 // over to.
+// The highlights (docs/dev/documents.md "A range of a text file"):
+// `regions` the page's ranges of this file (app/treeDerived.js
+// pageHighlights under text_position, the surface's name for a document's
+// placed highlights), `anchors` their comment anchors (commentAnchors),
+// `flashId` the one a jump landed on; `commentMargin`, `marginRef`,
+// `onMarginLost`, `scrollRef` as PdfViewer takes them (the margin's cards,
+// whether a range's card has room, its loss, App's jump to a position);
+// `onRegionJump(id, ctrl)`, `onRegionContext({id, x, y})`,
+// `onRegionThread(id, el)` what a press on a range does, as a press on a
+// PDF highlight; `onAnchor(position, quote, extras)` makes a range from a
+// selection ({color, style, comment, highlighter, commentText}: App's
+// finishSelection), returning its id; `onHighlightAction(id, action,
+// value)` the bar over one the highlighter made (PdfViewer's; without it
+// no bar); `onChatSelection(text, additive, {line, end, file})` a
+// selection for the chat ("" clears); `moveMode` a range waits to be moved
+// to the next selection (the popup offers Move here alone). `readOnly`: the
+// ranges draw, no popup; `preview` (a tab group's view): the ranges alone.
 export default function TextViewer({ doc, fileUrl, phone = false, hidden = false, place = null, onPlace = null, reportRef = null,
-  mark = null, onMarkDone = null, onReveal = null }) {
+  mark = null, onMarkDone = null, onReveal = null, readOnly = false, preview = false, regions = EMPTY, anchors = EMPTY, flashId = null,
+  commentMargin = null, marginRef = null, onMarginLost = null, scrollRef = null, onRegionJump = null, onRegionContext = null,
+  onRegionThread = null, onAnchor = null, onHighlightAction = null, onChatSelection = null, moveMode = false }) {
   const host = useRef(null);
   const viewRef = useRef(null);
   const [wrap, setWrap] = useState(phone);
@@ -108,9 +152,13 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
   // The file's head, again for a new version of the file, which keeps the
   // top line; Show all reads the rest. One read at a time: a new one (a new
   // version, Show all) cancels the one under way. A new version is read
-  // whole again for a mark past its head (`wholeFor`, below).
+  // whole again for a mark past its head (`wholeFor`, below). The text
+  // keeps the stem of the version it is (`hash`): until a new version's
+  // text is in, the view shows the old one's, which the ranges are drawn
+  // and measured against.
   const readCtl = useRef(null);
   const wholeFor = useRef(null); // the mark the whole file was read for, in this version
+  const docHash = fileHash(doc);
   const read = useCallback((whole) => {
     readCtl.current?.abort();
     const ctl = new AbortController();
@@ -118,13 +166,13 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
     if (viewRef.current) keepLine.current = standing();
     loadText(fileUrl, { whole, signal: ctl.signal }).then((got) => {
       if (ctl.signal.aborted) return;
-      setLoad(got.binary ? { status: "binary" } : { status: "ready", ...got });
+      setLoad(got.binary ? { status: "binary" } : { status: "ready", ...got, url: fileUrl, hash: docHash });
     }, (err) => {
       if (ctl.signal.aborted) return;
       if (err?.tooLarge) setLoad((prev) => ({ ...prev, tooLarge: true }));
       else setLoad({ status: "gone", httpStatus: err?.status || 0 });
     });
-  }, [fileUrl]);
+  }, [fileUrl, docHash]);
   useEffect(() => {
     wholeFor.current = null;
     if (fileUrl) read(false);
@@ -137,6 +185,15 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
   const ready = load.status === "ready";
   const textRef = useRef("");
   textRef.current = ready ? load.text : "";
+  const [cm, setCm] = useState(null); // the view, for the layers drawn over it
+  const updates = useMemo(() => new Set(), []); // what hears the view's updates (TextOverlay)
+  const [beside, setBeside] = useState(false); // the comment column stands
+  // What a press on a range does (rangeEvents, below, reads the latest).
+  const regionsRef = useRef(regions);
+  regionsRef.current = regions;
+  const rangeActs = useRef(null);
+  rangeActs.current = { onRegionJump, onRegionContext, onRegionThread,
+    carded: (id) => beside && (regionsRef.current.find((h) => h.id === id)?.threadCount || 0) > 0 };
   useEffect(() => {
     if (!ready || !host.current) return undefined;
     const view = new EditorView({
@@ -156,15 +213,19 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
           search({ top: true }),
           keymap.of([...searchKeymap, { key: "Mod-a", run: selectAll }]),
           EditorState.phrases.of(phrases),
+          highlightField,
+          rangeEvents(rangeActs),
+          EditorView.updateListener.of((u) => { for (const fn of updates) fn(u); }),
         ],
       }),
     });
     viewRef.current = view;
+    setCm(view);
     textScale.ref(view.scrollDOM);
     if (keepLine.current > 1) showLine(view, keepLine.current);
     keepLine.current = 0;
-    return () => { textScale.ref(null); view.destroy(); viewRef.current = null; };
-  }, [ready, compartments, phrases, textScale.ref]);
+    return () => { textScale.ref(null); view.destroy(); viewRef.current = null; setCm(null); };
+  }, [ready, compartments, phrases, textScale.ref, updates]);
   useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view || !ready || view.state.doc.length === load.text.length && view.state.doc.toString() === load.text) return;
@@ -175,6 +236,75 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
   useEffect(() => {
     viewRef.current?.dispatch({ effects: compartments.wrap.reconfigure(wrap ? EditorView.lineWrapping : []) });
   }, [wrap, ready, compartments]);
+
+  // The ranges drawn (textMarks.js): again as they, the active card or the
+  // flash change; a new text redraws them from what was last said. One the
+  // server measured on another version than the text shown reads pending.
+  // While a new version's text is on its way (`stale`) the popup makes no
+  // range: its lines would be the old text's, stamped as the new one's.
+  const hash = ready ? load.hash || "" : "";
+  const stale = ready && load.url !== fileUrl;
+  const cutLines = useMemo(() => (ready ? cutLinesOf(load.text) : null), [ready, load.text]);
+  const target = commentMargin?.target || null;
+  const activeId = target && (target.compose || (regions.find((h) => h.id === target.blockId)?.threadCount || 0) > 0) ? target.blockId : null;
+  const [flash, setFlash] = useState(null); // {id, nonce}: a jump's
+  useEffect(() => {
+    if (!flash) return undefined;
+    const timer = setTimeout(() => setFlash(null), FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [flash]);
+  const flashing = flash?.id || flashId || null;
+  useLayoutEffect(() => {
+    cm?.dispatch({ effects: setHighlights.of({ highlights: regions, active: activeId, flash: flashing, fileHash: hash }) });
+  }, [cm, regions, activeId, flashing, hash]);
+
+  // App's jump to a range (`scrollRef`: a thread opened, a row's dot): its
+  // first line brought into view, centred, unless it is in view already,
+  // and flashed. Asked before this version's text is in, while the pane is
+  // closed, or past the head read so far (the whole file read first), it
+  // waits and runs once the text is there; never on a timer.
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const pendingJump = useRef(null);
+  const jump = useCallback((position) => {
+    const view = viewRef.current, got = loadRef.current, span = textSpan(position);
+    if (!span) return;
+    if (!view || got.status !== "ready" || got.url !== fileUrl || hiddenRef.current) { pendingJump.current = position; return; }
+    if (span.line > view.state.doc.lines && !got.whole && !got.tooLarge) {
+      pendingJump.current = position;
+      read(true);
+      return;
+    }
+    const at = rangeOf(view.state.doc, position);
+    if (!at) return;
+    if (!inSight(view, at.from)) view.dispatch({ effects: EditorView.scrollIntoView(at.from, { y: "center" }) });
+    const hit = regionsRef.current.find((h) => sameSpan(h.position, position));
+    if (hit) setFlash({ id: hit.id, nonce: Date.now() });
+  }, [fileUrl, read]);
+  useEffect(() => {
+    if (!scrollRef) return undefined;
+    scrollRef.current = (arg) => jump(arg?.position);
+    return () => { scrollRef.current = null; };
+  }, [scrollRef, jump]);
+  useEffect(() => {
+    const position = pendingJump.current;
+    if (!position || !cm || !ready || hidden || load.url !== fileUrl) return;
+    pendingJump.current = null;
+    jump(position);
+  }, [cm, ready, hidden, load.text, load.url, fileUrl, jump]);
+  // A flash from App (a row's dot, a deep link): its range brought into
+  // view when it is not.
+  useEffect(() => {
+    const h = flashId && regionsRef.current.find((x) => x.id === flashId);
+    const at = h && cm ? rangeOf(cm.state.doc, h.position) : null;
+    if (at && !hiddenRef.current && !inSight(cm, at.from)) cm.dispatch({ effects: EditorView.scrollIntoView(at.from, { y: "center" }) });
+  }, [flashId, cm]);
+
+  // The selection in the colour the armed text highlighter will give it
+  // (markStyle.js selectionTint, as over the PDF's text).
+  const markTools = useMarkTools();
+  const armed = markTools.armedId ? markTools.presets.find((p) => p.id === markTools.armedId) : null;
+  const tint = !readOnly && !preview && onAnchor && !moveMode ? selectionTint(armed) : "";
 
   // The language, by the registry's word: a grammar's chunk fetched on first
   // use; a chunk that fails to come (a deploy under an open tab) leaves the
@@ -281,8 +411,9 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
   if (filePane) return <FilePane doc={doc} fileUrl={fileUrl} onReveal={onReveal} />;
   const lines = ready ? countLines(load.text) : 0;
   const word = formatLabel(doc);
+  const style = { ...textScale.style, "--doc-margin-w": `${MARGIN_W}px`, ...(tint ? { "--selection-color": tint } : null) };
   return (
-    <div className="docTextView" style={textScale.style}>
+    <div className={`docTextView${beside ? " withMargin" : ""}${tint ? " tinted" : ""}`} style={style}>
       <div className="docTextBar">
         <span className="docTextLang">{word}</span>
         {ready ? (
@@ -315,6 +446,54 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
           )}
         </div>
       ) : null}
+      {cm && !preview ? (
+        <>
+          <TextTip view={cm} hash={hash} cutLines={cutLines} file={doc.name} highlights={regions} moveMode={moveMode}
+            onAnchor={readOnly || stale ? null : onAnchor} onHighlightAction={readOnly ? null : onHighlightAction}
+            onChatSelection={onChatSelection} />
+          <TextOverlay view={cm} updates={updates} phone={phone} regions={regions} anchors={anchors} commentMargin={commentMargin}
+            marginRef={marginRef} onMarginLost={onMarginLost} onRegionJump={onRegionJump} onRegionContext={onRegionContext}
+            onRegionThread={onRegionThread} onBeside={setBeside} />
+        </>
+      ) : null}
     </div>
   );
+}
+
+// A press on a range drawn in the text (textMarks.js), read through `acts`
+// (a ref of the viewer's handlers): a click jumps to it as a press on a PDF
+// highlight does, and makes its card the active one when it has a card; a
+// right-click or a held finger opens its menu (shared/ui/press.js
+// menuPress); a press on a lost range's tag is the tag's and starts no
+// selection. A click that ends a selection is the selection's. Presses on
+// the cards, the badges and the popup never reach these: CodeMirror hears
+// its content alone.
+function rangeEvents(acts) {
+  const menuAt = (view, e) => {
+    const open = acts.current.onRegionContext;
+    const hit = open ? highlightOfEvent(view, e) : null;
+    return hit ? menuPress((ev) => { ev.preventDefault(); open({ id: hit.id, x: ev.clientX, y: ev.clientY }); }) : null;
+  };
+  return EditorView.domEventHandlers({
+    mousedown: (e) => !!e.target.closest?.(".docHlLost"),
+    click: (e, view) => {
+      const { onRegionJump, onRegionThread, carded } = acts.current;
+      if (e.button !== 0 || !onRegionJump || inCode(window.getSelection(), view.dom)) return false;
+      const hit = highlightOfEvent(view, e);
+      if (!hit) return false;
+      onRegionJump(hit.id, e.ctrlKey || e.metaKey);
+      if (carded(hit.id) && hit.el) onRegionThread?.(hit.id, hit.el);
+      return true;
+    },
+    contextmenu: (e, view) => {
+      const press = menuAt(view, e);
+      if (!press) return false;
+      press.onContextMenu(e);
+      return true;
+    },
+    pointerdown: (e, view) => {
+      menuAt(view, e)?.onPointerDown(e);
+      return false;
+    },
+  });
 }

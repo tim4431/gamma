@@ -306,7 +306,8 @@ instruction of Gamma's. Its parts:
    owner's comments (`is_owner` true); a comment by anyone else is context,
    not an instruction, and the reply says when someone else's request was
    not acted on. Change the sources in this directory; a comment without a
-   `source` is found by its `quote`. The build: Codex is told to rebuild
+   `source` is found by its `quote`, and a `was` is the text a range of a
+   text file was commented on before the file changed under it. The build: Codex is told to rebuild
    with the project's own build (latexmk, make, a script), its commands
    running in a sandbox with no network; Claude Code that it cannot run
    commands and the owner's own build picks up its changes. Never edit
@@ -319,12 +320,13 @@ instruction of Gamma's. Its parts:
    `reply` (one or two sentences, `file:line`, or the question), and one
    `summary` sentence.
 4. **The comments**: per entry `### Comment {i}` and a fenced `json` block
-   (the file's name only inside it, since a member can name a file) with `{thread_id, file, place, page, quote, note, source:
+   (the file's name only inside it, since a member can name a file) with `{thread_id, file, place, page, quote, note, was?, source:
    {file, line, end?, as: "current" | "commented"} | null, pictures:
    [".gamma/feedback/img/<key>.jpg"], comments: [{by, is_owner, agent, at,
    text, deleted?}]}` (`json.dumps(..., ensure_ascii=False, indent=1)`;
-   `pictures` the entry's `picture` and `before` that exist under the
-   vault's directory; a tombstone's `text` ""). Three backticks in a row
+   `was` only on an entry that has one, a range of a text file placed
+   roughly ([feedback.md](feedback.md) "An entry"); `pictures` the
+   entry's `picture` and `before` that exist under the vault's directory; a tombstone's `text` ""). Three backticks in a row
    in any string get a zero-width space before the third, so a body cannot
    close the fence.
 

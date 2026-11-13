@@ -586,9 +586,26 @@ def test_the_prompt(tmp_path):
                                     "text": "", "deleted": True}
     assert blocks[1]["source"] is None and blocks[1]["pictures"] == []
     assert prompt.picture_paths(entries, root) == [str(root / ".gamma/feedback/img/aaaaaaaaaaaaaaaa.jpg")]
+    assert "was" not in first and "was" not in blocks[1]
     one = prompt.build(agent="claude", owner="tim", work_folder="p", note="", entries=entries[1:], root=root)
     assert "hands you 1 comment on" in one and "(no instruction: address the comments)" in one
     assert "You cannot run commands" in one and "rebuild" not in one
+
+
+def test_the_prompt_of_a_range_of_a_source_file(tmp_path):
+    """A thread on lines of ``main.tex`` placed roughly after the agent's own
+    edit: its lines through ``source`` (the file itself), the text as it
+    stands as ``quote`` and the text the comment was made on as ``was``."""
+    entry = _entry("t1", ("tim", "", "name the dataset", False), file="main.tex", kind="lines", picture=None,
+                   where={"line": 26, "end": 27, "quote": "per epoch,\nwithout any decay", "placed": "rough",
+                          "match": 0.91, "was": "per epoch,\nwithout decay"},
+                   source={"file": "main.tex", "line": 26, "end": 27, "version": "current"})
+    text = prompt.build(agent="codex", owner="tim", work_folder="p", note="", entries=[entry], root=tmp_path)
+    [block] = [json.loads(part.split("```", 1)[0]) for part in text.split("```json\n")[1:]]
+    assert (block["file"], block["place"], block["page"], block["quote"], block["was"]) == (
+        "main.tex", "lines", None, "per epoch,\nwithout any decay", "per epoch,\nwithout decay")
+    assert block["source"] == {"file": "main.tex", "line": 26, "end": 27, "as": "current"}
+    assert block["pictures"] == [] and "A `was` is the text the comment was made on" in text
 
 
 def test_the_answers():

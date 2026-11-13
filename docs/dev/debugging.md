@@ -583,7 +583,11 @@ passage budget (`passages.json`: `ai_context.fair_shares` ↔
 backend's rewrite of older rows and the client's copy of a duplicated
 page; [documents.md](documents.md#fixtures)), a file's format by its name
 (`formats.json`: `gamma/documents/formats.py` ↔ `documents/formats.js`,
-with the backend's media types and first-bytes rule), sibling keys
+with the backend's media types and first-bytes rule), a range of a text
+file's quote and context (`textposition.json`: `highlights.span_text` and
+`clamp_span` ↔ `documents/viewers/textAnchors.js` `contextOf`, with the
+code-point and UTF-16 columns; [api.md](api.md) "The highlight shape"),
+sibling keys
 (`fractionalkeys.json`: the npm and PyPI fractional-indexing libraries) and
 pasted math (`pastemath.json`: `gamma/paste_math.py` ↔
 `editor/pasteMath.js`). The kinds are run against the column by
@@ -825,6 +829,19 @@ running (2026-11):
 | `GET /api/files?q=图` (no run: every name read from the index, folded and scored) | 95 ms |
 | `GET /api/folders/{W}/at?path=big/file-01234.bin` (one seek of `idx_ub_file_name`) | 11 ms |
 | `POST /pages/summaries`' lookup of 40 ids, on the connection (`+parent_id`; ~11 ms without) | 2 ms |
+
+A text file's ranges placed after a change
+([highlight_relocation.md](highlight_relocation.md#text-files)) are timed
+by two cases, each one total held to its budget rather than a p95:
+`backend/tests/test_text_anchors.py -m perf -p no:xdist` (the pure ladder,
+the job path's size) and `backend/tests/test_text_relocation.py -m perf -p
+no:xdist` (the inline run a replacement and the vault's round wait for, its
+read, ladder and write timed around `text_anchors.relocate`):
+
+| Case | Budget |
+|---|---|
+| `prepare` + `place_all` of a 50,000-line file (3 MB) with 100 ranges (~0.5 s) | 1.0 s |
+| fifty inline runs, each a 1,000-line file with ten ranges replaced once (~1.3 s, about 25 ms a file) | 1.5 s |
 
 The budgets are about 5x the p95 an idle Ryzen 9 9950X3D measured (Node
 22.23, Python 3.12, November 2026), rounded up. Cases near a millisecond
@@ -1206,6 +1223,20 @@ The scenarios live in `tests/e2e/scenarios/`:
   that does not pull and pushes everything, a PDF opened through `/open` added to the library
   from its tab menu, and the folder and Document menu items, whose
   messages to the shell an init script records. `--group vaults`.
+- `textAnchors.mjs`: highlights and threads in a text file
+  ([highlight_relocation.md](highlight_relocation.md#text-files),
+  [comments.md](comments.md) "The margin"), the vaults recipe over the
+  SyncTeX sample paper with a `.gammaignore` that tracks its `.tex`. A
+  highlight and a thread made from a selection in `main.tex`'s code view
+  (`dragSelectCodeText`, exported for other scenarios), the card beside
+  the text level with its line and the entry in `open.json` by its lines;
+  ten threads on whole lines made through the API, the file rewritten and
+  synced, the survivors moved, two dashed with `was`, two lost as tags at
+  their old lines, in the column, the Comments window and the feedback
+  files; a lost range's closest match taken from its menu and accepted; a
+  selection as the chat's chip by its line, a Ctrl+selection adding the
+  next; on a phone a scripted selection's popup, the popover and the
+  badge. `--group text-anchors`.
 - `zotero-link.mjs`: a Zotero link on the clone's surfaces. A second Gamma
   talks to the fake Zotero (`backend/tests/zotero_fake.py --port 0`, over
   HTTP, serving `zotero_fixtures.standard_library`) through

@@ -8,7 +8,7 @@
 // Copy link, Report on anyone else's, Delete), the
 // thread's Resolve and its reply field once the thread is the active one.
 // The first comment's line carries the chip of a Send waiting on the
-// thread, and under it a line says when its place moved in a new build.
+// thread, and under it a line says when its place moved in a new version.
 // A comment that comes (a reply, yours or someone's) rises into place
 // (ListMotion).
 import React, { startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -26,12 +26,13 @@ import { authorLabel, authorTitle, canDeleteComment, canEditComment, canReportCo
 import { openReport } from "../support/reportContent.js";
 import { ThreadPlaceContext } from "./threadPlaceContext.js";
 
-// What a thread says of its place once its PDF was rebuilt (App's placeOf
-// through threadPlaceContext.js).
+// What a thread says of its place once its file changed, a PDF rebuilt or
+// a text file rewritten (App's placeOf through threadPlaceContext.js): the
+// words of the feedback files too (feedback/feedbackText.js placedText).
 const PLACE_TEXT = {
-  moved: () => t("The passage moved in the new build"),
-  lost: () => t("The passage was not found in the new build"),
-  earlier: () => t("Drawn on an earlier build"),
+  moved: () => t("The passage moved in the new version"),
+  lost: () => t("The passage was not found in the new version"),
+  earlier: () => t("Drawn on an earlier version"),
 };
 
 // A comment's text, rendered as a note is. One put off (`later`) is drawn

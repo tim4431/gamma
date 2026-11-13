@@ -29,10 +29,11 @@ test("every format but markdown has a viewer, and every viewer a descriptor the 
     assert.equal(!!spec.ink, id === "pdf" || id === "notebook", `${id}: the markup strip hangs on the PDF and the notebook`);
     assert.equal(!!spec.host, id === "pdf" || id === "notebook", `${id}: the host renders the PDF and the notebook`);
     assert.equal(!!spec.regions, id === "image", `${id}: regions are the picture's`);
-    assert.equal(!!spec.margin, id === "pdf" || id === "image", `${id}: the comment margin stands beside the PDF and the picture`);
+    assert.equal(!!spec.margin, id === "pdf" || id === "image" || id === "text",
+      `${id}: the comment margin stands beside the PDF, the picture and the code view`);
   }
   assert.ok(VIEWERS.image.tools.includes("zoom") && VIEWERS.image.tools.includes("selectMode"));
-  assert.deepEqual(VIEWERS.text.tools, []);
+  assert.deepEqual(VIEWERS.text.tools, ["highlighter"], "the code view takes the text highlighters");
   assert.equal(VIEWERS.pdf.word, "PDF", "the format token stays untranslated");
 });
 

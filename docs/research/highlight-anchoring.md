@@ -209,7 +209,11 @@ server's; a move by hand is the correction); refusing ambiguous passages.
   so a run without the file a highlight was measured on (purged 30 days
   after it was replaced, or a page shown from a URL alone) has context too.
   The folding and search would stay as they are; `normalize_quote` would
-  read the stored context.
+  read the stored context. Closed for a range of a text file
+  ([file-explorer.md](file-explorer.md), As built (step 6)): its
+  `text_position` stores 40 code points either side, and its run reads no
+  old file ([dev/highlight_relocation.md](../dev/highlight_relocation.md#text-files)).
+  A PDF highlight still takes its context from the old file.
 - A passage that the new file splits where the old one did not, or reads in
   another order (two interleaved columns): finding its parts without the
   old file's pieces to go by. The page break, and the pieces the old file

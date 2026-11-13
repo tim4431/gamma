@@ -66,6 +66,34 @@ def test_pdf_passages_and_note_selections_share_one_budget():
     assert len(request_selections(ask(selections=[{"text": f"s{i}"} for i in range(20)]))) == MAX_SELECTIONS
 
 
+def test_a_selection_in_a_text_file_names_its_lines():
+    """A selection in the code view (page 0) keeps its lines, ``end``
+    defaulting to ``line``; anything else is no lines. The question names
+    them, and one sentence serves a PDF and a text file."""
+    payload = ask(selections=[{"text": "for step in range(10):", "page": 0, "line": 118, "end": 120},
+                              {"text": "one line", "page": 0, "line": 7},
+                              {"text": "line zero", "page": 0, "line": 0},
+                              {"text": "backwards", "page": 0, "line": 5, "end": 4},
+                              {"text": "a flag", "page": 0, "line": True},
+                              {"text": "on a PDF page", "page": 2, "line": 3}])
+    passages = request_selections(payload)
+    assert [p.get("lines") for p in passages] == [[118, 120], [7, 7], None, None, None, None]
+    assert passages[0] == {"text": "for step in range(10):", "page": 0, "box": None, "lines": [118, 120]}
+    assert "lines" not in passages[2] and "lines" not in passages[5]
+    text = final_prompt(payload)
+    assert "from the page's document. Answer specifically about them:" in text
+    assert 'Passage 1 (lines 118–120):\n"""\nfor step in range(10):\n"""' in text
+    assert 'Passage 2 (line 7):\n"""\none line\n"""' in text and "Passage 3:\n" in text
+    assert 'Passage 6 (PDF page 2):' in text
+    located = [{"lines": [118, 120], "window": [98, 140]}]
+    assert "Selected passage (lines 118–120):" in final_prompt(ask(selections=payload.selections[:1]), located)
+    # A cut names its lines, so the chat's note says which selection went short.
+    long = ask(selections=[{"text": "x" * 3_000, "page": 0, "line": 118, "end": 120},
+                           {"text": "p" * 3_000, "page": 2}], context_char_limit=1_000)
+    assert passage_cuts(long) == [{"kind": "pdf", "n": 1, "of": 2, "kept": 500, "total": 3_000, "lines": [118, 120]},
+                                  {"kind": "pdf", "n": 2, "of": 2, "kept": 500, "total": 3_000}]
+
+
 def test_attached_blocks_share_the_budget_and_say_what_was_cut(notes):
     c, ids = notes
 

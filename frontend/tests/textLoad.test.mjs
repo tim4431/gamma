@@ -1,12 +1,12 @@
 // How the text viewer decodes a file (src/documents/viewers/textLoad.js):
 // the byte-order marks, UTF-8 with replacement, a head's partial last line,
-// the line cap, what is no text (the shared fixture's rule), and the size a
+// the line cap and the lines it cut, what is no text (the shared fixture's rule), and the size a
 // response says; and how much of a response loadText reads, through a
 // stand-in fetch.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { BAD_SHARE, HEAD_BYTES, LINE_CAP, MAX_TEXT_BYTES, byteOrderMark, contentTotal, decodeText, loadText, notText } from "../src/documents/viewers/textLoad.js";
+import { BAD_SHARE, HEAD_BYTES, LINE_CAP, MAX_TEXT_BYTES, byteOrderMark, contentTotal, cutLinesOf, decodeText, loadText, notText } from "../src/documents/viewers/textLoad.js";
 
 const utf8 = (s) => new TextEncoder().encode(s);
 const utf16 = (s, little = true) => {
@@ -90,6 +90,16 @@ test("a lone \\r is a line break to the cap, as on the server and in CodeMirror"
   assert.equal(crlf.text, `a\r\n${"x".repeat(LINE_CAP)}…\r\nb\r\n`);
   // a head of an old Mac file drops its partial last line
   assert.deepEqual(decodeText(utf8("one\rtwo\rthr"), { head: true }), { text: "one\rtwo\r", bad: false, binary: false, cut: true });
+});
+
+test("cutLinesOf names the lines the cap cut, in the raw text or the shown one, by any line break", () => {
+  const long = "x".repeat(LINE_CAP + 5);
+  const raw = `short\n${long}\r\nmid\r${long}\nend`;
+  assert.deepEqual([...cutLinesOf(raw)], [2, 4]);
+  assert.deepEqual([...cutLinesOf(decodeText(utf8(raw)).text)], [2, 4], "a cut line keeps its number");
+  assert.deepEqual([...cutLinesOf(`${long}`)], [1], "a file of one line");
+  assert.deepEqual([...cutLinesOf(`a\n${"y".repeat(LINE_CAP)}\n`)], [], "exactly the cap is whole");
+  assert.equal(cutLinesOf("short\nfile\n").size, 0);
 });
 
 test("a NUL anywhere in what was decoded, or U+FFFD past 5% of it, says binary", () => {

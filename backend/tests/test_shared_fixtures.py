@@ -5,7 +5,7 @@ finishStroke.test.mjs, notebook.test.mjs, mentions.test.mjs, textBox.test.mjs,
 picture.test.mjs, shapes.test.mjs, shapeTool.test.mjs, itemTypes.test.mjs,
 palette.test.mjs, linkName.test.mjs, personColor.test.mjs,
 passageBudget.test.mjs, libraryUtils.test.mjs, blockOps.test.mjs,
-textLoad.test.mjs and gammaLinks.test.mjs; a case
+textLoad.test.mjs, textAnchors.test.mjs and gammaLinks.test.mjs; a case
 added here fails whichever side drifts. Other pytest modules read the rest
 (blockkind.json test_block_columns.py, pastemath.json test_paste_math.py,
 slug.json test_publish.py, zoterotext.json and zoteroshown.json the text box
@@ -938,6 +938,44 @@ def test_language_names():
     langs = {row.language for row in formats.EXTENSIONS.values() if row.language} | {
         language for _, language in formats.NAMES.values() if language}
     assert set(formats.LANGUAGE_NAMES) == langs - {"plaintext"}
+
+
+TEXTPOSITION = _load("textposition.json")
+
+
+def test_text_position_numbers():
+    from gamma import highlights
+    from gamma.documents import text_anchors
+    assert (highlights.CONTEXT_CHARS, highlights.TEXT_QUOTE_MAX) == (TEXTPOSITION["context"], TEXTPOSITION["quote_max"])
+    assert text_anchors.TEXT_RELOCATE_MAX_BYTES == TEXTPOSITION["max_text_bytes"]
+
+
+@pytest.mark.parametrize("case", TEXTPOSITION["spans"], ids=[c["name"] for c in TEXTPOSITION["spans"]])
+def test_text_position_reads_as_a_span(case):
+    """A stored text_position's span as its readers take it, the client's
+    textSpan alike: whole numbers (3.0 too, which a browser reads as 3)."""
+    from gamma import highlights
+    got = highlights.text_span({"text_position": case["position"]})
+    assert (dict(zip(highlights.TEXT_SPAN, got)) if got else None) == case["span"]
+
+
+@pytest.mark.parametrize("case", TEXTPOSITION["cases"], ids=[c["name"] for c in TEXTPOSITION["cases"]])
+def test_text_position_span(case):
+    """A text range's quote and context, cut from the decoded lines by code
+    points as the client's contextOf cuts them, its span as stored (clamped,
+    an end at column 0 trimmed), and its columns as CodeMirror counts them."""
+    from gamma import highlights
+    lines, span = case["lines"], case["span"]
+    stored = highlights.clamp_span(lines, span)
+    assert (dict(zip(highlights.TEXT_SPAN, stored)) if stored else None) == case.get("trimmed", span)
+    assert highlights.span_text(lines, span) == (case["quote"], case["prefix"], case["suffix"])
+    if stored:
+        assert highlights.span_text(lines, stored) == (case["quote"], case["prefix"], case["suffix"])
+
+    def units(line, col):
+        return len(line[:col].encode("utf-16-le")) // 2
+    assert case["utf16"] == {"col": units(lines[span["line"] - 1], span["col"]),
+                             "end_col": units(lines[span["end"] - 1], span["end_col"])}
 
 
 LINELINKS = _load("linelinks.json")

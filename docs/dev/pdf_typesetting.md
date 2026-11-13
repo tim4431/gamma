@@ -172,7 +172,7 @@ of its open comment threads as a card of its own (`gamma/pdf_notes.py`).
 Notes go where `?notes_at=` says: `beside` (the default) in a column beside
 the page, `page` in the page's own free space. Threads always go beside the
 page, where the viewer puts a highlight's threads once a lower zoom leaves
-room for them ([comments.md](comments.md) "The PDF margin"). Comments work
+room for them ([comments.md](comments.md) "The margin"). Comments work
 with the Notes switch off. The full text of the notes stays in the popup
 either way.
 

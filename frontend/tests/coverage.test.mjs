@@ -174,6 +174,10 @@ test("passages that went short say what was sent, and why", () => {
   assert.equal(many.short, `3 passages shortened: ${n(8_000)} of ${n(18_500)} characters sent`);
   assert.match(many.long, new RegExp(`^PDF passage 2: first ${n(4_000)} of ${n(9_000)} characters\\. Selected note text: .* Attached block: `));
   assert.match(many.long, /model's window couldn't hold all of it/);
+  // A selection of a text file's lines is named by them.
+  const lines = (l) => shortenedNote({ budget: 1_000, asked: 1_000, items: [{ kind: "pdf", n: 1, of: 1, kept: 500, total: 900, lines: l }] }).short;
+  assert.equal(lines([118, 120]), `Lines 118–120 shortened: first 500 of 900 characters sent`);
+  assert.equal(lines([7, 7]), `Line 7 shortened: first 500 of 900 characters sent`);
 });
 
 test("a reply that went without tools names its model and the reason", () => {

@@ -1,4 +1,4 @@
-// The PDF's comment margin (docs/dev/comments.md "The PDF margin"): where a
+// The PDF's comment margin (docs/dev/comments.md "The margin"): where a
 // page stands once a column of comment cards goes beside it, and how the
 // cards stack in that column. Pure, so node tests it
 // (tests/marginLayout.test.mjs).

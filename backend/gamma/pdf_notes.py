@@ -13,7 +13,7 @@ notes under the highlight.
 
 **Beside the page** (``notes_at`` ``beside``, and every thread) is where the
 viewer shows a highlight's comment threads once a lower zoom leaves room for
-them (docs/dev/comments.md "The PDF margin",
+them (docs/dev/comments.md "The margin",
 ``frontend/src/comments/marginLayout.js``): a column of cards, each level
 with its highlight's first line, stacked so none overlaps. Every page of
 the copy is then widened on the right of the page as shown (``_widen``): its

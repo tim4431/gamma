@@ -54,7 +54,7 @@ export const canWithdraw = (request, me) => !!me && request?.by === me
   && (request.state === "sent" || request.state === "running") && !isWithdrawn(request);
 
 // An entry's picture to show: the region as it is now, else as it was
-// commented on (handwriting on an earlier build has only that one).
+// commented on (handwriting on an earlier version has only that one).
 export const pictureOf = (entry) => entry?.picture_url || entry?.before_url || "";
 
 // An entry's first comment, {who, body, deleted}: the agent that wrote it

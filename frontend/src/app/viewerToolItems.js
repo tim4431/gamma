@@ -50,7 +50,7 @@ export const VIEWER_TOOL_ITEMS = Object.freeze([
   },
   {
     id: "highlighter", label: T("Text highlighter buttons"),
-    hint: T("PDFs only. A button per highlighter on the strip (Appearance › Text highlighters); with one on, what you select is marked at once in its style and colour."),
+    hint: T("A button per highlighter on the strip (Appearance › Text highlighters); with one on, what you select in a PDF or a text file is marked at once in its style and colour."),
     keywords: "highlight marker colour color select text quick preset underline wavy squiggly strikethrough definition question copy duplicate",
     modes: ["always", "hidden"],
   },

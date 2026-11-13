@@ -16,7 +16,7 @@
 // Pure: tests/blockProps.test.mjs.
 import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { blockPosition, closestPlace, getParentInfo, isHighlightBlock, isInkGroup, isLinkBlock, isNum, isPlaceBlock, isRecord,
-  isRegionBlock, placedToCheck, roughMatchPercent, sameJson } from "../shared/model/blockModel.js";
+  isRegionBlock, isTextRangeBlock, linesLabel, placedToCheck, rangePending, roughMatchPercent, sameJson, textSpan } from "../shared/model/blockModel.js";
 import { DEFAULT_HIGHLIGHT, LINK_COLOR, colorName, hexColor, normalizeColor, parseColor } from "../shared/model/palette.js";
 import { STYLE_NAMES, isLineStyle } from "../shared/model/markStyle.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
@@ -83,7 +83,7 @@ export function blockKind(b, { isPage = false, isFolder = false, isLabel = false
   if (isLinkBlock(b)) return "link";
   // Ink, text box, picture and sheet are ruled out above, so this is the
   // position object test alone.
-  if (isPlaceBlock(b) || isRecord(b?.properties?.text_position)) return "highlight";
+  if (isPlaceBlock(b)) return "highlight";
   return "note";
 }
 
@@ -100,11 +100,12 @@ export function effectiveKind(live, server) {
 const onHighlight = (b, kind) => !unset(b?.properties?.linked_highlight_id) && (kind === "highlight" || kind === "note");
 
 // The kind's word, refined: a note on a highlight, an area highlight, a
-// region of a picture.
+// region of a picture, lines of a text file.
 export function kindLabel(b, kind = blockKind(b)) {
   if (onHighlight(b, kind)) return t("Note on a highlight");
   if (kind === "highlight" && b?.properties?.pdf_position?.area) return t("Area highlight");
   if (kind === "highlight" && !isHighlightBlock(b) && isRegionBlock(b)) return t("Region of the picture");
+  if (kind === "highlight" && !isHighlightBlock(b) && isTextRangeBlock(b)) return t("Lines of the file");
   return t(ownEntry(KINDS, kind)?.label || KINDS.note.label);
 }
 
@@ -141,6 +142,20 @@ export const CATALOG = {
   "image_position.boundingRect": { section: "kind", type: "json", label: T("Frame"), hint: T("The box drawn, from the picture's top-left corner, in its pixels.") },
   "image_position.rects": { section: "kind", type: "json", label: T("Boxes"), hint: T("The one box of the region, the same as its frame.") },
   "image_position.hash": { section: "kind", type: "mono", label: T("Drawn on"), hint: T("The stored picture the region was drawn on; another than the page's means it was drawn on an earlier version.") },
+  // ranges of a text file
+  text_position: { section: "kind", type: "json", label: T("Lines"), hint: T("Where this sits in the file: its lines and columns, the text around it and the version it was measured on.") },
+  "text_position.line": { section: "kind", type: "number", label: T("First line"), hint: T("The line it starts on, counted from 1.") },
+  "text_position.col": { section: "kind", type: "number", label: T("Start column"), hint: T("Where it starts on its first line, in characters from 0.") },
+  "text_position.end": { section: "kind", type: "number", label: T("Last line"), hint: T("The line it ends on, counted from 1.") },
+  "text_position.end_col": { section: "kind", type: "number", label: T("End column"), hint: T("Where it ends on its last line: the character just after it, counted from 0.") },
+  "text_position.prefix": { section: "kind", type: "text", label: T("Text before"), hint: T("The file's text just before the passage when it was measured, which helps find it again after a change.") },
+  "text_position.suffix": { section: "kind", type: "text", label: T("Text after"), hint: T("The file's text just after the passage when it was measured, which helps find it again after a change.") },
+  "text_position.hash": { section: "kind", type: "mono", label: T("Measured on"), hint: T("The stored file the lines were measured on; another than the page's means it was measured on an earlier version.") },
+  "text_position.lost": { section: "kind", type: "flag", label: T("Lost"), hint: T("Its text was not found in the changed file.") },
+  "text_position.approx": { section: "kind", type: "flag", label: T("To check"), hint: T("Placed roughly after the file changed; it waits to be accepted or moved.") },
+  "text_position.match": { section: "kind", type: "number", label: T("Match"), hint: T("How alike its text and the text found for it read, 0 to 1.") },
+  "text_position.prev": { section: "kind", type: "json", label: T("Before the change"), hint: T("Where it was before the file changed.") },
+  "text_position.closest": { section: "kind", type: "json", label: T("Closest match"), hint: T("The best place found for a lost passage, too unlike it to apply.") },
   link_url: { section: "kind", type: "url", label: T("Links to"), hint: T("The web or document address this region opens.") },
   link_page_id: { section: "kind", type: "page", label: T("Links to page"), hint: T("The Gamma page this region opens.") },
   link_block_id: { section: "kind", type: "block", label: T("Lands on"), hint: T("The highlight on the linked page this region scrolls to.") },
@@ -528,7 +543,7 @@ function blockRef(id, ctx) {
   const node = ctx.lookupBlock?.(id);
   if (node) {
     const quote = node.properties?.quote || "";
-    const text = (isHighlightBlock(node) ? quote || firstLine(node.content) : firstLine(node.content) || quote) || t("(empty)");
+    const text = (isPlaceBlock(node) ? quote || firstLine(node.content) : firstLine(node.content) || quote) || t("(empty)");
     return { id, text, page: ctx.pageTitle || "", pageId: ctx.pageId || "", state: "ok" };
   }
   const ref = ctx.refCache?.[id];
@@ -628,6 +643,36 @@ function placeRow(section, block, pos, ctx, css, server) {
     nav: placeNav(block, ctx, server) });
 }
 
+// The chips of a range of a text file, as placeSummary gives a place on a
+// PDF its own: to check with its match, lost, and measured on an older
+// version than `fileHash`, the stem of the file the open page shows
+// (rangePending; undefined when the block is not on the open page).
+function textPlaceChips(pos, fileHash) {
+  const chips = [];
+  if (!isRecord(pos)) return chips;
+  if (placedToCheck(pos)) {
+    const match = roughMatchPercent(pos);
+    chips.push({ id: "check", tone: "warn", text: match === null ? t("To check") : t("To check · {pct}% match", { pct: match }) });
+  }
+  if (pos.lost) chips.push({ id: "lost", tone: "failed", text: t("Lost") });
+  if (rangePending(pos, fileHash)) {
+    chips.push({ id: "older", tone: "warn", text: t("Measured on an older version of the file") });
+  }
+  return chips;
+}
+
+// A range of a text file as its row shows it: its lines, the position as
+// JSON, and textPlaceChips' chips.
+function textPlaceRow(section, block, pos, ctx, server) {
+  const span = textSpan(pos);
+  const preview = !span ? jsonPreview(pos)
+    : linesLabel(span.line, span.end);
+  // only the open page's blocks are measured against the open page's file
+  const fileHash = ctx.lookupBlock?.(block.id) ? ctx.pageFileHash : undefined;
+  return makeRow(section, ["text_position"], { type: "json", value: pos, display: { preview, text: jsonText(pos) },
+    nav: placeNav(block, ctx, server), tags: textPlaceChips(pos, fileHash) });
+}
+
 // A text box's or a picture's page: the sheet it is under, else its
 // pdf_page.
 function onPageRow(section, block, p, ctx) {
@@ -653,7 +698,7 @@ function kindRows(kind, block, p, ctx, server) {
   const used = new Set();
   const take = (...keys) => keys.forEach((k) => used.add(k));
   if (kind === "highlight" || kind === "link") {
-    take("color", "style", "quote", "pdf_position", "image_position", "link_url", "link_page_id", "link_block_id");
+    take("color", "style", "quote", "pdf_position", "image_position", "text_position", "link_url", "link_page_id", "link_block_id");
     const color = colorSummary(p.color);
     rows.push(makeRow(s, ["color"], { type: "color", value: p.color, display: color }));
     if (isLineStyle(p.style)) rows.push(makeRow(s, ["style"], { type: "text", value: p.style, display: plain(t(STYLE_NAMES[p.style])) }));
@@ -661,6 +706,12 @@ function kindRows(kind, block, p, ctx, server) {
     if (!unset(p.quote)) rows.push(valueRow(s, ["quote"], p.quote, ctx));
     if (isRecord(p.pdf_position)) rows.push(placeRow(s, block, p.pdf_position, ctx, color.css, server));
     if (isRecord(p.image_position)) rows.push(valueRow(s, ["image_position"], p.image_position, ctx));
+    if (isRecord(p.text_position)) {
+      rows.push(textPlaceRow(s, block, p.text_position, ctx, server));
+      for (const k of ["prev", "closest"]) {
+        if (isRecord(p.text_position[k])) rows.push(valueRow(s, ["text_position", k], p.text_position[k], ctx));
+      }
+    }
     if (!unset(p.link_url)) rows.push(valueRow(s, ["link_url"], p.link_url, ctx));
     if (!unset(p.link_page_id)) rows.push(valueRow(s, ["link_page_id"], p.link_page_id, ctx));
     if (!unset(p.link_block_id)) {
@@ -1034,6 +1085,8 @@ export function statusChips(live, server, err, ctx = {}) {
   if (!unset(p.deleted_at) || (missing && err.data?.trashed)) chips.push({ id: "deleted", tone: "failed", text: t("In Recently deleted") });
   if (isHighlightBlock(block) && isRecord(p.pdf_position)) {
     chips.push(...placeSummary(p.pdf_position, { currentDocId: ctx.pageFileHash }).chips);
+  } else if (isTextRangeBlock(block)) {
+    chips.push(...textPlaceChips(p.text_position, ctx.pageFileHash));
   }
   if (!unset(p.zotero_readonly)) chips.push({ id: "zotero", tone: null, text: t("Not written back to Zotero") });
   if (p.transcript) chips.push({ id: "transcript", tone: null, text: t("Transcript") });

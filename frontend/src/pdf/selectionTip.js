@@ -1,4 +1,5 @@
-// Where the PDF selection popup opens (PdfViewer's TipFrame): what it hangs
+// Where a selection popup opens (shared/ui/TipFrame.jsx; the PDF's and the
+// code view's TextTip): what it hangs
 // from, as {top, bottom, left, gap} in viewport pixels. It opens `gap`
 // below `bottom` with its left edge at `left`, or ends `gap` above `top`
 // when there is no room below (placeFloating keeps it inside the window).

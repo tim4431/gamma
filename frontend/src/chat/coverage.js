@@ -7,6 +7,7 @@
 // offer), and one that went without tools because its model can't call
 // them. Pure functions, so the chat's component and the test share them.
 import { t, tn } from "../shared/i18n/i18n.js";
+import { linesLabel } from "../shared/model/blockModel.js";
 import { estimateTokens, fmtTokens } from "./tokenUsage.js";
 
 // The spans one reply's read_page calls covered on a page, merged and
@@ -182,13 +183,18 @@ export function trimmedNote(trimmed) {
 // The pill for the passages and attached blocks the message pointed at
 // that went short ({"shortened": {items, budget, asked}} on the stream:
 // ai_context's passage budget cut them, or the window fit shrank it below
-// what the request asked for, `asked`).
+// what the request asked for, `asked`). A selection of a text file's lines
+// is named by them (its item's `lines`).
 export function shortenedNote(shortened) {
   const items = shortened?.items || [];
   if (!items.length) return null;
   const chars = (n) => (n || 0).toLocaleString();
-  const what = (item) => (item.kind === "pdf" ? (item.of > 1 ? t("PDF passage {i}", { i: item.n }) : t("PDF passage"))
-    : item.kind === "note" ? t("Selected note text") : t("Attached block"));
+  const what = (item) => {
+    const [from, to] = item.lines || [];
+    if (item.kind === "pdf" && from) return linesLabel(from, to);
+    return item.kind === "pdf" ? (item.of > 1 ? t("PDF passage {i}", { i: item.n }) : t("PDF passage"))
+      : item.kind === "note" ? t("Selected note text") : t("Attached block");
+  };
   const kept = items.reduce((sum, item) => sum + (item.kept || 0), 0);
   const total = items.reduce((sum, item) => sum + (item.total || 0), 0);
   const fit = shortened.asked > shortened.budget;

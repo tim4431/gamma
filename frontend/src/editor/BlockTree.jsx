@@ -14,7 +14,7 @@ import rehypeRaw from "rehype-raw";
 import { rehypeNoteSanitize } from "./noteSanitize.js";
 import {
   blockColor, blockPage, blockPosition, blockQuote, countBlocks, isFolded, isInkGroup, isLinkBlock,
-  isPlaceBlock, isPlainNote, isRegionBlock, placeKeyOf, roughMatchPercent,
+  isPlaceBlock, isPlainNote, isRegionBlock, placeKeyOf, POSITION_KEY, roughMatchPercent, textSpan,
 } from "../shared/model/blockModel";
 import { lockedRow } from "../vault/notesLock.js";
 import { DEFAULT_HIGHLIGHT, darkPageLine } from "../shared/model/palette.js";
@@ -1136,14 +1136,17 @@ const BlockRow = React.memo(function BlockRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
-  // A highlight on the PDF or a region of the picture: both rows have the
-  // dot that jumps to the place, in its colour; a region names no page.
+  // A highlight on the PDF, a region of the picture or a range of a text
+  // file: each row has the dot that jumps to the place, in its colour; a
+  // region names no page, a range its lines.
   const isRegion = isRegionBlock(block);
   const isHighlight = isPlaceBlock(block);
   // Its place on the document (null for one placed by its page alone), its
   // colour and the passage it marks.
-  const pos = blockPosition(block, placeKeyOf(block)), color = blockColor(block), quote = blockQuote(block);
-  // How alike its text and the replaced PDF's were, for one matched roughly.
+  const placeKey = placeKeyOf(block);
+  const pos = blockPosition(block, placeKey), color = blockColor(block), quote = blockQuote(block);
+  const lines = placeKey === POSITION_KEY.text ? textSpan(pos) : null;
+  // How alike its text and the replaced file's were, for one matched roughly.
   const roughPercent = isHighlight ? roughMatchPercent(pos) : null;
   // The highlight made last: its card is the one the guide's highlight tour
   // points at (guide/recent.js).
@@ -1661,7 +1664,15 @@ const BlockRow = React.memo(function BlockRow({
               className="collapseBtn highlightDotBtn dotSlot"
               onClick={(e) => { e.stopPropagation(); onJump(block.id, e.ctrlKey || e.metaKey); }}
               title={
-                pos?.lost
+                lines
+                  ? pos.lost
+                    ? t("Not found in the current file — jump to where it was")
+                    : roughPercent != null
+                      ? t("Matched roughly ({n}%) after the file changed — jump to it", { n: roughPercent })
+                      : lines.end > lines.line
+                        ? t("Jump to lines {from}–{to}", { from: lines.line, to: lines.end })
+                        : t("Jump to line {n}", { n: lines.line })
+                : pos?.lost
                   ? t("Not found in the current PDF — jump to where it was")
                   : roughPercent != null
                     ? t("Matched roughly ({n}%) after the PDF was replaced — jump to it", { n: roughPercent })
@@ -1706,8 +1717,8 @@ const BlockRow = React.memo(function BlockRow({
             {pos?.lost && onMoveHighlight ? (
               <button
                 className="collapseBtn attachModeBtn"
-                title={t("Move to a selection on the PDF")}
-                aria-label={t("Move to a selection on the PDF")}
+                title={lines ? t("Move to a selection in the file") : t("Move to a selection on the PDF")}
+                aria-label={lines ? t("Move to a selection in the file") : t("Move to a selection on the PDF")}
                 onClick={(e) => { e.stopPropagation(); onMoveHighlight(block.id); }}
               ><LocateIcon size={12} /></button>
             ) : null}

@@ -160,7 +160,7 @@ def test_a_lone_cr_past_the_window_counts_beside_the_lfs(tmp_path):
     split across the counted chunks: every break counted as the extractor
     and the viewer split them."""
     def lines_of(data: bytes) -> int:
-        return len(text._split(data.decode("utf-8")))
+        return len(text.split_lines(data.decode("utf-8")))
 
     cases = [b"a\rb\n" * 50_000, b"\na\nb\n  \r\n\nb\na\r\n\r\n\r\n \r\nabba b\ra\n\r\n a\xc3\xa9"]
     # the count starts past the first chunk read; its first chunk ends on the \r of a \r\n
