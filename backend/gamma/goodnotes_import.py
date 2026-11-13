@@ -43,12 +43,12 @@ def import_goodnotes(ws: str, data, conn, folder: str = "", *, name: str = "", a
     nothing; ``selected`` the notebooks' paths to import (None: all);
     400 for an upload with no notebook."""
     name = display_filename(name)
-    run = _Import(ws, conn, folder, actor, preview, progress)
+    run = Import(ws, conn, folder, actor, preview, progress)
     return run.run_upload(data, selected, refused=gn.NO_NOTEBOOKS_REASON,
                           find=lambda entries: gn.find_notebooks(entries, name), nested=gn.nested_zip)
 
 
-class _Import(app.AppImport):
+class Import(app.AppImport):
     KEY = "goodnotes_import"
     TAG = "goodnotes"
     LEFT_OUT = gn.LEFT_OUT
@@ -194,7 +194,7 @@ def notebook_pdfs(members, notebook: gn.Notebook) -> tuple[dict, dict, dict, dic
         if found is None:
             missing.append(path)
             continue
-        opened = app.open_pdf(found, attachment, _Import.TAG)
+        opened = app.open_pdf(found, attachment, Import.TAG)
         if opened is None:
             continue
         pages[attachment], readers[attachment], sources[attachment] = opened

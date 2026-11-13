@@ -581,14 +581,14 @@ def imported_at_once(monkeypatch, ws: str, uploads: dict) -> dict:
     into ``ws`` at once, a thread each: every import reads the library and
     stores its files, then waits for the others before it writes
     (``AppImport.write``), so none has written when another looks."""
-    real = ni._Import.write
+    real = ni.Import.write
     together = threading.Barrier(len(uploads), timeout=30)
 
     def gated(self, *args, **kwargs):
         together.wait()
         return real(self, *args, **kwargs)
 
-    monkeypatch.setattr(ni._Import, "write", gated)
+    monkeypatch.setattr(ni.Import, "write", gated)
     reports, errors = {}, []
 
     def run(name, data):

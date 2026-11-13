@@ -11,9 +11,13 @@ const FORMATS = {
   markdown: { label: T("Markdown"), ...MARKDOWN_ZIP },
   notion: { label: T("Notion"), ...MARKDOWN_ZIP },
   gamma: { label: T("Gamma"), endpoint: "gamma", instructions: T("Selected pages include their notes, attachments and chats. Pages already in your library are kept unchanged.") },
-  notability: { label: T("Notability"), endpoint: "notability", instructions: T("Each note becomes a page with its handwriting, typed text, pictures and recordings. Notes already imported are skipped.") },
-  goodnotes: { label: T("GoodNotes"), endpoint: "goodnotes", instructions: T("Each notebook becomes a page with its handwriting, typed text, pictures and recordings. Notebooks already imported are skipped.") },
+  // One card for both note apps: the server finds either app's notes in
+  // the upload (gamma/note_app_import.py import_note_apps).
+  noteapps: { label: T("Notability & GoodNotes"), endpoint: "note-apps", instructions: T("Each note or notebook becomes a page with its handwriting, typed text, pictures and recordings. Notes already imported are skipped.") },
 };
+// The endpoints of one app alone (scripts', and a review staged before the
+// card took both), reopened on the card.
+const NOTE_APPS = ["notability", "goodnotes"];
 export function importFormat(source, file) {
   const format = FORMATS[source];
   if (!format) throw new Error("Unsupported import source");
@@ -23,7 +27,7 @@ export function importFormat(source, file) {
 // the endpoint, so a Notion review reopens as Markdown's).
 export function dialogSource(endpoint) {
   return Object.keys(FORMATS).find((source) => FORMATS[source].endpoint === endpoint)
-    || (endpoint === "markdown-file" ? "markdown" : "zotero");
+    || (endpoint === "markdown-file" ? "markdown" : NOTE_APPS.includes(endpoint) ? "noteapps" : "zotero");
 }
 // The upload, and its review read by a background job (POST
 // /api/jobs/import-preview): resolves to that job, whose params name the

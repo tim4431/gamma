@@ -18,7 +18,7 @@ export default {
       title: T("In Notability, export as **Note**"),
       body: T("A note's options → Export Options; in its library, press and hold a note.") },
     { id: "nb-import", anchor: "view.import", placement: "left",
-      title: T("View → **Import…** → Notability notes"),
+      title: T("View → **Import…** → Notability & GoodNotes"),
       body: T("A review sets each note beside the page it makes."),
       advanceOn: { event: "import.finished", match: { source: "notability" } } },
     { id: "nb-ink", anchor: null,

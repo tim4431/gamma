@@ -5916,10 +5916,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // write there, else to the personal one, and a workspace others see asks
   // first. Images alone go only to the workspace shown, onto its page in
   // view. Then each takes the path a picked file takes: a PDF or a Markdown
-  // note becomes a page, an image a picture on the surface in view, a .note
-  // or .ntb opens the Notability import's review, a .goodnotes the
-  // GoodNotes import's, and a .zip the Import dialog, which asks what export
-  // it is.
+  // note becomes a page, an image a picture on the surface in view, a .note,
+  // .ntb or .goodnotes opens the Notability & GoodNotes import's review, and
+  // a .zip the Import dialog, which asks what export it is.
   const openedBusy = useRef(false);
   const openedAgain = useRef(false);
   async function takeOpenedFiles() {
@@ -5999,8 +5998,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // picked one opens. The images go first, onto the surface in view as the
   // Picture button's do, since a page the upload opens would stop their
   // placing; with no surface in view they are named in the status. One
-  // import dialog at a time: the Notability review wins over the GoodNotes
-  // one, either over a .zip's, and what none takes is named in the status.
+  // import dialog at a time: the note apps' review (their files together,
+  // either app's) wins over a .zip's, and what none takes is named in the
+  // status.
   async function openOpenedHeld(held) {
     const files = [];
     const failed = [];
@@ -6011,13 +6011,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     const pages = files.filter((f) => openedKind(f) === "page");
     const images = files.filter((f) => openedKind(f) === "picture");
-    const notes = files.filter((f) => openedKind(f) === "notability");
-    const notebooks = files.filter((f) => openedKind(f) === "goodnotes");
+    const notes = files.filter((f) => openedKind(f) === "noteapps");
     const archives = files.filter((f) => openedKind(f) === "archive");
     const unknown = files.filter((f) => !openedKind(f)).map((f) => f.name);
-    const reviewed = notes.length ? { source: "notability", files: notes }
-      : notebooks.length ? { source: "goodnotes", files: notebooks } : null;
-    const later = reviewed ? [...(notes.length ? notebooks : []), ...archives] : archives.slice(1);
+    const reviewed = notes.length ? { source: "noteapps", files: notes } : null;
+    const later = reviewed ? archives : archives.slice(1);
     const unplaced = images.length && !(await pictures.placeInView(images)) ? images : [];
     if (pages.length) await uploadFiles(pages, "");
     if (reviewed) {
@@ -7567,7 +7565,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       importEmbeddedAnnots(focusedBlockId, docId, false, o.strip);
       return;
     }
-    if (["zotero", "markdown", "notion", "gamma", "notability", "goodnotes"].includes(o.source)) {
+    if (["zotero", "markdown", "notion", "gamma", "noteapps"].includes(o.source)) {
       const review = (file) => setImportReview({ source: o.source, file, strip: o.strip,
         folder: homeMode && folderFilter ? folderFilter : "" });
       const { label, accept, multiple } = importSource(o.source);
@@ -12100,7 +12098,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             icon={ImportIcon}
             data-guide="view.import"
             onClick={() => { setOpenPopover(null); setImportOpen(true); }}
-            title={t("Bring in notes and highlights: a Zotero library, Notability notes, GoodNotes notebooks, Notion pages, Markdown, a Logseq export, a Gamma export, or the annotations saved inside this PDF")}
+            title={t("Bring in notes and highlights: a Zotero library, Notability notes and GoodNotes notebooks, Notion pages, Markdown, a Logseq export, a Gamma export, or the annotations saved inside this PDF")}
           >{t("Import…")}</MenuItem>
         ),
       ],
