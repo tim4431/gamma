@@ -14,9 +14,9 @@ import { ContextMenu, MenuDivider, MenuItem, SubMenuItem } from "../shared/ui/Me
 import { menuPress } from "../shared/ui/press.js";
 import { MarkGlyph } from "../shared/ui/MarkGlyph.jsx";
 import {
-  ChevronDownIcon, ChevronUpIcon, DuplicateIcon, EyeIcon, EyeOffIcon, HighlightIcon, PaletteIcon, SettingsIcon, SparklesIcon, Trash2Icon,
+  ChevronDownIcon, ChevronUpIcon, DuplicateIcon, EyeIcon, EyeOffIcon, HighlightIcon, PaletteIcon, SettingsIcon, Trash2Icon,
 } from "../shared/ui/Icons";
-import { MAX_PRESETS, MAX_PRESET_NAME, MAX_SHOWN_PRESETS, presetKey, presetLook, presetName, startersMissing } from "../shared/model/markStyle.js";
+import { MAX_PRESETS, MAX_PRESET_NAME, MAX_SHOWN_PRESETS, presetKey, presetLook, presetName } from "../shared/model/markStyle.js";
 import { colorName, highlightColor, pickerColors } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { composing } from "../shared/lib/hotkeys.js";
@@ -62,8 +62,7 @@ export function HighlighterStrip({ hl, only = false, menuAt }) {
 // A strip highlighter's menu: its name, style and colour (each edit keeps
 // the menu open, as an editor's), the colour group, then turning it on or
 // off, moving it, Duplicate (the menu goes on to the copy), Hide or Show,
-// the hidden ones, the three starters while none is there, Remove, and
-// Edit highlighters….
+// the hidden ones, Remove, and Edit highlighters….
 export function HighlighterMenu({ hl }) {
   const palette = usePalette();
   const p = hl.menu ? hl.list.find((x) => x.id === hl.menu.id) : null;
@@ -131,9 +130,6 @@ export function HighlighterMenu({ hl }) {
             );
           })}
         </SubMenuItem>
-      ) : null}
-      {startersMissing(hl.list) ? (
-        <MenuItem icon={SparklesIcon} onClick={then(hl.addStarters)}>{t("Add Definition, Question and Disputed")}</MenuItem>
       ) : null}
       <MenuItem icon={Trash2Icon} danger disabled={lastShown} title={lastShown ? t("One stays on the strip") : undefined}
         onClick={then(() => hl.remove(p.id))}>{t("Remove")}</MenuItem>

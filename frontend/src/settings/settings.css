@@ -807,8 +807,6 @@ button.aiModelTag:disabled { cursor: default; }
 .hlRowEditor { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 0 0 6px 28px; }
 .hlSep { margin: 6px 8px 2px; color: var(--text-dim); font-size: var(--fs-xs); border-top: 1px solid var(--border-subtle); padding-top: 6px; }
 .hlActions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px; }
-/* a long label (the three starters) wraps inside the pane on a phone */
-.hlActions .uiBtn { max-width: 100%; height: auto; white-space: normal; text-align: start; }
 
 /* The colour picker (shared/ui/ColorPicker.jsx): the square, the two bars
    and the fields. Its gradients are inline styles. */

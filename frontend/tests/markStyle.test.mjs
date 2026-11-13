@@ -5,9 +5,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  MARK_STYLES, MAX_PRESETS, MAX_PRESET_NAME, MAX_SHOWN_PRESETS, STARTER_PRESETS, STYLE_NAMES, addPreset, addStarters, blockStyle,
+  MARK_STYLES, MAX_PRESETS, MAX_PRESET_NAME, MAX_SHOWN_PRESETS, STYLE_NAMES, addPreset, blockStyle,
   duplicatePreset, effectivePresets, isLineStyle, markStyle, movePreset, newPresetId, normalizePresets, placePreset, presetFor, presetKey,
-  presetKeys, presetName, removePreset, restorePreset, seedPresets, selectionTint, setPresetHidden, startersMissing, swapIntoStrip,
+  presetKeys, presetName, removePreset, restorePreset, seedPresets, selectionTint, setPresetHidden, swapIntoStrip,
   swatchOf, withStyle,
 } from "../src/shared/model/markStyle.js";
 import { addHighlightAsBlock, blocksToHighlights } from "../src/shared/model/blockModel.js";
@@ -167,21 +167,6 @@ test("a region of a picture is a box: it stores no line style and reads as the w
   const [region1] = blocksToHighlights([block], "image_position", "i1");
   assert.equal(region1.style, "highlight");
   assert.deepEqual(region1.position, { ...region, area: true, onVersion: true });
-});
-
-test("the starters: the issue's three meanings, once each, hidden past a full strip", () => {
-  assert.deepEqual(STARTER_PRESETS.map((s) => [s.name, s.style]), [["Definition", "underline"], ["Question", "squiggly"], ["Disputed", "strikeout"]]);
-  const seed = seedPresets("", W("#ffe28f"));
-  assert.ok(startersMissing(seed));
-  const r = addStarters(seed);
-  assert.equal(r.added, 3);
-  assert.deepEqual(r.list.map((p) => [p.name, p.style, !!p.hidden]),
-    [["", "highlight", false], ["Definition", "underline", false], ["Question", "squiggly", false], ["Disputed", "strikeout", false]]);
-  assert.equal(startersMissing(r.list), false);
-  assert.equal(addStarters(r.list).added, 0, "not twice");
-  const three = normalizePresets([hl("a"), hl("b", "highlight", W("#aaebaa")), hl("c", "highlight", W("#9bcdff"))]);
-  assert.deepEqual(addStarters(three).list.map((p) => !!p.hidden), [false, false, false, false, true, true]);
-  assert.equal(addStarters(seed, (n) => `«${n}»`).list[1].name, "«Definition»", "names translated as they are added");
 });
 
 test("an armed highlighter's selection tint: the wash it lays, a light tint of a line's tone", () => {

@@ -234,7 +234,7 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | `view_image` | The pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), all or one by index |
 | `cite` | The citation records kept with pages: the paper metadata, its BibTeX, the slide citation |
 | `list_workspaces` | The workspaces the connection reads, the default first: each one's id, name and the account's role |
-| `read_gamma_link` | Resolve and read a page, block, or share URL, including PDF page context; a folder-share URL lists the folder's pages |
+| `read_gamma_link` | Resolve and read a page, block, folder, or share URL, including PDF page context; a folder or folder-share URL lists the folder's pages |
 | `export_page` | One page as Markdown text, or as a PDF file: the annotated paper or the notes typeset; with `sub_pages`, the pages inside it too |
 | `reply_feedback` | A feedback connection's only: a reply in a feedback item's thread, signed with the connection's name |
 | `resolve_feedback` | A feedback connection's only: resolve a feedback item once it is done (never a reopen) |
@@ -357,7 +357,7 @@ Nothing is stored.
 
 ### Send a page to an assistant
 
-Paste a Gamma page, block, or share URL with your question. `read_gamma_link`
+Paste a Gamma page, block, folder, or share URL with your question. `read_gamma_link`
 validates the server and workspace, resolves the reference locally, and reads the
 page through the same dispatcher as the other read tools. A block link also reads
 that block; `pdf_page` starts the PDF excerpt at that physical page. A URL's
@@ -368,13 +368,19 @@ Copy the page URL directly from the browser's address bar, or use an existing
 block or share link. The assistant keeps that reference as context until another
 is supplied; it does not track the user's active tab or PDF scroll position.
 
-A folder-share link (a `?share=` token naming a folder, [api.md](api.md)
-"Shares") resolves to the folder — by its id, the reference carrying the
-folder's path as its `title` and a `?ws=…&folder=<id>` URL — and answers
-with `list_pages(folder=<id>)` in the workspace scope, so the call its
-result names for the next batch lists the same folder: the pages the share
-view lists, with the page URL template for citing them. A
-share whose folder is gone fails as unavailable. With `&page=` beside the
+A folder link (the library's `?ws=…&folder=<id>` address while a folder is
+browsed) and a folder-share link (a `?share=` token naming a folder,
+[api.md](api.md) "Shares") resolve to the folder — by its id, the reference
+carrying the folder's path as its `title` and a `?ws=…&folder=<id>` URL —
+and answer with `list_pages(folder=<id>)` in the workspace scope, so the
+call its result names for the next batch lists the same folder: the pages
+the library or the share view lists, with the page URL template for citing
+them. A folder link without `ws=` reads in the connected workspace holding
+the folder; a folder that is gone fails as unavailable. Beside a page
+(`&page=`, `&block=`) the link's `folder=` is only where the page was
+opened, and the page is read. A folder share's `&folder=` is a folder
+browsed in the share view, read when it is the shared folder or below it
+and refused otherwise. With `&page=` beside the
 token it reads that page instead, refused unless the page is filed in the
 folder or below it (a page inside another page by where its top page is,
 as the share view reaches it). A page share's link reads its page, or

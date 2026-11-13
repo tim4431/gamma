@@ -45,9 +45,9 @@ ICONS = [Icon(src=ICON_URI, mimeType="image/png", sizes=["512x512"])]
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
 NOT_ANSWERING = "This connection may not answer feedback: reconnect allowing it, or use a feedback token."
 INSTRUCTIONS = (
-    "When the user pastes a Gamma page, block, or share link, call read_gamma_link with the URL. "
+    "When the user pastes a Gamma page, block, folder, or share link, call read_gamma_link with the URL. "
     "It resolves the reference and reads the page, including a linked note or PDF passage; a "
-    "folder-share link lists the folder's pages instead. "
+    "folder or folder-share link lists the folder's pages instead. "
     "Use the returned page_id for follow-up questions; keep this context until the user changes it. "
     "Never fetch the link as a website or discard its server/workspace identity to work around a failed read. "
     "If only a link is sent, acknowledge the page and location without an unsolicited summary. "
@@ -102,8 +102,8 @@ WORKSPACES_TOOL = Tool(name="list_workspaces", title="List the connected workspa
                        inputSchema={"type": "object", "properties": {}, "additionalProperties": False},
                        annotations=READ_ONLY)
 LINK_TOOL = Tool(name="read_gamma_link", title="Read a Gamma link", icons=ICONS,
-                 description="Read the Gamma page, block, or share link the user provided. "
-                 "Preserves pdf_page and quote context. A folder-share link lists the folder's pages. "
+                 description="Read the Gamma page, block, folder, or share link the user provided. "
+                 "Preserves pdf_page and quote context. A folder or folder-share link lists the folder's pages. "
                  "Resolves locally within the connected workspaces; "
                  "never fetches remote URLs or grants access through a share token. "
                  "Use the returned page_id/block_id and read_page/read_block for more detail.",
@@ -262,8 +262,8 @@ def _read_link(user_id: str, workspaces: list[str], base: str, url: str) -> Call
         reads = [("read_page", {key: ref[key] for key in ("page_id", "pdf_page") if key in ref})]
         if ref.get("block_id"):
             reads.append(("read_block", {"block_id": ref["block_id"]}))
-    else:  # a folder share: its pages, read as list_pages(folder=…) in the workspace's
-           # scope, so the call its result names for the next batch lists the same folder
+    else:  # a folder (a folder link's or a folder share's): its pages, read as list_pages(folder=…)
+           # in the workspace's scope, so the call its result names for the next batch lists the same folder
         scope = _scope(user_id, base, ws, type="folder", folder="")
         reads = [("list_pages", {"folder": ref["folder"]})]
         content.append(_link_templates(base, ws))
