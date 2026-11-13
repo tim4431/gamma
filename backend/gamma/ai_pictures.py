@@ -55,8 +55,9 @@ from .blocks_store import page_root_id
 from .documents.formats import IMAGE_EXTENSIONS, IMAGE_MEDIA_TYPES
 from .documents.model import is_image, page_document, pdf_file_hash
 from .logbuf import log
-from .pdf_image import svg_pdf, svg_png
-from .pdf_text import RENDER_MAX_SIDE, image_part, page_raster, render_page
+from .pdf_image import svg_png
+from .pdf_text import RENDER_MAX_SIDE, image_part, render_page
+from .picture import svg_size
 from .storage import UPLOAD_REF_RE, find_upload_file, store_file
 
 DEFAULT_BUDGET = 12   # pictures per message (and newest earlier pictures kept)
@@ -260,8 +261,8 @@ def image_region(ws: str, name: str, box=None, marks=()) -> tuple[bytes, str, in
     height)`` as ``render_page`` shapes a picture, cut to ``box`` (fractions
     of the picture, top-left origin) when one is given: what a feedback
     thread's picture (gamma/feedback/pictures.py), the chat's page image of
-    a picture page and ``clip_region`` draw. An SVG is drawn through its
-    one-page PDF (``pdf_image.svg_pdf``); a raster is read with Pillow, its
+    a picture page and ``clip_region`` draw. An SVG is drawn by MuPDF under
+    its time limit (``pdf_image.svg_png``); a raster is read with Pillow, its
     EXIF orientation applied, an animation's first frame, transparency on
     white. The crop is at least ``REGION_MIN_PX`` of the picture's own
     pixels a side (a vector picture has none), and the picture is scaled so
@@ -346,25 +347,22 @@ def _raster_region(data: bytes, box):
 
 
 def _svg_region(data: bytes, box):
-    """An SVG's region drawn by MuPDF (``pdf_image.svg_pdf``) as a Pillow
-    RGB image, with the frame the marks are placed in: the page's points
-    are the picture's pixels."""
-    seen = []
-
-    def zoom(width, height):
-        seen.append((width, height))
-        return _zoom(width, height)
-
-    raster, _pages = page_raster(svg_pdf(data), 1, zoom, box)
-    if raster is None or not seen:
-        return None
-    (width, height), scale = seen[0], _zoom(*seen[0])
-    if box:
-        width, height = width / max(box[2] - box[0], 1e-9), height / max(box[3] - box[1], 1e-9)
+    """An SVG's region drawn by MuPDF (``pdf_image.svg_png``, the region
+    alone, under its time limit) as a Pillow RGB image on white, with the
+    frame the marks are placed in: its size as the browser shows it
+    (``picture.svg_size``) is its page's in points, so its pixels are those
+    points. ValueError when it does not draw."""
+    size = svg_size(data)
+    if size is None:
+        raise ValueError("not an SVG")
+    width, height = size
+    shown = ((box[2] - box[0]) * width, (box[3] - box[1]) * height) if box else (width, height)
+    side = max(1, round(max(shown) * _zoom(*shown)))
+    png, _w, _h = svg_png(data, side, box)
+    with Image.open(io.BytesIO(png), formats=["PNG"]) as drawn:
+        image = _on_white(drawn)
     left, top = (box[0] * width, box[1] * height) if box else (0.0, 0.0)
-    image = Image.frombuffer(raster.mode, (raster.width, raster.height), raster.data, "raw", raster.mode,
-                             raster.stride, 1).convert("RGB")
-    return image, (width, height, left, top, scale)
+    return image, (width, height, left, top, side / max(shown))
 
 
 def _on_white(image):
