@@ -113,6 +113,13 @@ export function markedParts(text, query, opts = {}, lead = 0) {
     s = `…${s.slice(cut)}`;
     ranges = ranges.map(([a, b]) => [a - cut + 1, b - cut + 1]);
   }
+  return partsAt(s, ranges);
+}
+
+// `text` cut at `ranges` ([from, to) offsets into it, sorted and apart, as
+// matchRanges gives them) into [{text, mark}] pieces.
+export function partsAt(text, ranges) {
+  const s = String(text || "");
   const parts = [];
   let pos = 0;
   for (const [a, b] of ranges) {

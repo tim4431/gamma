@@ -598,7 +598,11 @@ title in Gamma and stays in the file. A new link takes the vault's habit
 links, shortest or relative paths, the attachment folder; the key names
 are to be checked against a real vault). A renamed note breaks nothing in
 Gamma, which links by id; the other files still say the old name, and
-Gamma offers to rewrite them, counted, as Obsidian does.
+Gamma offers to rewrite them, counted, as Obsidian does. In a work folder,
+where every file is a page, a link to a file (`[the method](sections/method.tex)`)
+is that page's mention, as a link to a note is; a picture's embed keeps its
+upload's address so it draws inline
+([dev/synced_vaults.md](../dev/synced_vaults.md) "Links and highlights").
 
 **A change in Gamma** is written like this, a moment after its commit:
 

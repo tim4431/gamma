@@ -138,12 +138,12 @@ These describe the implementation unless explicitly marked as plans.
   zoom-in is the open item. The stored shapes as built are in
   [storage](user_db.md) and [home library](home_library.md).
 - [Any file as a page](../research/file-explorer.md): a plan whose steps 0
-  to 3 are built ([documents](documents.md),
+  to 5 are built ([documents](documents.md),
   [work folders](work_folders.md), [feedback](feedback.md)). A page's
   document of any format with a viewer for each, work folders through
   synced vaults whose tracked files are chosen, comment threads as feedback
-  a local agent acts on, and a Files window; its steps and what is still to
-  decide.
+  a local agent acts on, text files in search and the chat, and a Files
+  window; its steps and what is still to decide.
 - [Scaling on SQLite](../research/scaling.md): items 1 to 12 of its work list
   are done (item 8, the blob seam, was built and then taken out again) and
   described in the topic docs above; the cluster items (LiteFS, placement, a

@@ -133,6 +133,13 @@ test("a change selects the groups that exercise it", () => {
     "backend/gamma/work_folders/paths.py", "backend/gamma/mcp_links.py", "backend/gamma/ai_tools.py", "frontend/src/search/SearchPanel.jsx",
     "frontend/src/documents/viewers/textMark.js", "frontend/src/documents/viewers/TextViewer.jsx"]) assert.ok(pick([file]).includes("text-search"), file);
   assert.ok(pick(["backend/gamma/work_folders/paths.py"]).includes("feedback"), "the feedback entries name their files by it");
+  // the explorer: the Files window, quick open's files, the crumbs, links by path and the reads behind them
+  for (const file of ["frontend/src/explorer/FileTree.jsx", "frontend/src/explorer/useFileSearch.js", "frontend/src/explorer/workPaths.js",
+    "frontend/src/library/QuickOpen.jsx", "frontend/src/editor/PageCrumbs.jsx", "frontend/src/editor/PathLink.jsx",
+    "backend/gamma/work_folders/file_search.py", "backend/gamma/work_folders/paths.py", "backend/gamma/routers/folders.py",
+    "backend/gamma/vault/links.py"]) assert.ok(pick([file]).includes("explorer"), file);
+  assert.deepEqual(pick(["backend/tests/seed_work_folder.py"]), ["explorer"], "the seed is the explorer group's alone");
+  assert.ok(pick(["frontend/src/editor/PathLink.jsx"]).includes("notes-pdf-share"), "a note's relative link is drawn there");
   // a scenario helper selects the scenarios importing it
   const notes = pick(["frontend/tests/e2e/scenarios/notes.mjs"]);
   for (const id of ["notes-pdf-share", "collab", "files", "diagrams"]) assert.ok(notes.includes(id), id);

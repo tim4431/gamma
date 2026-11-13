@@ -6,10 +6,14 @@ Gamma's.
 Gamma holds a link to a page or a block as ``[[id]]`` (``![[id]]`` embeds a
 block) and a picture or a file as its upload's address; the file says
 ``[[Title]]``, ``[[dir/Title|alias]]``, ``[text](<a b.md>)``,
-``![[fig.png|300]]``. ``to_gamma`` reads a block's file text into Gamma's,
-with a memo of how each link was written, keyed by what it resolved to (a
-page or block id, or a vault path: an upload's address holds its hash, which
-changes when the picture does). ``written`` writes Gamma's text back, each
+``![[fig.png|300]]``. In a work folder every file is a page, so a link to a
+file that has one is a mention of that page (``LinkContext.add_page_file``),
+written back by its path, except a picture's embed, which keeps its upload's
+address to draw inline, and a note's link to its own PDF, which stays the
+file's link beside the page it is on. ``to_gamma`` reads a block's file
+text into Gamma's, with a memo of how each link was written, keyed by what
+it resolved to (a page or block id, or a vault path: an upload's address
+holds its hash, which changes when the picture does). ``written`` writes Gamma's text back, each
 link as the memo remembers it where it can and in the vault's habit
 otherwise, with the memo of what it wrote. The engine calls them only for a
 block whose text changed on that side (identity first): an
@@ -160,7 +164,8 @@ def named(value: str, note: str, paths) -> str:
 
 class LinkContext:
     """What a block's links need of the vault: its notes (``add_note``), the
-    files Gamma holds as uploads (``add_file``), the anchors and headings of
+    files Gamma holds as uploads (``add_file``), a work folder's files that
+    are pages (``add_page_file``), the anchors and headings of
     its blocks, its habit; and of Gamma: ``page_of`` (a block or page id →
     its page's id, None for none), ``title_of`` (a page id → its title),
     ``address`` (``https://host/?ws=<id>``, the base of an absolute link; ""
@@ -182,6 +187,7 @@ class LinkContext:
         self.title_of = title_of or (lambda page_id: "")
         self.store = store or (lambda path: None)
         self.pages, self.page_path = {}, {}      # vault path ↔ page id
+        self.file_pages = {}                     # a work folder's file's vault path → its page id
         self.files, self.names = {}, {}          # vault path ↔ upload name
         self.anchors, self.marks, self.headings = {}, {}, {}
         self.read_only = set()
@@ -219,6 +225,17 @@ class LinkContext:
         file's to it is read afresh (``store``), its bytes perhaps changed
         since."""
         self.names.setdefault(name, path)
+        self.files.setdefault(path, "")
+        self._tables.clear()
+
+    def add_page_file(self, path: str, page_id: str):
+        """A work folder's file that is the page ``page_id``: a link to it is
+        a mention of the page, found by its name too, as a file is. The page
+        is spelled back by this path unless it has a note (a PDF paired with
+        one), whose path it keeps; a page with no note takes no anchor
+        (``_anchor``): its notes are never written to disk."""
+        self.file_pages[path] = page_id
+        self.page_path.setdefault(page_id, path)
         self.files.setdefault(path, "")
         self._tables.clear()
 
@@ -301,9 +318,10 @@ class LinkContext:
 
     def _anchor(self, block_id, page_id):
         """The marker of a block of another note, asked for when it has none;
-        None when its file takes none this round."""
+        None when its file takes none this round, or when the page's file is
+        no note (a work folder's file page)."""
         marker = self.anchors.get(block_id)
-        if marker is None and page_id not in self.read_only:
+        if marker is None and page_id not in self.read_only and self.page_path.get(page_id) in self.pages:
             marker = anchor_marker(block_id)
             if not re.search("[A-Za-z]", marker):      # (an anchor needs a letter)
                 marker = f"b{marker}"
@@ -394,6 +412,8 @@ def _file_link(ctx: LinkContext, m):
             return None
         if path in ctx.pages:
             return _mention(ctx, bang, ctx.pages[path], sub)
+        if _file_page(ctx, path, bang):
+            return _mention(ctx, "", ctx.file_pages[path], "")
         name = ctx._upload(path)
         if not name:
             return None
@@ -415,8 +435,19 @@ def _file_link(ctx: LinkContext, m):
     if path in ctx.pages:
         sub = unquote(href.partition("#")[2])
         return _mention(ctx, "", ctx.pages[path], f"#{sub}" if sub else "")
+    if _file_page(ctx, path, bang):
+        return _mention(ctx, "", ctx.file_pages[path], "")
     name = ctx._upload(path)
     return (path, f"{bang}[{label}](/api/uploads/{name}{title})") if name else None
+
+
+def _file_page(ctx, path: str, bang) -> bool:
+    """Whether a link to the file at ``path`` is a mention of its page: a
+    work folder's file that is one, unless it is the note's own PDF or a
+    picture embedded (its upload's address draws it). A ``#…`` after a
+    file's name names nothing in the page and is dropped."""
+    return (path in ctx.file_pages and path != ctx.pdf
+            and not (bang and _split_ext(path)[1] in IMAGE_MEDIA_TYPES))
 
 
 def _mention(ctx, bang, page_id, sub):
@@ -651,8 +682,9 @@ def _named(ctx, path: str, make) -> str:
 def _new_mention(link: _Link, ctx) -> str:
     """A mention no memo knows, in the habit: of a note of the vault, of a
     block in one (``#^marker``, asked for when it has none; its page's when
-    its file takes none), of a page outside the vault (its absolute
-    address), or as typed."""
+    its file takes none), of a work folder's file page (by its path, the
+    leaf its label), of a page outside the vault (its absolute address), or
+    as typed."""
     target = link.target
     page_id = ctx.page_of(target) or (target if target in ctx.page_path else None)
     if page_id is None:
@@ -664,12 +696,13 @@ def _new_mention(link: _Link, ctx) -> str:
     marker = ctx._anchor(target, page_id) if target != page_id else None
     sub = f"#^{marker}" if marker else ""
     path = ctx.page_path[page_id]
-    stem = _split_ext(posixpath.basename(path))[0]
+    leaf = posixpath.basename(path)
+    shown = _split_ext(leaf)[0] if path in ctx.pages else leaf
     if sub and page_id == ctx.page_id:
-        return f"[{_label(stem)}]({sub})" if ctx.habit.markdown else f"{link.bang}[[{sub}]]"
+        return f"[{_label(shown)}]({sub})" if ctx.habit.markdown else f"{link.bang}[[{sub}]]"
 
     def make(text, wiki):
-        return f"{link.bang}[[{text}{sub}]]" if wiki else f"[{_label(stem)}]({_href(text)}{sub})"
+        return f"{link.bang}[[{text}{sub}]]" if wiki else f"[{_label(shown)}]({_href(text)}{sub})"
     return _named(ctx, path, make)
 
 

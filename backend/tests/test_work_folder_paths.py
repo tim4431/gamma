@@ -1,9 +1,15 @@
 """A work folder's file by its path (gamma/work_folders/paths.py,
 docs/dev/work_folders.md "Paths"): ``page_path`` and ``page_at_path`` are a
 pair, over the folder tree and the vault's stamps, and a typed name matches
-exactly, else ignoring case by ``blocks_store.named``'s ``lower()``."""
+exactly, else ignoring case by ``blocks_store.named``'s ``lower()``;
+``page_at_href`` resolves a note's relative link from the note's directory.
+tests/shared/workpaths.json pins the path and the directory of a page, and
+which links are relative, with the client's twin
+(frontend/tests/workPaths.test.mjs, which reads its crumbs too)."""
 
+import json
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -131,6 +137,36 @@ def test_a_note_is_found_by_its_title(paper, owner):
     assert _at(v, "sections/Draft ideas") == [page_id] == _at(v, "sections/draft ideas.md")
 
 
+def test_a_link_resolves_from_its_notes_directory(paper):
+    v = paper
+    method, main = v.page_of("sections/method.tex"), v.page_of("main.tex")
+
+    def href(base, link):
+        with connect_pages_db(v.ws) as conn:
+            return paths.page_at_href(conn, Tree.read(conn), v.folder, base, link)
+
+    assert href("sections", "method.tex") == [method] == href("", "sections/method.tex")
+    assert href("sections", "../main.tex") == [main] == href("sections", "main.tex")   # then from W's top
+    assert href("figures/deep", "../fig1.pdf#page=2") == [v.page_of("figures/fig1.pdf")]
+    assert href("sections", "./notes.md") == [v.page_of("sections/notes.md")]       # the note's directory first
+    assert href("", "notes.md") == [v.page_of("notes.md")]
+    assert href("sections", "sections%5Cmethod.tex") == [method]
+    for nothing in ("../../main.tex", "plot.py", "/main.tex", "deep/plot.py"):
+        assert href("sections", nothing) == [], nothing
+
+
+def test_a_link_resolves_among_the_pages_a_share_reaches(paper):
+    """What is out of reach changes no answer: a candidate left with none
+    is tried as if it named nothing."""
+    v = paper
+    inner, top = v.page_of("sections/notes.md"), v.page_of("notes.md")
+    with connect_pages_db(v.ws) as conn:
+        tree = Tree.read(conn)
+        assert paths.page_at_href(conn, tree, v.folder, "sections", "notes.md", allows=lambda i: i != inner) == [top]
+        assert paths.page_at_href(conn, tree, v.folder, "sections", "notes.md", allows=lambda i: i != top) == [inner]
+        assert paths.page_at_href(conn, tree, v.folder, "sections", "notes.md", allows=lambda i: False) == []
+
+
 def test_a_library_page_has_no_path(owner):
     page = make_page(owner, "a library page")
     with connect_pages_db(workspace_of(OWNER)) as conn:
@@ -167,3 +203,31 @@ def test_a_paths_first_segment_names_its_work_folder():
     assert paths.work_of_path(None, TREE, "Library/x.tex") is None and paths.work_of_path(None, TREE, "") is None
     with pytest.raises(ValueError, match="T1, T2, T3"):
         paths.work_of_path(None, TREE, "tWin/x.tex")
+
+
+SHARED = json.loads((Path(__file__).resolve().parents[2] / "tests" / "shared" / "workpaths.json")
+                    .read_text(encoding="utf-8"))
+SHARED_TREE = _tree(*((f, parent, name, mark == "vault") for f, parent, name, mark in SHARED["tree"]))
+
+
+@pytest.mark.parametrize("case", SHARED["cases"], ids=lambda c: c["name"])
+def test_the_shared_paths(case):
+    props, w = case["props"], case["props"].get("work_folder", "")
+    assert paths.page_path(SHARED_TREE, props, title=case["title"]) == case["path"]
+    assert paths.dir_path(SHARED_TREE, props["folders"][0], w) == case["dir"]
+
+
+def test_a_folder_share_measures_a_path_from_its_folders_parent():
+    raw = {"work_folder": "W", "folders": ["raw"], "file_name": "data.csv"}
+    assert paths.page_path(SHARED_TREE, raw, shared="raw") == "raw/data.csv"
+    assert paths.page_path(SHARED_TREE, raw, shared="figures") == "figures/raw/data.csv"
+    assert paths.page_path(SHARED_TREE, raw, shared="W") == "figures/raw/data.csv"
+    assert paths.path_top(SHARED_TREE, "W", "raw") == "figures"
+    assert paths.path_top(SHARED_TREE, "W", "shelf") == paths.path_top(SHARED_TREE, "W") == "W"
+
+
+@pytest.mark.parametrize("case", SHARED["hrefs"], ids=lambda c: c["href"] or "empty")
+def test_the_shared_relative_links(case):
+    assert paths.is_relative_href(case["href"]) is case["relative"]
+    if not case["relative"]:
+        assert paths.page_at_href(None, SHARED_TREE, "W", "sections", case["href"]) == []

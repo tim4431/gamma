@@ -14,8 +14,10 @@
 // selection, hover and click) on its button. `onChoose(row)` takes a pick.
 // `onKeyDown(e, row)` sees the field's keys first and returns true for one it
 // took (quick open's Ctrl+Enter and Shift+Enter). The selection goes back to
-// the first row whenever the query changes. `note` (what a pick does) and
-// `hint` (the keys) make the line under the list.
+// the first row whenever the query changes, and stays on the row it is on
+// (by its key) while rows that come later (quick open's files, from the
+// server) land above it. `note` (what a pick does) and `hint` (the keys)
+// make the line under the list.
 
 import React, { useEffect, useRef, useState } from "react";
 import { DialogOverlay } from "./Surfaces";
@@ -25,10 +27,14 @@ export default function Palette({
   label, listLabel, icon, placeholder, guide, query, onQuery, rows, sectionTitle = {}, renderRow,
   onChoose, onKeyDown, onClose, empty, note, hint,
 }) {
-  const [active, setActive] = useState(0);
+  // the row selected for this query: its key, and its place should it go
+  const [picked, setPicked] = useState({ query, key: "", index: 0 });
   const listRef = useRef(null);
   const inputRef = useRef(null);
-  const at = Math.min(active, rows.length - 1);
+  const mine = picked.query === query;
+  const found = mine && picked.key ? rows.findIndex((r) => r.key === picked.key) : -1;
+  const at = found >= 0 ? found : Math.min(mine ? picked.index : 0, rows.length - 1);
+  const pick = (i) => setPicked({ query, key: rows[i]?.key || "", index: i });
 
   useEffect(() => {
     const hold = (e) => {
@@ -38,7 +44,6 @@ export default function Palette({
     document.addEventListener("focusin", hold, true);
     return () => document.removeEventListener("focusin", hold, true);
   }, []);
-  useEffect(() => { setActive(0); }, [query]);
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   }, [at]);
@@ -49,7 +54,7 @@ export default function Palette({
     "aria-selected": i === at,
     className: `slashMenuItem chatMentionOption quickOpenRow${i === at ? " selected" : ""}`,
     onPointerDown: (e) => e.preventDefault(),
-    onMouseEnter: () => setActive(i),
+    onMouseEnter: () => pick(i),
     onClick: () => choose(row),
   });
   return (
@@ -70,7 +75,7 @@ export default function Palette({
               if (onKeyDown?.(e, rows[at])) return;
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                 e.preventDefault();
-                setActive((i) => (Math.min(i, rows.length - 1) + (e.key === "ArrowDown" ? 1 : -1) + rows.length) % (rows.length || 1));
+                if (rows.length) pick((at + (e.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length);
               } else if (e.key === "Enter") {
                 e.preventDefault();
                 choose(rows[at]);

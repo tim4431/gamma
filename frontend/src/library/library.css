@@ -714,6 +714,12 @@
 .quickOpenHint { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; }
 .quickOpenNote { color: var(--text-muted); min-width: 0; }
 .quickOpenKey { font-family: var(--font-mono); }
+/* A file row's second line: its work folder and directory, cut at the end.
+   A narrow screen drops the file's time, so the name keeps the room. */
+.quickOpenRow .quickOpenPath { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 480px) {
+  .quickOpenRow[data-kind="file"] .quickOpenTime { display: none; }
+}
 
 /* --- Phone (the compact layout, .phoneUI on .app) ------------------------
    The listing bar wraps: the library's name as a heading (a folder or label

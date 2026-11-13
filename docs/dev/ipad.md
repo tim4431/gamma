@@ -1764,12 +1764,17 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
   row's, a highlight's) closes the panel over it (`showOnPage`,
   `jumpToHighlightId`). Show note on the page brings the notes up
   (`showInNotes`): the Notes panel, or on a page with sheets its notes
-  view.
+  view. The Files window is a panel too, beside an open page only (on the
+  library the listing is the explorer), from More's Files row or the
+  command, with no bottom tab of its own: its rows are 44px tall with a
+  44px chevron, a tap on a file opens it (which closes the panel, as every
+  navigation does) and a held finger opens a row's menu.
 - **More** is the account button (`header.account`) under another name:
   its sheet is the account menu with the rest of the topbar on top —
   Background tasks, the open folder's Share this folder, and the View
-  menu's rows (`viewMenuItems`; of the window toggles only PDF, since the
-  tabs switch Notes and Chat, and in the iPad app *Server bar*, then Undo,
+  menu's rows (`viewMenuItems`; of the window toggles only PDF and,
+  beside an open page, Files, since the tabs switch Notes and Chat, and in
+  the iPad app *Server bar*, then Undo,
   Redo, Go to page and Command palette). The tasks, folder-share and View buttons are
   not rendered; their popovers open from those rows in the sheet's place.
   A flyout (the account menu's Tours) opens inline under its row, since

@@ -1,0 +1,41 @@
+{
+  "tree": [
+    ["W", "", "Paper", "vault"],
+    ["figures", "W", "figures", null],
+    ["raw", "figures", "raw", null],
+    ["sections", "W", "sections", null],
+    ["shelf", "", "Shelf", null]
+  ],
+  "cases": [
+    {"name": "a file at W's top", "props": {"work_folder": "W", "folders": ["W"], "file_name": "main.tex"},
+     "title": "main.tex", "path": "main.tex", "dir": "", "crumbs": ["W"]},
+    {"name": "two levels down", "props": {"work_folder": "W", "folders": ["raw"], "file_name": "data.csv"},
+     "title": "data.csv", "path": "figures/raw/data.csv", "dir": "figures/raw", "crumbs": ["W", "figures", "raw"]},
+    {"name": "a note made in Gamma, no file yet", "props": {"work_folder": "W", "folders": ["sections"]},
+     "title": "Plan", "path": "Plan", "dir": "sections", "crumbs": ["W", "sections"]},
+    {"name": "in the library too", "props": {"work_folder": "W", "folders": ["figures", "shelf"], "file_name": "fig1.pdf"},
+     "title": "fig1", "path": "figures/fig1.pdf", "dir": "figures", "crumbs": ["W", "figures"]},
+    {"name": "folders[0] outside its W", "props": {"work_folder": "W", "folders": ["shelf", "figures"], "file_name": "x.pdf"},
+     "title": "x", "path": "", "dir": "", "crumbs": []},
+    {"name": "a library page", "props": {"folders": ["shelf"]}, "title": "Attention", "path": "", "dir": "", "crumbs": []}
+  ],
+  "hrefs": [
+    {"href": "sections/method.tex", "relative": true},
+    {"href": "../main.tex", "relative": true},
+    {"href": "my%20fig.pdf#page=2", "relative": true},
+    {"href": "./notes.md", "relative": true},
+    {"href": "https://example.org/x.tex", "relative": false},
+    {"href": "mailto:someone@example.org", "relative": false},
+    {"href": "gamma://page/abc", "relative": false},
+    {"href": "/sections/method.tex", "relative": false},
+    {"href": "#heading", "relative": false},
+    {"href": "?q=1", "relative": false},
+    {"href": "", "relative": false},
+    {"href": "C:/paper/main.tex", "relative": false},
+    {"href": " sections/method.tex ", "relative": true},
+    {"href": " /main.tex", "relative": false},
+    {"href": " https://example.org/a", "relative": false},
+    {"href": " #heading", "relative": false},
+    {"href": "   ", "relative": false}
+  ]
+}

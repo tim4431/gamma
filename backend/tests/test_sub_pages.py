@@ -479,7 +479,7 @@ def test_step_47_gives_a_workspace_stamped_46_the_parent_page_column(data_dir):
     db.close_workspace_connections("spOld")
     with closing(sqlite3.connect(str(path))) as old:  # the file as release 46 left it
         db.register_functions(old)
-        for index in ("listing", "dir", "work_folder", "deleted_with", "parent_page"):
+        for index in ("listing", "dir", "work_folder", "file_name", "deleted_with", "parent_page"):
             old.execute(f"DROP INDEX idx_ub_{index}")
         for column in ("first_folder", "work_folder", "deleted_with", "parent_page"):  # (48's and 53's came after)
             old.execute(f"ALTER TABLE unified_blocks DROP COLUMN {column}")

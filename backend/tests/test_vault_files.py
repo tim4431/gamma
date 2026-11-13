@@ -26,7 +26,7 @@ from gamma.ops import OpError, trash_page
 from gamma.vault.local_remote import LocalRemote
 from gamma.work_folders import takeover
 from gamma.work_folders.library import library_document
-from test_vault_sync import Vault, _pdf, insert
+from test_vault_sync import Vault, _pdf, insert, set_
 
 OWNER = "vf_owner"
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
@@ -398,6 +398,117 @@ def test_a_note_linking_a_picture_new_in_the_same_round_reads_the_pictures_row(w
     other = f"{_digest(PNG2)}.png"
     assert v.texts(v.page_of("N.md")) == [f"see ![](/api/uploads/{other})"] and v.served(other) == PNG2
     assert v.linked(other) == [(str(v.root / "fig2.png"), v.page_of("fig2.png"))]
+    v.quiet()
+
+
+def _paper(v):
+    """A work folder with a paper (``main.md`` and ``main.pdf``, one page), a
+    section, a figure's PDF and a picture, made pages by a first round."""
+    v.write("main.md", "the paper\n")
+    v.write("main.pdf", _pdf("main paper"), age=10)
+    v.write("sections/method.tex", "\\section{Method}\n", age=10)
+    v.write("figures/fig1.pdf", _pdf("figure one"), age=10)
+    v.write("fig.png", PNG, age=10)
+    v.sync()
+    assert v.page_of("main.pdf") == v.page_of("main.md")
+    return {rel: v.page_of(rel) for rel in ("main.md", "sections/method.tex", "figures/fig1.pdf", "fig.png")}
+
+
+def test_a_notes_link_to_a_work_folders_file_is_a_mention_of_its_page(work):
+    """A link to a file that has a page is that page's mention, as a link to
+    a note is; a picture's embed stays its upload, and the paired note's
+    link to its own PDF the file's."""
+    v = work()
+    pages = _paper(v)
+    text = ("[the method](sections/method.tex) and [[main.pdf]] and [[figures/fig1.pdf]]\n\n"
+            "![[fig.png]] and [fig](fig.png)\n")
+    v.write("notes.md", text)
+    v.write("main.md", "the paper, see [[main.pdf]]\n", age=5)
+    v.sync()
+    pic = f"{_digest(PNG)}.png"
+    assert v.texts(v.page_of("notes.md")) == [
+        f"[[{pages['sections/method.tex']}]] and [[{pages['main.md']}]] and [[{pages['figures/fig1.pdf']}]]",
+        f"![](/api/uploads/{pic}) and [[{pages['fig.png']}]]"]
+    paper = v.doc(pages["main.md"])["hash"]
+    assert v.texts(pages["main.md"]) == [f"the paper, see [main.pdf](/api/uploads/{paper}.pdf)"]
+    assert v.text("notes.md") == text
+    v.quiet()
+
+
+def test_a_file_new_in_the_round_is_its_upload_until_the_note_changes(work):
+    """A file with no row yet when the note is read has no page to mention:
+    read in place, its upload's address; the note read again, its page's
+    mention."""
+    v = work()
+    v.write("N.md", "n\n")
+    v.sync()
+    v.write("data.csv", "1,2\n", age=10)
+    v.write("N.md", "see [[data.csv]]\n", age=5)
+    v.sync()
+    name = stored_name(_digest(b"1,2\n"), ".csv")
+    note = v.page_of("N.md")
+    assert v.texts(note) == [f"see [data.csv](/api/uploads/{name})"]
+    v.write("N.md", "see [[data.csv]] again\n", age=3)
+    v.sync()
+    assert v.texts(note) == [f"see [[{v.page_of('data.csv')}]] again"]
+    v.quiet()
+
+
+def test_a_listed_files_link_is_its_page_and_a_listed_pictures_embed_stays_as_typed(work, monkeypatch):
+    monkeypatch.setenv("GAMMA_VAULT_KEEP_MB", "1")
+    v = work()
+    v.write("data/big.h5", b"\x00" + os.urandom(MB), age=10)
+    v.write("data/huge.png", PNG + os.urandom(MB), age=10)
+    v.sync()
+    big = v.page_of("data/big.h5")
+    assert v.doc(big)["at"] == "listed" and v.doc(v.page_of("data/huge.png"))["at"] == "listed"
+    v.write("notes/N.md", "the weights: [[big.h5]], [w](../data/big.h5)\n\n![[huge.png]]\n")
+    v.sync()
+    assert v.texts(v.page_of("notes/N.md")) == [f"the weights: [[{big}]], [[{big}]]", "![[huge.png]]"]
+    v.quiet()
+
+
+def test_gammas_link_to_a_file_page_is_written_by_its_path_and_asks_no_anchor(work):
+    """A mention typed in Gamma of a file page is the file's link in the
+    vault's habit; one of a block in a file page's notes too, with no anchor
+    (its notes are never written to disk); a link the file wrote keeps its
+    spelling when its block is edited in Gamma."""
+    v = work()
+    pages = _paper(v)
+    method = pages["sections/method.tex"]
+    v.edit(method, insert(method, "a thought on the method"))
+    v.write("notes.md", "see [the method](sections/method.tex)\n")
+    v.sync()
+    note = v.page_of("notes.md")
+    block, thought = v.find(note, f"see [[{method}]]"), v.find(method, "a thought on the method")
+    v.edit(note, set_(block, f"now see [[{method}]]"),
+           insert(note, f"and [[{pages['figures/fig1.pdf']}]], [[{thought}]] and [[{pages['main.md']}]]"))
+    v.sync()
+    assert v.text("notes.md") == "now see [the method](sections/method.tex)\n\nand [[fig1.pdf]], [[method.tex]] and [[main]]\n"
+    assert v.text("sections/method.tex") == "\\section{Method}\n" and v.text("main.md") == "the paper\n"
+    assert v.texts(note) == [f"now see [[{method}]]",
+                             f"and [[{pages['figures/fig1.pdf']}]], [[{thought}]] and [[{pages['main.md']}]]"]
+    v.quiet()
+    v.write(".obsidian/app.json", '{"useMarkdownLinks": true}')
+    v.edit(note, insert(note, f"also [[{pages['figures/fig1.pdf']}]]"))
+    v.sync()
+    assert v.text("notes.md").endswith("\n\nalso [fig1.pdf](fig1.pdf)\n")
+    v.quiet()
+
+
+def test_a_file_moved_on_disk_keeps_the_notes_link_on_both_sides(work):
+    v = work()
+    v.write("sections/method.tex", "\\section{Method}\n", age=10)
+    v.sync()
+    v.write("notes.md", "see [[sections/method.tex]]\n")
+    v.sync()
+    method, note = v.page_of("sections/method.tex"), v.page_of("notes.md")
+    assert v.texts(note) == [f"see [[{method}]]"]
+    os.makedirs(v.root / "parts")
+    os.replace(v.root / "sections/method.tex", v.root / "parts/method.tex")
+    v.sync()
+    assert v.page_of("parts/method.tex") == method
+    assert v.texts(note) == [f"see [[{method}]]"] and v.text("notes.md") == "see [[sections/method.tex]]\n"
     v.quiet()
 
 

@@ -47,6 +47,8 @@ import { NoteReviewBar } from "./NoteReviewBar";
 import { useNoteAsk, useNoteChange } from "../chat/noteReview.js";
 import { ImageIcon, LinkIcon, LocateIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
+import { isRelativeHref } from "../explorer/workPaths.js";
+import { PathLink, PathLinkScope } from "./PathLink";
 import { findMathAtCursor, LatexAcPopup, MathLivePreview } from "./LatexEditor";
 import { useMathUi } from "./useMathUi.js";
 import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
@@ -405,12 +407,14 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
             placeholder={t("Edit the source note…")}
           />
         ) : refBlock?.content ? (
-          <BlockMarkdown content={refBlock.content} blockId={`embed:${refId}`} refLabels={refLabels}
-            onBlockRefClick={onBlockRefClick} nested
-            onTaskToggle={editable ? stableTask : undefined}
-            onImageEdit={editable ? stableImg : undefined}
-            onTableEdit={editable ? stableTbl : undefined}
-            onDiagramEdit={editable ? stableDiagram : undefined} />
+          <PathLinkScope pageId={refBlock.page_root_id}>
+            <BlockMarkdown content={refBlock.content} blockId={`embed:${refId}`} refLabels={refLabels}
+              onBlockRefClick={onBlockRefClick} nested
+              onTaskToggle={editable ? stableTask : undefined}
+              onImageEdit={editable ? stableImg : undefined}
+              onTableEdit={editable ? stableTbl : undefined}
+              onDiagramEdit={editable ? stableDiagram : undefined} />
+          </PathLinkScope>
         ) : (
           // A source in Recently deleted names its page (the click opens the
           // notice that offers Restore); one that no page holds says so.
@@ -571,6 +575,8 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
           if (parseUploadUrl(href) && !/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(href)) {
             return <FileChip href={href} text={textOf(children)} />;
           }
+          // A path relative to the note: in a work folder, the file it names.
+          if (isRelativeHref(href)) return <PathLink href={href}>{children}</PathLink>;
           return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
         },
         // A foldable callout's title (callouts.js → <details><summary>):

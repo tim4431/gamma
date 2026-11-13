@@ -674,6 +674,29 @@ it (`LinkContext._file_path`). A picture of the vault a note links is read where
 is, under its content digest's name (`LocalRemote.link_file`: a
 `linked_files` row with no page), so the page shows it with nothing stored.
 
+**A work folder's files.** In a work folder's round every file is a page
+(`kinds.FILE`, a PDF's page too), so a note's link to a tracked file that
+has one is a mention of that page, `[[page_id]]`, as a link to a note is
+(`LinkContext.add_page_file`): `[the method](sections/method.tex)`,
+`[[main.pdf]]`, `[fig](fig.png)` and a listed file's `[[big.h5]]`, found by
+its name from another directory too. Gamma draws it as the page's chip,
+opens the file's page from it, counts it in backlinks, and keeps it through
+a move on disk (an id, not a path). Three cases keep the upload's address:
+a picture's embed (`![[fig.png]]`, `![](fig.png)`: a `!` and an image's
+extension), so the picture draws inline; a paired note's link to its own
+PDF (`[[main.pdf]]` in `main.md`), which would mention the page it is on;
+and a file new this round that a changed note links (changed notes are
+pushed before new files), read in place this round and the page's mention
+once the note is read again. A listed picture's embed
+has no bytes to name and stays as typed. Written back, a mention of a file
+page is the file's link in the vault's habit (`[[method.tex]]`,
+`[method.tex](method.tex)`: its leaf the label, extension and all), a
+paper's page its note's; a mention of a block in a file page's notes is a
+link to the file and asks no anchor, since those notes are never written
+to disk. A kept folder is unchanged: a file link there is its upload's
+address, and the file's chip finds the library page by hash. A block read
+before keeps its text until it changes on one side (identity first).
+
 **A highlight** is the one block of its own dialect, which differs from
 the vault export's on purpose:
 
@@ -1159,6 +1182,14 @@ unmarked folder gets the round above, unchanged. In a work folder:
   makes no sub-page. New files are made PDFs first, then the other
   formats, then the notes, so a note made in the same round links a
   picture's row.
+- **The links' tables** (`Round._ctx_at`, "Links and highlights"): every
+  row with a page but a note's is `add_page_file`, a listed file's too, so
+  a link to it is that page's mention; a row's upload (`Kind.link_name`) is
+  `add_file` beside it, for a picture's embed and a paired note's own PDF;
+  a file the scan found with no row yet is `add_file` with no name, read in
+  place (`_picture`) when a changed note, pushed before the new files, links
+  it. `_promoted` adds a row's page as the round makes it, so a new note
+  read after links the page.
 - **A move or rename on disk** (`_moved`) files the page first in the new
   directory's folder, whatever moved, then in its folders outside every
   work folder, and sets `file_name`; the title follows the stem only for a

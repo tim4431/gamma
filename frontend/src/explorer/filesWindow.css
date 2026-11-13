@@ -1,0 +1,59 @@
+/* The Files window (explorer/FilesWindow.jsx, FileTree.jsx): a tree of
+   rows, each indented by its depth (--level, set on the row), 28px tall
+   under a pointer and 44px under a finger on a phone. The "⋯" shows on
+   hover through .rowMenuHost (shared/styles/app.css). */
+.dockWindowBody .filesPanel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.fileTree { padding: var(--space-2) 0; }
+.fileTreeRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px 0 calc(8px + (var(--level, 1) - 1) * 14px);
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.fileTreeRow:hover { background: var(--bg-hover); }
+.fileTreeRow.selected { background: var(--bg-selected); }
+/* rows that fill a list draw the ring inside (ui-design.md "Keyboard focus") */
+.fileTreeRow:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.fileTreeRow.dragOver {
+  background: var(--accent-bg);
+  border-color: var(--accent-fill);
+  border-style: dashed;
+}
+.fileTreeRow > svg { flex-shrink: 0; }
+.fileTreeRow > svg:not(.fileGlyph) { color: var(--accent); }
+.fileTreeChevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--text-muted);
+}
+.fileTreeName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fileTreeCount { color: var(--text-muted); font-size: var(--fs-xs); }
+.fileTreeMore { color: var(--accent); }
+.fileTreeMore[aria-disabled="true"] { opacity: 0.6; cursor: default; }
+.fileTreeNote { color: var(--text-muted); cursor: default; }
+.fileTreeNote:hover { background: none; }
+.phoneUI .fileTreeRow { min-height: 44px; }
+.phoneUI .fileTreeChevron { width: 44px; height: 44px; }

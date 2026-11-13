@@ -20,9 +20,10 @@ The plan is [research/file-explorer.md](../research/file-explorer.md)
 `marks.py` the folder tree as the rules read it, `filing.py` the op rule,
 `ignore_rules.py` the `.gammaignore` matcher and writer, `selection.py`
 the tracking dialog's tree, preview and file, `takeover.py` the vaults
-from before step 1), `gamma/folder_links.py` (which vaults are work
+from before step 1, `paths.py` a file's path both ways, `file_search.py`
+quick open's rule for files), `gamma/folder_links.py` (which vaults are work
 folders; making, saving, cancelling and removing one), `gamma/db.py`
-(`BLOCK_HOT_COLUMNS`, `SQL_IN_LISTING`, `BLOCK_HOT_INDEXES`,
+(`BLOCK_HOT_COLUMNS`, `SQL_IN_LISTING`, `SQL_FILE_NAME`, `BLOCK_HOT_INDEXES`,
 `folder_links.library`), migration step 53, and on the client
 `frontend/src/documents/library.js` and `frontend/src/explorer/`. Tests:
 `backend/tests/test_work_folders_library.py` and
@@ -33,15 +34,21 @@ and `workFolders.test.mjs` read too; the op path's
 `test_library_routes.py`), the matcher's (`test_ignore_rules.py`, held to
 git where git is on PATH), the round's (`test_work_folder_rounds.py`,
 `test_work_folder_takeover.py`), the dialog's routes
-(`test_track_routes.py`), the client's `knownPages.test.mjs` and
-`trackSelection.test.mjs`, the scale check (`test_work_folder_scale.py`,
+(`test_track_routes.py`), the paths' and the files' reads
+(`test_work_folder_paths.py` over `tests/shared/workpaths.json`, which
+`workPaths.test.mjs` reads too, and `test_work_folder_files.py`), the
+client's `knownPages.test.mjs`, `trackSelection.test.mjs` and the Files
+window's (`fileTree.test.mjs`, `directoryRows.test.mjs`,
+`useFilesWindow.test.mjs`, `fileSearch.test.mjs`), the scale check (`test_work_folder_scale.py`,
 timing tests that run with `-m perf`) and the browser suite's
 `work-folders` group (`frontend/tests/e2e/scenarios/workFolders.mjs`) and
 its `viewers` group (`scenarios/viewers.mjs`: a work folder of eight
 formats, each file opened in its pane, a region's comment reaching the
-feedback document), and its `text-search` group
+feedback document), its `text-search` group
 (`scenarios/textSearch.mjs`: a work folder's `.tex` files found by
-search, cited by the chat and read over MCP by their lines). The search
+search, cited by the chat and read over MCP by their lines) and its
+`explorer` group (`scenarios/explorer.mjs`: the Files window, quick open's
+files, a file's crumbs, links by path). The search
 index at a work folder's scale is `test_search_scale.py` (`-m perf`).
 
 The words used here:
@@ -159,7 +166,7 @@ step that adds them leaves the workspace format as it is:
   NULL (a folder row, a library page, and an empty or non-text value).
 - `first_folder`: `properties.folders[0]`, a file's directory.
 
-Three partial indexes:
+Four partial indexes:
 
 - `idx_ub_listing` on `(parent_id, position)` where `parent_id = 'root'`
   and `SQL_IN_LISTING`: the library listing in its order. `parent_id`
@@ -170,11 +177,21 @@ Three partial indexes:
 - `idx_ub_work_folder` on `work_folder` where it is not NULL: a work
   folder's files, those in Recently deleted included (a stamp stays on a
   trashed page), for the takeover, `release` and the removal's counts.
+- `idx_ub_file_name` on `(SQL_FILE_NAME, first_folder, id)` where
+  `parent_id = 'root'` and `work_folder IS NOT NULL`: a file by its name
+  ("Files by name" below, and a path's leaf named exactly), covering, so a
+  search reads no table row. `db.SQL_FILE_NAME` is
+  `COALESCE(json_extract(properties, '$.file_name'), content)`: the file's
+  name, or the title of a note made in Gamma that its vault has not named
+  yet. The planner never takes it unaided: its readers name it.
 
 SQLite uses a partial index only for a query that repeats its condition,
-so the condition is one string: `db.SQL_IN_LISTING`, re-exported by
+and an expression index only for one that names its expression as
+written, so each is one string: `db.SQL_IN_LISTING`, re-exported by
 `work_folders.library` (`db.py` cannot import the package, which imports
-it). `normalize.block_columns` drops every index whose statement names a
+it), and `db.SQL_FILE_NAME`. The fourth index is in `BLOCK_HOT_INDEXES`,
+so `PAGES_SCHEMA` makes it when an older workspace opens and no migration
+step adds it. `normalize.block_columns` drops every index whose statement names a
 stale column anywhere, its condition included, and after the column makes
 the hot ones again, and any other it dropped from its own statement.
 
@@ -183,14 +200,19 @@ the hot ones again, and any other it dropped from its own statement.
 A file's path in its work folder is the names of its directories below W
 and its `file_name`, joined with `/`, read off the folder tree and the
 stamps with no disk at hand. `work_folders/paths.py` holds the pair:
-`page_path(tree, props, *, title)` gives a page's path (a page
+`page_path(tree, props, *, title, shared)` gives a page's path (a page
 without `file_name`, a note not yet named by its vault, its title; `""`
-for a page in no work folder; `dir_path(tree, folder, W)` a directory's,
-which feedback's scopes name), and `page_at_path(conn, tree, W, path)` the
+for a page in no work folder, and for one whose `folders[0]` is not in its
+W; for a folder share of a directory below W, `shared`, measured from that
+directory's parent, `path_top`, so a share is told no folder above its
+own; `dir_path(tree, folder, W)` a directory's, which feedback's scopes and
+a note's links name), and `page_at_path(conn, tree, W, path)` the
 live pages at a path: split on `/` and `\` (empty segments and `.`
 dropped), W's directories descended by name through the tree, the leaf a
-file's `file_name` among the pages filed in that directory (one query on
-`idx_ub_dir`), else a note page by its title with a `.md` dropped, else, for
+file's `file_name` among the pages filed in that directory (exactly: one
+seek of `idx_ub_file_name`; else, ignoring case, one read of the
+directory's rows on `idx_ub_dir`), else a note page by its title with a
+`.md` dropped, else, for
 a leaf without an extension, the leaf with `.tex`, then `.bib` (LaTeX's
 `\input`, `\include` and `\bibliography` name files without one, and the
 chat's outline prints them as written). Several pages (twin directories,
@@ -198,17 +220,105 @@ twin titles) are all answered, for the caller to refuse naming their ids.
 `work_of_path(conn, tree, path)` is `(W, the rest)` when the path's first
 segment names a work folder.
 
+`page_at_href(conn, tree, W, base_dir, href, *, allows)` is a note's link
+as it wrote it, relative to the note's directory `base_dir` (`dir_path`'s
+spelling, `""` for W): a `#…` or `?…` suffix dropped, `%20` read, then
+tried through `page_at_path` relative to the note's directory, then from
+W's top (the vault's order, `markdown_zip_links.resolve_path`), a
+candidate that climbs above W skipped, and one whose pages `allows` (a
+share's reach) refuses all of tried as if it named nothing, so what is out
+of reach changes no answer. The base is the note's directory, never its path: a note
+made in Gamma has no `file_name` until its vault names it (in a folder that
+does not pull, never), and its path is then its title, whose directory
+would be W's top. A link with a scheme (a one-letter one too, so
+`C:/paper/main.tex`: the vault's link reader's `_SCHEME_RE`), or starting
+with `/`, `#` or `?`, or blank, read with the spaces around it dropped,
+names nothing (`is_relative_href`; the client's twin is `isRelativeHref`
+in `explorer/workPaths.js`). There is no search by the bare name: a typed
+path names a place, and the vault's rewrite took the basename case when it
+pulled the note. `GET /api/folders/{id}/at` answers it, for the note
+editor's path links ([api.md](api.md) "Folders and labels"): the client
+asks with the note's own directory as the folder (the server reads its
+path from the tree, so a folder share of that directory resolves it), and
+opens the first page answered (by path, then id), saying how many when
+the rule could not tell several apart. A block embedded from another
+note keeps its links plain (`PathLinkScope`): they are relative to that
+note.
+
+The crumbs (`fileCrumbs`, W first down to the directory) and the link
+predicate are pinned with these by one fixture,
+`tests/shared/workpaths.json`: its `cases` give a page's path, its
+directory (the server's) and its crumbs' chain (the client's: a note with
+no file yet, a file in the library too, a `folders[0]` outside its W), its
+`hrefs` the links that are relative and those that are not.
+
 **The name rule**, one for every name a person or a model types: exactly,
 else ignoring case by `blocks_store.named` (`lower()`, not `casefold()`:
 the web app and the extension compare paths with `toLowerCase()`, and
-"Straße" is not "STRASSE" to any of them). `work_folders_named(tree,
+"Straße" is not "STRASSE" to any of them), both sides NFC (a name stands
+as the disk gave it, NFD from a Mac, and a typed one is NFC, as the vault's
+link reader and the search fold them). `work_folders_named(tree,
 name_or_id)` applies it to the work folders' roots (an id is itself), and
 feedback's `work_folder_named` builds its 404 and 400 on it
 ([feedback.md](feedback.md)). The readers: the feedback document's file
 names (`file_path`, which prefers the vault's rows on the computer that
 holds them), the chat's `read_page(path=…)` and `list_pages`' `path=`, and
-the search's file hits ([api.md](api.md) "Search"). Tests:
-`backend/tests/test_work_folder_paths.py`.
+the search's file hits ([api.md](api.md) "Search"), quick open's file
+rows and the note editor's path links. Tests:
+`backend/tests/test_work_folder_paths.py`, `test_work_folder_files.py`.
+
+### Files by name
+
+Quick open's Files group asks `GET /api/files?q=…`
+([api.md](api.md) "Folders and labels"): the files of every work folder
+(or of a folder's subtree, or of what a folder share reaches) whose name
+or path the query names, best first, each with the code-point spans it
+matched. The rule is `work_folders/file_search.py`, its one statement; the
+client draws the rows in the order given and marks the spans given, and
+ranks nothing (so the rule has no shared fixture).
+
+- **Two shapes.** A query holding `/` or `\` is one path term, spaces and
+  all: its segments match the file's directories in order (each inside
+  one of the directory names, not necessarily adjacent; at a name's start
+  20 points, elsewhere 10), its leaf the file's name; `figures/` alone
+  lists every file below `figures`. Any other query is name terms, split
+  on whitespace, each matched in the file's name alone, never its
+  directories: `figures fig1` finds nothing, `figures/fig1` finds
+  `figures/fig1.pdf`, and a directory whose name holds a space is reached
+  only by a slash query (`old drafts/v1`). A folder whose name holds `/`
+  reads as two segments.
+- **Folding and points.** NFC, `lower()` (the name rule's, never
+  `casefold()`), and `-`, `_` and `.` read as a space: `fig 1` finds
+  `fig_1.pdf` (and `fig1.pdf` after it). A name term, and the leaf,
+  scores 100 at the name's start, 60 at a word's start, 30 elsewhere; name
+  terms add 200 when the whole query is the name, 40 when it starts it, 20
+  when it is in it. Ties go to the shorter name, the shallower directory,
+  the folded name, the id. No typo pass (a `LIKE` cannot carry one; the
+  title ranking keeps its own for pages). A name whose `lower()` is longer
+  than itself (`İ`) matches but reports no spans.
+- **The read.** One snapshot: the folder tree, then the candidates from
+  `idx_ub_file_name` alone (name, directory, id), the eight longest
+  maximal runs of ASCII letters and digits in the name terms and the leaf
+  a `SQL_FILE_NAME LIKE '%run%'` each (LIKE folds ASCII case, which is all
+  a run holds; a pasted paragraph would otherwise pass SQLite's expression
+  depth, and the ranker still tests every term), ranked in Python with
+  each directory's path read once, then the top rows by id. A query with
+  no such run (`图`) reads every file's name and ranks them all, the worst
+  case; the next keystroke of a Latin query brings a run. A query that
+  names nothing (blank, separators alone) answers no rows with 200, so a
+  keystroke never fails.
+- **A row** carries its `path`, its `dir` (the path's directory, which the
+  `match.path` spans index and the row draws under the name: a note not
+  named yet has its title as its path, and its directory only here) and
+  its spans. A folder share's rows measure both from the shared folder's
+  parent (`paths.path_top`), and its query is ranked against that, so no
+  folder above the share is named or matched.
+- Trashed files and pages of no work folder are never rows; a library
+  file in a work folder is a row here by its file name and a page in the
+  title ranking (the client keeps one row, the page's). While a query is
+  asked, the rows of the one before stay only when it extends it; the
+  palette's selection stays on its row (by key) when the files land above
+  it.
 
 ### Migration step 53
 
@@ -649,6 +759,87 @@ Modified and Comments (its open threads). The sort is the list's own
 its rows itself; what a row does (select, open, its menu, its pin, a
 rename, a drag) is the library's, which App hands in.
 
+## The Files window
+
+A dock window, Files, shows the library's folders and the work folders'
+files as a tree beside the open page (`explorer/FilesWindow.jsx`, a lazy
+chunk with `FileTree.jsx`, `fileTree.js` and `filesWindow.css`; App
+imports none of them). It is a view of the folders, which stay the model
+with the labels: no label nodes, no pages filed nowhere, no filter box
+(quick open is the search, "Files by name" above). View → Files and the
+command `app.toggleFiles` (unbound) show it; it starts closed, and its
+showing and its place are this browser's, not a page's (a page's saved
+layout keeps it where it is, `layoutKeeping`). On a desktop, shown with no
+slot holding it, it goes first on the left. On a phone it is the overlay
+`phonePanel === "files"`, from the More sheet's Files row beside an open
+page (the listing is the explorer on the home view): rows 44 px tall, a tap
+on a file opens it and closes the overlay, a held finger opens a row's
+menu. A share view has none.
+
+- **The state** is two explorer hooks, so App adds no counted hook
+  ([frontend-refactor.md](frontend-refactor.md) "New state"):
+  `useFilesWindow.js`, called before App's page lookups (whether it is
+  shown; the open folders, kept per account and workspace, at most 200;
+  the row the keys are on; the row selected; `known`, the file rows it
+  selected, opened or gave a menu, at most 20, which App merges into
+  `knownBlocks`, patched and dropped with App's other rows on a rename or
+  a delete; the keys, the selection and `known` are the account's and the
+  workspace's, dropped with a change of either or a sign-out), and
+  `useFilesTree.js`, called after them (the reads, the first slot, the
+  reveal).
+- **The rows** (`fileTree.js` `treeRows`): the library's top folders in
+  tree order; a library folder's subfolders in tree order, then its pages
+  by title, 200 at a time (a page filed in two folders under each); a work
+  folder's directories by name (numeric), then the files of each open one
+  in the server's order (`GET /api/folders/{id}/pages?sort=name`, 200 a
+  read); a "Show {n} more files" row while there are more, `n` what one
+  press adds (at most 200, so a 10,000-file directory says 200), a note
+  row while it reads, could not read (Try again) or holds nothing. A
+  folder counts its library pages, or in a work folder the files below it
+  (the listing's `work_counts`). A folder share's tree keeps to the share.
+- **The reads** (`useDirectoryRows.js` over `directoryRows.js`): only while
+  the window shows, and only of the open directories the tree draws (every
+  folder above them open). A directory is read when it first opens, then
+  again from the top (every row it holds, 500 a request, so a file past
+  row 500 stays) only when the listing's count of its files changed or the
+  listing's `work_changes` name a write to one of its files after the read
+  (the read's `seq`; a file renamed on disk keeps the count, and the write
+  to its page shows it), never because the listing was read again. A
+  directory closed keeps its rows. The home list view's open directory is
+  read twice while both show: two sorts, two page sizes.
+- **The reveal**: the open page, once per page, when its row is first known
+  and the window shows (a page opened while it is hidden is revealed when
+  it shows): its folders opened (none closed), its directory paged until
+  it holds the row (at most 500 rows), a library folder shown down to it
+  by title, the row selected and scrolled into view; a row not drawn once
+  that is done (past 500 rows) is let go, never scrolled to later.
+- **A press**: on a folder opens or closes it; on a file selects and opens
+  it, one press for a mouse and a finger (the list view selects on a click
+  and opens on a second). The tree's selection is its own, not the home
+  selection F2 and Delete act on; a row's menu, by a right-click, a held
+  finger, its "⋯" or the keys, is the library's menu for that row, the
+  home selection let go (a file's the page menu for that one page, a
+  folder's the folder menu for that one folder); a drag of a row carries
+  that page alone. A library folder takes a dropped page as the library
+  does; a directory takes none.
+- **The keys**, a WAI-ARIA tree ([ui-design.md](ui-design.md) "Keyboard
+  focus"): one row in the tab order (the row the keys are on, else the
+  selected one, else the first); ↑ and ↓ move a row, Home and End to the
+  ends; → opens a closed folder or moves into an open one, ← closes an open
+  folder or moves to the folder the row is in; Enter opens a file, opens
+  or closes a folder, and on a "Show more" row reads more; Space selects;
+  Shift+F10 and the menu key open the row's menu.
+  No typeahead. *Collapse all* in the header closes every folder. When
+  the row the keys and the focus are on goes (a "Show more" row read, a
+  "Reading…" note replaced), the row now in its place takes both.
+
+Tests: `frontend/tests/fileTree.test.mjs` (the rows, the keys, the tab
+stop), `directoryRows.test.mjs` (what is read when), `useFilesWindow.test.mjs`
+(`layoutKeeping`), `workPaths.test.mjs`, and the browser suite's
+`explorer` group (`frontend/tests/e2e/scenarios/explorer.mjs`: the window
+beside a page, a library folder in it, the crumbs, links by path, quick
+open among 20,000 seeded files, the phone's overlay).
+
 ## Pages the listing does not carry
 
 The listing leaves out the files not in the library, so the client reads
@@ -660,9 +851,12 @@ listing. App merges them with the listing's rows into `knownBlocks`
 the page list, the tabs' icons, the chat and the citation pills read. A
 row's `_listed` (by its top; a top the client does not know counts as
 listed) keeps the library's own lists, the label counts and the pickers'
-default lists to listed pages, the tabs' and the recents' aside
+default lists to listed pages, the tabs', the recents' and the pins' aside
 (`pickerPages`), so a file stays in Recently viewed, Open tabs and the
-Pinned strip, and the chat's pickers offer it.
+Pinned strip, and the chat's pickers and quick open offer it. The Files
+window adds the few file rows it selected, opened or gave a menu
+(`files.known`, at most 20), so their tabs and menus know them at once;
+the many rows of its open directories stay its own.
 
 ## The round in a work folder
 
@@ -845,7 +1039,8 @@ its check.
 
 - `GET /api/blocks/root/children` for a member: `SQL_IN_LISTING`, a page
   dropped whose top is not among the rows; its answer carries
-  `work_counts` (`{directory folder: files}`). A folder share lists the
+  `work_counts` (`{directory folder: files}`) and `work_changes` (the
+  directories written lately: one seek of the change log's seq index). A folder share lists the
   pages it reaches, a work folder's files among them. `?within=<folder>`
   lists a folder's pages whatever their flag (the HTTP vault reads it).
 - `block_search(q="")`, the `[[` popup's recent pages (`IN_LISTED`).
@@ -894,6 +1089,17 @@ folder exports, the bibliography, Obsidian and the Markdown zips, a folder
 manifest, `GET /api/folders/{id}/pages` (a work folder's directory, paged;
 no row names a parent, a file being inside no page).
 
+**A work folder's files only** (`work_folder IS NOT NULL`): `GET
+/api/files`, quick open's files by name or path, on `idx_ub_file_name`;
+`GET /api/folders/{id}/at`, a path or a note's link resolved in one work
+folder (`paths.page_at_href`); `paths.page_at_path` for the chat's
+`read_page(path=…)`. Their scale is held by
+`backend/tests/test_work_folder_scale.py` over 20,000 files that
+`backend/tests/seed_work_folder.py` inserts as their vault would leave
+the rows (every third a note, the rest listed binaries, which no indexer
+and no reader of bytes reaches); the browser suite seeds its 20,000 the
+same way, the script run from `backend/` with `GAMMA_DATA_DIR` set.
+
 **Writes as a person** go through the op rule: `POST /blocks` at the root,
 `POST /api/pages`, `POST /blocks/by-doc` (403 `locked` for a new page in a
 work folder), the AI's `move_page`, `rename_page`, `delete_page`,
@@ -909,8 +1115,23 @@ into a work folder or one of its directories (`import_review.destination`).
 
 ## Known gaps
 
-- Quick open finds a file only from the open tabs and the recents until
-  the Files window (step 5); a typed query finds files through search.
+- The Files window reveals the open file only within the first 500 rows of
+  its directory, by name; past them the directory stays open with its
+  "Show more" row and the file unrevealed (a read around an id would be the
+  next step).
+- The tree has no typeahead, and a path link to a directory (a trailing
+  `/`) opens no directory: it says no tracked file is there.
+- A link by path in a block embedded from another note stays a plain link
+  (it is relative to that note, which the open note's context does not
+  describe).
+- The search's file hits (step 4's `search/hits.py`, for members and the
+  chat) give a path from W's top; only `GET /api/files` and
+  `GET /api/folders/{id}/at` measure a folder share's paths from the
+  shared folder.
+- Quick open's file search reads every file's name for a query with no
+  ASCII letter or digit in its name terms or leaf (`图`, or a directory
+  alone, `figures/`): about 50 ms at 20,000 files, inside its budget, with
+  no prefilter by the directories a path's segments name.
 - The search panel's qualifiers the listing answers (`year:`, `author:`,
   `is:pinned`, a negated or several-folder `folder:` …) travel as the
   listing's page ids, so one of them beside a work folder's chip leaves
@@ -920,9 +1141,12 @@ into a work folder or one of its directories (`import_review.destination`).
 - Label views list library pages only.
 - A vault of another server is never a work folder in step 1.
 - A deselected file's last edits are pushed until the next whole round.
-- A note's link to a file of another format names its stored address
-  (`/api/uploads/<hash><ext>`), a chip, never a mention of the file's page;
-  links by path are step 5's. The chip's *Add to library* stores the
+- A note's link to a file stays its stored address
+  (`/api/uploads/<hash><ext>`), a chip, where the vault does not make it
+  the file's mention ([synced vaults](synced_vaults.md) "Links and
+  highlights"): a picture's embed, a paired note's link to its own PDF, a
+  file new in the same round (until the note is read again) and a kept
+  folder's links. That chip's *Add to library* stores the
   bytes it names and makes a library page of them, a page apart from the
   file's own (`POST /api/pages/by-file`), rather than adding the file's
   page. A picture replaced on disk leaves a note's

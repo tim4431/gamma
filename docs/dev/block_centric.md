@@ -131,7 +131,8 @@ the shapes weighed, a zoom-in on a subtree among them, are in
 [research/sub-pages.md](../research/sub-pages.md)). `/page` makes one.
 The flat library with folders and labels stays the navigation model: a
 sub-page is reached by a link, its parent's Pages inside panel or its own
-crumbs, never a page tree in a sidebar. A Logseq-style zoom-in on a
+crumbs. The Files window is a view of the folders, which stay the model
+with the labels: it lists a folder's top pages, not a page tree. A Logseq-style zoom-in on a
 block's subtree is another thing and is still open (below).
 
 ## Where the code still says "page = PDF" (inventory, 2026-09-02)
@@ -494,6 +495,7 @@ and trash entry ([home_library.md](home_library.md#sub-pages)).
 
 ## Non-goals (for now)
 - No page-type enum — describe pages by what they carry.
-- No page-tree sidebar replacing folders; the library stays the
-  navigation surface.
+- No page tree replacing folders: the Files window
+  ([home_library.md](home_library.md) "Work folders") is a view of the
+  folders, which stay the model with the labels.
 - No rewrite of the viewer; it remains the PDF attachment's renderer.

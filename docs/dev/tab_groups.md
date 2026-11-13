@@ -27,7 +27,7 @@ the page fills the work area as it always did.
   kept in another shape (stacked, or more than two groups) is drawn as it
   was kept; nothing makes one any more.
 - **What splits.** The groups share the page's place, the middle of the
-  work area. The docked windows (Notes, Chat, Comments) stand around the
+  work area. The docked windows (Notes, Chat, Comments, Files) stand around the
   groups as they stand around the page with one group, at their own
   sizes, as VS Code's side bars stand outside its editor grid.
 - **The live group.** One group is live: its active tab is the page App

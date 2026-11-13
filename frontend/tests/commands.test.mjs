@@ -136,6 +136,23 @@ test("the translation commands apply where the translate button does, and wait f
   assert.deepEqual(calls, ["toggle", "page", "document"]);
 });
 
+test("the view toggles are unbound palette rows; the Files window is a member's, wherever the page is", () => {
+  const ids = ["app.toggleChat", "app.toggleComments", "app.togglePdf", "app.toggleNotes", "app.toggleFiles"];
+  for (const id of ids) {
+    const cmd = commandById(id);
+    assert.equal(cmd.keys, null, `${id} starts unbound`);
+    assert.equal(cmd.group, "View", id);
+    assert.notEqual(cmd.palette, false, `${id} is a palette row`);
+  }
+  const files = commandById("app.toggleFiles");
+  assert.equal(files.when({ shareMode: true }), false, "a share view's listing is its explorer");
+  assert.equal(files.when({ shareMode: false, homeMode: true }), true, "on the home view");
+  assert.equal(files.when({ shareMode: false, hasPage: true }), true, "beside a page");
+  let toggled = 0;
+  files.run({ toggleFiles: () => { toggled += 1; } });
+  assert.equal(toggled, 1);
+});
+
 test("fixedKeys follows the Enter preference", () => {
   assert.deepEqual(fixedKeys(false)[0][0], ["Shift-Enter"]);
   assert.deepEqual(fixedKeys(true)[0][0], ["Enter"]);

@@ -282,7 +282,8 @@ def test_a_stale_column_takes_every_index_that_names_it_and_gets_them_back():
     """``normalize.block_columns`` over a ``work_folder`` of an older
     definition: the indexes that name it anywhere, in their condition or
     after another column (``idx_ub_listing``, ``idx_ub_dir``,
-    ``idx_ub_work_folder``, and one of no hot list), are dropped before the
+    ``idx_ub_work_folder``, ``idx_ub_file_name``, and one of no hot list),
+    are dropped before the
     column and made again after it; a rerun changes nothing."""
     older = "work_folder TEXT GENERATED ALWAYS AS (json_extract(properties, '$.work_folder')) VIRTUAL"
     table = next(s for s in PAGES_SCHEMA if s.startswith("CREATE TABLE IF NOT EXISTS unified_blocks"))
@@ -298,7 +299,8 @@ def test_a_stale_column_takes_every_index_that_names_it_and_gets_them_back():
     assert block_columns(conn)
     assert conn.execute("SELECT work_folder, first_folder FROM unified_blocks").fetchone() == (None, "L1")
     indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
-    assert {"idx_ub_listing", "idx_ub_dir", "idx_ub_work_folder", "idx_ub_deleted_with", "idx_other"} <= indexes
+    assert {"idx_ub_listing", "idx_ub_dir", "idx_ub_work_folder", "idx_ub_file_name", "idx_ub_deleted_with",
+            "idx_other"} <= indexes
     ddl = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0]
     assert BLOCK_HOT_COLUMNS["work_folder"] in ddl and older not in ddl
     assert not block_columns(conn)

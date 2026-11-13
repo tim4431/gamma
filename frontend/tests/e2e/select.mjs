@@ -64,6 +64,7 @@ export const GROUPS = [
   { id: "local-agents", files: ["localAgents.mjs"], s: 40 },
   { id: "viewers", files: ["viewers.mjs"], s: 60 },
   { id: "text-search", files: ["textSearch.mjs"], s: 26 },
+  { id: "explorer", files: ["explorer.mjs"], s: 70 },
   { id: "mirror", files: ["mirror.mjs"], s: 7 },
   { id: "ink-zoom", files: ["inkZoom.mjs"], s: 7 },
   { id: "trash", files: ["trash.mjs"], s: 5 },
@@ -173,12 +174,15 @@ export const RULES = [
   // (a text box's editor and read mode are the notes')
   // the "N pages inside" panel and the crumbs over a sub-page's title (/page makes one in notes)
   ["frontend/src/editor/SubPagesPanel.jsx", ["sub-pages", "notes-pdf-share"]],
-  ["frontend/src/editor/PageCrumbs.jsx", ["sub-pages", "notes-pdf-share"]],
+  ["frontend/src/editor/PageCrumbs.jsx", ["sub-pages", "notes-pdf-share", "explorer"]],
   // the @ menu and its chips (the reminders are App's, under app/**)
   ["frontend/src/editor/mentions.js", ["note-mentions", "notes-pdf-share"]],
   ["frontend/src/editor/MentionMenu.jsx", ["note-mentions", "notes-pdf-share", "inbox"]],
   // the @ menu's state and keys, a note row's and a comment field's
   ["frontend/src/editor/useMentionMenu.js", ["note-mentions", "notes-pdf-share", "comments", "inbox"]],
+  // a note's link by path, opened through the work folder it is in (the e2e explorer group)
+  ["frontend/src/editor/PathLink.jsx", ["sub-pages", "notes-pdf-share", "explorer"]],
+  ["frontend/src/editor/pathLinkContext.js", ["sub-pages", "notes-pdf-share", "explorer"]],
   // (text-search: a note's line link is a pill)
   ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search"]],
   // ink-zoom: a selection's Transcribe reaches the chat's request; text-search: a reply's line link
@@ -207,9 +211,14 @@ export const RULES = [
   ["frontend/src/explorer/knownPages.js", ALL],
   // the work-folder rules every page and folder menu, drop and the open page's title ask
   ["frontend/src/explorer/workFolders.js", ["work-folders", "vaults", "folders", "sub-pages", "trash", "files", "quick-open"]],
-  // a work folder's list view and the tracking dialog
-  ["frontend/src/explorer/**", ["work-folders", "vaults"]],
-  ["frontend/src/library/QuickOpen.jsx", ["quick-open", "sub-pages"]],
+  // quick open's Files group: the server's rows and marks
+  ["frontend/src/explorer/fileSearch.js", ["quick-open", "sub-pages", "explorer"]],
+  ["frontend/src/explorer/useFileSearch.js", ["quick-open", "sub-pages", "explorer"]],
+  // a file's path, its crumbs and a note's relative link (BlockTree's renderer asks isRelativeHref)
+  ["frontend/src/explorer/workPaths.js", ["work-folders", "vaults", "explorer", "notes-pdf-share", "sub-pages"]],
+  // a work folder's list view and the tracking dialog; the Files window, its owner and its rows
+  ["frontend/src/explorer/**", ["work-folders", "vaults", "explorer"]],
+  ["frontend/src/library/QuickOpen.jsx", ["quick-open", "sub-pages", "explorer"]],
   ["frontend/src/library/RecentlyDeleted.jsx", ["trash", "sub-pages"]],
   // the library's bulk actions: delete (a folder's pages too), file and label, move into a page, duplicate
   ["frontend/src/library/pageBatch.js", ["trash", "folders", "quick-open", "sub-pages", "files"]],
@@ -245,6 +254,8 @@ export const RULES = [
   // the fake Zotero the Zotero link scenario's second Gamma talks to, and the library it serves
   ["backend/tests/zotero_fake.py", ["zotero-link"]],
   ["backend/tests/zotero_fixtures.py", ["zotero-link"]],
+  // the 20,000 files the explorer group's quick open searches
+  ["backend/tests/seed_work_folder.py", ["explorer"]],
   // the stand-ins for Codex and Claude Code the local agents scenario's server starts
   ["backend/tests/fake_agents/**", ["local-agents"]],
   ["backend/tests/**", []],
@@ -271,7 +282,7 @@ export const RULES = [
   ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback", "local-agents"]],
   ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders", "local-agents"]],
   ["backend/gamma/linked_files.py", ["vaults", "work-folders", "feedback"]],
-  ["backend/gamma/vault/**", ["vaults", "work-folders", "feedback", "viewers"]],
+  ["backend/gamma/vault/**", ["vaults", "work-folders", "feedback", "viewers", "explorer"]],
   // feedback on a work folder's files: the reader, the pictures, the SyncTeX map, the requests, the files and the routes
   // (viewers: a region of a picture and a thread on a picture's page as entries with their pictures)
   // (local-agents: a request claimed and worked by an agent on this computer, the document's `agent`)
@@ -282,10 +293,12 @@ export const RULES = [
   ["backend/gamma/local_agents/**", ["local-agents"]],
   ["backend/gamma/routers/local_agents.py", ["local-agents"]],
   ["backend/gamma/md_lens.py", ["vaults"]],
-  // a file's path in its work folder: the feedback entries' file, a search hit's path, read_page(path=…)
-  ["backend/gamma/work_folders/paths.py", ["work-folders", "vaults", "feedback", "text-search"]],
-  // work folders: the library rule, the op rule, .gammaignore, the takeover (docs/dev/work_folders.md)
-  ["backend/gamma/work_folders/**", ["work-folders", "vaults"]],
+  // a file's path in its work folder: the feedback entries' file, a search hit's path, read_page(path=…),
+  // quick open's file rows and a path link's file
+  ["backend/gamma/work_folders/paths.py", ["work-folders", "vaults", "feedback", "text-search", "explorer"]],
+  // work folders: the library rule, the op rule, .gammaignore, the takeover (docs/dev/work_folders.md);
+  // files by name (file_search.py)
+  ["backend/gamma/work_folders/**", ["work-folders", "vaults", "explorer"]],
   ["backend/gamma/folder_sync.py", []],
   ["backend/gamma/gamma_sync.py", []],
   // the clones' engine and the clock the Zotero link's rounds run on (sync_clock.py), its conflicts and log tables (sync_engine.py)
@@ -383,8 +396,9 @@ export const RULES = [
   ["backend/gamma/translate.py", ["translation", "notes-pdf-share"]],
   // the translated view's endpoint, and the services' keys Settings stores
   ["backend/gamma/routers/translate.py", ["settings", "notes-pdf-share", "translation"]],
-  // deleting a folder or a label (the trees' other writes are ops, ALL below)
-  ["backend/gamma/routers/folders.py", ["folders", "notes-pdf-share"]],
+  // deleting a folder or a label (the trees' other writes are ops, ALL below); a work folder's
+  // directory read, its files by name (GET /files) and a path resolved (GET /folders/{id}/at)
+  ["backend/gamma/routers/folders.py", ["folders", "notes-pdf-share", "work-folders", "explorer"]],
   // comments: their storage and API, and the hooks every block writer runs
   // (orphan, place and purge on deletes, moves and page purges; the copies
   // of a backup merge and an import; after_write feeds the inbox)

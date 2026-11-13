@@ -62,7 +62,7 @@ from ..ops import MAX_OPS, OpError, after_commit, after_commits, apply_batches, 
 from ..search import index as text_index
 from ..work_folders.library import work_folder_of
 from ..work_folders.marks import Tree, filing_targets
-from .blocks import SUMMARY_COLUMNS, op_refusal, page_preview, page_summary
+from .blocks import SUMMARY_COLUMNS, op_refusal, page_preview, page_summary, summaries
 from .imports import originals_gone
 
 router = APIRouter(prefix="/api", tags=["pages"])
@@ -272,7 +272,8 @@ def page_summaries(payload: SummariesLookup, request: Request):
     does not reach. The open tabs, the recents and the focused page
     ask this for the pages the listing does not carry (a
     work folder's files). Any member, or a share; 413 past
-    ``MAX_SUMMARIES``. A read, though a POST."""
+    ``MAX_SUMMARIES``. A read, though a POST (hosted.POST_READS); the
+    lookup is ``blocks.summaries``."""
     if len(payload.ids) > MAX_SUMMARIES:
         raise HTTPException(status_code=413, detail=f"at most {MAX_SUMMARIES} pages in one request")
     ids = [i for i in dict.fromkeys(payload.ids) if i]
@@ -280,9 +281,7 @@ def page_summaries(payload: SummariesLookup, request: Request):
     with connect_pages_db(resolve_ws(request)) as conn:
         if not conn.in_transaction:
             conn.execute("BEGIN")  # one read snapshot for the rows, their previews and parents
-        found = {r[0]: r for r in conn.execute(
-            f"SELECT {SUMMARY_COLUMNS} FROM unified_blocks WHERE parent_id = 'root' "
-            "AND id IN (SELECT value FROM json_each(?))", (json.dumps(ids),))}
+        found = summaries(conn, ids)
         if scope is not None:
             found = {i: r for i, r in found.items() if scope.allows_page(conn, i)}
         parents = page_parents(conn) if found else {}

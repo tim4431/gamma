@@ -71,7 +71,7 @@ try {
   marks.palette = mark();
   await page.keyboard.press('Control+p');
   const dialog = page.getByRole('dialog', { name: 'Open a page' });
-  await dialog.getByRole('textbox', { name: 'Search pages by title or label' }).waitFor();
+  await dialog.getByRole('textbox', { name: 'Search pages, files, folders and labels' }).waitFor();
   await beat(900);
   await page.keyboard.type('quantum comp', { delay: 90 });
   const row = dialog.locator('[role="option"][data-kind="label"]', { hasText: LABEL });

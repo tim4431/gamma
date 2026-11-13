@@ -297,6 +297,10 @@ import { useWorkFolderActions } from "../explorer/useWorkFolderActions.jsx";
 import FolderList from "../explorer/FolderList.jsx";
 import { useFolderRows, useWorkSort } from "../explorer/useFolderRows.js";
 import { useSummaries } from "../explorer/useSummaries.js";
+import { layoutKeeping, useFilesWindow } from "../explorer/useFilesWindow.js";
+import { useFilesTree } from "../explorer/useFilesTree.js";
+import { fileCrumbs } from "../explorer/workPaths.js";
+import { PathLinkContext } from "../editor/pathLinkContext.js";
 import FeedbackHost from "../feedback/FeedbackHost.jsx";
 import { openFeedback } from "../feedback/useFeedback.js";
 import { documentView, viewerOf } from "../documents/documentView.js";
@@ -351,13 +355,18 @@ const FileSourceDialog = lazySurface(() => import("../vault/FileSourceDialog"));
 const FolderPickerDialog = lazySurface(() => import("../vault/FolderPickerDialog"));
 // Choose files…, what a work folder tracks (explorer/TrackDialog.jsx), while open.
 const TrackDialog = lazySurface(() => import("../explorer/TrackDialog"));
+// The Files window (explorer/FilesWindow.jsx): the folders and the work
+// folders' files as a tree, with the View menu.
+const FilesWindow = lazySurface(() => import("../explorer/FilesWindow.jsx"));
 // What a header menu opens, fetched when the pointer or focus reaches its
 // button so nothing waits on the network after the click: the account menu
 // (Settings, Tours, Report a problem and, on a phone, the View rows) and the
 // View menu (Import/Export, the AI Chat toggle).
 const preloading = (...surfaces) => () => { for (const surface of surfaces) surface.preload(); };
 const preloadAccountMenu = preloading(SettingsDialog, GuideOverlay, ReportProblem, ImportDialog, ChatDock);
-const preloadViewMenu = preloading(ImportDialog, ChatDock, CommentsPanel);
+const preloadViewMenu = preloading(ImportDialog, ChatDock, CommentsPanel, FilesWindow);
+// The dock bar's grip anchor per window (guide/anchors.js).
+const GRIP_GUIDE = { notes: "notes.grip", chat: "chat.grip", comments: "comments.grip", files: "files.grip" };
 // Why a native app's opened files went to another workspace, kept across
 // the reload the switch is (takeOpenedFiles).
 const OPENED_NOTE = "gamma-opened-note";
@@ -1362,9 +1371,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     };
   }
 
-  // A Pages inside row's menu (editor/SubPagesPanel.jsx): the same page
-  // menu, for that one page, the library's selection let go (the panel
-  // lists none of it). `panel` marks where it opened: its Open and the
+  // A Pages inside row's menu (editor/SubPagesPanel.jsx), and a file row's
+  // in the Files window: the same page menu, for that one page, the
+  // library's selection let go (the panel and the tree have their own, and
+  // list none of it). `panel` marks where it opened: its Open and the
   // rows that open the page first keep Back to the page the panel is on,
   // and it has no Rename, which is the listing's.
   function openSubPageMenu(id, name) {
@@ -1373,6 +1383,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       clearSelection();
       setHomeMenu({ kind: "page", id, name, x: e.clientX, y: e.clientY, el: e.currentTarget, panel: true });
     };
+  }
+  // A folder row's menu in the Files window, and a drag of a row there: for
+  // that one folder or page, the library's selection let go as above, so
+  // the menu and the drop act on the row alone.
+  function openTreeFolderMenu(id) {
+    return (e) => {
+      clearSelection();
+      openTagMenu("folder", id)(e);
+    };
+  }
+  function startTreeDrag(e, id) {
+    if (selectedPages.size || selectedFolders.size) clearSelection();
+    startPageDrag(e, id);
   }
 
   // Double-click / Enter / context-menu "Open": the old single-click behavior.
@@ -2979,11 +3002,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     ids: [...openTabs.map((tab) => tab.id), ...recentViews.map((r) => r.id), focusedBlockId],
     known: (id) => listingIds.has(id), version: libTree, enabled: !shareMode && !!authUser?.user,
   });
-  const knownBlocks = useMemo(() => mergeKnown(homeBlocks, [...folderRows.rows, ...summaries.rows]),
-    [homeBlocks, folderRows.rows, summaries.rows]);
-  // A rename or a delete made here, on every row the app holds of the page.
-  const patchKnown = (id, fields) => { folderRows.patch(id, fields); summaries.patch(id, fields); };
-  const dropKnown = (ids) => { folderRows.drop(ids); summaries.drop(ids); };
+  // The Files window's state (explorer/useFilesWindow.js), and the few file
+  // rows it hands over: the selected, opened and menu'd ones.
+  const files = useFilesWindow({
+    scopeKey: authUser?.user && wsId ? `${authUser.user}@${wsId}` : "", libTree, enabled: !shareMode && !!authUser?.user,
+  });
+  const knownBlocks = useMemo(() => mergeKnown(homeBlocks, [...folderRows.rows, ...summaries.rows, ...files.known]),
+    [homeBlocks, folderRows.rows, summaries.rows, files.known]);
+  // A rename or a delete made here, on every row the app holds of the page,
+  // the Files window's too (filesTree, made further down: these run on an
+  // action, never while rendering).
+  const patchKnown = (id, fields) => {
+    folderRows.patch(id, fields); summaries.patch(id, fields); files.patch(id, fields); filesTree.dirs.patch(id, fields);
+  };
+  const dropKnown = (ids) => { folderRows.drop(ids); summaries.drop(ids); files.forget(ids); filesTree.dirs.drop(ids); };
   // The format of the document each known page carries ("" for none), for
   // a tab's kind icon (tabs store only id, title and pinned).
   const tabKinds = useMemo(() => new Map(knownBlocks.map((b) => [b.id, pageDocument(b)?.format || ""])), [knownBlocks]);
@@ -4459,7 +4491,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           .filter((b) => !trashingRef.current.has(b.id)) // a delete batch still on its way (trashPages)
           .map((b) => ({ ...b, _parentPage: b.parent || "" }));
         // with how many files each work folder's directory holds (folderMeta)
-        libTreeRef.current = { ...libraryTree(data), workCounts: data.work_counts || {} };
+        // and which were written lately (the Files window's reads again)
+        libTreeRef.current = { ...libraryTree(data), workCounts: data.work_counts || {}, workChanges: data.work_changes || null };
         if (still) for (const read of [children, libTreeRef.current]) homeReadRef.current.add(read);
         setHomeBlocks(children);
         setLibTree(libTreeRef.current);
@@ -4548,9 +4581,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A closed window forgets its fold: shown again, from wherever, it comes
   // back whole rather than as a bare header bar.
   useEffect(() => {
-    setCollapsedWins((prev) => ((chatHidden && prev.chat) || (!notesVisible && prev.notes) || (commentsHidden && prev.comments)
-      ? { ...prev, chat: prev.chat && !chatHidden, notes: prev.notes && notesVisible, comments: prev.comments && !commentsHidden } : prev));
-  }, [chatHidden, notesVisible, commentsHidden]);
+    const hidden = { chat: chatHidden, notes: !notesVisible, comments: commentsHidden, files: files.hidden };
+    setCollapsedWins((prev) => {
+      const forget = Object.keys(hidden).filter((id) => hidden[id] && prev[id]);
+      return forget.length ? { ...prev, ...Object.fromEntries(forget.map((id) => [id, false])) } : prev;
+    });
+  }, [chatHidden, notesVisible, commentsHidden, files.hidden]);
   // Phone layout: which overlay panel covers the center ('notes' | 'chat' |
   // null = the main view). Reset on navigation so a new page opens on its content.
   const isPhone = useIsPhone();
@@ -4595,6 +4631,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // no button to hover.
   useEffect(() => {
     if (!isPhone) ChatDock.preload();
+    if (!isPhone && !files.hidden && !shareMode) FilesWindow.preload();
     if (initialUrl || initialShare || initialBlockId) preloadPdfEngine();
     if (initialThreadId) ThreadPopover.preload();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -6896,8 +6933,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const sideBySide = !isPhone && !isSingle(tabLayoutRef.current);
       if (sideBySide) setPdfHidden(!!savedUi?.pdfHidden);
       else if (savedUi?.layout) {
-        setLayout(savedUi.layout);
-        setCollapsedWins(savedUi.collapsed || {});
+        // The Files window's place and fold are the browser's, not the page's.
+        setLayout((cur) => layoutKeeping(savedUi.layout, cur, "files"));
+        setCollapsedWins((cur) => ({ ...savedUi.collapsed, files: !!cur.files }));
         setPdfHidden(!!savedUi.pdfHidden);
         setChatHidden(!!savedUi.chatHidden);
         if (savedUi.notesVisible != null) setNotesVisible(savedUi.notesVisible);
@@ -9098,6 +9136,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (!notesVisible) guideEvents.emit("window.shown", { id: "notes" });
       setNotesVisible((v) => !v);
     },
+    // The Files window; on a phone, its panel over the page.
+    toggleFiles: () => {
+      if (isPhone) { setPhonePanel((p) => (p === "files" ? null : "files")); return; }
+      if (files.hidden) guideEvents.emit("window.shown", { id: "files" });
+      files.toggle();
+    },
     openSettings: (pane) => { setOpenPopover(null); setSettingsOpen((cur) => pane || cur || "account"); },
     exportAs,
     downloadPdf: () => exportRawPdf(),
@@ -9519,13 +9563,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // (explorer/FolderList.jsx), and so they do a row read beside the listing
   // (a tab's summary): the library draws what its last read carried, none
   // when that read failed. Tabs, recents and the pinned strip keep every
-  // page; the pickers the listed ones and those of the tabs and recents
-  // (pickerPages).
+  // page; the pickers the listed ones and those of the tabs, recents and
+  // pins (pickerPages).
   const homeIds = useMemo(() => new Set(homeBlocks.map((b) => b.id)), [homeBlocks]);
   const libraryPages = useMemo(() => pageBlocks.filter((b) => b._listed && !b._parentPage && homeIds.has(b.id)), [pageBlocks, homeIds]);
   const pickerPages = useMemo(() => {
     const near = new Set([...openTabs.map((tab) => tab.id), ...recentViews.map((r) => r.id)]);
-    return knownBlocks.filter((b) => near.has(b.id) || pagesById.get(b.id)?._listed !== false);
+    return knownBlocks.filter((b) => near.has(b.id) || pagesById.get(b.id)?._pinned || pagesById.get(b.id)?._listed !== false);
   }, [knownBlocks, pagesById, openTabs, recentViews]);
   // What may be done with work folders' files and folders, the menus' rows
   // for them and Add to library, Remove from library and Save a copy
@@ -9541,6 +9585,38 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     },
   });
   const { work: focusedFile, rules: openRules, titleLocked, inLibrary: openInLibrary } = work.open;
+  // The Files window's reads, its first slot and the open page's reveal
+  // (explorer/useFilesTree.js), only while it is shown: on a phone as the
+  // overlay over the page.
+  const filesOn = !shareMode && !!authUser?.user;
+  const filesShown = filesOn && (isPhone ? phonePanel === "files" : !files.hidden);
+  const filesTree = useFilesTree({
+    files, shown: filesShown, libTree, workTree, focusedBlockId, focusedRow: pagesById.get(focusedBlockId), layout, moveWindow, isPhone,
+  });
+  // A link by path in a work folder's note (editor/PathLink.jsx): the pages
+  // the path names from the note's directory (its first folder, whether or
+  // not its file is written yet, which the server reads the directory's
+  // path from: a folder share of it covers it); opened as a link jump,
+  // which Back returns from. `pageId` is the note's: a block of another
+  // page embedded in it links from its own. None in a page share, which
+  // reaches no folder.
+  const pathLinks = useMemo(() => (focusedFile && (!shareMode || sharedFolder) ? {
+    pageId: focusedBlockId,
+    resolve: async (href) => {
+      const query = new URLSearchParams({ path: href });
+      try {
+        const d = await apiJson(`${API}/folders/${encodeURIComponent(pageFolders[0] || focusedFile)}/at?${query}`);
+        return d.pages || [];
+      } catch {
+        return [];
+      }
+    },
+    open: (id) => fileChipActionsRef.current.openBlock(id, { pushNav: true, link: true }),
+    say: setStatus,
+  } : null), [focusedFile, focusedBlockId, shareMode, sharedFolder, pageFolders, setStatus]);
+  // A file's directory is its crumbs' (PageCrumbs): its folder chips are the
+  // library's folders and its labels only.
+  const chipFolders = (ids) => (focusedFile ? ids.filter((id) => !workOf(workTree, id)) : ids);
   // Who a note can mention (editor/MentionMenu.jsx MentionContext,
   // docs/dev/mentions.md): the workspace's members, read once per
   // workspace, and the signed-in account. A share view mentions no one.
@@ -10615,9 +10691,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     <div className="sidebar" data-guide="dock.notes" ref={liveSidebarRef}>
           {!homeMode && <div className="pageTitleRow">
             <div className="pageTitleMain">
-            {/* the pages the open page is inside, each opening that page */}
+            {/* a file's folders from its work folder down, each opening that
+                folder; the pages a sub-page is inside, each opening that page */}
             <PageCrumbs ancestors={openFamily.ancestors} onOpen={openFamilyPage}
-              targetProps={lib.organize ? (page) => ({ ...pageDropProps(page.id, page.title), className: pageDropClass(page.id) }) : undefined} />
+              targetProps={lib.organize ? (page) => ({ ...pageDropProps(page.id, page.title), className: pageDropClass(page.id) }) : undefined}
+              folders={focusedFile ? fileCrumbs(libTree, workTree, { folders: pageFolders, work: focusedFile }) : []}
+              onOpenFolder={(id) => { pushNav(); goHome(); openFolder(id); }} />
             {titleEditing && !readOnly && !titleLocked && focusedBlockId ? (
               // A textarea so a long title wraps as it does when shown; a title
               // stays one line, so pasted line breaks become spaces.
@@ -10666,7 +10745,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {labelEditing ? (() => {
                     const filed = openPageFiling();
                     // a page inside another is filed by labels only
-                    const chips = filingChips(libTree, openSubPage ? { labels: filed.labels } : filed);
+                    const chips = filingChips(libTree, openSubPage ? { labels: filed.labels } : { ...filed, folders: chipFolders(filed.folders) });
                     const q = labelInput.trim();
                     const ql = q.toLowerCase();
                     // A path ending in "/" is a folder opened, not a name
@@ -10769,7 +10848,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </div>
                     );
                   })() : (() => {
-                    const chips = filingChips(libTree, { folders: openSubPage ? [] : pageFolders, labels: pageLabels });
+                    const chips = filingChips(libTree, { folders: openSubPage ? [] : chipFolders(pageFolders), labels: pageLabels });
                     return (
                     <span
                       className={`categoryFrontmatterValue ${chips.folders.length || chips.labels.length ? "" : "empty"}`}
@@ -12251,10 +12330,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       still={!!treeOriginRef.current.get(blocks)} off={readOnly || inkUi.open}
                       hold=".slashMenu, .refPopup">
                       <FileChipContext.Provider value={fileChipCtx}>
-                        <NoteSheetContext.Provider value={noteSheetCtx}>
-                          <BlockTree blocks={blocks} readOnly={readOnly} rowProps={stableRowProps(rowProps)}
-                            zoteroLock={focusedBlock?.properties?.zotero_readonly ? focusedBlockId : ""} notesLocked={notesLocked} />
-                        </NoteSheetContext.Provider>
+                        <PathLinkContext.Provider value={pathLinks}>
+                          <NoteSheetContext.Provider value={noteSheetCtx}>
+                            <BlockTree blocks={blocks} readOnly={readOnly} rowProps={stableRowProps(rowProps)}
+                              zoteroLock={focusedBlock?.properties?.zotero_readonly ? focusedBlockId : ""} notesLocked={notesLocked} />
+                          </NoteSheetContext.Provider>
+                        </PathLinkContext.Provider>
                       </FileChipContext.Provider>
                       {subPagesPanel}
                       {backlinksPanel}
@@ -12294,6 +12375,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     notes: (Boolean(notesWindow) && !centerNotes) || !!notesPaper,
     chat: !chatHidden && (!shareMode || !!focusedBlockId),
     comments: !commentsHidden && !!focusedBlockId && !homeMode && commentsOn,
+    files: filesOn && !files.hidden,
   };
   // A window's frame: its title, the grip's drag and fold, and its close.
   // The window and its folded bar share it.
@@ -12330,6 +12412,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     };
     if (id === "notes") return { title: t("Notes"), common, onClose: closeWindow(() => setNotesVisible(false)) };
     if (id === "chat") return { title: t("Chat"), common, onClose: closeWindow(() => setChatHidden(true)) };
+    if (id === "files") return { title: t("Files"), common, onClose: closeWindow(() => files.setHidden(true)) };
     return { title: t("Comments"), common, onClose: closeWindow(() => setCommentsHidden(true)) };
   }
   function renderWindow(id) {
@@ -12431,6 +12514,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </LazyBoundary>
       );
     }
+    if (id === "files") {
+      return (
+        // Until its module is in, the window's frame with an empty body.
+        <LazyBoundary fallback={(
+          <DockWindow title={title} guide="files.grip" {...common} onClose={onClose}>
+            <div className="filesPanel" />
+          </DockWindow>
+        )}>
+          <FilesWindow {...common} onClose={onClose} files={files} tree={filesTree} libTree={libTree} workTree={workTree}
+            folderMeta={folderMeta} libraryPages={libraryPages} lib={lib} pageMenu={openSubPageMenu} folderMenu={openTreeFolderMenu}
+            menuPress={menuPress} onOpen={(pageId, row) => { files.remember(row); openPage(pageId); }}
+            onDragStart={startTreeDrag} onDrop={dropOnFolder} dragOver={folderDragOver} setDragOver={setFolderDragOver} />
+        </LazyBoundary>
+      );
+    }
     return null;
   }
   // Windows per slot, in stored order, visibility-filtered. On a phone the
@@ -12453,7 +12551,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const { title, common, onClose } = windowFrame(w);
       return (
         <div key={w} className="collapsedBar">
-          <DockBar title={title} guide={w === "notes" ? "notes.grip" : w === "chat" ? "chat.grip" : "comments.grip"}
+          <DockBar title={title} guide={GRIP_GUIDE[w]}
             onGrip={common.onGrip} onFold={common.onFold} onClose={onClose} />
         </div>
       );
@@ -12499,7 +12597,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // and read-only topbars; on a phone the More sheet lists them instead of a
   // View button. A window toggle carries a check while shown. Read-only
   // share views omit AI chat and the import actions. A phone's bottom tabs
-  // already switch Notes and Chat, so there only the PDF toggle is a window.
+  // already switch Notes and Chat, so there only the PDF and Files toggles
+  // are windows.
   // Undo, Redo and the two palettes are their commands (app/appCommands.js),
   // keys and all: the way to them without a keyboard.
   const commandRow = (id) => <CommandMenuItem key={id} id={id} ctx={appCmdRef.current} bindings={keybindings} />;
@@ -12513,9 +12612,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (!isShown) guideEvents.emit("window.shown", { id });
       toggle();
     };
+    // The Files window beside the listing or a page; on a phone the listing
+    // is the explorer, and the row brings the overlay over an open page.
+    const filesRow = filesOn && (!isPhone || !homeMode);
     return menuGroups(
       [
-        (!isPhone || pdfRow || shellBar) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
+        (!isPhone || pdfRow || shellBar || filesRow) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
         pdfRow && (doc ? (
           <MenuItem key="pdf" icon={FileIcon} {...shown(!pdfHidden)} onClick={toggleWindow("pdf", !pdfHidden, () => setPdfHidden((v) => !v))}>{paneWord}</MenuItem>
         ) : (
@@ -12531,6 +12633,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <MenuItem key="comments" icon={MessageSquareIcon} {...shown(!commentsHidden)}
             onPointerEnter={CommentsPanel.preload}
             onClick={toggleWindow("comments", !commentsHidden, () => setCommentsHidden((v) => !v))}>{t("Comments")}</MenuItem>
+        ),
+        filesRow && (
+          <MenuItem key="files" icon={FolderIcon} {...shown(filesShown)} onPointerEnter={FilesWindow.preload}
+            onClick={isPhone ? () => { setOpenPopover(null); setPhonePanel((p) => (p === "files" ? null : "files")); }
+              : toggleWindow("files", !files.hidden, files.toggle)}>{t("Files")}</MenuItem>
         ),
         shellBar && (
           <MenuItem key="shellBar" icon={PanelTopIcon} {...shown(shellBar.shown)}
@@ -14052,6 +14159,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       {isPhone && focusedBlockId && !homeMode && commentsOn && (phonePanel === "comments" || phoneSeen.current.comments) ? (
         <div className={`phonePanel ${phonePanel === "comments" ? "" : "phonePanelHidden"}`}>{renderWindow("comments")}</div>
       ) : null}
+      {isPhone && filesOn && (phonePanel === "files" || phoneSeen.current.files) ? (
+        <div className={`phonePanel ${phonePanel === "files" ? "" : "phonePanelHidden"}`}>{renderWindow("files")}</div>
+      ) : null}
       {isPhone && (!shareMode || focusedBlockId) && (phonePanel === "chat" || phoneSeen.current.chat) ? (
         <div className={`phonePanel ${phonePanel === "chat" ? "" : "phonePanelHidden"}`}>{renderWindow("chat")}</div>
       ) : null}
@@ -14386,6 +14496,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         onOpenLabel={(id) => { if (!homeMode) goHome(); openLabel(id, ""); }}
         onSearch={openSearchWith}
         onCreate={lib.organize ? (title) => createPage(homeMode ? folderFilter : "", title) : null}
+        files={filesOn}
+        onOpenFile={(row) => { files.remember(row); openPage(row.id); }}
       /></LazyBoundary> : null}
       {guideMounted ? <LazyBoundary><GuideOverlay guide={guide} keybindings={keybindings} /></LazyBoundary> : null}
       {settingsMounted ? <LazyBoundary><SettingsDialog

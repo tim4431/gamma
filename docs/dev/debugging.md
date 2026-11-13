@@ -809,6 +809,23 @@ The scoped search reads every file page's document per request
 ~40 ms, measured with other worktrees' tests running, 2026-11): its budget
 is about twice that p95, not 5x an idle one.
 
+A work folder's readers at its scale are
+`backend/tests/test_work_folder_scale.py` (`-m perf -p no:xdist`): 20,000
+files in 11 directories, one of them 10,000, beside 500 library pages,
+the rows inserted by `backend/tests/seed_work_folder.py`. Quick open's
+cases go through the API, so each holds a request's few milliseconds;
+their budgets are about twice the p95 measured with other worktrees' tests
+running (2026-11):
+
+| Case | Budget (p95) |
+|---|---|
+| `GET /api/files?q=file-012` (the runs `file` and `012` as LIKEs, 100 matches ranked) | 25 ms |
+| `GET /api/files?q=dir 3/file-012` (a path term: the leaf's runs, the segment scored) | 22 ms |
+| `GET /api/files?q=nothing-here` (the whole prefilter, nothing ranked) | 16 ms |
+| `GET /api/files?q=图` (no run: every name read from the index, folded and scored) | 95 ms |
+| `GET /api/folders/{W}/at?path=big/file-01234.bin` (one seek of `idx_ub_file_name`) | 11 ms |
+| `POST /pages/summaries`' lookup of 40 ids, on the connection (`+parent_id`; ~11 ms without) | 2 ms |
+
 The budgets are about 5x the p95 an idle Ryzen 9 9950X3D measured (Node
 22.23, Python 3.12, November 2026), rounded up. Cases near a millisecond
 have about 6 to 8x (the warm eraser flush, a restyle, the one-set
@@ -977,7 +994,10 @@ is there too, as `-closed.jpg`: closing a context or a page during a step
 first keeps its last look. The
 `check` workflow runs the suite on every PR and uploads those folders as the
 `e2e-failures-<shard>` artifact. `harness.mjs` holds the server
-lifecycle, `Account` (session cookie + `X-Gamma-Workspace` for API
+lifecycle (`server.manage(...)` runs `manage.py` on the server's data
+dir, `server.python(script, ...)` any script of `backend/` there: the
+`explorer` group seeds a work folder of 20,000 files with
+`tests/seed_work_folder.py`), `Account` (session cookie + `X-Gamma-Workspace` for API
 seeding, browser contexts logged in as that account), `makePdf` (a small
 real PDF with a text layer) and `step()`. It also holds two checks of
 where a surface opens. `assertOpensInPlace` reads a menu or card frame by
