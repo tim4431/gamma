@@ -14,12 +14,12 @@
 // `setStatus(msg, action)`.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  MAX_SHOWN_PRESETS, addPreset, addStarters, duplicatePreset, effectivePresets, hiddenPresets, movePreset, normalizePresets, presetKey, presetKeys,
+  MAX_SHOWN_PRESETS, addPreset, duplicatePreset, effectivePresets, hiddenPresets, movePreset, normalizePresets, presetKey, presetKeys,
   presetName, removePreset, restorePreset, selectionTint, setPresetHidden, shownPresets, swapIntoStrip,
 } from "../shared/model/markStyle.js";
 import { pickerColors } from "../shared/model/palette.js";
 import { isTextField } from "../shared/lib/hotkeys.js";
-import { t, tn } from "../shared/i18n/i18n.js";
+import { t } from "../shared/i18n/i18n.js";
 import { HL_IDLE, armedTo, disarmed, highlighterKey, menuClosed, menuOpened, nextArmed, toggled } from "./highlighterState.js";
 
 export function useTextHighlighter({ stored, setStored, seedColor, palette, setPalette, canHighlight, inkOpen, onArm, openSettings, setStatus }) {
@@ -121,12 +121,6 @@ export function useTextHighlighter({ stored, setStored, seedColor, palette, setP
         const n = name(r.id, r.list);
         if (r.hidden) say(t("{name} added under Hidden highlighters.", { name: n }), { label: t("Put it on the strip"), run: () => c.swapIn(r.id) });
         else say(t("{name} added to the strip.", { name: n }));
-      },
-      addStarters: () => {
-        const r = addStarters(L().list, (n) => t(n));
-        if (!r.added) return;
-        write(r.list);
-        say(tn("{n} highlighter added.", "{n} highlighters added.", r.added));
       },
       setGroup: (id) => {
         const p = L().palette;

@@ -1276,11 +1276,10 @@ The tools (`pdf/MarkTools.jsx` on App's `MarkToolsContext`, the hook's
   the menu going on to the copy; past a full strip it is hidden, and the
   pill offers *Put it on the strip*, `swapIntoStrip`), *Hide from the
   strip* or *Show on the strip* (the pill's *Show*), *Hidden highlighters
-  ▸* (a row arms one, pinned while armed), *Add Definition, Question and
-  Disputed* (the issue's three, `STARTER_PRESETS`, while one of their
-  looks is missing), *Remove* (the pill's *Undo* puts that one item back
-  at its place, `restorePreset`) and *Edit highlighters…*. Hide and Remove
-  are greyed at the last shown one: the strip never empties.
+  ▸* (a row arms one, pinned while armed), *Remove* (the pill's *Undo*
+  puts that one item back at its place, `restorePreset`) and *Edit
+  highlighters…*. Hide and Remove are greyed at the last shown one: the
+  strip never empties.
 - **The selection popup** (`TipMarks` in `PlainTip`): one row of the Text
   highlights swatches, drawn in the popup's one-shot style (the wash until
   the fold says otherwise; a line style draws each swatch as its line,
@@ -1332,8 +1331,10 @@ allowEmpty`, its look as the placeholder), its key, On the strip (greyed at
 four, or at the last shown one), Edit (its style row, the Text highlights
 swatches and Another colour, the `ColorPicker`), Duplicate and Remove;
 then *Add highlighter* (the next look none has: a wash in the first swatch
-no wash highlighter has, then an underline, and so on) and the three
-starters. Reset stores `[]` again, which brings the seed back; it leaves
+no wash highlighter has, then an underline, and so on). No set of
+highlighters comes ready-made beyond the seed: what each one means is the
+reader's, made with Add highlighter, Duplicate or Save look as
+highlighter. Reset stores `[]` again, which brings the seed back; it leaves
 `highlighterColor` alone, which released builds still read.
 
 ## Chat settings are global
