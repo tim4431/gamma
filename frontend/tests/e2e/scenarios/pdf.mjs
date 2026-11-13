@@ -715,9 +715,9 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
 
   // A strip highlighter's menu edits it in place (its style, colour, name),
   // duplicates it (armed, the menu on the copy), hides it (its key stays;
-  // Hidden highlighters arms it, pinned to the strip while on) and adds the
-  // issue's three; armed, a release marks in its look, the selection tinted
-  // by its line; Edit highlighters… opens the Settings section.
+  // Hidden highlighters arms it, pinned to the strip while on); armed, a
+  // release marks in its look, the selection tinted by its line; Edit
+  // highlighters… opens the Settings section.
   await step("pdf: a strip highlighter's menu edits, duplicates and hides it, and an armed line highlighter marks in its look", async () => {
     const up = await account.upload("/api/uploads", makePdf([["Kappa lambda mu nu", "Xi omicron pi rho"]]), "strip.pdf", "application/pdf");
     const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Strip paper", source_url: up.source_url } });
@@ -764,17 +764,12 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assert(await strip.nth(1).evaluate((el) => el.classList.contains("pinned") && el.getAttribute("aria-pressed") === "true"), "pinned and pressed");
       await strip.nth(1).click();
       await until(async () => await strip.count() === 1, { what: "gone again once off" });
-      // the issue's three, as one press
-      await strip.first().click({ button: "right" });
-      await menu.getByRole("menuitem", { name: "Add Definition, Question and Disputed", exact: true }).click();
-      await profile((v) => (v.highlightPresets || []).length === 4, "the starters added beside the hidden copy");
-      assertEq(await strip.count(), 3, "the wash, Question and Disputed shown; Definition's look was there already");
       // Edit highlighters… opens the section, the hidden one under its line
       await strip.first().click({ button: "right" });
       await menu.getByRole("menuitem", { name: "Edit highlighters…", exact: true }).click();
       const dialog = p.locator(".settingsModal");
       await dialog.locator(".hlRow").first().waitFor();
-      assertEq(await dialog.locator(".hlRow").count(), 4);
+      assertEq(await dialog.locator(".hlRow").count(), 2);
       assertEq(await dialog.locator(".hlRow.off").count(), 1, "the hidden one muted");
       await dialog.locator(".hlSep").waitFor();
       await p.keyboard.press("Escape");

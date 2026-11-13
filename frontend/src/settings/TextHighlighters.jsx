@@ -4,9 +4,8 @@
 // line, each a row — its grip (drag it, or its arrow keys, within its
 // group), its look, its name (none: it is called by its look), its key, On
 // the strip, an editor (its style, its colour from the Text highlights
-// group or any colour), Duplicate and Remove — then Add highlighter, the
-// three starters while none of them is there, and Reset, which puts the
-// one highlighter an account starts with back. Every write goes through
+// group or any colour), Duplicate and Remove — then Add highlighter, and
+// Reset, which puts the one highlighter an account starts with back. Every write goes through
 // `onChange`, useTextHighlighter's setPresets (an updater over the list in
 // effect, normalized).
 import React from "react";
@@ -14,8 +13,8 @@ import { createPortal } from "react-dom";
 import { NameInput, Section } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import {
-  MARK_STYLES, MAX_PRESETS, MAX_PRESET_NAME, MAX_SHOWN_PRESETS, addPreset, addStarters, duplicatePreset, effectivePresets, hiddenPresets,
-  placePreset, presetFor, presetKey, presetLook, presetName, removePreset, setPresetHidden, shownPresets, startersMissing,
+  MARK_STYLES, MAX_PRESETS, MAX_PRESET_NAME, MAX_SHOWN_PRESETS, addPreset, duplicatePreset, effectivePresets, hiddenPresets,
+  placePreset, presetFor, presetKey, presetLook, presetName, removePreset, setPresetHidden, shownPresets,
 } from "../shared/model/markStyle.js";
 import { colorName, highlightColor, pickerColors } from "../shared/model/palette.js";
 import { MarkGlyph } from "../shared/ui/MarkGlyph.jsx";
@@ -23,7 +22,7 @@ import { ColorPicker } from "../shared/ui/ColorPicker";
 import { useDragOrder } from "../shared/ui/useDragOrder.js";
 import { StyleRow, SwatchRow } from "../pdf/MarkTools.jsx";
 import {
-  ChevronDownIcon, DuplicateIcon, EyeIcon, EyeOffIcon, GripIcon, PipetteIcon, PlusIcon, SparklesIcon, TrashIcon,
+  ChevronDownIcon, DuplicateIcon, EyeIcon, EyeOffIcon, GripIcon, PipetteIcon, PlusIcon, TrashIcon,
 } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -168,11 +167,6 @@ export function TextHighlighters({ presets, seedColor, firstSwatch, onChange, pa
           })}>
           <PlusIcon size={14} />{t("Add highlighter")}
         </button>
-        {startersMissing(list) ? (
-          <button type="button" className="uiBtn sm" onClick={() => onChange((l) => addStarters(l, (n) => t(n)).list)}>
-            <SparklesIcon size={14} />{t("Add Definition, Question and Disputed")}
-          </button>
-        ) : null}
       </div>
       <span className="srOnly" aria-live="polite">{said}</span>
     </Section>

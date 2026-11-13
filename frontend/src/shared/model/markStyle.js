@@ -253,28 +253,6 @@ export function restorePreset(list, item, index) {
   return normalizePresets(next);
 }
 
-// The issue's three meanings (#154), offered as one press: the names T()
-// keys, translated as they are added; each colour a swatch of the default
-// groups.
-export const STARTER_PRESETS = Object.freeze([
-  Object.freeze({ name: T("Definition"), style: "underline", color: Object.freeze({ hex: "#9bcdff", alpha: 0.65 }) }),
-  Object.freeze({ name: T("Question"), style: "squiggly", color: Object.freeze({ hex: "#dc2626", alpha: 1 }) }),
-  Object.freeze({ name: T("Disputed"), style: "strikeout", color: Object.freeze({ hex: "#6b7280", alpha: 1 }) }),
-]);
-// Whether a starter's look is missing from the list, with room for it.
-export const startersMissing = (list) => list.length < MAX_PRESETS && STARTER_PRESETS.some((s) => !presetFor(list, s.style, s.color));
-// The starters whose look the list does not have, appended (hidden past a
-// full strip, cut at MAX_PRESETS) → {list, added: how many}. `name`
-// translates a starter's name.
-export function addStarters(list, name = (n) => n) {
-  let next = list, added = 0;
-  for (const s of STARTER_PRESETS) {
-    const r = addPreset(next, s, { name: name(s.name) });
-    if (r && !r.existed) { next = r.list; added++; }
-  }
-  return { list: next, added };
-}
-
 // The colour a selection is drawn in while a highlighter is armed
 // (PdfViewer's --selection-color): the wash it lays, or a light tint of its
 // line's tone, so an armed underline does not preview as a wash.

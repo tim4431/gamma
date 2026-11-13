@@ -94,8 +94,11 @@ article on line annotations.
   held finger opens its menu (its name, style and colour, move, Duplicate,
   hide, Hidden highlighters, Remove), as the pen strip's Tool menu reads.
 - **Saved from what is at hand**: *Save look as highlighter* on a highlight
-  and on the bar over a new one; *Duplicate* on a strip button; the issue's
-  three meanings (Definition, Question, Disputed) as one press.
+  and on the bar over a new one; *Duplicate* on a strip button; *Add
+  highlighter* in Settings. A ready-made set (the issue's Definition,
+  Question and Disputed, one press) was built and taken out again: what a
+  highlighter means is the reader's own, and the set only took a row of
+  every highlighter's menu and a button in Settings.
 - **A one-row popup** again: the colours, the highlighters, a fold with a
   one-shot style, the colour group and the way to Settings.
 - **A cap of four on the strip**, the rest hidden and a menu away, so the
