@@ -165,6 +165,37 @@ export async function mcpScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("mcp: the sign-in may let it edit a workspace's notes, and the connection gets the note tools there", async () => {
+    const ctx = await alice.context(browser);
+    try {
+      await ctx.route("https://client.example/callback**", (route) => route.fulfill({ status: 200, contentType: "text/plain", body: "Connection approved." }));
+      const flow = await request();
+      const page = await openPage(ctx, flow.url);
+      const spaces = page.getByRole("group", { name: "Workspaces it may read" });
+      await page.getByRole("button", { name: "Allow read-only access" }).waitFor();
+      // the open workspace is ticked, View; Edit makes it a connection that edits there
+      await spaces.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.getByText("Read and edit notes", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Allow reading and editing" }).click();
+      await page.waitForURL("https://client.example/callback**");
+      const response = await fetch(`${server.base}/oauth/token`, { method: "POST", body: new URLSearchParams({
+        grant_type: "authorization_code", client_id: flow.client.client_id, code: new URL(page.url()).searchParams.get("code"),
+        code_verifier: flow.verifier, redirect_uri: flow.redirect, resource: `${server.base}/mcp`,
+      }) });
+      assertEq(response.status, 200);
+      const listed = await fetch(`${server.base}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${(await response.json()).access_token}`,
+        "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
+      const names = (await listed.json()).result.tools.map((tool) => tool.name);
+      assert(names.includes("edit_block") && names.includes("create_block") && !names.includes("delete_block"),
+        `the note tools, never a deletion: ${names.join(", ")}`);
+      const connection = (await alice.api("/api/integrations/tokens")).tokens.find((t) => t.name === "Codex browser test (OAuth)");
+      assertEq(JSON.stringify(connection?.edit_workspaces), JSON.stringify([alice.ws]), "it edits the workspace marked Edit");
+      await alice.api(`/api/integrations/tokens/${connection.id}`, { method: "DELETE" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("mcp: a saved library page cannot dismiss authorization", async () => {
     const ctx = await alice.context(browser);
     try {

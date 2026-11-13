@@ -2,7 +2,7 @@ import React from "react";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { API, apiJson, setExpectedUser } from "../shared/lib/utils";
 import { LoginPage, SessionConflictPage } from "./LoginPage";
-import { WorkspacePicker, accessBody } from "../settings/WorkspacePicker";
+import { WorkspacePicker, accessBody, edits } from "../settings/WorkspacePicker";
 import { Splash } from "../shared/ui/BrandMark";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -70,8 +70,9 @@ export function McpAuthorization({ requestId, userCode }) {
   return <McpConsent key={`${requestId || userCode}:${user}`} requestId={requestId} userCode={userCode} />;
 }
 
-// The consent page: the workspaces the connection may read, and whether it
-// may also answer the user's comments on work-folder files (reply and
+// The consent page: the workspaces the connection may read, which of them it
+// may also edit the notes of (View or Edit, as a share's people are given),
+// and whether it may also answer the user's comments on work-folder files (reply and
 // resolve: the `feedback` scope, docs/dev/feedback.md "Tokens and MCP"),
 // ticked when the client asked for gamma:feedback. A setup command's
 // sign-in (`userCode`) shows its code to check against the terminal's and
@@ -115,6 +116,7 @@ export default function McpConsent({ requestId, userCode }) {
       window.location.reload();
     } catch (err) { setError(err.message); setBusy(false); }
   };
+  const editing = edits(access);
   // The splash stays until the request is read: the card shows whole.
   if (!details && !error) return <Splash />;
   return <div className="app mcpConsentPage"><div className="loginPage"><div className="loginCard mcpConsent">
@@ -129,20 +131,17 @@ export default function McpConsent({ requestId, userCode }) {
       <p className="loginConflictHint">{t("Signed in as")} <strong>{details.username}</strong>.</p>
       <label>{t("Workspaces it may read")}</label>
       <WorkspacePicker workspaces={details.workspaces} value={access} onChange={setAccess} disabled={busy}
-        label={t("Workspaces it may read")} />
+        label={t("Workspaces it may read")} roles />
       <label className="mcpFeedback">
         <input type="checkbox" checked={feedback} disabled={busy} onChange={(e) => setFeedback(e.target.checked)} />
         {" "}{t("Also let it answer my comments on work-folder files (reply and resolve)")}
       </label>
       <div className="mcpPermissions">
-        {feedback ? <>
-          <strong>{t("Read and answer feedback")}</strong>
-          <ul><li>{t("Reads your library and answers comments on your work folders' files. Cannot edit or delete anything else.")}</li></ul>
-        </> : <>
-          <strong>{t("Read-only access")}</strong>
-          <ul><li>{t("Read pages, notes, highlights, and PDF text.")}</li>
-            <li>{t("Cannot edit or delete your library.")}</li></ul>
-        </>}
+        <strong>{editing ? t("Read and edit notes") : feedback ? t("Read and answer feedback") : t("Read-only access")}</strong>
+        <ul><li>{t("Read pages, notes, highlights, and PDF text.")}</li>
+          {editing ? <li>{t("Create, edit and move notes in the workspaces marked Edit. Never deletes anything, or changes pages, folders or settings.")}</li> : null}
+          {feedback ? <li>{t("Answer comments on your work folders' files: reply and resolve.")}</li> : null}
+          {editing || feedback ? null : <li>{t("Cannot edit or delete your library.")}</li>}</ul>
         <p className="loginConflictHint">{t("Content the assistant reads is shared with its provider.")}</p>
       </div>
       <p className="loginConflictHint">{t("Access lasts 90 days. Change the workspaces or disconnect any time in Settings → AI → Integrations.")}</p>
@@ -153,7 +152,8 @@ export default function McpConsent({ requestId, userCode }) {
         </details>}
       <div className="mcpConsentActions">
       <button className="loginBtn" disabled={busy || !(access.all || access.ids.length)} onClick={() => decide(true)}>
-        <MorphText>{busy ? t("Connecting…") : feedback ? t("Allow reading and answering") : t("Allow read-only access")}</MorphText>
+        <MorphText>{busy ? t("Connecting…") : editing ? t("Allow reading and editing")
+          : feedback ? t("Allow reading and answering") : t("Allow read-only access")}</MorphText>
       </button>
       <button className="loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>
       </div>

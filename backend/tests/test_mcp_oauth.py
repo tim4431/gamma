@@ -346,7 +346,26 @@ def test_signin_approves_several_workspaces_or_all(browser):
         listing = c.get("/api/integrations/tokens").json()["tokens"]
         mine = [t for t in listing if t["name"] == "Codex test (OAuth)"]
         assert any(t["workspaces"] == [lab, ws] for t in mine) and any(t["all_workspaces"] for t in mine)
+        assert not any(t["edit_all"] or t["edit_workspaces"] for t in mine)
         workspaces.delete(later)
+        # of those it reads, those it may edit: one, or every one; never one it does not read
+        client_id, value = pending(c)
+        assert c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "workspaces": [ws],
+                                                               "edit_workspaces": [lab]}).status_code == 400
+        client_id, value = pending(c)
+        result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "workspaces": [lab, ws],
+                                                                 "edit_workspaces": [lab]})
+        code = parse_qs(urlsplit(result.json()["redirect_url"]).query)["code"][0]
+        editor = exchange(c, client_id, code).json()["access_token"]
+        assert resolve_connection(editor, BASE + "/mcp").editable == (lab,)
+        assert "edit_block" in _tool_names(c, editor)
+        client_id, value = pending(c)
+        result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "all_workspaces": True,
+                                                                 "edit_all": True})
+        code = parse_qs(urlsplit(result.json()["redirect_url"]).query)["code"][0]
+        everywhere = exchange(c, client_id, code).json()["access_token"]
+        assert {ws, lab} <= set(resolve_connection(everywhere, BASE + "/mcp").editable)
+        assert "edit_block" not in _tool_names(c, every)
     finally:
         for t in c.get("/api/integrations/tokens").json()["tokens"]:
             c.delete("/api/integrations/tokens/" + t["id"])
