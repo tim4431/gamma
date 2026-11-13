@@ -15,7 +15,7 @@ import { createContext, useContext } from "react";
 // while the Text tool is armed. drawHold, scribble and eraserFilter ('all' | 'pen' |
 // 'highlighter') are the account's, fingerUndo ('off' | 'tap' | 'double')
 // and hoverPreview (the hover footprint in the preset's look) this
-// browser's. ink.clip: the handwriting clipboard holds strokes (a held pen
+// browser's. ink.clip: the handwriting clipboard holds something (a held pen
 // or a right-click may then offer Paste here); ink.keys: {copy, cut,
 // duplicate}, the chord labels the selection menu puts in its titles (""
 // when unbound). ink.ruler: the ruler, {surface, x, y, angle, length,

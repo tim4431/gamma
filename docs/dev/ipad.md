@@ -606,11 +606,11 @@ a pen or highlighter stroke is claimed.
    thing Swift decides about the pen; its rules (`HoldWatch`) are a pure
    part, tested with the time given. The page answers at once, from the
    samples (the claim's `hold`, `InkLayer.jsx`):
-   - with strokes on the handwriting clipboard and no sample more than 2
-     CSS px from the first, `{cancel: true}`, and *Paste here* opens where
-     the pen went down ([handwriting.md](handwriting.md) "Copy, cut and
-     paste"). The shell takes the line away and keeps the touch, so palms
-     stay swallowed, and at the lift sends `stroke` with no samples;
+   - with strokes or pictures on the handwriting clipboard and no sample
+     more than 2 CSS px from the first, `{cancel: true}`, and *Paste here*
+     opens where the pen went down ([handwriting.md](handwriting.md) "Copy,
+     cut and paste"). The shell takes the line away and keeps the touch, so
+     palms stay swallowed, and at the lift sends `stroke` with no samples;
    - with *Draw and hold* on (and for a highlighter its preset's
      straight not *Off*), `recognise` runs over the samples in page
      points (lines only for a highlighter; through the preset's

@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { transformPoint } from "../src/ink/ink.js";
 import {
   MAX_Z, MIN_SIDE, captionText, carriedPicture, dragCrop, duplicatePicture, imageDelta, lassoTakes, mirrorPicture, movePicture,
-  normalizePicture, onTop, orderPicture, pictureMarkdown, picturesBySurface, transformPicture, turnedBox,
+  normalizePicture, onTop, orderPicture, pictureAt, pictureMarkdown, picturesBySurface, transformPicture, turnedBox,
 } from "../src/markup/picture.js";
 import { addPlaced } from "../src/markup/placed.js";
 import { findBlock } from "../src/shared/model/blockModel.js";
@@ -166,6 +166,19 @@ test("a lasso takes a picture when more than half its turned frame lies inside, 
   const turned = pic({ angle: 90 });
   assert.equal(lassoTakes(turned, band), false);
   assert.equal(lassoTakes(turned, lasso(turnedBox(turned).map((v, i) => v + (i < 2 ? -1 : 1)))), true, "a lasso round its turned frame");
+});
+
+test("a tap with the lasso takes the topmost picture whose turned frame holds the point, never a locked one", () => {
+  // `under` from 100 to 300 across; `over`, on top, turned on its side: from 150 to 250 across, 50 to 250 down
+  const shown = [{ id: "under", pic: pic() }, { id: "over", pic: pic({ angle: 90 }) }];
+  assert.equal(pictureAt(shown, 200, 150), "over", "where both are, the one on top");
+  assert.equal(pictureAt(shown, 120, 150), "under", "beside the turned one, inside its unturned frame: the one under it");
+  assert.equal(pictureAt(shown, 200, 60), "over", "above the frame before the turn, inside the turned one");
+  assert.equal(pictureAt(shown, 320, 150), null, "on neither");
+  assert.equal(pictureAt([shown[0], { id: "held", pic: pic({ angle: 90, locked: true }) }], 200, 150), null,
+    "a locked one on top: nothing, not the one under it");
+  assert.equal(pictureAt([shown[0], { id: "held", pic: pic({ angle: 90, locked: true }) }], 120, 150), "under");
+  assert.equal(pictureAt(undefined, 200, 150), null, "a surface with no pictures");
 });
 
 test("a picture carried by the lasso's handles: its centre where the strokes' points go, its frame scaled and turned with them", () => {

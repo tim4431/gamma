@@ -72,9 +72,10 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
   // Several strokes at once (a paste): they join the surface's current
   // group when it can take them all under MAX_STROKES and GROUP_SPLIT_BYTES,
   // else a new group takes them all — a paste is never split across groups
-  // — as one entry. → {id, ids} of the group they landed in, null when no
-  // group could hold them.
-  async function handleInkStrokes(page, strokes, size) {
+  // — as one entry, `label` and `link` its (a paste with pictures,
+  // useInkSelection.js). → {id, ids} of the group they landed in, null when
+  // no group could hold them or the byte budget refused them.
+  async function handleInkStrokes(page, strokes, size, { label = T("ink paste"), link = null } = {}) {
     if (readOnly || !focusedBlockId || inkStale || !strokes.length || !size) return null;
     if (pasteTooBig(page, strokes, size)) {
       setStatus(t("Too much handwriting to paste into one note."));
@@ -82,8 +83,7 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
     }
     const { id, before } = await groupFor(page, size, strokes.reduce((n, s) => n + strokeBytes(s), 0), strokes.length);
     const { ink: after, ids } = appendStrokes(before, strokes);
-    applyInk([{ id, page, before, after }], { label: T("ink paste") });
-    return { id, ids };
+    return applyInk([{ id, page, before, after }], { label, link }) ? { id, ids } : null;
   }
   // The pill a snapped stroke raises ("Straightened.", "Shape: circle.",
   // ink/finishStroke.js): Undo is one tap away every time; a `once` status

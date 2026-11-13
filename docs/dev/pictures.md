@@ -198,9 +198,17 @@ The lasso takes pictures with the strokes it circles, as GoodNotes' does
   frame inside the loop or the box. The frame is weighed at five by five
   points, as a stroke is taken by more than half its samples
   (`picture.js` `lassoTakes`).
-- A tap with the lasso selects the nearest stroke alone.
+- **A tap** with the lasso selects the nearest stroke. Where no stroke is,
+  it selects the picture under it, as a loop round it would: the topmost
+  whose turned frame holds the point, unless that one is locked
+  (`picture.js` `pictureAt`). Strokes lie over pictures, so a stroke under
+  the tap wins. A finger's tap with *Draws with: Pen only* does the same
+  while the lasso is armed. With the hand armed a click still selects the
+  picture itself, with its own menu and handles.
+- **Select all** (Ctrl+A, More → Select all) takes every unlocked picture
+  of the surface with its strokes (`selectAllPictures`).
 - **Pictures** in the lasso's row (this browser's `inkLassoPictures`, on to
-  start) chooses whether it takes them.
+  start) chooses whether the loop, a tap and Select all take them.
 - **A locked picture** is never taken. One locked after it was taken, or
   gone to another surface since, drops out of the selection, and no edit
   moves it (`selectedPictures`).
@@ -214,15 +222,18 @@ The lasso takes pictures with the strokes it circles, as GoodNotes' does
   (`carriedPicture`).
 - Each picture is kept on the surface, and no side goes under 8 pt. Its
   crop, flips, lock, opacity and `z` stay.
+- The handles scale the pictures uniformly, aspect kept. Alt stretches a
+  picture on its own handle only: the lasso's handle never stretched with
+  Alt, so it has no stretch to carry.
 - **Per action**:
-  - Move, resize, rotate, the flips, Delete and Duplicate take the
-    pictures too.
+  - Move, resize, rotate, the flips, Delete, Duplicate, Copy and Cut take
+    the pictures too.
   - A flip mirrors each picture about the box's centre line: its centre
     mirrored, its image flipped and its turn reversed (`mirrorPicture`).
   - Duplicate puts each copy just over its original, as far off as the
     strokes' copies, and selects the copies (`duplicatePicture`).
-  - Copy and Cut take the strokes alone, since the handwriting clipboard
-    holds strokes. Cut leaves the pictures on the page.
+  - Copy and Cut put the pictures on the handwriting clipboard with the
+    strokes ([Copy, cut and paste](#copy-cut-and-paste)).
   - Color, Width and style, New note, Merge into note, Select note and
     Convert (Transcribe in the chat, Redraw as shapes, Convert to text,
     Copy as SVG and Download SVG) act on the strokes alone; the SVG
@@ -230,7 +241,7 @@ The lasso takes pictures with the strokes it circles, as GoodNotes' does
     Redraw as shapes, which selects the new shapes alone, and Convert to
     text, which lets the selection go
     ([handwriting_ai.md](handwriting_ai.md)).
-  - A selection of pictures alone greys those buttons and Copy and Cut.
+  - A selection of pictures alone greys those buttons and Comment.
   - Show note shows the first group's note, else the first picture's.
 - **One step to undo.** A lasso step that changed pictures keeps its
   strokes in the stroke history and its pictures in the block history.
@@ -239,13 +250,53 @@ The lasso takes pictures with the strokes it circles, as GoodNotes' does
   - Ctrl+Z with the strip closed steps the block history, and the strokes
     with it.
   - Both pills name it "selection move", "selection resize", "selection
-    rotation", "selection flip", "selection deletion" or "selection
-    duplication", the stroke entry's label.
+    rotation", "selection flip", "selection deletion", "selection
+    duplication", "selection cut" or "selection paste", the stroke entry's
+    label.
   - Convert to text makes the same linked step of the strokes it removes
     and the text box it adds, "ink conversion to text"
     ([handwriting_ai.md](handwriting_ai.md#one-step-for-both)).
+  - The two histories stay two, linked rather than merged: each half
+    undoes on its own once the other history has moved on, and the pill
+    says which half stayed ([Not built yet](#not-built-yet)).
 - **Collab** carries both halves as any edit: the pictures through
   `setBlocks`, the strokes through the ink save.
+
+#### Copy, cut and paste
+
+The lasso's clipboard is the handwriting one
+([handwriting.md](handwriting.md#what-the-user-sees), "Copy, cut and
+paste"), and a selection's pictures ride on it with its strokes.
+
+- **Copy** (Ctrl+C, the menu) keeps each selected picture as it is placed,
+  with its caption, not the notes under it, as Duplicate copies one. The
+  box a paste places takes in their turned frames. The pill counts both:
+  "Copied 2 strokes and 1 picture."
+- **Cut** (Ctrl+X, More → Cut) copies, then removes both halves as one
+  step, through the link Delete uses ("selection cut"). The notes under a
+  cut picture stay, in its place in the notes, since the paste brings back
+  only the picture and its caption; Delete takes them with it.
+- **Paste** puts the copies down as the strokes' are: the copied box at the
+  centre of the surface in view, at a held pen's or a right-click's point,
+  kept on the surface. Each picture keeps its place against the strokes
+  and the other pictures, its crop, flips and opacity. The copies go over
+  the surface's pictures in the order the originals stacked, and become
+  the selection with the strokes. Strokes and pictures are one step of
+  both histories ("selection paste"); a paste of strokes alone is still
+  "ink paste".
+- **The file.** A picture names its upload, `/api/uploads/<hash>.<ext>`
+  in the workspace's own store. A pasted copy names the same upload, as a
+  Duplicate does, on any page or sheet of the workspace. A cut picture's
+  file stays stored for 30 days after nothing names it
+  ([user_db.md](user_db.md#stored-files)), so a paste after a cut finds
+  it.
+- **Another workspace or server** never gets the paste. The clipboard is
+  this tab's memory, and switching workspaces or servers reloads the tab,
+  so a paste is always in the workspace whose uploads its pictures name.
+  The system clipboard's copy carries the pictures in its JSON for other
+  apps, but no paste reads it back.
+- Copy image, on a picture's own menu, stays a PNG on the system
+  clipboard, which a paste places as a new picture.
 
 ### Undo, the notes and other views
 
@@ -484,10 +535,10 @@ are in [text_boxes.md](text_boxes.md#client) and
     `orderPicture`, `onTop` and `duplicatePicture` (the menu's Duplicate
     and the lasso's); the drawing's `pictureLayout`.
   - The lasso's: `lassoTakes` (what a loop takes, through `ink.js`
-    `pointInPolygon`), `transformPicture` (the handles' scale and turn,
-    through `ink.js` `transformPoint`), `mirrorPicture` (a flip about the
-    selection's centre line) and `carriedPicture` (a picture as the
-    selection's live preview shows it).
+    `pointInPolygon`), `pictureAt` (what a tap takes), `transformPicture`
+    (the handles' scale and turn, through `ink.js` `transformPoint`),
+    `mirrorPicture` (a flip about the selection's centre line) and
+    `carriedPicture` (a picture as the selection's live preview shows it).
   - An SVG's: `svgSize` (twin of `picture.svg_size`), `svgFill` (its
     stretch) and `isSvgUrl` ([SVG pictures](#svg-pictures)).
   - `captionText` and `pictureMarkdown`, the `![caption](url)` line, which
@@ -555,7 +606,8 @@ are in [text_boxes.md](text_boxes.md#client) and
   (below).
 - `placed.js`: what a text box and a picture share as objects on a surface:
   `withPlaced(tree, id, key, fn)`, one placed value's edit, and
-  `addPlaced(tree, surface, id, properties)`, where a new one goes.
+  `addPlaced(tree, surface, id, properties, content)`, where a new one
+  goes, `content` a pasted picture's caption.
 - `MarkupLayers.jsx` mounts the picture layer, `MarkupToolbar.jsx` has the
   button (`onPicture`), and `PageTools.jsx` carries the `onPicture…`
   actions among the page's actions.
@@ -602,14 +654,18 @@ are in [text_boxes.md](text_boxes.md#client) and
   `undoLinked(s, o, link, redo)` steps the newest entry only when it
   carries `link`.
 - `ink/`: the lasso's half ([handwriting.md](handwriting.md#client)).
-  `InkLayer.jsx` takes the pictures a loop circles (`lassoPictures`),
-  draws the selection's box round them and reports its preview
-  (`onCarry`). `selectionEdits.js` has `selectedPictures`,
-  `selectionBox`, `editPictures`, `removePictures` and the pictures'
-  half of `actionEdit`. `selectedPictures` is the one rule for the
-  selection's pictures: those its surface draws, none locked since. The
-  layer's box and every edit read it. `useInkSelection.js` makes each step
-  (`stepSelection`), and `useInkDocument.js` and `inkHistory.js` keep its
+  `InkLayer.jsx` takes the pictures a loop circles and the one a tap is
+  on (`lassoPictures`, `tappedPicture`), draws the selection's box round
+  them and reports its preview (`onCarry`). `selectionEdits.js` has
+  `selectedPictures`, `selectionBox`, `editPictures`, `removePictures`,
+  the pictures' half of `actionEdit`, `selectAllPictures`, and the
+  clipboard's: `clipOf` (the pictures with their captions), `clipStatus`
+  (the pill) and `pastePictures` (paste's half in the tree).
+  `selectedPictures` is the one rule for the selection's pictures: those
+  its surface draws, none locked since. The layer's box and every edit
+  read it. `useInkSelection.js` makes each step
+  (`stepSelection`; a paste's link goes through `useInkStrokes.js`
+  `handleInkStrokes`), and `useInkDocument.js` and `inkHistory.js` keep its
   `link` (`takeEntry`, `picturesStayed`).
 - `shared/model/blockModel.js`: `isHighlightBlock` refuses a picture, and
   `blockPage` reads its `pdf_page`. It tests for one itself
@@ -1211,17 +1267,22 @@ format.
 - `frontend/tests/pictureEdits.test.mjs`: crop mode's geometry, the z-order
   (`orderPicture`'s `z`, the block left in place, a locked picture left
   as it is, a duplicate just over its original), the lasso (what a loop
-  takes of an upright and a turned frame, never a locked one; the
-  handles' scale and turn and a drag's move as the strokes' points go; a
-  flip that shows the mirror image), the line a row copies
+  takes of an upright and a turned frame, never a locked one; what a tap
+  takes, the topmost and never a locked one; the handles' scale and turn
+  and a drag's move as the strokes' points go; a flip that shows the
+  mirror image), the line a row copies
   as, what a file becomes before it goes up and what its upload answers
   (an SVG as it is, at `svgSize`), and which drags a surface takes.
 - `frontend/tests/selectionEdits.test.mjs`: the lasso selection's
   pictures (on its surface, none locked since, its box round their turned
-  frames, kept aside with them), their half of an edit and of Delete, and
-  which actions carry them. `inkHistory.test.mjs`: a lasso step's `link`,
-  the entry a linked undo takes, why its pictures stayed and its pill.
-- `frontend/tests/placed.test.mjs`: `withPlaced` and `addPlaced`.
+  frames, kept aside with them), their half of an edit and of Delete,
+  which actions carry them, select all's, the clipboard's pictures and
+  captions, its pill, and a paste's (the same upload, shifted with the
+  strokes, over the surface's pictures in the order they stacked).
+  `inkHistory.test.mjs`: a lasso step's `link`, the entry a linked undo
+  takes, why its pictures stayed and its pill.
+- `frontend/tests/placed.test.mjs`: `withPlaced` and `addPlaced`, a
+  caption with it.
 - `frontend/tests/overPictures.test.mjs`: where the highlighter's mask puts
   a picture, its crop's corners on `turnedCorners` as the flips mirror
   them.
@@ -1300,7 +1361,11 @@ format.
   mask's opacity there and in Gamma Dark), a sheet, two people on one
   picture, and the lasso (a picture and a stroke taken, a locked picture
   left, both carried by a drag, undone and redone in one step from the
-  strip and by Ctrl+Z, Pictures off). `select.mjs` runs it for changes under
+  strip and by Ctrl+Z, Pictures off; Select all by Ctrl+A and More; a tap
+  on a picture, on a stroke over it and on a locked one; Copy and Paste
+  of both, placed as they were, undone and redone as one step, Cut as one
+  step with the notes under the picture left, and a paste on another
+  paper showing the same upload). `select.mjs` runs it for changes under
   `frontend/src/markup/`, `ink/`, `notebook/`, `editor/`, `pdf/`, and
   `backend/gamma/picture.py` and `text_box.py`. `transfers.mjs` checks a Notability import's picture on
   screen and in the round trip.
@@ -1330,11 +1395,6 @@ format.
     the pictures alone.
   - After a stroke drawn since, Ctrl+Z takes back the pictures alone, and
     its pill says the handwriting stays.
-- The lasso copies, cuts and pastes strokes alone: the handwriting
-  clipboard holds no pictures. Select all and a tap with the lasso select
-  strokes alone.
-- The lasso's handle has no Alt stretch, so the pictures it holds scale
-  uniformly.
 - An SVG in the PDFs is what MuPDF draws of it, which is not always what a
   browser draws: CSS beyond inline styles, filters, masks and web fonts may
   differ. Its text is set in MuPDF's fonts.
