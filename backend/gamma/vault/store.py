@@ -121,10 +121,15 @@ def forget_kind(link_id: str, kind: str) -> None:
 
 
 def forget_link(link_id: str) -> None:
-    """Everything kept of a vault that was removed."""
+    """Everything kept of a vault that was removed, but for a chat turn
+    still open: its end may never be written (Gamma closing right after),
+    and the next start fails it then (runner.recover), its conversation's
+    message too, without the vault."""
     with connect_vaults_db() as conn:
-        for table in ("vault_files", "vault_dirs", "vault_history", "agent_folders", "agent_threads"):
+        for table in ("vault_files", "vault_dirs", "vault_history", "agent_folders", "agent_threads",
+                      "agent_conversations", "agent_policies", "agent_grants"):
             conn.execute(f"DELETE FROM {table} WHERE link_id = ?", (link_id,))
+        conn.execute("DELETE FROM agent_turns WHERE link_id = ? AND ended_at IS NOT NULL", (link_id,))
 
 
 def unlevel(link_id: str) -> None:

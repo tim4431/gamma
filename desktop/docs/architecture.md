@@ -445,6 +445,7 @@ keep their rows, where their words warn. Each goes through
 | *Remove the vault…* | always | the counts from `GET …/removal`, the question `keeping.removalAsk`, then `DELETE …?files=keep` or `files=trash` |
 | the switches | a folder's vault | `PATCH {pull}`, `PATCH {push}` (`setPush`, above), a work folder's `PATCH {library}` |
 | the agent row | a work folder of its maker, on a server that runs agents | `setAgent`: turning one on asks first, then `PATCH {agent}` with the shell's word; off is `PATCH {agent: ""}` |
+| *What it may run* | under the agent row, while an agent is on | `setAgentRuns`: *Ask me in the chat* asks first (`keeping.runsAsk`), then `PATCH {agent_runs: "ask"}` with the shell's word; *Nothing more* is `PATCH {agent_runs: "never"}` |
 
 The changes and the rounds (*pause*, *resume*, *sync*, *Pull now*, *Push
 now*, the switches and the agent row) leave the panel open on the new
@@ -465,7 +466,20 @@ shell's word, which `vaultOn`'s headers alone do not carry, while the bar
 reads *Checking Codex…* (the server asks the agent afresh and refuses one
 not ready with why), and a notice says what came of it
 (`keeping.agentSaid`: "Codex now answers the Sends on thesis; 2 waiting
-were handed to it."). Turning it off asks nothing. *Remove the vault…* offers *Remove, keep the files* and
+were handed to it."). Turning it off asks nothing.
+
+**Letting it ask** (`setAgentRuns`, the row *What it may run* under the
+agent's) is the computer's decision too: *Let Codex ask to run more in
+D:\Papers\thesis?*, what it may then ask for in the chat (Codex: a command
+with the network or a change outside the folder; Claude Code: a command
+such as the build), that nothing runs until allowed there, and that an
+allowed command runs as the person, with their files and the network; then
+`PATCH {agent_runs: "ask"}` with the shell's word and a notice
+(`keeping.runsSaid`). *Nothing more* asks nothing
+([docs/dev/local_agents.md](../../docs/dev/local_agents.md) "Asking in the
+chat").
+
+*Remove the vault…* offers *Remove, keep the files* and
 *Remove, move them to the trash* (the files the sync wrote go to
 `.gamma/trash`; files the user added or changed stay). A vault of one file,
 a vault whose directory is not there and a stopped one (its marker gone or

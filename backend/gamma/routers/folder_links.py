@@ -74,6 +74,8 @@ class LinkPatch(BaseModel):
     # A work folder's agent on this computer: "codex" or "claude" on, "" off
     # (docs/dev/local_agents.md).
     agent: str | None = Field(default=None, max_length=32)
+    # What that agent may run: "never", or "ask" (its chat's turns may ask).
+    agent_runs: str | None = Field(default=None, max_length=16)
     # A new token of the other server for a link to one, kept in place of the
     # link's own once that server takes it (one that may write to push).
     token: str = Field(default="", max_length=400)
@@ -271,7 +273,8 @@ def list_links(request: Request):
     files wait for its tracking dialog, ``mine`` whether the account made
     the link (the tracking dialog's routes are its maker's alone), ``agent``
     a work folder's agent on this computer, ``{name, label, ready, problem,
-    running: {request_id, detail} | null}`` or null (``local_agents.info``:
+    running: {kind: "send" | "chat", request_id (null for a chat turn),
+    detail} | null}`` or null (``local_agents.info``:
     nothing is run to know it). The desktop app's sync panel lists
     them all. A folder vault's ``status``: ``{running, started_at,
     last_sync, last_error, failed_at?, counts, kept, untracked?, refused?,
@@ -542,13 +545,21 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
     computer's decision), and the answer's ``queued`` says how many waiting
     Sends it took; ``""`` turns it off, the maker's alone. 404 on a server
     that runs no agents, 400 for a vault that is no work folder, an agent
-    Gamma does not know or one not ready (its problem). A resume hands the
-    agent the Sends made since it was turned on that wait."""
+    Gamma does not know or one not ready (its problem). ``agent_runs`` is
+    what that agent may run (``folder_links.set_agent_runs``): ``ask`` lets
+    its chat's turns ask the person, which the desktop app asks with its
+    shell's word (403 without), ``never`` the maker's alone; the gate of
+    ``agent``, then 400 for another value or a folder with no agent on
+    (after the PATCH's own ``agent``). A resume hands the agent the Sends
+    made since it was turned on that wait."""
     changes = (payload.notes is not None or payload.push is not None or payload.pull is not None
-               or payload.library is not None or bool(payload.token) or payload.agent is not None)
+               or payload.library is not None or bool(payload.token) or payload.agent is not None
+               or payload.agent_runs is not None)
     link = _made(request, link_id) if changes else _kept(request, link_id)
     if payload.agent is not None:
         _agent_allowed(request, link, payload.agent)
+    if payload.agent_runs is not None:
+        _runs_allowed(request, link, payload.agent_runs, payload.agent)
     try:
         if payload.notes is not None:
             link = folder_links.set_notes(link_id, payload.notes) or link
@@ -565,6 +576,8 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
         if payload.agent is not None:
             queued = folder_links.set_agent(link_id, payload.agent, by=_account(request))
             link = folder_links.get_link(link_id) or link
+        if payload.agent_runs is not None:
+            folder_links.set_agent_runs(link_id, payload.agent_runs, by=_account(request))
     except folder_links.LinkError as e:
         raise _refused(e)
     if payload.paused is False:
@@ -597,6 +610,27 @@ def _agent_allowed(request: Request, link: dict, agent: str) -> None:
     if not found["ready"]:
         raise HTTPException(status_code=400,
                             detail=found["problem"] or f"{found['label']} is not ready on this computer.")
+
+
+def _runs_allowed(request: Request, link: dict, runs: str, agent: str | None) -> None:
+    """The PATCH's gate for ``agent_runs``, in order, past ``_made``: a
+    server that runs agents (404), a work folder (400), ``never`` or
+    ``ask`` (400), an agent on once the PATCH's ``agent`` is set (400);
+    for ``ask``, the shell's word (403: letting an agent ask to run
+    commands is the computer's decision). ``never`` needs nothing more."""
+    from .. import local_agents
+    from ..local_agents import store
+
+    if not local_agents.enabled():
+        raise HTTPException(status_code=404, detail="Agents run on the desktop app's own server.")
+    if not folder_links.work_folder_link(link):
+        raise HTTPException(status_code=400, detail="Only a work folder can have an agent.")
+    if runs not in store.RUNS:
+        raise HTTPException(status_code=400, detail="What an agent may run is never or ask.")
+    if not (agent if agent is not None else (store.agent_of(link["id"]) or {}).get("agent")):
+        raise HTTPException(status_code=400, detail="Turn an agent on first.")
+    if runs == "ask":
+        _from_shell(request, "Only the desktop app may let an agent ask to run commands in this folder.")
 
 
 def _hand_waiting(link: dict) -> None:

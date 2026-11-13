@@ -5,6 +5,12 @@ library root, the active conversation of each, and the archive of earlier
 ones; and how one is exported with its pictures. The chat request itself is
 in [ai.md](ai.md).
 
+The chat's computer side (talking to Codex or Claude Code on this
+computer, [local_agents.md](local_agents.md) "The chat's computer side")
+keeps nothing here: its conversations are the vault maker's alone, in
+their own private table (`computer_chats`), written by the server's
+runner, and no member, share, export or backup reads them.
+
 ## Buckets
 
 Focused page id in the paper view, `home` at the library root, the

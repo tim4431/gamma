@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  addsToLibrary, agentLine, bannerKey, baseName, carriesToServer, directionText, editsFile, isOpenedPdf, libraryWorkspaces,
+  addsToLibrary, agentLine, bannerKey, baseName, carriesToServer, computerAgent, directionText, editsFile, isOpenedPdf, libraryWorkspaces,
   mentionAgent, notesLocked, openedHere, readVault, vaultBanner, vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
@@ -207,4 +207,22 @@ test("the agent a comment names: the work folder's, for its maker alone", () => 
   assert.equal(mentionAgent(work({ agent: null })), null, "no agent on");
   assert.equal(mentionAgent(opened()), null);
   assert.equal(mentionAgent(null), null);
+});
+
+test("the chat's computer side: the same agent, with its run, the folder's name and whether it is paused", () => {
+  const codex = { name: "codex", label: "Codex", ready: true, problem: "", running: null };
+  const work = (over = {}, agent = {}) => folder({ work_folder: true, mine: true, agent: { ...codex, ...agent }, ...over });
+  assert.deepEqual(computerAgent(work()),
+    { name: "codex", label: "Codex", ready: true, problem: "", running: null, folder: "Papers", paused: false });
+  const running = { kind: "chat", request_id: null, detail: "Editing main.tex" };
+  assert.deepEqual(computerAgent(work({}, { running })).running, running);
+  assert.equal(computerAgent(work({ name: "" })).folder, "Attention.md", "no name: the path's last");
+  assert.equal(computerAgent(work({ paused: true })).paused, true);
+  assert.equal(computerAgent(work({ choosing: true })).paused, true, "still choosing its files");
+  assert.equal(computerAgent(work({}, { ready: false, problem: "Codex is not signed in." })).problem, "Codex is not signed in.");
+  assert.equal(computerAgent(work({ mine: false })), null, "a member who did not make the vault");
+  assert.equal(computerAgent(work({ work_folder: false })), null);
+  assert.equal(computerAgent(work({ agent: null })), null, "no agent on");
+  assert.equal(computerAgent(opened()), null);
+  assert.equal(computerAgent(null), null);
 });

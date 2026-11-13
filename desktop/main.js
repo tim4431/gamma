@@ -1429,6 +1429,31 @@ async function setAgent(serverId, linkId, name, confirmed) {
   }
 }
 
+// What a work folder's agent may run beyond its confinement: 'ask', it may
+// ask in the chat of a file of the folder (Codex to go past its sandbox,
+// Claude Code to run a command, each allowed or declined there), or 'never'.
+// Letting it ask is the computer's decision, as turning the agent on is:
+// asked first (`confirmed` answers in tests, where the question takes
+// Cancel), and the PATCH carries the shell's word. Back to 'never' asks
+// nothing.
+async function setAgentRuns(serverId, linkId, runs, confirmed) {
+  if (runs !== 'never' && runs !== 'ask') throw new Error(`What an agent may run is never or ask, not ${runs}`);
+  const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
+  if (!item.work || !item.agent) throw new Error('Turn an agent on first.');
+  if (runs === item.agentRuns) return false;
+  if (runs === 'ask' && !confirmed) {
+    const q = keeping.runsAsk(item);
+    if (await ask({ type: 'question', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 0, cancelId: 1 }, 1) !== 0) return null;
+  }
+  await api(origin, `/api/folder-links/${link.id}`, {
+    method: 'PATCH', headers: { ...headers, ...JSON_TYPE, ...(runs === 'ask' ? shellWord(origin) : {}) },
+    body: JSON.stringify({ agent_runs: runs }),
+  });
+  showNotice(keeping.runsSaid(item, runs));
+  refreshKeeping().catch(() => {});
+  return true;
+}
+
 // The agents on this computer looked for again (`?fresh=1`: the server runs
 // their version and sign-in checks, at most every few seconds), as a work
 // folder's view opens in the panel, then the panel read with what was found.
@@ -1732,9 +1757,10 @@ function refreshKeeping() {
 
 // What a vault's row and its view in the panel do (VAULT_ACTIONS), `value`
 // the switch's new setting for `pull` and `library` (a bool), `push` (a
-// word) and `agent` (an agent's name, "" for none); `choose` opens a work
-// folder's tracking dialog in Gamma, and `check-agents` looks for the
-// agents on this computer again as a work folder's view opens.
+// word), `agent` (an agent's name, "" for none) and `agent-runs` ('never'
+// or 'ask'); `choose` opens a work folder's tracking dialog in Gamma, and
+// `check-agents` looks for the agents on this computer again as a work
+// folder's view opens.
 const VAULT_ACTIONS = {
   pause: (serverId, id) => pauseVault(serverId, id, true),
   resume: (serverId, id) => pauseVault(serverId, id, false),
@@ -1751,6 +1777,7 @@ const VAULT_ACTIONS = {
   choose: (serverId, id) => chooseFiles(serverId, id),
   library: (serverId, id, value) => setLibrary(serverId, id, Boolean(value)),
   agent: (serverId, id, value) => setAgent(serverId, id, value),
+  'agent-runs': (serverId, id, value) => setAgentRuns(serverId, id, value),
   'check-agents': (serverId) => checkAgents(serverId),
 };
 
@@ -2883,7 +2910,7 @@ function registerIpc() {
   // Of a vault's actions, those that change it or run a round leave the sync
   // panel open on the new state (bar.html keptRow); the others ask first, or
   // open something.
-  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'agent', 'check-agents'];
+  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'agent', 'agent-runs', 'check-agents'];
   ipcMain.handle('shell:keeping-action', shellOnly((kind, serverId, id, action, value) =>
     withDialog('Could not do that.', () => keepingAction(kind, serverId, id, action, value), !STAYS_OPEN.includes(action))()));
   // A page's asks about this computer in Gamma's own menus (a folder's "Sync
@@ -3147,6 +3174,7 @@ if (process.env.GAMMA_SHELL_TEST) {
     setPull,
     setPush,
     setAgent,
+    setAgentRuns,
     forceVault,
     goOnVault,
     locateVault,

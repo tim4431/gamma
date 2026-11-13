@@ -1,0 +1,44 @@
+/* The chat's computer side (chat/computer/ComputerChat.jsx): what it adds to
+   the chat's own classes. */
+
+/* The strip under the header names the agent and what it is at: the
+   provider health strip's slot and shape, in neutral colours, amber only
+   while the agent cannot run or waits for the person's answer. */
+.chatHealthStrip.computerStrip {
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border-bottom-color: var(--border-subtle);
+}
+.chatHealthStrip.computerStrip:is(.problem, .asking) { color: var(--warn); background: var(--warn-bg); }
+.chatHealthStrip.computerStrip .transferSpin.inline { flex: none; }
+
+/* Under a reply: what the turn changed, a turn that could not resume the
+   agent's session, and how a turn ended when it did not answer. */
+.computerChanges, .computerFresh {
+  margin: 4px 0 2px;
+  color: var(--text-muted);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  line-height: var(--lh-ui);
+}
+.computerFresh { margin: 0 0 6px; font-style: italic; }
+.computerEnded {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: calc(var(--fs-sm) * var(--text-scale, 1));
+  line-height: 1.5;
+}
+.computerEnded.err { color: var(--danger); }
+.computerEnded svg { flex: none; margin-top: 0.25em; }
+
+/* What the agent asks (ComputerAsk.jsx), in the approval card's look: the
+   command on a code line, the files it would change, and their diff one
+   row a line, the lines taken out struck and the ones put in tinted. */
+.computerAskCommand code { font-family: var(--font-mono); color: var(--text-primary); overflow-wrap: anywhere; }
+.computerAskPaths { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 6px; }
+.computerAskPaths code { font-family: var(--font-mono); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); overflow-wrap: anywhere; }
+.computerAskDiff { font-family: var(--font-mono); }
+.computerAskDiff > * { display: block; }
+.computerAskDiffHead { color: var(--text-muted); }

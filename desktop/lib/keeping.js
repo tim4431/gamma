@@ -270,10 +270,12 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // computer that answers its Sends (`agent`, a name, "" for none, with its
 // `agentLabel`), whether it is ready (`agentReady`: null while the server
 // still checks) and why not (`agentProblem`), and what it does now
-// (`agentRunning`: the request's detail while a run works, else ""), as the
-// link's `agent` says them. `agents` is what the server finds on this
-// computer (`GET /api/local-agents`' `agents`; null: a server that runs no
-// agents, which then offers none).
+// (`agentRunning`: the detail of its run while one works, else "";
+// `agentChat` when that run is a turn of a page's chat, not a Send), and
+// what it may run beyond its confinement (`agentRuns`: "ask", it may ask in
+// the chat, or "never"), as the link's `agent` says them. `agents` is what
+// the server finds on this computer (`GET /api/local-agents`' `agents`;
+// null: a server that runs no agents, which then offers none).
 function vault(server, link, servers, roles = null, agents = null) {
   const s = link.status || {};
   const scope = link.kind === 'file' ? 'file' : 'folder';
@@ -303,7 +305,8 @@ function vault(server, link, servers, roles = null, agents = null) {
   Object.assign(item, {
     agent: (agent && agent.name) || '', agentLabel: agent ? agent.label || AGENT_LABELS[agent.name] || agent.name : '',
     agentReady: agent ? (agent.ready === undefined ? null : agent.ready) : null, agentProblem: (agent && agent.problem) || '',
-    agentRunning: run ? String(run.detail || 'Working') : '',
+    agentRunning: run ? String(run.detail || 'Working') : '', agentChat: Boolean(run && run.kind === 'chat'),
+    agentRuns: agent && agent.runs === 'ask' ? 'ask' : 'never',
     agents: item.work && Array.isArray(agents) ? agentChoices(agents) : null,
   });
   const stated = scope === 'file' ? fileState(item, s) : folderState(item, s, left);
@@ -349,7 +352,8 @@ const said = (text) => `${capital(text)}${/[.!?]$/.test(text) ? '' : '.'}`;
 
 // A directory's vault, worst first: a work folder whose files are not chosen
 // yet (Choose files… opens its dialog in Gamma), a round running, its agent
-// answering a Send (busy: the files may change meanwhile), paused,
+// answering a Send or working in a page's chat (busy: the files may change
+// meanwhile), paused,
 // stopped (its marker gone or another's: Locate… says where it is), held by
 // its guard (Go on), its directory not there, a problem, never synced, up to
 // date.
@@ -369,7 +373,8 @@ function folderState(item, s, left) {
   }
   if (item.away) return awayState(item);
   // A vault's own problem keeps its row while its agent works: the agent's run is said in the title.
-  const meanwhile = item.agentRunning ? ` ${item.agentLabel} is working on a Send meanwhile.` : '';
+  const meanwhile = item.agentRunning
+    ? ` ${item.agentLabel} is working ${item.agentChat ? 'in the chat' : 'on a Send'} meanwhile.` : '';
   if (item.stopped) return { ...item, state: 'error', text: 'Stopped', title: `${item.stopped} Locate… tells Gamma where the directory is now.${meanwhile}` };
   if (item.held) {
     const { removals = 0, total = 0 } = item.held;
@@ -383,7 +388,7 @@ function folderState(item, s, left) {
   if (s.last_error) return { ...item, state: 'error', text: 'Sync problem', title: `${s.last_error}${meanwhile}` };
   if (item.agentRunning) {
     return { ...item, state: 'busy', agentBusy: true, text: `${item.agentLabel} is working · ${item.agentRunning}`,
-      title: `${item.agentLabel} is answering a Send of this folder on this computer: the files here may change meanwhile.` };
+      title: `${item.agentLabel} is ${item.agentChat ? 'working in the chat of a file of this folder' : 'answering a Send of this folder'} on this computer: the files here may change meanwhile.` };
   }
   if (!s.last_sync) return { ...item, state: 'new', text: 'Not synced yet', title: 'The first round runs in a moment.' };
   const { changed } = item;
@@ -619,6 +624,31 @@ function agentSaid(item, name, queued = 0) {
   return `${label} now answers the Sends on ${item.name}${queued ? `; ${queued} waiting ${queued === 1 ? 'was' : 'were'} handed to it` : ''}.`;
 }
 
+// What each agent may ask for in the chat when its folder's "What it may
+// run" is Ask (docs/dev/local_agents.md): Codex to go past its sandbox,
+// Claude Code to run a command at all.
+const AGENT_ASKS = {
+  codex: 'to run a command with the network or to change files outside this folder',
+  claude: 'to run a command, such as your build',
+};
+
+// The question before a work folder's agent may ask in the chat to run
+// what its confinement keeps from it, the computer's decision (main.js
+// setAgentRuns): `{ message, detail, buttons }`, button 0 letting it ask.
+function runsAsk(item) {
+  const label = item.agentLabel || AGENT_LABELS[item.agent] || 'The agent';
+  return { message: `Let ${label} ask to run more in ${item.dest}?`,
+    detail: `In the chat of a file of this folder, ${label} can then ask you ${AGENT_ASKS[item.agent] || 'to run a command'}; nothing of it runs until you allow it there. A command you allow runs as you, with your files and the network.`,
+    buttons: ['Ask me in the chat', 'Cancel'] };
+}
+
+// What setting a work folder's "What it may run" to `runs` came to, for the bar.
+function runsSaid(item, runs) {
+  const label = item.agentLabel || AGENT_LABELS[item.agent] || 'The agent';
+  return runs === 'ask' ? `${label} may now ask you in the chat to run more on ${item.name}.`
+    : `${label} no longer asks to run more on ${item.name}: it keeps to its confinement.`;
+}
+
 // What a round asked for came to, for the bar: its status as the round
 // left it (main.js followRound).
 function roundSaid(item, status) {
@@ -638,4 +668,4 @@ function roundSaid(item, status) {
 }
 
 module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, WHOLE_RULE, firstRound, removalAsk, forceAsk,
-  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid };
+  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, runsAsk, runsSaid };

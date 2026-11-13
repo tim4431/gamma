@@ -94,6 +94,10 @@ test('a work folder\'s agent: who made it, the agent and how it stands, the agen
   const on = work({ mine: true, agent: { name: 'codex', label: 'Codex', ready: false, problem: 'Codex is not signed in on this computer: run `codex login` in a terminal.', running: null } }, found);
   assert.deepEqual([on.agent, on.agentLabel, on.agentReady, on.agentRunning], ['codex', 'Codex', false, '']);
   assert.match(on.agentProblem, /^Codex is not signed in/);
+  // what it may run: never unless the link says ask (a server from before 3b says nothing)
+  assert.deepEqual([none.agentRuns, on.agentRuns], ['never', 'never']);
+  assert.equal(work({ mine: true, agent: { name: 'claude', label: 'Claude Code', ready: true, runs: 'ask' } }, found).agentRuns, 'ask');
+  assert.equal(work({ mine: true, agent: { name: 'claude', label: 'Claude Code', ready: true, runs: 'always' } }, found).agentRuns, 'never');
 
   const checking = work({ agent: { name: 'claude', label: 'Claude Code', ready: null, problem: '', running: null } }, found);
   assert.deepEqual([checking.mine, checking.agentReady], [false, null], 'another account\'s, and the server still checks');
@@ -121,6 +125,16 @@ test('a work folder\'s agent: who made it, the agent and how it stands, the agen
   assert.match(held.title, /Codex is working on a Send meanwhile\.$/);
   assert.equal(keeping.summarize([failing]).state, 'error');
 
+  // a turn of a page's chat works the folder too: busy, said as the chat's, not a Send's
+  const chatting = { name: 'codex', label: 'Codex', ready: true, problem: '', running: { kind: 'chat', request_id: null, detail: 'Editing sections/intro.tex' } };
+  const chat = work({ mine: true, agent: chatting }, found);
+  assert.deepEqual([chat.state, chat.text, chat.agentChat], ['busy', 'Codex is working · Editing sections/intro.tex', true]);
+  assert.equal(chat.title, 'Codex is working in the chat of a file of this folder on this computer: the files here may change meanwhile.');
+  assert.equal(keeping.summarize([chat]).text, 'Agent working');
+  assert.match(work({ mine: true, agent: chatting, status: { last_sync: now, last_error: 'The disk is full.' } }, found).title,
+    /^The disk is full\. Codex is working in the chat meanwhile\.$/);
+  assert.equal(running.agentChat, false, 'a Send\'s run, kind "send" or none, is no chat');
+
   // a server that runs no agents offers none; one that lists only some reads the others as not here; only a work folder offers them
   assert.equal(work({ mine: true }, null).agents, null);
   assert.deepEqual(work({ mine: true }, [found[0]]).agents[1], { name: 'claude', label: 'Claude Code', found: false, ready: false, problem: 'Claude Code is not on this computer.' });
@@ -139,6 +153,17 @@ test('turning on a work folder\'s agent is asked with what it may do and the Sen
   assert.equal(keeping.agentSaid(item, 'codex', 0), 'Codex now answers the Sends on Quantum.');
   assert.equal(keeping.agentSaid(item, 'claude', 3), 'Claude Code now answers the Sends on Quantum; 3 waiting were handed to it.');
   assert.equal(keeping.agentSaid(item, ''), 'Codex no longer answers the Sends on Quantum: they wait for an agent you run yourself.');
+});
+
+test('letting a work folder\'s agent ask in the chat is asked with what it may ask for and the risk; the outcome is said', () => {
+  const codex = keeping.runsAsk({ name: 'Quantum', dest: 'C:\\Papers\\Quantum', agent: 'codex', agentLabel: 'Codex' });
+  assert.equal(codex.message, 'Let Codex ask to run more in C:\\Papers\\Quantum?');
+  assert.equal(codex.detail, 'In the chat of a file of this folder, Codex can then ask you to run a command with the network or to change files outside this folder; nothing of it runs until you allow it there. A command you allow runs as you, with your files and the network.');
+  assert.deepEqual(codex.buttons, ['Ask me in the chat', 'Cancel']);
+  const claude = { name: 'Quantum', dest: 'C:\\Papers\\Quantum', agent: 'claude', agentLabel: 'Claude Code' };
+  assert.match(keeping.runsAsk(claude).detail, /^In the chat of a file of this folder, Claude Code can then ask you to run a command, such as your build; .* runs as you, with your files and the network\.$/);
+  assert.equal(keeping.runsSaid(claude, 'ask'), 'Claude Code may now ask you in the chat to run more on Quantum.');
+  assert.equal(keeping.runsSaid(claude, 'never'), 'Claude Code no longer asks to run more on Quantum: it keeps to its confinement.');
 });
 
 test('an up-to-date vault says what it pushed, its conflicts, the files changed here and those not synced', () => {

@@ -1155,7 +1155,8 @@ def set_agent(link_id: str, agent: str, *, by: str) -> int:
     """A work folder's agent on this computer (docs/dev/local_agents.md):
     ``agent`` (``codex``, ``claude``) answers its Sends from now on, turned
     on by the account ``by``, or ``""`` none. The row is this computer's
-    (``local_agents.store``); a run of the agent it had stops when it is
+    (``local_agents.store``, which forgets what the agent may run when it
+    is turned off or changed); a run of the agent it had stops when it is
     turned off or changed, the folder's open pages hear ``{t: "vault"}``
     (their chip and the comments' @ menu read the agent again), and an
     agent turned on (or changed) takes the Sends that wait now → how many
@@ -1177,6 +1178,29 @@ def set_agent(link_id: str, agent: str, *, by: str) -> int:
     if agent and agent != had:
         return runner.queue_folder(link["workspace_id"], link_id)
     return 0
+
+
+def set_agent_runs(link_id: str, runs: str, *, by: str) -> None:
+    """What a work folder's agent on this computer may run
+    (docs/dev/local_agents.md): ``ask``, its chat's turns may ask the
+    person, set by the account ``by``, or ``never``. The row is this
+    computer's (``local_agents.store.set_runs``), read when a turn starts;
+    turning the agent off or changing it forgets it. The folder's open
+    pages hear ``{t: "vault"}``. Set back to never, the chat turns running
+    decline the asks that wait and whatever they ask next
+    (``runner.runs_never``). The route checks who may and that the agent
+    is on. Nothing for no such link."""
+    from .local_agents import runner, store as agents  # local: the runner imports the feedback modules
+
+    link = get_link(link_id)
+    if link is None:
+        return
+    had = agents.runs_of(link_id)
+    agents.set_runs(link_id, runs, by=by)
+    if runs == "never":
+        runner.runs_never(link_id)
+    if had != runs:
+        _tell_open_pages(link)
 
 
 def _tell_open_pages(link: dict) -> None:

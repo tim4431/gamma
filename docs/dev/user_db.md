@@ -377,6 +377,17 @@ All state is SQLite + files on disk under a data directory (env
   - `upload_retention` — the stored files kept for less than 30 days once
     nothing references them (`name`, `keep_s`, `since`; "Stored files"
     below);
+  - `computer_chats` — the chat's computer side
+    ([local_agents.md](local_agents.md) "The chat's computer side"): a
+    page's conversations of the work folder vault's maker with the agent on
+    the computer, one row a conversation (its messages as JSON, a
+    `version`, `archived_at` null for the active one). Private to the
+    account (`ws_backup.PRIVATE_TABLES`: a backup has it empty, a restore
+    keeps the live rows), read by no export, mirror or share, gone with
+    its page deleted for good (`ops._purge`), and an account's rows go when
+    its membership ends or the account is deleted
+    (`db.delete_workspace_prefs`). From `db.PAGES_SCHEMA` as the file opens
+    (no workspace step);
   - `chats` / `chat_history` — the AI chat
     ([chat_history.md](chat_history.md)): one active conversation per `bucket` (a page's id, a
     folder's id, or `home`) with its `title` and its version

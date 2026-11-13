@@ -588,7 +588,17 @@ USERS_SCHEMA = [
 # its stderr's tail), never shown to members; agent_threads = the thread an
 # agent of a vault answered last, the session and directory it ran in, when
 # its run read the thread and the comments it read (JSON ids), its reply and
-# the request: what a follow-up resumes.
+# the request: what a follow-up resumes; agent_conversations = the session
+# a page's computer chat (pages.db computer_chats) ran its agent in last,
+# and the directory: what its next turn resumes; agent_turns = one row a
+# turn of that chat, its state (queued, running, done, failed, stopped),
+# its process and ``error``, this computer's record (the whole error, the
+# stderr tail), never written in the conversation; agent_policies = what a
+# vault's agent may run (``ask``: its chat's turns may ask the person; no
+# row is ``never``), who set it and when; agent_grants = a command a person
+# allowed in a conversation of that chat, exactly as asked, the directory it
+# runs in (``.`` the folder) and the network host it reaches ("" none), and
+# its vault.
 VAULTS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS linked_files (
         ws TEXT NOT NULL,
@@ -678,6 +688,43 @@ VAULTS_SCHEMA = [
         request_id TEXT NOT NULL DEFAULT '',
         at TEXT NOT NULL,
         PRIMARY KEY (link_id, thread_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_conversations (
+        conversation_id TEXT PRIMARY KEY,
+        link_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        session TEXT NOT NULL DEFAULT '',
+        cwd TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_turns (
+        id TEXT PRIMARY KEY,
+        ws TEXT NOT NULL,
+        link_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        page_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        state TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        error TEXT NOT NULL DEFAULT '',
+        pid INTEGER
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_agent_turns_open ON agent_turns(ended_at) WHERE ended_at IS NULL",
+    """CREATE TABLE IF NOT EXISTS agent_policies (
+        link_id TEXT PRIMARY KEY,
+        runs TEXT NOT NULL,
+        set_by TEXT NOT NULL,
+        set_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_grants (
+        conversation_id TEXT NOT NULL,
+        command TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        host TEXT NOT NULL,
+        link_id TEXT NOT NULL,
+        at TEXT NOT NULL,
+        PRIMARY KEY (conversation_id, command, cwd, host)
     )""",
 ]
 
@@ -854,6 +901,32 @@ CHATS_SCHEMA = [
         updated_at TEXT NOT NULL
     )""",
     "CREATE INDEX IF NOT EXISTS chat_history_bucket ON chat_history (bucket, updated_at)",
+]
+# computer_chats = the conversations of a page's chat with the agent on this
+# computer (gamma/local_agents/chats.py, docs/dev/local_agents.md "The chat's
+# computer side"), not chats: one account's alone, the maker of the work
+# folder's vault (`user_id`), `agent` the agent it began with, `messages`
+# its JSON messages (the person's and the agent's turns, relative paths
+# only), `version` bumped by every write (the runner's as the turn goes,
+# the routes'), `archived_at` NULL for the page's active conversation of
+# that account. Private to the account: a backup carries none and a restore
+# keeps the live rows (ws_backup.PRIVATE_TABLES); no export, share, mirror
+# or read_chats reads it; it goes with the page deleted for good
+# (ops._purge). Additive: no step (docs/dev/migrations.md rule 2).
+COMPUTER_CHATS_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS computer_chats (
+        id TEXT PRIMARY KEY,
+        page_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        messages TEXT NOT NULL DEFAULT '[]',
+        version INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        archived_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_computer_chats_page ON computer_chats(page_id, user_id, archived_at)",
 ]
 # comments = the threads people leave on a note, a page (its root block) or
 # a highlight (its block) — gamma/comments.py, docs/dev/comments.md. A
@@ -1193,6 +1266,7 @@ PAGES_SCHEMA = [
     ) WITHOUT ROWID""",
     WORKSPACE_PREFS_SCHEMA,
     *CHATS_SCHEMA,
+    *COMPUTER_CHATS_SCHEMA,
     *COMMENTS_SCHEMA,
     *FEEDBACK_SCHEMA,
     *BLOCK_FTS_SCHEMA,
@@ -1871,14 +1945,16 @@ def restamp_pref(user_id: str, key: str, old: str, new: str, ws: str = "") -> bo
 
 
 def delete_workspace_prefs(ws: str, user_id: str) -> int:
-    """Delete the account's prefs kept in the workspace (``workspace_prefs``)
-    and the pages it follows there (``page_follows``): its membership ended,
-    or the account is deleted. Returns how many prefs went; a workspace
-    without a pages.db has none (none is created)."""
+    """Delete the account's prefs kept in the workspace (``workspace_prefs``),
+    the pages it follows there (``page_follows``) and its conversations with
+    the agent on this computer (``computer_chats``, its alone): its
+    membership ended, or the account is deleted. Returns how many prefs
+    went; a workspace without a pages.db has none (none is created)."""
     if not os.path.isfile(ws_db_path(ws, "pages.db")):
         return 0
     with connect_pages_db(ws) as db:
         db.execute("DELETE FROM page_follows WHERE user_id = ?", (user_id,))
+        db.execute("DELETE FROM computer_chats WHERE user_id = ?", (user_id,))
         return db.execute("DELETE FROM workspace_prefs WHERE user_id = ?", (user_id,)).rowcount
 
 
