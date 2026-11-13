@@ -1042,7 +1042,18 @@ async function main() {
         ['folder', true, 'everything', true, true, 'Choosing files']);
       assert.equal(vault.server, ids.alpha, 'on the host, the first local server');
       assert.equal(await bar.locator('#syncPanel #vaultAsk').count(), 0, 'the bar asks nothing: the tracking dialog does');
-      content = await findPage(app, (u) => u.startsWith('http://127.0.0.1') && new URL(u).searchParams.get('track') === vault.id);
+      // The window is known by the dialog it shows, not by its address: the
+      // page reads ?track= as it boots and takes it out of the address
+      // (frontend/src/vault/useVault.js), often before the waits above end.
+      content = await waitFor(async () => {
+        for (const p of app.windows()) {
+          if (p.url().startsWith('http://127.0.0.1') && await p.getByRole('dialog', { name: 'Choose files' }).isVisible()) return p;
+        }
+        return null;
+      }, 'the window at the vault\'s tracking dialog', 30_000);
+      const dialog = content.getByRole('dialog', { name: 'Choose files' });
+      assert.equal(await dialog.locator('.importReviewHeader strong').innerText(), 'Reading', 'the dialog is the vault\'s directory');
+      assert(!new URL(content.url()).searchParams.has('track'), 'the hand-over leaves the address');
       assert(!fs.existsSync(path.join(dir, '.gammaignore')), 'nothing chosen yet');
       // its Save, as the page sends it: the preset, its notes and PDFs added to the library
       const saved = await content.evaluate((id) => fetch(`/api/folder-links/${id}/selection`, {
