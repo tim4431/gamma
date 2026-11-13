@@ -1,6 +1,6 @@
 import React from "react";
 import { NameInput, PaneHead, Section, Row, Toggle, Stepper, PictureChoices } from "./SettingsKit";
-import { HighlightPresets } from "./HighlightPresets";
+import { TextHighlighters } from "./TextHighlighters";
 import { MenuSelect } from "../shared/ui/Menus";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
@@ -174,10 +174,9 @@ export function AppearanceSettings({ value, diagnostics }) {
           <PaletteGroup key={g.id} group={g} canAdd={palette.groups.length < MAX_GROUPS} canDelete={palette.groups.length > 1}
             onChange={(group) => setGroup(g.id, group)} onDelete={() => deleteGroup(g.id)} onDuplicate={() => addGroup(g)} />
         ))}
-        <Row icon={HighlightIcon} label={t("Text highlights")} hint={t("Highlighting selected PDF text, and recolouring a highlight from its menu; the selection popup switches it too.")}>
+        <Row icon={HighlightIcon} label={t("Text highlights")} hint={t("The colours the selection bar, a highlight's menu and a highlighter's menu offer.")}>
           <MenuSelect label={t("Text highlights")} value={palette.pickers.highlight} onChange={setPicker("highlight")} options={groupOptions} />
         </Row>
-        <HighlightPresets presets={value.highlightPresets} onChange={value.setHighlightPresets} palette={palette} />
         <Row icon={HighlightIcon} label={t("Ink highlights")} hint={t("A highlighter pen in the handwriting tool strip: the colours its options row offers.")}>
           <MenuSelect label={t("Ink highlights")} value={palette.pickers.highlighter} onChange={setPicker("highlighter")} options={groupOptions} />
         </Row>
@@ -215,6 +214,9 @@ export function AppearanceSettings({ value, diagnostics }) {
       <BarLayoutSection title={t("Viewer tools")} scope="account" prefs={SECTION_PREFS.appearance["Viewer tools"]}
         bar={VIEWER_TOOLS} value={value.viewerTools} onChange={value.setViewerTools} icons={VIEWER_TOOL_ICONS}
         resetTitle={t("Every tool back on the viewer's strip, in the default order")} />
+
+      <TextHighlighters presets={value.highlightPresets} seedColor={value.highlighterColor} firstSwatch={value.firstSwatch}
+        onChange={value.setHighlightPresets} palette={palette} />
 
       <Section title={t("Tours")} scope="account" prefs={SECTION_PREFS.appearance["Tours"]}>
         <Toggle icon={HelpCircleIcon} label={t("Suggest tours")} hint={t("A short tour the first time a feature comes up.")}

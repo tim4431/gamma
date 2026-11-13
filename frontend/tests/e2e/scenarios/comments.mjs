@@ -697,14 +697,14 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const r = await tip.evaluate((el) => { const b = el.getBoundingClientRect(); return { left: b.left, top: b.top }; });
     assert(Math.hypot(r.left - release.x, r.top - release.y) < 40,
       `the popup opens by the pointer: its corner (${r.left}, ${r.top}), the release (${release.x}, ${release.y})`);
-    // the styles, a line, the colours and their fold, a line, then the tools: Comment, Link
+    // the colours (and any highlighter of its own), their fold, a line, then the tools: Comment, Link
     const row = await tip.evaluate((el) => [...el.querySelector(".colorRow").children].map((c) => ({
-      kind: c.classList.contains("tipDivider") ? "line" : c.classList.contains("markStyles") ? "styles"
+      kind: c.classList.contains("tipDivider") ? "line" : c.classList.contains("markBtn") ? "mark"
         : c.classList.contains("markFoldBtn") ? "fold" : c.classList.contains("linkTipBtn") ? "tool" : "colour",
       label: c.getAttribute("aria-label") || c.getAttribute("title") || "", left: c.getBoundingClientRect().left, right: c.getBoundingClientRect().right,
     })));
     const kinds = row.map((c) => c.kind).join(" ");
-    assert(/^styles line (colour )+fold line (tool ?)+$/.test(kinds), `styles | colours | tools: ${kinds}`);
+    assert(/^(colour )+(mark )*fold line (tool ?)+$/.test(kinds), `colours | tools: ${kinds}`);
     const line = row.findLastIndex((c) => c.kind === "line");
     assert(row[line - 1].right < row[line].left && row[line].right < row[line + 1].left, "the line sits between them");
     assertEq(row[line + 1].label, "Comment on this passage", "Comment is the first tool");

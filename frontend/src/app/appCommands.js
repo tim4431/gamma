@@ -22,7 +22,9 @@
 // inkCut(), inkPaste(), inkDuplicate(), inkSelectAll(), and translation (the
 // PDF's translated view, docs/dev/translation.md "The button"; null where the
 // translate button does not apply): {pages, shown, running, current,
-// docDone, as the viewer reports them, toggle(), page(), document()} }.
+// docDone, as the viewer reports them, toggle(), page(), document()}, and
+// highlighter (the text highlighters, docs/dev/settings.md "Text
+// highlighters"; null where they do not apply): {toggle(), next()} }.
 import { t } from "../shared/i18n/i18n.js";
 import { isTextField } from "../shared/lib/hotkeys.js";
 
@@ -163,6 +165,13 @@ export const APP_COMMANDS = [
     { when: (c) => !!c.translation && !c.translation.running && !c.translation.current }),
   cmd("pdf.translateDocument", t("Translate whole document"), GROUP_PDF, null, (c) => { c.translation.document(); },
     { when: (c) => !!c.translation && !c.translation.running && !c.translation.docDone }),
+  // The text highlighters, as the strip's buttons: on (the one armed last,
+  // else the first) or off, and the next one; unbound, so a reader binds
+  // one with a modifier, which a note being typed into lets through.
+  cmd("pdf.textHighlighter", t("Text highlighter on or off"), GROUP_PDF, null, (c) => { c.highlighter.toggle(); },
+    { when: (c) => !!c.highlighter }),
+  cmd("pdf.nextHighlighter", t("Next text highlighter"), GROUP_PDF, null, (c) => { c.highlighter.next(); },
+    { when: (c) => !!c.highlighter }),
   // Mod, not Ctrl: a Mac's Ctrl+click is the right click, so it boxes with ⌘.
   held("pdf.areaDrag", t("Hold to box a region of the PDF"), "Mod"),
   held("pdf.peekOriginal", t("Hold to see the original of a translated page"), "Alt"),

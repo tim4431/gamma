@@ -14,7 +14,7 @@ const source = (file) => fs.readFileSync(path.join(SETTINGS, file), "utf8");
 
 // The sources each pane renders: its own file and the sections it pulls in.
 const PANE_FILES = {
-  appearance: ["SettingsAppearance.jsx", "SettingsLibraryDisplay.jsx", "HighlightPresets.jsx", "BarLayoutSection.jsx", "../app/topbarItems.js", "../app/viewerToolItems.js"],
+  appearance: ["SettingsAppearance.jsx", "SettingsLibraryDisplay.jsx", "TextHighlighters.jsx", "BarLayoutSection.jsx", "../app/topbarItems.js", "../app/viewerToolItems.js"],
   reading: ["SettingsDialog.jsx"],
   translation: ["SettingsTranslation.jsx"],
   keyboard: ["SettingsKeyboard.jsx"],

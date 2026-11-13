@@ -11,7 +11,8 @@
 // while some tool that applies here is hidden. A tool in use stays on the
 // strip whatever its mode (App pins it): Record while recording, Translate
 // while it translates or shows a translation, the pen while its tools are
-// open, the text highlighter while it is on. Translate hidden is how the
+// open, the armed text highlighter (its button alone) while one is on.
+// Translate hidden is how the
 // translate button is turned off.
 //
 // The default order is the strip's own: the PDF and the notebook viewer
@@ -48,9 +49,9 @@ export const VIEWER_TOOL_ITEMS = Object.freeze([
     modes: ["always", "hidden"],
   },
   {
-    id: "highlighter", label: T("Text highlighter"),
-    hint: T("PDFs only. What you select is highlighted at once, in the colour you used last."),
-    keywords: "highlight marker colour color select text quick",
+    id: "highlighter", label: T("Text highlighter buttons"),
+    hint: T("PDFs only. A button per highlighter on the strip (Appearance › Text highlighters); with one on, what you select is marked at once in its style and colour."),
+    keywords: "highlight marker colour color select text quick preset underline wavy squiggly strikethrough definition question copy duplicate",
     modes: ["always", "hidden"],
   },
   {

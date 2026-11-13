@@ -127,7 +127,8 @@
   .chatInput,
   .titleEdit,
   .metaInput,
-  .mdImgCaptionInput
+  .mdImgCaptionInput,
+  .hlMenuName
 ):focus-visible,
 :is(.homeFindBox, .searchInputWrap, .pdfPageWidget, .chatComposer, .commentBox):focus-within {
   outline: none;
@@ -1453,9 +1454,10 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 }
 .plainTip .colorBtn.rowMenuBtn:hover { background: var(--bg-hover); }
 
-/* How a highlight marks its passage (pdf/MarkTools.jsx): the four styles
-   as one segmented control, each drawn in the colour it would take
-   (MarkGlyph), before the swatches of the popup and the menus. */
+/* How a highlight marks its passage (pdf/MarkTools.jsx): the colours, the
+   account's highlighters as glyph buttons (.markBtn), the four styles as
+   one segmented control in the popup's fold and the menus, each drawn in
+   the colour it would take (MarkGlyph). */
 .markGlyph { display: block; flex: none; }
 .markStyles {
   display: inline-flex;
@@ -1470,8 +1472,8 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 18px; /* with the group's padding and border, a swatch tall */
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: none;
   border-radius: var(--radius-full);
@@ -1485,48 +1487,58 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   color: var(--text-primary);
   box-shadow: 0 0 0 1px var(--border-hover);
 }
-/* The presets: chips of a style in a colour and a name, under the row. */
-.markPresets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.markMenu .markPresets { margin-top: 0; }
-.markPreset {
+/* A swatch drawn as a line: the line in the swatch's colour on the popup's
+   own ground, so it shows what it makes. */
+.colorBtn.markLine {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  max-width: 170px;
-  height: 24px;
-  padding: 0 8px 0 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
+  justify-content: center;
   background: var(--bg-raised);
-  color: var(--text-primary);
-  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+/* A highlighter: its look in a square, so it reads apart from the round
+   colours beside it. */
+.markBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
   cursor: pointer;
 }
-.markPreset:hover { background: var(--bg-hover); }
-.markPreset.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.markPresetName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The presets and the popup's colour fold (the groups the swatches come
-   from, the way to Settings, a new preset) take the row's width and wrap
-   in it, never widening the popup (no width of their own to give it); an
-   open fold makes it room enough for a group's name. */
-.markPresets, .markFold { width: 0; min-width: 100%; }
-.plainTip:has(.markFold) { min-width: 260px; }
+.markBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.markBtn.selected { border-color: var(--border); box-shadow: 0 0 0 2px var(--border); }
+/* The armed highlighter, its own button or the swatch standing for it: a
+   finger's selection makes it in one tap. */
+:is(.markBtn, .colorBtn).armed { box-shadow: 0 0 0 2px var(--accent); }
+/* Every mark a pointer presses is at least 30 px to a finger, the layout as
+   it is: its hit area reaches past its edge, into the row's gap (6 to 8 px,
+   so two meet at most in its middle). */
+:is(.plainTip .colorBtn, .markMenu .colorBtn, .markBtn, .markStyleBtn) { position: relative; }
+:is(.plainTip .colorBtn, .markMenu .colorBtn, .markBtn, .markStyleBtn)::after { content: ""; position: absolute; inset: -4px; }
+/* the style buttons sit 2 px apart: theirs meet in the gap */
+.markStyles .markStyleBtn::after { inset: -4px -1px; }
+.markRow { display: flex; flex-wrap: wrap; gap: 6px; }
+/* The fold's button: a chevron, or the one-shot style while it is not the
+   wash, so a line about to be made shows at a glance. */
+.plainTip .markFoldBtn.on { color: var(--text-primary); background: var(--bg-active); }
+/* The popup's fold: the one-shot style, the hidden highlighters, the
+   colour group, Save look and Edit highlighters. */
 .markFold {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--border-subtle);
 }
-.markFoldHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  color: var(--text-dim);
-  font-size: var(--fs-xs);
-}
-.markFoldNew { justify-self: start; }
+.markFoldRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.markFoldLabel { min-width: 72px; color: var(--text-dim); font-size: var(--fs-xs); }
+.markFoldActions { display: flex; flex-wrap: wrap; gap: 6px; }
 .markGroups { display: grid; gap: 1px; }
 .markGroup {
   display: flex;
@@ -1553,15 +1565,27 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 }
 .markGroupName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .markGroupMore { color: var(--text-dim); font-size: var(--fs-2xs); }
-.markDraft { display: grid; gap: 6px; }
-.markDraftRow { display: flex; align-items: center; gap: 6px; }
-.markDraftRow input { flex: 1; min-width: 0; }
-/* A menu's marking rows (a highlight's, the text highlighter's). */
+/* A menu's marking rows (a highlight's, a strip highlighter's): wide enough
+   for four highlighters and four colours on a line. */
 .markMenu {
   display: grid;
   gap: 8px;
   justify-items: start;
+  min-width: 200px;
   padding: 8px 12px 6px;
+}
+.markMenu .colorRow { gap: 6px; }
+/* A strip highlighter's menu: its look and its name, typed in place. */
+.hlMenuHead { display: flex; align-items: center; gap: 8px; width: 100%; }
+.hlMenuName {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input, var(--bg-block));
+  color: var(--text-primary);
+  font: inherit; /* ui-allow font-inherit: an input, which the control reset does not zoom */
 }
 
 /* The selection translator under the color row (PdfViewer SelTranslation):
@@ -1991,7 +2015,22 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   left: 14px;
   top: 50%;
   transform: translateY(-50%);
+  /* A short viewer (a landscape phone, the zoom window open, a short
+     window) scrolls the column rather than run it into the outline's box
+     above and the full-screen box below; its ⋯ stays reachable. */
+  max-height: calc(100% - 2 * (var(--ctl-icon-btn) + 22px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
 }
+.pdfZoomOverlay::-webkit-scrollbar { display: none; }
+/* its buttons' focus ring drawn inside them, so the scroll box clips none */
+.pdfZoomOverlay button:focus-visible { outline-offset: -2px; }
+/* The text highlighters on the strip (pdf/HighlighterStrip.jsx): a run of
+   buttons, set off by hairlines once there are two; one armed from the
+   hidden ones, pinned, a dashed line over it. */
+.stripMarks:has(> :nth-child(2)) { padding-block: 2px; border-block: 1px solid var(--border); }
+.pdfCtlBox .stripMarkBtn.pinned { border-top: 1px dashed var(--border-hover); }
 .pdfOutlineBox { top: 8px; left: 14px; }
 .pdfFullscreenBox { bottom: 14px; left: 14px; }
 
@@ -7467,7 +7506,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .viewerWrap.inkZoomOpen :is(.pdfCloseBtn, .pdfFullscreenBox) { bottom: calc(14px + var(--ink-zoom-h, 0px)); }
 .viewerWrap.inkZoomOpen .recordingPill { bottom: calc(12px + var(--ink-zoom-h, 0px)); }
 .viewerWrap.inkZoomOpen .replayBar { bottom: calc(10px + var(--ink-zoom-h, 0px)); }
-.viewerWrap.inkZoomOpen .pdfZoomOverlay { top: calc((100% - var(--ink-zoom-h, 0px)) / 2); }
+.viewerWrap.inkZoomOpen .pdfZoomOverlay { top: calc((100% - var(--ink-zoom-h, 0px)) / 2);
+  max-height: calc(100% - var(--ink-zoom-h, 0px) - 2 * (var(--ctl-icon-btn) + 22px)); }
 /* The ruler (ink/InkLayer.jsx InkRuler): an anchor on its middle line, as
    long as the ruler and turned by its angle; the band 36 css px wide
    (RULER_PX) at any zoom, its edges, ticks and numbers, the angle knob in
