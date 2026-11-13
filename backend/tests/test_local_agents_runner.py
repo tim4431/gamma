@@ -95,6 +95,7 @@ def disk(tmp_path, monkeypatch):
         conn.execute("DELETE FROM linked_files WHERE substr(path, 1, ?) = ?", (len(below), below))
         conn.execute("DELETE FROM agent_runs")
         conn.execute("DELETE FROM agent_folders")
+        conn.execute("DELETE FROM agent_threads")
     with folder_links._dirty_guard:
         folder_links._dirty.clear()
     assert not left, f"children left running: {[c.proc.pid for c in left]}"
@@ -502,6 +503,21 @@ def test_the_store(disk):
     later = store.start_run(ws="ws1", link_id="lnkA", request_id="req1", agent="claude")
     assert store.run_of("ws1", "req1")["id"] == later and store.run_of("ws1", "nothing") is None
 
+    # the threads answered: one row a thread, the newest answer in place of the one before
+    for link_id, thread_id, session in (("lnkA", "t1", "s1"), ("lnkA", "t1", "s2"), ("lnkA", "t2", "s2"),
+                                        ("lnkB", "t3", "s3"), ("lnkC", "t4", "s4")):
+        store.answered_thread(link_id, thread_id, agent="codex", session=session, cwd="/p", seen_at="2026-11-13T10",
+                              read=[f"r-{session}", "r0"], comment_id=f"c-{session}", request_id="req1")
+    rows = store.threads_of("lnkA", ["t1", "t2", "t3"])
+    assert {t: (r["session"], r["comment_id"]) for t, r in rows.items()} == {"t1": ("s2", "c-s2"), "t2": ("s2", "c-s2")}
+    assert rows["t1"]["read"] == ["r-s2", "r0"] and "read_ids" not in rows["t1"]
+    assert rows["t1"]["cwd"] == "/p" and rows["t1"]["agent"] == "codex" and store.threads_of("lnkA", []) == {}
+    store.forget_threads("lnkA")  # relinked
+    assert store.threads_of("lnkA", ["t1"]) == {}
+    store.forget_links({"lnkC"})  # a vault gone while this server was not looking
+    vault_store.forget_link("lnkC")  # a vault removed
+    assert store.threads_of("lnkB", ["t3"]) == {} and store.threads_of("lnkC", ["t4"]) == {}
+
 
 def _entry(thread_id, *comments, state="open", **more):
     return {"id": thread_id, "file": "main.pdf", "kind": "passage", "state": state,
@@ -519,7 +535,10 @@ def test_what_is_pending():
     entries = [_entry("t1", mine), _entry("t2", mine, answered), _entry("t3", mine, answered, mine),
                _entry("t4", mine, state="resolved"), _entry("t5", mine), _entry("t6", mine, answered,
                                                                                  ("tim", "", "", True))]
-    assert [e["id"] for e in prompt.pending(entries, {"t5"})] == ["t1", "t3"]
+    # a request's answered flag is not asked: t5, which another member's reply flagged, is still open and unanswered
+    assert [e["id"] for e in prompt.pending(entries)] == ["t1", "t3", "t5"]
+    # an agent's reply here that a person spoke before, unread by its run, still leaves that word to answer
+    assert [e["id"] for e in prompt.pending(entries, {"t2": "c1", "t6": "c0"})] == ["t1", "t2", "t3", "t5"]
 
 
 def test_the_prompt(tmp_path):
@@ -668,9 +687,9 @@ def test_a_withdraw_while_the_answers_are_written(lab, disk, monkeypatch):
     reply = agent.reply
     calls = []
 
-    def withdrawn_after_one(connection, ws, base, args):
+    def withdrawn_after_one(connection, ws, base, args, **kw):
         calls.append(args["thread_id"])
-        out = reply(connection, ws, base, args)
+        out = reply(connection, ws, base, args, **kw)
         _withdraw(lab, "larAnswerWithdraw")
         return out
 

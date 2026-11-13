@@ -1,16 +1,21 @@
 """What this computer keeps of its agents, in vaults.db (``db.VAULTS_SCHEMA``,
 never migrated): the agent each work folder's vault answers its Sends with
-(``agent_folders``, one row a link; none for no agent) and one row a run
+(``agent_folders``, one row a link; none for no agent), one row a run
 (``agent_runs``): which request it took, the agent's session, its state
 (``running`` until it ends ``done``, ``failed`` or ``stopped``), the last
 progress it showed, the source files it changed, whether the build changed,
-its steps and its process.
+its steps and its process; and one row a thread an agent here answered last
+(``agent_threads``): the agent, its session and the directory it ran in,
+when the run read the thread, the reply it wrote and the request, so that a
+follow-up in the thread resumes that session.
 
 A run's ``error`` is this computer's record of a failure, the agent's whole
 error and its stderr's tail: it may name the user's paths and is never shown
 to the workspace's members (their request carries a sentence of the
-runner's). A removed vault forgets its agent (``vault.store.forget_link``);
-``forget_links`` drops the rows of links that are gone some other way.
+runner's). A removed vault forgets its agent and its threads
+(``vault.store.forget_link``), a relinked one its threads
+(``forget_threads``); ``forget_links`` drops the rows of links that are gone
+some other way.
 
 Every function opens its own short connection and commits before it returns,
 as gamma/vault/store.py does.
@@ -77,11 +82,71 @@ def set_agent(link_id: str, agent: str, *, by: str) -> None:
 
 
 def forget_links(live_ids: set[str]) -> int:
-    """The agents of the links not in ``live_ids`` forgotten (a vault gone
-    while this server was not looking) → how many."""
+    """The agents of the links not in ``live_ids`` forgotten, and their
+    threads (a vault gone while this server was not looking) → how many
+    agents."""
+    live = json.dumps(sorted(live_ids))
     with connect_vaults_db() as conn:
+        conn.execute("DELETE FROM agent_threads WHERE link_id NOT IN (SELECT value FROM json_each(?))", (live,))
         return conn.execute("DELETE FROM agent_folders WHERE link_id NOT IN (SELECT value FROM json_each(?))",
-                            (json.dumps(sorted(live_ids)),)).rowcount
+                            (live,)).rowcount
+
+
+# --- the threads answered ---------------------------------------------------------------
+
+_THREAD_COLUMNS = ("thread_id", "agent", "session", "cwd", "seen_at", "read_ids", "comment_id", "request_id", "at")
+
+
+def answered_thread(link_id: str, thread_id: str, *, agent: str, session: str, cwd: str, seen_at: str,
+                    read: list[str], comment_id: str, request_id: str) -> None:
+    """The agent ``agent`` of the vault ``link_id`` answered the thread with
+    the reply ``comment_id``, in the session ``session`` run in ``cwd``, on
+    the request ``request_id``, having read the thread's comments ``read``
+    at ``seen_at``: the thread's row, in place of the one it had."""
+    with connect_vaults_db() as conn:
+        conn.execute("INSERT INTO agent_threads (link_id, thread_id, agent, session, cwd, seen_at, read_ids, "
+                     "comment_id, request_id, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                     "ON CONFLICT(link_id, thread_id) DO UPDATE SET agent = excluded.agent, "
+                     "session = excluded.session, cwd = excluded.cwd, seen_at = excluded.seen_at, "
+                     "read_ids = excluded.read_ids, comment_id = excluded.comment_id, "
+                     "request_id = excluded.request_id, at = excluded.at",
+                     (link_id, thread_id, agent, session or "", cwd or "", seen_at or "", json.dumps(list(read or [])),
+                      comment_id or "", request_id or "", page_now()))
+
+
+def threads_of(link_id: str, thread_ids) -> dict[str, dict]:
+    """``{thread id: {thread_id, agent, session, cwd, seen_at, read (the
+    ids of the comments the run read), comment_id, request_id, at}}`` of
+    those of ``thread_ids`` an agent of the vault ``link_id`` answered, in
+    one query."""
+    ids = sorted(set(thread_ids))
+    if not ids:
+        return {}
+    with connect_vaults_db() as conn:
+        rows = conn.execute(f"SELECT {', '.join(_THREAD_COLUMNS)} FROM agent_threads WHERE link_id = ? "
+                            "AND thread_id IN (SELECT value FROM json_each(?))", (link_id, json.dumps(ids))).fetchall()
+    out = {}
+    for row in rows:
+        found = dict(zip(_THREAD_COLUMNS, row))
+        found["read"] = _ids(found.pop("read_ids"))
+        out[row[0]] = found
+    return out
+
+
+def _ids(raw: str) -> list[str]:
+    """A stored JSON list of ids; [] for anything else."""
+    try:
+        value = json.loads(raw or "[]")
+    except ValueError:
+        return []
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+
+
+def forget_threads(link_id: str) -> None:
+    """The threads the vault's agent answered forgotten: its directory moved
+    (a session belongs to the directory it ran in)."""
+    with connect_vaults_db() as conn:
+        conn.execute("DELETE FROM agent_threads WHERE link_id = ?", (link_id,))
 
 
 # --- the runs ------------------------------------------------------------------------------

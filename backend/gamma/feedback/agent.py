@@ -91,11 +91,20 @@ def _link(base: str, ws: str, thread: dict) -> str:
                       block_id=thread["block_id"], thread_id=thread["id"])
 
 
-def reply(connection: Connection, ws: str, base: str, args: dict) -> tuple[str, dict]:
+def _seen(event: dict | None, seen: str) -> dict | None:
+    """The write's event, with when the writer read the thread (``seen``,
+    an agent on this computer's run): the requests made after it are not
+    answered by it (``requests.answered``)."""
+    return {**event, "seen": seen} if event and seen else event
+
+
+def reply(connection: Connection, ws: str, base: str, args: dict, *, seen: str = "") -> tuple[str, dict]:
     """Write ``args["body"]`` as this connection's reply in the thread
     ``args["thread_id"]`` (``REPLY_SCHEMA``): ``(text, {thread_id,
     comment_id, page_id, url})``. A repeated ``id`` answers the reply it
-    wrote and writes nothing. ValueError for a refusal."""
+    wrote and writes nothing. ``seen``: when the writer read the thread
+    (``_seen``; never one of the tool's arguments). ValueError for a
+    refusal."""
     _may_answer(connection, ws)
     with connect_pages_db(ws) as conn:
         thread = _thread(conn, args)
@@ -108,7 +117,8 @@ def reply(connection: Connection, ws: str, base: str, args: dict) -> tuple[str, 
         except HTTPException as e:
             raise ValueError(str(e.detail)) from None
     if out["created"]:
-        comments.written(ws, thread["page_id"], thread["block_id"], thread["id"], out["event"], client="", via="")
+        comments.written(ws, thread["page_id"], thread["block_id"], thread["id"], _seen(out["event"], seen), client="",
+                         via="")
     url = _link(base, ws, thread)
     said = (f"Replied to the feedback item {thread['id']} on {named}" if out["created"]
             else f"This reply to the feedback item {thread['id']} on {named} was written already")
@@ -116,10 +126,11 @@ def reply(connection: Connection, ws: str, base: str, args: dict) -> tuple[str, 
                               "page_id": thread["page_id"], "url": url}
 
 
-def resolve(connection: Connection, ws: str, base: str, args: dict) -> tuple[str, dict]:
+def resolve(connection: Connection, ws: str, base: str, args: dict, *, seen: str = "") -> tuple[str, dict]:
     """Resolve the thread ``args["thread_id"]`` as this connection
     (``RESOLVE_SCHEMA``): ``(text, {thread_id, page_id, url})``. A resolved
-    thread stays as it was resolved. ValueError for a refusal."""
+    thread stays as it was resolved. ``seen`` as for ``reply``. ValueError
+    for a refusal."""
     _may_answer(connection, ws)
     with connect_pages_db(ws) as conn:
         thread = _thread(conn, args)
@@ -130,7 +141,8 @@ def resolve(connection: Connection, ws: str, base: str, args: dict) -> tuple[str
         except HTTPException as e:
             raise ValueError(str(e.detail)) from None
     if out["event"]:
-        comments.written(ws, thread["page_id"], thread["block_id"], thread["id"], out["event"], client="", via="")
+        comments.written(ws, thread["page_id"], thread["block_id"], thread["id"], _seen(out["event"], seen), client="",
+                         via="")
     url = _link(base, ws, thread)
     said = (f"Resolved the feedback item {thread['id']} on {named}" if out["event"]
             else f"The feedback item {thread['id']} on {named} was resolved already")

@@ -14,6 +14,8 @@
 import { t } from "../shared/i18n/i18n.js";
 import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, pdfAnchorOf } from "../shared/model/blockModel.js";
 import { plainSnippet } from "../search/snippets.js";
+import { peopleIn } from "../editor/mentions.js";
+import { AGENT_MAX } from "../feedback/feedbackView.js";
 
 export const MAX_COMMENT = 20000; // characters, as the server (comments.MAX_BODY)
 
@@ -261,6 +263,42 @@ export function sentChip(thread) {
     return { state, label, title: detail || label, tone: "pending" };
   }
   return { state, label: t("Sent"), title: t("Waiting for the agent"), tone: "pending" };
+}
+
+// What a comment field says under the text while it names the work
+// folder's agent on this computer (`agent`, vaultState.js mentionAgent) as
+// the server reads it: a mention outside code that `initial` (an edit's
+// text before) did not have. Sending it is a Send of the thread, or of the
+// file's open comments from the page's own thread (`file`); an edit the
+// server will not send (`refused`: "closed" in a resolved thread,
+// "not_newest" for an older comment, as local_agents/mention.py) says why,
+// and while the agent cannot run, its problem. → {text, warn}, or null for
+// nothing to say.
+export function mentionHint({ agent, text, initial = "", file = false, refused = "" }) {
+  if (!agent || !peopleIn(text).has(agent.name) || peopleIn(initial).has(agent.name)) return null;
+  if (refused) return { text: sendRefusal({ agent: agent.label, refused }), warn: true };
+  if (agent.ready === false && agent.problem) return { text: agent.problem, warn: true };
+  return {
+    text: file ? t("Sends this file's open comments to {agent} on this computer.", { agent: agent.label })
+      : t("Sends this thread to {agent} on this computer.", { agent: agent.label }),
+    warn: false,
+  };
+}
+
+// Why a comment that named the agent was not sent to it, for the status
+// line (the comment itself is posted): the answer's `send` ({agent,
+// refused, why}, routers/comments.py), worded here by its code, else the
+// server's sentence. "" for a Send that was made, or none.
+const REFUSALS = {
+  closed: (agent) => t("Reopen this thread to send it to {agent} again.", { agent }),
+  not_newest: (agent) => t("Mention {agent} in a new reply to send this thread again.", { agent }),
+  viewer: (agent) => t("Only the workspace's owners and editors can send comments to {agent}.", { agent }),
+  too_many: (agent) => t("{agent} takes at most {max} comments at a time: mention it in the threads you want answered.", { agent, max: AGENT_MAX }),
+};
+export function sendRefusal(send) {
+  if (!send?.refused) return "";
+  const agent = send.agent || "";
+  return REFUSALS[send.refused]?.(agent) || t("Not sent to {agent}: {reason}", { agent, reason: send.why || send.refused });
 }
 
 // What a thread is on, in the Comments window's words: the highlight's

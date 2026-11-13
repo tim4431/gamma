@@ -6,14 +6,15 @@
 // editorRef: the editor's textarea-like facade. people, me: who can be
 // named. pages, rootId: the page links. canInvite: an "Invite…" row.
 // reminders: "Remind" rows (a comment's field has none: the reminder scan
-// reads notes only). onPicked(row): after a row went in (a reminder, an
-// invite).
+// reads notes only). agents: the work folder's agent on this computer
+// ([{name, label, ready, problem}], a comment field's alone: a note never
+// lists it). onPicked(row): after a row went in (a reminder, an invite).
 import { useState } from "react";
 import { findMathAtCursor } from "./LatexEditor";
 import { fenceInnerAt } from "./fences.js";
 import { datePending, mentionRows, mentionText, mentionTrigger } from "./mentions.js";
 
-export function useMentionMenu({ editorRef, people, me, pages, rootId, canInvite = false, reminders = true, onCacheRef, onPicked }) {
+export function useMentionMenu({ editorRef, people, me, pages, rootId, canInvite = false, reminders = true, agents = [], onCacheRef, onPicked }) {
   // { start, query, rows, anchor }, opened by typing an "@" that starts a
   // word; it stays open across spaces while something answers the query.
   const [atMenu, setAtMenu] = useState(null);
@@ -31,7 +32,7 @@ export function useMentionMenu({ editorRef, people, me, pages, rootId, canInvite
     setAtMenu((prev) => {
       const trigger = mentionTrigger(value, cursor, prev?.start ?? null);
       if (!trigger || (!typing && prev?.start !== trigger.start)) return null;
-      const all = mentionRows({ query: trigger.query, people, me, pages, rootId, canInvite });
+      const all = mentionRows({ query: trigger.query, people, me, pages, rootId, canInvite, agents });
       const rows = reminders ? all : all.filter((r) => r.kind !== "remind");
       return rows.length || datePending(trigger.query) ? { ...trigger, rows, anchor: ta.caretCoords(trigger.start) } : null;
     });

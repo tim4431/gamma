@@ -7,8 +7,10 @@ Scripted by ``FAKE_AGENT`` as tests/fake_agents/fake_codex.py is: ``edits``
 (or ``files``), ``answer`` / ``each`` with ``summary``, ``delay``, ``log``,
 and ``fail`` one of ``exit``, ``garbage``, ``no_answer``, ``not_signed_in``
 (the status says so, and a turn ends in a result that is an error),
-``failed`` (a result that is an error), ``hang`` (with ``grandchild``).
-The log gets ``{"argv", "cwd", "env"}`` and ``{"stdin": text}``.
+``failed`` (a result that is an error), ``hang`` (with ``grandchild``),
+``resume`` (a ``--resume`` turn exits 1 with nothing on stdout, as for a
+session that is gone); ``distinct`` gives each new session an id of its
+own. The log gets ``{"argv", "cwd", "env"}`` and ``{"stdin": text}``.
 """
 
 import json
@@ -17,6 +19,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 
 FAKE = json.loads(os.environ.get("FAKE_AGENT") or "{}")
 FAIL = FAKE.get("fail", "")
@@ -66,7 +69,12 @@ def answer_of(prompt: str):
 def turn(args: list[str]) -> int:
     prompt = sys.stdin.read()
     log({"stdin": prompt})
-    session = flag(args, "--resume") or "5e55-fake-session"
+    if FAIL == "resume" and flag(args, "--resume"):
+        sys.stderr.write(f"No conversation found with session ID: {flag(args, '--resume')}\n")
+        sys.stderr.flush()
+        return 1
+    session = flag(args, "--resume") or ("5e55-fake-session-" + uuid.uuid4().hex[:8] if FAKE.get("distinct")
+                                         else "5e55-fake-session")
     cwd = os.getcwd()
     out({"type": "system", "subtype": "init", "session_id": session, "cwd": cwd, "tools": ["Read", "Edit"],
          "mcp_servers": [], "permissionMode": "acceptEdits"})

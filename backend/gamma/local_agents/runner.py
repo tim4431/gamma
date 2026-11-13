@@ -14,9 +14,13 @@ never has two agents in its directory. A run (``_Run``):
    agent and its maker still hold, and records the run (``store.start_run``);
 2. probes the agent afresh: one not ready fails the request with its problem;
 3. reads the request's entries and keeps those with something new to answer
-   (``prompt.pending``), at most ``MAX_THREADS``;
+   (``prompt.pending``), at most ``MAX_THREADS``, noting when it read them
+   (``seen_at``) and which comments it read (``read``): a person's word it
+   did not read is the next run's;
 4. notes the folder's files (``_snapshot``), starts one turn of the agent in
    the vault's directory with ``prompt.build`` (gamma/local_agents/events.py),
+   resuming the session that answered its threads last when they share one
+   (``_session``; a resume that fails before any step starts afresh once),
    and shows its steps as the request's detail, at most every
    ``DETAIL_EVERY_S``, never naming a path outside the folder or a whole
    command; a watchdog thread stops the turn on a withdraw, an agent turned
@@ -24,8 +28,10 @@ never has two agents in its directory. A run (``_Run``):
    ``RUN_TIMEOUT_S`` after the turn began;
 5. once the turn is done, compares the files, writes each answer as the
    agent's reply signed with its label (``agent_id`` ``local:<name>``, so the
-   comment reads as an agent on this computer's), resolves the fixed ones,
-   and sets the request ``done`` with the summary and the files changed, or
+   comment reads as an agent on this computer's) and records the thread's
+   session (``store.answered_thread``), resolves the fixed ones in which a
+   person said nothing the run did not read, and sets the request ``done`` with
+   the summary and the files changed, or
    ``failed`` with a sentence a member may read; the agent's whole error and
    its stderr stay in the run's row on this computer.
 
@@ -41,6 +47,7 @@ come back through ``on_request`` on the same thread).
 
 import atexit
 import collections
+import json
 import os
 import re
 import shlex
@@ -51,7 +58,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from ..db import account_names, connect_pages_db, connect_users_db
+from ..db import account_names, connect_pages_db, connect_users_db, page_now
 from ..feedback import requests
 from ..feedback.entries import FeedbackError
 from ..logbuf import log
@@ -523,6 +530,24 @@ def _cut(text: str) -> str:
     return text if len(text) <= requests.MAX_DETAIL else text[:requests.MAX_DETAIL - 1] + "…"
 
 
+def _spoken_after(ws: str, since: dict[str, tuple[str, set[str]]]) -> set[str]:
+    """The threads of ``since`` (``{thread id: (when a run read it, the ids
+    of the comments it read)}``) in which a person (a session: no token, no
+    agent) has a live comment that run did not read, or edited one after it
+    read: words it never saw. By the ids, not the times, since a comment is
+    stamped before its commit. One query."""
+    since = {thread_id: (at, read) for thread_id, (at, read) in since.items() if at}
+    if not since:
+        return set()
+    with connect_pages_db(ws) as conn:
+        rows = conn.execute("SELECT thread_id, id, updated_at FROM comments "
+                            "WHERE thread_id IN (SELECT value FROM json_each(?)) AND agent_id = '' "
+                            "AND deleted_at IS NULL AND orphaned_at IS NULL",
+                            (json.dumps(sorted(since)),)).fetchall()
+    return {thread_id for thread_id, comment_id, updated in rows
+            if comment_id not in since[thread_id][1] or updated > since[thread_id][0]}
+
+
 class _Stop(Exception):
     """The run ends here; its state and the words were set."""
 
@@ -548,6 +573,8 @@ class _Run:
         self.built = False
         self.unwritten = False  # the request's last write failed: the run's row stays open for ``recover``
         self.tracked: set[str] = set()  # the vault's files, by path folded: what the request's words may name
+        self.seen_at = ""  # when the run read its entries: the requests made since are the next run's
+        self.read: dict[str, list[str]] = {}  # the ids of the comments it read, by thread
         self._shown, self._shown_at = "", 0.0
 
     # --- the request ---------------------------------------------------------------
@@ -706,10 +733,16 @@ class _Run:
         # 3. what there is to answer
         files = vault_store.files(self.link_id)
         self.tracked = {path.casefold() for path in files}
+        self.seen_at = page_now()
         with connect_pages_db(self.ws) as conn:
             found_entries = requests.entries_of(self.ws, conn, self.record, paths=entries.paths_of(files))
-        answered = {t["id"] for t in self.record["threads"] if t["answered"]}
-        todo = prompt.pending(found_entries, answered)
+        self.read = {e["id"]: [c["id"] for c in e.get("comments") or []] for e in found_entries}
+        # A thread an earlier run answered here while a person spoke in it
+        # unread (a mention made during that run) is still to answer.
+        last = store.threads_of(self.link_id, [e["id"] for e in found_entries])
+        spoken = _spoken_after(self.ws, {t: (row["seen_at"], set(row["read"])) for t, row in last.items()
+                                         if row["comment_id"]})
+        todo = prompt.pending(found_entries, {t: last[t]["comment_id"] for t in spoken})
         self.tracked |= {e["source"]["file"].casefold() for e in todo if (e.get("source") or {}).get("file")}
         if not todo:
             nothing = "Nothing new since the last answers."
@@ -730,17 +763,14 @@ class _Run:
             self._fail(f"{self.label} is not on this computer.")
         text = prompt.build(agent=self.agent, owner=self.maker_name, work_folder=self.record["work_folder"]["name"],
                             note=self.record["note"], entries=todo, root=root)
-        self.turn = events.start(self.agent, argv=argv, cwd=str(root), prompt=text, schema=prompt.ANSWER_SCHEMA,
-                                 images=prompt.picture_paths(todo, root))
-        if self.turn.pid:
-            store.update_run(self.run_id, pid=self.turn.pid)
-        ended = threading.Event()
-        threading.Thread(target=self._watch, args=(ended,), name=f"agent-watch-{self.request_id}",
-                         daemon=True).start()
-        try:
-            done = self._follow()
-        finally:
-            ended.set()
+        session = self._session(todo, last)
+        done = self._turn(argv, root, text, todo, session)
+        if session and not done["ok"] and not self.steps and not self.stop.is_set() and not self.timed_out:
+            # A session this computer no longer has (Claude Code has no
+            # fallback of its own): the same prompt once more, afresh.
+            log.info(f"[agents] {self.label} could not resume its session on request {self.request_id}: "
+                     "starting a new one")
+            done = self._turn(argv, root, text, todo, "")
 
         # 5. what it did, and its answers
         self.changes, self.built = _changed_files(before, _snapshot(root))
@@ -780,6 +810,36 @@ class _Run:
             return
         self.end = {"state": "done", "detail": _cut(detail), "error": record}
 
+    def _session(self, todo: list[dict], answered: dict[str, dict]) -> str:
+        """The session to resume: the one this agent answered every thread
+        of ``todo`` in last, in the vault's directory as it is now
+        (``answered``: ``store.threads_of``); "" for a new one."""
+        sessions = set()
+        for entry in todo:
+            row = answered.get(entry["id"])
+            if not row or row["agent"] != self.agent or row["cwd"] != self.link["path"] or not row["session"]:
+                return ""
+            sessions.add(row["session"])
+        return sessions.pop() if len(sessions) == 1 else ""
+
+    def _turn(self, argv: list[str], root: Path, text: str, todo: list[dict], session: str) -> dict:
+        """One turn of the agent on ``text`` (``session`` one to resume),
+        watched, its events followed → its done. A turn before it is
+        closed first."""
+        if self.turn is not None:
+            self.turn.close()
+        self.turn = events.start(self.agent, argv=argv, cwd=str(root), prompt=text, schema=prompt.ANSWER_SCHEMA,
+                                 images=prompt.picture_paths(todo, root), session=session)
+        if self.turn.pid:
+            store.update_run(self.run_id, pid=self.turn.pid)
+        ended = threading.Event()
+        threading.Thread(target=self._watch, args=(self.turn, ended), name=f"agent-watch-{self.request_id}",
+                         daemon=True).start()
+        try:
+            return self._follow()
+        finally:
+            ended.set()
+
     def _record(self, done: dict) -> str:
         """This computer's record of the turn: its error and the agent's
         stderr tail."""
@@ -789,17 +849,17 @@ class _Run:
             parts.append(f"stderr:\n{tail}")
         return "\n".join(p for p in parts if p)
 
-    def _watch(self, ended: threading.Event) -> None:
+    def _watch(self, turn, ended: threading.Event) -> None:
         """Stop the turn on the run's stop or at its deadline, counted from
         the turn's start (not from the queue's wait)."""
         deadline = time.monotonic() + _run_timeout()
         while not ended.is_set():
             if self.stop.is_set():
-                self.turn.stop()
+                turn.stop()
                 return
             if time.monotonic() >= deadline:
                 self.timed_out = True
-                self.turn.stop()
+                turn.stop()
                 return
             ended.wait(0.1)
 
@@ -852,9 +912,13 @@ class _Run:
                     self.stop.set()
 
     def _answer(self, valid: list[dict]) -> tuple[int, str]:
-        """Each answer written as the agent's reply, the fixed ones resolved,
-        until a withdraw (the run's stop) ends the writing → ``(replies
-        written, the first refusal's words)``."""
+        """Each answer written as the agent's reply and its thread's session
+        recorded, the fixed ones resolved unless a person said in them what
+        the run did not read (the agent never saw that word: the thread
+        stays open for it), until a withdraw (the run's stop) ends the
+        writing → ``(replies written, the first refusal's words)``. Each
+        write says when the run read the thread (``seen``), so a request
+        made since is not answered by it."""
         from .. import comments
         from ..blocks_store import new_block_id
         from ..feedback import agent as feedback_agent
@@ -869,12 +933,28 @@ class _Run:
         for item in valid:
             if self.stop.is_set():  # withdrawn meanwhile: nothing more is written in Gamma
                 break
+            thread_id = item["thread_id"]
             try:
-                feedback_agent.reply(connection, self.ws, "", {"thread_id": item["thread_id"], "body": item["reply"],
-                                                               "id": new_block_id()})
+                _, out = feedback_agent.reply(connection, self.ws, "", {"thread_id": thread_id, "body": item["reply"],
+                                                                        "id": new_block_id()}, seen=self.seen_at)
                 written += 1
-                if item["outcome"] == "fixed":
-                    feedback_agent.resolve(connection, self.ws, "", {"thread_id": item["thread_id"]})
+                self._answered(thread_id, out["comment_id"])
+                unread = _spoken_after(self.ws, {thread_id: (self.seen_at, set(self.read.get(thread_id, ())))})
+                if item["outcome"] == "fixed" and not unread:
+                    feedback_agent.resolve(connection, self.ws, "", {"thread_id": thread_id}, seen=self.seen_at)
             except ValueError as e:
                 refusal = refusal or str(e)
         return written, refusal
+
+    def _answered(self, thread_id: str, comment_id: str) -> None:
+        """The thread's row: this agent answered it with ``comment_id`` in
+        its turn's session, in the vault's directory. Never raises: the
+        reply is written, and a follow-up without the row starts a new
+        session."""
+        try:
+            store.answered_thread(self.link_id, thread_id, agent=self.agent,
+                                  session=getattr(self.turn, "session", "") or "", cwd=self.link["path"],
+                                  seen_at=self.seen_at, read=self.read.get(thread_id, []), comment_id=comment_id,
+                                  request_id=self.request_id)
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[agents] recording the session of thread {thread_id} in workspace {self.ws}: {e}")

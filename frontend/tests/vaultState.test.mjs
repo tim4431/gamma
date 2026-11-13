@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   addsToLibrary, agentLine, bannerKey, baseName, carriesToServer, directionText, editsFile, isOpenedPdf, libraryWorkspaces,
-  notesLocked, openedHere, readVault, vaultBanner, vaultChip, vaultConflictsPath,
+  mentionAgent, notesLocked, openedHere, readVault, vaultBanner, vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
 
@@ -192,4 +192,19 @@ test("a work folder's agent on this computer: named, its problem while it cannot
   assert.equal(agentLine(folder()), null);
   assert.equal(agentLine(opened()), null);
   assert.equal(agentLine(null), null);
+});
+
+test("the agent a comment names: the work folder's, for its maker alone", () => {
+  const codex = { name: "codex", label: "Codex", ready: true, problem: "", running: null };
+  const work = (over = {}, agent = {}) => folder({ work_folder: true, mine: true, agent: { ...codex, ...agent }, ...over });
+  assert.deepEqual(mentionAgent(work()), { name: "codex", label: "Codex", ready: true, problem: "" });
+  assert.deepEqual(mentionAgent(work({}, { running: { request_id: "r1", detail: "Editing main.tex" } })),
+    { name: "codex", label: "Codex", ready: true, problem: "" }, "working: still named");
+  assert.equal(mentionAgent(work({}, { ready: false, problem: "Codex is not signed in." })).problem, "Codex is not signed in.");
+  assert.equal(mentionAgent(work({}, { ready: null, problem: "stale" })).problem, "", "still checking");
+  assert.equal(mentionAgent(work({ mine: false })), null, "a member who did not make the vault");
+  assert.equal(mentionAgent(work({ work_folder: false })), null);
+  assert.equal(mentionAgent(work({ agent: null })), null, "no agent on");
+  assert.equal(mentionAgent(opened()), null);
+  assert.equal(mentionAgent(null), null);
 });

@@ -652,7 +652,10 @@ detail, threads: [{id, answered}]}`, `by` the username.
   `resolve` sets `answered_at` on every row of the thread not answered whose
   request was made before the comment and whose requester is not the actor
   or whose event carries an `agent` (a token's write answers whoever it
-  belongs to); then the work folder's files are due. A reopen answers
+  belongs to); then the work folder's files are due. An event that says
+  when its writer read the thread (`seen`: an agent on this computer's run,
+  [local_agents.md](local_agents.md) "A mention while a run works")
+  answers only the requests made by then. A reopen answers
   nothing. So a thread shows as sent (`sent` on its entry and on the comment
   API's thread) until an agent or another member answers it, and a later
   Send waits on it again.
@@ -862,7 +865,9 @@ panel, and from then on a Send of that folder made in Gamma by the maker is
 claimed by this server (`requests.claim`, `sent` to `running` in one
 step), worked by the agent in the vault's directory, answered with replies
 signed by its label and set `done` or `failed`
-([local_agents.md](local_agents.md)). While a folder has such an agent, a
+([local_agents.md](local_agents.md)); the maker's comment that names the
+agent (`@codex`) is such a Send too, of its thread or of the file's open
+comments. While a folder has such an agent, a
 token's Send to it is refused (403), and so is a token's change of a
 request a run holds (409); the requests it has taken read `state_by`
 `Codex` or `Claude Code`, and an outside agent leaves them alone.

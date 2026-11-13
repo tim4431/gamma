@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import {
   abandonedCommentHighlight, addComment, anchorSnippet, anchorWords, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment,
   commentOnlyHighlight, deleteComment, EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, isWithdrawn, keepThreads,
-  laterComments, popoverThreads, resolveThread, sentChip, shortCount, threadLink, threadPlace, threadsIn, upsertThread,
+  laterComments, mentionHint, popoverThreads, resolveThread, sendRefusal, sentChip, shortCount, threadLink, threadPlace, threadsIn, upsertThread,
 } from "../src/comments/comments.js";
 
 const c = (id, thread, author, at, extra = {}) => ({
@@ -190,6 +190,38 @@ test("the Send chip: Sent while the request waits, the agent at work, Failed wit
   assert.equal(sentChip(on("failed", "withdrawn")), null, "the person took it back");
   assert.equal(sentChip({ ...page()[0], sent: null }), null);
   assert.equal(sentChip(page()[0]), null);
+});
+
+test("a field naming the agent on this computer says what sending does: the thread, or the file's open comments", () => {
+  const agent = { name: "codex", label: "Codex", ready: true, problem: "" };
+  const sends = (text) => ({ text, warn: false });
+  const warns = (text) => ({ text, warn: true });
+  assert.deepEqual(mentionHint({ agent, text: "@codex use the British spelling" }), sends("Sends this thread to Codex on this computer."));
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", file: true }), sends("Sends this file's open comments to Codex on this computer."));
+  assert.deepEqual(mentionHint({ agent: { ...agent, ready: false, problem: "Codex is not signed in." }, text: "@codex go" }), warns("Codex is not signed in."));
+  assert.deepEqual(mentionHint({ agent: { ...agent, ready: null }, text: "@codex go" }), sends("Sends this thread to Codex on this computer."), "still checking");
+  assert.equal(mentionHint({ agent, text: "ask `@codex` later" }), null, "inside code");
+  assert.equal(mentionHint({ agent, text: "@Codex go" }), null, "the name exactly");
+  assert.equal(mentionHint({ agent, text: "@codex again", initial: "@codex go" }), null, "an edit that keeps an old mention sends nothing");
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go" }), sends("Sends this thread to Codex on this computer."), "an edit that adds one");
+  // an edit the server will not send says why before it is saved
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go", refused: "not_newest" }),
+    warns("Mention Codex in a new reply to send this thread again."));
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go", refused: "closed" }), warns("Reopen this thread to send it to Codex again."));
+  assert.equal(mentionHint({ agent, text: "go on", initial: "go", refused: "closed" }), null, "no mention, nothing to say");
+  assert.equal(mentionHint({ agent: null, text: "@codex go" }), null);
+});
+
+test("a mention the server did not send to the agent says why, worded here by its code, else in the server's words", () => {
+  const refused = (code, why = "") => ({ agent: "Codex", refused: code, why });
+  assert.equal(sendRefusal(refused("closed")), "Reopen this thread to send it to Codex again.");
+  assert.equal(sendRefusal(refused("not_newest")), "Mention Codex in a new reply to send this thread again.");
+  assert.equal(sendRefusal(refused("viewer")), "Only the workspace's owners and editors can send comments to Codex.");
+  assert.equal(sendRefusal(refused("too_many")), "Codex takes at most 100 comments at a time: mention it in the threads you want answered.");
+  assert.equal(sendRefusal(refused("writes", "This server takes no writes.")), "Not sent to Codex: This server takes no writes.");
+  assert.equal(sendRefusal(refused("nothing", "Nothing new since the last answers.")), "Not sent to Codex: Nothing new since the last answers.");
+  assert.equal(sendRefusal({ agent: "Codex", request_id: "c1", scope: "thread", threads: 1 }), "", "sent");
+  assert.equal(sendRefusal(undefined), "", "no agent named");
 });
 
 test("what became of a thread's place after a rebuild: a highlight moved or lost, ink or a region drawn on an earlier build", () => {

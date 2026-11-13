@@ -3,20 +3,22 @@
 // threads, and the PDF's margin (CommentMargin.jsx) shows one card per
 // thread beside its highlight or ink group. Each comment with its author
 // (an agent by its name, with whose connection it wrote), time and text
-// rendered as a note is (so @people and [[links]] work), its "⋯" menu (Edit,
+// rendered as a note is (so @people and [[links]] work, and in a work
+// folder maker's own comments its agent's @name), its "⋯" menu (Edit,
 // Copy link, Report on anyone else's, Delete), the
 // thread's Resolve and its reply field once the thread is the active one.
 // The first comment's line carries the chip of a Send waiting on the
 // thread, and under it a line says when its place moved in a new build.
 // A comment that comes (a reply, yours or someone's) rises into place
 // (ListMotion).
-import React, { startTransition, useCallback, useContext, useEffect, useRef, useState } from "react";
+import React, { startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ContextMenu, MenuButton, MenuItem } from "../shared/ui/Menus";
 import { CheckIcon, FlagIcon, LinkIcon, PencilIcon, RefreshIcon, Trash2Icon } from "../shared/ui/Icons";
 import ListMotion from "../shared/ui/ListMotion";
 import { IconSwap } from "../shared/ui/MotionWidgets";
 import { PersonAvatar } from "../collaboration/Presence";
 import { BlockMarkdown } from "../editor/BlockTree";
+import { MentionContext } from "../editor/MentionMenu";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
 import { CommentComposer, hasDraft } from "./CommentComposer";
@@ -69,7 +71,9 @@ function CommentText({ comment, later, labelsFor, onBlockRefClick }) {
 // `reply`: a comment after the first, stepped in under the first one's
 // text. `later`: the ids of the comments drawn as they near the view.
 // Without `actions` (a margin card at rest) the line has neither.
-function Comment({ comment, me, owner, canComment, people, labelsFor, later, field, onBlockRefClick, onEdit, onDelete, onCopyLink, resolve = null, chip = null, place = "", reply = false, actions = true }) {
+// `editRefused`: why an edit of it that names the agent is not sent
+// ("closed", "not_newest"; "" when it would be), for its field to say.
+function Comment({ comment, me, owner, canComment, people, labelsFor, later, field, onBlockRefClick, onEdit, onDelete, onCopyLink, resolve = null, chip = null, place = "", reply = false, actions = true, editRefused = "" }) {
   const [menu, setMenu] = useState(null);
   const [editing, setEditing] = useState(() => hasDraft(`edit:${comment.id}`)); // an edit left unsaved
   const mayEdit = canComment && canEditComment(comment, me);
@@ -78,6 +82,12 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
   const who = authorLabel(comment);
   const byline = authorTitle(comment);
   const placeText = PLACE_TEXT[place]?.();
+  // In the maker's own comments the agent's "@name" is the agent's chip:
+  // there the server sent it to the agent (the field's `links.agent`).
+  const agent = !comment.agent && !!me && comment.author === me ? field?.links?.agent || null : null;
+  const named = useContext(MentionContext);
+  const mentions = useMemo(() => (agent ? { ...named, agents: [agent] } : null), [named, agent]);
+  const text = <CommentText comment={comment} later={later.has(comment.id)} labelsFor={labelsFor} onBlockRefClick={onBlockRefClick} />;
   return (
     <div className={`commentItem rowMenuHost${reply ? " reply" : ""}`} data-motion-key={comment.id} data-comment-id={comment.id}>
       <PersonAvatar name={who || "?"} title={byline} />
@@ -100,16 +110,14 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
           {!comment.deleted && actions ? <MenuButton open={openMenu} label={t("Comment actions")} /> : null}
         </div>
         {editing ? (
-          <CommentComposer {...field} initial={comment.body} autoFocus people={people} me={me} draftKey={`edit:${comment.id}`}
+          <CommentComposer {...field} initial={comment.body} refused={editRefused} autoFocus people={people} me={me} draftKey={`edit:${comment.id}`}
             placeholder={t("Edit the comment…")} submitLabel={t("Save")}
             onCancel={() => setEditing(false)}
             // refused, the field stays with the new text back in it
             onSubmit={async (body) => { const ok = await onEdit(comment.id, body); if (ok) setEditing(false); return ok; }} />
         ) : comment.deleted ? (
           <div className="commentDeleted">{t("Comment deleted")}</div>
-        ) : (
-          <CommentText comment={comment} later={later.has(comment.id)} labelsFor={labelsFor} onBlockRefClick={onBlockRefClick} />
-        )}
+        ) : mentions ? <MentionContext.Provider value={mentions}>{text}</MentionContext.Provider> : text}
         {placeText ? <div className="commentThreadState" data-place={place}>{placeText}</div> : null}
       </div>
       {menu ? (
@@ -153,6 +161,9 @@ export function Thread({ thread, focused = false, active, onActivate, canComment
   const collapsed = summary && !active && !draft;
   const comments = collapsed ? thread.comments.slice(0, 1) : thread.comments;
   const replies = thread.comments.length - 1;
+  // An edit naming the agent is a Send only of the open thread's newest comment (local_agents/mention.py).
+  const newest = thread.comments.findLast((c) => !c.deleted)?.id;
+  const editRefused = (c) => (!open ? "closed" : c.id === newest ? "" : "not_newest");
   const activate = (e) => {
     if (!canActivate || e.target.closest?.("button, a, input, textarea, .cm-editor, .ctxMenu")) return;
     onActivate(thread.id);
@@ -169,7 +180,7 @@ export function Thread({ thread, focused = false, active, onActivate, canComment
         {comments.map((c, i) => (
           <Comment key={c.id} comment={c} me={me} canComment={canComment} people={people} {...rest} actions={!collapsed}
             reply={i > 0} resolve={i === 0 && canComment ? { open, onClick: () => onResolve(thread.id, open) } : null}
-            chip={i === 0 ? chip : null} place={i === 0 ? place : ""} />
+            chip={i === 0 ? chip : null} place={i === 0 ? place : ""} editRefused={editRefused(c)} />
         ))}
       </ListMotion>
       {collapsed && replies > 0 ? (
