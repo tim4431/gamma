@@ -712,20 +712,37 @@ def test_the_send_waiting_on_a_thread(own):
     second = thread_on(own, page["id"], page["id"], "two")["id"]
     with connect_pages_db(ws) as conn:
         conn.executemany("INSERT INTO feedback_requests (id, rev, work_folder, scope, scope_kind, by, at, state, "
-                         "state_at, detail) VALUES (?, ?, 'W', ?, 'file', 'u', ?, ?, ?, ?)",
-                         [("cmReq1", 1, page["id"], "t1", "failed", "t1", "no build"),
-                          ("cmReq2", 2, page["id"], "t2", "running", "t2", "compiling"),
-                          ("cmReq3", 3, page["id"], "t3", "done", "t3", "")])
+                         "state_at, detail, state_by) VALUES (?, ?, 'W', ?, 'file', 'u', ?, ?, ?, ?, ?)",
+                         [("cmReq1", 1, page["id"], "t1", "failed", "t1", "no build", "u"),
+                          ("cmReq2", 2, page["id"], "t2", "running", "t2", "compiling", "Codex"),
+                          ("cmReq3", 3, page["id"], "t3", "done", "t3", "", "Codex")])
         conn.executemany("INSERT INTO feedback_request_threads (request_id, thread_id, answered_at) VALUES (?, ?, ?)",
                          [("cmReq1", first, None), ("cmReq2", first, None), ("cmReq1", second, None),
                           ("cmReq2", second, "t4"), ("cmReq3", second, None)])
         conn.commit()
         assert comments._sent(conn, [first, second, "none"]) == {
-            first: {"request_id": "cmReq2", "state": "running", "at": "t2", "detail": "compiling"},
-            second: {"request_id": "cmReq1", "state": "failed", "at": "t1", "detail": "no build"}}
+            first: {"request_id": "cmReq2", "state": "running", "at": "t2", "detail": "compiling", "state_by": "Codex"},
+            second: {"request_id": "cmReq1", "state": "failed", "at": "t1", "detail": "no build", "state_by": "u"}}
         assert comments._sent(conn, []) == {}
     sent = {t["id"]: t["sent"] for t in _threads(own, page["id"])}
     assert sent[first]["request_id"] == "cmReq2" and sent[second]["state"] == "failed"
+    assert sent[first]["state_by"] == "Codex"
+
+
+def test_a_local_agents_comment_says_so(own):
+    """A comment whose ``agent_id`` is ``local:…`` (an agent on this
+    computer, gamma/local_agents) carries ``agent_kind`` local; a token's
+    and a person's have no such key."""
+    ws = workspace_of("cm_own")
+    page = make_page(own, "Local agent page")
+    thread = thread_on(own, page["id"], page["id"], "fix it")["id"]
+    with connect_pages_db(ws) as conn:
+        for agent, agent_id in (("Codex", "local:codex"), ("Script", "tok1")):
+            comments.create(conn, page["id"], block_id=page["id"], body=f"{agent} here", author=account_of("cm_own"),
+                            author_name="cm_own", thread_id=thread, agent=agent, agent_id=agent_id)
+        got = comments.thread_of(conn, thread)["comments"]
+    assert [(c["agent"], c.get("agent_kind")) for c in got] == [("", None), ("Codex", "local"), ("Script", None)]
+    assert "agent_kind" not in got[0] and "agent_kind" not in got[2]
 
 
 def test_the_open_count_is_the_windows(own):

@@ -199,7 +199,7 @@ def test_a_vault_made_from_a_directory_writes_only_its_marker_into_a_new_folder(
     assert _state(owner, ideas) == {"vault": {"id": link["id"], "name": "Lab notes", "scope": "folder",
                                               "path": str(root.resolve() / "Ideas.md"), "pull": True,
                                               "push": "everything", "problem": "", "conflicts": 0, "paused": False,
-                                              "work_folder": True, "choosing": False, "library": False,
+                                              "work_folder": True, "choosing": False, "library": False, "mine": True,
                                               "page": {"library": False, "file_name": "Ideas.md"}},
                                     "reader": None}
     assert owner.get(f"/api/folder-links/{link['id']}").json()["status"]["folder_path"] == ["Lab notes"]
@@ -761,7 +761,7 @@ def test_a_page_of_no_vault_and_a_page_of_a_followed_file(owner, disk):
     vault = _state(owner, followed)["vault"]
     assert vault == {"id": link["id"], "name": "follows.pdf", "scope": "file", "path": str(f.resolve()), "pull": False,
                      "push": "pdfs", "problem": "", "conflicts": 0, "paused": False, "work_folder": False,
-                     "choosing": False, "library": False, "page": {"library": False, "file_name": ""}}
+                     "choosing": False, "library": False, "mine": True, "page": {"library": False, "file_name": ""}}
     folder = make_folder(owner, "VR kept")
     kept = make_page(owner, "VR kept page", {"folders": [folder]})["id"]
     older = _create(owner, folder=folder, path=str(disk / "Kept"))

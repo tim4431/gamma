@@ -285,7 +285,10 @@ the panel on it again (`takeState`).
 **The shell's word.** The routes that take a path on this computer answer
 only a request that carries `X-Gamma-Shell` with the secret the sidecar
 was started with: `POST /api/folder-links`, `/preview`, `/<id>/relink`,
-`/open` and `/opened/<id>/locate`. The shell makes the secret at each start
+`/open` and `/opened/<id>/locate`, and so does `PATCH /api/folder-links/<id>`
+that turns a work folder's agent on (the agent edits the directory:
+[docs/dev/local_agents.md](../../docs/dev/local_agents.md) "Who turns it
+on"). The shell makes the secret at each start
 (`SHELL_SECRET`, 32 random bytes) and hands it to every local server as
 `GAMMA_SHELL_SECRET` (`lib/sidecar.js`), so a page of Gamma, which shares
 its server's origin and session, cannot name a path itself. `shellWord(origin)`
@@ -350,7 +353,9 @@ computer keeps of Gamma: the clones, the Zotero links and the synced
 vaults of every running local server, whichever server the window shows.
 It reads *Synced*, *Syncing…*, *Conflicts*, *Held*, *n problems*, *Not
 synced yet*, *Starting…*, *Waiting*, *Changes queued* and the like, with a
-matching icon and colour, and shows once a server is open, anything is
+matching icon and colour (*Agent working* when the only thing at work is a
+work folder's agent: a vault's own problem still ranks above it and keeps
+its row, the run said in the row's tooltip), and shows once a server is open, anything is
 kept or the vault dialog is up; its tooltip counts them ("1 clone and 2
 synced vaults on this computer: synced"). Its **panel** lists three
 groups, *Clones*, *Zotero links* and *Synced vaults*, each row with its
@@ -404,7 +409,22 @@ switches as the dialog has them: a remote's folder keeps *Pull* on and
 *everything* shut (`keeping.REMOTE_RULE`, which `setPull` and `setPush`
 refuse too). A work folder adds the switch *Add its PDFs and notes to the
 library* (`setLibrary`, `PATCH {library}`): whether the files it finds from
-now on are library documents too; the files it holds keep theirs. Its
+now on are library documents too; the files it holds keep theirs. On a
+server that runs agents, the vault's maker (`item.mine`) also gets the
+agent row ([docs/dev/local_agents.md](../../docs/dev/local_agents.md)),
+pushed with the switches so the lock of a vault whose workspace the
+account left shuts it too: *Agent in this folder*, a segmented *Off* | *Codex* | *Claude Code*
+(`agentSeg`, `item.agents` from `keeping.agentChoices`), an agent not on
+this computer or not ready shut with its problem in its tooltip; under it,
+as visible lines, the problem of the chosen agent and of each one that
+cannot be chosen, one line of what the choice does (*Sends wait for an
+agent you run yourself.*; *Codex answers this folder's Sends: it edits the
+files here and runs commands in its sandbox, without network.*; *Claude
+Code answers this folder's Sends: it edits the files here and runs no
+commands.*), and while a run works *Now: Codex is working · Editing
+main.tex*. Opening a work folder's view as its maker looks for the agents
+again (`check-agents`, `checkAgents`: `GET /api/local-agents?fresh=1`,
+then a reading). Its
 everyday actions follow as a bar of round buttons
 (`.vaultBar`: *Sync now*, *Pull now*, *Push now*, *Pause* or *Resume*, and
 the directory), each named by its tooltip; the rare and the grave ones
@@ -424,11 +444,28 @@ keep their rows, where their words warn. Each goes through
 | *Force pull…*, *Force push…* | a folder's vault | the page count from `GET …/removal`, a warning (`keeping.forceAsk`), then `…?force=pull` or `force=push` |
 | *Remove the vault…* | always | the counts from `GET …/removal`, the question `keeping.removalAsk`, then `DELETE …?files=keep` or `files=trash` |
 | the switches | a folder's vault | `PATCH {pull}`, `PATCH {push}` (`setPush`, above), a work folder's `PATCH {library}` |
+| the agent row | a work folder of its maker, on a server that runs agents | `setAgent`: turning one on asks first, then `PATCH {agent}` with the shell's word; off is `PATCH {agent: ""}` |
 
 The changes and the rounds (*pause*, *resume*, *sync*, *Pull now*, *Push
-now* and the switches) leave the panel open on the new state
-(`STAYS_OPEN`); the others close it, since they ask first or open
-something. *Remove the vault…* offers *Remove, keep the files* and
+now*, the switches and the agent row) leave the panel open on the new
+state (`STAYS_OPEN`, the same list in `main.js` and `bar.html`); the
+others close it, since they ask first or open something.
+
+**Turning an agent on** (`setAgent`) is the computer's decision. The shell
+first asks the server how many Sends of the folder would be handed to the
+agent (`GET /api/local-agents/waiting?link=<id>`, counted by the rule the
+server hands them over by; left out when it does not answer) and asks
+(`keeping.agentAsk`): *Let Codex work in
+D:\Papers\thesis?*, with "Codex will answer the Sends you make on this
+folder: it edits files in this directory and runs commands in its sandbox,
+without network. 2 waiting Sends will be handed to it." (Claude Code: "…
+it edits files in this directory and runs no commands."), buttons *Turn on
+Codex* and *Cancel*. Then `PATCH /api/folder-links/<id> {agent}` with the
+shell's word, which `vaultOn`'s headers alone do not carry, while the bar
+reads *Checking Codex…* (the server asks the agent afresh and refuses one
+not ready with why), and a notice says what came of it
+(`keeping.agentSaid`: "Codex now answers the Sends on thesis; 2 waiting
+were handed to it."). Turning it off asks nothing. *Remove the vault…* offers *Remove, keep the files* and
 *Remove, move them to the trash* (the files the sync wrote go to
 `.gamma/trash`; files the user added or changed stay). A vault of one file,
 a vault whose directory is not there and a stopped one (its marker gone or
@@ -445,7 +482,9 @@ runs, the files push has taken and the pages pull has looked at, of those
 the round knows so far (the status's `progress`, written as the round goes),
 its tooltip the bytes of the PDFs it pushes and the file at hand, or
 *Syncing…* before the round has compared the folder with
-the directory or when its round says nothing of itself; *Paused · 14:02*;
+the directory or when its round says nothing of itself; *Codex is working ·
+Editing main.tex* while its agent answers a Send (busy: the files may
+change meanwhile); *Paused · 14:02*;
 *Stopped* (its marker gone or another vault's: *Locate…* says where the
 directory is now); *Held · 12 of 20 files gone* (the guard against many
 files gone at once: nothing was pulled or pushed until *Go on…*);
@@ -497,8 +536,9 @@ a time), so two processes never race for its port and data directory
 (`test/main.test.js` and `test/registry.test.js`, `npm test`).
 
 `refreshKeeping` reads every running local server's `GET /api/mirrors`,
-`GET /api/zotero/links` (none from a server that has no such list) and
-`GET /api/folder-links` every 15 s, every 2 s while something syncs, when
+`GET /api/zotero/links` (none from a server that has no such list),
+`GET /api/folder-links` and `GET /api/local-agents` (5 s at most; none
+from a server that runs no agents, which answers 404) every 15 s, every 2 s while something syncs, when
 the panel opens and after each action. A call while a reading runs gets the
 reading that starts once that one ends, and the running reading's result is
 dropped: an action calls it right after changing something on a server,

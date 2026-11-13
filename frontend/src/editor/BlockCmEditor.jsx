@@ -1222,11 +1222,12 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
   }, [cursorsKey]);
 
   // Ref labels resolve asynchronously (onFetchRefs), and the people a note
-  // can mention arrive after it opens; refresh the chip decorations when
-  // either actually changes, not on every render.
+  // can mention (a comment's: the agent too) arrive after it opens; refresh
+  // the chip decorations when either actually changes, not on every render.
   const labelsKey = Object.entries(refLabels || {})
     .map(([id, r]) => `${id}:${r?.content}:${r?.trashed ? "trashed" : ""}`)
-    .concat(mentions ? [mentions.me, ...mentions.known] : []).join("\u0000");
+    .concat(mentions ? [mentions.me, ...mentions.known, ...(mentions.agents || []).map((a) => `agent:${a.name}`)] : [])
+    .join("\u0000");
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;

@@ -80,6 +80,7 @@ import { blockPropertiesScenarios } from "./scenarios/blockProperties.mjs";
 import { vaultScenarios } from "./scenarios/vaults.mjs";
 import { workFolderScenarios } from "./scenarios/workFolders.mjs";
 import { feedbackScenarios } from "./scenarios/feedback.mjs";
+import { localAgentScenarios } from "./scenarios/localAgents.mjs";
 import { viewerScenarios } from "./scenarios/viewers.mjs";
 import { textSearchScenarios } from "./scenarios/textSearch.mjs";
 import { explorerScenarios } from "./scenarios/explorer.mjs";
@@ -120,6 +121,7 @@ const RUNNERS = {
   "vaults": vaultScenarios,
   "work-folders": workFolderScenarios,
   "feedback": feedbackScenarios,
+  "local-agents": localAgentScenarios,
   "viewers": viewerScenarios,
   "text-search": textSearchScenarios,
   "explorer": explorerScenarios,

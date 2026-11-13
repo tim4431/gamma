@@ -113,7 +113,8 @@ def _pictures(entry: dict, mode: str) -> list[str]:
 
 def _comment(comment: dict) -> list[str]:
     by = comment.get("by") or "someone"
-    who = f"**{comment['agent']}** ({by}'s connection)" if comment.get("agent") else f"**{by}**"
+    where = f"on {by}'s computer" if comment.get("agent_kind") == "local" else f"{by}'s connection"
+    who = f"**{comment['agent']}** ({where})" if comment.get("agent") else f"**{by}**"
     body = "*(deleted)*" if comment.get("deleted") else comment.get("body", "")
     return [f"> {who} · {_when(comment.get('at'))}",
             *(f"> {line}" if line else ">" for line in body.replace("\r\n", "\n").split("\n"))]

@@ -6,8 +6,12 @@ tokens' of any scope, a token in its own workspace as everywhere on the
 HTTP API; a share visitor, signed in or not, is refused. A Send is made by
 a member who may edit (or a write token): it starts work on the owner's
 computer. Its state is set by an agent (a feedback or write token) or, to
-withdraw it, by its requester. Every handler is a sync ``def``: it reads
-the pages.db, and the pictures are drawn, off the event loop.
+withdraw it, by its requester. On the desktop app's own server a work
+folder's vault may have an agent on this computer (docs/dev/local_agents.md):
+it takes the Sends its maker makes in Gamma, so a token's Send there is
+refused, and so is a token's change of a request it is answering. Every
+handler is a sync ``def``: it reads the pages.db, and the pictures are
+drawn, off the event loop.
 """
 
 from contextlib import contextmanager
@@ -16,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from .. import workspaces
+from .. import local_agents, workspaces
 from ..auth import is_token, require_ws
 from ..db import connect_pages_db
 from ..feedback import entries, markdown, pictures, requests
@@ -71,7 +75,10 @@ def read_feedback(request: Request, scope: str = "", state: str = "open", format
     ``before_url``; ``owner`` the requester's username), or with
     ``format=md`` its Markdown (``text/markdown``, the pictures as their
     routes). 400 for a library page or folder, another state or format;
-    404 for no such folder or live page."""
+    404 for no such folder or live page. On a server that runs agents the
+    JSON has ``agent``, the work folder's agent on this computer for the
+    Feedback dialog (``_agent_of``), and ``agents_found``, whether this
+    computer has any; never the files' document, which stays as it is."""
     ws = _member(request)
     _format(format)
     with connect_pages_db(ws) as conn, _refusals():
@@ -80,7 +87,35 @@ def read_feedback(request: Request, scope: str = "", state: str = "open", format
     doc["entries"] = [entries.with_urls(e) for e in doc["entries"]]
     if format == "md":
         return Response(markdown.render(doc, pictures="urls"), media_type=MARKDOWN)
+    if local_agents.enabled():
+        from ..local_agents import catalog
+
+        doc["agent"] = _agent_of(ws, doc["work_folder"]["id"], request.state.user_id)
+        doc["agents_found"] = any(catalog.cached(name)["found"] for name in catalog.AGENTS)
     return doc
+
+
+def _agent_of(ws: str, w: str, user_id: str) -> dict | None:
+    """The agent of the work folder ``w``'s vault here, as the dialog says
+    it: ``{name, label, ready, problem, takes, why}``, ``ready`` and
+    ``problem`` as last asked (``catalog.cached``: nothing runs), ``takes``
+    whether a Send of ``user_id`` would reach it now (the vault's maker,
+    the vault writing its directory), ``why`` in English when not; None
+    for no agent."""
+    from ..local_agents import catalog, runner
+
+    found = runner.folder_agent(ws, w)
+    if found is None:
+        return None
+    label = found["label"]
+    why = ""
+    if user_id != found["maker"]:
+        why = f"Only the person who keeps this folder on this computer can send to {label}."
+    elif not found["writable"]:
+        why = f"The work folder is paused on this computer: {label} starts once it syncs again."
+    probe = catalog.cached(found["name"])
+    return {"name": found["name"], "label": label, "ready": probe["ready"], "problem": probe["problem"],
+            "takes": not why, "why": why}
 
 
 def _entry(request: Request, thread_id: str, regions: dict | None = None) -> tuple[str, dict]:
@@ -133,26 +168,49 @@ def create_request(payload: RequestCreate, request: Request):
     """A Send → ``{request}`` (201; 200 for a repeated ``id`` of the same
     account, answered as stored). A member who may edit, or a write token.
     400 for a scope outside a work folder, nothing to send or a thread that
-    is no open one in the scope; 404 for no such scope; 409 for another
-    account's id; 413 for a longer note."""
+    is no open one in the scope; 403 for a token's Send to a work folder an
+    agent on this computer answers (it takes the Sends made in Gamma); 404
+    for no such scope; 409 for another account's id; 413 for a longer
+    note."""
     ws = _member(request, write=True)
     with connect_pages_db(ws) as conn, _refusals():
-        out = requests.create(ws, conn, entries.resolve_scope(conn, payload.scope), by=request.state.user_id,
+        scope = entries.resolve_scope(conn, payload.scope)
+        if is_token(request) and local_agents.enabled():
+            from ..local_agents import runner
+
+            if runner.folder_agent(ws, scope.work_folder) is not None:
+                raise FeedbackError(403, "An agent on this computer takes Sends made in Gamma, not with a token.")
+        out = requests.create(ws, conn, scope, by=request.state.user_id,
                               by_name=request.state.user or "", note=payload.note, threads=payload.threads,
-                              request_id=payload.id)
+                              request_id=payload.id, via=requests.TOKEN if is_token(request) else requests.SESSION)
     if not out["created"]:
         return JSONResponse(status_code=200, content={"request": out["request"]})
     return {"request": out["request"]}
+
+
+def _local(ws: str, records: list[dict]) -> list[dict]:
+    """On a server that runs agents, each record gains ``local``: whether an
+    agent on this computer holds it now (so Withdraw stops it)."""
+    if local_agents.enabled():
+        from ..local_agents import runner
+
+        for record in records:
+            record["local"] = runner.running(ws, record["id"])
+    return records
 
 
 @router.get("/requests")
 def list_requests(request: Request, after: int = 0, scope: str = "", state: str = "", limit: int = 50):
     """``{requests, cursor}``: the requests made or changed since the
     cursor ``after``, oldest first (``requests.listing``); ``scope`` a work
-    folder's or a file's id, ``state`` one state, ``limit`` at most 100."""
+    folder's or a file's id, ``state`` one state, ``limit`` at most 100. On
+    a server that runs agents a record says whether one of them holds it
+    (``local``)."""
     ws = _member(request)
     with connect_pages_db(ws) as conn, _refusals():
-        return requests.listing(conn, after=after, scope=scope, state=state, limit=limit)
+        out = requests.listing(conn, after=after, scope=scope, state=state, limit=limit)
+    _local(ws, out["requests"])
+    return out
 
 
 @router.get("/requests/{request_id}")
@@ -165,7 +223,21 @@ def read_request(request_id: str, request: Request):
         if record is None:
             raise HTTPException(status_code=404, detail="no such request")
         found = requests.entries_of(ws, conn, record)
+    _local(ws, [record])
     return {"request": record, "entries": [entries.with_urls(e) for e in found]}
+
+
+def _not_answering_here(ws: str, request_id: str) -> None:
+    """409 while an agent on this computer works on the request: its run
+    writes the request's state, no one else's agent."""
+    if not local_agents.enabled():
+        return
+    from ..local_agents import catalog, runner, store
+
+    if runner.running(ws, request_id):
+        run = store.run_of(ws, request_id)
+        label = catalog.label(run["agent"]) if run else "An agent"
+        raise HTTPException(status_code=409, detail=f"{label} on this computer is answering this request.")
 
 
 @router.post("/requests/{request_id}/state")
@@ -173,12 +245,14 @@ def set_request_state(request_id: str, payload: RequestState, request: Request):
     """Set a request's state → ``{request}``: an agent (an integration token
     of the feedback or write scope) any change ``requests.TRANSITIONS``
     lets it make, the requester's session a withdraw (``failed``). 403 for
-    anyone else, 404 for no such request, 409 for a change refused, 413
-    for a longer detail; 423 while a delete holds the workspace."""
+    anyone else, 404 for no such request, 409 for a change refused or a
+    token's while an agent on this computer answers the request, 413 for a
+    longer detail; 423 while a delete holds the workspace."""
     ws = _member(request)
     if is_token(request):
         if request.state.token_scope not in ("feedback", "write"):
             raise HTTPException(status_code=403, detail="this token is read-only")
+        _not_answering_here(ws, request_id)
         writer, by_name = "agent", display_name(request.state.token_name)
     else:
         writer, by_name = "requester", request.state.user or ""

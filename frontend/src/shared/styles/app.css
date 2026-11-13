@@ -1290,10 +1290,11 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 /* An embed whose source is in Recently deleted or gone: the card, quiet. */
 .blockEmbedCard.gone { border-left-color: var(--border); }
 
-/* An @ mention (editor/mentions.js mentionChip): a date, a reminder or a
-   person — the ref chip's shape in the quiet fill, a token rather than a
-   link. A reminder is accent-coloured behind an alarm clock (a mask, so
-   the editor's widget and the rendered chip share it), red once it is due. */
+/* An @ mention (editor/mentions.js mentionChip): a date, a reminder, a
+   person or the agent on this computer — the ref chip's shape in the quiet
+   fill, a token rather than a link. A reminder is accent-coloured behind an
+   alarm clock (a mask, so the editor's widget and the rendered chip share
+   it), red once it is due; the agent stands behind a bot, the Bot icon's. */
 .mentionChip {
   display: inline-block;
   padding: 0 4px;
@@ -1308,7 +1309,8 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 }
 .mentionChip.mention-remind { color: var(--accent-bright); }
 .mentionChip.mention-remind.overdue { color: var(--danger); }
-.mentionChip.mention-remind::before {
+.mentionChip.mention-remind::before,
+.mentionChip.mention-agent::before {
   content: "";
   display: inline-block;
   width: 0.95em;
@@ -1319,6 +1321,11 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   --alarm: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='13' r='8'/%3E%3Cpath d='M12 9v4l2 2M5 3 2 6M22 6l-3-3M6.38 18.7 4 21M17.64 18.67 20 21'/%3E%3C/svg%3E");
   -webkit-mask: var(--alarm) center / contain no-repeat;
   mask: var(--alarm) center / contain no-repeat;
+}
+.mentionChip.mention-agent::before {
+  --bot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 8V4H8M2 14h2M20 14h2M15 13v2M9 13v2'/%3E%3Crect x='4' y='8' width='16' height='12' rx='2'/%3E%3C/svg%3E");
+  -webkit-mask: var(--bot) center / contain no-repeat;
+  mask: var(--bot) center / contain no-repeat;
 }
 .cmMentionChip { cursor: text; }
 

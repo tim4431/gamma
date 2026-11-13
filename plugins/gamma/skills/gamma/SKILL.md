@@ -114,7 +114,9 @@ request from the user about that file. Act on it when the user asks you to
    file), then `read_feedback(thread_id)` for an item and its picture. A request
    the user sent is `.gamma/feedback/requests/<id>.json` or
    `list_feedback(request="<id>")`: act on its threads and follow its instruction
-   line.
+   line. Leave a request that is `running`, `done` or `failed` alone: its
+   `state_by` names who has it, perhaps Gamma's own agent on the user's computer
+   (Codex or Claude Code), which answers that work folder's Sends itself.
 2. Read each item: the file, the place (a PDF page with the quoted passage, an
    area or a drawing with its picture, a region of a picture file with its crop,
    or the whole file or picture), the source file and lines SyncTeX found, and

@@ -123,7 +123,7 @@ def forget_kind(link_id: str, kind: str) -> None:
 def forget_link(link_id: str) -> None:
     """Everything kept of a vault that was removed."""
     with connect_vaults_db() as conn:
-        for table in ("vault_files", "vault_dirs", "vault_history"):
+        for table in ("vault_files", "vault_dirs", "vault_history", "agent_folders", "agent_threads"):
             conn.execute(f"DELETE FROM {table} WHERE link_id = ?", (link_id,))
 
 

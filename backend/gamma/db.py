@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 57
+SCHEMA_VERSION = 58
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -579,7 +579,16 @@ USERS_SCHEMA = [
 # not be written, and the journal ``pending``, JSON {token, ...});
 # vault_dirs = a vault's directories, their folders and file ids;
 # vault_history = the bytes a write replaced, zlib, kept some days. A file id
-# is text: it can pass 63 bits.
+# is text: it can pass 63 bits. agent_folders = the agent on this computer a
+# work folder's vault answers its Sends with (gamma/local_agents/store.py:
+# codex or claude, who turned it on and when); agent_runs = one row a run of
+# that agent on a request, its session, state, progress, the source files it
+# changed (JSON), whether the build changed, its steps (JSON) and process;
+# ``error`` is this computer's record of a failure (the agent's whole error,
+# its stderr's tail), never shown to members; agent_threads = the thread an
+# agent of a vault answered last, the session and directory it ran in, when
+# its run read the thread and the comments it read (JSON ids), its reply and
+# the request: what a follow-up resumes.
 VAULTS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS linked_files (
         ws TEXT NOT NULL,
@@ -631,6 +640,44 @@ VAULTS_SCHEMA = [
         path TEXT NOT NULL,
         at TEXT NOT NULL,
         data BLOB NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_folders (
+        link_id TEXT PRIMARY KEY,
+        agent TEXT NOT NULL,
+        set_by TEXT NOT NULL DEFAULT '',
+        set_at TEXT NOT NULL DEFAULT ''
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        ws TEXT NOT NULL,
+        link_id TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        session TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        detail TEXT NOT NULL DEFAULT '',
+        error TEXT NOT NULL DEFAULT '',
+        changes TEXT NOT NULL DEFAULT '[]',
+        built INTEGER NOT NULL DEFAULT 0,
+        steps TEXT NOT NULL DEFAULT '[]',
+        pid INTEGER NOT NULL DEFAULT 0
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_agent_runs_request ON agent_runs(ws, request_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_runs_open ON agent_runs(ended_at) WHERE ended_at IS NULL",
+    """CREATE TABLE IF NOT EXISTS agent_threads (
+        link_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        session TEXT NOT NULL DEFAULT '',
+        cwd TEXT NOT NULL DEFAULT '',
+        seen_at TEXT NOT NULL DEFAULT '',
+        read_ids TEXT NOT NULL DEFAULT '[]',
+        comment_id TEXT NOT NULL DEFAULT '',
+        request_id TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        PRIMARY KEY (link_id, thread_id)
     )""",
 ]
 
@@ -873,11 +920,14 @@ COMMENTS_SCHEMA = [
 # requester, `note` their line of instruction, `state` sent / running /
 # done / failed with `state_at`, `state_by` (a token's display name or the
 # requester's username) and `detail` (a failure's reason, a line of
-# progress). feedback_request_threads = the threads each one names, with
+# progress), `via` how the Send was made: `session` (a person in Gamma),
+# `token` (an integration token), '' before step 58 (an agent on this
+# computer takes only a session's, docs/dev/local_agents.md).
+# feedback_request_threads = the threads each one names, with
 # `answered_at` once a token or another account replied or resolved after
 # it. Neither travels (as comments): no mirror, publication, share export,
-# backup merge or Gamma export carries them. Additive: no step
-# (docs/dev/migrations.md rule 2).
+# backup merge or Gamma export carries them. The tables are additive; `via`
+# came with step 58 (docs/dev/migrations.md).
 FEEDBACK_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS feedback_requests (
         id TEXT PRIMARY KEY,
@@ -892,7 +942,8 @@ FEEDBACK_SCHEMA = [
         state TEXT NOT NULL DEFAULT 'sent',
         state_at TEXT NOT NULL,
         state_by TEXT NOT NULL DEFAULT '',
-        detail TEXT NOT NULL DEFAULT ''
+        detail TEXT NOT NULL DEFAULT '',
+        via TEXT NOT NULL DEFAULT ''
     )""",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_feedback_requests_rev ON feedback_requests(rev)",
     "CREATE INDEX IF NOT EXISTS idx_feedback_requests_folder ON feedback_requests(work_folder, rev)",

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import {
   abandonedCommentHighlight, addComment, anchorSnippet, anchorWords, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment,
   commentOnlyHighlight, deleteComment, EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, isWithdrawn, keepThreads,
-  laterComments, popoverThreads, resolveThread, sentChip, shortCount, threadLink, threadPlace, threadsIn, upsertThread,
+  laterComments, mentionHint, popoverThreads, resolveThread, sendRefusal, sentChip, shortCount, threadLink, threadPlace, threadsIn, upsertThread,
 } from "../src/comments/comments.js";
 
 const c = (id, thread, author, at, extra = {}) => ({
@@ -135,6 +135,11 @@ test("an agent's comment: its name on the line and the connection in the title; 
   assert.equal(authorLabel(agents), "Claude Code");
   assert.equal(authorTitle(agents), "Written by Claude Code with ann's connection");
   assert.equal(authorTitle({ ...agents, author: "" }), "Written by Claude Code with Someone's connection", "an account gone");
+  const local = c("z", "z", "tim", "t", { agent: "Codex", agent_kind: "local" });
+  assert.equal(authorLabel(local), "Codex");
+  assert.equal(authorTitle(local), "Written by Codex on tim's computer", "an agent Gamma ran on the computer");
+  assert.equal(authorTitle({ ...local, author: "" }), "Written by Codex on Someone's computer");
+  assert.ok(!canEditComment(local, "tim"));
   const own = c("y", "y", "ann", "t", { agent: "" });
   assert.equal(authorLabel(own), "ann");
   assert.equal(authorTitle(own), "ann");
@@ -175,6 +180,9 @@ test("the Send chip: Sent while the request waits, the agent at work, Failed wit
   assert.deepEqual(sentChip(on("running", "Editing sections/method.tex")),
     { state: "running", label: "The agent is working", title: "Editing sections/method.tex", tone: "pending" });
   assert.equal(sentChip(on("running")).title, "The agent is working");
+  const named = (detail) => ({ ...page()[0], sent: { request_id: "r1", state: "running", at: "2026-11-10T13:59:00.000000Z", detail, state_by: "Codex" } });
+  assert.deepEqual(sentChip(named("Editing main.tex")), { state: "running", label: "Codex is working", title: "Editing main.tex", tone: "pending" });
+  assert.equal(sentChip(named("")).title, "Codex is working");
   assert.deepEqual(sentChip(on("failed", "the build failed")), { state: "failed", label: "Failed", title: "Failed: the build failed", tone: "failed" });
   assert.equal(sentChip(on("failed")).title, "Failed");
   assert.ok(isWithdrawn(on("failed", "withdrawn").sent));
@@ -182,6 +190,38 @@ test("the Send chip: Sent while the request waits, the agent at work, Failed wit
   assert.equal(sentChip(on("failed", "withdrawn")), null, "the person took it back");
   assert.equal(sentChip({ ...page()[0], sent: null }), null);
   assert.equal(sentChip(page()[0]), null);
+});
+
+test("a field naming the agent on this computer says what sending does: the thread, or the file's open comments", () => {
+  const agent = { name: "codex", label: "Codex", ready: true, problem: "" };
+  const sends = (text) => ({ text, warn: false });
+  const warns = (text) => ({ text, warn: true });
+  assert.deepEqual(mentionHint({ agent, text: "@codex use the British spelling" }), sends("Sends this thread to Codex on this computer."));
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", file: true }), sends("Sends this file's open comments to Codex on this computer."));
+  assert.deepEqual(mentionHint({ agent: { ...agent, ready: false, problem: "Codex is not signed in." }, text: "@codex go" }), warns("Codex is not signed in."));
+  assert.deepEqual(mentionHint({ agent: { ...agent, ready: null }, text: "@codex go" }), sends("Sends this thread to Codex on this computer."), "still checking");
+  assert.equal(mentionHint({ agent, text: "ask `@codex` later" }), null, "inside code");
+  assert.equal(mentionHint({ agent, text: "@Codex go" }), null, "the name exactly");
+  assert.equal(mentionHint({ agent, text: "@codex again", initial: "@codex go" }), null, "an edit that keeps an old mention sends nothing");
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go" }), sends("Sends this thread to Codex on this computer."), "an edit that adds one");
+  // an edit the server will not send says why before it is saved
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go", refused: "not_newest" }),
+    warns("Mention Codex in a new reply to send this thread again."));
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go", refused: "closed" }), warns("Reopen this thread to send it to Codex again."));
+  assert.equal(mentionHint({ agent, text: "go on", initial: "go", refused: "closed" }), null, "no mention, nothing to say");
+  assert.equal(mentionHint({ agent: null, text: "@codex go" }), null);
+});
+
+test("a mention the server did not send to the agent says why, worded here by its code, else in the server's words", () => {
+  const refused = (code, why = "") => ({ agent: "Codex", refused: code, why });
+  assert.equal(sendRefusal(refused("closed")), "Reopen this thread to send it to Codex again.");
+  assert.equal(sendRefusal(refused("not_newest")), "Mention Codex in a new reply to send this thread again.");
+  assert.equal(sendRefusal(refused("viewer")), "Only the workspace's owners and editors can send comments to Codex.");
+  assert.equal(sendRefusal(refused("too_many")), "Codex takes at most 100 comments at a time: mention it in the threads you want answered.");
+  assert.equal(sendRefusal(refused("writes", "This server takes no writes.")), "Not sent to Codex: This server takes no writes.");
+  assert.equal(sendRefusal(refused("nothing", "Nothing new since the last answers.")), "Not sent to Codex: Nothing new since the last answers.");
+  assert.equal(sendRefusal({ agent: "Codex", request_id: "c1", scope: "thread", threads: 1 }), "", "sent");
+  assert.equal(sendRefusal(undefined), "", "no agent named");
 });
 
 test("what became of a thread's place after a rebuild: a highlight moved or lost, ink or a region drawn on an earlier build", () => {

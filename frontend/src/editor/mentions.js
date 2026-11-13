@@ -89,6 +89,14 @@ export function dateToken({ date, time, remind }) {
 }
 export const personToken = (user) => `@${user}`;
 
+// The usernames a text mentions outside code (a ``` fence or a `span`), as
+// the server reads them (mentions.py people_in): who a comment notifies,
+// and whether it names the agent on this computer (comments.js
+// mentionHint).
+const CODE_RE = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
+export const peopleIn = (text) => new Set(scanMentions(String(text || "").replace(CODE_RE, " "))
+  .filter((m) => m.kind === "person").map((m) => m.user));
+
 // When a reminder is due (its time, else REMIND_TIME), as a local moment.
 export const remindAt = ({ date, time }) => localMoment(date, time || REMIND_TIME);
 
@@ -110,14 +118,21 @@ export function dateLabel({ date, time }, now = new Date()) {
 
 // Who a note can mention (App's MentionContext): {me: the signed-in
 // username ("" in a share view), people: the workspace's [{username,
-// role}], known: the Set of usernames a person chip is drawn for}.
+// role}], known: the Set of usernames a person chip is drawn for}. A
+// comment field and the maker's own comments add `agents`, the work
+// folder's agent on this computer ([{name, label}], vaultState.js
+// mentionAgent), never a note.
 export const NO_MENTIONS = Object.freeze({ me: "", people: [], known: new Set() });
 
 // What a mention token shows, the rendered view's chip and the editor's
-// alike: {kind ("date" | "remind" | "person"), text, title, overdue}, or
-// null for a person no one here is called (the text stays as it is).
-export function mentionChip(token, { me, known }, now = new Date()) {
+// alike: {kind ("date" | "remind" | "person" | "agent"), text, title,
+// overdue}, or null for a person no one here is called (the text stays as
+// it is). An agent's name is its chip before a member's of that name: in
+// the maker's comment the server sends it to the agent.
+export function mentionChip(token, { me, known, agents = [] }, now = new Date()) {
   if (token.kind === "person") {
+    const agent = agents.find((a) => a.name === token.user);
+    if (agent) return { kind: "agent", text: `@${token.user}`, title: t("Agent: {agent} on this computer", { agent: agent.label || agent.name }) };
     if (!known.has(token.user)) return null;
     return { kind: "person", text: `@${token.user}`, title: token.user === me ? t("You") : token.user };
   }
@@ -300,7 +315,10 @@ function remindTargets(rest, people, me) {
 //           tomorrow at 9 by default, or "Remind @bob" after "remind @bo"
 //           (remindTargets)
 //   people  {kind: "person", user, you} — `people` ([{username}], the
-//           workspace's; `me` first, "(You)"), then {kind: "invite"} when
+//           workspace's; `me` first, "(You)"), then {kind: "agent", name,
+//           label, ready, problem} for each of `agents` (a comment field's:
+//           the work folder's agent on this computer) by its name or label,
+//           a member of its name left out, then {kind: "invite"} when
 //           `canInvite`
 //   pages   {kind: "page", id, title, format, path} — `pages` (App's page
 //           list, libraryUtils.pageBlocksOf) by title, chips and path
@@ -310,7 +328,7 @@ function remindTargets(rest, people, me) {
 //           pages above it (`_path`), else its first folder
 // Every row has a `key` and its `section`. Empty when nothing answers,
 // which closes the menu.
-export function mentionRows({ query = "", people = [], me = "", pages = [], rootId = "", canInvite = false, now = new Date() }) {
+export function mentionRows({ query = "", people = [], me = "", pages = [], rootId = "", canInvite = false, agents = [], now = new Date() }) {
   const q = query.trim().toLowerCase().replace(/\s+/g, " ");
   const rows = [];
   const add = (section, row) => rows.push({ section, ...row });
@@ -332,12 +350,18 @@ export function mentionRows({ query = "", people = [], me = "", pages = [], root
   if (remind && remindAt(remind) <= now) remind = null;
   if (remind) users.forEach((user) => add("date", { kind: "remind", key: `remind:${user}`, user, you: user === me, date: remind.date, time: remind.time }));
 
-  // People.
-  const everyone = [...new Set([me, ...people.map((p) => p.username)])].filter(Boolean);
+  // People, then the agent: its "@name" is the agent's in this field (the
+  // server's rule), so a member of that name has no row here. Past the
+  // people's cap, so five members never push it out.
+  const agentNames = new Set(agents.map((a) => a.name));
+  const everyone = [...new Set([me, ...people.map((p) => p.username)])].filter((u) => u && !agentNames.has(u));
   const matched = q
     ? everyone.map((u, i) => [u, i, personRank(u, q)]).filter(([, , r]) => r != null).sort((a, b) => a[2] - b[2] || a[1] - b[1])
     : everyone.map((u, i) => [u, i]);
   matched.slice(0, PEOPLE_ROWS).forEach(([user]) => add("people", { kind: "person", key: `person:${user}`, user, you: user === me }));
+  agents.filter((a) => !q || personRank(a.name, q) != null || personRank(a.label || "", q) != null).forEach((a) => add("people", {
+    kind: "agent", key: `agent:${a.name}`, name: a.name, label: a.label || a.name, ready: a.ready, problem: a.problem || "",
+  }));
   if (canInvite && (!q || (q.length >= 2 && "invite".startsWith(q)))) add("people", { kind: "invite", key: "invite" });
 
   // Link to page.
@@ -354,6 +378,7 @@ export function mentionText(row, me) {
   if (row.kind === "date") return dateToken(row);
   if (row.kind === "remind") return dateToken({ date: row.date, time: row.time, remind: row.user || me });
   if (row.kind === "person") return personToken(row.user);
+  if (row.kind === "agent") return personToken(row.name);
   if (row.kind === "page") return `[[${row.id}]]`;
   return "";
 }

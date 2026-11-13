@@ -2021,6 +2021,21 @@ def _v55_positions(ws: str, pages: sqlite3.Connection, data) -> None:
         block_columns(pages)
 
 
+def _v58_request_via(ws: str, pages: sqlite3.Connection, data) -> None:
+    """``feedback_requests`` gains ``via``, how a Send was made: ``session``
+    (a person in Gamma) or ``token`` (an integration token), ``''`` on every
+    Send so far, which nobody can tell apart now. An agent on this computer
+    takes only a session's Send (docs/dev/local_agents.md), so one made by a
+    script holding the maker's token never starts it. Added where
+    ``_columns()`` has the table and lacks the column; a rerun changes
+    nothing, and a copy without the table gets it from the schema
+    statements. Requests never leave a workspace's own copy
+    (``LOCAL_STEPS``)."""
+    columns = _columns(pages, "feedback_requests")
+    if columns and "via" not in columns:
+        pages.execute("ALTER TABLE feedback_requests ADD COLUMN via TEXT NOT NULL DEFAULT ''")
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -2068,6 +2083,7 @@ WORKSPACE_STEPS = [
     (53, "work_folders", _v53_work_folders),
     (54, "feedback", _v54_comment_agents),
     (55, "positions", _v55_positions),
+    (58, "request_via", _v58_request_via),
 ]
 
 # The workspace steps that only add a column SQLite derives from the rows
@@ -2076,6 +2092,6 @@ WORKSPACE_STEPS = [
 DERIVED_STEPS = {47, 48, 53}
 
 # The workspace steps that change only tables no copy of the workspace keeps
-# in step with another (comments, the Inbox's rows): a mirror never sends
-# them, so two copies on either side of one still agree.
-LOCAL_STEPS = {54}
+# in step with another (comments, the Inbox's rows, the Sends): a mirror
+# never sends them, so two copies on either side of one still agree.
+LOCAL_STEPS = {54, 58}

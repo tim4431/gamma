@@ -14,6 +14,8 @@
 import { t } from "../shared/i18n/i18n.js";
 import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, pdfAnchorOf } from "../shared/model/blockModel.js";
 import { plainSnippet } from "../search/snippets.js";
+import { peopleIn } from "../editor/mentions.js";
+import { AGENT_MAX } from "../feedback/feedbackView.js";
 
 export const MAX_COMMENT = 20000; // characters, as the server (comments.MAX_BODY)
 
@@ -227,29 +229,76 @@ export const isEdited = (comment) => !comment.deleted && !!comment.updated_at &&
 
 // Who a comment reads as written by: the agent that wrote it through its
 // author's connection ("Claude Code"), else its author. `authorTitle` is
-// its avatar's title, which names the connection for an agent.
+// its avatar's title, which names the connection for an agent, or the
+// computer for an agent Gamma ran there (`agent_kind` "local",
+// docs/dev/local_agents.md: its author is the person who sent it the
+// comments).
 export const authorLabel = (comment) => comment.agent || comment.author;
-export const authorTitle = (comment) => (comment.agent
-  ? t("Written by {agent} with {who}'s connection", { agent: comment.agent, who: comment.author || t("Someone") })
-  : comment.author);
+export function authorTitle(comment) {
+  if (!comment.agent) return comment.author;
+  const who = comment.author || t("Someone");
+  return comment.agent_kind === "local"
+    ? t("Written by {agent} on {who}'s computer", { agent: comment.agent, who })
+    : t("Written by {agent} with {who}'s connection", { agent: comment.agent, who });
+}
 
 // A Send its requester withdrew: the server's `failed` with "withdrawn".
 export const isWithdrawn = (request) => request?.state === "failed" && request.detail === "withdrawn";
 
 // The chip of a thread a Send waits on (`thread.sent`, {request_id, state,
-// at, detail}), {state, label, title, tone} (`tone` the uiTag's): Sent
-// while the request waits for the agent, what the agent is at while it
-// works, Failed with its reason in the title. null for none, and for a Send
-// withdrawn: the thread is open, the person's to send again.
+// at, detail, state_by}), {state, label, title, tone} (`tone` the uiTag's):
+// Sent while the request waits for the agent, the agent working (named by
+// `state_by` when it says) with what it is at in the title, Failed with its
+// reason in the title. null for none, and for a Send withdrawn: the thread
+// is open, the person's to send again.
 export function sentChip(thread) {
   const sent = thread?.sent;
   if (!sent || isWithdrawn(sent)) return null;
-  const { state, detail } = sent;
+  const { state, detail, state_by: agent } = sent;
   if (state === "failed") {
     return { state, label: t("Failed"), title: detail ? t("Failed: {reason}", { reason: detail }) : t("Failed"), tone: "failed" };
   }
-  if (state === "running") return { state, label: t("The agent is working"), title: detail || t("The agent is working"), tone: "pending" };
+  if (state === "running") {
+    const label = agent ? t("{agent} is working", { agent }) : t("The agent is working");
+    return { state, label, title: detail || label, tone: "pending" };
+  }
   return { state, label: t("Sent"), title: t("Waiting for the agent"), tone: "pending" };
+}
+
+// What a comment field says under the text while it names the work
+// folder's agent on this computer (`agent`, vaultState.js mentionAgent) as
+// the server reads it: a mention outside code that `initial` (an edit's
+// text before) did not have. Sending it is a Send of the thread, or of the
+// file's open comments from the page's own thread (`file`); an edit the
+// server will not send (`refused`: "closed" in a resolved thread,
+// "not_newest" for an older comment, as local_agents/mention.py) says why,
+// and while the agent cannot run, its problem. → {text, warn}, or null for
+// nothing to say.
+export function mentionHint({ agent, text, initial = "", file = false, refused = "" }) {
+  if (!agent || !peopleIn(text).has(agent.name) || peopleIn(initial).has(agent.name)) return null;
+  if (refused) return { text: sendRefusal({ agent: agent.label, refused }), warn: true };
+  if (agent.ready === false && agent.problem) return { text: agent.problem, warn: true };
+  return {
+    text: file ? t("Sends this file's open comments to {agent} on this computer.", { agent: agent.label })
+      : t("Sends this thread to {agent} on this computer.", { agent: agent.label }),
+    warn: false,
+  };
+}
+
+// Why a comment that named the agent was not sent to it, for the status
+// line (the comment itself is posted): the answer's `send` ({agent,
+// refused, why}, routers/comments.py), worded here by its code, else the
+// server's sentence. "" for a Send that was made, or none.
+const REFUSALS = {
+  closed: (agent) => t("Reopen this thread to send it to {agent} again.", { agent }),
+  not_newest: (agent) => t("Mention {agent} in a new reply to send this thread again.", { agent }),
+  viewer: (agent) => t("Only the workspace's owners and editors can send comments to {agent}.", { agent }),
+  too_many: (agent) => t("{agent} takes at most {max} comments at a time: mention it in the threads you want answered.", { agent, max: AGENT_MAX }),
+};
+export function sendRefusal(send) {
+  if (!send?.refused) return "";
+  const agent = send.agent || "";
+  return REFUSALS[send.refused]?.(agent) || t("Not sent to {agent}: {reason}", { agent, reason: send.why || send.refused });
 }
 
 // What a thread is on, in the Comments window's words: the highlight's

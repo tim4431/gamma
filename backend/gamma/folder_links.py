@@ -1071,6 +1071,8 @@ def set_push(link_id: str, word: str, token: str = "", token_id: str = "") -> di
             if raised:
                 state = {k: v for k, v in (get_link(link_id) or link)["state"].items() if k != takeover.TAKEN_OVER}
                 conn.execute("UPDATE folder_links SET library = 1, state = ? WHERE id = ?", (json.dumps(state), link_id))
+    if work_folder_link(link) and not work_folder_link(after):
+        _stop_agent(link_id)  # no work folder now: its agent answers no Send
     if push == PUSH_ALL and not link["notes"]:
         set_notes(link_id, True)
     return get_link(link_id)
@@ -1149,6 +1151,64 @@ def set_library(link_id: str, on: bool) -> dict | None:
     return link
 
 
+def set_agent(link_id: str, agent: str, *, by: str) -> int:
+    """A work folder's agent on this computer (docs/dev/local_agents.md):
+    ``agent`` (``codex``, ``claude``) answers its Sends from now on, turned
+    on by the account ``by``, or ``""`` none. The row is this computer's
+    (``local_agents.store``); a run of the agent it had stops when it is
+    turned off or changed, the folder's open pages hear ``{t: "vault"}``
+    (their chip and the comments' @ menu read the agent again), and an
+    agent turned on (or changed) takes the Sends that wait now → how many
+    it took. The route checks who may and whether the agent is ready.
+    LinkError for a vault that is no work folder; 0 for no such link."""
+    from .local_agents import runner, store as agents  # local: the runner imports the feedback modules
+
+    link = get_link(link_id)
+    if link is None:
+        return 0
+    if agent and not work_folder_link(link):
+        raise LinkError("Only a work folder can have an agent.")
+    had = (agents.agent_of(link_id) or {}).get("agent", "")
+    agents.set_agent(link_id, agent, by=by)
+    if had and had != agent:
+        _stop_agent(link_id)
+    if had != agent:
+        _tell_open_pages(link)
+    if agent and agent != had:
+        return runner.queue_folder(link["workspace_id"], link_id)
+    return 0
+
+
+def _tell_open_pages(link: dict) -> None:
+    """Each page of the vault's work folder open in a window now hears
+    ``{t: "vault"}``, for its vault chip to look again. Never raises: the
+    change is made."""
+    ws = link["workspace_id"]
+    opened = sorted(page_id for key_ws, page_id in collab.open_pages() if key_ws == ws)
+    if not opened:
+        return
+    try:
+        with connect_pages_db(ws) as conn:
+            pages = [r[0] for r in conn.execute(
+                "SELECT id FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?)) AND work_folder = ?",
+                (json.dumps(opened), link["folder_id"]))]
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[folders] the open pages of work folder {link['folder_id']}: {e}")
+        return
+    for page_id in pages:
+        collab.publish(ws, page_id, {"t": "vault"})
+
+
+def _stop_agent(link_id: str) -> None:
+    """The run of the vault's agent on this computer stops, if one runs: its
+    agent was turned off or changed, the vault paused, moved, removed or no
+    longer pushes everything (gamma/local_agents/runner.py ``stop_link``,
+    which reads why when the run ends)."""
+    from .local_agents import runner  # local: the runner imports the feedback modules
+
+    runner.stop_link(link_id)
+
+
 def _mark_again(link: dict) -> None:
     """A work folder's mark written again from its row's switches. A folder
     gone, or a mark that cannot be written now, is the next round's to put
@@ -1167,7 +1227,8 @@ def set_paused(link_id: str, paused: bool) -> dict | None:
     """Pause the link — the tick leaves it alone; a sync asked for still
     runs, and a round already running finishes — or resume it. The pause
     is ``status.paused_at``, when it began; None for no such link. A work
-    folder whose files are not chosen yet stays paused: LinkError."""
+    folder whose files are not chosen yet stays paused: LinkError. A pause
+    stops the run of the vault's agent (``_stop_agent``)."""
     with _status_guard, connect_users_db() as conn:
         r = conn.execute("SELECT status, state FROM folder_links WHERE id = ?", (link_id,)).fetchone()
         if r is None:
@@ -1179,6 +1240,8 @@ def set_paused(link_id: str, paused: bool) -> dict | None:
         if paused:
             status[PAUSED] = since or page_now()
         conn.execute("UPDATE folder_links SET status = ? WHERE id = ?", (json.dumps(status), link_id))
+    if paused:
+        _stop_agent(link_id)
     return get_link(link_id)
 
 
@@ -1223,7 +1286,8 @@ def relink(link_id: str, path: str) -> dict | None:
     are read there from now on, the link's last error goes and a round
     follows (none while its files are not chosen). None for no such link;
     LinkError for a place that is not the link's, or that ``check_vault``
-    refuses."""
+    refuses. A run of the vault's agent stops, and the sessions it answered
+    threads in are forgotten: they belong to the directory that was."""
     link = get_link(link_id)
     if link is None:
         return None
@@ -1242,6 +1306,7 @@ def relink(link_id: str, path: str) -> dict | None:
         except (vault_disk.Stopped, vault_disk.Offline) as e:
             raise LinkError(f"{root} is not this vault: {e}.") from e
     check_vault({**link, "path": new})
+    _stop_agent(link_id)
     with _holding(link_id):
         from .vault.sync import PLACE  # local: it imports this module
 
@@ -1252,6 +1317,9 @@ def relink(link_id: str, path: str) -> dict | None:
                 conn.execute("UPDATE folder_links SET path = ?, state = ? WHERE id = ?", (new, json.dumps(state), link_id))
             except sqlite3.IntegrityError as e:
                 raise LinkError(_taken({**link, "path": new})) from e
+        from .local_agents import store as agents  # local: the runner imports the feedback modules
+
+        agents.forget_threads(link_id)
         if engine(link):
             from .vault.local_remote import LocalRemote  # local: it imports this module
 
@@ -1510,12 +1578,14 @@ def delete_link(link_id: str, files: str = "keep") -> bool:
     read in place cannot be stored, or the state file a folder kept before
     left is held open (``_remove_vault``): nothing is removed. A remote
     source's token stays on that server (whoever minted it revokes it: the
-    desktop app does when it drops a link it made)."""
+    desktop app does when it drops a link it made). A run of the vault's
+    agent stops first; its row goes with the vault's (``vault_store.forget_link``)."""
     from .vault import upgrade as vault_upgrade  # local: it imports this module
 
     link = get_link(link_id)
     if link is None:
         return False
+    _stop_agent(link_id)
     with _holding(link_id):
         link = get_link(link_id) or link
         if choosing(link):
@@ -1739,9 +1809,17 @@ def page_vault(ws: str, page_id: str, *, can_act: bool, user_id: str) -> dict | 
     ``problem`` why its file was not written or read, the vault's own reason
     first (``_halted``), ``conflicts`` the clashes the file won that are
     open; ``work_folder`` whether the vault is one, ``choosing`` whether its
-    files wait to be chosen, ``library`` its library switch, and ``page``
+    files wait to be chosen, ``library`` its library switch, ``mine``
+    whether ``user_id`` made the vault (whose comments may name its
+    agent: gamma/local_agents/mention.py), and ``page``
     the page's own stamps: whether it is in the library, and its file's
-    name. None for a page of no vault."""
+    name. On a server that runs agents, ``agent`` too: the work folder's
+    agent on this computer (``local_agents.info``: its run's detail for
+    those shown the path alone), null for none. None for a page of no
+    vault."""
+    from . import local_agents
+    from .local_agents import info as agent_info  # local: the runner it asks imports the feedback modules
+
     link = vault_of_page(ws, page_id)
     if link is None:
         return None
@@ -1758,11 +1836,14 @@ def page_vault(ws: str, page_id: str, *, can_act: bool, user_id: str) -> dict | 
         row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
     props = load_props(row[0]) if row else {}
     shown = can_act or link["created_by"] == user_id
-    return {"id": link["id"], "name": dest_of(link).name, "scope": link["kind"], "path": path if shown else "",
-            "pull": bool(link["pull"]), "push": push_word(link["push"]), "problem": _halted(link) or problem,
-            "conflicts": clashes, "paused": bool(link["status"].get(PAUSED)), "work_folder": work_folder_link(link),
-            "choosing": choosing(link), "library": bool(link["library"]),
-            "page": {"library": props.get("library") is True, "file_name": str(props.get("file_name") or "")}}
+    out = {"id": link["id"], "name": dest_of(link).name, "scope": link["kind"], "path": path if shown else "",
+           "pull": bool(link["pull"]), "push": push_word(link["push"]), "problem": _halted(link) or problem,
+           "conflicts": clashes, "paused": bool(link["status"].get(PAUSED)), "work_folder": work_folder_link(link),
+           "choosing": choosing(link), "library": bool(link["library"]), "mine": link["created_by"] == user_id,
+           "page": {"library": props.get("library") is True, "file_name": str(props.get("file_name") or "")}}
+    if local_agents.enabled():
+        out["agent"] = agent_info.agent_info(link, can_act=shown)
+    return out
 
 
 def _halted(link: dict) -> str:
