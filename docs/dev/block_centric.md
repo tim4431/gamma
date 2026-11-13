@@ -131,7 +131,8 @@ the shapes weighed, a zoom-in on a subtree among them, are in
 [research/sub-pages.md](../research/sub-pages.md)). `/page` makes one.
 The flat library with folders and labels stays the navigation model: a
 sub-page is reached by a link, its parent's Pages inside panel or its own
-crumbs, never a page tree in a sidebar. A Logseq-style zoom-in on a
+crumbs. The Files window is a view of the folders, which stay the model
+with the labels: it lists a folder's top pages, not a page tree. A Logseq-style zoom-in on a
 block's subtree is another thing and is still open (below).
 
 ## Where the code still says "page = PDF" (inventory, 2026-09-02)
@@ -154,7 +155,8 @@ Backend
 - ~~`search.py`: the only FTS index is `pdf_fts(doc_id, page, content)`;
   `/pdf-search` returns nothing for users without PDFs; there is no block FTS
   (`/block-search` is a Python scan).~~ `block_fts` + `GET /api/search`
-  (stage 2). `/pdf-search` and `/block-search` remain until the frontend
+  (stage 2). `/pdf-search` (since 2026-11 `POST /document-search`, over PDFs and
+  text files) and `/block-search` remain until the frontend
   switches.
 - ~~`ai_context.py`: context is framed as "Here is the PDF text"; a page with
   no `doc_id` contributes only via `include_notes`. `AIChatRequest` takes both
@@ -194,7 +196,7 @@ Frontend (all cleared 2026-09-02 except the search panel)
 - ~~Cards say PDF/Note, tooltips "paper".~~ `pageKindLabel`, copy says page.
 - ~~Chat picker lists only PDF pages; chat sends `doc_id`.~~ Every page;
   the request carries `page_id` (the page is the unit of context).
-- Search panel: the Ctrl+F panel keeps `/block-search` + `/pdf-search` —
+- Search panel: the Ctrl+F panel keeps `/block-search` + `/pdf-search` (now `/document-search`) —
   deliberately (fuzzy/regex + case/word flags that FTS bm25 does not offer);
   `/api/search` serves the AI tools. Group copy says "Other PDFs".
 - ~~Settings nav group "Reading".~~ "Editor".
@@ -372,7 +374,7 @@ stage.)*
   root's `updated_at` moved, the version bumped, or a block writer called
   `mark_page_dirty`; pruned with the page — since 2026-10 the index is
   `block_fts` in pages.db, kept by triggers in every write's transaction,
-  [user_db.md](user_db.md) "The notes index"), `gamma/pdf_index.py` (the
+  [user_db.md](user_db.md) "The notes index"), `gamma/pdf_index.py` (since 2026-11 `gamma/search/`, `text_fts`; the
   `pdf_fts` schema plus the two queries every consumer shares —
   `pdf_missing`, `search_pdf`; extraction stays in `routers/search.py`),
   `blocks_store.root_pages` (the one library/folder page scan the search,
@@ -493,6 +495,7 @@ and trash entry ([home_library.md](home_library.md#sub-pages)).
 
 ## Non-goals (for now)
 - No page-type enum — describe pages by what they carry.
-- No page-tree sidebar replacing folders; the library stays the
-  navigation surface.
+- No page tree replacing folders: the Files window
+  ([home_library.md](home_library.md) "Work folders") is a view of the
+  folders, which stay the model with the labels.
 - No rewrite of the viewer; it remains the PDF attachment's renderer.

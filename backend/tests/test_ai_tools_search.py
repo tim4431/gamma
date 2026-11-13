@@ -1,10 +1,19 @@
-"""search_library: notes hits before PDF hits, scope rules, the legacy
-search_pdfs name, and what a page-scoped chat can reach."""
+"""search_library: notes hits before the documents' hits (PDF pages and
+files' lines), scope rules, the legacy search_pdfs name, and what a
+page-scoped chat can reach."""
 
-from conftest import make_folder
+from conftest import doc_props, make_folder
+from gamma import storage
 from gamma.ai_tools import agent_tools, run_agent_tool
+from gamma.db import connect_data_db
+from gamma.documents.model import stored_name
+from gamma.search import indexer
+from gamma.search.index import Doc, store_docs
 
 from ai_fixtures import folder, indexed_pdf, org, props  # noqa: F401 (fixtures)
+
+METHOD = ["\\section{Method}", "We fit a small network to the training set by gradient descent.",
+          *[f"filler line {n}" for n in range(3, 60)], "The step size is tuned by gradient clipping."]
 
 
 def test_search_library_scoped_snippets(org, indexed_pdf):
@@ -20,7 +29,7 @@ def test_search_library_scoped_snippets(org, indexed_pdf):
                                     "properties": {"folders": [textonly]}})
     assert r.status_code == 200
     text, _ = run_agent_tool(ids["ws"], folder(textonly), "search_library", {"query": "cat"})
-    assert text.startswith("No notes or PDF text match") and "not answer from your own knowledge" in text
+    assert text.startswith("No notes or document text match") and "not answer from your own knowledge" in text
     c.delete(f"/api/blocks/{r.json()['id']}")
     # A folder with no pages at all says so.
     text, _ = run_agent_tool(ids["ws"], folder(make_folder(c, "nowhere")), "search_library", {"query": "cat"})
@@ -29,7 +38,7 @@ def test_search_library_scoped_snippets(org, indexed_pdf):
 
 def test_search_library_finds_notes_and_pdf_text(org, indexed_pdf):
     """Notes hits (block ids, from block_fts) come before PDF hits (page
-    numbers, from pdf_fts); a page without a PDF is searchable by its notes,
+    numbers, from text_fts); a page without a PDF is searchable by its notes,
     and the note index follows edits without any explicit rebuild."""
     c, ids = org
     title_a, title_b = props(c, ids["a"])["content"], props(c, ids["b"])["content"]
@@ -56,6 +65,39 @@ def test_search_library_finds_notes_and_pdf_text(org, indexed_pdf):
                              {"query": "bias-preserving"})
     assert f"[{note_block}]" not in text
     c.delete(f"/api/blocks/{note_block}")
+
+
+def test_search_library_lists_a_text_files_line(org, monkeypatch):
+    """A text document's hit names the file, the line the query matched and
+    its run's lines, with a line link on MCP; a file not indexed yet is
+    counted with the documents and kicked by its Doc."""
+    c, ids = org
+    papers = make_folder(c, "tex sources")
+    tex = "a1b2c3" * 4
+    storage.put_upload(ids["ws"], stored_name(tex, ".tex"), "\n".join(METHOD).encode())
+    r = c.post("/api/blocks", json={"parent_id": "root", "content": "method.tex",
+                                    "properties": {"folders": [papers],
+                                                   **doc_props(tex, name="method.tex", format="text", ext=".tex")}})
+    assert r.status_code == 200
+    page = r.json()["id"]
+    kicked = []
+    monkeypatch.setattr(indexer, "index_missing_async", lambda ws, docs: kicked.append(dict(docs)) or True)
+    text, _ = run_agent_tool(ids["ws"], folder(papers), "search_library", {"query": "gradient"})
+    assert "1 document(s) not indexed yet" in text
+    assert kicked == [{tex: Doc(tex, "text", ".tex", "store")}]
+    with connect_data_db(ids["ws"]) as db:
+        store_docs(db, [indexer.index_doc(ids["ws"], Doc(tex, "text", ".tex", "store"))])
+    scope = {**folder(papers), "link_base": "http://localhost/?ws=" + ids["ws"]}
+    text, action = run_agent_tool(ids["ws"], scope, "search_library", {"query": "gradient descent"})
+    lines = [l for l in text.splitlines() if l.startswith("- ")]
+    assert lines == [f'- file "method.tex" l.2 (lines 1–40; page_id {page}; '
+                     f'http://localhost/?ws={ids["ws"]}&page={page}&line=2): '
+                     "We fit a small network to the training set by gradient descent."], text
+    assert "files' lines in rank order" in text and "not indexed" not in text
+    assert action["summary"].endswith("1 hit")
+    text, _ = run_agent_tool(ids["ws"], folder(papers), "search_library", {"query": "clipping"})
+    assert '- file "method.tex" l.60 (lines 41–60;' in text
+    c.delete(f"/api/blocks/{page}")
 
 
 def test_deprecated_search_pdfs_still_dispatches(org, indexed_pdf):

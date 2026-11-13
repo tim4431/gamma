@@ -14,6 +14,7 @@ untranslated (docs/dev/i18n.md).
 import re
 
 from ..db import parse_stamp
+from . import anchors
 
 MODES = ("files", "urls", "tool")
 HEADING_QUOTE = 80   # characters of a passage's quote in an item's heading
@@ -22,7 +23,8 @@ NOTE_LINE = 300      # characters of a note's text in its item
 INTRO = ("Each item is a comment thread on a file of this work folder. Answer it in Gamma: reply with what you\n"
          "changed and where, resolve it when it is done (see \"How to answer\" at the end).")
 PLACED = {"exact": "placed exactly", "rough": "placed roughly ({match})", "estimate": "placed by estimate",
-          "lost": "not found in this build", "pending": "not placed yet", "earlier": "drawn on an earlier build"}
+          "lost": "not found in the current version", "pending": "not placed yet",
+          "earlier": "drawn on an earlier version"}
 REGION_PLACED = {"exact": "placed exactly", "earlier": "drawn on an earlier version of the picture",
                  "lost": "the file is no longer a picture"}
 REBUILT = {"area": "the figure was rebuilt", "passage": "the PDF was rebuilt", "file": "the picture was rebuilt"}
@@ -42,14 +44,20 @@ def _line(text: str, cap: int) -> str:
 def heading(entry: dict) -> str:
     """What an item is on: ``Page 3 · “the loss is defined as”``,
     ``Page 5 · area``, ``Page 2 · handwriting``, ``Page 3 · note on “…”``,
-    ``Region · 320×180 px at (40, 60)``, ``Note on a region · …``, ``A
-    note``, ``The whole file``."""
+    ``Region · 320×180 px at (40, 60)``, ``Note on a region · …``, ``Lines
+    118–120 · “…”``, ``Line 118 · note on “…”``, ``A note``, ``The whole
+    file``."""
     kind, where = entry["kind"], entry["where"]
     if kind == "file":
         return "The whole file"
     if kind == "note":
         return "A note"
     on = "note on " if where.get("note") else ""
+    if kind == "lines":
+        line = where.get("line")
+        lines = anchors.line_words(line, where.get("end") or line).capitalize() + " · " if line else ""
+        quote = _line(where.get("quote", ""), HEADING_QUOTE)
+        return f"{lines}{on}“{quote}”" if quote else f"{lines}{on}passage"
     if kind == "region":
         what, rect = "Note on a region" if on else "Region", where.get("rect")
         return f"{what} · {rect[2] - rect[0]}×{rect[3] - rect[1]} px at ({rect[0]}, {rect[1]})" if rect else what
@@ -75,6 +83,8 @@ def _facts(entry: dict) -> list[str]:
     lines = ["- " + " · ".join(facts)]
     if where.get("note"):
         lines.append(f"- note: “{_line(where['note'], NOTE_LINE)}”")
+    if where.get("was"):
+        lines.append(f"- was: “{_line(where['was'], HEADING_QUOTE)}”")
     source = entry.get("source")
     if source:
         span = f"lines {source['line']}–{source['end']}" if source.get("end") else f"line {source['line']}"
@@ -113,7 +123,8 @@ def _pictures(entry: dict, mode: str) -> list[str]:
 
 def _comment(comment: dict) -> list[str]:
     by = comment.get("by") or "someone"
-    who = f"**{comment['agent']}** ({by}'s connection)" if comment.get("agent") else f"**{by}**"
+    where = f"on {by}'s computer" if comment.get("agent_kind") == "local" else f"{by}'s connection"
+    who = f"**{comment['agent']}** ({where})" if comment.get("agent") else f"**{by}**"
     body = "*(deleted)*" if comment.get("deleted") else comment.get("body", "")
     return [f"> {who} · {_when(comment.get('at'))}",
             *(f"> {line}" if line else ">" for line in body.replace("\r\n", "\n").split("\n"))]

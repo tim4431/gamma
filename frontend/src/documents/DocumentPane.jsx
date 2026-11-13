@@ -24,10 +24,12 @@ export const preloadViewer = (format, doc = null) => DEFAULT[viewerOf(format, do
 
 // The surface: { doc, fileUrl, pageId, readOnly, preview, hidden, phone,
 // scale: {value, onZoomTo, onEffectiveScale}, place, onPlace, reportRef,
-// regions, anchors, flashId, regionMode, onRegion, onRegionJump,
+// mark, onMarkDone, regions, anchors, flashId, regionMode, moveMode, onRegion, onRegionJump,
 // onRegionContext, onRegionThread, commentMargin, marginRef, onMarginLost,
-// scrollRef, captureRef, onAskRegion, onReveal, onStatus } — each viewer
-// takes what it uses (docs/dev/documents.md "Viewers").
+// scrollRef, captureRef, onAskRegion, onReveal, onAnchor, onHighlightAction,
+// onChatSelection, onStatus } — each viewer takes what it uses
+// (docs/dev/documents.md "Viewers"; a text file's ranges ride `regions`
+// and the region handlers).
 export default function DocumentPane({ view, render, fallback = null, surface = null }) {
   const host = view.viewer ? render?.[view.viewer] : null;
   if (host) return host();

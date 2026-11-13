@@ -13,15 +13,24 @@
 // `link`: the vault as GET /api/folder-links/{id} answers it; `fresh`: the
 // vault is still choosing its first files (made from the shell, which
 // opened this page with ?track=), so Cancel removes it (`onCancelled`).
-// `onSaved()` follows a Save, whose round runs in the background.
+// `onSaved()` follows a Save, whose round runs in the background. A vault
+// of another server (`link.remote_url`) uploads every file ticked to that
+// server, which the summary says with the secrets files among them
+// (explorer/trackRemote.js); in the desktop app, whose shell opened its
+// dialog in this server's window, Save, Cancel and closing hand the window
+// back to it (the page ask `tracked` {link, cancelled}, `cancelled` once the
+// vault is removed) in place of `onSaved` and `onCancelled`.
 import React from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { API, apiJson } from "../shared/lib/utils";
+import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { fmtBytes } from "../shared/lib/format.js";
 import { SubDialog, Toggle } from "../settings/SettingsKit";
 import ImportTree from "../transfers/ImportTree.jsx";
 import { formatLabel } from "../library/libraryUtils";
+import { askShell } from "../vault/useVault.js";
 import { body, boxOf, initial, isSelected, ofFormat, toggle, toggleAll, toggleFormat } from "./trackSelection.js";
+import { handsBack, secretsWarning, uploadsText } from "./trackRemote.js";
 import "../transfers/importReview.css";
 import "./explorer.css";
 
@@ -99,6 +108,9 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
   // the footer's Cancel of a fresh vault, which removes it, asked about
   const [asking, setAsking] = React.useState(false);
   const url = `${API}/folder-links/${encodeURIComponent(link.id)}`;
+  // The shell's window handed back on leaving: `cancelled` once the vault is gone.
+  const handBack = handsBack(link, IS_DESKTOP);
+  const tracked = (cancelled) => { askShell("tracked", { link: link.id, cancelled }); onClose(); };
 
   const readDir = React.useCallback(async (dir = "") => {
     const q = new URLSearchParams({ base });
@@ -199,7 +211,8 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ selection, base_hash: read.rules.hash || "", library }),
       });
-      onSaved();
+      if (handBack) tracked(false);
+      else onSaved();
     } catch (err) {
       if (err?.status === 409) setProblem({ text: t("The .gammaignore changed on disk since it was read."), again: true });
       else setProblem({ text: err.message || String(err) });
@@ -209,22 +222,28 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
   }
   async function cancelFresh() {
     stopPreview();
+    let gone = true;
     try {
       await apiJson(url, { method: "DELETE" });
     } catch (err) {
+      gone = false;
       setStatus?.(t("Could not cancel the work folder: {message}", { message: err.message || err }));
     }
-    onCancelled();
+    if (handBack) tracked(gone);
+    else onCancelled();
   }
+  const leave = handBack ? () => tracked(false) : onClose;
   // A fresh vault's Cancel removes it, so it asks first, from the footer as
   // from Escape or the ×; Choose files… asks once something changed.
-  const close = fresh ? cancelFresh : onClose;
+  const close = fresh ? cancelFresh : leave;
   const guard = fresh ? { question: t("Cancel making this work folder?"), keep: t("Keep choosing"), leave: t("Cancel it") }
     : changed ? { question: t("Leave without saving?"), keep: t("Keep choosing"), leave: t("Leave") } : null;
   const draft = fresh ? undefined : { changes: state.changes, library };
   const name = link.dest ? leaf(link.dest.replace(/\\/g, "/")) : link.path ? leaf(link.path.replace(/\\/g, "/")) : "";
   const leaving = current?.leaving || [];
   const kept = leaving.filter((p) => p.notes || p.open_comments);
+  const uploads = uploadsText(link, current);
+  const secrets = secretsWarning(link, current);
 
   return (
     <SubDialog title={t("Choose files")} onClose={close} guard={guard} draft={draft} className="trackDialog">
@@ -259,6 +278,7 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
         <div className="trackSummary" role="status">
           {current ? <>
             <p>{tn("{n} file, {size}", "{n} files, {size}", current.files, { size: fmtBytes(current.bytes || 0) })}</p>
+            {uploads ? <p>{uploads}</p> : null}
             {joined.size ? (
               <details>
                 <summary>{tn("{n} file kept with its page's other file", "{n} files kept with their page's other file", joined.size)}</summary>
@@ -281,6 +301,10 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
             {current.large ? <p>{tn("{n} chosen file is over {size} and is listed without its bytes",
               "{n} chosen files are over {size} and are listed without their bytes",
               current.large, { size: fmtBytes(current.keep_bytes || 0) })}</p> : null}
+            {secrets ? <>
+              <p className="importWarning">{secrets.text}</p>
+              <ul>{secrets.files.map((path) => <li key={path}><strong>{path}</strong></li>)}</ul>
+            </> : null}
             {current.over_cap ? <p className="importWarning">{t("A work folder tracks at most {cap} files: untick some to save.", { cap: current.cap })}</p> : null}
             {read.rules.exists && !current.rules_ours ? <p>{t("Your .gammaignore will be rewritten.")}</p> : null}
           </> : preview?.error && preview.key === selectionKey ? <p className="importWarning">{preview.error}</p> : <p>{t("Counting…")}</p>}
@@ -290,6 +314,7 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
             hint={t("Each new file's page joins the library too; files already tracked keep their place")}
             checked={library} onChange={setLibrary} />
         </div>
+        <p className="reportModalHint">{t("The AI chat sends a tracked file's text to the model provider when the file is in its context, as it sends a PDF's.")}</p>
       </> : null}
       {problem ? (
         <p role="alert" className="importWarning">{problem.text}{" "}
@@ -306,7 +331,7 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
         </div>
       ) : (
         <div className="reportModalBtns importReviewFooter">
-          <button type="button" className="uiBtn" onClick={fresh ? () => setAsking(true) : onClose}>{t("Cancel")}</button>
+          <button type="button" className="uiBtn" onClick={fresh ? () => setAsking(true) : leave}>{t("Cancel")}</button>
           <button type="button" className="uiBtn primary" disabled={!read?.entries || !current || saving || !!current.over_cap}
             title={!current && read?.entries ? t("Save once the summary says what this choice comes to") : undefined}
             onClick={save}>{t("Save")}</button>

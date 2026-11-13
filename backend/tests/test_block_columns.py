@@ -18,7 +18,7 @@ from conftest import doc_props, login, make_folder, make_label, make_user, page_
 from gamma.blocks_store import BLOCK_COLUMNS, block_kind, fetch_subtree, page_for_doc, page_root_id, trash_entry
 from gamma.db import BLOCK_HOT_COLUMNS, BLOCK_HOT_INDEXES, PAGES_SCHEMA, connect_pages_db
 from gamma.normalize import block_columns
-from gamma.highlights import is_highlight, is_ink, is_link, is_region
+from gamma.highlights import is_highlight, is_ink, is_link, is_region, is_text_range
 from gamma.picture import is_picture
 from gamma.routers import blocks as blocks_router
 
@@ -232,12 +232,14 @@ def test_the_python_kind_agrees_with_the_generated_column(owner):
             assert is_picture(props) == (expected == "picture"), props
             assert not (expected == "picture" and is_highlight(props)), props
             assert not (expected in ("ink", "picture") and is_region(props)), props
+            assert not (expected in ("ink", "picture") and is_text_range(props)), props
             # a highlight of the column is a place on a PDF page, a region of a picture, or a text range:
-            # is_highlight and is_region each read their own key, both only when both keys are there
+            # is_highlight, is_region and is_text_range each read their own key, all of them when all keys are there
             if expected == "highlight":
-                assert is_highlight(props) or is_region(props) or isinstance(props.get("text_position"), dict), props
+                assert is_highlight(props) or is_region(props) or is_text_range(props), props
                 assert is_highlight(props) == isinstance(props.get("pdf_position"), dict), props
                 assert is_region(props) == isinstance(props.get("image_position"), dict), props
+                assert is_text_range(props) == isinstance(props.get("text_position"), dict), props
             # the exporters' link test agrees with it once the kinds before link are ruled out
             if expected in ("link", "highlight", "note"):
                 assert is_link(props) == (expected == "link"), props
@@ -282,7 +284,8 @@ def test_a_stale_column_takes_every_index_that_names_it_and_gets_them_back():
     """``normalize.block_columns`` over a ``work_folder`` of an older
     definition: the indexes that name it anywhere, in their condition or
     after another column (``idx_ub_listing``, ``idx_ub_dir``,
-    ``idx_ub_work_folder``, and one of no hot list), are dropped before the
+    ``idx_ub_work_folder``, ``idx_ub_file_name``, and one of no hot list),
+    are dropped before the
     column and made again after it; a rerun changes nothing."""
     older = "work_folder TEXT GENERATED ALWAYS AS (json_extract(properties, '$.work_folder')) VIRTUAL"
     table = next(s for s in PAGES_SCHEMA if s.startswith("CREATE TABLE IF NOT EXISTS unified_blocks"))
@@ -298,7 +301,8 @@ def test_a_stale_column_takes_every_index_that_names_it_and_gets_them_back():
     assert block_columns(conn)
     assert conn.execute("SELECT work_folder, first_folder FROM unified_blocks").fetchone() == (None, "L1")
     indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
-    assert {"idx_ub_listing", "idx_ub_dir", "idx_ub_work_folder", "idx_ub_deleted_with", "idx_other"} <= indexes
+    assert {"idx_ub_listing", "idx_ub_dir", "idx_ub_work_folder", "idx_ub_file_name", "idx_ub_deleted_with",
+            "idx_other"} <= indexes
     ddl = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0]
     assert BLOCK_HOT_COLUMNS["work_folder"] in ddl and older not in ddl
     assert not block_columns(conn)

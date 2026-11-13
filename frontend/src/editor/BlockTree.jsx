@@ -14,13 +14,13 @@ import rehypeRaw from "rehype-raw";
 import { rehypeNoteSanitize } from "./noteSanitize.js";
 import {
   blockColor, blockPage, blockPosition, blockQuote, countBlocks, isFolded, isInkGroup, isLinkBlock,
-  isPlaceBlock, isPlainNote, isRegionBlock, placeKeyOf, roughMatchPercent,
+  isPlaceBlock, isPlainNote, isRegionBlock, placeKeyOf, POSITION_KEY, roughMatchPercent, textSpan,
 } from "../shared/model/blockModel";
 import { lockedRow } from "../vault/notesLock.js";
 import { DEFAULT_HIGHLIGHT, darkPageLine } from "../shared/model/palette.js";
 import { blockStyle, isLineStyle } from "../shared/model/markStyle.js";
 import { MarkGlyph } from "../shared/ui/MarkGlyph.jsx";
-import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
+import { citesSeveralSources, gammaLinkId, isSourceLink, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
 import { RecordingCard } from "../recording/RecordingCard";
@@ -35,7 +35,7 @@ import { picturesDrag } from "../markup/pictureUpload.js";
 import { chordFromEvent, composing } from "../shared/lib/hotkeys.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
-import { CitationPill, GammaLinkCard, handleMarkdownCopy, useDockFolded } from "../shared/ui/Widgets";
+import { CitationPill, GammaLinkCard, handleMarkdownCopy, linePlace, useDockFolded } from "../shared/ui/Widgets";
 import { Collapse } from "../shared/ui/MotionWidgets";
 import { DiagramFigure, diagramCodeProps } from "../shared/ui/DiagramFigure";
 import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidth } from "../shared/lib/diagramMarkdown.js";
@@ -47,6 +47,8 @@ import { NoteReviewBar } from "./NoteReviewBar";
 import { useNoteAsk, useNoteChange } from "../chat/noteReview.js";
 import { ImageIcon, LinkIcon, LocateIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
+import { isRelativeHref } from "../explorer/workPaths.js";
+import { PathLink, PathLinkScope } from "./PathLink";
 import { findMathAtCursor, LatexAcPopup, MathLivePreview } from "./LatexEditor";
 import { useMathUi } from "./useMathUi.js";
 import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
@@ -405,12 +407,14 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
             placeholder={t("Edit the source note…")}
           />
         ) : refBlock?.content ? (
-          <BlockMarkdown content={refBlock.content} blockId={`embed:${refId}`} refLabels={refLabels}
-            onBlockRefClick={onBlockRefClick} nested
-            onTaskToggle={editable ? stableTask : undefined}
-            onImageEdit={editable ? stableImg : undefined}
-            onTableEdit={editable ? stableTbl : undefined}
-            onDiagramEdit={editable ? stableDiagram : undefined} />
+          <PathLinkScope pageId={refBlock.page_root_id}>
+            <BlockMarkdown content={refBlock.content} blockId={`embed:${refId}`} refLabels={refLabels}
+              onBlockRefClick={onBlockRefClick} nested
+              onTaskToggle={editable ? stableTask : undefined}
+              onImageEdit={editable ? stableImg : undefined}
+              onTableEdit={editable ? stableTbl : undefined}
+              onDiagramEdit={editable ? stableDiagram : undefined} />
+          </PathLinkScope>
         ) : (
           // A source in Recently deleted names its page (the click opens the
           // notice that offers Restore); one that no page holds says so.
@@ -491,7 +495,7 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
   // (they still consume an index so the mapping stays aligned).
   const tableInfo = useMemo(() => scanTables(content || ""), [content]);
   const diagramInfo = useMemo(() => scanDiagramFences(content || ""), [content]);
-  const citesSeveral = useMemo(() => citesSeveralPapers(content), [content]);
+  const citesSeveral = useMemo(() => citesSeveralSources(content), [content]);
   return (
     <ReactMarkdown
       // remark-breaks: a single Enter inside a note renders as a real line
@@ -548,16 +552,17 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
               />
             );
           }
-          // A link into this library is not an external chip: a citation
-          // (pasted from a chat answer) is the chat's pill, a copied
-          // page/block link a card. Its id has to resolve here, which also
-          // supplies the card's page title. refLabels holds ids this block's
-          // content mentions, so an id that isn't in the library falls
-          // through to the external chip below, whatever host the URL names.
+          // A link into this library is not an external chip: a citation of
+          // a PDF passage or a file's lines (pasted from a chat answer) is
+          // the chat's pill, a copied page/block link a card. Its id has to
+          // resolve here, which also supplies the card's page title.
+          // refLabels holds ids this block's content mentions, so an id that
+          // isn't in the library falls through to the external chip below,
+          // whatever host the URL names.
           const gl = parseGammaLink(href, window.location.origin);
           const glRef = gl ? refLabels?.[gammaLinkId(gl)] : null;
           if (gl && (!gl.foreign || glRef)) {
-            if (gl.kind === "citation") return <CitationPill link={{ ...gl, href }} multi={citesSeveral}>{children}</CitationPill>;
+            if (isSourceLink(gl)) return <CitationPill link={{ ...gl, href }} multi={citesSeveral}>{children}</CitationPill>;
             return (
               <GammaLinkCard link={{ ...gl, href }} label={glRef?.page_title || glRef?.content}>
                 {children}
@@ -570,6 +575,8 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
           if (parseUploadUrl(href) && !/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(href)) {
             return <FileChip href={href} text={textOf(children)} />;
           }
+          // A path relative to the note: in a work folder, the file it names.
+          if (isRelativeHref(href)) return <PathLink href={href}>{children}</PathLink>;
           return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
         },
         // A foldable callout's title (callouts.js → <details><summary>):
@@ -1129,14 +1136,17 @@ const BlockRow = React.memo(function BlockRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
-  // A highlight on the PDF or a region of the picture: both rows have the
-  // dot that jumps to the place, in its colour; a region names no page.
+  // A highlight on the PDF, a region of the picture or a range of a text
+  // file: each row has the dot that jumps to the place, in its colour; a
+  // region names no page, a range its lines.
   const isRegion = isRegionBlock(block);
   const isHighlight = isPlaceBlock(block);
   // Its place on the document (null for one placed by its page alone), its
   // colour and the passage it marks.
-  const pos = blockPosition(block, placeKeyOf(block)), color = blockColor(block), quote = blockQuote(block);
-  // How alike its text and the replaced PDF's were, for one matched roughly.
+  const placeKey = placeKeyOf(block);
+  const pos = blockPosition(block, placeKey), color = blockColor(block), quote = blockQuote(block);
+  const lines = placeKey === POSITION_KEY.text ? textSpan(pos) : null;
+  // How alike its text and the replaced file's were, for one matched roughly.
   const roughPercent = isHighlight ? roughMatchPercent(pos) : null;
   // The highlight made last: its card is the one the guide's highlight tour
   // points at (guide/recent.js).
@@ -1217,8 +1227,9 @@ const BlockRow = React.memo(function BlockRow({
   }
 
   // A gamma block link pastes as mention chip / synced embed / plain URL; a
-  // page or citation link pastes as the link card; any other URL pastes
-  // as-is (the link chip) or as a titled markdown link.
+  // page link pastes as the link card, a citation or a file's line link as
+  // the citation pill; any other URL pastes as-is (the link chip) or as a
+  // titled markdown link.
   function pasteAsItems(link) {
     if (link?.kind === "block") {
       const blockId = link.blockId;
@@ -1231,6 +1242,15 @@ const BlockRow = React.memo(function BlockRow({
     if (link?.kind === "citation") {
       return [
         { name: "gamma", icon: "citation", label: T("Citation"), hint: t("passage on p. {page}", { page: link.page }) },
+        { name: "url", icon: "url", label: "URL", hint: T("keep the link") },
+      ];
+    }
+    if (link?.kind === "line") {
+      const hint = link.to > link.line
+        ? t("lines {from}–{to} of the file", { from: link.line, to: link.to })
+        : t("line {n} of the file", { n: link.line });
+      return [
+        { name: "gamma", icon: "citation", label: T("Line link"), hint },
         { name: "url", icon: "url", label: "URL", hint: T("keep the link") },
       ];
     }
@@ -1320,16 +1340,20 @@ const BlockRow = React.memo(function BlockRow({
       // Stored host-free: the note keeps working when this library moves to
       // another server (a desktop sidecar, the NAS, a mirror).
       const url = relativeGammaLink(pm.url, window.location.origin);
-      const pageId = gammaLinkId(pm.link);
-      const fallback = pm.link.kind === "citation" ? `p. ${pm.link.page}` : "page";
+      const link = pm.link;
+      const pageId = gammaLinkId(link);
+      // A line link reads as the file's name and line ("method.tex:7",
+      // "method.tex:3–5"), what the AI's citation rule writes.
+      const lines = link.to > link.line ? `${link.line}–${link.to}` : `${link.line}`;
+      const fallback = link.kind === "citation" ? `p. ${link.page}` : link.kind === "line" ? linePlace(link) : "page";
       fetch(withShare(`${API}/block-search?ids=${encodeURIComponent(pageId)}`))
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           const b = d?.blocks?.[0];
           const title = (b?.page_title || b?.content || "").replace(/[[\]\n]/g, " ").trim();
-          const label = pm.link.kind === "citation"
-            ? (title ? `${title}, p. ${pm.link.page}` : fallback)
-            : (title || fallback);
+          const label = !title ? fallback
+            : link.kind === "citation" ? `${title}, p. ${link.page}`
+              : link.kind === "line" ? `${title}:${lines}` : title;
           doReplace(`[${label}](${url})`);
         })
         .catch(() => doReplace(`[${fallback}](${url})`));
@@ -1640,7 +1664,15 @@ const BlockRow = React.memo(function BlockRow({
               className="collapseBtn highlightDotBtn dotSlot"
               onClick={(e) => { e.stopPropagation(); onJump(block.id, e.ctrlKey || e.metaKey); }}
               title={
-                pos?.lost
+                lines
+                  ? pos.lost
+                    ? t("Not found in the current file — jump to where it was")
+                    : roughPercent != null
+                      ? t("Matched roughly ({n}%) after the file changed — jump to it", { n: roughPercent })
+                      : lines.end > lines.line
+                        ? t("Jump to lines {from}–{to}", { from: lines.line, to: lines.end })
+                        : t("Jump to line {n}", { n: lines.line })
+                : pos?.lost
                   ? t("Not found in the current PDF — jump to where it was")
                   : roughPercent != null
                     ? t("Matched roughly ({n}%) after the PDF was replaced — jump to it", { n: roughPercent })
@@ -1685,8 +1717,8 @@ const BlockRow = React.memo(function BlockRow({
             {pos?.lost && onMoveHighlight ? (
               <button
                 className="collapseBtn attachModeBtn"
-                title={t("Move to a selection on the PDF")}
-                aria-label={t("Move to a selection on the PDF")}
+                title={lines ? t("Move to a selection in the file") : t("Move to a selection on the PDF")}
+                aria-label={lines ? t("Move to a selection in the file") : t("Move to a selection on the PDF")}
                 onClick={(e) => { e.stopPropagation(); onMoveHighlight(block.id); }}
               ><LocateIcon size={12} /></button>
             ) : null}

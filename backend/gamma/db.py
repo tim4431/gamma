@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 55
+SCHEMA_VERSION = 58
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -143,7 +143,9 @@ USERS_SCHEMA = [
         created_at TEXT NOT NULL,
         expires_at INTEGER NOT NULL,
         scope TEXT NOT NULL DEFAULT 'read',
-        workspaces TEXT NOT NULL DEFAULT ''
+        workspaces TEXT NOT NULL DEFAULT '',
+        edits TEXT NOT NULL DEFAULT '',
+        asks INTEGER NOT NULL DEFAULT 1
     )""",
     # mirrors = local workspaces that are offline copies of a workspace on
     # another Gamma server (gamma/sync_engine.py): where it lives, the
@@ -556,6 +558,48 @@ USERS_SCHEMA = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_jobs_workspace ON jobs(workspace_id, owner)",
+    # computers = what a computer announced over its channel to this server
+    # (gamma/computers/registry.py), one row per integration token of the
+    # ``computer`` scope (token_id): its account and that token's
+    # workspace, the computer's id for this server and its name, the
+    # folders and pages it keeps there (JSON [{kind, folder_id | page_id,
+    # paused}], ids only), its assistants (JSON [{name, label, found, ready,
+    # version, code}]), the app's version, and when it was last seen. Never
+    # a path. Whether it is online now is in memory. Additive: no step.
+    """CREATE TABLE IF NOT EXISTS computers (
+        token_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        computer TEXT NOT NULL,
+        name TEXT NOT NULL,
+        vaults TEXT NOT NULL DEFAULT '[]',
+        assistants TEXT NOT NULL DEFAULT '[]',
+        app TEXT NOT NULL DEFAULT '',
+        seen_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_computers_user ON computers(user_id, workspace_id)",
+    # computer_links = this computer's channel to another Gamma server
+    # (gamma/computers/channel.py), kept by the desktop app's own server:
+    # one per server, workspace there and local account (created_by), with
+    # the ``computer`` token of that server (Fernet-encrypted, as
+    # folder_links keeps a vault's) and its id for whoever revokes it, the
+    # account there the server named (its id and username), and the
+    # channel's status as JSON ({state: connecting | connected | refused |
+    # older | unreachable, error, at}). Additive: no step.
+    """CREATE TABLE IF NOT EXISTS computer_links (
+        id TEXT PRIMARY KEY,
+        remote_url TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        token TEXT NOT NULL,
+        token_id TEXT NOT NULL,
+        account TEXT NOT NULL DEFAULT '',
+        username TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT '{}',
+        UNIQUE(remote_url, workspace_id, created_by)
+    )""",
 ]
 
 
@@ -577,7 +621,26 @@ USERS_SCHEMA = [
 # not be written, and the journal ``pending``, JSON {token, ...});
 # vault_dirs = a vault's directories, their folders and file ids;
 # vault_history = the bytes a write replaced, zlib, kept some days. A file id
-# is text: it can pass 63 bits.
+# is text: it can pass 63 bits. agent_folders = the agent on this computer a
+# work folder's vault answers its Sends with (gamma/local_agents/store.py:
+# codex or claude, who turned it on and when); agent_runs = one row a run of
+# that agent on a request, its session, state, progress, the source files it
+# changed (JSON), whether the build changed, its steps (JSON) and process;
+# ``error`` is this computer's record of a failure (the agent's whole error,
+# its stderr's tail), never shown to members; agent_threads = the thread an
+# agent of a vault answered last, the session and directory it ran in, when
+# its run read the thread and the comments it read (JSON ids), its reply and
+# the request: what a follow-up resumes; agent_conversations = the session
+# a page's computer chat (pages.db computer_chats) ran its agent in last,
+# and the directory: what its next turn resumes; agent_turns = one row a
+# turn of that chat, its state (queued, running, done, failed, stopped),
+# its process and ``error``, this computer's record (the whole error, the
+# stderr tail), never written in the conversation; agent_policies = what a
+# vault's agent may run (``ask``: its chat's turns may ask the person; no
+# row is ``never``), who set it and when; agent_grants = a command a person
+# allowed in a conversation of that chat, exactly as asked, the directory it
+# runs in (``.`` the folder) and the network host it reaches ("" none), and
+# its vault.
 VAULTS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS linked_files (
         ws TEXT NOT NULL,
@@ -629,6 +692,81 @@ VAULTS_SCHEMA = [
         path TEXT NOT NULL,
         at TEXT NOT NULL,
         data BLOB NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_folders (
+        link_id TEXT PRIMARY KEY,
+        agent TEXT NOT NULL,
+        set_by TEXT NOT NULL DEFAULT '',
+        set_at TEXT NOT NULL DEFAULT ''
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        ws TEXT NOT NULL,
+        link_id TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        session TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        detail TEXT NOT NULL DEFAULT '',
+        error TEXT NOT NULL DEFAULT '',
+        changes TEXT NOT NULL DEFAULT '[]',
+        built INTEGER NOT NULL DEFAULT 0,
+        steps TEXT NOT NULL DEFAULT '[]',
+        pid INTEGER NOT NULL DEFAULT 0
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_agent_runs_request ON agent_runs(ws, request_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_runs_open ON agent_runs(ended_at) WHERE ended_at IS NULL",
+    """CREATE TABLE IF NOT EXISTS agent_threads (
+        link_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        session TEXT NOT NULL DEFAULT '',
+        cwd TEXT NOT NULL DEFAULT '',
+        seen_at TEXT NOT NULL DEFAULT '',
+        read_ids TEXT NOT NULL DEFAULT '[]',
+        comment_id TEXT NOT NULL DEFAULT '',
+        request_id TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        PRIMARY KEY (link_id, thread_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_conversations (
+        conversation_id TEXT PRIMARY KEY,
+        link_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        session TEXT NOT NULL DEFAULT '',
+        cwd TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_turns (
+        id TEXT PRIMARY KEY,
+        ws TEXT NOT NULL,
+        link_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        page_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        state TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        error TEXT NOT NULL DEFAULT '',
+        pid INTEGER
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_agent_turns_open ON agent_turns(ended_at) WHERE ended_at IS NULL",
+    """CREATE TABLE IF NOT EXISTS agent_policies (
+        link_id TEXT PRIMARY KEY,
+        runs TEXT NOT NULL,
+        set_by TEXT NOT NULL,
+        set_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_grants (
+        conversation_id TEXT NOT NULL,
+        command TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        host TEXT NOT NULL,
+        link_id TEXT NOT NULL,
+        at TEXT NOT NULL,
+        PRIMARY KEY (conversation_id, command, cwd, host)
     )""",
 ]
 
@@ -697,6 +835,11 @@ BLOCK_HOT_COLUMNS = {
 # that names its condition as written.
 SQL_IN_LISTING = ("(work_folder IS NULL OR json_type(properties, '$.library') = 'true' "
                   "OR (json_type(properties, '$.pinned') = 'text' AND json_extract(properties, '$.pinned') != ''))")
+# A work folder's file by its name (GET /api/files): its ``file_name``, or
+# its title for a note made in Gamma that its vault has not named yet. Here
+# for SQL_IN_LISTING's reason: idx_ub_file_name repeats it, and SQLite uses
+# an expression index only for a query that names the expression as written.
+SQL_FILE_NAME = "COALESCE(json_extract(properties, '$.file_name'), content)"
 BLOCK_HOT_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ub_page ON unified_blocks(page_id)",
     "CREATE INDEX IF NOT EXISTS idx_ub_kind ON unified_blocks(kind)",
@@ -705,15 +848,19 @@ BLOCK_HOT_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ub_deleted_with ON unified_blocks(deleted_with) WHERE deleted_with IS NOT NULL",
     # the library listing in its order; a work folder's directory, its files
     # and their counts; a work folder's files, those in Recently deleted
-    # too. Once ANALYZE (db_maintenance's PRAGMA optimize) has its numbers,
+    # too; quick open's files by name, the name's expression covered. Once
+    # ANALYZE (db_maintenance's PRAGMA optimize) has its numbers,
     # idx_ub_parent's few rows a parent on average win the planner over the
-    # first two, so their readers name them (INDEXED BY), and the lookups of
-    # the third write +parent_id.
+    # first two, and the planner never takes the fourth unaided, so their
+    # readers name them (INDEXED BY), and the lookups of the third write
+    # +parent_id.
     "CREATE INDEX IF NOT EXISTS idx_ub_listing ON unified_blocks(parent_id, position) "
     f"WHERE parent_id = 'root' AND {SQL_IN_LISTING}",
     "CREATE INDEX IF NOT EXISTS idx_ub_dir ON unified_blocks(parent_id, first_folder) "
     "WHERE parent_id = 'root' AND work_folder IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_ub_work_folder ON unified_blocks(work_folder) WHERE work_folder IS NOT NULL",
+    f"CREATE INDEX IF NOT EXISTS idx_ub_file_name ON unified_blocks({SQL_FILE_NAME}, first_folder, id) "
+    "WHERE parent_id = 'root' AND work_folder IS NOT NULL",
 ]
 _HOT_COLUMNS_SQL = ",\n        ".join(BLOCK_HOT_COLUMNS.values())
 
@@ -797,6 +944,32 @@ CHATS_SCHEMA = [
     )""",
     "CREATE INDEX IF NOT EXISTS chat_history_bucket ON chat_history (bucket, updated_at)",
 ]
+# computer_chats = the conversations of a page's chat with the agent on this
+# computer (gamma/local_agents/chats.py, docs/dev/local_agents.md "The chat's
+# computer side"), not chats: one account's alone, the maker of the work
+# folder's vault (`user_id`), `agent` the agent it began with, `messages`
+# its JSON messages (the person's and the agent's turns, relative paths
+# only), `version` bumped by every write (the runner's as the turn goes,
+# the routes'), `archived_at` NULL for the page's active conversation of
+# that account. Private to the account: a backup carries none and a restore
+# keeps the live rows (ws_backup.PRIVATE_TABLES); no export, share, mirror
+# or read_chats reads it; it goes with the page deleted for good
+# (ops._purge). Additive: no step (docs/dev/migrations.md rule 2).
+COMPUTER_CHATS_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS computer_chats (
+        id TEXT PRIMARY KEY,
+        page_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        messages TEXT NOT NULL DEFAULT '[]',
+        version INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        archived_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_computer_chats_page ON computer_chats(page_id, user_id, archived_at)",
+]
 # comments = the threads people leave on a note, a page (its root block) or
 # a highlight (its block) — gamma/comments.py, docs/dev/comments.md. A
 # thread is its root comment (`thread_id` = its own `id`) and the replies
@@ -862,11 +1035,14 @@ COMMENTS_SCHEMA = [
 # requester, `note` their line of instruction, `state` sent / running /
 # done / failed with `state_at`, `state_by` (a token's display name or the
 # requester's username) and `detail` (a failure's reason, a line of
-# progress). feedback_request_threads = the threads each one names, with
+# progress), `via` how the Send was made: `session` (a person in Gamma),
+# `token` (an integration token), '' before step 58 (an agent on this
+# computer takes only a session's, docs/dev/local_agents.md).
+# feedback_request_threads = the threads each one names, with
 # `answered_at` once a token or another account replied or resolved after
 # it. Neither travels (as comments): no mirror, publication, share export,
-# backup merge or Gamma export carries them. Additive: no step
-# (docs/dev/migrations.md rule 2).
+# backup merge or Gamma export carries them. The tables are additive; `via`
+# came with step 58 (docs/dev/migrations.md).
 FEEDBACK_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS feedback_requests (
         id TEXT PRIMARY KEY,
@@ -881,7 +1057,8 @@ FEEDBACK_SCHEMA = [
         state TEXT NOT NULL DEFAULT 'sent',
         state_at TEXT NOT NULL,
         state_by TEXT NOT NULL DEFAULT '',
-        detail TEXT NOT NULL DEFAULT ''
+        detail TEXT NOT NULL DEFAULT '',
+        via TEXT NOT NULL DEFAULT ''
     )""",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_feedback_requests_rev ON feedback_requests(rev)",
     "CREATE INDEX IF NOT EXISTS idx_feedback_requests_folder ON feedback_requests(work_folder, rev)",
@@ -1131,6 +1308,7 @@ PAGES_SCHEMA = [
     ) WITHOUT ROWID""",
     WORKSPACE_PREFS_SCHEMA,
     *CHATS_SCHEMA,
+    *COMPUTER_CHATS_SCHEMA,
     *COMMENTS_SCHEMA,
     *FEEDBACK_SCHEMA,
     *BLOCK_FTS_SCHEMA,
@@ -1140,10 +1318,10 @@ PAGES_SCHEMA = [
 # deleted, and everything in it comes back on demand: the cover
 # thumbnails, the viewer's PDF manifests and the kept translations below
 # (made again by a model, so the one thing here that costs tokens to come
-# back), and the PDF text index (pdf_fts, extracted again by the next
-# search), whose tables gamma/pdf_index.py applies itself
-# (pdf_index.SCHEMA), since that is where an index older than its side
-# table is taken over. Nothing a person wrote lives here: the chats, the
+# back), and the document text index (text_fts, extracted again by the
+# next search), whose tables gamma/search/index.py applies itself
+# (index.SCHEMA), since that is where an index of an older layout is
+# dropped and made again. Nothing a person wrote lives here: the chats, the
 # notes index and the translation glossary are in pages.db.
 DATA_SCHEMA = [
     # page_snaps = the recents-card cover thumbnails (small JPEG data URLs
@@ -1809,14 +1987,16 @@ def restamp_pref(user_id: str, key: str, old: str, new: str, ws: str = "") -> bo
 
 
 def delete_workspace_prefs(ws: str, user_id: str) -> int:
-    """Delete the account's prefs kept in the workspace (``workspace_prefs``)
-    and the pages it follows there (``page_follows``): its membership ended,
-    or the account is deleted. Returns how many prefs went; a workspace
-    without a pages.db has none (none is created)."""
+    """Delete the account's prefs kept in the workspace (``workspace_prefs``),
+    the pages it follows there (``page_follows``) and its conversations with
+    the agent on this computer (``computer_chats``, its alone): its
+    membership ended, or the account is deleted. Returns how many prefs
+    went; a workspace without a pages.db has none (none is created)."""
     if not os.path.isfile(ws_db_path(ws, "pages.db")):
         return 0
     with connect_pages_db(ws) as db:
         db.execute("DELETE FROM page_follows WHERE user_id = ?", (user_id,))
+        db.execute("DELETE FROM computer_chats WHERE user_id = ?", (user_id,))
         return db.execute("DELETE FROM workspace_prefs WHERE user_id = ?", (user_id,)).rowcount
 
 
@@ -1959,8 +2139,8 @@ def connect_pages_db(ws: str) -> Connection:
 
 def connect_data_db(ws: str) -> Connection:
     """THE way to open a workspace's data.db: WAL mode, the busy timeout and
-    the schema statements (``DATA_SCHEMA``), like pages.db. The PDF text
-    index adds its own tables (gamma/pdf_index.py)."""
+    the schema statements (``DATA_SCHEMA``), like pages.db. The document
+    text index adds its own tables (gamma/search/index.py)."""
     return _cached(ws_db_path(ws, "data.db"), ws, _open_ws_db, DATA_SCHEMA, False)
 
 

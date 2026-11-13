@@ -25,7 +25,7 @@ export async function quickOpenScenarios(env) {
       await page.keyboard.press("ControlOrMeta+p");
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
-      const input = dialog.getByRole("textbox", { name: "Search pages by title or label" });
+      const input = dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" });
       await until(() => input.evaluate((el) => el === document.activeElement), { what: "the palette's input takes focus" });
       // every page, and the Welcome page and the Sketchbook a new account starts with
       await until(async () => (await dialog.getByRole("option").count()) === titles.length + 2, { what: "every page listed before typing" });
@@ -64,7 +64,7 @@ export async function quickOpenScenarios(env) {
     try {
       await page.locator(".blockList").first().waitFor();
       const dialog = page.getByRole("dialog", { name: "Open a page" });
-      const input = dialog.getByRole("textbox", { name: "Search pages by title or label" });
+      const input = dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" });
       // A folder is a row of its own; picking it opens the folder view.
       await page.keyboard.press("ControlOrMeta+p");
       await input.fill("cavities");
@@ -118,7 +118,7 @@ export async function quickOpenScenarios(env) {
     try {
       await page.locator(".blockList").first().waitFor();
       const dialog = page.getByRole("dialog", { name: "Open a page" });
-      const input = dialog.getByRole("textbox", { name: "Search pages by title or label" });
+      const input = dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" });
       await page.keyboard.press("ControlOrMeta+p");
       // "c" is in every title: the label alone narrows it.
       await input.fill("label:horlogerie c");
@@ -612,7 +612,7 @@ export async function quickOpenScenarios(env) {
       // and only on it, with no Share popover.
       await page.keyboard.press("ControlOrMeta+p");
       const dialog = page.getByRole("dialog", { name: "Open a page" });
-      await dialog.getByRole("textbox", { name: "Search pages by title or label" }).fill("Jump target");
+      await dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" }).fill("Jump target");
       await dialog.getByRole("option", { name: /Jump target/ }).first().click();
       await until(async () => (await title()) === "Jump target", { what: "the target page open" });
       await page.waitForTimeout(800);

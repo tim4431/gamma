@@ -1,7 +1,9 @@
 """Highlights after a page's PDF is replaced: each one is found again in the
 new file by its text and moved to where that text is now
 (``PUT /pages/{id}/attachment`` starts the ``relocate-highlights`` job,
-routers/pages.py; docs/dev/highlight_relocation.md).
+routers/pages.py; docs/dev/highlight_relocation.md). A text file's ranges
+are placed again by gamma/documents/text_anchors.py, which shares this
+run's flags, thresholds and write (``_write``'s ``key``), not its reading.
 
 A highlight's place is a page and rectangles in that page's frame
 (``pdf_position``, gamma/highlights.py), good for the file it was made on
@@ -126,7 +128,7 @@ from .pdf_export import display_size, pdf_point_to_viewer, viewer_rect_to_pdf
 from .pdf_text import MAX_PAGES, GlyphPages, covers, has_box
 from .storage import find_upload_file, upload_refs
 
-CONTEXT_CHARS = 40        # of text before and after a passage, kept from the old file to tell places apart
+CONTEXT_CHARS = shape.CONTEXT_CHARS  # of text before and after a passage, kept from the old file to tell places apart
 CONTEXT_WEIGHT = 0.2      # what the context fit (0..1) adds to a place's confidence when places are ranked
 # The context fit from which an exact copy stands so plainly in the
 # passage's own surroundings that the rough search is not run: only a copy
@@ -1919,22 +1921,33 @@ def relocate(ws: str, page_id: str, new_doc: str, *, actor: str, progress=None, 
 
 
 def _write(ws: str, page_id: str, new_doc: str, items: list[tuple[str, dict]], ops: list[dict], kinds: dict,
-           counts: dict, *, actor: str) -> None:
-    """``relocate``'s write, in one transaction under the page's write lock.
-    The page must still be a live page (not deleted, not in Recently
-    deleted) and still show ``new_doc`` (``file_hash``: its ``doc.hash``,
-    a duplicated page's included), else ValueError and nothing is
-    written. An op for a highlight deleted, or whose position or quote
-    changed since ``items`` were read (a person moved it meanwhile), is
-    left out and its count in ``counts`` moves to ``changed``. The rest go
-    as batches of at most ``MAX_OPS`` on the page, client ``relocate``,
-    committed together, then each batch's ``after_commit``. The files the
-    written positions name (a ``prev``'s, a lost or unplaced one's
-    ``doc_id``: references) are claimed in the same transaction
-    (``upload_gc.claim``), so a build a sync replaced that is now a
-    highlight's reference loses the shorter life ``retain`` gave it."""
+           counts: dict, *, actor: str, key: str = "pdf_position") -> None:
+    """``relocate``'s write, in one transaction under the page's write lock;
+    also the text run's (documents/text_anchors.relocate), whose position
+    ``key`` is ``text_position``. The page must still be a live page (not
+    deleted, not in Recently deleted) and still show ``new_doc``
+    (``file_hash``: its ``doc.hash``, a duplicated page's included), else
+    ValueError and nothing is written. An op for a highlight deleted, or
+    whose position or quote changed since ``items`` were read (a person
+    moved it meanwhile), is left out and its count in ``counts`` moves to
+    ``changed``. The rest go as batches of at most ``MAX_OPS`` on the page,
+    client ``relocate``, committed together, then each batch's
+    ``after_commit``. The files the written PDF positions name (a
+    ``prev``'s, a lost or unplaced one's ``doc_id``: references) are
+    claimed in the same transaction (``upload_gc.claim``), so a build a
+    sync replaced that is now a highlight's reference loses the shorter
+    life ``retain`` gave it; a text position names no file."""
+    pdf = key == "pdf_position"
+    word = "PDF" if pdf else "file"
+
     def state(props: dict):
-        return props.get("pdf_position"), props.get("quote")
+        return props.get(key), props.get("quote")
+
+    def current(conn):
+        if pdf:
+            return page_highlights(conn, page_id, unplaced=True)
+        from .documents.text_anchors import page_ranges  # it imports this module
+        return page_ranges(conn, page_id)
 
     before = {bid: state(props) for bid, props in items}
     with connect_pages_db(ws) as conn:
@@ -1944,10 +1957,10 @@ def _write(ws: str, page_id: str, new_doc: str, items: list[tuple[str, dict]], o
                                (page_id,)).fetchone()
             if not row or row[0] != "root":
                 raise ValueError("the page was deleted before its highlights were placed — restore it and "
-                                 "choose Find highlights in this PDF")
+                                 f"choose Find highlights in this {word}")
             if file_hash(page_document(load_json(row[1] or "{}"))) != new_doc:
-                raise ValueError("the page's PDF changed again before the highlights were placed")
-            now = {bid: state(props) for bid, props in page_highlights(conn, page_id, unplaced=True)}
+                raise ValueError(f"the page's {word} changed again before the highlights were placed")
+            now = {bid: state(props) for bid, props in current(conn)}
             unchanged = []
             for op in ops:
                 if now.get(op["id"]) == before[op["id"]]:
@@ -1959,8 +1972,9 @@ def _write(ws: str, page_id: str, new_doc: str, items: list[tuple[str, dict]], o
             results = apply_batches(conn, batches, actor=actor, client=CLIENT) if batches else []
             # The files the written positions name are their references now (a prev's, a lost one's): kept as
             # any file is once let go, not for the shorter life a sync gave the outgoing build
-            upload_gc.claim(conn, set().union(*(upload_refs("", {"pdf_position": op["props"]["pdf_position"]})
-                                                for op in unchanged if "pdf_position" in op["props"])))
+            if pdf:
+                upload_gc.claim(conn, set().union(*(upload_refs("", {"pdf_position": op["props"]["pdf_position"]})
+                                                    for op in unchanged if "pdf_position" in op["props"])))
             conn.commit()
         except BaseException:
             conn.rollback()

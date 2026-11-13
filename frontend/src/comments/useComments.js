@@ -17,7 +17,7 @@ import { keepIfSame, sameMap } from "../shared/lib/keepIfSame.js";
 import { t } from "../shared/i18n/i18n.js";
 import { CLIENT_ID } from "../collaboration/usePageCollab";
 import {
-  addComment, deleteComment, editComment, findComment, foldThreads, keepThreads, resolveThread, upsertThread,
+  addComment, deleteComment, editComment, findComment, foldThreads, keepThreads, resolveThread, sendRefusal, upsertThread,
 } from "./comments.js";
 // The row control's, the PDF badge's and the lazy surfaces' rules: in the
 // startup bundle with the rows that need them.
@@ -134,6 +134,14 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
   }, [threads]);
 
   const failed = (what, err) => statusRef.current?.(t("Couldn't save the comment: {message}", { message: err?.message || what }));
+  // A write that named the agent on this computer answers its `send`: one
+  // refused is said (the comment is stored either way); one made shows as
+  // the thread's chip, the answer's thread carrying it.
+  const sendSaid = (out) => {
+    const why = sendRefusal(out?.send);
+    if (why) statusRef.current?.(why);
+    return out;
+  };
 
   // A new thread on `blockId`, or a reply in `threadId`. Resolves the
   // comment's id once stored (a new thread's id is its first comment's),
@@ -153,6 +161,7 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
         json("POST", { id, block_id: blockId, body, thread_id: threadId, client: CLIENT_ID }));
       pendingRef.current.delete(id);
       set(page, (list) => upsertThread(list, out.thread));
+      sendSaid(out);
       guideEvents.emit("comment.created", { reply: !!threadId });
       return id;
     } catch (err) {
@@ -192,8 +201,9 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
 
   const edit = useCallback((id, body) => write(
     (list) => editComment(list, id, body, nowStamp()),
-    () => apiJson(`${API}/comments/${encodeURIComponent(id)}`, json("PATCH", { body, client: CLIENT_ID })),
+    () => apiJson(`${API}/comments/${encodeURIComponent(id)}`, json("PATCH", { body, client: CLIENT_ID })).then(sendSaid),
     (list, out) => {
+      if (out?.thread) return upsertThread(list, out.thread); // a Send made: the thread with its chip
       const found = out?.comment && findComment(list, id);
       return found ? upsertThread(list, { ...found.thread, comments: found.thread.comments.map((c) => (c.id === id ? out.comment : c)) }) : list;
     },

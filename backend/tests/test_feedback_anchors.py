@@ -2,11 +2,12 @@
 docs/dev/feedback.md "The anchor"): read from the rows of a fresh pages.db
 table for each kind — a passage, an area (flagged, and without a quote),
 ink on a PDF page and on a sheet, a region of a picture (and a link block
-drawn as one), a note under a highlight or a region, a note alone, a text
-box, the page itself —; the file the place was measured on and its
-extension; a position without a frame; the crop boxes' minimums and clamps,
-the ink's being view_ink's (``ink_view.grow_box``); and ``parse``,
-``held_file`` and ``top`` on what is stored."""
+drawn as one), a range of a text file (and a link on one, and one whose
+place does not read), a note under a highlight, a region or a range, a note
+alone, a text box, the page itself —; the file the place was measured on
+and its extension; a position without a frame; the crop boxes' minimums and
+clamps, the ink's being view_ink's (``ink_view.grow_box``); and ``parse``,
+``held_file``, ``top`` and ``place_words`` on what is stored."""
 
 import json
 import sqlite3
@@ -162,6 +163,85 @@ def test_the_version_a_region_was_drawn_on_a_frameless_one_and_ink_on_a_picture(
     assert (frameless["kind"], frameless["rects"], frameless["box"]) == ("region", [], None)
     assert anchors.anchor_of(conn, "P", "I")["kind"] == "note"     # ink is placed by a pdf_position alone
     assert anchors.anchor_of(conn, "P", "B")["kind"] == "passage"  # a block with both positions is on the PDF page
+
+
+TEX = "d" * 24
+SOURCE = {"doc": document(TEX, name="main.tex", format="text", ext=".tex")}
+
+
+def _lines(line, end, *, col=0, end_col=5, hash=TEX, **more):
+    """A ``text_position`` over lines ``line``..``end`` of ``main.tex``,
+    measured on its version ``hash``."""
+    return {"line": line, "col": col, "end": end, "end_col": end_col, "prefix": "", "suffix": "", "hash": hash,
+            **more}
+
+
+def test_a_range_of_a_text_file_a_note_under_it_and_a_link_on_one():
+    conn = _db(("R", "P", {"text_position": _lines(16, 17), "quote": "Weight decay is\nthe oldest"}),
+               ("N", "R", {}), ("NN", "N", {}),
+               ("K", "P", {"text_position": _lines(30, 30), "quote": "x", "link_url": "https://example.org"}),
+               ("O", "P", {"text_position": _lines(4, 4, hash=OLD, lost=True), "quote": "gone"}),
+               ("U", "P", {"text_position": _lines(5, 5, hash=""), "quote": "unnamed"}),
+               doc=SOURCE)
+    anchor = anchors.anchor_of(conn, "P", "R")
+    assert anchor == {"v": 1, "kind": "lines", "block": "R", "doc_id": TEX, "ext": ".tex", "page": None, "rects": [],
+                      "quote": "Weight decay is\nthe oldest", "box": None, "lines": [16, 17]}
+    assert list(anchor) == ["v", "kind", "block", "doc_id", "ext", "page", "rects", "quote", "box", "lines"]
+    assert anchors.anchor_of(conn, "P", "NN") == anchor             # a note under a range takes its place
+    link = anchors.anchor_of(conn, "P", "K")                        # a link block on lines is a range too
+    assert (link["kind"], link["block"], link["lines"]) == ("lines", "K", [30, 30])
+    assert anchors.anchor_of(conn, "P", "O")["doc_id"] == OLD       # measured on an earlier version: that one
+    assert anchors.anchor_of(conn, "P", "U")["doc_id"] == TEX       # one naming no version: the page's
+    assert anchors.anchor_of(conn, "P", "P") == {"v": 1, "kind": "file", "block": "P", "doc_id": TEX, "ext": ".tex",
+                                                 "page": None, "rects": [], "quote": "", "box": None}
+    # the other kinds carry no ``lines``: their pinned keys stand
+    assert "lines" not in anchors.anchor_of(conn, "P", "P")
+
+
+def test_a_ranges_place_is_named_by_the_lines_it_holds_now():
+    """``following``: a ``lines`` anchor stored when its thread opened is
+    named by its range's lines after a relocation moved it; one whose block
+    is no range any more, and every other kind, as stored."""
+    conn = _db(("R", "P", {"text_position": _lines(19, 20), "quote": "moved down"}),
+               ("G", "P", {"quote": "no range now"}), doc=SOURCE)
+    stored = {**anchors.anchor_of(conn, "P", "R"), "lines": [16, 17]}
+    assert anchors.following(conn, "P", stored)["lines"] == [19, 20]
+    assert anchors.place_words(anchors.following(conn, "P", stored)) == "lines 19–20, “moved down”"
+    gone = {**stored, "block": "G"}
+    assert anchors.following(conn, "P", gone) is gone
+    whole = anchors.anchor_of(conn, "P", "P")
+    assert anchors.following(conn, "P", whole) is whole
+
+
+def test_a_range_whose_place_does_not_read_is_a_note():
+    """Nothing validates a ``text_position`` on write: a malformed one, or one
+    on ink, is no range (``highlights.text_span``), and a note under it walks
+    on up. A block with a PDF position too is placed on the PDF page."""
+    conn = _db(("Z", "P", {"text_position": _lines(0, 1), "quote": "zero"}),
+               ("S", "P", {"text_position": "1-3", "quote": "a string"}),
+               ("E", "P", {"text_position": _lines(3, 3, col=4, end_col=4), "quote": "empty"}),
+               ("I", "P", {"ink_url": "", "text_position": _lines(3, 3)}),
+               ("ZN", "Z", {}),
+               ("B", "P", {"pdf_position": _pos(1, (60, 80, 300, 96)), "text_position": _lines(2, 2), "quote": "both"}),
+               doc=SOURCE)
+    for block in ("Z", "S", "E", "I", "ZN"):
+        assert anchors.anchor_of(conn, "P", block)["kind"] == "note", block
+    assert anchors.anchor_of(conn, "P", "B")["kind"] == "passage"
+
+
+def test_a_ranges_anchor_parsed_held_and_named():
+    good = {"v": 1, "kind": "lines", "block": "R", "doc_id": TEX, "ext": ".tex", "page": None, "rects": [],
+            "quote": "for step in range(10):\n    train(step)", "box": None, "lines": [118, 120]}
+    assert anchors.parse(json.dumps(good)) == good
+    for lines in (None, [118], [120, 118], [0, 1], ["1", "2"], [True, 2], "118-120"):
+        assert anchors.parse(json.dumps({**good, "lines": lines})) is None, lines
+    assert anchors.held_file(json.dumps(good)) == ""                # a range carries its own context: nothing held
+    assert anchors.lines_of(good) == (118, 120) and anchors.lines_of({"kind": "passage"}) is None
+    assert anchors.top(good) == 0
+    assert anchors.place_words(good) == "lines 118–120, “for step in range(10): train(step)”"
+    assert anchors.place_words({**good, "lines": [7, 7], "quote": "x" * 70}) == f"line 7, “{'x' * 60}…”"
+    assert anchors.place_words({**good, "quote": ""}) == "lines 118–120"
+    assert anchors.place_words({**good, "lines": None}) == "a note"
 
 
 def test_boxes_grow_to_their_minimum_and_stay_on_the_page():

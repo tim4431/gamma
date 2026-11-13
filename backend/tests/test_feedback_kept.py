@@ -4,7 +4,7 @@ each rebuild while the thread is open stores the incoming build, so the
 relocation run reads the outgoing one from the store and places an area by
 its text again and again; the thread's version is held until its resolve,
 which gives it the replacement's day, and a reopen claims it back; a work
-folder's picture is kept the same way; the repair stores what the quota
+folder's picture is kept the same way, a text file's never; the repair stores what the quota
 refused; the place's source line is recorded on the anchor at the thread's
 open; the owner's copy of a page (a Gamma export, a backup merge) carries
 the versions its open threads hold."""
@@ -23,11 +23,13 @@ from fastapi import HTTPException
 from PIL import Image
 
 from conftest import (account_of, doc_props, login, make_folder, make_page, make_user, mark_work_folder, thread_on,
-                      workspace_of)
+                      work_props, workspace_of)
 from gamma import comments, folder_links, gamma_sync, jobs, linked_files, pdf_meta, storage, upload_gc, ws_backup
 from gamma.vault import disk as vault_disk, kinds, store as vault_store
-from gamma.blocks_store import new_block_id
+from gamma.auth import DISK_CLIENT
+from gamma.blocks_store import create_page, new_block_id
 from gamma.db import connect_pages_db, connect_users_db
+from gamma.documents.model import document, page_document
 from gamma.feedback import anchors, kept
 from gamma.vault.local_remote import LocalRemote
 from test_highlight_relocate import H, W, _pdf as _lines, _position
@@ -207,6 +209,35 @@ def test_a_pictures_version_is_kept_while_its_thread_is_open(work, owner):
     owner.post(f"/api/comments/{thread['id']}/resolve", json={"resolved": True}).raise_for_status()
     upload_gc.flush(ws)
     assert _rows(ws, "upload_orphans", name) and not _rows(ws, "upload_orphans", new)
+
+
+def test_a_text_files_thread_keeps_no_version(owner):
+    """``KEPT_FORMATS``: a range of a text file carries its own context, so a
+    thread on a ``.tex`` read in place stores nothing at its open nor at a
+    replacement (``keeps_bytes``, ``_unstored``), while a picture's does and
+    a work folder's file in the library keeps its bytes whatever it is."""
+    ws, account = workspace_of(OWNER), account_of(OWNER)
+    folder = make_folder(owner, f"FK formats {uuid.uuid4().hex[:8]}")
+    mark_work_folder(owner, folder, pull=False)
+
+    def page(name, hash, format, ext, **more):
+        doc = document(hash, name=name, at="path", format=format, ext=ext)
+        with connect_pages_db(ws) as conn:
+            made = create_page(conn, name, work_props(folder, name, doc=doc, **more), actor=account, client=DISK_CLIENT)
+        thread_on(owner, made["id"], made["id"], f"on {name}")
+        return made["id"], made["properties"]
+
+    (tex, tex_props), (png, png_props), (lib, lib_props) = (
+        page("main.tex", "1" * 24, "text", ".tex"), page("fig.png", "2" * 24, "image", ".png"),
+        page("kept.tex", "3" * 24, "text", ".tex", library=True))
+    assert kept.wait()
+    assert not kept.keeps_bytes(ws, tex) and not kept.keeps_bytes(ws, tex, tex_props)
+    assert kept.keeps_bytes(ws, png) and kept.keeps_bytes(ws, png, png_props)
+    assert kept.keeps_bytes(ws, lib) and kept.keeps_bytes(ws, lib, lib_props)
+    assert not kept._unstored(ws, page_document(tex_props)) and kept._unstored(ws, page_document(png_props))
+    assert not storage.exists(ws, f"{'1' * 24}.tex")
+    with connect_pages_db(ws) as conn:
+        assert f"{'2' * 24}.png" in kept.held_files(conn, [png])
 
 
 def test_the_repair_stores_what_the_quota_refused(work, owner, monkeypatch, caplog):

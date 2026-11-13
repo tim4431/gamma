@@ -49,6 +49,79 @@ def test_read_block_names_how_a_passage_is_marked(notes):
     assert f'[{made[None]}] (highlight: "passage None")' in text
 
 
+def test_a_note_shows_the_text_files_its_chips_link(notes):
+    """A file chip of a text file shows the file's first lines under the
+    note that links it, naming the page that carries the file and where
+    read_page reads on; a secrets file's chip says its text is kept from the
+    model, and a chip of another format is one line."""
+    from conftest import doc_props
+    from gamma import storage
+    from gamma.documents.model import stored_name
+
+    c, ids = notes
+
+    def stored(data: bytes, ext: str) -> str:
+        stem = storage.content_digest(data)
+        storage.put_upload(ids["ws"], stored_name(stem, ext), data)
+        return stem
+
+    rows = stored("".join(f'{{"run": {n}, "loss": 0.{n:03d}}}\n' for n in range(1, 401)).encode(), ".json")
+    secret = stored(b"API_KEY=sk-live-do-not-show\n", ".env")
+    picture = stored(b"\x89PNG\r\n\x1a\nfake", ".png")
+    owner = c.post("/api/blocks", json={"parent_id": "root", "content": "rows.json", "properties": doc_props(
+        rows, name="rows.json", format="text", ext=".json")}).json()["id"]
+    page = c.post("/api/blocks", json={"parent_id": "root", "content": "chips page"}).json()["id"]
+    assert c.put(f"/api/blocks/{page}", json={"properties": {"folders": [ids["sandbox"]]}}).status_code == 200
+    note = c.post("/api/blocks", json={"parent_id": page, "content": (
+        f"the runs: [rows.json](/api/uploads/{rows}.json), the keys [.env](/api/uploads/{secret}.env) "
+        f"and the plot [plot.png](/api/uploads/{picture}.png)")}).json()["id"]
+    for tool, args in (("read_block", {"block_id": page}), ("read_page", {"page_id": page})):
+        text, _ = run_agent_tool(ids["ws"], folder(ids["sandbox"]), tool, args)
+        assert 'File chip "rows.json" (JSON, 400 lines)' in text, text
+        assert f"(its page: {owner}; read_page(page_id={owner}, from_line=" in text
+        assert '[lines 1–' in text and '     1\t{"run": 1, "loss": 0.001}' in text
+        assert '"run": 400' not in text
+        assert 'File chip ".env" (Shell, 28 bytes): its text is kept from the model: a secrets file' in text
+        assert "sk-live" not in text
+        assert 'File chip "plot.png" (picture' in text
+    assert ids["page"] != page and note
+    for block in (page, owner):
+        c.delete(f"/api/blocks/{block}")
+
+
+def test_a_chip_on_the_cursors_block_leaves_the_block_whole(notes):
+    """A file chip's lines under the block at the cursor are outside the
+    block's 1,500 characters: the block is shown whole (a replace may start
+    from it), the chip's span is the lines shown, and a chat without tools
+    is never told to call read_page."""
+    from types import SimpleNamespace
+
+    from conftest import doc_props
+    from gamma import storage
+    from gamma.ai_context import notes_focus_section
+    from gamma.documents.model import stored_name
+
+    c, ids = notes
+    data = "".join(f"value_{n} = {n} * {n}  # a line of the script\n" for n in range(1, 301)).encode()
+    stem = storage.content_digest(data)
+    storage.put_upload(ids["ws"], stored_name(stem, ".py"), data)
+    owner = c.post("/api/blocks", json={"parent_id": "root", "content": "x.py", "properties": doc_props(
+        stem, name="x.py", format="text", ext=".py")}).json()["id"]
+    top = c.post("/api/blocks", json={"parent_id": ids["page"], "content": f"see [x.py](/api/uploads/{stem}.py)"}).json()["id"]
+    child = c.post("/api/blocks", json={"parent_id": top, "content": "and its sub-block"}).json()["id"]
+    payload = SimpleNamespace(focus_block_id=top, page_id=ids["page"], pages=[], context_blocks=[])
+    seen = {}
+    section = notes_focus_section(ids["ws"], payload, notes_seen=seen)
+    assert top in seen and child in seen and "more sub-blocks not shown" not in section
+    shown = section.count("# a line of the script")
+    assert shown > 25 and f"[lines 1–{shown} of 300]" in section
+    assert f"read_page(page_id={owner}, from_line={shown + 1}) reads on" in section
+    plain = notes_focus_section(ids["ws"], payload, tools=False)
+    assert "read_page(" not in plain and f"(its page: {owner})" in plain
+    for block in (top, owner):
+        c.delete(f"/api/blocks/{block}")
+
+
 def test_edit_block(notes):
     c, ids = notes
     scope = folder(ids["sandbox"])

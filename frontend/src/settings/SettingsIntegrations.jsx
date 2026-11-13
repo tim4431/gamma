@@ -2,43 +2,55 @@ import React from "react";
 import { guideEvents } from "../guide/events.js";
 import { API, apiJson } from "../shared/lib/utils";
 import { CopyField, PaneHead, Section, Row, Segmented, Step } from "./SettingsKit";
-import { LinkIcon, KeyIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon } from "../shared/ui/Icons";
+import { LinkIcon, KeyIcon, MonitorIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon } from "../shared/ui/Icons";
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshSetupCommand,
   claudeRemoveCommands, codexRemoveCommands, dshRemoveCommand } from "./assistantSetup";
-import { WorkspacePicker, accessBody } from "./WorkspacePicker";
+import { WorkspacePicker, accessBody, accessOf, edits as editsIn } from "./WorkspacePicker";
 import { t } from "../shared/i18n/i18n.js";
 
 const dateOf = (value) => new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-const timeOf = (value) => new Date(value).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 const ASSISTANTS = [["claude", t("Claude Code")], ["codex", t("Codex")], ["dsh", t("DeepSeek Harness")], ["other", t("Other")]];
 const PLATFORMS = [["windows", t("Windows PowerShell")], ["unix", t("macOS / Linux")]];
 
-// One connected assistant: how it signed in, what it may read (and whether
-// it answers feedback: a `feedback` connection replies to and resolves the
+// One connected assistant: how it signed in, what it may read, where it may
+// also edit notes (and whether it answers feedback: a `feedback` connection replies to and resolves the
 // comments on work folders' files, docs/dev/feedback.md), when it was
 // connected and when its access lapses. OAuth connections are minted with an
-// " (OAuth)" suffix on the client's name (mcp_oauth_provider.py).
+// " (OAuth)" suffix on the client's name (mcp_oauth_provider.py). A
+// `computer` token is a computer's channel (docs/dev/computers.md): the
+// desktop app mints it as "Gamma desktop: <its name>" to show this server
+// which of its synced vaults keep pages of the workspace, and it opens
+// nothing else; revoking it stops showing that computer here.
 function ConnectionRow({ item, names, busy, onEdit, onRevoke }) {
   const oauth = /\s\(OAuth\)$/.test(item.name);
-  const name = oauth ? item.name.replace(/\s\(OAuth\)$/, "") : item.name;
+  const computer = item.scope === "computer";
+  const name = computer ? t("Computer: {name}", { name: item.name.replace(/^Gamma desktop:\s*/, "") })
+    : oauth ? item.name.replace(/\s\(OAuth\)$/, "") : item.name;
   const daysLeft = Math.ceil((item.expires_at * 1000 - Date.now()) / 86400000);
   const expiry = daysLeft <= 0 ? t("Expired {date}", { date: dateOf(item.expires_at * 1000) })
     : t("Expires {expires_at} ({days} left)", { expires_at: dateOf(item.expires_at * 1000), days: daysLeft === 1 ? "1 day" : `${daysLeft} days` });
   const spaces = item.workspaces.map((id) => names.get(id)).filter(Boolean);
   const reads = item.all_workspaces ? t("Reads all workspaces")
     : spaces.length ? t("Reads {workspaces}", { workspaces: spaces.join(", ") }) : t("Reads no workspace");
-  const parts = [oauth ? t("Browser sign-in") : t("Token"), item.scope === "write" ? t("Read and write") : reads,
-    item.scope === "feedback" ? t("answers feedback") : null,
-    item.created_at ? t("Connected {date}", { date: dateOf(item.created_at) }) : null, expiry].filter(Boolean);
-  return <Row icon={oauth ? LinkIcon : KeyIcon} label={name}
+  const editing = (item.edit_workspaces || []).map((id) => names.get(id)).filter(Boolean);
+  const edits = item.edit_all ? t("edits notes wherever you edit")
+    : editing.length ? t("edits notes in {workspaces}", { workspaces: editing.join(", ") }) : null;
+  const connected = item.created_at ? t("Connected {date}", { date: dateOf(item.created_at) }) : null;
+  const parts = (computer ? [spaces.length ? t("Shows its synced vaults of {workspaces}", { workspaces: spaces.join(", ") }) : t("Shows its synced vaults"),
+    connected, expiry]
+    : [oauth ? t("Browser sign-in") : t("Token"), item.scope === "write" ? t("Read and write") : reads, edits,
+      edits && item.asks === false ? t("changes without asking") : null,
+      item.scope === "feedback" ? t("answers feedback") : null, connected, expiry]).filter(Boolean);
+  return <Row icon={computer ? MonitorIcon : oauth ? LinkIcon : KeyIcon} label={name}
     hint={<>{parts.join(" · ")}{daysLeft <= 0 ? <span className="uiTag warn">{t("Expired")}</span> : null}</>}>
     <div className="integrationActions">
-      {item.scope !== "write" ? <button type="button" className="uiBtn sm iconSq" disabled={busy} aria-label={t("Choose workspaces")}
-        title={t("Choose the workspaces {name} may read", { name })} onClick={() => onEdit(item)}>
+      {item.scope !== "write" && !computer ? <button type="button" className="uiBtn sm iconSq" disabled={busy} aria-label={t("Choose workspaces")}
+        title={t("Choose what {name} may read and edit", { name })} onClick={() => onEdit(item)}>
         <FoldersIcon size={16} />
       </button> : null}
       <button type="button" className="uiBtn sm iconSq danger" disabled={busy} aria-label={t("Disconnect")}
-        title={t("Disconnect {name}: the assistant loses access", { name })} onClick={() => onRevoke(item)}>
+        title={computer ? t("Disconnect {name}: this server stops showing it", { name })
+          : t("Disconnect {name}: the assistant loses access", { name })} onClick={() => onRevoke(item)}>
         <UnlinkIcon size={16} />
       </button>
     </div>
@@ -49,10 +61,9 @@ export function IntegrationSettings({ workspaceId }) {
   const [data, setData] = React.useState(null);
   const [assistant, setAssistant] = React.useState("claude");
   const [platform, setPlatform] = React.useState(() => /Windows/i.test(navigator.userAgent) ? "windows" : "unix");
-  // What DeepSeek Harness and a new token may read; the open workspace to start.
+  // What a new token may read; the open workspace to start.
   const [access, setAccess] = React.useState({ all: false, ids: [workspaceId] });
-  const [setup, setSetup] = React.useState(null);  // {code, until}: a dsh setup command's one-time code
-  const [editing, setEditing] = React.useState(null);  // {id, access}: a connection's workspaces, being changed
+  const [editing, setEditing] = React.useState(null);  // {id, access, asks}: a connection's workspaces, being changed
   const [name, setName] = React.useState(t("Script"));
   const [scope, setScope] = React.useState("read");
   const [secret, setSecret] = React.useState(null);
@@ -72,10 +83,7 @@ export function IntegrationSettings({ workspaceId }) {
       // A focus refresh started before a revocation must not restore its row.
       if (version !== loadVersion.current) return;
       const ids = new Set((value.tokens || []).map((item) => item.id));
-      if (known.current && [...ids].some((id) => !known.current.has(id))) {
-        guideEvents.emit("mcp.connected");
-        setSetup(null);  // its code is spent: the connection it made is listed
-      }
+      if (known.current && [...ids].some((id) => !known.current.has(id))) guideEvents.emit("mcp.connected");
       known.current = ids;
       setData(value); setLoadError("");
     } catch (err) {
@@ -83,7 +91,7 @@ export function IntegrationSettings({ workspaceId }) {
     }
   }, [endpoint]);
   React.useEffect(() => {
-    setData(null); setSecret(null); setSetup(null); setEditing(null); setMessage(""); setLoadError("");
+    setData(null); setSecret(null); setEditing(null); setMessage(""); setLoadError("");
     const load = () => refresh();
     load();
     window.addEventListener("focus", load);
@@ -106,13 +114,9 @@ export function IntegrationSettings({ workspaceId }) {
     setSecret(await post(endpoint, { name: name.trim(), scope, ...(scope !== "write" ? accessBody(access) : {}) }));
     await refresh();
   });
-  const makeSetup = () => run(async () => {
-    const value = await post(`${API}/integrations/setup-codes`, { name: t("DeepSeek Harness"), ...accessBody(access) });
-    setSetup({ code: value.code, until: Date.now() + value.expires_in * 1000 });
-  });
   const saveAccess = () => run(async () => {
     await apiJson(`${endpoint}/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(accessBody(editing.access)) });
+      body: JSON.stringify({ ...accessBody(editing.access), asks: editing.asks }) });
     setEditing(null);
     await refresh();
   });
@@ -124,18 +128,17 @@ export function IntegrationSettings({ workspaceId }) {
     setData((value) => value ? { ...value, tokens: value.tokens.filter((item) => item.id !== id) } : value);
     await refresh(t("Access revoked for the selected “{connectionName}” connection.", { connectionName }));
   });
-  const chooseAccess = (value) => { setAccess(value); setSetup(null); };
   const spaces = data?.workspaces || [];
   const names = new Map(spaces.map((w) => [w.id, w.name]));
   const picking = spaces.length > 1;
   const chosen = access.all || access.ids.length > 0;
-  const live = setup && Date.now() < setup.until;
   const platformPick = <div role="group" aria-label={t("Terminal platform")}>
     <Segmented value={platform} onChange={setPlatform} options={PLATFORMS} />
   </div>;
-  const picker = (label) => <WorkspacePicker workspaces={spaces} value={access} onChange={chooseAccess} disabled={busy} label={label} />;
+  const picker = (label) => <WorkspacePicker workspaces={spaces} value={access} onChange={setAccess} disabled={busy} label={label} />;
   // Claude Code, Codex and other assistants sign in through the browser,
-  // which needs a confirmed address; DeepSeek Harness connects with a token.
+  // which needs a confirmed address; DeepSeek Harness's setup command signs
+  // in for it, which needs none.
   const noSignIn = data && !data.oauth_available ? <div className="integrationDetails">
     <p>{t("Browser sign-in is not available for this Gamma address yet.")}</p>
     <p>{t("An administrator can enable it by confirming the public server URL in Settings → Server. DeepSeek Harness and tokens work without it.")}</p>
@@ -151,23 +154,17 @@ export function IntegrationSettings({ workspaceId }) {
     <p className="settingDesc">{t("Then disconnect it under Connected assistants: that ends its access.")}</p>
   </details>;
   const steps = !data ? null : assistant === "dsh" ? <>
-    {picking ? <Step n={1} title={t("Choose what it may read")}
-      hint={t("DeepSeek Harness reads these workspaces. You can change them here later.")}>
-      {picker(t("Workspaces DeepSeek Harness may read"))}
-    </Step> : null}
-    <Step n={picking ? 2 : 1} title={t("Run the setup command")}
-      hint={t("Quit DeepSeek Harness first, then run this in a terminal on the same computer. It adds the Gamma plugin to DeepSeek Harness and connects it to this server. The command works once.")}>
+    <Step n={1} title={t("Run this in a terminal")}
+      hint={t("Quit DeepSeek Harness first, then run this on the computer where you use it. It adds the Gamma plugin to DeepSeek Harness and opens Gamma's sign-in.")}>
       {platformPick}
-      {live ? <>
-        <CopyField key={`dsh-${platform}`} label={t("DeepSeek Harness setup command")} value={dshSetupCommand(data.mcp_url, setup.code, platform)}
-          action="Copy setup command" rows={platform === "windows" ? 3 : 4} />
-        <p className="settingDesc">{t("Valid until {time}. Requires {dsh}.", { time: timeOf(setup.until),
-          dsh: <a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer">{t("DeepSeek Harness")}</a> })}</p>
-      </> : <button className="uiBtn" disabled={busy || !chosen} onClick={makeSetup}>
-        {setup ? t("Show a new setup command") : t("Show the setup command")}
-      </button>}
+      <CopyField key={`dsh-${platform}`} label={t("DeepSeek Harness setup command")} value={dshSetupCommand(data.mcp_url, platform)}
+        action="Copy setup command" rows={platform === "windows" ? 3 : 4} />
+      <p className="settingDesc">{t("Requires {dsh}.", {
+        dsh: <a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer">{t("DeepSeek Harness")}</a> })}</p>
     </Step>
-    <Step n={picking ? 3 : 2} title={t("Open DeepSeek Harness")}
+    <Step n={2} title={t("Choose what it may read")}
+      hint={t("The command opens Gamma in your browser. Check that the page shows the code in your terminal, tick the workspaces it may read, and allow it. You can change them here later.")} />
+    <Step n={3} title={t("Open DeepSeek Harness")}
       hint={t("Ask about your papers, or paste a Gamma page or share link with your question. Gamma's tools appear as mcp__gamma__….")}>
       {removal(t("DeepSeek Harness"), t("Quit DeepSeek Harness, then run this in a terminal. It takes the Gamma plugin out of every DeepSeek Harness profile that has it and deletes the saved connection."),
         t("DeepSeek Harness remove command"), dshRemoveCommand(platform))}
@@ -223,7 +220,7 @@ export function IntegrationSettings({ workspaceId }) {
     </>}
   </>;
   return <>
-    <PaneHead icon={LinkIcon} title={t("Integrations")}>{t("Let Claude Code, Codex, DeepSeek Harness or another MCP assistant read your library. One connection can read several workspaces; it never changes them.")}</PaneHead>
+    <PaneHead icon={LinkIcon} title={t("Integrations")}>{t("Let Claude Code, Codex, DeepSeek Harness or another MCP assistant read your library. One connection can read several workspaces, and edit the notes of those you mark Edit.")}</PaneHead>
     {loadError ? <div className="integrationDetails" role="alert">
       <p>{t("Could not load your connections. {loadError}", { loadError: loadError })}</p>
       <button className="uiBtn" onClick={() => refresh()}>{t("Try again")}</button>
@@ -242,10 +239,15 @@ export function IntegrationSettings({ workspaceId }) {
       </button>}>
       {data ? data.tokens.length ? data.tokens.map((item) => <React.Fragment key={item.id}>
         <ConnectionRow item={item} names={names} busy={busy} onRevoke={revoke}
-          onEdit={(row) => setEditing(editing?.id === row.id ? null : { id: row.id, access: { all: row.all_workspaces, ids: row.workspaces } })} />
+          onEdit={(row) => setEditing(editing?.id === row.id ? null : { id: row.id, access: accessOf(row), asks: row.asks !== false })} />
         {editing?.id === item.id ? <div className="integrationDetails integrationEdit">
-          <WorkspacePicker workspaces={spaces} value={editing.access} disabled={busy}
+          <WorkspacePicker workspaces={spaces} value={editing.access} disabled={busy} roles={item.scope !== "write"}
             label={t("Workspaces {name} may read", { name: item.name })} onChange={(value) => setEditing({ ...editing, access: value })} />
+          {editsIn(editing.access) ? <label className="integrationAsk">
+            <input type="checkbox" checked={editing.asks} disabled={busy} onChange={(e) => setEditing({ ...editing, asks: e.target.checked })} />
+            <span>{t("Ask me before each change it makes")}
+              <span className="settingDesc">{t("The assistant shows Gamma's question in its own window. One that cannot show it changes nothing while this is on.")}</span></span>
+          </label> : null}
           <div className="integrationActions">
             <button className="uiBtn primary" disabled={busy || !(editing.access.all || editing.access.ids.length)} onClick={saveAccess}>{t("Save")}</button>
             <button className="uiBtn" disabled={busy} onClick={() => setEditing(null)}>{t("Cancel")}</button>

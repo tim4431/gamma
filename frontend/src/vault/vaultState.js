@@ -2,15 +2,20 @@
 // own server (GET /api/folder-links/page/{id}, routers/folder_links.py
 // `page_state`; docs/research/vaults.md "The words" and "Reading a PDF where
 // it is"): `{vault, reader}`. `vault` is the synced vault that keeps the page
-// (`{id, name, scope, path, pull, push, problem, conflicts, paused}`), `reader`
+// (`{id, name, scope, path, pull, push, problem, conflicts, paused,
+// work_folder, choosing, mine, agent}`, `mine` whether this account made it,
+// `choosing` a work folder still choosing its first files, `agent` a work
+// folder's agent on this computer or null), `reader`
 // the PDF the page reads where it lies (`{path, missing, mine,
 // relocation_error?}`, `mine` whether this account opened the file).
 // What the page shows of it: the chip in the page header and its card
 // (VaultChip.jsx), the banner over the page (its VaultBanner), whether the
 // notes are locked, and the conflict route the merge chips read. A path is
 // "" for a member who cannot act on the vault: where its files lie is the
-// reading of whoever made it. Pure: tests/vaultState.test.mjs.
-import { t, tn } from "../shared/i18n/i18n.js";
+// reading of whoever made it. On any other server the page's chip names
+// the computer that keeps it instead (computerChip, read by
+// usePageComputer.js). Pure: tests/vaultState.test.mjs.
+import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { inPlace, isPdf } from "../documents/pageDocument.js";
 
 // The answer, kept only when it says something: null for a page of no vault
@@ -65,6 +70,125 @@ export function vaultChip(state) {
     title: missing ? t("The file this PDF was read from is gone")
       : reader.path ? t("This PDF is read from {path}, not stored in the library", { path: reader.path })
       : t("This PDF is read from a file on this computer, not stored in the library"),
+  };
+}
+
+// What the card says of the agent on this computer that answers the work
+// folder's Sends (`vault.agent`, {name, label, ready, problem, running:
+// {kind, request_id, detail} | null, `kind` "send" or "chat"};
+// docs/dev/local_agents.md): {line, problem,
+// working}, `line` naming it, `problem` why it cannot run (the server's
+// English sentence, "" while ready or not known yet), `working` what it is
+// at during a run ("" otherwise; the detail is "" for a member who cannot
+// act on the vault). Null for a vault with no agent.
+export function agentLine(state) {
+  const agent = state?.vault?.agent;
+  if (!agent || typeof agent !== "object") return null;
+  const name = agent.label || agent.name || "";
+  const detail = agent.running?.detail || "";
+  const working = !agent.running ? ""
+    : detail ? t("{agent} is working: {detail}", { agent: name, detail }) : t("{agent} is working", { agent: name });
+  return {
+    line: t("Agent: {agent} on this computer", { agent: name }),
+    problem: agent.ready === false ? String(agent.problem || "") : "",
+    working,
+  };
+}
+
+// The agent a comment on the page can name (`@codex`): the work folder's
+// agent on this computer, for the vault's maker alone, whose mention of it
+// in a comment is a Send (docs/dev/local_agents.md). The @
+// menu's row, the field's hint and the chip in the maker's own comments
+// read it: {name, label, ready, problem}, `problem` as agentLine's. Null
+// for anyone else, a vault that is no work folder, and a folder with no
+// agent on.
+export function mentionAgent(state) {
+  const vault = state?.vault;
+  const agent = vault?.agent;
+  if (!vault?.work_folder || !vault.mine || !agent || typeof agent !== "object" || !agent.name) return null;
+  return {
+    name: agent.name, label: agent.label || agent.name, ready: agent.ready,
+    problem: agent.ready === false ? String(agent.problem || "") : "",
+  };
+}
+
+// The chat's computer side (chat/computer/): the same agent, by the same rule
+// as mentionAgent, with what the side's strip says before its own read
+// lands: `running` the vault's run ({kind, request_id, detail}, null when
+// idle), `folder` the work folder's name, `paused` whether the vault is
+// paused or still choosing its files (the agent starts nothing then).
+// Null wherever mentionAgent is.
+export function computerAgent(state) {
+  const agent = mentionAgent(state);
+  if (!agent) return null;
+  const { vault } = state;
+  const running = vault.agent.running;
+  return {
+    ...agent, running: running && typeof running === "object" ? running : null,
+    folder: vault.name || baseName(vault.path), paused: !!vault.paused || !!vault.choosing,
+  };
+}
+
+// The computers that keep the page in a synced vault of the account's, as
+// the page's server knows them (GET /api/pages/{id}/computer,
+// docs/dev/computers.md): each announces itself to that server over its
+// own channel, `[{id, name, online, since, vault: {kind, name, paused},
+// assistants: [{name, label, found, ready, version, code}]}]`, online ones
+// first. Only the vault's maker is told: `[]` for anyone else, for a
+// server older than the route and for an answer that says nothing.
+export function readComputers(answer) {
+  const list = Array.isArray(answer?.computers) ? answer.computers : [];
+  return list.filter((c) => c && typeof c === "object" && typeof c.name === "string" && c.name);
+}
+
+// When a computer went offline, as the chip says it: "2:02 PM" today, "Nov 3"
+// another day this year, with the year before it, in the interface's
+// language ("" for no time known).
+export function sinceText(since, now = new Date()) {
+  const d = new Date(since);
+  if (!since || Number.isNaN(d.getTime())) return "";
+  if (d.toDateString() === now.toDateString()) return fmtDate(d, { hour: "numeric", minute: "2-digit" });
+  return fmtDate(d, d.getFullYear() === now.getFullYear() ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+}
+
+const ASSISTANTS = { codex: T("Codex"), claude: T("Claude Code") };
+
+// An assistant a computer has, by its announced code (never the computer's
+// English problem): "Codex", "Codex (not signed in)", "Claude Code
+// (checking)", "Codex (not ready)".
+function assistantText(assistant) {
+  const name = String(assistant.label || (ASSISTANTS[assistant.name] ? t(ASSISTANTS[assistant.name]) : assistant.name) || "");
+  if (assistant.code === "signed_out") return t("{agent} (not signed in)", { agent: name });
+  if (assistant.code === "checking" || assistant.ready == null) return t("{agent} (checking)", { agent: name });
+  if (assistant.code === "not_ready" || assistant.ready === false) return t("{agent} (not ready)", { agent: name });
+  return name;
+}
+
+// The chip of a page another computer keeps (readComputers' first), drawn
+// where vaultChip has nothing to say (any server but this computer's own):
+// {online, label, title, state, vault, paused, assistants}. `label` names
+// the computer ("Synced vault on TIM-PC"); `state` is "Connected" or when it
+// went offline; `vault` the folder or file it keeps, as the page's server
+// names it; `paused` whether its vault is paused there ("" if not);
+// `assistants` the assistants found there, a not-ready one saying why (""
+// for none); `title` the lines after the label, for the tooltip. Null for
+// a page no computer of the account's keeps.
+export function computerChip(computers, now = new Date()) {
+  const computer = readComputers({ computers })[0];
+  if (!computer) return null;
+  const name = computer.name;
+  const online = computer.online === true;
+  const when = online ? "" : sinceText(computer.since, now);
+  const state = online ? t("Connected") : when ? t("Offline since {when}", { when }) : t("Offline");
+  const vault = computer.vault && typeof computer.vault === "object" ? computer.vault : {};
+  const kept = !vault.name ? "" : vault.kind === "file" ? t("File: {name}", { name: vault.name }) : t("Folder: {name}", { name: vault.name });
+  const paused = vault.paused ? t("Paused on {computer}", { computer: name }) : "";
+  const found = (Array.isArray(computer.assistants) ? computer.assistants : [])
+    .filter((a) => a && typeof a === "object" && a.found !== false && a.code !== "missing"); // found: null while checking
+  const assistants = found.length ? t("Assistants there: {names}", { names: found.map(assistantText).join(", ") }) : "";
+  return {
+    online, label: t("Synced vault on {computer}", { computer: name }), state, vault: kept, paused, assistants,
+    title: [state, kept, paused, assistants].filter(Boolean).join("\n"),
   };
 }
 

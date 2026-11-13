@@ -227,7 +227,7 @@ def test_staged_upload_is_bound_to_user_and_workspace_and_cancelled(accounts):
 
 def test_an_open_review_is_kept_and_a_swept_one_is_gone(accounts):
     """The dialog's keep-alive and the import's start restart a review's two
-    hours, and bring back one past them that no upload has swept yet; once
+    hours, and bring back one past them that no sweep has removed yet; once
     swept, both answer 404."""
     from gamma import import_staging
     owner, other = accounts["review-owner"], accounts["review-other"]
@@ -271,6 +271,47 @@ def test_an_open_review_is_kept_and_a_swept_one_is_gone(accounts):
     token = owner.post("/api/import/review/parts", json={"source": "markdown-zip", "size": len(data)}).json()["token"]
     assert owner.post(f"/api/import/review/{token}/keepalive").status_code == 409
     owner.delete(f"/api/import/review/{token}")
+
+
+def test_a_left_review_is_swept_without_another_upload(accounts):
+    """A review its dialog left (closed, crashed) goes with the app's hourly
+    sweep once past its TTL, though no upload follows to sweep it; one
+    within its TTL stays. The staging root is the server account's alone."""
+    from gamma import import_staging
+    owner = accounts["review-owner"]
+    me, ws = account_of("review-owner"), workspace_of("review-owner")
+    left = review(owner, archive({"one.md": "# Left review\ntext"}), "markdown-zip")["review_id"]
+    open_ = review(owner, archive({"one.md": "# Open review\ntext"}), "markdown-zip")["review_id"]
+    path = import_staging.get(left, me, ws)[0]
+    then = time.time() - import_staging.TTL - 5
+    os.utime(path, (then, then))
+    import_staging.sweep()
+    assert not path.exists() and import_staging.get(open_, me, ws)
+    if os.name == "posix":
+        assert path.parent.stat().st_mode & 0o077 == 0
+    owner.delete(f"/api/import/review/{open_}")
+
+
+def test_the_staging_root_is_the_server_accounts_own(tmp_path, monkeypatch):
+    """A sweep with nothing staged makes no root (each start of the app
+    sweeps); a root an earlier version made open to all is narrowed to
+    0700; one another account made first is refused."""
+    import tempfile
+    from gamma import import_staging
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    import_staging.sweep()
+    assert list(tmp_path.iterdir()) == []
+    if os.name != "posix":
+        return
+    root = import_staging._root_path()
+    root.mkdir(mode=0o755)
+    root.chmod(0o755)
+    import_staging.sweep()
+    assert root.stat().st_mode & 0o777 == 0o700
+    me = os.getuid()
+    monkeypatch.setattr(os, "getuid", lambda: me + 1)
+    with pytest.raises(RuntimeError):
+        import_staging.sweep()
 
 
 def test_update_adds_to_a_staged_reviews_metadata(accounts):

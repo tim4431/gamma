@@ -54,11 +54,13 @@ not add a period where the source continues.
 
 The link is plain Markdown, so it persists with the reply.
 `shared/model/gammaLinks.js` classifies one link into this library
-(`parseGammaLink` → `block` / `page` / `citation`). A citation renders as a
+(`parseGammaLink` → `block` / `page` / `citation` / `line`, the last for a
+text file's lines, [below](#line-links)). A citation renders as a
 compact pill (`CitationPill`, `shared/ui/Widgets.jsx`) in chat answers, notes
 and a note's preview on the PDF. It shows "p. 2" on the text's baseline,
 sized from the surrounding text. When the reply or note cites several
-papers, the source comes first ("Vaswani · p. 2").
+sources (`citesSeveralSources`: papers and files alike), a pill whose label
+names only the place gets its source in front ("Vaswani · p. 2").
 Hovering, focusing or long-pressing it previews the paper title, the PDF page
 and the quote; App's `citeSource` (on `GammaNavContext`) names the paper.
 The pointer can move from the pill into the preview, across the text between
@@ -83,8 +85,9 @@ locally, which the note renderer checks through the same `[[ref]]` batch
 lookup it uses for the card's title. An id that doesn't resolve stays an
 ordinary external link, which is what a link to somebody else's Gamma should
 be. Pasting normalises the other way: the "Paste as" chooser offers
-**Citation** / **Page link** for a recognised link and stores it host- and
-workspace-free (`relativeGammaLink`), so new notes never learn a host.
+**Citation** / **Line link** / **Page link** for a recognised link and stores
+it host- and workspace-free (`relativeGammaLink`), so new notes never learn a
+host.
 
 `pdf/pdfCitation.js` keeps source offsets through Unicode ligature folding,
 dehyphenation and whitespace normalization. Fallback passes tolerate differing
@@ -128,8 +131,9 @@ cancelled. The marks (`.pdfCitationMark`, the translation shimmer) ignore
 pointer input and never touch the annotation or note store. A click outside
 the passage or Escape removes them; there is no close button.
 
-Coverage: `frontend/tests/gammaLinks.test.mjs` (the classifier),
-`frontend/tests/pdfCitation.test.mjs`, the citation scenario in
+Coverage: `frontend/tests/gammaLinks.test.mjs` (the classifier, the line
+kind), `frontend/tests/coverage.test.mjs` (the context pill in pages and in
+lines), `frontend/tests/pdfCitation.test.mjs`, the citation scenario in
 `frontend/tests/e2e/scenarios/pdf.mjs`, and `backend/tests/test_pdf_citations.py`.
 The frontend fixture includes the failing PDF.js runs from physical
 pages 20–22 of Krantz et al., *A quantum engineer's guide to superconducting
@@ -140,3 +144,53 @@ saved citations against that complete PDF in an isolated browser test.
 the quote omitted `(Methods)` before the period. To check another complete PDF,
 pass its fixture file after the screenshot directory:
 `node tests/e2e/pdfCitationPaper.mjs /path/to/transduction.pdf /tmp/citation-shots tests/fixtures/pdfCitationTransduction.json`.
+
+## Line links
+
+A text file's page (a `.tex`, a script, a log; [documents.md](documents.md))
+is cited by its lines, with one key for one line and for a range:
+
+`[method.tex:2](/?page=GAMMA_PAGE_ID&line=2&quote=We%20fit%20a%20small%20network…)`,
+`[method.tex:2–4](/?page=GAMMA_PAGE_ID&line=2-4&quote=…)`
+
+`line` is `N` or `N-M`, 1-based, each of one to eight ASCII digits,
+`1 ≤ N ≤ M ≤ 10,000,000`; a link that names `line` and `pdf_page` both is
+malformed, and so are `M < N` and anything else the key holds.
+`parseGammaLink` gives `{kind: "line", pageId, line, to, quote}`, `to` null
+for one line; the MCP server's `resolve_link` reads the same key with the
+same rule (`mcp_links.line_span`, [mcp.md](mcp.md)), and
+`tests/shared/linelinks.json` holds the two to it. The chat's context and
+`read_page` print each line's number before it, and a search hit names its
+`l.N`, which is where N comes from. **The quote** is the first line's
+verbatim text, percent-encoded: the rule is stated once, in
+`ai_tools.citation_prompt` ([ai_tools.md](ai_tools.md)), which tells the
+model to always add it, because the file may change under its links and
+the viewer finds the line again by it. A link a person pastes may leave it
+out, or leave it empty for a blank line (`&quote=`, read as none on both
+sides); the viewer then marks the number alone. Unlike a PDF passage's, the
+quote has no least length (a code line is often `}` or `\fi`), and 4,000
+characters at most (a long code line's whole text; a PDF passage's stays
+2,000).
+
+A line link is the same pill, `gammaLink-line` beside `gammaLink-citation`.
+With no label of the author's it reads "line 7" or "lines 3–5"; the model
+writes the file's name in the link text itself (`method.tex:7`), as the
+citation rule asks. The preview names the file, "Line 7" or "Lines 3–5",
+the quote and **Open in the file**. A click calls `openPage(id, {kind:
+"line", pageId, line, to, quote})` (a PDF citation passes `{kind:
+"citation", pageId, page, quote}`): the page opens in place and the code
+view scrolls to the line and marks it ([documents.md](documents.md)
+"Viewers"). `citeSource` names a file only when the client knows its page
+(the listing, a tab, a recent page, a note's linked ids), so a cited file
+the reader never opened has no source name in front of its pill and
+"This file" in the preview. The citation tour is the PDF's: `chat.cited`
+fires for a `citation` link alone, and a line pill carries no
+`chat.citation` anchor. Pasted, **Line link** stores
+`[<file title>:N](/?page=…&line=N…)`, the title from the page's row.
+
+**Coverage in lines.** A reply's context pill (`chat/coverage.js`
+`coverageNote`) counts a text file's entry (`format: "text"`, with
+`lines` and `lines_shown`) in lines: "Model saw lines 1–400 of 2,310 · read
+lines 401–800 with tools", the tools' part from the `read_page` chips'
+`lines: [first, last]` (`readSpans(actions, pageId, "lines")`), and its long
+form names the lines nobody saw. A PDF's entry keeps its pages.

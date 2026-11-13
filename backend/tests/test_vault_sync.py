@@ -1174,6 +1174,19 @@ def test_a_block_link_into_a_note_this_round_cannot_write_is_a_link_to_its_page(
     assert v.text("Source.md") == "see [[Target]]\n" and v.text("Target.md") == "first\n\nthe linked block\n"
 
 
+def test_a_kept_folders_link_to_a_pdf_stays_its_upload(vault):
+    """Only a work folder's files are pages a link mentions: here a PDF's
+    link is its upload's address, as it always was."""
+    v = vault()
+    v.write("paper.pdf", _pdf("kept paper"), age=10)
+    v.sync()
+    v.write("Ref.md", "see [[paper.pdf]]\n")
+    v.sync()
+    name = f"{v.rows()['paper.pdf']['hash']}.pdf"
+    assert v.texts(v.page_of("Ref.md")) == [f"see [paper.pdf](/api/uploads/{name})"]
+    v.quiet()
+
+
 # --- force ------------------------------------------------------------------------------------------
 
 def test_force_push_makes_each_page_its_file_and_records_what_it_replaced(vault):

@@ -51,7 +51,7 @@ function server() {
 function setup(t, { canWrite = true, fallback = true, srv = server() } = {}) {
   const h = {
     srv, calls: [], remote: [], reloads: [], status: [], notices: [], comments: [], builds: [], sockets: [],
-    timers: new Map(), now: 0, hidden: false, me: null, peers: [], vault: 0,
+    timers: new Map(), now: 0, hidden: false, me: null, peers: [], vault: 0, computer: 0,
   };
   let timerId = 0;
   const options = {
@@ -62,6 +62,7 @@ function setup(t, { canWrite = true, fallback = true, srv = server() } = {}) {
     onSaveNotice: (text, kind) => h.notices.push([kind, text]),
     onComments: (msg) => h.comments.push(msg),
     onVault: () => { h.vault += 1; },
+    onComputer: () => { h.computer += 1; },
     onBuild: (build) => h.builds.push(build),
   };
   h.session = createCollabSession({
@@ -227,12 +228,14 @@ test("a run's first answer refetches the threads and the vault's standing and se
   await polling(h);
   assert.deepEqual(h.comments, [null], "the threads, as a hello would");
   assert.equal(h.vault, 1, "and the vault's standing, as a hello would");
+  assert.equal(h.computer, 1, "and the page's computers");
   assert.equal(h.session.hasPending(), false, "the waiting save went at once");
   for (let i = 0; i < POLL_COMMENTS_EVERY - 1; i++) await h.advance(POLL_MS);
   assert.deepEqual(h.comments, [null], `not before the ${POLL_COMMENTS_EVERY}th answer after`);
   await h.advance(POLL_MS);
   assert.deepEqual(h.comments, [null, null], "about every 30 s");
   assert.equal(h.vault, 2, "the vault's standing with them");
+  assert.equal(h.computer, 2, "the page's computers with them");
   // hidden: nothing is asked, however long
   const asked = h.polls().length;
   h.hidden = true;

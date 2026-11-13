@@ -62,7 +62,17 @@
     {"note": "a link before a region", "props": {"link_url": "u", "image_position": {}}, "kind": "link"},
     {"note": "both positions are a highlight", "props": {"pdf_position": {"pageNumber": 1}, "image_position": {}}, "kind": "highlight"},
     {"note": "a range of a text file is a highlight", "props": {"text_position": {}}, "kind": "highlight"},
-    {"note": "a range that is a string is a note", "props": {"text_position": "1-3"}, "kind": "note"}
+    {"note": "a range that is a string is a note", "props": {"text_position": "1-3"}, "kind": "note"},
+    {"note": "a range with its quote", "props": {"text_position": {"line": 118, "col": 4, "end": 120, "end_col": 37, "prefix": "a", "suffix": "b", "hash": "9f2c"}, "quote": "q"}, "kind": "highlight"},
+    {"note": "a range that is a list is a note", "props": {"text_position": [1, 3]}, "kind": "note"},
+    {"note": "a null range is a note", "props": {"text_position": null}, "kind": "note"},
+    {"note": "ink before a range", "props": {"ink_url": "", "text_position": {}}, "kind": "ink"},
+    {"note": "a text box before a range", "props": {"text_box": {"x": 1}, "text_position": {}}, "kind": "text_box"},
+    {"note": "a picture before a range", "props": {"picture": {}, "text_position": {}}, "kind": "picture"},
+    {"note": "a sheet before a range", "props": {"sheet": {}, "text_position": {}}, "kind": "sheet"},
+    {"note": "a recording before a range", "props": {"recording": {}, "text_position": {}}, "kind": "recording"},
+    {"note": "a link before a range", "props": {"link_url": "u", "text_position": {}}, "kind": "link"},
+    {"note": "all three positions are a highlight", "props": {"pdf_position": {"pageNumber": 1}, "image_position": {}, "text_position": {}}, "kind": "highlight"}
   ],
   "tree": [
     {"note": "under root: a page, whatever it holds", "parent_id": "root", "page_id": "p1", "props": {"pdf_position": {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": {"x1": 60, "y1": 312, "x2": 480, "y2": 330}, "rects": [{"x1": 60, "y1": 312, "x2": 480, "y2": 330}]}}, "kind": "page"},

@@ -11,10 +11,9 @@ local agents (Claude Code, Codex) as structured documents. The owner
 offered a rewrite from the bottom up and asked first whether the idea is
 possible at all.
 
-Status: **a plan; steps 0, 1, 2 and 3 are built** ("As built (step 0)" to
-"As built (step 3)" under "In steps"), the rest is not. This note surveys
-what
-the stored model and the code assumed before step 0, weighs three shapes a
+Status: **a plan; steps 0 to 6 are built** ("As built (step 0)" to
+"As built (step 6)" under "In steps"), the rest is not. This note surveys
+what the stored model and the code assumed before step 0, weighs three shapes a
 file could take, and lays the chosen one out in layers from the bottom,
 with the steps, the decisions still open and the risks. It was revised on
 2026-11-11 after the owner's answers ("Decided" below). The mechanics as
@@ -22,8 +21,10 @@ built live in [dev/documents.md](../dev/documents.md) (a page's document),
 [dev/work_folders.md](../dev/work_folders.md) (work folders),
 [dev/block_centric.md](../dev/block_centric.md),
 [dev/user_db.md](../dev/user_db.md), [dev/home_library.md](../dev/home_library.md),
-[dev/synced_vaults.md](../dev/synced_vaults.md) and
-[dev/comments.md](../dev/comments.md).
+[dev/synced_vaults.md](../dev/synced_vaults.md),
+[dev/comments.md](../dev/comments.md) and
+[dev/highlight_relocation.md](../dev/highlight_relocation.md) (a text
+file's ranges placed again).
 
 ## The answer in one paragraph
 
@@ -696,7 +697,8 @@ the file* (`FileSourceDialog`) is its source view.
   view and beside an open page: the folder tree with a work folder's files
   under their directories, opened lazily. It reverses the non-goal "no
   page-tree sidebar"; folders and labels stay the model, and the window
-  is a view of them.
+  is a view of them. Built in step 5 (As built (step 5)): closed to begin
+  with, on a phone an overlay beside an open page.
 - **A folder's view.** A work folder opens as the list view, directories
   first, with name, format, size, date and the count of open comments,
   and the path as crumbs.
@@ -714,7 +716,9 @@ thread as a PDF highlight does.
 When a text file changes, each anchor is found again by its quote:
 exactly near its old line, then word by word, then marked lost and kept,
 the rule set for PDFs. A picture replaced keeps its regions where they
-were, marked as made on another version.
+were, marked as made on another version. Regions were built in step 3
+(As built (step 3)), ranges of a text file in step 6 (As built (step 6)):
+a range carries the text around it, so its run reads no old file.
 
 ## What does not change
 
@@ -815,7 +819,7 @@ is for" works at the end of step 2.
 | 4. Text in search and the chat | The extractor, text files in the index, `source: "file"` hits with lines, the chat's context and `read_page` by lines. | A question about a `.tex` file answered with a link to its line. |
 | 5. The explorer | The Files window, quick open's Files group, paths in crumbs and links. | The browser suite's new group. |
 | 6. Anchors in text | `text_position`, highlights and threads from a selection, relocation after a change. | A file rewritten under ten comments keeps the ones whose text survived and marks the rest. |
-| Later | Work folders of another server from the dialog; editing a text file in Gamma; notebook and table viewers; building LaTeX ([latex-projects.md](latex-projects.md), parts 4 and 5, on a work folder's files). | |
+| Later | Work folders of another server from the dialog (made of an empty folder there: [agent-collab.md](agent-collab.md) step 4b; a folder with pages still later); editing a text file in Gamma; notebook and table viewers; building LaTeX ([latex-projects.md](latex-projects.md), parts 4 and 5, on a work folder's files). | |
 
 Step 0 and the first half of step 3 are refactors with nothing to show,
 and they carry most of the risk; each is small enough to review alone for
@@ -1242,6 +1246,539 @@ Where it differs from the plan above, the whole list:
     rows in the highlight menu (the PDF's rows show); the AI title for a
     non-PDF document (`docId` is the PDF's); an admin setting for the keep
     limit.
+
+**As built (step 4).** Built as its row says
+([dev/documents.md](../dev/documents.md) "Text extraction" and "Viewers",
+[dev/api.md](../dev/api.md) "Search", [dev/ai_context.md](../dev/ai_context.md)
+"A text file", [dev/ai_tools.md](../dev/ai_tools.md),
+[dev/mcp.md](../dev/mcp.md), [dev/pdf_citations.md](../dev/pdf_citations.md)
+"Line links", [dev/work_folders.md](../dev/work_folders.md) "Paths"). The
+one reader of a document's text is `gamma/documents/text.py`: `extract` by
+format for the index, `decode`, `read_lines` (a window streamed, the rest
+of the file counted from its bytes), `outline` by language, `locate` and
+`is_secret`; its decode rule is the code view's too, held by
+`tests/shared/textdecode.json`. The index is the package `gamma/search/`
+(`index` the tables and queries, `indexer` the lazy `indexing` job,
+batched, `hits` the one hit builder) in place of `pdf_index.py`, with no
+shim: data.db's `text_fts`, `text_fts_docs` and `text_fts_rows`, keyed by
+hash, a PDF's unit its page and a text file's a run of 40 lines with each
+line cut at 500 characters, so a run and a page are units of one size
+and rank together. An index of the old layout is dropped at its first use
+and filled again by the job; there is no migration step, and the
+workspace format stays 55. A file hit is `{source: "file", path,
+work_folder, language, line, lines, snippet, …}`, its line found again in
+its run by FTS5's own token rule. `POST /api/document-search` is the
+panel's document group; folder and label chips go to it and to
+`/block-search` as ids, resolved on the server
+(`routers/search.scope_pages`), so a work folder's chip reaches its
+20,000 files. A path resolves to a page through
+`gamma/work_folders/paths.py` (`page_path`, `page_at_path`,
+`work_of_path` and the name rule `work_folders_named`), on which
+feedback's file names are built too. The chat's context for a text
+document is its numbered lines, whole or a head and an outline from the
+first line not shown (`ai_context.text_head`, cached per file version),
+with the page's open threads and a note's file chips; `read_page` reads by
+`from_line` and `to_line` or by `path`, `list_pages` names a file's path,
+and `search_library` lists file hits. The line link
+`/?page=<id>&line=N[-M][&quote=…]`, its quote the first line's verbatim
+text, is a fourth kind of Gamma link (`gammaLinks.js`,
+`mcp_links.resolve_link`), drawn as the citation's pill and opening the
+code view at its lines, marked (`documents/viewers/textMark.js`). The
+browser group is `text-search`. Where it differs from the plan above, the
+whole list:
+
+1. The chat's PDF reader stays `pdf_text` (`pdf_excerpt`, labelled,
+   cached): the one extractor fronts the index for every format and the
+   chat's and tools' reading of a text file, and the chat's PDF path keeps
+   its page labels and its cache, which a library-wide index must not
+   share.
+2. The path pair lives in `gamma/work_folders/paths.py`, not
+   `blocks_store`, which that package imports. The work folder name rule
+   (exact, then ignoring case by `blocks_store.named`'s `lower()`) is
+   stated there, and feedback's lookup is built on it, its `casefold()`
+   gone.
+3. A listing-side predicate (`year:`, `author:`, `is:pinned`) still travels
+   as page ids. Only a chip, or a `folder:` or `label:` clause naming one
+   folder or label, is a scope sent as ids: a negated clause, or one naming
+   several, stays a predicate, since the server intersects its ids. Beside
+   a predicate a work folder's chip leaves out the files the library does
+   not list ([dev/work_folders.md](../dev/work_folders.md) "Known gaps").
+   There is no `is:text`; `in:files` is the files' switch.
+4. The index's unit column is `unit`, with no line columns: a run's lines
+   follow from its number and `RUN_LINES`, and the matched line is found
+   by re-scanning the run on the server (`text.locate`).
+5. `/pdf-search` (GET and POST) is gone with no shim; `GET /api/search`
+   keeps its shape and gains file hits; the two routes and `search_library`
+   share `search/hits.py`. A PDF hit names its document's first page in
+   `GET /search` and every page of it in `/document-search`; a file hit
+   names every page whose document it is, so two files of equal bytes are
+   two hits.
+6. No "This file" find group for the open code view: CodeMirror's panel is
+   its find, and the Files group lists the open file's hits, tagged *this
+   file*.
+7. A cited file page the reader never opened has no source name on its
+   pill: the model is told to write the file's name in the link's text,
+   and the preview says "This file".
+8. The composer takes no text files. A note's file chips are read, three a
+   page, each its first 4,000 characters with no outline (an outline would
+   read the whole file); the tracking dialog says what leaves the computer.
+9. Threads of every page are in the context, not only a text document's,
+   placed from the thread's stored anchor as the feedback entries are.
+10. The outline goes to the plain chat too; the call to read on with
+    `read_page` is written only for a chat with tools.
+11. The decode rule is UTF-8 with replacement after a BOM check, a NUL
+    anywhere or more than 5% U+FFFD making a file no text, for the server
+    and the code view alike (the code view's first-8-KiB test is gone); no
+    code-page guess.
+12. A secrets file's text never reaches the model, the index or a chip
+    (`text.is_secret`: `.env` and `.env.*`, `.netrc`, `.npmrc`, `.pypirc`,
+    `.htpasswd`, the ssh keys, `.pem`, `.key`, `.p12`, `.pfx`); the code
+    view shows it. This is the one exception to "What leaves the computer"'s
+    third rule.
+13. The indexer still downloads a PDF at an address, as before, through the
+    chat's guarded resolver: a search finds what the page shows.
+14. The scoped search's budget is 800 ms, not 150: each request reads every
+    file page's document (`root_pages`, `pages_in_scope`), about 450 ms p95
+    at 20,000 files measured beside other suites
+    ([dev/debugging.md](../dev/debugging.md) "Performance budgets"). The
+    other budgets of `test_search_scale.py` hold as planned.
+15. A duplicated page's document is searched by the agent only, as before:
+    the panel's and `GET /search`'s maps leave copies out.
+16. A file's old version's rows go at once when the vault replaces its
+    document (`purge_doc`); when the file crosses the keep limit
+    (`set_doc`) they wait for the next `purge_unused`.
+17. The line mark: a quote no line holds marks the number and says its
+    text is gone; a line beyond the part shown of a file too large to show
+    whole (past 16 MiB) says so in words of its own, not as a line past the
+    end. Back to the same page scrolls to its line as a target with no
+    mark. Only the live pane marks; a tab group's read pane never does.
+18. The extractor: `read_lines` counts the rest of a file by its `\n`, or
+    by `\r` in a read that holds no `\n` (a CR-only file), so a lone `\r`
+    beside a `\n` past the window is not counted; a binary file is a
+    `ValueError`, and its `Decoded` is empty text with `bad` False, the
+    shape the code view answers (the fixture's node half compares `text`,
+    `bad` and `binary`; `encoding` carries Python's codec names). A run's
+    text is its lines' up to `PAGE_CHARS` plus the newlines between them.
+    `locate` folds diacritics as unicode61 does and, with no token on any
+    line, gives the run's first non-empty line. An outline's caption is cut
+    to the entry's 80 characters, and the paragraph fill takes only the
+    budget the language's own entries leave. `page_path` answers `""` for
+    a page in no work folder, where feedback's `file_path` answered its
+    title.
+19. The index: `hits.build` answers its hits with `more` (the `next` of
+    `/document-search`) and takes `fan_out`, the agent listing a PDF's
+    pages itself. `store_docs` stores a document of more than `STORE_CHUNK`
+    units alone, in chunks, so a book never holds the write lock; the job
+    flushes its batch at 50 documents or `BATCH_UNITS` units, and its stop
+    is `Job.progress` raising `Cancelled`, the batch stored first.
+    `is_secret` reads the names of the pages that own the hash (a secret
+    name winning), not the title, so a renamed page is caught; the metadata
+    lookup passes the page's view to `ensure_indexed`, so a PDF at an
+    address keeps `at: "url"`. The `first_folder` arm for
+    `pages_in_folder` was measured slower and not taken.
+20. The chat and the tools: `TextHead` holds the numbered lines alone, and
+    the label, the outline block and the call to read on are written per
+    turn, so one cached entry serves a plain chat and a chat with tools and
+    the prompt stays stable; `text_head` reads a file once for its head and
+    outline, keyed by hash, extension, language and budget, a missing file
+    not cached, the outline's budget at most half the text's. A chip's page
+    is found by hash and extension among root pages (`page_for_file`
+    answers library pages only), so a work folder's file is named; a chip's
+    format is its name's, a `.bin` never text. A thread reads `author
+    (agent), date: "body"`, its source after its place; `read_page` brings
+    a page's threads with its first window when the chat's context does
+    not hold that page. On MCP a `line` beside a bare folder link is
+    ignored, as `pdf_page` is there, and `line=9-9` is kept as written. A
+    text file's size is given in bytes, other formats' rounded.
+21. The client: `isSourceLink` states the pill's rule once and `linePlace`
+    its words; the paste-as chooser takes a range too; a pill's own label
+    may name lines (`l.`, `ll.`, `line`, `lines`); `coverage.js` walks
+    merged spans, since a text entry's lines run to millions. The panel
+    sends `exclude` only when the open page shows a PDF, keys a document
+    hit by its page too (`docHitKey`), clears another filter's hits at once
+    rather than holding them back, puts the indexing hint and Show more
+    after both document groups, and asks again when an indexing job it
+    waited on ends (App's `indexed`), while each answer counts fewer
+    documents pending, since a linked file out of reach stays pending. The
+    code view's `decodeText` applies the one rule to the head and to the
+    whole; the mark is the accent's wash and a bar at the gutter, a range's
+    first line scrolled to the top; "Line N marked." is for screen readers
+    only; a press on an unmarked line dismisses the mark too. The task row
+    reads "Indexing documents for search" and counts documents; the home
+    box offers "Search inside notes, PDFs and files".
+22. The browser group `text-search` types its query again until the Files
+    hit shows, since the first search starts the index; its selection rules
+    also name `chat/**`, `editor/**`, `ai_tools.py`, `mcp_server.py` and
+    `work_folders/paths.py`, the last with `feedback`.
+23. Not built in step 4: the Files window and server-side quick open (step
+    5); `text_position` anchors and a selection of lines reaching the chat
+    (step 6); eager indexing on a vault round; a per-format index budget for
+    data-ish text (`csv` and `log` share the text caps);
+    `view_image(page_id=…)` for a picture page (the context names no tool
+    for one); a scoped search that does not read every file page per
+    request (one query for the scope's documents, or a docs map kept by
+    the workspace's change sequence), which item 14's budget waits on.
+
+**As built (step 5).** Built as its row says
+([dev/work_folders.md](../dev/work_folders.md) "The Files window", "Files
+by name" and "Paths", [dev/home_library.md](../dev/home_library.md) "Quick
+open" and "Work folders", [dev/synced_vaults.md](../dev/synced_vaults.md)
+"Links and highlights", [dev/api.md](../dev/api.md) "Folders and labels",
+[dev/ui-design.md](../dev/ui-design.md) "Keyboard focus" and "Dock
+windows"). The Files window is a lazy chunk (`explorer/FilesWindow.jsx`,
+`FileTree.jsx` over `fileTree.js`'s rows and keys), its state two explorer
+hooks App calls (`useFilesWindow.js` before App's page lookups,
+`useFilesTree.js` after them, with `useDirectoryRows.js` over
+`directoryRows.js`), so App gained no counted hook; the dock dispatches
+its fourth window through tables (`GRIP_GUIDE`, the fold-forget table).
+Quick open's Files group is `GET /api/files` (`work_folders/file_search.py`
+the match rule, over the partial index `idx_ub_file_name`), drawn by
+`explorer/useFileSearch.js`; a path resolves through
+`GET /api/folders/{id}/at` (`paths.page_at_href`), the client's twin of
+the path rule is `explorer/workPaths.js`, and both are held to
+`tests/shared/workpaths.json`. `POST /pages/summaries` names `+parent_id`
+(its lookup of 40 ids about 1 ms where it took 11 at 20,000 files), and a
+read-only hosted server lets it through. The browser group is `explorer`, its 20,000 files seeded
+by `backend/tests/seed_work_folder.py` (the perf fixture's rows, run as a
+script through the harness's `Server.python`). Where it differs from the
+plan above, the whole list:
+
+1. The Files window starts closed, and its showing is per browser, not per
+   page: the home view is already the library, and the window earns its
+   place beside an open page and stays open across pages once opened
+   (`layoutKeeping`: a page's saved layout keeps it where it is, and its
+   fold). View → Files and the command `app.toggleFiles` (unbound) bring
+   it; its chunk is fetched with the startup requests when it is open,
+   else on the View menu's hover.
+2. The tree is a folder tree: labels have no place in it (a label view is
+   the listing's flat mirror), and library pages filed in no folder are not
+   in it. Folders and labels stay the model.
+3. Files by name or path is one route, `GET /api/files`, over every work
+   folder, `folder` optional for one work folder or a directory's subtree;
+   quick open searches them all, as it searches every page.
+4. The match rule lives on the server alone: the client draws the server's
+   rows and marks the server's spans, so there is one rule and no shared
+   fixture for it, and no typo pass for files. A directory is named with a
+   slash: a query holding `/` or `\` is one path term, spaces kept
+   (`old drafts/v1`); any other query's words match the file's name alone
+   (`figures fig1` finds nothing, `figures/fig1` does).
+5. An index on the file's name (`idx_ub_file_name`, over
+   `COALESCE(file_name, content)`) is added with no migration step
+   (`BLOCK_HOT_INDEXES`, made when a workspace opens); "no path is stored on
+   a page" holds, paths are computed from the tree per request. A leaf
+   named exactly is one seek of that index; otherwise `page_at_path` reads
+   the directory's rows on `idx_ub_dir` and applies the name rule in
+   Python.
+6. Links by path: in a work folder's round a note's link to a tracked file
+   that has a page becomes a mention of that page, which opens it, survives
+   a move on disk and feeds backlinks; a picture's embed keeps its upload
+   address, a paired note's link to its own PDF stays the file's chip, and
+   a file new in the same round is its upload until the note is read
+   again. A kept folder is unchanged. Gamma's mention of a file page, or of
+   a block in its notes, is written back by the file's path and asks no
+   anchor (`LinkContext._anchor` makes none for a page whose path is no
+   note), rather than marking the page read-only, since a paired PDF
+   shares its note's page. What the vault did not resolve (a path typed in
+   Gamma, an untracked file, a folder that does not pull) resolves on a
+   click through `GET /folders/{id}/at`, from the note's directory (known
+   from its folders, whether or not its file is written yet), opened as a
+   link jump Back returns from; a path naming none says "No tracked file
+   at …" in the status pill.
+7. The crumbs start at the work folder, the folder a person opens, as the
+   home bar's do; a path (feedback, the tools, the files route) leaves it
+   out. The directory's chip leaves the label field of a file's page.
+   `page_path` now answers `""` for a page whose `folders[0]` is outside
+   its work folder, as its twin does.
+8. Quick open's Files group lists at most 20 rows, deduped against the page
+   rows (a library file found by its title is one row, the page's).
+9. Pins join the pickers' near set (tabs, recents and pins).
+10. On a phone the Files window is an overlay beside an open page, reached
+    from the More sheet's Files row or the command; on the home view the
+    listing is the explorer and the row is not offered; there is no fifth
+    bottom tab.
+11. The reveal finds a row within the first 500 of a directory by name;
+    past that the directory stays open with "Show more" and the row
+    unrevealed.
+12. A single click opens a file in the tree, and selects it, where the home
+    list view selects on a click and opens on a double-click; the tree's
+    selection is its own, and a file row's menu is the page menu for that
+    one page with the home selection let go (`openSubPageMenu`), so F2 and
+    Delete never act on what the tree selected.
+13. The reveal and the directory reads happen only while the window is
+    shown; a file opened with the window closed reads nothing of the tree,
+    and the window catches up with it when it is shown. An open directory
+    is read again only when the listing's count of its files changed or the
+    listing's `work_changes` name a write to one of its files since.
+14. The scale budgets, measured at 20,000 files and set at about twice
+    their p95 ([dev/debugging.md](../dev/debugging.md) "Performance
+    budgets"): `GET /api/files` 25 ms for a name, 22 for a path term, 16 for
+    no hit, 95 for a query with no ASCII run (every name read and ranked);
+    `GET /folders/{id}/at` 11 ms; the summaries' lookup of 40 ids 2 ms on
+    the connection (through the test client the route takes about 9 ms, its
+    40 previews and the request itself, which the 5 ms ceiling could not
+    hold). The quick-open cases run before the case that adds 2,000
+    directories to the fixture, so they time the 11 directories of the
+    seed; the path case resolves `big/file-01234.bin`, where the seed puts
+    that file.
+15. The seed's and the perf fixture's files are listed binaries
+    (`file-NNNNN.bin`, `at: "listed"`, no hash) and notes: a PDF is never
+    listed, and a listed document reaches no indexer and no reader of
+    bytes, so a seed inside a live server costs nothing while quick open is
+    timed.
+16. The browser group runs quick open first, before any file is a tab or a
+    recent (those are page rows, which the Files group leaves out), and its
+    path query is `dir 3/012`: a leaf held by names in every directory, so
+    the segment does the choosing. Its phone step looks up `fig2`, the one
+    figure no earlier step opened; it pauses the work folder before it
+    types paths into a note made in Gamma, so no round names the note or
+    rewrites the links; and it allows the one 404 of `/folders/{id}/at`
+    its unresolved link asks for. `select.mjs` gives the new client files
+    their own rows (`fileSearch.js` and `useFileSearch.js` with quick
+    open's groups, `workPaths.js` with `notes-pdf-share` and `sub-pages`
+    too, since every note link asks it), and `routers/folders.py` names
+    `work-folders` beside `explorer`.
+17. The reads: the directory's path is `paths.dir_path`, as step 4 named it,
+    and the predicate of a relative link is `paths.is_relative_href`, the
+    server's half of the fixture's `hrefs`. A leaf named exactly is one
+    seek of `idx_ub_file_name`, so a stored name with spaces around it is
+    no longer an exact twin where another file names the leaf exactly.
+    `GET /folders/{id}/at` answers a link that names nothing (a scheme, a
+    leading `/`, `#` or `?`) with the 404 of a path that names no file.
+    The rank folds each name once and drops a row at the first term its
+    name lacks, which holds the no-run case at 48 ms p95.
+18. The vault: a page mentioned by a note's link is spelled back by its
+    path, and a paired paper's page by its note's (`page_path` keeps the
+    note's path; the label is the leaf only for a path that is no note),
+    so a mention of a work folder's PDF made in Gamma is written as
+    `[[p.pdf]]`, where it was the upload's address. A file link's
+    `#fragment` (`[[main.pdf#page=3]]`) names nothing in Gamma's text and
+    is dropped there; the remembered spelling keeps it on disk. A file
+    moved on disk inside a round keeps its old path in that round's table,
+    resolving a stale link to the same page.
+19. The tree: the hidden flag and the open folders are kept in
+    `localStorage` by `useFilesWindow.js` itself, not through
+    `usePersistedFlag` / `usePersistedState` (the hook is tested under node,
+    which `shared/lib/utils.js` does not load, and the open folders' key
+    changes with the account, where `usePersistedState` reads its key
+    once). `revealPath` lives in `workPaths.js`, which App imports, so
+    nothing of `fileTree.js` reaches App's startup. `directoryRows.js`
+    holds `NONE`, the page sizes and the reveal's paging (`findStep`);
+    `useDirectoryRows` adds `retry`. Only directories whose every folder
+    above is open are read. A "Show {n} more files" row counts what one
+    press adds (at most 200), a library folder's too, paged on the client;
+    it and a note row are tree items, so Enter reads more or reads again.
+    The keys leave Alt, Ctrl and Meta chords alone (Alt+← goes back).
+    App's `patchKnown` and `dropKnown` reach the tree's rows, so a rename
+    or a delete shows there at once. The window, quick open's Files group
+    and the files' read need a signed-in member (`filesOn`); a share view
+    has neither.
+20. Quick open sends the query trimmed; the server's `parse` strips it
+    too, so the answer is the same and a trailing space asks nothing
+    again. A query the title matcher cannot read still lists the file rows
+    after the page rows. The placeholder names files in a share view too.
+21. The note editor's path links say "No tracked file at …" with the
+    address percent-decoded (`my fig.pdf`); `resolve` gets it as written.
+    `BlockTree` asks `isRelativeHref` itself, after its upload and Gamma
+    link cases, so `PathLink` draws only relative addresses.
+22. Not built in step 5: a filter box or search in the Files window (quick
+    open is the search); typeahead in the tree; Copy path or Show in folder
+    for a directory; crumbs in a tab group's pane; a path link to a
+    directory (a trailing `/`); hover cards for path links; a `[[` or `@`
+    picker over files (`useFileSearch` is ready for it); `in:files` in
+    quick open (the search panel has it); a prefilter by directory for a
+    path term with no leaf or a query with no ASCII run (both read every
+    name, about 50 ms at 20,000 files); a read around an id for the reveal
+    past 500 rows.
+
+**As built (step 6).** Built as its row says
+([dev/api.md](../dev/api.md) "The highlight shape" and the
+`PUT /pages/{page_id}/attachment` row,
+[dev/highlight_relocation.md](../dev/highlight_relocation.md) "Text files",
+[dev/feedback.md](../dev/feedback.md) "The anchor", "An entry" and "The
+Markdown", [dev/documents.md](../dev/documents.md) "Viewers",
+[dev/comments.md](../dev/comments.md) "Threads" and "The margin",
+[dev/ai_context.md](../dev/ai_context.md): a selection of lines, a
+range's words). A highlight in a
+text file is a block with `text_position`: `{line, col, end, end_col}`
+(lines 1-based, the end inclusive; columns 0-based code points of the
+decoded line), `prefix` and `suffix` (40 code points either side) and
+`hash`, the version it was measured on, always written; its text is the
+block's `quote`, as a PDF highlight's is. The quote and context of a span
+are `highlights.span_text` on the server and
+`documents/viewers/textAnchors.js` `contextOf` on the client, held to one
+another by `tests/shared/textposition.json`. When the page's stored file
+changes, by a work folder's round or by `PUT /attachment`,
+`gamma/documents/text_anchors.py` places each range again from its own
+quote and context, with no old file: exactly near its old line, the lines
+compared under a fold of whitespace (NFC, case kept), then word by word at
+or above `relocateMinMatch`, else lost and kept with its best place under
+the threshold as `closest`. The flags, the thresholds, the words and the
+compare-and-set write are the PDF run's (`highlight_relocate._write(…,
+key=)`). A file of at most 512 KiB is placed in the replacement's own
+request, a larger one by the `relocate-highlights` job. A thread on a range
+is a `lines` anchor, and its feedback entry names the file's own lines
+(`where.line`, `end`, `was`; `source` the file). The code view draws the
+ranges over their text, a selection's popup makes a highlight or a thread,
+the cards stand in a column beside the text, a phone shows badges, and a
+selection reaches the chat by its lines. No migration: `text_position` was
+the kind column's since step 55. The browser group is `text-anchors`.
+Where it differs from the plan above, the whole list:
+
+1. The run reads no old file. The plan says "the rule set for PDFs", whose
+   run reads its reference from the stored old version; a text range
+   carries its `prefix` and `suffix` (the W3C `TextQuoteSelector`'s idea),
+   so the ladder needs only the new text. The two runs share the flags,
+   the thresholds, the write, the words and the client's looks, not the
+   reading. [highlight-anchoring.md](highlight-anchoring.md)'s open item on
+   storing the context is closed for text.
+2. No version is kept for a text file's thread (`kept.KEPT_FORMATS =
+   ("pdf", "image")`): the plan's "the version a comment was made on is
+   kept" serves the PDF run and the pictures, and text needs neither.
+   `held_file` is `""` for a `lines` anchor, and a text page under an open
+   thread stores none of its rebuilds, so the run reads the linked path. A
+   `file` or `note` anchor on a text page still names `<hash>.tex`, which is
+   never stored for it ([dev/feedback.md](../dev/feedback.md) "Known
+   gaps"). A page without a document keeps no bytes, whatever its
+   threads.
+3. `hash`, not `doc_id`, names the version a range was measured on, always
+   written and never held, as a region's is: a replacement stamps nothing
+   on text ranges, and "pending" is read (`hash` not the page's file, and
+   neither `lost` nor `approx`).
+4. Columns are code points, which the plan left without a unit. A span
+   never ends in a line break: an end at column 0 of a later line is moved
+   back to the end of the line before, again past empty lines; the quote is
+   cut at 10,000 code points.
+5. The run is in the request up to `TEXT_INLINE_BYTES` (512 KiB), the job
+   above it, where the plan has one job: a formatter run over a repository
+   would meet the 20 jobs an account may run, and the pending window goes.
+   The cost sits on the vault's round: fifty files of 1,000 lines with ten
+   ranges each, placed in their rounds, take about 1.3 s against a budget
+   of 1.5 s, and the ladder alone places 100 ranges in a 50,000-line file
+   in about 0.5 s against 1.0 ([dev/debugging.md](../dev/debugging.md)
+   "Performance budgets"). The choice reads the new document's `size` (a
+   document without one is placed in the request). Its counts go back as
+   `relocation` on `PUT /attachment`'s answer, which the replacement's
+   status reads ("File replaced." and `relocationSummary`); the vault's
+   path logs them under `[relocate]`. A refusal of the run is answered as
+   `relocation_error`, any other failure logged and answered as "the
+   highlights could not be placed: …", since the replacement is committed
+   and the vault's round must not fail on it. The job records `format` in
+   its params, a PDF run's too.
+6. The run hashes the bytes it read and refuses ("the file changed while
+   it was read") when they are not the version it was asked to place; the
+   ranges stay pending until the next change. A PDF run reads a stored
+   file, whose bytes cannot change under it.
+7. The fold: whitespace runs are one space and the ends trimmed, NFC is
+   applied a character and its marks at a time (equal to NFC except across
+   two base characters, Hangul's conjoining jamo), no case folding: a
+   re-indentation or a CRLF rewrite leaves a range exact, a renamed
+   identifier does not. The exact step treats a quote's first and last
+   lines as parts of lines unless the selection took them whole, and
+   bounds itself (the 500 copies nearest the old line ranked, 32 lines
+   either side of the old line per seed word); a solid placement takes the
+   new file's context, a dashed one keeps the stored one. A pending range
+   found nowhere goes back to its reference (`prev`'s lines, which store no
+   columns); a lost range whose version came back with its quote standing
+   is written bare and counted kept.
+8. No review card for text (the PDF's hangs on rectangles): a dashed range
+   is accepted from its menu or by the Document menu's Accept all; a lost
+   one is placed by hand through "Move to a selection…" or "Use the closest
+   match ({n}%)", the review card's step as a menu row, shown for a lost
+   text range that has a `closest`. Accept and the closest match are keyed
+   by the block's own position (`placeKeyOf`), where they read
+   `pdf_position` before; `closestPlacement` takes the block's quote too,
+   since a text position stores none and its `prev` needs it. The Document
+   menu's Review row stays the PDF's; "Find highlights in this file" runs
+   the job by hand, and its route answers a page of another format "the
+   page has no PDF or text file" (it said "no PDF"), a text page without
+   ranges "the page has no highlights placed on its file" and a listed one
+   "the file is listed without its bytes".
+9. A lost range is drawn as a dashed tag at the start of its old first
+   line, not as a hollow mark over its old lines: for text the old line
+   number holds other text now. The line cue stays on its old lines, and
+   its card stands at that line.
+10. No `estimate` and no `earlier` for a text range's `placed`: `exact`,
+    `rough`, `lost` and `pending` serve.
+11. The viewer surface keeps step 3's names `onRegionJump`,
+    `onRegionContext` and `onRegionThread` for a range, and gains
+    `onAnchor`, `onChatSelection` and `onHighlightAction` (the bar over a
+    range the highlighter just made). The viewer flag was not renamed:
+    App reads `regions` as "a region drawn with a finger", and the margin
+    flag already existed as `margin`, which `text` now carries beside
+    `tools: ["highlighter"]`. One gate in App, `takesHighlights` (the
+    viewer's tools name the highlighter; a PDF needs its address too),
+    serves the highlighters, their strip, the command and the notes' Move
+    button; `highlight.created` names a range's kind `lines`.
+12. A selection reaching the chat is a labelled item (`line`, `end`,
+    `file`; the chip "Line 33 · main.tex"), not a new path: the page-0 path
+    existed. App's own selection readers skip the code view, a plain click
+    there clears the set, and a click on a range adds its quote with the
+    file's name. On the server a selection with lines is headed `lines
+    118–120` and read with 20 lines either side through `text_window`, the
+    same budget as the PDF's windows; a cut one carries its `lines`, so the
+    shortened pill names it "Lines 118–120" where it said "PDF passage".
+13. `TipFrame` is lifted to `shared/ui/TipFrame.jsx`, its layer the
+    `--z-tip` token; the code view has its own small `TextTip` (the marks,
+    Copy where the host's menu is off, Comment on this passage), and no
+    Link, Translate or Move; the highlight menu leaves the Link rows out
+    for a text range alone. The selection takes a highlighter's tint only
+    while one is armed, and a linked range is drawn in the accent.
+14. The column's tops come from the viewer (`CommentMarginSlot`'s
+    `topOf`), not from rectangles. It stands beside CodeMirror's scroller,
+    moved with its vertical scroll alone, when the view has room for
+    360 px of text beside it, never on a phone; with Wrap off a long line
+    scrolled sideways passes under its gap. Its tops and a phone's badges
+    are read in CodeMirror's measure phase, the badges from the drawn
+    marks, so a badge exists only while its line is drawn, and a press on
+    one jumps to its range and opens its threads (the PDF's and the
+    picture's badges do), where the plan had it open the bar over the range. A jump to a range not yet loaded waits
+    until the whole file is read, and scrolls only when the range is out
+    of view. comments.md's "The PDF margin" is "The margin".
+15. The anchor's `lines` key is written on `lines` anchors alone, so the
+    other kinds' key order stands. `place_words` names one as `lines
+    118–120, “quote…”`. The chat's thread lines, the feedback tools'
+    answers (`anchors.following`), the entries and the agent's prompt name
+    the lines the block holds now, not those the anchor was opened on. A
+    malformed `text_position` places nothing, so a thread on it reads as a
+    note.
+16. One vocabulary for the place words, client and Markdown, every format:
+    "moved in the new version", "not found in the current version", "drawn
+    on an earlier version", where the PDF's said "build".
+17. A rough entry carries `was`, the quote the comment was made on (from
+    `prev`): the text twin of a PDF entry's `before` picture. The local
+    agents' prompt carries it too. An entry's order puts a page's notes
+    after its placed threads, and a text file's threads by line.
+18. The AI's words for a text range's highlight are its lines and state
+    (`line 52`, `line 47; not found in the current file`, `line 23; placed
+    roughly`), after the quote of the page section's `- Highlighted:` line
+    and of `read_block`'s, so the model reads on with
+    `read_page(from_line=)`.
+19. The client's model: a block with a `pdf_position` and a
+    `text_position` is placed by the PDF's (`placeKeyOf`, as the server's
+    `_placed`), and a kind is read region, then range, then PDF. A range's
+    Properties row reads "Lines 118–120" with its chips (To check, Lost,
+    "Measured on an older version of the file"), which the status line
+    shows too. A range is drawn pending only when both its `hash` and the
+    page's file are known and differ; a span ending at the start of a cut
+    line stops before it, and a line break alone makes none.
+20. The browser group makes ten of its threads through the API on whole
+    lines (a highlight and a thread come from selections in the view). The
+    replaced last sentence keeps a closest match above `CLOSEST_MIN`, so
+    the group takes it from the menu and accepts it, where the plan
+    expected none; the deleted paragraph's has none. Stacked cards are not
+    level with their lines, so only the first card's place is measured.
+    `select.mjs` names `text-anchors` beside the viewers, the comments, the
+    editor, the chat, the feedback reader, the vault, `documents/text.py`
+    and `highlight_relocate.py`.
+21. Not built in step 6: placing a range whose `hash` never was the page's
+    file before the next change (it waits for it); a real long press in the
+    browser group (the phone step sets its selection by script); a review
+    card for text; Link and Translate on a text selection; a format-aware
+    hold for a `file` or `note` anchor on a text page; a check on a touch
+    device of the code view's selection and of the column keeping pace
+    with the scroll; a measured cost of the inline run for a quote of
+    thousands of characters over hundreds of lines (the perf cases place
+    two-line quotes).
 
 ## Still to decide
 

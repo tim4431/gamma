@@ -4,13 +4,15 @@ frontend/tests/textnorm.test.mjs, ink.test.mjs, inkRender.test.mjs,
 finishStroke.test.mjs, notebook.test.mjs, mentions.test.mjs, textBox.test.mjs,
 picture.test.mjs, shapes.test.mjs, shapeTool.test.mjs, itemTypes.test.mjs,
 palette.test.mjs, linkName.test.mjs, personColor.test.mjs,
-passageBudget.test.mjs, libraryUtils.test.mjs and blockOps.test.mjs; a case
+passageBudget.test.mjs, libraryUtils.test.mjs, blockOps.test.mjs,
+textLoad.test.mjs, textAnchors.test.mjs and gammaLinks.test.mjs; a case
 added here fails whichever side drifts. Other pytest modules read the rest
 (blockkind.json test_block_columns.py, pastemath.json test_paste_math.py,
 slug.json test_publish.py, zoterotext.json and zoteroshown.json the text box
-tests, library.json test_work_folders_library.py and workfiling.json
-test_work_folders_filing.py, whose node halves are library.test.mjs and
-workFolders.test.mjs), and test_every_fixture_is_read_by_both_suites checks that every
+tests, library.json test_work_folders_library.py, workfiling.json
+test_work_folders_filing.py and workpaths.json test_work_folder_paths.py,
+whose node halves are library.test.mjs, workFolders.test.mjs and
+workPaths.test.mjs), and test_every_fixture_is_read_by_both_suites checks that every
 fixture has a reader on each side but those ONE_SIDED names. The mirror's
 cases (synctree.json, textmerge.json) have only this Python side; the
 client's recognisers (inkshapes.json, inkscribble.json) have only the node
@@ -916,6 +918,76 @@ def test_format_stored(case):
     from gamma.documents import formats
     head = None if case["head"] is None else case["head"].encode("latin-1")
     assert formats.stored_format(case["name"], case["ext"], head) == (case["format"], case["language"])
+
+
+TEXTDECODE = _load("textdecode.json")
+
+
+@pytest.mark.parametrize("case", TEXTDECODE["cases"], ids=[c["name"] for c in TEXTDECODE["cases"]])
+def test_text_decode(case):
+    """A text file's bytes decoded as the viewer decodes them: by the mark, else UTF-8 with replacement."""
+    from gamma.documents import text
+    got = text.decode(base64.b64decode(case["bytes"]))
+    assert (got.text, got.encoding, got.bad, got.binary) == (case["text"], case["encoding"], case["bad"], case["binary"])
+
+
+def test_language_names():
+    """What a text file's language is called, the client's Format column's words: every language of the tables but plaintext."""
+    from gamma.documents import formats
+    assert formats.LANGUAGE_NAMES == FORMATS["language_names"]
+    langs = {row.language for row in formats.EXTENSIONS.values() if row.language} | {
+        language for _, language in formats.NAMES.values() if language}
+    assert set(formats.LANGUAGE_NAMES) == langs - {"plaintext"}
+
+
+TEXTPOSITION = _load("textposition.json")
+
+
+def test_text_position_numbers():
+    from gamma import highlights
+    from gamma.documents import text_anchors
+    assert (highlights.CONTEXT_CHARS, highlights.TEXT_QUOTE_MAX) == (TEXTPOSITION["context"], TEXTPOSITION["quote_max"])
+    assert text_anchors.TEXT_RELOCATE_MAX_BYTES == TEXTPOSITION["max_text_bytes"]
+
+
+@pytest.mark.parametrize("case", TEXTPOSITION["spans"], ids=[c["name"] for c in TEXTPOSITION["spans"]])
+def test_text_position_reads_as_a_span(case):
+    """A stored text_position's span as its readers take it, the client's
+    textSpan alike: whole numbers (3.0 too, which a browser reads as 3)."""
+    from gamma import highlights
+    got = highlights.text_span({"text_position": case["position"]})
+    assert (dict(zip(highlights.TEXT_SPAN, got)) if got else None) == case["span"]
+
+
+@pytest.mark.parametrize("case", TEXTPOSITION["cases"], ids=[c["name"] for c in TEXTPOSITION["cases"]])
+def test_text_position_span(case):
+    """A text range's quote and context, cut from the decoded lines by code
+    points as the client's contextOf cuts them, its span as stored (clamped,
+    an end at column 0 trimmed), and its columns as CodeMirror counts them."""
+    from gamma import highlights
+    lines, span = case["lines"], case["span"]
+    stored = highlights.clamp_span(lines, span)
+    assert (dict(zip(highlights.TEXT_SPAN, stored)) if stored else None) == case.get("trimmed", span)
+    assert highlights.span_text(lines, span) == (case["quote"], case["prefix"], case["suffix"])
+    if stored:
+        assert highlights.span_text(lines, stored) == (case["quote"], case["prefix"], case["suffix"])
+
+    def units(line, col):
+        return len(line[:col].encode("utf-16-le")) // 2
+    assert case["utf16"] == {"col": units(lines[span["line"] - 1], span["col"]),
+                             "end_col": units(lines[span["end"] - 1], span["end_col"])}
+
+
+LINELINKS = _load("linelinks.json")
+
+
+@pytest.mark.parametrize("case", LINELINKS["cases"], ids=[c["name"] for c in LINELINKS["cases"]])
+def test_line_link(case):
+    """A line link's line=N[-M] and its quote, as read_gamma_link takes them and the client draws a pill."""
+    from gamma import mcp_links
+    assert (mcp_links.MAX_LINE, mcp_links.MAX_QUOTE) == (LINELINKS["max_line"], LINELINKS["max_quote"])
+    span = mcp_links.line_span(case["line"]) if case["quote_chars"] <= mcp_links.MAX_QUOTE else None
+    assert span == (tuple(case["parsed"]) if case["parsed"] else None)
 
 
 FRACTIONALKEYS = _load("fractionalkeys.json")

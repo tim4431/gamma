@@ -14,10 +14,13 @@ import anyio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, email_invites
-from . import guests, hosted, inbox, jobs, migrations, offsite, reports, sync_engine, trash, upload_gc, version
-from . import workspaces, ws_backup, zotero_stream
+from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, downloads
+from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, offsite, reports, sync_engine
+from . import trash, upload_gc, version, workspaces, ws_backup, zotero_stream
 from .feedback import listeners as feedback_listeners, requests as feedback_requests
+from .computers import channel as computer_channel
+from . import local_agents
+from .local_agents import runner as local_agents_runner
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
 from .compression import JsonGzip
@@ -68,7 +71,9 @@ from .routers import (
     zotero as zotero_router,
     zotero_sync as zotero_sync_router)
 from . import folder_links
+from .routers import computer_links as computer_links_api, computers as computers_api
 from .routers import folder_links as folder_links_api
+from .routers import local_agents as local_agents_api
 from .seed import ensure_admin_seed
 
 # Worker threads for sync endpoints, streamed replies and file responses
@@ -243,7 +248,8 @@ def _blocked_app(guide: dict) -> FastAPI:
 def _startup_maintenance():
     """After the data directory is current: create users.db on a fresh
     install (and vaults.db on the desktop app's own server, the one server
-    that keeps it), seed the first admin, then per workspace: apply the per-file
+    that keeps it, whose agents' runs a stopped server left fail there:
+    gamma/local_agents/runner.py ``recover``), seed the first admin, then per workspace: apply the per-file
     schema statements (a restored backup gains page_ops, WAL, ...). A
     workspace behind on its own migration steps is skipped: the background
     walk the lifespan starts (``migrations.warming``) upgrades it, or the
@@ -254,6 +260,11 @@ def _startup_maintenance():
     connect_users_db().close()
     if config.folder_links_enabled():
         connect_vaults_db().close()
+    if local_agents.enabled():
+        try:
+            local_agents_runner.recover()  # the runs a stopped server left fail; the Sends waiting are taken
+        except Exception as e:  # noqa: BLE001 — the agents never stop the server
+            log.error(f"[startup] the agents on this computer could not recover their runs: {e}")
     jobs.recover()
     ensure_admin_seed()
     for ws_id in workspace_ids():
@@ -308,6 +319,23 @@ def sweep_comments() -> None:
         feedback_requests.sweep()
 
 
+def sweep_temp() -> None:
+    """The leftover temporary files' sweeps, at startup and hourly: the
+    snapshots' work files a killed process left (gamma/ws_backup.py), the
+    import reviews past their TTL (gamma/import_staging.py) and the
+    downloads a killed process left (gamma/downloads.py). One timer for the
+    three, as for ``sweep_comments``'s two: the lifespan's ``async with`` is
+    at Python's limit of nested blocks. Each runs whatever the one before
+    did, and logs its own failure."""
+    for fn, failed in ((ws_backup.sweep_stale_temp, "[backups] temp sweep failed"),
+                       (import_staging.sweep, "[imports] staging sweep failed"),
+                       (downloads.sweep, "[downloads] sweep failed")):
+        try:
+            fn()
+        except Exception:
+            log.exception(failed)
+
+
 @asynccontextmanager
 async def every(seconds, fn, failed: str):
     """While the app runs: ``fn`` in a worker thread at startup, then every
@@ -342,11 +370,15 @@ async def zotero_live():
     """While the app runs: Zotero's streaming API (gamma/zotero_stream.py),
     which starts the rounds of Live Zotero links as soon as their library
     changes. Off with the sync loops (``GAMMA_SYNC_INTERVAL=0``); the links
-    keep in step without it, at their safety poll."""
+    keep in step without it, at their safety poll. At its end this
+    computer's channels to other servers stop too (gamma/computers/channel.py,
+    which ``folder_links.tick`` starts): the lifespan's ``async with`` is at
+    Python's limit of nested blocks, so the two share it."""
     zotero_stream.start()
     try:
         yield
     finally:
+        computer_channel.stop_all()
         await asyncio.to_thread(zotero_stream.stop)
 
 
@@ -379,7 +411,7 @@ def create_app() -> FastAPI:
                 every(email_invites.SWEEP_INTERVAL_S, email_invites.sweep, "[invites] sweep failed"), \
                 every(reports.SWEEP_INTERVAL_S, reports.tick, "[reports] round failed"), \
                 every(inbox.SWEEP_INTERVAL_S, inbox.sweep, "[inbox] sweep failed"), \
-                every(ws_backup.STALE_TEMP_S, ws_backup.sweep_stale_temp, "[backups] temp sweep failed"), \
+                every(ws_backup.STALE_TEMP_S, sweep_temp, "[temp] sweep failed"), \
                 every(jobs.SWEEP_INTERVAL_S, jobs.sweep, "[jobs] sweep failed"), \
                 every(db_maintenance.EVERY_S, db_maintenance.tick, "[db] maintenance failed"), \
                 every(offsite.wait_s, offsite.tick, "[offsite] round failed"), \
@@ -466,11 +498,15 @@ def create_app() -> FastAPI:
     app.include_router(collab.router)
     app.include_router(comments_router.router)
     app.include_router(feedback_router.router)
+    app.include_router(local_agents_api.router)
     feedback_listeners.register()  # what keeps the feedback files, requests and kept versions current
+    local_agents_runner.register()  # an agent on this computer takes the Sends of the folders it answers
     app.include_router(reports_router.router)
     app.include_router(sync.router)
     app.include_router(mirrors.router)
     app.include_router(folder_links_api.router)
+    app.include_router(computers_api.router)        # a computer's channel to this server, every server
+    app.include_router(computer_links_api.router)   # this computer's channels to others, the desktop app's
     app.include_router(publish.router)
     app.include_router(zotero_router.router)
     app.include_router(zotero_sync_router.router)  # importing it registers the Zotero link's clock

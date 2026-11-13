@@ -14,12 +14,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { API, apiJson, getCurrentWorkspace } from "../shared/lib/utils";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { t } from "../shared/i18n/i18n.js";
+import { keptFolders } from "../explorer/workFolderActions.js";
 import { bannerKey, readVault, vaultBanner } from "./vaultState.js";
 
 let elsewhere = false;
 
 // `{state, refresh, banner, dismissBanner, adding, setAdding, addingFile,
-// setAddingFile, editing, setEditing, links, refreshLinks, tracking, track,
+// setAddingFile, editing, setEditing, links, kept, refreshLinks, tracking, track,
 // closeTracking, watchRound}`:
 //   state     null for a page of no vault reading no file here, and wherever
 //             the route does not answer (outside the desktop app, a share's
@@ -42,6 +43,12 @@ let elsewhere = false;
 //             routes are the maker's) by their folder's id (GET
 //             /api/folder-links, read once and by `refreshLinks()`);
 //             elsewhere empty
+//   kept      the folders a vault of this server keeps, whoever made it
+//             (every local folder link the account sees, which for a
+//             workspace's owner is all of its workspace's), read with
+//             `links`: null in the desktop app until they are known, empty
+//             on a server that keeps no vault (404) and outside the desktop
+//             app (that server's own answer refuses a folder it keeps)
 //   tracking  {link, fresh} while the tracking dialog is open for the vault
 //             `link` (as GET /api/folder-links/{id} answers it), `fresh`
 //             when the vault is still choosing its
@@ -75,6 +82,7 @@ export function useVault(pageId, enabled, { track = "", setStatus = null } = {})
     }
   }, []);
   useEffect(() => { refresh(); }, [pageId, enabled, refresh]);
+  const [kept, setKept] = useState(() => (IS_DESKTOP ? null : new Set()));
   const refreshLinks = useCallback(async () => {
     if (!IS_DESKTOP || !open.current.enabled) return;
     const ws = getCurrentWorkspace();
@@ -82,7 +90,10 @@ export function useVault(pageId, enabled, { track = "", setStatus = null } = {})
       const { links: all = [] } = await apiJson(`${API}/folder-links`);
       setLinks(new Map(all.filter((l) => l.kind === "folder" && !l.remote_url && l.workspace_id === ws && l.mine)
         .map((l) => [l.folder_id, l])));
-    } catch {}
+      setKept(keptFolders(all));
+    } catch (err) {
+      if (err?.status === 404) setKept(new Set());
+    }
   }, []);
   useEffect(() => { refreshLinks(); }, [enabled, refreshLinks]);
   const trackLink = useCallback(async (linkId) => {
@@ -123,7 +134,7 @@ export function useVault(pageId, enabled, { track = "", setStatus = null } = {})
   return {
     state, refresh, banner: key !== dismissed ? banner : null, dismissBanner,
     adding, setAdding, addingFile, setAddingFile, editing, setEditing,
-    links, refreshLinks, tracking, track: trackLink, closeTracking, watchRound,
+    links, kept, refreshLinks, tracking, track: trackLink, closeTracking, watchRound,
   };
 }
 

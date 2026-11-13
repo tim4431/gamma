@@ -36,6 +36,17 @@
   background: var(--bg-raised);
   border-bottom: 1px solid var(--border-subtle);
 }
+/* A line link's notice (TextViewer.jsx): where the mark went, when its line
+   moved or is past the end; the plain "Line N marked" is for a screen reader
+   alone (.srOnly). */
+.docMarkNotice {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--fs-xs);
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 .docTextBody { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .docTextBody .textScaleBadge { padding-right: var(--space-4); }
 .docTextHost { flex: 1; min-height: 0; }
@@ -99,6 +110,138 @@
 .docTextView .cm-searchMatch { background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 2px; }
 .docTextView .cm-searchMatch.cm-searchMatch-selected { background: color-mix(in srgb, var(--accent) 45%, transparent); }
 .docTextView .cm-selectionMatch { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* The lines a line link marks: the PDF citation mark's accent wash
+   (app.css .pdfCitationMark), still, with an accent bar at the gutter's
+   edge; a wrapped line is marked whole. */
+.docTextView .cm-line.docLineMark {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* The highlights of the file (textMarks.js, textAnchors.js markSpec): the
+   PDF's looks on a themed page. The colour vars come on each mark (--hl,
+   --hl-dark and --hl-dark-line for a dark theme, --hl-mark its line tone);
+   a dark scheme reads the dark-tuned ones, as a dark PDF page does. A wash
+   of the colour; a line style a line in --hl-mark at the foot (underline),
+   wavy there (squiggly) or across the middle (strikeout), as app.css draws
+   them on a PDF page; commented a stronger wash over a line at the foot;
+   the active card's the strong mix; one to check outlined dashed; one
+   measured on another version, which the server has not placed again yet,
+   faint; a link a line in the theme's accent (the PDF's link blue on a
+   themed page); a jump's flash the PDF's. Lines at
+   the foot are box-shadows, so no line box moves. The dark-tuned vars are
+   taken with !important, as app.css takes them on a PDF page: each mark
+   carries its own in its inline style, which a plain rule never beats. */
+:is([data-scheme="dark"], [data-theme="gamma-dark"]) .docTextView :is(.docHl, .docHlLost) {
+  --hl: var(--hl-dark) !important;
+  --hl-mark: var(--hl-dark-line) !important;
+}
+:is([data-scheme="dark"], [data-theme="gamma-dark"]) .docTextView .cm-line.docHlLine {
+  --hl-mark: var(--hl-dark-line) !important;
+}
+.docTextView .docHl {
+  background: color-mix(in srgb, var(--hl) 45%, transparent);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.docTextView .docHl[data-hl-style] { position: relative; background: transparent; }
+.docTextView .docHl[data-hl-style="underline"] {
+  background: linear-gradient(var(--hl-mark), var(--hl-mark)) left bottom / 100% max(1.5px, 9%) no-repeat;
+}
+.docTextView .docHl[data-hl-style="strikeout"] {
+  background: linear-gradient(var(--hl-mark), var(--hl-mark)) left 56% / 100% max(1.5px, 8%) no-repeat;
+}
+.docTextView .docHl[data-hl-style="squiggly"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: max(3px, 24%);
+  background: var(--hl-mark);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 4'%3E%3Cpath d='M0 2Q2 .4 4 2T8 2' fill='none' stroke='black' stroke-width='1.3'/%3E%3C/svg%3E") left bottom / auto 100% repeat-x;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 4'%3E%3Cpath d='M0 2Q2 .4 4 2T8 2' fill='none' stroke='black' stroke-width='1.3'/%3E%3C/svg%3E") left bottom / auto 100% repeat-x;
+  pointer-events: none;
+}
+.docTextView .docHl[data-hl-style]:hover { background-color: color-mix(in srgb, var(--hl) 35%, transparent); }
+.docTextView .docHl.docHlCommented {
+  background: color-mix(in srgb, var(--hl) 55%, transparent);
+  box-shadow: inset 0 -2px 0 var(--hl-dark-line, var(--hl));
+}
+.docTextView .docHl.docHlActive { background: color-mix(in srgb, var(--hl-dark-line, var(--hl)) 35%, var(--hl)); }
+.docTextView .docHl.docHlApprox { outline: 1px dashed var(--hl-dark-line, var(--hl)); outline-offset: -1px; }
+.docTextView .docHl.docHlPending { background: color-mix(in srgb, var(--hl) 25%, transparent); }
+.docTextView .docHl.docHlLink { box-shadow: inset 0 -2px 0 var(--accent); }
+.docTextView :is(.docHl, .docHlLost).docHlFlash { animation: pdfHlFlash 1s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .docTextView :is(.docHl, .docHlLost).docHlFlash { animation: none; box-shadow: 0 0 0 3px var(--hl-dark-line, var(--hl)); }
+}
+/* A lost range's tag at the start of its old first line: an empty box the
+   line's height, dashed in its colour's line tone, its quote as the title;
+   the line's own text is not marked. */
+.docTextView .docHlLost {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 1.2em;
+  height: 1.2em;
+  margin-right: 0.4em;
+  vertical-align: text-bottom;
+  border: 2px dashed var(--hl-dark-line, var(--hl));
+  border-radius: 2px;
+  cursor: pointer;
+}
+.docTextView .docHlLost.docHlActive { background: color-mix(in srgb, var(--hl) 35%, transparent); }
+/* The line cue: a bar in the range's line tone on every line of every
+   range, placed or lost (dashed), fainter for one to check: how a file is
+   scanned for its commented lines. It stands inside the line's padding,
+   beside a line link's bar (.docLineMark) at the gutter's edge. */
+.docTextView .cm-line.docHlLine { position: relative; }
+.docTextView .cm-line.docHlLine::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--space-2);
+  width: 3px;
+  background: var(--hl-mark, var(--accent));
+  pointer-events: none;
+}
+.docTextView .cm-line.docHlLine.lost::before {
+  background: repeating-linear-gradient(to bottom, var(--hl-mark, var(--accent)) 0 4px, transparent 4px 7px);
+}
+.docTextView .cm-line.docHlLine.approx::before { opacity: 0.6; }
+/* The selection in the armed text highlighter's colour (TextViewer sets
+   --selection-color), as over a PDF's text. */
+.docTextView.tinted .cm-content ::selection,
+.docTextView.tinted .cm-content::selection {
+  background: var(--selection-color);
+}
+
+/* The layers beside the text (TextOverlay.jsx). The editor clips what
+   rides past it; the content keeps the column's room at its right while it
+   stands (--doc-margin-w: the card, the gap and the edge). The badges lie
+   over the content's box inside the scroller, scrolling with the text both
+   ways, under the gutters; the column's host lies over the scroller,
+   clipping the cards scrolled past it (not over Find's panel), its track
+   moved with the text's vertical scroll and ending where the column begins
+   (CommentMargin's left: 100% + the gap), so the column stands at the
+   view's right edge. Only the badges and the cards take the pointer. */
+.docTextView .cm-editor { overflow: hidden; }
+.docTextView.withMargin .cm-content { padding-right: var(--doc-margin-w); }
+.docTextOverlay {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+}
+.docTextOverlay .pdfNoteAnchor { pointer-events: auto; }
+.docTextMarginHost {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  overflow: hidden;
+  pointer-events: none;
+}
+.docTextMarginTrack { position: absolute; top: 0; left: 0; width: calc(100% - var(--doc-margin-w)); will-change: transform; }
+.docTextMarginTrack .commentMargin { pointer-events: auto; }
 
 /* --- the picture -------------------------------------------------------- */
 .imgViewer {

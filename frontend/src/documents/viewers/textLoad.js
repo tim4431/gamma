@@ -2,9 +2,12 @@
 // "Viewers"): its head first, through one Range request, the rest on
 // request up to a cap; the bytes decoded by their byte-order mark, else as
 // UTF-8 with replacement; a head cut at its last whole line and every line
-// at a width a view can draw; a NUL early in the bytes meaning the file is
-// no text after all. Pure but for `loadText`'s fetch, so node tests the
-// decoding (tests/textLoad.test.mjs).
+// at a width a view can draw; a NUL, or too many bytes that are no text,
+// meaning the file is no text after all (the server's rule too:
+// gamma/documents/text.py decode, tests/shared/textdecode.json); and which
+// lines the cap cut (cutLinesOf), which no highlight may touch. Pure but
+// for `loadText`'s fetch, so node tests the decoding
+// (tests/textLoad.test.mjs).
 
 // The head a file opens with: one Range request of this many bytes.
 export const HEAD_BYTES = 2 * 1024 * 1024;
@@ -13,8 +16,9 @@ export const MAX_TEXT_BYTES = 16 * 1024 * 1024;
 // A line is cut at this many characters (a minified file is one line of
 // megabytes, which the view would draw whole).
 export const LINE_CAP = 10000;
-// A NUL within the first this many bytes says binary.
-const NUL_SCAN = 8192;
+// More U+FFFD than this share of the characters says binary (text.py's
+// BAD_SHARE).
+export const BAD_SHARE = 0.05;
 
 // The byte-order mark at the start of `bytes`, as {encoding, skip}: UTF-8,
 // UTF-16LE (what Windows PowerShell 5.1 writes) or UTF-16BE; null for none.
@@ -25,17 +29,19 @@ export function byteOrderMark(bytes) {
   return null;
 }
 
-// Whether the first bytes hold a NUL, which no text file does (a UTF-16
-// file does, but its mark says so first).
-export function looksBinary(bytes) {
-  const n = Math.min(bytes.length, NUL_SCAN);
-  for (let i = 0; i < n; i++) if (bytes[i] === 0) return true;
-  return false;
+// Whether decoded text is no text: a NUL anywhere in it (a UTF-16 file's
+// zero bytes are no NUL once decoded by its mark), or U+FFFD past BAD_SHARE
+// of its characters.
+export function notText(text) {
+  if (text.includes("\0")) return true;
+  let bad = 0;
+  for (let i = text.indexOf("\ufffd"); i >= 0; i = text.indexOf("\ufffd", i + 1)) bad++;
+  return bad > BAD_SHARE * text.length;
 }
 
 // The text of `bytes`: {text, bad, binary, cut}. `bad`: some bytes were not
-// the encoding's and show as U+FFFD; `binary`: a NUL in the first bytes of
-// a file with no byte-order mark, so the pane hands over to the file pane;
+// the encoding's and show as U+FFFD; `binary`: what was decoded is no text
+// (notText; text "" and bad false), so the pane hands over to the file pane;
 // `cut`: with `head`, the partial last line was dropped (the file goes on
 // past the bytes read), or a head with no line break at all kept as its one
 // line, and in any read a line past LINE_CAP characters was cut, each with
@@ -43,7 +49,6 @@ export function looksBinary(bytes) {
 export function decodeText(bytes, { head = false } = {}) {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const bom = byteOrderMark(u8);
-  if (!bom && looksBinary(u8)) return { text: "", bad: false, binary: true, cut: false };
   let body = bom ? u8.subarray(bom.skip) : u8;
   let cut = false;
   if (head && body.length) {
@@ -64,31 +69,52 @@ export function decodeText(bytes, { head = false } = {}) {
     text = new TextDecoder(bom?.encoding || "utf-8").decode(body, opts);
     bad = true;
   }
+  if (notText(text)) return { text: "", bad: false, binary: true, cut: false };
   const capped = capLines(text);
   return { text: capped.text, bad, binary: false, cut: cut || capped.cut };
 }
 
-// The index of the last line break's final byte in `body`, -1 for none.
+// The index of the last line break's final byte in `body` (a \n, or a \r:
+// an old Mac file's), -1 for none.
 function lastLineBreak(body, encoding) {
   if (encoding === "utf-16le" || encoding === "utf-16be") {
     const lo = encoding === "utf-16le" ? 0 : 1, hi = 1 - lo;
     for (let i = body.length - (body.length % 2) - 2; i >= 0; i -= 2) {
-      if (body[i + lo] === 0x0a && body[i + hi] === 0) return i + 1;
+      if ((body[i + lo] === 0x0a || body[i + lo] === 0x0d) && body[i + hi] === 0) return i + 1;
     }
     return -1;
   }
-  return body.lastIndexOf(0x0a);
+  return Math.max(body.lastIndexOf(0x0a), body.lastIndexOf(0x0d));
 }
 
-// Every line past LINE_CAP characters cut there, with an ellipsis.
+// Every line past LINE_CAP characters cut there, with an ellipsis; a line
+// ends at \r\n, \r or \n, as the server's and CodeMirror's lines do, and
+// its break is kept, so the cut never moves a line's number.
 function capLines(text) {
   if (text.length <= LINE_CAP) return { text, cut: false };
-  const lines = text.split("\n");
+  const parts = text.split(/(\r\n?|\n)/);
   let cut = false;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].length > LINE_CAP) { lines[i] = `${lines[i].slice(0, LINE_CAP)}…`; cut = true; }
+  for (let i = 0; i < parts.length; i += 2) {
+    if (parts[i].length > LINE_CAP) { parts[i] = `${parts[i].slice(0, LINE_CAP)}…`; cut = true; }
   }
-  return { text: cut ? lines.join("\n") : text, cut };
+  return { text: cut ? parts.join("") : text, cut };
+}
+
+// The lines of `text` (1-based) that capLines cuts, or cut already: those
+// past LINE_CAP characters, whose shown "…" the file has not. A selection
+// touching one makes no highlight (textAnchors.js spanOf).
+export function cutLinesOf(text) {
+  const out = new Set();
+  if (text.length <= LINE_CAP) return out;
+  const breaks = /\r\n?|\n/g;
+  let start = 0, n = 1;
+  for (let m = breaks.exec(text); ; m = breaks.exec(text)) {
+    const end = m ? m.index : text.length;
+    if (end - start > LINE_CAP) out.add(n);
+    if (!m) return out;
+    start = m.index + m[0].length;
+    n++;
+  }
 }
 
 // The file's whole size from a response: a 206's Content-Range total, else

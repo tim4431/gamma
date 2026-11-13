@@ -456,8 +456,9 @@ export function pageKindLabel(doc) {
 // language; "" for none.
 const FORMAT_LABELS = { markdown: T("Markdown"), text: T("Text"), image: T("Picture"), audio: T("Audio"),
   video: T("Video"), binary: T("File") };
-// The names languages are known by, in every interface language.
-const LANGUAGE_LABELS = {
+// The names languages are known by, in every interface language: the
+// server's formats.LANGUAGE_NAMES too (tests/shared/formats.json).
+export const LANGUAGE_LABELS = {
   latex: "LaTeX", bibtex: "BibTeX", csv: "CSV", tsv: "TSV", json: "JSON", yaml: "YAML", toml: "TOML", // i18n-ignore
   xml: "XML", ini: "INI", python: "Python", mathematica: "Mathematica", matlab: "MATLAB", html: "HTML", // i18n-ignore
   javascript: "JavaScript", typescript: "TypeScript", jsx: "JSX", tsx: "TSX", css: "CSS", scss: "SCSS", // i18n-ignore

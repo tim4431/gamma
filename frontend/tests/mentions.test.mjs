@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
-  dateLabel, datePending, dateToken, mentionRows, mentionText, mentionTrigger, parseDateQuery, remindAt, scanMentions,
+  dateLabel, datePending, dateToken, mentionChip, mentionRows, mentionText, mentionTrigger, parseDateQuery, peopleIn, remindAt, scanMentions,
 } from "../src/editor/mentions.js";
 
 const shared = JSON.parse(await readFile(new URL("../../tests/shared/mentions.json", import.meta.url), "utf8"));
@@ -154,4 +154,48 @@ test("a picked row's text", () => {
   assert.equal(mentionText({ kind: "person", user: "bob.k" }), "@bob.k");
   assert.equal(mentionText({ kind: "page", id: "p1" }), "[[p1]]");
   assert.equal(mentionText({ kind: "invite" }), "");
+});
+
+const CODEX = { name: "codex", label: "Codex", ready: true, problem: "" };
+const many = [1, 2, 3, 4, 5, 6].map((n) => ({ username: `m${n}` }));
+
+test("a comment field's agent: a row of People past the people's cap, by its name or label", () => {
+  const list = rows("", { agents: [CODEX], canInvite: false });
+  assert.deepEqual(summary(list).filter((r) => r.startsWith("people")),
+    ["people:person:carol", "people:person:alice", "people:person:bob.k", "people:agent"]);
+  assert.deepEqual(list.find((r) => r.kind === "agent"),
+    { section: "people", kind: "agent", key: "agent:codex", name: "codex", label: "Codex", ready: true, problem: "" });
+  assert.equal(rows("", { people: many, agents: [CODEX] }).filter((r) => r.kind === "person").length, 5);
+  assert.equal(rows("", { people: many, agents: [CODEX] }).some((r) => r.kind === "agent"), true, "five members never push it out");
+  assert.deepEqual(summary(rows("cod", { agents: [CODEX] })), ["people:agent"]);
+  const claude = { name: "claude", label: "Claude Code", ready: false, problem: "Claude Code is not signed in." };
+  assert.equal(rows("code", { agents: [claude] }).find((r) => r.kind === "agent")?.problem, "Claude Code is not signed in.", "by its label");
+  assert.equal(rows("alice", { agents: [CODEX] }).some((r) => r.kind === "agent"), false);
+  assert.equal(rows("").some((r) => r.kind === "agent"), false, "a note passes none");
+});
+
+test("a member named as the agent has no row where the agent has one", () => {
+  const people = [...PEOPLE, { username: "codex" }];
+  assert.equal(rows("cod", { people }).some((r) => r.key === "person:codex"), true, "a note, or no agent: the member");
+  assert.deepEqual(summary(rows("cod", { people, agents: [CODEX] })), ["people:agent"]);
+});
+
+test("the agent's row writes its @name, and its token chips as the agent's before a member's", () => {
+  const row = rows("", { agents: [CODEX] }).find((r) => r.kind === "agent");
+  assert.equal(mentionText(row, "carol"), "@codex");
+  const [token] = scanMentions("@codex please");
+  const known = new Set(["carol", "codex"]);
+  assert.deepEqual(mentionChip(token, { me: "carol", known, agents: [CODEX] }),
+    { kind: "agent", text: "@codex", title: "Agent: Codex on this computer" });
+  assert.equal(mentionChip(token, { me: "carol", known }).kind, "person", "without the agent: the member");
+  assert.equal(mentionChip(token, { me: "carol", known: new Set() }), null, "nor a member: plain text");
+  assert.equal(mentionChip(scanMentions("@Codex")[0], { me: "carol", known: new Set(), agents: [CODEX] }), null, "the name exactly");
+});
+
+test("the people a text mentions outside code, as the server reads them", () => {
+  assert.deepEqual([...peopleIn("@codex fix this, @bob.k look")], ["codex", "bob.k"]);
+  assert.deepEqual([...peopleIn("`@codex` and\n```\n@alice\n```\n@carol")], ["carol"]);
+  assert.deepEqual([...peopleIn("```\n@alice never closed")], []);
+  assert.deepEqual([...peopleIn("mail tim@codex.org on 2026-10-09 @2026-10-09")], []);
+  assert.deepEqual([...peopleIn("")], []);
 });

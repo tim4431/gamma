@@ -111,7 +111,7 @@ def build(target: Path, github_repo: str | None = None, archive: bool = False):
     claude_catalog.write_text(json.dumps({
         "name": "gamma-local",
         "owner": {"name": "Gamma"},
-        "metadata": {"description": "Search and read Gamma PDF libraries with Claude Code."},
+        "metadata": {"description": "Search and read Gamma libraries with Claude Code."},
         "plugins": [{"name": "gamma", "source": "./plugins/gamma",
                      "description": manifests[1]["description"], "category": "productivity"}],
     }, indent=2) + "\n", encoding="utf-8")

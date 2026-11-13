@@ -9,10 +9,15 @@ import { useMemo, useRef } from "react";
 import { EXTENSIONS } from "./formats.js";
 
 // The handlers a surface carries, each null when App gives none (the
-// viewer then leaves the control out: no region drag when read-only, no
-// Show in folder off the desktop).
-const HANDLERS = ["onZoomTo", "onEffectiveScale", "onPlace", "onRegion", "onRegionJump", "onRegionContext", "onRegionThread",
-  "onMarginLost", "onAskRegion", "onReveal"];
+// viewer then leaves the control out: no region drag nor selection tip
+// when read-only, no Show in folder off the desktop). The region handlers
+// serve a text file's ranges too; onAnchor(position, quote, extras) makes
+// one from the code view's selection (→ the new highlight's id),
+// onHighlightAction(id, action, value) is the bar over one just made, and
+// onChatSelection(text, additive, {line, end, file}) hands the chat a
+// selection of lines ("" for a plain click, which clears the chat's set).
+const HANDLERS = ["onZoomTo", "onEffectiveScale", "onPlace", "onMarkDone", "onRegion", "onRegionJump", "onRegionContext",
+  "onRegionThread", "onMarginLost", "onAskRegion", "onReveal", "onAnchor", "onHighlightAction", "onChatSelection"];
 
 // The extensions a replacement of `doc` may bring, for the file picker's
 // accept: the registry rows of the document's format (formats.js), "" for
@@ -23,32 +28,40 @@ export function replaceAccept(doc) {
 }
 
 // `state`: {doc, fileUrl, pageId, readOnly, hidden, phone, scale (App's
-// pdfScale), regions, anchors, flashId, regionMode, commentMargin,
-// marginRef, scrollRef, captureRef}; `handlers`: HANDLERS' functions, or
-// null, and `placeOf()`, where the page's viewer last stood (read once per
-// page: a viewer takes its place as it mounts). → {surface, reportRef}:
-// the surface, memoised on what it shows, and the ref the viewer sets to
-// report its place (App's captureScrollPos calls it before leaving).
+// pdfScale), mark, regions (the placed highlights: a picture's regions, a
+// text file's ranges), anchors, flashId, regionMode, moveMode,
+// commentMargin, marginRef, scrollRef, captureRef}; `moveMode` a highlight
+// waits to be moved to the next selection (App's moveHighlightId, the
+// PDF's moveMode); `mark` a line link's target on this
+// page ({kind: "line", line, to, quote}, or `scrollOnly` for Back's return
+// to a line), which the viewer ends with onMarkDone; `handlers`: HANDLERS'
+// functions, or null, and `placeOf()`, where the page's viewer last stood
+// (read once per page: a viewer takes its place as it mounts). →
+// {surface, reportRef}: the surface, memoised on what it shows, and the ref
+// the viewer sets to report its place (App's captureScrollPos and navEntry
+// call it).
 export function useViewerSurface(state, handlers) {
   const reportRef = useRef(null);
   const fns = useRef(handlers);
   fns.current = handlers;
   const given = HANDLERS.map((k) => !!handlers[k]);
-  const { doc, fileUrl, pageId, readOnly, hidden, phone, scale, regions, anchors, flashId, regionMode, commentMargin,
-    marginRef, scrollRef, captureRef } = state;
+  const { doc, fileUrl, pageId, readOnly, hidden, phone, scale, mark = null, regions, anchors, flashId, regionMode,
+    moveMode = false, commentMargin, marginRef, scrollRef, captureRef } = state;
   const surface = useMemo(() => {
     const call = (k) => (fns.current[k] ? (...args) => fns.current[k]?.(...args) : null);
     return {
       doc, fileUrl, pageId, readOnly, hidden, phone,
       scale: { value: scale, onZoomTo: call("onZoomTo"), onEffectiveScale: call("onEffectiveScale") },
       place: fns.current.placeOf?.() ?? null, onPlace: call("onPlace"), reportRef,
-      regions, anchors, flashId, regionMode,
+      mark, onMarkDone: call("onMarkDone"),
+      regions, anchors, flashId, regionMode, moveMode,
       onRegion: call("onRegion"), onRegionJump: call("onRegionJump"), onRegionContext: call("onRegionContext"), onRegionThread: call("onRegionThread"),
       commentMargin, marginRef, onMarginLost: call("onMarginLost"), scrollRef, captureRef,
       onAskRegion: call("onAskRegion"), onReveal: call("onReveal"),
+      onAnchor: call("onAnchor"), onHighlightAction: call("onHighlightAction"), onChatSelection: call("onChatSelection"),
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `given` stands for the handlers' presence
-  }, [doc, fileUrl, pageId, readOnly, hidden, phone, scale, regions, anchors, flashId, regionMode, commentMargin,
-    marginRef, scrollRef, captureRef, ...given]);
+  }, [doc, fileUrl, pageId, readOnly, hidden, phone, scale, mark, regions, anchors, flashId, regionMode, moveMode,
+    commentMargin, marginRef, scrollRef, captureRef, ...given]);
   return { surface, reportRef };
 }

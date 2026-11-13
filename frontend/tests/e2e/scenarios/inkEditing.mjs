@@ -1007,7 +1007,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
       await vpage.keyboard.press("ControlOrMeta+p");
       const palette = vpage.getByRole("dialog", { name: "Open a page" });
       await palette.waitFor();
-      await palette.getByRole("textbox", { name: "Search pages by title or label" }).fill("Slow to load");
+      await palette.getByRole("textbox", { name: "Search pages, files, folders and labels" }).fill("Slow to load");
       await palette.locator('[role="option"][data-kind="page"]', { hasText: "Slow to load" }).click();
       await until(() => new URL(vpage.url()).searchParams.get("block") === next.id, { what: "the next paper open" });
       // the strip stays open with nothing armed: the pen, then Ctrl+V

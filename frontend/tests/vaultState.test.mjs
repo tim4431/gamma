@@ -2,8 +2,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  addsToLibrary, bannerKey, baseName, carriesToServer, directionText, editsFile, isOpenedPdf, libraryWorkspaces,
-  notesLocked, openedHere, readVault, vaultBanner, vaultChip, vaultConflictsPath,
+  addsToLibrary, agentLine, bannerKey, baseName, carriesToServer, computerAgent, computerChip, directionText, editsFile, isOpenedPdf,
+  libraryWorkspaces, mentionAgent, notesLocked, openedHere, readComputers, readVault, sinceText, vaultBanner, vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
 
@@ -179,4 +179,110 @@ test("App's page list (libraryUtils.pageBlocksOf) carries what isOpenedPdf reads
   assert.equal(isOpenedPdf("paper", rows), true);
   assert.equal(isOpenedPdf("stored", rows), false, "a page there whose PDF is stored");
   assert.equal(isOpenedPdf("notes", rows), false, "a page there that reads no file of its own");
+});
+
+test("a work folder's agent on this computer: named, its problem while it cannot run, what it is at while it works", () => {
+  const agent = (extra) => folder({ agent: { name: "codex", label: "Codex", ready: true, problem: "", running: null, ...extra } });
+  assert.deepEqual(agentLine(agent()), { line: "Agent: Codex on this computer", problem: "", working: "" });
+  assert.equal(agentLine(agent({ ready: false, problem: "Codex is not on this computer." })).problem, "Codex is not on this computer.");
+  assert.equal(agentLine(agent({ ready: null, problem: "" })).problem, "", "still checking");
+  assert.equal(agentLine(agent({ running: { request_id: "r1", detail: "Editing main.tex" } })).working, "Codex is working: Editing main.tex");
+  assert.equal(agentLine(agent({ running: { request_id: "r1", detail: "" } })).working, "Codex is working", "a member who cannot act on it");
+  assert.equal(agentLine(folder({ agent: null })), null);
+  assert.equal(agentLine(folder()), null);
+  assert.equal(agentLine(opened()), null);
+  assert.equal(agentLine(null), null);
+});
+
+test("the agent a comment names: the work folder's, for its maker alone", () => {
+  const codex = { name: "codex", label: "Codex", ready: true, problem: "", running: null };
+  const work = (over = {}, agent = {}) => folder({ work_folder: true, mine: true, agent: { ...codex, ...agent }, ...over });
+  assert.deepEqual(mentionAgent(work()), { name: "codex", label: "Codex", ready: true, problem: "" });
+  assert.deepEqual(mentionAgent(work({}, { running: { request_id: "r1", detail: "Editing main.tex" } })),
+    { name: "codex", label: "Codex", ready: true, problem: "" }, "working: still named");
+  assert.equal(mentionAgent(work({}, { ready: false, problem: "Codex is not signed in." })).problem, "Codex is not signed in.");
+  assert.equal(mentionAgent(work({}, { ready: null, problem: "stale" })).problem, "", "still checking");
+  assert.equal(mentionAgent(work({ mine: false })), null, "a member who did not make the vault");
+  assert.equal(mentionAgent(work({ work_folder: false })), null);
+  assert.equal(mentionAgent(work({ agent: null })), null, "no agent on");
+  assert.equal(mentionAgent(opened()), null);
+  assert.equal(mentionAgent(null), null);
+});
+
+test("the chat's computer side: the same agent, with its run, the folder's name and whether it is paused", () => {
+  const codex = { name: "codex", label: "Codex", ready: true, problem: "", running: null };
+  const work = (over = {}, agent = {}) => folder({ work_folder: true, mine: true, agent: { ...codex, ...agent }, ...over });
+  assert.deepEqual(computerAgent(work()),
+    { name: "codex", label: "Codex", ready: true, problem: "", running: null, folder: "Papers", paused: false });
+  const running = { kind: "chat", request_id: null, detail: "Editing main.tex" };
+  assert.deepEqual(computerAgent(work({}, { running })).running, running);
+  assert.equal(computerAgent(work({ name: "" })).folder, "Attention.md", "no name: the path's last");
+  assert.equal(computerAgent(work({ paused: true })).paused, true);
+  assert.equal(computerAgent(work({ choosing: true })).paused, true, "still choosing its files");
+  assert.equal(computerAgent(work({}, { ready: false, problem: "Codex is not signed in." })).problem, "Codex is not signed in.");
+  assert.equal(computerAgent(work({ mine: false })), null, "a member who did not make the vault");
+  assert.equal(computerAgent(work({ work_folder: false })), null);
+  assert.equal(computerAgent(work({ agent: null })), null, "no agent on");
+  assert.equal(computerAgent(opened()), null);
+  assert.equal(computerAgent(null), null);
+});
+
+const codexThere = { name: "codex", label: "Codex", found: true, ready: true, version: "0.167.0", code: "" };
+const pc = (over = {}) => ({ id: "c1", name: "TIM-PC", online: true, since: null, vault: { kind: "folder", name: "cavity", paused: false },
+  assistants: [codexThere], ...over });
+
+test("the page's computers: kept only when the answer names them", () => {
+  assert.deepEqual(readComputers({ computers: [pc()] }), [pc()]);
+  assert.deepEqual(readComputers({ computers: [null, "x", { id: "c2" }, pc()] }), [pc()], "a computer with no name is none");
+  assert.deepEqual(readComputers({ computers: "nonsense" }), []);
+  assert.deepEqual(readComputers(null), []);
+});
+
+test("when a computer went offline: the time today, the day this year, the year before", () => {
+  const now = new Date(2026, 10, 13, 18, 0);
+  assert.match(sinceText(new Date(2026, 10, 13, 14, 2).toISOString(), now), /2:02/);
+  const day = sinceText(new Date(2026, 10, 3, 9, 0).toISOString(), now);
+  assert.match(day, /Nov/);
+  assert.match(day, /3/);
+  assert.doesNotMatch(day, /2026|9:00/);
+  assert.match(sinceText(new Date(2025, 10, 3).toISOString(), now), /2025/);
+  assert.equal(sinceText(null, now), "");
+  assert.equal(sinceText("nonsense", now), "");
+});
+
+test("the computer's chip: its name, connected or offline since, the vault it keeps, and the assistants there", () => {
+  const now = new Date(2026, 10, 13, 18, 0);
+  const chip = computerChip([pc()], now);
+  assert.equal(chip.label, "Synced vault on TIM-PC");
+  assert.equal(chip.online, true);
+  assert.equal(chip.state, "Connected");
+  assert.equal(chip.vault, "Folder: cavity");
+  assert.equal(chip.paused, "");
+  assert.equal(chip.assistants, "Assistants there: Codex");
+  assert.equal(chip.title, "Connected\nFolder: cavity\nAssistants there: Codex");
+  const away = computerChip([pc({ online: false, since: new Date(2026, 10, 13, 14, 2).toISOString() })], now);
+  assert.equal(away.online, false);
+  assert.match(away.state, /^Offline since 2:02/);
+  assert.equal(computerChip([pc({ online: false })], now).state, "Offline", "no time known");
+  assert.equal(computerChip([pc({ vault: { kind: "file", name: "main.pdf", paused: true } })], now).vault, "File: main.pdf");
+  assert.equal(computerChip([pc({ vault: { kind: "file", name: "main.pdf", paused: true } })], now).paused, "Paused on TIM-PC");
+  assert.equal(computerChip([pc({ online: false }), pc({ id: "c2", name: "LAPTOP" })], now).label, "Synced vault on TIM-PC", "the first: the server sends online ones first");
+  assert.equal(computerChip([], now), null);
+  assert.equal(computerChip(null, now), null);
+});
+
+test("the assistants there: by their code, never the computer's own words; none found, no line", () => {
+  const claude = { name: "claude", label: "Claude Code", found: true, ready: true, version: "2.1.318", code: "" };
+  const line = (assistants) => computerChip([pc({ assistants })]).assistants;
+  assert.equal(line([codexThere, claude]), "Assistants there: Codex, Claude Code");
+  assert.equal(line([{ ...codexThere, ready: false, code: "signed_out" }, { ...claude, ready: null, code: "checking" }]),
+    "Assistants there: Codex (not signed in), Claude Code (checking)");
+  assert.equal(line([{ ...codexThere, ready: false, code: "not_ready" }]), "Assistants there: Codex (not ready)");
+  assert.equal(line([{ name: "codex", label: "Codex", found: null, ready: null, version: "", code: "checking" }]),
+    "Assistants there: Codex (checking)", "not yet found or not: the computer is still checking");
+  assert.equal(line([{ name: "claude", found: true, ready: true, code: "" }]), "Assistants there: Claude Code", "no label: its name");
+  assert.equal(line([{ ...codexThere, found: false, ready: false, code: "missing" }, claude]), "Assistants there: Claude Code");
+  assert.equal(line([{ ...codexThere, found: false, ready: false, code: "missing" }]), "");
+  assert.equal(line([]), "");
+  assert.equal(line(undefined), "");
 });

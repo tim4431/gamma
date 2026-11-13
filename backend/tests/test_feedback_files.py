@@ -1,7 +1,8 @@
 """The feedback files below a work folder's ``.gamma/feedback/``
 (gamma/feedback/files.py, docs/dev/feedback.md "The files"): written by
 every whole round and within one hot pass of a comment, byte for byte the
-same on a quiet pass, rewritten on a reply, a moved place and a resolve,
+same on a quiet pass, an entry on lines of a tracked source file naming
+them, rewritten on a reply, a moved place and a resolve,
 emptied by the last resolve, gone with the vault and when it stops being a
 work folder; nothing written where the directory is not the vault's, below
 a junction, or while the vault is paused or choosing its files; Gamma's
@@ -20,7 +21,7 @@ import pymupdf
 import pytest
 
 from conftest import account_of, fresh_client, login, make_page, make_user, thread_on, token_for
-from gamma import folder_links, gamma_sync, pdf_meta, storage
+from gamma import folder_links, gamma_sync, highlights, pdf_meta, storage
 from gamma.vault import disk as vault_disk, kinds, store as vault_store
 from gamma.blocks_store import new_block_id
 from gamma.db import connect_pages_db, connect_vaults_db
@@ -190,6 +191,36 @@ def test_the_files_are_written_by_every_round_within_a_pass_of_a_comment_and_lef
     _pass()
     assert _sync(owner, link["id"])["feedback"] == {"open": 1}
     assert _footprint(root) == before and _leftovers(root) == []
+
+
+def test_a_thread_on_lines_of_a_source_file_is_an_entry_naming_them(owner, disk):
+    """A work folder that tracks ``*.tex``: a range of ``main.tex`` and a
+    thread on it give an entry with the file's own path and lines, no
+    picture, and the version stays where it is read (nothing stored)."""
+    root = disk / "paper"
+    tex = "\\section{Method}\nWeight decay is the oldest remedy.\nThis note measures how much it helps.\n"
+    link = _vault(owner, root, {".gammaignore": "*\n!*/\n!*.tex\n!*.pdf\n", "main.tex": tex}, pull=False)
+    ws, page = link["workspace_id"], _page_of(link, "main.tex")
+    with connect_pages_db(ws) as conn:
+        doc = json.loads(conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page,)).fetchone()[0])["doc"]
+    assert doc["format"] == "text"
+    lines = tex.split("\n")
+    span = (3, 0, 3, len(lines[2]))
+    quote, prefix, suffix = highlights.span_text(lines, span)
+    block = new_block_id()
+    commit_ops(ws, page, [insert(page, "", {"text_position": highlights.text_position(
+        *span, hash=doc["hash"], prefix=prefix, suffix=suffix), "quote": quote}, block)], actor=account_of(OWNER))
+    thread = thread_on(owner, page, block, "say by how much")
+    _pass()
+    [entry] = _open(root)["entries"]
+    assert {k: entry[k] for k in ("id", "file", "format", "kind", "where", "source", "picture", "before")} == {
+        "id": thread["id"], "file": "main.tex", "format": "text", "kind": "lines",
+        "where": {"line": 3, "quote": "This note measures how much it helps.", "placed": "exact"},
+        "source": {"file": "main.tex", "line": 3, "version": "current"}, "picture": None, "before": None}
+    text = (_here(root) / "open.md").read_text(encoding="utf-8")
+    assert "### 1. Line 3 · “This note measures how much it helps.”\n" in text
+    assert "- source: `main.tex`, line 3\n" in text
+    assert not storage.exists(ws, f"{doc['hash']}.tex")
 
 
 def test_a_reply_a_moved_place_and_a_resolve_rewrite_the_files_and_the_last_resolve_empties_them(owner, disk):

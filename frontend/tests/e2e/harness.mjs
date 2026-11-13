@@ -119,7 +119,12 @@ export class Server {
   // of them (a second each) would block the event loop past the backend's
   // 5 s keep-alive, and the next request would go down a socket it had closed.
   async manage(...args) {
-    const { stdout } = await execFileAsync(PYTHON, ["manage.py", ...args], {
+    return this.python("manage.py", ...args);
+  }
+  // A script of backend/ on this server's data dir (a seed such as
+  // tests/seed_work_folder.py, which imports gamma as manage.py does); its output.
+  async python(...args) {
+    const { stdout } = await execFileAsync(PYTHON, args, {
       cwd: BACKEND, env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, TMPDIR: this.tmpDir, ...this.env }, encoding: "utf8",
     });
     return stdout;

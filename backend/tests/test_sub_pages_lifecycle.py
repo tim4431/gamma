@@ -263,7 +263,7 @@ def test_empty_reads_the_trash_once_on_one_connection(owner, monkeypatch):
         owner.delete(f"/api/blocks/{tree[0]}").raise_for_status()
     asked, reads, conns = [], [], set()
     real_went, real_trashed, real_entry, real_purge = ops._went_with, trash._trashed, trash._purge_entry, \
-        trash.pdf_index.purge_unused
+        trash.text_index.purge_unused
     monkeypatch.setattr(ops, "_went_with", lambda conn, page: asked.append(page) or real_went(conn, page))
 
     def entry(ws, conn, *args, **kw):
@@ -276,7 +276,7 @@ def test_empty_reads_the_trash_once_on_one_connection(owner, monkeypatch):
         return real_purge(ws, conn, *args, **kw)
 
     monkeypatch.setattr(trash, "_purge_entry", entry)
-    monkeypatch.setattr(trash.pdf_index, "purge_unused", purge)
+    monkeypatch.setattr(trash.text_index, "purge_unused", purge)
 
     def trashed(conn):
         out = real_trashed(conn)
@@ -325,7 +325,7 @@ def test_step_48_indexes_what_went_with_a_page(data_dir):
         old.commit()
     try:
         with connect_pages_db("splOld48") as cx:
-            assert cx.execute("PRAGMA user_version").fetchone()[0] == 55  # the newest workspace step
+            assert cx.execute("PRAGMA user_version").fetchone()[0] == 58  # the newest workspace step
             assert ops._went_with(cx, "splTop48") == ["splKid48"]
             plan = " ".join(str(r[-1]) for r in cx.execute(  # _went_with's own statement
                 f"EXPLAIN QUERY PLAN {ops.WENT_WITH_SQL}", ("splTop48", TRASH)))

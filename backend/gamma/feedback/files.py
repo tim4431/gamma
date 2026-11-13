@@ -132,7 +132,11 @@ def write(link: dict) -> dict:
     pictures or files wait for the next pass (the pictures' cap, a replace a
     reader held), or ``{"open": n, "error": why}`` when the directory is
     not the vault's or does not answer, the folder is no work folder's, or a
-    write failed, logged once per change of text. Never raises."""
+    write failed, logged once per change of text. A vault of another server
+    writes none yet (its threads are that server's): ``{"open": 0}``. Never
+    raises."""
+    if link["remote_url"]:
+        return {"open": 0}
     ws, w = link["workspace_id"], link["folder_id"]
     root = Path(link["path"])
     count = 0
@@ -174,9 +178,12 @@ def write_request(link: dict, request_id: str) -> None:
     pictures ``img/`` holds already, the rest null until a pass draws
     them), best effort: nothing while a round or a pass holds the vault's
     lock (the work folder is marked, so the hot pass writes it), and an
-    error is only logged. Never raises."""
+    error is only logged; nothing for a vault of another server, whose
+    threads are that server's. Never raises."""
     from .. import folder_links  # local: it imports ops, which imports comments, which imports this package
 
+    if link["remote_url"]:
+        return
     with folder_links.try_holding(link["id"]) as held:
         if not held:
             return

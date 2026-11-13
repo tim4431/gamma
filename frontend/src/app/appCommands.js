@@ -12,20 +12,22 @@
 // page selected on the home library), homePicks (how many), organize (the
 // library may be changed: library/libraryAccess.js), search(all),
 // palette(prefix), back(), undo(redo), renameTitle(), deletePages(), recentlyDeleted(), toggleChat(),
-// toggleComments(), togglePdf(), toggleNotes(), splitTab(side) and joinGroups()
+// toggleComments(), togglePdf(), toggleNotes(), toggleFiles() (the Files
+// window; on a phone its overlay), splitTab(side) and joinGroups()
 // with phone (one view at a time: no groups) and groups (how many tab groups),
 // openSettings(pane), exportAs(format),
 // downloadPdf(), importDialog(), newPage(), share(), metadata(), pageProperties(), attach(),
 // reportProblem(), and for the handwriting group (docs/dev/handwriting.md
 // "Copy, cut and paste"): inkOpen (the markup strip is open), inkTool (a
 // tool other than the hand is armed), inkSelected (the lasso holds a
-// selection), inkClip (the handwriting clipboard holds strokes), inkCopy(),
-// inkCut(), inkPaste(), inkDuplicate(), inkSelectAll(), and translation (the
-// PDF's translated view, docs/dev/translation.md "The button"; null where the
-// translate button does not apply): {pages, shown, running, current,
-// docDone, as the viewer reports them, toggle(), page(), document()}, and
-// highlighter (the text highlighters, docs/dev/settings.md "Text
-// highlighters"; null where they do not apply): {toggle(), next()} }.
+// selection), inkClip (the handwriting clipboard holds strokes or
+// pictures), inkCopy(), inkCut(), inkPaste(), inkDuplicate(),
+// inkSelectAll(), and translation (the PDF's translated view,
+// docs/dev/translation.md "The button"; null where the translate button
+// does not apply): {pages, shown, running, current, docDone, as the viewer
+// reports them, toggle(), page(), document()}, and highlighter (the text
+// highlighters, docs/dev/settings.md "Text highlighters"; null where they
+// do not apply): {toggle(), next()} }.
 import { t } from "../shared/i18n/i18n.js";
 import { isTextField } from "../shared/lib/hotkeys.js";
 
@@ -122,6 +124,7 @@ export const APP_COMMANDS = [
   cmd("app.toggleComments", t("Show or hide the comments"), GROUP_VIEW, null, (c) => { c.toggleComments(); }, { when: (c) => c.hasPage && c.commentsOn }),
   cmd("app.togglePdf", t("Show or hide the PDF"), GROUP_VIEW, null, (c) => { c.togglePdf(); }, { when: (c) => c.hasPdf }),
   cmd("app.toggleNotes", t("Show or hide the notes"), GROUP_VIEW, null, (c) => { c.toggleNotes(); }, { when: (c) => c.hasPdf }),
+  cmd("app.toggleFiles", t("Show or hide the Files window"), GROUP_VIEW, null, (c) => { c.toggleFiles(); }, { when: (c) => !c.shareMode }),
   // Tab groups (docs/dev/tab_groups.md): the page's place splits once, the
   // open page's tab into a pane of its own on the right, and every tab back
   // in one group. A phone has one view at a time, so no groups.

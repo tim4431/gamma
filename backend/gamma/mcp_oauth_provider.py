@@ -9,7 +9,7 @@ from mcp.server.auth.provider import AuthorizationCode, AuthorizationParams, Aut
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 from .db import connect_users_db
-from .integrations import create_token, grant, granted, token_digest
+from .integrations import create_token, edit_grant, editing, grant, granted, token_digest
 from .mcp_oauth import FEEDBACK_SCOPE, TTL, load, offered, store
 
 
@@ -17,6 +17,8 @@ class GammaCode(AuthorizationCode):
     user_id: str
     workspace_id: str
     workspaces: str = ""  # the stored grant (integrations.grant): "", "*" or a JSON list
+    edits: str = ""  # the ones of them it may edit (integrations.edit_grant)
+    asks: bool = True  # whether each change there asks first
     session_hash: str
 
 
@@ -72,9 +74,11 @@ class Provider:
         try:
             wanted = granted(value["workspace_id"], value.get("workspaces", ""))
             primary, stored = grant(value["user_id"], wanted, scope)
+            edits = edit_grant(value["user_id"], primary, stored, editing(value.get("edits", "")))
             issued = create_token(value["user_id"], primary,
                                   (client.client_name or "MCP assistant")[:65] + " (OAuth)", 90,
-                                  oauth_resource=self.resource, scope=scope, workspaces=stored)
+                                  oauth_resource=self.resource, scope=scope, workspaces=stored, edits=edits,
+                                  asks=value.get("asks", True))
         except HTTPException as exc:
             raise TokenError("invalid_grant", str(exc.detail)) from exc
         return OAuthToken(access_token=issued["token"], expires_in=TTL, scope=" ".join(value["scopes"]))

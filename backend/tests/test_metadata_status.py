@@ -2,7 +2,7 @@
 
 from conftest import doc_props, make_page, workspace_of, guest_name
 from gamma.db import connect_data_db
-from gamma.pdf_index import store_doc
+from gamma.search.index import store_doc
 from gamma.textnorm import normalize_text
 
 
@@ -117,7 +117,7 @@ def test_status_reads_index_state(guest):
 
     # Bumped extraction version → the doc reads as stale, not indexed.
     with connect_data_db(ws) as conn:
-        conn.execute("UPDATE pdf_fts_docs SET ver = ver - 1 WHERE doc_id = ?", (doc,))
+        conn.execute("UPDATE text_fts_docs SET ver = ver - 1 WHERE doc_id = ?", (doc,))
     r = guest.get("/api/metadata/status")
     p = _paper(r, page["id"])
     assert p["indexed"] is False

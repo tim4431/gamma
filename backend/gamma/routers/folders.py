@@ -12,28 +12,42 @@ see the refiling like any edit. A deleted folder's AI chats (its bucket and
 its subfolders') are filed into the library chat's history, and its share
 links stop. Workspace editors; never through a share link. Inside a work
 folder the tree is its vault's (``work_folders.filing.tree_op``): a person's
-delete there is refused with the ``locked`` conflict.
+delete there is refused with the ``locked`` conflict. A workspace owner
+lets go of a work folder whose vault is not on this server (``POST
+/api/folders/{id}/let-go``).
 
 The library listing leaves a work folder's files out unless they are in the
 library; ``GET /api/folders/{id}/pages`` lists one of its directories
-instead, sorted and paged, a row per file as the listing has it.
+instead, sorted and paged, a row per file as the listing has it. ``GET
+/api/folders/{id}/at`` resolves a path, or a note's relative link, to the
+pages at it (work_folders/paths.py), and ``GET /api/files`` finds files by
+name or path across the work folders (quick open's Files group,
+work_folders/file_search.py), both rows as the listing has them with each
+file's ``path``.
 """
+
+import json
 
 from fastapi import APIRouter, HTTPException, Request
 
 from .. import comments
-from ..auth import actor_of, require_ws, resolve_ws, share_scope, writer_client
+from ..auth import actor_of, require_user_id, require_ws, resolve_ws, share_scope, writer_client, ws_role
 from ..blocks_store import FOLDERS, LABELS
-from ..db import connect_pages_db
+from ..db import SQL_FILE_NAME, connect_pages_db
 from ..ops import OpError, delete_tree
+from ..work_folders import file_search, paths
 from ..work_folders.marks import Tree
-from .blocks import SUMMARY_COLUMNS, op_refusal, page_summary
+from .blocks import SUMMARY_COLUMNS, changes_seq, op_refusal, page_summary, summaries
 
 router = APIRouter(prefix="/api", tags=["folders"])
 
 FOLDER_PAGES = 200      # the files one read of a directory gives by default
 MAX_FOLDER_PAGES = 500  # ...and at most
 SORTS = ("name", "format", "size", "modified")
+FILE_HITS = 20          # the files one search answers by default
+MAX_FILE_HITS = 50      # ...and at most
+NOT_A_DIRECTORY = "the library lists this folder's pages"
+OUT_OF_SHARE = "not accessible via this share link"
 
 
 def delete_tree_block(ws: str, tree: str, block_id: str, *, actor: str, client: str = ""):
@@ -68,6 +82,50 @@ def delete_folder(folder_id: str, request: Request):
     return delete_tree_block(ws, FOLDERS, folder_id, actor=actor_of(request), client=writer_client(request))
 
 
+@router.post("/folders/{folder_id}/let-go")
+def let_go_of_work_folder(folder_id: str, request: Request):
+    """A work folder whose vault is not on this server let go by a
+    workspace owner (``takeover.let_go``): a computer gone, its token
+    revoked or expired, or its vault removed while this server did not
+    answer would leave the folder locked for every member. Its files not in
+    the library go to Recently deleted, the others stay as library pages
+    filed where they were, its mark is taken off and its directory folders
+    that hold no page go → ``{ok, kept, trashed}``, the files kept and those
+    sent. The computer that kept it stops at its next round
+    (gamma/folder_links.py ``MARK_GONE``). A session of the workspace's
+    owner (403 otherwise, and for a token or a share link); 404 for a
+    folder that carries no mark; 409 for one a synced vault of this server
+    keeps, which is removed instead, and for any in a workspace something
+    else keeps in step (a clone, a Zotero link: ``elsewhere.kept_elsewhere``),
+    whose marks are copies: a clone's let-go would reach its source as the
+    mirror's writes, which no work-folder rule holds, so the source's owner
+    lets go there."""
+    from .. import folder_links
+    from ..work_folders import elsewhere, takeover
+
+    user_id = require_user_id(request)
+    ws = _writer(request)
+    if ws_role(request) != "owner":
+        raise HTTPException(status_code=403, detail="Only the workspace's owner may let go of a work folder.")
+    with connect_pages_db(ws) as conn:
+        marked = Tree.read(conn).mark(folder_id) is not None
+    if not marked:
+        raise HTTPException(status_code=404, detail="That folder is no work folder.")
+    if elsewhere.kept_elsewhere(ws):
+        raise HTTPException(status_code=409, detail="This workspace is kept in step by something else (a clone of "
+                                                    "another, or a Zotero link): let go of the work folder in the "
+                                                    "workspace it comes from, or stop keeping this one in step first.")
+    if any(link["kind"] == "folder" and not link["remote_url"] and link["workspace_id"] == ws
+           and link["folder_id"] == folder_id for link in folder_links.all_links()):
+        raise HTTPException(status_code=409, detail="This work folder is kept by a synced vault on this server: "
+                                                    "remove the vault instead.")
+    try:
+        done = takeover.let_go(ws, folder_id, user_id)
+    except OpError as e:
+        return op_refusal(e)
+    return {"ok": True, **done}
+
+
 @router.delete("/labels/{label_id}")
 def delete_label(label_id: str, request: Request):
     """Delete a label and take it off every page: ``{ids, pages, chats: 0,
@@ -96,8 +154,10 @@ def folder_pages(folder_id: str, request: Request, sort: str = "name", order: st
     """A work folder's directory, page by page: the files filed directly in
     the folder ``folder_id`` (their ``folders[0]``, ``idx_ub_dir``), W itself
     or a folder below it, whatever the library lists — ``{folder, pages:
-    [row], offset, next, total}``, ``next`` the offset of the next page
-    (null at the end). A row is the page as the library listing has it
+    [row], offset, next, total, seq}``, ``next`` the offset of the next page
+    (null at the end), ``seq`` the change log's as the rows were read (the
+    listing's ``work_changes`` says when a directory read at it changed
+    since). A row is the page as the library listing has it
     (``page_summary``, no preview, and no parent: a file is inside no page)
     with ``open_comments``, its open threads (``comments.open_counts``).
     ``sort``: ``name`` (the file's name, then the title; the default),
@@ -119,9 +179,9 @@ def folder_pages(folder_id: str, request: Request, sort: str = "name", order: st
     scope = share_scope(request)
     with connect_pages_db(resolve_ws(request)) as conn:
         if scope is not None and not scope.allows_folder(conn, folder_id):
-            raise HTTPException(status_code=403, detail="not accessible via this share link")
+            raise HTTPException(status_code=403, detail=OUT_OF_SHARE)
         if not Tree.read(conn).work_of(folder_id):
-            raise HTTPException(status_code=400, detail="the library lists this folder's pages")
+            raise HTTPException(status_code=400, detail=NOT_A_DIRECTORY)
         if not conn.in_transaction:
             conn.execute("BEGIN")  # the rows and the count of one snapshot
         where = "INDEXED BY idx_ub_dir WHERE parent_id = 'root' AND work_folder IS NOT NULL AND first_folder = ?"
@@ -129,8 +189,132 @@ def folder_pages(folder_id: str, request: Request, sort: str = "name", order: st
         rows = conn.execute(f"SELECT {SUMMARY_COLUMNS} FROM unified_blocks {where} "
                             f"ORDER BY {_order(sort, desc)} LIMIT ? OFFSET ?", (folder_id, limit, offset)).fetchall()
         counts = comments.open_counts(conn, [r[0] for r in rows])
+        seq = changes_seq(conn)
         conn.rollback()
     pages = [{**page_summary(r, ""), "open_comments": counts.get(r[0], 0)} for r in rows]
     end = offset + len(rows)
     return {"folder": folder_id, "pages": pages, "offset": offset, "next": end if end < total else None,
-            "total": total}
+            "total": total, "seq": seq}
+
+
+def _file_row(tree: Tree, row, shared: str = "") -> dict:
+    """A file as the listing has it (no preview, no parent) with its
+    ``path`` in its work folder (for a folder share ``shared``, from the
+    shared folder's parent: ``paths.path_top``)."""
+    page = page_summary(row, "")
+    return {**page, "path": paths.page_path(tree, page["properties"], title=page["content"], shared=shared)}
+
+
+def _member_or_folder_share(request: Request):
+    """The request's share scope, None for a member; 403 for a page
+    share, which reaches no folder."""
+    scope = share_scope(request)
+    if scope is not None and not scope.folder:
+        raise HTTPException(status_code=403, detail=OUT_OF_SHARE)
+    return scope
+
+
+@router.get("/folders/{folder_id}/at")
+def folder_path(folder_id: str, path: str, request: Request, dir: str | None = None):
+    """The pages a path names in the work folder of ``folder_id`` (W or a
+    directory of it): ``{pages: [row]}``, a row the page as the listing
+    has it with its ``path``, by path then id. ``path`` is a link's target
+    as a note wrote it, or a typed path; ``dir`` the directory of the note
+    the link is in, as ``paths.dir_path`` spells it ("" for W), by default
+    ``folder_id``'s own (a note's link asks with its note's directory, which
+    a folder share of it covers). Resolved by ``paths.page_at_href``:
+    relative to ``dir``, then from W's top. Two files the rule cannot tell
+    apart are both answered, for the caller to choose; 404 for none (a link
+    with a scheme or a leading ``/`` names none). 400 for a folder in no
+    work folder; any member, or a folder share that covers the folder,
+    which resolves the path among the pages it reaches alone (403
+    otherwise, and for a page share)."""
+    scope = _member_or_folder_share(request)
+    with connect_pages_db(resolve_ws(request)) as conn:
+        if scope is not None and not scope.allows_folder(conn, folder_id):
+            raise HTTPException(status_code=403, detail=OUT_OF_SHARE)
+        if not conn.in_transaction:
+            conn.execute("BEGIN")  # the tree, the resolution and the rows of one snapshot
+        tree = Tree.read(conn)
+        work = tree.work_of(folder_id)
+        if not work:
+            conn.rollback()
+            raise HTTPException(status_code=400, detail=NOT_A_DIRECTORY)
+        base = paths.dir_path(tree, folder_id, work) if dir is None else dir
+        allows = None if scope is None else (lambda page_id: scope.allows_page(conn, page_id))
+        ids = paths.page_at_href(conn, tree, work, base, path, allows=allows)
+        found = summaries(conn, ids) if ids else {}
+        conn.rollback()
+    if not found:
+        raise HTTPException(status_code=404, detail="no tracked file at that path")
+    shared = scope.folder if scope is not None else ""
+    rows = [_file_row(tree, found[i], shared) for i in ids if i in found]
+    return {"pages": sorted(rows, key=lambda r: (r["path"], r["id"]))}
+
+
+@router.get("/files")
+def find_files(q: str, request: Request, folder: str = "", limit: int = FILE_HITS):
+    """A work folder's files by name or path, best first: ``{files: [row],
+    total}``, a row the file as the listing has it with its ``path``, its
+    ``dir`` (the path's directory part, "" at the top) and ``match: {name,
+    path}``, the code-point spans ``[from, to)`` the query matched in the
+    file's name and in ``dir``; ``total`` how many matched before the cut
+    at ``limit`` (at most ``MAX_FILE_HITS``). The rule is
+    ``work_folders.file_search``; a ``q`` that names nothing (blank, or
+    separators alone) answers no rows. ``folder``: W or a directory of it,
+    its subtree only (400 for a folder in no work folder); none: every work
+    folder. Any member; a folder share keeps to the files its folder
+    reaches (403 for a folder it does not cover, and for a page share),
+    their paths and directories measured from the shared folder's parent
+    (``paths.path_top``), so no folder above it is named or matched.
+
+    One snapshot: the candidates are read from ``idx_ub_file_name`` alone
+    (named: the planner never picks it), the longest runs of the query's
+    letters and digits a LIKE each on the name's expression
+    (``file_search.runs``), then ranked in Python and the top rows read by
+    id."""
+    scope = _member_or_folder_share(request)
+    limit = max(1, min(limit, MAX_FILE_HITS))
+    query = file_search.parse(q)
+    with connect_pages_db(resolve_ws(request)) as conn:
+        if folder and scope is not None and not scope.allows_folder(conn, folder):
+            raise HTTPException(status_code=403, detail=OUT_OF_SHARE)
+        if not conn.in_transaction:
+            conn.execute("BEGIN")
+        tree = Tree.read(conn)
+        if folder and not tree.work_of(folder):
+            conn.rollback()
+            raise HTTPException(status_code=400, detail=NOT_A_DIRECTORY)
+        if query is None:
+            conn.rollback()
+            return {"files": [], "total": 0}
+        within = None
+        if folder or scope is not None:
+            within = tree.subtree(folder or scope.folder)
+            if folder and scope is not None:
+                within &= tree.subtree(scope.folder)
+            within = sorted(f for f in within if tree.work_of(f))
+        sql = (f"SELECT {SQL_FILE_NAME}, first_folder, id FROM unified_blocks INDEXED BY idx_ub_file_name "
+               "WHERE parent_id = 'root' AND work_folder IS NOT NULL")
+        args: list = []
+        if within is not None:
+            sql += " AND first_folder IN (SELECT value FROM json_each(?))"
+            args.append(json.dumps(within))
+        for run in file_search.runs(query):
+            sql += f" AND {SQL_FILE_NAME} LIKE ?"
+            args.append(f"%{run}%")
+        shared = scope.folder if scope is not None else ""
+
+        def dir_of(f):
+            w = tree.work_of(f)
+            return paths.dir_path(tree, f, paths.path_top(tree, w, shared))
+
+        hits, total = file_search.rank(conn.execute(sql, args), query, dir_of, limit)
+        found = summaries(conn, [h[0][2] for h in hits]) if hits else {}
+        conn.rollback()
+    files = []
+    for (_, folder_id, page_id), _, name_spans, dir_spans in hits:
+        if page_id in found:
+            row = _file_row(tree, found[page_id], shared)
+            files.append({**row, "dir": dir_of(folder_id), "match": {"name": name_spans, "path": dir_spans}})
+    return {"files": files, "total": total}

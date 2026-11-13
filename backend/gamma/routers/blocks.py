@@ -54,6 +54,7 @@ from ..ops import (MAX_CONTENT, OpError, StorableBody, after_commits, apply_each
 from ..storage import upload_refs
 from ..textnorm import fuzzy_pattern, literal_runs
 from ..work_folders.library import SQL_IN_LISTING
+from .search import scope_pages
 
 router = APIRouter(prefix="/api", tags=["blocks"])
 
@@ -115,16 +116,19 @@ class UBPutChildrenRequest(StorableBody):
 
 
 class NotesSearch(BaseModel):
-    """POST /block-search: the GET's q mode, with the pages the panel's
-    filters keep sent as their ids (``pages``: None for the whole library,
-    [] for none) and the block kinds ``in:`` keeps (``kinds``, [] for
-    all)."""
+    """POST /block-search: the GET's q mode, kept to the folders and labels
+    of the panel's chips (``folders``, ``labels``) and the pages its
+    predicates keep, sent as their ids (``pages``: None for the whole
+    library, [] for none) — routers/search.scope_pages — and to the block
+    kinds ``in:`` keeps (``kinds``, [] for all)."""
     q: str = ""
     limit: int = 10
     case: bool = False
     whole: bool = False
     cursor: str = ""
     pages: list[str] | None = None
+    folders: list[str] | None = None
+    labels: list[str] | None = None
     kinds: list[str] = []
 
 
@@ -311,14 +315,15 @@ def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
 
 @router.post("/block-search")
 def block_search_post(payload: NotesSearch, request: Request):
-    """The Ctrl+F panel's notes group: GET /block-search's ``q`` mode with
-    the page ids its filters keep (``pages``, at most MAX_SEARCH_PAGES:
-    413 past it; [] finds nothing) and the block kinds ``in:`` keeps
-    (``kinds``, 400 for one no block has), in the body, since a URL cannot
-    carry a library's ids. It answers what the GET answers, a share token's
-    reach (``?share=``) included: ``pages`` only narrows what the token
-    reaches. A read, though a POST (hosted.POST_READS). Sync def: the scan
-    runs in the threadpool."""
+    """The Ctrl+F panel's notes group: GET /block-search's ``q`` mode inside
+    the folders and labels of its chips and the page ids its predicates
+    keep (``scope_pages``; ``pages`` at most MAX_SEARCH_PAGES: 413 past it;
+    [] finds nothing) and the block kinds ``in:`` keeps (``kinds``, 400 for
+    one no block has), in the body, since a URL cannot carry a library's
+    ids. It answers what the GET answers, a share token's reach
+    (``?share=``) included: the scope only narrows what the token reaches.
+    A read, though a POST (hosted.POST_READS). Sync def: the scan runs in
+    the threadpool."""
     bad = sorted(set(payload.kinds) - SEARCH_KINDS)
     if bad:
         raise HTTPException(status_code=400, detail=f"unknown kind: {', '.join(bad)}")
@@ -328,7 +333,7 @@ def block_search_post(payload: NotesSearch, request: Request):
     share = share_scope(request)
     with connect_pages_db(resolve_ws(request)) as conn:
         reach = share.block_ids(conn) if share is not None else None
-        pages = set(payload.pages) if payload.pages is not None else None
+        pages = scope_pages(conn, payload)
         found = _notes_search(conn, reach, payload.q, payload.limit, payload.case, payload.whole, after, pages,
                               payload.kinds)
         if isinstance(found, dict):
@@ -403,8 +408,9 @@ def ub_get_children(block_id: str, request: Request, within: str = ""):
     when it is in the library or pinned) as its ``page_summary`` (sub-pages
     too, each naming its parent and with its preview, which the pinned and
     recents strips and a label view draw; one whose top is not carried is
-    left out), the folder and label trees (``_trees``) and ``work_counts``
-    (``_work_counts``) — what the home view draws, in one request. A folder
+    left out), the folder and label trees (``_trees``), ``work_counts``
+    (``_work_counts``) and ``work_changes`` (``_work_changes``) — what the
+    home view draws, in one request. A folder
     share lists the pages it reaches, a work folder's files too.
     ``within`` (a folder id; 400 through a share): the pages filed in that
     folder or below it instead, whatever the library lists (``pages_in_folder``),
@@ -441,7 +447,8 @@ def ub_get_children(block_id: str, request: Request, within: str = ""):
                 carried = {r[0] for r in rows}
                 rows = [r for r in rows if top_of(parents, r[0]) in carried]
             out = {"children": [page_summary(r, page_preview(conn, r[0]), parents.get(r[0], "")) for r in rows],
-                   **_trees(conn, scope, rows), "work_counts": _work_counts(conn, scope)}
+                   **_trees(conn, scope, rows), "work_counts": _work_counts(conn, scope),
+                   "work_changes": _work_changes(conn, scope)}
             conn.rollback()
             return OrjsonResponse(out)
         if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
@@ -489,6 +496,36 @@ def _work_counts(conn, scope) -> dict[str, int]:
     return counts
 
 
+WORK_CHANGES = 500  # the change log's last seqs the listing's ``work_changes`` reads
+
+
+def changes_seq(conn) -> int:
+    """The workspace change log's last seq (``page_changes``), 0 for none."""
+    return conn.execute("SELECT COALESCE(MAX(seq), 0) FROM page_changes").fetchone()[0]
+
+
+def _work_changes(conn, scope) -> dict:
+    """The listing's ``work_changes``: ``{seq, since, dirs}``, ``seq`` the
+    change log's last (``changes_seq``), ``dirs`` ``{folder id: seq}``, the
+    last write to a file filed right in each directory of a work folder
+    (its ``first_folder``) among the writes after ``since`` (the last
+    WORK_CHANGES seqs), a folder share's only for the folders it reaches. A
+    directory's rows read at a seq (``GET /folders/{id}/pages`` answers
+    it) of at least ``since`` are as the files stand while ``dirs`` names
+    no later write to that directory: a file renamed on disk, which changes
+    no count, is a write to its page. One seek of the log's seq index and a
+    row per page written."""
+    seq = changes_seq(conn)
+    since = max(0, seq - WORK_CHANGES)
+    dirs = {folder: n for folder, n in conn.execute(
+        "SELECT ub.first_folder, MAX(pc.seq) FROM page_changes pc JOIN unified_blocks ub ON ub.id = pc.page_id "
+        "WHERE pc.seq > ? AND ub.work_folder IS NOT NULL GROUP BY ub.first_folder", (since,)) if isinstance(folder, str)}
+    if scope is not None and dirs:
+        reach = folder_subtree_ids(conn, scope.folder)
+        dirs = {folder: n for folder, n in dirs.items() if folder in reach}
+    return {"seq": seq, "since": since, "dirs": dirs}
+
+
 # What the library listing carries of a page's properties: what the home
 # view's cards and filters, quick open, the chat and link pickers and the
 # DOI / arXiv link matching read (docs/dev/api.md "The library listing"):
@@ -523,6 +560,16 @@ def page_summary(row, preview: str, parent: str = "") -> dict:
         props["meta"] = meta
     return {"id": row[0], "content": row[2] or "", "position": row[1], "created_at": row[3],
             "updated_at": row[4], "preview": preview, "parent": parent, "properties": props}
+
+
+def summaries(conn, ids: list[str]) -> dict:
+    """The live root pages among ``ids`` as ``SUMMARY_COLUMNS`` rows, by
+    id. ``+parent_id``, as ops' lookups write it: the planner otherwise
+    takes idx_ub_parent and walks every root row, a work folder's 20,000
+    files among them, for a few ids."""
+    return {r[0]: r for r in conn.execute(
+        f"SELECT {SUMMARY_COLUMNS} FROM unified_blocks WHERE +parent_id = 'root' "
+        "AND id IN (SELECT value FROM json_each(?))", (json.dumps(ids),))}
 
 
 PREVIEW_CHARS = 240

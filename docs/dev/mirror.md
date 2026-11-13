@@ -204,7 +204,7 @@ but no round reads them; "Limits and next steps"), the comments (in
 pages.db beside the pages too: each server keeps its own, and a comment
 write moves no change feed, [comments.md](comments.md)),
 cover snapshots, search indexes (the copy keeps its own: the notes index
-follows the copy's own writes, the PDF index is extracted again).
+follows the copy's own writes, the document text index is extracted again).
 
 ## The page filter
 

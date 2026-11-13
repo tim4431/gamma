@@ -72,7 +72,7 @@ These describe the implementation unless explicitly marked as plans.
 | Run commands, test selection, browser tests, timing budgets, and diagnostics | [Running, testing, and debugging](debugging.md) |
 | CI, packaging, and release workflows | [GitHub Actions](github_actions.md) |
 | HTTP endpoints and authorization | [API](api.md) |
-| Search normalization, indexing, and result highlighting | [Search](api.md#search-searchpy-gammablock_indexpy-gammapdf_indexpy) |
+| Search normalization, indexing, and result highlighting | [Search](api.md#search-searchpy-gammablock_indexpy-gammasearch) |
 | Accounts, databases, stored files, quotas, and logs | [Storage and accounts](user_db.md) |
 | Workspace roles, sharing, and backups | [Workspaces](workspaces.md) |
 | Data-directory upgrades | [Migrations](migrations.md) |
@@ -93,7 +93,7 @@ These describe the implementation unless explicitly marked as plans.
 | The typesetting engine both PDF writers share, and the annotated-PDF export | [PDF typesetting](pdf_typesetting.md) |
 | Background jobs, the tasks tray, and adding a kind of long work | [Background tasks](tasks.md) |
 | Folders and labels, pages inside pages, page cards, recents, and trash | [Home library](home_library.md) |
-| A page's document, the `doc` property, of any format: the format registry, the stored shape and its rules (the listed state of a file too large to keep), the one read and its predicates (the file a page owns, the file it shows, read in place, a library PDF), one library page per stored file, migration steps 52 and 55, the shared fixtures, the viewer registry and the viewers (the code view, the picture with its regions, the player, the file pane) | [Documents](documents.md) |
+| A page's document, the `doc` property, of any format: the format registry, the stored shape and its rules (the listed state of a file too large to keep), the one read and its predicates (the file a page owns, the file it shows, read in place, a library PDF), one library page per stored file, migration steps 52 and 55, the shared fixtures, the viewer registry and the viewers (the code view with its highlight ranges, the picture with its regions, the player, the file pane) | [Documents](documents.md) |
 | Work folders: a synced vault's folder whose tracked files are pages that follow the disk, the library rule (what the library lists, what is a paper), the op rule (who may refile, rename or trash a file), `.gammaignore` and the tracking dialog, the takeover of older vaults, Add to library and Save a copy, migration step 53, and every root-page reader classified | [Work folders](work_folders.md) |
 | Pages side by side: the open tabs arranged into two panes, each with its strip, its page buttons and its page, split by a tab's menu, the topbar's right-click or a drag onto a side of the page; the ringed live pane and the view of the other, drawn as the page itself, with the docked windows around the groups; this browser's arrangement over the synced tabs | [Tab groups](tab_groups.md) |
 | Provider configuration, chat, and the library agent | [AI](ai.md) |
@@ -102,14 +102,16 @@ These describe the implementation unless explicitly marked as plans.
 | Chat buckets per page and folder, the active conversation, the archive, and exporting a conversation with its pictures | [Chat history](chat_history.md) |
 | The translated PDF view, its engines and limits, and the annotated PDF that carries it | [PDF translation](translation.md) |
 | Clickable PDF citations and library links | [PDF citations](pdf_citations.md) |
-| A page's highlights found again by their text after its PDF is replaced, the rough matches drawn dashed, the ones not found drawn hollow with their closest match, the review card of both, moving one by hand | [Highlights after a PDF replacement](highlight_relocation.md) |
+| A page's highlights found again by their text after its PDF is replaced, the rough matches drawn dashed, the ones not found drawn hollow with their closest match, the review card of both, moving one by hand; a text file's ranges found again by their quote and context when the file changes | [Highlights after a PDF replacement](highlight_relocation.md) |
 | MCP, integration tokens, OAuth, and assistant plugins | [MCP](mcp.md) |
 | Preferences, Settings panes, notices, and backup tasks | [Settings](settings.md) |
 | Themes, controls, menus, dialogs, and editor interactions | [UI design](ui-design.md) |
 | Command catalogs, dispatch, and keybindings | [Hotkeys](hotkeys.md) |
 | The note editor's @ menu: dates, people and page links as chips, reminders and their delivery | [Mentions and reminders](mentions.md) |
-| Comment threads on notes, pages, highlights, regions of a picture and handwriting: storage, who may comment, the API, following the blocks; each account's Inbox and its live delivery | [Comments](comments.md) |
+| Comment threads on notes, pages, highlights, regions of a picture, ranges of a text file and handwriting: storage, who may comment, the API, following the blocks; each account's Inbox and its live delivery | [Comments](comments.md) |
 | Feedback: the comment threads on a work folder's files as entries an agent acts on, with the place each was opened on, the source line SyncTeX maps it to, a picture of its region, the version kept while it is open, Send and its requests, the files below `.gamma/feedback/`, the routes, the feedback token scope and the MCP tools, the seam for a connector | [Feedback](feedback.md) |
+| An agent on this computer: Codex CLI or Claude Code turned on for a work folder in the desktop app, which takes the maker's Sends, works in the folder's directory and answers each comment; finding the agents, the claim and the run, the prompt and the answer, the two drivers, the processes, what vaults.db keeps, the routes, trust | [Local agents](local_agents.md) |
+| A computer and the servers its vaults name: the `computer` token and its channel (an announce and a held poll), presence kept by the server and shown to the vault's maker in any window, the sync panel's line, the routes on both sides, trust | [Computers](computers.md) |
 | LaTeX pairing, completion, caret behavior, preview, and pasted `\( \)` / `\[ \]` math | [LaTeX editing](latex_editing.md) |
 | Mermaid and SVG diagrams: rendering, sanitizing, sizing and editing | [Diagrams](diagrams.md) |
 | Interface translations and catalogs | [Internationalization](i18n.md) |
@@ -137,12 +139,14 @@ These describe the implementation unless explicitly marked as plans.
   zoom-in is the open item. The stored shapes as built are in
   [storage](user_db.md) and [home library](home_library.md).
 - [Any file as a page](../research/file-explorer.md): a plan whose steps 0
-  to 3 are built ([documents](documents.md),
-  [work folders](work_folders.md), [feedback](feedback.md)). A page's
+  to 6 are built ([documents](documents.md),
+  [work folders](work_folders.md), [feedback](feedback.md),
+  [highlight relocation](highlight_relocation.md#text-files)). A page's
   document of any format with a viewer for each, work folders through
   synced vaults whose tracked files are chosen, comment threads as feedback
-  a local agent acts on, and a Files window; its steps and what is still to
-  decide.
+  a local agent acts on, text files in search and the chat, a Files
+  window, and highlights and threads on a text file's lines that follow
+  their text when the file changes; its steps and what is still to decide.
 - [Scaling on SQLite](../research/scaling.md): items 1 to 12 of its work list
   are done (item 8, the blob seam, was built and then taken out again) and
   described in the topic docs above; the cluster items (LiteFS, placement, a

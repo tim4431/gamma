@@ -5,6 +5,8 @@ insert that lets a constraint decide. Each test starts several requests at
 once on a barrier, with the gap between the check and the write widened
 where there is one to widen, and looks at what is left."""
 
+import threading
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -67,6 +69,15 @@ def test_two_owners_demoting_each_other_at_once_leave_an_owner(owner, monkeypatc
     ws = info["id"]
     workspaces.set_member(ws, account_of("cw_second"), "owner", by=account_of("cw_owner"))
     slowed(monkeypatch, workspaces, "_is_last_owner")  # between the owner count and the write
+    # Both past the route's owner check before either writes: a request the
+    # other's demotion beat to that check is refused there (403), and the
+    # count-and-write race below never runs.
+    real, both_owners = workspaces.set_member, threading.Barrier(2, timeout=10)
+
+    def set_member(*args, **kwargs):
+        both_owners.wait()
+        return real(*args, **kwargs)
+    monkeypatch.setattr(workspaces, "set_member", set_member)
     results = at_once([
         lambda: owner.put(f"/api/workspaces/{ws}/members/cw_second", json={"role": "editor"}),
         lambda: second.put(f"/api/workspaces/{ws}/members/cw_owner", json={"role": "editor"}),

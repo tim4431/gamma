@@ -5,9 +5,12 @@ the library lists), a directory of 10,000 files reads its first page of
 rows at once, the directories' counts come from one indexed read, the op
 rule's read of a folder tree of 2,000 directories stays small, the
 feedback document of 50 open threads among the files reads at once
-(docs/dev/feedback.md), and migration step 55's rebuild of the kind column
-over the files is timed once. The rows are inserted directly, as a vault's
-would stand. The one real round is a work folder's first over 2,000 small
+(docs/dev/feedback.md), quick open's search of the files by name or path
+(GET /api/files) answers within a keystroke, a path resolves to its page
+at once, the summaries of a tab bar's pages read at once, and migration
+step 55's rebuild of the kind column over the files is timed once. The
+rows are inserted directly, as a vault's would stand
+(tests/seed_work_folder.py). The one real round is a work folder's first over 2,000 small
 files of mixed formats, every file a page (docs/dev/work_folders.md "The
 round in a work folder"), timed once and reported.
 
@@ -36,6 +39,7 @@ from gamma.routers import blocks as blocks_router
 from gamma.vault import disk as vault_disk, store as vault_store, sync as vault_sync
 from gamma.vault.local_remote import LocalRemote
 from gamma.work_folders.marks import Tree
+from seed_work_folder import add_folders, seed
 from test_migrations import KIND_55, kind_before_55
 from test_perf import budget, measure
 from test_vault_files import PNG
@@ -61,34 +65,6 @@ def _serial():
         pytest.skip("timing budgets run serially: python -m pytest tests/test_work_folder_scale.py -m perf")
 
 
-def _folders(conn, parent, names, now) -> list[str]:
-    """Folder rows below ``parent``, inserted directly."""
-    ids = [secrets.token_urlsafe(9) for _ in names]
-    conn.executemany(f"INSERT INTO unified_blocks ({BLOCK_COLUMNS}) VALUES (?, ?, ?, ?, '{{}}', ?, ?, ?)",
-                     [(i, parent, f"a{n:06d}", name, now, now, FOLDERS) for n, (i, name) in enumerate(zip(ids, names))])
-    return ids
-
-
-def _files(conn, w, directory, count, now, start) -> None:
-    """``count`` files of the work folder ``w`` filed in ``directory``, as
-    their vault stamps them (every third a note), each with its row of the
-    change log."""
-    rows, seq = [], conn.execute("SELECT COALESCE(MAX(seq), 0) FROM page_changes").fetchone()[0]
-    for n in range(start, start + count):
-        page_id, leaf = secrets.token_urlsafe(9), f"file-{n:05d}"
-        props = {"work_folder": w, "folders": [directory]}
-        if n % 3:
-            props |= {"file_name": f"{leaf}.pdf", "doc": {"format": "pdf", "name": f"{leaf}.pdf",
-                                                          "hash": secrets.token_hex(12), "ext": ".pdf", "at": "path",
-                                                          "url": "", "size": 1000 + n}}
-        else:
-            props["file_name"] = f"{leaf}.md"
-        rows.append((page_id, "root", f"z{n:06d}", leaf, json.dumps(props), now, now, page_id))
-    conn.executemany(f"INSERT INTO unified_blocks ({BLOCK_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
-    conn.executemany("INSERT INTO page_changes (page_id, seq, kind, at, actor) VALUES (?, ?, 'live', ?, '')",
-                     [(r[0], seq + k, now) for k, r in enumerate(rows, 1)])
-
-
 def _listing(c):
     r = c.get("/api/blocks/root/children")
     r.raise_for_status()
@@ -98,7 +74,8 @@ def _listing(c):
 @pytest.fixture(scope="module")
 def big():
     """500 library pages, the listing timed; then a work folder W of
-    20,000 files: 10,000 in its directory ``big``, the rest in 10 others."""
+    20,000 files: 10,000 in its directory ``big``, the rest in 10 others
+    (``dir 0`` … ``dir 9``, 1,000 each, numbered on from 10,000)."""
     make_user(USER, PASSWORD)
     c, ws = login(USER, PASSWORD), workspace_of(USER)
     w = make_folder(c, "wfs-W")
@@ -108,11 +85,7 @@ def big():
     alone = measure(lambda _: _listing(c))
     now = page_now()
     with connect_pages_db(ws) as conn:
-        dirs = _folders(conn, w, ["big"] + [f"dir {n}" for n in range(DIRS)], now)
-        _files(conn, w, dirs[0], BIG, now, 0)
-        per = (FILES - BIG) // DIRS
-        for n, directory in enumerate(dirs[1:]):
-            _files(conn, w, directory, per, now, BIG + n * per)
+        dirs = seed(conn, w, files=FILES, big=BIG, dirs=DIRS, now=now)
         touch_page(conn, FOLDERS, account_of(USER), now=now)
         conn.commit()
     return SimpleNamespace(c=c, ws=ws, w=w, dirs=dirs, alone=alone)
@@ -150,9 +123,78 @@ def test_the_work_counts_are_one_indexed_read(big, request):
     budget(request, measure(counts), 10)
 
 
+def _json(r):
+    r.raise_for_status()
+    return r.json()
+
+
+def _files(big, q):
+    return _json(big.c.get("/api/files", params={"q": q}))
+
+
+def test_quick_open_finds_a_file_among_20000_by_name(big, request):
+    """Every name holds ``file``, so the runs ``file`` AND ``012`` let
+    through every name holding ``012``, which Python ranks: the hundred
+    ``file-012NN`` match."""
+    got = _files(big, "file-012")
+    assert got["total"] == 100 and got["files"][0]["properties"]["file_name"] == "file-01200.md"
+    budget(request, measure(lambda _: _files(big, "file-012")), 25)
+
+
+def test_quick_open_finds_a_file_by_a_path_fragment(big, request):
+    """One path term: the leaf's runs are the LIKEs, the segment ``dir 3``
+    is scored on what they let through."""
+    got = _files(big, "dir 3/file-1301")
+    assert got["files"] and all(f["path"].startswith("dir 3/file-1301") for f in got["files"])
+    _files(big, "dir 3/file-012")
+    budget(request, measure(lambda _: _files(big, "dir 3/file-012")), 22)
+
+
+def test_quick_open_answers_a_name_no_file_has(big, request):
+    assert _files(big, "nothing-here") == {"files": [], "total": 0}
+    budget(request, measure(lambda _: _files(big, "nothing-here")), 16)
+
+
+def test_quick_open_ranks_every_file_for_a_query_with_no_latin_run(big, request):
+    """``图`` gives the prefilter no run: the whole covering read, and every
+    one of the 20,000 names folded and scored, the worst case."""
+    assert _files(big, "图") == {"files": [], "total": 0}
+    budget(request, measure(lambda _: _files(big, "图")), 95)
+
+
+def test_a_path_resolves_to_its_page_at_once(big, request):
+    """A file of the directory of 10,000 by its path: one seek of
+    idx_ub_file_name, never a read of the directory."""
+    def at(_):
+        return _json(big.c.get(f"/api/folders/{big.w}/at", params={"path": "big/file-01234.bin"}))
+
+    pages = at(None)["pages"]
+    assert [p["path"] for p in pages] == ["big/file-01234.bin"]
+    budget(request, measure(at), 11)
+
+
+def test_the_summaries_of_40_files_read_at_once(big, request):
+    """``POST /pages/summaries``'s lookup of 40 files among the 20,000
+    (``blocks.summaries``, ``+parent_id``: without it the planner walks
+    idx_ub_parent over every root row, about ten times as long). Timed on
+    the connection: the request around it costs a few milliseconds of its
+    own, and the previews one seek a page."""
+    with connect_pages_db(big.ws) as conn:
+        ids = [r[0] for r in conn.execute("SELECT id FROM unified_blocks WHERE work_folder = ? AND parent_id = 'root' "
+                                          "ORDER BY id LIMIT 40", (big.w,))]
+    assert [p["id"] for p in _json(big.c.post("/api/pages/summaries", json={"ids": ids}))["pages"]] == ids
+
+    def read(_):
+        with connect_pages_db(big.ws) as conn:
+            return blocks_router.summaries(conn, ids)
+
+    assert len(read(None)) == 40
+    budget(request, measure(read), 2)
+
+
 def test_the_op_rule_reads_a_tree_of_2000_directories(big, request):
     with connect_pages_db(big.ws) as conn:
-        _folders(conn, big.dirs[1], [f"sub {n}" for n in range(TREE_DIRS)], page_now())
+        add_folders(conn, big.dirs[1], [f"sub {n}" for n in range(TREE_DIRS)], page_now())
         touch_page(conn, FOLDERS, account_of(USER))
         conn.commit()
 
@@ -172,7 +214,7 @@ def test_the_feedback_document_of_50_open_threads_reads_at_once(big, request):
     with connect_pages_db(big.ws) as conn:
         pages = [r[0] for r in conn.execute(
             "SELECT id FROM unified_blocks WHERE work_folder = ? AND parent_id = 'root' "
-            "AND json_extract(properties, '$.file_name') LIKE '%.pdf' ORDER BY content LIMIT 50", (big.w,))]
+            "AND json_extract(properties, '$.file_name') LIKE '%.bin' ORDER BY content LIMIT 50", (big.w,))]
         assert len(pages) == 50
         for page_id in pages:
             comments.create(conn, page_id, block_id=page_id, body="a thought on this file", author=account_of(USER),
@@ -193,7 +235,7 @@ STEP_55_MS = 10_000
 def test_step_55_rebuilds_the_kind_column_over_the_files(big, request, tmp_path):
     """Migration step 55 on a pages.db of release 54's shape holding W's
     rows: ``kind`` and the five generated columns after it dropped and
-    added again with their seven indexes (normalize.block_columns), timed
+    added again with their eight indexes (normalize.block_columns), timed
     once, since a rerun does nothing. The copy is built from the fixture's
     rows under the old statement."""
     with connect_pages_db(big.ws) as conn:

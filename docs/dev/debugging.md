@@ -586,7 +586,11 @@ passage budget (`passages.json`: `ai_context.fair_shares` ↔
 backend's rewrite of older rows and the client's copy of a duplicated
 page; [documents.md](documents.md#fixtures)), a file's format by its name
 (`formats.json`: `gamma/documents/formats.py` ↔ `documents/formats.js`,
-with the backend's media types and first-bytes rule), sibling keys
+with the backend's media types and first-bytes rule), a range of a text
+file's quote and context (`textposition.json`: `highlights.span_text` and
+`clamp_span` ↔ `documents/viewers/textAnchors.js` `contextOf`, with the
+code-point and UTF-16 columns; [api.md](api.md) "The highlight shape"),
+sibling keys
 (`fractionalkeys.json`: the npm and PyPI fractional-indexing libraries) and
 pasted math (`pastemath.json`: `gamma/paste_math.py` ↔
 `editor/pasteMath.js`). The kinds are run against the column by
@@ -791,6 +795,57 @@ keystrokes, of a 50-op batch and of a stale set merged into a
 exits with code 5. Under xdist (`-n`) the module skips, since its numbers
 would mean nothing beside the other workers.
 
+The document text index at a work folder's scale is
+`backend/tests/test_search_scale.py` (`-m perf -p no:xdist`): 20,000
+`.tex` files beside 500 library PDFs, 2,000 of them indexed and 18,000
+pending, read in place from paths that are gone.
+
+| Case | Budget (p95) |
+|---|---|
+| `POST /api/document-search {folders: [W]}`, 18,000 pending (one query for what is linked, 200 probes) | 800 ms |
+| `pages_in_scope(conn, [W])` | 100 ms |
+| `index_doc` + `store_docs` of a 3 MB, 60,000-line log | 1,500 ms |
+| the scoped search and a directory's listing while the job runs over the 18,000 | 800 ms, 60 ms |
+| `purge_unused` with 20,500 documents | 300 ms |
+| `purge_doc` of one hash | 5 ms |
+| `documents.text.extract` of a 2 MB `.tex` | 400 ms |
+| `documents.text.read_lines` lines 1–400 of a 64 MB file, with its total | 60 ms |
+
+The scoped search reads every file page's document per request
+(`pages_in_scope` ~70 ms, `root_pages` ~110 ms, `pending` ~65 ms, the MATCH
+~40 ms, measured with other worktrees' tests running, 2026-11): its budget
+is about twice that p95, not 5x an idle one.
+
+A work folder's readers at its scale are
+`backend/tests/test_work_folder_scale.py` (`-m perf -p no:xdist`): 20,000
+files in 11 directories, one of them 10,000, beside 500 library pages,
+the rows inserted by `backend/tests/seed_work_folder.py`. Quick open's
+cases go through the API, so each holds a request's few milliseconds;
+their budgets are about twice the p95 measured with other worktrees' tests
+running (2026-11):
+
+| Case | Budget (p95) |
+|---|---|
+| `GET /api/files?q=file-012` (the runs `file` and `012` as LIKEs, 100 matches ranked) | 25 ms |
+| `GET /api/files?q=dir 3/file-012` (a path term: the leaf's runs, the segment scored) | 22 ms |
+| `GET /api/files?q=nothing-here` (the whole prefilter, nothing ranked) | 16 ms |
+| `GET /api/files?q=图` (no run: every name read from the index, folded and scored) | 95 ms |
+| `GET /api/folders/{W}/at?path=big/file-01234.bin` (one seek of `idx_ub_file_name`) | 11 ms |
+| `POST /pages/summaries`' lookup of 40 ids, on the connection (`+parent_id`; ~11 ms without) | 2 ms |
+
+A text file's ranges placed after a change
+([highlight_relocation.md](highlight_relocation.md#text-files)) are timed
+by two cases, each one total held to its budget rather than a p95:
+`backend/tests/test_text_anchors.py -m perf -p no:xdist` (the pure ladder,
+the job path's size) and `backend/tests/test_text_relocation.py -m perf -p
+no:xdist` (the inline run a replacement and the vault's round wait for, its
+read, ladder and write timed around `text_anchors.relocate`):
+
+| Case | Budget |
+|---|---|
+| `prepare` + `place_all` of a 50,000-line file (3 MB) with 100 ranges (~0.5 s) | 1.0 s |
+| fifty inline runs, each a 1,000-line file with ten ranges replaced once (~1.3 s, about 25 ms a file) | 1.5 s |
+
 The budgets are about 5x the p95 an idle Ryzen 9 9950X3D measured (Node
 22.23, Python 3.12, November 2026), rounded up. Cases near a millisecond
 have about 6 to 8x (the warm eraser flush, a restyle, the one-set
@@ -959,7 +1014,10 @@ is there too, as `-closed.jpg`: closing a context or a page during a step
 first keeps its last look. The
 `check` workflow runs the suite on every PR and uploads those folders as the
 `e2e-failures-<shard>` artifact. `harness.mjs` holds the server
-lifecycle, `Account` (session cookie + `X-Gamma-Workspace` for API
+lifecycle (`server.manage(...)` runs `manage.py` on the server's data
+dir, `server.python(script, ...)` any script of `backend/` there: the
+`explorer` group seeds a work folder of 20,000 files with
+`tests/seed_work_folder.py`), `Account` (session cookie + `X-Gamma-Workspace` for API
 seeding, browser contexts logged in as that account), `makePdf` (a small
 real PDF with a text layer) and `step()`. It also holds two checks of
 where a surface opens. `assertOpensInPlace` reads a menu or card frame by
@@ -1181,6 +1239,20 @@ The scenarios live in `tests/e2e/scenarios/`:
   that does not pull and pushes everything, a PDF opened through `/open` added to the library
   from its tab menu, and the folder and Document menu items, whose
   messages to the shell an init script records. `--group vaults`.
+- `textAnchors.mjs`: highlights and threads in a text file
+  ([highlight_relocation.md](highlight_relocation.md#text-files),
+  [comments.md](comments.md) "The margin"), the vaults recipe over the
+  SyncTeX sample paper with a `.gammaignore` that tracks its `.tex`. A
+  highlight and a thread made from a selection in `main.tex`'s code view
+  (`dragSelectCodeText`, exported for other scenarios), the card beside
+  the text level with its line and the entry in `open.json` by its lines;
+  ten threads on whole lines made through the API, the file rewritten and
+  synced, the survivors moved, two dashed with `was`, two lost as tags at
+  their old lines, in the column, the Comments window and the feedback
+  files; a lost range's closest match taken from its menu and accepted; a
+  selection as the chat's chip by its line, a Ctrl+selection adding the
+  next; on a phone a scripted selection's popup, the popover and the
+  badge. `--group text-anchors`.
 - `zotero-link.mjs`: a Zotero link on the clone's surfaces. A second Gamma
   talks to the fake Zotero (`backend/tests/zotero_fake.py --port 0`, over
   HTTP, serving `zotero_fixtures.standard_library`) through
@@ -1511,7 +1583,11 @@ The scenarios live in `tests/e2e/scenarios/`:
   - Last, the lasso takes a picture with a stroke and leaves a locked one.
     A drag carries both, and one undo and one redo step both, from the
     strip and by Ctrl+Z. With its row's Pictures off it takes the stroke
-    alone.
+    alone. Select all takes the page's unlocked pictures, by Ctrl+A and
+    More. A tap takes the picture under it, a stroke over it first, never
+    a locked one. Copy and Paste carry a picture with the strokes, placed
+    as they were, one step to undo and redo; Cut is one step; a paste on
+    another paper names the same upload and shows it.
 - `guide.mjs`: the first-run guide ([onboarding.md](onboarding.md)),
   started from the account menu's Tours — every registered home-view anchor
   is present once, the demo step adds a paper by itself (pointed at an

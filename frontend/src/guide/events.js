@@ -53,7 +53,7 @@ export const EVENTS = [
   "dialog.opened",    // {name}: a dialog came up — "zotero-link", the Zotero link dialog
   "recording.stopped", // {id}: a recording was saved (Stop, or leaving the page)
   "recording.played", // {id}: a recording's playback started
-  "search.results",   // {pdf}: a search's answers all came; pdf — some are text inside PDFs
+  "search.results",   // {pdf, text}: a search's answers all came; pdf — some are text inside PDFs, text — some are lines of text files
   "search.filtered",  // {kind: folder | label}: a filter chip was made in the search box
   "comment.created",  // {reply}: a comment was stored; reply — in a thread that was there
   "import.finished",  // {source}: this tab's import finished (the server's name for it, importApi.js FORMATS' endpoint; the note apps' import sends one per app it brought notes of, "notability" / "goodnotes")

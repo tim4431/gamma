@@ -3,7 +3,7 @@
 
 ::
 
-    {"v": 1, "kind": "passage" | "area" | "ink" | "region" | "note" | "file",
+    {"v": 1, "kind": "passage" | "area" | "ink" | "region" | "lines" | "note" | "file",
      "block": "<the block the place is read from>",
      "doc_id": "<the file the place was measured on>" | "",
      "ext": ".pdf" | ".png" | … | "",
@@ -11,17 +11,20 @@
      "rects": [[x1, y1, x2, y2], …],
      "quote": "…",
      "box": [x0, y0, x1, y1] | None,
+     "lines": [118, 120],
      "source": {…}}
 
 ``ext`` is the page's document's extension when the thread opened ("" for
 none), so ``doc_id`` and ``ext`` name the stored file the place was
 measured on (``held_file``). ``page`` is the 1-based PDF page (None for a
-region of a picture); ``rects`` are fractions of the page, or of the
-picture, as shown (top-left origin, four decimals, at most
-``highlights.PREV_MAX_RECTS``), ``quote`` at most
+region of a picture and a range of a text file); ``rects`` are fractions of
+the page, or of the picture, as shown (top-left origin, four decimals, at
+most ``highlights.PREV_MAX_RECTS``; none for a range), ``quote`` at most
 ``highlights.PREV_MAX_QUOTE`` characters ("" for an area, ink, a region, a
 note and the file), ``box`` the region picture's crop (fractions, four
-decimals; None for a note and the file). ``source`` is added after the
+decimals; None for a range, a note and the file). ``lines`` is a range's
+alone: its first and last line (1-based, inclusive) when the thread
+opened; no other kind carries the key. ``source`` is added after the
 commit (gamma/feedback/kept.py) and absent until then.
 
 ``anchor_of`` computes it from the rows alone, no file read, inside
@@ -29,8 +32,10 @@ commit (gamma/feedback/kept.py) and absent until then.
 ``file``; a highlight or link region (``passage``, or ``area`` for an area
 or one without a quote) and an ink group on a PDF page (``ink``), and a
 region of a picture (``region``: a highlight or link block with an
-``image_position``, its ``doc_id`` the version it was drawn on), are their
-own place; any other block is placed by its nearest ancestor below the page
+``image_position``, its ``doc_id`` the version it was drawn on) and a range
+of a text file (``lines``: a highlight or link block whose
+``text_position`` reads, its ``doc_id`` the version its lines were measured
+on), are their own place; any other block is placed by its nearest ancestor below the page
 that is one of those (a note under a highlight: that highlight's kind and
 id, the annotated export's rule), else it is a ``note`` with no page. A
 position with no frame (a Logseq import) has no rects and no box.
@@ -42,11 +47,13 @@ from .. import highlights, storage
 from ..blocks_store import load_props
 from ..documents import formats
 from ..documents.model import file_hash, page_document, stored_name
+from ..documents.text import is_secret
 
 V = 1
-KINDS = ("passage", "area", "ink", "region", "note", "file")
+KINDS = ("passage", "area", "ink", "region", "lines", "note", "file")
 PLACED_KINDS = ("highlight", "link", "ink")  # the block kinds a pdf_position places on a page
 REGION_KINDS = ("highlight", "link")         # the block kinds an image_position places on a picture
+LINE_KINDS = ("highlight", "link")           # the block kinds a text_position places in a text file
 MAX_DEPTH = 64             # ancestors looked through for a note's place
 
 # The region picture's crop: an area's rectangle padded by AREA_PAD; a
@@ -98,12 +105,16 @@ def _ink_box(pos: dict, size) -> list | None:
 def _placed(kind, props: dict) -> str:
     """The position that places the block ``kind`` on its document:
     ``pdf_position`` (a highlight, link region or ink group on a PDF page),
-    ``image_position`` (a highlight or link block on a picture), "" for
-    none. A block with both is placed on the PDF page."""
+    ``image_position`` (a highlight or link block on a picture),
+    ``text_position`` (a highlight or link block on lines of a text file,
+    when its span reads: ``highlights.text_span``), "" for none. A block
+    with several is placed by the first of these."""
     if kind in PLACED_KINDS and isinstance(props.get("pdf_position"), dict):
         return "pdf_position"
     if kind in REGION_KINDS and isinstance(props.get("image_position"), dict):
         return "image_position"
+    if kind in LINE_KINDS and highlights.text_span(props):
+        return "text_position"
     return ""
 
 
@@ -148,6 +159,18 @@ def _on_image(block_id: str, props: dict, page_hash: str, ext: str) -> dict:
     return _anchor("region", block_id, measured, None, rects, "", _area_box(rects) if rects else None, ext=ext)
 
 
+def _on_lines(block_id: str, props: dict, page_hash: str, ext: str) -> dict:
+    """The anchor of a range of a text file (``_placed``): measured on the
+    version its ``text_position.hash`` names, else the page's; its quote and
+    its lines, no rectangle and no crop."""
+    pos = props["text_position"]
+    measured = pos.get("hash") if isinstance(pos.get("hash"), str) and pos["hash"] else page_hash
+    line, _, end, _ = highlights.text_span(props)
+    quote = props.get("quote") if isinstance(props.get("quote"), str) else ""
+    return {**_anchor("lines", block_id, measured, None, (), quote[:highlights.PREV_MAX_QUOTE], None, ext=ext),
+            "lines": [line, end]}
+
+
 def anchor_of(conn, page_id: str, block_id: str) -> dict:
     """The anchor of a thread opened on ``block_id`` of the page
     ``page_id`` now, read from the rows of the pages.db ``conn``."""
@@ -166,15 +189,47 @@ def anchor_of(conn, page_id: str, block_id: str) -> dict:
         placed = _placed(row[1], props)
         if placed == "pdf_position":
             return _on_page(current, row[1], props, page_hash, ext)
-        if placed:
+        if placed == "image_position":
             return _on_image(current, props, page_hash, ext)
+        if placed == "text_position":
+            return _on_lines(current, props, page_hash, ext)
         current, seen = row[0], seen + 1
     return _anchor("note", block_id, page_hash, ext=ext)
 
 
+def text_kept(view: dict | None) -> bool:
+    """Whether a page's document (``page_document``) is a text file whose
+    text is kept from the model (``documents.text.is_secret``): its ranges'
+    quotes are never told to one either, only their lines."""
+    return bool(view) and view["format"] == "text" and is_secret(view["name"])
+
+
+def following(conn, page_id: str, anchor: dict) -> dict:
+    """``anchor`` as a thread's place is named now: a ``lines`` anchor
+    follows its range, so while its block is still a range of the file the
+    lines it holds now (after a relocation the stored ones are stale), with
+    ``state`` ``lost`` when the last change took its text away or
+    ``earlier`` while it is measured on another version than the page's
+    file (the run has not placed it yet), and without its quote on a
+    secrets file (``text_kept``); any other anchor as it is."""
+    if anchor.get("kind") != "lines":
+        return anchor
+    row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    view = page_document(load_props(row[0]) if row else {})
+    live = anchor_of(conn, page_id, anchor["block"])
+    if live["kind"] == "lines" and live["block"] == anchor["block"]:
+        row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (live["block"],)).fetchone()
+        pos = (load_props(row[0]) if row else {}).get("text_position") or {}
+        current = file_hash(view) or ""
+        state = "lost" if pos.get("lost") is True else "earlier" if current and live["doc_id"] != current else ""
+        anchor = {**live, "state": state} if state else live
+    return {**anchor, "quote": ""} if text_kept(view) else anchor
+
+
 def parse(text) -> dict | None:
     """A stored anchor as an object; None for NULL and for one that is
-    malformed (no object, an unknown kind, no block)."""
+    malformed (no object, an unknown kind, no block, a range without its
+    two lines)."""
     if not text:
         return None
     try:
@@ -185,7 +240,53 @@ def parse(text) -> dict | None:
             and isinstance(value.get("doc_id", ""), str) and isinstance(value.get("ext", ""), str)
             and isinstance(value.get("rects", []), list)):
         return None
+    if value["kind"] == "lines" and lines_of(value) is None:
+        return None
     return value
+
+
+def lines_of(anchor: dict | None) -> tuple[int, int] | None:
+    """A range's anchor's ``(first, last)`` line, None for any other or a
+    malformed one."""
+    lines = (anchor or {}).get("lines")
+    if not (isinstance(lines, list) and len(lines) == 2
+            and all(isinstance(n, int) and not isinstance(n, bool) for n in lines) and 1 <= lines[0] <= lines[1]):
+        return None
+    return lines[0], lines[1]
+
+
+def line_words(first: int, last: int) -> str:
+    """"lines 118–120", or "line 118" for one: how a range's lines are named
+    to an agent and to the chat's model."""
+    return f"lines {first}–{last}" if last > first else f"line {first}"
+
+
+def place_words(anchor: dict) -> str:
+    """Where a thread is, in words, from its anchor: "the whole file", "a
+    region of the picture", "a note", on a PDF page "page 3, “the loss is
+    defined…”" (a passage's quote cut at 60), "page 5, an area", "page 2,
+    handwriting", and in a text file "lines 118–120, “for step in…”" (the
+    lines it was opened on, or ``following``'s: "line 47 (not found in the
+    current version), “…”", "lines 3–5 of an earlier version, “…”"). What
+    the feedback tools' answers and the chat's context name a thread's
+    place by."""
+    if anchor["kind"] == "file":
+        return "the whole file"
+    if anchor["kind"] == "region":
+        return "a region of the picture"
+    quote = " ".join((anchor.get("quote") or "").split())
+    quoted = f"“{quote[:60]}{'…' if len(quote) > 60 else ''}”"
+    if anchor["kind"] == "lines":
+        lines = lines_of(anchor)
+        if not lines:
+            return "a note"
+        named = line_words(*lines) + {"lost": " (not found in the current version)",
+                                      "earlier": " of an earlier version"}.get(anchor.get("state"), "")
+        return f"{named}, {quoted}" if quote else named
+    if not anchor.get("page"):
+        return "a note"
+    what = {"passage": quoted, "area": "an area", "ink": "handwriting"}.get(anchor["kind"], "a note")
+    return f"page {anchor['page']}, {what}"
 
 
 def held_file(text) -> str:
@@ -193,9 +294,10 @@ def held_file(text) -> str:
     ``stored_name(doc_id, ext)`` (the stem through
     ``storage.stored_pdf_stem``), "" for none. An anchor without ``ext``
     (written before step 3) holds a PDF; one whose ``ext`` is no extension
-    holds nothing."""
+    holds nothing, nor does a range of a text file, which carries its own
+    context (kept.KEPT_FORMATS)."""
     anchor = parse(text)
-    stem = storage.stored_pdf_stem(anchor.get("doc_id")) if anchor else ""
+    stem = storage.stored_pdf_stem(anchor.get("doc_id")) if anchor and anchor["kind"] != "lines" else ""
     if not stem:
         return ""
     ext = anchor.get("ext") or ".pdf"

@@ -4,8 +4,9 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { PLACED, applyOps, diffTrees, displacedRow, propsPatch, pushOp, seedPositions, withMerges } from "../src/shared/model/blockOps.js";
-import { POSITION_KEY, anchorOf, blockPage, blockPosition, blocksToHighlights, freshCopy, isHighlightBlock, isPlaceBlock,
-  isRegionBlock, pdfAnchorOf, placeKeyOf, positionKeyOf } from "../src/shared/model/blockModel.js";
+import { POSITION_KEY, TEXT_QUOTE_MAX, acceptedPosition, anchorOf, blockPage, blockPosition, blocksToHighlights, closestPlacement,
+  freshCopy, isHighlightBlock, isPlaceBlock, isRegionBlock, isTextRangeBlock, linesLabel, pdfAnchorOf, placeKeyOf, positionKeyOf,
+  rangePending, roughMatchPercent, textSpan } from "../src/shared/model/blockModel.js";
 import { mergePicture } from "../src/markup/picture.js";
 import { mergeTextBox } from "../src/markup/textBox.js";
 
@@ -278,10 +279,11 @@ test("a region of a picture: a block placed by image_position that no other kind
   assert.equal(isRegionBlock(N("x", "", [], { image_position: [1] })), false, "an array is no region");
   assert.equal(isRegionBlock(N("x", "", [], { image_position: "r" })), false);
   // the position by the page's document's key
-  assert.deepEqual(POSITION_KEY, { pdf: "pdf_position", image: "image_position" });
+  assert.deepEqual(POSITION_KEY, { pdf: "pdf_position", image: "image_position", text: "text_position" });
   assert.equal(positionKeyOf({ format: "image" }), "image_position");
   assert.equal(positionKeyOf({ format: "pdf" }), "pdf_position");
-  assert.equal(positionKeyOf({ format: "text" }), "pdf_position", "the PDF's for any other document");
+  assert.equal(positionKeyOf({ format: "text" }), "text_position");
+  assert.equal(positionKeyOf({ format: "audio" }), "pdf_position", "the PDF's for any other document");
   assert.equal(positionKeyOf(null), "pdf_position");
   assert.equal(blockPosition(r), null, "no PDF place");
   assert.equal(blockPosition(r, "image_position"), region);
@@ -309,6 +311,82 @@ test("a region of a picture: a block placed by image_position that no other kind
   const copy = freshCopy({ ...r, children: [] });
   assert.deepEqual(copy.properties, { color: "#ffe066aa" });
   assert.notEqual(copy.id, "r");
+});
+
+test("a range of a text file: a block placed by text_position that no other kind claims, listed under the text key", () => {
+  const range = { line: 16, col: 0, end: 16, end_col: 33, prefix: "\\section{Intro}\n", suffix: ", and", hash: "f1" };
+  const pos = { pageNumber: 2, width: 612, height: 792, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [] };
+  const t = N("t", "", [], { text_position: range, quote: "Weight decay is the oldest remedy", color: "#ffe066aa", style: "underline" });
+  assert.equal(isTextRangeBlock(t), true);
+  assert.equal(isHighlightBlock(t), false, "no place on a PDF page");
+  assert.equal(isRegionBlock(t), false);
+  assert.equal(isPlaceBlock(t), true);
+  for (const other of [{ ink_url: "" }, { text_box: { x: 1 } }, { picture: { url: "/api/uploads/p.png" } }, { sheet: {} }]) {
+    assert.equal(isTextRangeBlock(N("x", "", [], { ...other, text_position: range })), false, JSON.stringify(other));
+  }
+  assert.equal(isTextRangeBlock(N("x", "", [], { text_position: [16] })), false, "an array is no range");
+  assert.equal(isTextRangeBlock(N("x", "", [], { text_position: "1-3" })), false);
+  // the span, by the server's text_span rule
+  assert.deepEqual(textSpan(range), { line: 16, col: 0, end: 16, end_col: 33 });
+  assert.deepEqual(textSpan({ line: 3, col: 9, end: 5, end_col: 0 }), { line: 3, col: 9, end: 5, end_col: 0 }, "a later line's column 0");
+  for (const bad of [{ line: 0, col: 0, end: 1, end_col: 2 }, { line: 2, col: 0, end: 1, end_col: 2 }, { line: 1, col: 4, end: 1, end_col: 4 },
+    { line: 1, col: -1, end: 1, end_col: 2 }, { line: 1.5, col: 0, end: 2, end_col: 2 }, { line: "1", col: 0, end: 1, end_col: 2 }, { line: 1 }, null, []]) {
+    assert.equal(textSpan(bad), null, JSON.stringify(bad));
+  }
+  // the position by the key, the block's own key
+  assert.equal(blockPosition(t), null, "no PDF place");
+  assert.equal(blockPosition(t, "text_position"), range);
+  assert.equal(blockPosition(N("x", "", [], { text_position: { ...range, end_col: 0 } }), "text_position"), null, "no span");
+  assert.equal(placeKeyOf(t), "text_position");
+  assert.equal(placeKeyOf(N("h", "", [], { pdf_position: pos, text_position: range })), "pdf_position", "a place on the PDF first");
+  assert.equal(blockPage(t), null);
+  // the viewer's list under the text key: ranges alone, each with its own position
+  const tree = [t, N("h", "", [], { pdf_position: pos, quote: "q" }), N("old", "", [], { text_position: { ...range, hash: "f0" }, quote: "x" }),
+    N("bad", "", [], { text_position: { line: 0 }, quote: "y" })];
+  const ranges = blocksToHighlights(tree, "text_position", "f1");
+  assert.deepEqual(ranges.map((h) => [h.id, h.style]), [["t", "underline"], ["old", "highlight"]], "a malformed one is drawn nowhere");
+  assert.equal(ranges[0].position, range, "the stored position, nothing added");
+  assert.equal(ranges[0].quote, "Weight decay is the oldest remedy");
+  // pending: measured on another version than the file shown, not lost; an empty hash reads as the file's own (the server's rule)
+  assert.deepEqual(ranges.map((h) => rangePending(h.position, "f1")), [false, true]);
+  assert.equal(rangePending({ ...range, hash: "f0", approx: true, match: 0.9 }, "f1"), true, "placed to check on an older version: still pending");
+  assert.equal(rangePending({ ...range, hash: "f0", lost: true }, "f1"), false, "lost is lost");
+  assert.equal(rangePending({ ...range, hash: "" }, "f1"), false);
+  assert.equal(rangePending({ ...range, hash: "f0" }, ""), false, "no file to compare with");
+  assert.deepEqual([linesLabel(3, 5), linesLabel(3, 3), linesLabel(3)], ["Lines 3–5", "Line 3", "Line 3"]);
+  assert.deepEqual(blocksToHighlights(tree).map((h) => h.id), ["h"], "the PDF key leaves the ranges out");
+  assert.deepEqual(blocksToHighlights(tree, "image_position"), []);
+  // the anchor a comment card stands beside
+  assert.deepEqual(anchorOf(t, "text_position"), { page: null, position: range });
+  assert.equal(anchorOf(t), null);
+  assert.equal(anchorOf(t, "image_position"), null);
+  assert.equal(anchorOf(N("h", "", [], { pdf_position: pos }), "text_position"), null);
+  // Duplicate leaves the range with the original
+  const copy = freshCopy({ ...t, children: [] });
+  assert.deepEqual(copy.properties, { quote: "Weight decay is the oldest remedy", color: "#ffe066aa", style: "underline" });
+});
+
+test("a lost range placed at its closest match is dashed there, to check, with where it was", () => {
+  const closest = { line: 40, col: 2, end: 41, end_col: 7, match: 0.62, quote: "is to repeat\nthe study", hash: "f2" };
+  const lost = { line: 55, col: 0, end: 55, end_col: 30, prefix: "p", suffix: "s", hash: "f1", lost: true, closest };
+  assert.deepEqual(closestPlacement(lost, "is to see whether the same holds"), {
+    position: { line: 40, col: 2, end: 41, end_col: 7, hash: "f2", prefix: "p", suffix: "s", approx: true, match: 0.62,
+      prev: { hash: "f1", line: 55, col: 0, end: 55, end_col: 30, quote: "is to see whether the same holds" } },
+    quote: "is to repeat\nthe study",
+  });
+  const placed = closestPlacement(lost, "x".repeat(1500));
+  assert.equal(placed.position.prev.quote.length, 1500, "a range's prev keeps its whole quote, which the next run matches it by");
+  assert.equal(closestPlacement(lost, "x".repeat(TEXT_QUOTE_MAX + 5)).position.prev.quote.length, TEXT_QUOTE_MAX,
+    "clipped as the server's");
+  assert.equal(closestPlacement({ ...lost, closest: { ...closest, quote: "y".repeat(3000) } }).quote.length, 3000,
+    "the closest's quote whole: the range's quote from then on");
+  assert.equal(roughMatchPercent(placed.position), 62, "the menu's percentage");
+  assert.equal(acceptedPosition(placed.position).approx, undefined, "Accept draws it solid");
+  assert.deepEqual(Object.keys(acceptedPosition(placed.position)).sort(), ["col", "end", "end_col", "hash", "line", "prefix", "suffix"]);
+  assert.equal(closestPlacement({ ...lost, closest: undefined }), null, "nothing to apply without a closest match");
+  assert.equal(closestPlacement({ ...lost, closest: { ...closest, hash: undefined } }), null, "nor one naming no version");
+  assert.equal(closestPlacement({ ...lost, closest: { ...closest, match: 2 } }), null);
+  assert.equal(closestPlacement({ ...lost, closest: { ...closest, end_col: 0, end: 40, col: 0 } }), null, "nor one with no span");
 });
 
 test("a comment thread stands on the PDF on a highlight, a link region or an ink group with a position", () => {

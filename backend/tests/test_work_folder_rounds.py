@@ -199,6 +199,25 @@ def test_a_note_made_in_gamma_is_written_where_tracked_and_reported_where_not(wo
     assert [k for k in status["kept"] if "leaves out Hidden/Unwritten.md" in k["why"]], status
 
 
+def test_a_note_made_in_gamma_links_a_pdfs_page_by_its_file(work, owner):
+    """A mention of a work folder's PDF in a note pull writes is the PDF's
+    link by its path, where a page with no note was its absolute address;
+    read back, it is the mention."""
+    v = work()
+    v.write("Papers/p.pdf", _pdf("a paper"), age=10)
+    v.sync()
+    paper = v.page_of("Papers/p.pdf")
+    fresh = _made(owner, "Reading", v.folder)
+    commit_ops(v.ws, fresh, [insert(fresh, f"read [[{paper}]] first")], actor=v.user)
+    v.sync()
+    assert v.text("Reading.md") == "read [[p.pdf]] first\n" and v.texts(fresh) == [f"read [[{paper}]] first"]
+    v.quiet()
+    v.write("Reading.md", "read [[p.pdf]] first, then again\n", age=5)
+    v.sync()
+    assert v.texts(fresh) == [f"read [[{paper}]] first, then again"]
+    v.quiet()
+
+
 def test_a_pdf_files_page_trashed_by_the_mirror_leaves_the_pdf_where_it_is(work):
     v = work()
     paper = v.write("Sub/p.pdf", _pdf("mine"), age=10)

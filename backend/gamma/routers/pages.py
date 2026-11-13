@@ -26,8 +26,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import config, folder_links, highlight_relocate, jobs, linked_files, pdf_index, pdf_meta, publish, storage, \
-    upload_gc
+from .. import (comments, config, folder_links, highlight_relocate, jobs, linked_files, pdf_meta, publish, storage,
+               upload_gc)
 from ..auth import (DISK_CLIENT, actor_of, link_ratelimit, require_user_id, require_ws, require_ws_writer, resolve_ws,
                     share_scope, writer_client)
 from ..blocks_store import (
@@ -52,6 +52,7 @@ from ..blocks_store import (
     write_lock,
 )
 from ..db import connect_pages_db, connect_users_db, get_profile, safe_doc_id
+from ..documents import text_anchors
 from ..documents.formats import SNIFF_BYTES, stored_format
 from ..documents.model import (FORMAT_EXT, document, document_props, document_title, file_hash, in_place, is_listed,
                                is_pdf, own_hash, page_document, parse_upload_url, stored_name, upload_url)
@@ -60,9 +61,10 @@ from ..markdown_zip_import import markdown_page
 from ..logbuf import log
 from ..storage import UNSTORED, find_upload_file
 from ..ops import MAX_OPS, OpError, after_commit, after_commits, apply_batches, apply_ops, props_patch
+from ..search import index as text_index
 from ..work_folders.library import work_folder_of
 from ..work_folders.marks import Tree, filing_targets
-from .blocks import SUMMARY_COLUMNS, op_refusal, page_preview, page_summary
+from .blocks import SUMMARY_COLUMNS, op_refusal, page_preview, page_summary, summaries
 from .imports import originals_gone
 
 router = APIRouter(prefix="/api", tags=["pages"])
@@ -71,8 +73,9 @@ router = APIRouter(prefix="/api", tags=["pages"])
 # name of the Markdown file a page was imported from (markdown_zip_import).
 ATTACHMENT_KEYS = ("doc", "original_filename")
 SHARE_PAGES_PER_5_MIN = 30  # pages a link visitor may make through an edit share, per IP
-RELOCATE = "relocate-highlights"  # the job that places a replaced PDF's highlights (_start_relocation)
+RELOCATE = "relocate-highlights"  # the job that places a replaced file's highlights (_start_relocation)
 NOT_STORED = "the PDF is not stored on the server"  # why no run places the highlights of a PDF shown from a URL alone
+LISTED = "the file is listed without its bytes"  # why no run places the ranges of a text file that turned listed
 # Why a page of a Zotero link takes no PDF from a person while the link brings Zotero's (its ``zotero_pdf``
 # is anything but "unavailable", gamma/zotero_sync.py): the two files would part, and Zotero's annotations
 # with them. A detached link's page waits for the reattach, a clone's for its origin.
@@ -269,10 +272,14 @@ def page_summaries(payload: SummariesLookup, request: Request):
     preview and parent included), in the order asked, for the live pages
     among them: an unknown id, a block that is no page and a page in
     Recently deleted are left out, and through a share link every page it
-    does not reach. The open tabs, the recents and the focused page
-    ask this for the pages the listing does not carry (a
-    work folder's files). Any member, or a share; 413 past
-    ``MAX_SUMMARIES``. A read, though a POST."""
+    does not reach. Each carries ``notes``, how many blocks of its own hold
+    something, and ``open_comments``, its open threads: what a computer's
+    tracking dialog says of the files of a work folder here that leave
+    (gamma/work_folders/selection.py ``_leaving``). The open tabs, the
+    recents and the focused page ask this for the pages the listing does
+    not carry (a work folder's files). Any member, or a share; 413 past
+    ``MAX_SUMMARIES``. A read, though a POST (hosted.POST_READS); the
+    lookup is ``blocks.summaries``."""
     if len(payload.ids) > MAX_SUMMARIES:
         raise HTTPException(status_code=413, detail=f"at most {MAX_SUMMARIES} pages in one request")
     ids = [i for i in dict.fromkeys(payload.ids) if i]
@@ -280,13 +287,17 @@ def page_summaries(payload: SummariesLookup, request: Request):
     with connect_pages_db(resolve_ws(request)) as conn:
         if not conn.in_transaction:
             conn.execute("BEGIN")  # one read snapshot for the rows, their previews and parents
-        found = {r[0]: r for r in conn.execute(
-            f"SELECT {SUMMARY_COLUMNS} FROM unified_blocks WHERE parent_id = 'root' "
-            "AND id IN (SELECT value FROM json_each(?))", (json.dumps(ids),))}
+        found = summaries(conn, ids)
         if scope is not None:
             found = {i: r for i, r in found.items() if scope.allows_page(conn, i)}
         parents = page_parents(conn) if found else {}
-        pages = [page_summary(found[i], page_preview(conn, i), parents.get(i, "")) for i in ids if i in found]
+        shown = json.dumps(sorted(found))
+        notes = dict(conn.execute("SELECT page_id, COUNT(*) FROM unified_blocks WHERE page_id IN (SELECT value FROM "
+                                  "json_each(?)) AND id != page_id AND (kind != 'note' OR content != '') GROUP BY page_id",
+                                  (shown,)).fetchall()) if found else {}
+        threads = comments.open_counts(conn, sorted(found)) if found else {}
+        pages = [{**page_summary(found[i], page_preview(conn, i), parents.get(i, "")), "notes": notes.get(i, 0),
+                  "open_comments": threads.get(i, 0)} for i in ids if i in found]
         conn.rollback()
     return OrjsonResponse({"pages": pages})
 
@@ -599,11 +610,15 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
     attachment again changes nothing. The work, described there, is
     ``replace_attachment``'s, which the Zotero link and a vault call too.
 
-    Returns the updated block, with the relocation job as ``job``, or,
-    when no run started, the reason as ``relocation_error``: the account's
-    background tasks are full (the Document menu's Find highlights in this
-    PDF places the highlights later), or the new PDF is shown from a URL
-    alone (``NOT_STORED``: no file to read). The replacement stands
+    Returns the updated block, with the relocation job as ``job``, a text
+    file's ranges placed at once as ``relocation`` (``{format: "text",
+    highlights, moved, kept, approx, lost, changed, min_match,
+    exact_chars}``), or, when no run started or the one made at once
+    refused, the reason as ``relocation_error``: the account's background
+    tasks are full (the Document menu's Find highlights in this PDF places
+    the highlights later), the new PDF is shown from a URL alone
+    (``NOT_STORED``: no file to read), or the text run's own (the file
+    changed while it was read, it is no text). The replacement stands
     either way."""
     ws = require_ws(request, write=True)
     client = writer_client(request)
@@ -622,16 +637,19 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
 
 def replaced_answer(done: dict) -> dict:
     """What ``PUT /pages/{id}/attachment`` answers for ``replace_attachment``'s
-    result: the updated block, with the relocation run as ``job`` or why none
-    started as ``relocation_error``; the page as it was when nothing changed.
-    The desktop app's own server answers a PDF sent from disk the same way
-    (gamma/folder_links.py ``LocalSink``)."""
+    result: the updated block, with the relocation run as ``job``, a text
+    file's run made at once as ``relocation`` (its counts), or why none
+    started or the run refused as ``relocation_error``; the page as it was
+    when nothing changed. The desktop app's own server answers a PDF sent
+    from disk the same way (gamma/folder_links.py ``LocalSink``)."""
     if not done["results"]:
         return done["page"]
     answer = {**done["page"], "content": done["content"], "properties": done["props"],
               "updated_at": done["results"][0]["at"]}
     if done["job"]:
         answer["job"] = done["job"]
+    elif done.get("relocation"):
+        answer["relocation"] = done["relocation"]
     elif done["relocation_error"]:
         answer["relocation_error"] = done["relocation_error"]
     return answer
@@ -700,13 +718,20 @@ def replace_attachment(ws: str, page_id: str, hash: str, url: str = "", name: st
     ``relocate-highlights`` job owned by ``owner`` starts
     (``_start_relocation``): each highlight is found again in the new file
     by its text and moved there; until it is done they sit where they were.
-    Only a PDF replaced by a PDF starts one.
+    A PDF replaced by a PDF starts one. A text file replaced by a text file
+    whose page has ranges in it (``text_anchors.page_ranges``: no stamp, a
+    range names the version it was measured on itself) has them placed at
+    once, before this returns, when the new file is at most
+    ``TEXT_INLINE_BYTES`` (``_relocate_text``), else by the same job; a
+    file that turned listed (no bytes to read) starts nothing, and its
+    ranges read as pending until the next replacement.
 
     → ``{page (as read), content, props (the page's title and properties
     after), results (the batches' results), placed ([(block id, props)] of
     the highlights stamped), incoming, outgoing (the stored files' hashes,
-    "" for none), job (the run, or None), relocation_error (why no run
-    started; "" when one did or none was needed)}``."""
+    "" for none), job (the run, or None), relocation (the counts of a text
+    run made at once, or None), relocation_error (why no run started or the
+    run made at once refused; "" when one did or none was needed)}``."""
     with connect_pages_db(ws) as conn:
         write_lock(conn)  # the checks and the write as one step
         try:
@@ -746,11 +771,13 @@ def replace_attachment(ws: str, page_id: str, hash: str, url: str = "", name: st
                     conn.rollback()  # nothing to write: let go of the lock
                 return {"page": page, "content": page["content"], "props": page["properties"], "results": [],
                         "placed": [], "incoming": incoming, "outgoing": outgoing, "job": None,
-                        "relocation_error": ""}
+                        "relocation": None, "relocation_error": ""}
             marks = originals_gone(conn, page_id) if had and moved else []
             swapped = had and moved and not (outgoing and outgoing == incoming)  # another file, not another address
             pdfs = is_pdf(old_doc) and format == "pdf"  # the highlights' file is a PDF before and after
+            texts = old_doc is not None and old_doc["format"] == format == "text"  # a text file before and after
             placed = highlight_relocate.page_highlights(conn, page_id) if swapped and pdfs else []
+            ranges = text_anchors.page_ranges(conn, page_id) if swapped and texts else []
             stamps = []
             for bid, p in placed:
                 # the file its rects were measured on, where it names none, and no closest place a lost one kept:
@@ -772,26 +799,62 @@ def replace_attachment(ws: str, page_id: str, hash: str, url: str = "", name: st
             raise
         after_commits(ws, conn, results)
         if old and old != hash:
-            pdf_index.purge_unused(ws, conn)
+            text_index.purge_doc(ws, None, conn, old)
     if keep_old_days and outgoing and outgoing != incoming:
         replaced = stored_name(outgoing, old_doc["ext"])
         try:  # after the commit: retain takes the purge's lock, which never waits on the write lock
             upload_gc.retain(ws, replaced, keep_old_days * 86400)
         except Exception as e:  # noqa: BLE001 — a shorter life missed is no failed replacement
             log.warning(f"[uploads] {page_id}: could not shorten the life of {replaced}: {e}")
-    job, reason = None, ""
+    job, relocation, reason = None, None, ""
     if placed:
         job, reason = (_start_relocation(owner, ws, page["id"], content, incoming, outgoing=outgoing)
                        if incoming else (None, NOT_STORED))
+    elif ranges:
+        if not incoming:
+            reason = LISTED
+        elif (page_document(after)["size"] or 0) > text_anchors.TEXT_INLINE_BYTES:
+            job, reason = _start_relocation(owner, ws, page["id"], content, incoming, outgoing=outgoing,
+                                            format="text")
+        else:
+            relocation, reason = _relocate_text(owner, ws, page["id"], incoming)
     return {"page": page, "content": content, "props": after, "results": results, "placed": placed,
-            "incoming": incoming, "outgoing": outgoing, "job": job, "relocation_error": "" if job else reason}
+            "incoming": incoming, "outgoing": outgoing, "job": job, "relocation": relocation,
+            "relocation_error": "" if job or relocation else reason}
+
+
+def _relocate_text(owner: str, ws: str, page_id: str, new_doc: str) -> tuple[dict | None, str]:
+    """The page's text ranges placed in its file ``new_doc`` at once
+    (documents/text_anchors.relocate, by ``owner``'s thresholds), for a
+    file of at most ``TEXT_INLINE_BYTES``: a file of a thousand lines with
+    ten ranges takes about 25 ms, its write included, short enough for the
+    replacement's own thread (a vault's round waits for it), and no
+    background task, whose cap a formatter rewriting a repository's files
+    would reach. The counts are logged, the answer a vault drops. →
+    ``(result, "")``, or ``(None, why)`` when the run refused (the ranges
+    stay as they were, pending until the next replacement)."""
+    limits = highlight_relocate.thresholds(get_profile(owner)[0])
+    try:
+        result = text_anchors.relocate(ws, page_id, new_doc, actor=owner, **limits)
+    except ValueError as e:
+        log.warning(f"[relocate] {page_id}: {e}")
+        return None, str(e)
+    except Exception as e:  # noqa: BLE001 — the replacement is committed; a failed run leaves the ranges pending
+        log.exception(f"[relocate] {page_id}: the text ranges could not be placed")
+        return None, f"the highlights could not be placed: {e}"
+    log.info(f"[relocate] {page_id}: {result['highlights']} ranges, {result['moved']} moved, {result['kept']} kept, "
+             f"{result['approx']} approx, {result['lost']} lost, {result['changed']} changed")
+    return result, ""
 
 
 def _start_relocation(owner: str, ws: str, page_id: str, title: str, new_doc: str, *,
-                      outgoing: str | None = None, quiet: bool = True) -> tuple[dict | None, str]:
+                      outgoing: str | None = None, quiet: bool = True,
+                      format: str = "pdf") -> tuple[dict | None, str]:
     """Start the ``relocate-highlights`` job that places the page's
     highlights in its PDF ``new_doc`` (gamma/highlight_relocate.py
-    ``relocate``), owned by the account ``owner`` (the request's, or a
+    ``relocate``), or, for ``format`` ``text``, the ranges of its text
+    file (documents/text_anchors.py ``relocate``; the job's ``format``
+    param says which), owned by the account ``owner`` (the request's, or a
     Zotero link's owner). One run per
     page and file: its key is ``<page id>:<new_doc>``, and a start while a
     run for the same page and file is going answers that run. A
@@ -818,7 +881,8 @@ def _start_relocation(owner: str, ws: str, page_id: str, title: str, new_doc: st
     ``PLACING_RECHECK_S``."""
     name = " ".join((title or "").split())[:80] or "Untitled"
     limits = highlight_relocate.thresholds(get_profile(owner)[0])
-    params = {"page_id": page_id, "title": name, "doc_id": new_doc, **limits}
+    params = {"page_id": page_id, "title": name, "doc_id": new_doc, "format": format, **limits}
+    place = text_anchors.relocate if format == "text" else highlight_relocate.relocate
     if outgoing is not None:
         previous = jobs.latest(owner, RELOCATE, f"{page_id}:{outgoing}")
         if previous and previous["state"] in jobs.ACTIVE:
@@ -828,7 +892,7 @@ def _start_relocation(owner: str, ws: str, page_id: str, title: str, new_doc: st
                 pass  # past its last stop: it finishes, and its write is refused (the page carries another file)
 
     def run(job):
-        return highlight_relocate.relocate(ws, page_id, new_doc, actor=owner, progress=job.progress, **limits)
+        return place(ws, page_id, new_doc, actor=owner, progress=job.progress, **limits)
 
     def ended(_state):
         from ..zotero_sync_pdfs import relocation_ended  # local: the Zotero engine imports this router
@@ -863,28 +927,33 @@ def relocate_highlights(payload: RelocateRequest, request: Request):
     and moved there, the ones not found marked ``lost``, each read from
     the file its rectangles were measured on while that file is stored
     (``_start_relocation``), and one known by its page and quote alone is
-    placed where its quote is, dashed. Session accounts only, like every
+    placed where its quote is, dashed. A text file's page has its ranges
+    found again in its file the same way, by their quotes, always as the
+    job (one task row), never at once. Session accounts only, like every
     job start (a token gets 403), and workspace editors. → the job, the
     running one when a run for this page and file is going already; 400 for
-    a page without a PDF, with one shown from a URL alone (``NOT_STORED``),
-    or without highlights on it, 404 for no such page, 429 when the
-    account's jobs are full, 409 while the last run for this file is still
-    stopping."""
+    a page without a PDF or a text file, with one shown from a URL alone
+    (``NOT_STORED``) or listed without its bytes, or without highlights on
+    it, 404 for no such page, 429 when the account's jobs are full, 409
+    while the last run for this file is still stopping."""
     require_user_id(request)
     ws = require_ws(request, write=True)
     with connect_pages_db(ws) as conn:
         page = _load_page(conn, payload.page_id)
-        placed = highlight_relocate.page_highlights(conn, page["id"], unplaced=True)
-    view = page_document(page["properties"])
-    if not is_pdf(view):
-        raise HTTPException(status_code=400, detail="the page has no PDF")
+        view = page_document(page["properties"])
+        text = view is not None and view["format"] == "text"
+        placed = (text_anchors.page_ranges(conn, page["id"]) if text
+                  else highlight_relocate.page_highlights(conn, page["id"], unplaced=True))
+    if not (is_pdf(view) or text):
+        raise HTTPException(status_code=400, detail="the page has no PDF or text file")
     new_doc = file_hash(view)
     if not new_doc:
-        raise HTTPException(status_code=400, detail=NOT_STORED)
+        raise HTTPException(status_code=400, detail=LISTED if text else NOT_STORED)
     if not placed:
-        raise HTTPException(status_code=400, detail="the page has no highlights placed on its PDF")
+        raise HTTPException(status_code=400, detail="the page has no highlights placed on its "
+                                                    + ("file" if text else "PDF"))
     job, _reason = _start_relocation(request.state.user_id, ws, page["id"], page["content"], new_doc,
-                                     quiet=False)
+                                     quiet=False, format=view["format"])
     return job
 
 
@@ -912,7 +981,7 @@ def detach_pdf(page_id: str, request: Request):
                 actor=actor_of(request), client=writer_client(request)))
         except OpError as e:
             return op_refusal(e)
-        pdf_index.purge_unused(ws, conn)
+        text_index.purge_unused(ws, conn)
     return {"ok": True, "block": {**page, "properties": props, "updated_at": result["at"]}}
 
 

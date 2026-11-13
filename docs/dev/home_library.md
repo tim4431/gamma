@@ -69,20 +69,43 @@ the library.
   time on the right, viewed for a recent page and modified otherwise; the
   open page says Current.
 - A query ranks through `createLibraryMatcher` (the listing's filter box
-  matcher, below), recency breaking ties. Results fall under Pages, Folders
-  (matched on the name or the path) and Labels. The matched characters are
+  matcher, below), recency breaking ties. Results fall under Pages, Files
+  (below), Folders (matched on the name or the path) and Labels. The matched characters are
   marked (`MarkedText` in SearchPanel.jsx over `markedParts` from
   `search/snippets.js`); a typo-only match stays unmarked. A page row shows
   its folder and label chips (`CardLabels`, as on a file row), so a
   label-only match reads as one; a sub-page's row its labels only, its
   path on the second line saying where it is.
-- A typed list ends with two actions. *Search inside notes and PDFs for "q"*
-  (Ctrl+Enter) opens the workspace search with the query (App's
-  `openSearchWith`). *Create page "q"* (Shift+Enter, only where
+- For a member (not in a share view), a typed query also finds the work
+  folders' files by name or path, under **Files** after the pages
+  (`explorer/useFileSearch.js`: `GET /api/files?q=…&limit=20` after 120 ms
+  of quiet, the previous request aborted and a stale answer dropped). The
+  server ranks them and says which characters matched
+  (`gamma/work_folders/file_search.py`, [work_folders.md](work_folders.md)
+  "Files by name"): a query with `/` or `\` is one path term, spaces kept
+  (`dir 3/file-012`), any other query's words match the file's name alone;
+  the palette draws its rows in that order and marks its spans
+  (`explorer/fileSearch.js` `fileParts`, by code points, drawn by search's
+  `MarkedText`), never ranking a file itself. A row shows the file's name,
+  its work folder and directory (the row's `dir`) under it, and its time
+  (hidden under 480 px wide); the rows of the query before stay while a
+  longer one is asked, and the selection stays on its row when the files
+  land above it; a file a page row
+  already lists (a library file found by its title, an open tab) is one
+  row, the page's (`fileRows`). At most 20. While files are asked for and
+  none is listed the line under the list says "Searching files…", on a
+  failure "Files could not be searched.", and when nothing but the actions
+  answered "No matching pages or files.". Enter opens the file's page, the
+  row handed to App's known pages (`files.remember`) so its tab knows it
+  at once. The box reads "Search pages, files, folders and labels".
+- A typed list ends with two actions. *Search notes, PDFs and files for
+  "q"* (Ctrl+Enter) opens the workspace search with the query (App's
+  `openSearchWith`); the palette's ranking of pages stays in the browser,
+  over the pages it knows (its files are the server's, above). *Create page "q"* (Shift+Enter, only where
   `lib.organize`) calls `createPage` with that title, in the folder the home
   view has open.
-- Enter opens a page through `openPage`, the same path as a card
-  double-click, and a folder or label in its home view. A query starting
+- Enter opens a page or a file's page through `openPage`, the same path as
+  a card double-click, and a folder or label in its home view. A query starting
   with `>` is the command palette ([hotkeys.md](hotkeys.md)).
 
 ## Folders and labels
@@ -250,9 +273,13 @@ page's top, and `pages_in_scope` (the `scope` of GET search) tests a
 folder id against the top and a label id against the page itself. So a
 folder view, a folder share, GET search's scope, a folder export, a folder
 chat's agent and a synced vault reach a sub-page through its top without
-code of their own. The Ctrl+F panel's chips and qualifiers are evaluated
-in the browser by the same rule (`search/searchFilters.js`, through
-`libraryUtils.topPageOf`), and it sends the page ids they keep.
+code of their own. The Ctrl+F panel sends its folder and label chips, and
+a `folder:` or `label:` clause naming one folder or label, as their ids,
+which `pages_in_scope` resolves (`routers/search.scope_pages`), so a work
+folder's chip reaches files the listing never carries; its other
+qualifiers are evaluated in the browser by the same rule
+(`search/searchFilters.js`, through `libraryUtils.topPageOf`), and it
+sends the page ids they keep.
 `root_pages` without a folder reaches every live page, sub-pages included
 (search, export, the agent, reindexing). `blocks_store.filed_folders` is
 a page's folders by this rule, which the connector's clip and lookup
@@ -314,7 +341,8 @@ path" and the `@` menu's page row the path, each else the page's first
 folder. The Ctrl+F search panel names a hit's page "Parent › Child", the
 pages above it muted and shrinking first.
 
-**Reaching one.** Three ways, none of them a page tree in a sidebar:
+**Reaching one.** Four ways; the Files window is a view of the folders, which
+stay the model with the labels:
 
 - the `[[id]]` chip `/page` wrote, or any chip or link to the page;
 - **Pages inside** (`editor/SubPagesPanel.jsx`), under the notes above
@@ -329,7 +357,10 @@ pages above it muted and shrinking first.
 - **the crumbs** (`editor/PageCrumbs.jsx`) at the top of the page header:
   the ancestors, top first, each a button that opens its page (Back
   returns), separated by `/`, the page's own title below. A library page
-  has none.
+  has none;
+- **the Files window** (`explorer/FilesWindow.jsx`, "Work folders" below):
+  the folders as a tree beside the page, each library folder's top pages
+  under it; a sub-page is reached from its top page, as in the listing.
 
 App reads `GET /pages/{id}/family` ([api.md](api.md) "Pages") for the open
 page: alongside its tree when the listing has the page, as the comments
@@ -574,13 +605,19 @@ Ctrl+P and the chat's page pickers): the workspace search's typo-tolerant title 
 folded, every whitespace term must hit the title or a chip, and title hits
 outrank chip-only ones.
 
-The box reads no notes or PDF text, and points to the search that does
-(`ListSearchElsewhere`). With nothing matched, a banner above the listing
-("No title or label matches …") offers *Search inside notes and PDFs* with
+The box reads no notes and no document text, and points to the search that
+does (`ListSearchElsewhere`). With nothing matched, a banner above the listing
+("No title or label matches …") offers *Search inside notes, PDFs and files* with
 the full search's shortcut. Enter in the box does the same. With matches, a
 quiet row right after the last match offers it. Both open the workspace
 search with the query filled in (SearchPanel's `initialQuery`, App's
-`openSearchWith`). Neither is a `.fileRow` / `.folderRow`.
+`openSearchWith`). Neither is a `.fileRow` / `.folderRow`. The search lists
+titles, notes, the PDFs' pages (Library PDFs) and the text files' lines
+(Files: a row names the file's directory in its work folder, its name and
+the line, and opens the file at that line), each group a page at a time
+from `POST /api/block-search` and `POST /api/document-search`, which take
+the filters' folders and labels as ids and the pages its other qualifiers
+keep ([api.md](api.md) "Search matching and display").
 
 The list view is a table. Every row ends in the same trailing columns
 (`rowColumns` in App.jsx): the kind ("PDF", "Page", or a folder's or label's
@@ -656,7 +693,8 @@ on a second line (the Phone block at the end of `library.css`).
 
 Search chips (Tab autosuggest; Enter stays the search's own key) cover both kinds, named from the trees: a
 label chip keeps the pages carrying that label, a folder chip (its path)
-the pages filed in the folder or below it. The search popover's typed
+the pages filed in the folder or below it, a work folder's files included:
+a chip goes to the server as its id. The search popover's typed
 qualifiers (`label:`, `folder:`, `-label:read`, `is:pdf`, `year:>=2020` …,
 [api.md](api.md) "Search matching and display") combine with the chips.
 The home filter box and Ctrl+P read no qualifiers: a query holding one
@@ -715,9 +753,43 @@ folder from those, summed down its subtree, in place of the library pages.
   `mergeKnown`, the listing's row winning), which `pageBlocks`, the tab
   icons, the chat's chips and the citation pills read; `_listed` says
   whether the library lists a row. `libraryPages`, the label counts and
-  the pickers' default lists keep to listed pages, but for the tabs' and
-  recents' (`pickerPages`), so a file stays in Recently viewed, Open tabs
-  and the Pinned strip.
+  the pickers' default lists keep to listed pages, but for the tabs',
+  recents' and pins' (`pickerPages`), so a file stays in Recently viewed,
+  Open tabs and the Pinned strip, and quick open lists a pinned file. The
+  Files window hands over the few file rows it selected, opened or opened
+  a menu on (`files.known`, at most 20), so the file's tab, menu and rules
+  know it as a file before a summary is read.
+- **The Files window.** View → Files (on a phone the More sheet's Files
+  row beside an open page; the command `app.toggleFiles`, unbound) shows
+  the folders as a tree in a dock window, first on the left; closed to
+  begin with, its showing kept per browser, not per page
+  (`explorer/useFilesWindow.js`; a page's saved layout keeps the window
+  where it is, `layoutKeeping`). Its rows: the library's folders in tree
+  order with their top pages by title (200 at a time), a work folder's
+  directories by name and the files of each open one from
+  `GET /api/folders/{id}/pages` (200 a press, `explorer/useDirectoryRows.js`).
+  Nothing is read while it is hidden; an open directory is read again only
+  when the listing's count for it changes or its `work_changes` name a
+  write to one of its files since the read (a rename on disk),
+  not on every listing refresh, so the home list view's open directory is
+  read twice while both show (two sorts, two page sizes). A press on a
+  folder opens or closes it, a press on a file selects and opens it — one
+  press, where the list view selects on a click and opens on a second; the
+  tree's selection is its own, and a file row's menu is the page menu for
+  that one page with the home selection let go (`openSubPageMenu`). The
+  open page is revealed once, when its row is first known and the window
+  shows: its folders opened, its directory paged to it (at most 500 rows),
+  the row selected and scrolled to ([work_folders.md](work_folders.md)
+  "The Files window").
+- **Crumbs and links by path.** A file's page shows its folders from the
+  work folder down to its directory as crumbs above the title
+  (`explorer/workPaths.js` `fileCrumbs` over the open page's `pageFolders`,
+  so they are there on the first frame); a crumb opens that folder in the
+  library, Back returning to the file. The page's directory chip leaves the
+  label field (library folders and labels stay). A relative link in a work
+  folder's note that the vault left as written opens the file it names
+  (`editor/PathLink.jsx`: `GET /api/folders/{W}/at` with the note's
+  directory as the base); one that names none says "No tracked file at …".
 - **Drops and filing.** A file not in the library is filed by its
   directory alone: Move to folder and a drop on a library folder leave it
   out with the rule's words; a note that follows may be dropped on another
@@ -996,9 +1068,9 @@ connection: one read of the trash gives every entry with the rows that
 went with it (`trash._trashed`), each entry's deletion checks under its
 write lock that the page is still there as read (a row restored since is
 passed by, a page restored and deleted again since has its rows read
-again), and data.db's rows of papers no block carries are purged once at
-the end of a pass that deleted a page, on the same connection, not per
-page, because `pdf_index.purge_unused` reads every block's
+again), and data.db's rows of documents no block carries are purged once
+at the end of a pass that deleted a page, on the same connection, not per
+page, because `search.index.purge_unused` reads every block's
 properties. The sweeper runs at
 startup and every hour (`lifespan`). It
 skips a workspace whose `pages.db` and WAL are unchanged since the last

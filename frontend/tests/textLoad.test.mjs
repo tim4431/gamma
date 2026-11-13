@@ -1,10 +1,12 @@
 // How the text viewer decodes a file (src/documents/viewers/textLoad.js):
 // the byte-order marks, UTF-8 with replacement, a head's partial last line,
-// the line cap, a NUL, and the size a response says; and how much of a
-// response loadText reads, through a stand-in fetch.
+// the line cap and the lines it cut, what is no text (the shared fixture's rule), and the size a
+// response says; and how much of a response loadText reads, through a
+// stand-in fetch.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { HEAD_BYTES, LINE_CAP, MAX_TEXT_BYTES, byteOrderMark, contentTotal, decodeText, loadText, looksBinary } from "../src/documents/viewers/textLoad.js";
+import { readFileSync } from "node:fs";
+import { BAD_SHARE, HEAD_BYTES, LINE_CAP, MAX_TEXT_BYTES, byteOrderMark, contentTotal, cutLinesOf, decodeText, loadText, notText } from "../src/documents/viewers/textLoad.js";
 
 const utf8 = (s) => new TextEncoder().encode(s);
 const utf16 = (s, little = true) => {
@@ -43,9 +45,9 @@ test("a byte-order mark picks UTF-8, UTF-16LE or UTF-16BE, and is not shown", ()
 
 test("UTF-8 without a mark; invalid bytes show as U+FFFD and are reported", () => {
   assert.deepEqual(decodeText(utf8("a\nb\n")), { text: "a\nb\n", bad: false, binary: false, cut: false });
-  const latin1 = cat(utf8("caf"), new Uint8Array([0xe9]), utf8("\n"));
+  const latin1 = cat(utf8("caf"), new Uint8Array([0xe9]), utf8(" au lait, as the menu says\n"));
   const out = decodeText(latin1);
-  assert.equal(out.text, "caf�\n");
+  assert.equal(out.text, "caf� au lait, as the menu says\n");
   assert.equal(out.bad, true);
   assert.equal(decodeText(utf8("日本語\n")).bad, false, "valid multi-byte text is not 'bad'");
 });
@@ -74,12 +76,58 @@ test("a line past 10,000 characters is cut there with an ellipsis", () => {
   assert.equal(decodeText(utf8("y".repeat(LINE_CAP))).cut, false, "exactly the cap is whole");
 });
 
-test("a NUL in the first 8 KiB of a file without a mark says binary", () => {
-  assert.equal(looksBinary(new Uint8Array([0x41, 0x00, 0x42])), true);
-  assert.equal(looksBinary(utf8("plain text\n")), false);
-  const late = cat(utf8("a".repeat(8192)), new Uint8Array([0]));
-  assert.equal(looksBinary(late), false, "past the first 8 KiB it is not scanned");
+test("a lone \\r is a line break to the cap, as on the server and in CodeMirror", () => {
+  // a progress bar of 150 updates on one \n-line, then the lines after it
+  const bar = Array.from({ length: 150 }, (_, i) => `step ${i} ${"=".repeat(80)}`).join("\r");
+  const out = decodeText(utf8(`${bar}\nepoch 1 done\nepoch 2 done val_loss 0.3\n`));
+  const lines = out.text.split(/\r\n?|\n/);
+  assert.equal(out.cut, false);
+  assert.equal(lines.indexOf("epoch 2 done val_loss 0.3") + 1, 152);
+  // an old Mac file past the cap: every line kept, each its own
+  const mac = Array.from({ length: 2000 }, (_, i) => `line ${i + 1}`).join("\r") + "\r";
+  assert.equal(decodeText(utf8(mac)).text, mac);
+  const crlf = decodeText(utf8(`a\r\n${"x".repeat(LINE_CAP + 1)}\r\nb\r\n`));
+  assert.equal(crlf.text, `a\r\n${"x".repeat(LINE_CAP)}…\r\nb\r\n`);
+  // a head of an old Mac file drops its partial last line
+  assert.deepEqual(decodeText(utf8("one\rtwo\rthr"), { head: true }), { text: "one\rtwo\r", bad: false, binary: false, cut: true });
+});
+
+test("cutLinesOf names the lines the cap cut, in the raw text or the shown one, by any line break", () => {
+  const long = "x".repeat(LINE_CAP + 5);
+  const raw = `short\n${long}\r\nmid\r${long}\nend`;
+  assert.deepEqual([...cutLinesOf(raw)], [2, 4]);
+  assert.deepEqual([...cutLinesOf(decodeText(utf8(raw)).text)], [2, 4], "a cut line keeps its number");
+  assert.deepEqual([...cutLinesOf(`${long}`)], [1], "a file of one line");
+  assert.deepEqual([...cutLinesOf(`a\n${"y".repeat(LINE_CAP)}\n`)], [], "exactly the cap is whole");
+  assert.equal(cutLinesOf("short\nfile\n").size, 0);
+});
+
+test("a NUL anywhere in what was decoded, or U+FFFD past 5% of it, says binary", () => {
+  assert.equal(BAD_SHARE, 0.05);
+  assert.equal(notText("a\0b"), true);
+  assert.equal(notText("plain text\n"), false);
+  assert.equal(notText(""), false, "an empty file is text");
+  assert.equal(notText(`${"a".repeat(95)}${"�".repeat(5)}`), false, "exactly 5% is still text");
+  assert.equal(notText(`${"a".repeat(94)}${"�".repeat(6)}`), true);
   assert.deepEqual(decodeText(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x00, 0x01])), { text: "", bad: false, binary: true, cut: false });
+  const late = cat(utf8("a\n".repeat(6000)), new Uint8Array([0]), utf8("b\n"));
+  assert.equal(decodeText(late).binary, true, "past the first 8 KiB too");
+  assert.equal(decodeText(late, { head: true }).binary, true, "in a head too");
+  assert.equal(decodeText(utf16("NUL\0char\n")).binary, true, "a UTF-16 file's own U+0000");
+});
+
+// The server's rule, case for case: tests/shared/textdecode.json, which
+// backend/tests/test_shared_fixtures.py runs through gamma/documents/text.py
+// decode. Its `encoding` is the backend's codec name, which decodeText has
+// no output for: text, bad and binary are compared.
+const DECODE = JSON.parse(readFileSync(new URL("../../tests/shared/textdecode.json", import.meta.url), "utf8"));
+
+test("decodeText decodes every case of the shared fixture as the server does", () => {
+  assert.ok(DECODE.cases.length >= 10);
+  for (const c of DECODE.cases) {
+    const got = decodeText(Buffer.from(c.bytes, "base64"));
+    assert.deepEqual({ text: got.text, bad: got.bad, binary: got.binary }, { text: c.text, bad: c.bad, binary: c.binary }, c.name);
+  }
 });
 
 test("contentTotal reads a 206's Content-Range total, else Content-Length, else the bytes read", () => {

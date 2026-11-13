@@ -87,6 +87,16 @@ person's `PersonAvatar` in the icon column.
   `/` menu's fuzzy match (`fuzzyIndices`). Invite… follows when the editor
   may share the page (App's `onInvite`: not a viewer, a share view or a
   guest).
+- **The work folder's agent.** A comment's field, for the maker of the
+  page's work-folder vault on the desktop app with an agent on (the field's
+  `links.agent`, `vaultState.mentionAgent`), lists that agent in People
+  after the people (`mentionRows`' `agents`, past their cap of five):
+  a bot icon, its label (*Codex*, *Claude Code*) matched by name or label,
+  and "on this computer", or its problem when it cannot run. A member of
+  the agent's name gets no row there, since in that comment the name is
+  the agent's. Picking it writes `@codex `; the server makes the comment a
+  Send ([local_agents.md](local_agents.md) "A mention in a comment"). A
+  note's menu never lists it.
 - **Link to page.** Pages come from `rankRefPages`, the `[[` picker's
   ranking, which gives the recent ones before anything is typed: the
   title, then as weaker hits the page's folder and label chips by name
@@ -114,6 +124,10 @@ share it:
   once it is due. Its title says whom it reminds.
 - **A person** is a chip only when someone here has that name: a member of
   the workspace, or the signed-in account. Any other `@name` stays text.
+- **The work folder's agent** (`agents`, given to a comment field and to
+  the maker's own posted comments only, never through `MentionContext`):
+  its exact name is the agent's chip, a bot behind it
+  (`.mention-agent::before`), before a member of the same name.
 
 The rendered view's `mdPreprocess` (BlockTree.jsx) turns each mention,
 outside math and code, into a `mention:` link (`mentionMarkdown`), which

@@ -44,7 +44,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
   async function openNotes(page) {
     await page.keyboard.press("ControlOrMeta+p");
     const dialog = page.getByRole("dialog", { name: "Open a page" });
-    await dialog.getByRole("textbox", { name: "Search pages by title or label" }).fill("Lecture notes");
+    await dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" }).fill("Lecture notes");
     await until(async () => (await dialog.locator('[role="option"][data-kind="page"]').count()) === 1, { what: "the notes page listed" });
     await page.keyboard.press("Enter");
     await until(() => blockOf(page) === notes.id, { what: "the notes page opens" });

@@ -7,14 +7,13 @@
 // them there.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API, apiJson, usePersistedState } from "../shared/lib/utils";
+import { PAGE_ROWS, joined, listed, readLimit, readRows } from "./directoryRows.js";
 
 // The sorts the list offers, the server's keys; Modified lists the newest
 // first, the others from A.
 export const WORK_SORTS = ["name", "format", "size", "modified"];
 const orderOf = (sort) => (sort === "modified" ? "desc" : "asc");
-const PAGE_ROWS = 200;
-const MAX_ROWS = 500;
-const NONE = { key: "", rows: [], total: 0, next: null, loading: false, failed: false, still: true };
+const NONE ={ key: "", rows: [], total: 0, next: null, loading: false, failed: false, still: true };
 
 // The list's sort, kept in this browser (`workSort`) and never taken from
 // the library's own sort of its folders: {sort, order, setSort}.
@@ -31,8 +30,9 @@ export function useWorkSort() {
 // load: docs/dev/ui-design.md "Lists that change"). It reads again from
 // the top when the folder, the sort or the order change, and when `version`
 // does (App's listing, read again on coming home, on wake and after an Add
-// or a Remove): a read again keeps as many rows as were loaded, so the
-// list stays where it was. `more()` reads the next page of rows; `patch`
+// or a Remove): a read again reads as many rows as were loaded
+// (directoryRows.js readRows, a request per 500), so the list stays where
+// it was. `more()` reads the next page of rows; `patch`
 // and `drop` follow a rename or a delete made here before the next read.
 export function useFolderRows({ folderId, sort, order, version }) {
   const [held, setHeld] = useState(NONE);
@@ -43,13 +43,17 @@ export function useFolderRows({ folderId, sort, order, version }) {
   const read = useCallback(async (offset, limit, replace) => {
     const n = ++asked.current;
     setHeld((h) => ({ ...(replace && h.key !== key ? { ...NONE } : h), key, loading: true, failed: false }));
-    const q = new URLSearchParams({ sort, order, offset: String(offset), limit: String(limit) });
-    try {
+    const page = async (at, size) => {
+      const q = new URLSearchParams({ sort, order, offset: String(at), limit: String(size) });
       const d = await apiJson(`${API}/folders/${encodeURIComponent(folderId)}/pages?${q}`);
-      if (n !== asked.current) return;
-      const rows = (d.pages || []).map((r) => ({ ...r, _parentPage: r.parent || "" }));
+      return n === asked.current ? d : null;
+    };
+    try {
+      const d = await readRows(page, offset, limit);
+      if (!d) return;
+      const rows = listed(d.pages);
       setHeld((h) => ({
-        key, rows: replace ? rows : [...h.rows, ...rows.filter((r) => !h.rows.some((x) => x.id === r.id))],
+        key, rows: replace ? rows : joined(h.rows, rows),
         total: d.total ?? rows.length, next: d.next ?? null, loading: false, failed: false, still: true,
       }));
     } catch {
@@ -58,8 +62,7 @@ export function useFolderRows({ folderId, sort, order, version }) {
   }, [key, folderId, sort, order]);
   useEffect(() => {
     if (!key) { asked.current++; setHeld(NONE); return; }
-    const kept = heldRef.current.key === key ? heldRef.current.rows.length : 0;
-    read(0, Math.min(MAX_ROWS, Math.max(PAGE_ROWS, kept)), true);
+    read(0, readLimit(heldRef.current.key === key ? heldRef.current : null), true);
   }, [key, version]); // eslint-disable-line react-hooks/exhaustive-deps
   const more = useCallback(() => {
     const h = heldRef.current;

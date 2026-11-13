@@ -136,6 +136,8 @@
   .vaultBox .switch input:disabled + .switchTrack { opacity: 0.45; }
   .vaultBox .say { color: var(--text-secondary); line-height: 1.45; }
   .vaultBox .say.no { color: var(--danger); }
+  .vaultBox .agentRow { display: flex; flex-direction: column; gap: 5px; }
+  .vaultBox .agentRow .k { width: auto; }
   .vaultBox .btns { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
   .seg button { border: none; background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--fs-2xs); padding: 3px 8px; cursor: pointer; }
@@ -463,7 +465,8 @@
   // A row's or a vault view's action (main.js keepingAction). Those that
   // change the vault or run a round leave the panel open on the new state;
   // the others ask first in a native dialog, or open something.
-  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library'];
+  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'agent', 'agent-runs', 'check-agents',
+    'show-computer', 'hide-computer'];
   function runKept(i, action, value) {
     if (!STAYS_OPEN.includes(action)) closeMenu();
     gammaShell.keepingAction(i.kind, i.server, i.id, action, value).catch(() => {});
@@ -549,10 +552,12 @@
     return r;
   }
 
-  // Push: off / PDFs / everything, as three buttons; `everything` shut where it cannot be, `noEverything` saying why.
-  const FAR_PUSH = 'A vault of another server pushes PDFs at most, for now';
+  // Push: off / PDFs / everything, as three buttons; `everything` shut where it cannot be, `noEverything` saying why;
+  // with `locked`, every one but the setting shut, `locked` saying why (a work folder of another server).
+  const FAR_PUSH = 'A vault of another server pushes PDFs at most: a work folder there is made from an empty folder';
+  const FAR_WORK = 'A work folder of another server pushes everything and pulls: remove the vault to stop';
   const WHOLE_PUSH = 'A vault of the whole library cannot push everything: make one of a folder';
-  function pushSeg(value, onPick, noEverything) {
+  function pushSeg(value, onPick, noEverything, locked) {
     const seg = document.createElement('span');
     seg.className = 'seg';
     seg.setAttribute('role', 'group');
@@ -562,7 +567,10 @@
       b.dataset.push = word;
       b.textContent = text;
       b.setAttribute('aria-pressed', String(value === word));
-      if (word === 'everything' && noEverything) {
+      if (locked && value !== word) {
+        b.disabled = true;
+        b.title = locked;
+      } else if (word === 'everything' && noEverything) {
         b.disabled = true;
         b.title = noEverything;
       }
@@ -589,6 +597,89 @@
   }
 
   const pullSwitch = (id, on, onPick, shut) => switchOf(id, 'Pull', on, onPick, shut);
+
+  // A work folder's agent: Off / Codex / Claude Code, as three buttons
+  // (`agents`, keeping.js agentChoices); one not on this computer or not
+  // ready is shut, its problem in its tooltip.
+  function agentSeg(value, agents, onPick) {
+    const seg = document.createElement('span');
+    seg.className = 'seg';
+    seg.id = 'vaultAgent';
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', 'Agent in this folder');
+    for (const a of [{ name: '', label: 'Off' }, ...agents]) {
+      const b = document.createElement('button');
+      b.dataset.agent = a.name;
+      b.textContent = a.label;
+      b.setAttribute('aria-pressed', String(value === a.name));
+      if (a.name && (a.found === false || a.ready === false)) {
+        b.disabled = true;
+        b.title = a.problem || `${a.label} is not ready on this computer`;
+      }
+      b.onclick = (e) => { e.stopPropagation(); if (value !== a.name) onPick(a.name); };
+      seg.appendChild(b);
+    }
+    return seg;
+  }
+
+  // What the agent chosen does in the folder, under the agent row.
+  const AGENT_SAYS = {
+    '': 'Sends wait for an agent you run yourself.',
+    codex: 'Codex answers this folder\'s Sends: it edits the files here and runs commands in its sandbox, without network.',
+    claude: 'Claude Code answers this folder\'s Sends: it edits the files here and runs no commands.',
+  };
+
+  // What a work folder's agent may run beyond its confinement: Nothing more
+  // ('never') / Ask me in the chat ('ask'), as two buttons.
+  function runsSeg(value, onPick) {
+    const seg = document.createElement('span');
+    seg.className = 'seg';
+    seg.id = 'vaultRuns';
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', 'What it may run');
+    for (const [word, text] of [['never', 'Nothing more'], ['ask', 'Ask me in the chat']]) {
+      const b = document.createElement('button');
+      b.dataset.runs = word;
+      b.textContent = text;
+      b.setAttribute('aria-pressed', String(value === word));
+      b.onclick = (e) => { e.stopPropagation(); if (value !== word) onPick(word); };
+      seg.appendChild(b);
+    }
+    return seg;
+  }
+
+  // What the agent on may run, and may ask for, under the row What it may run.
+  const RUNS_SAYS = {
+    codex: 'Codex runs commands in its sandbox, without network; with Ask, it can ask in the chat to go further (the network, files outside this folder).',
+    claude: 'Claude Code edits the files here and runs no commands; with Ask, it can ask in the chat to run one (your build).',
+  };
+
+  // A work folder's agent row (its maker's alone): the segment, then as
+  // visible lines the problem of the chosen agent and of each one that
+  // cannot be chosen, what the chosen one does, and what it does now; with
+  // an agent on, the row What it may run and its line.
+  function agentRow(i) {
+    const box = document.createElement('div');
+    box.className = 'agentRow';
+    box.appendChild(switchRow([['Agent in this folder', agentSeg(i.agent, i.agents, (name) => runKept(i, 'agent', name))]]));
+    const line = (text, no) => {
+      const say = document.createElement('div');
+      say.className = `say${no ? ' no' : ''}`;
+      say.textContent = text;
+      box.appendChild(say);
+    };
+    const problems = new Set();
+    if (i.agent && i.agentReady === false && i.agentProblem) problems.add(i.agentProblem);
+    for (const a of i.agents) if (a.ready !== true && a.problem) problems.add(a.problem);
+    for (const p of problems) line(p, true);
+    line(AGENT_SAYS[i.agent] || AGENT_SAYS[''], false);
+    if (i.agentRunning) line(`Now: ${i.agentLabel} is working · ${i.agentRunning}`, false);
+    if (i.agent) {
+      box.appendChild(switchRow([['What it may run', runsSeg(i.agentRuns, (word) => runKept(i, 'agent-runs', word))]]));
+      if (RUNS_SAYS[i.agent]) line(RUNS_SAYS[i.agent], false);
+    }
+    return box;
+  }
 
   // A vault's switches in one row, each after its name: `[name, control]`
   // pairs, Pull then Push, or a work folder's library switch.
@@ -654,9 +745,12 @@
     panel.appendChild(box);
   }
 
+  // A work folder's view of its maker looks for the agents on this computer
+  // again (main.js checkAgents), so its agent row offers what is there now.
   function openVault(i) {
     vaultView = i.key;
     renderSync();
+    if (i.agentHere && i.mine && i.agents) runKept(i, 'check-agents');
   }
 
   // A vault's own view: where it is and how it stands, its switches (a work
@@ -666,7 +760,9 @@
   // tooltip; the rare and the grave ones keep their rows, where their words
   // warn: Choose files… for a work folder (its tracking dialog, in Gamma), Go
   // on… for a vault its guard held, Locate… for one whose directory or file
-  // is not where it was, Force pull… and Force push…, Remove the vault….
+  // is not where it was, Force pull… and Force push…, Show this computer
+  // there or Stop showing for a vault of another server (under its State,
+  // whether this computer is shown there), Remove the vault….
   function renderVault(panel, i) {
     backRow(panel, () => { vaultView = null; renderSync(); });
     panel.appendChild(label(i.name));
@@ -676,15 +772,29 @@
     boxRow(box, 'Local', i.seen ? 'On the computer of the account that made it' : i.dest, i.seen ? '' : 'path');
     boxRow(box, 'Remote', `${i.remote}${i.folder ? ` · ${i.folder}` : ''}`);
     boxRow(box, 'State', i.text).title = i.title;
+    // A vault of another server: whether this computer is shown there (keeping.js computerLine).
+    if (i.computer) {
+      const say = document.createElement('div');
+      say.className = `say${i.computer.state === 'refused' || i.computer.state === 'older' ? ' no' : ''}`;
+      say.id = 'vaultComputer';
+      say.textContent = i.computer.text;
+      say.title = i.computer.title;
+      box.appendChild(say);
+    }
     // A vault of a workspace its maker left runs no round; another account's, seen by a viewer, takes no action.
     const shut = i.seen ? 'Another account made this vault: it, or an editor of the workspace, acts on it.'
       : i.away ? 'Your account is no longer a member of its workspace: nothing is pulled or pushed.' : '';
     if (i.scope === 'folder') {
-      const rows = [switchRow([['Pull', pullSwitch('vaultPull', i.pull, (on) => runKept(i, 'pull', on), i.remoteUrl && 'A vault of another server pulls, for now')],
+      // a vault of another server keeps pulling; a work folder there pushes everything too, both locked
+      const farWork = Boolean(i.remoteUrl && i.work);
+      const rows = [switchRow([['Pull', pullSwitch('vaultPull', i.pull, (on) => runKept(i, 'pull', on),
+        farWork ? FAR_WORK : i.remoteUrl && 'A vault of another server pulls')],
         ['Push', pushSeg(i.push, (word) => runKept(i, 'push', word),
-          i.remoteUrl ? FAR_PUSH : i.whole && i.push !== 'everything' ? WHOLE_PUSH : '')]])];
+          farWork ? '' : i.remoteUrl ? FAR_PUSH : i.whole && i.push !== 'everything' ? WHOLE_PUSH : '', farWork ? FAR_WORK : '')]])];
       // a work folder's switch: whether the PDFs and notes it finds are added to the library too
       if (i.work) rows.push(switchRow([['Add its PDFs and notes to the library', switchOf('vaultLibrary', 'Add its PDFs and notes to the library', i.library, (on) => runKept(i, 'library', on))]]));
+      // and its agent, its maker's choice on a server that runs agents (a work folder of the server's own, for now)
+      if (i.agentHere && i.mine && i.agents) rows.push(agentRow(i));
       for (const sw of rows) {
         if (shut) {
           sw.title = shut;
@@ -733,8 +843,10 @@
       ['locate', ICONS.locate, folder ? 'Locate…' : 'Locate the file…', !i.seen && (!folder || Boolean(i.stopped) || i.offline)],
       ['force-pull', ICONS.force, 'Force pull…', rounds && folder],
       ['force-push', ICONS.force, 'Force push…', rounds && folder],
+      // this computer shown on a vault of another server's server, or no longer
+      i.computer ? [i.computer.action, i.computer.action === 'show-computer' ? ICONS.remote : ICONS.pause, i.computer.button, true] : null,
       ['remove', ICONS.stop, 'Remove the vault…', !i.seen, false, true],
-    ];
+    ].filter(Boolean);
     for (const [act, icon, text, shown, off, danger] of acts) {
       if (!shown) continue;
       const b = document.createElement('button');

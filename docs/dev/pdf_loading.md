@@ -14,11 +14,11 @@ throws a parsed document away.**
 Every stored PDF gets one row in the workspace's `data.db`, table `pdf_docs`:
 byte size, page count, and every page's size in PDF points with `/Rotate`
 applied (the same box pdf.js measures its scale-1 viewport from, so a layout
-built from it is exact). It is derived data next to the PDF text index, so
+built from it is exact). It is derived data next to the document text index, so
 its `CREATE TABLE IF NOT EXISTS` is in `db.DATA_SCHEMA`, which every
 `data.db` connection applies (no migration step); it lives in backups
 harmlessly, and is purged with the index when no page carries the document
-any more (`pdf_index.purge_unused`).
+any more (`search.index.purge_unused`; a replaced file's, `purge_doc`).
 
 Who writes it: `storage.store_pdf` (imports, a PDF the fetch handoff held),
 `storage.store_pdf_stream` (uploads, a file chip's PDF among them) and
@@ -198,7 +198,7 @@ margins, and starts at the viewer's left edge once it is wider than the
 viewer. While the document has a highlight with an open comment thread, a
 page with room for the comment column stands beside it instead, the two
 centred together, and a page without room stays centred
-([comments.md](comments.md#the-pdf-margin)). The column is inside the page
+([comments.md](comments.md#the-margin)). The column is inside the page
 box, so it scrolls and zooms with the page; the pages' columns stack as
 one, each page's cards under the ones above. The zoom anchor's horizontal
 arithmetic reads the same three layouts (`pageLeft`,

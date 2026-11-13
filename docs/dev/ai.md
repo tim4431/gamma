@@ -507,9 +507,12 @@ set — some models reject it; see "Reasoning effort" below), optional `speed`
 (the provider's service tier; see "Speed" below), optional `system` override, the message's
 `images` and their budget `max_pictures` ("Pictures" below), and the context PAGES: `pages`
 (several — a report across pages) or, when empty, the one page of `page_id`
-(the open page). A page's PDF attachment is derived server-side from its
-document (`documents.model.page_document`): the stored file it shows
-(`file_hash`), so a duplicated page reads the original's PDF — `doc_id` is
+(the open page). A page's PDF attachment, or its text file, is derived
+server-side from its document (`documents.model.page_document`): the stored
+file it shows (`file_hash`), so a duplicated page reads the original's PDF; a
+text file's numbered lines, head and outline, are built from the page alone
+([ai_context.md](ai_context.md) "A text file"), so nothing in the request
+changes for one — `doc_id` is
 still accepted as a compatibility input: it resolves to the page carrying that PDF
 (`blocks_store.page_for_doc`) and does nothing when no page does; send
 `page_id`, nothing new may depend on `doc_id`. `stream: true` (the chat UI's
@@ -936,6 +939,12 @@ without a picture. Nothing placed at all falls back to the
 plain head excerpt. With a native PDF attachment there is no window and no
 picture, and the passages carry the viewer's page only.
 
+A selection in a text file's code view comes as `{text, page: 0, line,
+end}`: `request_selections` keeps its `lines`, the question labels it
+"Selected passage (lines 118–120)", and `text_selection_context` sends the
+numbered lines around it with the message, as a PDF passage's window
+([ai_context.md](ai_context.md)); there is no section and no picture.
+
 **How much is quoted.** A selection is what the user asks about, so it gets
 the single-paper budget the request carries (`context_char_limit`,
 Settings → AI → Chat → Context size, 60,000 characters by default): a dozen
@@ -958,10 +967,23 @@ character being a code point on both sides, with the cases in
 and the setting in its hover text. After sending, the stream's
 `{"shortened": {items, budget, asked}}` line (after `{"trimmed"}`) lists
 what went short, block outlines included, which only the server can
-measure. The reply keeps it as `shortened` and shows the pill
-(`coverage.js` `shortenedNote`). Its explanation names the setting, or the
+measure; a selection of a text file's lines carries its `lines` and is
+named by them ("Lines 118–120 shortened: …"). The reply keeps it as
+`shortened` and shows the pill (`coverage.js` `shortenedNote`). Its explanation names the setting, or the
 model's window when the window fit shrank the budget (`budget` below
 `asked`, "Fitting the window" above).
+
+### The computer side
+
+On a work folder's file whose vault the account made, with an agent on
+(the desktop app's own server), the chat's header starts with a switch,
+**Gamma AI | Codex**, drawn even when Gamma AI is off or unset. The
+Codex side is not Gamma AI's: it talks to the agent on this computer, has
+its own conversations, strip, transcript and composer, and goes through
+none of this document's machinery (no provider, model, tools, Plan mode,
+approvals or chat buckets). It is [local_agents.md](local_agents.md)
+"The chat's computer side"; this side's PDF passages are the same App
+state on both.
 
 ### The composer
 
@@ -1032,16 +1054,17 @@ tick.
 References persist for follow-up questions and are saved as `contextPages`
 on each user message. Loading a conversation restores its last references;
 editing an earlier message reuses that message's references. Each contributes
-its title, metadata, summary, and PDF excerpt (or native PDF), with optional
-notes/highlights. The multi-paper text budget is shared by valid pages; a
+its title, metadata, summary, and PDF excerpt (or native PDF) or text
+file's numbered lines (head and outline), its open comment threads, with
+optional notes/highlights. The multi-paper text budget is shared by valid pages; a
 selection still centers the open paper's excerpt. Tool-enabled chats also
 receive document maps labelled with page IDs.
 
 Explicit references expand `read_page`, `read_block`, and `search_library`
 access within the current workspace, even outside the original page/folder.
-They never expand the editing scope. PDF search hits identify their Gamma
-page IDs so the assistant can read further or cite the matching paper,
-including when titles are identical. References are resolved server-side;
+They never expand the editing scope. PDF and file search hits identify their
+Gamma page IDs so the assistant can read further or cite the matching paper
+or line, including when titles are identical. References are resolved server-side;
 missing pages and non-page blocks are ignored.
 
 ### Pointing the chat at notes
@@ -1237,8 +1260,9 @@ page-image route, the chat's region and view pictures, `picture_at`) draws
 it through `ai_pictures.image_region(ws, file, box, marks)`: `page` is 1
 (any other is "no such page"), `ink` does nothing. The function reads the
 stored file (an upload or a work folder's file read in place, at most
-`STORED_MAX_BYTES`), an SVG through its one-page PDF
-(`pdf_image.svg_pdf`), a raster with Pillow (the EXIF orientation applied,
+`STORED_MAX_BYTES`), an SVG as MuPDF draws the box alone under its time
+limit (`pdf_image.svg_png`, [pictures.md](pictures.md#svg-pictures)), a
+raster with Pillow (the EXIF orientation applied,
 an animation's first frame, transparency on white), cuts the box (at
 least `REGION_MIN_PX`, 48, of the picture's own pixels a side) and scales
 it so the longer side is `RENDER_MAX_SIDE`, zooming at most
@@ -1293,7 +1317,7 @@ What it can reach depends on where the chat is opened — every chat declares an
 - `"folder"` — the home/folder chat (`folder` = current path, `""` = root):
   tools reach the pages in that folder.
 - `"page"` — the page chat (`page_id` = the focused page, with or without a
-  PDF): tools reach only that page — the reading tools plus the note-block
+  document, a PDF or a text file): tools reach only that page — the reading tools plus the note-block
   editors; the page-level organizers (list/rename/move, folders and labels)
   don't exist there. The reading tools reach the pages inside it too, as
   attachments widen reading and never editing ([ai_tools.md](ai_tools.md)).
@@ -1307,7 +1331,11 @@ are always appended mechanically to the base prompt, so a custom prompt can
 change the agent's style but not widen its reach. Everything off (or no/invalid
 scope) = plain chat. Among those mechanical lines: with a reading tool armed,
 the model is asked to link the pages it refers to as `[title](/?page=<id>)`,
-which the chat opens in place (details in [ai_tools.md](ai_tools.md)).
+which the chat opens in place (details in [ai_tools.md](ai_tools.md)). With a
+document in context the system prompt also carries the citation rule
+(`ai_tools.CITATION_PROMPT`): a PDF passage as `[p. N](/?page=…&pdf_page=N&quote=…)`,
+a text file's line as `[<file name>:N](/?page=…&line=N&quote=<the line's
+verbatim text>)` ([pdf_citations.md](pdf_citations.md) "Line links").
 
 The changing tools (rename, move, folders and labels, the note editors) are
 armed only when `auth.can_write` lets the request write: an editor or
@@ -1389,7 +1417,7 @@ One permission per capability: List pages (`list_pages`, the folder tree
 `read_chats`, and the citation records `cite`), Read note blocks, View pages
 and handwriting (`view` → `view_pdf_page`, a rendered page picture for a
 scan or a figure, `view_ink`, the user's handwriting, and `view_image`, the
-pictures a note embeds), Search library (`search_library` — notes and PDF text; the stored key is
+pictures a note embeds), Search library (`search_library` — notes, PDF text and text files; the stored key is
 still `search`), Search papers online (`web_search` → `search_papers`,
 `related_papers` and, when the account has a web engine for this chat,
 `search_web`), Fetch documents (`web_read` → `fetch_paper`; the web tools are
@@ -2012,7 +2040,8 @@ replays each saved reply's recorded actions as assistant `tool_calls` +
 `role:"tool"` turns, so the model keeps prior tool results across turns
 instead of re-listing. Every replayed result is prefixed with a note
 (`_REPLAYED_NOTE`): it is from an earlier turn, the notes may have changed,
-call again before quoting or editing. The base prompt says the same, so a
+call again before quoting or editing (a work folder's text file, too, may
+have changed under a replayed read: a rebuild, an edit). The base prompt says the same, so a
 request to read, show or check something is answered from a fresh call, not
 last turn's outline (the agent's own edits change what `read_block`
 returns). A change the user reverted from its row (`reverted` on the

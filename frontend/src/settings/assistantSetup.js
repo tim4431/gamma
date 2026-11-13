@@ -36,12 +36,13 @@ export function claudeConnectCommand(serverUrl, platform, { replace = false } = 
 // Run from the parent of the extracted gamma-marketplace directory on either OS.
 export const claudePluginInstallCommands = "claude plugin marketplace add ./gamma-marketplace\nclaude plugin install gamma@gamma-local --scope user";
 
-// DeepSeek Harness has no browser sign-in: its setup script (tools/install-gamma-dsh.*)
-// adds the Gamma plugin to the dsh profiles on that computer, then exchanges the
-// one-time setup code for the connection's token and saves it where the plugin
-// reads it when dsh starts. The token never appears in the command or on screen.
-export function dshSetupCommand(serverUrl, setupCode, platform) {
-  return releaseScript("install-gamma-dsh", [["ServerUrl", serverUrl], ["SetupCode", setupCode]], platform);
+// DeepSeek Harness has no browser sign-in of its own: its setup script
+// (tools/install-gamma-dsh.*) adds the Gamma plugin to the dsh profiles on that
+// computer, signs in for it (it opens Gamma's sign-in in the browser and waits
+// for the user to allow it) and saves the token where the plugin reads it when
+// dsh starts. The token never appears in the command or on screen.
+export function dshSetupCommand(serverUrl, platform) {
+  return releaseScript("install-gamma-dsh", [["ServerUrl", serverUrl]], platform);
 }
 
 // Taking Gamma out of each assistant: its MCP connection and, where setup

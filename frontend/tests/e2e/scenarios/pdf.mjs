@@ -1456,7 +1456,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await p.keyboard.press("ControlOrMeta+p");
       const dialog = p.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
-      const input = dialog.getByRole("textbox", { name: "Search pages by title or label" });
+      const input = dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" });
       await until(() => input.evaluate((el) => el === document.activeElement), { what: "the palette's input takes focus" });
       await input.fill(title);
       const rows = dialog.locator('[role="option"][data-kind="page"]');

@@ -617,8 +617,12 @@ class Round:
     def _open(self) -> None:
         """The marker, the mark of the vault's folder (a work folder's whole
         round writes it again where it is not the link's, after a restore or
-        a mirror's merge; a vault that does not push everything, of another
-        server's work folder, keeps a kept folder's round), what the vault
+        a mirror's merge, but one of another server whose mark is gone there
+        stops, ``folder_links.MARK_GONE``: that server let go of it, which
+        its state keeps (``folder_links.LET_GO_THERE``), so a mark another
+        vault writes on that folder later is never taken for its own; a vault
+        that does not push everything, of another server's work folder,
+        keeps a kept folder's round), what the vault
         tracks (``_read_rules``), the journal settled (it may move files),
         then the scan, which a work folder's round holds to its cap
         (``_capped``); one page's round reads no scan."""
@@ -626,7 +630,10 @@ class Round:
         self.marker = disk.check_marker(self.root, vault_id)
         self._same_place()
         self.work = self.remote.mark() if self.link.get("push") == folder_links.PUSH_ALL else None
-        if not self.only and self.state.get(takeover.TAKEN_OVER) and folder_links.work_folder_link(self.link):
+        if not self.only and self.state.get(takeover.TAKEN_OVER) and folder_links.work_vault(self.link):
+            if self.link["remote_url"] and self.work is None:   # let go there: marked again, its files would be refused
+                self.state[folder_links.LET_GO_THERE] = page_now()   # and never again: a mark there names no vault
+                raise disk.Stopped(folder_links.MARK_GONE)
             self.work = takeover.write_mark(self.link, self.remote)
         self.rules = self._read_rules()
         self._recover()
@@ -845,11 +852,12 @@ class Round:
         no pull) take no new anchor: a link to one of their blocks is a link
         to the page. In a kept folder the files a link may name are the
         scan's pictures and those read in place before (``remote.pictures``);
-        in a work folder every file is a page, its row naming the upload a
-        link reads (``Kind.link_name``), and one the scan found that has no
-        row yet (new this round, its page made after the notes changed) is
-        read in place when a link names it (``_picture``), its row the
-        page's once the page is made."""
+        in a work folder every file is a page, which a link to it mentions
+        (``add_page_file``, a listed file's too), its row naming the upload a
+        picture's embed and a note's own PDF read (``Kind.link_name``), and
+        one the scan found that has no row yet (new this round, its page made
+        after the notes changed) is read in place when a link names it
+        (``_picture``), its row the page's once the page is made."""
         if self._ctx is None:
             ctx = links.LinkContext(links.habit_at(self.root), address=self.remote.address(),
                                           page_of=self.remote.page_of, title_of=self.remote.title_of,
@@ -871,7 +879,10 @@ class Round:
                         found = self.scan.files.get(rel) if self.scan else None
                         if not self.pulling or row["problem"] or (found and found.placeholder):
                             ctx.read_only.add(row["page_id"])
-                elif (name := cls.link_name(rel, row)):
+                    continue
+                if self.work and row["page_id"]:
+                    ctx.add_page_file(rel, row["page_id"])
+                if (name := cls.link_name(rel, row)):
                     if cls.in_place:
                         ctx.add_file(rel, name)
                     else:
@@ -936,13 +947,16 @@ class Round:
             self.state.pop("placing", None)
 
     def _promoted(self, path: str) -> None:
-        """A file's new base in the rows, one read in place in the links'
-        context too (a note read later this round may link it); its page
-        hears that its file changed."""
+        """A file's new base in the rows, one read in place, and in a work
+        folder any file that is a page, in the links' context too (a note
+        read later this round may link it); its page hears that its file
+        changed."""
         row = store.get(self.id, path)
         if row and not row["was"]:
             self.rows[path] = row
             cls = kinds.by_kind(row["kind"])
+            if self._ctx is not None and self.work and row["page_id"] and cls is not kinds.NOTES:
+                self._ctx.add_page_file(path, row["page_id"])
             if self._ctx is not None and cls.in_place and (name := cls.link_name(path, row)):
                 self._ctx.add_file(path, name)
         if row and row["page_id"]:

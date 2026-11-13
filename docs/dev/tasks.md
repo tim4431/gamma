@@ -152,7 +152,12 @@ jobs".
   `paper-handoff` while one waits for the user's browser, so a card whose
   reply has scrolled away is still somewhere to find. A click on that row
   opens the publisher's page; the chat's own card settles the request
-  ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)).
+  ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A third,
+  `computer-turn`, is a chat turn of an agent on this computer queued or
+  running for the account ([local_agents.md](local_agents.md) "Its model,
+  its typing, a terminal…"): a click opens the page's chat on the computer
+  side (a turn of another workspace, only its page), and its Stop goes to
+  the turn's own stop route, not `cancelJob`.
 - `GET /api/jobs/{id}` is one job with its `result`.
 - `POST /api/jobs/{id}/cancel`, `DELETE /api/jobs/{id}` and
   `POST /api/jobs/clear` stop, remove and clear jobs.
@@ -174,12 +179,12 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `restore` | `restore` (an uploaded zip), `restore-snapshot` | Settings → Workspaces → Data → Merge / Restore, Settings → Backups → Restore, a shared page or folder imported by link | the restore report |
 | `metadata` | `metadata` (`routers/metadata.py`) | Settings → Maintenance → Fetch needed / Fetch selected / Refetch; an upload of several PDFs | `{papers, fetched, failed}` |
 | `server-backup` | `server-backup` (`routers/admin.py`) | Settings → Server → Server backups | the snapshot's info |
-| `indexing` | — (`routers/search.py`, owner `""`) | a search, a page chat, Settings → Maintenance → Rebuild | `{papers}` |
+| `indexing` | — (`gamma/search/indexer.py`, owner `""`) | a search, a page chat, Settings → Maintenance → Rebuild | `{documents}`; progress in documents, written in batches, a stopped run storing what it read |
 | `transcribe` | `transcribe` (`routers/recordings.py`, one per recording block) | a recording's menu → Transcribe; every recording that ends, with Settings → Reading & editing › Recordings › Transcribe recordings on | `{paragraphs, model}` ([recording.md](recording.md)) |
 | `workspace-delete` | `workspace-delete` (`routers/workspaces.py`, one per workspace) | Settings → Workspaces → Manage → Delete…, for an owner or an admin | `{warning, final_copy}`; phases `keeping` (the final copy's bytes) and `deleting`, past which it no longer stops ([workspaces.md](workspaces.md) "Deleting a workspace") |
 | `account-delete` | `account-delete` (`routers/admin.py`, one per account; `workspaces.start_account_delete`) | Settings → Users → an account → Delete… (admins); on a share host also the server's own, owner `jobs.WORKSPACE`, for an account whose Gamma Cloud account was deleted ([cloud_accounts.md](cloud_accounts.md) "A deleted account on the share host") | `{deleted_workspaces}`; the same phases, a final copy per workspace that goes |
 | `db-check` | `db-check` (`routers/admin.py`) | Settings → Server → Databases → Check now (admins) | what `/admin/check-databases` answers; progress in files |
-| `relocate-highlights` | `relocate-highlights` (`routers/pages.py`, one per page and file; `PUT /pages/{id}/attachment` starts it by itself) | a replaced PDF (the Document menu → Replace the PDF…, a build script's `PUT`, a Zotero link bringing Zotero's new file, which starts it for the link's owner, [zotero_sync.md](zotero_sync.md#pdfs)); the Document menu → Find highlights in this PDF | `{highlights, moved, kept, lost, approx, changed, min_match, exact_chars}`: the counts, then the owner's thresholds the run went by, which its params `{page_id, title, doc_id, min_match, exact_chars}` record as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) |
+| `relocate-highlights` | `relocate-highlights` (`routers/pages.py`, one per page and file; `PUT /pages/{id}/attachment` starts it by itself) | a replaced PDF (the Document menu → Replace the PDF…, a build script's `PUT`, a Zotero link bringing Zotero's new file, which starts it for the link's owner, [zotero_sync.md](zotero_sync.md#pdfs)); a replaced text file over 512 KiB (a smaller one's ranges are placed in the replacement itself, no task, [highlight_relocation.md](highlight_relocation.md#text-files)); the Document menu → Find highlights in this PDF (a text file's: Find highlights in this file) | `{highlights, moved, kept, lost, approx, changed, min_match, exact_chars}` (a text file's with `format: "text"`): the counts, then the owner's thresholds the run went by, which its params `{page_id, title, doc_id, format, min_match, exact_chars}` record as it starts, `format` naming which run places it, `pdf` or `text` ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) |
 
 The off-site copies' Copy now (Settings → Backups, `POST
 /api/admin/offsite/run`) is not a job: it starts the server's own

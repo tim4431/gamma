@@ -34,6 +34,20 @@ the table `comments` in the workspace's `pages.db` (`db.COMMENTS_SCHEMA`):
 Indexes: `block_id`, `(thread_id, created_at)`, `page_id`, and a partial one
 on `orphaned_at` for the sweep.
 
+A thread on a range of a text file (a highlight with `text_position`,
+[api.md](api.md) "The highlight shape") keeps a `lines` anchor: `kind:
+"lines"`, `doc_id` the version its lines were measured on
+(`text_position.hash`), no page, rectangles or box, the block's quote, and
+`lines: [first, last]` as they were when it opened
+(`gamma/feedback/anchors.py`; [feedback.md](feedback.md) "The anchor").
+A note under a range takes the range's place. No version of the file is
+kept for it (`kept.KEPT_FORMATS`: the range carries the text around it,
+which is all its run needs), and its feedback entry names the file's own
+lines as its source, never SyncTeX's. When the file changes, the range is
+placed again by its quote ([highlight_relocation.md](highlight_relocation.md#text-files))
+and the thread follows its block; its card and its popover say it moved
+or was not found, as for a PDF highlight (`comments.threadPlace`).
+
 The comments live beside the blocks, as the AI chats do, and never inside
 them. Every block reader (the exports, the AI context, search, folder sync,
 PDF typesetting, the outliner, the three-way merge, undo) therefore keeps
@@ -139,8 +153,8 @@ refused with a 400.
 | Method | Path | Body | Answer |
 |---|---|---|---|
 | GET | `/api/pages/{page_id}/comments?state=open\|resolved\|all` | | `{threads}`; 404 for a page in Recently deleted or gone, 400 for another `state` |
-| POST | `/api/pages/{page_id}/comments` | `{id?, block_id, body, thread_id?, client?}` | 201 `{comment, thread}` |
-| PATCH | `/api/comments/{id}` | `{body, client?}` | `{comment}` |
+| POST | `/api/pages/{page_id}/comments` | `{id?, block_id, body, thread_id?, client?}` | 201 `{comment, thread, send?}` |
+| PATCH | `/api/comments/{id}` | `{body, client?}` | `{comment, thread?, send?}` |
 | DELETE | `/api/comments/{id}?client=` | | `{deleted: true}` |
 | POST | `/api/comments/{id}/resolve` | `{resolved, client?}` | `{thread}` |
 | GET | `/api/pages/{page_id}/notify` | | `{level}`: `all` or `replies`, the page's Notify me for the session's account ("Following a page" below) |
@@ -162,6 +176,14 @@ refused with a 400.
 - **Edit.** The author through the writer that wrote it (403 "only its
   author can edit a comment" otherwise). An edit that leaves the text as it
   was keeps `updated_at`.
+- **A mention of the work folder's agent.** On the desktop app's own
+  server, the vault's maker's comment on a work folder's file that newly
+  names the folder's agent on this computer (`@codex`) is a Send to it as
+  well ([local_agents.md](local_agents.md) "A mention in a comment"): the
+  answer carries `send` (`{agent, request_id, scope, threads}`, or
+  `{agent, refused, why}` with the comment stored anyway) and the thread
+  read again with its Sent chip; an edit's answer carries the thread only
+  then. No `send` for a comment that names no agent.
 - **Delete.** The author, by a session or by the token that wrote it, or
   the workspace's owner (signed in, not through a token or a share link). A
   root that still has
@@ -234,18 +256,19 @@ paste).
 
 **The anchor.** A root keeps where its thread was opened (`anchor`, JSON;
 [feedback.md](feedback.md) "The anchor"): its kind (`passage`, `area`,
-`ink`, `region`, `note` or `file`), the block the place is read from (a
-note under a highlight takes the highlight's), the file the place was
-measured on and its extension, the PDF page (none for a region of a
-picture), the rectangles and quote as fractions of the page or the picture
-then, and the region picture's crop. `comments.create` computes it from the rows, under
+`ink`, `region`, `lines`, `note` or `file`), the block the place is read
+from (a note under a highlight takes the highlight's), the file the place
+was measured on and its extension, the PDF page (none for a region of a
+picture or a range of a text file), the rectangles and quote as fractions
+of the page or the picture then, the region picture's crop, and a range's
+first and last line (`lines`). `comments.create` computes it from the rows, under
 its lock; the source line SyncTeX maps it to is added after the commit
 (`gamma/feedback/kept.py`). It never changes with the block: it is the
 place as commented, which the feedback reader compares with the block now.
 A reply holds none, and nothing is backfilled for a root from before step
 54, whose place is read from its block. While its thread is open, the file
 it names is held from the upload sweep ([user_db.md](user_db.md) "What
-counts as a reference").
+counts as a reference"); a range's `lines` anchor names none.
 
 **The sweep.** `comments.sweep` runs at startup and hourly in the app's
 lifespan (`app.py`), beside `trash.sweep`, not in `db_maintenance`. It walks
@@ -712,7 +735,11 @@ drops an edit's.
 since a comment changes no note; [hotkeys.md](hotkeys.md)), which the
 command palette offers on a read-only page too: the palette leaves out
 only the `edits` commands there, as the keys do. The
-highlight menu's Comment on the PDF. The selection popup's Comment (below).
+highlight menu's Comment on the PDF, and on a range of a text file. The
+selection popup's Comment (below), and the code view's "Comment on this
+passage" ([documents.md](documents.md) "A range of a text file"), which
+makes the range through the surface's `onAnchor` with `{comment: true}`
+and goes on as the PDF's does.
 The page title row's control, for the
 page's own thread (on its root block), which share visitors get too.
 
@@ -727,7 +754,7 @@ highlight colour, without opening its note for typing (`addHighlight`'s
 first rect to be drawn and opens the thread popover from it with "New
 comment" focused, as the highlight menu's Comment does; where the page has
 room for the margin, the new thread opens as a card there instead ("The
-PDF margin" below). App keeps that
+margin" below). App keeps that
 highlight in `freshCommentRef` while its popover (or card) is open; when it
 closes, or another block's takes its place, a highlight with no note and
 no thread (`abandonedCommentHighlight`, `comments/comments.js`) is deleted
@@ -798,7 +825,7 @@ on the PDF.
 **Vocabulary.** A thread is called a comment in the interface ("3
 comments", "Comment on this note"); a highlight's own text is its note.
 
-### The PDF margin
+### The margin
 
 Beside the PDF's pages, as Notion shows comments in a page's right margin,
 each highlight's open threads are cards in a column, level with the
@@ -811,7 +838,11 @@ is [documents.md](documents.md) "Viewers") takes threads as a highlight
 does, its card level with the region's top
 (`commentAnchors` with the page's position key; `anchorTop` reads the
 frame the same way), and the picture, one page, is shifted left for the
-column as a PDF page is (`marginLayout.fitBeside`). A note's threads, the
+column as a PDF page is (`marginLayout.fitBeside`). So has the code view:
+a range of a text file (`text_position`) takes threads as a highlight
+does, its card level with the range's first line (a lost range's at its
+old first line, where its tag stands), in a column of its own beside the
+text (below, "The code view's column"). A note's threads, the
 page's own and the notes pane's controls keep the popover, and the notes
 pane has no comments section. On the server a thread on a region is a
 `region` anchor and a feedback entry of that kind ([feedback.md](feedback.md)
@@ -903,8 +934,8 @@ with neither Resolve nor the "⋯". A comment an agent wrote shows the
 token's name as its author, the account's connection in the title
 (`authorTitle`), and the first comment's line carries the Sent chip while
 a request waits on the thread (`sentChip`, [feedback.md](feedback.md)
-"Requests and their states") and what became of its place after a rebuild
-(`threadPlace`, through `threadPlaceContext.js`'s `ThreadPlaceContext`, a
+"Requests and their states") and what became of its place after its file
+changed (a rebuild, a source file rewritten; `threadPlace`, through `threadPlaceContext.js`'s `ThreadPlaceContext`, a
 module of its own so App's provider imports no surface). It is `Thread.jsx`'s `Thread` with
 `summary`: the popover's own thread view, whose active rule it shares. A
 press on the card (not on a button, link or field), Enter or Space on it,
@@ -944,6 +975,28 @@ card's page loses its room (a zoom, a narrower pane), the viewer calls
 `onMarginLost` and App shows the thread in the popover from the
 highlight instead, drafts and all (they are keyed per field, not per
 surface).
+
+**The code view's column.** A text file has no pages and no zoom to fit
+beside, and its scroller scrolls sideways when lines do not wrap, so its
+column is not inside a page's box: `documents/viewers/TextOverlay.jsx`
+draws it in a layer beside CodeMirror's scroller (`.docTextMarginHost`),
+whose track is moved with the text's vertical scroll alone
+(`translateY` of the scroller's `scrollTop`, written on its scroll event),
+so the column stands at the view's right edge however far the text is
+scrolled sideways. The one `CommentMarginSlot` in it is told each card's
+top by the viewer (`topOf(anchor)`: the range's first line's top, read
+from CodeMirror's height map in its measure phase) in place of the
+anchors' rectangles; the stacking, the cards and the active card are the
+PDF's. It stands while a range has an open thread or a new thread's card
+and the view has room for 360 px of text beside the column
+(`marginLayout.marginLeft`'s rule with the gutters and that width as the
+page), never on a phone; while it stands the content keeps the column's
+width at its right, so wrapped text never runs under the cards, and a
+long unwrapped line scrolled sideways passes under the gap. Without the
+column a range shows the badge (`NoteBadge`, in a layer inside the
+scroller that rides with the text) and its threads open in the popover,
+as on a page without room. `marginRef` answers by that room, and a
+resize or Wrap that takes it from the active card calls `onMarginLost`.
 
 ### The Inbox
 

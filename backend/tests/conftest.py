@@ -19,7 +19,8 @@ os.environ["GAMMA_DATA_DIR"] = own_folder("gamma-test-")
 os.environ["GAMMA_SYNC_INTERVAL"] = "0"  # mirror rounds run only when a test asks
 for var in ("GAMMA_STATIC_DIR", "GAMMA_AI_ANTHROPIC_API_KEY", "GAMMA_AI_OPENAI_API_KEY",
             "GAMMA_AI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GAMMA_AI_MODELS", "GAMMA_AI_MODEL",
-            "GAMMA_ADMIN_USER", "GAMMA_ADMIN_PASSWORD", "GAMMA_FOLDER_LINKS", "GAMMA_SHELL_SECRET"):
+            "GAMMA_ADMIN_USER", "GAMMA_ADMIN_PASSWORD", "GAMMA_FOLDER_LINKS", "GAMMA_SHELL_SECRET",
+            "GAMMA_AGENT_CODEX", "GAMMA_AGENT_CLAUDE", "GAMMA_LOCAL_AGENTS", "GAMMA_AGENT_RUN_TIMEOUT"):
     os.environ.pop(var, None)
 # Nor a developer's off-site bucket: a test server's startup round must never
 # copy into it (gamma/offsite.py reads these at every round). Nor a Zotero
@@ -415,14 +416,15 @@ def make_page(guest, title="Test page", properties=None):
     return block
 
 
-def doc_props(hash="", *, url="", name="", at=None, copy=False) -> dict:
-    """The properties of a page whose document is ``hash`` (a PDF): stored,
-    read in place (``at="path"``), at the address ``url``, or a copy;
-    ``documents.model.document``'s canonical doc. ``doc_props(url=
+def doc_props(hash="", *, url="", name="", at=None, copy=False, format="pdf", ext=None, size=None) -> dict:
+    """The properties of a page whose document is ``hash`` (a PDF, else
+    ``format`` stored as ``ext``): stored, read in place (``at="path"``),
+    at the address ``url``, listed (``at="listed"`` with ``size``), or a
+    copy; ``documents.model.document``'s canonical doc. ``doc_props(url=
     "/api/uploads/X.pdf")`` is a copy of X, as a duplicated page stores it."""
     from gamma.documents.model import document
 
-    return {"doc": document(hash, url, name, at=at, copy=copy)}
+    return {"doc": document(hash, url, name, at=at, format=format, ext=ext, size=size, copy=copy)}
 
 
 def mark_work_folder(owner, folder_id, *, pull=True, library=False) -> dict:

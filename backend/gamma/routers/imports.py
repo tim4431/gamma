@@ -305,7 +305,7 @@ def discard_import_review(token: str, request: Request):
 @router.post("/import/review/{token}/keepalive")
 def keep_import_review(token: str, request: Request):
     """The dialog still shows the review: its two hours start again, also
-    once past them while no upload's sweep has removed it (404 then)."""
+    once past them while no sweep has removed it (404 then)."""
     ws = require_ws(request, write=True)
     import_staging.touch(token, request.state.user_id, ws)
     return {"ok": True}

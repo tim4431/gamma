@@ -14,7 +14,7 @@ import { tabDrag, useTabDrag } from "./tabDrag.js";
 import { useMenuAim } from "./menuAim";
 import { doublePress, menuPress } from "./press.js";
 import { assetUrl, copyText } from "../lib/utils";
-import { citesSeveralPapers, parseGammaLink } from "../model/gammaLinks.js";
+import { citesSeveralSources, isSourceLink, parseGammaLink } from "../model/gammaLinks.js";
 import { remarkPaperLinks } from "../lib/remarkPaperLinks.js";
 import { diagramFence, normalizeChatMarkdown, remarkDiagrams } from "../lib/diagramMarkdown.js";
 import { DiagramFigure, diagramCodeProps } from "./DiagramFigure";
@@ -260,16 +260,18 @@ const CHAT_COPY_COMPONENTS = {
 
 // Navigation for Gamma's own links, provided once by App: the chat, the
 // rendered notes and anything else that renders a library link opens a page
-// in place instead of reloading the app. { openPage(id, citation),
-// openBlock(id), citeSource(pageId) → {title, short} | null }; citeSource
-// names the paper a citation pill points at.
+// in place instead of reloading the app. { openPage(id, target),
+// openBlock(id), citeSource(pageId) → {title, short} | null }; `target` is
+// where to land ({kind: "citation", pageId, page, quote} or {kind: "line",
+// pageId, line, to, quote}, null for the page's top); citeSource names the
+// paper or file a citation pill points at.
 const GammaNavContext = createContext(null);
 
 // A page or block link into a Gamma library rendered as a card, in the chat
-// and in a note (a citation is a CitationPill). `link` comes from
-// parseGammaLink, `label` is a resolved page title when the caller has one
-// (the note renderer resolves it through the [[ref]] cache); `children` is
-// the author's own link text.
+// and in a note (a citation or a line link is a CitationPill). `link` comes
+// from parseGammaLink, `label` is a resolved page title when the caller has
+// one (the note renderer resolves it through the [[ref]] cache); `children`
+// is the author's own link text.
 //
 // The card only claims the link once the id resolves locally: `link.foreign`
 // (a link written against another host, e.g. copied before the server moved,
@@ -303,18 +305,30 @@ function GammaLinkCard({ link, label, children }) {
   );
 }
 
-// Whether the chat reply being rendered cites more than one paper (a note
+// Whether the chat reply being rendered cites more than one source (a note
 // passes its own `multi`).
 const CiteMultiContext = createContext(false);
-const PAGE_LABEL = /^pp?\.\s*\d/i;
+// An author's label that names only the place ("p. 2", "ll. 3–5", "line 7"),
+// so the source goes in front of it.
+const PLACE_LABEL = /^(pp?\.|ll?\.|lines?)\s*\d/i;
+
+// A line link's lines in words, "line 7" or "lines 3–5": a pill's label when
+// its author gave none, and a pasted link's when its file has no title.
+function linePlace(link) {
+  return link.to > link.line
+    ? t("lines {from}–{to}", { from: link.line, to: link.to })
+    : t("line {n}", { n: link.line });
+}
 
 // A citation, in a chat reply or a note: a small tinted pill on the text's
-// baseline, so a "p. 2" mid-sentence doesn't push the lines apart. Hovering,
-// focusing or long-pressing it previews the cited passage (paper, PDF page,
-// the quote); a click (or Enter) opens it in the PDF, and so does the
-// preview's own link. `multi`: the text cites several papers, so a
-// page-number pill also names its source ("Vaswani · p. 2"). `guide` marks
-// the chat's citations for the tour.
+// baseline, so a "p. 2" mid-sentence doesn't push the lines apart. It cites a
+// PDF passage (`link.kind` "citation") or a text file's lines ("line").
+// Hovering, focusing or long-pressing it previews the cited place (the
+// source, the PDF page or the lines, the quote); a click (or Enter) opens it
+// in the PDF or the file, and so does the preview's own link. `multi`: the
+// text cites several sources, so a pill that names only the place also names
+// its source ("Vaswani · p. 2", "main.tex · line 7"). `guide` marks the
+// chat's citations for the tour.
 //
 // The pointer on its way from the pill into the preview crosses the text
 // between them: while it heads for the preview (menuAim.js's triangle, aimed
@@ -330,8 +344,10 @@ function CitationPill({ link, multi, guide, children }) {
   const raw = textOf(children).trim();
   const own = /^(https?:\/\/|\/?\?)/i.test(raw) ? "" : raw;
   const source = nav?.citeSource?.(link.pageId) || null;
-  const pageLabel = `p. ${link.page}`;
-  const named = multi && source?.short && (!own || PAGE_LABEL.test(own));
+  const isLine = link.kind === "line";
+  const range = isLine && link.to > link.line;
+  const placeLabel = isLine ? linePlace(link) : `p. ${link.page}`;
+  const named = multi && source?.short && (!own || PLACE_LABEL.test(own));
   const show = () => {
     clearTimeout(timer.current);
     const r = ref.current?.getBoundingClientRect();
@@ -348,7 +364,9 @@ function CitationPill({ link, multi, guide, children }) {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || !nav) return;
     e.preventDefault();
     e.stopPropagation();
-    nav.openPage?.(link.pageId, { pageId: link.pageId, page: link.page, quote: link.quote });
+    nav.openPage?.(link.pageId, isLine
+      ? { kind: "line", pageId: link.pageId, line: link.line, to: link.to, quote: link.quote }
+      : { kind: "citation", pageId: link.pageId, page: link.page, quote: link.quote });
   };
   useEffect(() => () => clearTimeout(timer.current), []);
   useLayoutEffect(() => { aim.setTarget(preview ? tipRef.current?.getBoundingClientRect() : null); }, [preview]);
@@ -358,10 +376,10 @@ function CitationPill({ link, multi, guide, children }) {
     window.addEventListener("scroll", hide, true);
     return () => window.removeEventListener("scroll", hide, true);
   }, [preview]);
-  const tipId = `cite-${link.pageId}-${link.page}`;
+  const tipId = `cite-${link.kind}-${link.pageId}-${isLine ? `${link.line}-${link.to ?? link.line}` : link.page}`;
   return (
     <>
-      <a ref={ref} href={link.href || "#"} className="citePill gammaLink-citation" data-guide={guide}
+      <a ref={ref} href={link.href || "#"} className={`citePill gammaLink-${link.kind}`} data-guide={guide}
         aria-describedby={preview ? tipId : undefined}
         onMouseEnter={() => { aim.keep(); if (preview) clearTimeout(timer.current); else later(show, 250); }}
         onMouseLeave={() => aim.guard(hide)}
@@ -377,7 +395,7 @@ function CitationPill({ link, multi, guide, children }) {
           open(e);
         }}>
         {named ? <span className="citePillSrc" data-markdown-copy-ignore="">{source.short} · </span> : null}
-        <span className="gammaLinkLabel">{own ? children : pageLabel}</span>
+        <span className="gammaLinkLabel">{own ? children : placeLabel}</span>
       </a>
       {/* Portalled, its events still bubble through the note's row in the
           React tree, whose press would start editing: they stop here. The
@@ -390,10 +408,11 @@ function CitationPill({ link, multi, guide, children }) {
           onMouseLeave={() => later(hide, 200)}
           onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
           onClick={(e) => e.stopPropagation()}>
-          <div className="citePreviewTitle">{source?.title || t("This paper")}</div>
-          <div className="citePreviewPage">{t("PDF page {page}", { page: link.page })}</div>
+          <div className="citePreviewTitle">{source?.title || (isLine ? t("This file") : t("This paper"))}</div>
+          <div className="citePreviewPage">{!isLine ? t("PDF page {page}", { page: link.page })
+            : range ? t("Lines {from}–{to}", { from: link.line, to: link.to }) : t("Line {line}", { line: link.line })}</div>
           {link.quote ? <blockquote className="citePreviewQuote">“{link.quote}”</blockquote> : null}
-          <a href={link.href || "#"} className="citePreviewOpen" tabIndex={-1} onClick={open}>{t("Open in PDF")} <kbd>↵</kbd></a>
+          <a href={link.href || "#"} className="citePreviewOpen" tabIndex={-1} onClick={open}>{isLine ? t("Open in the file") : t("Open in PDF")} <kbd>↵</kbd></a>
         </div>, document.body) : null}
     </>
   );
@@ -408,8 +427,11 @@ function ChatMarkdownLink({ href, children, title }) {
   const link = nav ? parseGammaLink(href, window.location.origin) : null;
   // The chat writes its own citations, so a link it produced is this
   // library's by construction; a foreign host in chat text is an ordinary
-  // external link.
-  if (link && !link.foreign && link.kind === "citation") return <CitationPill link={{ ...link, href }} multi={multi} guide="chat.citation">{children}</CitationPill>;
+  // external link. The citation tour is the PDF's: a file's line pill is not
+  // its anchor.
+  if (link && !link.foreign && isSourceLink(link)) {
+    return <CitationPill link={{ ...link, href }} multi={multi} guide={link.kind === "citation" ? "chat.citation" : undefined}>{children}</CitationPill>;
+  }
   if (link && !link.foreign) return <GammaLinkCard link={{ ...link, href }}>{children}</GammaLinkCard>;
   return <a href={href} className="gammaLinkCard" target="_blank" rel="noreferrer" title={title || href}>
     <ExternalLinkIcon size={14} aria-hidden="true" /><span className="gammaLinkLabel">{children}</span>
@@ -423,7 +445,7 @@ const CHAT_MARKDOWN_COPY_COMPONENTS = { ...CHAT_MARKDOWN_COMPONENTS, ...CHAT_COP
 // GammaNavContext; Ctrl/Cmd-click still opens a new tab.
 const ChatMarkdown = React.memo(function ChatMarkdown({ text, copyBlocks = false }) {
   const normalized = useMemo(() => normalizeChatMarkdown(text), [text]);
-  const multiSource = useMemo(() => citesSeveralPapers(normalized), [normalized]);
+  const multiSource = useMemo(() => citesSeveralSources(normalized), [normalized]);
   return (
     <div onCopy={handleMarkdownCopy}>
       <CiteMultiContext.Provider value={multiSource}>
@@ -870,6 +892,7 @@ export {
   DockBar,
   DockWindow,
   handleMarkdownCopy,
+  linePlace,
   OpenTabs,
   PopoverAnchor,
   useCopied,

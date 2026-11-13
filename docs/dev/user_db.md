@@ -137,9 +137,11 @@ All state is SQLite + files on disk under a data directory (env
     `(user_id, host)`, each sealed with its account's id, imported by the
     Connector ([extension.md](extension.md));
   - `integration_tokens` — hashed assistant tokens per account, each of one
-    workspace (with a `scope` — `read`, `write`, or `feedback`, a read token
+    workspace (with a `scope` — `read`, `write`, `feedback`, a read token
     that may also reply to and resolve the threads on a work folder's files
-    ([comments.md](comments.md) "Who may comment"); free text, so a scope
+    ([comments.md](comments.md) "Who may comment"), or `computer`, a
+    computer's channel to this server, which opens nothing else
+    ([computers.md](computers.md)); free text, so a scope
     this server does not know reads as `read` — and `workspaces`, what a read
     or feedback token's MCP connection reads beside it: `''`, `'*'` or a JSON
     list), and `mcp_oauth` — the OAuth flow's
@@ -183,6 +185,18 @@ All state is SQLite + files on disk under a data directory (env
     mirrors') and the token's id. What this computer knows of a vault's
     files is in `vaults.db` (below), never here
     ([synced_vaults.md](synced_vaults.md#what-lands-on-disk));
+  - `computers` — what each computer announced over its channel, a row per
+    `computer` token: the account, the workspace, the computer's id for
+    this server and its name, the vaults it keeps here (folder and page ids,
+    paused or not), the assistants there, the app's version and when it was
+    last seen; whether it is online is in memory. Gone with its token, its
+    workspace and its account; additive, never migrated
+    ([computers.md](computers.md));
+  - `computer_links` — on the desktop app's own server, this computer's
+    channels to other servers, a row per server, workspace there and local
+    account: the address, the `computer` token (sealed like a vault's) and
+    its id, the account there and the channel's status; additive
+    ([computers.md](computers.md#the-host));
   - `jobs` — background jobs (exports, backups, restores, imports, the
     search indexer): owner (an account id, `''` for a workspace's own
     work), workspace, kind, parameters, state, last progress, result, error, the produced
@@ -272,8 +286,8 @@ All state is SQLite + files on disk under a data directory (env
     object there), `link` (a non-empty `link_url` or `link_page_id`,
     `highlights.is_link`), `highlight` (a `pdf_position`, `image_position`
     or `text_position` object: a place on a PDF page, a region of a
-    picture, a range of a text file; `highlights.is_highlight` and
-    `is_region` each read their own key), `note`, tested in that order
+    picture, a range of a text file; `highlights.is_highlight`,
+    `is_region` and `is_text_range` each read their own key), `note`, tested in that order
     (`db.BLOCK_HOT_COLUMNS`; `picture` since step 44, the region and the
     range since step 55, [migrations.md](migrations.md)). The filters read the column (its
     index); the block dict computes the same rule in Python from the
@@ -315,14 +329,20 @@ All state is SQLite + files on disk under a data directory (env
     non-empty text, the work folder a page is a file of (its vault stamps
     it, [work_folders.md](work_folders.md)), NULL on every other row
     (migration step 53). `first_folder` — generated:
-    `properties.folders[0]`, a file's directory. Three partial indexes read
+    `properties.folders[0]`, a file's directory. Four partial indexes read
     them: `idx_ub_listing` on `(parent_id, position)` over the root pages
     the library listing carries (`db.SQL_IN_LISTING`, which a query must
     repeat for SQLite to use it: no work folder, in the library, or
     pinned), `idx_ub_dir` on `(parent_id, first_folder)` over the root
-    pages with a `work_folder` (a directory's files and their counts), and
+    pages with a `work_folder` (a directory's files and their counts),
     `idx_ub_work_folder` on `work_folder` (a work folder's files, those in
-    Recently deleted included).
+    Recently deleted included), and `idx_ub_file_name` on
+    `(db.SQL_FILE_NAME, first_folder, id)` over the root pages with a
+    `work_folder` (a file by its name, covering: quick open's files and a
+    path's leaf; its readers name it with `INDEXED BY`). The fourth has no
+    migration step: it is in `db.BLOCK_HOT_INDEXES`, which `PAGES_SCHEMA`
+    makes when a workspace opens ([work_folders.md](work_folders.md)
+    "Columns and indexes").
 
   The op log and the mirror carry `properties` alone; nothing writes `kind`,
   `doc_id`, `parent_page`, `deleted_with`, `work_folder` or `first_folder`.
@@ -371,6 +391,17 @@ All state is SQLite + files on disk under a data directory (env
   - `upload_retention` — the stored files kept for less than 30 days once
     nothing references them (`name`, `keep_s`, `since`; "Stored files"
     below);
+  - `computer_chats` — the chat's computer side
+    ([local_agents.md](local_agents.md) "The chat's computer side"): a
+    page's conversations of the work folder vault's maker with the agent on
+    the computer, one row a conversation (its messages as JSON, a
+    `version`, `archived_at` null for the active one). Private to the
+    account (`ws_backup.PRIVATE_TABLES`: a backup has it empty, a restore
+    keeps the live rows), read by no export, mirror or share, gone with
+    its page deleted for good (`ops._purge`), and an account's rows go when
+    its membership ends or the account is deleted
+    (`db.delete_workspace_prefs`). From `db.PAGES_SCHEMA` as the file opens
+    (no workspace step);
   - `chats` / `chat_history` — the AI chat
     ([chat_history.md](chat_history.md)): one active conversation per `bucket` (a page's id, a
     folder's id, or `home`) with its `title` and its version
@@ -445,7 +476,10 @@ All state is SQLite + files on disk under a data directory (env
   (`ws_backup._normalize_copies`, which runs the `normalize.py` steps of
   migrations 26–30 and 33 on a copy stamped below the base, the workspace
   steps above the copy's version and the notes index's rebuild, in the
-  order [migrations.md](migrations.md) "Writing a step" gives). A
+  order [migrations.md](migrations.md) "Writing a step" gives; step 30's
+  `highlight_shape` reshapes `pdf_position` alone, so a region's
+  `image_position` and a text range's `text_position` pass through
+  untouched). A
   restore never replaces the live
   change log ([workspaces.md](workspaces.md) "Export and backups"). Backups
   copy it with the sqlite backup API, which is WAL-safe. Nothing may
@@ -464,22 +498,30 @@ All state is SQLite + files on disk under a data directory (env
   translations"; asked of the model again, at its cost, when they are
   gone), the region pictures of a work folder's comment threads
   `feedback_pictures` (JPEG bytes by key, at most 48 MB, the oldest going
-  first; drawn again when asked, [feedback.md](feedback.md)) and the PDF text index `pdf_fts` / `pdf_fts_docs` (extracted PDF
-  text per page — schema + queries `gamma/pdf_index.py`, extraction
-  `routers/search.py`; extracted again by the next search), with its
-  `pdf_fts_rows` side table mapping a paper to its rows' rowids, so a
-  paper's rows are deleted by rowid instead of a scan of the whole FTS
-  table, and each paper's count of indexed characters kept on its
-  `pdf_fts_docs` row (`chars`, what `GET /api/metadata/status` reads; an
-  index from before it gains the column and counts each paper once). The index is built on demand (a search starts the workspace's
-  indexing job), a few hundred PDF pages per transaction; the rows of
-  papers no block's document names (its `hash`, a duplicated page's
-  included) are purged when a page or a PDF goes
-  (`pdf_index.purge_unused`). Derived data: no migration step — the
-  tables are `CREATE ... IF NOT EXISTS`, the index's from
-  `pdf_index.SCHEMA` (a new `pdf_fts_rows` takes over the rows already
-  there when it is created), the others from `db.DATA_SCHEMA`, which every
-  connection and a restored copy apply. Open it through
+  first; drawn again when asked, [feedback.md](feedback.md)) and the
+  document text index `text_fts` / `text_fts_docs` (the extracted text of
+  the PDFs and text files, a row per PDF page or run of 40 lines — schema
+  + queries `gamma/search/index.py`, extraction `gamma/search/indexer.py`;
+  extracted again by the next search), with its `text_fts_rows` side table
+  mapping a document to its rows' rowids, so a document's rows are deleted
+  by rowid instead of a scan of the whole FTS table, and each document's
+  bookkeeping on its `text_fts_docs` row (`units`, `ver`, `chars`, what
+  `GET /api/metadata/status` reads, `format`, `lines`, `truncated`). The
+  index is built on demand (a search or a chat starts the workspace's
+  indexing job), in batches of about 500 units per transaction; the rows
+  of documents no block's document names (its `hash`, a duplicated page's
+  included) are purged when a page or a document goes
+  (`index.purge_unused`), and a replacement drops the one hash it let go
+  (`index.purge_doc`). A work folder's file that crosses the keep limit
+  (`vault.remote.set_doc`) purges nothing: its old hash's rows linger,
+  out of every search (a search reads only the hashes pages carry), until
+  the next sweep. Derived data: no migration step — the tables are
+  `CREATE ... IF NOT EXISTS`, the index's from `index.SCHEMA`; an index of
+  another layout (an older Gamma's `pdf_fts*`, a restored backup's) is
+  dropped and made again, empty, on first use (no take-over: every
+  document is extracted again by the background job), and the others come
+  from `db.DATA_SCHEMA`, which every connection and a restored copy apply.
+  Open it through
   `db.connect_data_db(ws)`: WAL and the busy timeout, like pages.db.
   Shared by the workspace's members.
 
@@ -545,7 +587,7 @@ commits, and inside its own transaction already. Two rules keep it exact:
 a trigger's `delete` must hand FTS5 what the current rules make of the old
 row, so a change to `normalize_text` ships with a migration step that
 rebuilds every workspace's index (`textnorm.INDEX_VERSION` versions the
-PDF index only); and the rowids must never be renumbered (no `VACUUM`).
+document text index only); and the rowids must never be renumbered (no `VACUUM`).
 `block_index.rebuild` is the whole recovery path: the view, the table and
 the triggers put in place again (`IF NOT EXISTS`; a connection applies them
 as it opens, a cached one never again, so a trigger that is gone comes back
@@ -757,7 +799,11 @@ track of the ones nothing uses.
   `pdf_position.doc_id` and `pdf_position.prev.doc_id` (a picture's
   region names the version it was drawn on in `image_position.hash`, which
   holds nothing: regions are never relocated, and the version a thread on
-  one needs is held by the thread's anchor). Those two name the
+  one needs is held by the thread's anchor; a range of a text file names
+  the version it was measured on in `text_position.hash`, and its `prev`
+  and `closest` a `hash` each, which hold nothing either: a range carries
+  its own quote and context, so the run that places it again reads the new
+  version alone and keeps no old one). Those two name the
   file a highlight's rectangles were measured on, after a replacement: a
   pending highlight's `prev` (and a lost one's `doc_id`) is its reference,
   the version it is matched from at every later replacement, and stays

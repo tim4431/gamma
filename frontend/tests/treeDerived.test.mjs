@@ -87,6 +87,25 @@ test("pageHighlights and commentAnchors under the image key: a picture's regions
   assert.deepEqual(commentAnchors(picture, new Map()).map((a) => a.id), ["h1"], "the PDF key: the PDF's alone");
 });
 
+test("pageHighlights and commentAnchors under the text key: a text file's ranges by their lines, lost ones too", () => {
+  const range = (hash, more = {}) => ({ line: 16, col: 0, end: 17, end_col: 4, prefix: "", suffix: "", hash, ...more });
+  const file = [
+    { id: "t1", content: "", properties: { text_position: range("f1"), quote: "Weight", color: "#ffe066aa" }, children: [] },
+    { id: "t0", content: "", properties: { text_position: range("f0", { lost: true }), quote: "gone" }, children: [] },
+    { id: "bad", content: "", properties: { text_position: { line: 0 }, quote: "?" }, children: [] },
+    { id: "h1", content: "", properties: { pdf_position: at(1), quote: "a quote" }, children: [] },
+    { id: "l1", content: "", properties: { text_position: range("f1"), link_url: "https://x", quote: "link" }, children: [] },
+  ];
+  const out = pageHighlights(file, flattenBlocks(file), new Map([["t0", 3]]), "text_position", "f1");
+  assert.deepEqual(out.map((h) => [h.id, h.threadCount, h.position.hash, !!h.position.lost, !!h.linkTarget]),
+    [["t1", undefined, "f1", false, false], ["t0", 3, "f0", true, false], ["l1", undefined, "f1", false, true]]);
+  const anchors = commentAnchors(file, new Map([["t0", 3]]), "text_position");
+  assert.deepEqual(anchors.map((a) => [a.id, a.kind, a.threadCount]), [["t1", "highlight", 0], ["t0", "highlight", 3], ["l1", "highlight", 0]],
+    "by its span, not by rectangles; a malformed one stands nowhere");
+  assert.equal(anchors[1].position, file[1].properties.text_position, "the block's own position");
+  assert.deepEqual(commentAnchors(file, new Map()).map((a) => a.id), ["h1"], "the PDF key: the PDF's alone");
+});
+
 test("keepIfSameJson: the kept list while the next one reads the same, the next one once it differs", () => {
   const ref = { current: { json: "", value: [] } };
   const first = keepIfSameJson(ref, stampedList(tree));

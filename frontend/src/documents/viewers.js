@@ -16,14 +16,15 @@ export const FORMAT_VIEWER = { pdf: "pdf", text: "text", image: "image", audio: 
 //   host     the host renders it (DocumentPane's `render`: it takes the
 //            host's state), else DocumentPane draws it from the surface
 //   ink      the markup strip, Record and the player hang on it
-//   regions  it takes regions (image_position)
-//   margin   its threads stand in the comment margin
+//   regions  it takes regions drawn on it (image_position)
+//   margin   its threads stand in the comment margin (the PDF's highlights,
+//            a picture's regions, a text file's ranges)
 //   word     its name in the View menu and the phone tab (a T() key); close
 //            the × button's title. "PDF" stays the untranslated format token.
 export const VIEWERS = {
   pdf: { tools: ["zoom", "ink", "record", "highlighter", "translate", "selectMode"], host: true, ink: true, margin: true, word: T("PDF"), close: T("Close PDF") },
   notebook: { tools: ["zoom", "ink", "record", "paper", "notesView"], host: true, ink: true, word: T("Notebook"), close: T("Back to the notes") },
-  text: { tools: [], word: T("Text"), close: T("Close the file view") },
+  text: { tools: ["highlighter"], margin: true, word: T("Text"), close: T("Close the file view") },
   image: { tools: ["zoom", "selectMode"], regions: true, margin: true, word: T("Picture"), close: T("Close the picture") },
   media: { tools: [], word: T("Player"), close: T("Close the player") },
   file: { tools: [], word: T("File"), close: T("Close the file view") },

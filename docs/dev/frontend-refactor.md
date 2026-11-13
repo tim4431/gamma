@@ -42,11 +42,12 @@ does not show comes in chunks of its own, through `lazySurface` and
 | Share popover | while open | nothing |
 | Thread popover (comments) | while open | nothing |
 | Properties popover (`editor/BlockProperties.jsx`, `blockProperties.css`) | while open | nothing |
-| PDF margin cards (comments) | beside a page with room and an open thread | nothing |
+| Margin cards (comments) | beside a PDF's page, a picture or a text file's code view with room and an open thread | nothing |
 | Comments window | with its dock window | the window's frame (`DockWindow`), body empty |
+| Files window (`explorer/FilesWindow.jsx` with `FileTree.jsx`, `fileTree.js` and `filesWindow.css`; App imports nothing of them, and its owners `useFilesWindow.js`, `useFilesTree.js`, `useDirectoryRows.js`, `directoryRows.js` and `workPaths.js` are small and in the App chunk) | with its dock window or its phone overlay; fetched at startup when it is open on a desktop, else on the View menu's hover | the window's frame (`DockWindow`), body empty |
 | Inbox panel | while open | nothing |
 | A vault page's Edit the file (`vault/FileSourceDialog.jsx`) and an opened PDF's Add to library… (`vault/FolderPickerDialog.jsx`) | while open | nothing |
-| The code view (`documents/viewers/TextViewer.jsx`, with `@codemirror/search` and `@codemirror/language-data`; each grammar a chunk of its own, fetched when a file of it opens) and the picture, the player and the file pane (`documents/viewers/FileViews.jsx`) | with a page whose document is of their format (`documents/DocumentPane.jsx`); App fetches the chunk as the page starts to open (`preloadViewer`) | the pane's empty shell (`.docViewSkeleton`) |
+| The code view (`documents/viewers/TextViewer.jsx`, with `@codemirror/search` and `@codemirror/language-data`; each grammar a chunk of its own, fetched when a file of it opens; its marks, popup and margin layers, `textMarks.js`, `TextTip.jsx` and `TextOverlay.jsx`, come with it, and it imports nothing of pdf.js: the popup's frame is `shared/ui/TipFrame.jsx`, the marks' tools `pdf/MarkTools.jsx` and `pdf/selectionTip.js`, none of which loads it) and the picture, the player and the file pane (`documents/viewers/FileViews.jsx`) | with a page whose document is of their format (`documents/DocumentPane.jsx`); App fetches the chunk as the page starts to open (`preloadViewer`) | the pane's empty shell (`.docViewSkeleton`) |
 | pdf.js and its worker | `loadPdfEngine()` in `pdf/PdfViewer.jsx`, awaited just before `getDocument` | the viewer's skeleton and status pill |
 
 Mermaid was already loaded this way (`shared/lib/mermaidRenderer.js`).
@@ -152,8 +153,14 @@ desktop, the workspace's folder vaults and the tracking dialog) and
 `explorer/useFolderRows.js` / `useSummaries.js` (a work folder's rows and
 the pages the listing leaves out), `explorer/useWorkFolderActions.jsx`
 (what may be done with a work folder's files and folders, and the library
-requests and menu rows for its files) and `comments/useInkThreads.js`
-(what a comment thread on an ink group does to the ink) are. State that must
+requests and menu rows for its files), `explorer/useFilesWindow.js` (the
+Files window's showing, open folders, keys' row, selection and the file
+rows it hands App), `explorer/useFilesTree.js` with `useDirectoryRows.js`
+(its directory reads, first slot and reveal: a second owner, since what it
+needs of App — the page rows, the phone flag — is made after the known
+rows the first feeds), `explorer/useFileSearch.js` (quick open's files,
+QuickOpen's own) and `comments/useInkThreads.js` (what a comment thread on
+an ink group does to the ink) are. State that must
 outlive a component, or be read outside React, is a store with listeners
 that components read through `useSyncExternalStore` (`pdf/translateState.js`,
 `recording/recorderStore.js`, `replay/playback.js`,
@@ -168,7 +175,10 @@ nothing of it). App calls the owner and hands its commands on.
   `inbox/inboxText.js` under `useInbox.js`, `vault/vaultState.js` under
   `useVault.js`, `explorer/knownPages.js` beside `useSummaries.js`,
   `explorer/workFolderActions.js` under `useWorkFolderActions.jsx`,
-  `explorer/trackSelection.js` under `TrackDialog.jsx` and
+  `explorer/trackSelection.js` under `TrackDialog.jsx`,
+  `explorer/directoryRows.js` under `useDirectoryRows.js`, `layoutKeeping`
+  in `useFilesWindow.js`, `explorer/fileSearch.js` under `useFileSearch.js`
+  and
   `feedback/feedbackView.js` with `feedback/feedbackText.js` under
   `FeedbackDialog.jsx`.
 - **An owner is narrow.** It takes the few inputs it reads and returns
@@ -285,7 +295,7 @@ and the tab groups of the `workspace/` row.
 | `collaboration/` (existing: `usePageCollab.js`) | Queued writes, debounce, retries, explicit flush, unload handling — the live session hook `usePageCollab` ([collab.md](collab.md)); App keeps the transition effect and the remote-apply glue | `commit`, `flush`, `onRemoteOps` |
 | `editor/` | Block editing, caret/focus, undo, and notes rendering | Existing editor files, `editTail`, notes-window markup and editor actions |
 | `library/` | Listing derivation, selection, page/folder/label operations, and library UI | `pageBlocks` through `homeItems`, click handlers, filing, rename/move/delete, carousels |
-| `explorer/` (built: `workFolders.js`, `workFolderActions.js`, `knownPages.js`, `trackSelection.js`, `useFolderRows.js`, `useSummaries.js`, `useWorkFolderActions.jsx`, `FolderList.jsx`, `TrackDialog.jsx`, [work_folders.md](work_folders.md)) | Work folders: the rules a file and the folders of one follow, what the menus, drops and open page ask of them, Add to library, Remove from library and Save a copy, a directory's list view read a page of rows at a time, the pages the listing does not carry, the tracking dialog | Extracted: the rules (node-tested twins of the server's), what App asks of them (`workFolderActions.js`, node-tested), the commands and the menus' library rows (`useWorkFolderActions.jsx`), the list view's rows and the two reads; App merges the rows into `knownBlocks`, hands the list view the library's row actions and gates its own menus and drops on the answers |
+| `explorer/` (built: `workFolders.js`, `workFolderActions.js`, `knownPages.js`, `trackSelection.js`, `useFolderRows.js`, `useSummaries.js`, `useWorkFolderActions.jsx`, `FolderList.jsx`, `TrackDialog.jsx`, the Files window's `useFilesWindow.js`, `useFilesTree.js`, `useDirectoryRows.js`, `directoryRows.js`, `fileTree.js`, `FilesWindow.jsx`, `FileTree.jsx`, the path twin `workPaths.js`, quick open's `useFileSearch.js` and `fileSearch.js`, [work_folders.md](work_folders.md)) | Work folders: the rules a file and the folders of one follow, what the menus, drops and open page ask of them, Add to library, Remove from library and Save a copy, a directory's list view read a page of rows at a time, the pages the listing does not carry, the tracking dialog; the Files window, a file's crumbs and path, quick open's files | Extracted: the rules (node-tested twins of the server's), what App asks of them (`workFolderActions.js`, node-tested), the commands and the menus' library rows (`useWorkFolderActions.jsx`), the list view's rows and the two reads, the Files window's state, reads and tree; App merges the rows into `knownBlocks`, hands the list view and the tree the library's row actions, mounts the window in its dock and gates its own menus and drops on the answers |
 | `feedback/` (built: `useFeedback.js`, `FeedbackHost.jsx`, `FeedbackDialog.jsx`, `feedbackView.js`, `feedbackText.js`, [feedback.md](feedback.md)) | Feedback on a work folder's files: the view and Send dialog, the requests and their states | Extracted whole: the dialog's scope is a store each opener writes (the list bar, the Comments window, the vault chip), the host App mounts reads it, and the dialog holds its own reads and state; App only hands it `openThreadAt`, who may send and the vaults, and wires the ink threads' hook (`comments/useInkThreads.js`) into the ink owners |
 | `workspace/` (built: the tab groups, `tabLayout.js`, `TabGroups.jsx`, `PagePane.jsx`, [tab_groups.md](tab_groups.md); the dock arrangement itself is still App's) | Dock arrangement, visibility, panel sizes, drag geometry, and phone presentation; the open tabs' groups side by side | `moveWindow`, `startWindowDock`, `renderSlotGroup`, per-page layout snapshots |
 | `documents/` (built: `pageDocument.js`, `documentView.js`, `viewers.js`, `codeLanguages.js`, `DocumentPane.jsx`, `viewerSurface.js`, `viewers/`, `formats.js`, [documents.md](documents.md)) | What a page carries and which viewer it shows: one rule for the live page and a tab group's (`documentView`), the registry of panes and what each brings to the frame (`viewers.js`), the pane that mounts the viewer it names, the viewers of its own (the code view, the picture, the player, the file pane) and the surface they take | Extracted: the viewer decision (App reads it as `docView` and its gates from `spec`, never a pane's id), the viewer switch, and the surface's memo and the viewer's report ref (`useViewerSurface`, stable closures over App's handlers); App keeps the PDF's and the notebook's render functions and their props |
@@ -358,6 +368,13 @@ currently it shares the drop handler. Preview and drop must use the same target
 calculation. Keep collapsed headers outside percentage-sized panels, preserve
 window order, and restore ratios only when the target panel structure exists.
 Make all retry timers cancellable on navigation and unmount.
+
+Done of this so far: a fourth window (Files) joined through tables rather
+than another branch per site (the grip anchors' `GRIP_GUIDE`, the
+fold-forget effect's table of hidden flags), and a page's saved layout keeps
+a window whose place is the browser's where it is (`layoutKeeping`, with its
+fold); `windowFrame` and `renderWindow` still branch on the id, and the
+rest of this section is open.
 
 Phone overlays should derive from the same visible-window model while retaining
 the desktop arrangement for the switch back to a wider viewport. Preserve

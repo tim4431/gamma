@@ -58,14 +58,15 @@ A root comment keeps where its thread was opened, `comments.anchor`, JSON
 
 ```text
 {"v": 1,
- "kind":   "passage" | "area" | "ink" | "region" | "note" | "file",
+ "kind":   "passage" | "area" | "ink" | "region" | "lines" | "note" | "file",
  "block":  "<the block the place is read from>",
  "doc_id": "<24 hex>" | "",          # the file the place was measured on
  "ext":    ".pdf" | ".png" | …,      # the page's document's extension when the thread opened; "" for none
- "page":   3 | null,                 # the 1-based PDF page; null for a region of a picture
+ "page":   3 | null,                 # the 1-based PDF page; null for a region of a picture and a range
  "rects":  [[x1, y1, x2, y2], …],    # fractions of the page (or the picture) as shown, top-left origin, 4 dp, at most 200
  "quote":  "…",                      # at most 1000 characters; "" for an area, ink, a region, a note, the file
  "box":    [x0, y0, x1, y1] | null,  # the region picture's crop, fractions, 4 dp
+ "lines":  [118, 120],               # a range's alone: its first and last line when the thread opened
  "source": {…}}                      # added after the commit by the kept worker; absent until then
 ```
 
@@ -89,8 +90,16 @@ A root comment keeps where its thread was opened, `comments.anchor`, JSON
   on (`image_position.hash`, else the page's), `page` null, `rects` its
   one rectangle as fractions of that version (`highlights.region_box`),
   `quote` "".
+- **lines**: a highlight or link block with a `text_position` whose span
+  reads (`highlights.text_span`), a range of a text file
+  ([api.md](api.md) "The highlight shape"; a block with a PDF or picture
+  position too is placed by that one). `doc_id` is the version its lines
+  were measured on (`text_position.hash`, else the page's), `page` null, no
+  `rects` and no `box`, `quote` the block's, and `lines` its `[line, end]`:
+  a key only this kind carries, so the other kinds' keys and their order
+  stand. A malformed `text_position` places nothing (the block is a note).
 - **note**: anything else. The nearest ancestor below the page that is a
-  highlight, a link region, an ink group or a region with a position gives
+  highlight, a link region, an ink group, a region or a range with a position gives
   the place: `kind` becomes that ancestor's and `block` its id (the
   annotated export's rule for a note under a highlight). Without one the
   thread is a `note` on the block itself, with the page's `doc_id` and no
@@ -111,12 +120,21 @@ which the reader compares with the block now. A reply holds none. Nothing
 is backfilled for a root from before migration step 54
 ([migrations.md](migrations.md)): its place is read from its block. The
 module's pure helpers: `parse(text)` (a stored anchor as an object, None
-for NULL or a malformed one; a dict passes through), `held_file(text)`
+for NULL or a malformed one, a `lines` anchor without two whole lines
+included; a dict passes through), `held_file(text)`
 (`stored_name(doc_id, ext)`, the stem through `storage.stored_pdf_stem`,
 "" for none: the hold, "The commented version kept"; an anchor written
 before step 3 has no `ext` and holds a PDF, one whose `ext` is no
-extension holds nothing) and `top(anchor)` (the place's top: the highest
-rectangle's, else the box's, else 0: the order of a page's threads).
+extension holds nothing, nor does a `lines` anchor), `top(anchor)` (the
+place's top: the highest rectangle's, else the box's, else 0: the order of
+a page's threads) and `place_words(anchor)`, the place in words the
+feedback tools' answers and the chat's thread lines use: `the whole file`,
+`a region of the picture`, `page 3, “…”`, `page 5, an area`, `page 2,
+handwriting`, `lines 118–120, “…”` / `line 118` (`line_words`), `a note`.
+A range's anchor keeps the lines it was opened on; `following(conn,
+page_id, anchor)` gives the lines its block holds now while it is still a
+range, which both of those name (the entry and the agent's prompt read
+the block's lines too).
 
 ## The entry and the document
 
@@ -138,8 +156,10 @@ a live root page with `work_folder` is a `file`. `FeedbackError(404)` for
 no such folder or live page (a page in Recently deleted is none),
 `FeedbackError(400, "Feedback is for a work folder's files.")` for a library
 page or folder. `work_folder_named(conn, name_or_id, tree=None)`: a W by
-its id, or by its name ignoring case when exactly one carries it (404 for
-none, 400 for two: name one by its id). `FeedbackError(status, detail)`
+its id, or by its name when exactly one carries it (404 for none, 400 for
+two: name one by its id), by the work folder name rule of
+`work_folders.paths.work_folders_named`: exactly, else ignoring case with
+`lower()` ([work_folders.md](work_folders.md#paths)). `FeedbackError(status, detail)`
 lives here; the routes answer it as an `HTTPException`, the MCP tools as an
 error text.
 
@@ -158,9 +178,12 @@ gives the ids, oldest first: what a Send names when it names none.
 ### A file's name
 
 `file_path(tree, props, paths=None, *, page_id, title)`: `paths[page_id]`
-when given, else the names of the folders from the page's `folders[0]` up
-to W (W left out) joined with `/`, then its `file_name`; a page without a
-`file_name` (a note page) is named by its title. `paths` is `{page id:
+when given, else the tree's path, `work_folders.paths.page_path`
+([work_folders.md](work_folders.md#paths)): the names of the folders from
+the page's `folders[0]` up to W (W left out) joined with `/`, then its
+`file_name`; a page without a `file_name` (a note page) is named by its
+title. The disk's override is feedback's alone; the chat's tools and the
+search name a file by `page_path`. `paths` is `{page id:
 path}` from the vault's rows on this computer (`paths_of(vault.store.files(link_id))`:
 each page at its PDF row's path, else its notes row's; tombstones, a row
 with `was` or an in-place one, left out), what the files' writer passes so
@@ -174,16 +197,18 @@ the names are the disk's. Separators are `/`.
  "format":   "pdf",                        # the document's format; "markdown" for a note page without one
  "page_id":  "…",
  "block_id": "…",                          # the block the thread hangs on
- "kind":     "passage" | "area" | "ink" | "region" | "note" | "file",
+ "kind":     "passage" | "area" | "ink" | "region" | "lines" | "note" | "file",
  "where":    {"page": 3, "quote": "…", "box": […], "rect": [x1, y1, x2, y2], "size": [w, h],
               "placed": "exact", "match": 0.82, "note": "…"},
+             # a range: {"line": 118, "end": 120, "quote": "…", "placed": "rough", "match": 0.86, "was": "…", "note": "…"}
  "source":   {"file": "sections/method.tex", "line": 118, "end": 120, "version": "current"} | null,
  "picture":  "img/<key>.jpg" | null,
  "before":   "img/<key>.jpg" | null,
  "state":    "open" | "resolved",
- "sent":     {"request_id": "…", "state": "sent" | "running" | "failed", "at": "…", "detail": "…"} | null,
+ "sent":     {"request_id": "…", "state": "sent" | "running" | "failed", "at": "…", "detail": "…",
+              "state_by": "…"} | null,
  "link":     "<the thread's Gamma link>",
- "comments": [{"id", "by", "agent", "at", "body", "deleted"}]}
+ "comments": [{"id", "by", "agent", "at", "body", "deleted", "agent_kind"?}]}
 ```
 
 The keys come in that order, and a `where` key with no value is left out.
@@ -224,33 +249,65 @@ The keys come in that order, and a `where` key with no value is left out.
     `earlier` when another (it stays where it was; the viewer draws it
     dashed), `lost` when the page's document is no longer a picture.
     Nothing for the file.
+  - a range of a text file (`lines`, and a note under one) follows its
+    block, as a passage does: `line` and `end` (left out when equal to
+    `line`) are the block's lines now while it is placed on the page's
+    current file (`placed` `exact` or `rough`: the run's result, or the
+    version it was made on), else the anchor's `lines` (a lost or pending
+    range, or one whose block is gone, keeps the lines it was commented
+    at); `quote` the block's (respelled by a rough placement) when the
+    block is there, else the anchor's; `placed` reads the same ladder by
+    `text_position.hash` in place of `doc_id`: `exact`, `rough` with
+    `match`, `lost`, `pending` (measured on another version, the run not
+    done) — never `estimate` or `earlier` (a text run writes no `approx`
+    without `match`, and ranges are always placed again); and when it is
+    `rough`, **`was`**, the text the comment was made on (the quote the
+    thread's anchor recorded, given when the range reads otherwise now; for
+    a thread without one, `text_position.prev.quote`, the text last
+    confirmed there), so an agent that rewrote the sentence sees what was
+    commented as well as what stands there now (a PDF entry has its
+    `before` picture for this). On a secrets file
+    (`anchors.text_kept`: `documents.text.is_secret`) neither quote is
+    given, the lines alone, here and so in the files, the tools and the
+    local agent's prompt.
 - **`source`**: live (`version: "current"`) when the place is on a PDF
   page of the page's current file (`placed` is `exact`, `rough` or
   `estimate`) and the SyncTeX map answers on this computer ("SyncTeX");
   else the one recorded at the thread's open (`anchor.source`, `version:
   "commented"`); else null. `end` comes only when it differs from `line`. A
-  region of a picture has none.
+  region of a picture has none. A range of a text file is its own source,
+  never SyncTeX's: `{"file": <the entry's file>, "line", "end"?, "version"}`
+  from `where`, `current` while it is `exact` or `rough`, else `commented`
+  (the lines it was commented at); `kept._record_source` never runs for it
+  (it has no page).
 - **`picture`** and **`before`**: "The pictures". HTTP and MCP add
   `picture_url` and `before_url` after them (`entries.with_urls`).
 - **`sent`**: the newest Send waiting on the thread (`comments._sent`: a
   `feedback_request_threads` row not answered whose request is `sent`,
-  `running` or `failed`), `detail` only when the request has one; null
-  otherwise. The comment API's threads carry the same.
+  `running` or `failed`), `detail` and `state_by` (who set its state: a
+  token's display name, the label of an agent on this computer, the
+  requester's username) only when the request has them; null otherwise.
+  The comment API's threads carry the same, `state_by` "" while it is
+  sent.
 - **`link`**: `?ws=<ws>&page=<page_id>&block=<block_id>&thread=<id>`, the
   address the Inbox opens, prefixed by `link_base` (MCP's absolute base;
   "" in the files and over HTTP, where the link is the query alone).
 - **`comments`**: oldest first; `by` the author's username (the stored name
   once the account is gone), `agent` the token's display name or "", `at`
   the comment's `created_at`, `body` ("" with `deleted: true` for a
-  tombstone).
+  tombstone). A comment an agent on this computer wrote
+  ([local_agents.md](local_agents.md): its `agent_id` starts with
+  `local:`, `comments.LOCAL_AGENT`) adds `agent_kind: "local"`, as the
+  comment API's comment does; no other comment has the key, so every other
+  entry and file stays byte-identical.
 
 ### The order
 
 Files by name (case folded, then as it is); in a file the whole file's
 threads first, then by `where.page`, `anchors.top`, the box's left edge
 (else the rectangles'), the threads without a page after those with one: a
-picture's regions by top and left edge, then the notes; ties by
-`created_at`, then id.
+picture's regions by top and left edge, a text file's ranges by
+`where.line`, then the notes; ties by `created_at`, then id.
 
 ### The document
 
@@ -303,7 +360,7 @@ and `read_feedback` give. Exactly:
 ```markdown
 # Feedback on paper
 
-2 open comments · owner tim · updated 2026-11-10 13:58
+5 open comments · owner tim · updated 2026-11-10 13:58
 
 Each item is a comment thread on a file of this work folder. Answer it in Gamma: reply with what you
 changed and where, resolve it when it is done (see "How to answer" at the end).
@@ -344,6 +401,25 @@ changed and where, resolve it when it is done (see "How to answer" at the end).
 > **tim** · …
 > use the viridis palette.
 
+## main.tex
+
+### 4. Line 17 · “This note measures how much it helps”
+
+- id: `5e0b…` · lines · placed exactly
+- source: `main.tex`, line 17
+
+> **tim** · 2026-11-10 13:56
+> say by how much.
+
+### 5. Lines 26–27 · “Training and test loss per epoch, without any weight decay.”
+
+- id: `6a1c…` · lines · placed roughly (0.91)
+- was: “Training and test loss per epoch, with no weight decay.”
+- source: `main.tex`, lines 26–27
+
+> **tim** · 2026-11-10 13:55
+> name the dataset.
+
 ---
 
 ## How to answer
@@ -360,12 +436,18 @@ passage), `Page {n} · area`, `Page {n} · handwriting`, `Page {n} · note on
 “{quote}”` (a note under a passage, `note on an area` and `note on
 handwriting` under those), `Region · {w}×{h} px at ({x1}, {y1})` (a region
 of a picture, by `where.rect`; `Note on a region · …` under one; `Region`
-alone when the block is gone), `A note` (one without a place), `The whole
+alone when the block is gone), `Lines {line}–{end} · “{quote}”` / `Line
+{line} · “{quote}”` (a range of a text file; `note on “…”` under one,
+`passage` for an empty quote), `A note` (one without a place), `The whole
 file`.
 `placed` reads `placed exactly` / `placed roughly ({match})` / `placed by
-estimate` / `not found in this build` / `not placed yet` / `drawn on an
-earlier build`, and for a region `placed exactly` / `drawn on an earlier
-version of the picture` / `the file is no longer a picture`; an item with a
+estimate` / `not found in the current version` / `not placed yet` / `drawn
+on an earlier version` — one vocabulary for every format, a build's PDF and
+a source file alike, as the app's thread card says it — and for a region
+`placed exactly` / `drawn on an earlier
+version of the picture` / `the file is no longer a picture`; a rough range
+adds the line `- was: “{the text it was made on, at most 80 characters}”`
+after the note; an item with a
 `before` picture adds `the figure was rebuilt` (an area), `the PDF was
 rebuilt` (a passage) or `the picture was rebuilt` (a thread on a picture's
 page); a resolved item says so. The source line reads `lines a–b` when
@@ -376,7 +458,9 @@ request's detail. The picture lines read `Page {n}, the comment's region`
 commented on`, without the page for a region of a picture, and `The
 picture` / `The picture as it was commented on` for a thread on a picture's
 page. Bodies are quoted line by line with `> `, a body's own Markdown left
-as it is; a tombstone reads `*(deleted)*`. The last line of "How to answer"
+as it is; a tombstone reads `*(deleted)*`. A token's comment is signed
+`**Claude Code** (tim's connection)`, one with `agent_kind: "local"`
+`**Codex** (on tim's computer)`. The last line of "How to answer"
 names the JSON form the reader can reach (`open.json`, the `GET
 /api/feedback` query, or `read_feedback`). With no entries: the heading, `No
 open comments.` (or `No resolved comments.`), and "How to answer". The
@@ -391,7 +475,9 @@ hangs on, cut out of its PDF page as the page shows it; the region of a
 picture a thread hangs on, cut out of the picture; the whole picture for a
 thread on a picture's page. A passage, an area, ink, a region and a note
 under one of those get pictures, and the page's thread when the page shows
-a picture; a note alone and a PDF's whole file none.
+a picture; a note alone, a PDF's whole file and a text file (a range of
+lines, a note on one, the whole file: its entry names its lines, and its
+`was` stands for `before`) none.
 
 - **`picture`**, the region as the person sees it now: `pictures.now(conn,
   page_id, props, anchor, memo=)` when `placed` is `exact`, `rough` or
@@ -530,7 +616,8 @@ the `before` picture from it. `gamma/feedback/kept.py`:
   longer describes. A thread opened on another server's page records none,
   nor does one on a picture.
 - **At every replacement while it holds** (`keeps_bytes(ws, page_id,
-  props)`: the page is a library file, or has an open thread) the incoming
+  props)`: the page is a library file, or a PDF or a picture with an open
+  thread, below) the incoming
   bytes are stored first (`vault.local_remote.LocalRemote.replace_doc`,
   `linked_files._take_bytes`), so the outgoing ones, stored at the open or at
   the replacement before, are the run's reference and get the replacement's
@@ -559,6 +646,18 @@ A highlight made on a build replaced before its thread was opened is placed
 by its quote, as any highlight on a file read in place: nothing is stored at
 the first highlight.
 
+Only a PDF's and a picture's versions are kept: `kept.KEPT_FORMATS = ("pdf",
+"image")`, the formats whose threads need the version they were opened on
+(the PDF run reads the text under rectangles from it, the pictures draw
+`before`). A range of a text file carries its own context, its quote and
+the text around it ([api.md](api.md) "The highlight shape"), so its run
+reads nothing of the old version and it has no picture: a thread on a
+`.tex` stores nothing at its open (`_unstored` asks the format, so `repair`
+follows) nor at a replacement (`keeps_bytes`' open-thread case asks it,
+whether the caller passes the properties or not), and a `lines` anchor
+holds no file. A work folder's file in the library keeps its bytes whatever
+its format, as a library document does.
+
 ## Requests and their states
 
 Send is the person's "go": a request that an agent act on a scope's open
@@ -568,28 +667,34 @@ workspace's pages.db (`db.FEEDBACK_SCHEMA`, additive: no migration step;
 
 | Table | Columns |
 |---|---|
-| `feedback_requests` | `id` (a block id's shape; the client may mint it, so a retried Send writes once), `rev` (the listing's cursor: the workspace's next number at the insert and at every change of state, under the write lock), `work_folder` (W), `scope` and `scope_kind` (`file` or `folder`: the page or folder id the person sent), `by` (the requester's account id) and `by_name`, `at`, `note` (at most 2000 characters), `state` (`sent`, `running`, `done`, `failed`), `state_at`, `state_by` (a token's display name, or the requester's username), `detail` (`failed`: the reason; `running`: a line of progress; at most 500 characters) |
+| `feedback_requests` | `id` (a block id's shape; the client may mint it, so a retried Send writes once), `rev` (the listing's cursor: the workspace's next number at the insert and at every change of state, under the write lock), `work_folder` (W), `scope` and `scope_kind` (`file` or `folder`: the page or folder id the person sent), `by` (the requester's account id) and `by_name`, `at`, `note` (at most 2000 characters), `state` (`sent`, `running`, `done`, `failed`), `state_at`, `state_by` (a token's display name, the label of an agent on this computer, or the requester's username), `detail` (`failed`: the reason; `running`: a line of progress; at most 500 characters), `via` (how it was made: `session` or `token`, `''` before migration step 58; not in the record) |
 | `feedback_request_threads` | `request_id`, `thread_id`, `answered_at` (a reply or a resolve after the request, by a token or another account) |
 
 A request record, as the API answers it: `{id, rev, work_folder: {id,
 name}, scope: {kind, id, name}, by, at, note, state, state_at, state_by,
 detail, threads: [{id, answered}]}`, `by` the username.
 
-- **`create(ws, conn, scope, *, by, by_name, note, threads, request_id)`**
-  → `{request, created}`, commits. `threads` omitted: every open thread in
-  the scope; given: each must be an open thread there (400 otherwise), at
-  most 500. 400 "Nothing to send: no open comments here." for none; 413 past
-  the note's length. A repeated `request_id` by the same account answers the
-  stored request with `created` false; another account's id is a 409.
+- **`create(ws, conn, scope, *, by, by_name, note, threads, request_id,
+  via)`** → `{request, created}`, commits. `threads` omitted: every open
+  thread in the scope; given: each must be an open thread there (400
+  otherwise), at most 500. 400 "Nothing to send: no open comments here." for
+  none; 413 past the note's length. A repeated `request_id` by the same
+  account answers the stored request with `created` false; another
+  account's id is a 409. `via` (`requests.VIA`) is how the Send was made,
+  stored in the row's `via` column and not in the record: `session` (a
+  person in Gamma) or `token` (an integration token), as the route says;
+  `''` for a Send from before migration step 58. An agent on this computer
+  takes a session's alone ([local_agents.md](local_agents.md#claiming-and-the-run)).
 - **`listing(conn, *, after, scope, state, limit)`** → `{requests, cursor}`:
   `rev > after`, oldest first, `limit` 50 by default and at most 100;
   `scope` a W's or a file's id filters by `work_folder` or `scope`; `cursor`
   is the last `rev` given, else `after`. So a new request and a state change
   alike show past a cursor. `get(conn, id)` is one.
-- **`set_state(ws, conn, id, state, *, detail, by_name, writer)`**:
-  `writer` is `agent` (an integration token of the `feedback` or `write`
-  scope) or `requester` (the session of `by`), and `TRANSITIONS` says who may
-  make which change:
+- **`set_state(ws, conn, id, state, *, detail, by_name, writer,
+  only_from=())`**: `writer` is `agent` (an integration token of the
+  `feedback` or `write` scope, or an agent on this computer) or
+  `requester` (the session of `by`), and `TRANSITIONS` says who may make
+  which change:
 
   | from \ to | running | done | failed |
   |---|---|---|---|
@@ -604,18 +709,37 @@ detail, threads: [{id, answered}]}`, `by` the username.
   detail `withdrawn` whatever they sent, and the withdraw is their only
   change (their `running` or `done`, repeated or not, is the 409). A
   write takes the next `rev`, sets `state_at`, `state_by` and `detail`.
+  `only_from` names the states the writer expects the request in, checked
+  under the lock: a stored state outside it is a 409 "The request is
+  {state} now.". Every write of an agent on this computer passes
+  `("running",)`, so a request withdrawn between two of them is never
+  overwritten; an outside agent's writes pass none and are unchanged.
+- **`claim(ws, conn, id, *, by_name, detail)`** → the request, or None:
+  an agent on this computer takes a `sent` request
+  ([local_agents.md](local_agents.md#claiming-and-the-run)), `running` with
+  `detail`, `state_by` its label, the next `rev` and `state_at`, in one
+  step under the write lock; a request that is no longer `sent` (taken,
+  withdrawn, answered, gone) is rolled back and None, so of two takers, or
+  a taker and a withdraw, one wins. Commits, then `_changed`.
 - **After every write** (`_changed`): `collab.publish(ws, page, {t:
   "comments", block_id: "", thread_id: ""})` to each page whose threads are
   in the request (open tabs refetch their threads and Sent chips),
   `files.mark_folder(ws, W)`, and for a work folder of this computer whose
   vault may write now (not paused, not choosing its files)
   `files.write_request(link, id)` at once, best effort: the hot pass
-  rewrites it on a failure.
+  rewrites it on a failure. Then each of `change_listeners` hears
+  `fn(ws, request_id)`, on the early-return path too, each in its own
+  `try` that logs and never raises: `local_agents.runner.on_request`, which
+  queues the Sends an agent on this computer answers and stops a run whose
+  request was withdrawn, is the one listener.
 - **Answered.** `answered(ws, event)`, the listener's part: a `reply` or a
   `resolve` sets `answered_at` on every row of the thread not answered whose
   request was made before the comment and whose requester is not the actor
   or whose event carries an `agent` (a token's write answers whoever it
-  belongs to); then the work folder's files are due. A reopen answers
+  belongs to); then the work folder's files are due. An event that says
+  when its writer read the thread (`seen`: an agent on this computer's run,
+  [local_agents.md](local_agents.md) "A mention while a run works")
+  answers only the requests made by then. A reopen answers
   nothing. So a thread shows as sent (`sent` on its entry and on the comment
   API's thread) until an agent or another member answers it, and a later
   Send waits on it again.
@@ -754,16 +878,29 @@ pictures are drawn, off the event loop. `FeedbackError` becomes the
 
 | Method | Path | Answer |
 |---|---|---|
-| GET | `/api/feedback?scope=<id>&state=open\|resolved\|all&format=json\|md` | the document of a work folder, a directory or a file (`entries.document`, `owner` the requester's username, the entries with `picture_url` / `before_url`), or with `format=md` its Markdown (`text/markdown; charset=utf-8`, the pictures as their routes). 400 for a library page or folder, another state or format; 404 for no such folder or live page |
+| GET | `/api/feedback?scope=<id>&state=open\|resolved\|all&format=json\|md` | the document of a work folder, a directory or a file (`entries.document`, `owner` the requester's username, the entries with `picture_url` / `before_url`), or with `format=md` its Markdown (`text/markdown; charset=utf-8`, the pictures as their routes). On a server that runs agents (`local_agents.enabled`) the JSON adds `agent` and `agents_found` for the Feedback dialog (below the table); never the files' document. 400 for a library page or folder, another state or format; 404 for no such folder or live page |
 | GET | `/api/feedback/threads/{thread_id}?format=json\|md` | `{entry}` in any state, or its Markdown (the file's heading, then the item); 404 for a thread hidden, gone, a reply's id or not on a work folder's file |
 | GET | `/api/feedback/threads/{thread_id}/picture?at=now\|before&v=<key>` | `image/jpeg`, `Cache-Control: private, max-age=86400`; 404 when the entry has no such picture or it cannot be drawn now; 400 for another `at`. `v`, the picture's key, only busts a browser's cache |
-| POST | `/api/feedback/requests` | `{id?, scope, note?, threads?}` → 201 `{request}` (200 for a repeated `id` of the same account, answered as stored). `require_ws(write=True)`: a member who may edit, or a `write` token; never a `feedback` or `read` token, a viewer or a share visitor (a Send starts work on the owner's computer). 400 for a scope outside a work folder, nothing to send, a thread that is no open one in the scope or a malformed id; 404 for no such scope; 409 for another account's id; 413 past the note's length |
-| GET | `/api/feedback/requests?after=<rev>&scope=<id>&state=<s>&limit=<n>` | `{requests, cursor}` ("Requests and their states"); 400 for another state |
-| GET | `/api/feedback/requests/{id}` | `{request, entries}`, the entries of its threads as they are now (with their picture routes): what its file holds; 404 |
-| POST | `/api/feedback/requests/{id}/state` | `{state, detail?}` → `{request}`: an agent (a `feedback` or `write` token, in its own workspace) any change `TRANSITIONS` lets it make, the requester's session a withdraw (`failed`); 403 for a read token ("this token is read-only"), another member, a viewer or a share visitor; 404; 409 for a change refused; 413 past the detail's length; 423 while a delete holds the workspace |
+| POST | `/api/feedback/requests` | `{id?, scope, note?, threads?}` → 201 `{request}` (200 for a repeated `id` of the same account, answered as stored). `require_ws(write=True)`: a member who may edit, or a `write` token; never a `feedback` or `read` token, a viewer or a share visitor (a Send starts work on the owner's computer). 400 for a scope outside a work folder, nothing to send, a thread that is no open one in the scope or a malformed id; 403 for a token's Send to a work folder whose vault here has an agent on this computer ("An agent on this computer takes Sends made in Gamma, not with a token."); 404 for no such scope; 409 for another account's id; 413 past the note's length |
+| GET | `/api/feedback/requests?after=<rev>&scope=<id>&state=<s>&limit=<n>` | `{requests, cursor}` ("Requests and their states"); on a server that runs agents each record adds `local`, whether an agent on this computer holds it now; 400 for another state |
+| GET | `/api/feedback/requests/{id}` | `{request, entries}`, the entries of its threads as they are now (with their picture routes): what its file holds; the record's `local` as in the listing; 404 |
+| POST | `/api/feedback/requests/{id}/state` | `{state, detail?}` → `{request}`: an agent (a `feedback` or `write` token, in its own workspace) any change `TRANSITIONS` lets it make, the requester's session a withdraw (`failed`); 403 for a read token ("this token is read-only"), another member, a viewer or a share visitor; 404; 409 for a change refused, and for a token's change while an agent on this computer answers the request ("Codex on this computer is answering this request."); 413 past the detail's length; 423 while a delete holds the workspace |
 
 `picture_url` is `/api/feedback/threads/{id}/picture?at=now&v=<key>`,
 `before_url` the same with `at=before`.
+
+`doc.agent`, on the desktop app's own server only (`_agent_of`): null when
+the work folder has no agent on this computer; else `{name, label, ready,
+problem, takes, why}`, `ready` and `problem` as last asked
+(`local_agents.catalog.cached`: nothing runs, `ready` null while still
+checking), `takes` whether this account's Send would reach the agent now
+(the vault's maker, the vault writing its directory), and `why`, English,
+when not: "Only the person who keeps this folder on this computer can send
+to Codex." or "The work folder is paused on this computer: Codex starts
+once it syncs again.". `doc.agents_found` says whether this computer has
+either agent. Both are on this route alone: `open.json`, the request files
+and MCP's `read_feedback` stay as they are
+([local_agents.md](local_agents.md#the-routes)).
 
 ## Tokens and MCP
 
@@ -806,8 +943,22 @@ pictures are drawn, off the event loop. `FeedbackError` becomes the
 
 ## The seam
 
-Gamma starts no process. The owner builds the part that starts an agent
-(a watcher, a timer, a shell hook), and what it finds here is:
+On the desktop app's own server Gamma itself can be the connector: the
+vault's maker turns on Codex or Claude Code for a work folder in the sync
+panel, and from then on a Send of that folder made in Gamma by the maker is
+claimed by this server (`requests.claim`, `sent` to `running` in one
+step), worked by the agent in the vault's directory, answered with replies
+signed by its label and set `done` or `failed`
+([local_agents.md](local_agents.md)); the maker's comment that names the
+agent (`@codex`) is such a Send too, of its thread or of the file's open
+comments. While a folder has such an agent, a
+token's Send to it is refused (403), and so is a token's change of a
+request a run holds (409); the requests it has taken read `state_by`
+`Codex` or `Claude Code`, and an outside agent leaves them alone.
+
+Anywhere else, and for a folder with no agent on this computer, Gamma
+starts no process. The owner builds the part that starts an agent (a
+watcher, a timer, a shell hook), and what it finds here is:
 
 1. **A request appearing.** On this computer, a work folder's
    `.gamma/feedback/requests/<id>.json` ("The request file", `format:
@@ -849,7 +1000,9 @@ Gamma starts no process. The owner builds the part that starts an agent
    `running` again (a retry) and then `done`; `done` is final. A request
    the person withdrew reads `failed` with the detail `withdrawn`, set by
    the requester's session (`state_by` their name): the connector stops on
-   it and may not change it. The table of changes and who makes each is
+   it and may not change it. A request `running`, `done` or `failed` that
+   the connector did not set is someone else's (its `state_by` names who
+   has it): it leaves it alone. The table of changes and who makes each is
    `TRANSITIONS`; a change refused is a 409. Gamma shows the state beside
    the request, with the detail.
 
@@ -862,7 +1015,7 @@ with a thread takes no new strokes, is never deleted by the saver and
 refuses a merge, [handwriting.md](handwriting.md)); a thread's card shows
 its agent's comments under the token's name, a Sent chip while a request
 waits on it, and whether its passage moved or was not found in the new
-build; the Feedback dialog (`frontend/src/feedback/`: `FeedbackDialog.jsx`
+version; the Feedback dialog (`frontend/src/feedback/`: `FeedbackDialog.jsx`
 over the pure `feedbackView.js`, `tests/feedbackView.test.mjs`; its state
 a module store, `useFeedback.js`, that each opener calls and
 `FeedbackHost.jsx` renders; the words in `feedbackText.js`), opened from
@@ -906,13 +1059,21 @@ guide's "Comments and inbox" says it for people.
   about 89 Mpx) or past `STORED_MAX_BYTES` draws no picture, and there is no
   setting for either. The chat's region picture of a picture page shows
   nothing until the image branch of `/api/ai/page-image` answers.
+- A range of a text file has no picture and no `before`: a rough one's
+  `was` is the text it was made on, a lost one keeps its quote and the
+  lines it was commented at. A `file` or `note` anchor on a text page still
+  names the page's version (`held_file` holds `<hash>.tex`), which is never
+  stored for it, so the hold costs nothing but a stored library text
+  document's old version kept while the thread is open.
 
 ## Tests
 
 - `tests/test_feedback_anchors.py`: the anchor of each kind, a region's and
-  the extension held.
+  the extension held, a range's lines and the words they are named by.
 - `tests/test_feedback_entries.py`: every kind's `where` and `placed`, a
-  picture's regions and the whole picture through a rebuild, the file's
+  picture's regions and the whole picture through a rebuild, a text file's
+  ranges by their own lines through a change (exact, rough with `was`,
+  lost, pending, the block gone), the file's
   name from the vault's rows and from the tree, the order, `sent`, a
   tombstone, the cut, the scopes and their refusals, the states, a root from
   before step 54, the source live or as commented, the pictures' keys; the
@@ -927,9 +1088,12 @@ guide's "Comments and inbox" says it for people.
   picture route, who reads.
 - `tests/test_feedback_requests.py`: who may send, a retry, "Nothing to
   send", every change of state by each writer, the cursor, `answered_at`,
-  the room publish, the listeners, the sweep.
-- `tests/test_feedback_pictures.py`, `test_feedback_kept.py`,
-  `test_synctex.py`, `test_feedback_sources.py`, `test_feedback_files.py`,
+  the room publish, the listeners, the sweep, `claim`, `only_from` and the
+  `change_listeners`. An agent on this computer has its own suites,
+  `tests/test_local_agents_*.py` ([local_agents.md](local_agents.md#tests)).
+- `tests/test_feedback_pictures.py`, `test_feedback_kept.py` (a text file's
+  thread keeps no version), `test_synctex.py`, `test_feedback_sources.py`,
+  `test_feedback_files.py` (an entry on lines of a tracked `.tex`),
   `test_feedback_tools.py`, and the gate `test_feedback_loop.py` (a work
   folder with a paper, two comments, a Send, a feedback token's state and
   answers, a rebuild, the Inbox, `open.json` empty at the end).

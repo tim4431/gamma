@@ -4,12 +4,15 @@ client such as Claude Code saves it to disk and gives the model its path).
 Rendering is gamma/routers/export.py's; nothing is stored.
 """
 
+import json
 from urllib.parse import urlencode
 
 from fastapi import HTTPException
 
-from .blocks_store import sub_pages, with_sub_pages
+from .blocks_store import load_props, sub_pages, with_sub_pages
 from .db import account_name, connect_pages_db, connect_users_db
+from .documents.model import page_document
+from .feedback.anchors import text_kept
 from .markdown_export import UPLOAD_RE
 
 FORMATS = ("markdown", "pdf", "notes_pdf")
@@ -67,6 +70,10 @@ def export_page(ws: str, base: str, user_id: str, args: dict) -> tuple[str, tupl
         # with ``sub_pages``, the page and every page inside it, each after its parent
         pages = with_sub_pages(conn, [page_id]) if row and args.get("sub_pages") and sub_pages(conn, page_id) \
             else [page_id]
+        # a secrets file's ranges quote it: they stay out of what the model is handed (text_kept)
+        kept = {page for page, raw in conn.execute(
+            "SELECT id, properties FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps(pages),)) if text_kept(page_document(load_props(raw)))}
     if not row:
         raise ValueError("No such page in the connected workspace — use a page_id from list_pages or search_library.")
     title = row[0] or "Untitled"
@@ -79,14 +86,17 @@ def export_page(ws: str, base: str, user_id: str, args: dict) -> tuple[str, tupl
     media_type = "application/pdf"
     try:
         if fmt == "markdown":
-            parts = [page_markdown(ws, page, highlights=highlights, notes=notes) for page in pages]
+            parts = [page_markdown(ws, page, highlights=highlights and page not in kept, notes=notes)
+                     for page in pages]
             query = urlencode({"ws": ws})
             md = "\n\n---\n\n".join(UPLOAD_RE.sub(lambda m: f"{base}/api/uploads/{m.group(1)}?{query}", text)
                                     for text, _ in parts)
             names = ", ".join(name for _, name in parts)
+            left = (f"; the highlights of {len(kept)} secrets file{'s' if len(kept) != 1 else ''} are left out"
+                    if highlights and kept else "")
             return (f"Markdown export of “{title}”{along} (file name{'s' if inside else ''} {names}, "
                     f"{'one page after another, parents first, ' if inside else ''}images and files link to "
-                    f"this Gamma server and open signed in):\n\n{md}"), None
+                    f"this Gamma server and open signed in{left}):\n\n{md}"), None
         with connect_users_db() as conn:
             author = account_name(conn, user_id)
         if fmt == "pdf" and inside:  # GET /pages/{id}/export-pdf?sub_pages=1 gives a browser the same file
@@ -99,12 +109,14 @@ def export_page(ws: str, base: str, user_id: str, args: dict) -> tuple[str, tupl
             what = "the annotated PDF" if highlights or notes else "the original PDF"
             path = f"/api/pages/{page_id}/export-pdf?" + urlencode({"ws": ws, **flags})
         else:
+            quoted = highlights and not kept  # one flag for every page of the file
             if inside:
-                data, name, _ = page_export_file(ws, page_id, "notes-pdf", highlights=highlights, notes=notes,
+                data, name, _ = page_export_file(ws, page_id, "notes-pdf", highlights=quoted, notes=notes,
                                                  sub_pages=True)
             else:
-                data, name = page_notes_pdf(ws, page_id, highlights=highlights, notes=notes)
-            what = "the notes as a PDF"
+                data, name = page_notes_pdf(ws, page_id, highlights=quoted, notes=notes)
+            what = "the notes as a PDF" + (" (without highlights: a secrets file's are never quoted)"
+                                           if highlights and kept else "")
             path = f"/api/pages/{page_id}/export?" + urlencode({"ws": ws, "mode": "notes-pdf", **flags})
     except HTTPException as e:
         raise ValueError(f"Could not export “{title}”{along}: {e.detail}.") from None

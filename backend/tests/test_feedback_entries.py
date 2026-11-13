@@ -2,7 +2,8 @@
 entry and the document") and its Markdown (gamma/feedback/markdown.py): the
 threads of a work folder, a directory or a file as entries — every kind's
 place and how it stands after a rebuild (exact, rough, estimate, lost,
-pending, earlier), a picture's regions and the whole picture, the file's
+pending, earlier), a picture's regions and the whole picture, a text file's
+ranges by their own lines (exact, rough with ``was``, lost, pending), the file's
 name from the vault's rows and from the folder tree, the order, a Send
 waiting, a tombstone, the cut past ``MAX_ENTRIES``, the state filters, the
 scopes and their refusals, a root from before step 54 read from its block,
@@ -21,7 +22,7 @@ import pytest
 import gamma.feedback
 from conftest import (account_of, login, make_folder, make_page, make_user, mark_work_folder, thread_on, work_props,
                       workspace_of)
-from gamma import storage
+from gamma import comments, storage
 from gamma.vault import store as vault_store
 from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page
@@ -251,6 +252,98 @@ def _anchor_of(ws, thread_id):
         return conn.execute("SELECT anchor FROM comments WHERE id = ?", (thread_id,)).fetchone()[0]
 
 
+def _lines(line, end, hash, *, end_col=8, **more) -> dict:
+    """A ``text_position`` over whole lines ``line``..``end`` measured on the
+    version ``hash``."""
+    return {"line": line, "col": 0, "end": end, "end_col": end_col, "prefix": "", "suffix": "", "hash": hash, **more}
+
+
+def test_a_text_files_ranges_name_their_own_lines(paper, synctex):
+    """A range of ``main.tex`` (step 6): a thread opened on it through the
+    comment route keeps a ``lines`` anchor; its entry names the lines and
+    the quote, its source is the file itself (never SyncTeX), with no
+    picture; a file's ranges go by line, a note under one at its line, the
+    page's notes after them. After a change each stands as the run left it:
+    moved and exact, rough with how alike it read and the text it was made
+    on (``was``), lost or not placed yet at the lines it was commented on."""
+    p = paper
+    old, new = "e" * 24, "f" * 24   # read in place on the person's computer: nothing stored here
+    with connect_pages_db(p.ws) as conn:
+        page = create_page(conn, "main.tex", work_props(p.M, "main.tex", doc=document(
+            old, name="main.tex", at="path", format="text", ext=".tex")), actor=p.account, client=DISK_CLIENT)["id"]
+    _ops(p.own, page, [_insert("fbxX", page, text_position=_lines(14, 14, old), quote="Weight decay"),
+                       _insert("fbxQ", page, text_position=_lines(16, 17, old, end_col=5), quote="two\nlines"),
+                       _insert("fbxR", page, text_position=_lines(23, 23, old), quote="the old caption"),
+                       _insert("fbxP", page, text_position=_lines(30, 30, old), quote="not placed"),
+                       _insert("fbxL", page, text_position=_lines(47, 47, old), quote="a last run"),
+                       _insert("fbxT", page, "a note on the page")])
+    _ops(p.own, page, [_insert("fbxN", "fbxR", "why this caption?")])
+    t = {k: thread_on(p.own, page, block, f"on {k}")["id"] for k, block in (
+        ("L", "fbxL"), ("R", "fbxR"), ("X", "fbxX"), ("T", "fbxT"), ("P", "fbxP"), ("Q", "fbxQ"), ("N", "fbxN"),
+        ("file", page))}
+    assert anchors.parse(_anchor_of(p.ws, t["Q"])) == {
+        "v": 1, "kind": "lines", "block": "fbxQ", "doc_id": old, "ext": ".tex", "page": None, "rects": [],
+        "quote": "two\nlines", "box": None, "lines": [16, 17]}
+
+    def read():
+        with connect_pages_db(p.ws) as conn:
+            got = entries.entries(p.ws, conn, entries.resolve_scope(conn, page))
+        return [e["id"] for e in got], {e["id"]: e for e in got}
+
+    synctex.asked.clear()
+    order, by = read()
+    assert order == [t[k] for k in ("file", "X", "Q", "R", "N", "P", "L", "T")]
+    X, Q, N = by[t["X"]], by[t["Q"]], by[t["N"]]
+    assert (X["format"], X["kind"], X["where"]) == ("text", "lines", {"line": 14, "quote": "Weight decay",
+                                                                      "placed": "exact"})
+    assert (X["source"], X["picture"], X["before"]) == ({"file": "main.tex", "line": 14, "version": "current"},
+                                                        None, None)
+    assert Q["where"] == {"line": 16, "end": 17, "quote": "two\nlines", "placed": "exact"}
+    assert Q["source"] == {"file": "main.tex", "line": 16, "end": 17, "version": "current"}
+    assert (N["kind"], N["where"]) == ("lines", {"line": 23, "quote": "the old caption", "placed": "exact",
+                                                 "note": "why this caption?"})
+    assert synctex.asked == []                          # a text file is its own source
+    assert markdown.heading(Q) == "Lines 16–17 · “two lines”" and markdown.heading(N) == "Line 23 · note on “the old caption”"
+
+    # the file changed: what the run writes (gamma/documents/text_anchors.py)
+    commit_ops(p.ws, page, [{"op": "set", "id": page, "props": {"doc": document(
+        new, name="main.tex", at="path", format="text", ext=".tex")}}], actor=p.account, client=DISK_CLIENT)
+    _ops(p.own, page, [
+        {"op": "set", "id": "fbxX", "props": {"text_position": _lines(17, 17, new)}},
+        {"op": "set", "id": "fbxQ", "props": {"text_position": _lines(19, 20, new, end_col=5)}},
+        {"op": "set", "id": "fbxR", "props": {"quote": "the new caption", "text_position": _lines(
+            26, 26, new, approx=True, match=0.86, prev={"hash": old, "line": 23, "end": 23, "quote": "the old caption"})}},
+        {"op": "set", "id": "fbxL", "props": {"text_position": _lines(47, 47, old, lost=True)}}])
+    order, by = read()
+    assert order == [t[k] for k in ("file", "X", "Q", "R", "N", "P", "L", "T")]
+    assert {k: by[t[k]]["where"]["placed"] for k in ("X", "Q", "R", "N", "P", "L")} == {
+        "X": "exact", "Q": "exact", "R": "rough", "N": "rough", "P": "pending", "L": "lost"}
+    X, R, P, L = (by[t[k]] for k in ("X", "R", "P", "L"))
+    assert (X["where"]["line"], X["source"]) == (17, {"file": "main.tex", "line": 17, "version": "current"})
+    assert R["where"] == {"line": 26, "quote": "the new caption", "placed": "rough", "match": 0.86,
+                          "was": "the old caption"}
+    assert R["source"] == {"file": "main.tex", "line": 26, "version": "current"}
+    assert by[t["N"]]["where"]["line"] == 26 and by[t["N"]]["where"]["note"] == "why this caption?"
+    assert P["where"] == {"line": 30, "quote": "not placed", "placed": "pending"}
+    assert L["where"] == {"line": 47, "quote": "a last run", "placed": "lost"}
+    assert P["source"] == {"file": "main.tex", "line": 30, "version": "commented"}
+    assert L["source"] == {"file": "main.tex", "line": 47, "version": "commented"}
+    assert all(by[t[k]]["picture"] is None and by[t[k]]["before"] is None for k in t)
+    text = markdown.render_entry(R)
+    assert "### Line 26 · “the new caption”\n\n- id: " in text and "placed roughly (0.86)" in text
+    assert "\n- was: “the old caption”\n" in text
+    assert "lines · not found in the current version\n" in markdown.render_entry(L)
+    assert "- source: `main.tex`, line 47 (as commented)" in markdown.render_entry(L)
+
+    # the note moved out from under its range and the range deleted: the thread names the lines it was opened on
+    _ops(p.own, page, [{"op": "move", "id": "fbxN", "parent": page}])
+    _ops(p.own, page, [{"op": "delete", "id": "fbxR"}])
+    gone = _entry(p, t["N"])
+    assert (gone["kind"], gone["where"]) == ("lines", {"line": 23, "quote": "the old caption", "placed": "lost",
+                                                       "note": "why this caption?"})
+    assert gone["source"] == {"file": "main.tex", "line": 23, "version": "commented"}
+
+
 def test_an_area_dragged_on_the_same_build_keeps_the_threads_place(paper, synctex):
     """An area's or ink's thread stays where it was opened while the file is
     the anchor's: its page, box, picture and source line agree, the block
@@ -443,6 +536,30 @@ def test_states_a_tombstone_and_a_send(paper):
     assert _entry(p, tomb)["sent"] == {"request_id": sent["id"], "state": "sent", "at": sent["at"]}
 
 
+def test_a_local_agents_comment_and_who_took_the_send(paper):
+    """A reply an agent on this computer wrote (``agent_id`` ``local:…``)
+    carries ``agent_kind`` local into the entry and reads "on …'s
+    computer"; a token's and a person's carry no such key. A claimed Send
+    names who took it."""
+    p = paper
+    with connect_pages_db(p.ws) as conn:
+        page = create_page(conn, "local", work_props(p.M, "local.pdf"), actor=p.account, client=DISK_CLIENT)["id"]
+    thread = thread_on(p.own, page, page, "tighten the abstract")["id"]
+    with connect_pages_db(p.ws) as conn:
+        for agent, agent_id in (("Codex", "local:codex"), ("Claude Code", "tok1")):
+            comments.create(conn, page, block_id=page, body=f"{agent} did it", author=p.account, author_name=USER,
+                            thread_id=thread, agent=agent, agent_id=agent_id)
+        sent = requests.create(p.ws, conn, entries.resolve_scope(conn, page), by=p.account, by_name=USER)["request"]
+        assert requests.claim(p.ws, conn, sent["id"], by_name="Codex", detail="Starting Codex")["state"] == "running"
+    got = _entry(p, thread)
+    assert [c.get("agent_kind") for c in got["comments"]] == [None, "local", None]
+    assert "agent_kind" not in got["comments"][0] and "agent_kind" not in got["comments"][2]
+    assert got["sent"] == {"request_id": sent["id"], "state": "running", "at": sent["at"], "detail": "Starting Codex",
+                           "state_by": "Codex"}
+    text = markdown.render_entry(got)
+    assert f"> **Codex** (on {USER}'s computer) · " in text and f"> **Claude Code** ({USER}'s connection) · " in text
+
+
 def test_a_document_is_cut_past_its_entries(paper, monkeypatch):
     monkeypatch.setattr(entries, "MAX_ENTRIES", 3)
     doc = _document(paper)
@@ -512,7 +629,7 @@ def _comment(cid, by, at, body, agent=""):
 
 FIXED = {"format": "gamma-feedback-1", "workspace": "ws1", "work_folder": {"id": "W", "name": "paper"},
          "scope": {"kind": "work_folder", "id": "W", "name": "paper"}, "owner": "tim", "state": "open",
-         "updated_at": "2026-11-10T13:58:41.120000Z", "count": 3, "answer": entries.ANSWER, "entries": [
+         "updated_at": "2026-11-10T13:58:41.120000Z", "count": 6, "answer": entries.ANSWER, "entries": [
              {"id": "0d7c5e2a9f1b", "file": "main.pdf", "format": "pdf", "page_id": "P1", "block_id": "H1",
               "kind": "passage", "where": {"page": 3, "quote": "the loss is defined as", "placed": "exact"},
               "source": {"file": "sections/method.tex", "line": 118, "end": 120, "version": "current"},
@@ -532,11 +649,29 @@ FIXED = {"format": "gamma-feedback-1", "workspace": "ws1", "work_folder": {"id":
              {"id": "f3e19b2c6d70", "file": "figures/fig1.pdf", "format": "pdf", "page_id": "P2", "block_id": "P2",
               "kind": "file", "where": {}, "source": None, "picture": None, "before": None, "state": "open",
               "sent": None, "link": "?ws=ws1&page=P2&block=P2&thread=f3e19b2c6d70",
-              "comments": [_comment("f3e19b2c6d70", "tim", "2026-11-10T13:57:00.000000Z", "use the viridis palette.")]}]}
+              "comments": [_comment("f3e19b2c6d70", "tim", "2026-11-10T13:57:00.000000Z", "use the viridis palette.")]},
+             {"id": "5e0b7c13d2a4", "file": "main.tex", "format": "text", "page_id": "P3", "block_id": "L1",
+              "kind": "lines", "where": {"line": 17, "quote": "This note measures how much it helps", "placed": "exact"},
+              "source": {"file": "main.tex", "line": 17, "version": "current"}, "picture": None, "before": None,
+              "state": "open", "sent": None, "link": "?ws=ws1&page=P3&block=L1&thread=5e0b7c13d2a4",
+              "comments": [_comment("5e0b7c13d2a4", "tim", "2026-11-10T13:56:00.000000Z", "say by how much.")]},
+             {"id": "6a1c8d24e3b5", "file": "main.tex", "format": "text", "page_id": "P3", "block_id": "L2",
+              "kind": "lines", "where": {"line": 26, "end": 27,
+                                         "quote": "Training and test loss per epoch,\nwithout any weight decay.",
+                                         "placed": "rough", "match": 0.91,
+                                         "was": "Training and test loss per epoch,\nwith no weight decay."},
+              "source": {"file": "main.tex", "line": 26, "end": 27, "version": "current"}, "picture": None,
+              "before": None, "state": "open", "sent": None, "link": "?ws=ws1&page=P3&block=L2&thread=6a1c8d24e3b5",
+              "comments": [_comment("6a1c8d24e3b5", "tim", "2026-11-10T13:55:00.000000Z", "name the dataset.")]},
+             {"id": "7b2d9e35f4c6", "file": "main.tex", "format": "text", "page_id": "P3", "block_id": "L3",
+              "kind": "lines", "where": {"line": 47, "quote": "validation loss was lowest.", "placed": "lost"},
+              "source": {"file": "main.tex", "line": 47, "version": "commented"}, "picture": None, "before": None,
+              "state": "open", "sent": None, "link": "?ws=ws1&page=P3&block=L3&thread=7b2d9e35f4c6",
+              "comments": [_comment("7b2d9e35f4c6", "tim", "2026-11-10T13:54:00.000000Z", "which run?")]}]}
 
 EXPECTED = """# Feedback on paper
 
-3 open comments · owner tim · updated 2026-11-10 13:58
+6 open comments · owner tim · updated 2026-11-10 13:58
 
 Each item is a comment thread on a file of this work folder. Answer it in Gamma: reply with what you
 changed and where, resolve it when it is done (see "How to answer" at the end).
@@ -577,6 +712,33 @@ changed and where, resolve it when it is done (see "How to answer" at the end).
 > **tim** · 2026-11-10 13:57
 > use the viridis palette.
 
+## main.tex
+
+### 4. Line 17 · “This note measures how much it helps”
+
+- id: `5e0b7c13d2a4` · lines · placed exactly
+- source: `main.tex`, line 17
+
+> **tim** · 2026-11-10 13:56
+> say by how much.
+
+### 5. Lines 26–27 · “Training and test loss per epoch, without any weight decay.”
+
+- id: `6a1c8d24e3b5` · lines · placed roughly (0.91)
+- was: “Training and test loss per epoch, with no weight decay.”
+- source: `main.tex`, lines 26–27
+
+> **tim** · 2026-11-10 13:55
+> name the dataset.
+
+### 6. Line 47 · “validation loss was lowest.”
+
+- id: `7b2d9e35f4c6` · lines · not found in the current version
+- source: `main.tex`, line 47 (as commented)
+
+> **tim** · 2026-11-10 13:54
+> which run?
+
 ---
 
 ## How to answer
@@ -590,6 +752,16 @@ changed and where, resolve it when it is done (see "How to answer" at the end).
 def test_the_markdown_of_a_fixed_document():
     assert markdown.render(FIXED) == EXPECTED
     assert markdown.render(json.loads(json.dumps(FIXED))) == EXPECTED  # what open.json reads back gives the same
+
+
+def test_the_markdown_of_a_local_agents_reply():
+    """Only the reply's line changes when an agent on this computer wrote it."""
+    first = FIXED["entries"][0]
+    local = {**FIXED, "entries": [{**first, "comments": [first["comments"][0],
+                                                         {**first["comments"][1], "agent_kind": "local"}]},
+                                  *FIXED["entries"][1:]]}
+    assert markdown.render(local) == EXPECTED.replace("> **Claude Code** (tim's connection) · ",
+                                                      "> **Claude Code** (on tim's computer) · ")
 
 
 def test_the_markdown_with_nothing_open():
@@ -621,7 +793,14 @@ def test_the_markdowns_headings_and_facts():
     assert markdown.heading(item("passage", {"page": 3, "quote": "q", "note": "n"})) == "Page 3 · note on “q”"
     assert markdown.heading(item("area", {"page": 5, "note": "n"})) == "Page 5 · note on an area"
     assert markdown.heading(item("note", {"note": "n"})) == "A note"
-    long = markdown.heading(item("passage", {"page": 1, "quote": "word " * 40}))
+    # a range of a text file, and the place words every format shares
+    assert markdown.heading(item("lines", {"line": 3, "end": 3})) == "Line 3 · passage"
+    assert markdown.heading(item("lines", {"line": 3, "end": 5, "quote": "q", "note": "n"})) == "Lines 3–5 · note on “q”"
+    assert "· passage · drawn on an earlier version\n" in markdown.render_entry(item("passage", {"page": 1,
+                                                                                               "placed": "earlier"}))
+    assert "· passage · not found in the current version\n" in markdown.render_entry(item("passage", {"page": 1,
+                                                                                                  "placed": "lost"}))
+    long =markdown.heading(item("passage", {"page": 1, "quote": "word " * 40}))
     assert len(long) == len("Page 1 · “”") + 80 and long.endswith("…”")
     text = markdown.render_entry(item("passage", {"page": 1, "quote": "q", "placed": "rough", "match": 0.82,
                                                   "note": "a\nnote"},

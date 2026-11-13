@@ -39,15 +39,15 @@ test("plugin installation is independent of a user's server address and credenti
     "claude plugin marketplace add ./gamma-marketplace\nclaude plugin install gamma@gamma-local --scope user");
 });
 
-test("DeepSeek Harness setup runs the release installer with this server and its one-time code", () => {
-  assert.equal(dshSetupCommand("http://localhost:9001/mcp", "Code_123-abc", "windows"),
+test("DeepSeek Harness setup runs the release installer with this server alone", () => {
+  assert.equal(dshSetupCommand("http://localhost:9001/mcp", "windows"),
     "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/tim4431/Gamma/releases/latest/download/install-gamma-dsh.ps1'))) "
-    + "-ServerUrl 'http://localhost:9001/mcp' -SetupCode 'Code_123-abc'");
-  assert.equal(dshSetupCommand("http://localhost:9001/mcp", "Code_123-abc", "unix"),
+    + "-ServerUrl 'http://localhost:9001/mcp'");
+  assert.equal(dshSetupCommand("http://localhost:9001/mcp", "unix"),
     "(gamma_setup=$(mktemp) && trap 'rm -f \"$gamma_setup\"' 0 && curl -fsSL 'https://github.com/tim4431/Gamma/releases/latest/download/install-gamma-dsh.sh' "
-    + "-o \"$gamma_setup\" && sh \"$gamma_setup\" 'http://localhost:9001/mcp' 'Code_123-abc')");
+    + "-o \"$gamma_setup\" && sh \"$gamma_setup\" 'http://localhost:9001/mcp')");
   for (const platform of ["windows", "unix"]) {
-    const command = dshSetupCommand("https://example/mcp'$(whoami)", "code", platform);
+    const command = dshSetupCommand("https://example/mcp'$(whoami)", platform);
     assert(!command.includes("GAMMA_TOKEN") && !command.includes("Read-Host"), "no token is typed or pasted");
     assert(command.includes(platform === "windows" ? "'https://example/mcp''$(whoami)'" : "'https://example/mcp'\"'\"'$(whoami)'"));
   }

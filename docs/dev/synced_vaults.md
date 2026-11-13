@@ -322,7 +322,8 @@ FileResponse's ETag of its size and time: unlike a stored name, which is
 `immutable`, its path can hold other bytes tomorrow.
 
 **A version kept while its comments are open.** A page read in place
-that has an open comment thread keeps the bytes it shows stored
+whose PDF or picture has an open comment thread keeps the bytes it shows
+stored
 (`uploads/<hash>.pdf`, the name a `linked_files` row holds too), and the
 version each thread was opened on is held until the thread is resolved:
 the relocation run and the feedback reader go on reading it after the
@@ -331,7 +332,9 @@ stores the current bytes, a replacement while a thread is open stores the
 incoming ones first (`feedback.kept.keeps_bytes`, the one predicate with a
 library file's versions, "A work folder's round"), and the sweep below
 stores what was left unstored ([feedback.md](feedback.md) "The commented
-version kept").
+version kept"). A text file keeps no version: its ranges carry their own
+context and are placed again in the round itself, from the new bytes
+alone ([highlight_relocation.md](highlight_relocation.md#text-files)).
 
 **The sweep** (`linked_files.sweep`, from each tick): the opened pages to
 forget (below), the bytes of a page with an open thread not stored yet
@@ -674,6 +677,29 @@ it (`LinkContext._file_path`). A picture of the vault a note links is read where
 is, under its content digest's name (`LocalRemote.link_file`: a
 `linked_files` row with no page), so the page shows it with nothing stored.
 
+**A work folder's files.** In a work folder's round every file is a page
+(`kinds.FILE`, a PDF's page too), so a note's link to a tracked file that
+has one is a mention of that page, `[[page_id]]`, as a link to a note is
+(`LinkContext.add_page_file`): `[the method](sections/method.tex)`,
+`[[main.pdf]]`, `[fig](fig.png)` and a listed file's `[[big.h5]]`, found by
+its name from another directory too. Gamma draws it as the page's chip,
+opens the file's page from it, counts it in backlinks, and keeps it through
+a move on disk (an id, not a path). Three cases keep the upload's address:
+a picture's embed (`![[fig.png]]`, `![](fig.png)`: a `!` and an image's
+extension), so the picture draws inline; a paired note's link to its own
+PDF (`[[main.pdf]]` in `main.md`), which would mention the page it is on;
+and a file new this round that a changed note links (changed notes are
+pushed before new files), read in place this round and the page's mention
+once the note is read again. A listed picture's embed
+has no bytes to name and stays as typed. Written back, a mention of a file
+page is the file's link in the vault's habit (`[[method.tex]]`,
+`[method.tex](method.tex)`: its leaf the label, extension and all), a
+paper's page its note's; a mention of a block in a file page's notes is a
+link to the file and asks no anchor, since those notes are never written
+to disk. A kept folder is unchanged: a file link there is its upload's
+address, and the file's chip finds the library page by hash. A block read
+before keeps its text until it changes on one side (identity first).
+
 **A highlight** is the one block of its own dialect, which differs from
 the vault export's on purpose:
 
@@ -857,7 +883,9 @@ are never measured, by the stat its read takes, not the scan's) is
 listed, size}` ([documents.md](documents.md) "The listed state"); one that
 crosses the limit either way, or is listed with a new size, takes one
 `set_doc`. New bytes replace the document (`replace_doc`, the versions
-stored where `feedback.kept.keeps_bytes` says); the same bytes under a new
+stored where `feedback.kept.keeps_bytes` says; a text file's highlight
+ranges placed again in that call, from the bytes at the path, when the
+file is at most 512 KiB, [highlight_relocation.md](highlight_relocation.md#text-files)); the same bytes under a new
 stat refresh the row and its linked row (`restat_doc`). A move relinks and
 refiles, the title and `file_name` following the new leaf; a new name that
 says another format or extension (`notes.txt` to `notes.log`, `a.txt` to
@@ -1159,6 +1187,14 @@ unmarked folder gets the round above, unchanged. In a work folder:
   makes no sub-page. New files are made PDFs first, then the other
   formats, then the notes, so a note made in the same round links a
   picture's row.
+- **The links' tables** (`Round._ctx_at`, "Links and highlights"): every
+  row with a page but a note's is `add_page_file`, a listed file's too, so
+  a link to it is that page's mention; a row's upload (`Kind.link_name`) is
+  `add_file` beside it, for a picture's embed and a paired note's own PDF;
+  a file the scan found with no row yet is `add_file` with no name, read in
+  place (`_picture`) when a changed note, pushed before the new files, links
+  it. `_promoted` adds a row's page as the round makes it, so a new note
+  read after links the page.
 - **A move or rename on disk** (`_moved`) files the page first in the new
   directory's folder, whatever moved, then in its folders outside every
   work folder, and sets `file_name`; the title follows the stem only for a
@@ -1199,10 +1235,12 @@ unmarked folder gets the round above, unchanged. In a work folder:
   their documents, and a kept folder's round meets no row of a class it does
   not compare.
 - **A library file's versions** are stored as they come (`LocalSink.store`
-  before `replace_attachment`), its document still at `path`; so are any
-  file's while a comment thread on it is open (`feedback.kept.keeps_bytes`,
-  the one predicate at the replacement; [feedback.md](feedback.md) "The
-  commented version kept").
+  before `replace_attachment`), its document still at `path`; so are a
+  PDF's or a picture's while a comment thread on it is open
+  (`feedback.kept.keeps_bytes`, the one predicate at the replacement;
+  [feedback.md](feedback.md) "The commented version kept"). A text file's
+  ranges are placed again inside the round instead
+  ([highlight_relocation.md](highlight_relocation.md#text-files)).
 - **The feedback files.** After its sync a whole round writes the work
   folder's `.gamma/feedback/` (`folder_links._vault_round`, the summary in
   `status.feedback`; [feedback.md](feedback.md) "The files"), a held round
@@ -1681,9 +1719,18 @@ writes of routes with no client in their body as the vault's (a file's
 upload and download go without it); and one route of its
 own, a page's plan (`POST /api/pages/{id}/plan`, `ops.commit_plan`). A
 token that may read pulls; pushing takes one that may write, of an editor.
-A vault of another server is never a work folder itself (it writes no
-mark), but one that pushes everything into a folder there that carries a
-mark runs a work folder's round, as the op rule there asks.
+A vault of another server is a work folder only when it was made one of
+an empty folder there ([work_folders.md](work_folders.md) "Work folders
+of another server": it writes the mark through its token, and that server
+refuses a mark in a clone, a Zotero-linked workspace or around another
+work folder); one that pushes everything into a folder there that carries
+a mark runs a work folder's round, as the op rule there asks.
+
+The computer also announces itself to that server over a channel of its
+own (a token of the `computer` scope, which opens nothing else): the
+vault's maker sees there, in any window, that the folder or file is kept
+on this computer, whether it is online, and which assistants are here
+([computers.md](computers.md)).
 
 What differs from a vault of this server:
 

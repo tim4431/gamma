@@ -218,7 +218,7 @@ Both shells take messages only from the server's own main frame.
 | `{type: "fileData", id, offset}` | `{data}`, or `{}` | Up to 2 MiB of that file from byte `offset`, in base64; `""` at its end. `{}`: the shell holds no such file, or the offset is past its end |
 | `{type: "fileDone", id}` | `{}` | The page is done with that file (taken, refused or put aside): the shell deletes its copy |
 | `{type: "shellBar", shown?}` | `{shown}` | The View menu's *Server bar* row (`app/useShellBar.js`): `shown` hides or shows the shell's bar ([The chrome](#the-chrome)). Without it, as the page loads, it only asks, and so does a `shown` that is no Bool. The reply is the person's choice; the bar still shows while it is needed |
-| `{type: "editMenu", shown}` | `{}` | The system's edit menu over a selection (Copy, Look Up, Translate, Share, …): off while the selection is a PDF page's text, where the PDF's selection popup opens and the menu would cover it, and on again once the selection is anything else, a note's or none (`pdf/PdfViewer.jsx`). The page says so on the selection change itself, not after the popup's wait, so the menu is off before it would open, and the popup carries Copy in its place. A `shown` that is missing or no Bool is on. The shell's web view (`ShellWebView`, `WebShell.swift`) then refuses every action UIKit asks the menu about and empties the edit menu's builder, and a menu already open closes; a key command, ⌘C on a keyboard, still runs |
+| `{type: "editMenu", shown}` | `{}` | The system's edit menu over a selection (Copy, Look Up, Translate, Share, …): off while the selection is a PDF page's text or a text file's in its code view, where the selection popup opens and the menu would cover it, and on again once the selection is anything else, a note's or none (`pdf/PdfViewer.jsx`, `documents/viewers/TextTip.jsx`). The page says so on the selection change itself, not after the popup's wait, so the menu is off before it would open, and the popup carries Copy in its place. A `shown` that is missing or no Bool is on. The shell's web view (`ShellWebView`, `WebShell.swift`) then refuses every action UIKit asks the menu about and empties the edit menu's builder, and a menu already open closes; a key command, ⌘C on a keyboard, still runs |
 | `{type: "save", name, mime, size}` | `{id}`, or `{}` | Under `save`: begin a file the page saves, of exactly `size` bytes (`saveBlob` in `shared/lib/saveFile.js`). `name` and `mime` may be `""`. `{}`: the host refuses it, and the page says the app did not take the file |
 | `{type: "saveData", id, offset, data}` | `{}` | The file's next bytes in base64, from `offset`, which is the count of bytes sent so far. The page sends 2,097,150 raw bytes at a time (`SAVE_CHUNK`, a multiple of 3, so only the last chunk's base64 ends in padding and the host may decode each chunk on its own or join them). An unknown id, or an offset that is not the bytes so far, gets an error reply |
 | `{type: "saveDone", id, cancel?}` | `{saved}` | The file is complete: the host answers at once and presents the file after answering. `saved: false` is a refusal; a reply without `saved` counts as saved. With `cancel: true`, sent after a chunk failed, the host drops what it has |
@@ -606,11 +606,11 @@ a pen or highlighter stroke is claimed.
    thing Swift decides about the pen; its rules (`HoldWatch`) are a pure
    part, tested with the time given. The page answers at once, from the
    samples (the claim's `hold`, `InkLayer.jsx`):
-   - with strokes on the handwriting clipboard and no sample more than 2
-     CSS px from the first, `{cancel: true}`, and *Paste here* opens where
-     the pen went down ([handwriting.md](handwriting.md) "Copy, cut and
-     paste"). The shell takes the line away and keeps the touch, so palms
-     stay swallowed, and at the lift sends `stroke` with no samples;
+   - with strokes or pictures on the handwriting clipboard and no sample
+     more than 2 CSS px from the first, `{cancel: true}`, and *Paste here*
+     opens where the pen went down ([handwriting.md](handwriting.md) "Copy,
+     cut and paste"). The shell takes the line away and keeps the touch, so
+     palms stay swallowed, and at the lift sends `stroke` with no samples;
    - with *Draw and hold* on (and for a highlighter its preset's
      straight not *Off*), `recognise` runs over the samples in page
      points (lines only for a highlighter; through the preset's
@@ -872,7 +872,7 @@ before a reload waits until a page can take it. The web half is
 ### Pictures
 
 Pictures on a page ([pictures.md](pictures.md#adding-a-picture)) are the
-web app's, with no native code. The iPad differs in four ways:
+web app's, with no native code. The iPad differs in five ways:
 
 - **The picker.** The strip's Picture button opens the system file picker
   (`shared/lib/pickFiles.js`, `accept="image/*"`), which WebKit shows as
@@ -889,6 +889,10 @@ web app's, with no native code. The iPad differs in four ways:
   and 8192 in desktop Chromium and Firefox). So a picture re-encoded there (a HEIC, a TIFF, one past
   24 MP) comes out within those caps, and so does Copy image's PNG. A PNG,
   JPEG, GIF or WebP up to 24 MP goes up as it is, as on every device.
+- **An SVG in the exports.** This iPad's server draws one itself, in the
+  app's process and with no time limit, where another server draws it in
+  a process it kills after 10 s ([What runs](#what-runs)). An SVG that
+  takes MuPDF minutes holds this iPad's PDF work that long.
 
 ### The local server
 
@@ -910,10 +914,13 @@ answers. Nothing in it knows what the server holds.
   supports iOS since 3.13 (PEP 730), and the app embeds it as
   [its iOS guide](https://docs.python.org/3/using/ios.html) describes.
 - **The backend from `backend/`, unchanged**: `app.py` and the `gamma`
-  package, copied into the bundle at build time. The server has no iPad
-  branch. It reads the environment the desktop's sidecars are given
-  ([desktop.md](desktop.md)), and it spawns no processes, which iOS would
-  not allow.
+  package, copied into the bundle at build time. It reads the environment
+  the desktop's sidecars are given ([desktop.md](desktop.md)), and it
+  spawns no processes, which iOS would not allow. Its one iPad branch is
+  where another server would start one, to draw an SVG picture under a
+  time limit: it knows iOS by `sys.platform == "ios"` and draws the SVG
+  itself, with no limit, as on Android
+  ([pictures.md](pictures.md#svg-pictures)).
 - **The built web app** from `frontend/dist`, served at the server's root
   (`GAMMA_STATIC_DIR`). This iPad therefore shows the web app of the app's
   own build, as a desktop's local server does; another server shows its
@@ -1639,6 +1646,14 @@ Only an iPad can show these, and none has been run yet:
     with its own `pointerId`. Try with Scribble on and off, and in Safari
     beside the app. Fingers must scroll and tap the PDF once the Pencil
     hovers or touches again.
+39. SVG pictures ([pictures.md](pictures.md#svg-pictures)). Playwright's
+    WebKit on Linux draws an SVG's `<img>` as Chromium does, under the
+    file's own policy. On the iPad: an SVG from Files placed on a page and
+    stretched (its whole frame filled, its inline styles kept, no script
+    run), an SVG shared to the app landing as a picture, and its URL opened
+    in Safari (downloaded, or shown with no script run). Then an annotated
+    PDF and a Notability export of that page on This iPad, whose server
+    draws the SVG itself, with no time limit.
 
 ### Not built yet
 
@@ -1749,12 +1764,17 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
   row's, a highlight's) closes the panel over it (`showOnPage`,
   `jumpToHighlightId`). Show note on the page brings the notes up
   (`showInNotes`): the Notes panel, or on a page with sheets its notes
-  view.
+  view. The Files window is a panel too, beside an open page only (on the
+  library the listing is the explorer), from More's Files row or the
+  command, with no bottom tab of its own: its rows are 44px tall with a
+  44px chevron, a tap on a file opens it (which closes the panel, as every
+  navigation does) and a held finger opens a row's menu.
 - **More** is the account button (`header.account`) under another name:
   its sheet is the account menu with the rest of the topbar on top —
   Background tasks, the open folder's Share this folder, and the View
-  menu's rows (`viewMenuItems`; of the window toggles only PDF, since the
-  tabs switch Notes and Chat, and in the iPad app *Server bar*, then Undo,
+  menu's rows (`viewMenuItems`; of the window toggles only PDF and,
+  beside an open page, Files, since the tabs switch Notes and Chat, and in
+  the iPad app *Server bar*, then Undo,
   Redo, Go to page and Command palette). The tasks, folder-share and View buttons are
   not rendered; their popovers open from those rows in the sheet's place.
   A flyout (the account menu's Tours) opens inline under its row, since

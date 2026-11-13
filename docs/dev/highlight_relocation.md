@@ -25,9 +25,14 @@ its passage:
 Every run matches a highlight from its reference, the last place someone
 confirmed, never from a pending guess ([The reference](#the-reference)).
 
+A text file's ranges (a `.tex`, a script, a log) are found again the same
+way when the file changes, by their own quote and context, with the same
+flags, thresholds and write ([Text files](#text-files)).
+
 Code:
 
 - `gamma/highlight_relocate.py`: the search and the write.
+- `gamma/documents/text_anchors.py`: a text file's ladder and run.
 - `gamma/highlights.py`: the position's flags, `prev` and `closest`
   (`previous_place`, `valid_prev`, `valid_closest`, `from_scaled`).
 - `pdf_text.GlyphPages`: the glyphs, page frames and the PDF's own
@@ -92,8 +97,10 @@ job ends, however it ends (`zotero_sync_pdfs.relocation_ended`). A PDF
 replaced here waits for that before the link decides it
 ([zotero_sync.md](zotero_sync.md#the-plan)).
 
-The job's params are `{page_id, title, doc_id, min_match, exact_chars}`:
-the file and the thresholds ([The thresholds](#the-thresholds)). Its key is
+The job's params are `{page_id, title, doc_id, format, min_match,
+exact_chars}`: the file, which run places it (`pdf`, or `text` for a text
+file's, [Text files](#text-files)) and the thresholds ([The
+thresholds](#the-thresholds)). Its key is
 `<page id>:<doc_id>`, one run per page and file. A replacement first stops
 the same account's queued or running run for the outgoing file. It never
 waits for it, since their keys differ. A run past its last stop, or another
@@ -116,8 +123,10 @@ gets 403). It answers:
 - 200 and the run, also one already going for the page's current file.
 - 409 only while that run is still stopping.
 - 429 when the account's jobs are full.
-- 400 for a page without a PDF, with one not stored (`NOT_STORED`), or
-  without highlights placed on it or known by their quote.
+- 400 for a page without a PDF or a text file ("the page has no PDF or
+  text file"), with one not stored (`NOT_STORED`, or `LISTED` for a text
+  file listed without its bytes), or without highlights placed on it or
+  known by their quote ("…placed on its PDF", "…on its file").
 - 404 for no such page.
 
 The run (`relocate`) works from a snapshot of the page's placed highlights
@@ -152,7 +161,10 @@ the page's write lock. It fails, writing nothing, when the page is no
 longer live ("the page was deleted before its highlights were placed —
 restore it and choose Find highlights in this PDF"). It fails too when the
 page no longer carries the file placed for (`file_hash`: "the page's
-PDF changed again before the highlights were placed"). A highlight deleted
+PDF changed again before the highlights were placed"). A text file's run
+writes through the same function with its position key (`key=
+"text_position"`): its two refusals say "file" for "PDF", and it claims no
+upload, since a text position names no file. A highlight deleted
 since the snapshot, or whose `pdf_position` or `quote` changed, is left
 alone and counted in `changed`. The rest go as `set` ops in batches of at
 most `MAX_OPS`, client `relocate`, actor the owner. They commit together,
@@ -522,11 +534,121 @@ image by an image writes no stamps and starts no job (`page_highlights`
 reads `pdf_position` alone), and the vault's file class replaces the
 document only (`replace_doc`). The gate is in `replace_attachment`: the
 stamps and the relocation run only when the outgoing and the incoming
-documents are both PDFs (`is_pdf(old) and format == "pdf"`). A format
-change through the vault (a file whose sniffed format changed, say an
-unknown name whose bytes turned out a PDF) starts no run either; positions
-of the old format stay on their blocks, drawn by no viewer and listed in
-the notes.
+documents are both PDFs (`is_pdf(old) and format == "pdf"`), and a text
+file's run only when both are text files ([Text files](#text-files)). A
+format change through the vault (a file whose sniffed format changed, say
+an unknown name whose bytes turned out a PDF) starts no run either;
+positions of the old format stay on their blocks, drawn by no viewer and
+listed in the notes.
+
+## Text files
+
+A range of a text file (a block with a `text_position`, made from a
+selection in the code view; [api.md](api.md) "The highlight shape") is
+lines and columns, good for the version it was measured on, whose stem it
+always carries (`hash`). When a work folder's file changes on disk, or a
+library text document is replaced through `PUT /attachment`, each range is
+found again in the new version by its quote and moved there
+(`gamma/documents/text_anchors.py`).
+
+What it shares with the PDF run: the thresholds (`relocateMinMatch` and
+`relocateExactChars`, [The thresholds](#the-thresholds)), `CLOSEST_MIN`,
+the context weight, the flags and their meaning (`approx`, `match`,
+`prev`, `lost`, `closest`), the reference rule ([The
+reference](#the-reference)), the job, the write and the client's looks.
+
+What differs:
+
+- **No old file is read.** A range carries its own context: the forty
+  code points before and after its quote when it was measured (`prefix`,
+  `suffix`, the W3C `TextQuoteSelector`'s idea). The quote and its context
+  are the needle, so no version is kept for it, no stamp is written on a
+  replacement (`hash` names the version already) and a range made on
+  another computer's older copy is placed like any other. "Measured on
+  another version" (pending) is `hash` against the page's file, never
+  written.
+- **The fold is code's.** Lines are compared with a carriage return
+  dropped, composed (NFC, not NFKC), every run of whitespace one space and
+  the ends stripped, case kept. A formatter's re-indentation, tabs for
+  spaces and CRLF for LF leave a range exact; a renamed identifier does
+  not.
+- **The ladder** (`find_range`, `place_all`): exactly first, its folded
+  lines in a row near its old line (the first and last lines partial
+  unless the selection took them whole, on word edges), copies ranked by
+  the context's fit, then nearness; then, from `exact_chars` characters,
+  word by word over the windows around its rarest words (difflib's ratio,
+  applied from `min_match`, drawn dashed); else lost and kept at its old
+  lines, with `closest` when the best window read at least `CLOSEST_MIN`
+  alike. A range already measured on the new version whose quote stands at
+  its lines writes nothing (one that still carries flags, a lost range
+  whose version came back, is written bare and counted kept). A range
+  placed solid takes the new file's `prefix` and `suffix`, a dashed one
+  keeps its stored ones; a dashed range is matched from its `prev`
+  (its reference: its span and its whole quote), and found nowhere goes
+  back to it, lost at `prev`'s span. The exact step ranks at most
+  `MAX_EXACT` (500) copies, the nearest to the old line, and a seed word
+  gives at most `SEED_REACH` (32) lines either side of it.
+- **The rough step's cost is bounded.** In each window the quote and the
+  window are aligned by characters while that costs at most `ROUGH_BUDGET`
+  (20,000 of difflib's lookups, `_cost`: each unit of the quote against its
+  copies in the window; a few milliseconds), else by tokens (`\w+` and
+  each other character) while those do, else by whole lines, so a range
+  of hundreds of lines is placed in milliseconds, as a short one is; such
+  a long range is placed roughly only where some of its lines stand
+  unchanged. The place is set by the runs of one alignment (`_aligned`:
+  the longest, and on either side each next one while the window's gap to
+  it is longer than the quote's by no more than half the run), so the
+  quote's edited head or tail is never matched to a stray copy of its
+  words lines away; the unmatched head and tail stretch it over as many
+  lines as they hold, and an edge the quote had on a word or a line is
+  kept. Beyond the characters' alignment, how alike the two read is the
+  same ratio over the characters the runs and the stretches between them
+  share. A range's stored quote, prefix and suffix are read clipped (at
+  most 10,000 and 40 code points), whoever wrote them, and the run tells
+  the job's progress before each range, so it can stop between two.
+- **Inline under 512 KiB.** A replacement whose new text file is at most
+  `TEXT_INLINE_BYTES` (512 KiB, about 10,000 lines of source) places its
+  ranges in its own thread, after its commit and before it answers
+  (`routers/pages.py` `_relocate_text`): about 25 ms for a file of 1,000
+  lines with ten ranges, the write included. It lands before the feedback
+  files' pass and the client's next frame, and a formatter rewriting a
+  repository's files never meets the account's cap of 20 background tasks.
+  It runs on the vault's round (`LocalRemote.replace_doc`), so each
+  rewritten file with ranges costs the round its run. `PUT /attachment`
+  answers its counts as `relocation` (`{format: "text", highlights, moved,
+  kept, approx, lost, changed, min_match, exact_chars}`); the vault logs
+  them (`[relocate] <page>: … ranges, … moved, …`). A larger file starts
+  the `relocate-highlights` job with `format: "text"` (its progress in
+  `highlights` alone, phase `matching`: there is no old file to read);
+  the manual route always starts the job. The choice reads the new
+  document's `size` (none: in the request). A failure other than a refusal
+  is logged and answered as "the highlights could not be placed: …",
+  since the replacement is committed.
+- **The bytes read are hashed.** The run reads the stored `<hash><ext>`,
+  else the file on this computer the page reads in place, at most 16 MiB,
+  and refuses when they do not hash to the version it places for ("the
+  file changed while it was read": an agent writing the file again in the
+  seconds between the vault's read and the run's). A refusal, a binary or
+  empty file, or a file too large leaves every range as it was, pending,
+  and is answered as `relocation_error` and logged; the replacement
+  stands, and the next change runs again.
+- **A change of format starts nothing.** A text file that turned binary,
+  or another format, or listed without its bytes (`LISTED`: "the file is
+  listed without its bytes") keeps its ranges as they are, pending by
+  their `hash`.
+
+A lost range is drawn as a tag at its old first line, never as a mark over
+the text now at those lines ([documents.md](documents.md) "A range of a
+text file"). A text file has no review card: a dashed range is accepted
+from its menu (Accept, and the Document menu's Accept all), a lost one is
+placed through "Move to a selection…" or "Use the closest match ({n}%)"
+when it has a `closest`, both keyed by the block's own position
+(`placeKeyOf`). The Document menu's Review row is the PDF's; "Find
+highlights in this file" starts the job by hand. The replacement's status
+reads "File replaced." and the run's counts (`relocationSummary`'s text
+branch, "Highlights placed in the file: …"), or, when it refused, "File
+replaced. Its highlights were not placed (…): choose Find highlights in
+this file in the Document menu to place them."
 
 ## The thresholds
 
@@ -1066,7 +1188,8 @@ paperclip popover lists:
 
 - **Review 3 highlights** (**Review 1 highlight** for one), for anyone,
   titled "Show the first dashed or hollow highlight with what it matched
-  and where it was before";
+  and where it was before", on a PDF alone (a text file has no review
+  card);
 - **Accept all 3 rough matches** (**Accept 1 rough match** for one), for an
   editor while some are pending. The status says how many when there are
   several.
@@ -1078,7 +1201,9 @@ ones alone, an estimated area included. A discarded one is in neither.
 
 **Find highlights in this PDF**'s title says what a run does: "Find each
 highlight's text in this file and move the highlight there; one matched
-roughly is drawn dashed, one whose text is gone hollow".
+roughly is drawn dashed, one whose text is gone hollow". On a text page
+it reads **Find highlights in this file**, shown while the file is stored
+([Text files](#text-files)).
 
 **The notes row.** A lost row's dot is hollow (`.highlightDot.lost`, its
 colour the inline `border-color`), titled "Not found in the current PDF —
@@ -1087,7 +1212,11 @@ stands beside it among the row's hover controls. A pending row's dot keeps
 its fill inside a dashed ring in its colour's line tone
 (`.highlightDot.approx`, `darkPageLine`). Its title is "Matched roughly
 (92%) after the PDF was replaced — jump to it", or "Placed by estimate
-after the PDF was replaced — jump to it" without `match`.
+after the PDF was replaced — jump to it" without `match`. A text file's
+range says "Not found in the current file — jump to where it was",
+"Matched roughly (92%) after the file changed — jump to it", else "Jump
+to lines 118–120", and its move button "Move to a selection in the
+file".
 
 **What the tab says.** The run's Background tasks row reads "Placing the
 highlights of “…”". Its phases are "Reading the PDF" and "Finding each
@@ -1103,6 +1232,13 @@ The summary holds:
   or review all 3 from the Document menu.";
 - how many someone moved meanwhile (`changed`);
 - when one is lost, how to move a hollow highlight.
+
+A text file's run (`format: "text"`, the request's answer or the job's
+result) is told in the file's words: "Highlights placed in the file: …
+moved, … matched roughly, … stayed in place, … not found.", a dashed one
+"right-click it to accept it or move it", a lost one "A hollow tag marks
+a highlight whose text is gone: right-click it and choose Move to a
+selection or Use the closest match.".
 
 A failed or stopped run says so, unless a run for another file of the same
 page started after it. `taskKinds.relocationSuperseded` reads that from the
@@ -1153,6 +1289,13 @@ title is "This page's highlights are being placed — see Background tasks".
   - Keeping the context with the highlight when it is made, as a W3C
     `TextQuoteSelector`'s prefix and suffix, would serve such runs
     ([research/highlight-anchoring.md](../research/highlight-anchoring.md)).
+    A text file's range keeps it ([Text files](#text-files)); a PDF
+    highlight does not yet.
+- A text range whose `hash` never was the page's file (made on another
+  server's older copy) waits for the file's next change to be placed, and
+  reads as pending until then. The manual route places it at once.
+- A text file's inline run sits on the vault's round: fifty rewritten
+  files with ranges add about a second to it once.
 - A passage under `exact_chars` characters, or of one word, that the new
   file splits at a page break is not found.
 - A page whose PDF is shown from a URL alone (no hash, and an address
@@ -1271,6 +1414,18 @@ The other backend tests:
   in their form (`closest`'s quote clipped, up to 200 rectangles).
 - `test_restore_consistency.py`: a restore keeping `doc_id`, `lost`,
   `closest`, `approx`, `match` and `prev`.
+- `test_text_anchors.py`: a text file's fold and ladder (exact near its old
+  line, word by word, lost with or without `closest`, a pending one from
+  its `prev`), and `-m perf`: 50,000 lines with 100 ranges under a second.
+- `test_text_relocation.py`: a library text document replaced through
+  `PUT /attachment` placed before it answers (`relocation`), a range
+  reworded in place dashed, a large file by the job (`format: "text"`), the
+  bytes changed under the run, a file turned binary or listed, a PDF page
+  never running the text ladder, the twenty-first replacement in a pass,
+  the write's compare-and-set and its words by key, the manual route on a
+  text page, a work folder's file rewritten on disk, and `-m perf`: fifty
+  inline runs of 1,000 lines with ten ranges each under 1.5 s (about 1.3 s
+  here).
 
 In the web app, `frontend/tests/highlightReview.test.mjs` checks the card's
 arithmetic.

@@ -9,10 +9,10 @@ as the memory cache keys it, or ``engine:<id>`` for a machine-translation
 service. A paragraph is found by its source text's hash (``src_hash``), so
 a page segmented again finds its paragraphs whatever their order.
 
-Derived data, like the PDF text index beside it, though it comes back only
-by paying a model again: the tables come from ``db.DATA_SCHEMA``, which
-every data.db connection applies; the rows go with their document
-(``purge``, from ``pdf_index.purge_unused``); and a kept translation is
+Derived data, like the document text index beside it, though it comes back
+only by paying a model again: the tables come from ``db.DATA_SCHEMA``,
+which every data.db connection applies; the rows go with their document
+(``purge``, from ``search.index.purge_unused``); and a kept translation is
 never the reason a translation fails: every function logs its own errors
 and carries on as if nothing were kept. routers/translate.py decides who
 writes (the request's ``keep``, an account that may change the workspace);
@@ -183,7 +183,7 @@ def forget(ws: str, doc_id: str) -> int:
 
 def purge(conn, live_docs) -> int:
     """Drop the kept translations and briefs of documents not in
-    ``live_docs``, on the caller's data.db connection (pdf_index.purge_unused
+    ``live_docs``, on the caller's data.db connection (search.index.purge_unused
     commits). How many documents went."""
     try:
         stale = [d for d in _documents(conn) if d not in live_docs]

@@ -80,7 +80,13 @@ import { blockPropertiesScenarios } from "./scenarios/blockProperties.mjs";
 import { vaultScenarios } from "./scenarios/vaults.mjs";
 import { workFolderScenarios } from "./scenarios/workFolders.mjs";
 import { feedbackScenarios } from "./scenarios/feedback.mjs";
+import { localAgentScenarios } from "./scenarios/localAgents.mjs";
+import { computerScenarios } from "./scenarios/computers.mjs";
+import { remoteWorkScenarios } from "./scenarios/remoteWork.mjs";
 import { viewerScenarios } from "./scenarios/viewers.mjs";
+import { textSearchScenarios } from "./scenarios/textSearch.mjs";
+import { textAnchorScenarios } from "./scenarios/textAnchors.mjs";
+import { explorerScenarios } from "./scenarios/explorer.mjs";
 import { GROUPS, changedFromGit, selectGroups, shardOf } from "./select.mjs";
 
 const RUNNERS = {
@@ -118,7 +124,13 @@ const RUNNERS = {
   "vaults": vaultScenarios,
   "work-folders": workFolderScenarios,
   "feedback": feedbackScenarios,
+  "local-agents": localAgentScenarios,
+  "computers": computerScenarios,
+  "remote-work": remoteWorkScenarios,
   "viewers": viewerScenarios,
+  "text-search": textSearchScenarios,
+  "text-anchors": textAnchorScenarios,
+  "explorer": explorerScenarios,
   "zotero-link": zoteroLinkScenarios,
   "transfers": transferScenarios,
   "mcp": mcpScenarios,

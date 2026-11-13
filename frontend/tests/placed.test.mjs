@@ -51,4 +51,5 @@ test("a new one on a PDF page goes at the top level with its pdf_page; on a shee
     "under the sheet, no pdf_page");
   assert.equal(onSheet[0], t[0]);
   assert.equal(addPlaced(t, "gone", "n", props), t, "a sheet gone meanwhile: the same tree");
+  assert.equal(addPlaced(t, 3, "n", props, "A **caption**").at(-1).content, "A **caption**", "a pasted picture's caption with it");
 });

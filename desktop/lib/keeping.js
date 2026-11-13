@@ -251,10 +251,13 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // rest (a PDF a push could not deliver, a file in the way) and the names
 // its scan refused (`status.refused`: two names that differ only by case,
 // a name Windows refuses, a link), which never become pages. `whole`: a
-// vault of the whole library. `work`: a work folder (a folder of the
-// server's own that pushes everything, docs/dev/work_folders.md), with its
-// library switch (`library`) and whether its files wait to be chosen in
-// Gamma (`choosing`).
+// vault of the whole library. `work`: a work folder (docs/dev/work_folders.md),
+// as the link's `work` says (a server from before it: a folder of the
+// server's own that pushes everything), with its library switch (`library`)
+// and whether its files wait to be chosen in Gamma (`choosing`). A work
+// folder of another server, made from an empty folder there, pushes
+// everything and pulls, both locked (REMOTE_WORK_RULE). `agentHere`: a work
+// folder of the server's own, the only one an agent works in, for now.
 //
 // `roles` is the workspaces the server's account may open, as its `GET
 // /api/session` lists them (`[{id, role}]`; null: not read). The server
@@ -263,8 +266,25 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // pause it, locate it and remove it. A vault with no `dest` is another
 // account's, listed to a viewer of its workspace (`seen`): where its files
 // lie is its maker's reading, and the server refuses the viewer every
-// action on it.
-function vault(server, link, servers, roles = null) {
+// action on it. `mine`: the account made it (the list's own word), the one
+// who may turn on an agent for a work folder.
+//
+// A work folder's agent (docs/dev/local_agents.md): the agent on this
+// computer that answers its Sends (`agent`, a name, "" for none, with its
+// `agentLabel`), whether it is ready (`agentReady`: null while the server
+// still checks) and why not (`agentProblem`), and what it does now
+// (`agentRunning`: the detail of its run while one works, else "";
+// `agentChat` when that run is a turn of a page's chat, not a Send), and
+// what it may run beyond its confinement (`agentRuns`: "ask", it may ask in
+// the chat, or "never"), as the link's `agent` says them. `agents` is what
+// the server finds on this computer (`GET /api/local-agents`' `agents`;
+// null: a server that runs no agents, which then offers none).
+//
+// A vault of another server also says whether this computer is shown there
+// (`computer`, computerLine): `computers` is `{ links, name }`, the server's
+// computer links (`GET /api/computer-links`) and this computer's name; null:
+// not read, and nothing is said.
+function vault(server, link, servers, roles = null, agents = null, computers = null) {
   const s = link.status || {};
   const scope = link.kind === 'file' ? 'file' : 'folder';
   const names = s.folder_path || [];
@@ -285,14 +305,118 @@ function vault(server, link, servers, roles = null) {
     changed, left: left.length, untracked: s.untracked || 0,
     away: Boolean(roles && !link.remote_url && !roles.some((w) => w.id === link.workspace_id)), seen: !link.dest,
     whole: scope === 'folder' && link.folder_id === 'root',
-    work: scope === 'folder' && !link.remote_url && link.folder_id !== 'root' && pushWord(link.push) === 'everything',
-    library: Boolean(link.library), choosing: Boolean(link.choosing),
+    work: scope === 'folder' && link.folder_id !== 'root'
+      && (typeof link.work === 'boolean' ? link.work : !link.remote_url && pushWord(link.push) === 'everything'),
+    library: Boolean(link.library), choosing: Boolean(link.choosing), mine: Boolean(link.mine),
   };
+  item.agentHere = item.work && !link.remote_url;
+  const agent = link.agent || null;
+  const run = agent && agent.running;
+  Object.assign(item, {
+    agent: (agent && agent.name) || '', agentLabel: agent ? agent.label || AGENT_LABELS[agent.name] || agent.name : '',
+    agentReady: agent ? (agent.ready === undefined ? null : agent.ready) : null, agentProblem: (agent && agent.problem) || '',
+    agentRunning: run ? String(run.detail || 'Working') : '', agentChat: Boolean(run && run.kind === 'chat'),
+    agentRuns: agent && agent.runs === 'ask' ? 'ask' : 'never',
+    agents: item.agentHere && Array.isArray(agents) ? agentChoices(agents) : null,
+  });
+  item.computer = link.remote_url && !item.seen && computers && Array.isArray(computers.links)
+    ? computerLine(item, link, computers) : null;
   const stated = scope === 'file' ? fileState(item, s) : folderState(item, s, left);
   return item.seen ? { ...stated, title: `${stated.title} ${SEEN}` } : stated;
 }
 
 const SEEN = 'Another account made this vault: it, or an editor of the workspace, acts on it.';
+
+const originOf = (url) => {
+  try { return new URL(url).origin; } catch { return url || ''; }
+};
+
+// What a computer link's state reads as after "Shown on NAS as TIM-PC ·",
+// and its tooltip (`remote`, the server's name; `name`, this computer's;
+// `who`, the account there that sees it).
+const COMPUTER_STATES = {
+  connecting: ['connecting', (remote) => `This computer is announcing itself to ${remote}.`],
+  connected: ['connected', (remote, name, who) => `Only ${who} sees on ${remote}, in any window, that this vault is kept on ${name}, whether it is online, and which assistants are here. No path is sent.`],
+  refused: ['refused this computer\'s token', (remote) => `${remote} refused the token this computer shows itself with: it was revoked there, or it expired. Stop showing, then Show this computer there, to hand it a new one.`],
+  older: ['older than this app', (remote) => `${remote} is older than this app, so it cannot show this computer: update it.`],
+  unreachable: ['not reachable', (remote) => `${remote} does not answer now; this computer tries again by itself.`],
+};
+
+// Whether this computer is shown on the server a vault of another server
+// syncs with, as the vault's view says it: the host's computer link of that
+// server and workspace (`computers.links`, `{id, remote_url, workspace_id,
+// account, username, status: {state, error, at}}`), whose channel tells that
+// server, for the vault's maker alone, that the vault is kept on this
+// computer (`computers.name`), whether it is online and which assistants are
+// here, never a path. `{ state, text, title, action, button }`: the line, its
+// tooltip, and the view's action, `hide-computer` (Stop showing) with a link,
+// `show-computer` (Show this computer there) with none; `state` is the
+// link's, or `none`.
+function computerLine(item, link, computers) {
+  const name = computers.name || 'this computer';
+  const shown = computers.links.find((c) => c && originOf(c.remote_url) === originOf(link.remote_url) && c.workspace_id === link.workspace_id);
+  if (!shown) {
+    return { state: 'none', text: `Not shown on ${item.remote}`, action: 'show-computer', button: 'Show this computer there',
+      title: `Show this computer there, and you see on ${item.remote}, in any window, that this vault is kept on ${name}, whether it is online, and which assistants are here. No path is sent.` };
+  }
+  const s = shown.status || {};
+  const state = Object.prototype.hasOwnProperty.call(COMPUTER_STATES, s.state) ? s.state : 'connecting';
+  const [words, why] = COMPUTER_STATES[state];
+  const who = shown.username || 'your account';
+  return { state, text: `Shown on ${item.remote} as ${name} · ${words}`, action: 'hide-computer', button: 'Stop showing',
+    title: `${why(item.remote, name, who)}${s.error && state !== 'connected' ? ` ${said(String(s.error))}` : ''}` };
+}
+
+// What showing this computer on server `remote` came to when it failed, for
+// the bar: a server older than this app refuses a computer's token as it is
+// minted (`minting`: its scopes do not know it, 422) or at the host's check
+// (409); otherwise the server's reason, or the error's.
+function computerFailed(remote, err) {
+  const e = err || {};
+  const detail = e.body && typeof e.body.detail === 'string' ? e.body.detail : '';
+  if (e.status === 409 || (e.minting && e.status === 422)) {
+    return `${remote} is older than this app: it cannot show this computer.`;
+  }
+  return `${remote} cannot show this computer: ${detail || String(e.message || e)}`;
+}
+
+// What showing this computer (`name`) on server `remote` came to, or
+// stopping (`shown` false), for the bar.
+function computerSaid(remote, name, shown) {
+  return shown ? `${name} is shown on ${remote}: only your account there sees it, with the vaults it keeps and the assistants here.`
+    : `${name} is no longer shown on ${remote}; its token there is revoked.`;
+}
+
+// What the bar says when this computer (`name`) stopped showing itself on
+// server `remote` but its token there could not be revoked (the server not
+// reached, the window signed out of it or into another account): the token
+// is left for the person to remove there.
+function computerStranded(remote, name) {
+  return `${name} is no longer shown on ${remote}, but its token there could not be revoked: remove “Gamma desktop: ${name}” in ${remote}'s Settings → Integrations, signed in as the account that made it.`;
+}
+
+// What the bar says when a vault of server `remote` is made while the window
+// is signed in there as another account than the one this computer is shown
+// to (`who`): the link stays theirs, never handed to another account.
+function computerOtherAccount(remote, name, who) {
+  return `${name} is shown on ${remote} to ${who}, not to the account signed in there now: sign in there as ${who}, or Stop showing first.`;
+}
+
+// The agents a work folder may have, by name, in the order the panel
+// offers them (the server's catalog, gamma/local_agents/catalog.py).
+const AGENT_LABELS = { codex: 'Codex', claude: 'Claude Code' };
+
+// What the panel offers of the agents the server found: each known one,
+// `{name, label, found, ready, problem}`, one the server did not list read as
+// not on this computer.
+function agentChoices(agents) {
+  return Object.entries(AGENT_LABELS).map(([name, label]) => {
+    const a = agents.find((x) => x && x.name === name);
+    if (!a) return { name, label, found: false, ready: false, problem: `${label} is not on this computer.` };
+    return { name, label: a.label || label, found: a.found === undefined ? null : a.found,
+      ready: a.ready === undefined ? null : a.ready, problem: a.problem || '' };
+  });
+}
 
 // A vault of a workspace its maker is no longer in, as its row says it.
 function awayState(item) {
@@ -314,7 +438,9 @@ function directions(item) {
 const said = (text) => `${capital(text)}${/[.!?]$/.test(text) ? '' : '.'}`;
 
 // A directory's vault, worst first: a work folder whose files are not chosen
-// yet (Choose files… opens its dialog in Gamma), a round running, paused,
+// yet (Choose files… opens its dialog in Gamma), a round running, its agent
+// answering a Send or working in a page's chat (busy: the files may change
+// meanwhile), paused,
 // stopped (its marker gone or another's: Locate… says where it is), held by
 // its guard (Go on), its directory not there, a problem, never synced, up to
 // date.
@@ -333,17 +459,24 @@ function folderState(item, s, left) {
     return { ...item, state: 'paused', text: `Paused · ${clock(s.paused_at)}`, title: 'Nothing is pulled or pushed until you resume it; Sync now runs one round.' };
   }
   if (item.away) return awayState(item);
-  if (item.stopped) return { ...item, state: 'error', text: 'Stopped', title: `${item.stopped} Locate… tells Gamma where the directory is now.` };
+  // A vault's own problem keeps its row while its agent works: the agent's run is said in the title.
+  const meanwhile = item.agentRunning
+    ? ` ${item.agentLabel} is working ${item.agentChat ? 'in the chat' : 'on a Send'} meanwhile.` : '';
+  if (item.stopped) return { ...item, state: 'error', text: 'Stopped', title: `${item.stopped} Locate… tells Gamma where the directory is now.${meanwhile}` };
   if (item.held) {
     const { removals = 0, total = 0 } = item.held;
     return { ...item, state: 'held', text: `Held · ${removals} of ${total} files gone`,
-      title: `${plural(removals, 'file')} of ${total} went from this computer since the last sync, so nothing was pulled or pushed. Go on pushes the removals (their pages move to Recently deleted); or put the files back.` };
+      title: `${plural(removals, 'file')} of ${total} went from this computer since the last sync, so nothing was pulled or pushed. Go on pushes the removals (their pages move to Recently deleted); or put the files back.${meanwhile}` };
   }
   if (item.offline) {
     return { ...item, state: 'waiting', text: 'Directory not there',
-      title: `${s.last_error || `${item.dest} is not there.`} The vault syncs again once it is back; Locate… if it moved.` };
+      title: `${s.last_error || `${item.dest} is not there.`} The vault syncs again once it is back; Locate… if it moved.${meanwhile}` };
   }
-  if (s.last_error) return { ...item, state: 'error', text: 'Sync problem', title: s.last_error };
+  if (s.last_error) return { ...item, state: 'error', text: 'Sync problem', title: `${s.last_error}${meanwhile}` };
+  if (item.agentRunning) {
+    return { ...item, state: 'busy', agentBusy: true, text: `${item.agentLabel} is working · ${item.agentRunning}`,
+      title: `${item.agentLabel} is ${item.agentChat ? 'working in the chat of a file of this folder' : 'answering a Send of this folder'} on this computer: the files here may change meanwhile.` };
+  }
   if (!s.last_sync) return { ...item, state: 'new', text: 'Not synced yet', title: 'The first round runs in a moment.' };
   const { changed } = item;
   const sent = counts.sent || 0;
@@ -383,10 +516,12 @@ function fileState(item, s) {
 
 // Everything one local server keeps: its answers to the three reads
 // (`zotero`, its Zotero links: none from a server that has no such list),
-// and `roles`, the workspaces its account may open (vault).
-function itemsOf(server, { mirrors = [], links = [], zotero: zoteroLinks = [], roles = null } = {}, servers = []) {
+// `roles`, the workspaces its account may open, `agents`, the agents it
+// finds on this computer, and `computers`, its computer links with this
+// computer's name (vault).
+function itemsOf(server, { mirrors = [], links = [], zotero: zoteroLinks = [], roles = null, agents = null, computers = null } = {}, servers = []) {
   return [...mirrors.map((m) => clone(server, m, servers)), ...(zoteroLinks || []).map((z) => zotero(server, z)),
-    ...links.map((l) => vault(server, l, servers, roles))];
+    ...links.map((l) => vault(server, l, servers, roles, agents, computers))];
 }
 
 // The sync button's reading of all of it: the worst state, a word or two,
@@ -401,7 +536,9 @@ function summarize(items) {
   if (!live.length) return { state: 'paused', text: 'Paused', title: `${what} on this computer: paused` };
   const state = live.reduce((worst, i) => (RANK[i.state] > RANK[worst] ? i.state : worst), 'ok');
   const n = live.filter((i) => i.state === state).length;
-  const text = {
+  // busy only because agents work (no round runs): say so, not "Syncing…"
+  const agentsOnly = state === 'busy' && live.filter((i) => i.state === 'busy').every((i) => i.agentBusy);
+  const text = agentsOnly ? 'Agent working' : {
     error: plural(n, 'problem'),
     conflicts: 'Conflicts',
     held: 'Held',
@@ -418,10 +555,25 @@ function summarize(items) {
 
 // --- what the shell says about a vault ---------------------------------------------
 
-// What a vault of another server may be, for now: it pulls, and pushes PDFs
-// at most (docs/research/vaults.md "Not built"). The dialog, the vault's
-// view and the shell's switches (main.js setPull, changePush) keep to it.
-const REMOTE_RULE = 'A vault of another server pulls, and pushes PDFs at most, for now.';
+// What a vault of another server may be: it pulls, and pushes PDFs at most,
+// unless it is a work folder there, which is made from an empty folder of
+// that server (main.js makeRemoteWorkFolder) and only then pushes
+// everything. The dialog, the vault's view and the shell's switches
+// (main.js setPull, changePush) keep to it.
+const REMOTE_RULE = 'A vault of another server pulls, and pushes PDFs at most: a work folder there is made from an empty folder.';
+
+// What a work folder of another server is, whatever its switches are asked:
+// it pushes everything and pulls, until it is removed (the server refuses
+// the rest too: its release would read this computer's library).
+const REMOTE_WORK_RULE = 'A work folder of another server pushes everything and pulls: remove the vault to stop.';
+
+// Why the empty folder `folder` of server `remote` did not become a work
+// folder there (`reason`: that server older than this app, the account only
+// a viewer there, or that server's or the host's refusal), for the bar while
+// the vault dialog asks how it is synced instead (main.js addFolderVault).
+function remoteWorkRefused(remote, folder, reason) {
+  return `“${folder}” cannot be a work folder of ${remote}: ${said(String(reason || `${remote} refused it`))} It can be synced as a vault that pulls instead.`;
+}
 
 // What a vault of the whole library may not be: a work folder, which needs
 // a folder of its own (the server's words, gamma/folder_links.py). One that
@@ -489,8 +641,8 @@ function firstRound({ path: dir, preview = {}, pull, push, folder, newFolder = f
 // A file's vault never touches its file; a vault whose directory is not
 // there, or is no longer its own (stopped: the marker gone or another
 // vault's), is forgotten without touching the disk. A work folder's files
-// not in the library go to Recently deleted, and those in it stay: both are
-// said.
+// not in the library go to Recently deleted (of the other server, for a work
+// folder there), and those in it stay: both are said.
 function removalAsk(item, removal = {}) {
   if (item.scope === 'file') {
     return { message: `Remove the synced vault of “${item.name}”?`,
@@ -502,7 +654,7 @@ function removalAsk(item, removal = {}) {
   const kept = removal.in_library || 0;
   const inPlace = removal.in_place || 0;
   const pagesSaid = files
-    ? `${files === 1 ? 'Its file not in the library goes' : `Its ${files} files not in the library go`} to Recently deleted` +
+    ? `${files === 1 ? 'Its file not in the library goes' : `Its ${files} files not in the library go`} to Recently deleted${item.remoteUrl ? ` on ${item.remote}` : ''}` +
       (kept ? `; ${kept === 1 ? 'its page in the library stays' : `its ${kept} pages in the library stay`}` : '')
     : pages ? `${pages === 1 ? 'Its page stays' : `Its ${pages} pages stay`} in Gamma` : 'It holds no pages yet';
   const stays = pagesSaid +
@@ -519,6 +671,17 @@ function removalAsk(item, removal = {}) {
   return { message,
     detail: `${stays} Keep the files in ${item.dest} as they are, or move the files the sync wrote to its trash, .gamma/trash; files you added or changed stay.`,
     buttons: ['Remove, keep the files', 'Remove, move them to the trash', 'Cancel'], choices: ['keep', 'trash', null] };
+}
+
+// The question when a work folder of another server cannot be removed as it
+// should, its server not reached (`reason`, the host's words): `{ message,
+// detail, buttons }`, button 0 removing it all the same, which forgets it on
+// this computer and leaves the folder a work folder there until its owner
+// lets go of it.
+function farRemovalAsk(item, reason) {
+  return { message: `${item.remote} cannot be reached: remove the work folder “${item.name}” all the same?`,
+    detail: `${said(String(reason || `${item.remote} does not answer`))} Remove anyway, and this computer forgets it; the folder stays a work folder on ${item.remote}, its files locked, until the workspace's owner lets go of it there. Or cancel, and remove it once ${item.remote} answers.`,
+    buttons: ['Remove anyway', 'Cancel'] };
 }
 
 // The question before a force pull (the files become what Gamma holds) or
@@ -547,6 +710,59 @@ function goOnAsk(item) {
     buttons: ['Go on', 'Cancel'] };
 }
 
+// What each agent may do in a work folder's directory, as the panel and the
+// question before turning one on say it: Codex runs commands in its
+// sandbox; Claude Code gets no shell (docs/dev/local_agents.md "Trust").
+const AGENT_DOES = {
+  codex: 'it edits files in this directory and runs commands in its sandbox, without network',
+  claude: 'it edits files in this directory and runs no commands',
+};
+
+// The question before agent `name` works in a work folder's directory, the
+// computer's decision (main.js setAgent), with the Sends of the folder that
+// wait now (`waiting`, handed to it once it is on; null: not counted):
+// `{ message, detail, buttons }`, button 0 turning it on.
+function agentAsk(item, name, waiting = null) {
+  const label = AGENT_LABELS[name] || name;
+  const handed = waiting ? ` ${waiting === 1 ? '1 waiting Send' : `${waiting} waiting Sends`} will be handed to it.` : '';
+  return { message: `Let ${label} work in ${item.dest}?`,
+    detail: `${label} will answer the Sends you make on this folder: ${AGENT_DOES[name] || 'it edits files in this directory'}.${handed}`,
+    buttons: [`Turn on ${label}`, 'Cancel'] };
+}
+
+// What turning a work folder's agent on (`name`, with the `queued` Sends
+// handed to it) or off ("": `item.agentLabel` was on) came to, for the bar.
+function agentSaid(item, name, queued = 0) {
+  if (!name) return `${item.agentLabel || 'The agent'} no longer answers the Sends on ${item.name}: they wait for an agent you run yourself.`;
+  const label = AGENT_LABELS[name] || name;
+  return `${label} now answers the Sends on ${item.name}${queued ? `; ${queued} waiting ${queued === 1 ? 'was' : 'were'} handed to it` : ''}.`;
+}
+
+// What each agent may ask for in the chat when its folder's "What it may
+// run" is Ask (docs/dev/local_agents.md): Codex to go past its sandbox,
+// Claude Code to run a command at all.
+const AGENT_ASKS = {
+  codex: 'to run a command with the network or to change files outside this folder',
+  claude: 'to run a command, such as your build',
+};
+
+// The question before a work folder's agent may ask in the chat to run
+// what its confinement keeps from it, the computer's decision (main.js
+// setAgentRuns): `{ message, detail, buttons }`, button 0 letting it ask.
+function runsAsk(item) {
+  const label = item.agentLabel || AGENT_LABELS[item.agent] || 'The agent';
+  return { message: `Let ${label} ask to run more in ${item.dest}?`,
+    detail: `In the chat of a file of this folder, ${label} can then ask you ${AGENT_ASKS[item.agent] || 'to run a command'}; nothing of it runs until you allow it there. A command you allow runs as you, with your files and the network.`,
+    buttons: ['Ask me in the chat', 'Cancel'] };
+}
+
+// What setting a work folder's "What it may run" to `runs` came to, for the bar.
+function runsSaid(item, runs) {
+  const label = item.agentLabel || AGENT_LABELS[item.agent] || 'The agent';
+  return runs === 'ask' ? `${label} may now ask you in the chat to run more on ${item.name}.`
+    : `${label} no longer asks to run more on ${item.name}: it keeps to its confinement.`;
+}
+
 // What a round asked for came to, for the bar: its status as the round
 // left it (main.js followRound).
 function roundSaid(item, status) {
@@ -565,5 +781,6 @@ function roundSaid(item, status) {
   return `${item.name} is up to date${parts.length ? `: ${parts.join(', ')}` : ''}.`;
 }
 
-module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, WHOLE_RULE, firstRound, removalAsk, forceAsk,
-  goOnAsk, roundSaid };
+module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, REMOTE_WORK_RULE, remoteWorkRefused, WHOLE_RULE, firstRound, removalAsk, farRemovalAsk, forceAsk,
+  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, runsAsk, runsSaid, computerLine, computerFailed, computerSaid,
+  computerStranded, computerOtherAccount };
