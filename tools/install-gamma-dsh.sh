@@ -48,6 +48,14 @@ gamma_installed() {  # the dsh-gamma version a profile has, else nothing
     sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$dsh_home/profiles/$1/node_modules/dsh-gamma/package.json" 2>/dev/null | head -n 1
 }
 
+# The app reads its plugins and Gamma's connection only when it starts: one
+# left open goes on without them, and its profile is not to be changed under
+# it. Its path names it (/Applications/DeepSeek Harness.app, /opt/DeepSeek Harness).
+if command -v pgrep >/dev/null 2>&1 && pgrep -f 'DeepSeek Harness' >/dev/null 2>&1; then
+    printf 'DeepSeek Harness is open. Quit it completely, then run this command again: it reads the Gamma plugin and connection only when it starts.\n' >&2
+    exit 1
+fi
+
 if [ "${1:-}" = --remove ]; then
     shift
     gamma_profiles="$*"

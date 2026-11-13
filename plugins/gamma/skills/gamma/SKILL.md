@@ -16,7 +16,11 @@ If setup already succeeded, check the current assistant's MCP status: in Codex,
 use `codex mcp get gamma`; in Claude Code, use `claude mcp get gamma` or `/mcp`;
 in DeepSeek Harness, look for `mcp__gamma__*` tools and the startup log, where
 `gamma: not connected` means the setup command has not run on this computer and
-a 401 means the saved token expired or was revoked.
+a 401 means the saved token expired or was revoked. This skill without any
+`mcp__gamma__*` tool most often means DeepSeek Harness was open when the setup
+command ran: it reads the connection only when it starts, so ask the user to
+quit it completely (also from its tray icon), start it again and open a new
+conversation.
 Report the observed reason: managed requirements need an
 administrator to allow the connection; authentication errors need sign-in; a
 healthy connection may need an app restart and a new task. If status cannot be

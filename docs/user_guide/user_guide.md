@@ -608,7 +608,7 @@ Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your
 |---|---|
 | **Claude Code** | `claude mcp add --transport http --scope user gamma <your Gamma>/mcp`, then `/mcp` → **gamma** → **Authenticate**, and tick the workspaces in the browser. The optional plugin from a [release](https://github.com/tim4431/Gamma/releases/latest) adds the `/gamma:gamma` workflow |
 | **Codex** | One setup command from the Codex tab: it installs the Gamma plugin and opens the browser sign-in. By hand: `codex mcp add gamma --url <your Gamma>/mcp`, then `codex mcp login gamma` |
-| **DeepSeek Harness** | Quit DeepSeek Harness and run the setup command from its tab. The command adds the Gamma plugin to the DeepSeek Harness app (and `dsh web`) and opens Gamma's sign-in in the browser: check that the page shows the code in your terminal, tick the workspaces and allow it. The connection is saved, so it is there every time DeepSeek Harness starts |
+| **DeepSeek Harness** | Quit DeepSeek Harness completely (also from its tray icon; the command stops while it is open) and run the setup command from its tab. The command adds the Gamma plugin to the DeepSeek Harness app (and `dsh web`) and opens Gamma's sign-in in the browser: check that the page shows the code in your terminal, tick the workspaces and allow it. The connection is saved, so it is there every time DeepSeek Harness starts |
 | **Any other MCP client** | Add the MCP URL with the client's sign-in option (OAuth in the browser). A client without OAuth gets a token from **Tokens (advanced)** and sends it as a bearer token |
 
 ### What an assistant can use

@@ -140,7 +140,12 @@ and runs it with that URL. The script:
    installed, `web` where that profile exists, else `web` (`-Profiles` / extra
    arguments name others). The desktop profile belongs to the app: only its own
    CLI manages it, after the app has initialized it once and while the app is
-   fully quit (dsh refuses otherwise; the script says so);
+   fully quit (dsh refuses otherwise; the script says so). The script stops at
+   once while the app runs (a process named `DeepSeek Harness`; `pgrep -f`
+   on macOS and Linux, where its path names it), before it installs, asks or
+   removes anything: the app reads the plugin and `gamma.json` only when it
+   starts, and one left open went on without Gamma's tools while the skill
+   it had loaded before said nothing was wrong;
 3. adds the plugin to each profile whose `node_modules/dsh-gamma` is missing or
    another version: the release's pinned `dsh-gamma-X.Y.Z.tgz`, checked against
    its SHA-256 and saved as `$DSH_HOME/dsh-gamma.tgz`, the one file every
@@ -838,6 +843,12 @@ Official references: [Codex MCP configuration](https://learn.chatgpt.com/docs/ex
 
 ## Troubleshooting
 
+- **DeepSeek Harness has the gamma skill but no `mcp__gamma__*` tools:** it was
+  open when the setup ran, so it still holds the plugin and the connection it
+  read when it started. Quit it completely, also from its tray icon, start it
+  again and open a new conversation. The setup script now stops while the app
+  runs, so this comes only from an older script or a connection replaced by
+  hand.
 - **Marketplace root does not contain a supported manifest:** run
   `codex plugin marketplace list` and check whether the registered source still
   contains `.agents/plugins/marketplace.json`. If a temporary source was deleted,
