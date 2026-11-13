@@ -62,6 +62,7 @@ export const GROUPS = [
   { id: "work-folders", files: ["workFolders.mjs"], s: 30 },
   { id: "feedback", files: ["feedback.mjs"], s: 60 },
   { id: "local-agents", files: ["localAgents.mjs"], s: 40 },
+  { id: "computers", files: ["computers.mjs"], s: 45 },
   { id: "viewers", files: ["viewers.mjs"], s: 60 },
   { id: "text-search", files: ["textSearch.mjs"], s: 26 },
   { id: "text-anchors", files: ["textAnchors.mjs"], s: 45 },
@@ -215,8 +216,10 @@ export const RULES = [
   ["frontend/src/collaboration/**", ALL], // the page's live session carries every edit
   // a page's standing with this computer in the desktop app: the chip, its card and dialogs, the banner, the notes lock
   // (local-agents: the agent the maker's comments name and the chat's computer side talks to)
-  ["frontend/src/vault/vaultState.js", ["vaults", "work-folders", "local-agents"]],
-  ["frontend/src/vault/**", ["vaults", "work-folders"]],
+  // (computers: on any other server, the chip of the computer that keeps the page, read by usePageComputer.js)
+  ["frontend/src/vault/vaultState.js", ["vaults", "work-folders", "local-agents", "computers"]],
+  ["frontend/src/vault/usePageComputer.js", ["computers"]],
+  ["frontend/src/vault/**", ["vaults", "work-folders", "computers"]],
   // the pages the listing does not carry, merged into every page list the app has
   ["frontend/src/explorer/knownPages.js", ALL],
   // the work-folder rules every page and folder menu, drop and the open page's title ask
@@ -282,15 +285,17 @@ export const RULES = [
   ["backend/gamma/mcp_links.py", ["mcp", "text-search"]],
   ["backend/gamma/mcp_server.py", ["mcp", "text-search"]],
   ["backend/gamma/mcp_*", ["mcp"]],
-  ["backend/gamma/integrations.py", ["mcp", "mirror", "settings"]],
-  ["backend/gamma/routers/integrations.py", ["mcp", "mirror", "settings"]],
+  // (computers: the `computer` scope the desktop app mints for its channel)
+  ["backend/gamma/integrations.py", ["mcp", "mirror", "settings", "computers"]],
+  ["backend/gamma/routers/integrations.py", ["mcp", "mirror", "settings", "computers"]],
   // synced vaults and PDFs read where they are: the routes a page reads and the engine behind them
   // (the vaults scenario; the shell's side is the desktop app's suite, desktop/test/e2e.js);
   // feedback: a work folder's rounds write its feedback files and keep the commented version;
   // viewers: the engine's class `file` makes a page of every file a work folder tracks;
   // local-agents: a work folder's agent on this computer, turned on and off by the PATCH
-  ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback", "local-agents"]],
-  ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders", "local-agents"]],
+  // computers: a vault of another server is what the computer's channel announces there
+  ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback", "local-agents", "computers"]],
+  ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders", "local-agents", "computers"]],
   ["backend/gamma/linked_files.py", ["vaults", "work-folders", "feedback"]],
   // (text-anchors: a text file's ranges placed again inside the round that replaced it)
   ["backend/gamma/vault/**", ["vaults", "work-folders", "feedback", "viewers", "explorer", "text-anchors"]],
@@ -304,6 +309,11 @@ export const RULES = [
   // drivers, the runner, what this computer keeps, and GET /api/local-agents
   ["backend/gamma/local_agents/**", ["local-agents"]],
   ["backend/gamma/routers/local_agents.py", ["local-agents"]],
+  // a computer's channel and presence (docs/dev/computers.md): the server's registry and routes, the
+  // computer's links and their threads
+  ["backend/gamma/computers/**", ["computers"]],
+  ["backend/gamma/routers/computers.py", ["computers"]],
+  ["backend/gamma/routers/computer_links.py", ["computers"]],
   ["backend/gamma/md_lens.py", ["vaults"]],
   // a file's path in its work folder: the feedback entries' file, a search hit's path, read_page(path=…),
   // quick open's file rows and a path link's file

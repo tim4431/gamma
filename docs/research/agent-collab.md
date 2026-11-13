@@ -655,7 +655,10 @@ agent), and a token cannot move them.
 | 3a. The chat's computer side | the switch and the strip, the agent's turns in the chat (its reply, its steps, what it changed), a selected passage sent with its source line, Stop, a turn that outlives its tab, its own conversations and History | built: [dev/local_agents.md](../dev/local_agents.md) "The chat's computer side", "As built (step 3a)" below |
 | 3b. Approvals | approval cards relayed from Codex's app-server and Claude Code's permission prompts (so Claude Code may ask to build), what the agent may run set on the computer | built: [dev/local_agents.md](../dev/local_agents.md) "Asking in the chat", "As built (step 3b)" below |
 | 3c. The rest of the side | *Continue in a terminal* and *Show in folder*, the agent's model and effort, the reply as it is typed, the selection's source line as a chip, a Background tasks row | built: [dev/local_agents.md](../dev/local_agents.md) "Its model, its typing, a terminal, the sources, Background tasks", "As built (step 3c)" below; later: View diff and Revert, *Open comments on this page (n)*, *Attach what I see*, a folder's computer chat |
-| 4. The remote | the computer announced to the servers its vaults name, presence in any window of the maker, work folders of another server, their requests and the chat relayed through the computer's channel | plan: "How the server sees a vault" |
+| 4a. The channel and presence | the computer announced to the servers its vaults name over a channel of its own (a `computer` token, an announce and a held poll), presence kept by the server and shown to the vault's maker in any window, the sync panel's line | built: [dev/computers.md](../dev/computers.md), "As built (step 4a)" below |
+| 4b. Work folders of another server | a vault of another server that pushes everything into a folder it marks there, the tracking dialog through the host | plan |
+| 4c. Their Sends and mentions | run on the computer over the channel: the server's claim, the entries, the answers written by the server | plan |
+| 4d. The chat relayed | the chat's computer side on another server's page, its asks answered on the computer, *Show in folder* and *Continue in a terminal* from the desktop window there | plan |
 | Later | the `acp` driver, delivery to an open session, a co-author's use of the maker's computer, one Inbox item per finished request | |
 
 ### As built (step 1)
@@ -827,6 +830,49 @@ plan's pieces were built; where they went otherwise:
   *Attach what I see* (pictures for Claude Code must sit under `.gamma/`);
   a folder's computer chat.
 
+### As built (step 4a)
+
+[dev/computers.md](../dev/computers.md) is the reference. Where it went
+otherwise than "How the server sees a vault":
+
+- **A credential of its own.** The channel speaks with a token of a new
+  `computer` scope, minted on that server by the shell with the window's
+  session and handed to the host with the shell's word, never with the
+  vault's sync token: a bearer is identity, and a sync token in a script
+  or a mirror's config must not pose as the computer. Such a token opens
+  the channel's two routes and nothing else, reads included, and no MCP
+  connection.
+- **The poll is the heartbeat.** One held `GET` (25 s, under a proxy's
+  idle limit, `async` so a hold takes no worker thread) both waits for
+  what the server asks and keeps the computer online; online lasts 45 s
+  past the last poll. The announce is a `POST` only when what the
+  computer keeps or finds changes.
+- **A small durable row.** Presence is in memory, but what the computer
+  last announced and when it was last seen is a users.db row per token,
+  so *offline since* survives a restart, and 4c can word a mention while
+  the computer is away.
+- **What the server learns** is the computer's id for it (an HMAC of the
+  install's id and the server's origin, so two servers cannot match one
+  computer by it), its host name, which folders and pages it keeps (ids;
+  the server names them), whether each is paused, and the assistants
+  with a problem's code, never its words and never a path.
+- **The nudge goes to the account** (`publish_account`), not the page's
+  room, so co-authors never learn when the maker's computer is on.
+- **One account there per link.** The host keeps one link per server,
+  workspace and local account, and never hands it to another account
+  signed in there (the shell says so, the host refuses it): the vaults it
+  announces were made with that account's tokens. The vaults themselves
+  record no account there yet, which 4c, whose runs answer as the maker,
+  needs (the survey's critic, C1).
+- **Not yet**: `here` (the desktop window on that server's page knowing
+  it is on the computer, for *Show in folder*) waits for 4d; nothing on
+  the computer acts on what the channel says, but to announce again.
+- **The open questions of trust** are answered as defaults for 4c and 4d:
+  a server the app did not start gets *Ask on this computer* as the only
+  asking form (a card answered on the computer itself, never relayed from
+  that server's sessions), and a window on a phone may start, follow and
+  stop the agent's work within its confinement but never widen it.
+
 ### Declined
 
 - **A webhook from the server to the PC.** A computer behind a router
@@ -858,9 +904,12 @@ plan's pieces were built; where they went otherwise:
   per assistant, and whether a page under a folder vault shares the
   folder's (the agent learns the paper once, the context grows; Codex
   already sends 64k input tokens for a one-line fix).
-- The server's part in the trust: is *Ask on this computer* the default
-  for a server the app did not start, and may a window on a phone drive
-  the computer at all.
+- The server's part in the trust, taken as defaults in "As built (step
+  4a)": *Ask on this computer* the only asking form for a server the app
+  did not start, and a phone driving the computer within its confinement
+  only. Whether an agent may be on at all for a server reached over plain
+  http outside this computer (the token travels in clear on the LAN)
+  is for 4c.
 - Whether "these" on a page also means highlights that carry a note and
   no thread. A note has no resolved state to say it is done; a work
   folder's feedback counts threads only (file-explorer.md, "Still to

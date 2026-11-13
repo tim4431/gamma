@@ -125,7 +125,7 @@ function server(name, links = [], { zotero = 'list', running: on = true, broken 
       const routed = fake.routes(p, init);
       if (routed && routed.failWith) return fails(routed.failWith, routed.body);
       if (routed) return ok(routed);
-      if (p === '/api/session') return ok({ user: { id: 'admin', username: 'admin' }, default_workspace: 'mine', workspaces: fake.workspaces });
+      if (p === '/api/session') return ok({ user: fake.user || 'admin', default_workspace: 'mine', workspaces: fake.workspaces });
       if (p === '/api/sync/changes') return ok({ format: 51, changes: [] });
       if (p === '/api/mirrors') return broken ? fails(500) : ok({ mirrors: [] });
       if (p === '/api/folder-links') return ok({ links: fake.vaults });
@@ -789,6 +789,195 @@ test('a folder with pages still asks in the bar: the vault dialog stays shown un
   assert.throws(() => shell.shellWord('http://nas.lan:9001'), /only to a server on this computer/, 'never to a remote');
   running.clear();
   assert.throws(() => shell.shellWord('http://127.0.0.1:50999'), /only to a server on this computer/, 'nor to a port no server of this app holds now');
+});
+
+// The host's computer links (GET /api/computer-links) and the NAS's tokens,
+// for the tests of this computer shown on a remote: `host` and `nas` fakes
+// of server(). The NAS mints `t<n>`; the host keeps the links it is handed
+// (POST, its answer `replaced` as `replace` says, or `fail`), forgets one on
+// DELETE and answers its token.
+function computerRoutes(host, nas, { replace = null, fail = null } = {}) {
+  const state = { links: [], minted: [], fail };
+  const routes = host.fake.routes;
+  host.fake.routes = (p, init) => {
+    if (p === '/api/computer-links' && init.method === 'POST') {
+      if (state.fail) return state.fail;
+      const body = JSON.parse(init.body);
+      const link = { id: `c${state.links.length + 1}`, remote_url: body.remote_url, workspace_id: body.workspace, account: 'admin', username: 'admin',
+        status: { state: 'connected', error: '', at: '2026-11-13T10:00:00Z' }, created_at: '2026-11-13T10:00:00Z', token_id: body.token_id };
+      state.links = [...state.links.filter((c) => !(c.remote_url === link.remote_url && c.workspace_id === link.workspace_id)), link];
+      const { token_id: _t, ...listed } = link;
+      return { link: listed, replaced: replace };
+    }
+    if (p === '/api/computer-links') return { links: state.links.map(({ token_id: _t, ...c }) => c) };
+    const gone = p.match(/^\/api\/computer-links\/([^/]+)$/);
+    if (gone && init.method === 'DELETE') {
+      const link = state.links.find((c) => c.id === decodeURIComponent(gone[1]));
+      state.links = state.links.filter((c) => c !== link);
+      return { ok: true, token_id: link.token_id };
+    }
+    return routes(p, init);
+  };
+  nas.fake.routes = (p, init) => {
+    if (p === '/api/integrations/tokens' && init.method === 'POST') {
+      const minted = { id: `t${state.minted.length + 1}`, token: `gamma_${state.minted.length + 1}`, ...JSON.parse(init.body) };
+      state.minted.push(minted);
+      return minted;
+    }
+    if (p.startsWith('/api/integrations/tokens/') && init.method === 'DELETE') return { ok: true };
+    if (p === '/api/sync/folders') return FOLDERS;
+    return null;
+  };
+  return state;
+}
+
+// The tokens revoked on fake `nas`, each `id@workspace`.
+const revoked = (nas) => nas.fake.calls.filter((c) => c.method === 'DELETE' && c.path.startsWith('/api/integrations/tokens/'))
+  .map((c) => `${c.path.split('/').pop()}@${c.headers['X-Gamma-Workspace']}`);
+
+test('a vault of another server shows this computer there: a computer token minted with the window\'s session, handed to the host with the shell\'s word, once per server, workspace and account; a failure revokes it and the vault stays', async () => {
+  fresh();
+  const host = server('Host');
+  const nas = server('NAS', [], { remote: 'http://nas.lan:9001' });
+  const picked = fs.mkdtempSync(path.join(dir, 'Far-'));
+  host.fake.routes = (p, init) => {
+    if (p === '/api/folder-links/preview') return previewOf(picked, { notes: 0, pages: 3 });
+    if (p === '/api/folder-links' && init.method === 'POST') {
+      return vaultLink({ path: picked, dest: picked, workspace_id: 'team', remote_url: 'http://nas.lan:9001', token_id: JSON.parse(init.body).token_id });
+    }
+    return null;
+  };
+  const shown = computerRoutes(host, nas, { replace: { token_id: 'old' } });
+  const realStart = sidecar.start;
+  sidecar.start = async () => ({ url: 'http://127.0.0.1:50999', port: 50999 });
+  shell.pretendShown(nas.srv, windowOn(host.fake, [{ origin: 'http://nas.lan:9001', fake: nas.fake }], 'team'));
+  process.env.GAMMA_SHELL_PICK_DIR = picked;
+  const add = async () => {
+    const adding = shell.addFolderVault('team', 'f1');
+    await until(() => shell.vaultAsk(), 'the dialog is up');
+    shell.answerVault(shell.vaultAsk().id, { pull: true, push: 'off' });
+    return adding;
+  };
+  const handed = () => host.fake.calls.filter((c) => c.path === '/api/computer-links' && c.method === 'POST');
+  try {
+    await add();
+    const [vaultToken, computer] = shown.minted;
+    assert.deepEqual([vaultToken.scope, computer.scope], ['read', 'computer'], 'a token of its own, never the vault\'s');
+    assert.equal(computer.name, `Gamma desktop: ${shell.computerName}`);
+    assert.equal(computer.expires_in_days, 365);
+    const mint = nas.fake.calls.filter((c) => c.path === '/api/integrations/tokens' && c.method === 'POST')[1];
+    assert.equal(mint.headers['X-Gamma-Workspace'], 'team', 'for the vault\'s workspace');
+    const [hand] = handed();
+    assert.deepEqual(hand.body, { remote_url: 'http://nas.lan:9001', workspace: 'team', token: computer.token, token_id: computer.id });
+    assert.equal(hand.headers['X-Gamma-Shell'], shell.shellSecret, 'the shell\'s word');
+    assert.deepEqual(revoked(nas), ['old@team'], 'the token the host replaced, and no other');
+    assert.equal(shell.notice(), `Kept lab is synced with ${picked}`);
+    for (const c of nas.fake.calls) assert.equal(c.headers['X-Gamma-Shell'], undefined, 'the word never goes to the remote');
+    assert.ok(!nas.fake.calls.some((c) => c.body && JSON.stringify(c.body).includes(picked)), 'nor a path');
+
+    // another vault of that server and workspace: the host shows this computer there for the account already
+    await add();
+    assert.equal(shown.minted.length, 3, 'only the vault\'s token');
+    assert.equal(handed().length, 1);
+    // signed in there as another account: the link stays the first one's, nothing minted for it
+    nas.fake.user = 'bob';
+    await add();
+    assert.equal(shown.minted.length, 4, 'only the vault\'s token');
+    assert.equal(handed().length, 1);
+    assert.equal(shell.notice(), `Kept lab is synced with ${picked}. ${shell.computerName} is shown on NAS to admin, not to the account signed in there now: sign in there as admin, or Stop showing first.`);
+    nas.fake.user = '';
+
+    // one the server refused is handed a new token; a hand-over that fails revokes it, the vault made all the same
+    shown.links = shown.links.map((c) => ({ ...c, status: { state: 'refused', error: '', at: '' } }));
+    shown.fail = { failWith: 502, body: { detail: 'Cannot reach http://nas.lan:9001' } };
+    const made = await add();
+    assert.equal(made.dest, picked);
+    const minted = shown.minted.at(-1);
+    assert.equal(minted.scope, 'computer');
+    assert.deepEqual(revoked(nas), ['old@team', `${minted.id}@team`], 'the token the host did not take is revoked');
+    assert.equal(shell.notice(), `Kept lab is synced with ${picked}. NAS cannot show this computer: Cannot reach http://nas.lan:9001`);
+
+    // a server older than this app knows no such scope
+    shown.links = [];
+    shown.fail = null;
+    const routes = nas.fake.routes;
+    nas.fake.routes = (p, init) => (p === '/api/integrations/tokens' && init.method === 'POST' && JSON.parse(init.body).scope === 'computer'
+      ? { failWith: 422, body: { detail: [{ msg: 'string does not match pattern' }] } } : routes(p, init));
+    await add();
+    assert.equal(shell.notice(), `Kept lab is synced with ${picked}. NAS is older than this app: it cannot show this computer.`);
+    assert.equal(handed().length, 2, 'nothing handed to the host');
+  } finally {
+    sidecar.start = realStart;
+    delete process.env.GAMMA_SHELL_PICK_DIR;
+    shell.pretendShown(null, null);
+  }
+});
+
+test('from the panel, Show this computer there and Stop showing on a vault of another server; the last vault of that server and workspace removed stops showing it', async () => {
+  fresh();
+  const host = server('Host');
+  const nas = server('NAS', [], { remote: 'http://nas.lan:9001' });
+  const far = (id, ws = 'team') => vaultLink({ id, workspace_id: ws, remote_url: 'http://nas.lan:9001', token_id: `vt-${id}` });
+  host.fake.vaults = [far('v1'), far('v2'), far('v3', 'lab')];
+  host.fake.routes = (p, init) => {
+    const m = p.match(/^\/api\/folder-links\/([^/]+)$/);
+    if (m && init.method === 'DELETE') {
+      host.fake.vaults = host.fake.vaults.filter((v) => v.id !== m[1]);
+      return { ok: true };
+    }
+    return null;
+  };
+  const shown = computerRoutes(host, nas);
+  // the panel mints and revokes with the window's session, signed into the remote
+  electron.session.defaultSession.fetch = async (url, init = {}) => nas.fake.answer(new URL(url).pathname, init, new URL(url));
+  const linkCalls = (method) => host.fake.calls.filter((c) => c.path.startsWith('/api/computer-links') && c.method === method);
+  try {
+    await shell.refreshKeeping();
+    let [item] = shell.keeping().items;
+    assert.deepEqual([item.computer.text, item.computer.button], ['Not shown on NAS', 'Show this computer there']);
+
+    await shell.keepingAction('vault', host.srv.id, 'v1', 'show-computer');
+    const [minted] = shown.minted;
+    assert.deepEqual([minted.scope, minted.name], ['computer', `Gamma desktop: ${shell.computerName}`]);
+    const [hand] = linkCalls('POST');
+    assert.deepEqual(hand.body, { remote_url: 'http://nas.lan:9001', workspace: 'team', token: minted.token, token_id: minted.id });
+    assert.equal(hand.headers['X-Gamma-Shell'], shell.shellSecret);
+    assert.equal(shell.notice(), `${shell.computerName} is shown on NAS: only your account there sees it, with the vaults it keeps and the assistants here.`);
+    await shell.refreshKeeping();
+    [item] = shell.keeping().items;
+    assert.deepEqual([item.computer.text, item.computer.button], [`Shown on NAS as ${shell.computerName} · connected`, 'Stop showing']);
+    assert.equal(shell.keeping().items.find((i) => i.id === 'v3').computer.text, 'Not shown on NAS', 'another workspace of that server is its own');
+
+    await shell.keepingAction('vault', host.srv.id, 'v1', 'hide-computer');
+    const [stop] = linkCalls('DELETE');
+    assert.equal(stop.path, '/api/computer-links/c1');
+    assert.equal(stop.headers['X-Gamma-Shell'], shell.shellSecret);
+    assert.deepEqual(revoked(nas), [`${minted.id}@team`], 'its token revoked on the remote');
+    assert.equal(shell.notice(), `${shell.computerName} is no longer shown on NAS; its token there is revoked.`);
+    assert.deepEqual(host.fake.vaults.map((v) => v.id), ['v1', 'v2', 'v3'], 'the vaults stay');
+
+    // removing a vault while another of that server and workspace stays keeps showing it; the last one stops
+    await shell.keepingAction('vault', host.srv.id, 'v2', 'show-computer');
+    await shell.removeVault(host.srv.id, 'v1', 'keep');
+    assert.equal(linkCalls('DELETE').length, 1, 'v2 keeps it shown');
+    assert.deepEqual(revoked(nas).slice(1), ['vt-v1@team'], 'the vault\'s own token');
+    await shell.removeVault(host.srv.id, 'v2', 'keep');
+    assert.equal(linkCalls('DELETE').at(-1).path, '/api/computer-links/c1');
+    assert.deepEqual(revoked(nas).slice(2), ['vt-v2@team', `${shown.minted[1].id}@team`]);
+    assert.deepEqual(shown.links, []);
+
+    // a token that server did not revoke (another account signed in there) is said, never claimed revoked
+    host.fake.vaults = [far('v4')];
+    await shell.refreshKeeping();
+    await shell.keepingAction('vault', host.srv.id, 'v4', 'show-computer');
+    const routes = nas.fake.routes;
+    nas.fake.routes = (p, init) => (p.startsWith('/api/integrations/tokens/') && init.method === 'DELETE' ? { ok: true, revoked: false } : routes(p, init));
+    await shell.keepingAction('vault', host.srv.id, 'v4', 'hide-computer');
+    assert.equal(shell.notice(), `${shell.computerName} is no longer shown on NAS, but its token there could not be revoked: remove “Gamma desktop: ${shell.computerName}” in NAS's Settings → Integrations, signed in as the account that made it.`);
+    nas.fake.routes = routes;
+  } finally {
+    delete electron.session.defaultSession.fetch;
+  }
 });
 
 test('a window getting the focus asks each running local server to look at its vaults, at most every ten seconds', async () => {

@@ -1723,6 +1723,12 @@ A vault of another server is never a work folder itself (it writes no
 mark), but one that pushes everything into a folder there that carries a
 mark runs a work folder's round, as the op rule there asks.
 
+The computer also announces itself to that server over a channel of its
+own (a token of the `computer` scope, which opens nothing else): the
+vault's maker sees there, in any window, that the folder or file is kept
+on this computer, whether it is online, and which assistants are here
+([computers.md](computers.md)).
+
 What differs from a vault of this server:
 
 - **No write lock.** A plan is written as the page stood when it was read

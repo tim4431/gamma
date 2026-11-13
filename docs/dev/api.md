@@ -1100,9 +1100,9 @@ Starting a job answers 429 when the account already has 20 queued or running, 50
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/integrations/tokens` | the account's assistant connections, whichever workspace is open (manual tokens and OAuth grants: id, name, dates, scope, `workspace_id`, what it reads: `all_workspaces` or `workspaces`, what it may edit: `edit_all` or `edit_workspaces`, and `asks`: whether each change asks first), the account's workspaces `[{id, name, personal, default, role}]`, the MCP URL and whether browser sign-in is available; session only, never a guest |
-| POST | `/integrations/tokens` | mint a manual token `{name, scope?: read \| write \| feedback, expires_in_days?, workspaces?: [id], all_workspaces?, edit_workspaces?: [id], edit_all?}` (shown once; the workspaces default to the current one; of those, the ones whose notes its MCP connection may edit, [mcp.md](mcp.md) "Editing notes"); at most 20 unexpired per account; `write` (a mirror's push credential, [mirror.md](mirror.md)) is for the current workspace alone and refused to a viewer; `feedback` (everything `read` may, plus answering the comment threads on a work folder's files and setting a Send's state, [feedback.md](feedback.md) "Tokens and MCP") takes several workspaces like `read`, and a viewer may make one |
+| POST | `/integrations/tokens` | mint a manual token `{name, scope?: read \| write \| feedback \| computer, expires_in_days?, workspaces?: [id], all_workspaces?, edit_workspaces?: [id], edit_all?}` (shown once; the workspaces default to the current one; of those, the ones whose notes its MCP connection may edit, [mcp.md](mcp.md) "Editing notes"); at most 20 unexpired per account; `write` (a mirror's push credential, [mirror.md](mirror.md)) is for the current workspace alone and refused to a viewer; `feedback` (everything `read` may, plus answering the comment threads on a work folder's files and setting a Send's state, [feedback.md](feedback.md) "Tokens and MCP") takes several workspaces like `read`, and a viewer may make one; `computer` (a computer's channel to this server, [computers.md](computers.md)) is for the current workspace alone, opens nothing but `/api/computers/announce` and `/poll` (403 elsewhere) and no MCP connection, and a viewer may make one |
 | PATCH | `/integrations/tokens/{id}` | change what a read or feedback connection reads `{workspaces: [id]}` or `{all_workspaces: true}`, each a workspace the account can open (403 otherwise; 400 for a write token), and which of them it may edit, `{edit_workspaces: [id]}` (each one it reads, 400 otherwise, and the account edits, 403 otherwise) or `{edit_all: true}` (with `all_workspaces`); left out, none; and `asks` (bool): whether each change it makes asks first, left out as it was |
-| DELETE | `/integrations/tokens/{id}` | revoke a connection |
+| DELETE | `/integrations/tokens/{id}` | revoke a connection: `{ok, revoked}`, `revoked` whether the account had it |
 | POST | `/integrations/device` | `{name}` → `{device_code, user_code, expires_in, interval}`: a setup command's sign-in for a client without its own (DeepSeek Harness); no session, rate-limited per address ([mcp.md](mcp.md) "A setup command's sign-in") |
 | GET | `/integrations/device/request?user_code=` | the consent page's view of a waiting sign-in: `{client_name, user_code, username, csrf, workspaces, default_workspace}` |
 | POST | `/integrations/device/consent` | `{user_code, csrf, workspaces?, all_workspaces?, edit_workspaces?, edit_all?, asks?, feedback?, approve}`: allow or cancel it, once |
@@ -1174,6 +1174,16 @@ Links (prefix `/zotero/links`):
 Session only, never a guest. A link is its owner's: the account recorded
 as its owner that still owns the workspace (anyone else gets 404 and an
 empty list), but `fetch`, which any member may ask for.
+
+### Computers (`routers/computers.py` on every server, `routers/computer_links.py` on the desktop app's own) — see [computers.md](computers.md)
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/computers/announce` | a `computer` token only: `{computer: {id, name}, app, vaults: [{kind: "folder", folder_id, paused} \| {kind: "file", page_id, paused}], assistants: [{name, label, found, ready, version, code}]}` → `{account: {id, username}, computer, workspace: {id}, version, wait}`; 400 malformed, 413 past 64 KiB |
+| GET | `/computers/poll?v=&wait=` | a `computer` token only, held up to 25 s: `{announce: true}` (unknown here, another version, or woken for it), `{wake: [...]}`, or `{}`; 401 when the token went meanwhile |
+| GET | `/pages/{id}/computer` | the signed-in account's computers that keep the page: `{computers: [{id, name, online, since, vault: {kind, name, paused}, assistants}]}`; a session only (a token or the guest 403, a share 404) |
+| GET | `/computer-links` | the desktop app's own server: the account's channels to other servers `{links: [{id, remote_url, workspace_id, account, username, status: {state, error, at}, created_at}]}` |
+| POST | `/computer-links` | the shell's word: `{remote_url, workspace, token, token_id}` → 201 `{link, replaced: {token_id} \| null}`; 400 a refused token or one of another workspace, 409 an older server, 502 unreachable |
+| DELETE | `/computer-links/{id}` | the shell's word: `{ok, token_id}` |
 
 ### Synced vaults and files read where they are (`routers/folder_links.py`, prefix `/api/folder-links`; the desktop app's own server only, 404 elsewhere) — see [synced_vaults.md](synced_vaults.md#the-routes)
 

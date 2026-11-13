@@ -17,6 +17,18 @@
 .vaultAgentProblem { color: var(--warn); }
 .vaultActions { display: flex; flex-direction: column; margin-top: var(--space-1); }
 
+/* On another server, the computer that keeps the page: a dot on the chip's
+   icon and before its state in the card, filled while the computer is
+   online, hollow while it is not. */
+.vaultComputerChip { position: relative; }
+.vaultComputerChip > .vaultComputerDot { position: absolute; right: 3px; bottom: 3px; }
+.vaultComputerDot {
+  display: inline-block; flex: none; width: 7px; height: 7px; border-radius: 50%;
+  box-sizing: border-box; border: 1.5px solid var(--text-muted); background: var(--bg-surface);
+}
+.vaultComputerDot.online { border-color: var(--ok); background: var(--ok); }
+.vaultComputerState { display: flex; align-items: center; gap: var(--space-2); }
+
 /* Add to library…: the folder list, ↑↓ stepping through its rows, and the
    switch under it. */
 .folderPickerList { display: flex; flex-direction: column; max-height: 300px; overflow-y: auto; margin-top: 2px; }

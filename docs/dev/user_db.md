@@ -137,9 +137,11 @@ All state is SQLite + files on disk under a data directory (env
     `(user_id, host)`, each sealed with its account's id, imported by the
     Connector ([extension.md](extension.md));
   - `integration_tokens` — hashed assistant tokens per account, each of one
-    workspace (with a `scope` — `read`, `write`, or `feedback`, a read token
+    workspace (with a `scope` — `read`, `write`, `feedback`, a read token
     that may also reply to and resolve the threads on a work folder's files
-    ([comments.md](comments.md) "Who may comment"); free text, so a scope
+    ([comments.md](comments.md) "Who may comment"), or `computer`, a
+    computer's channel to this server, which opens nothing else
+    ([computers.md](computers.md)); free text, so a scope
     this server does not know reads as `read` — and `workspaces`, what a read
     or feedback token's MCP connection reads beside it: `''`, `'*'` or a JSON
     list), and `mcp_oauth` — the OAuth flow's
@@ -183,6 +185,18 @@ All state is SQLite + files on disk under a data directory (env
     mirrors') and the token's id. What this computer knows of a vault's
     files is in `vaults.db` (below), never here
     ([synced_vaults.md](synced_vaults.md#what-lands-on-disk));
+  - `computers` — what each computer announced over its channel, a row per
+    `computer` token: the account, the workspace, the computer's id for
+    this server and its name, the vaults it keeps here (folder and page ids,
+    paused or not), the assistants there, the app's version and when it was
+    last seen; whether it is online is in memory. Gone with its token, its
+    workspace and its account; additive, never migrated
+    ([computers.md](computers.md));
+  - `computer_links` — on the desktop app's own server, this computer's
+    channels to other servers, a row per server, workspace there and local
+    account: the address, the `computer` token (sealed like a vault's) and
+    its id, the account there and the channel's status; additive
+    ([computers.md](computers.md#the-host));
   - `jobs` — background jobs (exports, backups, restores, imports, the
     search indexer): owner (an account id, `''` for a workspace's own
     work), workspace, kind, parameters, state, last progress, result, error, the produced

@@ -263,6 +263,15 @@ def cached(name: str) -> dict:
     return _answer(name, found=None, ready=None, at=0)
 
 
+def known(name: str) -> dict:
+    """The last probe of ``name`` however old, for a reader that comes back
+    often and needs no fresh one (a computer's channel, every poll): only
+    when none was ever made does it start one, as ``cached`` does; else
+    nothing runs, so it never keeps the agents probed by itself."""
+    hit = _cache.get(name)
+    return dict(hit) if hit is not None else cached(name)
+
+
 def probes(*, fresh: bool = False) -> list[dict]:
     return [probe(name, fresh=fresh) for name in AGENTS]
 

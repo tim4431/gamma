@@ -74,9 +74,10 @@ READ_ONLY_MESSAGE = ("This server is read-only: its plan has lapsed. You can sti
 # too), the export jobs a person leaves with their data through (the
 # downloads themselves are GETs: page and folder exports, workspace
 # backups, server snapshots), marking notices seen and Inbox items read or
-# archived (the account's own bookkeeping), and the admin's Sync now, by
-# which a paid-up server comes back. An entry ending in "/" is a prefix,
-# any other the whole path.
+# archived (the account's own bookkeeping), a computer announcing where the
+# account's vaults are kept (gamma/computers/: no data of the library), and
+# the admin's Sync now, by which a paid-up server comes back. An entry
+# ending in "/" is a prefix, any other the whole path.
 READ_ONLY_ALLOWED = (
     "/api/login",
     "/api/logout",
@@ -85,6 +86,7 @@ READ_ONLY_ALLOWED = (
     "/api/jobs/workspace-export",
     "/api/notices/",
     "/api/inbox/",
+    "/api/computers/announce",
     "/api/admin/hosted/sync",
 )
 # Reads sent as a POST, because their ids do not fit a URL: the file chips'

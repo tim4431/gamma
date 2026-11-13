@@ -276,7 +276,12 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // the chat, or "never"), as the link's `agent` says them. `agents` is what
 // the server finds on this computer (`GET /api/local-agents`' `agents`;
 // null: a server that runs no agents, which then offers none).
-function vault(server, link, servers, roles = null, agents = null) {
+//
+// A vault of another server also says whether this computer is shown there
+// (`computer`, computerLine): `computers` is `{ links, name }`, the server's
+// computer links (`GET /api/computer-links`) and this computer's name; null:
+// not read, and nothing is said.
+function vault(server, link, servers, roles = null, agents = null, computers = null) {
   const s = link.status || {};
   const scope = link.kind === 'file' ? 'file' : 'folder';
   const names = s.folder_path || [];
@@ -309,11 +314,88 @@ function vault(server, link, servers, roles = null, agents = null) {
     agentRuns: agent && agent.runs === 'ask' ? 'ask' : 'never',
     agents: item.work && Array.isArray(agents) ? agentChoices(agents) : null,
   });
+  item.computer = link.remote_url && !item.seen && computers && Array.isArray(computers.links)
+    ? computerLine(item, link, computers) : null;
   const stated = scope === 'file' ? fileState(item, s) : folderState(item, s, left);
   return item.seen ? { ...stated, title: `${stated.title} ${SEEN}` } : stated;
 }
 
 const SEEN = 'Another account made this vault: it, or an editor of the workspace, acts on it.';
+
+const originOf = (url) => {
+  try { return new URL(url).origin; } catch { return url || ''; }
+};
+
+// What a computer link's state reads as after "Shown on NAS as TIM-PC ·",
+// and its tooltip (`remote`, the server's name; `name`, this computer's;
+// `who`, the account there that sees it).
+const COMPUTER_STATES = {
+  connecting: ['connecting', (remote) => `This computer is announcing itself to ${remote}.`],
+  connected: ['connected', (remote, name, who) => `Only ${who} sees on ${remote}, in any window, that this vault is kept on ${name}, whether it is online, and which assistants are here. No path is sent.`],
+  refused: ['refused this computer\'s token', (remote) => `${remote} refused the token this computer shows itself with: it was revoked there, or it expired. Stop showing, then Show this computer there, to hand it a new one.`],
+  older: ['older than this app', (remote) => `${remote} is older than this app, so it cannot show this computer: update it.`],
+  unreachable: ['not reachable', (remote) => `${remote} does not answer now; this computer tries again by itself.`],
+};
+
+// Whether this computer is shown on the server a vault of another server
+// syncs with, as the vault's view says it: the host's computer link of that
+// server and workspace (`computers.links`, `{id, remote_url, workspace_id,
+// account, username, status: {state, error, at}}`), whose channel tells that
+// server, for the vault's maker alone, that the vault is kept on this
+// computer (`computers.name`), whether it is online and which assistants are
+// here, never a path. `{ state, text, title, action, button }`: the line, its
+// tooltip, and the view's action, `hide-computer` (Stop showing) with a link,
+// `show-computer` (Show this computer there) with none; `state` is the
+// link's, or `none`.
+function computerLine(item, link, computers) {
+  const name = computers.name || 'this computer';
+  const shown = computers.links.find((c) => c && originOf(c.remote_url) === originOf(link.remote_url) && c.workspace_id === link.workspace_id);
+  if (!shown) {
+    return { state: 'none', text: `Not shown on ${item.remote}`, action: 'show-computer', button: 'Show this computer there',
+      title: `Show this computer there, and you see on ${item.remote}, in any window, that this vault is kept on ${name}, whether it is online, and which assistants are here. No path is sent.` };
+  }
+  const s = shown.status || {};
+  const state = Object.prototype.hasOwnProperty.call(COMPUTER_STATES, s.state) ? s.state : 'connecting';
+  const [words, why] = COMPUTER_STATES[state];
+  const who = shown.username || 'your account';
+  return { state, text: `Shown on ${item.remote} as ${name} · ${words}`, action: 'hide-computer', button: 'Stop showing',
+    title: `${why(item.remote, name, who)}${s.error && state !== 'connected' ? ` ${said(String(s.error))}` : ''}` };
+}
+
+// What showing this computer on server `remote` came to when it failed, for
+// the bar: a server older than this app refuses a computer's token as it is
+// minted (`minting`: its scopes do not know it, 422) or at the host's check
+// (409); otherwise the server's reason, or the error's.
+function computerFailed(remote, err) {
+  const e = err || {};
+  const detail = e.body && typeof e.body.detail === 'string' ? e.body.detail : '';
+  if (e.status === 409 || (e.minting && e.status === 422)) {
+    return `${remote} is older than this app: it cannot show this computer.`;
+  }
+  return `${remote} cannot show this computer: ${detail || String(e.message || e)}`;
+}
+
+// What showing this computer (`name`) on server `remote` came to, or
+// stopping (`shown` false), for the bar.
+function computerSaid(remote, name, shown) {
+  return shown ? `${name} is shown on ${remote}: only your account there sees it, with the vaults it keeps and the assistants here.`
+    : `${name} is no longer shown on ${remote}; its token there is revoked.`;
+}
+
+// What the bar says when this computer (`name`) stopped showing itself on
+// server `remote` but its token there could not be revoked (the server not
+// reached, the window signed out of it or into another account): the token
+// is left for the person to remove there.
+function computerStranded(remote, name) {
+  return `${name} is no longer shown on ${remote}, but its token there could not be revoked: remove “Gamma desktop: ${name}” in ${remote}'s Settings → Integrations, signed in as the account that made it.`;
+}
+
+// What the bar says when a vault of server `remote` is made while the window
+// is signed in there as another account than the one this computer is shown
+// to (`who`): the link stays theirs, never handed to another account.
+function computerOtherAccount(remote, name, who) {
+  return `${name} is shown on ${remote} to ${who}, not to the account signed in there now: sign in there as ${who}, or Stop showing first.`;
+}
 
 // The agents a work folder may have, by name, in the order the panel
 // offers them (the server's catalog, gamma/local_agents/catalog.py).
@@ -429,11 +511,12 @@ function fileState(item, s) {
 
 // Everything one local server keeps: its answers to the three reads
 // (`zotero`, its Zotero links: none from a server that has no such list),
-// `roles`, the workspaces its account may open, and `agents`, the agents it
-// finds on this computer (vault).
-function itemsOf(server, { mirrors = [], links = [], zotero: zoteroLinks = [], roles = null, agents = null } = {}, servers = []) {
+// `roles`, the workspaces its account may open, `agents`, the agents it
+// finds on this computer, and `computers`, its computer links with this
+// computer's name (vault).
+function itemsOf(server, { mirrors = [], links = [], zotero: zoteroLinks = [], roles = null, agents = null, computers = null } = {}, servers = []) {
   return [...mirrors.map((m) => clone(server, m, servers)), ...(zoteroLinks || []).map((z) => zotero(server, z)),
-    ...links.map((l) => vault(server, l, servers, roles, agents))];
+    ...links.map((l) => vault(server, l, servers, roles, agents, computers))];
 }
 
 // The sync button's reading of all of it: the worst state, a word or two,
@@ -668,4 +751,5 @@ function roundSaid(item, status) {
 }
 
 module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, WHOLE_RULE, firstRound, removalAsk, forceAsk,
-  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, runsAsk, runsSaid };
+  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, runsAsk, runsSaid, computerLine, computerFailed, computerSaid,
+  computerStranded, computerOtherAccount };

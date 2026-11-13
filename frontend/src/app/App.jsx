@@ -244,6 +244,7 @@ import { ZoteroPdfCard, ZoteroReadonlyBadge } from "../collaboration/ZoteroPage.
 import { isVaultConflict } from "../collaboration/conflictKinds.js";
 import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
+import { usePageComputer } from "../vault/usePageComputer.js";
 import { addsToLibrary, carriesToServer, computerAgent, isOpenedPdf, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, vaultConflictsPath } from "../vault/vaultState.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
@@ -1719,6 +1720,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // vault's conflicts and Add to library… read it; the page socket's `vault`
   // reads it again.
   const vault = useVault(focusedBlockId, !shareMode && !!authUser?.user, { track: initialTrack, setStatus: (msg) => setStatus(msg) });
+  // On any server, the computers that keep the open page in a synced vault
+  // of the account's (vault/usePageComputer.js): the chip shows the first
+  // where the page has no standing with this computer; the account's
+  // `computer` nudge reads them again. A guest is never told.
+  const pageComputer = usePageComputer(focusedBlockId, !shareMode && !!authUser?.user && !authUser?.is_guest);
   // A PDF opened from this computer (vault/vaultState.js isOpenedPdf) leaves
   // *Opened files* only through Add to library…, which stores its bytes
   // first (linked_files.add_to_library) (the open page says so itself too:
@@ -5167,6 +5173,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     onInkLive: (msg) => inkLive.receiveInkLive(msg),
     // a synced vault's round touched the page: how it stands with this computer, again
     onVault: vault.refresh,
+    // a computer of the account's came or went: the page's computers, again
+    onComputer: pageComputer.refresh,
   });
   const collabRef = useRef(collab);
   collabRef.current = collab;
@@ -11118,9 +11126,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       open={mergeOpen === focusedBlockId} onOpenChange={(v) => setMergeOpen(v ? focusedBlockId : null)} />
                   </span>
                 ) : null}
-                {/* in the desktop app: the synced vault that keeps the page, or the file an opened PDF is read from */}
-                <VaultChip state={vaultState} open={openPopover === "vault"} canAdd={lib.organize}
-                  onOpenChange={(v) => { if (v) vault.refresh(); setOpenPopover(v ? "vault" : null); }}
+                {/* in the desktop app: the synced vault that keeps the page, or the file an opened PDF is read from;
+                    elsewhere the computer that keeps it */}
+                <VaultChip state={vaultState} computers={pageComputer.computers} open={openPopover === "vault"} canAdd={lib.organize}
+                  onOpenChange={(v) => { if (v) { vault.refresh(); pageComputer.refresh(); } setOpenPopover(v ? "vault" : null); }}
                   onReveal={() => askShell("reveal-on-disk", { page: focusedBlockId })}
                   onEdit={() => vault.setEditing(focusedBlockId)} {...work.chip}
                   onFeedback={work.chip.file && canWriteWorkspace ? () => openFeedback({ kind: "file", id: focusedBlockId }) : undefined} />
