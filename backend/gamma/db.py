@@ -1070,6 +1070,25 @@ FEEDBACK_SCHEMA = [
     ) WITHOUT ROWID""",
     "CREATE INDEX IF NOT EXISTS idx_feedback_waiting ON feedback_request_threads(thread_id) "
     "WHERE answered_at IS NULL",
+    # feedback_request_runs = the run of a computer that holds a request
+    # (gamma/routers/computers.py, a work folder of this server kept on that
+    # computer with an agent): `holder` the computer's token id, `run` the
+    # id the computer minted for the run (its claim's key, so a retry is
+    # told it holds it), `agent`, `seen_at` this server's clock when the run
+    # read its entries and `read` the comment ids it read by thread (JSON),
+    # `ended` '' while it runs, then the state its answers wrote, or
+    # `stopped` once it was withdrawn or refused. Swept with its request.
+    # Additive: no step (docs/dev/migrations.md rule 2).
+    """CREATE TABLE IF NOT EXISTS feedback_request_runs (
+        request_id TEXT PRIMARY KEY,
+        holder TEXT NOT NULL,
+        run TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        seen_at TEXT NOT NULL,
+        read TEXT NOT NULL DEFAULT '{}',
+        ended TEXT NOT NULL DEFAULT ''
+    ) WITHOUT ROWID""",
+    "CREATE INDEX IF NOT EXISTS idx_feedback_runs_holder ON feedback_request_runs(holder, ended)",
 ]
 _CHAT_COLUMNS = {"chats": "bucket, messages, updated_at, title",
                  "chat_history": "id, bucket, title, messages, created_at, updated_at"}

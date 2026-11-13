@@ -120,9 +120,28 @@ export function dateLabel({ date, time }, now = new Date()) {
 // username ("" in a share view), people: the workspace's [{username,
 // role}], known: the Set of usernames a person chip is drawn for}. A
 // comment field and the maker's own comments add `agents`, the work
-// folder's agent on this computer ([{name, label}], vaultState.js
-// mentionAgent), never a note.
+// folder's agent on this computer or on the computer that keeps it
+// ([{name, label, computer?}], vaultState.js mentionAgent, keeperAgent),
+// never a note.
 export const NO_MENTIONS = Object.freeze({ me: "", people: [], known: new Set() });
+
+// Where an agent a comment names works, in the words that name it: "on
+// this computer" for this computer's own, "on TIM-PC" for the agent of the
+// computer that keeps a work folder of this server (`computer`).
+export const agentWhere = (agent) => (agent?.computer ? t("on {computer}", { computer: agent.computer }) : t("on this computer"));
+
+// What waits for an agent whose computer is offline (`online` false): what
+// is sent to it runs once it connects. "" for one online or on this computer.
+export const agentAway = (agent) => (agent?.computer && agent.online === false
+  ? t("{computer} is offline: this runs when it connects.", { computer: agent.computer }) : "");
+
+// An agent chip's title: "Agent: Codex on this computer", "Agent: Codex on
+// TIM-PC".
+function agentTitle(agent) {
+  const label = agent.label || agent.name;
+  return agent.computer ? t("Agent: {agent} on {computer}", { agent: label, computer: agent.computer })
+    : t("Agent: {agent} on this computer", { agent: label });
+}
 
 // What a mention token shows, the rendered view's chip and the editor's
 // alike: {kind ("date" | "remind" | "person" | "agent"), text, title,
@@ -132,7 +151,7 @@ export const NO_MENTIONS = Object.freeze({ me: "", people: [], known: new Set() 
 export function mentionChip(token, { me, known, agents = [] }, now = new Date()) {
   if (token.kind === "person") {
     const agent = agents.find((a) => a.name === token.user);
-    if (agent) return { kind: "agent", text: `@${token.user}`, title: t("Agent: {agent} on this computer", { agent: agent.label || agent.name }) };
+    if (agent) return { kind: "agent", text: `@${token.user}`, title: agentTitle(agent) };
     if (!known.has(token.user)) return null;
     return { kind: "person", text: `@${token.user}`, title: token.user === me ? t("You") : token.user };
   }
@@ -316,8 +335,9 @@ function remindTargets(rest, people, me) {
 //           (remindTargets)
 //   people  {kind: "person", user, you} — `people` ([{username}], the
 //           workspace's; `me` first, "(You)"), then {kind: "agent", name,
-//           label, ready, problem} for each of `agents` (a comment field's:
-//           the work folder's agent on this computer) by its name or label,
+//           label, ready, problem, computer, online} for each of `agents`
+//           (a comment field's: the work folder's agent on this computer,
+//           or on the computer named that keeps it) by its name or label,
 //           a member of its name left out, then {kind: "invite"} when
 //           `canInvite`
 //   pages   {kind: "page", id, title, format, path} — `pages` (App's page
@@ -361,6 +381,7 @@ export function mentionRows({ query = "", people = [], me = "", pages = [], root
   matched.slice(0, PEOPLE_ROWS).forEach(([user]) => add("people", { kind: "person", key: `person:${user}`, user, you: user === me }));
   agents.filter((a) => !q || personRank(a.name, q) != null || personRank(a.label || "", q) != null).forEach((a) => add("people", {
     kind: "agent", key: `agent:${a.name}`, name: a.name, label: a.label || a.name, ready: a.ready, problem: a.problem || "",
+    computer: a.computer || "", online: a.online !== false,
   }));
   if (canInvite && (!q || (q.length >= 2 && "invite".startsWith(q)))) add("people", { kind: "invite", key: "invite" });
 

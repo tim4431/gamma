@@ -63,10 +63,10 @@ test("sendBody carries the minted id, the scope read and the trimmed note, cut t
 
 test("sendAgent reads the document's agent on this computer: ready, not ready, checking, not this Send's, or one to turn on", () => {
   const agent = (extra) => ({ agent: { name: "codex", label: "Codex", ready: true, problem: "", takes: true, why: "", ...extra }, agents_found: true });
-  assert.deepEqual(sendAgent(agent()), { mode: "ready", label: "Codex", problem: "", why: "" });
+  assert.deepEqual(sendAgent(agent()), { mode: "ready", label: "Codex", problem: "", why: "", computer: "", online: true });
   assert.equal(namesAgent(sendAgent(agent())), true);
   assert.deepEqual(sendAgent(agent({ ready: false, problem: "Codex is not on this computer." })),
-    { mode: "not_ready", label: "Codex", problem: "Codex is not on this computer.", why: "" });
+    { mode: "not_ready", label: "Codex", problem: "Codex is not on this computer.", why: "", computer: "", online: true });
   assert.equal(sendAgent(agent({ ready: null })).mode, "checking");
   assert.equal(namesAgent(sendAgent(agent({ ready: null }))), true);
   const other = sendAgent(agent({ takes: false, why: "Only the person who keeps this folder on this computer can send to Codex." }));
@@ -79,6 +79,20 @@ test("sendAgent reads the document's agent on this computer: ready, not ready, c
   assert.equal(sendAgent({ entries: [] }, true).mode, "", "a server without local agents");
   assert.equal(sendAgent(null).mode, "");
   assert.equal(AGENT_MAX, 100);
+});
+
+test("sendAgent reads the agent of the computer that keeps the folder: ready, its problem, or waiting while it is offline", () => {
+  const there = (extra) => ({ agent: { name: "codex", label: "Codex", computer: "TIM-PC", online: true, ...extra } });
+  assert.deepEqual(sendAgent(there()), { mode: "ready", label: "Codex", problem: "", why: "", computer: "TIM-PC", online: true });
+  const away = sendAgent(there({ online: false }));
+  assert.equal(away.mode, "away");
+  assert.equal(away.online, false);
+  assert.equal(namesAgent(away), true, "named on the button: the Send waits for it");
+  assert.deepEqual(sendAgent(there({ problem: "Codex is not signed in on TIM-PC." })),
+    { mode: "not_ready", label: "Codex", problem: "Codex is not signed in on TIM-PC.", why: "", computer: "TIM-PC", online: true });
+  assert.equal(sendAgent(there({ ready: null })).mode, "checking", "a readiness it does give");
+  assert.equal(sendAgent(there({ takes: false, why: "Not yours." })).mode, "other");
+  assert.equal(sendAgent(there({ takes: false, online: false })).mode, "other", "not this Send's: no matter where");
 });
 
 test("othersCount counts the entries someone else opened", () => {

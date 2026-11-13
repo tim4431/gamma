@@ -62,7 +62,8 @@ def create_link(payload: LinkCreate, request: Request):
 
 @router.delete("/{link_id}")
 def delete_link(link_id: str, request: Request):
-    """The channel stops and is forgotten: ``{ok: true, token_id}``, the
+    """The channel stops and is forgotten, the agents of the work folders it
+    announced turned off (``channel.delete``): ``{ok: true, token_id}``, the
     token's id on that server (the desktop app revokes it there). 404 for
     another account's or none."""
     token_id = channel.delete(link_id, _from_shell(request, SHELL_ONLY))

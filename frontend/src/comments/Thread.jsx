@@ -151,7 +151,8 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
 export function Thread({ thread, focused = false, active, onActivate, canComment, me, people, onResolve, onReply, summary = false, ...rest }) {
   const open = isOpen(thread);
   const ref = useRef(null);
-  const chip = sentChip(thread);
+  // The chip names the computer a Send waits for when another keeps the folder (the field's `links.agent`).
+  const chip = sentChip(thread, rest.field?.links?.agent);
   const place = useContext(ThreadPlaceContext)?.(thread) || "";
   useEffect(() => {
     if (focused) ref.current?.scrollIntoView({ block: "nearest" });

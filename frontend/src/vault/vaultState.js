@@ -14,7 +14,8 @@
 // "" for a member who cannot act on the vault: where its files lie is the
 // reading of whoever made it. On any other server the page's chip names
 // the computer that keeps it instead (computerChip, read by
-// usePageComputer.js). Pure: tests/vaultState.test.mjs.
+// usePageComputer.js), and a work folder's agent there (keeperAgent).
+// Pure: tests/vaultState.test.mjs.
 import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { inPlace, isPdf } from "../documents/pageDocument.js";
 
@@ -132,10 +133,12 @@ export function computerAgent(state) {
 // The computers that keep the page in a synced vault of the account's, as
 // the page's server knows them (GET /api/pages/{id}/computer,
 // docs/dev/computers.md): each announces itself to that server over its
-// own channel, `[{id, name, online, since, vault: {kind, name, paused},
-// assistants: [{name, label, found, ready, version, code}]}]`, online ones
-// first. Only the vault's maker is told: `[]` for anyone else, for a
-// server older than the route and for an answer that says nothing.
+// own channel, `[{id, name, online, since, vault: {kind, name, paused,
+// agent}, assistants: [{name, label, found, ready, version, code}]}]`,
+// online ones first; `vault.agent` ({name, label} | null) the agent that
+// answers the Sends of a work folder of that server there. Only the
+// vault's maker is told: `[]` for anyone else, for a server older than the
+// route and for an answer that says nothing.
 export function readComputers(answer) {
   const list = Array.isArray(answer?.computers) ? answer.computers : [];
   return list.filter((c) => c && typeof c === "object" && typeof c.name === "string" && c.name);
@@ -171,8 +174,10 @@ function assistantText(assistant) {
 // went offline; `vault` the folder or file it keeps, as the page's server
 // names it; `paused` whether its vault is paused there ("" if not);
 // `assistants` the assistants found there, a not-ready one saying why (""
-// for none); `title` the lines after the label, for the tooltip. Null for
-// a page no computer of the account's keeps.
+// for none); `agent` the agent there that runs the Sends of the work
+// folder it keeps ("Agent: Codex on TIM-PC", "" for none); `title` the
+// lines after the label, for the tooltip. Null for a page no computer of
+// the account's keeps.
 export function computerChip(computers, now = new Date()) {
   const computer = readComputers({ computers })[0];
   if (!computer) return null;
@@ -186,10 +191,55 @@ export function computerChip(computers, now = new Date()) {
   const found = (Array.isArray(computer.assistants) ? computer.assistants : [])
     .filter((a) => a && typeof a === "object" && a.found !== false && a.code !== "missing"); // found: null while checking
   const assistants = found.length ? t("Assistants there: {names}", { names: found.map(assistantText).join(", ") }) : "";
+  const answers = vaultAgent(computer);
+  const agent = answers ? t("Agent: {agent} on {computer}", { agent: answers.label, computer: name }) : "";
   return {
-    online, label: t("Synced vault on {computer}", { computer: name }), state, vault: kept, paused, assistants,
-    title: [state, kept, paused, assistants].filter(Boolean).join("\n"),
+    online, label: t("Synced vault on {computer}", { computer: name }), state, vault: kept, paused, assistants, agent,
+    title: [state, kept, paused, assistants, agent].filter(Boolean).join("\n"),
   };
+}
+
+// A computer's agent on the work folder it keeps of the page's server
+// (`vault.agent`), {name, label}, or null for none.
+function vaultAgent(computer) {
+  const agent = computer?.vault?.agent;
+  if (!agent || typeof agent !== "object" || typeof agent.name !== "string" || !agent.name) return null;
+  return { name: agent.name, label: String(agent.label || (ASSISTANTS[agent.name] ? t(ASSISTANTS[agent.name]) : agent.name)) };
+}
+
+// How the agent stands on a computer that is online, as its announced
+// assistant says (by its code, never the computer's English problem):
+// {ready, problem}, `ready` null while it is still checking or not
+// announced, `problem` why it cannot run ("" while it can).
+function assistantState(computer, agent) {
+  const found = (Array.isArray(computer.assistants) ? computer.assistants : [])
+    .find((a) => a && typeof a === "object" && a.name === agent.name);
+  const words = { agent: agent.label, computer: computer.name };
+  if (!found || found.code === "checking" || found.ready == null) return { ready: null, problem: "" };
+  if (found.code === "missing" || found.found === false) return { ready: false, problem: t("{agent} is not on {computer}.", words) };
+  if (found.code === "signed_out") return { ready: false, problem: t("{agent} is not signed in on {computer}.", words) };
+  if (found.code === "not_ready" || found.ready === false) return { ready: false, problem: t("{agent} is not ready on {computer}.", words) };
+  return { ready: true, problem: "" };
+}
+
+// The agent a comment on the page can name where this computer has none
+// for it (mentionAgent null: any window but the desktop app's own server's):
+// the agent of the first of the page's computers (readComputers, so the
+// maker's alone) whose work folder of the page's server has one turned on,
+// which the maker's Sends and mentions made here run on
+// (docs/dev/local_agents.md). mentionAgent's {name, label, ready, problem}
+// with `computer` its name and `online` whether it is connected: `ready`
+// and `problem` as its announced assistant says while it is online, null
+// and "" while it is away (the Send waits for it). Null for none.
+export function keeperAgent(computers) {
+  for (const computer of readComputers({ computers })) {
+    const agent = vaultAgent(computer);
+    if (!agent) continue;
+    const online = computer.online === true;
+    const { ready, problem } = online ? assistantState(computer, agent) : { ready: null, problem: "" };
+    return { ...agent, ready, problem, computer: computer.name, online };
+  }
+  return null;
 }
 
 // The banner over the page, in the missing-page notice's slot: a note the

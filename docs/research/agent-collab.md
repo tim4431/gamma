@@ -657,7 +657,7 @@ agent), and a token cannot move them.
 | 3c. The rest of the side | *Continue in a terminal* and *Show in folder*, the agent's model and effort, the reply as it is typed, the selection's source line as a chip, a Background tasks row | built: [dev/local_agents.md](../dev/local_agents.md) "Its model, its typing, a terminal, the sources, Background tasks", "As built (step 3c)" below; later: View diff and Revert, *Open comments on this page (n)*, *Attach what I see*, a folder's computer chat |
 | 4a. The channel and presence | the computer announced to the servers its vaults name over a channel of its own (a `computer` token, an announce and a held poll), presence kept by the server and shown to the vault's maker in any window, the sync panel's line | built: [dev/computers.md](../dev/computers.md), "As built (step 4a)" below |
 | 4b. Work folders of another server | a vault of another server that pushes everything into an empty folder it marks there, the tracking dialog on the host, that server's rules for the mark and its owner's *Let go* | built: [dev/work_folders.md](../dev/work_folders.md) "Work folders of another server", "As built (step 4b)" below |
-| 4c. Their Sends and mentions | run on the computer over the channel: the server's claim, the entries, the answers written by the server | plan |
+| 4c. Their Sends and mentions | run on the computer over the channel: the server's claim, the entries, the answers written by the server | built: [dev/local_agents.md](../dev/local_agents.md) "A work folder of another server", [dev/computers.md](../dev/computers.md) "The Sends", "As built (step 4c)" below |
 | 4d. The chat relayed | the chat's computer side on another server's page, its asks answered on the computer, *Show in folder* and *Continue in a terminal* from the desktop window there | plan |
 | Later | the `acp` driver, delivery to an open session, a co-author's use of the maker's computer, one Inbox item per finished request | |
 
@@ -894,6 +894,28 @@ server" is the reference. Where it went otherwise than planned:
 - **The dialog stays on the computer** (the host's own window, the window
   sent back to that server after), saying what is uploaded there and
   which ticked files may hold secrets.
+
+### As built (step 4c)
+
+[dev/local_agents.md](../dev/local_agents.md) "A work folder of another
+server" and [dev/computers.md](../dev/computers.md) "The Sends" are the
+reference. Where it went otherwise than "How the server sees a vault":
+
+- **Not a relay of the local routes.** The page's server decides whose
+  Send it is and keeps the request, its claim and its answers; the
+  computer pulls the Sends meant for it on the channel (woken by the
+  held poll), claims each for a run it names, and posts its answers. A
+  claim or an answer retried writes nothing twice; a withdraw is never
+  overwritten.
+- **The server writes the agent's replies** (signed `local:<agent>`,
+  with its own clock as `seen`): the computer's token writes no comment.
+- **The computer computes what needs its disk**: the source lines, from
+  the PDF and the sources there; the pictures are fetched from the server.
+- **The binding is announced** with the vault, so the server words the
+  agent and refuses a token's Send while the computer is away; a Send
+  made then waits for it.
+- **Asking stays local**: a server the app did not start gets Sends and
+  mentions, which never ask; the chat (4d) is next.
 
 ### Declined
 

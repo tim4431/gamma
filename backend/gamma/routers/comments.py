@@ -11,7 +11,8 @@ its display name and id (``integrations.display_name``). After each write
 ``comments.written``: the page's room hears ``{t: "comments", block_id,
 thread_id}``, every peer but the writer's tab (``client``), and the write's
 event goes to ``comments.after_write``. A new comment or an edit that
-mentions the work folder's agent on this computer is a Send too
+mentions the work folder's agent (on this computer, or on the computer that
+keeps that folder of this server) is a Send too
 (gamma/local_agents/mention.py), answered as ``send``. A page's Notify me (``/pages/{id}/notify``) is
 what its comments tell the session's account (gamma/inbox.py
 "following a page").
@@ -20,7 +21,7 @@ what its comments tell the session's account (gamma/inbox.py
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import comments, inbox, local_agents
+from .. import comments, inbox
 from ..auth import is_token, require_commenter, resolve_ws, share_scope, share_via, ws_role
 from ..db import connect_pages_db
 from ..integrations import display_name
@@ -85,14 +86,14 @@ def list_comments(page_id: str, request: Request, state: str = "all"):
 
 def _written(request: Request, ws: str, thread: dict, event: dict, client: str) -> dict | None:
     """``comments.written`` for a create's or an edit's event, and the Send
-    it makes when it names the work folder's agent on this computer
+    it makes when it names the work folder's agent, on this computer or on
+    the computer that keeps that folder of this server
     (gamma/local_agents/mention.py, decided once, before the Inbox reads the
     event) → that Send's answer, None when it names none."""
+    from ..local_agents import mention  # local: the agents' modules import the feedback modules
+
     via = share_via(request)
-    mention = None
-    if local_agents.enabled():
-        from ..local_agents import mention  # local: the agents' modules import the feedback modules
-    name = mention.agent_named(ws, event, via=via) if mention else ""
+    name = mention.agent_named(ws, event, via=via)
     if name:
         event = {**event, "agent_named": name}
     comments.written(ws, thread["page_id"], thread["block_id"], thread["id"], event, client=client, via=via)
