@@ -9,7 +9,7 @@ from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from . import upload_gc
 from .db import page_now
-from .documents.model import (SQL_IN_PLACE, SQL_PDF, check_document, copy_document, document, document_props,
+from .documents.model import (SQL_IN_PLACE, check_document, copy_document, document, document_props,
                               document_title, page_document, parse_upload_url, upload_url)
 from .highlights import is_ink, is_link
 from .storage import upload_refs
@@ -822,16 +822,16 @@ def page_in_folder(conn, page_id: str, folder_id: str) -> bool:
 
 
 # The most page ids one search request may name (POST /block-search and
-# /pdf-search: the pages the Ctrl+F panel's filters keep), about 750 KB of
-# body; 413 past it.
+# /document-search: the pages the Ctrl+F panel's predicates keep), about
+# 750 KB of body; 413 past it.
 MAX_SEARCH_PAGES = 50_000
 
 
 def pages_in_scope(conn, scope: list[str]) -> set[str]:
     """The library's pages inside every folder and label of ``scope`` (block
-    ids, the ``scope`` of GET /block-search and /pdf-search; the Ctrl+F
-    panel evaluates its chips in the browser and sends page ids): filed in
-    the folder or below it
+    ids: the ``scope`` of GET /block-search and GET /search, the
+    ``folders`` and ``labels`` of the Ctrl+F panel's POSTs,
+    routers/search.scope_pages): filed in the folder or below it
     (``pages_in_folder``: a sub-page by its top), carrying the label (each
     page its own). An id that is neither reaches none."""
     pages = None
@@ -850,20 +850,26 @@ def pages_in_scope(conn, scope: list[str]) -> set[str]:
 
 
 def root_pages(conn, folder: str = "") -> dict:
-    """{page_id: {"title", "doc_id"}} for the root pages a workspace-wide
-    operation reaches: every live page, sub-pages and a work folder's files
-    included, or — with ``folder`` a folder id — the pages filed in that
-    folder or below it
+    """{page_id: {"title", "doc_id", "format", "ext", "at", "name"}} for the
+    root pages a workspace-wide operation reaches: every live page,
+    sub-pages and a work folder's files included, or — with ``folder`` a
+    folder id — the pages filed in that folder or below it
     (``pages_in_folder``; an id that is no folder reaches none). ``doc_id``
-    is the hash of the PDF the page owns, "" for a page without one (a
-    copy's included)."""
-    pdf = f"CASE WHEN {SQL_PDF} THEN doc_id END"
+    is the hash of the document the page owns, of any format (the generated
+    column), "" for a page without one, a copy and a listed document;
+    ``format``, ``ext``, ``at`` and ``name`` its document's, "" without one
+    (a copy's are its file's)."""
+    columns = ("id, content, doc_id, json_extract(properties, '$.doc.format'), "
+               "json_extract(properties, '$.doc.ext'), json_extract(properties, '$.doc.at'), "
+               "json_extract(properties, '$.doc.name')")
     if folder:
-        rows = conn.execute(f"SELECT id, content, {pdf} FROM unified_blocks WHERE id IN "
+        rows = conn.execute(f"SELECT {columns} FROM unified_blocks WHERE id IN "
                             "(SELECT value FROM json_each(?))", (json.dumps(pages_in_folder(conn, folder)),))
     else:
-        rows = conn.execute(f"SELECT id, content, {pdf} FROM unified_blocks WHERE parent_id = 'root'")
-    return {page_id: {"title": content or "Untitled", "doc_id": doc_id or ""} for page_id, content, doc_id in rows}
+        rows = conn.execute(f"SELECT {columns} FROM unified_blocks WHERE parent_id = 'root'")
+    return {page_id: {"title": content or "Untitled", "doc_id": doc_id or "", "format": format or "",
+                      "ext": ext or "", "at": at or "", "name": name or ""}
+            for page_id, content, doc_id, format, ext, at, name in rows}
 
 
 def tree_rows(conn, tree: str) -> list[tuple]:

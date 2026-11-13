@@ -788,6 +788,27 @@ keystrokes, of a 50-op batch and of a stale set merged into a
 exits with code 5. Under xdist (`-n`) the module skips, since its numbers
 would mean nothing beside the other workers.
 
+The document text index at a work folder's scale is
+`backend/tests/test_search_scale.py` (`-m perf -p no:xdist`): 20,000
+`.tex` files beside 500 library PDFs, 2,000 of them indexed and 18,000
+pending, read in place from paths that are gone.
+
+| Case | Budget (p95) |
+|---|---|
+| `POST /api/document-search {folders: [W]}`, 18,000 pending (one query for what is linked, 200 probes) | 800 ms |
+| `pages_in_scope(conn, [W])` | 100 ms |
+| `index_doc` + `store_docs` of a 3 MB, 60,000-line log | 1,500 ms |
+| the scoped search and a directory's listing while the job runs over the 18,000 | 800 ms, 60 ms |
+| `purge_unused` with 20,500 documents | 300 ms |
+| `purge_doc` of one hash | 5 ms |
+| `documents.text.extract` of a 2 MB `.tex` | 400 ms |
+| `documents.text.read_lines` lines 1–400 of a 64 MB file, with its total | 60 ms |
+
+The scoped search reads every file page's document per request
+(`pages_in_scope` ~70 ms, `root_pages` ~110 ms, `pending` ~65 ms, the MATCH
+~40 ms, measured with other worktrees' tests running, 2026-11): its budget
+is about twice that p95, not 5x an idle one.
+
 The budgets are about 5x the p95 an idle Ryzen 9 9950X3D measured (Node
 22.23, Python 3.12, November 2026), rounded up. Cases near a millisecond
 have about 6 to 8x (the warm eraser flush, a restyle, the one-set

@@ -81,6 +81,7 @@ import { vaultScenarios } from "./scenarios/vaults.mjs";
 import { workFolderScenarios } from "./scenarios/workFolders.mjs";
 import { feedbackScenarios } from "./scenarios/feedback.mjs";
 import { viewerScenarios } from "./scenarios/viewers.mjs";
+import { textSearchScenarios } from "./scenarios/textSearch.mjs";
 import { GROUPS, changedFromGit, selectGroups, shardOf } from "./select.mjs";
 
 const RUNNERS = {
@@ -119,6 +120,7 @@ const RUNNERS = {
   "work-folders": workFolderScenarios,
   "feedback": feedbackScenarios,
   "viewers": viewerScenarios,
+  "text-search": textSearchScenarios,
   "zotero-link": zoteroLinkScenarios,
   "transfers": transferScenarios,
   "mcp": mcpScenarios,

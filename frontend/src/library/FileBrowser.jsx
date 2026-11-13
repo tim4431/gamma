@@ -206,7 +206,7 @@ function ListFindBox({ value, onChange, onEnter, keyLabel, byName = false }) {
 }
 
 // Where the filter box points past itself, to the workspace search over
-// notes and PDF text: a banner when nothing in the listing matched (the
+// notes, PDF and file text: a banner when nothing in the listing matched (the
 // query is filled into the search), else a quiet row under the matches.
 // Neither is a .fileRow / .folderRow, which callers count.
 function ListSearchElsewhere({ query, none, keyLabel, onSearch }) {
@@ -218,7 +218,7 @@ function ListSearchElsewhere({ query, none, keyLabel, onSearch }) {
         </span>
         <button type="button" className="uiBtn primary sm homeSearchBannerBtn" onClick={onSearch}>
           <SearchIcon size={14} />
-          {t("Search inside notes and PDFs")}
+          {t("Search inside notes, PDFs and files")}
           {keyLabel ? <kbd className="homeSearchKey">{keyLabel}</kbd> : null}
         </button>
       </div>
@@ -226,9 +226,9 @@ function ListSearchElsewhere({ query, none, keyLabel, onSearch }) {
   }
   return (
     <button type="button" className="homeSearchMore" onClick={onSearch}
-      title={keyLabel ? t("Search inside notes and PDFs") + ` (${keyLabel})` : undefined}>
+      title={keyLabel ? t("Search inside notes, PDFs and files") + ` (${keyLabel})` : undefined}>
       <SearchIcon size={14} />
-      <span>{t("Also search inside notes and PDFs for “{q}”", { q: query })}</span>
+      <span>{t("Also search inside notes, PDFs and files for “{q}”", { q: query })}</span>
     </button>
   );
 }

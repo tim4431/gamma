@@ -39,7 +39,10 @@ timing tests that run with `-m perf`) and the browser suite's
 `work-folders` group (`frontend/tests/e2e/scenarios/workFolders.mjs`) and
 its `viewers` group (`scenarios/viewers.mjs`: a work folder of eight
 formats, each file opened in its pane, a region's comment reaching the
-feedback document).
+feedback document), and its `text-search` group
+(`scenarios/textSearch.mjs`: a work folder's `.tex` files found by
+search, cited by the chat and read over MCP by their lines). The search
+index at a work folder's scale is `test_search_scale.py` (`-m perf`).
 
 The words used here:
 
@@ -122,7 +125,7 @@ once a bulk trash, when a rule needs it.
 |---|---|---|---|
 | `work_folder` | W's id | vault, mirror | the page is a file of W |
 | `library` | `true`, or absent | vault (from the switch, at the takeover), a person's new note (from the switch, `filing.creation`), Add and Remove (a person, through the op rule), mirror | the file is a library document too |
-| `file_name` | the leaf name of the page's file (`main.pdf`, `notes.md`) | vault, mirror | the list view's Name column, and the path a later step builds from it |
+| `file_name` | the leaf name of the page's file (`main.pdf`, `notes.md`) | vault, mirror | the list view's Name column, and the leaf of the page's path ("Paths" below) |
 
 - `library` exists only beside `work_folder`; clearing it deletes the key.
 - `file_name` is the document's file's leaf for a page with a document
@@ -174,6 +177,38 @@ so the condition is one string: `db.SQL_IN_LISTING`, re-exported by
 it). `normalize.block_columns` drops every index whose statement names a
 stale column anywhere, its condition included, and after the column makes
 the hot ones again, and any other it dropped from its own statement.
+
+### Paths
+
+A file's path in its work folder is the names of its directories below W
+and its `file_name`, joined with `/`, read off the folder tree and the
+stamps with no disk at hand. `work_folders/paths.py` holds the pair:
+`page_path(tree, props, *, title)` gives a page's path (a page
+without `file_name`, a note not yet named by its vault, its title; `""`
+for a page in no work folder; `dir_path(tree, folder, W)` a directory's,
+which feedback's scopes name), and `page_at_path(conn, tree, W, path)` the
+live pages at a path: split on `/` and `\` (empty segments and `.`
+dropped), W's directories descended by name through the tree, the leaf a
+file's `file_name` among the pages filed in that directory (one query on
+`idx_ub_dir`), else a note page by its title with a `.md` dropped, else, for
+a leaf without an extension, the leaf with `.tex`, then `.bib` (LaTeX's
+`\input`, `\include` and `\bibliography` name files without one, and the
+chat's outline prints them as written). Several pages (twin directories,
+twin titles) are all answered, for the caller to refuse naming their ids.
+`work_of_path(conn, tree, path)` is `(W, the rest)` when the path's first
+segment names a work folder.
+
+**The name rule**, one for every name a person or a model types: exactly,
+else ignoring case by `blocks_store.named` (`lower()`, not `casefold()`:
+the web app and the extension compare paths with `toLowerCase()`, and
+"Straße" is not "STRASSE" to any of them). `work_folders_named(tree,
+name_or_id)` applies it to the work folders' roots (an id is itself), and
+feedback's `work_folder_named` builds its 404 and 400 on it
+([feedback.md](feedback.md)). The readers: the feedback document's file
+names (`file_path`, which prefers the vault's rows on the computer that
+holds them), the chat's `read_page(path=…)` and `list_pages`' `path=`, and
+the search's file hits ([api.md](api.md) "Search"). Tests:
+`backend/tests/test_work_folder_paths.py`.
 
 ### Migration step 53
 
@@ -585,9 +620,16 @@ preview joins to their page's other file show ticked, not to be unticked
 alone, and the summary lists them, and says how many chosen files are over
 the keep limit and are listed without their bytes. It carries the library
 switch (off to start for a new work folder, else the link's; it adds notes
-and PDFs, never a file of another format); Save writes the selection and
-the folder's list is read again once the round is over; Cancel on a new
-work folder asks first, then removes it.
+and PDFs, never a file of another format), and under it one line says
+what the AI chat sends: a tracked file's text, to the model provider, when
+the file is in the chat's context, as a PDF's. A secrets file
+(`documents.text.is_secret`: `.env` and `.env.*`, `.netrc`, `.npmrc`,
+`.pypirc`, `.htpasswd`, the ssh keys, `.pem`, `.key`, `.p12`, `.pfx`) is
+the one exception: its text is never indexed, put in a chat's context,
+read by a tool or shown under a chip, though its code view shows it
+([documents.md](documents.md) "Text extraction"). Save writes the
+selection and the folder's list is read again once the round is over;
+Cancel on a new work folder asks first, then removes it.
 
 ## The folder's list view
 
@@ -836,8 +878,10 @@ its check.
 
 **Reaches every live page** (no change): block search by ids and backlinks
 (`IN_PAGE`), `root_pages(conn, "")`, `POST /api/pages/summaries` (the pages
-the listing does not carry, by id), the search index and its readers, the
-share scopes, comments, the Inbox, reports, translation memory,
+the listing does not carry, by id), the search index and its readers (the
+Ctrl+F panel's folder and label chips are resolved on the server,
+`routers/search.scope_pages`, so a work folder's chip reaches its files),
+the share scopes, comments, the Inbox, reports, translation memory,
 publishing (a hosted plan's page cap counts files), the AI's scoped reads
 and its context, the MCP tools, the trash's readers (an entry carries
 `work_folder`, "" for a library page, `deleted_by_vault` and, for a file,
@@ -867,8 +911,12 @@ into a work folder or one of its directories (`import_review.destination`).
 
 - Quick open finds a file only from the open tabs and the recents until
   the Files window (step 5); a typed query finds files through search.
-- The search panel's folder chip on a work folder sees the pages the
-  client knows, until the server resolves a folder scope (step 4).
+- The search panel's qualifiers the listing answers (`year:`, `author:`,
+  `is:pinned`, a negated or several-folder `folder:` …) travel as the
+  listing's page ids, so one of them beside a work folder's chip leaves
+  out the files the library does not list. The chip alone, or beside
+  other chips and `folder:` / `label:` clauses naming one folder or label,
+  is resolved on the server and reaches them.
 - Label views list library pages only.
 - A vault of another server is never a work folder in step 1.
 - A deselected file's last edits are pushed until the next whole round.

@@ -81,16 +81,7 @@ def _named(conn, thread: dict) -> str:
     where = file_path(Tree.read(conn), load_props(row[1]), page_id=thread["page_id"], title=row[0] or "")
     row = conn.execute("SELECT anchor FROM comments WHERE id = ?", (thread["id"],)).fetchone()
     anchor = anchors.parse(row[0] if row else None) or anchors.anchor_of(conn, thread["page_id"], thread["block_id"])
-    if anchor["kind"] == "file":
-        return f"{where}, the whole file"
-    if anchor["kind"] == "region":
-        return f"{where}, a region of the picture"
-    if not anchor.get("page"):
-        return f"{where}, a note"
-    quote = " ".join((anchor.get("quote") or "").split())
-    what = {"passage": f"“{quote[:60]}{'…' if len(quote) > 60 else ''}”", "area": "an area",
-            "ink": "handwriting"}.get(anchor["kind"], "a note")
-    return f"{where}, page {anchor['page']}, {what}"
+    return f"{where}, {anchors.place_words(anchor)}"
 
 
 def _link(base: str, ws: str, thread: dict) -> str:

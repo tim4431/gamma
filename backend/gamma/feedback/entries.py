@@ -26,6 +26,7 @@ from ..documents.model import file_hash, is_image, page_document
 from ..highlights import COORDS
 from ..work_folders.library import work_folder_of
 from ..work_folders.marks import Tree
+from ..work_folders.paths import dir_path, page_path, work_folders_named
 from ..vault.store import in_place
 from . import anchors, pictures
 
@@ -63,31 +64,13 @@ class Scope(NamedTuple):
 
 # --- scopes ------------------------------------------------------------------------
 
-def _dir_path(tree: Tree, folder: str, w: str) -> str:
-    """The path of the directory ``folder`` in the work folder ``w``: the
-    names below W down to it, joined with ``/`` ("" for W itself)."""
-    names, at, seen = [], folder, set()
-    while at and at != w and at in tree.parent and at not in seen:
-        seen.add(at)
-        names.append(tree.names.get(at, ""))
-        at = tree.parent[at]
-    return "/".join(reversed(names))
-
-
 def file_path(tree: Tree, props: dict, paths: dict | None = None, *, page_id: str = "", title: str = "") -> str:
     """A file's path in its work folder: ``paths[page_id]`` when given (the
-    vault's rows on this computer, ``paths_of``), else the names of its
-    directories (from its ``folders[0]`` up to W, W left out) and its
-    ``file_name``, joined with ``/``, else the page's title."""
+    vault's rows on this computer, ``paths_of``), else the tree's
+    (``work_folders.paths.page_path``)."""
     if paths and page_id in paths:
         return paths[page_id]
-    name = props.get("file_name") if isinstance(props.get("file_name"), str) else ""
-    if not name:
-        return title
-    folders = props.get("folders") if isinstance(props.get("folders"), list) else []
-    w = work_folder_of(props)
-    directory = _dir_path(tree, folders[0], w) if folders and tree.work_of(folders[0]) == w else ""
-    return f"{directory}/{name}" if directory else name
+    return page_path(tree, props, title=title)
 
 
 def paths_of(rows: dict) -> dict:
@@ -116,7 +99,7 @@ def resolve_scope(conn, scope_id: str, tree: Tree | None = None) -> Scope:
             raise FeedbackError(400, "Feedback is for a work folder's files.")
         if scope_id == w:
             return Scope("work_folder", w, w, tree.names.get(w, ""))
-        return Scope("folder", scope_id, w, _dir_path(tree, scope_id, w))
+        return Scope("folder", scope_id, w, dir_path(tree, scope_id, w))
     row = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
                        (scope_id,)).fetchone() if scope_id else None
     if not row:
@@ -129,15 +112,12 @@ def resolve_scope(conn, scope_id: str, tree: Tree | None = None) -> Scope:
 
 
 def work_folder_named(conn, name_or_id: str, tree: Tree | None = None) -> Scope:
-    """A work folder by its root folder's id, or by its name (ignoring
-    case; exactly one may carry it). FeedbackError 404 for none, 400 for a
-    name two carry."""
+    """A work folder by its root folder's id, or by its name
+    (``work_folders.paths.work_folders_named``: exactly, else ignoring case;
+    exactly one may carry it). FeedbackError 404 for none, 400 for a name
+    two carry."""
     tree = tree or Tree.read(conn)
-    roots = tree.roots()
-    if name_or_id in roots:
-        return Scope("work_folder", name_or_id, name_or_id, tree.names.get(name_or_id, ""))
-    wanted = (name_or_id or "").strip().casefold()
-    found = [w for w in roots if tree.names.get(w, "").strip().casefold() == wanted]
+    found = work_folders_named(tree, name_or_id)
     if not found:
         raise FeedbackError(404, f"No work folder is named {name_or_id!r}.")
     if len(found) > 1:

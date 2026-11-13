@@ -54,6 +54,7 @@ from ..ops import (MAX_CONTENT, OpError, StorableBody, after_commits, apply_each
 from ..storage import upload_refs
 from ..textnorm import fuzzy_pattern, literal_runs
 from ..work_folders.library import SQL_IN_LISTING
+from .search import scope_pages
 
 router = APIRouter(prefix="/api", tags=["blocks"])
 
@@ -115,16 +116,19 @@ class UBPutChildrenRequest(StorableBody):
 
 
 class NotesSearch(BaseModel):
-    """POST /block-search: the GET's q mode, with the pages the panel's
-    filters keep sent as their ids (``pages``: None for the whole library,
-    [] for none) and the block kinds ``in:`` keeps (``kinds``, [] for
-    all)."""
+    """POST /block-search: the GET's q mode, kept to the folders and labels
+    of the panel's chips (``folders``, ``labels``) and the pages its
+    predicates keep, sent as their ids (``pages``: None for the whole
+    library, [] for none) — routers/search.scope_pages — and to the block
+    kinds ``in:`` keeps (``kinds``, [] for all)."""
     q: str = ""
     limit: int = 10
     case: bool = False
     whole: bool = False
     cursor: str = ""
     pages: list[str] | None = None
+    folders: list[str] | None = None
+    labels: list[str] | None = None
     kinds: list[str] = []
 
 
@@ -311,14 +315,15 @@ def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
 
 @router.post("/block-search")
 def block_search_post(payload: NotesSearch, request: Request):
-    """The Ctrl+F panel's notes group: GET /block-search's ``q`` mode with
-    the page ids its filters keep (``pages``, at most MAX_SEARCH_PAGES:
-    413 past it; [] finds nothing) and the block kinds ``in:`` keeps
-    (``kinds``, 400 for one no block has), in the body, since a URL cannot
-    carry a library's ids. It answers what the GET answers, a share token's
-    reach (``?share=``) included: ``pages`` only narrows what the token
-    reaches. A read, though a POST (hosted.POST_READS). Sync def: the scan
-    runs in the threadpool."""
+    """The Ctrl+F panel's notes group: GET /block-search's ``q`` mode inside
+    the folders and labels of its chips and the page ids its predicates
+    keep (``scope_pages``; ``pages`` at most MAX_SEARCH_PAGES: 413 past it;
+    [] finds nothing) and the block kinds ``in:`` keeps (``kinds``, 400 for
+    one no block has), in the body, since a URL cannot carry a library's
+    ids. It answers what the GET answers, a share token's reach
+    (``?share=``) included: the scope only narrows what the token reaches.
+    A read, though a POST (hosted.POST_READS). Sync def: the scan runs in
+    the threadpool."""
     bad = sorted(set(payload.kinds) - SEARCH_KINDS)
     if bad:
         raise HTTPException(status_code=400, detail=f"unknown kind: {', '.join(bad)}")
@@ -328,7 +333,7 @@ def block_search_post(payload: NotesSearch, request: Request):
     share = share_scope(request)
     with connect_pages_db(resolve_ws(request)) as conn:
         reach = share.block_ids(conn) if share is not None else None
-        pages = set(payload.pages) if payload.pages is not None else None
+        pages = scope_pages(conn, payload)
         found = _notes_search(conn, reach, payload.q, payload.limit, payload.case, payload.whole, after, pages,
                               payload.kinds)
         if isinstance(found, dict):

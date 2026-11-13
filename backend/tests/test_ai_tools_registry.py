@@ -176,6 +176,33 @@ def test_agent_system_tells_the_model_how_to_link_pages():
     assert "Use only page ids the tools returned" in text
 
 
+def test_the_prompts_name_text_files_beside_pdfs():
+    """The prompts call a page's document a PDF or a text file: the agent
+    follows a file hit with read_page(from_line=N), reports a file's line,
+    and cites one with a line link whose quote is the line's own text; the
+    read_page spec takes a path and lines, and needs no page_id."""
+    from gamma.ai_tools import CITATION_PROMPT
+
+    text = agent_system(folder(""))
+    assert "what a page, its PDF or its file says" in text
+    assert "Follow a PDF hit with read_page(pdf_page=N), a file hit with read_page(from_line=N)" in text
+    assert "from a file (with its line)" in text
+    assert "a PDF or a text file" in AGENT_PROMPT and "a text file by its line" in AGENT_PROMPT
+    assert "[p. N](/?page=PAGE_ID&pdf_page=N&quote=URL_ENCODED_QUOTE)" in CITATION_PROMPT
+    assert "[<file name>:N](/?page=PAGE_ID&line=N&quote=URL_ENCODED_LINE)" in CITATION_PROMPT
+    assert "a range is [<file name>:N–M](…&line=N-M)" in CITATION_PROMPT
+    assert "Always add &quote=<the percent-encoded verbatim text of line N" in CITATION_PROMPT
+    read_page = next(t["spec"] for t in TOOLS if t["spec"]["name"] == "read_page")
+    assert read_page["parameters"]["required"] == []
+    assert {"path", "from_line", "to_line"} <= set(read_page["parameters"]["properties"])
+    formatted = next(t for t in agent_tools("folder", read_chars=9000) if t["name"] == "read_page")
+    assert "up to 9000" in formatted["description"] and "{" not in formatted["description"]
+    search = next(t["spec"] for t in TOOLS if t["spec"]["name"] == "search_library")
+    assert "read_page(page_id, from_line=N)" in search["description"]
+    listing = next(t["spec"] for t in TOOLS if t["spec"]["name"] == "list_pages")
+    assert "`path=`" in listing["description"] and "read_page(path=…)" in listing["description"]
+
+
 def test_update_plan_is_armed_only_beside_a_change():
     """update_plan has no permission of its own: it is armed last wherever a
     changing tool is, and nowhere a chat cannot change anything (every change

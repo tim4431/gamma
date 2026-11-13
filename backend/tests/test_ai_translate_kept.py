@@ -2,7 +2,7 @@
 and brief kept in the workspace's data.db, read before the server's memory,
 written when the request asks to keep them and its account may
 change the workspace, counted, cleared and forgotten through
-/api/translations, and dropped with the PDF (pdf_index.purge_unused)."""
+/api/translations, and dropped with the PDF (search.index.purge_unused)."""
 
 import json
 import sqlite3
@@ -637,7 +637,8 @@ def test_the_lookup_has_the_translation_request_s_caps(frank):
 
 
 def test_purge_unused_drops_the_kept_translations_of_a_pdf_no_page_carries(frank, monkeypatch):
-    from gamma import pdf_index, translate_store
+    from gamma import translate_store
+    from gamma.search import index as text_index
     from gamma.db import connect_pages_db
 
     ws = workspace_of("tkept_frank")
@@ -648,7 +649,7 @@ def test_purge_unused_drops_the_kept_translations_of_a_pdf_no_page_carries(frank
     translate_store.put(ws, gone, "zh-CN", MODEL, [("h", "of a deleted paper")], brief=True)
     translate_store.put_brief(ws, gone, "zh-CN", MODEL, "a deleted paper's brief")
     with closing(connect_pages_db(ws)) as conn:
-        pdf_index.purge_unused(ws, conn)
+        text_index.purge_unused(ws, conn)
     assert translate_store.lookup(ws, gone, "zh-CN", MODEL, ["h"]) == {}
     assert translate_store.get_brief(ws, gone, "zh-CN", MODEL) is None
     assert _kept(ws, live, ["a paragraph of a live paper"]) == {"a paragraph of a live paper": "T:a paragraph of a live paper"}
@@ -659,7 +660,7 @@ def test_a_duplicated_page_keeps_the_kept_translations_of_the_file_it_shows(fran
     translations. The original deleted for good takes neither away; the
     last page showing the file deleted for good does."""
     from gamma.db import connect_pages_db
-    from gamma import pdf_index
+    from gamma.search import index as text_index
 
     ws = workspace_of("tkept_frank")
     page, doc = _paper(frank, "duplicated")
@@ -681,7 +682,7 @@ def test_a_duplicated_page_keeps_the_kept_translations_of_the_file_it_shows(fran
     # In Recently deleted the copy can still come back, with them.
     assert frank.delete(f"/api/blocks/{copy}").status_code == 200
     with closing(connect_pages_db(ws)) as conn:
-        pdf_index.purge_unused(ws, conn)
+        text_index.purge_unused(ws, conn)
     assert _kept(ws, doc, [text]) == {text: f"T:{text}"}
 
     assert frank.delete(f"/api/trash/{copy}").status_code == 200
@@ -697,7 +698,8 @@ def test_a_duplicated_page_keeps_the_kept_translations_of_the_file_it_shows(fran
 def test_properties_no_parser_reads_as_an_object_never_stop_the_sweep(frank, tag, stored):
     """A merged backup copies rows as they are, so a row may hold what no
     writer here stores. It carries no paper, and the sweep goes on."""
-    from gamma import pdf_index, translate_store
+    from gamma import translate_store
+    from gamma.search import index as text_index
     from gamma.db import connect_pages_db
 
     ws = workspace_of("tkept_frank")
@@ -709,8 +711,8 @@ def test_properties_no_parser_reads_as_an_object_never_stop_the_sweep(frank, tag
                      "updated_at, page_id) VALUES ('oddrow', ?, 'a', '', ?, '', '', ?)", (page, stored, page))
         conn.commit()
         try:
-            assert live in pdf_index._live_docs(conn)
-            pdf_index.purge_unused(ws, conn)
+            assert live in text_index._live_docs(conn)
+            text_index.purge_unused(ws, conn)
         finally:
             conn.execute("DELETE FROM unified_blocks WHERE id = 'oddrow'")
             conn.commit()

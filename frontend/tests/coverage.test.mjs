@@ -21,6 +21,50 @@ test("the pages a reply's tools read merge into spans per page", () => {
   assert.deepEqual(unseenSpans(2, 9, [[3, 6], [9, 9]]), [[7, 8]]);
   assert.deepEqual(unseenSpans(9, 9, []), []);
   assert.deepEqual(unseenSpans(2, 0, []), []); // total unknown: nothing to say
+  // Spans past either end are clipped; overlapping ones merge.
+  assert.deepEqual(unseenSpans(0, 10, [[-3, 2], [4, 6], [5, 7], [9, 40]]), [[3, 3], [8, 8]]);
+});
+
+test("a text file's read_page chips are read in lines, apart from a PDF's pages", () => {
+  const actions = [
+    { kind: "read", tool: "read_page", page_id: "f", lines: [401, 800] },
+    { kind: "read", tool: "read_page", page_id: "f", lines: [1200, 1400] },
+    { kind: "read", tool: "read_page", page_id: "f", lines: [790, 900] },
+    { kind: "read", tool: "read_page", page_id: "f", pdf_pages: [3, 5] },
+  ];
+  assert.deepEqual(readSpans(actions, "f", "lines"), [[401, 900], [1200, 1400]]);
+  assert.deepEqual(readSpans(actions, "f"), [[3, 5]]);
+  assert.equal(formatSpans([[401, 900], [1200, 1400]], (n) => n.toLocaleString("en-US")), "401–900, 1,200–1,400");
+  // A log's millions of lines are counted by their spans, not one by one.
+  const started = performance.now();
+  assert.deepEqual(unseenSpans(400, 30_000_000, [[401, 800]]), [[801, 30_000_000]]);
+  assert.ok(performance.now() - started < 50);
+});
+
+test("a text file's context pill says which lines the model saw, read and missed", () => {
+  const n = (v) => v.toLocaleString();
+  const partial = { format: "text", title: "sections/method.tex", page_id: "f", doc_id: "h", native: false,
+    native_requested: false, partial: true, chars: 20000, lines: 2310, lines_shown: 400, pages: 0, pages_shown: 0 };
+  let note = coverageNote(partial, { actions: [], tools: false });
+  assert.equal(note.short, `Model saw lines 1–400 of ${n(2310)}`);
+  assert.match(note.long, new RegExp(`lines 1–400 of ${n(2310)} of “sections/method\\.tex” \\(about 5k tokens\\)`));
+  assert.match(note.long, new RegExp(`Lines 401–${n(2310)} were not seen`));
+  assert.match(note.long, /turn on Tools so it can read and search the whole file/);
+  assert.equal(note.refused, false);
+  // What the tools read on, in lines; a PDF chip on the page does not count.
+  const reads = [{ kind: "read", page_id: "f", lines: [401, 800] }, { kind: "read", page_id: "f", pdf_pages: [1, 2] }];
+  note = coverageNote(partial, { actions: reads, tools: true });
+  assert.equal(note.short, `Model saw lines 1–400 of ${n(2310)} · read lines 401–800 with tools`);
+  assert.match(note.long, /The assistant read lines 401–800 with its tools/);
+  assert.match(note.long, new RegExp(`Lines 801–${n(2310)} were not seen`));
+  assert.doesNotMatch(note.long, /turn on Tools|pages|PDF/);
+  // A file that fit whole says nothing; a text file has no file to refuse.
+  assert.equal(coverageNote({ ...partial, partial: false }), null);
+  assert.equal(coverageNote({ ...partial, partial: false, native_requested: true }), null);
+  // No line count known: the characters, as a PDF's entry falls back to.
+  assert.equal(coverageNote({ ...partial, lines: 0, lines_shown: 0 }).short, `Model saw ${n(20000)} characters`);
+  // An entry without a format, or a PDF's, keeps the PDF's words.
+  assert.equal(coverageNote({ ...partial, format: "pdf", pages: 9, pages_shown: 2 }).short, "Model saw pages 1–2 of 9");
 });
 
 test("the context pill says what the model saw, read and missed", () => {

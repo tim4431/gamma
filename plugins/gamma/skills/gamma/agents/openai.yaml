@@ -2,5 +2,5 @@ interface:
   display_name: "Gamma"
   icon_small: "./assets/icon.png"
   icon_large: "./assets/icon.png"
-  short_description: "Search and read Gamma pages, notes, and PDFs"
+  short_description: "Search and read Gamma pages, notes, PDFs and files"
   default_prompt: "Use $gamma to read the Gamma link I paste and answer my question about that page."

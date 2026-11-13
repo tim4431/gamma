@@ -1,6 +1,7 @@
 // Workspace search (Ctrl+F / Ctrl+Shift+F): one popover covering paper
 // titles, notes/highlights, reference links, the open PDF's text, and the
-// server-side FTS index over every paper's PDF. Extracted from App.jsx.
+// server-side FTS index over the documents' text: every PDF's pages and
+// every text file's lines. Extracted from App.jsx.
 //
 // Matching is separator-tolerant everywhere ("3000" finds "3,000-qubit"):
 // textnorm.js mirrors the backend's gamma/textnorm.py rules (the cases in
@@ -12,19 +13,26 @@
 // sorts through the same scorer), then the open paper (its notes, then its
 // PDF text with
 // highlighted, navigable matches), then other notes, reference links, and
-// finally content hits across the rest of the library. Each group pages with
-// a "Show more" (search/searchPages.js).
+// finally the index's hits, the PDFs' pages and the files' lines (the open
+// file's among them: its code view's own find is CodeMirror's). Each group
+// pages with a "Show more" (search/searchPages.js).
 //
 // The box takes qualifiers beside its text (label:, folder:, is:pdf,
 // year:>=2020, -in:pdf …; the grammar is search/queryParse.js, what each
 // means search/searchFilters.js), and Tab makes a label or folder chip as
-// before. The chips and the page-level qualifiers are evaluated here on
-// the library listing; the pages they keep go to the server by id, so it
-// ranks and limits inside them. A qualifier it cannot apply is searched as
+// before. A chip, or a clause naming one folder or label, goes to the
+// server as its id and is resolved there, so a work folder's chip reaches
+// files the library listing never carries; the other qualifiers are
+// evaluated here on the listing, and the pages they keep go by id. The
+// server ranks and limits inside them, and its answer for a run is shown
+// whole: only the groups matched here (titles, the open PDF) keep to the
+// listing. A qualifier it cannot apply is searched as
 // text, under an amber line that says why. Opening a library hit
 // keeps the search "pinned": once the paper renders, the query is re-found
 // with pdf.js and the match is highlighted and scrolled into view — positions
 // come from the same engine that draws the page, so they are always exact.
+// A file's hit names its line, and opens the file there (openPageLink, the
+// route of a chat's line link).
 
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
@@ -37,10 +45,10 @@ import { Chevron, MorphText } from "../shared/ui/MotionWidgets";
 import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
 import { createTitleScorer } from "../library/librarySearch";
 import { PAGE_PATH_SEP, filingChips, pagePathLabel } from "../library/libraryUtils";
-import { pageDocument } from "../documents/pageDocument.js";
+import { isPdf, pageDocument } from "../documents/pageDocument.js";
 import { markedParts, plainSnippet } from "./snippets";
 import { guideEvents } from "../guide/events.js";
-import { NOTES_PAGE, PDF_PAGE, TITLES_PAGE, appendNew, searchBody } from "./searchPages";
+import { DOC_PAGE, NOTES_PAGE, TITLES_PAGE, appendNew, docHitKey, searchBody } from "./searchPages";
 import { tokenAt } from "./queryParse";
 import { QUALIFIERS, applySuggestion, pageSet, resolveFilters, suggest } from "./searchFilters";
 import { composing } from "../shared/lib/hotkeys.js";
@@ -72,13 +80,17 @@ export function MarkedText({ text, query, opts, lead = 0 }) {
 
 // `button` false: the topbar's Search is off the bar (Settings → Appearance ›
 // Top bar), so only the popover lives here, opened by its shortcut or the
-// account menu's row.
+// account menu's row. `openPageLink(id, target)` opens a page at a place
+// (App's, the route of a Gamma link); without it a file's hit opens its
+// page at the top. `indexed`: the workspace's ended indexing jobs, as a
+// key; when one ends the search is asked again, so the hits the indexing
+// hint promised come.
 export default function SearchPanel({
   open, onOpenChange, button = true,
   focusedBlockId, homeBlocks, tree,
-  openBlock,
+  openBlock, openPageLink,
   pdfSearchRef, scrollToRef, cancelCoarseRestoreRef, setPdfHidden, docNonce,
-  onFindMarks, detailsDefault, wakeTasks, initialQuery = "",
+  onFindMarks, detailsDefault, wakeTasks, indexed = "", initialQuery = "",
 }) {
   const [query, setQuery] = useState("");
   const [caret, setCaret] = useState(0); // where the caret is in the box: the dropdown completes the token there
@@ -89,14 +101,15 @@ export default function SearchPanel({
   const [noteHits, setNoteHits] = useState([]); // /api/block-search
   const [notesPartial, setNotesPartial] = useState(false); // its scan stopped at the server's time budget
   const [notesNext, setNotesNext] = useState(""); // its `next`: the cursor of the following page
-  const [libHits, setLibHits] = useState([]);   // /api/pdf-search (FTS over all papers)
+  const [libHits, setLibHits] = useState([]);   // /api/document-search: PDF and file hits, in the index's rank order
   const [libIndexing, setLibIndexing] = useState(0);
   const [libNext, setLibNext] = useState("");
   const [titlesShown, setTitlesShown] = useState(TITLES_PAGE);
   const [filtersShown, setFiltersShown] = useState(TITLES_PAGE);
   const [moreBusy, setMoreBusy] = useState(""); // the group ("notes" / "lib") whose next page is coming
   const runRef = useRef(0); // the search run an answer belongs to: a later one drops it
-  const runPagesRef = useRef(null); // the page ids that run searched in: its "Show more" pages the same set
+  const runAskRef = useRef(null); // the scope that run searched in: its "Show more" pages the same one
+  const runKeyRef = useRef(""); // the filters (searchFilters `key`) the shown server hits were asked with
   const [pdfMatches, setPdfMatches] = useState([]); // pdf.js matches in the open document
   const [findIndex, setFindIndex] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -107,20 +120,36 @@ export default function SearchPanel({
   // be highlighted in the paper it navigated to.
   const [pinned, setPinned] = useState(false);
   const pendingFindRef = useRef(null); // {page, sinceNonce} — jump here once the target doc renders
+  // An indexing job ended while the shown answer had documents not indexed
+  // yet: the search is asked again, as long as each answer has fewer (a
+  // linked file out of reach stays pending and must not loop the job).
+  // `seen` is the re-ask the last run was for, `below` the count to beat.
+  const [reask, setReask] = useState(0);
+  const reaskRef = useRef({ seen: 0, below: Infinity });
+  useEffect(() => {
+    if (libIndexing > 0 && libIndexing < reaskRef.current.below) {
+      reaskRef.current.below = libIndexing;
+      setReask((n) => n + 1);
+    }
+  }, [indexed]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The query read: its free text, the pages the chips and qualifiers keep,
-  // the groups and kinds `in:` keeps, what is searched as text and why
-  // (search/searchFilters.js). Dates are local, so a new day reads it again.
+  // The query read: its free text, its scope and the pages its predicates
+  // keep, the groups, kinds and formats `in:` keeps, what is searched as
+  // text and why (search/searchFilters.js). Dates are local, so a new day
+  // reads it again.
   const pagesById = useMemo(() => new Map(homeBlocks.map((b) => [b.id, b])), [homeBlocks]);
   const today = new Date().toDateString();
   const filters = useMemo(() => resolveFilters(query, labels, { tree, pagesById, now: new Date() }),
     [query, labels, tree, pagesById, today]); // eslint-disable-line react-hooks/exhaustive-deps
   const q = filters.text;
   const sources = filters.sources;
-  // The listing's pages the filters keep ({ids, key}; ids null without a
-  // filter): the search follows it, running again when membership changes.
-  const filterPages = useMemo(() => pageSet(homeBlocks, filters.pageTest), [homeBlocks, filters.pageTest]);
-  const scopeIds = useMemo(() => (filterPages.ids ? new Set(filterPages.ids) : null), [filterPages.ids]);
+  // The listing's pages ({ids, key}; ids null without a filter) the
+  // predicates keep, which go to the server as `pages`, and the whole
+  // filter keeps, which the groups matched here keep to: the search
+  // follows both, running again when membership changes.
+  const sentPages = useMemo(() => pageSet(homeBlocks, filters.pageTest), [homeBlocks, filters.pageTest]);
+  const listPages = useMemo(() => pageSet(homeBlocks, filters.listTest), [homeBlocks, filters.listTest]);
+  const scopeIds = useMemo(() => (listPages.ids ? new Set(listPages.ids) : null), [listPages.ids]);
 
   useEffect(() => { if (open) setPinned(false); }, [open]);
   // Opened with a query from elsewhere (the home listing's filter box,
@@ -179,10 +208,11 @@ export default function SearchPanel({
   const problems = filters.problems.filter((p) => !(suggestions.length && p.from === caretFrom));
   const titleScoreOf = useMemo(() => createTitleScorer(q, { caseSensitive, wholeWord }),
     [q, caseSensitive, wholeWord, homeBlocks]);
-  // The pages the filters keep, the "Filters:" listing: a label on the
-  // page itself, a folder by where its top is filed (as the server's
+  // The listing pages the filters keep, the "Filters:" listing: a label on
+  // the page itself, a folder by where its top is filed (as the server's
   // blocks_store.pages_in_scope has them), with a query typed its matches
-  // first; ties (and everything at score 0) keep library order.
+  // first; ties (and everything at score 0) keep library order. A work
+  // folder's files the listing lacks are found by the groups below.
   const filterMatches = useMemo(() => {
     if (!scopeIds) return [];
     const members = homeBlocks.filter((b) => scopeIds.has(b.id));
@@ -192,9 +222,12 @@ export default function SearchPanel({
   // The typed clauses that keep pages, as the listing's header names them.
   const pageClauses = filters.clauses.filter((c) => c.key !== "in");
   // The groups searched: the notes request when in: keeps a block kind,
-  // the open PDF and the library's PDFs when it keeps pdf.
+  // the open PDF and the library's PDFs when it keeps pdf, the files'
+  // text when it keeps files; the documents request for either.
   const wantNotes = filters.kinds === null || filters.kinds.length > 0;
   const wantPdf = sources.has("pdf");
+  const wantFiles = sources.has("files");
+  const wantDocs = filters.formats === null || filters.formats.length > 0;
 
   // ---- find navigation in the open PDF
   function gotoFind(i, list = pdfMatches) {
@@ -216,48 +249,69 @@ export default function SearchPanel({
   useEffect(() => { onFindMarks(marks); }, [marks, onFindMarks]);
 
   // ---- the search itself (debounced; re-runs when a new document renders so
-  // pinned searches follow navigation, and when the filters' pages change).
-  // One page per group, a POST with the page ids the filters keep, so the
-  // server ranks and limits inside them; the run keeps those ids, and its
-  // "Show more" pages the same set.
-  const notesPage = (cursor, pages) => apiJson(`${API}/block-search`, postJson(searchBody(q, {
-    limit: NOTES_PAGE, cursor, pages, kinds: filters.kinds, case: caseSensitive, whole: wholeWord,
+  // pinned searches follow navigation, when the filters' pages change, and
+  // when an indexing job it waited on ends).
+  // One page per group, a POST with the filters' scope (the folder and
+  // label ids, and the page ids the predicates keep), so the server ranks
+  // and limits inside it; the run keeps that scope, and its "Show more"
+  // pages the same one.
+  const notesPage = (cursor, ask) => apiJson(`${API}/block-search`, postJson(searchBody(q, {
+    limit: NOTES_PAGE, cursor, scope: ask.scope, pages: ask.pages, kinds: filters.kinds, case: caseSensitive, whole: wholeWord,
   })));
-  // Full-text over every paper's PDF (server-side FTS index; normalized
+  // Full-text over the documents' text (server-side FTS index; normalized
   // word matching — the Aa/ab toggles only apply to notes and the open
-  // document, whose matches pdf.js lists: the server leaves it out).
-  const libPage = (cursor, pages) => apiJson(`${API}/pdf-search`, postJson(searchBody(q, {
-    limit: PDF_PAGE, cursor, pages, exclude: focusedBlockId || "",
+  // PDF, whose matches pdf.js lists: the server leaves its document out).
+  // The open file stays in: its hits are listed with the others'.
+  const libPage = (cursor, ask) => apiJson(`${API}/document-search`, postJson(searchBody(q, {
+    limit: DOC_PAGE, cursor, scope: ask.scope, pages: ask.pages, exclude: ask.exclude, formats: filters.formats,
   })));
+  // Whether the open page shows a PDF: the listing's document, or the PDF
+  // viewer's search hook (set once a PDF the listing lacks has rendered).
+  const openPdf = () => !!focusedBlockId
+    && (isPdf(pageDocument(pagesById.get(focusedBlockId))) || !!pdfSearchRef.current);
   useEffect(() => {
     // A new run: the last one's answers (its next pages too) are dropped,
     // and its cursors go with them.
     const run = ++runRef.current;
     const current = () => runRef.current === run;
-    const pages = filterPages.ids;
-    runPagesRef.current = pages;
+    if (reask === reaskRef.current.seen) reaskRef.current.below = Infinity; // a run of its own, not a re-ask
+    reaskRef.current.seen = reask;
+    const ask = { scope: filters.scope, pages: sentPages.ids, exclude: openPdf() ? focusedBlockId : "" };
+    runAskRef.current = ask;
     setMoreBusy(""); setNotesNext(""); setLibNext("");
     if (!q || !(open || pinned)) {
       setNoteHits([]); setNotesPartial(false); setLibHits([]); setLibIndexing(0); setPdfMatches([]); setBusy(false);
+      runKeyRef.current = filters.key;
       return;
+    }
+    // The server's hits are its answer for a run's scope, shown as they
+    // came: another filter's go now, not when the new answer comes (a new
+    // query's stay until then, as the box is typed into).
+    if (runKeyRef.current !== filters.key) {
+      runKeyRef.current = filters.key;
+      setNoteHits([]); setNotesPartial(false); setLibHits([]); setLibIndexing(0); setBusy(true);
     }
     const timer = setTimeout(() => {
       setBusy(true);
       let pdfText = 0; // hits inside PDFs, this one's or the library's, for the guide's search tour
+      let fileText = 0; // hits inside text files
       // `partial`: the server's scan ran out of time, so the notes found
       // are only some of them (the notes group says so).
       const none = Promise.resolve({});
-      const notesReq = (wantNotes ? notesPage("", pages) : none)
+      const notesReq = (wantNotes ? notesPage("", ask) : none)
         .then((d) => { if (current()) { setNoteHits(d.blocks || []); setNotesPartial(!!d.partial); setNotesNext(d.next || ""); } })
         .catch(() => { if (current()) { setNoteHits([]); setNotesPartial(false); setNotesNext(""); } });
-      const libReq = (wantPdf ? libPage("", pages) : none)
+      const libReq = (wantDocs ? libPage("", ask) : none)
         .then((d) => {
           if (!current()) return;
-          pdfText += (d.results || []).length;
-          setLibHits(d.results || []);
+          const results = d.results || [];
+          const files = results.filter((r) => r.source === "file").length;
+          fileText += files;
+          pdfText += results.length - files;
+          setLibHits(results);
           setLibIndexing(d.indexing || 0);
           setLibNext(d.next || "");
-          // Missing papers were just scheduled for extraction: wake the
+          // Missing documents were just scheduled for extraction: wake the
           // tasks poller so the progress button appears without waiting
           // for its idle heartbeat.
           if (d.indexing) wakeTasks?.();
@@ -300,11 +354,11 @@ export default function SearchPanel({
       Promise.allSettled([notesReq, libReq, pdfReq]).then(() => {
         if (!current()) return;
         setBusy(false);
-        guideEvents.emit("search.results", { pdf: pdfText > 0 });
+        guideEvents.emit("search.results", { pdf: pdfText > 0, text: fileText > 0 });
       });
     }, 250);
     return () => clearTimeout(timer);
-  }, [q, filters.key, filterPages.key, open, pinned, caseSensitive, wholeWord, docNonce]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [q, filters.key, sentPages.key, listPages.key, open, pinned, caseSensitive, wholeWord, docNonce, reask]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // "Show more": the group's next page, after the hits it lists (dropped
   // when the search moved on meanwhile). The notes cursor of a scan cut
@@ -313,7 +367,7 @@ export default function SearchPanel({
     const run = runRef.current;
     const notes = group === "notes";
     setMoreBusy(group);
-    (notes ? notesPage(notesNext, runPagesRef.current) : libPage(libNext, runPagesRef.current))
+    (notes ? notesPage(notesNext, runAskRef.current) : libPage(libNext, runAskRef.current))
       .then((d) => {
         if (runRef.current !== run) return;
         if (notes) {
@@ -321,7 +375,7 @@ export default function SearchPanel({
           setNotesPartial(!!d.partial);
           setNotesNext(d.next || "");
         } else {
-          setLibHits((prev) => appendNew(prev, d.results || [], (r) => `${r.doc_id}:${r.page}`));
+          setLibHits((prev) => appendNew(prev, d.results || [], docHitKey));
           setLibNext(d.next || "");
         }
       })
@@ -361,12 +415,22 @@ export default function SearchPanel({
     else openBlock(r.id);
   }
 
+  // Open a file's hit at its line: the route a chat's line link takes
+  // (App's openPageLink scrolls the code view to it and marks it once the
+  // text is loaded), so nothing is pinned or polled here.
+  function openFileHit(r) {
+    onOpenChange(false);
+    if (openPageLink) openPageLink(r.page_id, { kind: "line", pageId: r.page_id, line: r.line, to: null, quote: "" });
+    else openBlock(r.page_id, { pushNav: true, link: true });
+  }
+
   // ---- result grouping: titles → this page (notes, then its PDF text) →
-  // other notes → reference links → other pages' PDF content
-  // The filters' pages: titles and the open PDF are kept to them here. The
-  // notes and library hits come kept to them from the server; for them this
-  // only holds back a previous filter's hits (and kinds, and groups) until
-  // the new search answers.
+  // other notes → reference links → other pages' PDFs → the files' lines
+  // The filters' listing pages: titles and the open PDF are kept to them
+  // here. The notes and document hits are the server's answer for the
+  // run's scope, which reaches pages the listing lacks (a work folder's
+  // files): never kept to the listing, only to the kinds and groups in:
+  // keeps.
   const inScope = (pageId) => !scopeIds || scopeIds.has(pageId);
   const inKinds = (r) => !filters.kinds || filters.kinds.includes(r.kind);
   const allTitles = titleScoreOf && sources.has("title")
@@ -376,24 +440,25 @@ export default function SearchPanel({
     : [];
   const titleMatches = allTitles.slice(0, titlesShown);
   const titleIds = new Set(allTitles.map((b) => b.id)); // listed here (or by its "Show more"), not as a note
-  const scopedNotes = (wantNotes ? noteHits : [])
-    .filter((r) => inScope(r.page_root_id || r.id) && inKinds(r) && !(r.kind === "page" && titleIds.has(r.id)));
+  const noteRows = (wantNotes ? noteHits : [])
+    .filter((r) => inKinds(r) && !(r.kind === "page" && titleIds.has(r.id)));
   const inPage = (r) => focusedBlockId && (r.page_root_id === focusedBlockId || r.id === focusedBlockId);
-  const titlesExtra = scopedNotes.filter((r) => r.kind === "page"); // regex-mode / non-home pages
-  const notesHere = scopedNotes.filter((r) => r.kind !== "page" && inPage(r));
-  const notesElsewhere = scopedNotes.filter((r) => r.kind !== "page" && r.kind !== "link" && !inPage(r));
-  const linkHits = scopedNotes.filter((r) => r.kind === "link" && !inPage(r));
-  const libElsewhere = (wantPdf ? libHits : []).filter((r) => r.block_id !== focusedBlockId && inScope(r.block_id));
+  const titlesExtra = noteRows.filter((r) => r.kind === "page"); // regex-mode / non-home pages
+  const notesHere = noteRows.filter((r) => r.kind !== "page" && inPage(r));
+  const notesElsewhere = noteRows.filter((r) => r.kind !== "page" && r.kind !== "link" && !inPage(r));
+  const linkHits = noteRows.filter((r) => r.kind === "link" && !inPage(r));
+  const libElsewhere = (wantPdf ? libHits : []).filter((r) => r.source !== "file" && r.block_id !== focusedBlockId);
+  const fileHits = wantFiles ? libHits.filter((r) => r.source === "file") : [];
   const showPdfMatches = wantPdf && inScope(focusedBlockId);
   const filtersListed = filterMatches.slice(0, filtersShown);
   // An incomplete notes scan is no "No matches.": the notes group says why.
   const anything = titleMatches.length || titlesExtra.length || notesHere.length || notesElsewhere.length
     || linkHits.length || filterMatches.length || (showPdfMatches && pdfMatches.length) || libElsewhere.length
-    || notesPartial || notesNext || libNext;
+    || fileHits.length || notesPartial || notesNext || libNext;
   // What the details list besides the open PDF's matches (the compact bar's
   // summary line).
   const listed = titleMatches.length + titlesExtra.length + notesHere.length + notesElsewhere.length
-    + linkHits.length + filterMatches.length + libElsewhere.length;
+    + linkHits.length + filterMatches.length + libElsewhere.length + fileHits.length;
 
   // One switch for the whole detail area (all the result lists). Its default
   // comes from Settings → Search via the detailsDefault prop (App owns the
@@ -407,10 +472,11 @@ export default function SearchPanel({
   useLayoutEffect(() => { if (open) setShowDetails(detailsDefault); }, [open]);
 
   // Result rows: the page's kind glyph and title (a sub-page's as "Parent ›
-  // Child", the pages above it muted), then one line of text, the query
+  // Child", the pages above it muted; a file's after its directory in its
+  // work folder), then one line of text, the query
   // marked in both (search/snippets.js maps each match back
   // through the normalized text, and marks nothing it cannot place). Notes
-  // show as plain text, not markdown. The library's PDF index ignores the
+  // show as plain text, not markdown. The document index ignores the
   // Aa / ab toggles, so its rows are marked without them.
   // a page's document's format, the glyph's ("" for none)
   const pageFormat = (page) => pageDocument(page)?.format || "";
@@ -420,17 +486,20 @@ export default function SearchPanel({
     <div className="searchSection">{label}{count ? <span className="searchSectionCount">{count}</span> : null}</div>
   );
   const pageTag = (page) => <span className="searchPageTag">{t("p. {page}", { page })}</span>;
-  const resultHead = (pageId, title, format, extra, opts) => {
+  const lineTag = (n) => <span className="searchPageTag">{t("line {n}", { n })}</span>;
+  // What precedes a page's title: the pages a sub-page is in.
+  const pageLead = (pageId) => {
     const path = pagePathLabel(pagesById, pageId);
-    return (
-      <span className="searchResultPage">
-        <FileGlyph format={format} size={14} />
-        {path ? <span className="searchResultPath">{path}{PAGE_PATH_SEP.trimEnd()}</span> : null}
-        <span className="searchResultTitle">{marked(title || t("Untitled"), opts)}</span>
-        {extra}
-      </span>
-    );
+    return path ? `${path}${PAGE_PATH_SEP.trimEnd()}` : "";
   };
+  const resultHead = (pageId, title, format, extra, opts, lead = pageLead(pageId)) => (
+    <span className="searchResultPage">
+      <FileGlyph format={format} size={14} />
+      {lead ? <span className="searchResultPath">{lead}</span> : null}
+      <span className="searchResultTitle">{marked(title || t("Untitled"), opts)}</span>
+      {extra}
+    </span>
+  );
   const kindBadge = (r) => (
     r.kind === "highlight" ? <span className="searchKindBadge">{t("highlight")}</span>
       : r.kind === "link" ? <span className="searchKindBadge">{t("link")}</span>
@@ -466,6 +535,27 @@ export default function SearchPanel({
       <MorphText>{moreBusy === group ? t("Loading…") : t("Show more")}</MorphText>
     </button>
   );
+  // A file's hit: its directory in its work folder before its name (a
+  // library document has no path: the pages it is in, as any page's), the
+  // line it names, and that line as its text. The open file's is tagged
+  // "this file" in place of its directory.
+  const fileRow = (r, i) => {
+    const here = r.page_id === focusedBlockId;
+    const path = r.path || "";
+    const lead = here ? "" : path ? path.slice(0, path.lastIndexOf("/") + 1) : pageLead(r.page_id);
+    const tags = <>{lineTag(r.line)}{here ? <span className="searchKindBadge">{t("this file")}</span> : null}</>;
+    return (
+      <button
+        key={`file-${i}`}
+        className="searchResult"
+        onClick={() => openFileHit(r)}
+        title={t("Open \"{title}\" at line {line}", { title: path || r.title, line: r.line })}
+      >
+        {resultHead(r.page_id, r.title, "text", tags, {}, lead)}
+        <span className="searchResultText">{marked(r.snippet, {})}</span>
+      </button>
+    );
+  };
   const notesElsewhereLabel = focusedBlockId ? t("Other notes") : t("Notes");
   const libLabel = focusedBlockId ? t("Other PDFs") : t("Library PDFs");
 
@@ -549,7 +639,7 @@ export default function SearchPanel({
                   }
                 }}
                 placeholder={labels.length ? t("Search within labeled pages…")
-                  : t("Search titles, notes, and PDF text — Tab adds a filter, or type {example}", { example: PLACEHOLDER_EXAMPLE })}
+                  : t("Search titles, notes, PDF and file text — Tab adds a filter, or type {example}", { example: PLACEHOLDER_EXAMPLE })}
               />
               {suggestions.length ? (
                 <div className="categorySuggestions searchLabelSuggest" role="listbox" aria-label={t("Search filters")}>
@@ -632,7 +722,7 @@ export default function SearchPanel({
                       {t("Filters:")} {[...labels.map((c) => c.name), ...pageClauses.map((c) => c.raw)].join(" + ")}
                     </div>
                     {filterMatches.length === 0 ? (
-                      <div className="searchHint">{pageClauses.length ? t("No pages match these filters.")
+                      <div className="searchHint">{pageClauses.length || labels.some((c) => c.kind === "folder") ? t("No pages match these filters.")
                         : t("No pages carry {which}.", { which: labels.length === 1 ? t("this label") : t("all these labels") })}</div>
                     ) : filtersListed.map((b) => titleRow(b, filingLine(b)))}
                     {filterMatches.length > filtersListed.length
@@ -663,10 +753,7 @@ export default function SearchPanel({
                 {notesNext ? moreButton("notes", () => showMore("notes")) : null}
                 {linkHits.length ? section(t("Reference links"), linkHits.length) : null}
                 {linkHits.map(noteRow)}
-                {libElsewhere.length || libIndexing || libNext ? section(libLabel, libElsewhere.length) : null}
-                {libIndexing ? (
-                  <div className="searchHint">{tn("Indexing {n} PDF in the background — results will fill in shortly.", "Indexing {n} PDFs in the background — results will fill in shortly.", libIndexing)}</div>
-                ) : null}
+                {libElsewhere.length ? section(libLabel, libElsewhere.length) : null}
                 {libElsewhere.map((r, i) => (
                   <button
                     key={`lib-${i}`}
@@ -679,6 +766,11 @@ export default function SearchPanel({
                     <span className="searchResultText">{marked(r.snippet, {})}</span>
                   </button>
                 ))}
+                {fileHits.length ? section(t("Files"), fileHits.length) : null}
+                {fileHits.map(fileRow)}
+                {libIndexing ? (
+                  <div className="searchHint">{tn("Indexing {n} document in the background — results will fill in shortly.", "Indexing {n} documents in the background — results will fill in shortly.", libIndexing)}</div>
+                ) : null}
                 {libNext ? moreButton("lib", () => showMore("lib")) : null}
               </>
             ) : null}

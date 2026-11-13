@@ -62,6 +62,7 @@ export const GROUPS = [
   { id: "work-folders", files: ["workFolders.mjs"], s: 30 },
   { id: "feedback", files: ["feedback.mjs"], s: 60 },
   { id: "viewers", files: ["viewers.mjs"], s: 60 },
+  { id: "text-search", files: ["textSearch.mjs"], s: 26 },
   { id: "mirror", files: ["mirror.mjs"], s: 7 },
   { id: "ink-zoom", files: ["inkZoom.mjs"], s: 7 },
   { id: "trash", files: ["trash.mjs"], s: 5 },
@@ -121,8 +122,9 @@ export const RULES = [
   ["frontend/src/app/**", ALL],
   // the panes a document of another format than PDF gets (the code view, the picture, the player,
   // the file pane; docs/dev/documents.md "Viewers"): a work folder's files are pages of theirs, a
-  // tab group's pane reads one, a share's visitor sees one (the share steps are notes-pdf-share's)
-  ["frontend/src/documents/viewers/**", ["viewers", "work-folders", "tab-groups", "notes-pdf-share"]],
+  // tab group's pane reads one, a share's visitor sees one (the share steps are notes-pdf-share's);
+  // text-search: a line link marks its line in the code view
+  ["frontend/src/documents/viewers/**", ["viewers", "work-folders", "tab-groups", "notes-pdf-share", "text-search"]],
   ["frontend/src/documents/**", ALL], // the document a page carries decides its layout
   // the tab groups' pure model and the read view of a page in a group that is not live
   // (viewers: a code view read in a pane)
@@ -174,8 +176,10 @@ export const RULES = [
   ["frontend/src/editor/MentionMenu.jsx", ["note-mentions", "notes-pdf-share", "inbox"]],
   // the @ menu's state and keys, a note row's and a comment field's
   ["frontend/src/editor/useMentionMenu.js", ["note-mentions", "notes-pdf-share", "comments", "inbox"]],
-  ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties"]],
-  ["frontend/src/chat/**", [...CHAT, "ink-zoom"]], // ink-zoom: a selection's Transcribe reaches the chat's request
+  // (text-search: a note's line link is a pill)
+  ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search"]],
+  // ink-zoom: a selection's Transcribe reaches the chat's request; text-search: a reply's line link
+  ["frontend/src/chat/**", [...CHAT, "ink-zoom", "text-search"]],
   // the Inbox notifications row
   ["frontend/src/settings/SettingsAppearance.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "inbox", "zotero-link"]],
   // the Zotero link's dialog, opened from Workspaces › Clones and Zotero links only (the Account row is SettingsZotero.jsx, below)
@@ -207,8 +211,8 @@ export const RULES = [
   // the library's bulk actions: delete (a folder's pages too), file and label, move into a page, duplicate
   ["frontend/src/library/pageBatch.js", ["trash", "folders", "quick-open", "sub-pages", "files"]],
   ["frontend/src/library/**", ALL], // the home view every scenario opens on
-  // folders, sub-pages: the panel's filter chips and typed qualifiers
-  ["frontend/src/search/**", ["notes-pdf-share", "quick-open", "folders", "sub-pages"]],
+  // folders, sub-pages: the panel's filter chips and typed qualifiers; text-search: the Files group
+  ["frontend/src/search/**", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search"]],
   // cloud-sign-in: the people invited by e-mail and the requests to join
   ["frontend/src/sharing/**", ["notes-pdf-share", "publish", "collab", "cloud-sign-in"]],
   // the Zotero account and links' calls (Account & sync › Zotero, the link dialog)
@@ -242,10 +246,15 @@ export const RULES = [
   ["backend/gamma/ai_protocols/**", [...CHAT, "settings"]],
   // the AI client is the translated view's path to the model too
   ["backend/gamma/ai_client.py", [...CHAT, "settings", "ink-zoom", "translation"]],
+  // text-search: read_page by lines and search_library's file hits, over MCP
+  ["backend/gamma/ai_tools.py", [...CHAT, "settings", "ink-zoom", "text-search"]],
   ["backend/gamma/ai_*.py", [...CHAT, "settings", "ink-zoom"]],
   ["backend/gamma/chatgpt_oauth.py", ["settings"]],
   ["backend/gamma/routers/ai.py", [...CHAT, "settings", "ink-zoom", "translation"]],
   ["backend/gamma/routers/chats.py", CHAT],
+  // a line link read through read_gamma_link
+  ["backend/gamma/mcp_links.py", ["mcp", "text-search"]],
+  ["backend/gamma/mcp_server.py", ["mcp", "text-search"]],
   ["backend/gamma/mcp_*", ["mcp"]],
   ["backend/gamma/integrations.py", ["mcp", "mirror", "settings"]],
   ["backend/gamma/routers/integrations.py", ["mcp", "mirror", "settings"]],
@@ -262,6 +271,8 @@ export const RULES = [
   ["backend/gamma/feedback/**", ["feedback", "viewers"]],
   ["backend/gamma/routers/feedback.py", ["feedback"]],
   ["backend/gamma/md_lens.py", ["vaults"]],
+  // a file's path in its work folder: the feedback entries' file, a search hit's path, read_page(path=…)
+  ["backend/gamma/work_folders/paths.py", ["work-folders", "vaults", "feedback", "text-search"]],
   // work folders: the library rule, the op rule, .gammaignore, the takeover (docs/dev/work_folders.md)
   ["backend/gamma/work_folders/**", ["work-folders", "vaults"]],
   ["backend/gamma/folder_sync.py", []],
@@ -289,12 +300,14 @@ export const RULES = [
   ["backend/gamma/picture.py", [...EXPORTS, "notebooks", "pictures", ...CHAT]],
   ["backend/gamma/pdf_meta.py", PDF_VIEW],
   ["backend/gamma/pdf_text.py", PDF_VIEW],
-  ["backend/gamma/pdf_index.py", ["notes-pdf-share", "quick-open"]],
+  // the one reader of a document's text: the index's of every format, the chat's and the tools' of a text file
+  ["backend/gamma/documents/text.py", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search"]],
+  ["backend/gamma/search/**", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search"]], // the document text index
   ["backend/gamma/highlight_relocate.py", ["notes-pdf-share"]], // the highlights found again in a replaced PDF
   ["backend/gamma/routers/pdf.py", PDF_VIEW],
   ["backend/gamma/textnorm.py", ["notes-pdf-share", "quick-open"]],
   ["backend/gamma/block_index.py", ["notes-pdf-share", "quick-open"]],
-  ["backend/gamma/routers/search.py", ["notes-pdf-share", "quick-open", "folders", "sub-pages"]],
+  ["backend/gamma/routers/search.py", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search"]],
   ["backend/gamma/markdown_zip_import.py", [...EXPORTS, "sub-pages"]], // a Notion export's pages inside pages
   ["backend/gamma/markdown_zip_links.py", [...EXPORTS, "sub-pages"]], // a parent: is read as a link
   ["backend/gamma/notion_import.py", [...EXPORTS, "sub-pages"]],

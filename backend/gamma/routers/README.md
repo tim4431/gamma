@@ -38,7 +38,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `notices.py`  | `/api/notices*`                     | the red dot's feed (gamma/notices.py) and the ack when a notice is seen |
 | `inbox.py`    | `/api/inbox*`                       | the account's Inbox (gamma/inbox.py): its items, the unread count, marks read and archived; a signed-in session only |
 | `mentions.py` | `/api/people`, `/api/reminders*`    | the note editor's @ menu (gamma/mentions.py): a workspace's people, the account's reminders and the ones it dismissed |
-| `search.py`   | `/api/search`, `/pdf-search`, `/search-reindex` | FTS5 search over notes (`block_fts`) and PDF text (`pdf_fts`; PyMuPDF, normalized via `gamma/textnorm.py`), the PDF index built by the workspace's indexing job |
+| `search.py`   | `/api/search`, `/document-search`, `/search-reindex` | FTS5 search over notes (`block_fts`) and the documents' text (`text_fts`: PDF pages and text files' lines, normalized via `gamma/textnorm.py`), the index built by the workspace's indexing job (`gamma/search/`); the scope rule of the panel's POSTs (`scope_pages`) |
 | `links.py`    | `/api/link-preview`                 | a web page's title for link chips (through the SSRF guard, cached in-process) |
 | `clip.py`     | `/api/clip`, `/clip/note`, `/library/*` | the Gamma Connector's endpoints: save a page or a selection, look the library up for the popup |
 | `publisher_sessions.py` | `/api/publisher-sessions*` | publisher sign-in cookies the Connector imports, stored encrypted and write-only |

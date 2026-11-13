@@ -1,10 +1,11 @@
 // Pure library rules: the folder and label trees of the listing, then the
 // dates, the pages' documents and links.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { generateKeyBetween } from "fractional-indexing";
 import {
-  NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
+  LANGUAGE_LABELS, NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
   firstFolderPath, folderAtPath, folderChain, folderCompletion, folderEntries, folderInside, folderMatches,
   folderNeighbour, folderPath, folderPathHolds, folderPathNames, folderPosition, folderPositions, folderSubtree, folderTargets,
   formatFullDate, formatLabel, formatRelativeTime, formatShortDate,
@@ -313,6 +314,10 @@ test("a file's format as the Format column reads it", () => {
   assert.equal(formatLabel({ format: "text", language: "latex" }), "LaTeX");
   assert.equal(formatLabel({ format: "text", language: "cpp" }), "C++");
   assert.equal(formatLabel({ format: "text", language: "toString" }), "Text", "a language without a name of its own");
+  assert.equal(formatLabel({ format: "text", language: "plaintext" }), "Text");
+  // the words the chat's context names a language by too
+  const shared = JSON.parse(readFileSync(new URL("../../tests/shared/formats.json", import.meta.url), "utf8"));
+  assert.deepEqual(LANGUAGE_LABELS, shared.language_names);
   assert.equal(formatLabel({ format: "image" }), "Picture");
   assert.equal(formatLabel({ format: "binary" }), "File");
   assert.equal(formatLabel({ format: "nonsense" }), "");

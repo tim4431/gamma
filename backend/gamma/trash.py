@@ -30,12 +30,12 @@ from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from . import pdf_index
 from .auth import actor_names
 from .blocks_store import TRASH, load_props, trashed_page, write_lock
 from .db import connect_pages_db, format_stamp, parse_stamp, workspace_ids, ws_dir
 from .logbuf import log
 from .ops import delete_page
+from .search import index as text_index
 
 KEEP_DAYS = 30
 SWEEP_INTERVAL_S = 3600  # the app lifespan runs ``sweep`` at startup and this often
@@ -150,7 +150,7 @@ def _swept_after(ws: str, conn):
         yield gone
     finally:
         if gone:
-            pdf_index.purge_unused(ws, conn)
+            text_index.purge_unused(ws, conn)
 
 
 def empty(ws: str, *, actor: str = "") -> list[str]:

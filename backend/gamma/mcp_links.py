@@ -9,19 +9,32 @@ folder link (``?folder=``, the library's address while a folder is browsed)
 or a folder-share link resolves to the folder (``folder``, its id, with its
 path as ``title``) — the same pages the library or the share view lists —
 unless it also names a page. A folder share's ``folder=`` is a folder
-browsed in it, the shared folder or one below it.
+browsed in it, the shared folder or one below it. A page link may name a
+PDF page (``pdf_page``) or a line of its text file (``line``: ``N`` or
+``N-M``), never both, and a quote; beside a folder link alone neither is
+read.
 """
 
+import re
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .auth import ShareScope
 from .blocks_store import PATH_SEP, folder_chain, folder_path, page_root_id
 from .db import connect_pages_db, connect_users_db, share_token_workspace
 
+# A line link's ``line``: one line N or the lines N-M of the page's text
+# file (docs/dev/pdf_citations.md "Line links"), and a quote's length at
+# most; the client's parseGammaLink holds to both (tests/shared/linelinks.json).
+_LINE_RE = re.compile(r"^([0-9]{1,8})(?:-([0-9]{1,8}))?\Z")
+MAX_LINE = 10_000_000
+MAX_QUOTE = 4000
+
 LINK_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {"url": {"type": "string", "minLength": 1, "maxLength": 8192,
-                           "description": "A Gamma page, block, folder, share or folder-share URL, optionally with pdf_page and quote."}},
+                           "description": "A Gamma page, block, folder, share or folder-share URL, optionally with "
+                                          "pdf_page (a PDF page) or line (a text file's line N or lines N-M) "
+                                          "and quote."}},
     "required": ["url"],
 }
 
@@ -57,6 +70,17 @@ def holders(workspaces: list[str], ids: list[str], *, threads=(), requests=()) -
     return found
 
 
+def line_span(raw: str) -> tuple[int, int | None] | None:
+    """A line link's ``line`` value as ``(N, M)``, M None for one line;
+    None for a value that is no line N or range N-M with 1 <= N <= M <=
+    MAX_LINE."""
+    found = _LINE_RE.match(raw or "")
+    if not found:
+        return None
+    line, end = int(found.group(1)), int(found.group(2)) if found.group(2) else None
+    return (line, end) if 1 <= line <= (end or line) <= MAX_LINE else None
+
+
 def resolve_link(workspaces: list[str], base: str, url: str) -> dict:
     """Return a validated reference; caller reads it through the usual
     dispatcher, in the reference's ``workspace_id``."""
@@ -70,11 +94,13 @@ def resolve_link(workspaces: list[str], base: str, url: str) -> dict:
         if parsed.path not in {"", "/"}:
             raise ValueError
         params = parse_qs(parsed.query, keep_blank_values=True, max_num_fields=30)
-        keys = ("ws", "page", "block", "folder", "share", "pdf_page", "quote")
+        keys = ("ws", "page", "block", "folder", "share", "pdf_page", "line", "quote")
         if any(len(params.get(key, [])) > 1 for key in keys):
             raise ValueError
         values = {key: params[key][0] for key in keys if key in params}
-        if any(not value or len(value) > (4000 if key == "quote" else 128) for key, value in values.items()):
+        if values.get("quote") == "":
+            del values["quote"]  # none, as a line link to a blank line writes it
+        if any(not value or len(value) > (MAX_QUOTE if key == "quote" else 128) for key, value in values.items()):
             raise ValueError
     except ValueError:
         raise ValueError("Use a valid Gamma page, block, folder, or share URL.") from None
@@ -129,6 +155,14 @@ def resolve_link(workspaces: list[str], base: str, url: str) -> dict:
         if not raw.isascii() or not raw.isdecimal() or not 1 <= int(raw) <= 1_000_000:
             raise ValueError("pdf_page must be a positive PDF page number.")
         pdf_page = int(raw)
+    line = end = None
+    if "line" in values:
+        span = line_span(values["line"])
+        if not span:
+            raise ValueError("line must be a line number N or a range N-M.")
+        line, end = span
+        if pdf_page:
+            raise ValueError("A link names a PDF page or a line of a text file, not both.")
     with connect_pages_db(ws) as conn:
         if block_id:
             root = page_root_id(conn, block_id)
@@ -148,12 +182,16 @@ def resolve_link(workspaces: list[str], base: str, url: str) -> dict:
         canonical["block"] = block_id
     if pdf_page:
         canonical["pdf_page"] = pdf_page
+    if line:
+        canonical["line"] = values["line"]
     reference = {"workspace_id": ws, "page_id": page_id, "title": row[0] or "Untitled",
                  "url": base + "/?" + urlencode(canonical)}
     if block_id:
         reference["block_id"] = block_id
     if pdf_page:
         reference["pdf_page"] = pdf_page
+    if line:
+        reference["line"], reference["end"] = line, end
     if values.get("quote"):
         reference["selected_quote"] = values["quote"]
     return reference

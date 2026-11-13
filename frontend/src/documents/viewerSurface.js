@@ -11,8 +11,8 @@ import { EXTENSIONS } from "./formats.js";
 // The handlers a surface carries, each null when App gives none (the
 // viewer then leaves the control out: no region drag when read-only, no
 // Show in folder off the desktop).
-const HANDLERS = ["onZoomTo", "onEffectiveScale", "onPlace", "onRegion", "onRegionJump", "onRegionContext", "onRegionThread",
-  "onMarginLost", "onAskRegion", "onReveal"];
+const HANDLERS = ["onZoomTo", "onEffectiveScale", "onPlace", "onMarkDone", "onRegion", "onRegionJump", "onRegionContext",
+  "onRegionThread", "onMarginLost", "onAskRegion", "onReveal"];
 
 // The extensions a replacement of `doc` may bring, for the file picker's
 // accept: the registry rows of the document's format (formats.js), "" for
@@ -23,18 +23,21 @@ export function replaceAccept(doc) {
 }
 
 // `state`: {doc, fileUrl, pageId, readOnly, hidden, phone, scale (App's
-// pdfScale), regions, anchors, flashId, regionMode, commentMargin,
-// marginRef, scrollRef, captureRef}; `handlers`: HANDLERS' functions, or
-// null, and `placeOf()`, where the page's viewer last stood (read once per
-// page: a viewer takes its place as it mounts). → {surface, reportRef}:
-// the surface, memoised on what it shows, and the ref the viewer sets to
-// report its place (App's captureScrollPos calls it before leaving).
+// pdfScale), mark, regions, anchors, flashId, regionMode, commentMargin,
+// marginRef, scrollRef, captureRef}; `mark` a line link's target on this
+// page ({kind: "line", line, to, quote}, or `scrollOnly` for Back's return
+// to a line), which the viewer ends with onMarkDone; `handlers`: HANDLERS'
+// functions, or null, and `placeOf()`, where the page's viewer last stood
+// (read once per page: a viewer takes its place as it mounts). →
+// {surface, reportRef}: the surface, memoised on what it shows, and the ref
+// the viewer sets to report its place (App's captureScrollPos and navEntry
+// call it).
 export function useViewerSurface(state, handlers) {
   const reportRef = useRef(null);
   const fns = useRef(handlers);
   fns.current = handlers;
   const given = HANDLERS.map((k) => !!handlers[k]);
-  const { doc, fileUrl, pageId, readOnly, hidden, phone, scale, regions, anchors, flashId, regionMode, commentMargin,
+  const { doc, fileUrl, pageId, readOnly, hidden, phone, scale, mark = null, regions, anchors, flashId, regionMode, commentMargin,
     marginRef, scrollRef, captureRef } = state;
   const surface = useMemo(() => {
     const call = (k) => (fns.current[k] ? (...args) => fns.current[k]?.(...args) : null);
@@ -42,13 +45,14 @@ export function useViewerSurface(state, handlers) {
       doc, fileUrl, pageId, readOnly, hidden, phone,
       scale: { value: scale, onZoomTo: call("onZoomTo"), onEffectiveScale: call("onEffectiveScale") },
       place: fns.current.placeOf?.() ?? null, onPlace: call("onPlace"), reportRef,
+      mark, onMarkDone: call("onMarkDone"),
       regions, anchors, flashId, regionMode,
       onRegion: call("onRegion"), onRegionJump: call("onRegionJump"), onRegionContext: call("onRegionContext"), onRegionThread: call("onRegionThread"),
       commentMargin, marginRef, onMarginLost: call("onMarginLost"), scrollRef, captureRef,
       onAskRegion: call("onAskRegion"), onReveal: call("onReveal"),
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `given` stands for the handlers' presence
-  }, [doc, fileUrl, pageId, readOnly, hidden, phone, scale, regions, anchors, flashId, regionMode, commentMargin,
+  }, [doc, fileUrl, pageId, readOnly, hidden, phone, scale, mark, regions, anchors, flashId, regionMode, commentMargin,
     marginRef, scrollRef, captureRef, ...given]);
   return { surface, reportRef };
 }

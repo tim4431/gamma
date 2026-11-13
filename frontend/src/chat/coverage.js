@@ -1,20 +1,21 @@
 // What a reply's context pills say: the pages the model was given (the
 // stream's {"context"} line, saved on the message) combined with the pages
-// its tools read (the read_page actions' `pdf_pages`), the turns left out
-// of a conversation too long for the model, the selected passages that
-// went short, a reply cut off at the output limit, one a tool limit or
-// the window stopped (with the Continue both offer), and one that went
-// without tools because its model can't call them. Pure functions, so the
-// chat's component and the test share them.
+// its tools read (the read_page actions' `pdf_pages`; a text file's lines,
+// `lines`), the turns left out of a conversation too long for the model,
+// the selected passages that went short, a reply cut off at the output
+// limit, one a tool limit or the window stopped (with the Continue both
+// offer), and one that went without tools because its model can't call
+// them. Pure functions, so the chat's component and the test share them.
 import { t, tn } from "../shared/i18n/i18n.js";
 import { estimateTokens, fmtTokens } from "./tokenUsage.js";
 
-// The PDF page spans one reply's read_page calls covered on a page, merged
-// and sorted: [[3, 5], [8, 8]].
-export function readSpans(actions, pageId) {
+// The spans one reply's read_page calls covered on a page, merged and
+// sorted: [[3, 5], [8, 8]]. `key` is the chip's field — "pdf_pages" for a
+// PDF's pages, "lines" for a text file's lines.
+export function readSpans(actions, pageId, key = "pdf_pages") {
   const spans = (actions || [])
-    .filter((a) => a.kind === "read" && a.page_id === pageId && Array.isArray(a.pdf_pages) && a.pdf_pages[1])
-    .map((a) => [a.pdf_pages[0], a.pdf_pages[1]])
+    .filter((a) => a.kind === "read" && a.page_id === pageId && Array.isArray(a[key]) && a[key][1])
+    .map((a) => [a[key][0], a[key][1]])
     .sort((a, b) => a[0] - b[0]);
   const out = [];
   for (const [from, to] of spans) {
@@ -25,26 +26,29 @@ export function readSpans(actions, pageId) {
   return out;
 }
 
-// [[3, 5], [8, 8]] → "3–5, 8"
-export function formatSpans(spans) {
-  return spans.map(([from, to]) => (to > from ? `${from}–${to}` : `${from}`)).join(", ");
+// [[3, 5], [8, 8]] → "3–5, 8"; `num` writes one number (a line count's
+// thousands separators).
+export function formatSpans(spans, num = String) {
+  return spans.map(([from, to]) => (to > from ? `${num(from)}–${num(to)}` : num(from))).join(", ");
 }
 
-// The pages of a document the model never saw: neither in the context's
-// head span nor read by a tool. [] when it saw everything or the total is
-// unknown.
+// The pages (or lines) of a document the model never saw: neither in the
+// context's head span nor read by a tool. [] when it saw everything or the
+// total is unknown. Walks the spans, never the units: a log runs to
+// millions of lines.
 export function unseenSpans(shown, total, spans) {
   if (!total) return [];
-  const seen = shown ? [[1, shown], ...spans] : [...spans];
-  const covered = new Array(total + 1).fill(false);
-  for (const [from, to] of seen) for (let p = Math.max(1, from); p <= Math.min(total, to); p++) covered[p] = true;
+  const seen = (shown ? [[1, shown], ...spans] : [...spans])
+    .map(([from, to]) => [Math.max(1, from), Math.min(total, to)])
+    .filter(([from, to]) => from <= to)
+    .sort((a, b) => a[0] - b[0]);
   const out = [];
-  for (let p = 1; p <= total; p++) {
-    if (covered[p]) continue;
-    const last = out[out.length - 1];
-    if (last && last[1] === p - 1) last[1] = p;
-    else out.push([p, p]);
+  let next = 1; // the first unit no span so far covers
+  for (const [from, to] of seen) {
+    if (from > next) out.push([next, from - 1]);
+    next = Math.max(next, to + 1);
   }
+  if (next <= total) out.push([next, total]);
   return out;
 }
 
@@ -60,15 +64,20 @@ export function selectionPlace(selection) {
 
 const SETTINGS_PATH = () => t("Settings / AI / Chat / Context size");
 
+// “A page's title”, cut for a pill's sentence.
+const quoted = (title) => `“${title.slice(0, 48)}${title.length > 48 ? "…" : ""}”`;
+
 // The pill for one context entry (a document the model was given), or null
 // when nothing needs saying: a paper that fit whole, a native attachment
 // the provider took. `actions` are the reply's tool calls (what the
 // assistant read on its own), `tools` whether the reply had tools at all —
 // the advice differs: with tools the assistant can read the rest itself.
+// A text file's entry (`format` "text") counts lines, not pages.
 export function coverageNote(c, { actions = [], tools = false } = {}) {
+  if (c.format === "text") return textCoverageNote(c, { actions, tools });
   const refused = c.native_requested && !c.native;
   if (!refused && !c.partial) return null;
-  const what = c.title ? `“${c.title.slice(0, 48)}${c.title.length > 48 ? "…" : ""}”` : t("the PDF");
+  const what = c.title ? quoted(c.title) : t("the PDF");
   const place = selectionPlace(c.selection);
   const around = c.selection && !c.pages_shown;
   const shown = c.pages_shown && c.pages ? Math.min(c.pages_shown, c.pages) : 0;
@@ -119,6 +128,32 @@ export function coverageNote(c, { actions = [], tools = false } = {}) {
   return { short, long, refused };
 }
 
+// A text file's pill: the entry's `lines` is the file's line count and
+// `lines_shown` the last line the context holds (the head; an outline of
+// the rest rides with it), the read_page chips' `lines` what the tools read
+// on. A text file goes as text, never as a file, so nothing is refused.
+function textCoverageNote(c, { actions, tools }) {
+  if (!c.partial) return null;
+  const num = (n) => n.toLocaleString();
+  const what = c.title ? quoted(c.title) : t("the file");
+  const shown = c.lines_shown && c.lines ? Math.min(c.lines_shown, c.lines) : 0;
+  const read = c.page_id ? readSpans(actions, c.page_id, "lines") : [];
+  const readText = read.length ? formatSpans(read, num) : "";
+  const tokens = c.chars ? t("about {tokens} tokens", { tokens: fmtTokens(estimateTokens(c.chars)) }) : "";
+  const head = shown
+    ? t("lines 1–{n} of {total}", { n: num(shown), total: num(c.lines) })
+    : t("{chars} characters", { chars: num(c.chars || 0) });
+  const span = readText ? `${head} · ${t("read lines {lines} with tools", { lines: readText })}` : head;
+  let long = t("The context holds {span} of {what}{tokens}.", { span: head, what, tokens: tokens ? ` (${tokens})` : "" });
+  if (readText) long += " " + t("The assistant read lines {lines} with its tools.", { lines: readText });
+  const unseen = unseenSpans(shown, c.lines, read);
+  if (unseen.length) long += " " + t("Lines {lines} were not seen.", { lines: formatSpans(unseen, num) });
+  long += " " + (tools
+    ? t("Raise the budget in {path} to give it more up front.", { path: SETTINGS_PATH() })
+    : t("Raise the budget in {path}, or turn on Tools so it can read and search the whole file.", { path: SETTINGS_PATH() }));
+  return { short: t("Model saw {span}", { span }), long, refused: false };
+}
+
 // The pill for the area highlights (Ctrl+drag rectangles) whose pictures
 // went with the notes of a context page (`area_pictures` on its entry).
 export function areaPicturesNote(c) {
@@ -127,7 +162,7 @@ export function areaPicturesNote(c) {
   return {
     short: n === 1 ? t("Picture of 1 area highlight sent") : t("Pictures of {count} area highlights sent", { count: n }),
     long: t("The notes of {what} include rectangle highlights, which have no text; the model got a picture of each region instead (at most a few per page).",
-      { what: c.title ? `“${c.title.slice(0, 48)}${c.title.length > 48 ? "…" : ""}”` : t("the page") }),
+      { what: c.title ? quoted(c.title) : t("the page") }),
     refused: false,
   };
 }

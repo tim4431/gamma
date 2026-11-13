@@ -64,9 +64,9 @@ def org(client, request):
 @pytest.fixture(scope="module")
 def indexed_pdf(org):
     """Page a's PDF with a searchable hit on physical page 3, stored the way
-    the indexer stores a paper (pdf_index.store_doc)."""
+    the indexer stores a paper (search.index.store_doc)."""
     from gamma.db import connect_data_db
-    from gamma.pdf_index import store_doc
+    from gamma.search.index import store_doc
     from gamma.textnorm import normalize_text
 
     _, ids = org

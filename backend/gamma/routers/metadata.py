@@ -51,7 +51,7 @@ from ..ops import StorableBody, after_commit, apply_ops, props_patch
 from ..db import connect_data_db, connect_pages_db, page_now
 from ..documents.model import is_pdf, own_hash, page_document, source_address, stored_name
 from ..logbuf import log
-from ..pdf_index import doc_chars
+from ..search.index import doc_chars
 from ..pdf_text import PDF_EXTRACT_FAILED
 from ..pdf_text import page_count as _page_count
 from ..pdf_text import title_guess as _title_guess
@@ -1262,7 +1262,7 @@ def metadata_status(request: Request):
     own — it still cites; ``has_file`` is false, index fields stay unknown).
     A page whose document is no PDF (a figure, a data file) and that carries
     no record is no paper: left out.
-    Text/index state comes from the FTS index (data.db) — pages=0 rows are
+    Text/index state comes from the FTS index (data.db, text_fts_docs) — units=0 rows are
     recorded extraction failures, ver != INDEX_VERSION means stale; papers the
     index never saw report text_chars = null (unknown until indexed)."""
     ws = require_ws(request)
@@ -1273,7 +1273,7 @@ def metadata_status(request: Request):
     index = {}
     with connect_data_db(ws) as conn:
         chars = doc_chars(conn)  # applies the index's schema first
-        for doc_id, ver, pages in conn.execute("SELECT doc_id, ver, pages FROM pdf_fts_docs"):
+        for doc_id, ver, pages in conn.execute("SELECT doc_id, ver, units FROM text_fts_docs"):
             index[doc_id] = {"ver": ver, "pages": pages or 0, "chars": chars.get(doc_id) or 0}
     stored = {name for name, _, _ in storage.list(ws)}  # one listing, not a lookup per paper
     papers = []
@@ -1478,7 +1478,7 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
         # the AI document map and the library-wide Ctrl+F don't wait for the
         # first search to discover it. After our own head extraction: PyMuPDF
         # is serialized behind one lock and the lookup needs its text now.
-        _ensure_indexed(ws, doc_id)
+        _ensure_indexed(ws, view)
     # The first page's largest type: the title on most papers, where the
     # text head can open with a running header, a journal banner or a
     # "Downloaded from" line. A Crossref query, and a place the document's

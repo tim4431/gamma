@@ -20,7 +20,7 @@ import { lockedRow } from "../vault/notesLock.js";
 import { DEFAULT_HIGHLIGHT, darkPageLine } from "../shared/model/palette.js";
 import { blockStyle, isLineStyle } from "../shared/model/markStyle.js";
 import { MarkGlyph } from "../shared/ui/MarkGlyph.jsx";
-import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
+import { citesSeveralSources, gammaLinkId, isSourceLink, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
 import { RecordingCard } from "../recording/RecordingCard";
@@ -35,7 +35,7 @@ import { picturesDrag } from "../markup/pictureUpload.js";
 import { chordFromEvent, composing } from "../shared/lib/hotkeys.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
-import { CitationPill, GammaLinkCard, handleMarkdownCopy, useDockFolded } from "../shared/ui/Widgets";
+import { CitationPill, GammaLinkCard, handleMarkdownCopy, linePlace, useDockFolded } from "../shared/ui/Widgets";
 import { Collapse } from "../shared/ui/MotionWidgets";
 import { DiagramFigure, diagramCodeProps } from "../shared/ui/DiagramFigure";
 import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidth } from "../shared/lib/diagramMarkdown.js";
@@ -491,7 +491,7 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
   // (they still consume an index so the mapping stays aligned).
   const tableInfo = useMemo(() => scanTables(content || ""), [content]);
   const diagramInfo = useMemo(() => scanDiagramFences(content || ""), [content]);
-  const citesSeveral = useMemo(() => citesSeveralPapers(content), [content]);
+  const citesSeveral = useMemo(() => citesSeveralSources(content), [content]);
   return (
     <ReactMarkdown
       // remark-breaks: a single Enter inside a note renders as a real line
@@ -548,16 +548,17 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
               />
             );
           }
-          // A link into this library is not an external chip: a citation
-          // (pasted from a chat answer) is the chat's pill, a copied
-          // page/block link a card. Its id has to resolve here, which also
-          // supplies the card's page title. refLabels holds ids this block's
-          // content mentions, so an id that isn't in the library falls
-          // through to the external chip below, whatever host the URL names.
+          // A link into this library is not an external chip: a citation of
+          // a PDF passage or a file's lines (pasted from a chat answer) is
+          // the chat's pill, a copied page/block link a card. Its id has to
+          // resolve here, which also supplies the card's page title.
+          // refLabels holds ids this block's content mentions, so an id that
+          // isn't in the library falls through to the external chip below,
+          // whatever host the URL names.
           const gl = parseGammaLink(href, window.location.origin);
           const glRef = gl ? refLabels?.[gammaLinkId(gl)] : null;
           if (gl && (!gl.foreign || glRef)) {
-            if (gl.kind === "citation") return <CitationPill link={{ ...gl, href }} multi={citesSeveral}>{children}</CitationPill>;
+            if (isSourceLink(gl)) return <CitationPill link={{ ...gl, href }} multi={citesSeveral}>{children}</CitationPill>;
             return (
               <GammaLinkCard link={{ ...gl, href }} label={glRef?.page_title || glRef?.content}>
                 {children}
@@ -1217,8 +1218,9 @@ const BlockRow = React.memo(function BlockRow({
   }
 
   // A gamma block link pastes as mention chip / synced embed / plain URL; a
-  // page or citation link pastes as the link card; any other URL pastes
-  // as-is (the link chip) or as a titled markdown link.
+  // page link pastes as the link card, a citation or a file's line link as
+  // the citation pill; any other URL pastes as-is (the link chip) or as a
+  // titled markdown link.
   function pasteAsItems(link) {
     if (link?.kind === "block") {
       const blockId = link.blockId;
@@ -1231,6 +1233,15 @@ const BlockRow = React.memo(function BlockRow({
     if (link?.kind === "citation") {
       return [
         { name: "gamma", icon: "citation", label: T("Citation"), hint: t("passage on p. {page}", { page: link.page }) },
+        { name: "url", icon: "url", label: "URL", hint: T("keep the link") },
+      ];
+    }
+    if (link?.kind === "line") {
+      const hint = link.to > link.line
+        ? t("lines {from}–{to} of the file", { from: link.line, to: link.to })
+        : t("line {n} of the file", { n: link.line });
+      return [
+        { name: "gamma", icon: "citation", label: T("Line link"), hint },
         { name: "url", icon: "url", label: "URL", hint: T("keep the link") },
       ];
     }
@@ -1320,16 +1331,20 @@ const BlockRow = React.memo(function BlockRow({
       // Stored host-free: the note keeps working when this library moves to
       // another server (a desktop sidecar, the NAS, a mirror).
       const url = relativeGammaLink(pm.url, window.location.origin);
-      const pageId = gammaLinkId(pm.link);
-      const fallback = pm.link.kind === "citation" ? `p. ${pm.link.page}` : "page";
+      const link = pm.link;
+      const pageId = gammaLinkId(link);
+      // A line link reads as the file's name and line ("method.tex:7",
+      // "method.tex:3–5"), what the AI's citation rule writes.
+      const lines = link.to > link.line ? `${link.line}–${link.to}` : `${link.line}`;
+      const fallback = link.kind === "citation" ? `p. ${link.page}` : link.kind === "line" ? linePlace(link) : "page";
       fetch(withShare(`${API}/block-search?ids=${encodeURIComponent(pageId)}`))
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           const b = d?.blocks?.[0];
           const title = (b?.page_title || b?.content || "").replace(/[[\]\n]/g, " ").trim();
-          const label = pm.link.kind === "citation"
-            ? (title ? `${title}, p. ${pm.link.page}` : fallback)
-            : (title || fallback);
+          const label = !title ? fallback
+            : link.kind === "citation" ? `${title}, p. ${link.page}`
+              : link.kind === "line" ? `${title}:${lines}` : title;
           doReplace(`[${label}](${url})`);
         })
         .catch(() => doReplace(`[${fallback}](${url})`));

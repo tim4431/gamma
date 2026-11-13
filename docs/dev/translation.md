@@ -1586,7 +1586,7 @@ translation without asking a model, after a restart too.
 `gamma/translate_store.py`:
 
 - **Tables** (in `db.DATA_SCHEMA`, which every `data.db` connection
-  applies: derived data, like the PDF text index, so no migration):
+  applies: derived data, like the document text index, so no migration):
   - `pdf_translations (doc_id, lang, model, src, text, brief, at)`, one row
     per paragraph, primary key `(doc_id, lang, model, src)`. `src` is the
     first 32 hex digits of the SHA-256 of the source text as sent (tokens
@@ -1627,7 +1627,7 @@ translation without asking a model, after a restart too.
   generation moved on meanwhile. A forget and a write of the same document
   take turns (32 lock stripes by document; a clear takes them all, in
   order), so no write whose check passed lands after the delete.
-- **Purge**: `pdf_index.purge_unused` calls `translate_store.purge` beside
+- **Purge**: `search.index.purge_unused` calls `translate_store.purge` beside
   `pdf_meta.purge`, so a PDF that leaves the workspace takes its kept
   translations and brief along. A file a duplicated page still shows has
   not left: the sweep reads the file a copy shows (`file_hash`, as

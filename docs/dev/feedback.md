@@ -138,8 +138,10 @@ a live root page with `work_folder` is a `file`. `FeedbackError(404)` for
 no such folder or live page (a page in Recently deleted is none),
 `FeedbackError(400, "Feedback is for a work folder's files.")` for a library
 page or folder. `work_folder_named(conn, name_or_id, tree=None)`: a W by
-its id, or by its name ignoring case when exactly one carries it (404 for
-none, 400 for two: name one by its id). `FeedbackError(status, detail)`
+its id, or by its name when exactly one carries it (404 for none, 400 for
+two: name one by its id), by the work folder name rule of
+`work_folders.paths.work_folders_named`: exactly, else ignoring case with
+`lower()` ([work_folders.md](work_folders.md#paths)). `FeedbackError(status, detail)`
 lives here; the routes answer it as an `HTTPException`, the MCP tools as an
 error text.
 
@@ -158,9 +160,12 @@ gives the ids, oldest first: what a Send names when it names none.
 ### A file's name
 
 `file_path(tree, props, paths=None, *, page_id, title)`: `paths[page_id]`
-when given, else the names of the folders from the page's `folders[0]` up
-to W (W left out) joined with `/`, then its `file_name`; a page without a
-`file_name` (a note page) is named by its title. `paths` is `{page id:
+when given, else the tree's path, `work_folders.paths.page_path`
+([work_folders.md](work_folders.md#paths)): the names of the folders from
+the page's `folders[0]` up to W (W left out) joined with `/`, then its
+`file_name`; a page without a `file_name` (a note page) is named by its
+title. The disk's override is feedback's alone; the chat's tools and the
+search name a file by `page_path`. `paths` is `{page id:
 path}` from the vault's rows on this computer (`paths_of(vault.store.files(link_id))`:
 each page at its PDF row's path, else its notes row's; tombstones, a row
 with `was` or an in-place one, left out), what the files' writer passes so

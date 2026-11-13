@@ -56,7 +56,8 @@ vault/links.py     links, pictures and highlights, block by block, between the f
 vault/upgrade.py   a folder kept on disk before synced vaults, taken onto the engine
 md_lens.py         the lens between a Markdown file and a page's blocks
 linked_files.py    files read where they are on this computer: a vault's PDFs, Opened files, the follow worker
-work_folders/      a work folder's rules: the library switch, the op rule, .gammaignore, the tracking dialog, the takeover (docs/dev/work_folders.md)
+documents/         a page's document (docs/dev/documents.md): formats (the format registry), model (the stored shape and its view), text (a document's text for the index and the chat)
+work_folders/      a work folder's rules: the library switch, the op rule, .gammaignore, the tracking dialog, the takeover, a file's path in it (paths) (docs/dev/work_folders.md)
 feedback/          comments on a work folder's files as feedback files an agent reads and answers (docs/dev/feedback.md)
 zotero_sync.py     Zotero links: a personal workspace kept in step with a Zotero library (docs/dev/zotero_sync.md): the registry, the round, conflicts, the clock
 zotero_sync_rows.py    what the engine's parts share: the link's row, the round's state, pages.db rows, conflict rows and log lines
@@ -93,7 +94,7 @@ ink_view.py        handwriting as a picture for a vision model (the view_ink too
 notebook.py        notebook pages: paper rules, sheets, the notebook as a PDF (docs/dev/notebooks.md)
 recording.py       audio recordings: the recording block's rules, its label and export line, the transcribe job
 block_index.py     the notes index (block_fts in pages.db, kept by triggers): its queries
-pdf_index.py       the PDF text index (pdf_fts in data.db): schema, writes, queries
+search/            the document text index (text_fts in data.db): index (schema, writes, queries), indexer (extraction, the indexing job), hits (the one hit builder)
 pdf_meta.py        a PDF's manifest for the viewer: bytes, page count, page sizes (data.db)
 pdf_text.py        PDF reading through PyMuPDF: text, glyphs, labels, a page as pixels (page_raster, page_rasters)
 textnorm.py        search text normalization and fuzzy matching (both indexes, block search)

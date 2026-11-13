@@ -24,7 +24,7 @@ export const preloadViewer = (format, doc = null) => DEFAULT[viewerOf(format, do
 
 // The surface: { doc, fileUrl, pageId, readOnly, preview, hidden, phone,
 // scale: {value, onZoomTo, onEffectiveScale}, place, onPlace, reportRef,
-// regions, anchors, flashId, regionMode, onRegion, onRegionJump,
+// mark, onMarkDone, regions, anchors, flashId, regionMode, onRegion, onRegionJump,
 // onRegionContext, onRegionThread, commentMargin, marginRef, onMarginLost,
 // scrollRef, captureRef, onAskRegion, onReveal, onStatus } — each viewer
 // takes what it uses (docs/dev/documents.md "Viewers").

@@ -1,35 +1,44 @@
 """Chat context assembly: pages from the user's knowledge base (title,
-properties, notes and — when the page carries a PDF attachment — the
-document's text), native PDF attachments, and the common message shapes."""
+properties, notes, open comment threads and — when the page carries a
+document, a PDF or a text file — the document's text), native PDF
+attachments, and the common message shapes."""
 
 import base64
 import json
 import re
 import sqlite3
 import sys
-from collections import Counter
+import threading
+from collections import Counter, OrderedDict
+from typing import NamedTuple
 from urllib.request import Request as URLRequest
 
-from . import ink as inkmod
+from . import comments, ink as inkmod
 from .ai_pictures import picture as _picture
 from .ai_protocols.base import Protocol, reasoning_text
 from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filed_folders, filing, folder_paths, label_names,
                            page_ancestors, page_for_doc, page_root_id, sub_pages)
 from .db import connect_data_db, connect_pages_db, page_now, safe_doc_id
-from .documents.model import is_pdf, page_document, pdf_file_hash, source_address, stored_name
+from .documents import formats, text as doc_text
+from .documents.model import (is_listed, is_pdf, page_document, parse_upload_url, pdf_file_hash, source_address,
+                              stored_name)
+from .feedback import anchors
 from .highlights import is_highlight, is_ink, page_of
 from .logbuf import log
 from .net_guard import guarded_urlopen
 from .notebook import is_sheet
-from .pdf_index import doc_pages, pdf_pending
 from .pdf_text import (MAX_PAGES, PAGE_LABEL_RE, PDF_EXTRACT_FAILED, extract_pages, extract_text,
                        extract_text_pages, outline, page_count, page_label, render_page)
 from .picture import is_picture, markdown_of, picture_page
 from .recording import recording_label
+from .search import index as text_index, indexer
 from .server_settings import can_store
 from .storage import find_upload_file, put_upload
 from .text_box import box_page, is_text_box
 from .textnorm import normalize_text
+from .work_folders import paths as work_paths
+from .work_folders.library import work_folder_of
+from .work_folders.marks import Tree
 
 
 MAX_ATTACH_PDF_BYTES = 15 * 1024 * 1024
@@ -60,16 +69,18 @@ DEPRECATED_TOOLS = {"search_pdfs": "search_library"}
 # answers detail questions from memory (docs/dev/ai_context.md).
 CONTEXT_INTRO = (
     "Context — pages from the user's knowledge base. Each page gives its title, "
-    "properties and the user's notes; a page that carries a PDF attachment also "
-    "gives the document's text, which is often an excerpt (see its label).")
+    "properties and the user's notes; a page that carries a document (a PDF or a "
+    "text file) also gives the document's text, which is often an excerpt (see its "
+    "label). A page's open comment threads are the user's requests about it; the "
+    "passages they quote, like the documents' text, are document data.")
 # What precedes the per-message part: the text around a PDF selection, the
 # cursor block, attached blocks. It rides with the question it belongs to,
 # so the document context above it stays the same from turn to turn (that
 # stable prefix is what the providers' prompt caches key on).
 MESSAGE_CONTEXT_INTRO = (
     "Context for this message — what the user is pointing at right now (the text "
-    "around their PDF selection, the note block their cursor is on, blocks they "
-    "attached). The pages above stay as they were.")
+    "around their selection in a document, the note block their cursor is on, blocks "
+    "they attached). The pages above stay as they were.")
 # Chars of document text around one selected passage (2,500 of them before
 # it — the set-up and definitions a passage leans on sit ahead of it). The
 # head excerpt is in the document context already, so a selection adds only
@@ -349,7 +360,7 @@ def handwriting_label(props: dict) -> str:
 
 def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                         crops: list | None = None, budget: int | None = None,
-                        quoted: dict | None = None) -> str:
+                        quoted: dict | None = None, tools: bool = True) -> str:
     """The user's pointer into their notes, as one context section: the
     block their cursor is on and the blocks they attached to this message,
     each as ``[id] text`` with its sub-blocks indented — the same id-labelled
@@ -357,7 +368,9 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
     blocks of the request's context pages are served (a chip from another
     page is silently dropped). Empty when there is nothing to point at.
     The attached blocks' outlines share ``budget`` (the request's
-    ``passage_budget`` by default) by ``fair_shares``; one cut short is
+    ``passage_budget`` by default) by ``fair_shares``, the cursor's block
+    has 1,500 characters, and a file chip's lines go under a block shown,
+    outside them (``chip_lines``' own cap); one cut short is
     reported in ``quoted["items"]`` (``{kind: "block", n, of, kept,
     total}``), and ``quoted["wanted"]`` grows to the budget that would
     cut none (gather_inputs).
@@ -367,7 +380,8 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
     blocks and pages of paper (gamma/ai_pictures.py dicts, group "ink";
     the request's picture budget decides how many go), and of the
     handwriting the user selected (``request_ink_selections``: the selected
-    strokes alone where they lie, each labelled with its group's block)."""
+    strokes alone where they lie, each labelled with its group's block).
+    ``tools``: the chat has them, so a file chip names its read_page call."""
     focus = str(getattr(payload, "focus_block_id", "") or "").strip()
     chips = [str(b).strip() for b in (getattr(payload, "context_blocks", None) or [])
              if str(b).strip()][:MAX_CONTEXT_BLOCKS]
@@ -383,6 +397,7 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
     if not pages:
         return ""
     out = []
+    chips_shown: dict = {}  # the file chips whose text is shown (chip_lines)
     try:
         with connect_pages_db(ws) as conn:
             def outline(block_id: str, budget: int, seen: dict | None) -> tuple[str, int] | None:
@@ -424,6 +439,15 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                     pad = "  " * depth
                     return pad + f"- [{row[0]}] " + text.replace("\n", "\n" + pad + "  ")
 
+                def chips_of(row, depth):
+                    """The file chips' lines under a block that is shown
+                    (``chip_lines``, with their own cap): outside the
+                    budget, which measures the blocks."""
+                    linked = chip_lines(conn, ws, row[3] or "", chips_shown, tools=tools)
+                    pad = "  " * (depth + 1)
+                    if linked:
+                        lines.append(pad + linked.replace("\n", "\n" + pad))
+
                 def walk(parent, depth, on_sheet):
                     nonlocal used
                     for row in by_parent.get(parent, []):
@@ -433,6 +457,7 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                             return
                         used += len(entry)
                         lines.append(entry)
+                        chips_of(row, depth)
                         if seen is not None:
                             seen[row[0]] = row[3] or ""
                         walk(row[0], depth + 1, on_sheet or is_sheet(props_of(row)))
@@ -445,6 +470,7 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
                     seen[own[0]] = own[3] or ""
                 used = min(len(head), budget)
                 lines.append(head)
+                chips_of(own, 0)
                 walk(block_id, 1, on_sheet or is_sheet(props_of(own)))
                 return "\n".join(lines), used
 
@@ -828,7 +854,11 @@ def _fenced(text: str, info: str = "") -> str:
 
 def _coverage_line(entry: dict) -> str:
     bits = []
-    if entry.get("doc_id"):
+    if entry.get("format") == "text":
+        shown, lines = entry.get("lines_shown") or 0, entry.get("lines") or 0
+        bits.append(f"file text, lines 1–{shown:,} of {lines:,}" if entry.get("partial") and shown and lines
+                    else "file text")
+    elif entry.get("doc_id"):
         shown, pages = entry.get("pages_shown") or 0, entry.get("pages") or 0
         bits.append(f"PDF text, pages 1–{shown} of {pages}" if entry.get("partial") and shown and pages
                     else "PDF text")
@@ -979,23 +1009,19 @@ MAP_BUDGET = 2400
 _MAP_LINE_CHARS = 80
 
 
-def ensure_indexed(ws: str, doc_id: str) -> bool:
-    """Kick the background indexer for a paper the search index doesn't hold
-    at the current version, so a page chat's document map and search_library
-    exist by the next turn even when the model never calls search. Returns
-    True when the paper is already current."""
-    # Local import: keep gamma.* module load free of the routers package.
-    from .routers.search import _index_missing_async
+def ensure_indexed(ws: str, doc) -> bool:
+    """Kick the background indexer for a document (a ``search.index.Doc``,
+    or a view with its hash, format, ext and at) the search index doesn't
+    hold at the current version, so a page chat's document map and
+    search_library exist by the next turn even when the model never calls
+    search. Returns True when the document is already current."""
+    doc = text_index.as_doc(doc)
     try:
         with connect_data_db(ws) as connection:
-            missing = pdf_pending(ws, connection, [doc_id])
+            return not indexer.kick(ws, connection, {doc.hash: doc})
     except sqlite3.OperationalError as e:
-        log.warning(f"[ai_context] index check for {doc_id} failed: {e}")
+        log.warning(f"[ai_context] index check for {doc.hash} failed: {e}")
         return False
-    if not missing:
-        return True
-    _index_missing_async(ws, missing)
-    return False
 
 
 def document_map(ws: str, doc_id: str, budget: int = MAP_BUDGET, from_page: int = 1) -> str:
@@ -1007,7 +1033,7 @@ def document_map(ws: str, doc_id: str, budget: int = MAP_BUDGET, from_page: int 
     starts the map after the pages the excerpt already shows in full."""
     try:
         with connect_data_db(ws) as connection:
-            rows = doc_pages(connection, doc_id, _MAP_LINE_CHARS + 10)
+            rows = text_index.doc_units(connection, doc_id, _MAP_LINE_CHARS + 10)
     except sqlite3.OperationalError:
         return ""  # the index is busy: no map this turn
     if len(rows) < 3:
@@ -1070,6 +1096,430 @@ def pdf_excerpt(ws: str, doc_id: str, limit: int, offset: int = 0,
         return text, next_offset, len(full)
     span = (first, start_page + pages - 1) if text and pages else (0, 0)
     return text, next_offset, len(full), span
+
+
+# --- a text file (docs/dev/ai_context.md "A text file") ------------------------------
+# A text document reaches the model as its lines, numbered as read_page
+# prints them (documents.text.numbered), read from the file itself, never
+# from the index: the first chat on a fresh file needs no indexing. A file
+# that does not fit goes as its head and an outline of the rest
+# (documents.text.outline), the pair read once per file version and kept
+# (text_head). A secrets file's text never goes (documents.text.is_secret).
+
+SECRET_TEXT = "(its text is kept from the model: a secrets file)"
+TEXT_UNAVAILABLE = "(the file's text is not available on this server)"  # beside PDF_EXTRACT_FAILED
+NOT_TEXT = "(this file is not text)"
+TEXT_SENTENCES = (SECRET_TEXT, TEXT_UNAVAILABLE, NOT_TEXT)
+# The heads text_head keeps, at most: files, and characters of their text.
+TEXT_HEAD_FILES = 16
+TEXT_HEAD_CHARS = 4_000_000
+# A text file a note links (a file chip): the characters of its first lines
+# shown under the note, and how many chips of a page show theirs.
+CHIP_FILE_CHARS = 4000
+MAX_CHIP_FILES = 3
+# A page's open comment threads in its section: the characters they take
+# at most, the threads named, and the characters of one comment.
+THREADS_CHARS = 10_000
+MAX_CONTEXT_THREADS = 20
+_COMMENT_CHARS = 500
+_MORE_LINES = "…[more lines remain — call read_page again with from_line={n} to continue]"
+# A document's format as the context names it (formats.FORMATS); a text
+# file's language is formats.LANGUAGE_NAMES's word (language_name).
+_FORMAT_WORDS = {"pdf": "PDF", "markdown": "Markdown", "text": "text", "image": "picture", "audio": "audio",
+                 "video": "video", "binary": "file"}
+# A note's links to stored files: a picture it embeds, `![alt](/api/uploads/<hash>.png)`
+# (sized Obsidian-style as `![alt|300](…)`), and a file chip, `[name](/api/uploads/<hash>.<ext>)`
+# (frontend/src/transfers/FileChip.jsx). The one place that reads them.
+NOTE_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(\s*(/api/uploads/[^\s)]+)")
+NOTE_FILE_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(\s*(/api/uploads/[^\s)]+?)\s*\)")
+
+
+class TextHead(NamedTuple):
+    """A text file's part of the chat's context (``text_head``): ``text``
+    its first lines, numbered, or one of TEXT_SENTENCES for a file that is
+    not shown; ``cover`` the coverage entry's fields (``format`` "text",
+    ``lines`` the file's, ``lines_shown``, ``partial``, ``chars``);
+    ``outline`` where the rest is, ``[(line, text)]`` from ``next_line``,
+    the first line not shown (None: the file is shown whole)."""
+    text: str
+    cover: dict
+    outline: list
+    next_line: int | None
+
+
+_heads: OrderedDict = OrderedDict()
+_heads_size = [0]
+_heads_lock = threading.Lock()
+
+
+def text_head_clear() -> None:
+    """Forget every head ``text_head`` keeps (tests)."""
+    with _heads_lock:
+        _heads.clear()
+        _heads_size[0] = 0
+
+
+def is_text_document(view) -> bool:
+    """Whether the page's document is a text file with bytes to read: no
+    listed one (``documents.model.is_listed``), which has none."""
+    return bool(view) and view["format"] == "text" and bool(view["hash"]) and not is_listed(view)
+
+
+def _text_cover(lines: int, shown: int, chars: int, partial: bool) -> dict:
+    return {"format": "text", "lines": lines, "lines_shown": shown, "partial": partial, "chars": chars,
+            "pages": 0, "pages_shown": 0}
+
+
+def _fit_lines(lines: list, first: int, budget: int) -> list:
+    """The first of ``lines`` (the first numbered ``first``) whose numbered
+    text (``documents.text.numbered``) fits ``budget`` characters; at least
+    one, cut to fit."""
+    out, used = [], 0
+    for n, line in enumerate(lines, start=first):
+        used += len(f"{n:>6}\t") + len(line) + (1 if out else 0)
+        if used > budget:
+            break
+        out.append(line)
+    if not out and lines:
+        room = max(1, budget - 7 - len(doc_text.LINE_CUT))
+        out = [lines[0] if len(lines[0]) <= room else lines[0][:room] + doc_text.LINE_CUT]
+    return out
+
+
+def _read_head(ws: str, view: dict, budget: int) -> tuple[TextHead, bool]:
+    """``text_head``'s read, and whether it may be kept (a file not found
+    may be there at the next turn)."""
+    path = find_upload_file(view["file"], ws) if view.get("file") else None
+    if not path:
+        return TextHead(TEXT_UNAVAILABLE, _text_cover(0, 0, len(TEXT_UNAVAILABLE), False), [], None), False
+    try:
+        window = doc_text.read_lines(path, 1, doc_text.MAX_TEXT_LINES, budget=doc_text.MAX_TEXT_CHARS)
+    except ValueError:
+        return TextHead(NOT_TEXT, _text_cover(0, 0, len(NOT_TEXT), False), [], None), True
+    except OSError as error:
+        log.warning(f"[ai_chat] reading {view['file']} failed: {error}")
+        return TextHead(TEXT_UNAVAILABLE, _text_cover(0, 0, len(TEXT_UNAVAILABLE), False), [], None), False
+    lines, total = window.lines, window.total
+    whole = doc_text.numbered(lines, 1)
+    if window.last >= total and len(whole) <= budget:
+        return TextHead(whole, _text_cover(total, total, len(whole), False), [], None), True
+    map_budget = min(MAP_BUDGET, budget // 2)
+    shown = _fit_lines(lines, 1, budget - map_budget)
+    text = doc_text.numbered(shown, 1)
+    next_line = len(shown) + 1
+    found = doc_text.outline(lines, view.get("language"), from_line=next_line, budget=map_budget,
+                             cut=window.last < total)
+    return TextHead(text, _text_cover(total, len(shown), len(text), True), found, next_line), True
+
+
+def text_head(ws: str, view: dict, *, budget: int) -> TextHead:
+    """A text file's head for the chat's context: the whole file numbered
+    when it fits ``budget`` characters, else the outline of the rest from
+    the first line not shown within ``min(MAP_BUDGET, budget // 2)`` and
+    the first lines in what that leaves — read from the file
+    (``storage.find_upload_file``, never ``pdf_path``), its first
+    MAX_TEXT_LINES lines (or MAX_TEXT_CHARS characters) at most. Kept per
+    ``(ws, hash, ext, language, budget)``, the newest TEXT_HEAD_FILES heads
+    within TEXT_HEAD_CHARS characters: a
+    file's hash changes with its bytes, so a kept head is right by
+    construction and a replaced file is read once again (pdf_text's rule).
+    A secrets file gives SECRET_TEXT and no outline."""
+    if doc_text.is_secret(view["name"]):
+        return TextHead(SECRET_TEXT, _text_cover(0, 0, len(SECRET_TEXT), False), [], None)
+    key = (ws, view["hash"], view["ext"], view.get("language"), int(budget))
+    with _heads_lock:
+        if key in _heads:
+            _heads.move_to_end(key)
+            return _heads[key]
+    head, keep = _read_head(ws, view, int(budget))
+    if keep:
+        size = len(head.text) + sum(len(t) for _, t in head.outline)
+        with _heads_lock:
+            if key not in _heads:
+                _heads[key] = head
+                _heads_size[0] += size
+            while len(_heads) > 1 and (len(_heads) > TEXT_HEAD_FILES or _heads_size[0] > TEXT_HEAD_CHARS):
+                _, gone = _heads.popitem(last=False)
+                _heads_size[0] -= len(gone.text) + sum(len(t) for _, t in gone.outline)
+    return head
+
+
+def text_window(ws: str, view: dict, *, budget: int, from_line: int = 1,
+                to_line: int | None = None) -> tuple[str, dict, int | None]:
+    """Lines of a text file from ``from_line`` (1-based), numbered, as many
+    as fit ``budget`` characters with their numbers (``to_line``, inclusive,
+    caps them): read_page's windows and a file chip's head, never kept.
+    ``(text, cover, next_line)``: ``cover`` as ``text_head``'s (``lines``
+    the file's count, ``lines_shown`` the last line read), ``next_line``
+    the first line after the window, None at the end. No lines for a
+    ``from_line`` past the end; one of TEXT_SENTENCES for a file that is
+    not shown."""
+    from_line = max(1, int(from_line or 1))
+    if doc_text.is_secret(view["name"]):
+        return SECRET_TEXT, _text_cover(0, 0, len(SECRET_TEXT), False), None
+    path = find_upload_file(view["file"], ws) if view.get("file") else None
+    try:
+        window = doc_text.read_lines(path, from_line, to_line, budget=budget) if path else None
+    except ValueError:
+        return NOT_TEXT, _text_cover(0, 0, len(NOT_TEXT), False), None
+    except OSError as error:
+        log.warning(f"[ai_chat] reading {view['file']} failed: {error}")
+        window = None
+    if window is None:
+        return TEXT_UNAVAILABLE, _text_cover(0, 0, len(TEXT_UNAVAILABLE), False), None
+    shown = _fit_lines(window.lines, from_line, budget)
+    last = from_line + len(shown) - 1
+    text = doc_text.numbered(shown, from_line)
+    next_line = last + 1 if shown and last < window.total else None
+    return text, _text_cover(window.total, last, len(text), next_line is not None), next_line
+
+
+def _size_text(size) -> str:
+    """A file's size in words: "940 bytes", "212 KB", "3.1 MB", "1.2 GB"."""
+    if size is None:
+        return ""
+    if size < 1024:
+        return f"{size:,} bytes"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.0f} KB"
+    if size < 1024 ** 3:
+        return f"{size / 1024 ** 2:.1f} MB"
+    return f"{size / 1024 ** 3:.1f} GB"
+
+
+def language_name(language) -> str:
+    """A text file's language as the context and the library name it:
+    "LaTeX", "Python" (``formats.LANGUAGE_NAMES``); "" for plain text."""
+    return formats.LANGUAGE_NAMES.get(language or "", "")
+
+
+def document_line(view, name: str, cover: dict | None = None) -> str:
+    """The line naming a page's document that is no PDF: a text file's
+    language, lines (``cover``'s, when read), bytes and place; a picture,
+    a recording, a file of no format the model reads, a listed one, each
+    with what can be done with it here. "" for a PDF (its text has its own
+    label), a note's Markdown file and no document."""
+    if not view or view["format"] in ("pdf", "markdown"):
+        return ""
+    if is_listed(view):
+        return f'Document: "{name}" is listed without its bytes ({_size_text(view["size"])}): nothing to read here'
+    kind = view["ext"].lstrip(".").upper()
+    size = _size_text(view["size"])
+    if view["format"] == "text":
+        bits = [language_name(view["language"])] if language_name(view["language"]) else []
+        counts = [f"{cover['lines']:,} line{'' if cover['lines'] == 1 else 's'}"] if cover and cover["lines"] else []
+        if view["size"] is not None:
+            counts.append(f"{view['size']:,} bytes")
+        if counts:
+            bits.append(", ".join(counts))
+        if view["at"] == "path":
+            bits.append("read where it is")
+        return f'Document: text file "{name}"' + (f" ({'; '.join(bits)})" if bits else "")
+    what = ", ".join(x for x in (kind, size) if x)
+    if view["format"] == "image":
+        return (f'Document: picture "{name}" ({what}): no tool shows a page\'s picture here; '
+                "open the page to see it")
+    if view["format"] in ("audio", "video"):
+        return f'Document: {view["format"]} "{name}" ({what})'
+    return f'Document: file "{name}"' + (f" ({size})" if size else "") + ": it cannot be read here"
+
+
+def _outline_text(outline: list) -> str:
+    return "\n".join(f"  {t}" if t == doc_text.outline_stop(n) else f"  l.{n}  {t}" for n, t in outline)
+
+
+def text_document(view: dict, name: str, head: TextHead, *, tools: bool, more: bool = False) -> str:
+    """A text file's part of a page's section: its ``document_line``, its
+    first lines under a label saying which they are and that the numbers
+    are no text, then the outline of the rest. The calls to read on
+    (``read_page(from_line=N)``) are written only for a chat with
+    ``tools``: a plain chat is never told to call a tool it lacks.
+    ``more``: a read_page window, which ends naming its next call."""
+    cover = head.cover
+    out = [document_line(view, name, cover)]
+    total, shown = cover["lines"], cover["lines_shown"]
+    if head.text in TEXT_SENTENCES:
+        out.append(head.text)
+    elif not total:
+        out.append("(the file is empty)")
+    elif head.next_line is None:
+        out.append(f"[The whole file, {total:,} line{'' if total == 1 else 's'}. The number and tab before "
+                   f"each line are its line number, not the text.]\n{head.text}")
+    else:
+        rest = f"Lines {head.next_line:,}–{total:,} are NOT shown below"
+        if tools:
+            rest += f": read them with read_page(page_id, from_line={head.next_line})"
+        body = (f"[Lines 1–{shown:,} of {total:,}. The number and tab before each line are its line number, "
+                f"not the text.\n {rest}.]\n{head.text}")
+        if more:
+            body += "\n" + _MORE_LINES.format(n=head.next_line)
+        out.append(body)
+        if head.outline:
+            out.append("[OUTLINE — where the rest is, by line"
+                       + ("; pick the lines to read with read_page(from_line=N)" if tools else "")
+                       + "]\n" + _outline_text(head.outline))
+    return "\n".join(out)
+
+
+def _text_read(ws: str, view: dict, name: str, budget: int, from_line: int, to_line, report: dict | None) -> str:
+    """read_page's window of a text file: the head and outline
+    (``text_head``) for a first window, else ``text_window`` from
+    ``from_line``; ``report`` receives ``lines`` (first, last) and
+    ``next_line``."""
+    if from_line <= 1 and to_line is None:
+        head = text_head(ws, view, budget=budget)
+        if report is not None and head.cover["lines_shown"]:
+            report.update(lines=(1, head.cover["lines_shown"]), next_line=head.next_line,
+                          total=head.cover["lines"])
+        return text_document(view, name, head, tools=True, more=True)
+    text, cover, next_line = text_window(ws, view, budget=budget, from_line=from_line, to_line=to_line)
+    line = document_line(view, name, cover)
+    if text in TEXT_SENTENCES:
+        return f"{line}\n{text}"
+    total, last = cover["lines"], cover["lines_shown"]
+    if not text:
+        return (f"{line}\nfrom_line {from_line:,} is past the end — the file is "
+                + (f"{total:,} line{'' if total == 1 else 's'} long." if total else "empty."))
+    if report is not None:
+        report.update(lines=(from_line, last), next_line=next_line, total=total)
+    body = (f"[Lines {from_line:,}–{last:,} of {total:,}. The number and tab before each line are its line "
+            f"number, not the text.]\n{text}")
+    if next_line:
+        body += "\n" + _MORE_LINES.format(n=next_line)
+    return f"{line}\n{body}"
+
+
+def chip_files(connection, ws: str, content: str) -> list[dict]:
+    """The stored files a note's file chips link (``NOTE_FILE_RE``), each
+    once, in order, as a view in ``page_document``'s shape with its
+    ``size`` (None when the file is not here) and ``page``, the root page
+    that owns the file ("" for none). Its format is ``formats.stored_format``'s
+    (the stored extension's, else the name's), but a ``.bin`` is never read."""
+    out, seen = [], set()
+    for label, url in NOTE_FILE_RE.findall(content or ""):
+        parsed = parse_upload_url(url.strip())
+        if not parsed or parsed in seen:
+            continue
+        seen.add(parsed)
+        stem, ext = parsed
+        name = label.strip() or stored_name(stem, ext)
+        fmt, language = ("binary", None) if ext == ".bin" else formats.stored_format(name, ext, None)
+        file = stored_name(stem, ext)
+        path = find_upload_file(file, ws)
+        try:
+            size = path.stat().st_size if path else None
+        except OSError:
+            size = None
+        row = connection.execute(
+            "SELECT id FROM unified_blocks WHERE doc_id = ? AND parent_id = 'root' "
+            "AND json_extract(properties, '$.doc.ext') = ? LIMIT 1", (stem, ext)).fetchone()
+        out.append({"format": fmt, "language": language if fmt == "text" else None, "name": name, "hash": stem,
+                    "ext": ext, "size": size, "at": "store", "url": url.strip(), "file": file, "copy": False,
+                    "page": row[0] if row else ""})
+    return out
+
+
+def chip_lines(connection, ws: str, content: str, shown: dict, *, tools: bool = True) -> str:
+    """What a note's file chips add under it: a text file's first lines
+    (``text_window``, CHIP_FILE_CHARS each, for the first MAX_CHIP_FILES
+    files of the page — ``shown`` holds their stored names), with the page
+    it is when one carries it; a chip of another format, or a secrets
+    file, one line; with ``tools``, the read_page call that reads on. ""
+    for a note without chips."""
+    lines = []
+    for view in chip_files(connection, ws, content):
+        name, size = view["name"], _size_text(view["size"])
+        kind = (language_name(view["language"]) or "text") if view["format"] == "text" else \
+            _FORMAT_WORDS.get(view["format"], "file")
+        what = ", ".join(x for x in (kind, size) if x)
+        if doc_text.is_secret(name):
+            lines.append(f'File chip "{name}" ({what}): {SECRET_TEXT[1:-1]}')
+            continue
+        if view["format"] != "text":
+            lines.append(f'File chip "{name}" ({what})')
+            continue
+        if view["file"] not in shown and len(shown) >= MAX_CHIP_FILES:
+            lines.append(f'File chip "{name}" ({what}): its text is not shown, past {MAX_CHIP_FILES} files '
+                         "on a page")
+            continue
+        shown[view["file"]] = True
+        text, cover, next_line = text_window(ws, view, budget=CHIP_FILE_CHARS)
+        if cover["lines"]:
+            what = f"{language_name(view['language']) or 'text'}, {cover['lines']:,} lines"
+        head = f'File chip "{name}" ({what})'
+        if view["page"]:
+            head += (f" (its page: {view['page']}"
+                     + (f"; read_page(page_id={view['page']}, from_line={next_line}) reads on"
+                        if next_line and tools else "")
+                     + ")")
+        if text in TEXT_SENTENCES:
+            lines.append(f"{head}: {text}")
+        elif not text:
+            lines.append(f"{head}: (the file is empty)")
+        else:
+            span = (f"[lines 1–{cover['lines_shown']:,} of {cover['lines']:,}]" if next_line
+                    else "[the whole file]")
+            lines.append(f"{head}: {span}\n{text}")
+    return "\n".join(lines)
+
+
+def _comment_text(comment: dict) -> str:
+    who = comment.get("author") or "someone"
+    if comment.get("agent"):
+        who += f" ({comment['agent']})"
+    if comment.get("deleted"):
+        return f"{who}: (deleted)"
+    body = " ".join(str(comment.get("body") or "").split())
+    if len(body) > _COMMENT_CHARS:
+        body = body[:_COMMENT_CHARS] + "…"
+    return f'{who}, {str(comment.get("created_at") or "")[:10]}: "{body}"'
+
+
+def threads_section(connection, page_id: str, budget: int, *, file_page: bool = False, tools: bool = True) -> str:
+    """The open comment threads on a page (``comments.threads_for``), each
+    with its id, its place — from the thread's stored root anchor, which
+    alone carries the ``source`` line a build recorded, else the anchor its
+    block gives now (feedback.entries' rule) — and its comments; at most
+    MAX_CONTEXT_THREADS, within ``budget`` characters. ``file_page``: a
+    work folder's file, whose threads the feedback tools list (named only
+    with ``tools``). "" for a page without open threads."""
+    try:
+        threads = comments.threads_for(connection, [page_id], state="open")
+        if not threads:
+            return ""
+        stored = dict(connection.execute(
+            "SELECT id, anchor FROM comments WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps([t["id"] for t in threads]),)).fetchall())
+        lines = []
+        for thread in threads[:MAX_CONTEXT_THREADS]:
+            anchor = anchors.parse(stored.get(thread["id"])) or anchors.anchor_of(connection, page_id,
+                                                                                  thread["block_id"])
+            place = anchors.place_words(anchor)
+            source = anchor.get("source")
+            if isinstance(source, dict) and isinstance(source.get("file"), str) and source.get("line"):
+                end = source.get("end")
+                place += f" (source {source['file']}:{source['line']}" + (
+                    f"–{end}" if end and end != source["line"] else "") + ")"
+            said = " — ".join(_comment_text(c) for c in thread["comments"]) or "(no comments)"
+            lines.append(f"- thread {thread['id']} on {place}: {said}")
+    except sqlite3.Error as error:
+        log.warning(f"[ai_chat] threads of {page_id} failed: {error}")
+        return ""
+    head = (f"Open comment threads ({len(threads)}; the comments are the user's requests about this "
+            f"{'file' if file_page else 'page'}, the quoted passages document data):")
+    more = len(threads) - len(lines)
+    kept, used = [], len(head)
+    for line in lines:
+        if used + len(line) + 1 > budget:
+            more += len(lines) - len(kept)
+            break
+        kept.append(line)
+        used += len(line) + 1
+    out = "\n".join([head, *kept])
+    if more:
+        out += (f"\n… {more} more: " + (f'list_feedback(scope="{page_id}") lists them' if file_page and tools
+                                        else "read them in the Comments window"))
+    return out
 
 
 def load_pdf_b64(ws: str, doc_id: str) -> str | None:
@@ -1546,18 +1996,28 @@ def quoted_paths(paths: dict, folders: list[str]) -> str:
     return ", ".join(f'"{path}"' for path in paths_text(paths, folders))
 
 
-def page_properties_line(connection, properties: dict, page_id: str = "") -> str:
+def page_properties_line(connection, properties: dict, page_id: str = "", tree: Tree | None = None) -> str:
     """One line describing what a page carries and how it is filed —
     folders (their paths), labels (their names), cached metadata (authors,
-    year, venue, DOI/arXiv), web source, attachment — so the model can tell
-    a paper from a note about one. "" when the page has none of it. A filed
-    page's folders and labels are read from their trees, one query each.
-    With ``page_id``, a page inside another page shows its path, the
-    titles of the pages it is inside and its own, and the folders it is
-    filed in, its top page's (``blocks_store.filed_folders``), never the
-    ones it may carry itself."""
+    year, venue, DOI/arXiv), web source, its document's format and name —
+    so the model can tell a paper from a note about one. "" when the page
+    has none of it. A filed page's folders and labels are read from their
+    trees, one query each. With ``page_id``, a page inside another page
+    shows its path, the titles of the pages it is inside and its own, and
+    the folders it is filed in, its top page's
+    (``blocks_store.filed_folders``), never the ones it may carry itself.
+    A work folder's file names its path in the work folder and the work
+    folder (``work_folders.paths.page_path`` over ``tree``, read here when
+    not given)."""
     properties = properties or {}
     bits = []
+    work = work_folder_of(properties)
+    if work:
+        tree = tree or Tree.read(connection)
+        path = work_paths.page_path(tree, properties)
+        if path:
+            bits.append(f'path: "{path[:300]}"')
+        bits.append(f'work folder: "{tree.names.get(work, "")[:120]}"')
     ancestors = page_ancestors(connection, page_id) if page_id else []
     if ancestors:
         titles = dict(connection.execute(
@@ -1587,9 +2047,10 @@ def page_properties_line(connection, properties: dict, page_id: str = "") -> str
     if properties.get("web_url"):
         bits.append(f"web source: {str(properties['web_url'])[:200]}")
     view = page_document(properties)
-    if is_pdf(view):
-        name = f" ({view['name']})" if view["name"] else ""
-        bits.append(f"attachment: PDF{name}")
+    if view:
+        name = f' "{view["name"][:200]}"' if view["name"] else ""
+        bits.append(f"document: {_FORMAT_WORDS.get(view['format'], view['format'])}{name}"
+                    + (" (listed)" if is_listed(view) else ""))
     return ("Properties: " + "; ".join(bits)) if bits else ""
 
 
@@ -1630,25 +2091,35 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
                         document_text: str | None = None,
                         include_notes: bool = True, notes_budget: int = 0,
                         report: dict | None = None,
-                        notes_seen: dict | None = None, listing: bool = True) -> str | None:
+                        notes_seen: dict | None = None, listing: bool = True,
+                        from_line: int = 1, to_line: int | None = None, threads: bool = True,
+                        tools: bool = True) -> str | None:
     """Render one page as context: title, where it sits among sub-pages
-    (``page_family_lines``), properties, the attachment's text
-    (a windowed excerpt of ``pdf_budget`` chars from ``pdf_offset`` /
-    ``pdf_page`` — read_page's shape — or ``document_text`` when the caller
-    already built it), then the user's highlights and nested notes when
+    (``page_family_lines``), properties, the document's text — a PDF's
+    windowed excerpt of ``pdf_budget`` chars from ``pdf_offset`` /
+    ``pdf_page``, a text file's lines from ``from_line`` (to ``to_line``)
+    within ``pdf_budget`` (read_page's shapes), or ``document_text`` when
+    the caller already built it; a document of another format is one line
+    (``document_line``) — then the user's highlights and nested notes when
     ``include_notes`` (the chat sends a page's notes with the chat's
-    "include my notes" switch, and always for a page without an
-    attachment, which IS its notes; read_page shows them once per page). A
-    ``notes_budget`` > 0 caps the highlights and notes at that many chars
-    (read_page's window) and says how much was left out. ``report``, when
+    "include my notes" switch, and always for a page without a document,
+    which IS its notes; read_page shows them once per page), a text file a
+    note's chip links under the note (``chip_lines``), and with
+    ``threads`` the page's open comment threads (``threads_section``),
+    which ``include_notes`` has no say over. A ``notes_budget`` > 0 caps
+    the highlights and notes at that many chars (read_page's window) and
+    says how much was left out, and caps the threads too. ``report``, when
     given, receives ``pdf_pages`` — the ``(first, last)`` PDF pages the
-    window spans, (0, 0) for none — ``next_offset``, and ``areas``: the
-    ``(page, box)`` of the area highlights shown whose picture the caller
-    should attach (the first MAX_AREA_CROPS per page; the lines say
-    "picture N attached" for those, and name the page for the rest). None
-    when the page doesn't exist. ``notes_seen`` receives ``{block_id:
-    text}`` for every note shown in full — what an edit_block replace may
-    start from. ``listing``: as ``page_family_lines`` takes it."""
+    window spans, (0, 0) for none — ``next_offset``, a text file's
+    ``lines`` (first, last; (0, 0) for none), ``next_line`` and ``total``,
+    and ``areas``: the ``(page, box)`` of the area highlights shown whose
+    picture the caller should attach (the first MAX_AREA_CROPS per page;
+    the lines say "picture N attached" for those, and name the page for
+    the rest). None when the page doesn't exist. ``notes_seen`` receives
+    ``{block_id: text}`` for every note shown in full — what an edit_block
+    replace may start from. ``listing``: as ``page_family_lines`` takes
+    it. ``tools``: the reader has them (read_page, a chat with tools): the
+    chips and the threads name the calls that read on."""
     rows = fetch_subtree(connection, page_id)
     if not rows:
         return None
@@ -1665,10 +2136,15 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
     properties = json.loads(root[4] or "{}")
     view = page_document(properties)
     doc_id = pdf_file_hash(view)  # a duplicated page's is the file it shows
+    text_file = is_text_document(view)
+    tree = Tree.read(connection) if work_folder_of(properties) else None
+    name = ((work_paths.page_path(tree, properties) if tree else "")
+            or (view["name"] if view else "") or root[3] or "Untitled")
     highlights: list[str] = []
     notes: list[str] = []
     areas: list = []  # (page, box) of the area highlights whose picture goes along
     per_page: dict = {}
+    chips: dict = {}  # the file chips whose text is shown (chip_lines)
 
     def walk(block_id, depth, on_sheet=False):
         for row in by_parent.get(block_id, []):
@@ -1701,6 +2177,10 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
                 text = picture_text(child_properties, content) or content or "(empty)"
                 shown_as = "  " * depth + "- " + (f"{label} {text}" if label else text)
                 notes.append(shown_as)
+                linked = chip_lines(connection, ws, content, chips, tools=tools)
+                if linked:
+                    pad = "  " * (depth + 1)
+                    notes.append(pad + linked.replace("\n", "\n" + pad))
             if shown_as and (quote or content or is_picture(child_properties)):
                 seen_rows.append((row[0], row[3] or "", shown_as))
             walk(row[0], depth + 1, on_sheet or is_sheet(child_properties))
@@ -1712,14 +2192,23 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
     sections = [f"### {root[3] or 'Untitled'}"]
     sections.append(f"Gamma page ID: {page_id}")
     sections += page_family_lines(connection, page_id, listing)
-    props_line = page_properties_line(connection, properties, page_id)
+    props_line = page_properties_line(connection, properties, page_id, tree)
     if props_line:
         sections.append(props_line)
     if properties.get("summary"):
         sections.append(f"Summary: {properties['summary']}")
     if report is not None:
-        report.update(pdf_pages=(0, 0), next_offset=None, areas=areas)
-    if document_text is not None:
+        report.update(pdf_pages=(0, 0), next_offset=None, areas=areas, lines=(0, 0), next_line=None, total=0)
+    if text_file:
+        if document_text is not None:
+            sections.append(document_text or document_line(view, name))
+        elif pdf_budget > 0:
+            sections.append(_text_read(ws, view, name, pdf_budget, from_line, to_line, report))
+        else:
+            sections.append(document_line(view, name))
+    elif not doc_id and document_line(view, name):
+        sections.append(document_line(view, name))
+    elif document_text is not None:
         if document_text:
             sections.append(f"Document text:\n{document_text}")
     elif doc_id and pdf_budget > 0:
@@ -1749,7 +2238,7 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
         shown.append("User's highlighted passages:\n" + "\n".join(highlights))
     if notes:
         shown.append("User's notes:\n" + "\n".join(notes))
-    elif include_notes and not doc_id and not highlights:
+    elif include_notes and not view and not highlights:
         shown.append("User's notes: (this page has no notes yet)")
     text = "\n\n".join(shown)
     if notes_budget > 0 and len(text) > notes_budget:
@@ -1763,6 +2252,11 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
                 notes_seen[block_id] = stored
     if text:
         sections.append(text)
+    if threads:
+        open_threads = threads_section(connection, page_id, min(notes_budget or THREADS_CHARS, THREADS_CHARS),
+                                       file_page=bool(work_folder_of(properties)), tools=tools)
+        if open_threads:
+            sections.append(open_threads)
     return "\n\n".join(sections)
 
 
@@ -1779,10 +2273,12 @@ def gather_inputs(ws: str, payload, allow_native: bool,
     ``context_char_limit`` (``payload.doc_id`` alone is the compatibility
     input: it resolves to the page carrying that PDF, and a doc no page
     carries contributes nothing). Every page contributes its
-    title, properties and notes; a page with a PDF attachment adds the
-    document's text (or the file itself when ``attach_pdf`` and the provider
-    takes it) and hides the notes unless ``include_notes`` — a page without
-    one IS its notes, so they always go.
+    title, properties, notes and open comment threads; a page with a PDF
+    adds the document's text (or the file itself when ``attach_pdf`` and the
+    provider takes it), a page with a text file its lines (``text_head``:
+    the whole file, or its head and the outline of the rest), and either
+    hides the notes unless ``include_notes`` — a page without a document IS
+    its notes, so they always go.
 
     Returns ``(pdf_b64s, context, coverage, message_context, document_pdfs)``.
     ``context`` is the document part — the same text on every turn of a
@@ -1796,12 +2292,15 @@ def gather_inputs(ws: str, payload, allow_native: bool,
 
     ``coverage`` is the report the chat streams back as its first
     `{"context": [...]}` line — one entry per page: ``{"title", "page_id",
-    "doc_id" ("" for a page without a PDF), "native" (the file itself went),
+    "doc_id" (the PDF's or the text file's hash, "" for a page without
+    either), "format" (its document's, "" for none), "native" (the file
+    itself went),
     "native_requested" (the user asked for that and the page has a PDF;
     requested but not native = text went instead: the provider refused the
     file, or, with "native_skipped", it never went — "too_large" for this
     message, or "missing"), "partial", "chars",
-    "pages", "pages_shown", "notes" (the page's notes are in the context)}``
+    "pages", "pages_shown", "notes" (the page's notes are in the context)}``,
+    a text file's with ``lines`` and ``lines_shown`` in place of the pages
     — so the UI can say "the model saw pages 1–9 of 22" instead of leaving
     the user to guess, and the agent prompt and read_page can name the pages
     already in context. The open paper's entry also carries ``"selection":
@@ -1837,11 +2336,13 @@ def gather_inputs(ws: str, payload, allow_native: bool,
                       wanted=sum(len(p["text"]) for p in request_selections(payload))
                       + sum(len(s["text"]) for s in request_note_selections(payload)))
 
-    def report(title, page_id, doc_id, native, cover=None, notes=False, skipped=""):
-        # Only a page with a PDF has a file to ask for: a notes-only page
-        # always goes as text, and says nothing about the PDF switch.
-        coverage.append({"title": title, "page_id": page_id, "doc_id": doc_id, "native": native,
-                         "native_requested": bool(payload.attach_pdf and doc_id), "notes": notes,
+    def report(title, page_id, doc_id, native, cover=None, notes=False, skipped="", view=None):
+        # Only a page with a PDF has a file to ask for: a page of notes or
+        # of a text file always goes as text, and says nothing about the
+        # PDF switch.
+        coverage.append({"title": title, "page_id": page_id, "doc_id": doc_id,
+                         "format": view["format"] if view else "", "native": native,
+                         "native_requested": bool(payload.attach_pdf and is_pdf(view) and doc_id), "notes": notes,
                          **({"native_skipped": skipped} if skipped else {}),
                          **(cover or none)})
 
@@ -1867,15 +2368,32 @@ def gather_inputs(ws: str, payload, allow_native: bool,
         text_budget = (payload.context_char_limit if single
                        else max(1, payload.multi_context_char_limit // max(1, len(pages))))
         total_b64 = 0
+        tools = getattr(payload, "agent_scope", "") in ("page", "folder")
         for page_id, row in pages:
             title = row[0] or "Untitled"
             properties = json.loads(row[1] or "{}")
             view = page_document(properties)
             doc_id = pdf_file_hash(view)  # a duplicated page's is the file it shows
+            text_file = is_text_document(view)
             document_text = ""
             attached = False
             skipped = ""
             cover = dict(none)
+            if text_file:
+                # The head (and the outline of the rest) is the document
+                # part, kept per file version: the same text every turn.
+                # The outline goes to every chat; the call to read on, only
+                # to one with the tools to make it.
+                if not doc_text.is_secret(view["name"]):
+                    ensure_indexed(ws, view)
+                head = text_head(ws, view, budget=text_budget)
+                tree = Tree.read(connection) if work_folder_of(properties) else None
+                name = ((work_paths.page_path(tree, properties) if tree else "")
+                        or view["name"] or title)
+                document_text = text_document(view, name, head, tools=tools)
+                cover = head.cover
+                with_notes = bool(payload.include_notes)
+                report(title, page_id, view["hash"], False, cover, notes=with_notes, view=view)
             if doc_id and attach:
                 data = load_pdf_b64(ws, doc_id)
                 if data and total_b64 + len(data) < 20_000_000:
@@ -1891,10 +2409,10 @@ def gather_inputs(ws: str, payload, allow_native: bool,
                 # exist for the next turn — the first chat on a fresh paper
                 # otherwise runs without them for as long as the model never
                 # calls search.
-                ensure_indexed(ws, doc_id)
-            with_notes = bool(payload.include_notes) or not doc_id
+                ensure_indexed(ws, view)
+            with_notes = bool(payload.include_notes) or not (doc_id or text_file)
             if doc_id and attached:
-                report(title, page_id, doc_id, True, notes=with_notes)
+                report(title, page_id, doc_id, True, notes=with_notes, view=view)
             elif doc_id:
                 # The head excerpt is the document part: the same text on
                 # every turn, whatever this message selects.
@@ -1923,17 +2441,18 @@ def gather_inputs(ws: str, payload, allow_native: bool,
                         message_sections.append(
                             f'Text around the selected passage{"s" if len(passages) > 1 else ""} of '
                             f'"{title}" (Gamma page ID: {page_id}):\n{windows}')
-                report(title, page_id, doc_id, False, {**cover, **selected}, notes=with_notes, skipped=skipped)
+                report(title, page_id, doc_id, False, {**cover, **selected}, notes=with_notes, skipped=skipped,
+                       view=view)
             shown: dict = {}
             section = page_report_section(connection, ws, page_id, 0,
                                           document_text=document_text or "",
                                           include_notes=with_notes, report=shown,
                                           notes_seen=notes_seen,
-                                          listing=getattr(payload, "agent_scope", "") != "page")
+                                          listing=getattr(payload, "agent_scope", "") != "page", tools=tools)
             if section:
                 context_sections.append(section)
-                if not doc_id:
-                    report(title, page_id, "", False, {**none, "chars": len(section)}, notes=True)
+                if not (doc_id or text_file):
+                    report(title, page_id, "", False, {**none, "chars": len(section)}, notes=True, view=view)
                 # The area highlights' pictures ride with the message like
                 # the selection crops (the wires put images on the last
                 # user turn); the report says how many went.
@@ -1956,12 +2475,12 @@ def gather_inputs(ws: str, payload, allow_native: bool,
         title = (names[index] if index < len(names) else "") or f"Attached PDF {index + 1}"
         if allow_native:
             pdf_b64s.append(data)
-            coverage.append({"title": title, "page_id": "", "doc_id": "", "native": True,
+            coverage.append({"title": title, "page_id": "", "doc_id": "", "format": "pdf", "native": True,
                              "native_requested": True, "notes": False, **none})
         else:
             # Uploaded files get the single-paper budget, like the open paper.
             text, cover = pdf_text_cover_from_b64(data, payload.context_char_limit)
-            coverage.append({"title": title, "page_id": "", "doc_id": "", "native": False,
+            coverage.append({"title": title, "page_id": "", "doc_id": "", "format": "pdf", "native": False,
                              "native_requested": True, "notes": False, **cover})
             if text:
                 context_sections.append(f"### {title}\n{text}")
@@ -1969,7 +2488,8 @@ def gather_inputs(ws: str, payload, allow_native: bool,
     # Where the user is pointing inside the notes (cursor block, attached
     # block chips) belongs to this message, right before the question.
     focus_section = notes_focus_section(ws, payload, notes_seen=notes_seen, crops=crops,
-                                        budget=quote_budget, quoted=quoted)
+                                        budget=quote_budget, quoted=quoted,
+                                        tools=getattr(payload, "agent_scope", "") in ("page", "folder"))
     if focus_section:
         message_sections.append(focus_section)
 

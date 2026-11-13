@@ -1,0 +1,25 @@
+{
+  "about": "A line link's place (docs/dev/pdf_citations.md 'Line links'): `?page=<id>&line=N` or `&line=N-M`, N and M of one to eight ASCII digits, 1 <= N <= M <= max_line, and a quote of at most max_quote characters (the first line's verbatim text; an empty one is the number alone). line is the raw value of `line`, quote_chars the length of the quote sent with it; parsed is [N, M or null], or null for a link refused. Read by backend/tests/test_shared_fixtures.py (mcp_links.line_span and MAX_QUOTE, what read_gamma_link takes) and frontend/tests/gammaLinks.test.mjs (parseGammaLink, what the notes and the chat draw as a line pill).",
+  "max_line": 10000000,
+  "max_quote": 4000,
+  "cases": [
+    {"name": "one line", "line": "12", "quote_chars": 0, "parsed": [12, null]},
+    {"name": "a range", "line": "2-4", "quote_chars": 30, "parsed": [2, 4]},
+    {"name": "a range of one line", "line": "9-9", "quote_chars": 0, "parsed": [9, 9]},
+    {"name": "the last line a link names", "line": "10000000", "quote_chars": 0, "parsed": [10000000, null]},
+    {"name": "leading zeros within eight digits", "line": "00000007", "quote_chars": 0, "parsed": [7, null]},
+    {"name": "nine digits, though the number is small", "line": "000000007", "quote_chars": 0, "parsed": null},
+    {"name": "past the last line", "line": "10000001", "quote_chars": 0, "parsed": null},
+    {"name": "a range past the last line", "line": "1-10000001", "quote_chars": 0, "parsed": null},
+    {"name": "line zero", "line": "0", "quote_chars": 0, "parsed": null},
+    {"name": "a negative line", "line": "-1", "quote_chars": 0, "parsed": null},
+    {"name": "a fraction", "line": "1.5", "quote_chars": 0, "parsed": null},
+    {"name": "no number", "line": "", "quote_chars": 0, "parsed": null},
+    {"name": "a range without its end", "line": "3-", "quote_chars": 0, "parsed": null},
+    {"name": "a letter before the number", "line": "L3", "quote_chars": 0, "parsed": null},
+    {"name": "a range that ends before it starts", "line": "5-3", "quote_chars": 0, "parsed": null},
+    {"name": "digits that are not ASCII", "line": "٣", "quote_chars": 0, "parsed": null},
+    {"name": "a long code line as its quote", "line": "40", "quote_chars": 4000, "parsed": [40, null]},
+    {"name": "a quote past the cap", "line": "40", "quote_chars": 4001, "parsed": null}
+  ]
+}

@@ -4,12 +4,20 @@
 // Pure, so node tests it (tests/searchFilters.test.mjs); the grammar is
 // search/queryParse.js.
 //
-// A page-level qualifier is evaluated here, against the listing (GET
+// Every page-level qualifier is evaluated here, against the listing (GET
 // /blocks/root/children: every page with its filing, pin, dates, document
 // and paper metadata), through the libraryUtils reads the filter chips use
-// and pageDocument (documents/pageDocument.js).
-// The panel sends the matching page ids to /block-search and
-// /pdf-search, so the server still ranks and limits inside them. Dates
+// and pageDocument (documents/pageDocument.js): the groups the panel
+// matches itself (titles, the open PDF) keep to it. What the server is
+// asked splits in two. A chip, and a `folder:` or `label:` clause naming
+// one folder or label, is a scope clause: its id goes to /block-search
+// and /document-search as `folders` / `labels`, and the server resolves
+// it (routers/search.scope_pages), so a folder chip on a work folder
+// reaches its files, which the listing never carries. The rest are page
+// predicates (`is:`, `no:`, `author:`, `venue:`, `year:`, `created:`,
+// `updated:`, and a folder or label clause negated or naming several,
+// since the server intersects its ids): the listing pages they keep go as
+// `pages`, so the server still ranks and limits inside them. Dates
 // resolve in the reader's local time, which the server does not know.
 //
 // One rule for a known key Gamma cannot apply: a value outside its list,
@@ -27,15 +35,19 @@ import { cutSpans, lastAlternative, parseQuery, quoteValue, tokenAt, valueHead, 
 
 // What `in:` names, and the block kinds each part asks the server for
 // (the stored `kind`, db.BLOCK_HOT_COLUMNS). "pdf" is the open PDF's find
-// and the library's PDF group, which hold no blocks.
+// and the library's PDF group, "files" the text files' group: they hold
+// no blocks, and ask the document search for their format (IN_FORMATS).
 const IN_KINDS = {
   title: ["page"],
   notes: ["note", "text_box", "picture", "sheet", "recording", "ink"],
   highlights: ["highlight"],
   links: ["link"],
   pdf: [],
+  files: [],
 };
 export const SOURCES = Object.keys(IN_KINDS);
+// The document formats (POST /document-search `formats`) a group asks for.
+const IN_FORMATS = { pdf: ["pdf"], files: ["text"] };
 
 // The forms a year and a date take, as the dropdown and a problem name them.
 const YEAR_FORMS = "2020, >=2020, <2015, 2019..2021";
@@ -69,6 +81,7 @@ export const QUALIFIERS = {
       highlights: () => t("highlights"),
       links: () => t("reference links"),
       pdf: () => t("the text of the PDFs"),
+      files: () => t("the text of the files"),
     },
   },
 };
@@ -138,8 +151,9 @@ function rangeTest({ op, a, b }, bounds) {
 }
 const yearBounds = (v) => (/^\d{4}$/.test(v) ? [+v, +v + 1] : null);
 
-// A clause as {test} (a page predicate), {sources} (in:) or {problem},
-// with `canon`, its applied meaning as a string (the filter's key).
+// A clause as {test} (its test of a listing page), {sources} (in:) or
+// {problem}, with `canon`, its applied meaning as a string (the filter's
+// key); a label or folder clause also names its `ids`.
 function compile(clause, { tree, pagesById, now }) {
   const spec = QUALIFIERS[clause.key];
   const { key, values } = clause;
@@ -166,7 +180,8 @@ function compile(clause, { tree, pagesById, now }) {
       if (!found.length) return { problem: t("no label is named {name}", { name: v.text }) };
       ids.push(...found);
     }
-    return { test: labelTest(tree, ids), canon: `${sign}label=${[...new Set(ids)].sort()}` };
+    const unique = [...new Set(ids)].sort();
+    return { test: labelTest(tree, ids), ids: unique, canon: `${sign}label=${unique}` };
   }
   if (spec.type === "folder") {
     const ids = [];
@@ -179,7 +194,8 @@ function compile(clause, { tree, pagesById, now }) {
       if (!found.length) return { problem: t("no folder is named {name}", { name: v.text }) };
       ids.push(...found);
     }
-    return { test: folderTest(tree, pagesById, ids), canon: `${sign}folder=${[...new Set(ids)].sort()}` };
+    const unique = [...new Set(ids)].sort();
+    return { test: folderTest(tree, pagesById, ids), ids: unique, canon: `${sign}folder=${unique}` };
   }
   if (spec.type === "text") {
     const words = values.map((v) => fold(v.text));
@@ -223,17 +239,24 @@ function folderTest(tree, pagesById, ids) {
 // The query and the chips as what the panel searches:
 // - `text`: the free text, the applied clauses cut out (queryParse.cutSpans);
 //   with none, query.trim();
-// - `pageTest`: a listing page → whether every page-level clause and chip
-//   holds, null when there is none;
+// - `scope`: {folders, labels}, the ids of the scope clauses and chips,
+//   which the server resolves; null when there is none;
+// - `pageTest`: a listing page → whether every page predicate holds, null
+//   when there is none: the pages it keeps go to the server by id;
+// - `listTest`: a listing page → whether the whole filter holds, scope and
+//   predicates, null when there is none: what the groups the panel
+//   matches itself keep to, and the "Filters:" listing;
 // - `sources`: the groups searched (SOURCES, less what in: leaves out);
 //   `kinds`: the block kinds the notes search keeps, null for all, [] for
-//   none (no notes request);
+//   none (no notes request); `formats`: the document formats the document
+//   search keeps, the same way;
 // - `problems`: [{raw, from, to, reason}] for the clauses searched as text;
 // - `clauses`: the applied ones; `key`: their canonical form with the
 //   chips', equal for equal filters however they are spelled.
 // `chips` are the panel's {kind, id, name}; `ctx` {tree, pagesById, now}.
 export function resolveFilters(query, chips = [], { tree, pagesById, now = new Date() }) {
-  const applied = [], problems = [], tests = [], canon = [];
+  const applied = [], problems = [], predicates = [], tests = [], canon = [];
+  const folders = new Set(), labels = new Set();
   let sources = new Set(SOURCES);
   for (const clause of parseQuery(query, KEYS)) {
     if (clause.type !== "clause") continue;
@@ -247,21 +270,30 @@ export function resolveFilters(query, chips = [], { tree, pagesById, now = new D
       sources = new Set([...sources].filter((s) => out.sources.has(s) !== clause.neg));
       continue;
     }
-    tests.push(clause.neg ? (b) => !out.test(b) : out.test);
+    const test = clause.neg ? (b) => !out.test(b) : out.test;
+    tests.push(test);
     canon.push(out.canon);
+    if (out.ids?.length === 1 && !clause.neg) (clause.key === "folder" ? folders : labels).add(out.ids[0]);
+    else predicates.push(test);
   }
   for (const chip of chips) {
     tests.push(chip.kind === "folder" ? folderTest(tree, pagesById, [chip.id]) : labelTest(tree, [chip.id]));
+    (chip.kind === "folder" ? folders : labels).add(chip.id);
     canon.push(`chip:${chip.kind}=${chip.id}`);
   }
   if (sources.size < SOURCES.length) canon.push(`in=${[...sources].sort()}`);
-  const blockSources = SOURCES.filter((s) => IN_KINDS[s].length);
-  const kinds = blockSources.every((s) => sources.has(s)) ? null
-    : blockSources.filter((s) => sources.has(s)).flatMap((s) => IN_KINDS[s]);
+  // What of `parts` (IN_KINDS, IN_FORMATS) the sources keep: null for all.
+  const kept = (parts) => {
+    const named = SOURCES.filter((s) => parts[s]?.length);
+    return named.every((s) => sources.has(s)) ? null : named.filter((s) => sources.has(s)).flatMap((s) => parts[s]);
+  };
+  const every = (list) => (list.length ? (b) => list.every((test) => test(b)) : null);
   return {
     text: cutSpans(query, applied),
-    pageTest: tests.length ? (b) => tests.every((test) => test(b)) : null,
-    sources, kinds, problems, clauses: applied,
+    scope: folders.size || labels.size ? { folders: [...folders], labels: [...labels] } : null,
+    pageTest: every(predicates),
+    listTest: every(tests),
+    sources, kinds: kept(IN_KINDS), formats: kept(IN_FORMATS), problems, clauses: applied,
     key: canon.sort().join(" "),
   };
 }

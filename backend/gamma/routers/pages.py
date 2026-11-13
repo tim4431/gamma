@@ -26,8 +26,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import config, folder_links, highlight_relocate, jobs, linked_files, pdf_index, pdf_meta, publish, storage, \
-    upload_gc
+from .. import config, folder_links, highlight_relocate, jobs, linked_files, pdf_meta, publish, storage, upload_gc
 from ..auth import (DISK_CLIENT, actor_of, link_ratelimit, require_user_id, require_ws, require_ws_writer, resolve_ws,
                     share_scope, writer_client)
 from ..blocks_store import (
@@ -60,6 +59,7 @@ from ..markdown_zip_import import markdown_page
 from ..logbuf import log
 from ..storage import UNSTORED, find_upload_file
 from ..ops import MAX_OPS, OpError, after_commit, after_commits, apply_batches, apply_ops, props_patch
+from ..search import index as text_index
 from ..work_folders.library import work_folder_of
 from ..work_folders.marks import Tree, filing_targets
 from .blocks import SUMMARY_COLUMNS, op_refusal, page_preview, page_summary
@@ -772,7 +772,7 @@ def replace_attachment(ws: str, page_id: str, hash: str, url: str = "", name: st
             raise
         after_commits(ws, conn, results)
         if old and old != hash:
-            pdf_index.purge_unused(ws, conn)
+            text_index.purge_doc(ws, None, conn, old)
     if keep_old_days and outgoing and outgoing != incoming:
         replaced = stored_name(outgoing, old_doc["ext"])
         try:  # after the commit: retain takes the purge's lock, which never waits on the write lock
@@ -912,7 +912,7 @@ def detach_pdf(page_id: str, request: Request):
                 actor=actor_of(request), client=writer_client(request)))
         except OpError as e:
             return op_refusal(e)
-        pdf_index.purge_unused(ws, conn)
+        text_index.purge_unused(ws, conn)
     return {"ok": True, "block": {**page, "properties": props, "updated_at": result["at"]}}
 
 

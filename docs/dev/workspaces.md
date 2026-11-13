@@ -232,7 +232,7 @@ GAMMA_DATA_DIR/
     pages.db               blocks, the op and change logs, AI chats, notes index,
                            the translation glossary,
                            each account's tabs, recents and reading positions
-    data.db                derived only: PDF text index, PDF manifests, covers,
+    data.db                derived only: document text index, PDF manifests, covers,
                            kept translations (a model makes those again, for tokens)
     uploads/               PDFs, images and other attachments
 ```

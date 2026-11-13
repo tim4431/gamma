@@ -39,7 +39,7 @@ export const ANCHORS = {
   "header.search": { view: "any", description: "Workspace search (Ctrl+F)" },
   "search.panel": { view: "search", open: ["header.search"], description: "The search popover itself" },
   "search.input": { view: "search", open: ["header.search"], surface: "search.panel", description: "The search box: a query, and the folder and label chips Tab makes" },
-  "search.results": { view: "search", open: ["header.search"], surface: "search.panel", description: "The search's answers, grouped: titles, notes, this PDF, other PDFs" },
+  "search.results": { view: "search", open: ["header.search"], surface: "search.panel", description: "The search's answers, grouped: titles, notes, this PDF, other PDFs, files" },
   "header.share": { view: "page", description: "The Share button: the open page's, or on the library the open folder's" },
   "header.account": { view: "any", description: "Account & settings menu; on a phone, the bottom bar's More, the same menu with the topbar's other actions on top" },
   "account.menu": { view: "any", open: ["header.account"], description: "The account menu itself" },

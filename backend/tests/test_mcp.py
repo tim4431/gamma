@@ -134,7 +134,7 @@ def test_results_carry_links_and_structured_content(client, connection, monkeypa
     PDF page, the note block — so an external assistant copies links out of
     results instead of assembling them; the chat's results stay link-free."""
     from gamma.db import connect_data_db
-    from gamma.pdf_index import store_doc
+    from gamma.search.index import store_doc
     from gamma.pdf_text import extract_text
     from gamma.textnorm import normalize_text
 
@@ -172,6 +172,36 @@ def test_results_carry_links_and_structured_content(client, connection, monkeypa
     text, _ = run_agent_tool(ws, {"type": "folder", "folder": "", "can_write": False},
                              "search_library", {"query": "UniqueLinkedPassage"})
     assert "http://" not in text and f"(page_id {paper['id']}):" in text
+
+
+def test_a_text_files_lines_carry_their_links(client, connection):
+    """A text file reads by lines on MCP: the result names the lines read in
+    its structured content and links the first one; a line link reads from
+    its line, a range to its last line; every result's head names the line
+    link's shape."""
+    from gamma import storage
+    from gamma.documents.model import stored_name
+
+    c, ws, item = connection
+    token = item["token"]
+    data = "\\section{Method}\nWe fit a small network by gradient descent.\nThe step size is fixed.\nThe end.\n"
+    stem = storage.content_digest(data.encode())
+    storage.put_upload(ws, stored_name(stem, ".tex"), data.encode())
+    page = make_page(c, "method.tex", properties=doc_props(stem, name="method.tex", format="text", ext=".tex"))
+    page_url = f"http://localhost/?ws={ws}&page={page['id']}"
+    result = call(client, token, "read_page", {"page_id": page["id"], "from_line": 2, "to_line": 2})
+    text = result["content"][0]["text"]
+    assert not result["isError"] and "     2\tWe fit a small network by gradient descent." in text
+    assert "The step size" not in text and f"; line 2: {page_url}&line=2 (a range: &line=N-M" in text
+    assert result["structuredContent"]["lines"] == [2, 2] and result["structuredContent"]["url"] == page_url
+    assert f"file line http://localhost/?ws={ws}&page=<page_id>&line=<N>[-<M>]&quote=" in text
+    result = call(client, token, "read_gamma_link", {"url": f"{page_url}&line=2-3"})
+    text = result["content"][0]["text"]
+    assert result["structuredContent"]["line"] == 2 and result["structuredContent"]["end"] == 3
+    assert "     3\tThe step size is fixed." in text and "The end." not in text
+    result = call(client, token, "read_gamma_link", {"url": f"{page_url}&line=3"})
+    assert "     3\tThe step size is fixed." in result["content"][0]["text"]
+    assert "     4\tThe end." in result["content"][0]["text"] and "gradient" not in result["content"][0]["text"]
 
 
 def test_cite_and_view_ink(client, connection):

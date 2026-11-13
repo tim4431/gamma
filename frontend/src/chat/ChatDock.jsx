@@ -103,12 +103,13 @@ function relAge(iso) {
 
 // What the model was given for a reply, per document — streamed by
 // /api/ai/chat as its first line and saved on the message. Shown only when
-// it matters: the paper was truncated, or the PDF file was requested but
-// text went instead (the provider refused it, or it was too large or
-// missing). A notes-only page asks for no file. A full native attachment or a
-// paper that fit whole stays silent. The pill folds in what the reply's
-// tools read on their own ("pages 1–2 of 7 · read 3–5 with tools") and
-// which pages nobody saw; a selection says where the server placed it
+// it matters: the paper or text file was truncated, or the PDF file was
+// requested but text went instead (the provider refused it, or it was too
+// large or missing). A notes-only page asks for no file. A full native
+// attachment or a document that fit whole stays silent. The pill folds in
+// what the reply's tools read on their own ("pages 1–2 of 7 · read 3–5 with
+// tools", a text file's in lines) and which pages or lines nobody saw; a
+// selection says where the server placed it
 // ("p. 7 · Methods › Noise model") and whether a picture of it went along
 // (its text layer looked like a formula or table). Four more pills, per
 // reply: the oldest messages left out of a conversation the model can't

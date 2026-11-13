@@ -464,22 +464,30 @@ All state is SQLite + files on disk under a data directory (env
   translations"; asked of the model again, at its cost, when they are
   gone), the region pictures of a work folder's comment threads
   `feedback_pictures` (JPEG bytes by key, at most 48 MB, the oldest going
-  first; drawn again when asked, [feedback.md](feedback.md)) and the PDF text index `pdf_fts` / `pdf_fts_docs` (extracted PDF
-  text per page — schema + queries `gamma/pdf_index.py`, extraction
-  `routers/search.py`; extracted again by the next search), with its
-  `pdf_fts_rows` side table mapping a paper to its rows' rowids, so a
-  paper's rows are deleted by rowid instead of a scan of the whole FTS
-  table, and each paper's count of indexed characters kept on its
-  `pdf_fts_docs` row (`chars`, what `GET /api/metadata/status` reads; an
-  index from before it gains the column and counts each paper once). The index is built on demand (a search starts the workspace's
-  indexing job), a few hundred PDF pages per transaction; the rows of
-  papers no block's document names (its `hash`, a duplicated page's
-  included) are purged when a page or a PDF goes
-  (`pdf_index.purge_unused`). Derived data: no migration step — the
-  tables are `CREATE ... IF NOT EXISTS`, the index's from
-  `pdf_index.SCHEMA` (a new `pdf_fts_rows` takes over the rows already
-  there when it is created), the others from `db.DATA_SCHEMA`, which every
-  connection and a restored copy apply. Open it through
+  first; drawn again when asked, [feedback.md](feedback.md)) and the
+  document text index `text_fts` / `text_fts_docs` (the extracted text of
+  the PDFs and text files, a row per PDF page or run of 40 lines — schema
+  + queries `gamma/search/index.py`, extraction `gamma/search/indexer.py`;
+  extracted again by the next search), with its `text_fts_rows` side table
+  mapping a document to its rows' rowids, so a document's rows are deleted
+  by rowid instead of a scan of the whole FTS table, and each document's
+  bookkeeping on its `text_fts_docs` row (`units`, `ver`, `chars`, what
+  `GET /api/metadata/status` reads, `format`, `lines`, `truncated`). The
+  index is built on demand (a search or a chat starts the workspace's
+  indexing job), in batches of about 500 units per transaction; the rows
+  of documents no block's document names (its `hash`, a duplicated page's
+  included) are purged when a page or a document goes
+  (`index.purge_unused`), and a replacement drops the one hash it let go
+  (`index.purge_doc`). A work folder's file that crosses the keep limit
+  (`vault.remote.set_doc`) purges nothing: its old hash's rows linger,
+  out of every search (a search reads only the hashes pages carry), until
+  the next sweep. Derived data: no migration step — the tables are
+  `CREATE ... IF NOT EXISTS`, the index's from `index.SCHEMA`; an index of
+  another layout (an older Gamma's `pdf_fts*`, a restored backup's) is
+  dropped and made again, empty, on first use (no take-over: every
+  document is extracted again by the background job), and the others come
+  from `db.DATA_SCHEMA`, which every connection and a restored copy apply.
+  Open it through
   `db.connect_data_db(ws)`: WAL and the busy timeout, like pages.db.
   Shared by the workspace's members.
 
@@ -545,7 +553,7 @@ commits, and inside its own transaction already. Two rules keep it exact:
 a trigger's `delete` must hand FTS5 what the current rules make of the old
 row, so a change to `normalize_text` ships with a migration step that
 rebuilds every workspace's index (`textnorm.INDEX_VERSION` versions the
-PDF index only); and the rowids must never be renumbered (no `VACUUM`).
+document text index only); and the rowids must never be renumbered (no `VACUUM`).
 `block_index.rebuild` is the whole recovery path: the view, the table and
 the triggers put in place again (`IF NOT EXISTS`; a connection applies them
 as it opens, a cached one never again, so a trigger that is gone comes back

@@ -76,9 +76,10 @@ the library.
   its folder and label chips (`CardLabels`, as on a file row), so a
   label-only match reads as one; a sub-page's row its labels only, its
   path on the second line saying where it is.
-- A typed list ends with two actions. *Search inside notes and PDFs for "q"*
-  (Ctrl+Enter) opens the workspace search with the query (App's
-  `openSearchWith`). *Create page "q"* (Shift+Enter, only where
+- A typed list ends with two actions. *Search notes, PDFs and files for
+  "q"* (Ctrl+Enter) opens the workspace search with the query (App's
+  `openSearchWith`); the palette's own ranking stays in the browser, over
+  the pages it knows. *Create page "q"* (Shift+Enter, only where
   `lib.organize`) calls `createPage` with that title, in the folder the home
   view has open.
 - Enter opens a page through `openPage`, the same path as a card
@@ -250,9 +251,13 @@ page's top, and `pages_in_scope` (the `scope` of GET search) tests a
 folder id against the top and a label id against the page itself. So a
 folder view, a folder share, GET search's scope, a folder export, a folder
 chat's agent and a synced vault reach a sub-page through its top without
-code of their own. The Ctrl+F panel's chips and qualifiers are evaluated
-in the browser by the same rule (`search/searchFilters.js`, through
-`libraryUtils.topPageOf`), and it sends the page ids they keep.
+code of their own. The Ctrl+F panel sends its folder and label chips, and
+a `folder:` or `label:` clause naming one folder or label, as their ids,
+which `pages_in_scope` resolves (`routers/search.scope_pages`), so a work
+folder's chip reaches files the listing never carries; its other
+qualifiers are evaluated in the browser by the same rule
+(`search/searchFilters.js`, through `libraryUtils.topPageOf`), and it
+sends the page ids they keep.
 `root_pages` without a folder reaches every live page, sub-pages included
 (search, export, the agent, reindexing). `blocks_store.filed_folders` is
 a page's folders by this rule, which the connector's clip and lookup
@@ -574,13 +579,19 @@ Ctrl+P and the chat's page pickers): the workspace search's typo-tolerant title 
 folded, every whitespace term must hit the title or a chip, and title hits
 outrank chip-only ones.
 
-The box reads no notes or PDF text, and points to the search that does
-(`ListSearchElsewhere`). With nothing matched, a banner above the listing
-("No title or label matches …") offers *Search inside notes and PDFs* with
+The box reads no notes and no document text, and points to the search that
+does (`ListSearchElsewhere`). With nothing matched, a banner above the listing
+("No title or label matches …") offers *Search inside notes, PDFs and files* with
 the full search's shortcut. Enter in the box does the same. With matches, a
 quiet row right after the last match offers it. Both open the workspace
 search with the query filled in (SearchPanel's `initialQuery`, App's
-`openSearchWith`). Neither is a `.fileRow` / `.folderRow`.
+`openSearchWith`). Neither is a `.fileRow` / `.folderRow`. The search lists
+titles, notes, the PDFs' pages (Library PDFs) and the text files' lines
+(Files: a row names the file's directory in its work folder, its name and
+the line, and opens the file at that line), each group a page at a time
+from `POST /api/block-search` and `POST /api/document-search`, which take
+the filters' folders and labels as ids and the pages its other qualifiers
+keep ([api.md](api.md) "Search matching and display").
 
 The list view is a table. Every row ends in the same trailing columns
 (`rowColumns` in App.jsx): the kind ("PDF", "Page", or a folder's or label's
@@ -656,7 +667,8 @@ on a second line (the Phone block at the end of `library.css`).
 
 Search chips (Tab autosuggest; Enter stays the search's own key) cover both kinds, named from the trees: a
 label chip keeps the pages carrying that label, a folder chip (its path)
-the pages filed in the folder or below it. The search popover's typed
+the pages filed in the folder or below it, a work folder's files included:
+a chip goes to the server as its id. The search popover's typed
 qualifiers (`label:`, `folder:`, `-label:read`, `is:pdf`, `year:>=2020` …,
 [api.md](api.md) "Search matching and display") combine with the chips.
 The home filter box and Ctrl+P read no qualifiers: a query holding one
@@ -996,9 +1008,9 @@ connection: one read of the trash gives every entry with the rows that
 went with it (`trash._trashed`), each entry's deletion checks under its
 write lock that the page is still there as read (a row restored since is
 passed by, a page restored and deleted again since has its rows read
-again), and data.db's rows of papers no block carries are purged once at
-the end of a pass that deleted a page, on the same connection, not per
-page, because `pdf_index.purge_unused` reads every block's
+again), and data.db's rows of documents no block carries are purged once
+at the end of a pass that deleted a page, on the same connection, not per
+page, because `search.index.purge_unused` reads every block's
 properties. The sweeper runs at
 startup and every hour (`lifespan`). It
 skips a workspace whose `pages.db` and WAL are unchanged since the last

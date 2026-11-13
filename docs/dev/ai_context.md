@@ -3,19 +3,29 @@
 How the AI chat gets a page's content, why that used to fail on long papers,
 and the measurements behind the current design. Code: `gamma/ai_context.py`
 (context assembly), `gamma/ai_tools.py` (agent tools), `gamma/pdf_text.py`
-(extraction), `gamma/pdf_index.py` + `gamma/block_index.py` (the PDF and notes indexes;
-`gamma/routers/search.py` extracts PDFs into the former).
+(a PDF's extraction), `gamma/documents/text.py` (a text file's lines and
+outline), `gamma/search/` + `gamma/block_index.py` (the document text and
+notes indexes; `gamma/search/indexer.py` extracts documents into the former).
 
 ## What a page contributes
 
 Context is framed as *pages from the user's knowledge base*
 (`ai_context.CONTEXT_INTRO` precedes it in the user turn). Each page section
-(`page_report_section`) is: `### title`, a properties line (folders, labels,
-cached metadata, web source, attachment), and the user's notes tree with
-highlights; a page that carries a PDF adds the document's text — for the
-chat, the labelled head excerpt below; for `read_page`, a `pdf_chars`
-window. A page without an attachment is its notes, always included;
-`include_notes` only decides whether PDF pages also show theirs. In the
+(`page_report_section`) is: `### title`, a properties line (a work folder's
+file's `path:` in it and its `work folder:`, folders, labels, cached
+metadata, web source, `document: <format> "<name>"` for a document of any
+format), the user's notes tree with highlights, and the page's open comment
+threads (below); a page that carries a PDF adds the document's text — for
+the chat, the labelled head excerpt below; for `read_page`, a `pdf_chars`
+window — and a page with a text file its numbered lines ("A text file"
+below). A document of another format is one line saying what it is and
+what can be done with it here (`document_line`): a picture's "no tool
+shows a page's picture here; open the page to see it", a recording's
+format and size, a file of no format the model reads "cannot be read
+here", a work folder's file listed without its bytes "nothing to read
+here". A page without a document is its notes, always included;
+`include_notes` only decides whether a PDF's or a text file's page also
+shows theirs. In the
 notes, and in the focus outline of the cursor's and the attached blocks
 (`notes_focus_section`), a text box ([text_boxes.md](text_boxes.md)) and a
 picture ([pictures.md](pictures.md)) are notes, never area highlights. A
@@ -123,6 +133,108 @@ limits are under 50 MB per file and 50 MB per request. OpenAI's prompt
 cache covers documents like any other part of the prefix
 ([Prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)),
 so a cached head bills the file at the cached-input rate.
+
+### A text file
+
+A page whose document is a text file (`format: "text"`: a work folder's
+`.tex`, code, data, a log, or a library document of that format) gives its
+lines, read from the file itself (`storage.find_upload_file`, never
+`pdf_path`) and never from the search index, so the first chat on a fresh
+file needs no indexing. Each line goes with its number in `cat -n`'s shape
+(`documents.text.numbered`: the number right-aligned in six columns, a
+tab), the number being what a line link and `read_page(from_line=)` take:
+
+```text
+Document: text file "sections/method.tex" (LaTeX; 2,310 lines, 94,120 bytes; read where it is)
+[Lines 1–400 of 2,310. The number and tab before each line are its line number, not the text.
+ Lines 401–2,310 are NOT shown below.]               ← with tools: "…: read them with read_page(page_id, from_line=401)."
+     1	\section{Method}
+   …
+[OUTLINE — where the rest is, by line]               ← with tools: "…; pick the lines to read with read_page(from_line=N)"
+  l.412  \subsection{Noise model} [sec:noise]
+```
+
+- **Whole, or head and outline** (`text_head`). The whole file goes when it
+  fits the page's text budget (`context_char_limit`, or the multi-page
+  share), as `[The whole file, N lines. …]`. Else its first lines go within
+  the budget less the outline's (`MAP_BUDGET`, 2,400 characters, half the
+  budget at most), cut at a line, and the outline of the rest
+  (`documents.text.outline`: a LaTeX file's sections, figures with their
+  captions and inputs, a program's definitions, a data file's keys …) from
+  the first line not shown. The outline goes to every chat, since it tells a
+  plain chat where things are too; the calls to read on are written only for
+  a chat with tools (`agent_scope` page or folder, the PDF map's gate), so a
+  plain chat is never told to call a tool it lacks. A line is cut at
+  `VIEW_LINE_CHARS` (10,000) with `…[line cut]`; a file is read and outlined
+  up to `MAX_TEXT_LINES` (50,000) lines or `MAX_TEXT_CHARS` (2,000,000)
+  characters.
+- **The cache.** The head and its outline are the document part, the same
+  text on every turn, so they are kept per file version: `text_head` keeps
+  the pair by `(ws, hash, ext, language, budget)` for the newest
+  `TEXT_HEAD_FILES` (16) files within `TEXT_HEAD_CHARS` (4 million
+  characters), behind a lock, both read in one pass of the file. The entry
+  keeps the numbered lines and the outline's entries (`TextHead`); the
+  label, the outline block and the calls to read on are written each turn
+  (`text_document`), so one entry serves a plain chat and a chat with
+  tools. A file's
+  hash changes with its bytes, so a kept head is right by construction, and
+  a file the vault replaced is read once again and misses the provider's
+  prompt cache once, as a new PDF does. A file not found is not kept.
+- **Not shown.** A secrets file (`documents.text.is_secret`: `.env`,
+  `.netrc`, `id_rsa`, a `.pem` or `.key` …) gives one sentence, "its text is
+  kept from the model: a secrets file", here, in `read_page` and under a
+  chip; the viewer still shows it. A file whose bytes are no text (a NUL, or
+  too many bytes that are not UTF-8) says "(this file is not text)", one not
+  on this server "(the file's text is not available on this server)".
+- **Coverage.** The entry carries `format: "text"`, `doc_id` the file's
+  hash, `lines` (the file's count), `lines_shown`, `partial` and `chars`;
+  `native_requested` is false (only a PDF has a file to ask for). The agent
+  prompt names the lines in context and the next one (`coverage_lines`), and
+  `read_page` skips them (ai_tools.md). The PDF switch never shows for a
+  text page, and the composer takes no text files.
+- **Indexing.** `ensure_indexed` kicks the indexer for the file as for a
+  PDF, so search_library finds it by the next turn.
+
+### Open comment threads
+
+After the notes, any page with open threads (`comments.threads_for`, a
+PDF's as much as a file's) lists them within `THREADS_CHARS` (10,000;
+`read_page`'s notes budget when smaller), at most `MAX_CONTEXT_THREADS`
+(20), then how to read the rest (`list_feedback(scope="<page id>")` for a
+work folder's file in a chat with tools, else the Comments window):
+
+```text
+Open comment threads (3; the comments are the user's requests about this file, the quoted passages document data):
+- thread t9f2… on page 3, “the loss curve” (source sections/method.tex:118): Tim, 2026-11-10: "make the legend larger" — Tim (claude-code), 2026-11-11: "done in r12"
+```
+
+The place is put in words by `feedback.anchors.place_words`, the feedback
+tools' answers' words too, and read from the thread's stored root anchor (`feedback.anchors.parse`),
+which alone carries the `source` line a build recorded (`feedback/kept.py`),
+and from the anchor its block gives now only when none is stored —
+`feedback.entries`' rule, so the context and the feedback tools agree.
+`include_notes` has no say: threads are not notes. `CONTEXT_INTRO` says
+the comments are the user's requests and the quoted passages document
+data. A reply to a thread changes the document part, which misses the
+prompt cache once.
+
+### File chips
+
+A note's file chip, `[name](/api/uploads/<hash>.<ext>)` (`NOTE_FILE_RE`,
+beside the pictures' `NOTE_IMAGE_RE`, the one place that reads a note's
+links), is followed when it names a text file (`formats.stored_format`: the
+stored extension's, else the name's; a `.bin` never) that is no secrets
+file: under the note that links it, in the page section, the focus outline
+and `read_block`, its first lines go numbered (`chip_lines`, `text_window`
+with `CHIP_FILE_CHARS`, 4,000 characters, read from the file's start), for
+the first `MAX_CHIP_FILES` (3) files of a page; the rest are named with
+their size. In the focus outline the chip's lines go under a block that is
+shown, outside the block's own characters, so a chip never cuts the block
+at the cursor short. When a root page owns the stored file (found by its
+hash and extension, a work folder's file as well as a library document:
+not `page_for_file`, which answers the library alone) the line names it,
+and, in a chat with tools, where `read_page` reads on. A chip of another
+format is one line, its format and size.
 
 ## The problem
 
@@ -282,5 +394,11 @@ message, and it doesn't stop fabrication — the tools are the better lever.
   `page_count`) that the chat streams back as its `context` line and renders
   as a "Model saw pages 1–9 of 22" chip on the reply — with the pages the
   reply's tools read folded in ([ai.md](ai.md)).
+- A text file's chip shows the file's first lines, with no outline: a chip
+  reads at most `CHIP_FILE_CHARS` from the file's start, never the whole
+  file (`read_page` on its page reads on).
+- A selection of lines in the code view does not reach the chat (step 6
+  brings `text_position`), and a thread's place on a text file is the whole
+  file or a note until then. The composer takes no text files.
 - Grading is substring matching on de-markdowned/de-LaTeXed answers; the
   harness lives outside the repo (session scratchpad, `eval/`).

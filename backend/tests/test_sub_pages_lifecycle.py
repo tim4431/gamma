@@ -263,7 +263,7 @@ def test_empty_reads_the_trash_once_on_one_connection(owner, monkeypatch):
         owner.delete(f"/api/blocks/{tree[0]}").raise_for_status()
     asked, reads, conns = [], [], set()
     real_went, real_trashed, real_entry, real_purge = ops._went_with, trash._trashed, trash._purge_entry, \
-        trash.pdf_index.purge_unused
+        trash.text_index.purge_unused
     monkeypatch.setattr(ops, "_went_with", lambda conn, page: asked.append(page) or real_went(conn, page))
 
     def entry(ws, conn, *args, **kw):
@@ -276,7 +276,7 @@ def test_empty_reads_the_trash_once_on_one_connection(owner, monkeypatch):
         return real_purge(ws, conn, *args, **kw)
 
     monkeypatch.setattr(trash, "_purge_entry", entry)
-    monkeypatch.setattr(trash.pdf_index, "purge_unused", purge)
+    monkeypatch.setattr(trash.text_index, "purge_unused", purge)
 
     def trashed(conn):
         out = real_trashed(conn)
