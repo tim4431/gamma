@@ -3,7 +3,7 @@
 // how its place was found, its source line, and a Send's line and state.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { entryHeading, placedText, requestLine, sourceText } from "../src/feedback/feedbackText.js";
+import { entryHeading, placedText, requestLine, sendWords, sourceText, withdrawTitle } from "../src/feedback/feedbackText.js";
 
 const entry = (kind, where = {}) => ({ id: "t1", file: "main.pdf", kind, where });
 
@@ -62,16 +62,64 @@ test("a Send's line: when and how many, then what became of it", () => {
   const now = Date.parse("2026-11-10T14:10:00Z");
   const sent = { id: "r1", at: "2026-11-10T14:05:00.000000Z", state: "sent", state_by: "", detail: "",
     threads: [{ id: "a", answered: false }, { id: "b", answered: false }, { id: "c", answered: true }] };
-  assert.deepEqual(requestLine(sent, now), { line: "Sent 5m ago · 3 comments", state: "Waiting for the agent", kind: "sent" });
+  const line = "Sent 5m ago · 3 comments";
+  assert.deepEqual(requestLine(sent, now), { line, state: "Waiting for the agent", detail: "", kind: "sent" });
   assert.equal(requestLine({ ...sent, threads: [{ id: "a" }] }, now).line, "Sent 5m ago · 1 comment");
-  assert.deepEqual(requestLine({ ...sent, state: "running", state_by: "Claude Code" }, now).state, "The agent is working");
-  assert.deepEqual(requestLine({ ...sent, state: "running", detail: "rebuilding" }, now).state, "The agent is working: rebuilding");
+  assert.deepEqual(requestLine({ ...sent, state: "running", state_by: "Claude Code" }, now).state, "Claude Code is working", "named by state_by");
+  // the agent's own words go on a line of their own: the state stays short
+  assert.deepEqual(requestLine({ ...sent, state: "running", state_by: "Codex", detail: "Editing main.tex" }, now),
+    { line, state: "Codex is working", detail: "Editing main.tex", kind: "running" });
+  assert.deepEqual(requestLine({ ...sent, state: "running", detail: "rebuilding" }, now),
+    { line, state: "The agent is working", detail: "rebuilding", kind: "running" });
   assert.deepEqual(requestLine({ ...sent, state: "done", state_by: "Claude Code" }, now),
-    { line: "Sent 5m ago · 3 comments", state: "Done by Claude Code", kind: "done" });
+    { line, state: "Done by Claude Code", detail: "", kind: "done" });
+  assert.deepEqual(requestLine({ ...sent, state: "done", state_by: "Codex", detail: "Fixed both. Changed main.tex." }, now),
+    { line, state: "Done by Codex", detail: "Fixed both. Changed main.tex.", kind: "done" }, "with its summary");
   assert.equal(requestLine({ ...sent, state: "done" }, now).state, "Done");
   assert.deepEqual(requestLine({ ...sent, state: "failed", detail: "latexmk failed", state_by: "Claude Code" }, now),
-    { line: "Sent 5m ago · 3 comments", state: "Failed: latexmk failed", kind: "failed" });
-  assert.equal(requestLine({ ...sent, state: "failed" }, now).state, "Failed");
+    { line, state: "Failed", detail: "latexmk failed", kind: "failed" });
+  assert.equal(requestLine({ ...sent, state: "failed" }, now).detail, "");
   assert.deepEqual(requestLine({ ...sent, state: "failed", detail: "withdrawn", state_by: "tim" }, now),
-    { line: "Sent 5m ago · 3 comments", state: "Withdrawn", kind: "withdrawn" });
+    { line, state: "Withdrawn", detail: "", kind: "withdrawn" });
+});
+
+test("Withdraw's title says it stops the agent only where an agent on this computer holds the request", () => {
+  assert.equal(withdrawTitle({ state: "running", state_by: "Codex", local: true }),
+    "Stop Codex and withdraw: what it changed already stays in the files.");
+  // an outside agent working through a token: nothing here stops it
+  assert.equal(withdrawTitle({ state: "running", state_by: "Claude Code" }), "");
+  assert.equal(withdrawTitle({ state: "running", state_by: "Claude Code", local: false }), "");
+  assert.equal(withdrawTitle({ state: "running", state_by: "", local: true }), "");
+  assert.equal(withdrawTitle({ state: "sent", state_by: "", local: true }), "");
+  assert.equal(withdrawTitle(null), "");
+});
+
+test("the Send block: the folder's agent named, its limit, its problem, others' comments; else the generic button", () => {
+  const plan = (mode, extra = {}) => ({ mode, label: "Codex", problem: "", why: "", ...extra });
+  const ready = sendWords(plan("ready"), 2, 0);
+  assert.equal(ready.button, "Send 2 comments to Codex");
+  assert.deepEqual(ready.notes, [{ tone: "hint", text: "Codex works on this computer, in this folder's directory, and answers each comment." }]);
+  assert.equal(ready.blocked, false);
+  assert.equal(sendWords(plan("ready"), 1).button, "Send 1 comment to Codex");
+  const others = sendWords(plan("ready"), 3, 1);
+  assert.equal(others.notes[1].text, "1 of these comments is by someone else: Codex treats it as context.");
+  assert.equal(sendWords(plan("ready"), 3, 2).notes[1].text, "2 of these comments are by someone else: Codex treats them as context.");
+  const many = sendWords(plan("ready"), 101);
+  assert.equal(many.blocked, true);
+  assert.equal(many.notes[1].tone, "warn");
+  assert.equal(many.notes[1].text, "Codex takes at most 100 comments at a time: send a file or a directory of this work folder.");
+  assert.equal(sendWords(plan("ready"), 100).blocked, false, "100 is still one Send");
+  const down = sendWords(plan("not_ready", { problem: "Codex is not signed in on this computer: run `codex login` in a terminal." }), 2);
+  assert.equal(down.button, "Send 2 comments to Codex", "still named");
+  assert.deepEqual(down.notes, [{ tone: "warn",
+    text: "Codex is not signed in on this computer: run `codex login` in a terminal. This Send fails until then." }]);
+  assert.deepEqual(sendWords(plan("checking"), 2).notes, [{ tone: "hint", text: "Checking Codex…" }]);
+  const other = sendWords(plan("other", { why: "Only the person who keeps this folder on this computer can send to Codex." }), 2, 1);
+  assert.equal(other.button, "Send 2 comments");
+  assert.deepEqual(other.notes, [{ tone: "hint", text: "Only the person who keeps this folder on this computer can send to Codex." }]);
+  assert.equal(other.blocked, false);
+  assert.equal(sendWords(plan("other"), 200).blocked, false, "an outside agent has no limit here");
+  assert.equal(sendWords(plan("offer", { label: "" }), 2).notes[0].text,
+    "To have Codex or Claude Code answer here, turn one on in the sync panel: the sync button in the title bar, then ⋯ on this folder.");
+  assert.deepEqual(sendWords(plan("", { label: "" }), 2), { button: "Send 2 comments", notes: [], blocked: false });
 });

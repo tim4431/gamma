@@ -43,6 +43,18 @@ def folder_links_enabled() -> bool:
     return _env_on("GAMMA_FOLDER_LINKS")
 
 
+def local_agents_setting() -> bool | None:
+    """GAMMA_LOCAL_AGENTS as set: True on, False off (0/false/no/off), None
+    unset or anything else, which leaves it to whether the desktop app
+    started this server (gamma/local_agents ``enabled``). Read when asked,
+    so a test can turn it on."""
+    if _env_on("GAMMA_LOCAL_AGENTS"):
+        return True
+    if os.environ.get("GAMMA_LOCAL_AGENTS", "").strip().lower() in ("0", "false", "no", "off"):
+        return False
+    return None
+
+
 DEFAULT_VAULT_KEEP_MB = 64
 
 

@@ -519,6 +519,75 @@ test('a work folder choosing its files is shown so, its Choose files… opens it
   }
 });
 
+test('a work folder\'s agent from the panel: the agents found are read, turning one on is asked with the Sends waiting and carries the shell\'s word, off asks nothing', async () => {
+  fresh();
+  const s = server('Agents');
+  const codexOn = { name: 'codex', label: 'Codex', ready: true, problem: '', running: null };
+  // the link names its maker by account id, never by username
+  s.fake.vaults = [vaultLink({ push: 'everything', mine: true, created_by: 'u_7Xk3q', agent: null })];
+  const found = [{ name: 'codex', label: 'Codex', found: true, version: '0.167.0', ready: true, problem: '' },
+    { name: 'claude', label: 'Claude Code', found: false, version: '', ready: false, problem: 'Claude Code is not on this computer.' }];
+  s.fake.routes = (p, init) => {
+    if (p === '/api/local-agents') return { agents: found };
+    if (p === '/api/local-agents/waiting') return { waiting: 2 };  // the server counts by its own rule
+    if (p === '/api/folder-links/v1' && init.method === 'PATCH') {
+      const { agent } = JSON.parse(init.body);
+      s.fake.vaults = [vaultLink({ push: 'everything', mine: true, created_by: 'u_7Xk3q', agent: agent ? codexOn : null })];
+      return { ...s.fake.vaults[0], ...(agent ? { queued: 2 } : {}) };
+    }
+    return null;
+  };
+  const patches = () => s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH');
+  await shell.refreshKeeping();
+  let [item] = shell.keeping().items;
+  assert.deepEqual([item.work, item.mine, item.agent], [true, true, '']);
+  assert.deepEqual(item.agents.map((a) => [a.name, a.ready]), [['codex', true], ['claude', false]]);
+  const read = s.fake.calls.find((c) => c.path === '/api/local-agents');
+  assert.equal(read.query, '', 'the panel\'s reading takes what the server has, never a fresh check');
+
+  // asked first, with the maker's Sends that wait; under the harness the question takes Cancel
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex');
+  assert.deepEqual(patches(), [], 'nothing turned on');
+  assert.equal(shell.asked.at(-1), 'Let Codex work in C:\\Papers? Codex will answer the Sends you make on this folder: it edits files in this directory and runs commands in its sandbox, without network. 2 waiting Sends will be handed to it.');
+  const [counted] = s.fake.calls.filter((c) => c.path === '/api/local-agents/waiting');
+  assert.equal(new URLSearchParams(counted.query).get('link'), 'v1');
+  assert.ok(!s.fake.calls.some((c) => c.path === '/api/feedback/requests'), 'the shell counts nothing itself');
+
+  shell.answers.push(0);
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex');
+  const [on] = patches();
+  assert.deepEqual(on.body, { agent: 'codex' });
+  assert.equal(on.headers['X-Gamma-Shell'], shell.shellSecret, 'turning an agent on is the computer\'s word');
+  assert.equal(on.headers['X-Gamma-Workspace'], 'mine');
+  assert.equal(shell.notice(), 'Codex now answers the Sends on Papers; 2 waiting were handed to it.');
+  await shell.refreshKeeping();
+  [item] = shell.keeping().items;
+  assert.deepEqual([item.agent, item.agentLabel, item.agentReady], ['codex', 'Codex', true]);
+
+  // the same agent again changes nothing; a name that is none is refused; off asks nothing and carries no word
+  const asks = shell.asked.length;
+  assert.equal(await shell.setAgent(s.srv.id, 'v1', 'codex'), false);
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'gpt'), /codex or claude/);
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', '');
+  const off = patches().at(-1);
+  assert.deepEqual(off.body, { agent: '' });
+  assert.equal(off.headers['X-Gamma-Shell'], undefined);
+  assert.equal(shell.asked.length, asks, 'nothing asked');
+  assert.equal(shell.notice(), 'Codex no longer answers the Sends on Papers: they wait for an agent you run yourself.');
+
+  // the work folder's view asks the server to look again
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'check-agents');
+  assert.ok(s.fake.calls.some((c) => c.path === '/api/local-agents' && c.query === '?fresh=1'));
+
+  // a folder that is no work folder has no agent; a server that runs none (404) offers none
+  s.fake.vaults = [vaultLink({ mine: true })];
+  s.fake.routes = () => null;
+  await shell.refreshKeeping();
+  [item] = shell.keeping().items;
+  assert.equal(item.agents, null);
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex'), /Only a work folder/);
+});
+
 // What `POST /api/folder-links/preview` finds in the directory `picked`:
 // `pages` in the folder, `notes` in the directory, `refusal` why it may not be.
 const previewOf = (picked, { notes = 2, pages = 0, refusal = '', marker = null } = {}) => ({

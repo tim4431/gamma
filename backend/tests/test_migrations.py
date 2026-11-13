@@ -176,7 +176,7 @@ def test_v36_reshapes_the_folder_links_release_0_2_16_made(data_dir):
         assert conn.execute("SELECT id, path, remote_url FROM folder_links").fetchall() == [("l1", "Papers", "")]
         conn.execute("INSERT INTO folder_links (id, workspace_id, folder_id, path, created_by, created_at, remote_url) "
                      "VALUES ('l2', 'wsOfAnotherServer', 'root', 'Shared', 'u1', '2026-01-02T00:00:00Z', 'https://nas')")
-    assert migrations.data_version() == SCHEMA_VERSION == 57
+    assert migrations.data_version() == SCHEMA_VERSION == 58
     assert migrations.ensure_current()["applied"] == []  # 0.2.16's own step 36 left it here: current
     with connect_users_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM folder_links").fetchone() == (2,)
@@ -197,7 +197,7 @@ def test_v50_adds_pull_on_for_a_folder_off_for_a_file(data_dir):
         conn.execute("PRAGMA user_version = 49")
         conn.commit()
     result = migrations.ensure_current()
-    assert result["applied"] == ["folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["page_documents", "work_folders", "feedback", "positions"]
+    assert result["applied"] == ["folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["page_documents", "work_folders", "feedback", "positions", "request_via"]
     assert 50 not in [v for v, _, _ in migrations.WORKSPACE_STEPS]
     with connect_users_db() as conn:
         assert conn.execute("SELECT id, kind, push, pull FROM folder_links ORDER BY id").fetchall() == [
@@ -212,7 +212,7 @@ def test_v50_adds_pull_on_for_a_folder_off_for_a_file(data_dir):
     fresh = sqlite3.connect(":memory:")
     fresh.execute([st for st in USERS_SCHEMA if "TABLE IF NOT EXISTS folder_links" in st][0])
     assert upgraded == migrations._columns(fresh, "folder_links")
-    assert migrations.data_version() == SCHEMA_VERSION == 57
+    assert migrations.data_version() == SCHEMA_VERSION == 58
 
 
 def test_v51_gives_every_token_its_own_workspace_alone(data_dir):
@@ -240,7 +240,7 @@ def test_v51_gives_every_token_its_own_workspace_alone(data_dir):
     fresh = sqlite3.connect(":memory:")
     fresh.execute([st for st in USERS_SCHEMA if "TABLE IF NOT EXISTS integration_tokens" in st][0])
     assert upgraded == migrations._columns(fresh, "integration_tokens")
-    assert migrations.data_version() == SCHEMA_VERSION == 57
+    assert migrations.data_version() == SCHEMA_VERSION == 58
 
 
 def test_v46_adds_the_file_links_and_push_columns(data_dir):
@@ -257,7 +257,7 @@ def test_v46_adds_the_file_links_and_push_columns(data_dir):
         conn.execute("PRAGMA user_version = 45")
         conn.commit()
     result = migrations.ensure_current()
-    assert result["applied"] == ["folder_links_push", "content_reports", "folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions"]
+    assert result["applied"] == ["folder_links_push", "content_reports", "folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions", "request_via"]
     assert 46 not in [v for v, _, _ in migrations.WORKSPACE_STEPS]
     with connect_users_db() as conn:
         assert migrations._columns(conn, "folder_links")[-6:] == ["kind", "page_id", "push", "state", "pull", "library"]
@@ -272,7 +272,7 @@ def test_v46_adds_the_file_links_and_push_columns(data_dir):
         fresh = [r[1] for r in conn.execute("PRAGMA table_info(folder_links)")]
     assert fresh == migrations._columns(sqlite3.connect(":memory:").execute(
         [st for st in USERS_SCHEMA if "TABLE IF NOT EXISTS folder_links" in st][0]).connection, "folder_links")
-    assert migrations.data_version() == SCHEMA_VERSION == 57
+    assert migrations.data_version() == SCHEMA_VERSION == 58
 
 
 def test_v39_moves_the_done_reminders_into_their_table(data_dir):
@@ -321,7 +321,7 @@ def test_v40_adds_the_inbox_and_the_invitation_time(data_dir):
         conn.commit()
     result = migrations.ensure_current()
     assert result["applied"] == ["comments_inbox", "cloud_invitations", "email_invites", "zotero_links", "folder_links_push", "content_reports", "folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"]
-    assert result["workspace_steps"] == ["ink_v2", "picture_kind", "parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions"]
+    assert result["workspace_steps"] == ["ink_v2", "picture_kind", "parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions", "request_via"]
     assert 40 not in [v for v, _, _ in migrations.WORKSPACE_STEPS]  # a global step only: it does not move workspace_format()
     with connect_users_db() as conn:
         assert conn.execute("SELECT token, user_id, role, added_at FROM share_users").fetchall() == [
@@ -1386,8 +1386,8 @@ def test_v34_moves_the_workspace_prefs_into_the_workspace(data_dir, monkeypatch)
 
     result = migrations.ensure_current()
     assert result["applied"] == ["folder_links", "folder_links_remote", "reminders_done", "comments_inbox", "cloud_invitations", "email_invites", "zotero_links", "folder_links_push", "content_reports", "folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"]
-    assert result["workspace_steps"] == ["workspace_prefs", "highlight_colors", "recording_kind", "ink_v2", "picture_kind", "parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions"]
-    assert migrations.data_version() == SCHEMA_VERSION == 57
+    assert result["workspace_steps"] == ["workspace_prefs", "highlight_colors", "recording_kind", "ink_v2", "picture_kind", "parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions", "request_via"]
+    assert migrations.data_version() == SCHEMA_VERSION == 58
     assert migrations.is_behind(WS34)
     with closing(sqlite3.connect(str(pages_db))) as conn:  # the upgrade left the workspace as it was
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
@@ -1563,7 +1563,7 @@ def test_a_workspace_with_version_1_files_serves_version_2_after_its_first_open(
     assert new_url.rsplit("/", 1)[1] == f"{storage.content_digest(served.content)}.ink", "named by its bytes"
     assert c.get(old_url).status_code == 200, "the old file stays for the orphan cleanup"
     with closing(sqlite3.connect(str(config.WORKSPACES_DIR / ws / "pages.db"))) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 55  # the newest workspace step's own version
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 58  # the newest workspace step's own version
     files_after = sorted(p.name for p in uploads.iterdir() if p.is_file())
     assert files_after == sorted([old_name, new_url.rsplit("/", 1)[1]])
 
@@ -1578,14 +1578,14 @@ def test_a_data_directory_at_40_gets_only_the_ink_upgrade(data_dir, monkeypatch)
     """A data directory release 40 left (comments and the Inbox): users.db
     at 40 with its Inbox, a workspace from before it at 38 and one it
     created, stamped 40, each holding a version 1 stroke file. The upgrade
-    runs the global parts of steps 42, 43, 45, 46, 49, 50, 51, 53 and 54 alone
-    (step 40 not again; its tables, which the schema statements made already,
-    stay as they are) and stamps users.db 55, copying users.db alone; each
-    workspace runs steps 41, 44, 47, 48, 52, 53, 54 and 55 on its first open,
-    names the version 2 file and gets the ``kind`` column's picture and
-    position cases, the ``parent_page``, ``deleted_with``, ``work_folder``
-    and ``first_folder`` columns (derived columns: no row changes) and the
-    comments' agent and anchor columns."""
+    runs the global parts of steps 42, 43, 45, 46, 49, 50, 51, 53, 54, 56 and
+    57 alone (step 40 not again; its tables, which the schema statements made
+    already, stay as they are) and stamps users.db 58, copying users.db alone;
+    each workspace runs steps 41, 44, 47, 48, 52, 53, 54, 55 and 58 on its
+    first open, names the version 2 file and gets the ``kind`` column's
+    picture and position cases, the ``parent_page``, ``deleted_with``,
+    ``work_folder`` and ``first_folder`` columns (derived columns: no row
+    changes), the comments' agent and anchor columns and the Sends' ``via``."""
     from gamma import db
     from gamma import ink as inkmod
     from gamma.storage import content_digest
@@ -1610,8 +1610,8 @@ def test_a_data_directory_at_40_gets_only_the_ink_upgrade(data_dir, monkeypatch)
         shape = users_db_shape(conn)
 
     result = migrations.ensure_current()
-    assert result["applied"] == ["cloud_invitations", "email_invites", "zotero_links", "folder_links_push", "content_reports", "folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["ink_v2", "picture_kind", "parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions"]
-    assert migrations.data_version() == SCHEMA_VERSION == 57
+    assert result["applied"] == ["cloud_invitations", "email_invites", "zotero_links", "folder_links_push", "content_reports", "folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["ink_v2", "picture_kind", "parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions", "request_via"]
+    assert migrations.data_version() == SCHEMA_VERSION == 58
     assert backups.info(Path(result["backup"]).name)["files"] == ["users.db"]
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:  # only its stamp moved
         assert users_db_shape(conn) == shape
@@ -1619,14 +1619,14 @@ def test_a_data_directory_at_40_gets_only_the_ink_upgrade(data_dir, monkeypatch)
         assert conn.execute("SELECT id FROM inbox_items").fetchall() == [("i1",)]
     assert sorted(migrations.workspaces_behind()) == sorted(stamps)
     for ws, stamp in stamps.items():
-        assert [name for _, name, _ in migrations.workspace_steps_after(stamp)] == ["ink_v2", "picture_kind", "parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions"]
+        assert [name for _, name, _ in migrations.workspace_steps_after(stamp)] == ["ink_v2", "picture_kind", "parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions", "request_via"]
         with db.connect_pages_db(ws) as conn:  # the first open runs steps 41, 44, 47 and 48
             props = json.loads(conn.execute("SELECT properties FROM unified_blocks WHERE id = 'g1'").fetchone()[0])
         db.close_workspace_connections(ws)
         assert props == {"ink_url": f"/api/uploads/{new_name}", "ink_strokes": 2}
         assert (config.WORKSPACES_DIR / ws / "uploads" / new_name).is_file()
         with closing(sqlite3.connect(str(config.WORKSPACES_DIR / ws / "pages.db"))) as conn:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 55
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 58
     assert migrations.ensure_current()["applied"] == [] and not migrations.workspaces_behind()
 
 
@@ -1642,7 +1642,7 @@ def test_v42_adds_the_cloud_invitations_and_the_requests_to_join(data_dir):
         conn.execute("PRAGMA user_version = 41")
         conn.commit()
     result = migrations.ensure_current()
-    assert result["applied"] == ["cloud_invitations", "email_invites", "zotero_links", "folder_links_push", "content_reports", "folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["picture_kind", "parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions"]
+    assert result["applied"] == ["cloud_invitations", "email_invites", "zotero_links", "folder_links_push", "content_reports", "folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["picture_kind", "parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions", "request_via"]
     assert 42 not in [v for v, _, _ in migrations.WORKSPACE_STEPS]
     with connect_users_db() as conn:
         assert migrations._columns(conn, "pending_share_users") == [
@@ -1661,7 +1661,7 @@ def test_v42_adds_the_cloud_invitations_and_the_requests_to_join(data_dir):
     with connect_users_db() as conn:
         assert conn.execute("SELECT subject, role FROM pending_share_users").fetchall() == [("sub-1", "edit")]
         assert conn.execute("SELECT subject, status FROM join_requests").fetchall() == [("sub-2", "pending")]
-    assert migrations.data_version() == SCHEMA_VERSION == 57
+    assert migrations.data_version() == SCHEMA_VERSION == 58
 
 
 def test_v43_adds_the_email_invitations(data_dir):
@@ -1675,7 +1675,7 @@ def test_v43_adds_the_email_invitations(data_dir):
         conn.execute("PRAGMA user_version = 42")
         conn.commit()
     result = migrations.ensure_current()
-    assert result["applied"] == ["email_invites", "zotero_links", "folder_links_push", "content_reports", "folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["picture_kind", "parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions"]
+    assert result["applied"] == ["email_invites", "zotero_links", "folder_links_push", "content_reports", "folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["picture_kind", "parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions", "request_via"]
     assert 43 not in [v for v, _, _ in migrations.WORKSPACE_STEPS]
     with connect_users_db() as conn:
         assert migrations._columns(conn, "email_invites") == [
@@ -1703,7 +1703,7 @@ def test_v43_adds_the_email_invitations(data_dir):
     with connect_users_db() as conn:
         assert conn.execute("SELECT id, email, server_url FROM email_invites").fetchall() == [
             ("inv-1", "Ann@Example.org", "")]
-    assert migrations.data_version() == SCHEMA_VERSION == 57
+    assert migrations.data_version() == SCHEMA_VERSION == 58
 
 
 def test_v44_rebuilds_the_kind_column_with_its_picture_case():
@@ -1952,7 +1952,7 @@ def test_v53_turns_the_switch_on_for_the_vaults_that_become_work_folders(data_di
         conn.execute("PRAGMA user_version = 52")
         conn.commit()
     result = migrations.ensure_current()
-    assert result["applied"] == ["work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["work_folders", "feedback", "positions"]
+    assert result["applied"] == ["work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["work_folders", "feedback", "positions", "request_via"]
     with connect_users_db() as conn:
         assert dict(conn.execute("SELECT id, library FROM folder_links")) == {
             "work": 1, "whole": 0, "remote": 0, "pdfs": 0, "kept": 0, "file": 0}
@@ -1966,7 +1966,7 @@ def test_v53_turns_the_switch_on_for_the_vaults_that_become_work_folders(data_di
     fresh = sqlite3.connect(":memory:")
     fresh.execute([st for st in USERS_SCHEMA if "TABLE IF NOT EXISTS folder_links" in st][0])
     assert upgraded == migrations._columns(fresh, "folder_links")
-    assert migrations.data_version() == SCHEMA_VERSION == 57
+    assert migrations.data_version() == SCHEMA_VERSION == 58
     assert (53, "work_folders", migrations._v53_folder_links_library) in migrations.STEPS
     assert (53, "work_folders", migrations._v53_work_folders) in migrations.WORKSPACE_STEPS
     assert 53 in migrations.DERIVED_STEPS and migrations.workspace_format() == 55
@@ -2026,7 +2026,7 @@ def test_v54_gives_inbox_items_their_agent(data_dir):
         conn.execute("PRAGMA user_version = 53")
         conn.commit()
     result = migrations.ensure_current()
-    assert result["applied"] == ["feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["feedback", "positions"]
+    assert result["applied"] == ["feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["feedback", "positions", "request_via"]
     with connect_users_db() as conn:
         assert conn.execute("SELECT id, agent FROM inbox_items").fetchall() == [("i1", "")]
     with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
@@ -2038,7 +2038,7 @@ def test_v54_gives_inbox_items_their_agent(data_dir):
     fresh = sqlite3.connect(":memory:")
     fresh.execute([st for st in USERS_SCHEMA if "TABLE IF NOT EXISTS inbox_items" in st][0])
     assert upgraded == migrations._columns(fresh, "inbox_items") and upgraded[-1] == "agent"
-    assert migrations.data_version() == SCHEMA_VERSION == 57
+    assert migrations.data_version() == SCHEMA_VERSION == 58
     assert (54, "feedback", migrations._v54_inbox_agent) in migrations.STEPS
     assert (54, "feedback", migrations._v54_comment_agents) in migrations.WORKSPACE_STEPS
     assert 54 in migrations.LOCAL_STEPS and 54 not in migrations.DERIVED_STEPS
@@ -2145,7 +2145,27 @@ def test_v56_lets_no_token_edit_yet(data_dir):
     with connect_users_db() as conn:
         assert conn.execute("SELECT asks FROM integration_tokens").fetchall() == [(1,)]  # step 57: it asks
     assert not {56, 57} & {v for v, _, _ in migrations.WORKSPACE_STEPS}
-    assert migrations.data_version() == SCHEMA_VERSION == 57 and migrations.workspace_format() == 55
+    assert migrations.data_version() == SCHEMA_VERSION == 58 and migrations.workspace_format() == 55
+
+
+def test_v58_says_how_each_send_was_made():
+    """``feedback_requests`` gains ``via`` ('' on every Send so far, which no
+    agent on this computer takes); a rerun and a copy without the table
+    change nothing, and the step leaves the format where it was."""
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE feedback_requests (id TEXT PRIMARY KEY, rev INTEGER NOT NULL, work_folder TEXT NOT NULL, "
+                 "scope TEXT NOT NULL, scope_kind TEXT NOT NULL, by TEXT NOT NULL, by_name TEXT NOT NULL DEFAULT '', "
+                 "at TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', state TEXT NOT NULL DEFAULT 'sent', "
+                 "state_at TEXT NOT NULL, state_by TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '')")
+    conn.execute("INSERT INTO feedback_requests (id, rev, work_folder, scope, scope_kind, by, at, state_at) "
+                 "VALUES ('r1', 1, 'w', 'w', 'folder', 'u', 't', 't')")
+    migrations._v58_request_via("ws", conn, None)
+    assert conn.execute("SELECT via FROM feedback_requests WHERE id = 'r1'").fetchone() == ("",)
+    migrations._v58_request_via("ws", conn, None)  # re-runnable: nothing to do
+    migrations._v58_request_via("", sqlite3.connect(":memory:"), None)  # a copy without the table
+    assert (58, "request_via", migrations._v58_request_via) in migrations.WORKSPACE_STEPS
+    assert 58 not in [v for v, _, _ in migrations.STEPS] and 58 in migrations.LOCAL_STEPS
+    assert migrations.workspace_format() == 55
 
 
 def _comments_53(conn) -> None:
@@ -2250,7 +2270,7 @@ def test_v52_lazy(data_dir):
         conn.execute("PRAGMA user_version = 51")
         conn.commit()
     result = migrations.ensure_current()
-    assert result["applied"] == ["work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["page_documents", "work_folders", "feedback", "positions"]
+    assert result["applied"] == ["work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["page_documents", "work_folders", "feedback", "positions", "request_via"]
 
     block = c.get(f"/api/blocks/{page['id']}").json()
     assert block["properties"] == {"auto_title": "paper.pdf", "doc": {
@@ -2258,7 +2278,7 @@ def test_v52_lazy(data_dir):
     assert page_document(block["properties"])["file"] == "d1.pdf"
     db.close_workspace_connections(ws)
     with closing(sqlite3.connect(str(pages_db))) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 55
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 58
         assert conn.execute("SELECT doc_id FROM unified_blocks WHERE id = ?", (page["id"],)).fetchone() == ("d1",)
     snap = backups.info(Path(result["backup"]).name)
     assert f"workspaces/{ws}/pages.db" in snap["files"]
@@ -2294,7 +2314,7 @@ def test_v45_adds_the_zotero_links(data_dir):
         conn.execute("PRAGMA user_version = 44")
         conn.commit()
     result = migrations.ensure_current()
-    assert result["applied"] == ["zotero_links", "folder_links_push", "content_reports", "folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions"]
+    assert result["applied"] == ["zotero_links", "folder_links_push", "content_reports", "folder_links_pull", "integration_workspaces", "work_folders", "feedback", "integration_edits", "integration_asks"] and result["workspace_steps"] == ["parent_page", "deleted_with", "page_documents", "work_folders", "feedback", "positions", "request_via"]
     assert 45 not in [v for v, _, _ in migrations.WORKSPACE_STEPS]
     with connect_users_db() as conn:
         assert migrations._columns(conn, "zotero_links") == [
@@ -2322,7 +2342,7 @@ def test_v45_adds_the_zotero_links(data_dir):
     with connect_users_db() as conn:
         assert conn.execute("SELECT workspace_id, library FROM zotero_links").fetchall() == [
             ("ws-linked", "users/123")]
-    assert migrations.data_version() == SCHEMA_VERSION == 57
+    assert migrations.data_version() == SCHEMA_VERSION == 58
 
 
 def test_v45_keeps_the_oldest_of_one_owners_links_of_a_library_an_earlier_shape_let_in(data_dir):

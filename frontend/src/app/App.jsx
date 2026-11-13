@@ -10958,7 +10958,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 ) : null}
                 {/* in the desktop app: the synced vault that keeps the page, or the file an opened PDF is read from */}
                 <VaultChip state={vaultState} open={openPopover === "vault"} canAdd={lib.organize}
-                  onOpenChange={(v) => setOpenPopover(v ? "vault" : null)}
+                  onOpenChange={(v) => { if (v) vault.refresh(); setOpenPopover(v ? "vault" : null); }}
                   onReveal={() => askShell("reveal-on-disk", { page: focusedBlockId })}
                   onEdit={() => vault.setEditing(focusedBlockId)} {...work.chip}
                   onFeedback={work.chip.file && canWriteWorkspace ? () => openFeedback({ kind: "file", id: focusedBlockId }) : undefined} />

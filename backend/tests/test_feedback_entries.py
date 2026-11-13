@@ -21,7 +21,7 @@ import pytest
 import gamma.feedback
 from conftest import (account_of, login, make_folder, make_page, make_user, mark_work_folder, thread_on, work_props,
                       workspace_of)
-from gamma import storage
+from gamma import comments, storage
 from gamma.vault import store as vault_store
 from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page
@@ -443,6 +443,30 @@ def test_states_a_tombstone_and_a_send(paper):
     assert _entry(p, tomb)["sent"] == {"request_id": sent["id"], "state": "sent", "at": sent["at"]}
 
 
+def test_a_local_agents_comment_and_who_took_the_send(paper):
+    """A reply an agent on this computer wrote (``agent_id`` ``local:…``)
+    carries ``agent_kind`` local into the entry and reads "on …'s
+    computer"; a token's and a person's carry no such key. A claimed Send
+    names who took it."""
+    p = paper
+    with connect_pages_db(p.ws) as conn:
+        page = create_page(conn, "local", work_props(p.M, "local.pdf"), actor=p.account, client=DISK_CLIENT)["id"]
+    thread = thread_on(p.own, page, page, "tighten the abstract")["id"]
+    with connect_pages_db(p.ws) as conn:
+        for agent, agent_id in (("Codex", "local:codex"), ("Claude Code", "tok1")):
+            comments.create(conn, page, block_id=page, body=f"{agent} did it", author=p.account, author_name=USER,
+                            thread_id=thread, agent=agent, agent_id=agent_id)
+        sent = requests.create(p.ws, conn, entries.resolve_scope(conn, page), by=p.account, by_name=USER)["request"]
+        assert requests.claim(p.ws, conn, sent["id"], by_name="Codex", detail="Starting Codex")["state"] == "running"
+    got = _entry(p, thread)
+    assert [c.get("agent_kind") for c in got["comments"]] == [None, "local", None]
+    assert "agent_kind" not in got["comments"][0] and "agent_kind" not in got["comments"][2]
+    assert got["sent"] == {"request_id": sent["id"], "state": "running", "at": sent["at"], "detail": "Starting Codex",
+                           "state_by": "Codex"}
+    text = markdown.render_entry(got)
+    assert f"> **Codex** (on {USER}'s computer) · " in text and f"> **Claude Code** ({USER}'s connection) · " in text
+
+
 def test_a_document_is_cut_past_its_entries(paper, monkeypatch):
     monkeypatch.setattr(entries, "MAX_ENTRIES", 3)
     doc = _document(paper)
@@ -590,6 +614,16 @@ changed and where, resolve it when it is done (see "How to answer" at the end).
 def test_the_markdown_of_a_fixed_document():
     assert markdown.render(FIXED) == EXPECTED
     assert markdown.render(json.loads(json.dumps(FIXED))) == EXPECTED  # what open.json reads back gives the same
+
+
+def test_the_markdown_of_a_local_agents_reply():
+    """Only the reply's line changes when an agent on this computer wrote it."""
+    first = FIXED["entries"][0]
+    local = {**FIXED, "entries": [{**first, "comments": [first["comments"][0],
+                                                         {**first["comments"][1], "agent_kind": "local"}]},
+                                  *FIXED["entries"][1:]]}
+    assert markdown.render(local) == EXPECTED.replace("> **Claude Code** (tim's connection) · ",
+                                                      "> **Claude Code** (on tim's computer) · ")
 
 
 def test_the_markdown_with_nothing_open():

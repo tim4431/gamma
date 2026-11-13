@@ -18,6 +18,8 @@ from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments
 from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, offsite, reports, sync_engine
 from . import trash, upload_gc, version, workspaces, ws_backup, zotero_stream
 from .feedback import listeners as feedback_listeners, requests as feedback_requests
+from . import local_agents
+from .local_agents import runner as local_agents_runner
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
 from .compression import JsonGzip
@@ -69,6 +71,7 @@ from .routers import (
     zotero_sync as zotero_sync_router)
 from . import folder_links
 from .routers import folder_links as folder_links_api
+from .routers import local_agents as local_agents_api
 from .seed import ensure_admin_seed
 
 # Worker threads for sync endpoints, streamed replies and file responses
@@ -243,7 +246,8 @@ def _blocked_app(guide: dict) -> FastAPI:
 def _startup_maintenance():
     """After the data directory is current: create users.db on a fresh
     install (and vaults.db on the desktop app's own server, the one server
-    that keeps it), seed the first admin, then per workspace: apply the per-file
+    that keeps it, whose agents' runs a stopped server left fail there:
+    gamma/local_agents/runner.py ``recover``), seed the first admin, then per workspace: apply the per-file
     schema statements (a restored backup gains page_ops, WAL, ...). A
     workspace behind on its own migration steps is skipped: the background
     walk the lifespan starts (``migrations.warming``) upgrades it, or the
@@ -254,6 +258,11 @@ def _startup_maintenance():
     connect_users_db().close()
     if config.folder_links_enabled():
         connect_vaults_db().close()
+    if local_agents.enabled():
+        try:
+            local_agents_runner.recover()  # the runs a stopped server left fail; the Sends waiting are taken
+        except Exception as e:  # noqa: BLE001 — the agents never stop the server
+            log.error(f"[startup] the agents on this computer could not recover their runs: {e}")
     jobs.recover()
     ensure_admin_seed()
     for ws_id in workspace_ids():
@@ -483,7 +492,9 @@ def create_app() -> FastAPI:
     app.include_router(collab.router)
     app.include_router(comments_router.router)
     app.include_router(feedback_router.router)
+    app.include_router(local_agents_api.router)
     feedback_listeners.register()  # what keeps the feedback files, requests and kept versions current
+    local_agents_runner.register()  # an agent on this computer takes the Sends of the folders it answers
     app.include_router(reports_router.router)
     app.include_router(sync.router)
     app.include_router(mirrors.router)

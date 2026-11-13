@@ -70,6 +70,12 @@
   border-radius: var(--radius-sm);
 }
 .feedbackNote:focus-visible { outline: none; border-color: var(--accent); }
+/* What the Send says of an agent on this computer: where it works, why it
+   cannot run yet, whose comments are context. */
+.feedbackAgent { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
+.feedbackAgent:empty { margin-top: 0; } /* kept mounted (a live region), so it takes no room while it says nothing */
+.feedbackAgentNote { margin: 0; font-size: var(--fs-xs); line-height: var(--lh-ui); color: var(--text-muted); }
+.feedbackAgentNote[data-tone="warn"] { color: var(--danger); }
 .feedbackRequests { margin-top: var(--space-4); }
 .feedbackRequests ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
 .feedbackRequest {
@@ -82,6 +88,16 @@
 }
 .feedbackRequestLine { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .feedbackRequestNote { font-size: var(--fs-xs); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feedbackRequestDetail {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.feedbackRequest[data-state="failed"] .feedbackRequestDetail { color: var(--danger); }
 .feedbackRequestState { flex-shrink: 0; font-size: var(--fs-xs); color: var(--text-muted); }
 .feedbackRequest[data-state="failed"] .feedbackRequestState { color: var(--danger); }
 .feedbackRequest[data-state="done"] .feedbackRequestState { color: var(--ok); }

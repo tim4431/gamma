@@ -2,7 +2,8 @@
 // own server (GET /api/folder-links/page/{id}, routers/folder_links.py
 // `page_state`; docs/research/vaults.md "The words" and "Reading a PDF where
 // it is"): `{vault, reader}`. `vault` is the synced vault that keeps the page
-// (`{id, name, scope, path, pull, push, problem, conflicts, paused}`), `reader`
+// (`{id, name, scope, path, pull, push, problem, conflicts, paused, agent}`,
+// `agent` a work folder's agent on this computer or null), `reader`
 // the PDF the page reads where it lies (`{path, missing, mine,
 // relocation_error?}`, `mine` whether this account opened the file).
 // What the page shows of it: the chip in the page header and its card
@@ -65,6 +66,27 @@ export function vaultChip(state) {
     title: missing ? t("The file this PDF was read from is gone")
       : reader.path ? t("This PDF is read from {path}, not stored in the library", { path: reader.path })
       : t("This PDF is read from a file on this computer, not stored in the library"),
+  };
+}
+
+// What the card says of the agent on this computer that answers the work
+// folder's Sends (`vault.agent`, {name, label, ready, problem, running:
+// {request_id, detail} | null}; docs/dev/local_agents.md): {line, problem,
+// working}, `line` naming it, `problem` why it cannot run (the server's
+// English sentence, "" while ready or not known yet), `working` what it is
+// at during a run ("" otherwise; the detail is "" for a member who cannot
+// act on the vault). Null for a vault with no agent.
+export function agentLine(state) {
+  const agent = state?.vault?.agent;
+  if (!agent || typeof agent !== "object") return null;
+  const name = agent.label || agent.name || "";
+  const detail = agent.running?.detail || "";
+  const working = !agent.running ? ""
+    : detail ? t("{agent} is working: {detail}", { agent: name, detail }) : t("{agent} is working", { agent: name });
+  return {
+    line: t("Agent: {agent} on this computer", { agent: name }),
+    problem: agent.ready === false ? String(agent.problem || "") : "",
+    working,
   };
 }
 

@@ -61,6 +61,7 @@ export const GROUPS = [
   { id: "vaults", files: ["vaults.mjs"], s: 20 },
   { id: "work-folders", files: ["workFolders.mjs"], s: 30 },
   { id: "feedback", files: ["feedback.mjs"], s: 60 },
+  { id: "local-agents", files: ["localAgents.mjs"], s: 40 },
   { id: "viewers", files: ["viewers.mjs"], s: 60 },
   { id: "text-search", files: ["textSearch.mjs"], s: 26 },
   { id: "mirror", files: ["mirror.mjs"], s: 7 },
@@ -160,12 +161,14 @@ export const RULES = [
   ["frontend/src/replay/**", ["ink", "ink-editing", "notebooks", "recording"]],
   ["frontend/src/recording/**", ["recording"]],
   // the row control, the thread popover, the Comments window, the page's threads over the socket;
-  // feedback: an agent's comments, the Sent chip, the ink cards and the Feedback button
-  ["frontend/src/comments/**", ["comments", "collab", "inbox", "feedback"]],
+  // feedback: an agent's comments, the Sent chip, the ink cards and the Feedback button;
+  // local-agents: the byline of a reply an agent on this computer wrote
+  ["frontend/src/comments/**", ["comments", "collab", "inbox", "feedback", "local-agents"]],
   // the bell, its panel and the jumps (a thread's opens through comments/); feedback: an agent's items
   ["frontend/src/inbox/**", ["inbox", "feedback"]],
-  // the feedback view and Send (docs/dev/feedback.md "In the app")
-  ["frontend/src/feedback/**", ["feedback"]],
+  // the feedback view and Send (docs/dev/feedback.md "In the app"); local-agents: Send naming the
+  // folder's agent on this computer, its lines and the request it works
+  ["frontend/src/feedback/**", ["feedback", "local-agents"]],
   ["frontend/src/pdf/**", PDF_VIEW],
   // (a text box's editor and read mode are the notes')
   // the "N pages inside" panel and the crumbs over a sub-page's title (/page makes one in notes)
@@ -242,6 +245,8 @@ export const RULES = [
   // the fake Zotero the Zotero link scenario's second Gamma talks to, and the library it serves
   ["backend/tests/zotero_fake.py", ["zotero-link"]],
   ["backend/tests/zotero_fixtures.py", ["zotero-link"]],
+  // the stand-ins for Codex and Claude Code the local agents scenario's server starts
+  ["backend/tests/fake_agents/**", ["local-agents"]],
   ["backend/tests/**", []],
   ["backend/gamma/ai_protocols/**", [...CHAT, "settings"]],
   // the AI client is the translated view's path to the model too
@@ -261,15 +266,21 @@ export const RULES = [
   // synced vaults and PDFs read where they are: the routes a page reads and the engine behind them
   // (the vaults scenario; the shell's side is the desktop app's suite, desktop/test/e2e.js);
   // feedback: a work folder's rounds write its feedback files and keep the commented version;
-  // viewers: the engine's class `file` makes a page of every file a work folder tracks
-  ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback"]],
-  ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders"]],
+  // viewers: the engine's class `file` makes a page of every file a work folder tracks;
+  // local-agents: a work folder's agent on this computer, turned on and off by the PATCH
+  ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback", "local-agents"]],
+  ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders", "local-agents"]],
   ["backend/gamma/linked_files.py", ["vaults", "work-folders", "feedback"]],
   ["backend/gamma/vault/**", ["vaults", "work-folders", "feedback", "viewers"]],
   // feedback on a work folder's files: the reader, the pictures, the SyncTeX map, the requests, the files and the routes
   // (viewers: a region of a picture and a thread on a picture's page as entries with their pictures)
-  ["backend/gamma/feedback/**", ["feedback", "viewers"]],
-  ["backend/gamma/routers/feedback.py", ["feedback"]],
+  // (local-agents: a request claimed and worked by an agent on this computer, the document's `agent`)
+  ["backend/gamma/feedback/**", ["feedback", "viewers", "local-agents"]],
+  ["backend/gamma/routers/feedback.py", ["feedback", "local-agents"]],
+  // an agent on this computer answering a Send (docs/dev/local_agents.md): finding the CLIs, the
+  // drivers, the runner, what this computer keeps, and GET /api/local-agents
+  ["backend/gamma/local_agents/**", ["local-agents"]],
+  ["backend/gamma/routers/local_agents.py", ["local-agents"]],
   ["backend/gamma/md_lens.py", ["vaults"]],
   // a file's path in its work folder: the feedback entries' file, a search hit's path, read_page(path=…)
   ["backend/gamma/work_folders/paths.py", ["work-folders", "vaults", "feedback", "text-search"]],
@@ -378,7 +389,8 @@ export const RULES = [
   // (orphan, place and purge on deletes, moves and page purges; the copies
   // of a backup merge and an import; after_write feeds the inbox)
   // feedback: an agent's writes, the anchors and the listeners that keep the feedback files current
-  ["backend/gamma/comments.py", ["comments", "inbox", "notes-pdf-share", "collab", "transfers", "feedback"]],
+  // local-agents: a local agent's comment (agent_kind) and a Send's state_by on its threads
+  ["backend/gamma/comments.py", ["comments", "inbox", "notes-pdf-share", "collab", "transfers", "feedback", "local-agents"]],
   ["backend/gamma/routers/comments.py", ["comments", "inbox", "feedback"]],
   // the Inbox: its producers' items, the listing and its settle, the marks; feedback: an agent's items
   ["backend/gamma/inbox.py", ["inbox", "comments", "feedback"]],

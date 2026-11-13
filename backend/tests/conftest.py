@@ -19,7 +19,8 @@ os.environ["GAMMA_DATA_DIR"] = own_folder("gamma-test-")
 os.environ["GAMMA_SYNC_INTERVAL"] = "0"  # mirror rounds run only when a test asks
 for var in ("GAMMA_STATIC_DIR", "GAMMA_AI_ANTHROPIC_API_KEY", "GAMMA_AI_OPENAI_API_KEY",
             "GAMMA_AI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GAMMA_AI_MODELS", "GAMMA_AI_MODEL",
-            "GAMMA_ADMIN_USER", "GAMMA_ADMIN_PASSWORD", "GAMMA_FOLDER_LINKS", "GAMMA_SHELL_SECRET"):
+            "GAMMA_ADMIN_USER", "GAMMA_ADMIN_PASSWORD", "GAMMA_FOLDER_LINKS", "GAMMA_SHELL_SECRET",
+            "GAMMA_AGENT_CODEX", "GAMMA_AGENT_CLAUDE", "GAMMA_LOCAL_AGENTS", "GAMMA_AGENT_RUN_TIMEOUT"):
     os.environ.pop(var, None)
 # Nor a developer's off-site bucket: a test server's startup round must never
 # copy into it (gamma/offsite.py reads these at every round). Nor a Zotero
