@@ -456,8 +456,8 @@ def test_claude_code_asks_to_run_a_command_and_nothing_else(lab, disk, monkeypat
                      {"id": "toolu_ask2", "kind": "run", "status": "completed", "program": "latexmk"}]
     assert [a["response"]["response"]["behavior"] for a in _answers(disk.log)] == ["deny", "deny", "allow"]
     entries = read_log(disk.log)
-    assert [e["argv"] for e in entries if "-p" in (e.get("argv") or [])][-1] == claude.ASK_FLAGS
-    told = [e["stdin"] for e in entries if "stdin" in e][-1]
+    assert [e["argv"] for e in entries if "-p" in (e.get("argv") or [])][-1] == claude.ASK_FLAGS + [claude.STREAM_FLAG]
+    told =[e["stdin"] for e in entries if "stdin" in e][-1]
     assert "use Bash: each command is asked of" in told and "You cannot run commands" not in told
 
     # allowed in this chat: the next turn's same command is answered alone; another is asked, then declined

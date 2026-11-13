@@ -47,6 +47,8 @@ export async function localAgentScenarios(env) {
     FAKE_AGENT: JSON.stringify({ each: "fixed", summary: SUMMARY, delay: 8, log: agentLog, distinct: true, chat: CHAT_REPLY,
       // a turn of a folder that lets it ask (3b) asks to run the build with the network
       ask: [{ command: BUILD, reason: "The build fetches a font", host: "fonts.example" }],
+      // a chat turn's reply comes as it is typed (3c): a word every half second
+      typing: 0.5,
       edits: [{ path: "sections/method.tex", old: "by gradient descent.", new: "by gradient descent with weight decay $\\lambda$." }] }),
   } });
   try {
@@ -537,6 +539,85 @@ export async function localAgentScenarios(env) {
       const last = (await conversation()).messages.at(-1);
       assert(!last.steps.some((s) => s.status === "asked") && !(last.asks || []).length, "nothing was put to the person");
       await user.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent_runs: "never" } });
+    });
+
+    // Step 3c: the rest of the computer side.
+    await step("local-agents: the passage chip names its source line, the strip's menu asks the shell, and a model and effort chosen reach Codex as its reply is typed", async () => {
+      const before = heard().length;
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await codexSide(page);
+        // what the page asks the desktop shell (no shell here: the asks are recorded)
+        await page.evaluate(() => {
+          window.shellAsks = [];
+          window.addEventListener("message", (e) => { if (e.data?.source === "gamma-app") window.shellAsks.push(e.data); });
+        });
+        await selectOnPdf(page, 1, "The penalty");
+        const chip = dock.locator(".chatSelChips .chatSelChip").first();
+        await until(async () => (await chip.innerText()).includes("sections/method.tex:3"), { what: "the chip names the passage's source line" });
+
+        await dock.locator(".computerStripMenu").click();
+        await page.locator(".ctxMenuItem", { hasText: "Continue in a terminal" }).click();
+        await dock.locator(".computerStripMenu").click();
+        await page.locator(".ctxMenuItem", { hasText: "Show in folder" }).click();
+        // a message event comes after its post: wait for both
+        const asks = await until(async () => {
+          const got = await page.evaluate(() => window.shellAsks.map((a) => [a.type, a.page]));
+          return got.length >= 2 ? got : null;
+        }, { what: "both asks posted" });
+        assertEq(JSON.stringify(asks), JSON.stringify([["continue-in-terminal", main.id], ["reveal-on-disk", main.id]]),
+          "the page asks the shell with the page's id, nothing more");
+
+        const modelChip = dock.locator(".chatModelChip .uiSelectBtn");
+        await modelChip.click();
+        const items = page.locator(".uiSelectMenu .ctxMenuItem");
+        assert((await items.allInnerTexts()).some((s) => s.includes("GPT Fake Mini")) &&
+          !(await items.allInnerTexts()).some((s) => s.includes("Hidden")), "the models Codex lists, not its hidden ones");
+        await items.filter({ hasText: "GPT Fake Mini" }).click();
+        await modelChip.click();
+        await page.locator(".uiSelectMenu .ctxMenuItem").filter({ hasText: /^\s*medium\s*$/i }).click();
+        await until(async () => /GPT Fake Mini · medium/i.test(await modelChip.innerText()), { what: "the chip shows the choice" });
+
+        const replies = dock.locator(".chatBubble.ai");
+        const earlier = await replies.count();
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("say it slowly");
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        await until(async () => (await replies.count()) > earlier, { timeout: 10000, what: "the new turn's bubble" });
+        // the reply grows: seen part-way before it is whole
+        const seen = new Set();
+        await until(async () => {
+          const last = (await replies.nth(earlier).innerText().catch(() => "")).trim();
+          if (last) seen.add(last);
+          return last.includes(CHAT_REPLY);
+        }, { timeout: 40000, every: 250, what: "the reply, whole" });
+        await until(async () => (await conversation()).messages.at(-1).state === "done", { timeout: 20000, what: "the turn ends" });
+        const first = CHAT_REPLY.split(" ")[0];
+        assert([...seen].some((s) => s.includes(first) && !s.includes(CHAT_REPLY)),
+          `a part of the reply was seen before the whole: ${JSON.stringify([...seen])}`);
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const since = heard().slice(before);
+      const thread = since.find((e) => ["thread/start", "thread/resume"].includes(e.in?.method))?.in.params;
+      const turn = since.find((e) => e.in?.method === "turn/start")?.in.params;
+      assertEq(JSON.stringify([thread?.model, turn?.effort]), JSON.stringify(["gpt-fake-mini", "medium"]), "the model and the effort chosen");
+    });
+
+    await step("local-agents: a running turn is a Background tasks row, whose Stop ends it", async () => {
+      await user.api("/api/local-agents/chat/turns", { method: "POST", body: { page: main.id, text: "take your time" } });
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        await page.click("button[aria-label='Background tasks']");
+        const row = page.locator(".tasksPopover .taskRow", { hasText: "Codex on this computer" });
+        await row.waitFor({ timeout: 15000 });
+        await row.locator('button[aria-label^="Stop Codex on this computer"]').click();
+        await until(async () => (await conversation()).messages.at(-1).state === "stopped", { timeout: 20000, what: "the turn stops" });
+        await row.waitFor({ state: "detached", timeout: 15000 });
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
     });
 
     await step("local-agents: turned off by its maker, the folder has no agent and the feedback document names none", async () => {

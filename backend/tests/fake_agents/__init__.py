@@ -5,6 +5,7 @@ it, reading its log, and whether a process is still alive."""
 import json
 import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -42,6 +43,32 @@ def read_log(log: Path) -> list[dict]:
 def requests_in(log: Path) -> list[dict]:
     """The messages the fake read, in order."""
     return [entry["in"] for entry in read_log(log) if "in" in entry]
+
+
+def turns_in(log: Path) -> list[dict]:
+    """The log's ``{"argv", "cwd", "env"}`` of each process a turn started,
+    in order: Codex's app-server in a folder, Claude Code's ``-p`` with its
+    tools; never a probe's (``--version``, the status, the models: Codex's
+    app-server in the temporary directory, Claude Code's without tools)."""
+    probes = Path(tempfile.gettempdir()).resolve()
+    out = []
+    for entry in read_log(log):
+        argv = entry.get("argv") or []
+        if argv == ["app-server"] and Path(entry["cwd"]).resolve() != probes:
+            out.append(entry)
+        elif "-p" in argv and "--tools" in argv:
+            out.append(entry)
+    return out
+
+
+def settle_probes(timeout: float = 30.0) -> None:
+    """Wait for the probes ``catalog.cached`` started in the background,
+    whose processes a test's end would otherwise find running."""
+    from gamma.local_agents import catalog
+
+    end = time.monotonic() + timeout
+    while catalog._refreshing and time.monotonic() < end:
+        time.sleep(0.05)
 
 
 if sys.platform == "win32":

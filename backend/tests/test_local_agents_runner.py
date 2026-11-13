@@ -26,7 +26,7 @@ from types import SimpleNamespace
 import pytest
 
 from conftest import account_of, fresh_client, login, make_user, thread_on, token_for
-from fake_agents import gone, read_log, requests_in, script_agent, use_fakes
+from fake_agents import gone, read_log, requests_in, script_agent, settle_probes, turns_in, use_fakes
 from gamma import folder_links, gamma_sync, pdf_meta, storage, workspaces
 from gamma.db import connect_pages_db, connect_vaults_db
 from gamma.feedback import entries, files, requests
@@ -85,6 +85,7 @@ def disk(tmp_path, monkeypatch):
         files._folders.clear()
     yield SimpleNamespace(root=tmp_path / "disk", log=tmp_path / "agent.log", seen=seen, tmp=tmp_path)
     runner.reset()
+    settle_probes()
     catalog.forget()
     left = list(procs._live)
     procs.stop_all(timeout=1)
@@ -220,8 +221,7 @@ def test_a_makers_send_is_answered(lab, disk, monkeypatch):
     assert [Path(p).resolve() for p in turn["sandboxPolicy"]["writableRoots"]] == [f.root.resolve()]
     text = turn["input"][0]["text"]
     assert '"fix these"' in text and "lambda is never introduced" in text and f'"thread_id": "{f.threads[1]}"' in text
-    assert [Path(e["cwd"]).resolve() for e in read_log(disk.log) if e.get("argv") == ["app-server"]] == [
-        f.root.resolve()]
+    assert [Path(e["cwd"]).resolve() for e in turns_in(disk.log)] == [f.root.resolve()]
 
 
 def test_a_reply_loads_nothing_by_itself(lab, disk, monkeypatch):
@@ -258,10 +258,10 @@ def test_a_withdraw_during_the_probe(lab, disk, monkeypatch):
     f = _folder(lab, disk)
     probe = catalog.probe
 
-    def withdrawn_meanwhile(name, *, fresh=False):
+    def withdrawn_meanwhile(name, **kw):
         with connect_pages_db(lab.ws) as conn:
             requests.set_state(lab.ws, conn, "larProbeWithdraw", "failed", by_name=OWNER, writer="requester")
-        return probe(name, fresh=fresh)
+        return probe(name, **kw)
 
     monkeypatch.setattr(catalog, "probe", withdrawn_meanwhile)
     sent = _send(lab.owner, f, id="larProbeWithdraw")
@@ -269,7 +269,7 @@ def test_a_withdraw_during_the_probe(lab, disk, monkeypatch):
     got = _request(lab, sent["id"])
     assert (got["state"], got["detail"]) == ("failed", "withdrawn")
     assert store.run_of(lab.ws, sent["id"])["state"] == "stopped"
-    assert not [e for e in read_log(disk.log) if e.get("argv") == ["app-server"]]
+    assert not turns_in(disk.log)
     assert all(len(t["comments"]) == 1 for t in _threads(lab, f).values())
 
 
@@ -313,7 +313,7 @@ def test_an_agent_not_ready_fails_the_request(lab, disk, monkeypatch):
     got = _request(lab, sent["id"])
     assert (got["state"], got["detail"], got["state_by"]) == ("failed", catalog.NOT_SIGNED_IN["codex"], "Codex")
     assert store.run_of(lab.ws, sent["id"])["state"] == "failed"
-    assert not [e for e in read_log(disk.log) if e.get("argv") == ["app-server"]]
+    assert not turns_in(disk.log)
 
 
 def test_a_turn_that_takes_too_long(lab, disk, monkeypatch):
@@ -362,7 +362,7 @@ def test_nothing_new_since_the_last_answers(lab, disk):
     got = _request(lab, sent["id"])
     assert (got["state"], got["detail"]) == ("done", "Nothing new since the last answers.")
     assert store.run_of(lab.ws, sent["id"])["state"] == "done"
-    assert not [e for e in read_log(disk.log) if e.get("argv") == ["app-server"]]
+    assert not turns_in(disk.log)
 
 
 def test_too_many_comments_at_once(lab, disk, monkeypatch):

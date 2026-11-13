@@ -132,8 +132,9 @@ called from `set_agent`, `set_paused`, `relink`, `delete_link` and
   fresh or not. Never raises. It runs processes: a write and a run use it,
   never a read path.
 - **`cached(name)`** never runs a process: the kept probe, and when it is
-  missing or stale one background re-probe (a daemon thread, one per agent
-  at a time). With nothing kept yet it answers `found: null, ready: null`,
+  missing or stale, or a ready agent's models were listed `PROBE_TTL_S`
+  ago or never ("Its model, its typing…"), one background re-probe (a
+  daemon thread, one per agent at a time). With nothing kept yet it answers `found: null, ready: null`,
   "still checking". A listing, a page's chip and the Feedback dialog's poll
   read this.
 - **`probes(fresh)`** is both, in order.
@@ -445,9 +446,11 @@ reads **Gamma AI | Codex**, and on the Codex side the person talks to the
 agent on this computer, in the vault's directory. Only the maker ever sees
 it; for anyone else the chat is as it is. Where the maker lets it, the
 agent may ask on a card to go beyond its confinement ("Asking in the
-chat"); else Codex keeps its sandbox and Claude Code its file tools. There
-is no model menu, terminal hand-over, diff or Revert yet
-(docs/research/agent-collab.md "In steps": 3c).
+chat"); else Codex keeps its sandbox and Claude Code its file tools. Its
+model, the reply as it is typed, a terminal, the passages' source lines
+and Background tasks are below ("Its model, its typing, a terminal, the
+sources, Background tasks"); there is no diff or Revert yet
+(docs/research/agent-collab.md "In steps").
 
 - **The conversation is not a chat.** Gamma AI's chats are the workspace's
   (every member and a share read them, they travel in backups and exports,
@@ -469,8 +472,11 @@ is no model menu, terminal hand-over, diff or Revert yet
   quote; the box kept, since the source line is looked up when the turn
   starts). The agent's: `{id, role: "agent", agent, label, turn_id, state:
   queued | running | done | failed | stopped, text, steps: [{id, kind:
-  read | edit | run | search | other, status, path? | program?}], changes,
-  changed, built, error, fresh, at, ended_at}`: `path` relative to the
+  read | edit | run | search | other, status, path? | program?}], asks,
+  changes, changed, built, error, fresh, model, effort, at, ended_at}`:
+  `asks` what waits for the person ("Asking in the chat"), `model` and
+  `effort` what the turn asked for (null for the agent's default),
+  `path` relative to the
   folder or `"outside"`, `program` a command's program alone (as `_said`),
   `changes` the changed sources (at most 200; `changed` how many),
   `error` an English sentence (`_redact`ed), `fresh` true when a follow-up
@@ -544,6 +550,75 @@ is no model menu, terminal hand-over, diff or Revert yet
   active one (the active one archived); deleting one forgets its session.
   New chat and opening are refused (409) while a turn of the active one is
   queued or running.
+
+### Its model, its typing, a terminal, the sources, Background tasks
+
+- **The model and effort** the agent offers are read with the probe, with
+  no model use (`catalog.probe(models=True)`, kept with it; not re-read at
+  a turn's start, which asks only whether the agent is ready, so a read
+  lists them again once that listing is 10 minutes old, or when there was
+  none: `catalog._listed`): Codex's `model/list` on a short-lived
+  app-server (every page, hidden models left out, 15 s at most; it does
+  the Windows sandbox check in the same process), Claude Code's
+  `initialize` on a
+  `claude -p --input-format stream-json … --restricted --strict-mcp-config`
+  closed before any message. Shape: `[{id, label, efforts, effort (the
+  default), default}]` in `GET /api/local-agents` and the chat's
+  `computer.models`; none listed leaves the agent ready with `models: []`.
+  `POST /chat/turns` takes `model` and `effort`, each one the agent listed
+  (400 otherwise; an effort checked against the chosen model, or the
+  default one); Codex gets them on `thread/start` / `thread/resume`
+  (`model`) and `turn/start` (`effort`), Claude Code as `--model` (none
+  for its `default` entry) and `--effort`, which `--restricted` would not
+  read from the person's settings. The agent's message records them. The
+  composer's chip on this side is the agent's (`ModelChip`, the Gamma AI
+  chip's look): its models, and its efforts as a section; the choice is
+  the conversation's.
+- **The reply as it is typed.** A chat turn's driver streams
+  (`stream=True`; a Send's never does): Codex keeps
+  `item/agentMessage/delta` (opted out for Sends), Claude Code runs with
+  `--include-partial-messages` and reads `stream_event` `text_delta`s of
+  the main thread. Both yield `{type: "delta", text}`; the runner grows the
+  message's live paragraph, written at most every `CHAT_EVERY_S`, and the
+  whole `text` event that follows replaces it (no text twice).
+- **Continue in a terminal and Show in folder** are the strip's `⋯` menu.
+  Show in folder asks the shell `reveal-on-disk` as the vault chip does.
+  Continue in a terminal (offered when the strip's `session` is true: the
+  conversation has a session of the folder's agent, in its directory as it
+  is now, and no turn is to end) asks the shell `continue-in-terminal`
+  with the page's id alone; the shell asks its server `GET
+  /api/local-agents/chat/terminal?page=` (`{cwd, argv, agent, label}`:
+  the agent's command line plus `resume <thread>` for Codex or `--resume
+  <session>` for Claude Code, the session checked against the drivers'
+  pattern; 404 without one, 409 while a turn runs, since two writers on
+  one session are unsafe) and opens a terminal there ([desktop
+  architecture](../../desktop/docs/architecture.md) "The page's asks").
+  That terminal is the person's own session of the agent: their settings,
+  MCP servers and trust prompts apply, not Gamma's confinement. Checked
+  for real: `codex resume` and `claude --resume` in the folder take up a
+  session Gamma's driver made, with its context.
+- **A selection's source line** on its passage chip: `POST
+  /api/local-agents/chat/sources` `{page, selections}` → `{sources: [{file,
+  line, end?} | null]}` (`chats.sources_of`, the lookup the turn's prompt
+  uses: `feedback.sources.source_for` over the selection's box; at most 20,
+  no process), asked 400 ms after the selections change, kept a minute
+  and only until a turn of the conversation ends (the agent may have moved
+  the lines); the chip reads `sections/method.tex:3`, or the page number
+  without one.
+- **Background tasks** lists, for the account, one read-only row per chat
+  turn queued or running here (`routers/jobs.py`: `{id: "computer-<turn>",
+  kind: "computer-turn", title, params: {page, turn, agent, label, title
+  (the page's)}, state: queued | running, progress: {phase: "asking"} while
+  it asks, stoppable, stopping, readonly}`); the tray words it "Codex on
+  this computer: <page>", "Waiting for you" while it asks, opens the page's
+  chat on the computer side on a click (a turn of another workspace opens
+  only its page there: the app loads that workspace anew), and its Stop
+  calls the turn's stop route (in the turn's workspace) instead of
+  `cancelJob`.
+
+Checked against the real CLIs (Codex 0.167.0, Claude Code 2.1.318): both
+list their models with no model use, stream a reply in deltas, and take a
+chosen model and effort.
 
 ## Asking in the chat
 
@@ -915,14 +990,16 @@ and nothing of the run's row.
 | GET | `/api/folder-links` | each link's `agent`: `{name, label, ready, problem, running: {kind: "send" \| "chat", request_id (null for a chat turn), detail} \| null}` for a work folder with one, else null (`local_agents.info.listing`: one store query for the whole listing, readiness from `catalog.cached`, nothing run). A member who cannot act on the vault (`_acts`) reads `running.detail` as "" (it may name files) |
 | GET | `/api/folder-links/page/{page_id}` | the page's `vault` gains the same `agent` (`folder_links.page_vault`), on a server that runs agents only, and `mine` (whether this account made the vault, whose comments may name its agent) on every server. Turning an agent on, off or to another (`set_agent`) tells each open page of the folder `{t: "vault"}` (`_tell_open_pages`, from `collab.open_pages()`), so its chip and the comments' @ menu read it again |
 | POST, PATCH | `/api/pages/{id}/comments`, `/api/comments/{id}` | a comment that names the folder's agent is a Send too, answered as `send` ("A mention in a comment") |
-| GET | `/api/local-agents/chat?page=&version=` | the chat's computer side ("The chat's computer side"), the vault's maker only: `{computer, conversation}`, `computer` the strip (`{agent, label, ready, problem, folder, paused, turn}`, `ready` and `problem` from `catalog.cached`, `turn` `runner.chat_state` or null) and `conversation` the page's active one (`{id, title, agent, messages, version}`, null for none); with `version` the stored one, `{computer, same: true}` |
-| POST | `/api/local-agents/chat/turns` | `{page, text, selections?, id?}` → 202 `{conversation, turn: {id, state}}`; 400 for no text, past 20,000 characters or a malformed `id`; 409 while a turn of the conversation is queued or running, for a folder with no agent, paused or choosing its files, and for an agent known not to be ready (its problem); 403 when the maker is no editor or writes are refused. A repeated `id` (the person's message's) answers the turn it made |
+| GET | `/api/local-agents/chat?page=&version=` | the chat's computer side ("The chat's computer side"), the vault's maker only: `{computer, conversation}`, `computer` the strip (`{agent, label, ready, problem, models, folder, paused, turn, session}`, `session` whether a terminal can continue the conversation, `ready` and `problem` from `catalog.cached`, `turn` `runner.chat_state` or null) and `conversation` the page's active one (`{id, title, agent, messages, version}`, null for none); with `version` the stored one, `{computer, same: true}` |
+| POST | `/api/local-agents/chat/turns` | `{page, text, selections?, id?, model?, effort?}` → 202 `{conversation, turn: {id, state}}`; 400 for no text, past 20,000 characters, a malformed `id`, or a model or effort the agent did not list; 409 while a turn of the conversation is queued or running, for a folder with no agent, paused or choosing its files, and for an agent known not to be ready (its problem); 403 when the maker is no editor or writes are refused. A repeated `id` (the person's message's) answers the turn it made |
 | POST | `/api/local-agents/chat/turns/{id}/stop` | `{stopped}` (`runner.stop_chat`) |
 | POST | `/api/local-agents/chat/new` | `{page}` → `{conversation: null}`; 409 while a turn runs |
 | GET | `/api/local-agents/chat/history?page=` | `{conversations: [{id, title, agent, updated_at, turns}]}`, newest first |
 | POST, DELETE | `/api/local-agents/chat/history/{id}/open`, `/api/local-agents/chat/history/{id}` | open (→ `{conversation}`, 409 while a turn runs, 404 for one not archived) or delete (→ `{deleted: true}`, 409 for the active one) an archived conversation |
 | POST | `/api/local-agents/chat/turns/{turn}/asks/{ask}` | `{decision: "once" \| "chat" \| "deny", note?}` (a note at most 2,000 characters) → `{answered: true}`: the person's answer to a waiting ask ("Asking in the chat"); 400 for another decision, a longer note or `chat` on anything but a command; 404 for no such turn of the account or ask; 409 when it was answered, withdrawn or declined already, or the turn ended |
-| GET | `/api/local-agents?fresh=0\|1` | `{agents: [{name, label, found, version, ready, problem, at}]}`, Codex then Claude Code, from `catalog.cached`; `fresh=1` probes both anew, at most once every 10 s on this server (sooner, the kept answers). A signed-in account's session (`require_personal_user_id`; no token, no guest); 404 when not `enabled()` (`gamma/routers/local_agents.py`, registered beside the feedback router) |
+| GET | `/api/local-agents/chat/terminal?page=` | the desktop shell's alone in practice (Continue in a terminal): `{cwd, argv, agent, label}`, the conversation's session resumed ("Its model, its typing, a terminal…"); 404 "This conversation has no session to continue.", 409 while a turn runs, when the folder has no agent or it is not on this computer |
+| POST | `/api/local-agents/chat/sources` | `{page, selections: [{text, page, box}]}` → `{sources: [{file, line, end?} \| null]}`, in order; 400 past 20 selections |
+| GET | `/api/local-agents?fresh=0\|1` | `{agents: [{name, label, found, version, ready, problem, models, at}]}` (`models`: "Its model, its typing…"), Codex then Claude Code, from `catalog.cached`; `fresh=1` probes both anew, at most once every 10 s on this server (sooner, the kept answers). A signed-in account's session (`require_personal_user_id`; no token, no guest); 404 when not `enabled()` (`gamma/routers/local_agents.py`, registered beside the feedback router) |
 | GET | `/api/local-agents/waiting?link=` | `{waiting: n}`: how many Sends of the vault's work folder an agent turned on now would take (`runner.waiting`, the rule `queue_folder` takes them by), for the panel's question; the vault's maker only (404 otherwise, and for no such work folder) |
 | GET | `/api/feedback?scope=` | on a server that runs agents the JSON gains `agent` and `agents_found` (feedback.md "The routes"); the files' document never does |
 | GET | `/api/feedback/requests`, `/api/feedback/requests/{id}` | on a server that runs agents each request record gains `local`: whether a run on this computer holds it now (`runner.running`), so the dialog's Withdraw can say it stops the agent |
@@ -1187,13 +1264,14 @@ and the network), then `PATCH {agent_runs: "ask"}` with the shell's word
   came from several starts a new one.
 - Comments on another server (the NAS, a clone) never reach this computer's
   agent, as they never reach its files (feedback.md "Known gaps").
-- The chat's computer side (3a): the agent's text comes whole, a message at
-  a time, not as it is typed; Claude Code builds only where the folder
-  lets it ask; no model or effort choice, no *Continue in a
-  terminal*, no diff or Revert of what it changed, no source-line chip on
-  a passage, no Background tasks row; a page's chat only (no folder's);
-  the desktop app only, as the @ row. The window polls while a turn is to
-  end (no push). When Codex silently answers a resume with a new thread,
+- The chat's computer side: Claude Code builds only where the folder lets
+  it ask; no diff or Revert of what it changed (Gamma writes no file the
+  disk made: a decision first), no *Attach what I see*, no *Open comments
+  on this page*; a page's chat only (no folder's); the desktop app only,
+  as the @ row. The window polls while a turn is to end (no push), so the
+  typed reply grows in steps of about a second and a half. *Continue in a
+  terminal* is unit-tested on every platform but opened for real on none
+  yet; on macOS and Linux the terminal is found by name. When Codex silently answers a resume with a new thread,
   the turn reads `fresh` but carries none of the earlier messages, since
   Codex says so only once the turn is under way. The running step of a
   chat turn is in `agent.running.detail` for anyone who may act on the
@@ -1244,6 +1322,13 @@ and the network), then `PATCH {agent_runs: "ask"}` with the shell's word
   time, a follow-up resuming the session, two threads of two sessions
   resuming neither, a refused resume started afresh, the vault's `mine`
   and its open pages hearing the switch.
+- `tests/test_local_agents_extras.py`: the probe listing the models, a
+  choice one the agent listed, a turn running the model and effort asked
+  for (Codex's thread and turn, Claude Code's flags), both drivers
+  streaming a chat turn's text, the reply growing then replaced by the
+  whole message, the terminal route for Codex and Claude Code (and the
+  strip's `session` agreeing with it), the sources of the selections, the
+  Background tasks rows (running and asking, queued, gone after a Stop).
 - `tests/test_local_agents_asks.py`: asking in the chat: the policy is the
   computer's word (the PATCH's gate, the default, the listing's `runs`),
   consent forgotten with the agent, the directory and the vault, both
@@ -1311,5 +1396,8 @@ and the network), then `PATCH {agent_runs: "ask"}` with the shell's word
   New chat and History; asking turned on for the folder, a command Codex
   asks to run waiting on a card (the strip, the command whole, its reason)
   until allowed once, declined with a note (Codex's steer), allowed in this
-  chat and the same command answered unasked in the next turn; turning it
-  off.
+  chat and the same command answered unasked in the next turn; the passage
+  chip's source line, the strip's menu asking the shell (the asks
+  recorded, no shell in the browser suite), a model and effort chosen in
+  the chip reaching Codex, the reply seen part-way as it is typed, a
+  running turn's Background tasks row and its Stop; turning it off.

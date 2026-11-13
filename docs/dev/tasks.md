@@ -152,7 +152,12 @@ jobs".
   `paper-handoff` while one waits for the user's browser, so a card whose
   reply has scrolled away is still somewhere to find. A click on that row
   opens the publisher's page; the chat's own card settles the request
-  ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)).
+  ([ai_tools.md](ai_tools.md#walls-and-the-browser-handoff)). A third,
+  `computer-turn`, is a chat turn of an agent on this computer queued or
+  running for the account ([local_agents.md](local_agents.md) "Its model,
+  its typing, a terminal…"): a click opens the page's chat on the computer
+  side (a turn of another workspace, only its page), and its Stop goes to
+  the turn's own stop route, not `cancelJob`.
 - `GET /api/jobs/{id}` is one job with its `result`.
 - `POST /api/jobs/{id}/cancel`, `DELETE /api/jobs/{id}` and
   `POST /api/jobs/clear` stop, remove and clear jobs.

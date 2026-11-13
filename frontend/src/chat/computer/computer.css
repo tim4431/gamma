@@ -11,6 +11,14 @@
 }
 .chatHealthStrip.computerStrip:is(.problem, .asking) { color: var(--warn); background: var(--warn-bg); }
 .chatHealthStrip.computerStrip .transferSpin.inline { flex: none; }
+/* Its ⋯ menu at its end, no taller than the strip's line. */
+.chatHealthStrip.computerStrip .computerStripMenu {
+  flex: none;
+  width: var(--ctl-icon-btn-xs);
+  height: var(--ctl-icon-btn-xs);
+  margin: -4px -6px -4px 0;
+  color: inherit;
+}
 
 /* Under a reply: what the turn changed, a turn that could not resume the
    agent's session, and how a turn ended when it did not answer. */

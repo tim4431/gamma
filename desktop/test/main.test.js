@@ -1211,3 +1211,54 @@ test('a PDF opened with Gamma: bytes the workspace shown carries open their page
     shell.pretendShown(null, null);
   }
 });
+
+test('a page\'s Continue in a terminal: the command is the open server\'s answer, asked in the page\'s workspace, its refusals said in the notice', async () => {
+  fresh();
+  const terminal = require('../lib/terminal');
+  const realOnPath = terminal.onPath;
+  terminal.onPath = (name) => (name === 'osascript' ? null : `/found/${name}`); // a terminal on every platform
+  try {
+    const s = server('Local');
+    const argv = [path.join(dir, 'codex'), 'resume', 'thread-1'];
+    let answer = { cwd: dir, argv, agent: 'codex', label: 'Codex' };
+    s.fake.routes = (p) => (p === '/api/local-agents/chat/terminal' ? answer : null);
+    shell.pretendShown(s.srv, windowOn(s.fake));
+    const asks = () => s.fake.calls.filter((c) => c.path === '/api/local-agents/chat/terminal');
+
+    const run = await shell.terminalFromPage('mine', 'p1');
+    const [call] = asks();
+    assert.deepEqual([call.query, call.method, call.headers['X-Gamma-Workspace']], ['?page=p1', 'GET', 'mine']);
+    assert.deepEqual(shell.terminals.at(-1), run);
+    assert.equal(run.options.cwd, dir);
+    assert.ok(run.args.includes('thread-1'), 'the session resumed');
+    assert.equal(shell.notice(), 'Opened Codex’s conversation in a terminal.');
+
+    // the server's refusals, said as they are; nothing opened
+    const opened = shell.terminals.length;
+    for (const [status, detail] of [[409, 'Codex is still working: stop it first.'], [404, 'This conversation has no session to continue.']]) {
+      s.fake.routes = (p) => (p === '/api/local-agents/chat/terminal' ? { failWith: status, body: { detail } } : null);
+      assert.equal(await shell.terminalFromPage('mine', 'p1'), null);
+      assert.equal(shell.notice(), detail);
+    }
+    // an answer that is no command, or a directory not there
+    s.fake.routes = (p) => (p === '/api/local-agents/chat/terminal' ? answer : null);
+    answer = { cwd: dir, argv: 'codex resume thread-1', label: 'Codex' };
+    assert.equal(await shell.terminalFromPage('mine', 'p1'), null);
+    assert.equal(shell.notice(), 'The answer names no command to run in the terminal.');
+    const gone = path.join(dir, 'gone');
+    answer = { cwd: gone, argv, label: 'Codex' };
+    assert.equal(await shell.terminalFromPage('mine', 'p1'), null);
+    assert.equal(shell.notice(), `${gone} is not on this computer any more.`);
+    assert.equal(shell.terminals.length, opened);
+
+    // a remote server's page is not asked of
+    const remote = server('NAS', [], { remote: 'https://nas.example' });
+    shell.pretendShown(remote.srv, windowOn(s.fake, [{ origin: 'https://nas.example', fake: remote.fake }]));
+    assert.equal(await shell.terminalFromPage('mine', 'p1'), null);
+    assert.equal(remote.fake.calls.length, 0);
+    assert.equal(shell.terminals.length, opened);
+  } finally {
+    terminal.onPath = realOnPath;
+    shell.pretendShown(null, null);
+  }
+});

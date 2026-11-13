@@ -9,10 +9,15 @@ the Start menu has no login shell's PATH). An npm shim (a Windows ``.cmd``)
 is started as ``node <the package's script>``, never through ``cmd /c``,
 which parses the arguments again.
 
-Asking (``probe``) runs ``--version`` and the status command, which use no
-model; the answer is kept ``PROBE_TTL_S``. A read path (a listing, the
-feedback dialog's poll) uses ``cached``, which never runs a process: a
-stale or missing answer starts one probe in the background.
+Asking (``probe``) runs ``--version`` and the status command, then asks a
+ready agent which models it offers (Codex's ``model/list`` on the
+short-lived app-server that also checks its Windows sandbox, Claude Code's
+``initialize``), none of which uses a model; the answer is kept
+``PROBE_TTL_S``, and so is the list of models apart, since a run's start
+asks only whether the agent is ready (``_listed``). A read path (a listing,
+the feedback dialog's poll) uses ``cached``, which never runs a process: a
+stale or missing answer, or models a ready agent has not listed within
+``PROBE_TTL_S``, starts one probe in the background.
 """
 
 import json
@@ -63,6 +68,7 @@ def _fallbacks(exe: str) -> list[str]:
 FALLBACKS: dict[str, list[str]] = {name: _fallbacks(agent.exe) for name, agent in AGENTS.items()}
 
 _cache: dict[str, dict] = {}
+_listed: dict[str, float] = {}  # when a ready agent last listed its models (time.monotonic)
 _locks = {name: threading.Lock() for name in AGENTS}
 _refreshing: set[str] = set()
 _refreshing_lock = threading.Lock()
@@ -126,9 +132,10 @@ def command(name: str) -> list[str] | None:
     return _resolve(name)[0]
 
 
-def _answer(name: str, *, found, version: str = "", ready, problem: str = "", at: float | None = None) -> dict:
+def _answer(name: str, *, found, version: str = "", ready, problem: str = "", at: float | None = None,
+            models: list[dict] | None = None) -> dict:
     return {"name": name, "label": label(name), "found": found, "version": version, "ready": ready,
-            "problem": problem, "at": time.monotonic() if at is None else at}
+            "problem": problem, "models": list(models or []), "at": time.monotonic() if at is None else at}
 
 
 def _signed_in(agent: Agent, code: int, output: str) -> bool:
@@ -146,7 +153,7 @@ def _signed_in(agent: Agent, code: int, output: str) -> bool:
     return code == 0 and "login method" in text
 
 
-def _probe(agent: Agent) -> dict:
+def _probe(agent: Agent, models: bool = True) -> dict:
     argv, problem = _resolve(agent.name)
     if argv is None:
         return _answer(agent.name, found=False, ready=False, problem=problem)
@@ -158,33 +165,75 @@ def _probe(agent: Agent) -> dict:
     code, output = procs.run_quick(argv + list(agent.status), timeout=PROBE_TIMEOUT_S)
     if not _signed_in(agent, code, output):
         return _answer(agent.name, found=True, version=version, ready=False, problem=NOT_SIGNED_IN[agent.name])
+    offered: list[dict] = []
     if agent.name == "codex":
         from . import codex
 
-        ready, problem = codex.sandbox_ready(argv)
-        if not ready:
-            return _answer(agent.name, found=True, version=version, ready=False, problem=problem)
-    return _answer(agent.name, found=True, version=version, ready=True)
+        if models or codex.CHECK_SANDBOX:
+            ready, problem, offered = codex.inspect(argv, models=models)
+            if not ready:
+                return _answer(agent.name, found=True, version=version, ready=False, problem=problem)
+    elif models:
+        from . import claude
+
+        offered = claude.models(argv)
+    return _answer(agent.name, found=True, version=version, ready=True, models=offered)
 
 
-def probe(name: str, *, fresh: bool = False) -> dict:
-    """``{name, label, found, version, ready, problem, at}`` of the agent
-    ``name``, asked anew when ``fresh`` or older than ``PROBE_TTL_S``. It
-    runs processes: for a write and a run, never a read path. Callers at the
-    same time share one probe. Never raises."""
+def refused_choice(name: str, models: list[dict], model: str, effort: str) -> str:
+    """Why a turn of the agent ``name`` may not ask for ``model`` and
+    ``effort`` ("" for none, the agent's default), "" when it may: the
+    model one of ``models`` (the probe's), the effort one of the efforts of
+    that model, or of the agent's default model when none is chosen."""
+    by_id = {m["id"]: m for m in models}
+    if model and model not in by_id:
+        return f"{label(name)} does not offer that model on this computer."
+    if effort:
+        chosen = by_id.get(model) if model else next((m for m in models if m["default"]), None)
+        if chosen is None or effort not in chosen["efforts"]:
+            return f"{label(name)} does not offer that effort for this model."
+    return ""
+
+
+def _current(name: str, hit: dict, asked: float, fresh: bool, models: bool) -> bool:
+    """Whether the kept ``hit`` answers a probe asked at ``asked``: one that
+    finished after the call began does, fresh or not, one younger than
+    ``PROBE_TTL_S`` when not fresh; asked with ``models``, a ready agent's
+    models must be as recent."""
+    def recent(at: float) -> bool:
+        return at >= asked or (not fresh and asked - at < PROBE_TTL_S)
+    return recent(hit["at"]) and not (models and hit["ready"] and not recent(_listed.get(name, float("-inf"))))
+
+
+def probe(name: str, *, fresh: bool = False, models: bool = True) -> dict:
+    """``{name, label, found, version, ready, problem, models, at}`` of the
+    agent ``name`` (``models`` what it offers, ``[{id, label, efforts,
+    effort, default}]``: events.model), asked anew when ``fresh`` or older
+    than ``PROBE_TTL_S``. Without ``models`` (a run's start, which needs
+    only whether the agent is ready) the models are not asked again: a
+    ready agent keeps those of the last probe that listed them, and when
+    they were listed (``cached`` lists them again once that is
+    ``PROBE_TTL_S`` old, or when there was none). It runs processes: for a
+    write and a run, never a read path. Callers at the same time share one
+    probe. Never raises."""
     if name not in AGENTS:
         return _answer(name, found=False, ready=False, problem=f"Gamma knows no agent named {name}.")
     asked = time.monotonic()
     with _locks[name]:
         hit = _cache.get(name)
-        # One that finished after this call began answers it too, fresh or not.
-        if hit and (hit["at"] >= asked or (not fresh and asked - hit["at"] < PROBE_TTL_S)):
+        if hit and _current(name, hit, asked, fresh, models):
             return dict(hit)
         try:
-            answer = _probe(AGENTS[name])
+            answer = _probe(AGENTS[name], models=models)
         except Exception as e:  # noqa: BLE001 — never raises
             log.warning(f"[agents] probing {name}: {e}")
             answer = _answer(name, found=False, ready=False, problem=f"{label(name)} is not on this computer.")
+        if not answer["ready"]:
+            _listed.pop(name, None)
+        elif models:
+            _listed[name] = answer["at"]
+        elif hit and name in _listed:
+            answer["models"] = list(hit.get("models") or [])
         _cache[name] = answer
         return dict(answer)
 
@@ -199,10 +248,11 @@ def _refresh(name: str) -> None:
 
 def cached(name: str) -> dict:
     """The last probe of ``name`` without running anything; one missing or
-    stale starts a single probe in the background and the stale answer (or
-    ``found: None, ready: None``: still checking) is given meanwhile."""
+    stale (or a ready agent's models listed too long ago, or never) starts a
+    single probe in the background and the stale answer (or ``found: None,
+    ready: None``: still checking) is given meanwhile."""
     hit = _cache.get(name)
-    if (hit is None or time.monotonic() - hit["at"] >= PROBE_TTL_S) and name in AGENTS:
+    if (hit is None or not _current(name, hit, time.monotonic(), False, True)) and name in AGENTS:
         with _refreshing_lock:
             begin = name not in _refreshing
             _refreshing.add(name)
@@ -220,3 +270,4 @@ def probes(*, fresh: bool = False) -> list[dict]:
 def forget() -> None:
     """Drop every kept probe (tests)."""
     _cache.clear()
+    _listed.clear()

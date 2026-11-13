@@ -396,9 +396,9 @@ def test_the_strip_and_the_refusals(lab, disk, monkeypatch):
     f = _folder(lab, disk)
     assert catalog.probe("codex", fresh=True)["ready"]
     strip = _chat(lab.owner, f.page)["computer"]
-    assert strip == {"agent": "codex", "label": "Codex", "ready": True, "problem": "", "folder": strip["folder"],
-                     "paused": False, "turn": None}
-    assert strip["folder"]
+    assert strip == {"agent": "codex", "label": "Codex", "ready": True, "problem": "", "models": strip["models"],
+                     "folder": strip["folder"], "paused": False, "turn": None, "session": False}
+    assert strip["folder"] and [m["id"] for m in strip["models"]] == ["gpt-fake", "gpt-fake-mini"]
     for text, detail in (("  ", "Write a message first."),
                          ("x" * (chats.MAX_TEXT + 1), f"A message is at most {chats.MAX_TEXT} characters.")):
         assert _say(lab.owner, f.page, text, status=400)["detail"] == detail
