@@ -14,6 +14,9 @@ key optional):
 - ``answer``: the final message's JSON, whole; or ``each``: an outcome
   (``fixed``) given to every ``"thread_id": "<id>"`` in the prompt, with
   ``summary``;
+- ``chat``: the final message of a chat turn (a turn with no output schema
+  whose prompt carries a ``"message"``, gamma/local_agents/prompt.py
+  ``build_chat``), plain text; by default ``Done: <the message>``;
 - ``delay``: seconds before the turn ends (turn/interrupt ends it sooner);
 - ``fail``: ``exit`` (dies after turn/start, a line on stderr), ``garbage``
   (lines that are not JSON, then exits), ``no_answer`` (a final message
@@ -155,7 +158,16 @@ def prompt_of(params: dict) -> str:
     return "\n".join(part.get("text", "") for part in params.get("input") or [] if part.get("type") == "text")
 
 
-def answer_text(prompt: str) -> str:
+def chat_message(prompt: str) -> str | None:
+    """The person's message of a chat turn's prompt, None for a Send's."""
+    found = re.search(r'"message":\s*("(?:[^"\\]|\\.)*")', prompt)
+    return json.loads(found.group(1)) if found else None
+
+
+def answer_text(prompt: str, schema=None) -> str:
+    message = chat_message(prompt) if schema is None else None
+    if message is not None:
+        return FAKE.get("chat") or f"Done: {message}"
     if FAIL == "no_answer":
         return "I looked at the comments but have nothing to say in JSON."
     if "answer" in FAKE:
@@ -238,7 +250,7 @@ def run_turn() -> None:
     if state["interrupted"]:
         complete(thread, "interrupted")
         return
-    text = answer_text(prompt_of(params))
+    text = answer_text(prompt_of(params), params.get("outputSchema"))
     item("item/completed", thread, {"type": "agentMessage", "id": "am0", "text": text})
     complete(thread, "completed")
 

@@ -572,6 +572,20 @@ Every write publishes `{t: "comments", block_id, thread_id}` to the page's room,
 
 Every route is the workspace's members' (any role) and integration tokens' of any scope, a token in its own workspace; a share visitor, signed in or not, gets 403 "feedback belongs to the workspace's members". A request's write publishes `{t: "comments", block_id: "", thread_id: ""}` to each page whose threads it names, so open tabs refetch their threads and Sent chips, and the work folder's feedback files are rewritten within seconds on the computer that keeps it.
 
+### Agents on this computer (`routers/local_agents.py`, `gamma/local_agents/`) — see [local_agents.md](local_agents.md)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/local-agents?fresh=0\|1` | `{agents: [{name, label, found, version, ready, problem, at}]}`: Codex CLI and Claude Code as found on this computer, for the sync panel |
+| GET | `/local-agents/waiting?link=` | `{waiting: n}`: the Sends an agent turned on now would take, for the panel's question; the vault's maker only |
+| GET | `/local-agents/chat?page=&version=` | the chat's computer side: `{computer, conversation}` (the strip and the page's active conversation), `{computer, same: true}` when `version` is the stored one |
+| POST | `/local-agents/chat/turns` | `{page, text, selections?, id?}` → 202 `{conversation, turn: {id, state}}`: a message to the folder's agent, queued behind the vault's other runs |
+| POST | `/local-agents/chat/turns/{id}/stop` | `{stopped}` |
+| POST | `/local-agents/chat/new` | `{page}` → `{conversation: null}`: the conversation archived |
+| GET | `/local-agents/chat/history?page=` | `{conversations: [{id, title, agent, updated_at, turns}]}` |
+| POST, DELETE | `/local-agents/chat/history/{id}/open`, `/local-agents/chat/history/{id}` | open or delete an archived conversation |
+
+Only the desktop app's own server answers (`local_agents.enabled`; elsewhere 404), and only a signed-in account's session (a token or the guest: 403). The chat routes answer only the maker of the vault of the work folder the page is a live file of (404 for anyone else and any other page); the refusals and their codes are local_agents.md "The routes".
+
 ### Reports (`routers/reports.py`, `gamma/reports.py`)
 | Method | Path | Purpose |
 |---|---|---|

@@ -4,7 +4,7 @@ stream-json`` with the prompt on stdin, writing the lines Claude Code
 2.1.318 writes (system/init, assistant blocks, user tool results, result).
 
 Scripted by ``FAKE_AGENT`` as tests/fake_agents/fake_codex.py is: ``edits``
-(or ``files``), ``answer`` / ``each`` with ``summary``, ``delay``, ``log``,
+(or ``files``), ``answer`` / ``each`` with ``summary``, ``chat``, ``delay``, ``log``,
 and ``fail`` one of ``exit``, ``garbage``, ``no_answer``, ``not_signed_in``
 (the status says so, and a turn ends in a result that is an error),
 ``failed`` (a result that is an error), ``hang`` (with ``grandchild``),
@@ -55,6 +55,12 @@ def tool_result(session: str, tool_id: str, text: str, error: bool = False) -> N
         block["is_error"] = True
     out({"type": "user", "message": {"role": "user", "content": [block]}, "parent_tool_use_id": None,
          "session_id": session})
+
+
+def chat_message(prompt: str) -> str | None:
+    """The person's message of a chat turn's prompt, None for a Send's."""
+    found = re.search(r'"message":\s*("(?:[^"\\]|\\.)*")', prompt)
+    return json.loads(found.group(1)) if found else None
 
 
 def answer_of(prompt: str):
@@ -117,7 +123,10 @@ def turn(args: list[str]) -> int:
             time.sleep(1)
     time.sleep(float(FAKE.get("delay") or 0))
     schema = flag(args, "--json-schema")
-    if FAIL == "no_answer":
+    message = chat_message(prompt) if not schema else None
+    if message is not None:
+        result, structured = FAKE.get("chat") or f"Done: {message}", None
+    elif FAIL == "no_answer":
         result, structured = "I looked at the comments.", None
     else:
         structured = answer_of(prompt)

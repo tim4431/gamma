@@ -477,7 +477,8 @@ def _prefs_in(ws):
 def test_a_member_who_goes_takes_their_prefs_there(boss, ann, ben):
     # removed by an owner or leaving: the account's tabs, recents and reading
     # positions in that workspace go (and their copies from before step 34
-    # in users.db); everyone else's stay
+    # in users.db), and its conversations with the agent on its computer;
+    # everyone else's stay
     from gamma.db import connect_users_db, page_now
     room = boss.post("/api/workspaces", json={"name": "Prefs room", "kind": "shared", "owner": "ws_ann"}).json()["id"]
     a, b = account_of("ws_ann"), account_of("ws_ben")
@@ -488,9 +489,17 @@ def test_a_member_who_goes_takes_their_prefs_there(boss, ann, ben):
     with connect_users_db() as conn:
         conn.execute("INSERT INTO user_prefs VALUES (?, ?, 'recent-views', '[]', ?)", (b, room, page_now()))
     assert _prefs_in(room) == {(a, "open-tabs"), (b, "open-tabs"), (b, "read-pos")}
+    # and their conversations with the agent on their computer (private to them)
+    from gamma.db import connect_pages_db
+    with connect_pages_db(room) as conn:
+        for chat_id, who in (("cvAnn", a), ("cvBen", b)):
+            conn.execute("INSERT INTO computer_chats (id, page_id, user_id, agent, created_at, updated_at) "
+                         "VALUES (?, 'p1', ?, 'codex', 'x', 'x')", (chat_id, who))
 
     assert ann.delete(f"/api/workspaces/{room}/members/ws_ben").status_code == 200
     assert _prefs_in(room) == {(a, "open-tabs")}
+    with connect_pages_db(room) as conn:
+        assert [r[0] for r in conn.execute("SELECT id FROM computer_chats")] == ["cvAnn"]
     with connect_users_db() as conn:
         assert not conn.execute("SELECT 1 FROM user_prefs WHERE user_id = ? AND workspace_id = ?", (b, room)).fetchone()
     assert ann.put(f"/api/workspaces/{room}/members/ws_ben", json={"role": "viewer"}).status_code == 200

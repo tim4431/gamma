@@ -203,9 +203,9 @@ def test_a_run_shows_on_the_links_its_detail_to_who_may_act(lab, disk, monkeypat
     running = _links(lab.owner)[f.id]["agent"]["running"]
     assert running["request_id"] == sent["id"] and running["detail"].startswith("Reading 2 comments")
     assert _links(lab.editor)[f.id]["agent"]["running"]["detail"] == running["detail"]
-    assert _links(lab.viewer)[f.id]["agent"]["running"] == {"request_id": sent["id"], "detail": ""}
+    assert _links(lab.viewer)[f.id]["agent"]["running"] == {"kind": "send", "request_id": sent["id"], "detail": ""}
     page = lab.viewer.get(f"/api/folder-links/page/{f.page}").json()["vault"]
-    assert page["agent"]["running"] == {"request_id": sent["id"], "detail": ""}
+    assert page["agent"]["running"] == {"kind": "send", "request_id": sent["id"], "detail": ""}
     _withdraw(lab, sent["id"])
     assert runner.wait_idle(30)
     assert _links(lab.owner)[f.id]["agent"]["running"] is None

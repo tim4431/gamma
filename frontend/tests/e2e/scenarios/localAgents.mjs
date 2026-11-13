@@ -21,6 +21,7 @@ const PLACES = JSON.parse(fs.readFileSync(path.join(PAPER, "places.json"), "utf8
 const FAKES = path.join(ROOT, "backend", "tests", "fake_agents");
 const PAGE = { width: 612, height: 792 };
 const SUMMARY = "Moved the legend and introduced the penalty's weight.";
+const CHAT_REPLY = "Tightened the sentence in sections/method.tex:3.";
 
 // An area on page 1 of the paper from places.json's fraction rect, in the
 // page's points as the viewer stores it.
@@ -42,7 +43,7 @@ export async function localAgentScenarios(env) {
     GAMMA_FOLDER_LINKS: "1", GAMMA_SHELL_SECRET: "", GAMMA_LOCAL_AGENTS: "1",
     GAMMA_AGENT_CODEX: JSON.stringify([PYTHON, path.join(FAKES, "fake_codex.py")]),
     GAMMA_AGENT_CLAUDE: JSON.stringify([PYTHON, path.join(FAKES, "fake_claude.py")]),
-    FAKE_AGENT: JSON.stringify({ each: "fixed", summary: SUMMARY, delay: 8, log: agentLog, distinct: true,
+    FAKE_AGENT: JSON.stringify({ each: "fixed", summary: SUMMARY, delay: 8, log: agentLog, distinct: true, chat: CHAT_REPLY,
       edits: [{ path: "sections/method.tex", old: "by gradient descent.", new: "by gradient descent with weight decay $\\lambda$." }] }),
   } });
   try {
@@ -109,6 +110,36 @@ export async function localAgentScenarios(env) {
       await field.click();
       return field;
     };
+    // The chat window, opened from the View menu when it is closed.
+    const openChat = async (page) => {
+      const dock = page.locator(".dockWindow:has(.chatPanel)");
+      if (!(await dock.count())) {
+        await page.getByRole("button", { name: "View", exact: true }).click();
+        await page.locator(".menuPopover .ctxMenuItem", { hasText: "AI Chat" }).click();
+        await page.keyboard.press("Escape");
+      }
+      await dock.waitFor();
+      return dock;
+    };
+    // The chat's Codex side, its strip saying the agent is there.
+    const codexSide = async (page) => {
+      const dock = await openChat(page);
+      await dock.locator(".segGroup").getByRole("button", { name: "Codex", exact: true }).click();
+      await dock.locator(".computerStrip").waitFor();
+      return dock;
+    };
+    // `words` selected on PDF page `n`, as a drag ending in the viewer does.
+    const selectOnPdf = (page, n, words) => page.evaluate(([n, words]) => {
+      const span = [...document.querySelectorAll(`[data-page="${n}"] .textLayer span`)].find((s) => s.textContent.includes(words));
+      const off = span.textContent.indexOf(words);
+      const range = document.createRange();
+      range.setStart(span.firstChild, off);
+      range.setEnd(span.firstChild, off + words.length);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+      span.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    }, [n, words]);
+    const conversation = async () => (await user.api(`/api/local-agents/chat?page=${main.id}`)).conversation;
     // The request a mention made, once it is done.
     const doneRequest = (id) => until(async () => {
       const found = (await user.api("/api/feedback/requests?after=0")).requests.find((r) => r.id === id);
@@ -346,6 +377,102 @@ export async function localAgentScenarios(env) {
       const refused = await user.api(`/api/pages/${main.id}/comments`, { method: "POST",
         body: { block_id: caption.block_id, thread_id: caption.id, body: "@codex once more" } });
       assertEq(refused.send?.refused, "closed", "a resolved thread is reopened first");
+    });
+
+    // Step 3a: the chat's computer side (docs/dev/local_agents.md "The chat's computer side").
+    let chatThread = "";
+    await step("local-agents: the maker's chat has a Codex side, where a message with a PDF passage goes to Codex on this computer and its reply comes back", async () => {
+      const before = heard().length;
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await openChat(page);
+        assertEq(await dock.locator(".segGroup button").allInnerTexts().then((b) => b.map((s) => s.trim()).join("|")), "Gamma AI|Codex",
+          "the switch names Gamma AI and the folder's agent");
+        await codexSide(page);
+        await until(async () => (await dock.locator(".computerStrip").innerText()).trim() === "Codex on this computer · paper",
+          { what: "the strip names the agent and the folder" });
+        await dock.locator(".chatEmpty", { hasText: "Ask Codex about this file" }).waitFor();
+        await selectOnPdf(page, 1, "The penalty");
+        await dock.locator(".chatSelChips").getByText("PDF passage", { exact: true }).waitFor();
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("tighten this sentence");
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        await dock.locator(".chatBubble.user", { hasText: "tighten this sentence" }).waitFor();
+        assertEq(await dock.locator(".chatSelChips").count(), 0, "the passage went with the message");
+        // working, Stop in place of Send, then the reply
+        await dock.getByRole("button", { name: "Stop Codex", exact: true }).waitFor({ timeout: 10000 });
+        await until(async () => (await dock.locator(".computerStrip").innerText()).includes("Codex is working"),
+          { timeout: 15000, what: "the strip says Codex is working" });
+        await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor({ timeout: 40000 });
+        await dock.getByRole("button", { name: "Send", exact: true }).waitFor();
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const since = heard().slice(before);
+      const turns = since.filter((e) => e.in?.method === "turn/start");
+      assertEq(turns.length, 1, "one turn");
+      chatThread = turns[0].in.params.threadId;
+      const prompt = turns[0].in.params.input.filter((p) => p.type === "text").map((p) => p.text).join("\n");
+      assert(prompt.includes('"message": "tighten this sentence"') && prompt.includes("The penalty") && prompt.includes('"file": "main.pdf"'),
+        `the message, the passage and the file reach Codex: ${prompt.slice(0, 600)}`);
+      assert(!turns[0].in.params.outputSchema, "a chat turn answers in prose, with no answer schema");
+      const stored = await conversation();
+      assertEq(JSON.stringify(stored.messages.map((m) => [m.role, m.role === "agent" ? m.state : m.text])),
+        JSON.stringify([["user", "tighten this sentence"], ["agent", "done"]]), "the conversation as stored");
+      assertEq(stored.messages[0].selections[0].page, 1, "the passage's page");
+    });
+
+    await step("local-agents: the turn is the computer's: a tab closed mid-turn finds it again, and the follow-up resumes Codex's session", async () => {
+      const before = heard().length;
+      let ctx = await desktop();
+      let page = await openPage(ctx, at(main.id));
+      await waitForPdf(page, 1);
+      let dock = await codexSide(page);
+      await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor();
+      await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("and the next one too");
+      await dock.getByRole("button", { name: "Send", exact: true }).click();
+      await dock.getByRole("button", { name: "Stop Codex", exact: true }).waitFor({ timeout: 10000 });
+      await ctx.close(); // the tab goes; the turn does not
+      await until(async () => (await conversation()).messages.at(-1).state === "running", { timeout: 15000, what: "the turn runs on" });
+      ctx = await desktop();
+      page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        dock = await codexSide(page);
+        await dock.locator(".chatBubble.user", { hasText: "and the next one too" }).waitFor();
+        await dock.locator(".chatSteps.live").waitFor({ timeout: 10000 });
+        await until(async () => (await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).count()) === 2,
+          { timeout: 40000, what: "the second reply, seen in the new tab" });
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const since = heard().slice(before);
+      assertEq(JSON.stringify(since.filter((e) => e.in?.method === "thread/resume").map((e) => e.in.params.threadId)),
+        JSON.stringify([chatThread]), "the conversation's session resumed");
+      assertEq((await conversation()).messages.at(-1).fresh, false, "nothing forgotten");
+    });
+
+    await step("local-agents: Stop ends Codex's turn, and New chat keeps the conversation in History", async () => {
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await codexSide(page);
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("rewrite the whole method");
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        await dock.getByRole("button", { name: "Stop Codex", exact: true }).click({ timeout: 10000 });
+        await dock.locator(".computerEnded", { hasText: "Stopped" }).waitFor({ timeout: 20000 });
+        await dock.getByRole("button", { name: "Send", exact: true }).waitFor();
+        assertEq((await conversation()).messages.at(-1).state, "stopped", "stored as stopped");
+        await dock.getByRole("button", { name: "New chat", exact: true }).click();
+        await dock.locator(".chatEmpty", { hasText: "Ask Codex about this file" }).waitFor();
+        await dock.getByRole("button", { name: "Chat history", exact: true }).click();
+        const row = page.locator(".chatHistoryPop .chatHistRow", { hasText: "tighten this sentence" });
+        await row.click();
+        await dock.locator(".chatBubble.user", { hasText: "rewrite the whole method" }).waitFor();
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      assert(await user.api("/api/local-agents/chat/history?page=" + main.id).then((h) => h.conversations.length === 0),
+        "the opened conversation is the active one again");
     });
 
     await step("local-agents: turned off by its maker, the folder has no agent and the feedback document names none", async () => {

@@ -271,7 +271,8 @@ def list_links(request: Request):
     files wait for its tracking dialog, ``mine`` whether the account made
     the link (the tracking dialog's routes are its maker's alone), ``agent``
     a work folder's agent on this computer, ``{name, label, ready, problem,
-    running: {request_id, detail} | null}`` or null (``local_agents.info``:
+    running: {kind: "send" | "chat", request_id (null for a chat turn),
+    detail} | null}`` or null (``local_agents.info``:
     nothing is run to know it). The desktop app's sync panel lists
     them all. A folder vault's ``status``: ``{running, started_at,
     last_sync, last_error, failed_at?, counts, kept, untracked?, refused?,

@@ -3,8 +3,9 @@
 // `page_state`; docs/research/vaults.md "The words" and "Reading a PDF where
 // it is"): `{vault, reader}`. `vault` is the synced vault that keeps the page
 // (`{id, name, scope, path, pull, push, problem, conflicts, paused,
-// work_folder, mine, agent}`, `mine` whether this account made it, `agent`
-// a work folder's agent on this computer or null), `reader`
+// work_folder, choosing, mine, agent}`, `mine` whether this account made it,
+// `choosing` a work folder still choosing its first files, `agent` a work
+// folder's agent on this computer or null), `reader`
 // the PDF the page reads where it lies (`{path, missing, mine,
 // relocation_error?}`, `mine` whether this account opened the file).
 // What the page shows of it: the chip in the page header and its card
@@ -72,7 +73,8 @@ export function vaultChip(state) {
 
 // What the card says of the agent on this computer that answers the work
 // folder's Sends (`vault.agent`, {name, label, ready, problem, running:
-// {request_id, detail} | null}; docs/dev/local_agents.md): {line, problem,
+// {kind, request_id, detail} | null, `kind` "send" or "chat"};
+// docs/dev/local_agents.md): {line, problem,
 // working}, `line` naming it, `problem` why it cannot run (the server's
 // English sentence, "" while ready or not known yet), `working` what it is
 // at during a run ("" otherwise; the detail is "" for a member who cannot
@@ -105,6 +107,23 @@ export function mentionAgent(state) {
   return {
     name: agent.name, label: agent.label || agent.name, ready: agent.ready,
     problem: agent.ready === false ? String(agent.problem || "") : "",
+  };
+}
+
+// The chat's computer side (chat/computer/): the same agent, by the same rule
+// as mentionAgent, with what the side's strip says before its own read
+// lands: `running` the vault's run ({kind, request_id, detail}, null when
+// idle), `folder` the work folder's name, `paused` whether the vault is
+// paused or still choosing its files (the agent starts nothing then).
+// Null wherever mentionAgent is.
+export function computerAgent(state) {
+  const agent = mentionAgent(state);
+  if (!agent) return null;
+  const { vault } = state;
+  const running = vault.agent.running;
+  return {
+    ...agent, running: running && typeof running === "object" ? running : null,
+    folder: vault.name || baseName(vault.path), paused: !!vault.paused || !!vault.choosing,
   };
 }
 

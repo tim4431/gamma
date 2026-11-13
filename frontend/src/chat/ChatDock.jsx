@@ -59,6 +59,8 @@ import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import ListMotion from "../shared/ui/ListMotion";
 import { UsageRing } from "../shared/ui/UsageRing";
+import ComputerChat, { ChatSides, ComputerHeader } from "./computer/ComputerChat.jsx";
+import { useChatSide, useComputerChat } from "./computer/useComputerChat.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 // A conversation this tab has nothing of yet (one array, never written).
@@ -383,7 +385,7 @@ function ChipPreview({ text }) {
   );
 }
 
-function SelChip({ kind, icon, label, note, cut, auto = false, text, title, onRemove, removeTitle }) {
+export function SelChip({ kind, icon, label, note, cut, auto = false, text, title, onRemove, removeTitle }) {
   const Glyph = SEL_CHIP_ICONS[icon];
   return (
     <div className={`chatSelChip${kind ? ` ${kind}` : ""}${auto ? " auto" : ""}`} title={title ?? text}>
@@ -523,6 +525,10 @@ export default function ChatDock({
   // {id, text}: a message App asks the chat to send (a handwriting block's
   // "Transcribe with AI"), with whatever is attached at that moment.
   askSignal = null,
+  // The work folder's agent on this computer the open page's chat can talk
+  // to instead (vaultState computerAgent: the vault's maker, in the desktop
+  // app), else null: the header's switch and the side chat/computer/ draws.
+  computer = null,
   onGrip, onFold, collapsed, onClose,
 }) {
   const [loadedMessages, setChatMessages] = useState(NO_MESSAGES);
@@ -534,6 +540,12 @@ export default function ChatDock({
   // another. A rename or a move keeps the bucket; deleting the folder files
   // its conversations into "home"'s history (DELETE /api/folders/{id}).
   const chatKey = focusedBlockId || organizeFolder || "home";
+  // Which side the page's chat shows: Gamma AI's, or with `computer` the
+  // agent on this computer (chat/computer/), whose state is its own; each
+  // side keeps its draft across a switch.
+  const [side, setSide] = useChatSide(focusedBlockId, !!computer && !readOnly);
+  const onComputer = side === "computer";
+  const computerChat = useComputerChat(onComputer ? focusedBlockId : "", setStatus, computer?.label || "");
   // The draft comes back after a remount in the conversation it was typed
   // in; loading another conversation empties it (below).
   const [chatInput, setChatInput] = useState(() => (kept.key === chatKey ? kept.draft : ""));
@@ -1285,6 +1297,8 @@ export default function ChatDock({
   const chatProgScrollRef = useRef(false);
   const chatLastScrollTopRef = useRef(0);
   useEffect(() => { chatStickRef.current = true; }, [chatKey]);
+  // `onComputer`: back from the computer side, the transcript mounts again
+  // at its top and follows its end as it did.
   useEffect(() => {
     const el = chatScrollRef.current;
     if (!el || !chatStickRef.current) return;
@@ -1293,7 +1307,7 @@ export default function ChatDock({
       chatProgScrollRef.current = true;
       el.scrollTop = target;
     }
-  }, [chatMessages, busyHere]);
+  }, [chatMessages, busyHere, onComputer]);
 
   // What the message points at inside the notes: the chips, and the cursor
   // block's selection when it has one (first, as the server labels it S1).
@@ -1655,6 +1669,7 @@ export default function ChatDock({
     if (!askSignal?.id || askSignal.id === kept.asked || !aiInfo || loadedFor !== chatKey) return;
     kept.asked = askSignal.id;
     if (aiOff || readOnly) return;
+    setSide("ai"); // an ask from App is Gamma AI's
     if (busyHere) setChatInput(askSignal.text);
     else sendChatRef.current?.(askSignal.text, { planning: false }); // a command to carry out, never a plan
   }, [askSignal, aiInfo, aiOff, readOnly, busyHere, loadedFor, chatKey]);
@@ -1893,8 +1908,25 @@ export default function ChatDock({
   // conversation to lose (a viewer's chat is never kept, an empty one has
   // nothing to drop).
   const discardArmed = newChatAlt && canSave && chatMessages.length > 0;
-  const headerContent = aiOff || !aiKnown ? null : (
+  // The switch between the two sides leads the header, whether Gamma AI is
+  // set up or not: an account with an agent here and no AI still has a chat.
+  const sides = computer && !readOnly ? <ChatSides side={side} onSide={setSide} label={computer.label} /> : null;
+  if (onComputer) {
+    return (
+      <DockWindow title={t("Chat")} guide="chat.grip" onGrip={onGrip} onFold={onFold}
+        collapsed={collapsed} onClose={onClose} headerContent={<>
+          {sides}
+          <ComputerHeader chat={computerChat} label={computer.label}
+            openPopover={openPopover} setOpenPopover={setOpenPopover} askConfirm={askConfirm} />
+        </>}>
+        <ComputerChat key={focusedBlockId} chat={computerChat} computer={computer} pageId={focusedBlockId}
+          pdfSelections={pdfSelections} setPdfSelections={setPdfSelections} />
+      </DockWindow>
+    );
+  }
+  const headerContent = aiOff || !aiKnown ? sides : (
     <>
+      {sides}
       <div className="ctlBtnRow chatPanelHeaderBtns">
         {/* First in the strip: a button right of ⚙ would push its popover
             (right-aligned under it) past a narrow panel's edge. */}

@@ -12,7 +12,7 @@ on the way in and out (``gamma/integrity.py``): a snapshot records the
 result in its manifest, a restore refuses a damaged backup before touching
 anything. What is each account's own in the workspace (``PRIVATE_TABLES``:
 the members' open tabs, recents and reading positions, the pages they
-follow) is no library
+follow, their chats with the agent on their computer) is no library
 content: the zip's pages.db has those tables emptied, and a restore keeps
 the live rows.
 
@@ -69,9 +69,10 @@ from .zotero_sync_rows import CONFLICT_KINDS
 
 FORMAT = "gamma-backup-1"
 # pages.db tables that hold each account's own state, not the library's
-# (db.WORKSPACE_PREFS_SCHEMA, the pages it follows: page_follows): empty in
-# every zip, never replaced by a restore.
-PRIVATE_TABLES = ("workspace_prefs", "page_follows")
+# (db.WORKSPACE_PREFS_SCHEMA, the pages it follows: page_follows, its chats
+# with the agent on its computer: computer_chats): empty in every zip, never
+# replaced by a restore.
+PRIVATE_TABLES = ("workspace_prefs", "page_follows", "computer_chats")
 SCRUB_CHUNK = 64 << 20             # bytes of zeros per row when a copy's free pages are overwritten
 MAX_PER_WORKSPACE = 20             # manual snapshots per workspace
 MAX_SCHEDULED_PER_WORKSPACE = 100  # scheduled ones per workspace, every task together

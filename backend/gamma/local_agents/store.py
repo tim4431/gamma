@@ -7,13 +7,17 @@ progress it showed, the source files it changed, whether the build changed,
 its steps and its process; and one row a thread an agent here answered last
 (``agent_threads``): the agent, its session and the directory it ran in,
 when the run read the thread, the reply it wrote and the request, so that a
-follow-up in the thread resumes that session.
+follow-up in the thread resumes that session. For the chat's computer side
+(gamma/local_agents/chats.py): one row a conversation (``agent_conversations``),
+the session its agent ran in last and the directory, what its next turn
+resumes, and one row a turn (``agent_turns``), its state and process.
 
-A run's ``error`` is this computer's record of a failure, the agent's whole
-error and its stderr's tail: it may name the user's paths and is never shown
-to the workspace's members (their request carries a sentence of the
-runner's). A removed vault forgets its agent and its threads
-(``vault.store.forget_link``), a relinked one its threads
+A run's or a turn's ``error`` is this computer's record of a failure, the
+agent's whole error and its stderr's tail: it may name the user's paths and
+is never shown to the workspace's members (their request carries a sentence
+of the runner's) nor written in the conversation. A removed vault forgets
+its agent, its threads and its conversations' sessions and turns
+(``vault.store.forget_link``), a relinked one its threads and sessions
 (``forget_threads``); ``forget_links`` drops the rows of links that are gone
 some other way.
 
@@ -83,11 +87,14 @@ def set_agent(link_id: str, agent: str, *, by: str) -> None:
 
 def forget_links(live_ids: set[str]) -> int:
     """The agents of the links not in ``live_ids`` forgotten, and their
-    threads (a vault gone while this server was not looking) → how many
-    agents."""
+    threads, conversations and ended turns (a vault gone while this server
+    was not looking) → how many agents."""
     live = json.dumps(sorted(live_ids))
     with connect_vaults_db() as conn:
-        conn.execute("DELETE FROM agent_threads WHERE link_id NOT IN (SELECT value FROM json_each(?))", (live,))
+        for table in ("agent_threads", "agent_conversations"):
+            conn.execute(f"DELETE FROM {table} WHERE link_id NOT IN (SELECT value FROM json_each(?))", (live,))
+        conn.execute("DELETE FROM agent_turns WHERE ended_at IS NOT NULL "
+                     "AND link_id NOT IN (SELECT value FROM json_each(?))", (live,))
         return conn.execute("DELETE FROM agent_folders WHERE link_id NOT IN (SELECT value FROM json_each(?))",
                             (live,)).rowcount
 
@@ -143,10 +150,12 @@ def _ids(raw: str) -> list[str]:
 
 
 def forget_threads(link_id: str) -> None:
-    """The threads the vault's agent answered forgotten: its directory moved
-    (a session belongs to the directory it ran in)."""
+    """The threads the vault's agent answered forgotten, and the sessions
+    of its conversations: its directory moved (a session belongs to the
+    directory it ran in)."""
     with connect_vaults_db() as conn:
         conn.execute("DELETE FROM agent_threads WHERE link_id = ?", (link_id,))
+        conn.execute("DELETE FROM agent_conversations WHERE link_id = ?", (link_id,))
 
 
 # --- the runs ------------------------------------------------------------------------------
@@ -211,3 +220,76 @@ def run_of(ws: str, request_id: str) -> dict | None:
         row = conn.execute(f"{_RUN_SELECT} WHERE ws = ? AND request_id = ? ORDER BY started_at DESC, rowid DESC "
                            "LIMIT 1", (ws, request_id)).fetchone()
     return _run(row) if row else None
+
+
+# --- the chat's conversations and turns ------------------------------------------------------
+
+TURN_STATES = ("queued", "running", "done", "failed", "stopped")
+_TURN_COLUMNS = ("id", "ws", "link_id", "conversation_id", "page_id", "agent", "state", "started_at", "ended_at",
+                 "error", "pid")
+_TURN_SELECT = f"SELECT {', '.join(_TURN_COLUMNS)} FROM agent_turns"
+
+
+def conversation_of(conversation_id: str) -> dict | None:
+    """``{conversation_id, link_id, agent, session, cwd, at}`` of the
+    conversation's last session, None for none."""
+    with connect_vaults_db() as conn:
+        row = conn.execute("SELECT conversation_id, link_id, agent, session, cwd, at FROM agent_conversations "
+                           "WHERE conversation_id = ?", (conversation_id,)).fetchone()
+    return dict(zip(("conversation_id", "link_id", "agent", "session", "cwd", "at"), row)) if row else None
+
+
+def ran_conversation(conversation_id: str, *, link_id: str, agent: str, session: str, cwd: str) -> None:
+    """The conversation's agent ran in ``session`` in ``cwd``: its row, in
+    place of the one it had."""
+    with connect_vaults_db() as conn:
+        conn.execute("INSERT INTO agent_conversations (conversation_id, link_id, agent, session, cwd, at) "
+                     "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(conversation_id) DO UPDATE SET link_id = excluded.link_id, "
+                     "agent = excluded.agent, session = excluded.session, cwd = excluded.cwd, at = excluded.at",
+                     (conversation_id, link_id, agent, session or "", cwd or "", page_now()))
+
+
+def forget_conversation(conversation_id: str) -> None:
+    """A deleted conversation's session forgotten."""
+    with connect_vaults_db() as conn:
+        conn.execute("DELETE FROM agent_conversations WHERE conversation_id = ?", (conversation_id,))
+
+
+def add_turn(turn_id: str, *, ws: str, link_id: str, conversation_id: str, page_id: str, agent: str) -> None:
+    """A turn of the conversation waits for the agent (``queued``)."""
+    with connect_vaults_db() as conn:
+        conn.execute("INSERT INTO agent_turns (id, ws, link_id, conversation_id, page_id, agent, state, started_at) "
+                     "VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)",
+                     (turn_id, ws, link_id, conversation_id, page_id, agent, page_now()))
+
+
+def turn_running(turn_id: str, pid: int = 0) -> None:
+    """The turn runs (its process ``pid`` once known)."""
+    with connect_vaults_db() as conn:
+        conn.execute("UPDATE agent_turns SET state = 'running', pid = CASE WHEN ? != 0 THEN ? ELSE pid END "
+                     "WHERE id = ? AND ended_at IS NULL", (int(pid or 0), int(pid or 0), turn_id))
+
+
+def end_turn(turn_id: str, *, state: str, error: str = "") -> None:
+    """The turn ends in ``state`` (done, failed, stopped), ``error`` this
+    computer's record of why. A turn that ended already stays as it
+    ended."""
+    if state not in TURN_STATES[2:]:
+        raise ValueError(f"a turn ends {', '.join(TURN_STATES[2:])}")
+    with connect_vaults_db() as conn:
+        conn.execute("UPDATE agent_turns SET state = ?, ended_at = ?, error = ? WHERE id = ? AND ended_at IS NULL",
+                     (state, page_now(), error or "", turn_id))
+
+
+def get_turn(turn_id: str) -> dict | None:
+    with connect_vaults_db() as conn:
+        row = conn.execute(f"{_TURN_SELECT} WHERE id = ?", (turn_id,)).fetchone()
+    return dict(zip(_TURN_COLUMNS, row)) if row else None
+
+
+def open_turns() -> list[dict]:
+    """The turns that have not ended, oldest first: at startup, those a
+    server that stopped left behind."""
+    with connect_vaults_db() as conn:
+        rows = conn.execute(f"{_TURN_SELECT} WHERE ended_at IS NULL ORDER BY started_at").fetchall()
+    return [dict(zip(_TURN_COLUMNS, row)) for row in rows]
