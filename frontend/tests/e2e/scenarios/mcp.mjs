@@ -245,8 +245,8 @@ export async function mcpScenarios(env) {
       };
       const allowed = await change("Asked note", { action: "accept", content: { remember: false } });
       assert(allowed.question, "Gamma asks first");
-      assert(allowed.question.message.includes("Asked agent wants to add a note to “Asked page”"), allowed.question.message);
-      assert(allowed.question.message.includes("{+Asked note+}"), "the question shows the change");
+      assert(allowed.question.message.startsWith("Asked agent wants to add a note to “Asked page”. It adds 1 line."), allowed.question.message);
+      assert(allowed.question.message.includes("\n+ Asked note"), "the question shows the change line by line");
       assert(allowed.question.requestedSchema.properties.remember, "and offers not asking again");
       assert(!allowed.result.isError, JSON.stringify(allowed.result));
       const declined = await change("Declined note", { action: "decline" });

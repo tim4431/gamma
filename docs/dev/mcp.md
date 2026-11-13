@@ -554,11 +554,16 @@ way and not the client's own prompt or a step-up sign-in:
 - **The question** (`GammaMCP._ask`). The call is planned first with the
   tool's approval preview (`ai_tools.approval_preview`, the chat card's), in
   a worker thread; a call that could change nothing gets its answer and asks
-  nobody. Then `elicit_form` sends the client the question (`_question`):
-  who asks, what and where ("Codex wants to add a note to “Paper”, under
-  “Methods”:"), the change as a word diff (`[-removed-]{+added+}`) and the
-  page's URL, with one field, `remember` ("Don't ask again for this
-  connection"). Accept runs the call with the preview's digest
+  nobody. Then `elicit_form` sends the client the question (`_question`),
+  plain text, since that is what a client shows: who asks to do what where
+  and how much ("Codex wants to remove text from a note in “test”. It
+  removes 2 lines."), the change line by line as a terminal shows one
+  (`_lines`, from the preview's word diff: a removed line after `− `, an
+  added one after `+ `, one kept line beside each run of them with its
+  links as their text, "…" for the rest, at most 24 lines of 240
+  characters), and "Open in Gamma:" with the page's URL. Its one field,
+  `remember`, is "Don't ask again for this connection" ("You can turn
+  asking back on in Gamma: Settings → AI → Integrations"). Accept runs the call with the preview's digest
   (`run_agent_tool(approved=)`), as the chat's gate does; accept with
   `remember` also turns asking off for the connection (`set_asks`). Decline
   or cancel, or no answer within the chat card's ten minutes

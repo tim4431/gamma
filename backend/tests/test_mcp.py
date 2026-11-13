@@ -672,6 +672,34 @@ def test_a_connection_edits_notes_only_where_it_may(client, connection):
                 workspaces.delete(gone)
 
 
+def test_the_question_shows_a_change_line_by_line():
+    """Gamma's question is plain text, as a client shows it: what kind of
+    change and how much, the lines removed and added, a kept line beside
+    them with its links as their text, and where the page is."""
+    from gamma.ai_tools import text_diff
+    from gamma.integrations import Connection
+    from gamma.mcp_server import QUESTION_LINES, _question
+
+    codex = Connection("u", ["ws"], "read", "t", "Codex (OAuth)", "tim", ("ws",))
+    before = ("Experiments have observed this suppression. [Experimental study](https://arxiv.org/abs/physics/0402113)\n\n"
+              "## From interactions to entanglement\nBlockade lets one atom depend on another.\n\n"
+              "## Atoms as radio-frequency sensors\nRydberg atoms can act as probes.")
+    after = before.replace("## From interactions to entanglement\nBlockade lets one atom depend on another.\n\n", "")
+    removal = _question(codex, "edit_block", {"title": "test", "diff": text_diff(before, after)}, "https://g/?page=p")
+    assert removal.splitlines()[0] == "Codex wants to remove text from a note in “test”. It removes 2 lines."
+    assert "− ## From interactions to entanglement\n− Blockade lets one atom depend on another." in removal
+    assert "  Experiments have observed this suppression. Experimental study\n− " in removal  # the link as its text
+    assert "\n  ## Atoms as radio-frequency sensors" in removal and "[-" not in removal and "{+" not in removal
+    assert removal.endswith("\n\nOpen in Gamma: https://g/?page=p")
+    rewrite = _question(codex, "edit_block", {"title": "test", "diff": text_diff("old line", "new line")}, "")
+    assert rewrite.splitlines()[0] == "Codex wants to change a note in “test”. It removes 1 line and adds 1 line."
+    assert "− old line\n+ new line" in rewrite
+    added = _question(codex, "create_block", {"title": "Paper", "parent": "Methods", "diff": text_diff("", "A note")}, "")
+    assert added == "Codex wants to add a note to “Paper”, under “Methods”. It adds 1 line.\n\n+ A note"
+    long = _question(codex, "create_block", {"title": "P", "diff": text_diff("", "\n".join(f"line {i}" for i in range(60)))}, "")
+    assert long.count("\n+ ") == QUESTION_LINES and long.endswith("… and 36 more lines")
+
+
 def _events(response):
     """The JSON-RPC messages of an SSE answer."""
     return [json.loads(line[5:]) for line in response.text.splitlines() if line.startswith("data:") and line[5:].strip()]
