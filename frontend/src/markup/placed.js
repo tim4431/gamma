@@ -17,11 +17,12 @@ export function withPlaced(tree, id, key, fn) {
 
 // `tree` with a new block `id` of `properties` (its t0 and its `text_box` or
 // `picture`) on `surface`, a PDF page number or a sheet id, its content
-// empty: on a PDF page at the page's top level with its pdf_page, on a
-// sheet as the sheet's last child. The same tree when that sheet is gone.
-export function addPlaced(tree, surface, id, properties) {
+// `content` (a pasted picture's caption), else empty: on a PDF page at the
+// page's top level with its pdf_page, on a sheet as the sheet's last child.
+// The same tree when that sheet is gone.
+export function addPlaced(tree, surface, id, properties, content = "") {
   const onSheet = typeof surface === "string";
-  const node = { id, children: [], content: "",
+  const node = { id, children: [], content,
     properties: onSheet ? properties : { ...properties, pdf_page: surface } };
   if (!onSheet) return [...tree, node];
   return findBlock(tree, surface) ? updateBlockTree(tree, surface, (s) => ({ ...s, children: [...(s.children || []), node] })) : tree;

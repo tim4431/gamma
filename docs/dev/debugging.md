@@ -1495,7 +1495,11 @@ The scenarios live in `tests/e2e/scenarios/`:
   - Last, the lasso takes a picture with a stroke and leaves a locked one.
     A drag carries both, and one undo and one redo step both, from the
     strip and by Ctrl+Z. With its row's Pictures off it takes the stroke
-    alone.
+    alone. Select all takes the page's unlocked pictures, by Ctrl+A and
+    More. A tap takes the picture under it, a stroke over it first, never
+    a locked one. Copy and Paste carry a picture with the strokes, placed
+    as they were, one step to undo and redo; Cut is one step; a paste on
+    another paper names the same upload and shows it.
 - `guide.mjs`: the first-run guide ([onboarding.md](onboarding.md)),
   started from the account menu's Tours — every registered home-view anchor
   is present once, the demo step adds a paper by itself (pointed at an

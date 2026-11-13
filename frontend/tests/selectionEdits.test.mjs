@@ -3,8 +3,8 @@
 // parts): the selected strokes, the pictures the lasso took and their half
 // of an edit, what each action of the selection menu does and its history
 // label, Duplicate, New note and Merge into note with their refusals,
-// select all, Transcribe's groups and chips, the clipboard's shape, and
-// where a paste lands.
+// select all, Transcribe's groups and chips, the clipboard's shape and
+// pill, and where a paste lands with its pictures.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { restyleBrush } from "../src/ink/finishStroke.js";
@@ -12,8 +12,9 @@ import {
   MAX_STROKES, boundsOf, encodeStroke, flipStrokes, newInk, restyleStrokes, strokeBounds, transformStrokes, unionBox,
 } from "../src/ink/ink.js";
 import {
-  actionEdit, centredOn, clipOf, duplicatePlan, editPictures, inkChips, mergePlan, pasteShift, removePictures, selectAllItems,
-  selectedPictures, selectedStrokes, selectionBox, selectionChanges, selectionStill, splitPlan, transcribeGroups, wholeGroup,
+  actionEdit, centredOn, clipOf, clipStatus, duplicatePlan, editPictures, inkChips, mergePlan, pasteShift, pastePictures, removePictures,
+  selectAllItems, selectAllPictures, selectedPictures, selectedStrokes, selectionBox, selectionChanges, selectionStill, splitPlan,
+  transcribeGroups, wholeGroup,
 } from "../src/ink/selectionEdits.js";
 import { reshapeInk } from "../src/ink/shapes.js";
 import { mirrorPicture, movePicture, normalizePicture, picturesBySurface, transformPicture, turnedBox } from "../src/markup/picture.js";
@@ -75,7 +76,7 @@ test("the selection's pictures are those its surface still draws, none locked si
     { page: 1, items: [], pictures: ["p1"] });
 });
 
-test("the pictures' half of an edit: each through the edit, a locked one as it is; Delete's takes the notes under them", () => {
+test("the pictures' half of an edit: each through the edit, a locked one as it is; Delete's takes the notes under them, Cut's leaves them", () => {
   const tree = pictured();
   const moved = editPictures(tree, ["p1", "p2"], (p) => movePicture(p, 10, 0, SURFACE));
   assert.equal(findBlock(moved, "p1").properties.picture.x, normalizePicture(PIC({ angle: 90 })).x + 10);
@@ -85,6 +86,9 @@ test("the pictures' half of an edit: each through the edit, a locked one as it i
   assert.deepEqual(kept.map((b) => b.id), ["p2", "p3", "g1"]);
   assert.ok(!findBlock(kept, "p1note"), "the note under it went with it");
   assert.equal(removePictures(tree, ["gone"]), tree);
+  const cut = removePictures(tree, ["p1", "gone"], true);
+  assert.deepEqual(cut.map((b) => b.id), ["p1note", "p2", "p3", "g1"], "the note under it in its place");
+  assert.equal(removePictures(tree, ["gone"], true), tree);
 });
 
 test("a turn, a resize and a flip carry the selection's pictures by the strokes' values; the other actions leave them", () => {
@@ -256,6 +260,12 @@ test("select all takes every stroke of the surface's groups, a group with none l
   assert.deepEqual(selectAllItems(undefined, inkOf), [], "a surface with no groups");
 });
 
+test("select all takes the surface's pictures too, never a locked one nor one that names no upload", () => {
+  const tree = [...pictured(), node("p4", { picture: PIC({ z: -2 }), pdf_page: 1 }), node("p5", { picture: PIC(), pdf_page: 2 })];
+  assert.deepEqual(selectAllPictures(picturesBySurface(tree).get(1)), ["p4", "p1"], "as they stack, p2 locked and p3 no picture left out");
+  assert.deepEqual(selectAllPictures(undefined), [], "a surface with no pictures");
+});
+
 test("Transcribe: whole groups go as their blocks; part of one, as one chip per group of the selected strokes", () => {
   const g1 = page(stroke("a"), stroke("b", 50)), g2 = page(stroke("x"));
   const inkOf = groupsOf({ g1, g2 });
@@ -277,11 +287,54 @@ test("Transcribe: whole groups go as their blocks; part of one, as one chip per 
   assert.deepEqual(inkChips(transcribeGroups({ page: 1, items: [{ id: "g1", ids: ["gone"] }] }, inkOf).groups, "p"), [], "no chip without strokes");
 });
 
-test("the handwriting clipboard holds the file's space, the box in points and the strokes as they are", () => {
-  const strokes = [stroke("a")], space = newInk(2, 612, 792).space;
-  assert.deepEqual(clipOf({ strokes, box: [10, 20, 110, 70], space }),
-    { type: "gamma/ink", version: 2, space, box: { x1: 10, y1: 20, x2: 110, y2: 70 }, strokes });
-  assert.equal(clipOf({ strokes, box: [0, 0, 1, 1], space }).strokes, strokes);
+test("the handwriting clipboard holds the file's space, the box in points, the strokes as they are and the pictures with their captions", () => {
+  const g1 = { ...newInk(2, 612, 792), strokes: [stroke("a", 400, 400), stroke("b")] }, inkOf = groupsOf({ g1 });
+  const strokesOnly = { page: 2, items: [{ id: "g1", ids: ["a"] }] }, [ax0, ay0, ax1, ay1] = boundsOf(g1, ["a"]);
+  assert.deepEqual(clipOf(strokesOnly, inkOf, undefined),
+    { type: "gamma/ink", version: 2, space: g1.space, box: { x1: ax0, y1: ay0, x2: ax1, y2: ay1 }, strokes: [g1.strokes[0]] });
+  assert.equal(clipOf(strokesOnly, inkOf, undefined).strokes[0], g1.strokes[0], "the stroke object itself");
+  // p1 turned, with a caption and a note under it; p2 locked
+  const tree = pictured().map((b) => (b.id === "p1" ? { ...b, content: "The **figure**" } : b));
+  const shown = picturesBySurface(tree).get(1), p1 = normalizePicture(PIC({ angle: 90 }));
+  const both = clipOf({ page: 1, items: [{ id: "g1", ids: ["a"] }], pictures: ["p1", "p2"] }, inkOf, shown);
+  const [x0, y0] = turnedBox(p1);
+  assert.deepEqual(both.box, { x1: x0, y1: y0, x2: ax1, y2: ay1 }, "the box takes in the turned frame");
+  assert.deepEqual(both.pictures, [{ picture: p1, caption: "The **figure**" }], "the locked one left behind, the notes under p1 too");
+  const alone = clipOf({ page: 1, items: [], pictures: ["p1"] }, inkOf, shown);
+  const [, , x1, y1] = turnedBox(p1);
+  assert.deepEqual([alone.space, alone.strokes, alone.box], [null, [], { x1: x0, y1: y0, x2: x1, y2: y1 }],
+    "pictures alone: no space, no strokes");
+  assert.equal(clipOf({ page: 1, items: [{ id: "g1", ids: ["gone"] }], pictures: ["p2"] }, inkOf, shown), null, "nothing left to hold");
+});
+
+test("a copy's and a cut's pill say what they took", () => {
+  const clip = (n, m) => ({ strokes: Array(n).fill({}), ...(m ? { pictures: Array(m).fill({}) } : {}) });
+  assert.equal(clipStatus(clip(3, 0), false), "Copied 3 strokes.");
+  assert.equal(clipStatus(clip(1, 0), true), "Cut 1 stroke.");
+  assert.equal(clipStatus(clip(0, 1), false), "Copied 1 picture.");
+  assert.equal(clipStatus(clip(2, 2), true), "Cut 2 strokes and 2 pictures.");
+});
+
+test("a paste's pictures: new blocks naming the same upload, shifted with the strokes, kept on the surface, over the surface's pictures in the order they stacked", () => {
+  const low = normalizePicture(PIC({ x: 10, y: 10, z: -3 })), high = normalizePicture(PIC({ x: 50, y: 50, crop: { x: 0.5, y: 0, w: 0.5, h: 1 }, opacity: 0.5 }));
+  const clip = { strokes: [], pictures: [{ picture: low, caption: "low" }, { picture: high, caption: "" }] };
+  // the PDF page being pasted onto has a picture at z 4
+  const tree = [node("top", { picture: PIC({ z: 4 }), pdf_page: 3 })];
+  const out = pastePictures(tree, clip, 3, ["c1", "c2"], { dx: 100, dy: 200 }, SURFACE, 7);
+  assert.equal(out[0], tree[0], "the rest kept");
+  const [c1, c2] = [findBlock(out, "c1"), findBlock(out, "c2")];
+  assert.deepEqual(c1.properties, { t0: 7, picture: { ...movePicture(low, 100, 200, SURFACE), z: 4 }, pdf_page: 3 });
+  assert.equal(c1.content, "low", "its caption with it");
+  assert.deepEqual(c2.properties.picture, { ...movePicture(high, 100, 200, SURFACE), z: 4 }, "its crop and opacity kept");
+  assert.equal(c2.properties.picture.url, PIC().url, "the same upload");
+  assert.deepEqual(picturesBySurface(out).get(3).map((b) => b.id), ["top", "c1", "c2"], "over the page's, in the order they stacked");
+  const edge = pastePictures([], clip, 3, ["c1", "c2"], { dx: 1000, dy: 0 }, SURFACE, 7);
+  assert.equal(findBlock(edge, "c1").properties.picture.x, SURFACE.width - low.w, "kept on the surface");
+  const sheet = pastePictures([node("sheet", { sheet: { w: 612, h: 792 } })], clip, "sheet", ["c1", "c2"], { dx: 0, dy: 0 }, SURFACE, 7);
+  assert.deepEqual(findBlock(sheet, "sheet").children.map((c) => c.id), ["c1", "c2"], "on a sheet, its children");
+  assert.equal(findBlock(sheet, "c1").properties.pdf_page, undefined);
+  assert.equal(findBlock(sheet, "c1").properties.picture.z, undefined, "on a surface with none above 0, their own z left behind");
+  assert.equal(pastePictures(tree, { strokes: [] }, 3, [], { dx: 0, dy: 0 }, SURFACE, 7), tree, "no pictures: the same tree");
 });
 
 test("a paste puts the box's top-left at the point, kept on the surface; on a surface too small, its top-left corner stays on", () => {
