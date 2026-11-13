@@ -42,6 +42,9 @@ import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidt
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
 import { blockSpans, mathTex, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
+import { diffMarkdown, rehypeDiffMarks } from "./mdDiff.js";
+import { NoteReviewBar } from "./NoteReviewBar";
+import { useNoteAsk, useNoteChange } from "../chat/noteReview.js";
 import { ImageIcon, LinkIcon, LocateIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import { findMathAtCursor, LatexAcPopup, MathLivePreview } from "./LatexEditor";
@@ -470,8 +473,12 @@ function HighlightedCodePre({ children }) {
 // when the content or a resolved [[ref]] chip label actually changes; ref
 // labels are resolved by the caller so the comparison here stays a string
 // check. onBlockRefClick/onTaskToggle are deliberately excluded from the
-// comparison — the caller passes identity-stable wrappers.
-export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onDiagramEdit, onObjectAction, nested }) {
+// comparison — the caller passes identity-stable wrappers. `diff`: the
+// content is an AI change merged with its marks (editor/mdDiff.js), drawn
+// as tracked changes.
+const NOTE_REHYPE = [rehypeRaw, rehypeNoteSanitize, rehypeKatex];
+const DIFF_REHYPE = [rehypeRaw, rehypeNoteSanitize, rehypeDiffMarks, rehypeKatex];
+export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onDiagramEdit, onObjectAction, nested, diff = false }) {
   // GFM task-list checkboxes render in document order; this counter maps the
   // nth rendered checkbox back to the nth `[ ]`/`[x]` marker in the source so
   // clicking one toggles the right marker. Reset per render — the whole
@@ -491,7 +498,7 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
       // break (the editor lets you type them), not markdown's soft-break space.
       // remarkCallouts must run before it (it eats the marker line's "\n").
       remarkPlugins={[remarkGfm, remarkMath, remarkCallouts, remarkBreaks, remarkDiagrams]}
-      rehypePlugins={[rehypeRaw, rehypeNoteSanitize, rehypeKatex]}
+      rehypePlugins={diff ? DIFF_REHYPE : NOTE_REHYPE}
       // Upload URLs get the workspace / share token here (assetUrl): the
       // browser fetches <img> src and link hrefs without the API header.
       urlTransform={(url) => /^(blockref|blockembed|unlinked|mention):/.test(url) ? url : assetUrl(defaultUrlTransform(url))}
@@ -631,6 +638,7 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
 }, (prev, next) =>
   prev.content === next.content
   && prev.nested === next.nested
+  && prev.diff === next.diff
   && Object.keys(prev.refLabels).length === Object.keys(next.refLabels).length
   && Object.entries(next.refLabels).every(([id, r]) =>
     prev.refLabels[id]?.content === r.content && prev.refLabels[id]?.page_title === r.page_title
@@ -837,6 +845,21 @@ const BlockRow = React.memo(function BlockRow({
   // the read visibly sweeps down the outline. A row with its own mark keeps
   // that instead.
   const scanIdx = !aiMark && aiScan ? aiScan.order.get(block.id) : undefined;
+  // The AI's change to this block, drawn in it as tracked changes
+  // (chat/noteReview.js, editor/mdDiff.js): an edit waiting on its approval
+  // card, against what the block says now, or one that landed, while the
+  // block still says what the AI wrote. An open editor or the text being
+  // written shows instead, and a row that cannot be edited shows its text.
+  // A new block's text is all new: shown as it renders, marked whole. A
+  // preview tree draws it too, without the bar, as it edits nothing.
+  const aiChange = useNoteChange(block.id);
+  const aiAsk = useNoteAsk(block.id);
+  const review = readOnly || editing || aiText != null ? null
+    : aiAsk ? { ask: aiAsk, before: block.content || "", after: aiAsk.text }
+      : aiChange && aiChange.after === (block.content || "") ? { change: aiChange, before: aiChange.before, after: aiChange.after }
+        : null;
+  const reviewSource = useMemo(() => (review?.before ? diffMarkdown(review.before, review.after) : null),
+    [review?.before, review?.after]);
   // Identity-stable wrapper so the memoized BlockMarkdown never sees a fresh
   // callback (rowProps closures are rebuilt every App render) yet always
   // calls the latest one — same idiom as pdfViewer's stableCbs.
@@ -1527,6 +1550,14 @@ const BlockRow = React.memo(function BlockRow({
             // (or, on a gap line, where the block below the gap starts).
             const content = block.content || "";
             const rendered = e.currentTarget.querySelector(".blockRendered");
+            // The AI's change drawn in place holds text the source does not:
+            // the editor puts the caret at the press's point instead.
+            if (rendered?.hasAttribute("data-diff")) {
+              clickPosRef.current = { x: e.clientX, y: e.clientY, offset: null };
+              e.preventDefault();
+              onStartEdit(block.id, true, clickPosRef.current);
+              return;
+            }
             // A press on an object frame's margin (beside a picture or
             // table): the caret goes to the object's near end — the editor
             // keeps it rendered there, and the caret is right where the
@@ -1894,6 +1925,13 @@ const BlockRow = React.memo(function BlockRow({
             <div className="blockRendered aiStreaming">
               {aiText.trim() ? <BlockMarkdown content={aiText} blockId={block.id} refLabels={refLabels} /> : null}
             </div>
+          ) : review ? (
+            // The AI's change as tracked changes; a press opens the editor
+            // on the text as it is (no source offset: the view holds what went).
+            <div className={`blockRendered mdDiffView${reviewSource == null ? " mdDiffNew" : ""}`} data-diff="">
+              <BlockMarkdown content={reviewSource ?? review.after} diff={reviewSource != null} blockId={block.id}
+                refLabels={refLabels} onBlockRefClick={stableRefClick} />
+            </div>
           ) : (
             <div className="blockRendered" ref={renderedRef} onCopy={handleMarkdownCopy}
               onMouseMove={readOnly ? undefined : trackGapLine}
@@ -1922,6 +1960,7 @@ const BlockRow = React.memo(function BlockRow({
               {remoteCursors ? <RenderedCarets peers={remoteCursors} source={block.content || ""} containerRef={renderedRef} /> : null}
             </div>
           )}
+          {review && !preview ? <NoteReviewBar change={review.change} ask={review.ask} onStatus={onStatus} /> : null}
 
           {quote.trim() ? (
             <div className="blockQuote">

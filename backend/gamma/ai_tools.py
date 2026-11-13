@@ -1878,12 +1878,15 @@ def _plan_edit_block(conn, scope: dict, args: dict):
 
 
 def _preview_edit_block(conn, scope: dict, args: dict):
+    # `text`: the block's whole new text, which the note shows as tracked
+    # changes against what it says while the card waits (the card's `diff`
+    # cuts long unchanged stretches).
     plan, answer = _plan_edit_block(conn, scope, args)
     if not plan:
         return None, answer
     return {"page_id": plan["page_id"], "title": plan["title"], "block_id": plan["block"]["id"],
             "mode": plan["mode"], "diff": text_diff(plan["block"]["content"] or "", plan["text"]),
-            **_preview_pictures(plan["text"], plan["block"]["content"])}, None
+            "text": plan["text"], **_preview_pictures(plan["text"], plan["block"]["content"])}, None
 
 
 def missing_uploads(scope: dict, content: str, before: str = "") -> str:

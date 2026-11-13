@@ -1536,7 +1536,9 @@ A call of a tool whose permission is Ask waits for the user
    It shows the change as `diff`, a list of `[kind, text]` pairs: `ctx` kept,
    `del` removed, `ins` added (`ai_tools.text_diff`). Words are compared one
    by one, and CJK text character by character; long kept stretches are cut
-   around "…". A page move has `from` / `to` instead. A created or moved
+   around "…". A note edit's preview also has `text`, the block's whole
+   new text, which its note draws against what it says (below). A page
+   move has `from` / `to` instead. A created or moved
    block has its `parent`, and `src_title` when it leaves its page. A
    saved paper has the folder it goes `to` and its source as the `diff`,
    plus `existed` and `page_id` when the library holds it already. A
@@ -1606,6 +1608,17 @@ allow (Enter) and Back (Escape). The buttons never take the focus
 themselves, so typing in the composer cannot answer a card. A deletion's
 card (`isDeletion`: a `delete_*` tool) has the same four, its Allow once
 `primary danger`.
+
+A note edit's card (`edit_block` with the preview's `text`) is drawn in
+its note too, wherever the note shows, as tracked changes
+([Watching the agent work](#watching-the-agent-work-live-footprint)): the
+text the card would write against what the note says now, with the card's
+four answers on the bar under it (Don't allow without the card's line for
+what to do instead). An answer there is the card's own, through the latest
+render's `decideApproval` (so Allow in this chat files its grant under the
+conversation as it is now), which the card then shows as answered
+(`answered`); an answer on the card, the call's action or the end of the
+reply takes the drawing away (`noteReview.settle`).
 
 - **Allow in this chat** is kept per account and conversation in this
   browser: localStorage `gamma-ai-chat-grants`, keyed by the conversation's
@@ -1945,11 +1958,52 @@ notes panel shows where the agent is, not just what it did.
   named sibling. When the action lands, the reload swaps in the real block.
   Only armed edit/create tools are previewed; other tools' arguments are
   never streamed. Non-stream callers never see progress lines.
+- A note's edits are drawn in the note as tracked changes, as in Overleaf's
+  review, by the permission they ran under, never asking twice. An edit set
+  to Ask is drawn before it is written, with its card's answers (above);
+  once allowed there it is not drawn again (its action carries `approval`).
+  An edit or a new block that ran without asking (Allow in Settings, or a
+  grant of the chat or of every chat) is drawn after it landed, as a record
+  that waits on nothing. The dock hands each action to `chat/noteReview.js`
+  (`landed`, with its conversation, reply and index), which keeps the
+  block's text before and after it (the action's `revert`); several edits
+  of one block in a row are one change, from the text before the first to
+  the text after the last. The note draws it while it still says what the
+  AI wrote: an open editor, a word typed since or a row that cannot be
+  edited shows the text as it is.
+  `editor/mdDiff.js` merges the two texts into one Markdown source with
+  marks around what changed. It compares lines first, then the words of two
+  lines of the same shape, a code fence, a formula across lines and a table
+  being one unit and a formula, code span, link, picture, ref, mention or
+  HTML tag one word, so each construct renders whole and the new text's
+  structure stands. A word that went goes in plain, its emphasis marks and
+  tags dropped and its punctuation escaped. `BlockMarkdown`'s `diff` adds
+  `rehypeDiffMarks` between the sanitizer and KaTeX, which turns the marks
+  into `<del class="mdDiff">` / `<ins class="mdDiff">` (the approval card's
+  colours), and a code block or display formula into a `.mdDiffBlock` with
+  a bar at its side; a new block's text renders as it is, tinted whole. The
+  bar under a record (`editor/NoteReviewBar.jsx`) has **Revert** (each step
+  back, newest first, through the dock's `sendRevert`, marked in its
+  conversation as a row's revert is; it waits while that reply streams, as
+  the rows do), **Hide** (no longer drawn; the note keeps the text) and,
+  with more than one change on the page, **Hide all**. Nothing there reads
+  as an approval: the write is done. A revert that stops says why, with
+  **Revert anyway** where it can be forced and no diff to show; it sends
+  the user to the chat's row for one whose row would show what forcing
+  writes. A revert or redo from a row stops the drawing. A note change's
+  link in the reply's list draws it again as it opens the note (`show`,
+  with the steps `changeSteps` finds in the saved conversation: the action
+  and the edits of its block chained to it), hidden, allowed on its card or
+  from before a reload. A press on the drawn text opens the editor where
+  it was pressed.
 
-Everything is display-only: marks and previews live in App state
+The marks, previews and the scan are display-only: they live in App state
 (`aiMarks`, `aiLive`, `aiScan` → `rowProps` → `BlockRow`/`BlockTree`),
 clear on page switch and when the reply ends, and never enter the block
-tree, the undo history or the op queue.
+tree, the undo history or the op queue. The tracked changes are held in
+this tab too, across page switches (`chat/noteReview.js`, the last 200
+blocks' changes), never saved: a reload draws none until a row's link
+asks, and the reply's rows keep the undo.
 
 ### Replay across turns
 
