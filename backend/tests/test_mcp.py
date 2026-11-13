@@ -546,6 +546,95 @@ def test_setup_command_signs_in_through_the_browser(client, anon, connection):
         workspaces.delete(lab)
 
 
+# --- editing notes --------------------------------------------------------------------
+
+EDITING = {"edit_block", "create_block", "move_block", "clip_region"}
+
+
+def _text(ws, block_id):
+    with connect_pages_db(ws) as conn:
+        row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
+    return row[0] if row else None
+
+
+def _child(ws, parent_id, content):
+    with connect_pages_db(ws) as conn:
+        return conn.execute("SELECT id FROM unified_blocks WHERE parent_id = ? AND content = ?",
+                            (parent_id, content)).fetchone()[0]
+
+
+def test_a_connection_edits_notes_only_where_it_may(client, connection):
+    from gamma import workspaces
+
+    c, ws, item = connection
+    lab = workspaces.create("Edit lab", account_of("mcp-reader"))["id"]
+    make_user("mcp-edit-owner", "pw")
+    owned = workspaces.create("Viewed lab", account_of("mcp-edit-owner"), kind="shared")["id"]
+    workspaces.set_member(owned, account_of("mcp-reader"), "viewer", account_of("mcp-edit-owner"))
+    patch = lambda **body: c.patch(f"/api/integrations/tokens/{item['id']}", json=body)  # noqa: E731
+    try:
+        home = _page_with_note(c, ws, "Home notes", "McpHomeNote")
+        lab_page = _page_with_note(c, lab, "Lab notes", "McpLabNote")
+        tools = {t["name"]: t for t in rpc(client, item["token"], "tools/list").json()["result"]["tools"]}
+        assert not EDITING & set(tools)
+        refused = call(client, item["token"], "create_block", {"parent_id": lab_page["id"], "content": "x"})
+        assert refused["isError"] and "may only read" in refused["content"][0]["text"]
+        # edits only what it reads, only where the account edits
+        assert patch(workspaces=[ws, lab], edit_workspaces=[owned]).status_code == 400
+        assert patch(workspaces=[ws, lab, owned], edit_workspaces=[owned]).status_code == 403
+        changed = patch(workspaces=[ws, lab, owned], edit_workspaces=[lab])
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["edit_workspaces"] == [lab] and not changed.json()["edit_all"]
+        row = next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["id"] == item["id"])
+        assert row["edit_workspaces"] == [lab]
+        tools = {t["name"]: t for t in rpc(client, item["token"], "tools/list").json()["result"]["tools"]}
+        assert EDITING <= set(tools) and "delete_block" not in tools
+        assert tools["edit_block"]["annotations"]["destructiveHint"] is True
+        assert tools["create_block"]["annotations"]["readOnlyHint"] is False
+        spaces = call(client, item["token"], "list_workspaces", {})["structuredContent"]["workspaces"]
+        assert [w["editable"] for w in spaces] == [False, True, False]
+        # a note added and appended to in the workspace it edits, as the account through the chat's tools
+        made = call(client, item["token"], "create_block", {"parent_id": lab_page["id"], "content": "McpAddedNote"})
+        assert not made["isError"], made
+        assert _child(lab, lab_page["id"], "McpAddedNote")
+        lab_note = _child(lab, lab_page["id"], "McpLabNote")
+        appended = call(client, item["token"], "edit_block",
+                        {"block_id": lab_note, "content": " McpAppended", "mode": "append"})
+        assert not appended["isError"], appended
+        assert _text(lab, lab_note).endswith("McpAppended")
+        with connect_pages_db(lab) as conn:
+            assert conn.execute("SELECT client FROM page_ops WHERE page_id = ? ORDER BY seq DESC LIMIT 1",
+                                (lab_page["id"],)).fetchone()[0] == "ai"
+        # a whole rewrite needs a read first, which an earlier call counts for
+        rewrite = {"block_id": lab_note, "content": "McpRewritten", "mode": "replace"}
+        unread = call(client, item["token"], "edit_block", rewrite)
+        assert unread["isError"] and "read the block first" in unread["content"][0]["text"]
+        assert not call(client, item["token"], "read_block", {"block_id": lab_note})["isError"]
+        assert not call(client, item["token"], "edit_block", rewrite)["isError"]
+        assert _text(lab, lab_note) == "McpRewritten"
+        # never in a workspace it only reads, never a deletion
+        home_note = _child(ws, home["id"], "McpHomeNote")
+        elsewhere = call(client, item["token"], "edit_block", {"block_id": home_note, "content": " x", "mode": "append"})
+        assert elsewhere["isError"] and "may only read the workspace" in elsewhere["content"][0]["text"]
+        assert _text(ws, home_note) == "McpHomeNote"
+        assert call(client, item["token"], "delete_block", {"block_id": lab_note})["isError"]
+        # every workspace: those the account edits, never the one it views
+        assert patch(all_workspaces=True, edit_all=True).json()["edit_all"]
+        spaces = call(client, item["token"], "list_workspaces", {})["structuredContent"]["workspaces"]
+        assert {w["id"]: w["editable"] for w in spaces} == {ws: True, lab: True, owned: False}
+        assert patch(workspaces=[ws], edit_all=True).status_code == 400
+        # a deleted workspace leaves the edits too
+        assert patch(workspaces=[ws, lab], edit_workspaces=[ws, lab]).status_code == 200
+        workspaces.delete(lab)
+        lab = None
+        row = next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["id"] == item["id"])
+        assert row["edit_workspaces"] == [ws]
+    finally:
+        for gone in (lab, owned):
+            if gone:
+                workspaces.delete(gone)
+
+
 # --- answering feedback ---------------------------------------------------------------
 
 ANSWERING = {"reply_feedback", "resolve_feedback"}

@@ -60,6 +60,11 @@ sessions, databases, or private files to work around a missing connection.
 - `cite` returns the paper metadata and BibTeX kept with pages. Use it for a
   reference instead of composing one from the PDF, and never add a field the
   record lacks.
+- Where the user let this connection edit (`list_workspaces` says which
+  workspaces), `create_block`, `edit_block`, `move_block` and `clip_region`
+  change notes. Change notes only when the user asks, read a note with
+  `read_block` before rewriting it whole (or use `append` / `patch`), and
+  say what you changed with a link to it. Nothing can be deleted this way.
 - When the user wants a file, call `export_page`: `markdown` returns the text
   to write where they asked; `pdf` (the annotated paper) and `notes_pdf` (the
   notes typeset) return an embedded PDF. Save it under the returned name unless

@@ -140,7 +140,8 @@ def test_a_feedback_token_reads_several_workspaces_and_a_write_token_one(account
             grant(user_id, wanted, "write")
         assert e.value.detail == "A read and write token is for one workspace."
     item = create_token(user_id, ws, "Agent", 90, scope="feedback")
-    assert set_workspaces(user_id, item["id"], [lab, ws]) == (lab, f'["{lab}", "{ws}"]')
+    assert set_workspaces(user_id, item["id"], [lab, ws]) == (lab, f'["{lab}", "{ws}"]', "")
+    assert set_workspaces(user_id, item["id"], [lab, ws], [ws]) == (lab, f'["{lab}", "{ws}"]', f'["{ws}"]')
     pushed = create_token(user_id, ws, "Mirror", 90, scope="write")
     with pytest.raises(HTTPException):
         set_workspaces(user_id, pushed["id"], [ws])

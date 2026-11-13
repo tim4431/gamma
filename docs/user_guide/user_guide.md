@@ -572,10 +572,11 @@ The browser extension saves the paper you are reading in one click: PDF, metadat
 
 <img alt="In a terminal an @Gamma question is typed, the assistant searches the library and reads the page, and answers with a page number while Gamma highlights the passage" src="assets/assistant.svg" width="100%">
 
-Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your papers, notes, highlights and PDF text, read-only, in the workspaces you choose. Gamma runs an MCP server at `<your Gamma>/mcp`; the assistant connects to it and brings its own model. Gamma's own chat does not connect to outside MCP servers.
+Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your papers, notes, highlights and PDF text in the workspaces you choose, and, where you mark a workspace **Edit**, create, edit and move its notes. Gamma runs an MCP server at `<your Gamma>/mcp`; the assistant connects to it and brings its own model. Gamma's own chat does not connect to outside MCP servers.
 
 - Settings → AI → Integrations shows the setup for each assistant: run it where you use the assistant, tick the workspaces it may read, then ask: *"@Gamma, in the blockade paper, how is the blockade radius measured?"*
 - One connection can read several workspaces, or all of them (those you add later too). A search covers them all; the **Choose workspaces** button on a connection's row changes them without connecting again.
+- Each workspace a connection reads is **View** or **Edit**, as on the share popover. Edit lets the assistant add, edit and move notes there, and put a figure from a PDF into them; it never deletes anything or changes pages, folders or settings, and only where you can edit yourself. Choose it when you allow the connection, or later with **Choose workspaces**.
 - To remove Gamma from an assistant, open **Remove Gamma from …** at the end of its tab and run the commands there (for DeepSeek Harness, with the app quit: it takes the plugin out and deletes the saved connection), then **Disconnect** the connection under **Connected assistants**.
 - Paste a Gamma page, block or share link into the question and the assistant reads that page, in whichever of the connection's workspaces it is.
 - A remotely hosted Gamma needs its **Public server URL** confirmed once in Settings → Server. A connection expires after 90 days; the same pane lists every connection of your account and disconnects one.
@@ -607,7 +608,7 @@ Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your
 | `read_gamma_link` | A pasted page, block or share link, read in place; a folder share lists its pages |
 | `export_page` | A page as Markdown, or as a PDF: the annotated paper or the notes typeset |
 
-The first ten are the chat's own reading tools; each takes an optional workspace. An assistant never gets the write tools or the web tools: the connection is read-only, and the assistant has web access of its own.
+The first ten are the chat's own reading tools; each takes an optional workspace. In a workspace you mark **Edit**, an assistant also gets the chat's note tools: `edit_block`, `create_block`, `move_block` and `clip_region`. It never gets the chat's other write tools, or its web tools: the assistant has web access of its own.
 
 ## Import and export
 

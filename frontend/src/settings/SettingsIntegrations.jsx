@@ -5,15 +5,15 @@ import { CopyField, PaneHead, Section, Row, Segmented, Step } from "./SettingsKi
 import { LinkIcon, KeyIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon } from "../shared/ui/Icons";
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshSetupCommand,
   claudeRemoveCommands, codexRemoveCommands, dshRemoveCommand } from "./assistantSetup";
-import { WorkspacePicker, accessBody } from "./WorkspacePicker";
+import { WorkspacePicker, accessBody, accessOf } from "./WorkspacePicker";
 import { t } from "../shared/i18n/i18n.js";
 
 const dateOf = (value) => new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 const ASSISTANTS = [["claude", t("Claude Code")], ["codex", t("Codex")], ["dsh", t("DeepSeek Harness")], ["other", t("Other")]];
 const PLATFORMS = [["windows", t("Windows PowerShell")], ["unix", t("macOS / Linux")]];
 
-// One connected assistant: how it signed in, what it may read (and whether
-// it answers feedback: a `feedback` connection replies to and resolves the
+// One connected assistant: how it signed in, what it may read, where it may
+// also edit notes (and whether it answers feedback: a `feedback` connection replies to and resolves the
 // comments on work folders' files, docs/dev/feedback.md), when it was
 // connected and when its access lapses. OAuth connections are minted with an
 // " (OAuth)" suffix on the client's name (mcp_oauth_provider.py).
@@ -26,14 +26,17 @@ function ConnectionRow({ item, names, busy, onEdit, onRevoke }) {
   const spaces = item.workspaces.map((id) => names.get(id)).filter(Boolean);
   const reads = item.all_workspaces ? t("Reads all workspaces")
     : spaces.length ? t("Reads {workspaces}", { workspaces: spaces.join(", ") }) : t("Reads no workspace");
-  const parts = [oauth ? t("Browser sign-in") : t("Token"), item.scope === "write" ? t("Read and write") : reads,
+  const editing = (item.edit_workspaces || []).map((id) => names.get(id)).filter(Boolean);
+  const edits = item.edit_all ? t("edits notes wherever you edit")
+    : editing.length ? t("edits notes in {workspaces}", { workspaces: editing.join(", ") }) : null;
+  const parts = [oauth ? t("Browser sign-in") : t("Token"), item.scope === "write" ? t("Read and write") : reads, edits,
     item.scope === "feedback" ? t("answers feedback") : null,
     item.created_at ? t("Connected {date}", { date: dateOf(item.created_at) }) : null, expiry].filter(Boolean);
   return <Row icon={oauth ? LinkIcon : KeyIcon} label={name}
     hint={<>{parts.join(" · ")}{daysLeft <= 0 ? <span className="uiTag warn">{t("Expired")}</span> : null}</>}>
     <div className="integrationActions">
       {item.scope !== "write" ? <button type="button" className="uiBtn sm iconSq" disabled={busy} aria-label={t("Choose workspaces")}
-        title={t("Choose the workspaces {name} may read", { name })} onClick={() => onEdit(item)}>
+        title={t("Choose what {name} may read and edit", { name })} onClick={() => onEdit(item)}>
         <FoldersIcon size={16} />
       </button> : null}
       <button type="button" className="uiBtn sm iconSq danger" disabled={busy} aria-label={t("Disconnect")}
@@ -207,7 +210,7 @@ export function IntegrationSettings({ workspaceId }) {
     </>}
   </>;
   return <>
-    <PaneHead icon={LinkIcon} title={t("Integrations")}>{t("Let Claude Code, Codex, DeepSeek Harness or another MCP assistant read your library. One connection can read several workspaces; it never changes them.")}</PaneHead>
+    <PaneHead icon={LinkIcon} title={t("Integrations")}>{t("Let Claude Code, Codex, DeepSeek Harness or another MCP assistant read your library. One connection can read several workspaces, and edit the notes of those you mark Edit.")}</PaneHead>
     {loadError ? <div className="integrationDetails" role="alert">
       <p>{t("Could not load your connections. {loadError}", { loadError: loadError })}</p>
       <button className="uiBtn" onClick={() => refresh()}>{t("Try again")}</button>
@@ -226,9 +229,9 @@ export function IntegrationSettings({ workspaceId }) {
       </button>}>
       {data ? data.tokens.length ? data.tokens.map((item) => <React.Fragment key={item.id}>
         <ConnectionRow item={item} names={names} busy={busy} onRevoke={revoke}
-          onEdit={(row) => setEditing(editing?.id === row.id ? null : { id: row.id, access: { all: row.all_workspaces, ids: row.workspaces } })} />
+          onEdit={(row) => setEditing(editing?.id === row.id ? null : { id: row.id, access: accessOf(row) })} />
         {editing?.id === item.id ? <div className="integrationDetails integrationEdit">
-          <WorkspacePicker workspaces={spaces} value={editing.access} disabled={busy}
+          <WorkspacePicker workspaces={spaces} value={editing.access} disabled={busy} roles={item.scope !== "write"}
             label={t("Workspaces {name} may read", { name: item.name })} onChange={(value) => setEditing({ ...editing, access: value })} />
           <div className="integrationActions">
             <button className="uiBtn primary" disabled={busy || !(editing.access.all || editing.access.ids.length)} onClick={saveAccess}>{t("Save")}</button>

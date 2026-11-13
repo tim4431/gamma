@@ -1,6 +1,7 @@
 """Session-only management of external assistant connections, account-wide:
 each connection names the workspaces it may read (a write token, its one
-workspace; gamma/integrations.py).
+workspace) and those of them whose notes it may also change through MCP
+(gamma/integrations.py).
 
 A client without browser sign-in of its own (DeepSeek Harness) is signed
 in by its setup command, the way a TV or a CLI signs in (OAuth's device
@@ -19,7 +20,7 @@ from pydantic import BaseModel, Field
 from .. import ratelimit
 from ..auth import SESSION_COOKIE, require_personal_user_id, require_ws, ws_role
 from ..db import connect_users_db
-from ..integrations import ALL, create_token, grant, granted, set_workspaces, token_digest
+from ..integrations import ALL, create_token, edit_grant, editing, grant, granted, set_workspaces, token_digest
 from ..mcp_oauth import load, public_base, store
 from ..workspaces import list_for_user
 
@@ -40,12 +41,19 @@ def _owner(request: Request) -> tuple[str, str]:
 
 class Access(BaseModel):
     """The workspaces a connection may read: every one the account can open
-    (now and later), or those listed, else the current one."""
+    (now and later), or those listed, else the current one; and of those,
+    the ones it may also edit: every one (``edit_all``, with
+    ``all_workspaces``) or those listed, else none."""
     workspaces: list[str] | None = Field(default=None, max_length=200)
     all_workspaces: bool = False
+    edit_workspaces: list[str] | None = Field(default=None, max_length=200)
+    edit_all: bool = False
 
     def wanted(self, ws: str):
         return ALL if self.all_workspaces else self.workspaces or [ws]
+
+    def edits(self):
+        return ALL if self.edit_all else self.edit_workspaces or []
 
 
 class TokenCreate(Access):
@@ -56,9 +64,10 @@ class TokenCreate(Access):
     scope: str = Field(default="read", pattern="^(read|write|feedback)$")
 
 
-def _access(primary: str, value: str) -> dict:
-    found = granted(primary, value)
-    return {"all_workspaces": True, "workspaces": []} if found == ALL else {"all_workspaces": False, "workspaces": found}
+def _access(primary: str, value: str, edits: str = "") -> dict:
+    found, changing = granted(primary, value), editing(edits)
+    return {"all_workspaces": found == ALL, "workspaces": [] if found == ALL else found,
+            "edit_all": changing == ALL, "edit_workspaces": [] if changing == ALL else changing}
 
 
 @router.get("/tokens")
@@ -72,11 +81,11 @@ def list_tokens(request: Request, response: Response):
         base = str(request.base_url).rstrip("/")
         oauth_error = str(exc.detail)
     with connect_users_db() as conn:
-        rows = conn.execute("SELECT id, name, created_at, expires_at, scope, workspace_id, workspaces "
+        rows = conn.execute("SELECT id, name, created_at, expires_at, scope, workspace_id, workspaces, edits "
                             "FROM integration_tokens WHERE user_id = ? ORDER BY created_at DESC", (user_id,)).fetchall()
     tokens = [{**dict(zip(("id", "name", "created_at", "expires_at", "scope", "workspace_id"), r[:6])),
-               **_access(r[5], r[6])} for r in rows]
-    spaces = [{"id": w["id"], "name": w["name"], "personal": w["personal"], "default": w["default"]}
+               **_access(r[5], r[6], r[7])} for r in rows]
+    spaces = [{"id": w["id"], "name": w["name"], "personal": w["personal"], "default": w["default"], "role": w["role"]}
               for w in list_for_user(user_id) if not w["deleting"]]
     return {"tokens": tokens, "workspaces": spaces, "workspace_id": ws, "mcp_url": base + "/mcp",
             "oauth_available": oauth_error is None, "oauth_error": oauth_error}
@@ -95,15 +104,17 @@ def new_token(payload: TokenCreate, request: Request, response: Response):
         return {**create_token(user_id, ws, name, payload.expires_in_days, scope="write"), **_access(ws, "")}
     # A read or feedback token, a viewer's too (viewers comment): the workspaces it was given.
     primary, value = grant(user_id, payload.wanted(ws), payload.scope)
-    item = create_token(user_id, primary, name, payload.expires_in_days, scope=payload.scope, workspaces=value)
-    return {**item, **_access(primary, value)}
+    edits = edit_grant(user_id, primary, value, payload.edits())
+    item = create_token(user_id, primary, name, payload.expires_in_days, scope=payload.scope, workspaces=value,
+                        edits=edits)
+    return {**item, **_access(primary, value, edits)}
 
 
 @router.patch("/tokens/{token_id}")
 def change_access(token_id: str, payload: Access, request: Request):
     user_id, ws = _owner(request)
-    primary, value = set_workspaces(user_id, token_id, payload.wanted(ws))
-    return {"id": token_id, "workspace_id": primary, **_access(primary, value)}
+    primary, value, edits = set_workspaces(user_id, token_id, payload.wanted(ws), payload.edits())
+    return {"id": token_id, "workspace_id": primary, **_access(primary, value, edits)}
 
 
 @router.delete("/tokens/{token_id}")
@@ -166,8 +177,8 @@ def device_request(user_code: str, request: Request, response: Response):
           DEVICE_SECONDS)
     response.headers["Cache-Control"] = "no-store"
     return {"client_name": pending["name"], "user_code": key[:4] + "-" + key[4:], "username": request.state.user,
-            "csrf": csrf, "workspaces": list_for_user(user_id), "default_workspace": request.state.default_ws,
-            "feedback_asked": False}
+            "csrf": csrf, "workspaces": [w for w in list_for_user(user_id) if not w["deleting"]],
+            "default_workspace": request.state.default_ws, "feedback_asked": False}
 
 
 class DeviceConsent(Access):
@@ -190,14 +201,15 @@ def device_consent(payload: DeviceConsent, request: Request):
         raise HTTPException(403, "Consent expired or the signed-in account changed. Start again.")
     scope = "feedback" if payload.feedback else "read"
     primary, stored = grant(user_id, payload.wanted(ws), scope) if payload.approve else ("", "")
+    edits = edit_grant(user_id, primary, stored, payload.edits()) if payload.approve else ""
     pending = load("device_user", "", key, consume=True)
     load("device_consent", "", payload.csrf, consume=True)
     if not pending:
         raise HTTPException(400, "This sign-in expired or was answered already. Run the setup command again.")
     if payload.approve:
         store("device_ok", "", pending["device_code"], {"user": user_id, "workspace_id": primary,
-                                                        "workspaces": stored, "scope": scope, "session": session},
-              DEVICE_SECONDS)
+                                                        "workspaces": stored, "edits": edits, "scope": scope,
+                                                        "session": session}, DEVICE_SECONDS)
     else:
         store("device_denied", "", pending["device_code"], {"user": user_id}, DEVICE_SECONDS)
     return {"ok": True}
@@ -233,5 +245,7 @@ def device_token(payload: DevicePoll, request: Request, response: Response):
     if not any(token_digest(s[0]) == allowed["session"] for s in sessions):
         raise HTTPException(400, "You signed out of Gamma before the connection was made. Run the setup command again.")
     primary, value = grant(allowed["user"], granted(allowed["workspace_id"], allowed["workspaces"]), allowed["scope"])
-    item = create_token(allowed["user"], primary, pending["name"], 90, scope=allowed["scope"], workspaces=value)
+    edits = edit_grant(allowed["user"], primary, value, editing(allowed.get("edits", "")))
+    item = create_token(allowed["user"], primary, pending["name"], 90, scope=allowed["scope"], workspaces=value,
+                        edits=edits)
     return {"token": item["token"], "name": item["name"], "expires_at": item["expires_at"]}

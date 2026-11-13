@@ -774,10 +774,15 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Choose workspaces", exact: true }).click();
       const editor = page.getByRole("group", { name: "Workspaces Codex test may read" });
       await editor.getByRole("checkbox", { name: "Other assistant workspace", exact: true }).uncheck();
+      // and let it edit the notes of the one it keeps, as a share's person is given Edit
+      assertEq(await editor.getByRole("button", { name: "Edit", exact: true }).count(), 1, "a role for each workspace ticked");
+      await editor.getByRole("button", { name: "Edit", exact: true }).click();
       await page.getByRole("button", { name: "Save", exact: true }).click();
       await editor.waitFor({ state: "detached" });
       connections = await user.api("/api/integrations/tokens");
       assertEq(JSON.stringify(connections.tokens[0].workspaces), JSON.stringify([user.ws]));
+      assertEq(JSON.stringify(connections.tokens[0].edit_workspaces), JSON.stringify([user.ws]));
+      await page.getByText(/edits notes in /).waitFor();
       // Separate authorizations can have the same name. Revoking one must
       // leave the other visible, without claiming the assistant lost access.
       const duplicate = await user.api("/api/integrations/tokens", { method: "POST", body: { name: "Codex test" } });
