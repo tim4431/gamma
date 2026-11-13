@@ -1669,7 +1669,7 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     await L.keyboard.press("Control+p");
     const palette = L.getByRole("dialog", { name: "Open a page" });
     await palette.waitFor();
-    await palette.getByRole("textbox", { name: "Search pages by title or label" }).fill("Another paper for the paste");
+    await palette.getByRole("textbox", { name: "Search pages, files, folders and labels" }).fill("Another paper for the paste");
     await palette.locator('[role="option"][data-kind="page"]', { hasText: "Another paper for the paste" }).click();
     await until(() => new URL(L.url()).searchParams.get("block") === other.id, { what: "the other paper open" });
     await L.locator('[data-page="1"] .textLayer span', { hasText: "Another paper" }).waitFor({ timeout: 15000 });

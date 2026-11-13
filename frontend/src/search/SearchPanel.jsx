@@ -72,8 +72,10 @@ const postJson = (body) => ({ method: "POST", headers: { "Content-Type": "applic
 
 // `text` with the query's matches marked (search/snippets.js markedParts):
 // a result row here, a row of the Ctrl+P palette (library/QuickOpen.jsx).
-export function MarkedText({ text, query, opts, lead = 0 }) {
-  return markedParts(text, query, opts, lead).map((p, i) => (
+// `parts` ({text, mark} pieces) marks what another rule found instead: a
+// file row's spans from the server (explorer/fileSearch.js fileParts).
+export function MarkedText({ text, query, opts, lead = 0, parts }) {
+  return (parts || markedParts(text, query, opts, lead)).map((p, i) => (
     p.mark ? <mark key={i} className="searchMark">{p.text}</mark> : <React.Fragment key={i}>{p.text}</React.Fragment>
   ));
 }

@@ -699,6 +699,11 @@ BLOCK_HOT_COLUMNS = {
 # that names its condition as written.
 SQL_IN_LISTING = ("(work_folder IS NULL OR json_type(properties, '$.library') = 'true' "
                   "OR (json_type(properties, '$.pinned') = 'text' AND json_extract(properties, '$.pinned') != ''))")
+# A work folder's file by its name (GET /api/files): its ``file_name``, or
+# its title for a note made in Gamma that its vault has not named yet. Here
+# for SQL_IN_LISTING's reason: idx_ub_file_name repeats it, and SQLite uses
+# an expression index only for a query that names the expression as written.
+SQL_FILE_NAME = "COALESCE(json_extract(properties, '$.file_name'), content)"
 BLOCK_HOT_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ub_page ON unified_blocks(page_id)",
     "CREATE INDEX IF NOT EXISTS idx_ub_kind ON unified_blocks(kind)",
@@ -707,15 +712,19 @@ BLOCK_HOT_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ub_deleted_with ON unified_blocks(deleted_with) WHERE deleted_with IS NOT NULL",
     # the library listing in its order; a work folder's directory, its files
     # and their counts; a work folder's files, those in Recently deleted
-    # too. Once ANALYZE (db_maintenance's PRAGMA optimize) has its numbers,
+    # too; quick open's files by name, the name's expression covered. Once
+    # ANALYZE (db_maintenance's PRAGMA optimize) has its numbers,
     # idx_ub_parent's few rows a parent on average win the planner over the
-    # first two, so their readers name them (INDEXED BY), and the lookups of
-    # the third write +parent_id.
+    # first two, and the planner never takes the fourth unaided, so their
+    # readers name them (INDEXED BY), and the lookups of the third write
+    # +parent_id.
     "CREATE INDEX IF NOT EXISTS idx_ub_listing ON unified_blocks(parent_id, position) "
     f"WHERE parent_id = 'root' AND {SQL_IN_LISTING}",
     "CREATE INDEX IF NOT EXISTS idx_ub_dir ON unified_blocks(parent_id, first_folder) "
     "WHERE parent_id = 'root' AND work_folder IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_ub_work_folder ON unified_blocks(work_folder) WHERE work_folder IS NOT NULL",
+    f"CREATE INDEX IF NOT EXISTS idx_ub_file_name ON unified_blocks({SQL_FILE_NAME}, first_folder, id) "
+    "WHERE parent_id = 'root' AND work_folder IS NOT NULL",
 ]
 _HOT_COLUMNS_SQL = ",\n        ".join(BLOCK_HOT_COLUMNS.values())
 

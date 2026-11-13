@@ -40,6 +40,12 @@ test("rejects non-Gamma URLs and malformed page/quote values", () => {
   ]) assert.equal(parseGammaLink(href, ORIGIN), null, href);
 });
 
+test("a path in a work folder's note is no Gamma link: the server resolves it (editor/PathLink.jsx)", () => {
+  for (const href of ["sections/method.tex", "../main.tex", "./notes.md", "my%20fig.pdf#page=2"]) {
+    assert.equal(parseGammaLink(href, ORIGIN), null, href);
+  }
+});
+
 test("a text file's line link: one line or a range, the first line's text as its quote", () => {
   assert.deepEqual(parseGammaLink("/?page=file_1&line=12", ORIGIN),
     { kind: "line", pageId: "file_1", line: 12, to: null, quote: "", foreign: false });

@@ -57,7 +57,7 @@ vault/upgrade.py   a folder kept on disk before synced vaults, taken onto the en
 md_lens.py         the lens between a Markdown file and a page's blocks
 linked_files.py    files read where they are on this computer: a vault's PDFs, Opened files, the follow worker
 documents/         a page's document (docs/dev/documents.md): formats (the format registry), model (the stored shape and its view), text (a document's text for the index and the chat)
-work_folders/      a work folder's rules: the library switch, the op rule, .gammaignore, the tracking dialog, the takeover, a file's path in it (paths) (docs/dev/work_folders.md)
+work_folders/      a work folder's rules: the library switch, the op rule, .gammaignore, the tracking dialog, the takeover, a file's path in it (paths), files found by name or path (file_search) (docs/dev/work_folders.md)
 feedback/          comments on a work folder's files as feedback files an agent reads and answers (docs/dev/feedback.md)
 zotero_sync.py     Zotero links: a personal workspace kept in step with a Zotero library (docs/dev/zotero_sync.md): the registry, the round, conflicts, the clock
 zotero_sync_rows.py    what the engine's parts share: the link's row, the round's state, pages.db rows, conflict rows and log lines

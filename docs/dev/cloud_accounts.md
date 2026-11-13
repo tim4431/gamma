@@ -2239,7 +2239,8 @@ still go through:
 
 Reads are untouched, and so are the reads sent as a POST because their ids
 do not fit a URL, `hosted.POST_READS`: `/api/pages/by-docs` (the file
-chips' page lookup) and `POST /api/block-search` and `/api/document-search`
+chips' page lookup), `/api/pages/summaries` (the tabs' and recents' pages
+the listing leaves out) and `POST /api/block-search` and `/api/document-search`
 (the Ctrl+F panel's searches, with the folder, label and page ids its
 filters keep). The gate
 treats them as reads, so they also move no `last_write_at`.

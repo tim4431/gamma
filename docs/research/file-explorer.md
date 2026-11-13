@@ -11,8 +11,8 @@ local agents (Claude Code, Codex) as structured documents. The owner
 offered a rewrite from the bottom up and asked first whether the idea is
 possible at all.
 
-Status: **a plan; steps 0 to 4 are built** ("As built (step 0)" to
-"As built (step 4)" under "In steps"), the rest is not. This note surveys
+Status: **a plan; steps 0 to 5 are built** ("As built (step 0)" to
+"As built (step 5)" under "In steps"), the rest is not. This note surveys
 what
 the stored model and the code assumed before step 0, weighs three shapes a
 file could take, and lays the chosen one out in layers from the bottom,
@@ -696,7 +696,8 @@ the file* (`FileSourceDialog`) is its source view.
   view and beside an open page: the folder tree with a work folder's files
   under their directories, opened lazily. It reverses the non-goal "no
   page-tree sidebar"; folders and labels stay the model, and the window
-  is a view of them.
+  is a view of them. Built in step 5 (As built (step 5)): closed to begin
+  with, on a phone an overlay beside an open page.
 - **A folder's view.** A work folder opens as the list view, directories
   first, with name, format, size, date and the count of open comments,
   and the path as crumbs.
@@ -1414,6 +1415,177 @@ whole list:
     for one); a scoped search that does not read every file page per
     request (one query for the scope's documents, or a docs map kept by
     the workspace's change sequence), which item 14's budget waits on.
+
+**As built (step 5).** Built as its row says
+([dev/work_folders.md](../dev/work_folders.md) "The Files window", "Files
+by name" and "Paths", [dev/home_library.md](../dev/home_library.md) "Quick
+open" and "Work folders", [dev/synced_vaults.md](../dev/synced_vaults.md)
+"Links and highlights", [dev/api.md](../dev/api.md) "Folders and labels",
+[dev/ui-design.md](../dev/ui-design.md) "Keyboard focus" and "Dock
+windows"). The Files window is a lazy chunk (`explorer/FilesWindow.jsx`,
+`FileTree.jsx` over `fileTree.js`'s rows and keys), its state two explorer
+hooks App calls (`useFilesWindow.js` before App's page lookups,
+`useFilesTree.js` after them, with `useDirectoryRows.js` over
+`directoryRows.js`), so App gained no counted hook; the dock dispatches
+its fourth window through tables (`GRIP_GUIDE`, the fold-forget table).
+Quick open's Files group is `GET /api/files` (`work_folders/file_search.py`
+the match rule, over the partial index `idx_ub_file_name`), drawn by
+`explorer/useFileSearch.js`; a path resolves through
+`GET /api/folders/{id}/at` (`paths.page_at_href`), the client's twin of
+the path rule is `explorer/workPaths.js`, and both are held to
+`tests/shared/workpaths.json`. `POST /pages/summaries` names `+parent_id`
+(its lookup of 40 ids about 1 ms where it took 11 at 20,000 files), and a
+read-only hosted server lets it through. The browser group is `explorer`, its 20,000 files seeded
+by `backend/tests/seed_work_folder.py` (the perf fixture's rows, run as a
+script through the harness's `Server.python`). Where it differs from the
+plan above, the whole list:
+
+1. The Files window starts closed, and its showing is per browser, not per
+   page: the home view is already the library, and the window earns its
+   place beside an open page and stays open across pages once opened
+   (`layoutKeeping`: a page's saved layout keeps it where it is, and its
+   fold). View → Files and the command `app.toggleFiles` (unbound) bring
+   it; its chunk is fetched with the startup requests when it is open,
+   else on the View menu's hover.
+2. The tree is a folder tree: labels have no place in it (a label view is
+   the listing's flat mirror), and library pages filed in no folder are not
+   in it. Folders and labels stay the model.
+3. Files by name or path is one route, `GET /api/files`, over every work
+   folder, `folder` optional for one work folder or a directory's subtree;
+   quick open searches them all, as it searches every page.
+4. The match rule lives on the server alone: the client draws the server's
+   rows and marks the server's spans, so there is one rule and no shared
+   fixture for it, and no typo pass for files. A directory is named with a
+   slash: a query holding `/` or `\` is one path term, spaces kept
+   (`old drafts/v1`); any other query's words match the file's name alone
+   (`figures fig1` finds nothing, `figures/fig1` does).
+5. An index on the file's name (`idx_ub_file_name`, over
+   `COALESCE(file_name, content)`) is added with no migration step
+   (`BLOCK_HOT_INDEXES`, made when a workspace opens); "no path is stored on
+   a page" holds, paths are computed from the tree per request. A leaf
+   named exactly is one seek of that index; otherwise `page_at_path` reads
+   the directory's rows on `idx_ub_dir` and applies the name rule in
+   Python.
+6. Links by path: in a work folder's round a note's link to a tracked file
+   that has a page becomes a mention of that page, which opens it, survives
+   a move on disk and feeds backlinks; a picture's embed keeps its upload
+   address, a paired note's link to its own PDF stays the file's chip, and
+   a file new in the same round is its upload until the note is read
+   again. A kept folder is unchanged. Gamma's mention of a file page, or of
+   a block in its notes, is written back by the file's path and asks no
+   anchor (`LinkContext._anchor` makes none for a page whose path is no
+   note), rather than marking the page read-only, since a paired PDF
+   shares its note's page. What the vault did not resolve (a path typed in
+   Gamma, an untracked file, a folder that does not pull) resolves on a
+   click through `GET /folders/{id}/at`, from the note's directory (known
+   from its folders, whether or not its file is written yet), opened as a
+   link jump Back returns from; a path naming none says "No tracked file
+   at …" in the status pill.
+7. The crumbs start at the work folder, the folder a person opens, as the
+   home bar's do; a path (feedback, the tools, the files route) leaves it
+   out. The directory's chip leaves the label field of a file's page.
+   `page_path` now answers `""` for a page whose `folders[0]` is outside
+   its work folder, as its twin does.
+8. Quick open's Files group lists at most 20 rows, deduped against the page
+   rows (a library file found by its title is one row, the page's).
+9. Pins join the pickers' near set (tabs, recents and pins).
+10. On a phone the Files window is an overlay beside an open page, reached
+    from the More sheet's Files row or the command; on the home view the
+    listing is the explorer and the row is not offered; there is no fifth
+    bottom tab.
+11. The reveal finds a row within the first 500 of a directory by name;
+    past that the directory stays open with "Show more" and the row
+    unrevealed.
+12. A single click opens a file in the tree, and selects it, where the home
+    list view selects on a click and opens on a double-click; the tree's
+    selection is its own, and a file row's menu is the page menu for that
+    one page with the home selection let go (`openSubPageMenu`), so F2 and
+    Delete never act on what the tree selected.
+13. The reveal and the directory reads happen only while the window is
+    shown; a file opened with the window closed reads nothing of the tree,
+    and the window catches up with it when it is shown. An open directory
+    is read again only when the listing's count of its files changed or the
+    listing's `work_changes` name a write to one of its files since.
+14. The scale budgets, measured at 20,000 files and set at about twice
+    their p95 ([dev/debugging.md](../dev/debugging.md) "Performance
+    budgets"): `GET /api/files` 25 ms for a name, 22 for a path term, 16 for
+    no hit, 95 for a query with no ASCII run (every name read and ranked);
+    `GET /folders/{id}/at` 11 ms; the summaries' lookup of 40 ids 2 ms on
+    the connection (through the test client the route takes about 9 ms, its
+    40 previews and the request itself, which the 5 ms ceiling could not
+    hold). The quick-open cases run before the case that adds 2,000
+    directories to the fixture, so they time the 11 directories of the
+    seed; the path case resolves `big/file-01234.bin`, where the seed puts
+    that file.
+15. The seed's and the perf fixture's files are listed binaries
+    (`file-NNNNN.bin`, `at: "listed"`, no hash) and notes: a PDF is never
+    listed, and a listed document reaches no indexer and no reader of
+    bytes, so a seed inside a live server costs nothing while quick open is
+    timed.
+16. The browser group runs quick open first, before any file is a tab or a
+    recent (those are page rows, which the Files group leaves out), and its
+    path query is `dir 3/012`: a leaf held by names in every directory, so
+    the segment does the choosing. Its phone step looks up `fig2`, the one
+    figure no earlier step opened; it pauses the work folder before it
+    types paths into a note made in Gamma, so no round names the note or
+    rewrites the links; and it allows the one 404 of `/folders/{id}/at`
+    its unresolved link asks for. `select.mjs` gives the new client files
+    their own rows (`fileSearch.js` and `useFileSearch.js` with quick
+    open's groups, `workPaths.js` with `notes-pdf-share` and `sub-pages`
+    too, since every note link asks it), and `routers/folders.py` names
+    `work-folders` beside `explorer`.
+17. The reads: the directory's path is `paths.dir_path`, as step 4 named it,
+    and the predicate of a relative link is `paths.is_relative_href`, the
+    server's half of the fixture's `hrefs`. A leaf named exactly is one
+    seek of `idx_ub_file_name`, so a stored name with spaces around it is
+    no longer an exact twin where another file names the leaf exactly.
+    `GET /folders/{id}/at` answers a link that names nothing (a scheme, a
+    leading `/`, `#` or `?`) with the 404 of a path that names no file.
+    The rank folds each name once and drops a row at the first term its
+    name lacks, which holds the no-run case at 48 ms p95.
+18. The vault: a page mentioned by a note's link is spelled back by its
+    path, and a paired paper's page by its note's (`page_path` keeps the
+    note's path; the label is the leaf only for a path that is no note),
+    so a mention of a work folder's PDF made in Gamma is written as
+    `[[p.pdf]]`, where it was the upload's address. A file link's
+    `#fragment` (`[[main.pdf#page=3]]`) names nothing in Gamma's text and
+    is dropped there; the remembered spelling keeps it on disk. A file
+    moved on disk inside a round keeps its old path in that round's table,
+    resolving a stale link to the same page.
+19. The tree: the hidden flag and the open folders are kept in
+    `localStorage` by `useFilesWindow.js` itself, not through
+    `usePersistedFlag` / `usePersistedState` (the hook is tested under node,
+    which `shared/lib/utils.js` does not load, and the open folders' key
+    changes with the account, where `usePersistedState` reads its key
+    once). `revealPath` lives in `workPaths.js`, which App imports, so
+    nothing of `fileTree.js` reaches App's startup. `directoryRows.js`
+    holds `NONE`, the page sizes and the reveal's paging (`findStep`);
+    `useDirectoryRows` adds `retry`. Only directories whose every folder
+    above is open are read. A "Show {n} more files" row counts what one
+    press adds (at most 200), a library folder's too, paged on the client;
+    it and a note row are tree items, so Enter reads more or reads again.
+    The keys leave Alt, Ctrl and Meta chords alone (Alt+← goes back).
+    App's `patchKnown` and `dropKnown` reach the tree's rows, so a rename
+    or a delete shows there at once. The window, quick open's Files group
+    and the files' read need a signed-in member (`filesOn`); a share view
+    has neither.
+20. Quick open sends the query trimmed; the server's `parse` strips it
+    too, so the answer is the same and a trailing space asks nothing
+    again. A query the title matcher cannot read still lists the file rows
+    after the page rows. The placeholder names files in a share view too.
+21. The note editor's path links say "No tracked file at …" with the
+    address percent-decoded (`my fig.pdf`); `resolve` gets it as written.
+    `BlockTree` asks `isRelativeHref` itself, after its upload and Gamma
+    link cases, so `PathLink` draws only relative addresses.
+22. Not built in step 5: a filter box or search in the Files window (quick
+    open is the search); typeahead in the tree; Copy path or Show in folder
+    for a directory; crumbs in a tab group's pane; a path link to a
+    directory (a trailing `/`); hover cards for path links; a `[[` or `@`
+    picker over files (`useFileSearch` is ready for it); `in:files` in
+    quick open (the search panel has it); a prefilter by directory for a
+    path term with no leaf or a query with no ASCII run (both read every
+    name, about 50 ms at 20,000 files); a read around an id for the reveal
+    past 500 rows.
 
 ## Still to decide
 

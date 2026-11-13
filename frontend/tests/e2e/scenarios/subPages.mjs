@@ -114,7 +114,7 @@ export async function subPageScenarios(env) {
       await page.keyboard.press("Control+p");
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
-      await dialog.getByRole("textbox", { name: "Search pages by title or label" }).fill("Child one");
+      await dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" }).fill("Child one");
       const option = dialog.locator('[role="option"][data-kind="page"]').filter({ hasText: "Child one" }).first();
       await option.waitFor();
       assert((await option.innerText()).includes("Family top"), `the row names the page it is in: ${await option.innerText()}`);
@@ -500,7 +500,7 @@ export async function subPageScenarios(env) {
       await page.keyboard.press("Control+p");
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
-      const query = dialog.getByRole("textbox", { name: "Search pages by title or label" });
+      const query = dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" });
       await query.fill("quartz ledger");
       const option = dialog.locator('[role="option"][data-kind="page"]').filter({ hasText: "Ledger inside" });
       await option.waitFor();

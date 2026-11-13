@@ -30,6 +30,7 @@ export const ANCHORS = {
   "chat.grip": { view: "desktop chat", description: "Chat title: drag to dock, double-click to collapse or expand" },
   "notes.grip": { view: "docked notes", description: "Notes title: drag to dock, double-click to collapse or expand" },
   "comments.grip": { view: "docked comments", description: "Comments title: drag to dock, double-click to collapse or expand" },
+  "files.grip": { view: "docked files", description: "Files title: drag to dock, double-click to collapse or expand" },
   "comments.thread": { view: "comment thread", pick: "last", description: "A comment thread: its comments, the reply field and, on the first, Resolve" },
   "header.home": { view: "any", description: "The Home button in the topbar; on a phone, the bottom bar's Library tab" },
   "header.back": { view: "nav", description: "Back to where you were before a link jump; there only after one" },

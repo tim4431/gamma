@@ -315,14 +315,20 @@ All state is SQLite + files on disk under a data directory (env
     non-empty text, the work folder a page is a file of (its vault stamps
     it, [work_folders.md](work_folders.md)), NULL on every other row
     (migration step 53). `first_folder` — generated:
-    `properties.folders[0]`, a file's directory. Three partial indexes read
+    `properties.folders[0]`, a file's directory. Four partial indexes read
     them: `idx_ub_listing` on `(parent_id, position)` over the root pages
     the library listing carries (`db.SQL_IN_LISTING`, which a query must
     repeat for SQLite to use it: no work folder, in the library, or
     pinned), `idx_ub_dir` on `(parent_id, first_folder)` over the root
-    pages with a `work_folder` (a directory's files and their counts), and
+    pages with a `work_folder` (a directory's files and their counts),
     `idx_ub_work_folder` on `work_folder` (a work folder's files, those in
-    Recently deleted included).
+    Recently deleted included), and `idx_ub_file_name` on
+    `(db.SQL_FILE_NAME, first_folder, id)` over the root pages with a
+    `work_folder` (a file by its name, covering: quick open's files and a
+    path's leaf; its readers name it with `INDEXED BY`). The fourth has no
+    migration step: it is in `db.BLOCK_HOT_INDEXES`, which `PAGES_SCHEMA`
+    makes when a workspace opens ([work_folders.md](work_folders.md)
+    "Columns and indexes").
 
   The op log and the mirror carry `properties` alone; nothing writes `kind`,
   `doc_id`, `parent_page`, `deleted_with`, `work_folder` or `first_folder`.

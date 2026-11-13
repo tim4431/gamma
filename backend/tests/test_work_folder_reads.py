@@ -18,7 +18,7 @@ from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page, page_for_doc
 from gamma.db import connect_pages_db
 from gamma.documents.model import document
-from gamma.ops import SYNC_CLIENT
+from gamma.ops import SYNC_CLIENT, commit_ops
 from gamma.routers.clip import find_page
 from gamma.routers.metadata import NO_RECORD
 
@@ -101,6 +101,25 @@ def test_the_listing_leaves_out_the_files_the_library_does_not_list(r):
 
 def test_work_counts_count_each_directorys_own_files(r):
     assert _listing(r.owner)["work_counts"] == {r.W: 4, r.D: 2}
+
+
+def test_work_changes_name_a_directory_written_since_its_read(r):
+    """A file renamed on disk keeps its page and its directory's count; the
+    write to the page is what tells a reader of the directory to read it
+    again."""
+    read = r.owner.get(f"/api/folders/{r.D}/pages").json()
+    before = _listing(r.owner)["work_changes"]
+    assert before["seq"] == read["seq"] and before["since"] <= read["seq"]
+    assert all(seq <= read["seq"] for seq in before["dirs"].values())
+    for name in ("fig3.pdf", "fig2.pdf"):
+        commit_ops(r.ws, r.p["fig2"], [{"op": "set", "id": r.p["fig2"], "props": {"file_name": name}}],
+                   actor=account_of(USER), client=DISK_CLIENT)
+    after = _listing(r.owner)
+    assert after["work_counts"] == {r.W: 4, r.D: 2}
+    changes = after["work_changes"]
+    assert changes["dirs"][r.D] > read["seq"] and changes["seq"] >= changes["dirs"][r.D]
+    assert changes["dirs"].get(r.W, 0) <= read["seq"]
+    assert r.owner.get(f"/api/folders/{r.D}/pages").json()["seq"] == changes["seq"]
 
 
 def test_within_lists_a_folders_pages_whatever_the_library_lists(r):

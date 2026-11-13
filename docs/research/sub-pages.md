@@ -176,6 +176,12 @@ the shape.
   `Parent / Child`, each crumb opening that page, titles from the listing
   the client already holds (no new endpoint).
 
+(Note, 2026-11-13: the Files window of
+[file-explorer.md](file-explorer.md) step 5 is a folder tree in a dock
+window, the library's folders and a work folder's files. It shows no
+sub-pages and no page tree, and folders and labels stay the model; the
+sentence above holds for pages inside pages.)
+
 Deleting the chip leaves the page; Notion deletes the page with its
 block, but a chip here is also typed by hand, copied and pasted, and an
 undo of a delete would have to restore a trashed page. The page's own
