@@ -24,7 +24,10 @@ key optional):
   answer), ``failed`` (an error notification and a failed turn), ``mcp``
   (starts its MCP server whatever the config says), ``mcp_early`` (the
   same, said before thread/start answers, with the new thread's id),
-  ``read_only`` (the thread gets a read-only sandbox whatever was asked);
+  ``read_only`` (the thread gets a read-only sandbox whatever was asked),
+  ``resume`` (thread/resume is an error: the thread is gone);
+- ``distinct``: each thread/start makes a thread of its own id (else every
+  one is ``THREAD``);
 - ``log``: a file receiving one JSON line per thing seen: ``{"argv",
   "cwd", "env"}`` (the GAMMA_* and agent-session variable names it got),
   ``{"in": message}``, ``{"answer": message}`` (to a request it made),
@@ -39,6 +42,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 
 FAKE = json.loads(os.environ.get("FAKE_AGENT") or "{}")
 FAIL = FAKE.get("fail", "")
@@ -117,9 +121,12 @@ def handle(message: dict) -> None:
     elif method == "config/read":
         send({"id": request_id, "result": {"config": {"mcp_servers": {SERVER: {"command": "fake-mcp"}},
                                                        "web_search": "live"}, "origins": {}}})
+    elif method == "thread/resume" and FAIL == "resume":
+        send({"id": request_id, "error": {"code": -32600, "message": f"no rollout found for thread id "
+                                                                     f"{params.get('threadId')}"}})
     elif method in ("thread/start", "thread/resume"):
         state["config"] = params.get("config") or {}
-        thread = params.get("threadId") or THREAD
+        thread = params.get("threadId") or (f"{THREAD}-{uuid.uuid4().hex[:8]}" if FAKE.get("distinct") else THREAD)
         sandbox = {"workspace-write": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": False},
                    "read-only": {"type": "readOnly"}}.get(params.get("sandbox"), {"type": "readOnly"})
         if FAIL == "read_only":  # an administrator's requirements can hold a thread to read-only

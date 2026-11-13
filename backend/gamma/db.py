@@ -585,7 +585,10 @@ USERS_SCHEMA = [
 # that agent on a request, its session, state, progress, the source files it
 # changed (JSON), whether the build changed, its steps (JSON) and process;
 # ``error`` is this computer's record of a failure (the agent's whole error,
-# its stderr's tail), never shown to members.
+# its stderr's tail), never shown to members; agent_threads = the thread an
+# agent of a vault answered last, the session and directory it ran in, when
+# its run read the thread and the comments it read (JSON ids), its reply and
+# the request: what a follow-up resumes.
 VAULTS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS linked_files (
         ws TEXT NOT NULL,
@@ -663,6 +666,19 @@ VAULTS_SCHEMA = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_agent_runs_request ON agent_runs(ws, request_id)",
     "CREATE INDEX IF NOT EXISTS idx_agent_runs_open ON agent_runs(ended_at) WHERE ended_at IS NULL",
+    """CREATE TABLE IF NOT EXISTS agent_threads (
+        link_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        session TEXT NOT NULL DEFAULT '',
+        cwd TEXT NOT NULL DEFAULT '',
+        seen_at TEXT NOT NULL DEFAULT '',
+        read_ids TEXT NOT NULL DEFAULT '[]',
+        comment_id TEXT NOT NULL DEFAULT '',
+        request_id TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        PRIMARY KEY (link_id, thread_id)
+    )""",
 ]
 
 # unified_blocks' typed hot fields, after the seven columns blocks always

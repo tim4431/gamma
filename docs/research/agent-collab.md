@@ -651,7 +651,7 @@ agent), and a token cannot move them.
 | Step | Builds | State |
 |---|---|---|
 | 1. An agent on this computer answers a Send | the host on the desktop app's own server (`gamma/local_agents/`: finding the agents, the two drivers, the claim and the run, the answers), the folder's agent switched on in the sync panel, "Send to Codex" in the Feedback dialog, the agent's progress, summary and changed files on the request | built: [dev/local_agents.md](../dev/local_agents.md), "As built (step 1)" below |
-| 2. `@codex` in a comment | the mention as a Send of its thread or of the file's open threads, the @ menu's agent row, a follow-up resuming the session that answered, reserved names | plan: "The page and the thread" above |
+| 2. `@codex` in a comment | the mention as a Send of its thread or of the file's open threads, the @ menu's agent row, a follow-up resuming the session that answered, the names settled without reserving them | built: [dev/local_agents.md](../dev/local_agents.md) "A mention in a comment", "As built (step 2)" below |
 | 3. The chat's agent side | the switch and the strip, turns streamed in the chat's own lines, approval cards relayed from Codex's app-server and Claude Code's permission prompts (so Claude Code may ask to build), Stop, a turn that outlives its tab, *Continue in a terminal*, a selected passage mapped to its source line | plan: "The chat window gets a second side" and what follows |
 | 4. The remote | the computer announced to the servers its vaults name, presence in any window of the maker, work folders of another server, their requests and the chat relayed through the computer's channel | plan: "How the server sees a vault" |
 | Later | the `acp` driver, delivery to an open session, a co-author's use of the maker's computer, one Inbox item per finished request | |
@@ -694,6 +694,43 @@ went otherwise than planned above:
 - **The Inbox is unchanged.** A local agent's reply reads as the
   connection's, and the finished request has no item of its own.
 
+### As built (step 2)
+
+[dev/local_agents.md](../dev/local_agents.md) "A mention in a comment" is
+the reference; where it went otherwise than "The page and the thread"
+planned:
+
+- **Decided in the route, not on `after_write`.** The rule runs once per
+  write in the comment routes, before `comments.written`, and puts the
+  name on the event, so the Inbox reads the same answer; the Send follows
+  the write and comes back in the route's answer (`send`), so a refusal
+  reaches the field's status line and the thread comes back with its Sent
+  chip. A listener on `after_write` could do neither.
+- **The names are not reserved.** In the maker's comment on a file of the
+  folder, with that agent on, `@codex` is the agent: the Inbox tells no
+  member of that name, and the @ menu lists the agent and not the member.
+  Anywhere else the name keeps its meaning. Accounts named `codex` may
+  exist already, and the `acp` driver would add names.
+- **A thread the agent fixed stays resolved.** A follow-up reopens it
+  first; a mention in a resolved thread is refused with that advice.
+- **A mention while a run works is the next run's.** The plan had one run
+  a folder and nothing more; a mention made in a thread a run was working
+  on was then answered by that run's reply and never seen. The run now
+  says when it read the threads (`seen`) and which comments it read,
+  answers only the Sends made by then, leaves a thread open over a word
+  it did not read, and the next run takes the thread up again although
+  its newest comment is the agent's. Nor does another member's reply
+  cancel a waiting mention any more: the runner asks no request's
+  `answered` flags, which such a reply sets.
+- **Sessions are per thread, kept on the computer.** vaults.db's
+  `agent_threads` records the session that answered each thread and the
+  directory it ran in; a run resumes one only when all its threads share
+  it there. A session the agent no longer has starts afresh once.
+- **The @ row is the desktop app's.** The page's vault answer gained
+  `mine`, and switching the agent tells the folder's open pages, so the
+  row follows the switch; a browser on the same server shows no row,
+  though a typed `@codex` sends there too.
+
 ### Declined
 
 - **A webhook from the server to the PC.** A computer behind a router
@@ -734,8 +771,6 @@ went otherwise than planned above:
   decide" 2).
 - A highlight whose text the fix rewrote is drawn as a rough match or
   lost: accept it automatically when its turn answered it fixed?
-- Assistant names against usernames in the @ menu: refuse a username
-  `codex`, or let the maker's assistant win in the maker's comments.
 - Undo: the snapshot makes a *Revert* possible; whether it restores
   files under an editor that has them open.
 - What Codex's `workspace-write` confines on Windows depends on the

@@ -448,9 +448,10 @@ def locate_opened(page_id: str, payload: OpenFile, request: Request):
 def page_state(page_id: str, request: Request):
     """How a page stands with this computer: ``{vault, reader}``. ``vault``
     is ``{id, name, scope, path, pull, push, problem, conflicts, paused,
-    work_folder, choosing, library, page: {library, file_name}}`` for a page
-    a synced vault keeps (``folder_links.page_vault``: ``page`` the page's
-    own stamps as a work folder's file), else null; ``reader`` is ``{path, missing, mine, relocation_error?}`` for a
+    work_folder, choosing, library, mine, page: {library, file_name}}`` for
+    a page a synced vault keeps (``folder_links.page_vault``: ``mine``
+    whether the asking account made the vault, ``page`` the page's own
+    stamps as a work folder's file), else null; ``reader`` is ``{path, missing, mine, relocation_error?}`` for a
     PDF read where it is, else null, ``mine`` whether the asking account
     opened the file (what keeps it pushing or takes it elsewhere is that
     account's alone). A ``path`` is empty for a member who cannot act on it,

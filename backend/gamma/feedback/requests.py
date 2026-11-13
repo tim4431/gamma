@@ -363,17 +363,22 @@ def answered(ws: str, event: dict) -> None:
     """The comment listener's part (gamma/feedback/listeners.py): a reply
     or a resolve answers the thread in every request that waits on it and
     was made before it, unless it is its requester's own (a session's: a
-    token's write answers whoever it belongs to). A reopen answers nothing."""
+    token's write answers whoever it belongs to). An event that says when
+    its writer read the thread (``seen``: an agent on this computer's run,
+    gamma/feedback/agent.py) answers only the requests made by then: one
+    made while the run worked is still the next run's. A reopen answers
+    nothing."""
     if event.get("kind") not in ("reply", "resolve") or not event.get("thread_id"):
         return
     with connect_pages_db(ws) as conn:
         now = page_now()
+        seen = event.get("seen") or ""
         rows = conn.execute(
             "SELECT t.request_id, r.by, r.at, r.work_folder FROM feedback_request_threads t "
             "JOIN feedback_requests r ON r.id = t.request_id WHERE t.thread_id = ? AND t.answered_at IS NULL",
             (event["thread_id"],)).fetchall()
         hit = [(request_id, w) for request_id, by, at, w in rows
-               if at < now and (by != event.get("actor") or event.get("agent"))]
+               if (at <= seen if seen else at < now) and (by != event.get("actor") or event.get("agent"))]
         if not hit:
             return
         write_lock(conn)

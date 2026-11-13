@@ -2,8 +2,9 @@
 // own server (GET /api/folder-links/page/{id}, routers/folder_links.py
 // `page_state`; docs/research/vaults.md "The words" and "Reading a PDF where
 // it is"): `{vault, reader}`. `vault` is the synced vault that keeps the page
-// (`{id, name, scope, path, pull, push, problem, conflicts, paused, agent}`,
-// `agent` a work folder's agent on this computer or null), `reader`
+// (`{id, name, scope, path, pull, push, problem, conflicts, paused,
+// work_folder, mine, agent}`, `mine` whether this account made it, `agent`
+// a work folder's agent on this computer or null), `reader`
 // the PDF the page reads where it lies (`{path, missing, mine,
 // relocation_error?}`, `mine` whether this account opened the file).
 // What the page shows of it: the chip in the page header and its card
@@ -87,6 +88,23 @@ export function agentLine(state) {
     line: t("Agent: {agent} on this computer", { agent: name }),
     problem: agent.ready === false ? String(agent.problem || "") : "",
     working,
+  };
+}
+
+// The agent a comment on the page can name (`@codex`): the work folder's
+// agent on this computer, for the vault's maker alone, whose mention of it
+// in a comment is a Send (docs/dev/local_agents.md). The @
+// menu's row, the field's hint and the chip in the maker's own comments
+// read it: {name, label, ready, problem}, `problem` as agentLine's. Null
+// for anyone else, a vault that is no work folder, and a folder with no
+// agent on.
+export function mentionAgent(state) {
+  const vault = state?.vault;
+  const agent = vault?.agent;
+  if (!vault?.work_folder || !vault.mine || !agent || typeof agent !== "object" || !agent.name) return null;
+  return {
+    name: agent.name, label: agent.label || agent.name, ready: agent.ready,
+    problem: agent.ready === false ? String(agent.problem || "") : "",
   };
 }
 

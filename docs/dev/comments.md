@@ -139,8 +139,8 @@ refused with a 400.
 | Method | Path | Body | Answer |
 |---|---|---|---|
 | GET | `/api/pages/{page_id}/comments?state=open\|resolved\|all` | | `{threads}`; 404 for a page in Recently deleted or gone, 400 for another `state` |
-| POST | `/api/pages/{page_id}/comments` | `{id?, block_id, body, thread_id?, client?}` | 201 `{comment, thread}` |
-| PATCH | `/api/comments/{id}` | `{body, client?}` | `{comment}` |
+| POST | `/api/pages/{page_id}/comments` | `{id?, block_id, body, thread_id?, client?}` | 201 `{comment, thread, send?}` |
+| PATCH | `/api/comments/{id}` | `{body, client?}` | `{comment, thread?, send?}` |
 | DELETE | `/api/comments/{id}?client=` | | `{deleted: true}` |
 | POST | `/api/comments/{id}/resolve` | `{resolved, client?}` | `{thread}` |
 | GET | `/api/pages/{page_id}/notify` | | `{level}`: `all` or `replies`, the page's Notify me for the session's account ("Following a page" below) |
@@ -162,6 +162,14 @@ refused with a 400.
 - **Edit.** The author through the writer that wrote it (403 "only its
   author can edit a comment" otherwise). An edit that leaves the text as it
   was keeps `updated_at`.
+- **A mention of the work folder's agent.** On the desktop app's own
+  server, the vault's maker's comment on a work folder's file that newly
+  names the folder's agent on this computer (`@codex`) is a Send to it as
+  well ([local_agents.md](local_agents.md) "A mention in a comment"): the
+  answer carries `send` (`{agent, request_id, scope, threads}`, or
+  `{agent, refused, why}` with the comment stored anyway) and the thread
+  read again with its Sent chip; an edit's answer carries the thread only
+  then. No `send` for a comment that names no agent.
 - **Delete.** The author, by a session or by the token that wrote it, or
   the workspace's owner (signed in, not through a token or a share link). A
   root that still has

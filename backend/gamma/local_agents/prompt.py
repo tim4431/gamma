@@ -47,17 +47,22 @@ def _agent_comment(comment: dict) -> bool:
     return bool(comment.get("agent"))
 
 
-def pending(entries: list[dict], answered: set[str]) -> list[dict]:
-    """The entries to put to the agent: open, not answered in this request
-    already (``answered``: the threads whose ``answered`` flag is set), and
-    with a word from a person since an agent last answered (the newest
-    comment is not an agent's)."""
+def pending(entries: list[dict], seen: dict | None = None) -> list[dict]:
+    """The entries to put to the agent: open, and with a word from a person
+    since an agent last answered (the newest comment is not an agent's).
+    ``seen``: ``{thread id: comment id}`` of the replies an agent here wrote
+    while a person spoke in the thread unread by its run
+    (gamma/local_agents/runner.py): a thread whose newest comment is one of
+    them still has that word to answer. A request's ``answered`` flag is
+    not asked: another member's reply sets it, and answers nothing the
+    agent was asked."""
+    seen = seen or {}
     out = []
     for entry in entries:
-        if entry.get("state") != "open" or entry["id"] in answered:
+        if entry.get("state") != "open":
             continue
         said = [c for c in entry.get("comments") or [] if not c.get("deleted")] or entry.get("comments") or []
-        if said and _agent_comment(said[-1]):
+        if said and _agent_comment(said[-1]) and seen.get(entry["id"]) != said[-1].get("id"):
             continue
         out.append(entry)
     return out

@@ -1156,10 +1156,11 @@ def set_agent(link_id: str, agent: str, *, by: str) -> int:
     ``agent`` (``codex``, ``claude``) answers its Sends from now on, turned
     on by the account ``by``, or ``""`` none. The row is this computer's
     (``local_agents.store``); a run of the agent it had stops when it is
-    turned off or changed, and an agent turned on (or changed) takes the
-    Sends that wait now → how many it took. The route checks who may and
-    whether the agent is ready. LinkError for a vault that is no work
-    folder; 0 for no such link."""
+    turned off or changed, the folder's open pages hear ``{t: "vault"}``
+    (their chip and the comments' @ menu read the agent again), and an
+    agent turned on (or changed) takes the Sends that wait now → how many
+    it took. The route checks who may and whether the agent is ready.
+    LinkError for a vault that is no work folder; 0 for no such link."""
     from .local_agents import runner, store as agents  # local: the runner imports the feedback modules
 
     link = get_link(link_id)
@@ -1171,9 +1172,31 @@ def set_agent(link_id: str, agent: str, *, by: str) -> int:
     agents.set_agent(link_id, agent, by=by)
     if had and had != agent:
         _stop_agent(link_id)
+    if had != agent:
+        _tell_open_pages(link)
     if agent and agent != had:
         return runner.queue_folder(link["workspace_id"], link_id)
     return 0
+
+
+def _tell_open_pages(link: dict) -> None:
+    """Each page of the vault's work folder open in a window now hears
+    ``{t: "vault"}``, for its vault chip to look again. Never raises: the
+    change is made."""
+    ws = link["workspace_id"]
+    opened = sorted(page_id for key_ws, page_id in collab.open_pages() if key_ws == ws)
+    if not opened:
+        return
+    try:
+        with connect_pages_db(ws) as conn:
+            pages = [r[0] for r in conn.execute(
+                "SELECT id FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?)) AND work_folder = ?",
+                (json.dumps(opened), link["folder_id"]))]
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[folders] the open pages of work folder {link['folder_id']}: {e}")
+        return
+    for page_id in pages:
+        collab.publish(ws, page_id, {"t": "vault"})
 
 
 def _stop_agent(link_id: str) -> None:
@@ -1263,8 +1286,8 @@ def relink(link_id: str, path: str) -> dict | None:
     are read there from now on, the link's last error goes and a round
     follows (none while its files are not chosen). None for no such link;
     LinkError for a place that is not the link's, or that ``check_vault``
-    refuses. A run of the vault's agent stops: it works in the directory
-    that was."""
+    refuses. A run of the vault's agent stops, and the sessions it answered
+    threads in are forgotten: they belong to the directory that was."""
     link = get_link(link_id)
     if link is None:
         return None
@@ -1294,6 +1317,9 @@ def relink(link_id: str, path: str) -> dict | None:
                 conn.execute("UPDATE folder_links SET path = ?, state = ? WHERE id = ?", (new, json.dumps(state), link_id))
             except sqlite3.IntegrityError as e:
                 raise LinkError(_taken({**link, "path": new})) from e
+        from .local_agents import store as agents  # local: the runner imports the feedback modules
+
+        agents.forget_threads(link_id)
         if engine(link):
             from .vault.local_remote import LocalRemote  # local: it imports this module
 
@@ -1783,7 +1809,9 @@ def page_vault(ws: str, page_id: str, *, can_act: bool, user_id: str) -> dict | 
     ``problem`` why its file was not written or read, the vault's own reason
     first (``_halted``), ``conflicts`` the clashes the file won that are
     open; ``work_folder`` whether the vault is one, ``choosing`` whether its
-    files wait to be chosen, ``library`` its library switch, and ``page``
+    files wait to be chosen, ``library`` its library switch, ``mine``
+    whether ``user_id`` made the vault (whose comments may name its
+    agent: gamma/local_agents/mention.py), and ``page``
     the page's own stamps: whether it is in the library, and its file's
     name. On a server that runs agents, ``agent`` too: the work folder's
     agent on this computer (``local_agents.info``: its run's detail for
@@ -1811,7 +1839,7 @@ def page_vault(ws: str, page_id: str, *, can_act: bool, user_id: str) -> dict | 
     out = {"id": link["id"], "name": dest_of(link).name, "scope": link["kind"], "path": path if shown else "",
            "pull": bool(link["pull"]), "push": push_word(link["push"]), "problem": _halted(link) or problem,
            "conflicts": clashes, "paused": bool(link["status"].get(PAUSED)), "work_folder": work_folder_link(link),
-           "choosing": choosing(link), "library": bool(link["library"]),
+           "choosing": choosing(link), "library": bool(link["library"]), "mine": link["created_by"] == user_id,
            "page": {"library": props.get("library") is True, "file_name": str(props.get("file_name") or "")}}
     if local_agents.enabled():
         out["agent"] = agent_info.agent_info(link, can_act=shown)

@@ -242,7 +242,7 @@ import { ZoteroPdfCard, ZoteroReadonlyBadge } from "../collaboration/ZoteroPage.
 import { isVaultConflict } from "../collaboration/conflictKinds.js";
 import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
-import { addsToLibrary, carriesToServer, isOpenedPdf, libraryWorkspaces, notesLocked as vaultNotesLocked, openedHere, vaultConflictsPath } from "../vault/vaultState.js";
+import { addsToLibrary, carriesToServer, isOpenedPdf, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, vaultConflictsPath } from "../vault/vaultState.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
@@ -4835,6 +4835,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const vaultState = vault.state;
   const vaultConflicts = vaultConflictsPath(vaultState);
   const vaultConflictCount = vaultState?.vault?.conflicts || 0;
+  // The work folder's agent on this computer that the maker names in a
+  // comment (`@codex`, vaultState.js mentionAgent): the comment fields'
+  // `links.agent`, never MentionContext, which reaches the notes.
+  const commentAgent = useMemo(() => (IS_DESKTOP ? mentionAgent(vaultState) : null), [vaultState]);
 
   // Merges an offline copy's sync decided on this page's blocks
   // (docs/dev/mirror.md), the differences a Zotero link kept
@@ -10052,7 +10056,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     labelsFor: (body) => marginFns.current.commentLabels(body),
     links: {
       pages: pageBlocks, rootId: focusedBlockId, lookupBlock: (id) => treeById.get(id), refCache,
-      onCacheRef: (...args) => marginFns.current.onCacheRef(...args),
+      onCacheRef: (...args) => marginFns.current.onCacheRef(...args), agent: commentAgent,
     },
     onBlockRefClick: (...args) => marginFns.current.openBlockLink(...args),
     onAdd: comments.add,
@@ -10064,7 +10068,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     onActivate: (blockId, threadId) => marginFns.current.openThread(blockId, null, { threadId, toggle: false, pdf: true }),
     onClose: () => setThreadPop(null),
   } : null), [commentsOn, isPhone, comments.threadsByBlock, threadPop, commentMe, shareMode, workspace?.role, canComment, people, // eslint-disable-line react-hooks/exhaustive-deps
-    pageBlocks, focusedBlockId, treeById, refCache, !!commentSignIn, comments.add, comments.edit, comments.remove, comments.resolve]);
+    pageBlocks, focusedBlockId, treeById, refCache, commentAgent, !!commentSignIn, comments.add, comments.edit, comments.remove, comments.resolve]);
   // A press on a highlight or a region in the viewer: a note's ⊕ waiting
   // for its highlight picks it; else its row in the notes, and the chat is
   // fed as a click on the PDF feeds it (quote as the selection, an area or a
@@ -15101,7 +15105,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             people={people}
             labelsFor={commentLabels}
             // the fields' [[ and @ pickers, as a note row's (rowProps)
-            links={{ pages: pageBlocks, rootId: focusedBlockId, lookupBlock: (id) => treeById.get(id), refCache, onCacheRef }}
+            links={{ pages: pageBlocks, rootId: focusedBlockId, lookupBlock: (id) => treeById.get(id), refCache, onCacheRef, agent: commentAgent }}
             onBlockRefClick={openBlockLink}
             onAdd={comments.add}
             onEdit={comments.edit}

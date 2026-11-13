@@ -8,7 +8,7 @@ import React, { createContext, useContext, useEffect } from "react";
 import { useCaretAnchored } from "./LatexEditor";
 import { MarkedText } from "../search/SearchPanel";
 import { PersonAvatar } from "../collaboration/Presence";
-import { AlarmClockIcon, ClockIcon, FileGlyph, UserPlusIcon } from "../shared/ui/Icons";
+import { AlarmClockIcon, BotIcon, ClockIcon, FileGlyph, UserPlusIcon } from "../shared/ui/Icons";
 import { fmtDate, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 import {
@@ -35,6 +35,7 @@ function RowIcon({ row }) {
   if (row.kind === "date") return <ClockIcon size={16} />;
   if (row.kind === "remind") return <AlarmClockIcon size={16} />;
   if (row.kind === "person") return <PersonAvatar name={row.user} title={row.user} />;
+  if (row.kind === "agent") return <BotIcon size={16} />;
   if (row.kind === "invite") return <UserPlusIcon size={16} />;
   return <FileGlyph format={row.format} size={16} />;
 }
@@ -50,6 +51,11 @@ function RowText({ row, query, now }) {
   }
   if (row.kind === "person") {
     return <><MarkedText text={row.user} query={query} />{row.you ? <span className="mentionAside">{t("(You)")}</span> : null}</>;
+  }
+  // The work folder's agent: where it runs, or why it cannot.
+  if (row.kind === "agent") {
+    const aside = row.ready === false && row.problem ? row.problem : t("on this computer");
+    return <><MarkedText text={row.label} query={query} /><span className="mentionAside">{aside}</span></>;
   }
   if (row.kind === "invite") return t("Invite…");
   return <MarkedText text={row.title || t("Untitled")} query={query} />;

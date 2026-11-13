@@ -36,12 +36,13 @@ export async function localAgentScenarios(env) {
   const agentLog = path.join(disk, "agent.jsonl");
   // Both agents are the stand-ins, so neither probe reaches a CLI of this
   // computer. Codex answers every comment it is handed as fixed, after an
-  // edit of the paper's method and a pause long enough to be seen working.
+  // edit of the paper's method and a pause long enough to be seen working;
+  // each new session is a thread of its own id, so a resumed one shows.
   const server = new Server({ env: {
     GAMMA_FOLDER_LINKS: "1", GAMMA_SHELL_SECRET: "", GAMMA_LOCAL_AGENTS: "1",
     GAMMA_AGENT_CODEX: JSON.stringify([PYTHON, path.join(FAKES, "fake_codex.py")]),
     GAMMA_AGENT_CLAUDE: JSON.stringify([PYTHON, path.join(FAKES, "fake_claude.py")]),
-    FAKE_AGENT: JSON.stringify({ each: "fixed", summary: SUMMARY, delay: 8, log: agentLog,
+    FAKE_AGENT: JSON.stringify({ each: "fixed", summary: SUMMARY, delay: 8, log: agentLog, distinct: true,
       edits: [{ path: "sections/method.tex", old: "by gradient descent.", new: "by gradient descent with weight decay $\\lambda$." }] }),
   } });
   try {
@@ -79,6 +80,40 @@ export async function localAgentScenarios(env) {
       return d;
     };
     const notes = async (d) => (await d.locator(".feedbackAgentNote").allInnerTexts()).map((s) => s.trim());
+    // What the stand-in heard, in order: each turn/start names the thread
+    // (the agent's session) the turn ran in.
+    const heard = () => fs.readFileSync(agentLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    const turnsHeard = () => heard().filter((e) => e.in?.method === "turn/start").map((e) => e.in.params.threadId);
+    // A new comment on an area of page 1, through the API (no mention).
+    const commentOn = async (place, body) => {
+      const area = await user.api("/api/blocks", { method: "POST", body: { parent_id: main.id, content: "",
+        properties: { pdf_position: areaOf(place), color: "rgba(255, 226, 143, 0.65)" } } });
+      const made = await user.api(`/api/pages/${main.id}/comments`, { method: "POST", body: { block_id: area.id, body } });
+      assert(!("send" in made), "a comment that names no agent sends nothing");
+      return made.thread;
+    };
+    // A thread opened from the Comments window's row, its reply field
+    // pressed open (as in Notion), in the open or the resolved list.
+    const openThread = async (page, threadId, resolved = false) => {
+      const panel = await openComments(page);
+      if (resolved) await page.locator(".dockWindow:has(.commentsPanel) .segGroup button", { hasText: "Resolved" }).click();
+      const row = panel.locator(`.commentsPanelRow[data-thread-id="${threadId}"]`);
+      await row.waitFor({ timeout: 10000 });
+      await row.click();
+      return page.locator(".commentThread").first();
+    };
+    const replyField = async (thread) => {
+      await thread.locator(".commentBody").first().click();
+      const field = thread.locator(".commentField .cm-content").last();
+      await field.waitFor();
+      await field.click();
+      return field;
+    };
+    // The request a mention made, once it is done.
+    const doneRequest = (id) => until(async () => {
+      const found = (await user.api("/api/feedback/requests?after=0")).requests.find((r) => r.id === id);
+      return found?.state === "done" ? found : null;
+    }, { timeout: 40000, what: `request ${id} done` });
 
     let link = null, main = null;
     const threads = [];
@@ -198,6 +233,119 @@ export async function localAgentScenarios(env) {
         await page.keyboard.press("Escape");
         assertNoProblems(page);
       } finally { await ctx.close(); }
+    });
+
+    // Step 2: @codex in a comment (docs/dev/local_agents.md "A mention in a comment").
+    let caption = null, captionTurn = "";
+    await step("local-agents: in the maker's reply on the PDF the @ menu lists Codex on this computer, and the reply sends that thread to Codex", async () => {
+      caption = await commentOn(PLACES.v1.figure.rect, "the caption says 2025");
+      const before = turnsHeard().length;
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const thread = await openThread(page, caption.id);
+        await replyField(thread);
+        await page.keyboard.type("@cod");
+        const menu = page.locator(".mentionMenu");
+        const row = menu.locator(".refPopupItem.selected");
+        await until(async () => (await row.locator(".refPopupText").innerText().catch(() => "")).startsWith("Codex"),
+          { what: "the @ menu offers the folder's agent" });
+        assertEq((await row.locator(".mentionAside").innerText()).trim(), "on this computer", "where it runs");
+        assertEq(await menu.locator(".refPopupHead").allInnerTexts().then((h) => h.join("|")), "People", "under People");
+        await page.keyboard.press("Enter");
+        await menu.waitFor({ state: "detached" });
+        await thread.locator(".cmMentionChip", { hasText: "@codex" }).waitFor();
+        await page.keyboard.type("fix this only");
+        assertEq((await thread.locator("[data-agent-hint]").innerText()).trim(), "Sends this thread to Codex on this computer.",
+          "the field says what sending does");
+        await page.keyboard.press("Shift+Enter");
+        // the reply is stored, and its Send is the thread's alone
+        const reply = await until(async () => (await threadsOf(main.id)).find((th) => th.id === caption.id)
+          ?.comments.find((c) => c.body === "@codex fix this only"), { what: "the reply is stored" });
+        const request = await doneRequest(reply.id);
+        assertEq(JSON.stringify([request.note, request.threads.map((t) => t.id), request.state_by]),
+          JSON.stringify(["fix this only", [caption.id], "Codex"]), "a Send of the thread, the comment's other words its instruction");
+        // the reply's own @codex is the agent's chip in the maker's comment
+        await thread.locator(".commentItem.reply .mentionChip.mention-agent", { hasText: "@codex" }).first().waitFor();
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const stored = (await threadsOf(main.id)).find((th) => th.id === caption.id);
+      assert(stored.resolved_at, "the fixed thread is resolved");
+      assertEq(JSON.stringify([stored.comments.at(-1).agent, stored.comments.at(-1).body]),
+        JSON.stringify(["Codex", `Done for ${caption.id}.`]), "Codex answered it");
+      const turns = turnsHeard().slice(before);
+      assertEq(turns.length, 1, "one turn");
+      captionTurn = turns[0];
+      assert(!turnsHeard().slice(0, before).includes(captionTurn), `a session of its own: ${captionTurn}`);
+    });
+
+    await step("local-agents: a follow-up in the reopened thread resumes the session that answered there", async () => {
+      const before = heard().length;
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const thread = await openThread(page, caption.id, true);
+        await thread.getByRole("button", { name: "Reopen", exact: true }).click();
+        await until(async () => !(await threadsOf(main.id)).find((th) => th.id === caption.id)?.resolved_at, { what: "the thread is open again" });
+        await replyField(thread);
+        await page.keyboard.type("@codex");
+        await page.locator(".mentionMenu .refPopupItem.selected", { hasText: "Codex" }).waitFor();
+        await page.keyboard.press("Enter"); // the row writes "@codex "
+        await page.keyboard.type("keep the British spelling");
+        await page.keyboard.press("Shift+Enter");
+        const reply = await until(async () => (await threadsOf(main.id)).find((th) => th.id === caption.id)
+          ?.comments.find((c) => c.body === "@codex keep the British spelling"), { what: "the follow-up is stored" });
+        const request = await doneRequest(reply.id);
+        assertEq(request.note, "keep the British spelling");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const since = heard().slice(before);
+      const resumed = since.filter((e) => e.in?.method === "thread/resume").map((e) => e.in.params.threadId);
+      assertEq(JSON.stringify(resumed), JSON.stringify([captionTurn]), "Codex's thread/resume of the session that answered");
+      assertEq(since.filter((e) => e.in?.method === "thread/start").length, 0, "no new session");
+      assertEq(JSON.stringify(since.filter((e) => e.in?.method === "turn/start").map((e) => e.in.params.threadId)),
+        JSON.stringify([captionTurn]), "the turn ran in it");
+    });
+
+    await step("local-agents: an edit of an older comment is not sent and says why; a mention in the page's own thread sends the file's open comments", async () => {
+      const axis = await commentOn(PLACES.v1.equation.rect, "the axis label is missing");
+      await user.api(`/api/pages/${main.id}/comments`, { method: "POST", body: { block_id: axis.block_id, thread_id: axis.id, body: "and its units" } });
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const thread = await openThread(page, axis.id);
+        const first = thread.locator(".commentItem", { hasText: "the axis label is missing" }).first();
+        await first.hover();
+        await first.locator(".rowMenuBtn").click();
+        await page.locator(".ctxMenu .ctxMenuItem", { hasText: "Edit" }).click();
+        const edit = first.locator(".commentField .cm-content");
+        await edit.waitFor();
+        await edit.click();
+        await page.keyboard.press("End");
+        await page.keyboard.type(" @codex");
+        await page.locator(".mentionMenu .refPopupItem.selected", { hasText: "Codex" }).waitFor();
+        await page.keyboard.press("Enter");
+        assertEq((await first.locator("[data-agent-hint]").innerText()).trim(), "Mention Codex in a new reply to send this thread again.",
+          "the field says before saving that an older comment's edit is not sent");
+        await first.getByRole("button", { name: "Save", exact: true }).click();
+        await until(async () => (await page.textContent(".statusPill").catch(() => "") || "")
+          .includes("Mention Codex in a new reply to send this thread again."), { what: "the status says why it was not sent" });
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      assertEq((await user.api("/api/feedback/requests?after=0")).requests.filter((r) => r.threads.some((t) => t.id === axis.id)).length,
+        0, "no Send of that thread");
+      const made = await user.api(`/api/pages/${main.id}/comments`, { method: "POST", body: { block_id: main.id, body: "@codex tidy these up" } });
+      assertEq(JSON.stringify([made.send?.agent, made.send?.scope, made.send?.threads]), JSON.stringify(["Codex", "file", 2]),
+        "the file's open comments: the axis thread and the page's own");
+      assertEq(made.thread.sent?.request_id, made.send.request_id, "the answer's thread carries its Sent chip");
+      const request = await doneRequest(made.send.request_id);
+      assertEq(JSON.stringify(request.threads.map((t) => t.id).sort()), JSON.stringify([axis.id, made.thread.id].sort()));
+      const refused = await user.api(`/api/pages/${main.id}/comments`, { method: "POST",
+        body: { block_id: caption.block_id, thread_id: caption.id, body: "@codex once more" } });
+      assertEq(refused.send?.refused, "closed", "a resolved thread is reopened first");
     });
 
     await step("local-agents: turned off by its maker, the folder has no agent and the feedback document names none", async () => {

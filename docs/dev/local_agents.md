@@ -10,7 +10,9 @@ as the prompt, shows what the agent is doing as the request's `running`
 detail, writes the agent's answer to each comment as a reply signed
 `Codex` or `Claude Code`, resolves the comments it fixed, and sets the
 request `done` (with a summary and the source files changed) or `failed`.
-A withdraw stops the agent.
+A withdraw stops the agent. The maker can also send by naming the agent in
+a comment (`@codex fix this only`: "A mention in a comment"), and a
+follow-up in a thread the agent answered resumes the agent's session.
 
 The design, the survey of both CLIs and the later steps (`@codex` in a
 comment, the chat window's agent side, a remote server seeing the
@@ -28,6 +30,7 @@ and the folder-links and feedback routers.
 | `events.py`, `codex.py`, `claude.py` | the drivers: one turn of an agent as a stream of plain events ("The drivers") |
 | `prompt.py` | what the agent is told and the shape of its answer ("The prompt and the answer") |
 | `runner.py` | hearing the requests, claiming them and running them ("Claiming and the run") |
+| `mention.py` | a comment that names the agent as a Send ("A mention in a comment") |
 | `store.py` | what this computer keeps, in vaults.db ("What this computer keeps") |
 | `info.py` | what a vault says of its agent, for the links and a page's chip ("The routes") |
 
@@ -185,7 +188,9 @@ A run (`runner._Run.go`) never raises and always ends the run it recorded:
    ready fails the request with its problem. A read-only hosted server
    (`hosted.read_only`) or a workspace that refuses writes
    (`workspaces.refuse_writes`) fails it with that reason.
-3. **What there is to answer**: `requests.entries_of` with the paths from
+3. **What there is to answer**: the run notes when it reads (`seen_at`)
+   and, once read, which comments ("A mention while a run works" below):
+   `requests.entries_of` with the paths from
    the vault's rows (`entries.paths_of(vault.store.files(link_id))`, as the
    files' writer names them), then `prompt.pending`. None pending → `done`
    with "Nothing new since the last answers."; more than `MAX_THREADS`
@@ -202,8 +207,15 @@ A run (`runner._Run.go`) never raises and always ends the run it recorded:
    meanwhile ends the run before any process starts. Then
    `events.start(agent, argv=catalog.command(agent),
    cwd=<the vault's directory>, prompt=prompt.build(...), schema=
-   prompt.ANSWER_SCHEMA, images=<the pictures' absolute paths>)`, its pid
-   recorded. A watchdog thread waits for the run's stop or the deadline,
+   prompt.ANSWER_SCHEMA, images=<the pictures' absolute paths>,
+   session=<the one to resume, or "">)`, its pid recorded. The session is
+   the one this agent answered every pending thread in last, in the
+   vault's directory as it is now, when they share one (`_session`, from
+   `agent_threads`: "Resuming the session" below); a resumed turn that
+   ends badly before any step, not stopped and not past its deadline, is
+   started once more afresh (Claude Code has no fallback of its own; Codex
+   falls back to a new thread itself). A watchdog thread, one a turn,
+   waits for the run's stop or the deadline,
    `RUN_TIMEOUT_S` (1800 s, `GAMMA_AGENT_RUN_TIMEOUT`) counted from the
    turn's start, not from the queue's wait, and calls `turn.stop()`.
 5. **Progress.** Each step the agent starts becomes the request's detail,
@@ -240,8 +252,13 @@ A run (`runner._Run.go`) never raises and always ends the run it recorded:
    the requester (`integrations.Connection(user_id=<maker>,
    workspaces=[ws], scope="feedback", token_id="local:<name>",
    name=<label>, username=<maker's username>)`), so the reply is signed
-   with the label and its `agent_id` is `local:codex`; a `fixed` one is
-   resolved too (`agent.resolve`). A refusal of one is kept (the first
+   with the label and its `agent_id` is `local:codex`, and the thread's row
+   in `agent_threads` records the reply, the turn's session and the
+   directory; a `fixed` one is resolved too (`agent.resolve`), unless a
+   person wrote or edited a comment in it after `seen_at` (a word the agent
+   never saw: the thread stays open for the next run). Both writes pass
+   `seen=seen_at`, so they answer only the Sends made by then
+   (`requests.answered`). A refusal of one is kept (the first
    one's words) and the others go on; a withdraw meanwhile (the run's stop)
    ends the writing before the next one. No reply written → `failed` with
    that refusal. Else `done` with the detail `<summary, or "Answered 2 of 3
@@ -307,9 +324,14 @@ instruction of Gamma's. Its parts:
    in any string get a zero-width space before the third, so a body cannot
    close the fence.
 
-`prompt.pending(entries, answered)`: the entries that are open, not
-answered in this request already, and whose newest comment is not an
-agent's (nothing new from a person since an agent answered).
+`prompt.pending(entries, seen=None)`: the entries that are open and whose
+newest comment is not an agent's (nothing new from a person since an
+agent answered; a request's `answered` flags are not asked), unless that
+comment is a reply of this computer's agent written while a person spoke
+in the thread unread (`seen`: `{thread id: that reply's id}`, which the
+runner finds through `agent_threads` and `_spoken_after`: "A mention while
+a run works" below). The same full prompt goes to a resumed session: the
+agent reads the whole thread again either way.
 `prompt.ANSWER_SCHEMA` is the strict JSON schema of the answer (`answers`
 of `{thread_id, outcome, reply}` with `additionalProperties: false`, and
 `summary`), passed to Codex as `outputSchema` and to Claude Code as
@@ -317,6 +339,100 @@ of `{thread_id, outcome, reply}` with `additionalProperties: false`, and
 summary)`: the first item per thread among `thread_ids` with a known
 outcome and a non-empty reply (cut to `comments.MAX_BODY`), the summary on
 one line cut to 300 characters; anything malformed is `([], "")`.
+
+## A mention in a comment
+
+The vault's maker can also send by writing the agent's name in a comment:
+`@codex fix this only` in a thread on a passage, an area, a region, ink
+or a note is a Send of that thread, the comment's other words its
+instruction; written in the page's own thread (`block_id` the page's), it
+is a Send of every open thread of the file. The request, its states, its
+chip and its answers are the ones above. `gamma/local_agents/mention.py`
+holds the rule; the names are not reserved, so everywhere else `@codex`
+is what it was, plain text or a member named codex.
+
+- **The rule** (`agent_named(ws, event, via=)` → `codex`, `claude` or
+  `""`), asked once per write by the comment routes, before
+  `comments.written`, cheapest test first: `enabled()`; a create, reply
+  or edit; a person's own write (the event has neither `agent` nor
+  `agent_id`, so a token's comment and the agent's own replies never
+  count) not made through a share (`via`); the names it newly mentions
+  (`mentions.people_in`, for an edit less those of its text before, the
+  Inbox's rule) among the catalog's, exact lowercase (`@Codex` is not
+  the agent), and none read from the database before one is; then the
+  page a live file of a work folder whose agent here
+  (`runner.folder_agent`) is that one, and the writer that vault's maker.
+  The route puts the name on the event (`agent_named`), so the Inbox
+  reads the same answer: a member named codex is told nothing of it, nor
+  of the agent's later replies in a thread where the maker named it
+  (`inbox._agent_of`, by the agent switch as it is now).
+- **The Send** (`send(ws, event, name, by_name=)`, after `written`; never
+  raises): refused, with a code the client words and an English `why`,
+  when the thread is resolved (`closed`: it is reopened first), when an
+  edit is not of the thread's newest comment (`not_newest`, since the
+  agent would find nothing new in it), when the maker is no owner or
+  editor of the workspace now (`viewer`), when the server or the
+  workspace takes no writes (`writes`), and for a file-wide mention with
+  more than `MAX_THREADS` open threads (`too_many`) or none (`nothing`);
+  a FeedbackError of the create is `other`. Else `requests.create` with
+  the file's scope (`entries.resolve_scope`), `threads=[the thread]` or
+  none for the file's, `note` the body with the agent's mentions taken
+  out of its prose (`mentions.without`) and cut to `requests.MAX_NOTE`,
+  `via` `session`, and the comment's id as the request's (a retried POST
+  writes no comment and so no second Send; an edit's Send gets a new
+  id). The runner takes it as any Send of the maker's (`_ours`). With the
+  vault paused or the agent not ready, it waits or fails as a Send does.
+- **The answer.** `POST /api/pages/{id}/comments` answers `{comment,
+  thread, send?}` and `PATCH /api/comments/{id}` `{comment, thread?,
+  send?}`: `send` is `{agent, request_id, scope: "thread" | "file",
+  threads}` or `{agent, refused, why}`, absent when no agent was named;
+  with it, `thread` is read again after the Send, so its `sent` is the new
+  request (the thread the writer built under its lock has none, and the
+  client replaces a thread whole). The comment is stored either way.
+
+### A mention while a run works
+
+One run at a time a folder, so a mention made in a thread a run is
+working on waits behind it. These rules keep it from being lost:
+
+- The run notes when it reads its entries (`seen_at`) and the ids of the
+  comments it read, by thread (`read`). Its replies and resolves pass
+  `seen_at` on (`feedback.agent.reply` and `resolve` take `seen=`, never
+  from a tool's arguments, and put it on the event): `requests.answered`
+  with an event's `seen` answers only the requests made by then. Without
+  it (a token's write) a reply answers every waiting request made before
+  it, as before.
+- A word the run never saw is a person's live comment in the thread (a
+  session's: no agent's, no token's) whose id the run did not read, or
+  one it read that was edited after `seen_at` (`runner._spoken_after`; by
+  the ids, since a comment is stamped before its commit). A thread the
+  agent marked `fixed` is resolved only when it has no such word.
+- The next run puts the thread to the agent although its newest comment
+  is the agent's reply, when that reply is this computer's recorded one
+  (`agent_threads.comment_id`) and the thread has such a word for that
+  run (`agent_threads.read_ids`, `prompt.pending`'s `seen`).
+- The runner does not ask a request's `answered` flags: another member's
+  reply sets them ("Answered" in feedback.md), and it answers nothing the
+  agent was asked. What is new is the newest comment's rule above.
+
+A mention made while an earlier Send of the same thread still waits is
+read by that Send's run, which then answers both: the mention's own
+request ends "Nothing new since the last answers."
+
+### Resuming the session
+
+Each thread a run answers gets a row in vaults.db's `agent_threads`: the
+agent, its turn's session (Codex's thread, Claude Code's session), the
+directory it ran in, `seen_at` and the comments it read, the reply's id
+and the request. A later
+run whose pending threads all have a row of the same agent, run in the
+vault's directory as it is now, sharing one session, resumes it (Codex
+`thread/resume`, Claude Code `--resume`), so a follow-up in a thread
+(`@codex no, keep the British spelling`) is answered by an agent that
+remembers what it did; any other run starts a new session. A session the
+agent no longer has is started afresh once (step 4 of the run). The rows
+of a vault go when it is removed (`vault.store.forget_link`), relinked
+(`store.forget_threads`) or found gone (`store.forget_links`).
 
 ## The drivers
 
@@ -529,13 +645,17 @@ short connection):
 |---|---|
 | `agent_folders` | `link_id` (the key), `agent` (`codex`, `claude`), `set_by` (the account that turned it on), `set_at`; no row for no agent. The same agent set again keeps its `set_at` |
 | `agent_runs` | `id`, `ws`, `link_id`, `request_id`, `agent`, `session` (the agent's session or thread), `state` (`running`, then `done`, `failed` or `stopped`), `started_at`, `ended_at` (null while it runs), `detail` (the request's detail the run ended with: a done or failed run's words, "" for a stopped one), `error` (this computer's record of a failure: the agent's whole error and its stderr tail, never shown to members), `changes` (JSON, the source files changed, at most 200), `built`, `steps` (JSON, at most 200), `pid`; indexed by `(ws, request_id)` and on the open runs |
+| `agent_threads` | `link_id` and `thread_id` (the key), `agent`, `session`, `cwd` (the vault's directory the turn ran in), `seen_at` (when the run read the thread), `read_ids` (JSON, the comments it read), `comment_id` (its reply), `request_id`, `at`: the thread an agent of the vault answered last ("Resuming the session") |
 
 `agent_of`, `agents_of` (one query for a listing), `set_agent(link_id,
-agent, by=)` (`""` deletes the row), `forget_links(live_ids)`,
-`start_run`, `update_run` (`session` and `pid` while it runs),
+agent, by=)` (`""` deletes the row), `forget_links(live_ids)` (their
+threads too), `start_run`, `update_run` (`session` and `pid` while it runs),
 `end_run` (a run that ended stays as it ended), `open_runs` and `run_of`
-(the newest run of a request). `vault.store.forget_link`, a removed
-vault's rows, deletes its `agent_folders` row too. Nothing of this travels:
+(the newest run of a request), `answered_thread` (a thread's row, in place
+of the one it had), `threads_of(link_id, thread_ids)` (one query) and
+`forget_threads(link_id)` (on a relink). `vault.store.forget_link`, a
+removed vault's rows, deletes its `agent_folders` and `agent_threads` rows
+too. Nothing of this travels:
 the workspace's members see the request's state and detail, the replies,
 and nothing of the run's row.
 
@@ -545,7 +665,8 @@ and nothing of the run's row.
 |---|---|---|
 | PATCH | `/api/folder-links/{id}` | `agent` (`LinkPatch`, at most 32 characters): `"codex"` or `"claude"` turns the work folder's agent on, `""` off; counts toward the PATCH's changes. The gate, in order: the vault's maker (`_made`, 403); `enabled()` (404 "Agents run on the desktop app's own server."); a work folder (400 "Only a work folder can have an agent."); then, turning on or changing only, the shell's word (403 "Only the desktop app may turn on an agent for this folder."), a known name (400 "Gamma knows no agent named …") and `catalog.probe(name, fresh=True)` ready (400 with its problem). `folder_links.set_agent(link_id, agent, by=)` stores it, stops the run of the agent it had when it is turned off or changed (`_stop_agent`), and when one is turned on hands it the Sends that wait now; the answer is the link with `queued`, how many it took. `{paused: false}` and a saved selection (`PUT …/selection`) of a vault with an agent hand it the Sends that wait (`_hand_waiting`); a pause stops its run. A relink and a delete stop the run and turn the agent off (`_forget_agent`) |
 | GET | `/api/folder-links` | each link's `agent`: `{name, label, ready, problem, running: {request_id, detail} \| null}` for a work folder with one, else null (`local_agents.info.listing`: one store query for the whole listing, readiness from `catalog.cached`, nothing run). A member who cannot act on the vault (`_acts`) reads `running.detail` as "" (it may name files) |
-| GET | `/api/folder-links/page/{page_id}` | the page's `vault` gains the same `agent` (`folder_links.page_vault`), on a server that runs agents only |
+| GET | `/api/folder-links/page/{page_id}` | the page's `vault` gains the same `agent` (`folder_links.page_vault`), on a server that runs agents only, and `mine` (whether this account made the vault, whose comments may name its agent) on every server. Turning an agent on, off or to another (`set_agent`) tells each open page of the folder `{t: "vault"}` (`_tell_open_pages`, from `collab.open_pages()`), so its chip and the comments' @ menu read it again |
+| POST, PATCH | `/api/pages/{id}/comments`, `/api/comments/{id}` | a comment that names the folder's agent is a Send too, answered as `send` ("A mention in a comment") |
 | GET | `/api/local-agents?fresh=0\|1` | `{agents: [{name, label, found, version, ready, problem, at}]}`, Codex then Claude Code, from `catalog.cached`; `fresh=1` probes both anew, at most once every 10 s on this server (sooner, the kept answers). A signed-in account's session (`require_personal_user_id`; no token, no guest); 404 when not `enabled()` (`gamma/routers/local_agents.py`, registered beside the feedback router) |
 | GET | `/api/local-agents/waiting?link=` | `{waiting: n}`: how many Sends of the vault's work folder an agent turned on now would take (`runner.waiting`, the rule `queue_folder` takes them by), for the panel's question; the vault's maker only (404 otherwise, and for no such work folder) |
 | GET | `/api/feedback?scope=` | on a server that runs agents the JSON gains `agent` and `agents_found` (feedback.md "The routes"); the files' document never does |
@@ -595,6 +716,25 @@ either agent.
 - **Comments** (`comments/comments.js`): `authorTitle` of a comment with
   `agent_kind: "local"` reads "Written by Codex on tim's computer";
   `sentChip` of a running Send with `state_by` reads *Codex is working*.
+- **The mention.** App derives the agent the open page's comments can
+  name, `vaultState.mentionAgent(vault.state)`: `{name, label, ready,
+  problem}` for the maker of the page's work-folder vault with an agent
+  on, in the desktop app, else null. It reaches every comment field as
+  `links.agent` (the popover's and the margin's), never `MentionContext`,
+  which reaches the notes. There the @ menu lists it under People
+  (`mentions.mentionRows`' `agents`: a bot icon, the label, "on this
+  computer" or its problem; a member of the same name is not listed
+  there), the field and the maker's own posted comments draw `@codex` as
+  the agent's chip (`mentionChip`'s `agents`), and while the text newly
+  names it the bar under the field says what sending does
+  (`comments.mentionHint`: "Sends this thread to Codex on this
+  computer.", in the page's own thread "Sends this file's open comments
+  to Codex on this computer.", the agent's problem, or for an edit the
+  server will not send, why: in a resolved thread, and of a comment that is
+  not the thread's newest, `Thread.jsx`'s `editRefused`). `useComments`
+  takes the answer's `thread` (with its Sent chip) and says a refusal in
+  the status line (`comments.sendRefusal`, by its code, else "Not sent to
+  Codex: <why>").
 - **The vault chip's card** (`vault/VaultChip.jsx`, `vaultState.agentLine`):
   "Agent: Codex on this computer", the problem when it is not ready, and
   "Codex is working: <detail>" during a run. Opening the card reads the
@@ -627,7 +767,10 @@ came of it (`keeping.agentSaid`). Turning it off asks nothing.
 ## Trust
 
 - **Who starts a run.** Only the vault's maker, by a Send made in Gamma
-  while still at least an editor of the workspace. Another member's Send is
+  (from the dialog, or a mention in their own comment, never through a
+  share) while still at least an editor of the workspace. A mention in
+  anyone else's comment, a token's or the agent's own reply starts
+  nothing. Another member's Send is
   left for an agent they run; a token's Send to such a folder is refused,
   and a token's Send made before the folder had an agent is never taken
   (`via`), so a mirror or a script holding the maker's write token cannot
@@ -689,8 +832,18 @@ came of it (`keeping.agentSaid`). Turning it off asks nothing.
 - The Inbox says "Codex, with tim's connection" for a local agent's reply:
   its items carry no agent kind. Each reply is an Inbox item of its own, none
   for the finished request.
-- No session is resumed yet: each run starts a new Codex thread or Claude
-  Code session (the drivers take a `session`; step 2's follow-ups use it).
+- The @ menu's agent row and the field's hint are the desktop app's: in a
+  browser on the same server they are not drawn, though the server still
+  sends the maker's typed `@codex`. The
+  agent's chip in the maker's comments follows the switch as it is now, not
+  which comments did start a Send.
+- Deleting a mention's comment does not withdraw its Send (the Feedback
+  dialog's Withdraw does).
+- A thread the agent fixed is resolved, so a follow-up needs Reopen first;
+  `@codex` in a resolved thread's reply (through the API) is refused.
+- A run resumes a session only when every thread it answers was answered
+  last in that one session; a Send of a file or a folder whose threads
+  came from several starts a new one.
 - Comments on another server (the NAS, a clone) never reach this computer's
   agent, as they never reach its files (feedback.md "Known gaps").
 
@@ -699,7 +852,8 @@ came of it (`keeping.agentSaid`). Turning it off asks nothing.
 - `tests/fake_agents/fake_codex.py`, `fake_claude.py`: standard-library
   stand-ins for the two CLIs (`--version`, the status, `app-server`, `-p`
   stream-json), scripted by `FAKE_AGENT` (edits, the answer or `each`, a
-  delay, a failure mode, a log of every argv, request and stdin). Tests
+  delay, a failure mode, `resume` among them, `distinct` for a session id
+  of its own each, a log of every argv, request and stdin). Tests
   point `GAMMA_AGENT_CODEX` / `GAMMA_AGENT_CLAUDE` at them, set
   `GAMMA_LOCAL_AGENTS=1`, hide the real CLIs (no PATH, no fallbacks) and
   call `runner.reset()` around each test; `tests/conftest.py` pops the four
@@ -727,6 +881,17 @@ came of it (`keeping.agentSaid`). Turning it off asks nothing.
   waits taken, a workspace behind on its migrations waited for), turning
   on, pause and unpause; the words (tracked names, wrapped commands,
   redaction, a walk cut short), the store and the prompt on their own.
+- `tests/test_local_agents_mention.py`: a mention in a thread and in the
+  page's own thread, where it is plain text (each gate of the rule), an
+  edit's new mention of the newest comment, each refusal with the comment
+  posted anyway, a retried POST sending once, the instruction without the
+  mention, a member named codex told nothing (and told, of the maker's
+  comment through a token), a mention made while a run works answered by
+  the next run (the thread not resolved over it), another member's reply
+  not cancelling a waiting mention, a word unread by its id whatever its
+  time, a follow-up resuming the session, two threads of two sessions
+  resuming neither, a refused resume started afresh, the vault's `mine`
+  and its open pages hearing the switch.
 - `tests/test_local_agents_routes.py`: the PATCH's gate in order, the links
   and a page's standing carrying `agent` without running a process,
   `GET /api/local-agents`, the waiting count, `doc.agent`, a request's
@@ -737,7 +902,9 @@ came of it (`keeping.agentSaid`). Turning it off asks nothing.
   `tests/test_feedback_entries.py` (the local comment's Markdown, the
   pinned output unchanged).
 - Frontend: `tests/feedbackView.test.mjs`, `tests/feedbackText.test.mjs`,
-  `tests/comments.test.mjs`, `tests/vaultState.test.mjs`. Desktop:
+  `tests/comments.test.mjs` (the hint, the refusal's words),
+  `tests/vaultState.test.mjs` (`mentionAgent`), `tests/mentions.test.mjs`
+  (the agent's row, a member of its name, its text and chip). Desktop:
   `desktop/test/keeping.test.js` (the item's fields, the running row, a
   problem kept beside a run, *Agent working*, the question) and
   `desktop/test/main.test.js` (the PATCH carries `X-Gamma-Shell`, the
@@ -747,4 +914,9 @@ came of it (`keeping.agentSaid`). Turning it off asks nothing.
   `GAMMA_AGENT_CODEX` / `GAMMA_AGENT_CLAUDE` and `FAKE_AGENT`; the dialog's
   offer, turning Codex on, a Send from the dialog read as *Codex is
   working* then *Done by Codex* with the summary and the source file it
-  changed, the replies' signature, the threads resolved, turning it off.
+  changed, the replies' signature, the threads resolved; `@codex` picked
+  from the @ menu in a reply on the PDF (the row, the hint, the Send of
+  that thread with the comment's words, the agent's chip), a follow-up
+  after Reopen resuming the session that answered, an edit of an older
+  comment refused with its reason in the status line, a mention in the
+  page's own thread sending the file's open comments; turning it off.
