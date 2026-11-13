@@ -421,6 +421,10 @@ def test_one_connection_reads_several_workspaces(client, connection):
         # a link reads in its own workspace, among the connection's only
         link = call(client, token, "read_gamma_link", {"url": f"http://localhost/?ws={lab}&page={lab_page['id']}"})
         assert not link["isError"] and link["structuredContent"]["workspace_id"] == lab
+        # a folder link without ws= finds the workspace holding its folder
+        lab_folder = make_folder(c, "Lab folder", {"ws": lab})
+        link = call(client, token, "read_gamma_link", {"url": f"http://localhost/?folder={lab_folder}"})
+        assert not link["isError"] and link["structuredContent"]["workspace_id"] == lab, link
         refused = call(client, token, "read_gamma_link",
                        {"url": f"http://localhost/?ws={hidden}&page={hidden_page['id']}"})
         assert refused["isError"] and "McpSpectraEvidence" not in str(refused)

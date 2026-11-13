@@ -3,23 +3,25 @@ may read.
 
 A pasted URL is an identifier, never a fetch target or an additional grant.
 It reads in the workspace it names (``?ws=``, a share token's prefix), else
-in the one holding its page or block, and only among the connection's.
+in the one holding its page, block or folder, and only among the connection's.
 A page, block or page-share link resolves to a page (``page_id``); a
-folder-share link resolves to the folder (``folder``, its id, with its path
-as ``title``) — the same pages the share view lists — unless it also names
-a page in that folder.
+folder link (``?folder=``, the library's address while a folder is browsed)
+or a folder-share link resolves to the folder (``folder``, its id, with its
+path as ``title``) — the same pages the library or the share view lists —
+unless it also names a page. A folder share's ``folder=`` is a folder
+browsed in it, the shared folder or one below it.
 """
 
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .auth import ShareScope
-from .blocks_store import PATH_SEP, folder_path, page_root_id
+from .blocks_store import PATH_SEP, folder_chain, folder_path, page_root_id
 from .db import connect_pages_db, connect_users_db, share_token_workspace
 
 LINK_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {"url": {"type": "string", "minLength": 1, "maxLength": 8192,
-                           "description": "A Gamma page, block, share or folder-share URL, optionally with pdf_page and quote."}},
+                           "description": "A Gamma page, block, folder, share or folder-share URL, optionally with pdf_page and quote."}},
     "required": ["url"],
 }
 
@@ -59,18 +61,18 @@ def resolve_link(workspaces: list[str], base: str, url: str) -> dict:
         if parsed.path not in {"", "/"}:
             raise ValueError
         params = parse_qs(parsed.query, keep_blank_values=True, max_num_fields=30)
-        keys = ("ws", "page", "block", "share", "pdf_page", "quote")
+        keys = ("ws", "page", "block", "folder", "share", "pdf_page", "quote")
         if any(len(params.get(key, [])) > 1 for key in keys):
             raise ValueError
         values = {key: params[key][0] for key in keys if key in params}
         if any(not value or len(value) > (4000 if key == "quote" else 128) for key, value in values.items()):
             raise ValueError
     except ValueError:
-        raise ValueError("Use a valid Gamma page, block, or share URL.") from None
+        raise ValueError("Use a valid Gamma page, block, folder, or share URL.") from None
     if not same_origin:
         raise ValueError("This link belongs to a different Gamma server. Use its MCP connection or copy a link from this server.")
     ws = values.get("ws") or share_token_workspace(values.get("share", "")) or next(
-        iter(holders(workspaces, [values.get("block", ""), values.get("page", "")])), workspaces[0])
+        iter(holders(workspaces, [values.get(key, "") for key in ("block", "page", "folder")])), workspaces[0])
     if ws not in workspaces:
         raise ValueError("This link is in a workspace this connection cannot read. Allow that workspace "
                          "in Gamma under Settings → AI → Integrations.")
@@ -95,13 +97,20 @@ def resolve_link(workspaces: list[str], base: str, url: str) -> dict:
                 page_id = shared
         else:
             folder = row[1]
-    if folder and not page_id and not block_id:
+    # The folder browsed: the link's own (the library's ?folder=, or one a
+    # folder share's view browses), else the shared folder. Beside a page
+    # (a page share always names one) it is only where the page was opened.
+    listed = values.get("folder") or folder
+    if listed and not page_id and not block_id:
         with connect_pages_db(ws) as conn:
-            path = folder_path(conn, folder)
-        if not path:
-            raise ValueError("The shared folder is unavailable in the connected workspace.")
-        reference = {"workspace_id": ws, "folder": folder, "title": PATH_SEP.join(path),
-                     "url": base + "/?" + urlencode({"ws": ws, "folder": folder})}
+            chain, path = folder_chain(conn, listed), folder_path(conn, listed)
+        if not chain:
+            raise ValueError(f"The {'shared' if listed == folder else 'linked'} folder is unavailable "
+                             "in the connected workspace.")
+        if folder and folder not in chain:
+            raise ValueError("The linked folder is not in the shared folder.")
+        reference = {"workspace_id": ws, "folder": listed, "title": PATH_SEP.join(path),
+                     "url": base + "/?" + urlencode({"ws": ws, "folder": listed})}
         if values.get("quote"):
             reference["selected_quote"] = values["quote"]
         return reference

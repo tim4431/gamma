@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 import pytest
 
 from conftest import login, make_folder, make_page, make_user
+from gamma.blocks_store import PATH_SEP
 from gamma.db import connect_users_db, page_now
 from test_mcp import call, connection, rpc
 
@@ -79,6 +80,7 @@ def test_no_cross_workspace_or_conflicting_reference_reads(client, connection):
     "http://localhost/?page=x&pdf_page=-1", "http://localhost/?page=x&pdf_page=1.5",
     "http://localhost/?page=x&pdf_page=1000001", "http://localhost/?page=x\n",
     "http://localhost/", "http://localhost/?share=unknown", "http://localhost/?page=unknown",
+    "http://localhost/?folder=", "http://localhost/?folder=x&folder=y", "http://localhost/?folder=unknown",
 ])
 def test_malformed_or_foreign_links_are_rejected(client, connection, url):
     assert read(client, connection[2]["token"], url=url)["isError"]
@@ -174,6 +176,55 @@ def test_folder_share_links_list_the_folder(client, connection, monkeypatch):
     share = c.post(f"/api/share/folder/{make_folder(c, 'empty-share')}").json()
     result = read(client, credential["token"], url=f"http://localhost/?share={share['token']}")
     assert not result["isError"] and "The folder is empty." in result["content"][0]["text"], result
+
+
+def test_folder_links_list_the_folder(client, connection):
+    c, ws, credential = connection
+    browsed = make_folder(c, "browsed")
+    sub = make_folder(c, "browsed/sub")
+    paper = make_page(c, "Paper in the browsed folder", {"folders": [browsed]})
+    deeper = make_page(c, "Paper in its subfolder", {"folders": [sub]})
+    other = make_page(c, "Paper elsewhere", {"folders": [make_folder(c, "outside")]})
+    # The library's address while a folder is browsed, with ws= or without
+    for params in ({"ws": ws, "folder": browsed}, {"folder": browsed}):
+        result = read(client, credential["token"], url="http://localhost/?" + urlencode(params))
+        assert not result["isError"], result
+        assert result["structuredContent"] == {"workspace_id": ws, "folder": browsed, "title": "browsed",
+                                               "url": f"http://localhost/?ws={ws}&folder={browsed}"}
+        text = result["content"][0]["text"]
+        assert paper["id"] in text and deeper["id"] in text and other["id"] not in text
+        assert "page=<page_id>" in text
+    ref = read(client, credential["token"], url=f"http://localhost/?ws={ws}&folder={sub}")["structuredContent"]
+    assert ref["folder"] == sub and ref["title"] == "browsed" + PATH_SEP + "sub"
+    # Beside a page it is only where the page was opened.
+    result = read(client, credential["token"], url=f"http://localhost/?ws={ws}&folder={browsed}&page={other['id']}")
+    assert not result["isError"] and result["structuredContent"]["page_id"] == other["id"], result
+    # Another workspace's folder reads nothing, by its id or its workspace.
+    other_ws = make_user("folder-link-other", "pw")
+    with login("folder-link-other", "pw") as them:
+        theirs = make_folder(them, "Private folder name")
+    for params in ({"folder": theirs}, {"ws": ws, "folder": theirs}, {"ws": other_ws, "folder": theirs}):
+        result = read(client, credential["token"], url="http://localhost/?" + urlencode(params))
+        assert result["isError"] and "Private folder name" not in str(result), result
+    # A folder share's folder= is a folder browsed in it: the shared folder
+    # or one below it, never one outside.
+    share = c.post(f"/api/share/folder/{browsed}").json()
+    result = read(client, credential["token"], url=f"http://localhost/?share={share['token']}&folder={sub}")
+    assert not result["isError"], result
+    assert result["structuredContent"]["folder"] == sub
+    text = result["content"][0]["text"]
+    assert deeper["id"] in text and paper["id"] not in text
+    shared = read(client, credential["token"], url=f"http://localhost/?share={share['token']}&folder={browsed}")
+    assert shared["structuredContent"]["folder"] == browsed
+    a_page = read(client, credential["token"], url=f"http://localhost/?share={share['token']}&folder={other['id']}")
+    assert a_page["isError"] and "unavailable" in a_page["content"][0]["text"], a_page
+    result = read(client, credential["token"],
+                  url=f"http://localhost/?share={share['token']}&folder={make_folder(c, 'outside')}")
+    assert result["isError"] and "not in the shared folder" in result["content"][0]["text"], result
+    # A page share's link reads its page whatever folder it names.
+    page_share = c.post(f"/api/share/{paper['id']}").json()
+    result = read(client, credential["token"], url=f"http://localhost/?share={page_share['token']}&folder={sub}")
+    assert result["structuredContent"]["page_id"] == paper["id"], result
 
 
 def test_a_page_share_link_may_name_a_page_inside_its_page(client, connection):
