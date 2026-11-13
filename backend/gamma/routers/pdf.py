@@ -8,7 +8,6 @@ back as human-readable messages. Institutional access depends on the backend's
 network; publisher bot challenges may still require a browser.
 """
 
-import hashlib
 import html as html_lib
 import json
 import re
@@ -23,6 +22,7 @@ from pydantic import BaseModel
 from ..auth import require_user, resolve_ws, share_scope
 from ..db import connect_pages_db
 from .. import pdf_meta, storage
+from ..documents.model import stored_name, upload_url, url_hash
 from ..logbuf import log
 from ..net_guard import guarded_urlopen
 from ..server_settings import can_store
@@ -380,12 +380,12 @@ def download_pdf(source_url: str, want_bytes: bool = True, referer: str = "") ->
 
 
 def _share_allows_source(ws: str, scope, source_url: str) -> bool:
-    """A share link may only proxy the exact source URL recorded on one of
-    its own page blocks."""
+    """A share link may only proxy the exact address one of its own pages
+    shows its document from (a ``doc`` at ``url``)."""
     with connect_pages_db(ws) as conn:
         rows = conn.execute(
             "SELECT id FROM unified_blocks WHERE parent_id = 'root' "
-            "AND json_extract(properties, '$.source_url') = ?", (source_url,)).fetchall()
+            "AND json_extract(properties, '$.doc.url') = ?", (source_url,)).fetchall()
         return any(scope.allows_page(conn, r[0]) for r in rows)
 
 
@@ -397,17 +397,17 @@ def proxy_pdf(source_url: str, request: Request):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     # Proxy cache ids hash the URL (the bytes aren't known yet), same length
     # as the content-hash upload names.
-    pdf_doc_id = storage.digest_id(hashlib.sha256(source_url.encode()))
-    stored_name = f"{pdf_doc_id}.pdf"
+    pdf_doc_id = url_hash(source_url)
+    name = stored_name(pdf_doc_id, ".pdf")
     want_save = request.query_params.get("save") == "1"
 
     # If a local copy exists, redirect to the uploads route (supports Range
     # requests). The browser follows a redirect with no help from the app, so
     # the query that named the workspace — a share token, or ?ws= — rides
     # along, or the copy would be looked for in the session's own library.
-    if storage.exists(ws, stored_name):
+    if storage.exists(ws, name):
         carried = {k: v for k, v in request.query_params.items() if k in ("share", "ws")}
-        target = f"/api/uploads/{pdf_doc_id}.pdf" + (f"?{urllib.parse.urlencode(carried)}" if carried else "")
+        target = upload_url(name) + (f"?{urllib.parse.urlencode(carried)}" if carried else "")
         return RedirectResponse(target, status_code=302)
 
     # Download from source. Streamed through to the client as upstream bytes
@@ -477,7 +477,7 @@ def proxy_pdf(source_url: str, request: Request):
                     log.info(f"[pdf] not caching {pdf_doc_id}: the body is not a PDF")
                     spool.discard()
                 elif can_store(ws, spool.size):
-                    storage.put_path(ws, stored_name, spool.path)
+                    storage.put_path(ws, name, spool.path)
                     pdf_meta.schedule(ws, pdf_doc_id)
                 else:
                     log.info(f"[pdf] not caching {pdf_doc_id} ({spool.size} bytes): over storage limits")

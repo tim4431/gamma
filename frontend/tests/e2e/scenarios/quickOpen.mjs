@@ -1,5 +1,5 @@
 import { generateNKeysBetween } from "fractional-indexing";
-import { Account, live, wanted } from "../harness.mjs";
+import { Account, live, pressMouseBack, wanted } from "../harness.mjs";
 
 // Ctrl+P: the quick-open page palette (library/QuickOpen.jsx).
 export async function quickOpenScenarios(env) {
@@ -332,6 +332,49 @@ export async function quickOpenScenarios(env) {
         assertNoProblems(page);
       } finally { await ctx.close(); }
     }
+  });
+
+  await step("back: the mouse's back button unwinds a link jump, then goes to the library, and never leaves Gamma (#163)", async () => {
+    const from = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Mouse back from" } });
+    const to = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Mouse back to" } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: from.id, content: `[Jump onward](/?page=${to.id})` } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx);
+    // The entries before Gamma, as the desktop app's launcher is: in a page
+    // that does not take it, the button goes back.
+    await page.goto("data:text/html,<title>before</title>one");
+    await page.goto("data:text/html,<title>before</title>two");
+    await pressMouseBack(page);
+    await until(async () => (await page.textContent("body")) === "one", { what: "the button goes back in the window's history" });
+    const inGamma = () => new URL(page.url()).origin === new URL(server.base).origin;
+    const block = () => new URL(page.url()).searchParams.get("block");
+    try {
+      await page.goto(`${server.base}/?page=${from.id}&ws=${user.ws}`);
+      await until(() => block() === from.id, { what: "the first page opens" });
+      await page.locator(".gammaLinkCard", { hasText: "Jump onward" }).click();
+      await until(() => block() === to.id, { what: "the link jumps" });
+      await pressMouseBack(page);
+      await until(() => block() === from.id, { what: "the button unwinds the jump" });
+      // Nothing left to unwind: the library, then nowhere further.
+      await pressMouseBack(page);
+      await page.locator(".homeListBar").waitFor();
+      assert(inGamma() && !block(), `the library, not the entry before Gamma: ${page.url()}`);
+      await pressMouseBack(page);
+      await page.waitForTimeout(400);
+      assert(inGamma() && await page.locator(".homeListBar").isVisible(), `still the library: ${page.url()}`);
+      // A dialog keeps it, as it keeps Alt+←.
+      await page.locator(".fileRow", { hasText: from.content }).dblclick();
+      await until(() => block() === from.id, { what: "the page opens from the library" });
+      await page.keyboard.press("Control+p");
+      const dialog = page.getByRole("dialog", { name: "Open a page" });
+      await dialog.waitFor();
+      await pressMouseBack(page, dialog);
+      await page.waitForTimeout(400);
+      assert(inGamma() && block() === from.id, `the page stays: ${page.url()}`);
+      assert(await dialog.isVisible(), "and its dialog");
+      await page.keyboard.press("Escape");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
   });
 
   await step("tabs: the active tab stays in view, and ⌄ lists every open tab and opens the pick", async () => {

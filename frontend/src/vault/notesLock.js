@@ -1,14 +1,14 @@
 // What the notes lock refuses (vaultState.js notesLocked: a vault that pushes
 // everything and does not pull writes nothing of Gamma's to its files, so a
 // note changed here would part from the file its notes are written in).
-// BlockTree draws every row but a highlight's with no editor; a highlight's
-// row keeps its own, and App's row handlers ask these before a change it
-// starts would make, remove, move or open a note. Pure:
+// BlockTree draws every row but a highlight's or a region's with no editor;
+// those rows keep their own, and App's row handlers ask these before a
+// change it starts would make, remove, move or open a note. Pure:
 // tests/notesLock.test.mjs.
-import { getParentInfo, isHighlightBlock, visibleNeighbor } from "../shared/model/blockModel.js";
+import { getParentInfo, isPlaceBlock, visibleNeighbor } from "../shared/model/blockModel.js";
 
-// A row the lock holds: anything but a highlight.
-export const lockedRow = (block) => !!block && !isHighlightBlock(block);
+// A row the lock holds: anything but a highlight or a picture's region.
+export const lockedRow = (block) => !!block && !isPlaceBlock(block);
 
 const holdsLocked = (block) => lockedRow(block) || (block.children || []).some(holdsLocked);
 

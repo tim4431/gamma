@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from conftest import login, make_folder, make_user, workspace_of
+from conftest import doc_props, login, make_folder, make_user, workspace_of
 from gamma import ops, pdf_index, storage, upload_gc
 from gamma.db import connect_pages_db, page_now, ws_uploads_dir
 
@@ -159,7 +159,7 @@ def test_only_a_deleted_pdf_block_costs_the_library_wide_cleanup(ann, monkeypatc
     monkeypatch.setattr(pdf_index, "purge_unused", lambda w, conn: (calls.append(w), real(w, conn)))
     page = _page(c)
     _ops(c, page, [{"op": "insert", "id": "gcL1", "parent": page, "content": "plain"},
-                   {"op": "insert", "id": "gcL2", "parent": page, "content": "", "props": {"doc_id": "d" * 24}}])
+                   {"op": "insert", "id": "gcL2", "parent": page, "content": "", "props": doc_props("d" * 24)}])
     _ops(c, page, [{"op": "delete", "id": "gcL1"}])
     assert calls == []
     _ops(c, page, [{"op": "delete", "id": "gcL2"}])
@@ -172,11 +172,27 @@ def test_the_upload_reference_grammar():
     refs = storage.upload_refs(
         "![a](/api/uploads/0123abcd.png). [w](/api/uploads/beef01.safetensors) "
         "[p](/api/uploads/cafe02.pdf#page=2) /api/uploads/dead03.jpg?ws=x",
-        '{"ink_url": "/api/uploads/f00d04.ink", "doc_id": "facade05", "source_url": "/api/uploads/b0b06.pdf"}')
+        json.dumps({"ink_url": "/api/uploads/f00d04.ink", **doc_props("facade05", url="/api/uploads/b0b06.pdf")}))
     assert refs == {"0123abcd.png", "beef01.safetensors", "cafe02.pdf", "dead03.jpg",
                     "f00d04.ink", "facade05.pdf", "b0b06.pdf"}
     assert storage.upload_refs("plain text", {"color": "red"}) == set()
-    assert storage.upload_refs("", {"doc_id": "../../etc"}) == set()
+    # a block's doc names its file whatever reads it: stored, read in place, a
+    # copy (no address stored), cached under an address's hash, of any format
+    assert storage.upload_refs("", doc_props("s1")) == {"s1.pdf"}
+    assert storage.upload_refs("", doc_props("p1", at="path")) == {"p1.pdf"}
+    assert storage.upload_refs("", doc_props(url="/api/uploads/c1.pdf")) == {"c1.pdf"}
+    assert storage.upload_refs("", doc_props("u1", url="https://x.test/p.pdf")) == {"u1.pdf"}
+    assert storage.upload_refs("", doc_props(url="https://x.test/p.pdf")) == set()
+    text = {"doc": {"format": "text", "name": "main.tex", "hash": "t1", "ext": ".tex", "at": "store"}}
+    assert storage.upload_refs("", text) == {"t1.tex"} == storage.upload_refs("", json.dumps(text), held=False)
+    # a stem the grammar refuses, a doc that does not read, a flat doc_id: none
+    assert storage.upload_refs("", doc_props("a.b")) == set()
+    assert storage.upload_refs("", {"doc": {"hash": "../../etc"}}) == set()
+    assert storage.upload_refs("", {"doc_id": "facade05"}) == set()
+    # a highlight's position holds its files, shown or not
+    held = {"pdf_position": {"pageNumber": 1, "doc_id": "h1", "prev": {"doc_id": "h0"}}}
+    assert storage.upload_refs("", held) == {"h1.pdf", "h0.pdf"} and storage.upload_refs("", held, held=False) == set()
+    assert storage.upload_refs("", {"pdf_position": {"doc_id": storage.UNSTORED}}) == set()
 
 
 def test_reconcile_knows_every_reference_form(ann):
@@ -192,8 +208,9 @@ def test_reconcile_knows_every_reference_form(ann):
         {"op": "insert", "id": "gcF1", "parent": page, "content": f"[data](/api/uploads/{names['chip']})"},
         {"op": "insert", "id": "gcF2", "parent": page, "content": "", "props": {"ink_url": f"/api/uploads/{names['ink']}"}},
         {"op": "insert", "id": "gcF3", "parent": page, "content": f"[w](/api/uploads/{names['long']})"},
-        {"op": "insert", "id": "gcF4", "parent": page, "content": "", "props": {"source_url": f"/api/uploads/{names['src']}"}},
-        {"op": "insert", "id": "gcF5", "parent": page, "content": "", "props": {"doc_id": names["doc"][:-4]}},
+        # a copy's file (its address is not stored) and a nested document's
+        {"op": "insert", "id": "gcF4", "parent": page, "content": "", "props": doc_props(url=f"/api/uploads/{names['src']}")},
+        {"op": "insert", "id": "gcF5", "parent": page, "content": "", "props": doc_props(names["doc"][:-4])},
         {"op": "insert", "id": "gcF6", "parent": page, "content": f"see /api/uploads/{names['dot']}."},
     ])
     # a write that never finished: not a stored file, and swept once old
@@ -224,6 +241,62 @@ def test_only_an_open_zotero_file_conflict_holds_the_pdf_it_names(client):
         refs = upload_gc.referenced(conn)
     assert "keptopen.pdf" in refs
     assert not {"keptresolved.pdf", "notafile.pdf", "../outside.pdf", ".pdf"} & refs
+
+
+def _anchor(doc_id, kind="area"):
+    return json.dumps({"v": 1, "kind": kind, "block": "b", "doc_id": doc_id, "page": 1, "rects": [], "quote": "",
+                       "box": None})
+
+
+def _threads(ws, rows):
+    """Comment rows written directly: ``(id, thread_id, anchor, resolved,
+    orphaned, deleted)``."""
+    stamp = page_now()
+    with closing(connect_pages_db(ws)) as conn:
+        conn.executemany(
+            "INSERT INTO comments (id, thread_id, block_id, page_id, author, body, created_at, updated_at, "
+            "resolved_at, deleted_at, orphaned_at, anchor) VALUES (?, ?, 'b', 'p', 'a', 'x', ?, ?, ?, ?, ?, ?)",
+            [(i, t, stamp, stamp, stamp if resolved else None, stamp if deleted else None,
+              stamp if orphaned else None, anchor) for i, t, anchor, resolved, orphaned, deleted in rows])
+        conn.commit()
+
+
+def test_an_open_thread_holds_the_version_it_was_opened_on_and_shows_none(client):
+    ws = make_user("gc_thread_rows", "pw-gc_thread_rows")
+    _threads(ws, [("tOpen", "tOpen", _anchor("heldOpen"), False, False, False),
+                  ("tTomb", "tTomb", _anchor("heldTomb"), False, False, True),       # a tombstone with replies
+                  ("tTombR", "tTomb", None, False, False, False),
+                  ("tDone", "tDone", _anchor("heldResolved"), True, False, False),
+                  ("tGone", "tGone", _anchor("heldOrphaned"), False, True, False),
+                  ("tReply", "tOpen", _anchor("heldByAReply"), False, False, False),  # only a root's anchor
+                  ("tNote", "tNote", _anchor("", kind="note"), False, False, False),
+                  ("tBad", "tBad", "{not json", False, False, False),
+                  ("tUnstored", "tUnstored", _anchor(storage.UNSTORED), False, False, False),
+                  ("tOld", "tOld", None, False, False, False)])                       # a root from before step 54
+    with closing(connect_pages_db(ws)) as conn:
+        refs, shown = upload_gc._references(conn)
+    assert {"heldopen.pdf", "heldtomb.pdf"} <= refs
+    assert not {"heldresolved.pdf", "heldorphaned.pdf", "heldbyareply.pdf", ".pdf", "unstored.pdf"} & refs
+    assert not {"heldopen.pdf", "heldtomb.pdf"} & shown
+
+
+def test_the_purge_never_takes_a_version_an_open_thread_holds(ann):
+    c, ws = ann
+    _page(c, "held")                                                  # the purge needs a library that reads right
+    name, _ = storage.store_file(ws, PDF + b"thread", ".pdf")
+    held = name.removesuffix(".pdf")
+    _age(ws, name, 31)
+    _threads(ws, [("gcThread", "gcThread", _anchor(held), False, False, False)])
+    upload_gc.reconcile(ws)
+    assert storage.exists(ws, name) and name not in _orphans(ws)      # held: its row cleared, the file kept
+    with closing(connect_pages_db(ws)) as conn:
+        conn.execute("UPDATE comments SET resolved_at = ? WHERE id = 'gcThread'", (page_now(),))
+        conn.commit()
+    upload_gc.reconcile(ws)
+    assert name in _orphans(ws) and storage.exists(ws, name)          # let go: kept its 30 days from now
+    _age(ws, name, 31)
+    upload_gc.reconcile(ws)
+    assert not storage.exists(ws, name)
 
 
 # --- the purge ------------------------------------------------------------------------

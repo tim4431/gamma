@@ -124,8 +124,8 @@ class AIChatRequest(BaseModel):
     prompt: str
     # Context is PAGES from the user's knowledge base: `pages` (several — a
     # report across pages) or, when empty, the one page of `page_id` (the
-    # open page; its PDF attachment, if any, is derived server-side via
-    # blocks_store.page_attachment). `doc_id` is the compatibility input:
+    # open page; its PDF, if any, is derived server-side from its document,
+    # documents.model.page_document). `doc_id` is the compatibility input:
     # it resolves to the page carrying that PDF (blocks_store.page_for_doc)
     # and does nothing when no page does — send `page_id`; nothing new may
     # depend on `doc_id`.
@@ -411,7 +411,10 @@ def page_image(page_id: str, request: Request, page: int, box: str = "", ink: in
     it, as the page shows them — what a reply's view chip expands to, what
     a region attached to a message shows in the composer and the bubble,
     and what the model embeds (``![p. N](/api/ai/page-image/…)``) to show
-    the user a page it looked at. Any workspace member."""
+    the user a page it looked at. For a page whose document is a picture,
+    the picture itself or its region (``ai_pictures.image_region``; ``page``
+    is 1, any other is 404 "no such page"). 404 "not found" for a page with
+    neither a PDF nor a picture here. Any workspace member."""
     ws = require_ws(request)
     if page < 1:
         raise HTTPException(status_code=400, detail="invalid page")

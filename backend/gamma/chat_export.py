@@ -18,8 +18,8 @@ import zipfile
 from . import ai_pictures
 from .blocks_store import PATH_SEP, folder_path
 from .db import page_now
+from .documents.formats import IMAGE_EXTENSIONS
 from .logbuf import log
-from .storage import IMAGE_EXTENSIONS
 
 ASSETS = "assets/"
 # A Markdown image of the reply whose target is one of the chat's own

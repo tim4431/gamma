@@ -138,7 +138,7 @@ def _pages(client, ids):
         props = page["properties"]
         out[page["content"]] = {
             "meta": props.get("meta"), "zotero_rdf": _canon_rdf(props.get("zotero_rdf")),
-            "zotero_key": props.get("zotero_key"), "has_pdf": bool(props.get("doc_id")),
+            "zotero_key": props.get("zotero_key"), "has_pdf": bool((props.get("doc") or {}).get("hash")),
             "note_page": bool(props.get("zotero_note")) and props.get("zotero_note") == props.get("zotero_key"),
             "folders": sorted(folders[f] for f in props.get("folders") or []),
             "labels": sorted(labels[label] for label in props.get("labels") or []),

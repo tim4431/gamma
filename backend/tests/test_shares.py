@@ -1,6 +1,6 @@
 """Share links are keyed by page, not by PDF — with per-share permissions.
 
-Every page is a root block; a paper's PDF is just a doc_id/source_url on it.
+Every page is a root block; a paper's PDF is just a doc property on it.
 Shares follow the block model: a token names one page (in one workspace) and
 confines reads (and edit writes) to that page's subtree and assets — so note
 pages without any PDF share exactly like papers. Rows minted by the old
@@ -24,7 +24,7 @@ import bcrypt
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import account_of, folder_names, login, make_folder, make_label, make_user, make_page
+from conftest import account_of, doc_props, folder_names, login, make_folder, make_label, make_user, make_page
 from gamma.seed import insert_account
 
 
@@ -47,7 +47,7 @@ def _child(client, parent_id, content):
 
 
 def test_note_page_without_pdf_is_shareable(bob, anon):
-    page = make_page(bob, "Plain notes")            # no doc_id, no source_url
+    page = make_page(bob, "Plain notes")            # no doc
     note = _child(bob, page["id"], "a private thought")
     other = make_page(bob, "Another note page")
 
@@ -212,8 +212,7 @@ def test_upload_share_refusals_match_the_other_read_endpoints(bob, carol, anon):
 
 
 def test_pdf_proxy_only_serves_the_pages_own_source(bob, anon):
-    paper = make_page(bob, "Remote paper",
-                      properties={"doc_id": "remote_doc", "source_url": "https://example.com/paper.pdf"})
+    paper = make_page(bob, "Remote paper", properties=doc_props("remote_doc", url="https://example.com/paper.pdf"))
     notes = make_page(bob, "Just notes")
     t_paper = bob.post(f"/api/share/{paper['id']}").json()["token"]
     t_notes = bob.post(f"/api/share/{notes['id']}").json()["token"]
@@ -234,7 +233,8 @@ def test_pdf_proxy_only_serves_the_pages_own_source(bob, anon):
     uploads = ws_uploads_dir(workspace_of("bob_share"))
     uploads.mkdir(parents=True, exist_ok=True)
     (uploads / f"{cached}.pdf").write_bytes(b"%PDF-1.4 cached copy")
-    bob.put(f"/api/blocks/{paper['id']}", json={"properties": {"doc_id": cached}})
+    bob.put(f"/api/blocks/{paper['id']}",
+            json={"properties": doc_props(cached, url="https://example.com/paper.pdf")}).raise_for_status()
     r = anon.get("/api/pdf", params={"source_url": "https://example.com/paper.pdf", "share": t_paper},
                  follow_redirects=False)
     assert r.status_code == 302, r.text
@@ -469,7 +469,7 @@ def test_view_role_never_writes(bob, carol, anon):
 
 
 def test_anyone_edit_link_lets_a_stranger_write_under_a_display_name(bob, guest, anon):
-    page = make_page(bob, "Open draft", properties={"doc_id": "open_doc"})
+    page = make_page(bob, "Open draft", properties=doc_props("open_doc"))
     line = _child(bob, page["id"], "owner's line")
     other = make_page(bob, "Bob's private page")
     token = _share(bob, page["id"], audience="anyone", role="edit")["token"]
@@ -505,8 +505,8 @@ def test_anyone_edit_link_lets_a_stranger_write_under_a_display_name(bob, guest,
     assert r.status_code == 200, r.text
     assert bob.get(f"/api/pages/{page['id']}/ops").json()["batches"][-1]["actor"] == "link:Otter"
     assert anon.post("/api/blocks", params=q, json={"parent_id": other["id"], "content": "x"}).status_code == 403
-    assert anon.put(f"/api/blocks/{page['id']}", params=q, json={"properties": {"doc_id": "evil"}}).status_code == 403
-    assert bob.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == "open_doc"
+    assert anon.put(f"/api/blocks/{page['id']}", params=q, json={"properties": doc_props("evil")}).status_code == 403
+    assert bob.get(f"/api/blocks/{page['id']}").json()["properties"]["doc"]["hash"] == "open_doc"
     # images too, into the owner's uploads
     r = anon.post("/api/upload-image", params=q, headers={"X-Gamma-Name": "Otter"},
                   files={"file": ("dot.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, "image/png")})
@@ -561,7 +561,7 @@ def test_link_visitors_are_rate_limited_per_ip(bob, anon, monkeypatch):
 
 
 def test_edit_role_writes_inside_the_page_only(bob, carol, dave):
-    page = make_page(bob, "Shared draft", properties={"doc_id": "draft_doc"})
+    page = make_page(bob, "Shared draft", properties=doc_props("draft_doc"))
     keep = _child(bob, page["id"], "owner's line")
     other = make_page(bob, "Bob's private page")
     token = _share(bob, page["id"], audience="list",
@@ -586,9 +586,9 @@ def test_edit_role_writes_inside_the_page_only(bob, carol, dave):
     assert carol.delete(f"/api/blocks/{new_id}", params=q).status_code == 200
     # renaming the page is a content write — allowed; its properties are not
     assert carol.put(f"/api/blocks/{page['id']}", params=q, json={"content": "Shared draft (v2)"}).status_code == 200
-    r = carol.put(f"/api/blocks/{page['id']}", params=q, json={"properties": {"source_url": "https://evil/x.pdf"}})
+    r = carol.put(f"/api/blocks/{page['id']}", params=q, json={"properties": doc_props(url="https://evil/x.pdf")})
     assert r.status_code == 403
-    assert bob.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == "draft_doc"
+    assert bob.get(f"/api/blocks/{page['id']}").json()["properties"]["doc"]["hash"] == "draft_doc"
 
     # nothing outside the page, and never the page itself
     assert carol.delete(f"/api/blocks/{page['id']}", params=q).status_code == 403

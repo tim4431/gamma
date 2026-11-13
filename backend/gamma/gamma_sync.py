@@ -14,7 +14,7 @@ file, before each ``sync`` pulls; ``push`` does the same for one PDF
 anywhere on disk (a manuscript compiled again from its TeX). The page
 keeps its notes and highlights; notes files are never pushed. The desktop
 app keeps its synced vaults with an engine of its own
-(gamma/vault_sync.py), which pushes notes too; it takes this file's server
+(gamma/vault/sync.py), which pushes notes too; it takes this file's server
 client, ``Push`` and ``settled``, which is why this file lives in the gamma
 package. It imports nothing from it, and keeps its own state in the
 directory: the app's server keeps a vault's in its data directory.
@@ -46,7 +46,9 @@ seconds ago, ending in ``%%EOF``) and only when its bytes are not Gamma's
 already; one changed both on disk and in Gamma is kept and reported, and
 ``--force`` takes Gamma's. A token comes from ``--token``, the
 ``GAMMA_TOKEN`` environment variable, or the link when ``init --save-token``
-kept it there; pushing takes a token that may write.
+kept it there; pushing takes a token that may write, and a server that
+keeps its pages as this file reads them (``DOCUMENT_FORMAT``): update
+gamma-sync with the server.
 """
 
 import argparse
@@ -74,6 +76,7 @@ CHUNK = 1 << 20             # bytes read from disk at a time
 NOT_WHOLE = "not a whole PDF yet"   # ``settled``'s answer for a file at rest that does not end as a PDF ends
 WRITING = "still being written"     # ``settled``'s answer for a file written less than SETTLE_S ago
 NOT_THERE = "the file is not there"  # ``settled``'s, and a followed file's wait while it is gone
+DOCUMENT_FORMAT = 52        # the oldest workspace data format whose pages this client reads (``doc``)
 default_open = None         # tests: (method, path, headers, body) → (status, headers, body stream)
 
 
@@ -112,6 +115,7 @@ class Server:
         self.token = token
         self.timeout = timeout   # seconds a request may wait on a silent server
         self.open_ = default_open or self._urllib_open
+        self.format_checked = False   # ``check_format`` asked once
 
     def _headers(self):
         headers = {"Accept": "application/json", "User-Agent": "gamma-sync/1"}
@@ -133,6 +137,20 @@ class Server:
     def source(self, folder_id):
         """The folder's reads for a ``Round``."""
         return RemoteSource(self, folder_id)
+
+    def check_format(self) -> None:
+        """SyncError unless the server keeps its pages in a shape this client
+        reads: its change feed's ``format`` (the workspace data format)
+        ``DOCUMENT_FORMAT`` or newer. A server that names none, or an older
+        one, keeps a page's PDF in properties this client no longer reads.
+        Asked once."""
+        if self.format_checked:
+            return
+        there = self.get_json("/api/sync/changes?limit=1").get("format")
+        if not isinstance(there, int) or there < DOCUMENT_FORMAT:
+            named = f" (workspace data format {there})" if isinstance(there, int) else ""
+            raise SyncError(f"the server runs an older Gamma{named}: update it to use this gamma_sync")
+        self.format_checked = True
 
     def _json(self, method, path, headers, body=None) -> dict:
         """The server's JSON answer. An answer cut short, or one that is no
@@ -162,12 +180,13 @@ class Server:
         return self._json(method, path, {**self._headers(), "Content-Type": "application/json",
                                          "Content-Length": str(len(body))}, body)
 
-    def ask(self, method, path, obj=None) -> tuple[int, bytes]:
-        """``method path``, with ``obj`` as a JSON body when given: ``(status,
-        the answer's bytes)`` whatever the status, for a caller that reads a
-        refusal's own body (the desktop app's synced vault of another server,
-        gamma/vault_http.py). ``Unreachable`` as for ``get_json``."""
-        headers, body = self._headers(), None
+    def ask(self, method, path, obj=None, headers=None) -> tuple[int, bytes]:
+        """``method path``, with ``obj`` as a JSON body when given and
+        ``headers`` beside the client's own: ``(status, the answer's bytes)``
+        whatever the status, for a caller that reads a refusal's own body
+        (the desktop app's synced vault of another server,
+        gamma/vault/http_remote.py). ``Unreachable`` as for ``get_json``."""
+        headers, body = {**self._headers(), **(headers or {})}, None
         if obj is not None:
             body = json.dumps(obj).encode("utf-8")
             headers = {**headers, "Content-Type": "application/json", "Content-Length": str(len(body))}
@@ -179,18 +198,26 @@ class Server:
         server stores already are stored once."""
         return self.upload(path, "/api/uploads", "application/pdf")
 
-    def upload(self, path: Path, route: str, content_type: str) -> dict:
+    def upload(self, path: Path, route: str, content_type: str, filename: str = "", *, field: str = "file",
+               offset: int = 0, length: int | None = None, fields: dict | None = None) -> dict:
         """The file at ``path`` sent to ``route`` as its one multipart part
-        ``file``, streamed from disk: the server's JSON answer."""
+        ``field`` (``file``), streamed from disk, named ``filename`` (its
+        own name: the server stores a file under that name's extension):
+        the server's JSON answer. ``offset`` and ``length`` send a slice of
+        it (an upload in parts, ``/api/uploads/parts/{token}``), ``fields``
+        text fields before the file's part."""
         boundary = f"gamma-sync-{os.urandom(12).hex()}"
-        name = path.name.replace('"', "%22").replace("\r", "%0D").replace("\n", "%0A")
-        head = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\n'
-                f"Content-Type: {content_type}\r\n\r\n").encode("utf-8")
+        name = (filename or path.name).replace('"', "%22").replace("\r", "%0D").replace("\n", "%0A")
+        head = "".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'
+                       for key, value in (fields or {}).items())
+        head += (f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{name}"\r\n'
+                 f"Content-Type: {content_type}\r\n\r\n")
+        head = head.encode("utf-8")
         tail = f"\r\n--{boundary}--\r\n".encode("ascii")
-        size = path.stat().st_size
+        size = path.stat().st_size - offset if length is None else length
         headers = {**self._headers(), "Content-Type": f"multipart/form-data; boundary={boundary}",
                    "Content-Length": str(len(head) + size + len(tail))}
-        return self._json("POST", route, headers, _parts(head, path, size, tail))
+        return self._json("POST", route, headers, _parts(head, path, size, tail, offset))
 
     def download(self, path, target: Path) -> None:
         """GET ``path`` into ``target``, written beside it and moved into
@@ -214,13 +241,14 @@ class Server:
             part.unlink(missing_ok=True)
 
 
-def _parts(head: bytes, path: Path, size: int, tail: bytes):
-    """A multipart body: ``head``, the first ``size`` bytes of ``path``,
+def _parts(head: bytes, path: Path, size: int, tail: bytes, offset: int = 0):
+    """A multipart body: ``head``, ``size`` bytes of ``path`` from ``offset``,
     ``tail``. A file that shrank meanwhile is ``Changed``, never a short
     body."""
     yield head
     left = size
     with open(path, "rb") as f:
+        f.seek(offset)
         while left:
             chunk = f.read(min(left, CHUNK))
             if not chunk:
@@ -266,16 +294,21 @@ class RemoteSink:
                                      {"doc_id": doc_id, "original_filename": filename, "keep_old_days": KEEP_OLD_DAYS})
 
     def current(self, page_id: str) -> dict | None:
-        """``{doc_id, filename, title}`` of the page now (``""`` for no PDF
-        or no file name); None when it is gone, in the trash, or no page."""
+        """``{doc_id, filename, title}`` of the page now: the hash of the
+        document it owns (its ``doc``; none for a duplicated page, which
+        shows another's) and that document's name (``""`` for no PDF or no
+        file name); None when it is gone, in the trash, or no page. The
+        server's format is checked first (``Server.check_format``)."""
+        self.server.check_format()
         try:
             page = self.server.get_json(f"/api/blocks/{urllib.parse.quote(page_id, safe='')}")
         except NotFound:
             return None
         if page.get("parent_id") != "root":
             return None
-        props = page.get("properties") or {}
-        return {"doc_id": str(props.get("doc_id") or ""), "filename": str(props.get("original_filename") or ""),
+        doc = (page.get("properties") or {}).get("doc")
+        doc = doc if isinstance(doc, dict) else {}
+        return {"doc_id": "" if doc.get("copy") else str(doc.get("hash") or ""), "filename": str(doc.get("name") or ""),
                 "title": page.get("content") or ""}
 
 
@@ -379,8 +412,8 @@ def write_text(target: Path, text: str) -> dict:
 
 def doc_of(path: Path) -> str:
     """The id Gamma gives the file's bytes: the first DOC_CHARS hex
-    characters of their SHA-256. Equal to a page's doc_id, the file is the
-    page's PDF, and nothing needs to travel to know it."""
+    characters of their SHA-256. Equal to the hash of a page's document,
+    the file is the page's PDF, and nothing needs to travel to know it."""
     digest = hashlib.sha256()
     with open(path, "rb") as f:
         while chunk := f.read(CHUNK):
@@ -388,13 +421,15 @@ def doc_of(path: Path) -> str:
     return digest.hexdigest()[:DOC_CHARS]
 
 
-def settled(path: Path) -> str:
+def settled(path: Path, tail: bytes | None = b"%%EOF") -> str:
     """"" when the file is whole and may be sent: written at least SETTLE_S
     ago (a time ahead of this clock, a share's whose clock runs ahead, counts
     as long ago: the tests after it say whether it is whole), open for
     reading (Windows refuses while its writer holds it), and ending as a PDF
-    ends, with "%%EOF" in its last EOF_TAIL bytes. Otherwise why not yet; a
-    compile writes its PDF over a second or more."""
+    ends, with ``tail`` ("%%EOF") in its last EOF_TAIL bytes; ``tail`` None
+    skips that test for a file of any format (a synced vault's work folder
+    file), the two before it staying. Otherwise why not yet; a compile
+    writes its PDF over a second or more."""
     try:
         written = path.stat().st_mtime
     except OSError:
@@ -404,10 +439,10 @@ def settled(path: Path) -> str:
     try:
         with open(path, "rb") as f:
             f.seek(max(0, f.seek(0, os.SEEK_END) - EOF_TAIL))
-            tail = f.read()
+            end = f.read()
     except OSError as e:
         return f"cannot be read: {e}"
-    return "" if b"%%EOF" in tail else NOT_WHOLE
+    return "" if tail is None or tail in end else NOT_WHOLE
 
 
 def moved(path: Path, entry) -> bool:

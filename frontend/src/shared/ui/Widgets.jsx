@@ -503,8 +503,9 @@ function PopoverAnchor({ name, children, className = "" }) {
 }
 
 // The topbar's tab strip (Chrome-style). Each tab leads with its page's kind
-// icon (`kindOf(id)` → "pdf" | "page"); pinned tabs come first, keep their
-// title and carry a pin (click to unpin) where the close button would be.
+// icon (`kindOf(id)` → its document's format, "" for none); pinned tabs come
+// first, keep their title and carry a pin (click to unpin) where the close
+// button would be.
 // The strip keeps the active tab in view, pans with a plain mouse wheel, and
 // when it overflows fades its right edge and shows a "⌄ n" button whose
 // popover lists every open tab with a filter. The tabs are a list that moves
@@ -614,7 +615,7 @@ function OpenTabs({
     onMenuOpenChange?.(false);
     if (tab.id !== activeId) onOpen(tab.id);
   };
-  const kindIcon = (tab, size) => <FileGlyph isPdf={kindOf?.(tab.id) === "pdf"} size={size} />;
+  const kindIcon = (tab, size) => <FileGlyph format={kindOf?.(tab.id) || ""} size={size} />;
 
   return (
     <>

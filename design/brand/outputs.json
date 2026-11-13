@@ -224,6 +224,14 @@
     "png": [2840, 1400]
   },
   {
+    "source": "compositions/banner-light-zh.svg",
+    "destination": "docs/assets/branding/gamma-banner-crop-light-zh.svg",
+    "kind": "crop",
+    "theme": "light",
+    "box": [570, 376, 1420, 700],
+    "png": [2840, 1400]
+  },
+  {
     "source": "compositions/logo.svg",
     "destination": "docs/assets/branding/gamma-logo.svg",
     "kind": "logo",

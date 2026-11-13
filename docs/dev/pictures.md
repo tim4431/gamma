@@ -987,7 +987,7 @@ them. Its scripts run nowhere.
 `GET /api/uploads/{filename}` (`routers/uploads.py` `serve_upload`), on the
 app, the share host and the page hosts alike.
 
-- An SVG (`storage.SANDBOXED_EXTENSIONS`, with HTML) opened at its URL
+- An SVG (`documents.formats.SANDBOXED_EXTENSIONS`, with HTML) opened at its URL
   downloads (`Content-Disposition: attachment`), so it never runs as a
   document in the app's origin.
 - In case a browser draws it anyway it carries `Content-Security-Policy:

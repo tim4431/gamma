@@ -35,6 +35,7 @@ from ..auth import require_ws
 from ..block_index import fts_query
 from ..blocks_store import MAX_SEARCH_PAGES, pages_in_scope, root_pages, write_lock
 from ..db import connect_data_db, connect_pages_db
+from ..documents.model import stored_name
 from ..json_response import OrjsonResponse
 from ..logbuf import log
 from ..pdf_text import extract_pages
@@ -95,7 +96,7 @@ def _index_doc(ws: str, doc_id: str):
         raise
     except Exception as e:
         log.warning(f"[pdf-search] indexing {doc_id} failed: {e}")
-    name = f"{doc_id}.pdf"
+    name = stored_name(doc_id, ".pdf")
     if not read and is_linked(ws, name) and not _reads_through(ws, name):
         return
     with connect_data_db(ws) as conn:

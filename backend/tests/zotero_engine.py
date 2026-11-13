@@ -20,7 +20,7 @@ import json
 import time
 
 import pytest
-from conftest import account_of, login, make_user
+from conftest import account_of, doc_props, login, make_user
 from zotero_fake import FakeZotero
 from zotero_fixtures import pdf_bytes, standard_library
 from zotero_idle import Idle
@@ -339,16 +339,22 @@ def _stored_pdf(ws, content: bytes) -> str:
     return doc_id
 
 
-def _page(ws, page_id, title="A page", **props):
-    """A page made here with the properties ``props``."""
+def _page(ws, page_id, title="A page", *, doc_id="", name="", **props):
+    """A page made here with the properties ``props``, its document the
+    stored PDF ``doc_id`` (its file named ``name``) when given."""
+    if doc_id:
+        props.update(doc_props(doc_id, name=name))
     zotero_local.create_page(ws, page_id=page_id, title=title, props=props, actor="zs", client="t")
     return page_id
 
 
-def _paper(ws, page_id, title="A paper", **props):
-    """A paper page made here, its record a person's (``meta`` merged in)."""
+def _paper(ws, page_id, title="A paper", *, doc_id="", name="", **props):
+    """A paper page made here, its record a person's (``meta`` merged in),
+    its document the stored PDF ``doc_id`` (named ``name``) when given."""
     meta = {"title": title, "authors": ["Ada Lovelace"], "year": "2024", "venue": "", "volume": "", "pages": "",
             "doi": "", "arxiv_id": "", "publisher": "", "isbn": "", "source": "manual", **props.pop("meta", {})}
+    if doc_id:
+        props.update(doc_props(doc_id, name=name))
     zotero_local.create_page(ws, page_id=page_id, title=title, props={"meta": meta, **props}, actor="zi", client="t")
     return page_id
 

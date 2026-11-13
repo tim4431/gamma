@@ -9,12 +9,17 @@ from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from . import upload_gc
 from .db import page_now
+from .documents.model import (SQL_IN_PLACE, SQL_PDF, check_document, copy_document, document, document_props,
+                              document_title, page_document, parse_upload_url, upload_url)
 from .highlights import is_ink, is_link
-from .storage import display_filename, pdf_url, pdf_url_doc_id, upload_refs, url_filename
+from .storage import upload_refs
+from .work_folders import filing as work_filing, marks  # as modules: marks imports this one
+from .work_folders.library import SQL_LIBRARY_DOC, SQL_LIBRARY_PDF, SQL_LISTED, STAMPS, work_folder_of
 
 # A block's stored columns, in ``block_to_dict``'s row order: what an
 # insert writes and what a read selects. ``kind`` and ``doc_id`` are
-# generated (db.BLOCK_HOT_COLUMNS), so never written, and a read leaves
+# generated (db.BLOCK_HOT_COLUMNS; ``doc_id`` from the block's ``doc``,
+# gamma/documents/model.py), so never written, and a read leaves
 # ``kind`` to Python (``block_kind``): the generated column costs up to six
 # JSON functions per row, and the dict has the parsed properties anyway (a
 # 5,000-block tree read a third faster; docs/dev/api.md).
@@ -43,19 +48,16 @@ TREES = (FOLDERS, LABELS)
 RESERVED = ("root", TRASH, *TREES)
 PATH_SEP = " / "  # how a folder's path reads: its names from the top, joined
 
-# The rows inside a page of the library: a condition for the readers that
-# scan blocks across pages (block search, backlinks), which pass by the
-# reserved rows, the folder and label trees and Recently deleted.
-IN_LIBRARY = "page_id IN (SELECT id FROM unified_blocks WHERE parent_id = 'root')"
+# The rows inside a page: a condition for the readers that scan blocks
+# across pages (block search, backlinks), which pass by the reserved rows,
+# the folder and label trees and Recently deleted. ``IN_PAGE`` reaches
+# every live page, a work folder's files included; ``IN_LISTED`` the pages
+# the library lists (gamma/work_folders/library.py ``listed``), for a list
+# of what the library holds, such as the recent pages a link picker offers.
+IN_PAGE = "page_id IN (SELECT id FROM unified_blocks WHERE parent_id = 'root')"
+IN_LISTED = f"page_id IN (SELECT id FROM unified_blocks WHERE parent_id = 'root' AND {SQL_LISTED})"
 
 BLOCK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # the shape of a block or page id
-
-# The page property of a page whose PDF stays at a path on this computer
-# (gamma/linked_files.py), where a stored copy would be: ``true``.
-LINKED_FILE = "linked_file"
-# A condition on a page's row for a lookup by attachment, which never finds
-# such a page: its bytes stand for no page of the library.
-NOT_LINKED = f"json_extract(properties, '$.{LINKED_FILE}') IS NULL"
 
 
 def valid_block_id(block_id) -> bool:
@@ -98,8 +100,9 @@ def block_kind(parent_id, page_id, props: dict) -> str | None:
     value: ``highlights.is_ink``), ``text_box`` / ``picture`` / ``sheet``
     / ``recording`` (an object there), ``link`` (a ``link_url`` or
     ``link_page_id`` that is neither missing, null nor empty:
-    ``highlights.is_link``), ``highlight`` (a ``pdf_position`` object),
-    ``note``."""
+    ``highlights.is_link``), ``highlight`` (a ``pdf_position``,
+    ``image_position`` or ``text_position`` object: a place on a PDF page,
+    a region of a picture, a range of a text file), ``note``."""
     if parent_id is None:
         return None
     if parent_id in ("root", TRASH):
@@ -122,7 +125,7 @@ def block_kind(parent_id, page_id, props: dict) -> str | None:
         return "recording"
     if is_link(props):
         return "link"
-    if isinstance(props.get("pdf_position"), dict):
+    if any(isinstance(props.get(key), dict) for key in ("pdf_position", "image_position", "text_position")):
         return "highlight"
     return "note"
 
@@ -335,17 +338,34 @@ def trash_entry(conn, block_id: str) -> dict | None:
     return trashed_page(conn, *(went_with or row))
 
 
-def trashed_page(conn, page_id: str, title: str, props_raw) -> dict:
+def trashed_page(conn, page_id: str, title: str, props_raw, *, memo: dict | None = None) -> dict:
     """A trashed page as Recently deleted lists it: ``{id, title, folders,
-    parent, deleted_at, deleted_by}`` — ``folders`` the folder ids a restore
-    puts it back in (``trashed_folders``), ``parent`` the live page it goes
-    back inside (``trashed_parent``, "" for none), the stamps
-    ``ops.trash_page`` wrote."""
+    parent, deleted_at, deleted_by, work_folder, deleted_by_vault,
+    restorable?}`` — ``folders`` the folder ids a restore puts it back in
+    (``trashed_folders``), ``parent`` the live page it goes back inside
+    (``trashed_parent``, "" for none), the stamps ``ops.trash_page`` wrote,
+    ``work_folder`` the work folder it is a file of ("" for none),
+    ``deleted_by_vault`` whether its vault sent it there (its file deleted
+    or untracked: only the file brings it back) and, for a file, whether a
+    person's restore passes (``filing.may_restore``; the folder tree read
+    once per ``memo``)."""
     props = load_props(props_raw)
-    return {"id": page_id, "title": title or "Untitled", "folders": trashed_folders(conn, props),
-            "parent": trashed_parent(conn, props),
-            "deleted_at": str(props.get("deleted_at") or ""),
-            "deleted_by": str(props.get("deleted_by") or "")}
+    out = {"id": page_id, "title": title or "Untitled", "folders": trashed_folders(conn, props),
+           "parent": trashed_parent(conn, props),
+           "deleted_at": str(props.get("deleted_at") or ""),
+           "deleted_by": str(props.get("deleted_by") or ""),
+           "work_folder": work_folder_of(props),
+           "deleted_by_vault": props.get("deleted_by_vault") is True}
+    if out["work_folder"]:
+        memo = {} if memo is None else memo
+        if "tree" not in memo:
+            memo["tree"] = marks.Tree.read(conn)
+        try:
+            work_filing.may_restore(memo["tree"], props, "person")
+            out["restorable"] = True
+        except work_filing.Refused:
+            out["restorable"] = False
+    return out
 
 
 def _restored_props(conn, props: dict) -> dict:
@@ -433,60 +453,62 @@ def ancestor_chains(conn, block_ids: list[str]):
     return ancestors_by_id, page_root_by_id
 
 
-def page_attachment(props: dict | None) -> dict | None:
-    """What a page carries: ``{"kind": "pdf", "id": doc_id, "url": source_url,
-    "name": original_filename}`` when the page has a PDF attachment (a stored
-    ``doc_id`` and/or a ``source_url`` the proxy fetches lazily), else None.
-    ``url`` is where the file is fetched from: the stored ``source_url``,
-    else the stored copy (``storage.pdf_url``) — a page stores no
-    ``source_url`` that is its own ``doc_id``'s (``redundant_source_url``).
-
-    The one read of what a page carries: backend code that decides what
-    kind of page it is (gating, labels, listings) asks here instead of
-    reading ``doc_id``/``source_url`` itself, so the rule above holds
-    everywhere. Lookups BY attachment (``by-doc``, the search index, the
-    PDF export) key on ``doc_id`` directly; they are about the file, not
-    the page. Mirrored by ``pageAttachment()`` in
-    frontend/src/library/libraryUtils.js; tests/shared/attachment.json
-    holds the two to the same answers."""
-    props = props or {}
-    doc_id = str(props.get("doc_id") or "")
-    url = str(props.get("source_url") or "")
-    if not doc_id and not url:
-        return None
-    return {"kind": "pdf", "id": doc_id, "url": url or pdf_url(doc_id),
-            "name": str(props.get("original_filename") or "")}
-
-
-def attachment_file(attachment: dict | None) -> str:
-    """The doc id of the file an attachment (``page_attachment``) shows: its
-    ``id``, else the stored upload its ``url`` serves (a duplicated page
-    carries only ``/api/uploads/<doc id>.pdf``), else ``""`` (a PDF shown
-    from another address alone, never stored). The attachment's ``id``
-    stays ``""`` for such a page: this is for code that reads the file,
-    not for gating or lookups by attachment. Mirrored by
-    ``attachmentFile()`` in frontend/src/library/libraryUtils.js (the same
-    fixture)."""
-    if not attachment:
-        return ""
-    return attachment["id"] or pdf_url_doc_id(attachment["url"])
-
-
 def page_for_doc(conn, doc_id: str, columns: str = "id"):
-    """Lookup BY ATTACHMENT: the row (``columns`` of it) of the root page
-    whose PDF attachment is ``doc_id``, or None. The one query for "which
-    page carries this PDF": root pages only, a nested block never counts,
-    and a page that reads its PDF where it is on this computer
-    (``NOT_LINKED``) does not count either: a library PDF added never finds
-    one, and the bytes it holds are no other page's to be refused. Should a
-    workspace hold two (an older copy of the data), the oldest answers,
-    every time."""
+    """Lookup BY DOCUMENT: the row (``columns`` of it) of the root page
+    whose own PDF is ``doc_id`` (the generated column: a copy owns none),
+    or None. The one query for "which page carries this PDF": root pages
+    only, a nested block never counts, and a page that is no library
+    document does not count either (gamma/work_folders/library.py
+    ``SQL_LIBRARY_PDF``: an Opened files page, a work folder's file not in
+    the library): a library PDF added never finds one, and the bytes it
+    holds are no other page's to be refused. Should a workspace hold two
+    (an older copy of the data), the oldest answers, every time."""
     if not doc_id:
         return None
     return conn.execute(
         f"SELECT {columns} FROM unified_blocks WHERE doc_id = ? AND parent_id = 'root' "
-        f"AND {NOT_LINKED} ORDER BY created_at, id LIMIT 1",
+        f"AND {SQL_LIBRARY_PDF} ORDER BY created_at, id LIMIT 1",
         (doc_id,)).fetchone()
+
+
+def page_for_file(conn, hash: str, ext: str, columns: str = "id"):
+    """Lookup BY STORED FILE, for a document of any format: the row
+    (``columns`` of it) of the root page whose own document is the stored
+    file ``hash + ext`` (``stored_name``) and that is a library document
+    (``SQL_LIBRARY_DOC``), or None. One library page per stored file, keyed
+    by hash and extension: the same bytes uploaded as ``a.txt`` and
+    ``a.log`` are two stored files, and two pages. A ``.pdf`` is
+    ``page_for_doc``'s. The attach 409, Add to library's, the op path's
+    library check, the duplicate rule and the file chips' lookup read it."""
+    if ext == ".pdf":
+        return page_for_doc(conn, hash, columns)
+    if not hash or not ext:
+        return None
+    return conn.execute(
+        f"SELECT {columns} FROM unified_blocks WHERE doc_id = ? AND parent_id = 'root' AND {SQL_LIBRARY_DOC} "
+        "AND json_extract(properties, '$.doc.ext') = ? ORDER BY created_at, id LIMIT 1",
+        (hash, ext)).fetchone()
+
+
+def second_owner_as_copy(conn, props: dict) -> dict:
+    """``props`` of a new page a client writes whole (POST /api/blocks at
+    root: a duplicate, an open tab's from before the doc property among
+    them), checked already (``document_props``), with a ``doc`` that would
+    make the page a second owner of a file stored as the copy a duplicate
+    writes (``copy_document``): one whose stored file a library page owns
+    already (``page_for_file``, any format), and one read in place whose
+    file another page reads in place (whose reader is that page's:
+    gamma/linked_files.py). The original stays the one page of its
+    document."""
+    doc = props.get("doc") if isinstance(props, dict) else None
+    if not isinstance(doc, dict) or doc.get("copy") or not doc["hash"]:
+        return props
+    if doc["at"] == "path":
+        held = conn.execute("SELECT 1 FROM unified_blocks WHERE doc_id = ? AND parent_id = 'root' "
+                            f"AND {SQL_IN_PLACE}", (doc["hash"],)).fetchone()
+    else:
+        held = page_for_file(conn, doc["hash"], doc["ext"])
+    return {**props, "doc": copy_document(doc)} if held else props
 
 
 def write_lock(conn) -> None:
@@ -500,22 +522,24 @@ def write_lock(conn) -> None:
         conn.execute("BEGIN IMMEDIATE")
 
 
-def touch_page(conn, page_id: str, actor: str, kind: str = "live", *, now: str = "",
+def touch_page(conn, page_id: str, actor: str, kind: str = "live", *, now: str = "", quiet: bool = False,
                follow: bool = True) -> None:
     """Record a write to the page ``page_id`` in the workspace's change log
     (``page_changes``): its row takes the next seq of the workspace, so the
     change feed (routers/sync.py) lists the page once to any cursor below
     it. ``live`` (an edit, a creation, a restore) also stamps the page's
-    own row ``updated_at`` (``now``, the writer's stamp, or the time), and
-    the writer follows the page (``follow_page``) unless ``follow`` is
-    False (a batch that is no one's keystrokes: ops' ``UNFOLLOWED``
-    clients); a page that went (``deleted``: moved to Recently deleted, or
-    deleted for good) keeps its row as it is. Every writer of a page calls
-    it once per write, inside its transaction: under the write lock
-    (``write_lock``, or the transaction's first write), so seqs are handed
-    out in commit order and never twice. The caller commits."""
+    own row ``updated_at`` (``now``, the writer's stamp, or the time),
+    unless ``quiet`` (a vault's stamps, which leave the recent pages'
+    order: ops ``set``'s ``quiet``), and the writer follows the page
+    (``follow_page``) unless ``follow`` is False (a batch that is no one's
+    keystrokes: ops' ``UNFOLLOWED`` clients) or the write is quiet; a page
+    that went (``deleted``: moved to Recently deleted, or deleted for good)
+    keeps its row as it is. Every writer of a page calls it once per write,
+    inside its transaction: under the write lock (``write_lock``, or the
+    transaction's first write), so seqs are handed out in commit order and
+    never twice. The caller commits."""
     now = now or page_now()
-    if kind == "live":
+    if kind == "live" and not quiet:
         conn.execute("UPDATE unified_blocks SET updated_at = ? WHERE id = ?", (now, page_id))
         if follow:
             follow_page(conn, page_id, actor, now=now)
@@ -543,6 +567,15 @@ def follow_page(conn, page_id: str, actor: str, *, now: str = "") -> None:
         return
     conn.execute("INSERT OR IGNORE INTO page_follows (page_id, user_id, level, at) VALUES (?, ?, 'all', ?)",
                  (page_id, actor, now or page_now()))
+
+
+def _followed_by(client: str) -> bool:
+    """Whether a page the writer ``client`` names makes is followed by its
+    actor: not one a batch of it would leave unfollowed (ops'
+    ``UNFOLLOWED``: a synced vault's file, a mirror's page)."""
+    from .ops import UNFOLLOWED  # ops imports this module
+
+    return client not in UNFOLLOWED
 
 
 def newest_change_seq(conn) -> int:
@@ -587,10 +620,13 @@ def page_parents(conn) -> dict[str, str]:
     """``{sub-page id: its effective parent}`` for every live sub-page of the
     workspace, in library order (``position``, then the id): one read of the
     rows whose stored parent is a live page, then the chain rule — a page
-    in a cycle, below one or deeper than MAX_PAGE_DEPTH, is left out."""
+    in a cycle, below one or deeper than MAX_PAGE_DEPTH, is left out. The
+    read walks ``idx_ub_parent_page`` (the ``+`` keeps the planner off
+    ``idx_ub_parent``, which would read every root row, a work folder's
+    files included)."""
     stored = dict(conn.execute(
-        "SELECT c.id, c.parent_page FROM unified_blocks c JOIN unified_blocks p ON p.id = c.parent_page "
-        "AND p.parent_id = 'root' WHERE c.parent_id = 'root' AND c.parent_page IS NOT NULL "
+        "SELECT c.id, c.parent_page FROM unified_blocks c CROSS JOIN unified_blocks p ON p.id = c.parent_page "
+        "AND p.parent_id = 'root' WHERE +c.parent_id = 'root' AND c.parent_page IS NOT NULL "
         "ORDER BY c.position, c.id").fetchall())
     depth: dict[str, int | None] = {}  # a page's ancestors, counted; None when its chain is unsound
     for start in stored:
@@ -752,20 +788,28 @@ def folder_subtree_ids(conn, folder_id: str) -> set[str]:
     return {r[0] for r in conn.execute(_SUBTREE + "SELECT id FROM sub", (folder_id,))}
 
 
-def pages_in_folder(conn, folder_id: str | None, parents: dict[str, str] | None = None) -> list[str]:
-    """The pages filed in the folder ``folder_id`` or below it: the library
-    pages that carry it or a folder below it, in library order, each
-    followed by its descendants (``with_sub_pages``; a sub-page is filed
-    where its top is, whatever ``folders`` it carries); none for an id that
-    is no folder. ``folder_id`` None: every library page, so every live
-    page. ``parents``: a ``page_parents`` map already read."""
+def live_pages(conn, parents: dict[str, str] | None = None) -> list[str]:
+    """Every live page of the workspace, a work folder's files included:
+    the pages with no parent, in library order, each followed by its
+    descendants (``with_sub_pages``). ``parents``: a ``page_parents`` map
+    already read."""
     if parents is None:
         parents = page_parents(conn)
-    if folder_id is None:
-        rows = conn.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root' ORDER BY position, id")
-    else:
-        rows = conn.execute(_SUBTREE + f"SELECT p.id FROM unified_blocks p WHERE p.parent_id = 'root' AND "
-                            f"{_FILED_IN_SUB} ORDER BY p.position, p.id", (folder_id,))
+    rows = conn.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root' ORDER BY position, id")
+    return with_sub_pages(conn, [r[0] for r in rows if r[0] not in parents], parents)
+
+
+def pages_in_folder(conn, folder_id: str, parents: dict[str, str] | None = None) -> list[str]:
+    """The pages filed in the folder ``folder_id`` or below it: the pages
+    that carry it or a folder below it, in library order, each followed by
+    its descendants (``with_sub_pages``; a sub-page is filed where its top
+    is, whatever ``folders`` it carries); none for an id that is no
+    folder (every live page is ``live_pages``). ``parents``: a
+    ``page_parents`` map already read."""
+    if parents is None:
+        parents = page_parents(conn)
+    rows = conn.execute(_SUBTREE + f"SELECT p.id FROM unified_blocks p WHERE p.parent_id = 'root' AND "
+                        f"{_FILED_IN_SUB} ORDER BY p.position, p.id", (folder_id,))
     return with_sub_pages(conn, [r[0] for r in rows if r[0] not in parents], parents)
 
 
@@ -806,16 +850,19 @@ def pages_in_scope(conn, scope: list[str]) -> set[str]:
 
 
 def root_pages(conn, folder: str = "") -> dict:
-    """{page_id: {"title", "doc_id"}} for the root pages a library-wide
-    operation reaches: every page, sub-pages included, or — with ``folder``
-    a folder id — the pages filed in that folder or below it
+    """{page_id: {"title", "doc_id"}} for the root pages a workspace-wide
+    operation reaches: every live page, sub-pages and a work folder's files
+    included, or — with ``folder`` a folder id — the pages filed in that
+    folder or below it
     (``pages_in_folder``; an id that is no folder reaches none). ``doc_id``
-    is "" for a page without a PDF."""
+    is the hash of the PDF the page owns, "" for a page without one (a
+    copy's included)."""
+    pdf = f"CASE WHEN {SQL_PDF} THEN doc_id END"
     if folder:
-        rows = conn.execute("SELECT id, content, doc_id FROM unified_blocks WHERE id IN "
+        rows = conn.execute(f"SELECT id, content, {pdf} FROM unified_blocks WHERE id IN "
                             "(SELECT value FROM json_each(?))", (json.dumps(pages_in_folder(conn, folder)),))
     else:
-        rows = conn.execute("SELECT id, content, doc_id FROM unified_blocks WHERE parent_id = 'root'")
+        rows = conn.execute(f"SELECT id, content, {pdf} FROM unified_blocks WHERE parent_id = 'root'")
     return {page_id: {"title": content or "Untitled", "doc_id": doc_id or ""} for page_id, content, doc_id in rows}
 
 
@@ -835,13 +882,17 @@ def tree_rows(conn, tree: str) -> list[tuple]:
     return out
 
 
+def _children(rows) -> dict[str, list[tuple[str, str]]]:
+    kids: dict = {}
+    for block_id, parent, name, _props in rows:
+        kids.setdefault(parent, []).append((block_id, name or ""))
+    return kids
+
+
 def tree_children(conn, tree: str) -> dict[str, list[tuple[str, str]]]:
     """``{parent id: [(id, name)]}`` for the blocks of ``tree``, siblings in
     order; the tree's own id keys its top level."""
-    kids: dict = {}
-    for block_id, parent, name, _props in tree_rows(conn, tree):
-        kids.setdefault(parent, []).append((block_id, name or ""))
-    return kids
+    return _children(tree_rows(conn, tree))
 
 
 def tree_parents(conn, tree: str) -> dict[str, str]:
@@ -919,25 +970,35 @@ def named(children: list, name: str) -> list:
     return exact or [c for c in children if c[1].strip().lower() == name.lower()]
 
 
-def descend(kids: dict, start: str, names) -> tuple[list[str], list[str]]:
+def _passing_by(children: list, works) -> list:
+    return [c for c in children if c[0] not in works] if works else children
+
+
+def descend(kids: dict, start: str, names, *, works=()) -> tuple[list[str], list[str]]:
     """Walk ``names`` down ``kids`` (``tree_children``) from the block
     ``start``, each name matched as ``named`` does: ``(ids at the deepest
     level reached — several when siblings share a name —, the names left
-    when none matched)``."""
+    when none matched)``. The folders of ``works`` (work folders' roots,
+    gamma/work_folders/marks.py ``Tree.roots``) are passed by with all
+    below them, as if they were not there: a name that files library pages
+    never names a work folder's directory."""
     level = [start]
     for i, name in enumerate(names):
-        found = [c[0] for parent in level for c in named(kids.get(parent, []), name)]
+        found = [c[0] for parent in level for c in named(_passing_by(kids.get(parent, []), works), name)]
         if not found:
             return level, list(names[i:])
         level = found
     return level, []
 
 
-def folder_by_path(conn, names: list[str]) -> list[str]:
+def folder_by_path(conn, names: list[str], *, into_work: bool = False) -> list[str]:
     """The folders whose path is ``names`` (from the top, each matched
     exactly, else ignoring case) — one id, none, or several when siblings
-    share a name (the caller reports the ambiguity)."""
-    level, rest = descend(tree_children(conn, FOLDERS), FOLDERS, names)
+    share a name (the caller reports the ambiguity). A work folder and its
+    directories are passed by unless ``into_work``."""
+    rows = tree_rows(conn, FOLDERS)
+    works = () if into_work else set(marks.Tree.of(rows).roots())
+    level, rest = descend(_children(rows), FOLDERS, names, works=works)
     return level if names and not rest else []
 
 
@@ -951,22 +1012,33 @@ def new_block_id() -> str:
     return secrets.token_urlsafe(9)
 
 
-def folder_inserts(conn, paths, under: str = "", kids=None) -> tuple[list[dict], dict[tuple, str]]:
+def folder_inserts(conn, paths, under: str = "", kids=None, *,
+                   into_work: bool = False) -> tuple[list[dict], dict[tuple, str]]:
     """What filing pages under ``paths`` (each a list of names, from the top
     or from the folder ``under``, "" = the top) needs: the ``insert`` ops for the
     ``FOLDERS`` pseudo-page that make every path exist — a folder already
     there is reused (the first of several siblings that share a name), a new
     one goes last among its siblings — and ``{tuple(names): folder id}`` for
     each path. Apply the ops (``ops.apply_ops``) before writing the ids on a
-    page. ``kids``: the tree as ``tree_children`` reads it, from another
-    server's answer (gamma/vault_http.py), in place of ``conn``'s."""
-    kids = tree_children(conn, FOLDERS) if kids is None else kids
+    page. A work folder is passed by, with its directories (``descend``'s
+    ``works``): an import, a clip or the agent filing by name makes a
+    library folder beside one of the same name. The vault, filing its
+    files in its directories, walks from its work folder with
+    ``into_work``. ``kids``: the tree as ``tree_children`` reads it, from
+    another server's answer (gamma/vault/http_remote.py), in place of
+    ``conn``'s."""
+    works: set = set()
+    if kids is None:
+        rows = tree_rows(conn, FOLDERS)
+        kids = _children(rows)
+        if not into_work:
+            works = set(marks.Tree.of(rows).roots())
     ops, ids = [], {}
     for path in paths:
         path = [n.strip() for n in path if n and n.strip()]
         parent = under or FOLDERS
         for name in path:
-            found = named(kids.get(parent, []), name)
+            found = named(_passing_by(kids.get(parent, []), works), name)
             if found:
                 parent = found[0][0]
                 continue
@@ -1001,24 +1073,22 @@ def label_inserts(conn, names, have=None) -> tuple[list[dict], dict[str, str]]:
     return ops, ids
 
 
-def redundant_source_url(doc_id, source_url) -> bool:
-    """Whether ``source_url`` is the stored copy of ``doc_id``
-    (``storage.pdf_url``): what a page does not store, since its
-    attachment derives it (``page_attachment``)."""
-    return bool(doc_id) and source_url == pdf_url(doc_id)
-
-
-def page_root_props(props: dict | None, page_id: str = "") -> dict:
+def page_root_props(props: dict | None, page_id: str = "", *, writer: str = "person") -> dict:
     """A copy of ``props`` as the new page row ``page_id`` stores them:
     ``folders`` / ``labels`` kept when they are lists of ids
     (``filing_ids``, without repeats), else dropped; ``parent_page`` kept
     when it has a parent's shape (``valid_parent_value``), else dropped —
     whether it names a page is not asked, since a mirror may bring a
-    sub-page before its parent; and no ``source_url`` that is the
-    ``doc_id``'s stored copy (``redundant_source_url``). The page writers
-    (``create_page``, ``insert_page_tree``) apply it; the op path holds a
-    page's patch to the same rules (ops._filing_patch, ops._parent_patch,
-    ops._attachment_patch)."""
+    sub-page before its parent; the flat keys a document was kept in
+    (``LEGACY_KEYS``) dropped, and a ``doc`` kept in canonical form when it
+    checks, else dropped (``documents.model.document_props``); a work
+    folder's stamps (``work_folder``, ``library``, ``file_name``) dropped
+    unless ``writer`` (gamma/work_folders/filing.py ``writer_of``) is the
+    vault or the mirror, since an import or a duplicate carries a file's
+    properties as it found them. The page writers (``create_page``,
+    ``insert_page_tree``) apply it; the op path holds a page's patch to the
+    same rules (ops._filing_patch, ops._parent_patch, ops._document_patch,
+    ops._Batch.work_patch), refusing what this drops."""
     props = dict(props or {})
     for tree in TREES:
         if tree in props:
@@ -1027,33 +1097,36 @@ def page_root_props(props: dict | None, page_id: str = "") -> dict:
                 props[tree] = ids
     if PARENT_PAGE in props and not valid_parent_value(props[PARENT_PAGE], page_id):
         del props[PARENT_PAGE]
-    if redundant_source_url(props.get("doc_id"), props.get("source_url")):
-        del props["source_url"]
-    return props
+    if writer == "person":
+        for key in STAMPS:
+            props.pop(key, None)
+    return document_props(props, refuse=False)
 
 
-def attachment_props(doc_id: str, source_url: str = "", original_filename: str = "") -> tuple[dict, str]:
-    """What attaching a PDF writes on a page: ``({doc_id?, source_url?,
-    original_filename?}, automatic title)``. The title is the upload's file
-    name (its leaf — a browser may leak a relative path), else the URL's
-    file name, else the doc id; callers store it as ``auto_title`` too, the
-    compare-and-swap marker metadata_fetch replaces (any write of the
-    page's title through the op path drops it first — ops._Batch.set).
-    Both creation paths (by-doc ingest, POST /pages/{id}/attachment) go
-    through here so the rules match. A ``source_url`` that is the stored
-    copy of ``doc_id`` is not stored (``redundant_source_url``)."""
-    original = display_filename(original_filename)
-    props = {}
-    if doc_id:
-        props["doc_id"] = doc_id
-    if source_url and not redundant_source_url(doc_id, source_url):
-        props["source_url"] = source_url
-    if original:
-        props["original_filename"] = original
-    return props, original or url_filename(source_url) or doc_id
+def is_file(conn, page_id) -> bool:
+    """Whether ``page_id`` names a work folder's file, which no page is
+    inside (S3)."""
+    return bool(page_id) and isinstance(page_id, str) and conn.execute(
+        "SELECT 1 FROM unified_blocks WHERE id = ? AND work_folder IS NOT NULL", (page_id,)).fetchone() is not None
 
 
-def create_page(conn, title: str, props: dict | None = None, *, actor: str,
+def _filed_as(conn, props: dict, writer: str) -> dict:
+    """A new page's ``props`` (``page_root_props``'s) held to the
+    work-folder rule (gamma/work_folders/filing.py ``creation``) when they
+    file it, nest it or stamp it: as stored (a person's note filed in a
+    work folder that pulls is stamped its file), or OpError 403 ``LOCKED``.
+    Call it under the write lock."""
+    if not any(key in props for key in (FOLDERS, PARENT_PAGE, *STAMPS)):
+        return props
+    parent = props.get(PARENT_PAGE)
+    try:
+        return work_filing.creation(marks.Tree.read(conn), props, writer, target_is_file=is_file(conn, parent))
+    except work_filing.Refused as e:
+        from .ops import locked  # ops imports this module
+        raise locked(e) from None
+
+
+def create_page(conn, title: str, props: dict | None = None, *, actor: str, client: str = "",
                 block_id: str = "", position: str = "") -> dict:
     """Insert a new root page and return its block dict. Commits. Last in
     the library unless ``position`` (a sibling key the caller minted) says
@@ -1064,7 +1137,10 @@ def create_page(conn, title: str, props: dict | None = None, *, actor: str,
     re-create (a mirror bringing the page back with its own tree; its
     comments go with it; files only that copy held are left to upload_gc's
     ``reconcile`` pass).
-    ``props`` are stored as ``page_root_props`` leaves them. ``actor``
+    ``props`` are stored as ``page_root_props`` leaves them for the writer
+    ``client`` names (the op path's clients: ``sync`` the mirror, ``disk``
+    the vault, anyone else a person), held to the work-folder rule
+    (``_filed_as``: OpError 403 ``LOCKED``, nothing written). ``actor``
     makes it (``touch_page``).
     The writer of a page on its own (POST /api/pages, POST /api/blocks
     with parent ``root``, get_or_create_doc_page, the web clips, the seeded
@@ -1072,9 +1148,17 @@ def create_page(conn, title: str, props: dict | None = None, *, actor: str,
     block tree in one of its own transactions uses ``insert_page_tree``."""
     block_id = block_id or new_block_id()
     title = (title or "").strip() or "Untitled"
-    props = page_root_props(props, block_id)
+    writer = work_filing.writer_of(client)
+    props = page_root_props(props, block_id, writer=writer)
     now = page_now()
+    began = not conn.in_transaction
     write_lock(conn)  # the free key and the insert as one step
+    try:
+        props = _filed_as(conn, props, writer)
+    except Exception:
+        if began:
+            conn.rollback()
+        raise
     if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = ?",
                     (block_id, TRASH)).fetchone():
         from . import comments  # local: comments imports this module
@@ -1088,29 +1172,34 @@ def create_page(conn, title: str, props: dict | None = None, *, actor: str,
         f"INSERT INTO unified_blocks ({BLOCK_COLUMNS}) VALUES (?, 'root', ?, ?, ?, ?, ?, ?)",
         (block_id, new_pos, title, json.dumps(props), now, now, block_id),
     )
-    touch_page(conn, block_id, actor, now=now)
+    touch_page(conn, block_id, actor, now=now, follow=_followed_by(client))
     upload_gc.claim(conn, upload_refs(title, props))  # its PDF is in use (again)
     conn.commit()
     return block_to_dict(conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?",
                                       (block_id,)).fetchone())
 
 
-def insert_page_tree(conn, page_id: str, title: str, props: dict, tree: list, actor: str) -> int:
+def insert_page_tree(conn, page_id: str, title: str, props: dict, tree: list, actor: str, *,
+                     client: str = "") -> int:
     """Insert a root page (last on root) and its ``{content, properties?,
     id?, children?}`` tree (a node's own ``id`` is honoured), touched by
     ``actor`` (``touch_page``); returns the number of blocks written under
     the page. The page's ``props`` are stored as ``page_root_props``
-    leaves them. Takes the write lock first (the position is read under
-    it); the caller commits. This is the bulk writer of the library
-    imports: they put pages in short transactions of their own, where
-    ``create_page`` commits each one. Iterative, so a deep tree never meets
-    the recursion limit ``flatten_tree`` would."""
+    leaves them for the writer ``client`` names, held to the work-folder
+    rule as ``create_page`` holds them (OpError 403 ``LOCKED``, nothing
+    written by this call). Takes the write lock first (the position is
+    read under it); the caller commits. This is the bulk writer of the
+    library imports: they put pages in short transactions of their own,
+    where ``create_page`` commits each one. Iterative, so a deep tree never
+    meets the recursion limit ``flatten_tree`` would."""
     write_lock(conn)
+    writer = work_filing.writer_of(client)
+    props = _filed_as(conn, page_root_props(props, page_id, writer=writer), writer)
     now = page_now()
     pos = generate_key_between(last_child_position(conn, "root"), None)
     conn.execute(
         f"INSERT INTO unified_blocks ({BLOCK_COLUMNS}) VALUES (?,'root',?,?,?,?,?,?)",
-        (page_id, pos, title, json.dumps(page_root_props(props, page_id)), now, now, page_id),
+        (page_id, pos, title, json.dumps(props), now, now, page_id),
     )
     written = 0
     pending = [(page_id, tree)]
@@ -1129,45 +1218,62 @@ def insert_page_tree(conn, page_id: str, title: str, props: dict, tree: list, ac
             written += 1
             if node.get("children"):
                 pending.append((child_id, node["children"]))
-    touch_page(conn, page_id, actor, now=now)
+    touch_page(conn, page_id, actor, now=now, follow=_followed_by(client))
     return written
 
 
 def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
                            source_url: str | None = None,
                            original_filename: str | None = None,
-                           folder: str = "", *, ws: str, actor: str = "") -> dict:
-    """Lookup-or-create BY ATTACHMENT: the root page whose PDF attachment is
-    `doc_id`, created under root when absent. Shared by POST /api/blocks/by-doc
-    (PDF ingest from the app, "Open as document" on a PDF file block) and
-    the extension's /api/clip (dedup). Pages without a PDF are created by
-    POST /api/pages (create_page).
+                           folder: str = "", *, ws: str, actor: str = "",
+                           format: str = "pdf", ext: str = ".pdf", size: int | None = None) -> dict:
+    """Lookup-or-create BY DOCUMENT: the root page whose own document is
+    the stored file ``doc_id`` + ``ext`` (``page_for_file``; a PDF by
+    default), created under root when absent. Shared by POST /api/blocks/by-doc
+    (PDF ingest from the app, "Add to library" on a PDF file chip), the
+    extension's /api/clip (dedup), POST /api/pages/by-file (a stored file of
+    any format, with its ``format``, ``ext`` and ``size`` settled by the
+    route) and a work folder's Save a copy. Pages without a document are
+    created by POST /api/pages (create_page). A ``doc_id`` that can be no
+    stored file's stem is a ValueError (``documents.model.document``).
 
-    The automatic title is the upload's file name, else ``default_title``
-    (the caller's — a clip's tab title), else what ``attachment_props``
-    derives (URL file name, doc id). ``folder`` (a folder id) files a NEW
-    page; an existing page keeps its own. On an existing page this
-    opportunistically backfills the source/filename markers (an op batch on
-    the page, like every other write to an existing page — ``ws`` names the
-    workspace, ``actor`` the account); auto_title is
+    The title is the upload's file name, else ``default_title`` (the
+    caller's — a clip's tab title), else what ``document_title`` derives
+    (URL file name, doc id); a PDF's is automatic (``auto_title``: its
+    record may replace it), any other format's is the name alone. ``folder``
+    (a folder id) files a NEW page (one in a work folder is refused:
+    ``create_page``); an existing page keeps its own. On an existing page
+    this opportunistically backfills its document (one ``doc`` patch, an op
+    batch on the page, like every other write to an existing page — ``ws``
+    names the workspace, ``actor`` the account): the file name when it has
+    none, and the address when it is stored and one came, but never on a
+    work folder's file, whose document is its vault's; auto_title is
     only set when the page still carries the exact title this call considers
     automatic, so a re-upload can never mark a user's custom title as
     replaceable by the metadata worker. Lookup and creation run under the
-    write lock (``write_lock``): one page per PDF, however many requests
-    ask at once. Commits."""
-    attachment, auto = attachment_props(doc_id, source_url or "", original_filename or "")
-    original = attachment.get("original_filename", "")
-    title = original or (default_title or "").strip() or auto
+    write lock (``write_lock``): one page per stored file, however many
+    requests ask at once. Commits."""
+    stored = document(doc_id, source_url or "", original_filename or "", format=format, ext=ext, size=size)
+    title = (stored["name"] or (default_title or "").strip()
+             or document_title(original_filename or "", source_url or "", doc_id))
+    automatic = format == "pdf"
     write_lock(conn)
-    row = page_for_doc(conn, doc_id, BLOCK_COLUMNS)
+    row = page_for_file(conn, doc_id, stored["ext"], BLOCK_COLUMNS)
     if row:
         props = json.loads(row[4] or "{}")
         changed = False
-        for key in ("source_url", "original_filename"):
-            if attachment.get(key) and not props.get(key):
-                props[key] = attachment[key]
+        if page_document(props) is not None and not work_folder_of(props):  # a file's document is its vault's
+            had = check_document(props["doc"])
+            doc = dict(had)
+            if stored["name"] and not doc["name"]:
+                doc["name"] = stored["name"]
+            if doc["at"] == "store" and stored["at"] == "url":
+                doc.update(at="url", url=stored["url"])
+            doc = check_document(doc)
+            if doc != had:
+                props["doc"] = doc
                 changed = True
-        if not props.get("auto_title") and row[3] == title:
+        if automatic and not props.get("auto_title") and row[3] == title:
             props["auto_title"] = row[3]
             changed = True
         if changed:
@@ -1179,28 +1285,64 @@ def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
         else:
             conn.commit()  # nothing to write: let go of the lock
         return block_to_dict(row)
-    props = {**attachment, "auto_title": title}
+    props = {"doc": stored, **({"auto_title": title} if automatic else {})}
     if folder:
         props[FOLDERS] = [folder]
     return create_page(conn, title, props, actor=actor)
 
 
+def pages_for_files(conn, names) -> dict:
+    """Which root page each stored file became, batched by stored name:
+    ``{"<hash><ext>": {"id", "title"}}`` for every name that is some library
+    page's own document, of any format (``page_for_file``'s rule, read in
+    one query), or, for a ``.md`` / ``.markdown`` name, the markdown file a
+    note page was made from (``markdown_import``, as ``pages_for_docs``).
+    Names with no page, and names that are no stored file's
+    (``parse_upload_url``), are absent. Feeds the file chip's "Open page" /
+    "Add to library" for a chip of any format; of two pages of one file the
+    oldest answers."""
+    wanted = {}
+    for name in names:
+        parsed = parse_upload_url(upload_url(str(name))) if name else None
+        if parsed:
+            wanted[str(name)] = parsed
+    if not wanted:
+        return {}
+    stems = json.dumps(sorted({stem for stem, _ in wanted.values()}))
+    found = {}
+    for page_id, title, doc_id, ext, md in conn.execute(
+            f"SELECT id, content, CASE WHEN {SQL_LIBRARY_DOC} THEN doc_id END, json_extract(properties, '$.doc.ext'), "
+            "json_extract(properties, '$.markdown_import') FROM unified_blocks "
+            f"WHERE parent_id = 'root' AND ((doc_id IN (SELECT value FROM json_each(?1)) AND {SQL_LIBRARY_DOC}) "
+            "OR json_extract(properties, '$.markdown_import') IN (SELECT value FROM json_each(?1))) "
+            "ORDER BY created_at, id", (stems,)):
+        keys = [f"{doc_id}{ext}"] if doc_id and isinstance(ext, str) else []
+        if isinstance(md, str):
+            keys += [f"{md}.md", f"{md}.markdown"]
+        for key in keys:
+            if key in wanted and key not in found:
+                found[key] = {"id": page_id, "title": title}
+    return found
+
+
 def pages_for_docs(conn, hashes) -> dict:
     """Which root page a stored file became, batched: ``{hash: {"id",
-    "title"}}`` for every hash that is some page's PDF attachment
-    (``doc_id``) or the markdown file a note page was made from
+    "title"}}`` for every hash that is some page's own PDF (the generated
+    ``doc_id``) or the markdown file a note page was made from
     (``markdown_import`` — the upload's content digest, so a ``<hash>.md``
     chip finds its page). Hashes with no page are absent. Feeds the file
     chip's "Open page" / "Open as page" — one query per page render, never
-    one per chip. As in ``page_for_doc``, a linked page does not count and
-    of two pages of one file the oldest answers."""
+    one per chip. As in ``page_for_doc``, a page that is no library
+    document does not count and of two pages of one file the oldest
+    answers."""
     wanted = {str(d) for d in hashes if d}
     if not wanted:
         return {}
     found = {}
     for page_id, title, doc_id, md in conn.execute(
-            "SELECT id, content, doc_id, json_extract(properties, '$.markdown_import') FROM unified_blocks "
-            f"WHERE parent_id = 'root' AND {NOT_LINKED} AND (doc_id IN (SELECT value FROM json_each(?1)) "
+            f"SELECT id, content, CASE WHEN {SQL_LIBRARY_PDF} THEN doc_id END, "
+            "json_extract(properties, '$.markdown_import') FROM unified_blocks "
+            f"WHERE parent_id = 'root' AND ((doc_id IN (SELECT value FROM json_each(?1)) AND {SQL_LIBRARY_PDF}) "
             "OR json_extract(properties, '$.markdown_import') IN (SELECT value FROM json_each(?1))) "
             "ORDER BY created_at, id", (json.dumps(sorted(wanted)),)):
         for key in (doc_id, md):

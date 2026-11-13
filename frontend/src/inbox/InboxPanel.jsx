@@ -19,7 +19,7 @@ import { IconSwap, Reveal } from "../shared/ui/MotionWidgets";
 import { PersonAvatar } from "../collaboration/Presence";
 import { t } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
-import { inboxActor, inboxDays, inboxSentence, inboxSnippet, isUnread } from "./inboxText.js";
+import { inboxActor, inboxActorTitle, inboxDays, inboxSentence, inboxSnippet, isUnread } from "./inboxText.js";
 import { Popover } from "../shared/ui/Surfaces";
 
 const EMPTY_TEXT = {
@@ -38,7 +38,7 @@ function InboxRow({ item, inbox, workspaceId, now, onOpen }) {
   const archiveLabel = item.archived_at ? t("Move back to the inbox") : t("Archive this item");
   return (
     <div className={`inboxRow${unread ? " unread" : ""}`} data-motion-key={item.id} data-inbox-id={item.id} data-kind={item.kind}>
-      <PersonAvatar name={actor} title={inboxActor(item) || undefined} />
+      <PersonAvatar name={actor} title={inboxActorTitle(item) || undefined} />
       <button type="button" className="inboxMain" onClick={() => onOpen(item)} title={sentence}>
         <span className="inboxSentence">{sentence}</span>
         {snippet ? <span className="inboxSnippet">{snippet}</span> : null}

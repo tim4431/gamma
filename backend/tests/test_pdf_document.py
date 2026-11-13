@@ -3,7 +3,7 @@ and the ``notes-pdf`` export mode end to end."""
 
 import io
 
-from conftest import files_in, make_folder, make_page, require_math_renderer, workspace_of, guest_name
+from conftest import doc_props, files_in, make_folder, make_page, require_math_renderer, workspace_of, guest_name
 from test_pdf_export import _object_kinds, _open
 
 from gamma.note_markup import MATH, TEXT
@@ -254,6 +254,17 @@ def test_render_document_writes_title_notes_and_quotes():
     assert "the quoted passage" in text and "p. 7" in text and "my comment" in text
     # Markdown markers are rendered, never printed.
     assert "**" not in text and "#" not in text
+
+
+def test_a_page_shown_from_an_address_names_it_under_its_title():
+    """A PDF opened from its link prints that address under the title (a
+    DOI wins); a stored file, and a duplicated page showing one, name none."""
+    url = "https://example.org/paper.pdf"
+    assert url in _text(render_document([_page("Linked", doc_props(url=url))]))
+    cited = _text(render_document([_page("Cited", {**doc_props(url=url), "meta": {"doi": "10.1000/x1"}})]))
+    assert "https://doi.org/10.1000/x1" in cited and url not in cited
+    for props in (doc_props("d" * 24), doc_props(url=f"/api/uploads/{'d' * 24}.pdf")):
+        assert "http" not in _text(render_document([_page("Stored", props)])), props
 
 
 def test_render_document_needs_no_pdf_and_paginates():

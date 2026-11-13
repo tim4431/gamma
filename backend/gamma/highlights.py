@@ -63,6 +63,25 @@ alone. A text box and a picture have none: their place is their
 block id is the highlight's id. The frontend's twin is
 frontend/src/shared/model/blockModel.js; docs/dev/api.md "The highlight
 shape" describes it.
+
+A region of a picture (a page whose document is an image) is the same
+block with ``properties.image_position`` in place of ``pdf_position``::
+
+    {"width": 2400, "height": 1600,
+     "boundingRect": {"x1": 120, "y1": 64, "x2": 530, "y2": 284},
+     "rects": [{"x1": 120, "y1": 64, "x2": 530, "y2": 284}],
+     "hash": "9f2c…"}
+
+the frame the picture's own pixels as drawn (its natural size, EXIF
+orientation applied), one rectangle equal to ``boundingRect``, whole
+pixels, and ``hash`` the stored file's stem of the version it was drawn
+on, always written: "drawn on another version" is read, never stamped
+(``hash`` differs from the page's ``file_hash``), so a replacement writes
+no op on regions, and ``hash`` holds no file (storage._position_ids names
+nothing for it; the version a thread needs is held by its anchor,
+gamma/feedback/anchors.py). Regions are never relocated; readers scale by
+fractions (``region_box``). ``is_region`` is their test, the twin of
+``is_highlight``; the ``kind`` column calls both ``highlight``.
 """
 
 COORDS = ("x1", "y1", "x2", "y2")
@@ -226,15 +245,45 @@ def is_ink(props: dict | None) -> bool:
     return isinstance(props, dict) and "ink_url" in props
 
 
-def is_highlight(props: dict | None) -> bool:
-    """A highlight or a link region: a block with a ``pdf_position`` that
-    is no ink group, text box, picture or sheet — the ``kind`` column's
-    ``highlight``, and its ``link`` made on the page (db.BLOCK_HOT_COLUMNS
-    tests the other kinds first)."""
-    props = props or {}
-    return (isinstance(props.get("pdf_position"), dict) and not is_ink(props)
+def _placed_block(props: dict, key: str) -> bool:
+    return (isinstance(props.get(key), dict) and not is_ink(props)
             and not isinstance(props.get("text_box"), dict) and not isinstance(props.get("picture"), dict)
             and not isinstance(props.get("sheet"), dict))
+
+
+def is_highlight(props: dict | None) -> bool:
+    """A highlight or a link region on a PDF page: a block with a
+    ``pdf_position`` that is no ink group, text box, picture or sheet
+    (db.BLOCK_HOT_COLUMNS tests the other kinds first). The ``kind``
+    column's ``highlight`` is wider: a region of a picture (``is_region``)
+    reads as one too, so a reader of ``pdf_position`` tests this, never the
+    kind."""
+    return _placed_block(props or {}, "pdf_position")
+
+
+def is_region(props: dict | None) -> bool:
+    """A region of a picture: a block with an ``image_position`` that is no
+    ink group, text box, picture or sheet, the twin of ``is_highlight`` on
+    an image document. A block with both positions is both."""
+    return _placed_block(props or {}, "image_position")
+
+
+def region_box(props: dict | None) -> tuple[float, float, float, float] | None:
+    """A region's rectangle as fractions of its picture, ``(x0, y0, x1,
+    y1)``, top-left origin, clamped to the picture, four decimals; None for
+    a block that is no region or whose position has no frame or no placed
+    rectangle (nothing validates the shape on write). What every reader of
+    a region's place scales by: a figure rebuilt at another size keeps the
+    region's relative place."""
+    if not is_region(props):
+        return None
+    pos = props["image_position"]
+    size = _size(pos)
+    rect = pos.get("boundingRect")
+    if not size or not placed(rect):
+        return None
+    box = tuple(round(min(1.0, max(0.0, rect[k] / size[0 if k[0] == "x" else 1])), 4) for k in COORDS)
+    return box if box[0] < box[2] and box[1] < box[3] else None
 
 
 def is_link(props: dict | None) -> bool:

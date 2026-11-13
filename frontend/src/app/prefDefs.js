@@ -26,6 +26,7 @@ import { ZOOM_HEIGHT, ZOOM_HEIGHT_MAX, ZOOM_HEIGHT_MIN } from "../ink/zoomWindow
 import { textStyle } from "../markup/textBox.js";
 import { LANGUAGES } from "../shared/i18n/locales.js";
 import { normalizeChord } from "../shared/lib/hotkeys.js";
+import { normalizePresets } from "../shared/model/markStyle.js";
 import { DEFAULT_PALETTE, normalizeColor, normalizePalette } from "../shared/model/palette.js";
 import { DARK_THEMES, THEMES, themeScheme } from "./theme.js";
 import { TOPBAR } from "./topbarItems.js";
@@ -183,12 +184,18 @@ export const PREFS = {
   // one on the strip or a row of its ⋯ menu. Translate hidden is the
   // translate button turned off.
   viewerTools: pref("gamma-viewer-tools", ACCOUNT, VIEWER_TOOLS.DEFAULT, json(VIEWER_TOOLS.normalize)),
-  // The colour the strip's text highlighter highlights in: the last swatch
-  // picked for a text highlight, in the selection popup or the
-  // highlighter's own menu, stored as a highlight stores it (#rrggbbaa), so
-  // a changed palette leaves it as it is. "" until one is picked: the
-  // highlight picker's first swatch. Set where it acts; no Settings row.
+  // The colour the released builds' single text highlighter highlights in
+  // (#rrggbbaa, "" for the picker's first swatch): what they still write.
+  // This build only reads it, to seed the first text highlighter while the
+  // account has none of its own (markStyle.js seedPresets); no Settings row.
   highlighterColor: pref("gamma-highlighter-color", ACCOUNT, "", { parse: (raw) => (raw === "" ? "" : normalizeColor(raw) || undefined) }),
+  // The text highlighters (Settings → Appearance › Text highlighters;
+  // markStyle.js normalizePresets, docs/dev/settings.md "Text
+  // highlighters"): [{id, name, style, color: {hex, alpha}, hidden?}], the
+  // first four buttons on the viewer's strip and in the selection popup;
+  // [] until the first edit stores the list in effect (one wash
+  // highlighter, seeded from highlighterColor).
+  highlightPresets: pref("gamma-highlight-presets", ACCOUNT, [], json(normalizePresets)),
   // Interface size: index.html applies the stored value before first paint,
   // App.jsx keeps `--ui-scale` on the root in sync afterwards. Screens
   // differ, so it stays with the device.

@@ -4,7 +4,7 @@ paper" ingest), /api/library/lookup + /preview + /folders (popup helpers), and
 and the metadata thread is stubbed out."""
 
 import hashlib
-from conftest import account_of, workspace_of, guest_name
+from conftest import account_of, doc_props, make_page, workspace_of, guest_name
 import io
 import json
 import sqlite3
@@ -84,6 +84,23 @@ def _filed(props):
             [names[label] for label in props.get("labels", [])])
 
 
+def test_a_clip_starts_a_lookup_for_a_library_pdf_alone(guest, meta_calls):
+    """``_maybe_start_metadata``: a page's own library PDF names a work; a
+    document of another format (a figure) and a copy name none, so no lookup
+    of a picture by its title."""
+    from gamma.documents.model import document
+    from gamma.routers.clip import ClipRequest, _maybe_start_metadata
+
+    ws, actor = workspace_of(guest_name()), account_of(guest_name())
+    req = ClipRequest(source_url="https://example.org/x", fetch_metadata=True)
+    _maybe_start_metadata(ws, actor, req, {"id": "figure", "properties": {
+        "doc": document("f" * 24, name="fig.png", format="image", ext=".png")}})
+    _maybe_start_metadata(ws, actor, req, {"id": "copy", "properties": doc_props(url=f"/api/uploads/{'c' * 24}.pdf")})
+    _maybe_start_metadata(ws, actor, req, {"id": "paper", "properties": doc_props("d" * 24, name="p.pdf")})
+    _maybe_start_metadata(ws, actor, req, {"id": "web", "properties": {"web_meta": {"doi": "10.1/x"}}})
+    assert meta_calls == [(actor, "paper"), (actor, "web")]
+
+
 def test_clip_url_creates_filed_page_and_stores_pdf(guest, upstream, meta_calls):
     url = "https://example.org/papers/clip-one.pdf"
     r = guest.post("/api/clip", json={
@@ -100,7 +117,8 @@ def test_clip_url_creates_filed_page_and_stores_pdf(guest, upstream, meta_calls)
     assert (ws_uploads_dir(workspace_of(guest_name())) / f"{doc_id}.pdf").read_bytes() == PDF_BYTES
     title, props = _props(body["block_id"])
     assert title == "Clip One" and props["auto_title"] == "Clip One"
-    assert props["source_url"] == url
+    # shown from its address, its copy stored under the address's hash
+    assert props["doc"] == {"format": "pdf", "name": "", "hash": doc_id, "ext": ".pdf", "at": "url", "url": url}
     assert props["web_url"] == "https://example.org/papers/clip-one"
     assert _filed(props) == (["clip-reading/2026"], ["clip-to-read"])
     assert body["folders"] == props["folders"] and body["labels"] == props["labels"]
@@ -239,10 +257,10 @@ def test_clip_without_pdf_creates_web_page(guest, upstream, meta_calls):
     body = r.json()
     assert body["doc_id"] == "" and body["existed"] is False
     assert body["title"] == "Ghost" and body["open_url"] == f"/?block={body['block_id']}"
-    assert body["note"].startswith("No PDF found")
+    assert "note" not in body  # it named no PDF: nothing was missed
     title, props = _props(body["block_id"])
     assert title == "Ghost" and props["web_url"] == url
-    assert "doc_id" not in props and "source_url" not in props and "auto_title" not in props
+    assert "doc" not in props and "auto_title" not in props
     assert _filed(props) == (["web"], ["blog"])
     kids = guest.get(f"/api/blocks/{body['block_id']}/children").json()["children"]
     assert [k["content"] for k in kids] == ["> a striking claim\n— [Ghost](https://example.org/not-a-paper)"]
@@ -266,6 +284,52 @@ def test_clip_without_pdf_creates_web_page(guest, upstream, meta_calls):
     assert meta_calls == [(account_of(guest_name()), r3.json()["block_id"])]
     # Nothing at all to save is still a 400.
     assert guest.post("/api/clip", json={}).status_code == 400
+
+
+def test_a_web_clip_makes_the_article_the_pages_blocks(guest, upstream, meta_calls):
+    """A page naming no paper, clipped with its article (the Connector's
+    clip.js, gamma/web_clip.py): the page carries the tab and the article as
+    its blocks, nested under their headings below a source line, the picture
+    the browser uploaded shown from its stored copy and one it couldn't from
+    the web. Nothing is said of a PDF it never named; an article the browser
+    found nothing in keeps the link and says so; clipping the page again
+    finds it and writes nothing twice."""
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (3, 2), "red").save(buf, "PNG")
+    picture = guest.post("/api/upload-image", files={"file": ("p.png", buf.getvalue(), "image/png")}).json()["url"]
+    url = "https://blog.example/posts/web-clip-1"
+    html = ("<h2>Why</h2><p>Because <b>so</b>, at <span data-gamma-math='inline' data-tex='10^{-18}'>x</span>.</p>"
+            "<p><img src='https://cdn.example/p.png' alt='fig'><img src='https://cdn.example/far.png'></p>")
+    article = {"html": html, "site": "Blog", "byline": "Ada", "published": "2026-01-02",
+               "images": {"https://cdn.example/p.png": picture}}
+    r = guest.post("/api/clip", json={"source_url": url, "title": "A post", "folder_path": "webclips",
+                                      "article": article})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["existed"] is False and body["doc_id"] == "" and "note" not in body
+    title, props = _props(body["block_id"])
+    assert title == "A post" and props["web_url"] == url and _filed(props) == (["webclips"], [])
+    kids = guest.get(f"/api/blocks/{body['block_id']}/children").json()["children"]
+    assert [k["content"] for k in kids] == ["[Blog](https://blog.example/posts/web-clip-1) · Ada · 2026-01-02",
+                                            "## Why"]
+    under = guest.get(f"/api/blocks/{kids[1]['id']}/children").json()["children"]
+    assert [k["content"] for k in under] == ["Because **so**, at $10^{-18}$.",
+                                             f"![fig]({picture})![](https://cdn.example/far.png)"]
+    assert meta_calls == []
+    lk = guest.get("/api/library/lookup", params={"url": url})
+    assert lk.status_code == 200 and lk.json()["block_id"] == body["block_id"]
+    r2 = guest.post("/api/clip", json={"source_url": url, "title": "A post", "article": article})
+    assert r2.json()["existed"] is True and r2.json()["block_id"] == body["block_id"]
+    assert len(guest.get(f"/api/blocks/{body['block_id']}/children").json()["children"]) == 2
+    # Nothing found to clip: the link, and why it is only that.
+    for kind, said in (("article", "Gamma found no article text"), ("selection", "Nothing was selected")):
+        r = guest.post("/api/clip", json={"source_url": f"https://blog.example/posts/empty-{kind}", "title": "Empty",
+                                          "article": {"html": " ", "kind": kind}})
+        assert r.status_code == 200 and r.json()["note"].startswith(said)
+        assert guest.get(f"/api/blocks/{r.json()['block_id']}/children").json()["children"] == []
+    too_big = {"source_url": "https://blog.example/posts/huge", "article": {"html": "<p>x</p>" * 800_000}}
+    assert guest.post("/api/clip", json=too_big).status_code == 413
 
 
 def test_clip_dead_pdf_link_falls_back_to_web_page(guest, upstream, meta_calls):
@@ -299,7 +363,8 @@ def test_clip_no_copy_probes_only(guest, upstream, meta_calls):
     doc_id = r.json()["doc_id"]
     assert not (ws_uploads_dir(workspace_of(guest_name())) / f"{doc_id}.pdf").exists()
     _, props = _props(r.json()["block_id"])
-    assert props["source_url"] == url  # the app proxies it on open
+    assert props["doc"]["at"] == "url" and props["doc"]["url"] == url  # the app proxies it on open
+    assert props["doc"]["hash"] == doc_id  # where a copy would be stored
 
 
 def test_clip_from_uploaded_bytes(guest, upstream, meta_calls):
@@ -315,7 +380,8 @@ def test_clip_from_uploaded_bytes(guest, upstream, meta_calls):
     assert r.json()["doc_id"] == doc_id
     assert upstream == []  # no server-side fetch at all
     _, props = _props(r.json()["block_id"])
-    assert "source_url" not in props  # the stored copy: derived from doc_id
+    # the stored copy, its address derived from its hash
+    assert props["doc"] == {"format": "pdf", "name": "", "hash": doc_id, "ext": ".pdf", "at": "store"}
     assert props["web_url"] == "https://journal.example/doi/10.1000/paywalled"
     # Second save from the same publisher page is found via web_url / its DOI.
     lk = guest.get("/api/library/lookup", params={"url": "https://journal.example/doi/10.1000/paywalled"})
@@ -325,13 +391,70 @@ def test_clip_from_uploaded_bytes(guest, upstream, meta_calls):
     assert guest.post("/api/clip", json={"doc_id": "../../etc"}).status_code == 400
 
 
+def test_a_clip_never_finds_a_copy_or_a_pdf_read_in_place(guest, upstream, meta_calls):
+    """Only a page that owns its PDF in the library is the paper's: a
+    duplicated page shows the stored file and owns none, a page reading its
+    PDF from a file on this computer is no library page."""
+    data = b"%PDF-1.4 owned by one page\n" + b"o" * 500
+    doc_id = guest.post("/api/uploads", files={"file": ("owned.pdf", data, "application/pdf")}).json()["doc_id"]
+    address = f"/api/uploads/{doc_id}.pdf"
+    copy = make_page(guest, "Owned (copy)", doc_props(url=address))
+    on_disk = make_page(guest, "On disk", doc_props("9" * 24, name="ondisk.pdf", at="path"))
+    with connect_pages_db(workspace_of(guest_name())) as conn:
+        assert clip_mod.find_page(conn, urls=(address,)) is None
+        assert clip_mod.find_page(conn, urls=(f"/api/uploads/{'9' * 24}.pdf",)) is None
+    r = guest.post("/api/clip", json={"doc_id": doc_id, "title": "Owned"})
+    assert r.status_code == 200, r.text
+    assert r.json()["existed"] is False and r.json()["block_id"] not in (copy["id"], on_disk["id"])
+    with connect_pages_db(workspace_of(guest_name())) as conn:
+        assert clip_mod.find_page(conn, urls=(address,))["id"] == r.json()["block_id"]
+    lk = guest.get("/api/library/lookup", params={"url": address}).json()
+    assert lk["block_id"] == r.json()["block_id"] and lk["doc_id"] == doc_id
+
+
+def test_a_clip_files_in_the_library_never_in_a_work_folder(upstream, meta_calls):
+    """A work folder's file not in the library is no page of its PDF, so a
+    clip of those bytes makes a library page; a clip names a library folder
+    only: an id inside a work folder is refused with the rule's words, and a
+    path that names the work folder makes a library folder of that name."""
+    from conftest import fresh_client, make_folder, mark_work_folder, work_props
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import create_page
+    from gamma.documents.model import document
+    from gamma.work_folders.filing import refusal_text
+
+    c = fresh_client()
+    name = c.post("/api/login-guest").json()["username"]  # a library of its own
+    ws = workspace_of(name)
+    w, d = make_folder(c, "clip-W"), make_folder(c, "clip-W/dir")
+    mark_work_folder(c, w)
+    data = b"%PDF-1.4 a figure of a work folder\n" + b"f" * 500
+    doc_id = c.post("/api/uploads", files={"file": ("fig.pdf", data, "application/pdf")}).json()["doc_id"]
+    with connect_pages_db(ws) as conn:
+        figure = create_page(conn, "fig", work_props(w, "fig.pdf", directory=d, doc=document(
+            doc_id, name="fig.pdf", at="path")), actor=account_of(name), client=DISK_CLIENT)["id"]
+        assert clip_mod.find_page(conn, urls=(f"/api/uploads/{doc_id}.pdf",)) is None
+    r = c.post("/api/clip", json={"doc_id": doc_id, "title": "The figure as a paper"})
+    assert r.status_code == 200, r.text
+    assert r.json()["existed"] is False and r.json()["block_id"] != figure
+    refused = c.post("/api/clip", json={"doc_id": doc_id, "folder": d})
+    assert refused.status_code == 400 and refused.json()["detail"] == refusal_text("directories")
+    r = c.post("/api/clip", json={"source_url": "https://example.org/clip-work-folder", "title": "Filed by path",
+                                  "folder_path": "clip-W/dir"})
+    assert r.status_code == 200, r.text
+    [filed] = r.json()["folders"]
+    assert filed not in (w, d)
+    with connect_pages_db(ws) as conn:
+        assert folder_paths(conn)[filed] == ["clip-W", "dir"]
+
+
 def test_lookup_by_arxiv_and_doi(guest, upstream, meta_calls):
     r = guest.post("/api/clip", json={"source_url": "https://arxiv.org/abs/2601.01234v2", "title": "Arx"})
     assert r.status_code == 200, r.text
     block_id = r.json()["block_id"]
     _, props = _props(block_id)
     # Bare arXiv ids are version-stripped before resolving: the canonical PDF is the latest.
-    assert props["source_url"] == "https://arxiv.org/pdf/2601.01234"
+    assert props["doc"]["url"] == "https://arxiv.org/pdf/2601.01234"
     for params in ({"arxiv_id": "2601.01234"}, {"url": "https://arxiv.org/pdf/2601.01234v1"},
                    {"url": "arXiv:2601.01234"}, {"url": "https://arxiv.org/abs/2601.01234v2"}):
         lk = guest.get("/api/library/lookup", params=params)
@@ -353,7 +476,7 @@ def test_clip_arxiv_html_page_with_old_style_id(guest, upstream, meta_calls):
     body = r.json()
     assert body["doc_id"] and "note" not in body
     _, props = _props(body["block_id"])
-    assert props["source_url"] == "https://arxiv.org/pdf/cond-mat/0402216"
+    assert props["doc"]["url"] == "https://arxiv.org/pdf/cond-mat/0402216"
     assert props["web_url"] == page
     assert props["web_meta"] == {"arxiv_id": "cond-mat/0402216"}
     assert meta_calls == [(account_of(guest_name()), body["block_id"])]

@@ -22,6 +22,7 @@ import io
 import json
 
 import pytest
+from conftest import doc_props
 from zotero_engine import (GROUP, LIB, _block, _block_of, _conflicts, _due, _edit, _force, _highlight,  # noqa: F401
                            _kids, _link, _page_of, _pages, _rows, _sent_keys, _sync, _writes, background, fake, idle,
                            made, me, no_relocation, owner_id, quiet)
@@ -419,7 +420,7 @@ def test_a_highlight_held_across_a_pdf_replacement_sends_nothing_until_it_is_pla
     fake.add_file(LIB, keys["pdf"], pdf_bytes() + b"\n% the publisher's version\n")  # Zotero's file changed
     calls = len(fake.calls)
     _sync(me, ws)
-    assert _block(ws, page)["props"]["doc_id"] == _rows(ws, "attachment")[keys["pdf"]]["detail"]["doc_id"]
+    assert _block(ws, page)["props"]["doc"]["hash"] == _rows(ws, "attachment")[keys["pdf"]]["detail"]["doc_id"]
     stamped = _block(ws, hl)["props"]["pdf_position"]
     assert stamped.get("doc_id")  # being placed in the new file: held
     assert _rows(ws, "annotation")[keys["highlight"]]["state"] == "held"
@@ -827,7 +828,7 @@ def test_a_first_link_pairs_the_imported_annotations_and_notes_and_makes_nothing
             "venue": "Nature", "volume": "647", "pages": "1-10", "doi": "10.1038/s41586-000-00000-0",
             "arxiv_id": "", "publisher": "", "isbn": "", "source": "zotero"}
     zotero_local.create_page(ws, page_id=page, title="Attention is all you need", actor=owner_id, client="t",
-                             props={"meta": meta, "doc_id": doc, "zotero_key": item_uri(LIB, keys["attention"])})
+                             props={"meta": meta, **doc_props(doc), "zotero_key": item_uri(LIB, keys["attention"])})
     with za.Pages(pdf_bytes()) as pages:
         hl = za.from_item(fake.data(LIB, keys["highlight"]), pages.page(1))
     _edit(ws, owner_id, page, [
@@ -1495,7 +1496,7 @@ def test_a_first_link_adopting_gammas_sends_its_annotation_and_records_the_diffe
     doc, _ = storage.store_pdf(ws, pdf_bytes())
     page = "zaMineFirst"
     zotero_local.create_page(ws, page_id=page, title="Attention is all you need", actor=owner_id, client="t",
-                             props={"doc_id": doc, "zotero_key": item_uri(LIB, keys["attention"]), "meta": {
+                             props={**doc_props(doc), "zotero_key": item_uri(LIB, keys["attention"]), "meta": {
                                  "title": "Attention is all you need", "doi": "10.1038/s41586-000-00000-0",
                                  "authors": [], "year": "2017", "source": "manual"}})
     with za.Pages(pdf_bytes()) as pages:

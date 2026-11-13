@@ -129,9 +129,10 @@ is no page: then every request does.
 - **The end-of-queue re-ask.** Each final reply says whether its
   translations carry the brief (`brief`). Once the queue is done, when some
   chunk came back with the brief, the chunks that came back without it are
-  asked once more, with `wait_brief: true`, whatever comes back. A chunk
-  whose request fails then keeps the text it has; one that lands fades its
-  new text in. Nothing loops.
+  asked once more, with `wait_brief: true`, whatever comes back, together
+  with the chunks that lost a paragraph ("Failures"). A chunk whose request
+  fails then keeps the text it has; one that lands fades its new text in.
+  Nothing loops: a chunk is asked again at most once.
 
 **Failures.** A chunk whose request fails is asked again
 (`translateJob.requestChunk`):
@@ -144,8 +145,14 @@ is no page: then every request does.
 
 A chunk that still fails is dropped, not the job. Its paragraphs go into
 their pages' `failed` sets and stay pending: the original shows, the page
-is not done, and the next job asks for them. The workers go on. The job
-stops, with the last failure's reason, only when:
+is not done, and the next job asks for them. The workers go on, and once
+the queue is done the chunk is asked once more (the end-of-queue re-ask,
+above), as is every chunk with a paragraph the server could not translate
+(below): a provider busy for a moment is often free again by then, and the
+paragraphs that came back are answered from the server's memory. What lands
+then takes its mark away. A job on one paragraph ("A paragraph's menu") is
+not asked again so: its queue ends with its one request, and its pill
+offers Try again. The job stops, with the last failure's reason, only when:
 
 - `FAILS_IN_A_ROW` (3) chunks fail with no success between them: the
   provider is down, not one connection lost;
@@ -155,8 +162,10 @@ stops, with the last failure's reason, only when:
   final: it drops that chunk only.
 
 The server asks the model again for what its reply got wrong ("The
-server") and names the paragraphs that still failed (`failed`). Those stay
-pending too, without the queued wash. At the job's end the status counts
+server"), or a service with its tokens in another form ("Machine-translation
+services"), and names the paragraphs that still failed (`failed`). Those
+stay pending too, without the queued wash, and their chunk is asked once more
+at the queue's end. At the job's end the status counts
 `untranslated`, the paragraphs left in the original: those the server could
 not translate and those whose chunk's request failed (`unanswered`). The
 end-of-job message says how many, with a "Try again" that runs a job over
@@ -1309,11 +1318,12 @@ translation request never makes it.
 
 - **The paper** (`paper_of`): with `page_id`, the page row in the request's
   workspace (`require_ws`, checked only when a page is named) — its title,
-  authors, year and venue from `meta`, and its stored PDF (`page_attachment`,
-  `find_upload_file`, never a download). A duplicated page, which carries
-  only the stored upload's URL, is that stored file (`attachment_file`), as
-  the viewer reads it: the same paper, kept translations and Forget as the
-  page it was copied from. Without a stored file, the request's
+  authors, year and venue from `meta`, and its stored PDF (the file its
+  document shows, `documents.model.file_hash`; `find_upload_file`, never a
+  download). A duplicated page, which shows the original's stored file
+  without owning it (its doc is a `copy`), is that stored file, as the
+  viewer reads it: the same paper, kept translations and Forget as the page
+  it was copied from. Without a stored file, the request's
   `head`. The key names the stored file (`doc:<id>`). A page without one is
   named by its id (`page:<id>`), so the chunks and the selection translator,
   which send no head, find the brief a brief request made from the head.
@@ -1620,8 +1630,8 @@ translation without asking a model, after a restart too.
 - **Purge**: `pdf_index.purge_unused` calls `translate_store.purge` beside
   `pdf_meta.purge`, so a PDF that leaves the workspace takes its kept
   translations and brief along. A file a duplicated page still shows has
-  not left: the sweep reads that page's upload address as well as `doc_id`
-  (`attachment_file`, as `paper_of` does).
+  not left: the sweep reads the file a copy shows (`file_hash`, as
+  `paper_of` does) as well as the `doc_id` column, which leaves copies out.
 - **Errors**: every function logs its own sqlite errors and carries on as
   if nothing were kept. Derived data never fails a translation.
 
@@ -1670,16 +1680,16 @@ a writer clears it):
   offers it while no job runs, when some page holds translated text, the
   document on screen is the page's and the account may write the
   workspace. The page must also have a file the server keeps translations
-  under (`attachmentFile`: its upload, a duplicated page's upload, or for a
-  PDF opened from its link the copy the proxy saves under the link's
-  hash). A PDF opened
+  under (`fileHash` of its document: its upload, the original's upload on
+  a duplicated page, or for a PDF opened from its link the copy the proxy
+  saves under the link's hash). A PDF opened
   from its link with Save external PDFs off may have no copy: nothing of it is
   kept, and Forget resets the server's memory of it through `page`.
 
 ## Selection translation
 
 The text-selection popup (`PlainTip` in `pdf/PdfViewer.jsx`: the highlight
-colors, a line, then Copy (in the iPad app, whose system menu is off over
+style row, a line, the colors and their fold, a line, then Copy (in the iPad app, whose system menu is off over
 the PDF), Comment and the link) carries a 文A button, last, when
 Settings → Language and Translation › "Translate a selection" is on
 (`selTranslate`, account pref, default on), and the selection is not in a
@@ -1780,10 +1790,15 @@ session's first translation to finish says so on the pill, with **Export…**.
   `lines`, and ground and ink from the file itself, so no colour is sent. App sends it (`exportTranslation`,
   through `tasks/useAppJobs.js` `runExport`) for a page's annotated PDF (a
   folder's carries `translations`, "A folder's export" below), and only
-  when the PDF the viewer translated is the file the job reads (`translateExport.exportFile`): the page's upload, or the proxy
-  reading the page's own link, whose saved copy has the page's `doc_id`. A
-  duplicated page names no `doc_id` and exports the file it shows; a link
-  page whose copy was not kept fails its annotated PDF, translated or not.
+  when the PDF the viewer translated is the file the job reads
+  (`translateExport.exportFile`): the stored file the page's document
+  names (`fileHash` of its document, [documents.md](documents.md)), as
+  its upload or as the proxy reading the page's own link, whose saved
+  copy is named by the page's `doc.hash`. A duplicated page's is the
+  original's upload, so its annotated PDF carries the translation as the
+  original's does. A page shown from an address alone names no stored
+  file and writes none; a link page whose copy was not kept fails its
+  annotated PDF, translated or not.
   Such an export always goes through the job, even with every switch off. A
   share view translates nothing and sends none.
 - **Retry**: the job's params name the language (`translation`) but cannot
@@ -2003,6 +2018,10 @@ MuPDF's behaviour the writer depends on, each held by a test in
   a page drawn inside a form gives up only what lies in the box.
 - MuPDF 1.28's filter drops a `Tm` that repeats the line's: an overstruck
   glyph is drawn where the page drew it, or the formula is a picture.
+- PyMuPDF 1.28's `PdfFilterOptions()` leaves `no_update` as the memory had
+  it, and set, every form the filter copies comes out empty, so `_filtered`
+  sets it to 0; otherwise a formula on a form went a picture or not as the
+  heap fell, with the tests run before it.
 
 Why it is built this way, and the measurements:
 [research/translated-pdf-export.md](../research/translated-pdf-export.md).
@@ -2017,11 +2036,12 @@ viewer's own code and no viewer:
 
 - **Which papers** (`folderPapers`): the pages filed in the folder or below
   it, a page inside another filed where its top is (the server's
-  `pages_in_folder` rule), that show a stored PDF (`doc_id`; a duplicated
-  page or a link page without its copy has no file to write into), and of
-  those the ones whose file the memory holds under a key naming the
-  settings' language and model (`translateRecall.openKey`, App's
-  `folderKeyOf`). The paper open in the viewer goes as the viewer shows it
+  `pages_in_folder` rule), that show a stored PDF (`fileHash` of the
+  document, `doc_id` as the job names it: a duplicated page's is the
+  original's; a page shown from an address alone has no file to write
+  into), and of those the ones whose file the memory
+  holds under a key naming the settings' language and model
+  (`translateRecall.openKey`, App's `folderKeyOf`). The paper open in the viewer goes as the viewer shows it
   (`exportTranslation`, so Show original there exports its original).
 - **Each paper** (`paperLayout`): its PDF opened with pdf.js and no viewer
   (`PdfViewer.openPdfDocument`: the viewer's byte caches, else one GET, the
@@ -2087,15 +2107,27 @@ the misses to `translate_engines.translate` instead of a chat model.
 - The service path needs no AI provider. It has no effort (`""` in the
   final object), no brief (the
   brief request answers `{"ready": false}` at once), no streamed partials
-  (the stream is just the final line), no token usage and nothing to ask
-  again, since the APIs answer aligned lists. A service translates sentence
+  (the stream is just the final line), no token usage and no text left out
+  to ask for again, since the APIs answer aligned lists. A service translates sentence
   by sentence and takes no context.
 - Cache, kept translations, validation and dedup are the LLM path's, keyed
   on `engine:<id>`; its final object says `brief: true`. Nothing tells a
-  service to keep the `{v1}` tokens or `{br}` markers; a reply that broke a
-  token comes back verbatim (the original shows), and a lost marker is cut
-  by length. `failed` stays empty: a service answers the same text the same
-  way, so the viewer asking again would get the same.
+  service to keep the tokens or the `{br}` markers, and a lost marker is cut
+  by length.
+- **Tokens** go out as `{1}`, `{2}`… (`translate_engines.TOKEN_FORMS`), the
+  placeholder of software's own message catalogs, and come back as `{v1}`.
+  Microsoft drops or rewrites `{vN}` in about one text in ten into Japanese
+  or Korean, mostly where a text opens on the end of a sentence a column
+  break cut ("droplets,{v1} but…" lost the word and the token), and kept
+  every `{N}` in the same texts (issue #163,
+  [research/translation-reliability.md](../research/translation-reliability.md#services-and-tokens)).
+  A text that already holds the form (a paper's own "{1}") goes as it is.
+- **A broken token is asked again.** A reply whose tokens `checked` refuses
+  would show the wrong formula, and the same text comes back the same way,
+  so those texts go to the service once more, in one call, with their
+  tokens as `[v1]` (`redone` counts them). One still broken comes back
+  verbatim, named in `failed` as a model's is: the viewer marks it, counts it
+  and asks for it again, and it is neither cached nor kept.
 
 Credentials are per account under the reserved `translate-engines` pref.
 Like `ai-settings`, `/api/prefs` refuses it and the only read path is the

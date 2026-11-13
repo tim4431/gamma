@@ -82,6 +82,8 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
     case "read_page": return t("Read “{title}”", { title });
     case "read_block": return t("Read notes of “{title}”", { title: args.block_id ? titleOf(args.block_id) || t("a page") : title });
     case "read_chats": return t("Read an earlier AI chat");
+    case "list_feedback": return t("List the feedback");
+    case "read_feedback": return t("Read a feedback item");
     case "view_pdf_page": return t("Look at PDF page {page}", { page: args.pdf_page || "?" });
     case "view_ink": return t("Look at your handwriting");
     case "view_image": return t("Look at a note's pictures");

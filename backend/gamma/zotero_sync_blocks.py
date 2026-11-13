@@ -41,6 +41,7 @@ from . import ink as inkmod
 from . import zotero_remote as zr
 from .blocks_store import new_block_id, write_lock
 from .db import connect_pages_db, parse_stamp
+from .documents.model import stored_name
 from .highlights import is_ink
 from .logbuf import log
 from .ops import OpError
@@ -283,7 +284,7 @@ class Blocks:
         first use; None without one."""
         if self.pages is None:
             side = self.u.side
-            path = storage.open_path(self.r.ws, f"{side.doc_id}.pdf") if side and side.doc_id else None
+            path = storage.open_path(self.r.ws, stored_name(side.doc_id, ".pdf")) if side and side.doc_id else None
             self.pages = zotero_annotations.Pages(str(path)) if path else False
         return self.pages or None
 
@@ -1968,7 +1969,7 @@ def resolve_annotation(ws: str, row: dict, choice: str) -> None:
     ann = next((a for a in (view.annotations if view else ()) if found and a.block["id"] == found["block_id"]), None)
     if ann is None or not view.doc_id:
         raise ValueError("the annotation is no longer on its page")
-    path = storage.open_path(ws, f"{view.doc_id}.pdf")
+    path = storage.open_path(ws, stored_name(view.doc_id, ".pdf"))
     if not path:
         raise ValueError("the page's PDF is not here")
     props = ann.block.get("properties") or {}

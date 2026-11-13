@@ -1,5 +1,4 @@
 import { t } from "../shared/i18n/i18n.js";
-import { PAGE_FILE_ACCEPT } from "../shared/lib/utils";
 import { pickFiles } from "../shared/lib/pickFiles.js";
 import { BrandMark } from "../shared/ui/BrandMark";
 import { DownloadIcon, FilePlusIcon, LinkIcon, UploadIcon } from "../shared/ui/Icons.jsx";
@@ -7,15 +6,16 @@ import { DownloadIcon, FilePlusIcon, LinkIcon, UploadIcon } from "../shared/ui/I
 // "Start your library": what a library with nothing of the user's in it yet
 // (isFreshLibrary — no pages, or only the seeded Welcome page and Sketchbook) shows above
 // its listing. Four ways in, each an existing handler: a paper by link (the
-// Add popover), uploads, a blank note page, the Import dialog; plus the first
-// tour. It goes away with the first page of the user's own.
+// Add popover), uploads (any file: a PDF, a note, a figure, a data file), a
+// blank note page, the Import dialog; plus the first tour. It goes away with
+// the first page of the user's own.
 export default function LibraryEmpty({ onOpenLink, onUpload, onNewPage, onImport, onTour }) {
   const cards = [
     { id: "link", icon: LinkIcon, primary: true, onClick: onOpenLink,
       title: t("Open a paper from a link"),
       text: t("Paste an arXiv link, a DOI or any PDF address — Gamma finds the PDF.") },
-    { id: "upload", icon: UploadIcon, onClick: () => pickFiles({ accept: PAGE_FILE_ACCEPT, multiple: true }, (files) => onUpload([...files])),
-      title: t("Upload PDFs"),
+    { id: "upload", icon: UploadIcon, onClick: () => pickFiles({ multiple: true }, (files) => onUpload([...files])),
+      title: t("Upload files"),
       text: t("Choose files, or drop them anywhere on this page.") },
     { id: "page", icon: FilePlusIcon, onClick: onNewPage,
       title: t("Write a note page"),
@@ -50,7 +50,7 @@ export default function LibraryEmpty({ onOpenLink, onUpload, onNewPage, onImport
             {t("New here?")} <strong>{t("Take the 2-minute tour")}</strong>
           </button>
         ) : <span />}
-        <span className="libEmptyTip">{t("Tip: drag PDFs from your desktop straight in")}</span>
+        <span className="libEmptyTip">{t("Tip: drag files from your desktop straight in")}</span>
       </div>
     </section>
   );

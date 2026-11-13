@@ -4,7 +4,9 @@ decides what travels and when; this module says what a block looks like as
 items, what an item looks like as a block, and how one field of an item
 lands on a block it already has.
 
-A highlight is a ``highlight`` (or the ``underline`` Zotero made it), an area
+A highlight is a ``highlight``, or an ``underline`` when it marks its
+passage with a line (its ``style``; Zotero has no wavy underline nor
+strikethrough, and an item keeps the type it was made with), an area
 highlight an ``image``, a text box on a PDF page a ``text`` (or the ``note``
 Zotero made it), and an ink group one ``ink`` item per look, since an item has
 one colour and one width. A ``text`` annotation is a Zotero box (a
@@ -60,6 +62,8 @@ from .zotero_notes import note_tree
 
 TYPES = ("highlight", "underline", "image", "ink", "note", "text")
 TEXT_KINDS = ("highlight", "underline")      # the kinds that carry annotationText
+LINE_KIND = "underline"                      # what a highlight marked by a line goes as
+LINE_STYLES = ("underline", "squiggly", "strikeout")  # a highlight block's styles that are lines
 # The PDF annotation Zotero embeds for each kind: the subtype an import key names.
 SUBTYPES = {"highlight": "/Highlight", "underline": "/Underline", "image": "/Square", "ink": "/Ink",
             "note": "/Text", "text": "/FreeText"}
@@ -242,7 +246,7 @@ _MD5_MAX = 512
 def file_md5(src) -> str:
     """The MD5 of a stored PDF (a path) or of PDF bytes, lowercase hex, as
     Zotero's attachment ``md5`` spells it; "" for a file that can't be
-    read. A path's is kept by (path, size, mtime_ns), never by doc id: a
+    read. A path's is kept by (path, size, mtime_ns), never by hash: a
     strip rewrites a stored file in place under the same name."""
     if isinstance(src, (bytes, bytearray)):
         return hashlib.md5(src).hexdigest()
@@ -738,7 +742,7 @@ def _highlight_fields(props: dict, content: str, page: Page, zotero_type, nested
     if pos.get("area"):
         kind, boxes = "image", [_union(boxes)]
     else:
-        kind = zotero_type if zotero_type in TEXT_KINDS else "highlight"
+        kind = zotero_type if zotero_type in TEXT_KINDS else LINE_KIND if props.get("style") in LINE_STYLES else "highlight"
     fields = {"annotationType": kind}
     if kind in TEXT_KINDS:
         fields["annotationText"] = str(props.get("quote") or "")[:TEXT_MAX]
@@ -803,8 +807,8 @@ def _items(fields: dict, page: Page, slot: str, author: str, used: set,
 def to_items(block: dict, page: Page, *, ink_file=None, rows=(), zotero_type: str | None = None,
              nested=(), author: str = "") -> list[Item]:
     """A Gamma annotation block (``content``, ``properties``) on ``page`` as
-    Zotero items: a highlight as a ``highlight`` (``zotero_type``
-    "underline" keeps an underline one), an area highlight as an ``image``,
+    Zotero items: a highlight as a ``highlight``, one marked by a line as
+    an ``underline`` (``zotero_type``, the item's, keeps what it is), an area highlight as an ``image``,
     a text box as a ``text`` (``zotero_type`` "note": a ``note``), an ink
     group (``ink_file``, its parsed file) as one ``ink`` item per look, its
     strokes assigned to the block's ink ``rows`` (``(slot, stroke_ids,
@@ -911,7 +915,8 @@ def from_item(data: dict, page: Page) -> dict | None:
     ``imported_annot`` (the key the embedded importer gives the annotation
     Zotero would embed for it, so an RDF import adds it nothing twice) and
     ``annot_stripped: True``. A highlight's quote is ``annotationText`` as
-    sent; its colour takes ``HIGHLIGHT_ALPHA``; an ink item's strokes are
+    sent; its colour takes ``HIGHLIGHT_ALPHA``; an underline is a highlight
+    with ``style`` "underline"; an ink item's strokes are
     ids ``z<key>-<n>``; a note is a note-yellow text box, a text annotation
     a box upright on the same centre. None for an item that makes no block:
     a kind Gamma has none of, no place, another page, no strokes, a note or
@@ -958,6 +963,7 @@ def from_item(data: dict, page: Page) -> dict | None:
     props = {"color": color_in(data.get("annotationColor")), "quote": quote,
              "pdf_position": highlights.position(n, round(w, 2), round(h, 2),
                                                  [to_viewer_rect(b, page.frame) for b in boxes], area=area),
+             **({"style": "underline"} if kind == LINE_KIND else {}),
              **_key_props(data, annotation_key(n, SUBTYPES[kind], rects[0]))}
     return {"zotero_type": kind, "kind": "highlight", "content": comment_in(comment), "props": props,
             "ink": None, "stroke_ids": (), "slot": ""}
@@ -1075,16 +1081,17 @@ def page_number(props: dict, ink_file=None, *, on_sheet: bool = False) -> int | 
 def is_annotation_block(block: dict, *, on_sheet: bool = False) -> bool:
     """Whether a block is of a kind that is a Zotero annotation: an ink
     group on a PDF page, a text box on a PDF page (not on a sheet: the
-    nearest sheet wins), a highlight (not a link region), whatever its
-    state. A block with a row that still is one is held while it is not
-    ``eligible``, never gone."""
+    nearest sheet wins), a highlight on a PDF page (not a link region, and
+    not a region of a picture: Zotero's "image" annotation is an area of a
+    PDF page), whatever its state. A block with a row that still is one is
+    held while it is not ``eligible``, never gone."""
     props = block.get("properties") or {}
     kind = _kind(props)
     if kind == "ink":
         return not on_sheet and isinstance(props.get("pdf_position"), dict)
     if kind == "text_box":
         return text_box.box_page(props, on_sheet) is not None
-    return kind == "highlight"
+    return kind == "highlight" and highlights.is_highlight(props)
 
 
 def hold_reason(block: dict) -> str:
@@ -1102,7 +1109,7 @@ def hold_reason(block: dict) -> str:
     kind = _kind(props)
     if kind == "ink":
         return "" if props.get("ink_url") else WAIT_PLACING
-    if kind != "highlight":  # a text box, or no annotation
+    if kind != "highlight" or not highlights.is_highlight(props):  # a text box, a picture's region, or no annotation
         return ""
     pos = props["pdf_position"]
     if pos.get("lost"):

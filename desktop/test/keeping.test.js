@@ -1,6 +1,7 @@
 // The bar's reading of what this computer keeps (lib/keeping.js): a clone's
 // states in the order Gamma's sync pill checks them, a Zotero link's, a
-// synced vault's of a directory and of one file, the one summary the sync
+// synced vault's of a directory (a work folder's among them) and of one
+// file, the one summary the sync
 // button shows, and what the shell says about a vault: the dialog's first
 // round, the questions before a removal, a force or going on, a round's
 // outcome. `npm test` in desktop/.
@@ -65,6 +66,18 @@ test('a vault of a directory, worst first: syncing, paused, stopped, held, not t
   assert.match(away.title, /^the directory is not there The vault syncs again once it is back; Locate… if it moved\.$/);
   assert.deepEqual([folder({ status: { last_error: 'disk full' } }).state, folder({ status: { last_error: 'disk full' } }).title], ['error', 'disk full']);
   assert.deepEqual([folder({ status: {} }).state, folder({ status: {} }).text], ['new', 'Not synced yet']);
+});
+
+test('a work folder is a folder of the server\'s own that pushes everything; one choosing its files says so first, paused or stopped as it is', () => {
+  const work = folder({ push: 'everything', library: true, status: { last_sync: now } });
+  assert.deepEqual([work.work, work.library, work.choosing], [true, true, false]);
+  for (const kept of [folder({ status: {} }), folder({ push: 'pdfs', status: {} }), folder({ push: 'everything', folder_id: 'root', status: {} }),
+    folder({ push: 'everything', remote_url: 'http://nas.lan:9001', status: {} }), file({ status: {} })]) {
+    assert.equal(kept.work, false, kept.where);
+  }
+  const choosing = folder({ push: 'everything', choosing: true, status: { paused_at: now, stopped: 'choose its files first' } });
+  assert.deepEqual([choosing.choosing, choosing.state, choosing.text], [true, 'pending', 'Choosing files']);
+  assert.match(choosing.title, /^Nothing is tracked yet: Choose files… opens its tracking dialog in Gamma/);
 });
 
 test('an up-to-date vault says what it pushed, its conflicts, the files changed here and those not synced', () => {
@@ -322,6 +335,9 @@ test('the dialog shuts Sync for a vault that would be refused, and says why', ()
   assert.deepEqual(say({}, { remote: true, pull: false, push: 'pdfs' }), { ok: false, text: keeping.REMOTE_RULE }, 'the rule the vault\'s switches keep to');
   assert.equal(keeping.REMOTE_RULE, 'A vault of another server pulls, and pushes PDFs at most, for now.');
   assert.equal(say({}, { remote: true, push: 'pdfs' }).ok, true, 'a remote\'s folder may push its PDFs');
+  assert.deepEqual(say({}, { whole: true, push: 'everything' }), { ok: false, text: keeping.WHOLE_RULE }, 'the server\'s words');
+  assert.equal(say({ notes: 2 }, { whole: true, push: 'pdfs' }).ok, true, 'the whole library pulls, and pushes PDFs');
+  assert.equal(folder({ folder_id: 'root', status: {} }).whole, true);
   assert.deepEqual(say({ refusal: 'D:\\Papers holds the marker of the synced vault E:\\Papers: was it copied?' }),
     { ok: false, text: 'D:\\Papers holds the marker of the synced vault E:\\Papers: was it copied?' });
   assert.match(say({ pages: 3, notes: 1 }, { push: 'everything' }).text, /^Both the folder and the directory hold files/);
@@ -355,6 +371,14 @@ test('removing a vault: the pages stay, the PDFs read in place are stored first;
   const f = keeping.removalAsk(file({ status: {} }), { pages: 1 });
   assert.deepEqual(f.choices, ['keep', null]);
   assert.match(f.detail, /^main\.pdf is no longer pushed to the page\. The file and the page stay as they are\.$/);
+});
+
+test('removing a work folder says both numbers: its files not in the library go to Recently deleted, those in it stay', () => {
+  const w = folder({ push: 'everything', status: { last_sync: now, folder_path: ['Paper'] } });
+  assert.match(keeping.removalAsk(w, { pages: 5, files: 3, in_library: 2, in_place: 1, bytes: 2_000 }).detail,
+    /^Its 3 files not in the library go to Recently deleted; its 2 pages in the library stay; 1 PDF read where it is \(2 KB\) is stored in Gamma first\. /);
+  assert.match(keeping.removalAsk(w, { pages: 1, files: 1, in_library: 0 }).detail, /^Its file not in the library goes to Recently deleted\. /);
+  assert.match(keeping.removalAsk(w, { pages: 2, files: 0, in_library: 2 }).detail, /^Its 2 pages stay in Gamma\. /);
 });
 
 test('a force pull or push and going on are counted and asked first', () => {

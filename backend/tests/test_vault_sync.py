@@ -1,4 +1,4 @@
-"""A synced vault's rounds (gamma/vault_sync.py): real directories in tmp_path
+"""A synced vault's rounds (gamma/vault/sync.py): real directories in tmp_path
 and a real workspace, every step of push and pull (docs/dev/synced_vaults.md
 "A round"), a kill at each point of the journal followed by a round that
 converges with nothing lost and nothing doubled, the echo (a second round
@@ -20,16 +20,19 @@ from contextlib import closing
 import pymupdf
 import pytest
 
-from conftest import _tree_block, account_of, login, make_folder, make_page, make_user, workspace_of
-from gamma import (config, folder_links, gamma_sync, jobs, linked_files, md_lens, pdf_meta, storage, vault_disk,
-                   vault_merge, vault_store, vault_sync)
+from conftest import (_tree_block, account_of, doc_props, login, make_folder, make_page, make_user,
+                      mark_work_folder, thread_on, workspace_of)
+from gamma import comments, config, folder_links, gamma_sync, jobs, linked_files, md_lens, pdf_meta, storage
+from gamma.vault import disk as vault_disk, kinds, local_remote, merge as vault_merge, store as vault_store
+from gamma.vault import sync as vault_sync
 from gamma.blocks_store import LABELS, block_kind, new_block_id, newest_change_seq, write_lock
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
+from gamma.feedback import kept
 from gamma.ops import commit_ops, move_across_pages, restore_page, trash_page
 from gamma.routers import pages as pages_mod
 from gamma.routers.pages import replace_attachment
 from gamma.trash import purge as purge_page
-from gamma.vault_sync import LocalRemote
+from gamma.vault.local_remote import LocalRemote
 
 OWNER = "vs_owner"
 
@@ -50,7 +53,7 @@ def quick(monkeypatch):
     missing file removed at its second scan, no manifest walk holding a PDF
     open, no stat remembered."""
     monkeypatch.setenv("GAMMA_FOLDER_LINKS", "1")
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     monkeypatch.setattr(gamma_sync, "SETTLE_S", 0)
     monkeypatch.setattr(vault_store, "MISSING_S", 0)
     monkeypatch.setattr(pdf_meta, "schedule", lambda ws, doc_id: None)
@@ -577,7 +580,7 @@ def test_a_file_put_back_brings_its_page_back_from_recently_deleted(vault):
 
 
 def test_a_note_still_being_written_waits(vault, monkeypatch):
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 60)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 60)
     v = vault()
     v.write("Fresh.md", "just saved\n")
     status = v.sync()
@@ -599,15 +602,40 @@ def test_a_pdf_is_a_page_reading_it_in_place_with_the_note_of_its_stem(vault):
     page = v.page_of("Papers/Attention.pdf")
     assert v.page_of("Papers/Attention.md") == page and v.page_count() == 2
     props = v.blocks(page)[page]["props"]
-    assert props["doc_id"] == storage.content_digest(data) and props["linked_file"] is True
+    assert props["doc"]["hash"] == storage.content_digest(data) and props["doc"]["at"] == "path"
     assert v.texts(page) == ["my reading notes"] and v.info(page).title == "Attention"
-    assert linked_files._in_vault(page) and not storage.exists(v.ws, f"{props['doc_id']}.pdf")
-    assert storage.open_path(v.ws, f"{props['doc_id']}.pdf") == v.root / "Papers" / "Attention.pdf"
+    assert linked_files._in_vault(page) and not storage.exists(v.ws, f"{props['doc']['hash']}.pdf")
+    assert storage.open_path(v.ws, f"{props['doc']['hash']}.pdf") == v.root / "Papers" / "Attention.pdf"
     # new bytes: the page's PDF, the disk winning
     new = _pdf("attention, second edition")
     v.write("Papers/Attention.pdf", new, age=5)
     v.sync()
-    assert v.blocks(page)[page]["props"]["doc_id"] == storage.content_digest(new)
+    assert v.blocks(page)[page]["props"]["doc"]["hash"] == storage.content_digest(new)
+    v.quiet()
+
+
+def test_a_pdf_with_an_open_thread_has_each_version_stored_as_it_comes(vault, owner, monkeypatch):
+    """A comment thread on a vault's PDF keeps the bytes it shows stored
+    (gamma/feedback/kept.py): stored at its open, every new file stored by
+    the round as it comes, read in place all the same; once resolved, the
+    next is read in place alone."""
+    monkeypatch.setattr(comments, "write_listeners", [kept.after_comment])
+    v = vault()
+    first, second, third = _pdf("commented first"), _pdf("commented second"), _pdf("commented third")
+    v.write("Paper.pdf", first, age=30)
+    v.sync()
+    page = v.page_of("Paper.pdf")
+    thread = thread_on(owner, page, page, "the whole paper")
+    assert kept.wait() and storage.exists(v.ws, f"{storage.content_digest(first)}.pdf")
+    v.write("Paper.pdf", second, age=20)
+    v.sync()
+    doc = v.blocks(page)[page]["props"]["doc"]
+    assert doc["hash"] == storage.content_digest(second) and doc["at"] == "path"
+    assert storage.exists(v.ws, f"{doc['hash']}.pdf") and storage.exists(v.ws, f"{storage.content_digest(first)}.pdf")
+    owner.post(f"/api/comments/{thread['id']}/resolve", json={"resolved": True}).raise_for_status()
+    v.write("Paper.pdf", third, age=10)
+    v.sync()
+    assert not storage.exists(v.ws, f"{storage.content_digest(third)}.pdf")
     v.quiet()
 
 
@@ -631,14 +659,16 @@ def test_a_stored_pdf_pull_copied_out_is_followed_when_it_changes_on_disk(vault,
     v = vault()
     data = _pdf("stored first")
     r = owner.post("/api/uploads", files={"file": ("paper.pdf", data, "application/pdf")})
-    page = make_page(owner, "Followed", {"folders": [v.folder], "doc_id": r.json()["doc_id"]})["id"]
+    page = make_page(owner, "Followed", {"folders": [v.folder], **doc_props(r.json()["doc_id"])})["id"]
     v.sync()
     assert (v.root / "Followed.pdf").read_bytes() == data
+    assert v.blocks(page)[page]["props"]["doc"]["at"] == "store"
     new = _pdf("rewritten on disk")
     v.write("Followed.pdf", new, age=5)
     v.sync()
-    props = v.blocks(page)[page]["props"]
-    assert props["doc_id"] == storage.content_digest(new) and props["linked_file"] is True
+    props = v.blocks(page)[page]["props"]       # the disk's bytes, read where they are from now on
+    assert props["doc"] == {"format": "pdf", "name": "Followed.pdf", "hash": storage.content_digest(new), "ext": ".pdf",
+                            "at": "path"}
     assert storage.exists(v.ws, f"{r.json()['doc_id']}.pdf")       # the stored copy stays
     v.quiet()
 
@@ -694,7 +724,7 @@ def test_a_page_made_in_gamma_gets_its_file_and_a_stored_pdf_is_copied_beside_it
     v.edit(page, insert(page, "written in Gamma"))
     data = _pdf("stored")
     r = owner.post("/api/uploads", files={"file": ("paper.pdf", data, "application/pdf")})
-    paper = make_page(owner, "Stored paper", {"folders": [v.folder], "doc_id": r.json()["doc_id"]})["id"]
+    paper = make_page(owner, "Stored paper", {"folders": [v.folder], **doc_props(r.json()["doc_id"])})["id"]
     v.sync()
     assert v.text("Sub/A new page.md") == "written in Gamma\n"
     assert (v.root / "Stored paper.pdf").read_bytes() == data
@@ -998,10 +1028,15 @@ def test_a_page_that_leaves_the_vault_stores_its_pdf_first_and_its_files_go_to_t
     v.write("Leaving.md", "notes\n")
     v.sync()
     page = v.page_of("Leaving.pdf")
-    doc = v.blocks(page)[page]["props"]["doc_id"]
+    doc = v.blocks(page)[page]["props"]["doc"]["hash"]
+    assert v.blocks(page)[page]["props"]["doc"] == {"format": "pdf", "name": "Leaving.pdf", "hash": doc, "ext": ".pdf",
+                                                    "at": "path"}
     v.edit(page, {"op": "set", "id": page, "props": {"folders": None}})
     v.sync()
-    assert storage.exists(v.ws, f"{doc}.pdf") and "linked_file" not in v.blocks(page)[page]["props"]
+    # stored, the same file: its hash and name kept
+    assert v.blocks(page)[page]["props"]["doc"] == {"format": "pdf", "name": "Leaving.pdf", "hash": doc, "ext": ".pdf",
+                                                    "at": "store"}
+    assert storage.exists(v.ws, f"{doc}.pdf")
     assert not (v.root / "Leaving.pdf").exists() and not (v.root / "Leaving.md").exists()
     assert v.state(page) == "live" and v.texts(page) == ["notes"] and not v.rows()
     assert sorted(os.listdir(v.root / vault_disk.TRASH / os.listdir(v.root / vault_disk.TRASH)[0])) == ["Leaving.md",
@@ -1063,7 +1098,7 @@ def test_a_callout_with_no_anchor_gamma_knows_is_a_highlight_the_relocation_run_
     v.sync()
     page = v.page_of("Paper.pdf")
     hl = v.find(page, "what I think")
-    job = jobs.latest(v.user, "relocate-highlights", f"{page}:{v.blocks(page)[page]['props']['doc_id']}")
+    job = jobs.latest(v.user, "relocate-highlights", f"{page}:{v.blocks(page)[page]['props']['doc']['hash']}")
     assert job is not None and jobs.wait(job["id"])["state"] == "done"
     props = v.blocks(page)[hl]["props"]
     assert props["quote"] == line and props["pdf_position"]["pageNumber"] == 2
@@ -1090,7 +1125,7 @@ def test_highlights_whose_run_could_not_start_are_asked_again_at_the_next_round(
     assert v.link["state"]["placing"] == [page]
     v.sync()
     assert "placing" not in v.link["state"]
-    job = jobs.latest(v.user, "relocate-highlights", f"{page}:{v.blocks(page)[page]['props']['doc_id']}")
+    job = jobs.latest(v.user, "relocate-highlights", f"{page}:{v.blocks(page)[page]['props']['doc']['hash']}")
     assert jobs.wait(job["id"])["state"] == "done"
     (hl,) = [b for b, block in v.blocks(page).items() if b != page]
     assert v.blocks(page)[hl]["props"]["pdf_position"]["rects"]
@@ -1234,7 +1269,7 @@ def test_a_push_names_its_first_batch_with_the_journals_token(vault, monkeypatch
     """Crash safety: ``ops.apply_batches(batch_id=)`` names
     the first of a push's batches (``MAX_OPS`` each) with its pending's token,
     which is what the journal looks for after a crash (``landed``)."""
-    monkeypatch.setattr(vault_sync, "MAX_OPS", 2)
+    monkeypatch.setattr(local_remote, "MAX_OPS", 2)
     v = vault()
     v.write("B.md", "a\n")
     v.sync()
@@ -1246,7 +1281,7 @@ def test_a_push_names_its_first_batch_with_the_journals_token(vault, monkeypatch
     v.sync()
     with connect_pages_db(v.ws) as conn:
         named = conn.execute("SELECT batch_id FROM page_ops WHERE page_id = ? AND client = ? ORDER BY seq",
-                             (page, vault_sync.CLIENT)).fetchall()
+                             (page, local_remote.CLIENT)).fetchall()
     assert named[-2:] == [(tokens[-1],), ("",)] and v.remote.landed(page, tokens[-1])
     assert v.texts(page) == ["a", "b", "c", "d", "e"]
 
@@ -1363,7 +1398,7 @@ def test_a_kill_after_shape_ops_only_leaves_a_page_to_pull(vault, monkeypatch):
 
 def _quick_again(monkeypatch):
     monkeypatch.setenv("GAMMA_FOLDER_LINKS", "1")
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     monkeypatch.setattr(gamma_sync, "SETTLE_S", 0)
     monkeypatch.setattr(vault_store, "MISSING_S", 0)
     monkeypatch.setattr(pdf_meta, "schedule", lambda ws, doc_id: None)
@@ -1441,11 +1476,11 @@ def test_an_account_that_may_no_longer_edit_stops_the_vault_not_a_file(vault, mo
     v = vault()
     v.write("A.md", "a\n")
     v.sync()
-    monkeypatch.setattr(vault_sync.workspaces, "role_of", lambda ws, user: "viewer")
+    monkeypatch.setattr(local_remote.workspaces, "role_of", lambda ws, user: "viewer")
     v.write("A.md", "a, edited\n")
     status = v.sync(ok=False)
     assert "may no longer edit" in status["last_error"] and v.texts(v.page_of("A.md")) == ["a"]
-    monkeypatch.setattr(vault_sync.workspaces, "role_of", lambda ws, user: None)
+    monkeypatch.setattr(local_remote.workspaces, "role_of", lambda ws, user: None)
     status = vault_sync.sync(v.link, remote=v.remote, direction="pull").status
     assert "no access" in status["last_error"]
 
@@ -1467,7 +1502,7 @@ def test_a_vault_with_no_marker_stops_and_one_whose_disk_is_gone_is_offline(vaul
     w = vault("w")
     w.write("M.md", "m\n")
     w.sync()
-    monkeypatch.setattr(vault_disk, "walk", lambda root, ignore=(): (_ for _ in ()).throw(vault_disk.Offline("gone")))
+    monkeypatch.setattr(vault_disk, "walk", lambda root, rules=None, **kw: (_ for _ in ()).throw(vault_disk.Offline("gone")))
     for _ in range(2):
         status = w.sync(ok=False)
         assert status["offline"] and w.state(w.page_of("M.md")) == "live"
@@ -1485,8 +1520,8 @@ def test_a_cloud_placeholder_is_never_read_or_removed(vault, monkeypatch):
     page = v.page_of("Cloud.md")
     real = vault_disk.scan
 
-    def placeholders(root, vault_id):
-        found = real(root, vault_id)
+    def placeholders(root, vault_id, rules=None, **kw):
+        found = real(root, vault_id, rules, **kw)
         for f in found.files.values():
             f.placeholder = True
         return found
@@ -1528,7 +1563,7 @@ def test_vaults_db_is_never_written_inside_the_pages_write_lock(vault, monkeypat
             except sqlite3.OperationalError as e:
                 raise AssertionError("vaults.db written inside the pages lock") from e
         return real()
-    for module in (vault_store, vault_sync, linked_files):
+    for module in (vault_store, local_remote, linked_files):
         monkeypatch.setattr(module, "connect_vaults_db", checked)
     v.write("L.md", "a\n\nb\n")
     v.write("L.pdf", _pdf("l"), age=10)
@@ -1752,7 +1787,7 @@ def test_a_pdf_attached_in_gamma_to_a_page_of_notes_is_copied_beside_them(vault,
     v.sync()
     page = v.page_of("Reading.md")
     up = owner.post("/api/uploads", files={"file": ("p.pdf", _pdf("attached later"), "application/pdf")}).json()
-    owner.put(f"/api/blocks/{page}", json={"properties": {"folders": [v.folder], "doc_id": up["doc_id"]}}).raise_for_status()
+    owner.put(f"/api/blocks/{page}", json={"properties": {"folders": [v.folder], **doc_props(up["doc_id"])}}).raise_for_status()
     v.sync()
     assert sorted(os.listdir(v.root)) == [".gamma", "Reading.md", "Reading.pdf"]
     assert v.rows()["Reading.pdf"]["page_id"] == page and (v.root / "Reading.pdf").read_bytes()[:4] == b"%PDF"
@@ -1781,22 +1816,115 @@ def test_a_page_or_folder_whose_name_the_scan_leaves_out_is_written_where_it_see
     v.quiet()
 
 
-def test_a_file_the_scan_leaves_out_but_is_there_is_never_a_removal(vault):
-    """An ignore glob written into the marker since: the file is there, so it
-    never counts as removed, and the guard never holds a vault where nothing
-    went."""
-    v = vault()
+def _work(v, owner):
+    """The vault's folder marked as a work folder's (conftest
+    ``mark_work_folder``): its rounds are a work folder's."""
+    mark_work_folder(owner, v.folder)
+    return v
+
+
+def _seen(path):
+    st = os.stat(path)
+    return path.read_bytes(), st.st_mtime_ns, st.st_ino
+
+
+def test_a_file_its_gammaignore_leaves_out_goes_to_recently_deleted_where_it_is(vault, owner):
+    """A work folder's paper unticked since, its PDF and the notes pull wrote
+    beside it: its page in Recently deleted, its rows in-place tombstones, the
+    files' bytes, time and id untouched; ticked again, the page is back with
+    its notes, whatever the PDF's bytes now."""
+    v = _work(vault(), owner)
+    paper = v.write("Paper.pdf", _pdf("the paper"), age=10)
+    v.write("Note.md", "a note\n")
+    v.sync()
+    page = v.page_of("Paper.pdf")
+    v.edit(page, insert(page, "a thought on the paper"))
+    v.sync()
+    before, notes = _seen(paper), _seen(v.root / "Paper.md")
+    v.write(".gammaignore", "/Paper.*\n")
+    status = v.sync()
+    assert status["counts"]["removed"] == 2 and v.state(page) == "trashed"
+    assert _seen(paper) == before and _seen(v.root / "Paper.md") == notes
+    tombs = vault_store.tombstones(v.link["id"])
+    assert sorted(t["was"] for t in tombs) == ["Paper.md", "Paper.pdf"]
+    assert all(vault_store.in_place(t) and not t["pending"] for t in tombs)
+    assert not (v.root / vault_disk.TRASH).exists() and v.state(v.page_of("Note.md")) == "live"
+    v.quiet()
+
+    v.write("Paper.pdf", _pdf("the paper, built again"), age=5)
+    v.write(".gammaignore", "/Other.pdf\n")
+    v.sync()
+    assert v.state(page) == "live" and v.page_of("Paper.pdf") == page and vault_store.tombstones(v.link["id"]) == []
+    assert "a thought on the paper" in v.texts(page)
+    assert v.blocks(page)[page]["props"]["doc"]["hash"] == v.rows()["Paper.pdf"]["hash"]
+    v.quiet()
+
+
+def test_unticking_half_a_work_folder_is_held_by_the_guard_and_goes_on_when_confirmed(vault, owner):
+    v = _work(vault(), owner)
+    for n in range(12):
+        v.write(f"n{n}.md", f"note {n}\n")
+    v.sync()
+    v.write(".gammaignore", "/n[0-6].md\n")
+    status = v.sync(ok=False)
+    assert status["held"] == {"removals": 7, "total": 12} and all(v.state(v.page_of(f"n{n}.md")) == "live"
+                                                                  for n in range(12))
+    status = v.sync(confirm=True)
+    assert status["counts"]["removed"] == 7 and len(v.rows()) == 5
+    assert all((v.root / f"n{n}.md").exists() for n in range(12))
+
+
+def test_a_kill_between_the_trash_and_the_bury_never_moves_the_file(vault, owner, monkeypatch):
+    """The page goes first: a round that dies then leaves a live row the next
+    deselects again; one whose page the mirror brings back sends it back,
+    the file still where it is."""
+    v = _work(vault(), owner)
+    paper = v.write("Paper.pdf", _pdf("kill"), age=10)
+    v.sync()
+    page = v.page_of("Paper.pdf")
+    before = _seen(paper)
+    v.write(".gammaignore", "/Paper.pdf\n")
+
+    def killed(*_a):
+        raise Killed()
+    with monkeypatch.context() as m:
+        m.setattr(vault_store, "bury_in_place", killed)
+        with pytest.raises(Killed):
+            v.sync(ok=False)
+    assert v.state(page) == "trashed" and "Paper.pdf" in v.rows() and _seen(paper) == before
+    v.sync()
+    assert v.state(page) == "trashed" and vault_store.in_place(vault_store.tombstones(v.link["id"])[0])
+    with connect_pages_db(v.ws) as conn:
+        restore_page(v.ws, conn, page, actor=v.user, client="sync")
+    v.sync()
+    assert v.state(page) == "trashed" and _seen(paper) == before and not (v.root / vault_disk.TRASH).exists()
+
+
+@pytest.mark.parametrize("work", [False, True])
+def test_a_file_a_link_above_leaves_out_is_never_a_removal(vault, owner, tmp_path, work):
+    """The scan does not follow the link, and the file below it is there: no
+    removal, and the guard never holds a vault where nothing went."""
+    v = vault(f"link-{work}")
+    if work:
+        _work(v, owner)
     for n in range(10):
         v.write(f"n{n}.md", f"note {n}\n")
-    v.write("Plan.md", "plan\n")
+    v.write("Sub/Plan.md", "plan\n")
     v.sync()
-    page = v.page_of("Plan.md")
-    marker = json.loads((v.root / vault_disk.MARKER).read_text(encoding="utf-8"))
-    (v.root / vault_disk.MARKER).write_text(json.dumps({**marker, "ignore": ["Plan.md"]}), encoding="utf-8")
-    for _ in range(6):
-        status = v.sync()
-        assert not status.get("held") and status["counts"]["removed"] == 0
-    assert v.state(page) == "live" and not v.rows()["Plan.md"]["missing_since"]
+    page = v.page_of("Sub/Plan.md")
+    outside = tmp_path / f"outside-{work}"
+    shutil.move(str(v.root / "Sub"), str(outside))
+    if sys.platform == "win32":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(v.root / "Sub"), str(outside)], check=True, capture_output=True)
+    else:
+        os.symlink(outside, v.root / "Sub", target_is_directory=True)
+    try:
+        for _ in range(6):
+            status = v.sync(ok=False)
+            assert not status.get("held") and status["counts"]["removed"] == 0
+        assert v.state(page) == "live" and not v.rows()["Sub/Plan.md"]["missing_since"]
+    finally:
+        os.rmdir(v.root / "Sub") if sys.platform == "win32" else os.unlink(v.root / "Sub")
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="a junction is Windows'")
@@ -1984,6 +2112,27 @@ def test_a_picture_pasted_in_gamma_goes_to_the_attachment_folder_and_is_read_the
     assert _linked_at(v, name) == [str(v.root / "attachments" / name)]
     assert v.rows()[f"attachments/{name}"]["kind"] == "picture"
     v.quiet()
+
+
+def test_a_pictures_row_goes_with_its_file_and_its_directory_with_them(vault):
+    """A picture's row is no file the scan compares, so it outlived its file:
+    a directory deleted with its note and the picture the note linked stayed a
+    folder in Gamma for good, and the guard counted the row as a file."""
+    v = vault()
+    v.write("figs/N.md", "look: ![[a.png]]\n")
+    v.write("figs/a.png", PNG)
+    v.write("keep.md", "k\n")
+    v.sync()
+    page = v.page_of("figs/N.md")
+    assert v.rows()["figs/a.png"]["kind"] == "picture" and "figs" in vault_store.dirs(v.link["id"])
+    v.sync()
+    assert v.link["state"]["total"] == 2
+    shutil.rmtree(v.root / "figs")
+    v.sync()
+    v.sync()
+    assert v.state(page) == "trashed" and "figs/a.png" not in v.rows()
+    assert "figs" not in vault_store.dirs(v.link["id"])
+    assert "figs" not in {name for _parent, name in v.layout().folders.values()}
 
 
 def test_a_page_round_reads_a_picture_put_in_the_vault_since_the_last_scan(vault):
@@ -2320,7 +2469,7 @@ def test_a_pdf_pull_copied_out_follows_a_replacement_made_in_gamma(vault, owner)
     written: its problem says the page's PDF is another now."""
     v = vault()
     up = owner.post("/api/uploads", files={"file": ("paper.pdf", _pdf("stored first"), "application/pdf")}).json()
-    page = make_page(owner, "Copied", {"folders": [v.folder], "doc_id": up["doc_id"]})["id"]
+    page = make_page(owner, "Copied", {"folders": [v.folder], **doc_props(up["doc_id"])})["id"]
     v.sync()
     second = _pdf("replaced in Gamma, a corrected version")
     up = owner.post("/api/uploads", files={"file": ("paper v2.pdf", second, "application/pdf")}).json()
@@ -2352,7 +2501,7 @@ def test_a_pdf_rewritten_on_disk_keeps_one_linked_row(vault):
         v.sync()
     with connect_vaults_db() as conn:
         names = conn.execute("SELECT name FROM linked_files WHERE path = ?", (str(v.root / "P.pdf"),)).fetchall()
-    assert names == [(f"{v.blocks(page)[page]['props']['doc_id']}.pdf",)]
+    assert names == [(f"{v.blocks(page)[page]['props']['doc']['hash']}.pdf",)]
 
 
 def test_the_vaults_trash_holds_no_file_without_a_row(vault, monkeypatch):
@@ -2441,7 +2590,7 @@ def test_pull_alone_never_trashes_a_note_changed_on_disk_and_a_purge_takes_none_
 def test_a_note_saved_as_a_round_starts_whose_page_went_for_good_is_a_page_again(vault, monkeypatch):
     """Push waited for the note still being written; pull found its page gone
     for good, moved the file to the trash and swept it in the same round."""
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 60)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 60)
     v = vault()
     v.write("keep.md", "keep\n", age=120)
     v.write("n.md", "a note\n", age=120)
@@ -2453,7 +2602,7 @@ def test_a_note_saved_as_a_round_starts_whose_page_went_for_good_is_a_page_again
     v.write("n.md", "a note\n\nwords saved a moment ago\n")
     v.sync(ok=False)
     assert v.text("n.md") == "a note\n\nwords saved a moment ago\n"
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     v.sync()
     assert v.texts(v.page_of("n.md")) == ["a note", "words saved a moment ago"]
     v.quiet()
@@ -2527,7 +2676,7 @@ def test_a_note_whose_time_is_ahead_of_this_clock_is_read_and_holds_back_no_remo
     """A note saved through a share whose clock runs ahead waited as one still
     being written until this clock passed its time: not pushed, not pulled,
     and every removal of a note in the vault waited with it."""
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 1.0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 1.0)
     v = vault()
     v.write("n.md", "first line\n\nsecond line\n", age=30)
     v.write("sub/gone.md", "a note the person deletes\n", age=30)

@@ -3,8 +3,9 @@ from urllib.parse import urlencode
 
 import pytest
 
-from conftest import login, make_folder, make_page, make_user
-from gamma.db import connect_users_db, page_now
+from conftest import account_of, login, make_folder, make_page, make_user, thread_on
+from gamma.blocks_store import PATH_SEP
+from gamma.db import connect_pages_db, connect_users_db, page_now
 from test_mcp import call, connection, rpc
 
 
@@ -30,16 +31,18 @@ def test_page_block_and_share_links_read_the_same_page(client, connection):
             assert ref["block_id"] == note["id"]
     # The token names its workspace (<workspace id>.<secret>): the bare secret a
     # link minted before carries, another workspace's prefix, or a share whose
-    # token names another workspace than its own resolves nothing.
+    # token names another workspace than its own resolves nothing. A prefix
+    # naming a workspace the connection does not read says how to allow it.
     assert share["token"].startswith(ws + ".")
     secret = share["token"].partition(".")[2]
     stray = make_page(c, "Stray prefix")
     with connect_users_db() as conn:
         conn.execute("INSERT INTO shares (token, workspace_id, page_id, created_by, created_at) VALUES (?, ?, ?, '', ?)",
                      (f"elsewhere.{secret}x", ws, stray["id"], page_now()))
-    for stale in (secret, f"elsewhere.{secret}", f"elsewhere.{secret}x"):
+    for stale, says in ((secret, "unavailable"), (f"elsewhere.{secret}", "cannot read"),
+                        (f"elsewhere.{secret}x", "cannot read")):
         result = read(client, credential["token"], url=f"http://localhost/?share={stale}")
-        assert result["isError"] and "unavailable" in result["content"][0]["text"], result
+        assert result["isError"] and says in result["content"][0]["text"], result
     # Existing workspace permission also covers a restricted share on that page.
     c.put(f"/api/share-settings/{page['id']}", json={"audience": "list"})
     assert not read(client, credential["token"], url=f"http://localhost/?share={share['token']}")["isError"]
@@ -77,6 +80,7 @@ def test_no_cross_workspace_or_conflicting_reference_reads(client, connection):
     "http://localhost/?page=x&pdf_page=-1", "http://localhost/?page=x&pdf_page=1.5",
     "http://localhost/?page=x&pdf_page=1000001", "http://localhost/?page=x\n",
     "http://localhost/", "http://localhost/?share=unknown", "http://localhost/?page=unknown",
+    "http://localhost/?folder=", "http://localhost/?folder=x&folder=y", "http://localhost/?folder=unknown",
 ])
 def test_malformed_or_foreign_links_are_rejected(client, connection, url):
     assert read(client, connection[2]["token"], url=url)["isError"]
@@ -174,6 +178,55 @@ def test_folder_share_links_list_the_folder(client, connection, monkeypatch):
     assert not result["isError"] and "The folder is empty." in result["content"][0]["text"], result
 
 
+def test_folder_links_list_the_folder(client, connection):
+    c, ws, credential = connection
+    browsed = make_folder(c, "browsed")
+    sub = make_folder(c, "browsed/sub")
+    paper = make_page(c, "Paper in the browsed folder", {"folders": [browsed]})
+    deeper = make_page(c, "Paper in its subfolder", {"folders": [sub]})
+    other = make_page(c, "Paper elsewhere", {"folders": [make_folder(c, "outside")]})
+    # The library's address while a folder is browsed, with ws= or without
+    for params in ({"ws": ws, "folder": browsed}, {"folder": browsed}):
+        result = read(client, credential["token"], url="http://localhost/?" + urlencode(params))
+        assert not result["isError"], result
+        assert result["structuredContent"] == {"workspace_id": ws, "folder": browsed, "title": "browsed",
+                                               "url": f"http://localhost/?ws={ws}&folder={browsed}"}
+        text = result["content"][0]["text"]
+        assert paper["id"] in text and deeper["id"] in text and other["id"] not in text
+        assert "page=<page_id>" in text
+    ref = read(client, credential["token"], url=f"http://localhost/?ws={ws}&folder={sub}")["structuredContent"]
+    assert ref["folder"] == sub and ref["title"] == "browsed" + PATH_SEP + "sub"
+    # Beside a page it is only where the page was opened.
+    result = read(client, credential["token"], url=f"http://localhost/?ws={ws}&folder={browsed}&page={other['id']}")
+    assert not result["isError"] and result["structuredContent"]["page_id"] == other["id"], result
+    # Another workspace's folder reads nothing, by its id or its workspace.
+    other_ws = make_user("folder-link-other", "pw")
+    with login("folder-link-other", "pw") as them:
+        theirs = make_folder(them, "Private folder name")
+    for params in ({"folder": theirs}, {"ws": ws, "folder": theirs}, {"ws": other_ws, "folder": theirs}):
+        result = read(client, credential["token"], url="http://localhost/?" + urlencode(params))
+        assert result["isError"] and "Private folder name" not in str(result), result
+    # A folder share's folder= is a folder browsed in it: the shared folder
+    # or one below it, never one outside.
+    share = c.post(f"/api/share/folder/{browsed}").json()
+    result = read(client, credential["token"], url=f"http://localhost/?share={share['token']}&folder={sub}")
+    assert not result["isError"], result
+    assert result["structuredContent"]["folder"] == sub
+    text = result["content"][0]["text"]
+    assert deeper["id"] in text and paper["id"] not in text
+    shared = read(client, credential["token"], url=f"http://localhost/?share={share['token']}&folder={browsed}")
+    assert shared["structuredContent"]["folder"] == browsed
+    a_page = read(client, credential["token"], url=f"http://localhost/?share={share['token']}&folder={other['id']}")
+    assert a_page["isError"] and "unavailable" in a_page["content"][0]["text"], a_page
+    result = read(client, credential["token"],
+                  url=f"http://localhost/?share={share['token']}&folder={make_folder(c, 'outside')}")
+    assert result["isError"] and "not in the shared folder" in result["content"][0]["text"], result
+    # A page share's link reads its page whatever folder it names.
+    page_share = c.post(f"/api/share/{paper['id']}").json()
+    result = read(client, credential["token"], url=f"http://localhost/?share={page_share['token']}&folder={sub}")
+    assert result["structuredContent"]["page_id"] == paper["id"], result
+
+
 def test_a_page_share_link_may_name_a_page_inside_its_page(client, connection):
     c, ws, credential = connection
     top = make_page(c, "Shared project")
@@ -191,3 +244,35 @@ def test_a_page_share_link_may_name_a_page_inside_its_page(client, connection):
     # a share of the page inside reaches no page above it
     below = c.post(f"/api/share/{inside['id']}").json()
     assert read(client, credential["token"], url=f"http://localhost/?share={below['token']}&page={top['id']}")["isError"]
+
+
+def test_holders_find_a_thread_and_a_send_request(connection):
+    """The workspace of a call naming a comment thread (its root) or a Send
+    request (mcp_server._targets), as a block's: a reply or a hidden
+    thread is held by none."""
+    from gamma import comments, workspaces
+    from gamma.mcp_links import holders
+
+    c, ws, _ = connection
+    lab = workspaces.create("Holders lab", account_of("mcp-reader"))["id"]
+    try:
+        page = make_page(c, "Commented page")
+        root = thread_on(c, page["id"], page["id"], "a thread")
+        reply = c.post(f"/api/pages/{page['id']}/comments", json={
+            "block_id": page["id"], "thread_id": root["id"], "body": "a reply"}).json()["comment"]
+        gone = thread_on(c, page["id"], page["id"], "hidden soon")
+        with connect_pages_db(ws) as conn:
+            comments.orphan(conn, [page["id"]])  # a stand-in for its block's delete: every thread on it
+            conn.execute("UPDATE comments SET orphaned_at = NULL WHERE id IN (?, ?)", (root["id"], reply["id"]))
+            conn.execute("INSERT INTO feedback_requests (id, rev, work_folder, scope, scope_kind, by, at, state_at) "
+                         "VALUES ('holdersreq01', 1, 'w', 's', 'file', 'u', ?, ?)", (page_now(), page_now()))
+            conn.commit()
+        both = [lab, ws]
+        assert holders(both, [], threads=[root["id"]]) == [ws]
+        assert holders(both, [], requests=["holdersreq01"]) == [ws]
+        assert holders(both, [page["id"]], threads=["nosuchthread"]) == [ws]  # any lookup that finds it
+        assert holders(both, [], threads=[reply["id"], gone["id"]]) == []
+        assert holders(both, [], threads=[root["id"]], requests=["holdersreq01"]) == [ws]
+        assert holders(both, []) == [] and holders(both, ["x" * 129], threads=[""]) == []
+    finally:
+        workspaces.delete(lab)

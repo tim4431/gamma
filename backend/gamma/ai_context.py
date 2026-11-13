@@ -14,8 +14,9 @@ from . import ink as inkmod
 from .ai_pictures import picture as _picture
 from .ai_protocols.base import Protocol, reasoning_text
 from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filed_folders, filing, folder_paths, label_names,
-                           page_ancestors, page_attachment, page_for_doc, page_root_id, sub_pages)
+                           page_ancestors, page_for_doc, page_root_id, sub_pages)
 from .db import connect_data_db, connect_pages_db, page_now, safe_doc_id
+from .documents.model import is_pdf, page_document, pdf_file_hash, source_address, stored_name
 from .highlights import is_highlight, is_ink, page_of
 from .logbuf import log
 from .net_guard import guarded_urlopen
@@ -884,9 +885,9 @@ def context_markdown(title: str, system: str, messages: list, tools: list | None
 
 
 def _download_pdf_from_source(ws: str, doc_id: str, name: str) -> None:
-    """Best-effort download of a missing PDF from its recorded source URL,
-    stored as the workspace's ``name``."""
-    log.info(f"[ai_chat] PDF NOT FOUND: {name} in workspace {ws}, attempting download from source_url")
+    """Best-effort download of a missing PDF from the address its page
+    shows it from (``source_address``), stored as the workspace's ``name``."""
+    log.info(f"[ai_chat] PDF NOT FOUND: {name} in workspace {ws}, attempting download from its address")
     try:
         with connect_pages_db(ws) as connection:
             row = connection.execute(
@@ -895,8 +896,7 @@ def _download_pdf_from_source(ws: str, doc_id: str, name: str) -> None:
             ).fetchone()
         if not row:
             return
-        properties = json.loads(row[0] or "{}")
-        source = properties.get("source_url") or ""
+        source = source_address(page_document(json.loads(row[0] or "{}")))
         if not source:
             return
         request = URLRequest(
@@ -918,7 +918,7 @@ def pdf_path(ws: str, doc_id: str):
     """Return a document's local PDF path (``storage.find_upload_file``),
     downloading it from its source when it is not stored."""
     try:
-        name = f"{safe_doc_id(doc_id)}.pdf"
+        name = stored_name(safe_doc_id(doc_id), ".pdf")
     except ValueError:
         return None
     path = find_upload_file(name, ws)
@@ -1586,9 +1586,9 @@ def page_properties_line(connection, properties: dict, page_id: str = "") -> str
                 bits.append(f"{label}: {str(meta[key])[:120]}")
     if properties.get("web_url"):
         bits.append(f"web source: {str(properties['web_url'])[:200]}")
-    attachment = page_attachment(properties)
-    if attachment:
-        name = f" ({attachment['name']})" if attachment.get("name") else ""
+    view = page_document(properties)
+    if is_pdf(view):
+        name = f" ({view['name']})" if view["name"] else ""
         bits.append(f"attachment: PDF{name}")
     return ("Properties: " + "; ".join(bits)) if bits else ""
 
@@ -1663,8 +1663,8 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
         children.sort(key=lambda row: row[2])
 
     properties = json.loads(root[4] or "{}")
-    attachment = page_attachment(properties)
-    doc_id = attachment["id"] if attachment else ""
+    view = page_document(properties)
+    doc_id = pdf_file_hash(view)  # a duplicated page's is the file it shows
     highlights: list[str] = []
     notes: list[str] = []
     areas: list = []  # (page, box) of the area highlights whose picture goes along
@@ -1870,8 +1870,8 @@ def gather_inputs(ws: str, payload, allow_native: bool,
         for page_id, row in pages:
             title = row[0] or "Untitled"
             properties = json.loads(row[1] or "{}")
-            attachment = page_attachment(properties)
-            doc_id = attachment["id"] if attachment else ""
+            view = page_document(properties)
+            doc_id = pdf_file_hash(view)  # a duplicated page's is the file it shows
             document_text = ""
             attached = False
             skipped = ""

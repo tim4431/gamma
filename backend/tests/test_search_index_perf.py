@@ -11,9 +11,9 @@ from contextlib import closing
 
 import pytest
 
-from conftest import login, make_page, make_user, workspace_of
+from conftest import doc_props, login, make_page, make_user, workspace_of
 from gamma import pdf_index
-from gamma.db import ws_db_path
+from gamma.db import connect_pages_db, ws_db_path
 
 USER, PASSWORD = "sip_owner", "pw-sip-1"
 
@@ -78,15 +78,35 @@ def test_purge_keeps_papers_a_block_still_carries(owner):
     """The PDF rows of a deleted page go; a paper some other block still
     carries (only the full pass over properties can tell) stays."""
     ws = workspace_of(USER)
-    gone = make_page(owner, "Paper to delete", properties={"doc_id": "sipdoc10"})
+    gone = make_page(owner, "Paper to delete", properties=doc_props("sipdoc10"))
     holder = make_page(owner, "Holder page")
-    _block(owner, holder["id"], "a nested carrier", {"doc_id": "sipdoc11"})
+    _block(owner, holder["id"], "a nested carrier", doc_props("sipdoc11"))
     with closing(sqlite3.connect(ws_db_path(ws, "data.db"))) as conn:
         pdf_index.store_doc(conn, "sipdoc10", [(1, "doomed text")])
         pdf_index.store_doc(conn, "sipdoc11", [(1, "kept text")])
     _delete_page(owner, gone["id"])
     assert _pdf_rows(ws, "sipdoc10") == []
     assert _pdf_rows(ws, "sipdoc11") == [(1, "kept text")]
+
+
+def test_purge_keeps_the_papers_a_copy_shows(owner):
+    """A duplicated page owns no file (the doc_id column leaves it out) but
+    shows the original's: with the original deleted for good, the paper's
+    rows stay while the copy is there, in Recently deleted too, and go with
+    it."""
+    ws = workspace_of(USER)
+    original = make_page(owner, "Paper copied", properties=doc_props("sipdoc12"))
+    copy = make_page(owner, "Paper copied (copy)", properties=doc_props(url="/api/uploads/sipdoc12.pdf"))
+    with closing(sqlite3.connect(ws_db_path(ws, "data.db"))) as conn:
+        pdf_index.store_doc(conn, "sipdoc12", [(1, "shown text")])
+    _delete_page(owner, original["id"])
+    assert _pdf_rows(ws, "sipdoc12") == [(1, "shown text")]
+    assert owner.delete(f"/api/blocks/{copy['id']}").status_code == 200
+    with closing(connect_pages_db(ws)) as conn:
+        pdf_index.purge_unused(ws, conn)
+    assert _pdf_rows(ws, "sipdoc12") == [(1, "shown text")]
+    assert owner.delete(f"/api/trash/{copy['id']}").status_code == 200
+    assert _pdf_rows(ws, "sipdoc12") == []
 
 
 def test_an_index_written_before_the_side_table_is_taken_over(owner):

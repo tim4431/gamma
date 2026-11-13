@@ -14,7 +14,7 @@ import zipfile
 
 import pytest
 
-from conftest import login, make_folder, make_page, make_user
+from conftest import doc_props, login, make_folder, make_page, make_user
 
 PAGE_W, PAGE_H = 300, 400
 
@@ -901,6 +901,23 @@ def test_a_formula_takes_from_a_form_on_its_page_what_lies_in_its_box():
     assert not page.get_images() and not _hidden(page)
 
 
+def test_the_filter_sets_its_options_whole(monkeypatch):
+    """PyMuPDF 1.28's PdfFilterOptions() sets every field but no_update,
+    which keeps whatever the memory held: set, every form the filter copies
+    comes out without its content, so a formula on a form went a picture as
+    the heap fell. A constructor that leaves it set must change nothing."""
+    pymupdf = _mupdf()
+    made = pymupdf.mupdf.PdfFilterOptions
+
+    def stale():
+        options = made()
+        options.no_update = 1
+        return options
+
+    monkeypatch.setattr(pymupdf.mupdf, "PdfFilterOptions", stale)
+    test_a_formula_takes_from_a_form_on_its_page_what_lies_in_its_box()
+
+
 def test_a_formula_over_a_picture_of_its_page_is_a_picture():
     """A scan under its text layer, an equation set as an image: what shows
     in the box is a picture, so the formula is drawn as one, its text hidden
@@ -1233,7 +1250,7 @@ def user(client):
 def _pdf_page(c, title, data, **props):
     up = c.post("/api/uploads", files={"file": (f"{title}.pdf", data, "application/pdf")})
     assert up.status_code == 200, up.text
-    page = make_page(c, title, {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"], **props})
+    page = make_page(c, title, {**doc_props(up.json()["doc_id"]), **props})
     return page, up.json()["doc_id"]
 
 

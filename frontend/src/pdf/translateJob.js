@@ -9,14 +9,14 @@
 // later pages are still segmenting, and stream across page boundaries — the
 // parallel slots never idle at page ends. A chunk whose request fails is
 // asked again (requestChunk); one that still fails leaves its paragraphs
-// pending for the next job and the workers go on, since one dropped
-// connection to the provider says little of the next. The job stops, with
-// the last failure's reason, only when FAILS_IN_A_ROW chunks fail with no
-// success between them, or at once on a refusal no later request escapes
-// (finalRefusal). The server asks the model again for what its reply got
-// wrong and names the paragraphs that still failed, which stay pending for
-// the next job too. Halting aborts the requests in flight and keeps
-// finished chunks.
+// pending and the workers go on, since one dropped connection to the
+// provider says little of the next. The job stops, with the last failure's
+// reason, only when FAILS_IN_A_ROW chunks fail with no success between
+// them, or at once on a refusal no later request escapes (finalRefusal).
+// The server asks the model again for what its reply got wrong and names
+// the paragraphs that still failed. Both kinds are asked for once more at
+// the queue's end, and what still fails stays pending for the next job.
+// Halting aborts the requests in flight and keeps finished chunks.
 //
 // The paper's brief (its field and terms, which the server writes once and
 // puts in every request's prompt) is asked for as the job starts and never
@@ -307,19 +307,21 @@ export function createTranslateJob({
   const hadText = (u) => !landed.has(u) && u.targets.some((t) => stateOf(t.pn).out[t.i] != null);
   // A chunk's reply onto its pages. A unit asked again that fails keeps the
   // text it has, unmarked; one that failed before and comes back is no
-  // longer lost.
+  // longer lost or unanswered.
   const land = (c, res) => {
     const failed = new Set(res.failed || []);
     c.units.forEach((u, j) => {
       if (failed.has(j)) {
         if (landed.has(u)) return;
         if (hadText(u)) { unchangedText.add(u); return; }
+        unanswered.delete(u);
         lost.add(u);
         for (const t of u.targets) stateOf(t.pn).failed.add(t.i);
         return;
       }
       if (!landed.has(u)) { landed.add(u); doneChars += u.chars; }
       lost.delete(u);
+      unanswered.delete(u);
       unchangedText.delete(u);
       for (const r of results(u, res.translations[j])) {
         const st = stateOf(r.pn);
@@ -400,10 +402,12 @@ export function createTranslateJob({
     // done: the next job reads them again.
     const unread = new Set();
     // How long each request took once the model was writing; whether any
-    // came back with the brief, and the chunks that came back without it.
+    // came back with the brief, and the chunks that came back without it;
+    // the chunks with a paragraph that did not come back.
     const times = [];
     let withBrief = false;
     const without = [];
+    const missed = new Set();
     let wake = null;
     const notify = () => { const w = wake; wake = null; w?.(); };
     // How far a running job is: the characters landed and those streamed. While
@@ -495,6 +499,7 @@ export function createTranslateJob({
             return;
           }
           drop(c);
+          missed.add(c);
           continue;
         }
         streak = 0;
@@ -503,17 +508,24 @@ export function createTranslateJob({
         if (res.cached !== true) times.push(Date.now() - began);
         if (res.brief === true) withBrief = true;
         else if (res.brief === false) without.push(c);
+        if (res.failed?.length) missed.add(c);
         land(c, res);
         report({ progress: reached() });
       }
     };
     await Promise.all([producer(), ...Array.from({ length: parallel }, worker)]);
-    // The chunks that went without the brief, now that it is made: asked
-    // once more, whatever comes back. A request that fails leaves the text
-    // they have.
-    if (!halted() && !failed && withBrief && without.length) {
-      await Promise.all(Array.from({ length: Math.min(parallel, without.length) }, async () => {
-        for (let c = without.shift(); c && !halted(); c = without.shift()) {
+    // Asked once more at the queue's end, whatever comes back: the chunks
+    // that went without the brief, now that it is made, and those with a
+    // paragraph that did not come back (its request failed, or the server
+    // could not translate it), since a provider busy for a moment is often
+    // free again by then. Their paragraphs that came back are answered from
+    // the server's memory. Not a job on one paragraph: its queue ends with
+    // its one request, and its pill offers Try again. A request that fails
+    // leaves the text they have.
+    const again = [...new Set([...(withBrief ? without : []), ...(focus ? [] : missed)])];
+    if (!halted() && !failed && again.length) {
+      await Promise.all(Array.from({ length: Math.min(parallel, again.length) }, async () => {
+        for (let c = again.shift(); c && !halted(); c = again.shift()) {
           let res = null;
           try {
             res = await requestChunk(() => send(() => translate(c.texts, ctl.signal, null, { ...shared, ...c.context, waitBrief: true, fresh })),

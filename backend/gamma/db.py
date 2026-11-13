@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 51
+SCHEMA_VERSION = 55
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -94,7 +94,7 @@ def parse_stamp(stamp) -> datetime | None:
 # These guard every filesystem path built from a workspace id or doc id — the
 # last line of defense against traversal even after upstream auth checks.
 _WS_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_DOC_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+_DOC_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}\Z")
 
 
 def safe_ws_id(ws: str) -> str:
@@ -205,7 +205,9 @@ USERS_SCHEMA = [
     # the file ({doc, size, mtime, ...}; a folder link's live in its
     # directory's state file). `push` is 0 off, 1 PDFs, 2 everything;
     # `pull` is whether Gamma's changes reach the disk, 0 on a file link,
-    # which Gamma never writes. A link whose folder or page is on another
+    # which Gamma never writes. `library` is a work folder's switch: whether
+    # the pages of the files it tracks are made library documents too
+    # (docs/dev/work_folders.md). A link whose folder or page is on another
     # Gamma server names it (remote_url; workspace_id is then its workspace
     # there) with a token of it, Fernet-encrypted, and that token's id for
     # whoever revokes it there.
@@ -226,7 +228,8 @@ USERS_SCHEMA = [
         page_id TEXT NOT NULL DEFAULT '',
         push INTEGER NOT NULL DEFAULT 0,
         state TEXT NOT NULL DEFAULT '{}',
-        pull INTEGER NOT NULL DEFAULT 1
+        pull INTEGER NOT NULL DEFAULT 1,
+        library INTEGER NOT NULL DEFAULT 0
     )""",
     """CREATE TABLE IF NOT EXISTS publisher_sessions (
         user_id TEXT NOT NULL,
@@ -491,8 +494,10 @@ USERS_SCHEMA = [
     # the kind has none; a folder share's folder in `block_id`),
     # `share_token` when the recipient reaches the page only through a
     # share, `snippet` (at most 200 characters of the text at the time),
-    # `at`, and the recipient's `read_at` / `archived_at`. Written when the
-    # event happens; no unique index, the producers dedupe.
+    # `at`, the recipient's `read_at` / `archived_at`, and `agent`, the
+    # display name of the integration token whose write made the item (''
+    # for a person's; step 54). Written when the event happens; no unique
+    # index, the producers dedupe.
     """CREATE TABLE IF NOT EXISTS inbox_items (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
@@ -507,7 +512,8 @@ USERS_SCHEMA = [
         snippet TEXT NOT NULL DEFAULT '',
         at TEXT NOT NULL,
         read_at TEXT,
-        archived_at TEXT
+        archived_at TEXT,
+        agent TEXT NOT NULL DEFAULT ''
     )""",
     "CREATE INDEX IF NOT EXISTS idx_inbox_user ON inbox_items(user_id, at)",
     "CREATE INDEX IF NOT EXISTS idx_inbox_unread ON inbox_items(user_id) WHERE read_at IS NULL AND archived_at IS NULL",
@@ -561,8 +567,9 @@ USERS_SCHEMA = [
 # file is made as, and why that file's replacement placed no highlights. One
 # name may have several paths; a path has one page. vault_files = a vault's
 # files as the last round left them, one row a path, a trashed file's being
-# the trash path with ``was`` where it lived (kind 'notes', 'pdf' or
-# 'picture'; the hash and stat and when they were read, for the racy rule; a
+# the trash path with ``was`` where it lived (kind 'notes', 'pdf', 'picture'
+# or 'file', its class, gamma/vault/kinds.py; the hash and stat and when they
+# were read, for the racy rule; a
 # note's base text, its nodes [{id, g, m?}] in document order and ``gone``,
 # the blocks the file dropped [{id, hash, anchor, props, at}]; the title and
 # first filing this base recorded, the page's change-log seq it is level
@@ -639,15 +646,24 @@ VAULTS_SCHEMA = [
 # or the trash), ``folder`` / ``label`` in the pseudo-pages, else what the
 # block's properties make it, tested in this order the way the frontend
 # tests them (ink: an ``ink_url`` key; text box, picture, sheet, recording:
-# an object; link: a non-empty value; highlight: a ``pdf_position`` object,
-# which ink groups and link regions carry too — gamma/highlights.py).
-# ``parent_page`` is the page a sub-page is inside (its
+# an object; link: a non-empty value; highlight: a ``pdf_position``,
+# ``image_position`` or ``text_position`` object — a place on a PDF page,
+# which ink groups and link regions carry too, a region of a picture, a
+# range of a text file — gamma/highlights.py).
+# ``doc_id`` is the hash of the document the row owns (its ``properties.doc``,
+# gamma/documents/model.py ``own_hash``), on every row, nested and trashed
+# ones included: NULL on a row with no document, one shown from an address
+# alone and a copy. ``parent_page`` is the page a sub-page is inside (its
 # ``properties.parent_page``, gamma/blocks_store.py ``page_parents``), NULL
 # on every other row. ``deleted_with`` is the page a page in Recently
 # deleted went there with (its ``properties.deleted_with``, stamped by
 # ops.trash_page: the page it was inside was trashed), NULL on every other
-# row. An older file gains them, or a ``kind`` of an older definition,
-# through normalize.block_columns.
+# row. ``work_folder`` is the work folder a page is a file of (its
+# ``properties.work_folder``, a folder id the synced vault stamps:
+# gamma/work_folders/library.py), NULL on every other row and for an empty
+# or non-text value; ``first_folder`` is the first id of a row's
+# ``properties.folders``, a file's directory. An older file gains them, or a
+# ``kind`` of an older definition, through normalize.block_columns.
 BLOCK_HOT_COLUMNS = {
     "page_id": "page_id TEXT NOT NULL DEFAULT ''",
     "kind": """kind TEXT GENERATED ALWAYS AS (CASE
@@ -662,18 +678,42 @@ BLOCK_HOT_COLUMNS = {
             WHEN json_type(properties, '$.recording') = 'object' THEN 'recording'
             WHEN json_extract(properties, '$.link_url') != ''
                 OR json_extract(properties, '$.link_page_id') != '' THEN 'link'
-            WHEN json_type(properties, '$.pdf_position') = 'object' THEN 'highlight'
+            WHEN json_type(properties, '$.pdf_position') = 'object'
+                OR json_type(properties, '$.image_position') = 'object'
+                OR json_type(properties, '$.text_position') = 'object' THEN 'highlight'
             ELSE 'note' END) VIRTUAL""",
-    "doc_id": "doc_id TEXT GENERATED ALWAYS AS (json_extract(properties, '$.doc_id')) VIRTUAL",
+    "doc_id": """doc_id TEXT GENERATED ALWAYS AS (CASE WHEN json_extract(properties, '$.doc.copy') IS NULL
+            THEN NULLIF(json_extract(properties, '$.doc.hash'), '') END) VIRTUAL""",
     "parent_page": "parent_page TEXT GENERATED ALWAYS AS (json_extract(properties, '$.parent_page')) VIRTUAL",
     "deleted_with": "deleted_with TEXT GENERATED ALWAYS AS (json_extract(properties, '$.deleted_with')) VIRTUAL",
+    "work_folder": """work_folder TEXT GENERATED ALWAYS AS (CASE WHEN json_type(properties, '$.work_folder') = 'text'
+            THEN NULLIF(json_extract(properties, '$.work_folder'), '') END) VIRTUAL""",
+    "first_folder": "first_folder TEXT GENERATED ALWAYS AS (json_extract(properties, '$.folders[0]')) VIRTUAL",
 }
+# What the library listing carries, over a unified_blocks row: a page the
+# library lists (work_folders.library.SQL_LISTED) or a pinned one. Here, not
+# in gamma/work_folders/library.py, which re-exports it, because
+# idx_ub_listing repeats it: SQLite uses a partial index only for a query
+# that names its condition as written.
+SQL_IN_LISTING = ("(work_folder IS NULL OR json_type(properties, '$.library') = 'true' "
+                  "OR (json_type(properties, '$.pinned') = 'text' AND json_extract(properties, '$.pinned') != ''))")
 BLOCK_HOT_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ub_page ON unified_blocks(page_id)",
     "CREATE INDEX IF NOT EXISTS idx_ub_kind ON unified_blocks(kind)",
     "CREATE INDEX IF NOT EXISTS idx_ub_doc ON unified_blocks(doc_id) WHERE doc_id IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_ub_parent_page ON unified_blocks(parent_page) WHERE parent_page IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_ub_deleted_with ON unified_blocks(deleted_with) WHERE deleted_with IS NOT NULL",
+    # the library listing in its order; a work folder's directory, its files
+    # and their counts; a work folder's files, those in Recently deleted
+    # too. Once ANALYZE (db_maintenance's PRAGMA optimize) has its numbers,
+    # idx_ub_parent's few rows a parent on average win the planner over the
+    # first two, so their readers name them (INDEXED BY), and the lookups of
+    # the third write +parent_id.
+    "CREATE INDEX IF NOT EXISTS idx_ub_listing ON unified_blocks(parent_id, position) "
+    f"WHERE parent_id = 'root' AND {SQL_IN_LISTING}",
+    "CREATE INDEX IF NOT EXISTS idx_ub_dir ON unified_blocks(parent_id, first_folder) "
+    "WHERE parent_id = 'root' AND work_folder IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_ub_work_folder ON unified_blocks(work_folder) WHERE work_folder IS NOT NULL",
 ]
 _HOT_COLUMNS_SQL = ",\n        ".join(BLOCK_HOT_COLUMNS.values())
 
@@ -767,8 +807,13 @@ CHATS_SCHEMA = [
 # `resolved_at` / `resolved_by` are on the root only; `deleted_at` marks a
 # root deleted while it still has replies (a tombstone); `orphaned_at` is
 # set when the anchor block is deleted, cleared when it comes back, and
-# the sweep deletes the row seven days on. Never part of a block, so no
-# block reader has to skip them; a comment write touches no page.
+# the sweep deletes the row seven days on. `agent` / `agent_id` name the
+# integration token that wrote the comment (its display name and id, ''
+# for a session), `resolved_agent` the one that resolved a root (cleared
+# on reopen); `anchor` (JSON, the root only, NULL on a reply and on a root
+# from before step 54) is the place the thread was opened on
+# (gamma/feedback/anchors.py). Never part of a block, so no block reader
+# has to skip them; a comment write touches no page.
 COMMENTS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS comments (
         id TEXT PRIMARY KEY,
@@ -783,7 +828,11 @@ COMMENTS_SCHEMA = [
         resolved_at TEXT,
         resolved_by TEXT,
         deleted_at TEXT,
-        orphaned_at TEXT
+        orphaned_at TEXT,
+        agent TEXT NOT NULL DEFAULT '',
+        agent_id TEXT NOT NULL DEFAULT '',
+        resolved_agent TEXT NOT NULL DEFAULT '',
+        anchor TEXT
     )""",
     "CREATE INDEX IF NOT EXISTS idx_comments_block ON comments(block_id)",
     "CREATE INDEX IF NOT EXISTS idx_comments_thread ON comments(thread_id, created_at)",
@@ -804,6 +853,46 @@ COMMENTS_SCHEMA = [
         at TEXT NOT NULL,
         PRIMARY KEY (page_id, user_id)
     ) WITHOUT ROWID""",
+]
+# feedback_requests = the Sends of a work folder's feedback
+# (gamma/feedback/requests.py, docs/dev/feedback.md): `id` a block id's
+# shape (the client may mint it), `rev` the listing's cursor (MAX + 1 at
+# the insert and at every state change), `work_folder` and the `scope` the
+# requester sent (`scope_kind` file or folder), `by` / `by_name` the
+# requester, `note` their line of instruction, `state` sent / running /
+# done / failed with `state_at`, `state_by` (a token's display name or the
+# requester's username) and `detail` (a failure's reason, a line of
+# progress). feedback_request_threads = the threads each one names, with
+# `answered_at` once a token or another account replied or resolved after
+# it. Neither travels (as comments): no mirror, publication, share export,
+# backup merge or Gamma export carries them. Additive: no step
+# (docs/dev/migrations.md rule 2).
+FEEDBACK_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS feedback_requests (
+        id TEXT PRIMARY KEY,
+        rev INTEGER NOT NULL,
+        work_folder TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        scope_kind TEXT NOT NULL,
+        by TEXT NOT NULL,
+        by_name TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT 'sent',
+        state_at TEXT NOT NULL,
+        state_by TEXT NOT NULL DEFAULT '',
+        detail TEXT NOT NULL DEFAULT ''
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_feedback_requests_rev ON feedback_requests(rev)",
+    "CREATE INDEX IF NOT EXISTS idx_feedback_requests_folder ON feedback_requests(work_folder, rev)",
+    """CREATE TABLE IF NOT EXISTS feedback_request_threads (
+        request_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        answered_at TEXT,
+        PRIMARY KEY (request_id, thread_id)
+    ) WITHOUT ROWID""",
+    "CREATE INDEX IF NOT EXISTS idx_feedback_waiting ON feedback_request_threads(thread_id) "
+    "WHERE answered_at IS NULL",
 ]
 _CHAT_COLUMNS = {"chats": "bucket, messages, updated_at, title",
                  "chat_history": "id, bucket, title, messages, created_at, updated_at"}
@@ -1043,6 +1132,7 @@ PAGES_SCHEMA = [
     WORKSPACE_PREFS_SCHEMA,
     *CHATS_SCHEMA,
     *COMMENTS_SCHEMA,
+    *FEEDBACK_SCHEMA,
     *BLOCK_FTS_SCHEMA,
 ]
 
@@ -1078,6 +1168,11 @@ DATA_SCHEMA = [
     "CREATE TABLE IF NOT EXISTS pdf_translation_briefs (doc_id TEXT NOT NULL, lang TEXT NOT NULL, "
     "model TEXT NOT NULL, brief TEXT NOT NULL, at TEXT NOT NULL, "
     "PRIMARY KEY (doc_id, lang, model)) WITHOUT ROWID",
+    # feedback_pictures = the region pictures of a work folder's comment
+    # threads (gamma/feedback/pictures.py): JPEG bytes by their key, at
+    # most 48 MB in all, the oldest `at` going first.
+    "CREATE TABLE IF NOT EXISTS feedback_pictures (key TEXT PRIMARY KEY, data BLOB NOT NULL, "
+    "bytes INTEGER NOT NULL, at TEXT NOT NULL)",
 ]
 
 # Snapshots exist only to cover the (24-entry) recents queue; keep a few

@@ -1,13 +1,15 @@
 // The file chip: a same-origin upload linked from a block —
 // `[name](/api/uploads/<hash>.<ext>)`, what a dropped or pasted file becomes.
 // Files are content, any type, any number per page (docs/dev/block_centric.md,
-// "Files and documents"). Every chip looks the same. A PDF or markdown file
-// can become a page: "Add to library" in its menu (a right-click or a held
-// finger) — a PDF through `POST /blocks/by-doc/<hash>` (the page CARRIES
-// the file: viewer, highlights, metadata; nothing is uploaded twice), a
-// markdown file through `POST /pages/from-file` (a note page imported from
-// it — a copy, the file stays). Once the page exists the chip shows an
-// "open page" button.
+// "Files and documents"). Every chip looks the same. A file of any format but
+// an executable can become a page: "Add to library" in its menu (a right-click
+// or a held finger) — a PDF through `POST /blocks/by-doc/<hash>` (the page
+// CARRIES the file: viewer, highlights, metadata; nothing is uploaded twice),
+// a markdown file through `POST /pages/from-file` (a note page imported from
+// it — a copy, the file stays), any other file through `POST /pages/by-file`
+// (a page whose document it is: its viewer, notes, comments and chat;
+// transfers/documentUploads.js promoteChip). Once the page exists the chip
+// shows an "open page" button.
 //
 // The chip renders inside markdown, so it is inline: it must sit in a
 // sentence ("see [data.csv](…) for the raw numbers") as well as alone on a
@@ -19,8 +21,10 @@ import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { menuPress } from "../shared/ui/press.js";
 import { API, apiJson, assetUrl } from "../shared/lib/utils";
 import { saveLinkClick, saveUrl } from "../shared/lib/saveFile.js";
+import { uploadAnyFile } from "../shared/lib/uploadParts.js";
 import { xhrUpload } from "../shared/lib/xhrUpload";
 import { t } from "../shared/i18n/i18n.js";
+import { IMAGE_MEDIA_TYPES, formatOf, storedExtension } from "../documents/formats.js";
 
 // What the page around the chip provides: navigation and promotion come from
 // App (they need the page's folder and openBlock); a chip rendered with no
@@ -28,11 +32,13 @@ import { t } from "../shared/i18n/i18n.js";
 //   { readOnly, canOpen, openPage(pageId), promoteFile(hash, ext, name) → Promise }
 export const FileChipContext = createContext(null);
 
-// --- doc id → document page lookup, batched per render -----------------------
-// Every PDF / markdown chip asks "which page did this file become?"; the
-// asks of one render go out as ONE request (`POST /pages/by-docs`) and the
-// answers are cached until the page changes (App calls forgetDocPages on open).
-const docPages = new Map();          // docId → {id, title} | null (no page)
+// --- stored name → page lookup, batched per render ---------------------------
+// Every chip asks "which page did this file become?"; the asks of one render
+// go out as ONE request (`POST /pages/by-docs {files}`, keyed by the stored
+// name `<hash>.<ext>`: the same bytes stored under two extensions are two
+// files and two pages) and the answers are cached until the page changes
+// (App calls forgetDocPages on open; rememberDocPage after a promotion).
+const docPages = new Map();          // stored name → {id, title} | null (no page)
 const listeners = new Set();
 let pending = new Set();
 let timer = null;
@@ -46,41 +52,41 @@ export function forgetDocPages() {
   notify();
 }
 
-export function rememberDocPage(docId, page) {
-  if (docId) docPages.set(docId, page || null);
+export function rememberDocPage(name, page) {
+  if (name) docPages.set(name, page || null);
   notify();
 }
 
 async function flushLookups() {
   timer = null;
-  const ids = Array.from(pending);
+  const names = Array.from(pending);
   pending = new Set();
-  if (!ids.length) return;
+  if (!names.length) return;
   try {
     const data = await apiJson(`${API}/pages/by-docs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ doc_ids: ids }),
+      body: JSON.stringify({ files: names }),
     });
-    ids.forEach((id) => docPages.set(id, data?.pages?.[id] || null));
+    names.forEach((name) => docPages.set(name, data?.files?.[name] || null));
   } catch {
-    ids.forEach((id) => docPages.set(id, null));
+    names.forEach((name) => docPages.set(name, null));
   }
   notify();
 }
 
-function useDocPage(docId, enabled) {
+function useDocPage(name, enabled) {
   const [, rerender] = useReducer((n) => n + 1, 0);
   useEffect(() => {
-    if (!docId || !enabled) return undefined;
+    if (!name || !enabled) return undefined;
     listeners.add(rerender);
-    if (!docPages.has(docId) && !pending.has(docId)) {
-      pending.add(docId);
+    if (!docPages.has(name) && !pending.has(name)) {
+      pending.add(name);
       if (!timer) timer = setTimeout(flushLookups, 40);
     }
     return () => listeners.delete(rerender);
-  }, [docId, enabled]);
-  return docId && enabled ? docPages.get(docId) : undefined;
+  }, [name, enabled]);
+  return name && enabled ? docPages.get(name) : undefined;
 }
 
 // --- the markdown side ---------------------------------------------------------
@@ -120,20 +126,38 @@ export function postFile(endpoint, file) {
     (err) => { reporter?.done(id, false, String(err?.message || err)); return null; });
 }
 
-// POST /api/upload-file → {url, name} | null: any non-image file a block
-// takes (drop on a row, drop on the page).
+// Any file as `POST /api/upload-file` stores it, in parts past PART_BYTES
+// (shared/lib/uploadParts.js uploadAnyFile) → the JSON reply, or null on
+// refusal/failure, reported as `postFile` reports.
+function postAnyFile(file) {
+  let abort = null;
+  const id = reporter?.start(file, () => abort?.());
+  return uploadAnyFile(file, {
+    onProgress: (loaded, total) => reporter?.progress(id, loaded, total),
+    onAbortable: (fn) => { abort = fn; },
+  }).then((data) => { reporter?.done(id, true, ""); return data; },
+    (err) => { reporter?.done(id, false, String(err?.message || err)); return null; });
+}
+
+// {url, name} | null: any file a block takes as a chip (drop on a row, drop
+// on the page).
 async function uploadOtherFile(file) {
-  const data = file ? await postFile("/api/upload-file", file) : null;
+  const data = file ? await postAnyFile(file) : null;
   return data?.url ? { url: data.url, name: data.name || file.name } : null;
 }
 
-// Uploads every file and returns one markdown line per success: images
+// The image types `/upload-image` takes (documents/formats.js, the image
+// rows' media types): a picture of one is inline; an image of any other type
+// (TIFF, HEIC) is a file like any other.
+const PICTURE_TYPES = new Set(Object.values(IMAGE_MEDIA_TYPES));
+
+// Uploads every file and returns one markdown line per success: pictures
 // inline (`![](url)`), everything else a file chip. Used by a drop on a block
 // row and a drop on the page body.
 export async function uploadFilesAsLines(files) {
   const lines = [];
   for (const file of files) {
-    if (file.type?.startsWith("image/")) {
+    if (PICTURE_TYPES.has(file.type || "")) {
       const url = (await postFile("/api/upload-image", file))?.url;
       if (url) lines.push(`![](${url})`);
     } else {
@@ -144,7 +168,9 @@ export async function uploadFilesAsLines(files) {
   return lines;
 }
 
-// A human word for the file's kind (the tooltip), from its extension.
+// A human word for the file's kind (the tooltip), from its extension: finer
+// than the registry's formats, and the tooltip's words alone — no decision
+// reads it.
 const KINDS = [
   [/^pdf$/, "PDF"],
   [/^(png|jpe?g|gif|webp|svg)$/, t("Image")],
@@ -168,22 +194,22 @@ function fileKindLabel(ext) {
 
 const stop = (e) => e.stopPropagation();
 
-// Every file looks the same: icon, name, a download arrow. A PDF or a
-// markdown file that already has a page additionally shows a small "open
-// page" button before the arrow; making that page ("Add to library") lives
-// in the chip's menu (a right-click or a held finger), so a chip never
-// advertises it inline.
-const PAGEABLE = /^(pdf|md|markdown)$/;
-
+// Every file looks the same: icon, name, a download arrow. A file that
+// already has a page additionally shows a small "open page" button before the
+// arrow; making that page ("Add to library") lives in the chip's menu (a
+// right-click or a held finger), so a chip never advertises it inline. Every
+// format can become a page (a markdown file a note, any other a document) but
+// an executable's, which the server never stored (storedExtension null).
 export function FileChip({ href, text }) {
   const ctx = useContext(FileChipContext);
   const parsed = parseUploadUrl(href);
   const ext = parsed?.ext || "";
-  const isPdf = ext === "pdf";
+  const { format } = formatOf(`x.${ext}`);
+  const isPdf = format === "pdf";
   const name = (text || "").trim() || decodeURIComponent((href.split("/").pop() || "file").split("?")[0]);
   const [menu, setMenu] = useState(null);
-  const canOpen = !!ctx?.canOpen && PAGEABLE.test(ext);
-  const page = useDocPage(parsed?.hash, canOpen);
+  const canOpen = !!ctx?.canOpen && !!parsed && storedExtension(`x.${ext}`) !== null;
+  const page = useDocPage(parsed ? `${parsed.hash}.${ext}` : "", canOpen);
   const url = assetUrl(href);
   const close = () => setMenu(null);
   const openPage = () => ctx.openPage(page.id);
@@ -199,7 +225,9 @@ export function FileChip({ href, text }) {
       <MenuItem icon={PlusIcon}
         title={isPdf
           ? t("Make a page for this PDF: the viewer, highlights, chat and metadata — the file is not uploaded again")
-          : t("Import this markdown as a note page — a copy; the file stays as it is")}
+          : format === "markdown"
+            ? t("Import this markdown as a note page — a copy; the file stays as it is")
+            : t("Make a page for this file: its viewer, notes, comments and chat")}
         onClick={() => { close(); makePage(); }}>{t("Add to library")}</MenuItem>
     );
   }

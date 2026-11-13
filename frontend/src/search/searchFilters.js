@@ -5,8 +5,9 @@
 // search/queryParse.js.
 //
 // A page-level qualifier is evaluated here, against the listing (GET
-// /blocks/root/children: every page with its filing, pin, dates and
-// paper metadata), through the libraryUtils reads the filter chips use.
+// /blocks/root/children: every page with its filing, pin, dates, document
+// and paper metadata), through the libraryUtils reads the filter chips use
+// and pageDocument (documents/pageDocument.js).
 // The panel sends the matching page ids to /block-search and
 // /pdf-search, so the server still ranks and limits inside them. Dates
 // resolve in the reader's local time, which the server does not know.
@@ -20,7 +21,8 @@
 // are syntax: English in every language, never passed through t().
 
 import { t } from "../shared/i18n/i18n.js";
-import { filedIn, folderEntries, folderSubtree, pageAttachment, parseStamp, topPageOf } from "../library/libraryUtils.js";
+import { isPdf, pageDocument } from "../documents/pageDocument.js";
+import { filedIn, folderEntries, folderSubtree, parseStamp, topPageOf } from "../library/libraryUtils.js";
 import { cutSpans, lastAlternative, parseQuery, quoteValue, tokenAt, valueHead, valueTail } from "./queryParse.js";
 
 // What `in:` names, and the block kinds each part asks the server for
@@ -150,7 +152,7 @@ function compile(clause, { tree, pagesById, now }) {
     }
     if (key === "in") return { sources: new Set(names) };
     const tests = names.map((n) => ({
-      pdf: (b) => !!pageAttachment(b),
+      pdf: (b) => isPdf(pageDocument(b)),
       pinned: (b) => !!b.properties?.pinned,
       label: (b) => !filedIn(tree.labels, b.properties?.labels).length,
       folder: (b) => !filedIn(tree.folders, topOf(pagesById, b).properties?.folders).length,

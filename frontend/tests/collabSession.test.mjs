@@ -290,6 +290,31 @@ test("a rejected batch is dropped and the page reloads", async (t) => {
   assert.equal(h.session.hasPending(), false);
 });
 
+test("an op only a work folder's vault makes (locked) is dropped alone, and the server's words say why", async (t) => {
+  const words = "A work folder's file is named by its file: rename it on disk.";
+  const bodies = [];
+  const h = setup(t, async (url, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body.ops);
+    if (bodies.length === 1) {
+      const e = new Error("A work folder's file is named by its file: rename it on disk.");
+      e.status = 403;
+      e.data = { detail: e.message, conflict: "locked", index: body.ops.findIndex((op) => op.op === "set" && op.id === "a") };
+      throw e;
+    }
+    return batch(1, body.ops, ME);
+  });
+  h.edit([{ ...block("a", "a changed"), children: [block("c", "under a")] }, { ...block("b", "b changed"), position: "a1" }]);
+  await h.session.flush();
+  assert.deepEqual(bodies[0].map((op) => [op.op, op.id]).sort(), [["insert", "c"], ["set", "a"], ["set", "b"]]);
+  assert.deepEqual(bodies[1].map((op) => [op.op, op.id]).sort(), [["insert", "c"], ["set", "b"]],
+    "the block stays, so what is under it and the batch's other text go on");
+  assert.deepEqual(h.notices, [["rejected", words]]);
+  assert.deepEqual(h.status, [words]);
+  assert.deepEqual(h.reloads, ["page-a"], "the page is refetched: the screen shows the refused change");
+  assert.equal(h.session.hasPending(), false);
+});
+
 test("a batch refused because the workspace is being deleted is dropped, said once, and not retried", async (t) => {
   const h = setup(t, async () => {
     const e = new Error("“Lab” is being deleted and takes no more changes");

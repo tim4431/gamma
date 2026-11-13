@@ -44,3 +44,24 @@ test("a page share has no library to browse", () => {
   const lib = libraryAccess({ shareMode: true });
   assert.ok(!lib.browse && !lib.organize);
 });
+
+test("inside a work folder the directories follow the disk; a viewer organizes nowhere", () => {
+  // "paper" is a work folder (its mark) holding "figures"; "notes" a library folder.
+  const tree = libraryTree({ folders: { children: [
+    { id: "paper", content: "paper", properties: { vault: { pull: true, library: false } }, children: [node("figures", "figures")] },
+    node("notes", "notes"),
+  ] } });
+  const lib = libraryAccess({ role: "editor", tree });
+  assert.deepEqual(["paper", "figures", "notes", "", "gone"].map(lib.workFolder), ["paper", "paper", "", "", ""]);
+  assert.deepEqual(lib.organizeIn("figures"), { rename: false, move: false, moveTargets: [], delete: false, newSubfolder: false,
+    newPage: true, chooseFiles: false });
+  const paper = lib.organizeIn("paper");
+  assert.deepEqual([paper.rename, paper.move, paper.delete, paper.newSubfolder, paper.chooseFiles], [true, true, false, false, true]);
+  assert.deepEqual(paper.moveTargets, ["notes"], "out of every work folder");
+  assert.deepEqual(lib.organizeIn("notes").moveTargets, [], "never into one");
+  assert.equal(lib.organizeIn("").newSubfolder, true, "the library's top");
+  assert.equal(lib.organizeIn(undefined).newPage, true);
+  const viewer = libraryAccess({ role: "viewer", tree });
+  assert.equal(viewer.workFolder("figures"), "paper", "a viewer still knows a work folder");
+  assert.deepEqual(Object.values(viewer.organizeIn("notes")).filter((v) => v === true || v.length), []);
+});

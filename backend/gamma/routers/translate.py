@@ -285,20 +285,38 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         # it counts as made with one: it is kept so, and found so.
         paper_key, kept = _paper_keys(request, user_id, ws, paper, lang, model_id, payload.keep)
         batch = TranslateBatch(texts, keys(model_id, paper_key, True), kept, brief=True, fresh=payload.fresh)
-        translated = []
+        src = batch.miss_texts
+        translated, redo = [], []
         if batch.miss:
             # One engine call per batch limit, no streaming: the reply is
-            # aligned by the API, so there is nothing to salvage either.
+            # aligned by the API.
             try:
-                translated = translate_engines.translate(engine, engine_conf, batch.miss_texts, lang, user_id)
+                translated = translate_engines.translate(engine, engine_conf, src, lang, user_id)
             except translate_engines.EngineError as e:
                 log.warning(f"[ai_translate] {e}")
                 raise HTTPException(status_code=502, detail=f"translation failed: {e}")
-            # A service that mangled a formula token shows the original
-            # instead. Not `failed`: a service answers the same text the
-            # same way, so asking again would get the same.
-            translated = [translate_context.checked(src, t) or src for src, t in zip(batch.miss_texts, translated)]
-        return reply_with(_final(batch, translated, model_id, "", True))
+            translated = [translate_context.checked(s, t) for s, t in zip(src, translated)]
+            # A text whose formula token the service lost, doubled or
+            # rewrote would show the wrong formula. The same text would come
+            # back the same way, so it is asked again once with its tokens in
+            # the other form (translate_engines.TOKEN_FORMS).
+            redo = [j for j, t in enumerate(translated) if t is None]
+            if redo:
+                log.warning(f"[ai_translate] {translate_engines.ENGINES[engine]['label']} broke a token in "
+                            f"{len(redo)} of {len(src)} texts — asking for them again")
+                try:
+                    again = translate_engines.translate(engine, engine_conf, [src[j] for j in redo], lang, user_id,
+                                                        form=1)
+                except translate_engines.EngineError as e:
+                    log.warning(f"[ai_translate] asking again failed: {e}")
+                    again = [None] * len(redo)
+                for j, t in zip(redo, again):
+                    translated[j] = translate_context.checked(src[j], t)
+        # One still broken comes back VERBATIM, named in `failed` as the
+        # model's are: the viewer marks and counts it and asks for it again.
+        failed = [j for j, t in enumerate(translated) if t is None]
+        translated = [s if t is None else t for s, t in zip(src, translated)]
+        return reply_with(_final(batch, translated, model_id, "", True, len(redo), batch.at(failed)))
 
     rt = require_ai_runtime(user_id)
     entry = _resolve_model(rt, payload.model)

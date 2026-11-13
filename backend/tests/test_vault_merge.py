@@ -1,4 +1,4 @@
-"""gamma/vault_merge.py: a note changed on disk merged into its page, the
+"""gamma/vault/merge.py: a note changed on disk merged into its page, the
 target built from the page and the file's changes since the base
 (docs/dev/synced_vaults.md "Push"), with the counter-examples that once lost
 or doubled a block."""
@@ -11,7 +11,7 @@ from fractional_indexing import generate_key_between, generate_n_keys_between, v
 
 from gamma import md_lens, sync_tree
 from gamma.blocks_store import block_kind
-from gamma.vault_merge import file_wins, merge_page, premerge
+from gamma.vault.merge import file_wins, merge_page, premerge
 
 P = "page"
 INK = {"ink_url": "/api/uploads/strokes.ink"}

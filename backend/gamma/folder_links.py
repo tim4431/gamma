@@ -18,16 +18,16 @@ files are written, its direction, the change-log seq the last round saw,
 and that round's status.
 
 Every folder link is the vault engine's (``engine``): its rounds are
-gamma/vault_sync.py's, push then pull, notes both ways, its directory holding
+gamma/vault/sync.py's, push then pull, notes both ways, its directory holding
 a vault marker (``.gamma/vault.json``, its id in the row's ``state.vault``).
 One is made from a directory (``new_folder``: a new folder named after it) or
 from a folder. Its remote is this server's workspace, or a folder of
 *another* Gamma server reached over HTTP with a token of it (``remote_url``,
-``token``; gamma/vault_http.py: the desktop app keeps a NAS folder on a PC
+``token``; gamma/vault/http_remote.py: the desktop app keeps a NAS folder on a PC
 this way, no clone needed), which pulls with a token that may read and
 pushes with one that may write. A folder kept on disk before synced vaults,
 its state the gamma-sync client's file in the directory (``older``), is taken
-onto the engine at its first round (gamma/vault_upgrade.py); the gamma-sync
+onto the engine at its first round (gamma/vault/upgrade.py); the gamma-sync
 client alone runs ``gamma_sync.Round`` now.
 
 A **file link** (kind ``file``) makes the PDF at its path the page
@@ -43,6 +43,18 @@ by the mirror and Zotero when they would take a workspace a vault pushes
 everything into (``pushing_vault``). Vaults do not overlap on this computer
 or, when both push, in Gamma; a vault made from a directory takes in the
 vaults of one file inside it (``_take_in``).
+
+A **work folder** (``work_folder_link``; docs/dev/work_folders.md) is a vault
+of a folder of this server that pushes everything: its folder carries the
+vault's mark (``properties.vault = {pull, library}``, ``_set_mark``), each
+file it tracks is a page stamped as that folder's, and what it tracks is its
+directory's ``.gammaignore``, chosen in the web app's tracking dialog
+(gamma/work_folders/selection.py). One made with ``choose`` waits paused and
+*choosing* until the dialog saves: every way into a round refuses it until
+then, and removing it cancels it, taking back what making it made
+(``_cancel``). A vault from before work folders is taken over at its first
+round, and one whose push came down is let go at its next
+(gamma/work_folders/takeover.py).
 
 Rounds run from ``tick`` (the app's periodic loop, every ``TICK_S``): a
 vault of this server scans each time; a vault of another server has a whole
@@ -63,17 +75,22 @@ runs (``progress``, ``_progress_writer``). A paused link (``set_paused``) is
 left out of the tick and runs only when asked to sync.
 
 The **hot loop** (``hot_tick``, every ``HOT_S``) gives a page of a vault of
-this server a round of its own (``vault_sync.sync_page``, no scan): a page
+this server a round of its own (``vault.sync.sync_page``, no scan): a page
 written in Gamma, once ``HOT_S`` passed since its last write
 (``ops.commit_listeners`` marks it, ``_dirty``, and nothing else), and a page
 open in a window whose file's stat moved. A mark stays until a round of its
-page ran.
+page ran. The same loop writes a work folder's feedback files
+(gamma/feedback/files.py) within a pass of a change to its threads, as every
+whole round of a work folder does after its sync (``status.feedback``).
 
 **Removing a vault** (``delete_link``) leaves its pages as they are: the PDFs
 it read in place are stored first, and one that cannot be stops the removal
-before anything is undone; then its marker goes, and with ``files=trash``
+before anything is undone; then its feedback files and its marker go, and
+with ``files=trash``
 the files its rounds made move to its trash. A vault whose disk is not there
-keeps its pages reading their files, missing, to be located.
+keeps its pages reading their files, missing, to be located. A work folder's
+files that are not in the library go to Recently deleted instead, and the
+directory folders that leaves empty go (``_release_work``).
 """
 
 import json
@@ -83,23 +100,26 @@ import sqlite3
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
 
-from . import collab, config, folder_sync, gamma_sync, md_lens, storage, vault_disk, vault_store, workspaces
+from . import collab, config, folder_sync, gamma_sync, md_lens, storage, workspaces
 from .auth import DISK_CLIENT
-from .blocks_store import (FOLDERS, LINKED_FILE, PARENT_PAGE, TREES, filing, folder_path, folder_paths,
-                           folder_subtree_ids, load_json, load_props, new_block_id, page_in_folder, page_root_id,
-                           pages_in_folder)
+from .blocks_store import (FOLDERS, PARENT_PAGE, TREES, filing, folder_path, folder_paths, folder_subtree_ids,
+                           live_pages, load_json, load_props, new_block_id, page_in_folder, page_root_id, pages_in_folder)
 from .db import connect_pages_db, connect_users_db, connect_vaults_db, page_now
+from .vault import disk as vault_disk, store as vault_store
+from .documents.model import document_at, in_place, own_hash, page_document
 from .jobs import error_text
 from .logbuf import log
 from .ops import OpError, commit_listeners, commit_ops
 from .publisher_sessions import seal, unseal
-from .storage import store_pdf_stream
+from .storage import store_file_stream, store_pdf_stream
+from .work_folders import marks
+from .work_folders.library import SQL_OUTSIDE_LIBRARY
 
 TICK_S = 30            # how often the loop looks for links whose source changed
 HOT_S = 2              # how often the hot loop looks, and how long a page's last write rests before its round
@@ -120,7 +140,7 @@ _ERRORS = ("last_error", "failed_at", "stopped", "offline")   # what a round tha
 REFUSED_UNSAID = "This vault is refused as things stand; only an account that may edit its workspace is told why."
 
 _COLS = ("id, workspace_id, folder_id, path, notes, created_by, created_at, cursor, status, remote_url, token, token_id, "
-         "kind, page_id, push, state, pull")
+         "kind, page_id, push, state, pull, library")
 _locks: dict[str, threading.Lock] = {}
 _guard = threading.Lock()
 _status_guard = threading.Lock()  # one read-modify-write of a status at a time (_write_status, set_paused)
@@ -133,6 +153,9 @@ _dirty_guard = threading.Lock()
 _ticking = threading.Lock()      # one tick at a time: the loop's, or one a hint started
 _tick_asked = threading.Event()  # a tick asked for since the running one began: it runs once more
 PAUSED = "paused_at"   # the status key of a pause: the user's, which no round writes
+CHOOSING = "choosing"  # the state key of a work folder made with ``choose`` whose files are not chosen yet
+CHOOSE_FIRST = "choose its files first"   # what every way into a round answers a choosing vault
+CHOOSES_ONLY = "Only a vault that pushes everything chooses its files."
 
 
 class LinkError(ValueError):
@@ -163,7 +186,7 @@ def push_value(word: str) -> int:
 
 
 def engine(link: dict) -> bool:
-    """Whether the link's rounds are the vault engine's (gamma/vault_sync.py):
+    """Whether the link's rounds are the vault engine's (gamma/vault/sync.py):
     every folder link, one kept on disk before synced vaults too (``older``),
     which its first round takes onto the engine; a file link's are this
     module's own."""
@@ -172,10 +195,33 @@ def engine(link: dict) -> bool:
 
 def older(link: dict) -> bool:
     """Whether the link is a folder kept on disk before synced vaults, not
-    taken onto the engine yet (gamma/vault_upgrade.py, at its first round):
+    taken onto the engine yet (gamma/vault/upgrade.py, at its first round):
     its row names no marker, and its directory holds the gamma-sync client's
     state file."""
     return link["kind"] == "folder" and not link["state"].get("vault")
+
+
+def work_folder_link(link: dict) -> bool:
+    """Whether the vault is a work folder (docs/dev/work_folders.md): one of
+    a folder of this server that pushes everything. The vault alone asks:
+    the op path and the readers read its folder's mark and its pages'
+    stamps, which it writes."""
+    return (link["kind"] == "folder" and not link["remote_url"] and link["folder_id"] != folder_sync.ROOT
+            and link["push"] == PUSH_ALL)
+
+
+def choosing(link: dict) -> bool:
+    """Whether the work folder waits for its files to be chosen (made with
+    ``choose``, not saved yet): no round runs it."""
+    return bool(link["state"].get(CHOOSING))
+
+
+def _set_mark(link: dict, mark: dict | None) -> None:
+    """The vault's folder carries ``mark`` (``takeover.mark_of``), or none,
+    written as the vault (``DISK_CLIENT``), the one writer a person's op may
+    not stand in for."""
+    commit_ops(link["workspace_id"], FOLDERS, [{"op": "set", "id": link["folder_id"], "props": {"vault": mark}}],
+               actor=link["created_by"], client=DISK_CLIENT)
 
 
 def _absolute(text: str) -> bool:
@@ -295,7 +341,7 @@ def _row(r, with_token: bool = False) -> dict:
     link = {"id": r[0], "workspace_id": r[1], "folder_id": r[2], "path": r[3], "notes": bool(r[4]),
             "created_by": r[5], "created_at": r[6], "cursor": r[7] or "", "status": status,
             "remote_url": r[9] or "", "token_id": r[11] or "", "kind": r[12] or "folder", "page_id": r[13] or "",
-            "push": r[14] or PUSH_OFF, "state": _object_of(r[15]), "pull": r[16]}
+            "push": r[14] or PUSH_OFF, "state": _object_of(r[15]), "pull": r[16], "library": bool(r[17])}
     if with_token:
         link["token"] = _unseal(r[10] or "")
     return link
@@ -345,7 +391,7 @@ def _kept_before(link: dict, root: Path) -> bool:
     goes on with it, as an ``older`` one that its first round takes onto the
     engine. LinkError for the files of another folder, or of a gamma-sync of
     another version."""
-    from . import vault_upgrade  # local: it imports this module
+    from .vault import upgrade as vault_upgrade  # local: it imports this module
 
     try:
         state = vault_upgrade.old_state(root)
@@ -526,11 +572,11 @@ def _insert(link: dict, token: str = "") -> dict:
     with connect_users_db() as conn:
         _room_for(conn, link)
         try:
-            conn.execute(f"INSERT INTO folder_links ({_COLS}) VALUES ({', '.join('?' * 17)})",
+            conn.execute(f"INSERT INTO folder_links ({_COLS}) VALUES ({', '.join('?' * 18)})",
                          (link["id"], link["workspace_id"], link["folder_id"], link["path"], int(link["notes"]), link["created_by"],
                           link["created_at"], "", json.dumps(link["status"]), link["remote_url"], seal(token),
                           link["token_id"], link["kind"],
-                          link["page_id"], link["push"], json.dumps(link["state"]), link["pull"]))
+                          link["page_id"], link["push"], json.dumps(link["state"]), link["pull"], int(link["library"])))
         except sqlite3.IntegrityError as e:   # the path, taken meanwhile (UNIQUE, ignoring case)
             raise LinkError(_taken(link)) from e
     return link
@@ -539,8 +585,8 @@ def _insert(link: dict, token: str = "") -> dict:
 def _new(ws: str, path: str, user_id: str, **fields) -> dict:
     """A link not stored yet: a folder link unless ``fields`` say otherwise."""
     return {"id": uuid.uuid4().hex, "workspace_id": ws, "kind": "folder", "folder_id": "", "page_id": "", "path": path,
-            "notes": False, "pull": 1, "push": PUSH_OFF, "state": {}, "created_by": user_id, "created_at": page_now(), "cursor": "",
-            "status": {}, "remote_url": "", "token_id": "", **fields}
+            "notes": False, "pull": 1, "push": PUSH_OFF, "library": False, "state": {}, "created_by": user_id,
+            "created_at": page_now(), "cursor": "", "status": {}, "remote_url": "", "token_id": "", **fields}
 
 
 def _found_marker(root: Path, adopt: bool) -> dict | None:
@@ -570,57 +616,99 @@ def _merges(ws: str, folder_id: str, root: Path) -> bool:
     """Whether the folder and the directory both hold what a vault would
     send the other way: a folder with pages and a directory with notes or
     PDFs, which pushing everything would mix (a linked directory is a new
-    folder, a linked folder a new directory)."""
+    folder, a linked folder a new directory). The directory's files are
+    those its ``.gammaignore`` tracks (``selection.rules_of``)."""
+    from .work_folders import selection
+
     with connect_pages_db(ws) as conn:
-        if not pages_in_folder(conn, None if folder_id == folder_sync.ROOT else folder_id):
+        if not (live_pages(conn) if folder_id == folder_sync.ROOT else pages_in_folder(conn, folder_id)):
             return False
     try:
-        return root.is_dir() and bool(vault_disk.walk(root).files)
+        return root.is_dir() and bool(vault_disk.walk(root, selection.rules_of(root)).files)
     except vault_disk.Offline:
         return False
 
 
-def _new_folder(ws: str, name: str, user_id: str) -> str:
+def _new_folder(ws: str, name: str, user_id: str, mark: dict | None = None) -> str:
     """A new folder at the library's top named ``name``, even when one of the
     name is there: a vault made from a directory never fills a folder that
-    held pages."""
+    held pages. A work folder's carries its ``mark`` from the start."""
     folder_id = new_block_id()
-    commit_ops(ws, FOLDERS, [{"op": "insert", "id": folder_id, "parent": FOLDERS, "content": name}], actor=user_id,
-               client=DISK_CLIENT)
+    insert = {"op": "insert", "id": folder_id, "parent": FOLDERS, "content": name}
+    if mark is not None:
+        insert["props"] = {"vault": mark}
+    commit_ops(ws, FOLDERS, [insert], actor=user_id, client=DISK_CLIENT)
     return folder_id
 
 
-def _make_vault(link: dict, marker: dict | None, *, new_folder: bool, token: str = "") -> dict:
+def _make_vault(link: dict, marker: dict | None, *, new_folder: bool, token: str = "", choose: bool = False) -> dict:
     """A vault's row (with the token of its other server, ``token``), made
     after its folder (``new_folder``) and its marker (unless ``marker``, the
     one the directory holds), both taken back when the row cannot be stored.
     Then the file vaults inside it are its, with the link's lock held from the
     row on: a tick's round in between would read a taken-in PDF as new and
-    make it a second page."""
+    make it a second page. A work folder's folder carries the mark, and one
+    that holds no page yet has nothing to take over (``TAKEN_OVER`` now).
+    With ``choose`` it is paused and choosing, what was made for it noted for
+    a cancel (``_cancel``), and its file vaults wait for its files to be
+    chosen (``save_selection``)."""
+    from .work_folders import takeover
+
     root = dest_of(link)
-    made_folder = made_marker = False
+    work = work_folder_link(link)
+    mark = takeover.mark_of(link) if work else None
+    made_folder = made_marker = marked = False
+    made_dir = not (root / vault_disk.MARKER_DIR).exists()
     with _holding(link["id"]):    # a tick rests it (``_resting``), and nobody else knows the link yet
         try:
             if new_folder:
-                link["folder_id"] = _new_folder(link["workspace_id"], root.name or "Vault", link["created_by"])
+                link["folder_id"] = _new_folder(link["workspace_id"], root.name or "Vault", link["created_by"], mark)
                 made_folder = True
+            elif work:
+                _set_mark(link, mark)
+                marked = True
             if marker is None:
                 try:
                     marker = vault_disk.make_marker(root)
                 except OSError as e:
                     raise LinkError(f"Cannot write {root}: {e}") from e
                 made_marker = True
-            link["state"] = {"vault": marker["id"]}
+            state = {"vault": marker["id"]}
+            if work and (made_folder or not _holds_pages(link)):
+                state[takeover.TAKEN_OVER] = page_now()
+            if choose:
+                state |= {CHOOSING: True, "made": {"folder": made_folder, "marker": made_marker,
+                                                   "marker_dir": made_marker and made_dir}}
+                link["status"] = {**link["status"], PAUSED: page_now()}
+            link["state"] = state
             _insert(link, token)
         except BaseException:
             if made_marker:
                 (root / vault_disk.MARKER).unlink(missing_ok=True)
+                if made_dir:
+                    _drop_empty(root / vault_disk.MARKER_DIR)
             if made_folder:
                 commit_ops(link["workspace_id"], FOLDERS, [{"op": "delete", "id": link["folder_id"]}],
                            actor=link["created_by"], client=DISK_CLIENT)
+            elif marked:
+                _set_mark(link, None)
             raise
-        _take_in(link)
+        if not choose:
+            _take_in(link)
     return link
+
+
+def _holds_pages(link: dict) -> bool:
+    with connect_pages_db(link["workspace_id"]) as conn:
+        return bool(pages_in_folder(conn, link["folder_id"]))
+
+
+def _drop_empty(directory: Path) -> None:
+    """``directory`` removed when it is empty; left as it is otherwise."""
+    try:
+        directory.rmdir()
+    except OSError:
+        pass
 
 
 def _take_in(link: dict) -> None:
@@ -631,9 +719,9 @@ def _take_in(link: dict) -> None:
     (its stat left unknown when the page's bytes are older, so the round
     reads it), and its own link goes. One that cannot be taken in stays a
     vault of its own, and the log says why."""
-    from .vault_sync import remote_for  # local: it imports this module
+    from .vault.remote import remote_for  # local: it imports this module
 
-    files = [o for o in all_links() if o["kind"] == "file" and _takes_in(link, o) and inside(o["path"], link["path"])]
+    files = followed_files(link)
     remote = remote_for(link) if files else None
     for other in files:
         try:
@@ -642,9 +730,17 @@ def _take_in(link: dict) -> None:
             log.warning(f"[folders] {other['path']} stays a vault of its own: {getattr(e, 'detail', '') or e}")
 
 
+def followed_files(link: dict) -> list[dict]:
+    """The vaults of one file inside the directory vault ``link`` that it
+    takes in (``_take_in``): its tracking dialog keeps their PDFs ticked."""
+    return [o for o in all_links() if o["kind"] == "file" and _takes_in(link, o) and inside(o["path"], link["path"])]
+
+
 def _take_in_one(link: dict, remote, other: dict) -> None:
     """The file vault ``other`` taken in by the vault ``link`` (``_take_in``),
-    its folders made through ``remote``."""
+    its folders made through ``remote``. A work folder's page is stamped as
+    its file, in the library (it was a library page), its folders in other
+    work folders let go."""
     from . import linked_files  # local: it imports this module
 
     ws, rel = link["workspace_id"], os.path.relpath(other["path"], dest_of(link)).replace(os.sep, "/")
@@ -653,19 +749,27 @@ def _take_in_one(link: dict, remote, other: dict) -> None:
     with connect_pages_db(ws) as conn:
         row = conn.execute("SELECT content, properties, doc_id FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
                            (other["page_id"],)).fetchone()
+        tree = marks.Tree.read(conn)
     if row:
-        props = load_props(row[1])
-        if folder_id != folder_sync.ROOT:
-            filed = {FOLDERS: [folder_id, *(f for f in filing(props, FOLDERS) if f != folder_id)]}
-            if props.get(PARENT_PAGE):
-                filed[PARENT_PAGE] = None
-            commit_ops(ws, other["page_id"], [{"op": "set", "id": other["page_id"], "props": filed}],
-                       actor=link["created_by"], client=DISK_CLIENT)
         try:
             seen = linked_files.hash_file(other["path"])
         except (OSError, ValueError):
             seen = None
         level = seen is not None and seen[0] == (row[2] or "")
+        props = load_props(row[1])
+        if folder_id != folder_sync.ROOT:
+            others = [f for f in filing(props, FOLDERS) if f != folder_id]
+            filed = {FOLDERS: [folder_id, *others]}
+            if props.get(PARENT_PAGE):
+                filed[PARENT_PAGE] = None
+            if work_folder_link(link):
+                filed |= {FOLDERS: [folder_id, *(f for f in others if not tree.work_of(f))], "work_folder": link["folder_id"],
+                          "library": True, "file_name": rel.rsplit("/", 1)[-1]}
+                doc = props.get("doc")
+                if level and isinstance(doc, dict) and doc.get("size") is None:
+                    filed["doc"] = {**doc, "size": seen[1]}
+            commit_ops(ws, other["page_id"], [{"op": "set", "id": other["page_id"], "props": filed}],
+                       actor=link["created_by"], client=DISK_CLIENT)
         vault_store.put(link["id"], rel, kind="pdf", page_id=other["page_id"], hash=row[2] or "",
                         size=seen[1] if level else 0, mtime_ns=seen[2] if level else 0,
                         file_id=seen[3] if level else "", read_at=0.0,
@@ -676,7 +780,7 @@ def _take_in_one(link: dict, remote, other: dict) -> None:
 
 
 def create_link(ws: str, folder_id: str, path: str, notes: bool, user_id: str, push: str = "off", pull: bool = True, *,
-                new_folder: bool = False, adopt: bool = False) -> dict:
+                new_folder: bool = False, adopt: bool = False, choose: bool = False, library: bool = False) -> dict:
     """A new vault of a folder of this server's workspace ``ws``: the path is
     cleaned (``clean_path``) and must not be another link's, and the link
     passes ``check_vault``. ``push`` (``push_value``) is what goes back to
@@ -684,12 +788,15 @@ def create_link(ws: str, folder_id: str, path: str, notes: bool, user_id: str, p
     notes files are (always where it pushes everything). With ``new_folder``
     the vault is made from the directory, which must be there, into a new
     folder named after it; else from the folder, which must exist (or be
-    ``root``), and one that pushes everything may not mix a folder with pages
-    and a directory with files (``_merges``). The directory gets its marker
-    (``adopt``: the one it holds, ``_found_marker``) and takes in the file
-    vaults inside it. A directory an earlier link kept the same folder in
-    (``_kept_before``) is that folder's again, taken onto the engine at its
-    first round (gamma/vault_upgrade.py)."""
+    ``root``, which pushes everything nowhere: ``_whole_library``), and one
+    that pushes everything may not mix a folder with pages and a directory
+    with files (``_merges``). The directory gets its marker (``adopt``: the
+    one it holds, ``_found_marker``) and takes in the file vaults inside it.
+    A directory an earlier link kept the same folder in (``_kept_before``) is
+    that folder's again, taken onto the engine at its first round
+    (gamma/vault/upgrade.py). ``library`` is a work folder's switch; with
+    ``choose`` (a work folder only) its files wait for its tracking dialog,
+    no round running before (``_make_vault``)."""
     path, push, pull = clean_path(path), push_value(push), bool(pull)
     if not pull and not push:
         raise LinkError("A vault pulls, pushes, or both.")
@@ -703,9 +810,14 @@ def create_link(ws: str, folder_id: str, path: str, notes: bool, user_id: str, p
             if folder_id != folder_sync.ROOT and folder_id not in folder_paths(conn):
                 raise LinkError("That folder does not exist.")
     link = _new(ws, path, user_id, folder_id=folder_id, notes=bool(notes) or new_folder or push == PUSH_ALL, push=push,
-                pull=int(pull))
+                pull=int(pull), library=bool(library))
+    _whole_library(link)
+    if choose and not work_folder_link(link):
+        raise LinkError(CHOOSES_ONLY)
     check_vault(link)
     if _kept_before(link, root):
+        if choose:
+            raise LinkError(f"{root} holds a folder kept on disk before synced vaults: sync it as it is.")
         return _insert(link)
     marker = _found_marker(root, adopt)
     if not new_folder and push == PUSH_ALL and _merges(ws, folder_id, root):
@@ -713,7 +825,16 @@ def create_link(ws: str, folder_id: str, path: str, notes: bool, user_id: str, p
                         "or this folder with an empty or new one.")
     with connect_users_db() as conn:
         _room_for(conn, link)
-    return _make_vault(link, marker, new_folder=new_folder)
+    return _make_vault(link, marker, new_folder=new_folder, choose=choose)
+
+
+def _whole_library(link: dict) -> None:
+    """LinkError for a vault of this server's whole library that would push
+    everything: such a vault is a work folder, which needs a folder to carry
+    its mark. One from before goes on as it is, a kept folder."""
+    if (link["kind"] == "folder" and not link["remote_url"] and link["folder_id"] == folder_sync.ROOT
+            and link["push"] == PUSH_ALL):
+        raise LinkError("A vault of the whole library cannot push everything: make one of a folder.")
 
 
 def _remote(url: str, token: str, workspace: str) -> tuple[gamma_sync.Server, dict]:
@@ -741,7 +862,7 @@ def _remote(url: str, token: str, workspace: str) -> tuple[gamma_sync.Server, di
 
 def create_remote_link(url: str, token: str, token_id: str, workspace: str, folder_id: str, path: str, notes: bool,
                        user_id: str, push: str = "off", pull: bool = True) -> dict:
-    """A new vault of a folder on *another* Gamma server (gamma/vault_http.py),
+    """A new vault of a folder on *another* Gamma server (gamma/vault/http_remote.py),
     read with a token of that server (read access is enough unless ``push``,
     which takes a token that may write; the token is kept Fernet-encrypted,
     ``token_id`` for whoever revokes it there later). The token is checked
@@ -813,17 +934,25 @@ def create_remote_file_link(url: str, token: str, token_id: str, workspace: str,
 def preview(ws: str, path: str, folder_id: str = "", kind: str = "folder") -> dict:
     """What making a vault of ``path`` would find and write, writing nothing:
     ``{path, notes, pdfs, pictures, untracked, empty, marker, refusal, pages,
-    will_write}``. ``marker`` is the one the directory holds, ``{id,
-    link_id}`` (``link_id`` "" when no link holds it, so it may be adopted);
-    ``refusal`` why it would be refused ("" for none); ``pages`` what the
-    folder ``folder_id`` holds; ``will_write`` what it writes on disk, the
-    marker's directory when there is none yet. LinkError for a path no vault
-    can have, or a directory that cannot be read."""
+    will_write, gammaignore}``. The counts are of what the directory's
+    ``.gammaignore`` tracks (the default without one), ``untracked`` the
+    files it does not read: of no class, or left out by it (the default
+    leaves out every file of no class); ``empty`` a directory with no file
+    or directory at all that the scan lists; ``gammaignore`` that
+    file's ``{exists, ours}`` (``ours``: Gamma wrote it). ``marker`` is the
+    one the directory holds, ``{id, link_id}`` (``link_id`` "" when no link
+    holds it, so it may be adopted); ``refusal`` why it would be refused (""
+    for none; a ``.gammaignore`` that cannot be read among the reasons);
+    ``pages`` what the folder ``folder_id`` holds; ``will_write`` what it
+    writes on disk, the marker's directory when there is none yet. LinkError
+    for a path no vault can have, or a directory that cannot be read."""
+    from .work_folders import ignore_rules
+
     if kind == "file":
         path = clean_file_path(path)
         link = _new(ws, path, "", kind="file", pull=0, push=PUSH_PDFS)
         return {"path": path, "notes": 0, "pdfs": 1, "pictures": 0, "untracked": 0, "empty": False, "marker": None,
-                "refusal": _refusal_of(link), "pages": 0, "will_write": []}
+                "refusal": _refusal_of(link), "pages": 0, "will_write": [], "gammaignore": {"exists": False, "ours": False}}
     path = clean_path(path)
     root, refusal, found = Path(path), "", None
     try:
@@ -832,10 +961,14 @@ def preview(ws: str, path: str, folder_id: str = "", kind: str = "folder") -> di
         pass
     except vault_disk.Stopped as e:
         refusal = f"{root}: {e}."
-    scan = vault_disk.Scan()
+    scan, rules = vault_disk.Scan(), None
     if root.is_dir():
         try:
-            scan = vault_disk.walk(root, found["ignore"] if found else ())
+            rules = ignore_rules.read(root)
+        except ignore_rules.Unreadable as e:
+            refusal = refusal or f"{root}: its {ignore_rules.NAME} cannot be read: {e.why}."
+        try:
+            scan = vault_disk.walk(root, rules)
         except vault_disk.Offline as e:
             raise LinkError(f"Cannot read {root}: {e}") from e
     marker = None
@@ -847,7 +980,7 @@ def preview(ws: str, path: str, folder_id: str = "", kind: str = "folder") -> di
     pages = 0
     if folder_id:
         with connect_pages_db(ws) as conn:
-            pages = len(pages_in_folder(conn, None if folder_id == folder_sync.ROOT else folder_id))
+            pages = len(live_pages(conn) if folder_id == folder_sync.ROOT else pages_in_folder(conn, folder_id))
     link = _new(ws, path, "", folder_id=folder_id, state={"vault": found["id"]} if found else {})
     if not refusal:
         try:
@@ -855,10 +988,13 @@ def preview(ws: str, path: str, folder_id: str = "", kind: str = "folder") -> di
         except LinkError as e:
             refusal = str(e)
     kinds = [f.kind for f in scan.files.values()]
+    untracked = scan.untracked + sum(1 for p in scan.excluded if not p.endswith("/"))
     return {"path": path, "notes": kinds.count("notes"), "pdfs": kinds.count("pdf"), "pictures": scan.pictures,
-            "untracked": scan.untracked, "empty": not (scan.files or scan.dirs or scan.pictures or scan.untracked or scan.refused),
+            "untracked": untracked,
+            "empty": not (scan.files or scan.dirs or scan.pictures or untracked or scan.excluded or scan.refused),
             "marker": marker, "refusal": refusal or _refusal_of(link), "pages": pages,
-            "will_write": [] if found else [f"{vault_disk.MARKER_DIR}/"]}
+            "will_write": [] if found else [f"{vault_disk.MARKER_DIR}/"],
+            "gammaignore": {"exists": bool(rules and rules.exists), "ours": bool(rules and rules.ours)}}
 
 
 def _refusal_of(link: dict, **kw) -> str:
@@ -902,7 +1038,13 @@ def set_push(link_id: str, word: str, token: str = "", token_id: str = "") -> di
     everything turns its notes files on. A file link always sends:
     LinkError. Only the row changes; the next round reads it (a folder kept
     before, not taken onto the engine yet, is at that round, its notes
-    changed on disk kept until a force decides)."""
+    changed on disk kept until a force decides). A kept folder that comes
+    to push everything becomes a work folder, its pages in the library,
+    taken over at its next round; a work folder's push comes down only while
+    every file of it is in the library, and its next round lets it go
+    (gamma/work_folders/takeover.py)."""
+    from .work_folders import takeover
+
     push = push_value(word)
     link = get_link(link_id, with_token=True)
     if link is None:
@@ -911,16 +1053,34 @@ def set_push(link_id: str, word: str, token: str = "", token_id: str = "") -> di
         raise LinkError("A vault of one file always pushes its new versions.")
     if not push and not link["pull"]:
         raise LinkError("A vault pulls, pushes, or both.")
-    check_vault({**link, "push": push})
+    after = {**link, "push": push}
+    if push != link["push"]:
+        _whole_library(after)
+    if work_folder_link(link) and not work_folder_link(after) and _outside_library(link):
+        raise LinkError("This work folder's files are not in the library: remove the vault, or add them to the "
+                        "library first.")
+    check_vault(after)
     if link["remote_url"] and (push or token):
         _check_token(link, token or link["token"], bool(push))
-    with connect_users_db() as conn:
-        conn.execute("UPDATE folder_links SET push = ? WHERE id = ?", (push, link_id))
-        if link["remote_url"] and token:
-            _keep_token(conn, link_id, token, token_id)
+    raised = work_folder_link(after) and not work_folder_link(link)
+    with _holding(link_id) if raised else nullcontext():
+        with connect_users_db() as conn:
+            conn.execute("UPDATE folder_links SET push = ? WHERE id = ?", (push, link_id))
+            if link["remote_url"] and token:
+                _keep_token(conn, link_id, token, token_id)
+            if raised:
+                state = {k: v for k, v in (get_link(link_id) or link)["state"].items() if k != takeover.TAKEN_OVER}
+                conn.execute("UPDATE folder_links SET library = 1, state = ? WHERE id = ?", (json.dumps(state), link_id))
     if push == PUSH_ALL and not link["notes"]:
         set_notes(link_id, True)
     return get_link(link_id)
+
+
+def _outside_library(link: dict) -> bool:
+    """Whether a live file of the work folder is not in the library."""
+    with connect_pages_db(link["workspace_id"]) as conn:
+        return conn.execute(f"SELECT 1 FROM unified_blocks WHERE work_folder = ? AND +parent_id = 'root' AND "
+                            f"{SQL_OUTSIDE_LIBRARY} LIMIT 1", (link["folder_id"],)).fetchone() is not None
 
 
 def set_token(link_id: str, token: str, token_id: str = "") -> dict | None:
@@ -955,8 +1115,9 @@ def _keep_token(conn, link_id: str, token: str, token_id: str) -> None:
 
 def set_pull(link_id: str, pull: bool) -> dict | None:
     """Whether a folder link writes Gamma's changes to its directory; None
-    for no such link. A vault that does not pull pushes something. Only the
-    row changes."""
+    for no such link. A vault that does not pull pushes something. The row
+    changes, and a work folder's mark, which tells the op path whether its
+    notes follow Gamma's renames and moves."""
     link = get_link(link_id)
     if link is None:
         return None
@@ -966,22 +1127,91 @@ def set_pull(link_id: str, pull: bool) -> dict | None:
         raise LinkError("A vault pulls, pushes, or both.")
     with connect_users_db() as conn:
         conn.execute("UPDATE folder_links SET pull = ? WHERE id = ?", (int(bool(pull)), link_id))
-    return get_link(link_id)
+    link = get_link(link_id)
+    _mark_again(link)
+    return link
+
+
+def set_library(link_id: str, on: bool) -> dict | None:
+    """A work folder's library switch: whether the pages of the files it
+    finds from now on are library documents too (the pages it holds keep
+    theirs: a file is added or removed one by one). The row changes, and
+    the folder's mark. None for no such link; LinkError for a file link."""
+    link = get_link(link_id)
+    if link is None:
+        return None
+    if link["kind"] == "file":
+        raise LinkError("A vault of one file pushes its PDF to its page: it adds nothing to the library.")
+    with connect_users_db() as conn:
+        conn.execute("UPDATE folder_links SET library = ? WHERE id = ?", (int(bool(on)), link_id))
+    link = get_link(link_id)
+    _mark_again(link)
+    return link
+
+
+def _mark_again(link: dict) -> None:
+    """A work folder's mark written again from its row's switches. A folder
+    gone, or a mark that cannot be written now, is the next round's to put
+    right (it writes the mark whenever it differs)."""
+    from .work_folders import takeover
+
+    if not work_folder_link(link):
+        return
+    try:
+        _set_mark(link, takeover.mark_of(link))
+    except OpError as e:
+        log.warning(f"[folders] {link['path']}: its mark waits for the next round: {e.detail}")
 
 
 def set_paused(link_id: str, paused: bool) -> dict | None:
     """Pause the link — the tick leaves it alone; a sync asked for still
     runs, and a round already running finishes — or resume it. The pause
-    is ``status.paused_at``, when it began; None for no such link."""
+    is ``status.paused_at``, when it began; None for no such link. A work
+    folder whose files are not chosen yet stays paused: LinkError."""
     with _status_guard, connect_users_db() as conn:
-        r = conn.execute("SELECT status FROM folder_links WHERE id = ?", (link_id,)).fetchone()
+        r = conn.execute("SELECT status, state FROM folder_links WHERE id = ?", (link_id,)).fetchone()
         if r is None:
             return None
+        if not paused and _object_of(r[1]).get(CHOOSING):
+            raise LinkError("Choose its files first.")
         status = _object_of(r[0])
         since = status.pop(PAUSED, None)
         if paused:
             status[PAUSED] = since or page_now()
         conn.execute("UPDATE folder_links SET status = ? WHERE id = ?", (json.dumps(status), link_id))
+    return get_link(link_id)
+
+
+def save_selection(link_id: str, chosen: dict, base_hash: str, library: bool | None = None) -> dict | None:
+    """What the vault tracks, saved from its tracking dialog
+    (gamma/work_folders/selection.py): ``chosen`` evaluated, refused when the
+    ``.gammaignore`` is not the one the dialog read (``base_hash``) or it
+    tracks too many files; then, under the link's lock, the vaults of one
+    file inside it taken in, the new ``.gammaignore`` written, its hash kept
+    as the one the rounds read (``vault.sync.SELECTION``), a vault that was
+    choosing no longer, and none paused; the library switch set with it when
+    given. Then a round, confirmed: the dialog has said what leaves. → the
+    link; None for no such link. ``selection.SelectionError`` for a refusal,
+    LinkError for a library switch refused."""
+    from .vault import sync as vault_sync  # local: it imports this module
+    from .work_folders import selection
+
+    if get_link(link_id) is None:
+        return None
+    with _holding(link_id):
+        link = get_link(link_id)
+        if link is None:
+            return None
+        found = selection.evaluate(link, chosen)
+        selection.check(link, found, base_hash)
+        _take_in(link)
+        written = selection.write(link, found)
+        state = {k: v for k, v in (get_link(link_id) or link)["state"].items() if k not in (CHOOSING, "made")}
+        keep_state(link_id, {**state, vault_sync.SELECTION: written})
+        set_paused(link_id, False)
+        if library is not None:
+            set_library(link_id, library)
+    run_in_background(link_id, confirm=True)
     return get_link(link_id)
 
 
@@ -991,8 +1221,9 @@ def relink(link_id: str, path: str) -> dict | None:
     state file of a folder kept before, not taken onto the engine yet, this
     folder's), or a followed file that moved. The PDFs a vault reads in place
     are read there from now on, the link's last error goes and a round
-    follows. None for no such link; LinkError for a place that is not the
-    link's, or that ``check_vault`` refuses."""
+    follows (none while its files are not chosen). None for no such link;
+    LinkError for a place that is not the link's, or that ``check_vault``
+    refuses."""
     link = get_link(link_id)
     if link is None:
         return None
@@ -1012,7 +1243,7 @@ def relink(link_id: str, path: str) -> dict | None:
             raise LinkError(f"{root} is not this vault: {e}.") from e
     check_vault({**link, "path": new})
     with _holding(link_id):
-        from .vault_sync import PLACE  # local: it imports this module
+        from .vault.sync import PLACE  # local: it imports this module
 
         stored = (get_link(link_id) or link)["state"]           # as the last round left it
         state = {k: v for k, v in stored.items() if k != PLACE}     # the marker found there is the vault's now
@@ -1022,14 +1253,15 @@ def relink(link_id: str, path: str) -> dict | None:
             except sqlite3.IntegrityError as e:
                 raise LinkError(_taken({**link, "path": new})) from e
         if engine(link):
-            from .vault_sync import LocalRemote  # local: it imports this module
+            from .vault.local_remote import LocalRemote  # local: it imports this module
 
             LocalRemote(link["workspace_id"], link["folder_id"], link["created_by"]).relink(link["path"], new)
         with _status_guard, connect_users_db() as conn:
             r = conn.execute("SELECT status FROM folder_links WHERE id = ?", (link_id,)).fetchone()
             status = {k: v for k, v in _object_of(r[0] if r else "").items() if k not in _ERRORS}
             conn.execute("UPDATE folder_links SET status = ? WHERE id = ?", (json.dumps(status), link_id))
-    run_in_background(link_id)
+    if not choosing(link):
+        run_in_background(link_id)
     return get_link(link_id)
 
 
@@ -1039,45 +1271,62 @@ def _in_place(link: dict) -> list[tuple[str, str, str]]:
     """``(page id, path in the vault, doc id)`` of each PDF the vault's pages
     read where it is, that this server stores no copy of: what a removal
     stores first. A page in Recently deleted counts, its file in the vault's
-    trash."""
+    trash, or where it is for an in-place tombstone (``vault_store.on_disk``)."""
     with connect_vaults_db() as conn:
-        rows = conn.execute("SELECT page_id, path FROM vault_files WHERE link_id = ? AND kind = 'pdf' AND page_id != ''",
-                            (link["id"],)).fetchall()
+        rows = [(page_id, vault_store.on_disk({"path": path, "was": was})) for page_id, path, was in conn.execute(
+            "SELECT page_id, path, was FROM vault_files WHERE link_id = ? AND kind = 'pdf' AND page_id != ''",
+            (link["id"],))]
     if not rows:
         return []
     ws = link["workspace_id"]
     with connect_pages_db(ws) as conn:
-        pages = {r[0]: (load_props(r[1]), r[2] or "") for r in conn.execute(
-            "SELECT id, properties, doc_id FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
+        views = {r[0]: page_document(load_props(r[1])) for r in conn.execute(
+            "SELECT id, properties FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
             (json.dumps(sorted({page_id for page_id, _path in rows})),))}
     out = []
     for page_id, rel in rows:
-        props, doc = pages.get(page_id, ({}, ""))
-        if props.get(LINKED_FILE) and doc and not storage.exists(ws, f"{doc}.pdf"):
-            out.append((page_id, rel, doc))
+        view = views.get(page_id)
+        if in_place(view) and not storage.exists(ws, view["file"]):
+            out.append((page_id, rel, view["hash"]))
     return out
 
 
 def removal(link: dict) -> dict:
     """What removing the link would do, before it is asked: ``{pages,
-    in_place, bytes}``, the pages it holds (they stay), and the PDFs it
-    reads in place with what they weigh, which are stored first."""
-    from . import vault_upgrade  # local: it imports this module
+    in_place, bytes, files, in_library}``, the pages it holds, of which a
+    work folder's files not in the library (``files``) go to Recently
+    deleted and the rest (``in_library``) stay, and the PDFs it reads in
+    place with what they weigh, which are stored first."""
+    from .vault import upgrade as vault_upgrade  # local: it imports this module
 
     if link["kind"] == "file":
-        return {"pages": 1, "in_place": 0, "bytes": 0}
+        return {"pages": 1, "in_place": 0, "bytes": 0, "files": 0, "in_library": 1}
     if older(link):
-        return {"pages": vault_upgrade.pages_of(link), "in_place": 0, "bytes": 0}
+        pages = vault_upgrade.pages_of(link)
+        return {"pages": pages, "in_place": 0, "bytes": 0, "files": 0, "in_library": pages}
     with connect_vaults_db() as conn:
         pages = conn.execute("SELECT COUNT(DISTINCT page_id) FROM vault_files WHERE link_id = ? AND page_id != '' "
                              "AND was = ''", (link["id"],)).fetchone()[0]
-    in_place, size = [] if link["remote_url"] else _in_place(link), 0
-    for _page_id, rel, _doc in in_place:
+    pdfs, size = [] if link["remote_url"] else _in_place(link), 0
+    for _page_id, rel, _doc in pdfs:
         try:
             size += os.stat(dest_of(link) / rel).st_size
         except OSError:
             pass
-    return {"pages": pages, "in_place": len(in_place), "bytes": size}
+    files = 0
+    if _works(link):
+        with connect_pages_db(link["workspace_id"]) as conn:
+            files = conn.execute(f"SELECT COUNT(*) FROM unified_blocks WHERE work_folder = ? AND +parent_id = 'root' "
+                                 f"AND {SQL_OUTSIDE_LIBRARY}", (link["folder_id"],)).fetchone()[0]
+    return {"pages": pages, "in_place": len(pdfs), "bytes": size, "files": files, "in_library": max(pages - files, 0)}
+
+
+def _works(link: dict) -> bool:
+    """Whether the link holds a work folder to let go: it is one, or was one
+    its round has not let go yet."""
+    from .work_folders import takeover
+
+    return work_folder_link(link) or bool(link["state"].get(takeover.TAKEN_OVER))
 
 
 def _store_copy(ws: str, path: Path, doc: str) -> None:
@@ -1115,16 +1364,20 @@ def _remove_vault(link: dict, files: str) -> None:
     """A vault's removal, the module doc's: on its disk, the PDFs and
     pictures read in place stored (``_store_in_place``; a vault of another
     server reads none), then its trash taking the files its pulls made
-    (``files=trash``) and its marker going. A vault whose disk is not there
+    (``files=trash``), its feedback files going whatever ``files`` says
+    (gamma/feedback/files.py: Gamma's own, never trashed) and its marker
+    going. A vault whose disk is not there
     is left as it is on disk: its pages go on reading their files, missing,
     so that they can be located. A directory that answers but is no longer
     the vault's (its marker gone, another's there) has the vault's PDFs
     stored all the same, and nothing else of it touched. First, the state
     file of the gamma-sync client that a folder kept before left at the
-    root (its upgrade could not take it away, gamma/vault_upgrade.py): it
+    root (its upgrade could not take it away, gamma/vault/upgrade.py): it
     stands for nothing since, and a link made there again must not read it
     as that folder's; one another program holds stops the removal, nothing
     done."""
+    from .feedback import files as feedback_files  # local: it reads the pages and the vaults' rows
+
     root = dest_of(link)
     try:
         vault_disk.check_marker(root, link["state"]["vault"])
@@ -1145,19 +1398,27 @@ def _remove_vault(link: dict, files: str) -> None:
         return
     if files == "trash":
         _trash_ours(link, root)
+    feedback_files.remove(root)
     (root / vault_disk.MARKER).unlink(missing_ok=True)
 
 
 def _store_in_place(link: dict, root: Path) -> None:
     """The PDFs and pictures a vault of this server reads in place stored
-    (nothing changed yet when one cannot be: LinkError), and its pages no
-    longer reading them. Of the linked files below the directory only the
-    vault's own rows go: a PDF opened from there before it was a vault reads
-    where it is still."""
+    (nothing changed yet when one cannot be: LinkError), and every live page
+    of the vault whose document is read in place and stored no longer
+    reading it there (its document at ``store``: those PDFs, and a work
+    folder's file of any format whose bytes were stored already, a library
+    file's or a commented version; one in Recently deleted keeps reading in
+    place, its copy stored). A work folder's files of other formats are
+    stored by nothing here: Gamma copies nothing of a directory but what was
+    asked to be kept (docs/dev/work_folders.md "Removing a work folder"); its
+    pictures are files, so a kept folder's pictures alone are stored. Of the
+    linked files below the directory only the vault's own rows go: a PDF
+    opened from there before it was a vault reads where it is still."""
     ws, actor = link["workspace_id"], link["created_by"]
-    in_place = _in_place(link)
-    pictures = _linked_pictures(link)
-    for _page_id, rel, doc in in_place:
+    pdfs = _in_place(link)
+    pictures = [] if _works(link) else _linked_pictures(link)
+    for _page_id, rel, doc in pdfs:
         _store_copy(ws, root / rel, doc)
     for name, path in pictures:
         try:
@@ -1169,10 +1430,15 @@ def _store_in_place(link: dict, root: Path) -> None:
         if storage.matches_name(name, data):
             storage.put_upload(ws, name, data)
     with connect_pages_db(ws) as conn:
-        live = {page_id for page_id, _rel, _doc in in_place if page_root_id(conn, page_id) == page_id}
+        live = {page_id for page_id in _vault_pages(link["id"]) if page_root_id(conn, page_id) == page_id}
+        views = {r[0]: page_document(load_props(r[1])) for r in conn.execute(
+            "SELECT id, properties FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps(sorted(live)),))}
     for page_id in sorted(live):
-        commit_ops(ws, page_id, [{"op": "set", "id": page_id, "props": {LINKED_FILE: None}}], actor=actor,
-                   client=DISK_CLIENT)
+        view = views.get(page_id)
+        if in_place(view) and storage.exists(ws, view["file"]):
+            stored = {"doc": document_at(view, "store")}
+            commit_ops(ws, page_id, [{"op": "set", "id": page_id, "props": stored}], actor=actor, client=DISK_CLIENT)
     below = str(root).rstrip("\\/") + os.sep
     with connect_vaults_db() as conn:
         conn.execute("DELETE FROM linked_files WHERE ws = ? AND substr(path, 1, ?) = ? AND (page_id = '' OR page_id IN "
@@ -1235,45 +1501,108 @@ def delete_link(link_id: str, files: str = "keep") -> bool:
     vault by ``_remove_vault``, its files kept (``keep``) or the ones its
     pulls made moved to its trash (``trash``). A folder kept before and not
     taken onto the engine yet is, for ``trash``, taken onto it first
-    (gamma/vault_upgrade.py, which reads which files the client wrote), and
+    (gamma/vault/upgrade.py, which reads which files the client wrote), and
     with ``keep`` its directory stays as it is, its state file too, for a
-    link made there again. A followed file is never touched. After a round
-    that runs finishes. LinkError when a PDF read in place cannot be stored,
-    or the state file a folder kept before left is held open
-    (``_remove_vault``): nothing is removed. A remote source's token stays on that server
-    (whoever minted it revokes it: the desktop app does when it drops a link
-    it made)."""
-    from . import vault_upgrade  # local: it imports this module
+    link made there again. A followed file is never touched. A work folder
+    is let go once its PDFs are stored (``_release_work``), and one whose
+    files were never chosen is taken back as if it had not been made
+    (``_cancel``). After a round that runs finishes. LinkError when a PDF
+    read in place cannot be stored, or the state file a folder kept before
+    left is held open (``_remove_vault``): nothing is removed. A remote
+    source's token stays on that server (whoever minted it revokes it: the
+    desktop app does when it drops a link it made)."""
+    from .vault import upgrade as vault_upgrade  # local: it imports this module
 
     link = get_link(link_id)
     if link is None:
         return False
     with _holding(link_id):
         link = get_link(link_id) or link
-        if older(link) and files == "trash":
-            try:
-                link = vault_upgrade.upgrade(link)
-            except (vault_disk.Offline, vault_disk.Stopped, OSError) as e:
-                log.warning(f"[folders] removing {link['path']}: its files stay: {e}")
-        if engine(link) and not older(link):
-            _remove_vault(link, files)
+        if choosing(link):
+            _cancel(link)
+        else:
+            if older(link) and files == "trash":
+                try:
+                    link = vault_upgrade.upgrade(link)
+                except (vault_disk.Offline, vault_disk.Stopped, OSError) as e:
+                    log.warning(f"[folders] removing {link['path']}: its files stay: {e}")
+            if engine(link) and not older(link):
+                _remove_vault(link, files)
+                if _works(link):
+                    _release_work(link)
         _forget(link)
     return True
+
+
+def _cancel(link: dict) -> None:
+    """A work folder whose files were never chosen taken back (the tracking
+    dialog's Cancel): what making it made, the marker, ``.gamma/`` when it
+    is left empty and the folder when nothing is filed there, and its mark
+    from a folder it was made of, a note made there meanwhile kept as a
+    library page (``takeover.release``). It never wrote a ``.gammaignore``."""
+    from .vault import sync as vault_sync  # local: it imports this module
+    from .work_folders import takeover
+
+    root, made = dest_of(link), link["state"].get("made") or {}
+    if made.get("marker"):
+        try:
+            vault_disk.check_marker(root, link["state"]["vault"])
+            (root / vault_disk.MARKER).unlink(missing_ok=True)
+        except (vault_disk.Offline, vault_disk.Stopped, OSError) as e:
+            log.warning(f"[folders] {root}: its marker stays: {e}")
+        else:
+            if made.get("marker_dir"):
+                _drop_empty(root / vault_disk.MARKER_DIR)
+    try:
+        remote = vault_sync.remote_for(link)
+        takeover.release(link, remote, trash_files=False)
+        if made.get("folder"):
+            remote.drop_folder(link["folder_id"])
+    except (OpError, vault_sync.Refused) as e:
+        log.warning(f"[folders] {root}: its folder stays as it is: {getattr(e, 'detail', '') or e}")
+
+
+def _release_work(link: dict) -> None:
+    """A removed work folder let go (``takeover.release``): its files not in
+    the library to Recently deleted, the others library pages, filed where
+    they were; then the directory folders below its folder that hold no
+    live page deleted, deepest first, and its folder too when that leaves
+    it empty: they stood for directories, and nothing is filed there now."""
+    from .vault import sync as vault_sync  # local: it imports this module
+    from .work_folders import takeover
+
+    w = link["folder_id"]
+    with connect_pages_db(link["workspace_id"]) as conn:
+        tree = marks.Tree.read(conn)
+
+    def depth(folder: str) -> int:
+        n = 0
+        while folder in tree.parent and folder != w:
+            folder, n = tree.parent[folder], n + 1
+        return n
+
+    try:
+        remote = vault_sync.remote_for(link)
+        takeover.release(link, remote, trash_files=True)
+        for folder in sorted(tree.subtree(w), key=depth, reverse=True):
+            remote.drop_folder(folder)
+    except (OpError, vault_sync.Refused) as e:
+        log.warning(f"[folders] {link['path']}: its work folder stays as it was: {getattr(e, 'detail', '') or e}")
 
 
 # --- reading and writing Gamma here -----------------------------------------------------------
 
 def _page(ws: str, page_id: str) -> dict | None:
-    """``{doc_id, filename, title}`` of a page of this server's workspace
-    (``""`` for no PDF or no file name); None when ``page_id`` is no page of
-    the library: not there, a block inside a page, or in the trash."""
+    """``{doc_id, filename, title}`` of a page of this server's workspace:
+    the hash of the document it owns and that document's name (``""`` for
+    no PDF or no file name); None when ``page_id`` is no page of the
+    library: not there, a block inside a page, or in the trash."""
     with connect_pages_db(ws) as conn:
         row = conn.execute("SELECT parent_id, content, properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
     if not row or row[0] != "root":
         return None
-    props = load_json(row[2] or "{}") or {}
-    return {"doc_id": str(props.get("doc_id") or ""), "filename": str(props.get("original_filename") or ""),
-            "title": row[1] or ""}
+    view = page_document(load_json(row[2] or "{}") or {})
+    return {"doc_id": own_hash(view), "filename": view["name"] if view else "", "title": row[1] or ""}
 
 
 def may_edit(ws: str, user_id: str) -> bool:
@@ -1296,13 +1625,18 @@ class LocalSink:
         if not may_edit(self.ws, self.user_id):
             raise gamma_sync.SyncError("you may no longer edit this workspace")
 
-    def store(self, path: Path) -> str:
+    def store(self, path: Path, ext: str = ".pdf") -> str:
         """The file stored as an upload is (spooled, hashed, the quota and
-        the PDF header checked), under its doc_id."""
+        the first bytes checked: a ``.pdf``'s header, a ``.webm``'s
+        container, ``storage.content_refusal``), under ``ext``: → its hash,
+        the stored name's stem."""
         self._may_write()
         try:
             with open(path, "rb") as f:
-                doc_id, _existed, _size = store_pdf_stream(self.ws, f)
+                if ext == ".pdf":
+                    doc_id, _existed, _size = store_pdf_stream(self.ws, f)
+                else:
+                    doc_id = store_file_stream(self.ws, f, ext)[0].removesuffix(ext)
         except ValueError as e:
             raise gamma_sync.SyncError(str(e)) from e
         except HTTPException as e:   # the quota
@@ -1310,7 +1644,9 @@ class LocalSink:
         return doc_id
 
     def replace(self, page_id: str, doc_id: str, filename: str, *, check_held: bool = True) -> dict:
-        """The page takes the file ``doc_id``. ``check_held`` False: bytes
+        """The page takes the file ``doc_id``: stored, or still read in place
+        on a page that reads its file in place (``replace_attachment``).
+        ``check_held`` False: bytes
         another page carries are no refusal, for a page reading a file where
         it is, whose bytes are whatever the disk holds (gamma/linked_files.py)."""
         from .routers.pages import replace_attachment, replaced_answer  # local: keep gamma.* free of the routers package
@@ -1354,10 +1690,12 @@ def sink_of(link: dict):
 def vault_of_page(ws: str, page_id: str) -> dict | None:
     """The link of this server that keeps the page of ``ws``: its file link,
     else the folder link whose folder holds it, a page held by two being the
-    one the engine gives it (``vault_sync.remote_for``: a vault that pushes
+    one the engine gives it (``vault.remote.remote_for``: a vault that pushes
     below another's holds its pages, else the first made), one that pushes
-    before one that only pulls a copy; None for none."""
-    from .vault_sync import remote_for  # local: it imports this module
+    before one that only pulls a copy; None for none. A work folder's file
+    is the vault of its work folder's, by its stamp alone, or none's here
+    (another computer's work folder, mirrored)."""
+    from .vault.remote import remote_for  # local: it imports this module
 
     links = [link for link in all_links() if not link["remote_url"] and link["workspace_id"] == ws]
     file = next((link for link in links if link["kind"] == "file" and link["page_id"] == page_id), None)
@@ -1369,6 +1707,9 @@ def vault_of_page(ws: str, page_id: str) -> dict | None:
     with connect_pages_db(ws) as conn:
         if page_root_id(conn, page_id) != page_id:
             return None
+        stamp = conn.execute("SELECT work_folder FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+        if stamp and stamp[0]:
+            return next((link for link in folders if link["folder_id"] == stamp[0]), None)
         holding = [link for link in folders if link["folder_id"] == folder_sync.ROOT
                    or page_in_folder(conn, page_id, link["folder_id"])]
         for link in sorted(holding, key=lambda link: not link["push"]):
@@ -1389,15 +1730,18 @@ def _page_files(link: dict, page_id: str) -> dict:
 
 def page_vault(ws: str, page_id: str, *, can_act: bool, user_id: str) -> dict | None:
     """How the page stands with its vault (``vault_of_page``), for its chip:
-    ``{id, name, scope, path, pull, push, problem, conflicts, paused}``,
-    ``path`` the page's file on this computer ("" for none yet, a folder kept
-    before whose first round has not run among them, and for a member who
-    cannot act on it, ``can_act`` false, but for the vault's maker,
-    ``user_id``, whatever its role now: where the files lie is the maker's
-    reading),
+    ``{id, name, scope, path, pull, push, problem, conflicts, paused,
+    work_folder, choosing, library, page: {library, file_name}}``, ``path``
+    the page's file on this computer ("" for none yet, a folder kept before
+    whose first round has not run among them, and for a member who cannot
+    act on it, ``can_act`` false, but for the vault's maker, ``user_id``,
+    whatever its role now: where the files lie is the maker's reading),
     ``problem`` why its file was not written or read, the vault's own reason
     first (``_halted``), ``conflicts`` the clashes the file won that are
-    open. None for a page of no vault."""
+    open; ``work_folder`` whether the vault is one, ``choosing`` whether its
+    files wait to be chosen, ``library`` its library switch, and ``page``
+    the page's own stamps: whether it is in the library, and its file's
+    name. None for a page of no vault."""
     link = vault_of_page(ws, page_id)
     if link is None:
         return None
@@ -1410,18 +1754,26 @@ def page_vault(ws: str, page_id: str, *, can_act: bool, user_id: str) -> dict | 
         problem = (files.get("notes") or ("", ""))[1] or problem
         path = str(dest_of(link) / rel) if rel else ""
         clashes = len(conflicts(link, page_id))
+    with connect_pages_db(ws) as conn:
+        row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    props = load_props(row[0]) if row else {}
     shown = can_act or link["created_by"] == user_id
     return {"id": link["id"], "name": dest_of(link).name, "scope": link["kind"], "path": path if shown else "",
             "pull": bool(link["pull"]), "push": push_word(link["push"]), "problem": _halted(link) or problem,
-            "conflicts": clashes, "paused": bool(link["status"].get(PAUSED))}
+            "conflicts": clashes, "paused": bool(link["status"].get(PAUSED)), "work_folder": work_folder_link(link),
+            "choosing": choosing(link), "library": bool(link["library"]),
+            "page": {"library": props.get("library") is True, "file_name": str(props.get("file_name") or "")}}
 
 
 def _halted(link: dict) -> str:
     """Why the vault reaches no file now, as its pages' chips say it ("" while
-    it does): it stopped, its directory is not there, its guard holds it, its
-    last round did not finish, or its followed file is gone. Words of its
-    own, never the status's, which may name a place on this computer."""
+    it does): its files are not chosen yet, it stopped, its directory is not
+    there, its guard holds it, its last round did not finish, or its
+    followed file is gone. Words of its own, never the status's, which may
+    name a place on this computer."""
     status = link["status"]
+    if choosing(link):
+        return "the work folder's files are not chosen yet: Choose files… in its folder's menu"
     if status.get("stopped"):
         return "the vault stopped; the sync panel says why"
     if status.get("offline"):
@@ -1502,7 +1854,7 @@ def write_note(ws: str, page_id: str, text: str, hash: str) -> dict | None:
     history. Only a vault that pushes everything takes it: the file is then
     what the page becomes. → ``{hash, path}``; None for a page with no notes
     file."""
-    from .vault_sync import fits  # local: it imports this module
+    from .vault.sync import fits  # local: it imports this module
 
     found = _note_of(ws, page_id)
     if found is None:
@@ -1598,7 +1950,7 @@ def _write_status(link_id: str, status: dict, cursor: str | None = None, state: 
 
 def keep_state(link_id: str, state: dict) -> None:
     """A link's ``state`` stored, nothing else of its row: the step that takes
-    a folder kept before onto the engine (gamma/vault_upgrade.py)."""
+    a folder kept before onto the engine (gamma/vault/upgrade.py)."""
     with _status_guard, connect_users_db() as conn:
         conn.execute("UPDATE folder_links SET state = ? WHERE id = ?", (json.dumps(state), link_id))
 
@@ -1679,7 +2031,7 @@ def run_link(link_id: str, *, force: str = "", direction: str = "both", confirm:
 
 
 def _progress_writer(link: dict):
-    """What a vault's round reports of itself (``vault_sync.Round``'s
+    """What a vault's round reports of itself (``vault.sync.Round``'s
     ``progress``) written into the status as ``progress`` while it runs,
     beside the ``running`` and ``started_at`` the round began with: once the
     round has run ``PROGRESS_S``, then at most every ``PROGRESS_S``, and
@@ -1735,6 +2087,23 @@ def _holding(link_id: str):
         _let_go(link_id, lock)
 
 
+@contextmanager
+def try_holding(link_id: str):
+    """The link's lock when nothing holds it, held for the block and let go
+    (``_let_go``): the block gets True; False, nothing held, while a round,
+    a page's round or a feedback pass holds it (a request file written at
+    once, gamma/feedback/files.py ``write_request``: the hot pass writes it
+    then)."""
+    lock = _lock(link_id)
+    if not lock.acquire(blocking=False):
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        _let_go(link_id, lock)
+
+
 def _together(kept: dict | None, asked: dict) -> dict:
     """Two requests for a round as the one that runs: a force or a
     confirmation either asked for stays (the later force when both name one),
@@ -1786,28 +2155,39 @@ def forced(link: dict, force: str) -> dict:
 
 
 def _vault_round(link: dict, started: float, *, force: str, direction: str, confirm: bool) -> dict:
-    """A vault's round (``vault_sync.sync``), its progress in the status while
+    """A vault's round (``vault.sync.sync``), its progress in the status while
     it runs (``_progress_writer``), refused first by ``check_vault`` as it
     stands now; a folder kept before is taken onto the engine first
-    (gamma/vault_upgrade.py), which the status keeps saying from then on
+    (gamma/vault/upgrade.py), which the status keeps saying from then on
     (``upgraded_at``). One that pushes PDFs into a folder another vault made
     before it pushes into too, which links kept before were let do, has its
     push turned off then, and the status says why (``push_off``) while it
     stays off. → its status (the API contract): ``{running, started_at,
     last_sync, last_error, failed_at?, counts, kept, untracked, refused?,
     capped?, held?, stopped?, offline?, shared?, upgraded_at?, push_off?,
-    folder_path}``, and ``paused_at`` kept as it was (``_write_status``); a
+    feedback?, folder_path}``, and ``paused_at`` kept as it was (``_write_status``); a
     round that the marker, the disk or the account (or another server)
     stopped counts as failed, so ``RETRY_S`` applies. A vault of this server
     whose maker has no role in its workspace any more fails at once, before
     ``check_vault``, whose reasons read the workspace as it is now and name
     other vaults' places: it learns nothing new of a workspace it left
     (``_folder_names``). One whose maker may only view there now runs, and
-    a refusal tells it no reason (``REFUSED_UNSAID``)."""
-    from . import vault_sync, vault_upgrade  # local: they import this module
+    a refusal tells it no reason (``REFUSED_UNSAID``). A work folder whose
+    files are not chosen yet runs no round (``CHOOSE_FIRST``); one from
+    before work folders is taken over first, and a vault that stopped being
+    one is let go (gamma/work_folders/takeover.py): the status says since
+    when it is one (``work_folder_at``). A work folder's round then writes
+    its feedback files (gamma/feedback/files.py), a held round too, unless
+    the marker, the disk or the account stopped it: ``feedback`` is that
+    write's summary."""
+    from .vault import local_remote, sync as vault_sync, upgrade as vault_upgrade  # local: they import this module
+    from .feedback import files as feedback_files
+    from .work_folders import takeover
 
+    if choosing(link):
+        return _stopped(link, started, CHOOSE_FIRST)
     if not link["remote_url"] and not workspaces.role_of(link["workspace_id"], link["created_by"]):
-        return _failed(link, vault_sync.NO_ACCESS)
+        return _failed(link, local_remote.NO_ACCESS)
     lowered = link["status"].get("push_off")
     try:
         check_vault(forced(link, force), earlier=True)
@@ -1825,19 +2205,54 @@ def _vault_round(link: dict, started: float, *, force: str, direction: str, conf
             why = {"stopped": str(e)} if isinstance(e, vault_disk.Stopped) else {
                 "offline": True} if isinstance(e, vault_disk.Offline) else {}
             return _failed({**link, "status": {**link["status"], "started_at": started, **why}}, str(e))
+    try:
+        link = _work_turn(link)
+    except (vault_disk.Offline, vault_disk.Stopped, vault_sync.Refused, OpError) as e:
+        why = {"stopped": str(e)} if isinstance(e, vault_disk.Stopped) else {
+            "offline": True} if isinstance(e, vault_disk.Offline) else {}
+        return _failed({**link, "status": {**link["status"], "started_at": started, **why}},
+                       str(getattr(e, "detail", "") or e))
     # kept in the state at the upgrade's commit point: a round that died after it, or failed, loses none of it
     upgraded = link["state"].get(vault_upgrade.UPGRADED) or link["status"].get("upgraded_at")
     result = vault_sync.sync(link, direction=direction, force=force, confirm=confirm, progress=_progress_writer(link))
     status = {**result.status, "started_at": started, "folder_path": _folder_names(link, ask=direction != "push")}
     if upgraded:
         status["upgraded_at"] = upgraded
+    if result.state.get(takeover.TAKEN_OVER):
+        status["work_folder_at"] = result.state[takeover.TAKEN_OVER]
     if lowered and not link["push"]:
         status["push_off"] = lowered
     if status.get("last_error"):
         status["failed_at"] = time.time()
         log.warning(f"[folders] {link['path']}: {status['last_error']}")
+    if work_folder_link(link) and not status.get("stopped") and not status.get("offline"):
+        status["feedback"] = feedback_files.write(link)
     _write_status(link["id"], status, cursor=result.cursor, state=result.state)
     return status
+
+
+def _work_turn(link: dict) -> dict:
+    """The vault before its round: a work folder from before work folders
+    taken over (``takeover.take_over``), a vault that is no longer one let
+    go (``takeover.release``, its files library pages), its state then kept
+    with or without ``TAKEN_OVER``: the commit point, so a round killed
+    before it does it again. A vault let go loses its feedback files
+    (gamma/feedback/files.py). → the link as the round reads it."""
+    from .vault import sync as vault_sync  # local: it imports this module
+    from .feedback import files as feedback_files
+    from .work_folders import takeover
+
+    work, taken = work_folder_link(link), link["state"].get(takeover.TAKEN_OVER)
+    if work and not taken:
+        link = {**link, "state": takeover.take_over(link, vault_sync.remote_for(link))}
+    elif taken and not work:
+        takeover.release(link, vault_sync.remote_for(link), trash_files=False)
+        feedback_files.remove(dest_of(link))
+        link = {**link, "state": {k: v for k, v in link["state"].items() if k != takeover.TAKEN_OVER}}
+    else:
+        return link
+    keep_state(link["id"], link["state"])
+    return link
 
 
 def _file_round(link: dict, started: float) -> dict:
@@ -2054,13 +2469,14 @@ def _row_link(page_id: str, links: dict) -> dict | None:
 
 
 def run_page(link_id: str, page_id: str) -> bool:
-    """A round of the page's files (``vault_sync.sync_page``), unless a round
+    """A round of the page's files (``vault.sync.sync_page``), unless a round
     of the vault runs now: whether a round covered the page, which one that
-    found a file still being written did not. ``check_vault`` comes first, as
-    for a whole round. A refusal, or a round the marker, the disk or the
-    account stopped, is the vault's failure in its status; any other leaves
-    the status as the last whole round wrote it."""
-    from . import vault_sync  # local: it imports this module
+    found a file still being written did not, nor one of a work folder whose
+    files are not chosen yet. ``check_vault`` comes first, as for a whole
+    round. A refusal, or a round the marker, the disk or the account
+    stopped, is the vault's failure in its status; any other leaves the
+    status as the last whole round wrote it."""
+    from .vault import sync as vault_sync  # local: it imports this module
 
     lock = _lock(link_id)
     if not lock.acquire(blocking=False):
@@ -2068,6 +2484,8 @@ def run_page(link_id: str, page_id: str) -> bool:
     covered = True
     try:
         link = get_link(link_id)
+        if link is not None and choosing(link):
+            return False
         if link is None or not engine(link) or older(link):
             return True
         try:
@@ -2094,16 +2512,21 @@ def hot_tick() -> None:
     stat), each have a round of their own (``run_page``) when an engine vault
     that is not resting (``_resting``) keeps them. A mark goes once a round
     covered it, or when no vault keeps its page; one whose vault was busy,
-    or whose file was still being written, stays for the next tick."""
+    or whose file was still being written, stays for the next tick. Then
+    the feedback files of the work folders a change marked ``HOT_S`` ago or
+    more are written (``_feedback_pass``)."""
     if not config.folder_links_enabled():
         return
+    from .feedback import files as feedback_files  # local: it reads the pages and the vaults' rows
+
     now = time.monotonic()
     with _dirty_guard:
         wanted = {key: at for key, at in _dirty.items() if now - at >= HOT_S}
     opened = collab.open_pages()
     for key in set(_looked) - set(opened):
         del _looked[key]
-    if not wanted and not opened:
+    feedback = feedback_files.due(HOT_S)
+    if not wanted and not opened and not feedback:
         return
     links = {link["id"]: link for link in all_links() if engine(link) and not link["remote_url"]}
     for key in opened:
@@ -2119,3 +2542,30 @@ def hot_tick() -> None:
             _settle((ws, page_id), at)
         elif not _resting(link) and run_page(link["id"], page_id):
             _settle((ws, page_id), at)
+    for ws, w in feedback:
+        _feedback_pass(ws, w, links, feedback_files)
+
+
+def _feedback_pass(ws: str, w: str, links: dict, files) -> None:
+    """The feedback files of the work folder ``w`` of ``ws`` written
+    (``files.write``) under its link's lock, among ``links``, its mark
+    settled once the pass covered it. No link, or one resting for a reason
+    other than a round (paused, failed, choosing its files), drops the
+    mark: its next whole round writes. A lock a round holds keeps the mark
+    for the next tick, as does a pass that left something for the next
+    (``left``: a file a reader held, the pictures' cap)."""
+    at = time.monotonic()
+    link = next((link for link in links.values()
+                 if link["workspace_id"] == ws and link["folder_id"] == w and work_folder_link(link)), None)
+    if link is None or choosing(link) or (_resting(link) and not _lock(link["id"]).locked()):
+        files.settle(ws, w, at)
+        return
+    lock = _lock(link["id"])
+    if not lock.acquire(blocking=False):
+        return
+    try:
+        written = files.write(link)
+    finally:
+        _let_go(link["id"], lock)
+    if not written.get("left"):
+        files.settle(ws, w, at)

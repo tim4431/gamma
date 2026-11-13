@@ -1,12 +1,13 @@
-"""Exercise the real SDK transport, scoped credentials, and shared dispatch."""
+"""Exercise the real SDK transport, scoped credentials, and shared dispatch;
+a feedback connection's answering tools (gamma/feedback/agent.py)."""
 
 import time
 
 import pytest
 
-from conftest import account_of, login, make_folder, make_page, make_user
+from conftest import account_of, doc_props, login, make_folder, make_page, make_user, thread_on
 from gamma.ai_tools import agent_tools, mcp_tools, run_agent_tool
-from gamma.db import connect_users_db
+from gamma.db import connect_pages_db, connect_users_db
 from gamma.integrations import resolve_token
 
 
@@ -48,8 +49,9 @@ def test_initialize_and_read_tools(client, connection):
     # a new one is offered without touching the adapter); the literal makes growth visible.
     assert {t["name"] for t in tools} == mcp_tools() | {"list_workspaces", "read_gamma_link", "export_page"}
     assert {t["name"] for t in tools} == {"list_pages", "list_folders", "read_page", "read_block", "read_chats",
-                                          "view_pdf_page", "view_ink", "view_image", "cite", "search_library",
-                                          "list_workspaces", "read_gamma_link", "export_page"}
+                                          "list_feedback", "read_feedback", "view_pdf_page", "view_ink",
+                                          "view_image", "cite", "search_library", "list_workspaces",
+                                          "read_gamma_link", "export_page"}
     # every tool but the workspace list and a link (which names its own) can be pointed at a workspace
     assert all("workspace" in t["inputSchema"]["properties"] for t in tools
                if t["name"] not in ("list_workspaces", "read_gamma_link"))
@@ -89,7 +91,7 @@ def _pdf_page(c, title):
     w.write(buf)
     up = c.post("/api/uploads", files={"file": ("p.pdf", buf.getvalue(), "application/pdf")})
     assert up.status_code == 200, up.text
-    page = make_page(c, title, properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+    page = make_page(c, title, properties=doc_props(up.json()["doc_id"]))
     rect = {"x1": 100, "y1": 72, "x2": 300, "y2": 92}
     r = c.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": f"{page['id']}-hl", "content": "McpHighlightNote", "properties": {
@@ -136,7 +138,7 @@ def test_results_carry_links_and_structured_content(client, connection, monkeypa
 
     c, ws, item = connection
     token = item["token"]
-    paper = make_page(c, "Linked paper", properties={"doc_id": "l" * 24})
+    paper = make_page(c, "Linked paper", properties=doc_props("l" * 24))
     note = c.post("/api/blocks", json={"parent_id": paper["id"], "content": "UniqueLinkedNote"}).json()
     # The search index holds the hit; a read extracts the text from the PDF itself.
     pages = ["(page 1) first-page-body " * 5, "(page 2) UniqueLinkedPassage on the second page " * 3]
@@ -421,6 +423,10 @@ def test_one_connection_reads_several_workspaces(client, connection):
         # a link reads in its own workspace, among the connection's only
         link = call(client, token, "read_gamma_link", {"url": f"http://localhost/?ws={lab}&page={lab_page['id']}"})
         assert not link["isError"] and link["structuredContent"]["workspace_id"] == lab
+        # a folder link without ws= finds the workspace holding its folder
+        lab_folder = make_folder(c, "Lab folder", {"ws": lab})
+        link = call(client, token, "read_gamma_link", {"url": f"http://localhost/?folder={lab_folder}"})
+        assert not link["isError"] and link["structuredContent"]["workspace_id"] == lab, link
         refused = call(client, token, "read_gamma_link",
                        {"url": f"http://localhost/?ws={hidden}&page={hidden_page['id']}"})
         assert refused["isError"] and "McpSpectraEvidence" not in str(refused)
@@ -502,4 +508,156 @@ def test_setup_code_is_claimed_once_for_a_token(client, anon, connection):
         assert anon.post("/api/integrations/claim", json={"code": late}).status_code == 400
         leaving.close()
     finally:
+        workspaces.delete(lab)
+
+
+# --- answering feedback ---------------------------------------------------------------
+
+ANSWERING = {"reply_feedback", "resolve_feedback"}
+
+
+@pytest.fixture
+def answering(connection):
+    """A feedback token of the connection's account, made by hand and named
+    as an agent's would be, beside the connection's read token."""
+    c, _ws, _item = connection
+    made = c.post("/api/integrations/tokens", json={"name": "Claude Code", "scope": "feedback"})
+    assert made.status_code == 201, made.text
+    yield made.json()
+    c.delete(f"/api/integrations/tokens/{made.json()['id']}")
+
+
+def _commented_file(c, name):
+    """A work folder ``name`` of the client's workspace with ``main.pdf``
+    and one thread on a passage of it: ``(work, thread)``."""
+    from test_feedback_tools import commented, work_folder
+
+    work = work_folder(c, "mcp-reader", name)
+    return work, commented(c, work.files["main.pdf"], "lambda is never introduced.")
+
+
+def test_a_feedback_connection_replies_and_resolves(client, connection, answering, monkeypatch):
+    c, ws, item = connection
+    token = answering["token"]
+    work, thread = _commented_file(c, "Answered paper")
+    file = work.files["main.pdf"]
+    # Its list has the two answering tools beside the reading ones, the only ones that write.
+    tools = {t["name"]: t for t in rpc(client, token, "tools/list").json()["result"]["tools"]}
+    assert set(tools) == mcp_tools() | {"list_workspaces", "read_gamma_link", "export_page"} | ANSWERING
+    assert all(t["annotations"]["readOnlyHint"] is (name not in ANSWERING) for name, t in tools.items())
+    assert tools["reply_feedback"]["annotations"]["idempotentHint"] is False
+    assert tools["resolve_feedback"]["annotations"]["idempotentHint"] is True
+    assert tools["reply_feedback"]["inputSchema"]["required"] == ["thread_id", "body"]
+    assert set(tools["resolve_feedback"]["inputSchema"]["properties"]) == {"thread_id", "workspace"}
+    # A read connection is refused them, even right after a feedback one listed them (one tool list for all).
+    for listed_by in (token, item["token"]):
+        rpc(client, listed_by, "tools/list")
+        refused = call(client, item["token"], "reply_feedback", {"thread_id": thread["id"], "body": "sneaky"})
+        assert refused["isError"] and "may not answer feedback" in refused["content"][0]["text"]
+    assert not ANSWERING & {t["name"] for t in rpc(client, item["token"], "tools/list").json()["result"]["tools"]}
+
+    published = []
+    monkeypatch.setattr("gamma.collab.publish", lambda *args, **kw: published.append(args))
+    follows = _follows(ws, file)
+    replied = call(client, token, "reply_feedback", {"thread_id": thread["id"], "id": "mcpreply0001",
+                                                     "body": "Defined in 3.1 (sections/method.tex:112)."})
+    assert not replied["isError"], replied
+    url = f"http://localhost/?ws={ws}&page={file}&block={thread['block_id']}&thread={thread['id']}"
+    assert replied["content"][0]["text"] == (
+        f"Replied to the feedback item {thread['id']} on main.pdf, page 1, “the loss is defined as”: {url}")
+    assert replied["structuredContent"] == {"thread_id": thread["id"], "comment_id": "mcpreply0001",
+                                            "page_id": file, "url": url}
+    # signed with the connection's name, the page's room told, the person's Inbox too
+    (shown,) = [t for t in c.get(f"/api/pages/{file}/comments").json()["threads"] if t["id"] == thread["id"]]
+    assert [(m["author"], m["agent"]) for m in shown["comments"]] == [("mcp-reader", ""), ("mcp-reader", "Claude Code")]
+    with connect_pages_db(ws) as conn:
+        assert conn.execute("SELECT agent_id FROM comments WHERE id = 'mcpreply0001'").fetchone()[0] == answering["id"]
+    assert (ws, file, {"t": "comments", "block_id": thread["block_id"], "thread_id": thread["id"]}) in published
+    items = c.get("/api/inbox", params={"filter": "all"}).json()["items"]
+    assert any(i["thread_id"] == thread["id"] and i["kind"] == "reply" and i["agent"] == "Claude Code" for i in items)
+    # the same id again writes nothing twice
+    again = call(client, token, "reply_feedback", {"thread_id": thread["id"], "id": "mcpreply0001", "body": "Again."})
+    assert not again["isError"] and "was written already" in again["content"][0]["text"]
+    assert len(c.get(f"/api/pages/{file}/comments").json()["threads"][0]["comments"]) == 2
+
+    # What is no feedback item, and a server that takes no writes
+    library = make_page(c, "A library paper with a thread")
+    on_library = thread_on(c, library["id"], library["id"], "not feedback")
+    for thread_id, says in (("mcpreply0001", "No feedback item has that id"), ("nosuchthread", "No feedback item"),
+                            (on_library["id"], "That thread is not on a work folder's file.")):
+        refused = call(client, token, "reply_feedback", {"thread_id": thread_id, "body": "x"})
+        assert refused["isError"] and says in refused["content"][0]["text"], refused
+    with monkeypatch.context() as m:
+        m.setattr("gamma.hosted.read_only", lambda: "This server is read-only: its plan has lapsed.")
+        refused = call(client, token, "resolve_feedback", {"thread_id": thread["id"]})
+        assert refused["isError"] and "read-only" in refused["content"][0]["text"]
+    assert not c.get(f"/api/pages/{file}/comments").json()["threads"][0]["resolved_at"]
+
+    # Resolving: once, by the connection's name; again changes nothing; never a reopen
+    resolved = call(client, token, "resolve_feedback", {"thread_id": thread["id"]})
+    assert not resolved["isError"], resolved
+    assert resolved["content"][0]["text"].startswith(f"Resolved the feedback item {thread['id']} on main.pdf, page 1")
+    assert resolved["structuredContent"] == {"thread_id": thread["id"], "page_id": file, "url": url}
+    stored = c.get(f"/api/pages/{file}/comments").json()["threads"][0]
+    assert (stored["resolved_by"], stored["resolved_agent"]) == ("mcp-reader", "Claude Code")
+    again = call(client, token, "resolve_feedback", {"thread_id": thread["id"]})
+    assert not again["isError"] and "was resolved already" in again["content"][0]["text"]
+    assert c.get(f"/api/pages/{file}/comments").json()["threads"][0]["resolved_at"] == stored["resolved_at"]
+    assert call(client, token, "resolve_feedback", {"thread_id": thread["id"], "resolved": False})["isError"]
+    assert c.get(f"/api/pages/{file}/comments").json()["threads"][0]["resolved_at"] == stored["resolved_at"]
+    assert _follows(ws, file) == follows  # what a token writes makes no one follow the page
+
+
+def _follows(ws, page_id):
+    with connect_pages_db(ws) as conn:
+        return conn.execute("SELECT * FROM page_follows WHERE page_id = ? ORDER BY 1, 2", (page_id,)).fetchall()
+
+
+def test_feedback_ids_find_their_workspace(client, connection):
+    from gamma import workspaces
+
+    c, ws, _ = connection
+    lab = workspaces.create("Feedback lab", account_of("mcp-reader"))["id"]
+    in_lab = login("mcp-reader", "pw")
+    in_lab.headers["X-Gamma-Workspace"] = lab
+    made = None
+    try:
+        home, home_thread = _commented_file(c, "Home paper")
+        away, lab_thread = _commented_file(in_lab, "Lab paper")
+        made = c.post("/api/integrations/tokens", json={"name": "Claude Code", "scope": "feedback",
+                                                        "workspaces": [ws, lab]}).json()
+        token = made["token"]
+        # every work folder of every connected workspace, a section each
+        text = call(client, token, "list_feedback", {})["content"][0]["text"]
+        assert f"## Workspace Feedback lab (workspace={lab})" in text
+        assert home_thread["id"] in text and lab_thread["id"] in text and "# Feedback on Lab paper" in text
+        # a thread's id reads and answers in its own workspace
+        read = call(client, token, "read_feedback", {"thread_id": lab_thread["id"]})
+        assert not read["isError"], read
+        assert read["structuredContent"]["workspace_id"] == lab and read["structuredContent"]["pdf_page"] == 1
+        assert f"http://localhost/?ws={lab}&page={away.files['main.pdf']}&block=" in read["content"][0]["text"]
+        (image,) = [part for part in read["content"] if part["type"] == "image"]
+        assert image["mimeType"] == "image/jpeg" and len(image["data"]) > 100
+        replied = call(client, token, "reply_feedback", {"thread_id": lab_thread["id"], "body": "Done."})
+        assert not replied["isError"] and replied["structuredContent"]["workspace_id"] == lab
+        # a work folder's directory by id finds it too; by name, the default workspace's
+        assert lab_thread["id"] in call(client, token, "list_feedback", {"scope": away.w})["content"][0]["text"]
+        named = call(client, token, "list_feedback", {"scope": "Lab paper"})
+        assert named["isError"] or lab_thread["id"] not in named["content"][0]["text"]
+        named = call(client, token, "list_feedback", {"scope": "Lab paper", "workspace": lab})
+        assert lab_thread["id"] in named["content"][0]["text"]
+        # one id in two of them is refused, naming both, until workspace chooses
+        for owner, work in ((c, home), (in_lab, away)):
+            file = work.files["main.pdf"]
+            thread_on(owner, file, file, "the whole file", id="twinthread01")
+        refused = call(client, token, "resolve_feedback", {"thread_id": "twinthread01"})
+        assert refused["isError"] and "more than one connected workspace" in refused["content"][0]["text"]
+        assert "Feedback lab" in refused["content"][0]["text"]
+        chosen = call(client, token, "resolve_feedback", {"thread_id": "twinthread01", "workspace": lab})
+        assert not chosen["isError"] and chosen["structuredContent"]["workspace_id"] == lab
+        assert "main.pdf, the whole file" in chosen["content"][0]["text"]
+    finally:
+        in_lab.close()
+        if made:
+            c.delete(f"/api/integrations/tokens/{made['id']}")
         workspaces.delete(lab)

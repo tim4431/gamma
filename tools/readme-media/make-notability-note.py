@@ -60,7 +60,7 @@ rng = random.Random(20220421)
 # --- the paper ---------------------------------------------------------------------------------
 
 def curated_pdf() -> bytes:
-    """The atom-arrays PDF from the curated export: the page's doc_id in its pages.db."""
+    """The atom-arrays PDF from the curated export: the stored file of the page's doc in its pages.db."""
     archive = Path(os.environ.get('DEMO_EXPORT') or ROOT / 'artifacts/readme-media/demo.zip')
     with zipfile.ZipFile(archive) as z, tempfile.TemporaryDirectory() as tmp:
         db = Path(tmp) / 'pages.db'
@@ -70,7 +70,8 @@ def curated_pdf() -> bytes:
             (props,) = con.execute('select properties from unified_blocks where id = ?', (PAGE_ID,)).fetchone()
         finally:
             con.close()
-        return z.read(f"uploads/{json.loads(props)['doc_id']}.pdf")
+        doc = json.loads(props).get('doc', {})
+        return z.read(f"uploads/{doc.get('hash')}{doc.get('ext', '.pdf')}")
 
 
 def lines_of(page) -> list:

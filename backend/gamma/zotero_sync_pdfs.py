@@ -27,8 +27,9 @@ from datetime import datetime, timedelta, timezone
 
 from . import jobs, storage, sync_clock, zotero_local, zotero_merge
 from . import zotero_remote as zr
-from .blocks_store import attachment_file, load_props, page_attachment, write_lock
+from .blocks_store import load_props, write_lock
 from .db import connect_pages_db, format_stamp, page_now
+from .documents.model import page_document, pdf_file_hash, stored_name
 from .logbuf import log
 from .ops import OpError
 from .zotero_annotations import file_md5, hold_reason
@@ -69,10 +70,16 @@ _size = zotero_merge.stored_size          # the bytes of an attachment's stored 
 
 # --- the plan ---------------------------------------------------------------------------
 
+def _file_name(side) -> str:
+    """The name of the file a page shows ("" for none, or one never named)."""
+    view = page_document(side.props)
+    return view["name"] if view else ""
+
+
 def pdf_filename(side) -> str:
     """The name a page's PDF goes to Zotero under: the file's own, else the
     page's title as a PDF's name."""
-    name = str(side.props.get("original_filename") or "").strip()
+    name = _file_name(side)
     if name:
         return name
     title = " ".join((side.title or "").split())[:FILENAME_TITLE_MAX] or "document"
@@ -642,7 +649,7 @@ def _stored_copy(conn, ws: str, md5: str) -> str:
     for (doc_id,) in conn.execute(
             "SELECT json_extract(detail, '$.doc_id') FROM zotero_objects WHERE kind = 'attachment' "
             "AND json_extract(detail, '$.gmd5') = ?", (md5,)).fetchall():
-        path = storage.open_path(ws, f"{doc_id}.pdf") if isinstance(doc_id, str) and doc_id else None
+        path = storage.open_path(ws, stored_name(doc_id, ".pdf")) if isinstance(doc_id, str) and doc_id else None
         if path and file_md5(path) == md5:
             return doc_id
     return ""
@@ -798,7 +805,7 @@ def _download(r: Round, entry: zr.Entry, row: dict, att: dict, side: Side):
         doc_id = _stored_copy(conn, r.ws, zm)
     hint = row["detail"].get("copy")
     if not doc_id and isinstance(hint, str) and hint:
-        path = storage.open_path(r.ws, f"{hint}.pdf")
+        path = storage.open_path(r.ws, stored_name(hint, ".pdf"))
         doc_id = hint if path and file_md5(path) == zm else ""
     if not doc_id:
         if r.no_downloads:  # this server's storage filled up this round: no download is tried
@@ -825,7 +832,7 @@ def _download(r: Round, entry: zr.Entry, row: dict, att: dict, side: Side):
                              (side.page_id,)).fetchone()
         if not found or found[0] != "root":
             return False
-        return attachment_file(page_attachment(load_props(found[1]))) == expected
+        return pdf_file_hash(page_document(load_props(found[1]))) == expected
 
     new = {**row, "state": "live", "version": int(att.get("version") or 0),
            "detail": {**without(row["detail"], "file", "first", "copy"), "md5": zm, "gmd5": zm, "doc_id": doc_id,
@@ -841,8 +848,8 @@ def _download(r: Round, entry: zr.Entry, row: dict, att: dict, side: Side):
         _after_file(conn, new)  # in the attach's own transaction: a crash after it loses no annotation
 
     try:
-        zotero_local.set_pdf(r.ws, side.page_id, doc_id, owner=r.link["owner"],
-                             original_filename=str(data.get("filename") or ""), check=check, rows=rows)
+        zotero_local.set_pdf(r.ws, side.page_id, doc_id, owner=r.link["owner"], name=str(data.get("filename") or ""),
+                             check=check, rows=rows)
     except zotero_local.Changed:
         r.decide_again(entry.id)  # the page's file changed meanwhile: decided again next round
         return None
@@ -891,7 +898,7 @@ def _upload(r: Round, entry: zr.Entry, row: dict, att: dict, side: Side, *, both
     (re-read when Zotero had the bytes already)."""
     data = att.get("data") or {}
     zm = str(data.get("md5") or "").lower()
-    path = storage.open_path(r.ws, f"{side.doc_id}.pdf")
+    path = storage.open_path(r.ws, stored_name(side.doc_id, ".pdf"))
     if not path or not side.md5:
         entries_done(r, [entry.id])
         return None
@@ -919,7 +926,7 @@ def _upload(r: Round, entry: zr.Entry, row: dict, att: dict, side: Side, *, both
                     return _file_waits(r, entry, row, att, side, reason)
                 unkept = reason
                 log.info(f"[zotero] {r.ws}: no copy of Zotero's {source['key']} kept here ({reason})")
-    filename = str(side.props.get("original_filename") or data.get("filename") or "") or f"{side.doc_id}.pdf"
+    filename = _file_name(side) or str(data.get("filename") or "") or stored_name(side.doc_id, ".pdf")
     size = path.stat().st_size
     held = None
     if keep:
@@ -1016,7 +1023,7 @@ def _hold_copy(r: Round, side: Side, key: str, zm: str, kept: str, *, filename: 
     "theirs" tell when the page's PDF moved on since. One a killed upload
     left open is written over, never a second. ``resolved``: a row for the
     record (no copy kept), written once the upload went. The row's id."""
-    mine = f"{side.props.get('original_filename') or side.doc_id} · {side.md5}"
+    mine = f"{_file_name(side) or side.doc_id} · {side.md5}"
     theirs = f"{filename or source} · {zm}"
     base = json.dumps({"doc_id": kept, "md5": zm, "filename": filename, "key": key, "synced": side.md5})
     if resolved:

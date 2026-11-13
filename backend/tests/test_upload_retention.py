@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from conftest import login, make_user, workspace_of
+from conftest import doc_props, login, make_user, workspace_of
 from gamma import jobs, pdf_meta, storage, upload_gc
 from gamma.db import connect_pages_db, ws_uploads_dir
 from test_highlight_relocate import _line_rect, _pdf, _position
@@ -61,7 +61,7 @@ def test_a_highlight_references_the_files_its_position_was_measured_on():
     for position in ({"doc_id": storage.UNSTORED}, {"prev": {**prev, "doc_id": storage.UNSTORED}},
                      {"doc_id": "../../etc"}, {"doc_id": 7}, {"prev": "elsewhere"}, {}):
         assert storage.upload_refs("", {"pdf_position": {"pageNumber": 1, **position}}) == set()
-    assert storage.upload_refs("", {"pdf_position": "not a position", "doc_id": A}) == {f"{A}.pdf"}
+    assert storage.upload_refs("", {"pdf_position": "not a position", **doc_props(A)}) == {f"{A}.pdf"}
 
 
 def test_the_full_pass_sees_a_file_only_a_highlight_names(owner):
@@ -139,7 +139,7 @@ def test_the_file_a_pending_highlight_is_matched_from_stays_through_later_replac
     assert f"{v1}.pdf" not in _orphans(ws) and f"{v1}.pdf" not in _retained(ws)
     # v3 before anyone looked: still dashed, still v1's prev; v2 held only the rectangles the run moved off it,
     # so it goes after the sync's day
-    v2 = c.get(f"/api/blocks/{page}").json()["properties"]["doc_id"]
+    v2 = c.get(f"/api/blocks/{page}").json()["properties"]["doc"]["hash"]
     on_v3 = replace(upload(version(5, lower=True), "v3.pdf"), keep_old_days=1)
     assert on_v3["approx"] is True and on_v3["prev"]["doc_id"] == v1 and "doc_id" not in on_v3
     orphans = _orphans(ws)
@@ -155,7 +155,7 @@ def test_the_file_a_pending_highlight_is_matched_from_stays_through_later_replac
     _ops(c, page, [{"op": "set", "id": "rtV", "props": {"pdf_position": on_v3}}])
     assert f"{v1}.pdf" not in _orphans(ws)
     # v4 without the passage: hollow at v1's place, naming v1; v3, whose rectangles it no longer has, goes
-    v3 = c.get(f"/api/blocks/{page}").json()["properties"]["doc_id"]
+    v3 = c.get(f"/api/blocks/{page}").json()["properties"]["doc"]["hash"]
     on_v4 = replace(upload(version(), "v4.pdf"))
     assert on_v4["lost"] is True and on_v4["doc_id"] == v1 and "prev" not in on_v4
     orphans = _orphans(ws)
@@ -198,7 +198,7 @@ def test_a_replacement_that_asks_for_it_keeps_the_old_file_a_day(owner, monkeypa
     assert _retained(ws)[f"{old}.pdf"] == DAY and f"{old}.pdf" in _orphans(ws)
     _age(ws, f"{old}.pdf", 2)
     assert f"{old}.pdf" in upload_gc.reconcile(ws)["purged"]
-    assert c.get(f"/api/blocks/{page}").json()["properties"]["doc_id"] == new
+    assert c.get(f"/api/blocks/{page}").json()["properties"]["doc"]["hash"] == new
 
 
 def test_a_retained_file_a_highlight_names_is_kept_and_its_keep_applies_once_the_name_goes(owner):
@@ -291,7 +291,7 @@ def test_a_file_another_page_shows_gets_no_shorter_life(owner, monkeypatch):
     attach(copy2, source_url=f"/api/uploads/{first}.pdf")
     replace(copy2, doc_id=follower, keep_old_days=1)
     assert f"{first}.pdf" not in _retained(ws)
-    assert c.get(f"/api/blocks/{page2}").json()["properties"]["doc_id"] == first
+    assert c.get(f"/api/blocks/{page2}").json()["properties"]["doc"]["hash"] == first
 
 
 def test_the_full_pass_drops_the_shorter_life_of_a_file_a_block_shows_again(owner):
@@ -339,6 +339,6 @@ def test_a_share_s_export_and_a_mirror_carry_only_the_files_the_pages_show(owner
     # the owner's own export is a copy of the library: the held file comes along for the review
     assert held in uploads(c.get(f"/api/pages/{page}/export", params={"mode": "gamma"}))
     # a mirror (and a page published to the share host) moves what the blocks show
-    blocks = [{"content": "", "props": {"doc_id": shown[:-4]}}, {"content": "", "props": _highlight(position)}]
+    blocks = [{"content": "", "props": doc_props(shown[:-4])}, {"content": "", "props": _highlight(position)}]
     assert sync_tree.upload_refs(blocks, held=False) == {shown}
     assert sync_tree.upload_refs(blocks) == {shown, held}

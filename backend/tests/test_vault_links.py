@@ -1,5 +1,5 @@
 """A synced vault's links and highlights, block by block
-(``gamma/vault_links.py``): each syntax read into Gamma and written back,
+(``gamma/vault/links.py``): each syntax read into Gamma and written back,
 the memo that tells two links to one target apart, the habit a new link
 takes, and the counter-examples of a link's spelling and a highlight's
 quote that once changed a block nobody edited. Over every block of the vault
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from gamma import md_lens
-from gamma.vault_links import Habit, LinkContext, habit_at, highlight, is_callout, read_habit, to_gamma, written
+from gamma.vault.links import Habit, LinkContext, habit_at, highlight, is_callout, read_habit, to_gamma, written
 
 FIXTURES = Path(__file__).parent / "vault_fixtures"
 ADDRESS = "http://127.0.0.1:9100/?ws=w1"

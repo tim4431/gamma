@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import account_of, login, make_page, make_user, workspace_of, guest_name
+from conftest import account_of, doc_props, login, make_page, make_user, workspace_of, guest_name
 from zotero_engine import LIB, drop_link_row, link_row
 
 
@@ -45,7 +45,7 @@ def test_snapshot_round_trip(owner, other):
     ws = workspace_of("bk_owner")
     up = owner.post("/api/uploads", files={"file": ("a.pdf", b"%PDF-1.4 snapshot me", "application/pdf")})
     assert up.status_code == 200
-    page = make_page(owner, "Before the snapshot", properties={"source_url": up.json()["source_url"]})
+    page = make_page(owner, "Before the snapshot", properties=doc_props(up.json()["doc_id"]))
     assert owner.get(f"/api/workspaces/{ws}/backups").json() == {"backups": [], "max": 20}
 
     r = owner.post(f"/api/workspaces/{ws}/backups", json={"label": "before", "uploads": True})
@@ -302,6 +302,98 @@ def test_an_upload_dated_before_1980_still_snapshots(owner):
     entry = zipfile.ZipFile(io.BytesIO(z.content)).getinfo(f"uploads/{up.json()['doc_id']}.pdf")
     assert entry.date_time[0] == 1980
     assert owner.delete(f"/api/workspaces/{ws}/backups/{r.json()['name']}").status_code == 200
+
+
+def test_a_merge_brings_no_work_folder_and_matches_library_documents_only():
+    """A backup merged into another workspace brings its work folder's files
+    as library pages, their stamps dropped, and its folders as plain ones,
+    for the vault that marked them is the backup's computer's; and a page
+    of either side matches one of the same PDF only when both are library
+    documents: the backup's file not in the library matches no page of the
+    workspace, and the workspace's file no page of the backup. The review
+    says what the merge does."""
+    from gamma import ws_backup
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import create_page
+    from gamma.db import connect_pages_db
+    from gamma.documents.model import document
+    from gamma.work_folders.library import STAMPS
+    from conftest import make_folder, mark_work_folder, work_props
+
+    def library(name):
+        make_user(name, f"pw-{name}")
+        c = login(name, f"pw-{name}")
+        return c, workspace_of(name), account_of(name)
+
+    def file_page(ws, account, title, props):
+        with closing(connect_pages_db(ws)) as conn:
+            return create_page(conn, title, props, actor=account, client=DISK_CLIENT)["id"]
+
+    shared, mine = "1a" * 16, "2b" * 16  # a file's PDF on one side, a library page's on the other
+    src, src_ws, src_account = library("bk_wf_from")
+    w, d, lib = make_folder(src, "bk-W"), make_folder(src, "bk-W/dir"), make_folder(src, "bk-L")
+    mark_work_folder(src, w)
+    figure = file_page(src_ws, src_account, "figure", work_props(w, "figure.pdf", directory=d, doc=document(
+        shared, name="figure.pdf", at="path")))
+    paper = file_page(src_ws, src_account, "paper", {**work_props(w, "main.pdf", library=True, doc=document(
+        "3c" * 16, name="main.pdf", at="path")), "folders": [w, lib]})
+    page = make_page(src, "a library paper", properties=doc_props(mine))["id"]
+
+    dst, dst_ws, dst_account = library("bk_wf_to")
+    held = make_page(dst, "the workspace's paper", properties=doc_props(shared))["id"]
+    own_w = make_folder(dst, "bk-W")  # the same name as the backup's work folder
+    mark_work_folder(dst, own_w)
+    own_file = file_page(dst_ws, dst_account, "own figure", work_props(own_w, "fig.pdf", doc=document(
+        mine, name="fig.pdf", at="path")))
+
+    zpath = ws_backup.backup_path(src_ws, ws_backup.create(src_ws, label="work")["name"])
+    planned = {p["id"]: p["action"] for p in ws_backup.preview_zip(dst_ws, zpath)["pages"]}
+    assert (planned[figure], planned[paper], planned[page]) == ("create", "create", "create")
+    merged = ws_backup.restore_zip(dst_ws, zpath, "merge")
+    assert {figure, paper, page} <= set(merged["added"])
+    with closing(connect_pages_db(dst_ws)) as conn:
+        def props_of(block_id):
+            return json.loads(conn.execute("SELECT properties FROM unified_blocks WHERE id = ?",
+                                           (block_id,)).fetchone()[0])
+        assert not any(set(STAMPS) & props_of(p).keys() for p in (figure, paper))
+        assert props_of(figure)["folders"] == [d] and props_of(paper)["folders"] == [w, lib]
+        assert "vault" not in props_of(w) and props_of(own_w)["vault"] == {"pull": True, "library": False}
+        assert props_of(own_file)["work_folder"] == own_w and props_of(held)["doc"]["hash"] == shared
+    listed = {p["id"] for p in dst.get("/api/blocks/root/children").json()["children"]}
+    assert {figure, paper, page, held} <= listed and own_file not in listed
+
+
+def test_a_merge_matches_a_library_document_of_any_format_by_its_stored_file():
+    """The review's ``kind`` is the document's format; a backup's figure
+    matches the workspace's page of the same stored file (its hash and
+    extension) and is skipped for it, while the same bytes stored under
+    another extension are another file and match no page."""
+    from gamma import ws_backup
+    from gamma.documents.model import document
+
+    def library(name):
+        make_user(name, f"pw-{name}")
+        c = login(name, f"pw-{name}")
+        return c, workspace_of(name)
+
+    png, text = "4d" * 16, "5e" * 16
+    src, src_ws = library("bk_fmt_from")
+    figure = make_page(src, "a figure", properties={"doc": document(png, name="fig.png", format="image", ext=".png")})["id"]
+    notes = make_page(src, "a text", properties={"doc": document(text, name="notes.txt", format="text", ext=".txt")})["id"]
+    paper = make_page(src, "a paper", properties=doc_props("6f" * 16))["id"]
+    dst, dst_ws = library("bk_fmt_to")
+    held = make_page(dst, "the workspace's figure", properties={
+        "doc": document(png, name="figure.png", format="image", ext=".png")})["id"]
+    make_page(dst, "the same bytes as a log", properties={"doc": document(text, name="notes.log", format="text", ext=".log")})
+    zpath = ws_backup.backup_path(src_ws, ws_backup.create(src_ws, label="formats")["name"])
+    review = {p["id"]: p for p in ws_backup.preview_zip(dst_ws, zpath)["pages"]}
+    assert figure not in review  # listed as the workspace's page it is
+    assert (review[held]["action"], review[notes]["action"], review[paper]["action"]) == ("skip", "create", "create")
+    assert (review[held]["kind"], review[notes]["kind"], review[paper]["kind"]) == ("image", "text", "pdf")
+    merged = ws_backup.restore_zip(dst_ws, zpath, "merge")
+    assert figure not in merged["added"] and {notes, paper} <= set(merged["added"])
+    listed = {p["id"] for p in dst.get("/api/blocks/root/children").json()["children"]}
+    assert {held, notes, paper} <= listed and figure not in listed
 
 
 def test_dropping_the_snapshots_waits_for_one_being_written(owner):

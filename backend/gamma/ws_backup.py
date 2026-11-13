@@ -49,16 +49,21 @@ from pathlib import Path
 
 from . import comments, config, integrity, jobs, pdf_index, storage, upload_gc, zotero_remote
 from .backups import snapshot_db
-from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_LIBRARY, LABELS, NOT_LINKED, PARENT_PAGE, PATH_SEP, TRASH, TREES,
+from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_PAGE, LABELS, PARENT_PAGE, PATH_SEP, TRASH, TREES,
                            delete_subtree, existing_in, fetch_subtree, filing, folder_paths, last_child_position,
                            named, new_block_id, page_parents, top_of, touch_page, tree_children, tree_parents,
                            tree_rows, write_lock)
+from .documents.model import own_hash, page_document
+from .feedback.kept import held_files
 from .db import (DATA_SCHEMA, PAGES_SCHEMA, account_names, connect_pages_db, connect_users_db, copy_chats,
                  page_now, register_functions, safe_ws_id, ws_dir)
 from .logbuf import log
+from .note_app_import import page_kind
 from .normalize import (block_columns, block_fts, folder_blocks, highlight_shape, normalize_data_db,
                         normalize_pages_db, page_changes, page_ops_batch_id, pages_db_chats)
 from .seed import create_workspace_files
+from .work_folders.library import SQL_LIBRARY_DOC, STAMPS, library_document, work_folder_of
+from .work_folders.marks import Tree, filing_targets
 from .zotero_sync_rows import CONFLICT_KINDS
 
 FORMAT = "gamma-backup-1"
@@ -75,6 +80,19 @@ DELETED_KEEP_DAYS = 90             # final copies of deleted workspaces (backups
 STALE_TEMP_S = 3600                # a snapshot's work file this old was left by a killed process
 NAME_RE = re.compile(r"^\d{8}-\d{6}-[A-Za-z0-9_.-]{1,40}$")
 LABEL_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
+# The stored name of a row's own document (``stored_name``: the generated
+# ``doc_id`` column, which leaves a copy out, and the doc's extension): what a
+# backup's page and the workspace's match by, one library page per stored
+# file of any format (blocks_store.page_for_file), beside ``SQL_LIBRARY_DOC``.
+SQL_LIBRARY_FILE = "doc_id || json_extract(properties, '$.doc.ext')"
+
+
+def _library_file(props: dict) -> str:
+    """The stored name of the document a page owns as a library document
+    (``SQL_LIBRARY_FILE`` over the page's properties), "" for none: a copy,
+    a page with no document, a work folder's file not in the library."""
+    view = page_document(props)
+    return view["file"] if own_hash(view) and library_document(props) else ""
 
 
 class BackupError(ValueError):
@@ -289,8 +307,10 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
                     conn.executemany(f"INSERT INTO {name} VALUES (?)", ((i,) for i in keep))
                 conn.execute("DELETE FROM unified_blocks WHERE id NOT IN (SELECT id FROM keep_blocks)")
                 # A new page inside one the workspace has (for the same PDF under another id too) goes
-                # inside the workspace's page, as the review showed: the backup's parent row, left out, is gone
-                in_library = {p["id"] for p in review if p["action"] == "skip" and p["kind"] != "chat"}
+                # inside the workspace's page, as the review showed: the backup's parent row, left out, is gone.
+                # A work folder's file holds no page (S3): one inside it comes back a library page
+                in_library = {p["id"] for p in review
+                              if p["action"] == "skip" and p["kind"] != "chat" and not p.get("_file")}
                 conn.executemany("UPDATE unified_blocks SET properties = json_set(properties, '$.parent_page', ?) "
                                  "WHERE id = ?", [(p["parent"], p["id"]) for p in chosen
                                                   if p["action"] == "create" and p["parent"] in in_library])
@@ -348,8 +368,8 @@ def _normalize_copies(tdir: Path) -> None:
     """Bring the unpacked databases to the current shapes before anything
     reads them or anything live is touched. pages.db, in this order: a copy
     stamped below the base (``migrations.WS_VERSION_BASE``; 0, a backup
-    from before the stamps, can be of any age up to it, and a scoped Gamma
-    export carries no stamp) goes through the normalizers of the steps that
+    from before the stamps, can be of any age up to it, and so can a scoped
+    Gamma export from before release 52, which carried none) goes through the normalizers of the steps that
     walked every workspace: the block table's hot fields
     (``normalize.block_columns``, step 26), the change log
     (``page_changes``, step 27), the chats its data.db held
@@ -558,13 +578,13 @@ def _review_import(ws, tdir, upload_names):
     available = set(upload_names) | {name for name, _, _ in storage.list(ws)}
     conversations = "SELECT 'chats', bucket, bucket, messages FROM chats UNION ALL " \
                     "SELECT 'chat_history', id, bucket, messages FROM chat_history"
-    with closing(sqlite3.connect(str(ws_dir(ws) / "pages.db"))) as live:
+    # the one way in: a workspace nobody has opened since the server's upgrade is upgraded first
+    with connect_pages_db(ws) as live:
         # the library's blocks: a page only in Recently deleted comes back (``_merge``)
         live_pages = {r[0]: (r[1], json.loads(r[2] or "{}"))
-                      for r in live.execute(f"SELECT id, content, properties FROM unified_blocks WHERE {IN_LIBRARY}")}
-        live_docs = dict(live.execute(
-            f"SELECT doc_id, id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' AND {NOT_LINKED}"
-        ).fetchall())
+                      for r in live.execute(f"SELECT id, content, properties FROM unified_blocks WHERE {IN_PAGE}")}
+        live_docs = dict(live.execute(f"SELECT {SQL_LIBRARY_FILE}, id FROM unified_blocks WHERE doc_id IS NOT NULL "
+                                      f"AND parent_id = 'root' AND {SQL_LIBRARY_DOC}").fetchall())
         live_chats = {(table, key) for table, key, _, _ in live.execute(conversations)}
         live_paths = folder_paths(live)
         live_parents = page_parents(live)
@@ -584,9 +604,9 @@ def _review_import(ws, tdir, upload_names):
         roots = src.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id='root' ORDER BY position").fetchall()
         src_props = {row[0]: json.loads(row[4] or "{}") for row in roots}
         src_parents = page_parents(src)
-        destinations = {}  # the backup's page id → the workspace's page it is (the same id, or the same PDF)
+        destinations = {}  # the backup's page id → the workspace's page it is (the same id, or the same document)
         for page_id, props in src_props.items():
-            found = page_id if page_id in live_pages else live_docs.get(props["doc_id"]) if props.get("doc_id") else None
+            found = page_id if page_id in live_pages else live_docs.get(_library_file(props))
             if found:
                 destinations[page_id] = found
         for row in roots:
@@ -614,6 +634,8 @@ def _review_import(ws, tdir, upload_names):
             uploads = upload_refs([{"content": b[3], "props": json.loads(b[4] or "{}")} for b in blocks]
                                   + [{"content": messages} for c in page_chats for _, messages in chats[c]])
             missing = uploads - available
+            # the versions its open threads were opened on come along where the backup has them
+            uploads |= held_files(src, [row[0]]) & available
             selection_id = f"page:{row[0]}"
             warnings = [{"title": row[3], "reason": f"Missing attachment: {name}", "selection_id": selection_id}
                         for name in sorted(missing)]
@@ -623,12 +645,14 @@ def _review_import(ws, tdir, upload_names):
             pages.append({"id": destination_id or row[0], "title": title, "comments": comments.count_on(src, ids),
                           "folders": folders, "parent": parent,
                           **({"folders_alone": folders} if top_folders else {}),
-                          "selection_ids": [selection_id], "kind": "pdf" if destination_props.get("doc_id") else "page",
+                          "selection_ids": [selection_id],
+                          "kind": page_kind(destination_props),
                           "action": "skip" if destination_id else "create",
                           "source_paths": ["pages.db", *[f"uploads/{n}" for n in sorted(uploads)]],
                           "warnings": warnings, "missing": bool(missing),
                           "_blocks": ids, "_tree": tree, "_chats": page_chats, "_uploads": uploads,
-                          "_references": references, "_top_folders": top_folders})
+                          "_references": references, "_top_folders": top_folders,
+                          "_file": bool(destination_id) and bool(work_folder_of(destination_props))})
     for chat_id, held in chats.items():
         if chat_id in claimed_chats:
             continue
@@ -759,7 +783,7 @@ def _fresh_ids(rows, taken: set) -> tuple[list[list], dict[str, str]]:
 
 def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
     """Additive import: pages from the backup that don't exist locally (by
-    block id, or by doc_id for PDF pages) are appended to the library; pages
+    block id, or by the PDF they own) are appended to the library; pages
     that do exist are left untouched (live data always wins). A page that is
     only in Recently deleted counts as absent: its trashed copy's rows go and
     the backup's version comes back under the same ids (its chats, op log and
@@ -792,7 +816,13 @@ def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
     folders then; else it
     comes as a library page, filed by its own folders — which a selection
     that leaves its parent out set to its top's (``restore_zip``) — and is
-    in ``unparented``. Nothing in the backup's data.db is touched."""
+    in ``unparented``. A merge brings no work folder: every page it adds
+    is a library page (``_refiled``) and every folder it makes a plain one
+    (``_merge_trees``), for the vault that marked them is the computer's
+    that made the backup; a page of the backup matches the workspace's of
+    the same document (the stored file, by hash and extension, of any
+    format) only when both are library documents (``SQL_LIBRARY_DOC``,
+    ``SQL_LIBRARY_FILE``). Nothing in the backup's data.db is touched."""
     from fractional_indexing import generate_n_keys_between
 
     from . import ops
@@ -807,13 +837,15 @@ def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
             try:
                 taken = {r[0] for r in dst.execute("SELECT id FROM unified_blocks")}
                 mapping, grew, made = _merge_trees(src, dst, taken)
+                targets = set(filing_targets(Tree.read(dst)))
                 in_trash = {r[0] for r in dst.execute("SELECT id FROM unified_blocks WHERE parent_id = ?", (TRASH,))}
                 live_docs = dict(dst.execute(
-                    f"SELECT doc_id, id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' AND {NOT_LINKED}"
-                ).fetchall())
-                new_roots, same = [], {}  # same: a page skipped for the workspace's of its PDF → that page
-                for row in src.execute("SELECT id, doc_id FROM unified_blocks WHERE parent_id = 'root' "
-                                       "ORDER BY position ASC").fetchall():
+                    f"SELECT {SQL_LIBRARY_FILE}, id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' "
+                    f"AND {SQL_LIBRARY_DOC}").fetchall())
+                new_roots, same = [], {}  # same: a page skipped for the workspace's of its document → that page
+                # the library rule on the backup's side too: its file of a work folder is no page of its document
+                for row in src.execute(f"SELECT id, CASE WHEN {SQL_LIBRARY_DOC} THEN {SQL_LIBRARY_FILE} END "
+                                       "FROM unified_blocks WHERE parent_id = 'root' ORDER BY position ASC").fetchall():
                     doc_id = row[1]
                     if (row[0] in taken and row[0] not in in_trash) or (doc_id and doc_id in live_docs):
                         if not (row[0] in taken and row[0] not in in_trash):
@@ -821,9 +853,10 @@ def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
                         pages_skipped += 1
                         continue
                     new_roots.append(row)
-                # the pages a sub-page can go inside: those coming now and the workspace's
+                # the pages a sub-page can go inside: those coming now and the workspace's, but its
+                # work folders' files, which hold no page (S3)
                 lands = {row[0] for row in new_roots} | {r[0] for r in dst.execute(
-                    "SELECT id FROM unified_blocks WHERE parent_id = 'root'")}
+                    "SELECT id FROM unified_blocks WHERE parent_id = 'root' AND work_folder IS NULL")}
                 if new_roots:
                     keys = generate_n_keys_between(last_child_position(dst, "root"), None, n=len(new_roots))
                     for row, key in zip(new_roots, keys):
@@ -838,7 +871,7 @@ def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
                         rows[0][4], alone = _placed(rows[0][4], lands, same)
                         if alone:
                             unparented.add(row[0])
-                        rows[0][4] = _refiled(dst, rows[0][4], mapping)
+                        rows[0][4] = _refiled(dst, rows[0][4], mapping, targets)
                         dst.executemany(f"INSERT INTO unified_blocks ({BLOCK_COLUMNS}) "
                                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
                         comments_added += comments.copy_rows(dst, comments.rows_of_pages(src, [row[0]]),
@@ -870,12 +903,17 @@ def _merge_trees(src, dst, taken: set) -> tuple[dict, list[str], list[str]]:
     with the same name (a folder under the folder its parent became, a
     label of that name; ``blocks_store.named``), else it is added there,
     last among its siblings, under its own id unless the workspace uses it
-    (``taken``, which learns the new ids). Returns ``({backup id: workspace
-    id}, the trees that gained blocks, the blocks added)``."""
+    (``taken``, which learns the new ids). A folder added carries no mark of
+    a work folder (``vault``), and none is made or merged inside the
+    workspace's work folders or into one by its name, their directories
+    being their vault's: one that would land inside stands for the folder it
+    would land in, which files nothing (``_refiled``). Returns ``({backup
+    id: workspace id}, the trees that gained blocks, the blocks added)``."""
     from fractional_indexing import generate_key_between
 
     mapping, grew, made = {}, [], []
     now = page_now()
+    work = Tree.read(dst)
     for tree in TREES:
         mine = {r[0] for r in dst.execute("SELECT id FROM unified_blocks WHERE page_id = ?", (tree,))}
         kids = tree_children(dst, tree)
@@ -885,10 +923,15 @@ def _merge_trees(src, dst, taken: set) -> tuple[dict, list[str], list[str]]:
                 mapping[bid] = bid
                 continue
             at = mapping.get(parent, tree)
-            same = named(kids.get(at, []), name or "")
+            if tree == FOLDERS and work.work_of(at):
+                mapping[bid] = at
+                continue
+            same = named([c for c in kids.get(at, []) if not work.work_of(c[0])], name or "")
             if same:
                 mapping[bid] = same[0][0]
                 continue
+            if tree == FOLDERS:
+                props = json.dumps({k: v for k, v in json.loads(props or "{}").items() if k != "vault"})
             new_id = bid if bid not in taken else new_block_id()
             dst.execute(f"INSERT INTO unified_blocks ({BLOCK_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (new_id, at, generate_key_between(last_child_position(dst, at), None), name or "",
@@ -922,14 +965,18 @@ def _placed(props_raw: str, lands: set, same: dict) -> tuple[str, bool]:
     return json.dumps(props), True
 
 
-def _refiled(dst, props_raw: str, mapping: dict) -> str:
+def _refiled(dst, props_raw: str, mapping: dict, targets: set) -> str:
     """A page root's properties from the backup, filed under the
     workspace's folder and label ids (``mapping``), ids it does not have
-    left out."""
-    props = json.loads(props_raw or "{}")
+    left out, as a library page: a work folder's stamps dropped
+    (``work_folders.library.STAMPS``) and only the folders a library page
+    may be filed in kept (``targets``, ``marks.filing_targets``)."""
+    props = {k: v for k, v in json.loads(props_raw or "{}").items() if k not in STAMPS}
     for tree in TREES:
         if tree in props:
             kept = existing_in(dst, tree, [mapping.get(i, i) for i in filing(props, tree)])
+            if tree == FOLDERS:
+                kept = [f for f in kept if f in targets]
             if kept:
                 props[tree] = kept
             else:

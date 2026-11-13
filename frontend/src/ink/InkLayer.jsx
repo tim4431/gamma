@@ -16,7 +16,7 @@ import { createPortal, flushSync } from "react-dom";
 import { ContextMenu, MenuDivider, MenuItem, useMenuTrigger } from "../shared/ui/Menus";
 import { IconSwap } from "../shared/ui/MotionWidgets";
 import {
-  ClipboardIcon, CopyIcon, DuplicateIcon, FileTextIcon, FlipHIcon, FlipVIcon, HighlightIcon, LineWidthIcon, MergeIcon, MoreIcon, NotebookPenIcon,
+  ClipboardIcon, CopyIcon, DuplicateIcon, FileTextIcon, FlipHIcon, FlipVIcon, HighlightIcon, LineWidthIcon, MergeIcon, MessageSquareIcon, MoreIcon, NotebookPenIcon,
   PaletteIcon, PenIcon, PlayIcon, RectSelectIcon, ScissorsIcon, StopIcon, TrashIcon, SparklesIcon,
   PaintBucketIcon, DownloadIcon, ShapesIcon, TypeIcon,
 } from "../shared/ui/Icons";
@@ -915,6 +915,8 @@ function samplesBox(samples, pad) {
 // onZoom(page, {x, y} | {mag} | {at, size}) while a window is open.
 // aiWork: the handwriting on this surface the AI is redrawing or
 // converting, {box, landed?} (useInkSelection.js), washed over (InkAiWork).
+// The page tools' ink.canComment (the reader may comment on the page) gives
+// a PDF page's selection menu its Comment; a sheet's has none.
 export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures, tool, penTool, penInk, onPenDrag, penOnly, pressure, eraserMode,
   eraserSize = 1, eraserFilter = "all", drawHold = false, scribble = false, fingerUndo = "off", lassoMode = "free", lassoPictures = true,
   selection, flash, clip = false, keys, hoverPreview = true, ruler = null, rulerUnits = "pt", aiWork = null, onCarry,
@@ -922,6 +924,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
   onFingerScroll, onUndoGesture, onHoldStatus, onInkFeatures, onInkLive, onHaptic, onRuler,
   chrome = true, zoom = null, onZoom, onZoomStroke, view = false }) {
   useInkVersion();
+  const canComment = !!usePageTools()?.ink?.canComment && typeof pageNumber === "number";
   const canvasRef = useRef(null);
   const wetRef = useRef(null);
   const washRef = useRef(null);
@@ -2096,7 +2099,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
         style={{ left: pct(hitBox[0], width), top: pct(hitBox[1], height),
           width: pct(hitBox[2] - hitBox[0], width), height: pct(hitBox[3] - hitBox[1], height) }} /> : null}
       {selBox && onAction && chrome && !dragging ? <InkSelectionMenu surface={pageNumber} wrapRef={wrapRef} ignoreRef={menuIgnore} box={selBox} width={width}
-        strokes={selectedStrokes}
+        strokes={selectedStrokes} canComment={canComment}
         canMerge={canMergeSelection(groups, selectedIds)} keys={keys}
         onAction={onAction} onClose={() => onSelect(pageNumber, [])} /> : null}
       {pasteMenu && onPaste ? (
@@ -2685,7 +2688,8 @@ let moreOpen = false;
 
 // The selection's menu: two rows of 36 px buttons, at most seven each (a
 // hard cap for every later addition), the first fixed — Color, Width and
-// style, Copy, Convert, More, Delete — and More adding the second: Cut,
+// style, Copy, Convert, More, Comment (with `canComment`: a thread on the
+// selected handwriting, docs/dev/comments.md), Delete — and More adding the second: Cut,
 // Duplicate, Flip horizontal, Flip vertical, New note — Merge into note in
 // its place when `canMerge` (New note would change nothing then) —, Select
 // note and Show note. Convert's menu (InkConvertMenu) holds Transcribe in
@@ -2697,12 +2701,12 @@ let moreOpen = false;
 // open (the page, and the zoom window, whose layer drags the selection
 // too). `surface`: the page or sheet the selection is on, whose scale sets
 // Duplicate's offset. A selection of pictures alone (no `strokes`) greys
-// what acts on strokes alone: Color, Width and style, Copy, Convert, Cut,
-// New note and Select note. The menus its own buttons open (the style
+// what acts on strokes alone: Color, Width and style, Copy, Convert,
+// Comment, Cut, New note and Select note. The menus its own buttons open (the style
 // row's brush menu, Convert's) are measured once, at the press, so a
 // scroll or anything else that moves this menu closes them rather than
 // leave them where its buttons were.
-function InkSelectionMenu({ surface, wrapRef, ignoreRef, box, width, strokes, canMerge, keys, onAction, onClose }) {
+function InkSelectionMenu({ surface, wrapRef, ignoreRef, box, width, strokes, canComment = false, canMerge, keys, onAction, onClose }) {
   const [options, setOptions] = useState(null);
   const [more, setMoreState] = useState(moreOpen);
   // The menus its buttons open, one at a time (Menus.jsx useMenuTrigger):
@@ -2756,6 +2760,7 @@ function InkSelectionMenu({ surface, wrapRef, ignoreRef, box, width, strokes, ca
         <button className={"ctlBtn" + (menus.kind === "convert" ? " modeActive" : "")} {...menus.trigger("convert")} aria-label={t("Convert")}
           title={t("Transcribe, redraw or convert the selected handwriting")} disabled={inkless}><SparklesIcon aria-hidden="true" /></button>
         <button className={"ctlBtn" + (more ? " modeActive" : "")} aria-label={t("More")} title={t("More edits")} aria-expanded={more} onClick={() => setMore(!more)}><MoreIcon aria-hidden="true" /></button>
+        {canComment ? <button className="ctlBtn" aria-label={t("Comment")} title={t("Comment on the selected handwriting")} disabled={inkless} onClick={() => onAction("comment")}><MessageSquareIcon aria-hidden="true" /></button> : null}
         <button className="ctlBtn inkDeleteBtn" aria-label={t("Delete")} title={t("Delete selected handwriting")} onClick={() => onAction("delete")}><TrashIcon aria-hidden="true" /></button>
       </div>
       {more ? <div className="inkEditOptions inkEditMore" aria-label={t("More edits")}>

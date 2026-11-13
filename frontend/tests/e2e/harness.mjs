@@ -437,6 +437,23 @@ export async function arrived(locator) {
   });
 }
 
+// A press of the mouse's back button over the middle of `over` (a
+// locator), else of the page, which Playwright's mouse has no name for:
+// through the DevTools protocol, as the hardware's reaches Chromium. Unless
+// the page takes it, its release goes back in the window's history.
+export async function pressMouseBack(page, over = null) {
+  const { width, height } = page.viewportSize();
+  const box = over ? await over.boundingBox() : { x: 0, y: 0, width, height };
+  const cdp = await page.context().newCDPSession(page);
+  const at = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2), button: "back", clickCount: 1 };
+  try {
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", buttons: 8, ...at });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", buttons: 0, ...at });
+  } finally {
+    await cdp.detach().catch(() => {});
+  }
+}
+
 // A selector's matches without the copies of closed surfaces on their way
 // out (data-leaving, shared/ui/leave.js), for a count or a check taken
 // the moment a menu or popover closes.

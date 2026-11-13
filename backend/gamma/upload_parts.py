@@ -28,6 +28,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from . import storage
+from .documents.formats import stored_extension
 from .server_settings import check_upload_allowed
 
 MB = 1024 * 1024
@@ -79,7 +80,7 @@ def start(ws: str, size: int, name: str = "", kind: str = "pdf") -> Session:
     ext = ".pdf"
     if kind == "file":
         try:
-            ext = storage.upload_extension(name)
+            ext = stored_extension(name)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         if ext == ".ink":

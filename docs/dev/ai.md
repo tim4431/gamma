@@ -507,9 +507,10 @@ set — some models reject it; see "Reasoning effort" below), optional `speed`
 (the provider's service tier; see "Speed" below), optional `system` override, the message's
 `images` and their budget `max_pictures` ("Pictures" below), and the context PAGES: `pages`
 (several — a report across pages) or, when empty, the one page of `page_id`
-(the open page). A page's PDF attachment is derived server-side
-(`blocks_store.page_attachment`) — `doc_id` is still accepted as a
-compatibility input: it resolves to the page carrying that PDF
+(the open page). A page's PDF attachment is derived server-side from its
+document (`documents.model.page_document`): the stored file it shows
+(`file_hash`), so a duplicated page reads the original's PDF — `doc_id` is
+still accepted as a compatibility input: it resolves to the page carrying that PDF
 (`blocks_store.page_for_doc`) and does nothing when no page does; send
 `page_id`, nothing new may depend on `doc_id`. `stream: true` (the chat UI's
 mode) returns NDJSON lines of
@@ -1229,12 +1230,43 @@ bubble comes from the first; `view_pdf_page`, `view_ink`, `view_image` and
 `clip_region` chips carry `picture`, the URL the expanded chip shows; and
 the view tools' results tell the model it may embed that URL in its reply
 as a markdown image, which `ChatMarkdown` renders.
+
+**A picture page's region.** When the page's document is a picture
+([documents.md](documents.md) "The viewers"), `render_region` (the
+page-image route, the chat's region and view pictures, `picture_at`) draws
+it through `ai_pictures.image_region(ws, file, box, marks)`: `page` is 1
+(any other is "no such page"), `ink` does nothing. The function reads the
+stored file (an upload or a work folder's file read in place, at most
+`STORED_MAX_BYTES`), an SVG through its one-page PDF
+(`pdf_image.svg_pdf`), a raster with Pillow (the EXIF orientation applied,
+an animation's first frame, transparency on white), cuts the box (at
+least `REGION_MIN_PX`, 48, of the picture's own pixels a side) and scales
+it so the longer side is `RENDER_MAX_SIDE`, zooming at most
+`IMAGE_MAX_ZOOM` (4). Each mark `(box, color, strong)` is drawn as the
+viewer draws a region: an outline in the colour's line tone
+(`colors.line_color`), 2 px, 3 for a strong one, over a wash of the colour
+at a quarter of its alpha. The answer is `render_page`'s shape, `(bytes,
+"image/jpeg", width, height)`; None for a file not here, one that does not
+decode, a decompression bomb (`Image.MAX_IMAGE_PIXELS`) or one that changed
+under the read. The feedback reader's pictures of a region and of the
+whole picture are drawn by it ([feedback.md](feedback.md) "The pictures");
+the labels say "the picture" where a PDF's say "PDF page N".
 `GET /api/ai/selection-crop/{doc_id}` draws the selection pill's picture in
 saved replies. `ai_pictures.picture_at` gives the bytes of any of these
 pictures from the URL the chat shows it by: a stored upload as stored, a
 data URL decoded, a drawn one drawn as its route draws it. That is how the
 conversation export packs them
 ([chat_history.md](chat_history.md#exporting-a-conversation)).
+
+**Highlights drawn.** None of the chat's pictures draws Gamma's highlights.
+A feedback thread's region picture does ([feedback.md](feedback.md) "The
+pictures", `feedback/pictures.py`): the same page as
+`ink_view.page_with_handwriting` makes it, its `marks` being the page's
+highlights measured on the file drawn, which `pdf_export.page_with_ink(highlights=…)`
+adds as the export writes them (`_mark_annotation`) and MuPDF draws as the
+viewer does (the wash multiplied onto the text, an area's border and faint
+fill). It is rendered at `RENDER_MAX_SIDE` like the chat's regions, and
+kept in data.db by its content key, never as an upload.
 
 **The store and the upload GC.** A chat's pictures are stored uploads like a
 note's, and the saved conversation points at them, so `upload_gc.referenced`
@@ -1247,7 +1279,8 @@ stores a region or a handwriting view for the notes to embed
 
 Tests: `backend/tests/test_ai_pictures.py` (normalize, the routes, the
 request's pictures and budget, the earlier turns', the label lines, the
-view/clip/delete tools, the GC), `frontend/tests/chatPictures.test.mjs`,
+view/clip/delete tools, the GC), `backend/tests/test_ai_image_region.py`
+(a picture page's region and the route), `frontend/tests/chatPictures.test.mjs`,
 and the e2e step "a picked picture is stored and attached by URL".
 
 ## The library agent
@@ -1348,7 +1381,7 @@ is opened in: `AgentToolPicker` in `settings/AssistantTools.jsx`, grouped
 rows with the same state menus and presets. It is bound to the same map, so
 a change in either place is the same change.
 `ChatDock` derives its kind from its props (`organizeFolder` set → folder;
-else `pageAttach` → pdf; else notes) and sends that kind's map as the
+else a PDF document, `isPdf(doc)` → pdf; else notes) and sends that kind's map as the
 request's `permissions`.
 
 One permission per capability: List pages (`list_pages`, the folder tree

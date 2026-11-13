@@ -81,6 +81,32 @@ test("the handwriting commands keep to the strip's selection and clipboard, and 
   assert.deepEqual(calls, ["copy", "all"]);
 });
 
+// Ctrl+F with the focus in the chat window is ChatDock's find-in-chat, and
+// in the code view (documents/viewers/TextViewer.jsx) CodeMirror's own Find
+// panel: the search commands decline there and run anywhere else.
+test("the search commands leave Ctrl+F to the chat's find and to the code view's panel", () => {
+  const saved = globalThis.document;
+  const focusIn = (classes) => {
+    globalThis.document = {
+      querySelectorAll: () => [],
+      activeElement: { closest: (sel) => (sel.split(",").some((s) => classes.includes(s.trim())) ? {} : null) },
+    };
+  };
+  try {
+    const calls = [];
+    const ctx = { search: (everything) => { calls.push(everything); return true; } };
+    for (const where of [[".docTextView"], [".chatPanel"]]) {
+      focusIn(where);
+      assert.equal(commandById("app.search").run(ctx), false, `${where}: Ctrl+F declines`);
+      assert.equal(commandById("app.searchAll").run(ctx), false, `${where}: Ctrl+Shift+F declines`);
+    }
+    focusIn([".pdfViewer"]);
+    assert.equal(commandById("app.search").run(ctx), true);
+    assert.equal(commandById("app.searchAll").run(ctx), true);
+    assert.deepEqual(calls, [false, true]);
+  } finally { globalThis.document = saved; }
+});
+
 test("the PDF's held keys are lone modifiers that never dispatch", () => {
   assert.equal(commandChord("pdf.areaDrag", {}), "Mod", "Ctrl, ⌘ on a Mac");
   assert.equal(commandChord("pdf.peekOriginal", {}), "Alt");

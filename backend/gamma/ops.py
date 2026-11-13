@@ -4,7 +4,7 @@ A page's notes change through small, typed operations rather than a whole-
 tree replace, so several clients (two browsers of one account, share editors)
 can edit one page at once and only the touched rows move:
 
-- ``set {id, content?, base?, props?, base_props?}`` — ``content``
+- ``set {id, content?, base?, props?, base_props?, quiet?}`` — ``content``
   replaces the text; with ``base`` (the text the client's change was
   computed from) it is applied as a patch when the block changed
   meanwhile, so two people editing different spans of one block both keep
@@ -45,6 +45,20 @@ stored as given, an id of a block this copy does not have included — a
 mirror's page may name a folder its tree has not brought yet, a published
 page folders the share host never sees — and every reader passes such an id
 by (gamma/blocks_store.py ``filing``).
+
+A work folder's files and folders are held to the work-folder rule
+(gamma/work_folders/filing.py; docs/dev/work_folders.md "The op rule"), by
+the writer the batch's op client names: the mirror (``sync``) passes it,
+the vault (``disk``) is held to the shape a file keeps, anyone else is a
+person. A person changes no file's stamps, document or directory (a note
+of a work folder that pulls follows: its title and directory move its
+file), files no page of the library in a work folder, and changes no
+folder inside one (its directories follow the disk); trashing and restoring
+a file, and deleting a folder, go by the same rule (``trash_page``,
+``restore_page``, ``tree_deletion``). A refusal is a 403 with the conflict
+``LOCKED``, so a client drops that op alone. A page root's ``set`` the
+vault or the mirror marks ``quiet`` leaves the page's ``updated_at``: a
+vault stamping its pages never reorders anyone's recent pages.
 
 The folder and label trees are pseudo-pages to this path
 (gamma/blocks_store.py ``TREES``): a batch may name ``folders`` or
@@ -96,12 +110,15 @@ from .picture import merge_picture, normalize_picture
 from .text_box import merge_text_box, normalize_text_box
 from .blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, MAX_PAGE_DEPTH, PARENT_PAGE, TRASH, TREES, block_to_dict, delete_subtree,
-    ensure_reserved, fetch_subtree, filing, filing_ids, folder_inserts, free_position, is_op_page, label_inserts,
-    last_child_position, load_props, move_subtree_to_page, page_descendants, page_root_id, redundant_source_url, subtree_refs,
-    touch_page, trashed_page, valid_block_id, valid_parent_value, write_lock)
+    ensure_reserved, fetch_subtree, filing, filing_ids, folder_inserts, free_position, is_file, is_op_page,
+    label_inserts, last_child_position, load_props, move_subtree_to_page, page_descendants, page_for_file, page_root_id,
+    subtree_refs, touch_page, trashed_page, valid_block_id, valid_parent_value, write_lock)
 from .db import connect_pages_db, format_stamp, page_now, parse_stamp
+from .documents.model import document_props, own_hash, page_document
 from .logbuf import log
 from .storage import content_digest, store_file, upload_refs
+from .work_folders import filing as work_filing, marks
+from .work_folders.library import STAMPS, work_folder_of
 
 SYNC_CLIENT = "sync"  # the mirror's own writes, here and on its remote (sync_engine.CLIENT reads it)
 # The batches that make no one follow the page (blocks_store.follow_page):
@@ -137,13 +154,23 @@ MISSING = "missing"  # the block or the parent is gone
 MOVED = "moved"      # it lives in another page now
 CYCLE = "cycle"      # the move would put a block inside itself
 STALE = "stale"      # the page moved past the seq a plan was made at (``commit_plan``)
+LOCKED = "locked"    # a work folder's file or directory is its vault's (gamma/work_folders/filing.py)
+
+# What the vault adds to the stamps of a page it sends to Recently deleted:
+# its file was deleted or untracked, so only the file brings it back.
+DELETED_BY_VAULT = "deleted_by_vault"
+TRASH_STAMPS = ("deleted_at", "deleted_by", "deleted_with", DELETED_BY_VAULT)
+# The root keys the work-folder rule reads a page's patch for (``_Batch.work_patch``)
+_WORK_KEYS = (*STAMPS, FOLDERS, PARENT_PAGE, "doc")
 
 
 class OpError(Exception):
     """A refused batch. ``missing``: the unknown block or parent id behind a
     404, so a client that holds that block can send it again as an insert.
     ``conflict`` (MISSING / MOVED / CYCLE / STALE): refused because someone else
-    changed the page meanwhile, not because the batch is malformed;
+    changed the page meanwhile, not because the batch is malformed; LOCKED,
+    a 403: the work-folder rule refuses that op (its words in ``detail``), so
+    a client drops it alone and sends the rest, as for the others.
     ``index`` is the refused op's place in the batch."""
 
     def __init__(self, status: int, detail: str, missing: str = "", conflict: str = ""):
@@ -153,6 +180,29 @@ class OpError(Exception):
         self.missing = missing
         self.conflict = conflict
         self.index: int | None = None
+
+
+def locked(refused: work_filing.Refused) -> OpError:
+    """The work-folder rule's refusal as the op path answers it: a 403 with
+    the ``LOCKED`` conflict, never a 409 (the ops route retries a 409, and a
+    refusal without a conflict drops a collab batch whole)."""
+    return OpError(403, refused.detail, conflict=LOCKED)
+
+
+def _work_rule(rule, conn, props: dict, writer: str, memo: dict | None = None):
+    """``rule`` (filing.may_trash or may_restore) on a page's ``props`` for
+    ``writer``, its answer; the folder tree is read only for a work
+    folder's file, and once per ``memo`` (a call over many pages). A
+    refusal raises ``locked``."""
+    if not work_folder_of(props):
+        return props
+    memo = {} if memo is None else memo
+    if "tree" not in memo:
+        memo["tree"] = marks.Tree.read(conn)
+    try:
+        return rule(memo["tree"], props, writer)
+    except work_filing.Refused as e:
+        raise locked(e) from None
 
 
 def storable(value, *, finite: bool = True):
@@ -201,6 +251,7 @@ class SetOp(BaseModel):
     props: dict | None = None
     base_props: dict | None = None  # the values `props` was computed from (an ink group's, a text box's merge)
     base_ids: list[str] | None = None  # an ink merge: the base file's stroke ids, for a base that is gone
+    quiet: bool | None = None  # the vault's or the mirror's stamp of a page root: its updated_at stays
 
 
 class InsertOp(BaseModel):
@@ -293,9 +344,13 @@ class _Batch:
     """One apply_ops call: the page, the timestamp, an ancestry cache."""
 
     def __init__(self, conn, page_id: str, now: str, share_scoped: bool, cursor: dict | None = None,
-                 merges: dict | None = None, mirror: bool = False):
+                 merges: dict | None = None, client: str = ""):
         self.conn = conn
-        self.mirror = mirror  # an offline copy's own batch (SYNC_CLIENT): a merged parent cycle is stored
+        # who writes, by the op client (gamma/work_folders/filing.py): the mirror, the vault or a person
+        self.writer = work_filing.writer_of(client)
+        self.mirror = self.writer == "mirror"  # an offline copy's own batch: a merged parent cycle is stored
+        self._work_tree: marks.Tree | None = None  # the folder tree as the work-folder rule reads it
+        self.quiet = 0  # the quiet root sets among the ops (``set``)
         self.ws = getattr(conn, "ws", "")  # the workspace whose files an ink merge reads
         self.page_id = page_id
         self.tree = page_id in TREES  # a batch on the folder or label tree
@@ -310,7 +365,7 @@ class _Batch:
         # upload names the ops stopped / started referencing (gamma/upload_gc.py)
         self.dropped: set[str] = set()
         self.added: set[str] = set()
-        self.doc_deleted = False  # a deleted block carried a PDF (doc_id)
+        self.doc_deleted = False  # a deleted block carried a PDF (a doc, or a highlight's doc_id)
         self.chats_filed: dict[str, str] = {}  # folder chats a tree delete filed into the library's history
         # block id → (the people its text named before the batch, and names now), for the Inbox
         self.people: dict[str, tuple[set, set]] = {}
@@ -390,6 +445,54 @@ class _Batch:
                          or parent in {r[0] for r in fetch_subtree(self.conn, block_id)}):
             raise OpError(400, "cannot move a block into its own subtree", conflict=CYCLE)
 
+    # --- the work-folder rule (gamma/work_folders/filing.py) -----------------
+
+    def work_tree(self) -> marks.Tree:
+        """The folder tree, read once a batch and only when a rule asks."""
+        if self._work_tree is None:
+            self._work_tree = marks.Tree.read(self.conn)
+        return self._work_tree
+
+    def tree_rule(self, op: dict) -> None:
+        """A person's op on the folder tree, held to the work-folder rule
+        (``filing.tree_op``: inside a work folder the tree is the disk's).
+        A move, an insert or a delete changes the tree the next op is judged
+        by (W moved under a folder that the batch then deletes), so the tree
+        is read again after one."""
+        if self.page_id == FOLDERS and self.writer == "person":
+            try:
+                work_filing.tree_op(self.work_tree(), op, self.writer)
+            except work_filing.Refused as e:
+                raise locked(e) from None
+            if op["op"] != "set":
+                self._work_tree = None
+
+    def work_patch(self, page_id: str, before: dict, patch: dict | None, content: str | None) -> dict | None:
+        """A page root's ``set`` held to the work-folder rule
+        (``filing.root_patch``): ``patch`` as stored (clearing ``library``
+        drops the library folders), or ``locked``. ``before``: the page's
+        properties; ``content``: its new title, None when it stays. Passed
+        by for the mirror, and for a write that touches no stamp, filing,
+        parent or document and no file's title. A person who puts a file in
+        the library does so only while its bytes are stored here and no
+        other library page owns them (one page per library document)."""
+        if self.mirror or not ((patch and any(key in patch for key in _WORK_KEYS))
+                               or (content is not None and work_folder_of(before))):
+            return patch
+        try:
+            out = work_filing.root_patch(self.work_tree(), before, patch, content, self.writer,
+                                         target_is_file=is_file(self.conn, (patch or {}).get(PARENT_PAGE)))
+        except work_filing.Refused as e:
+            raise locked(e) from None
+        if self.writer == "person" and (out or {}).get("library") is True and before.get("library") is not True:
+            view = page_document(before)
+            if view is not None and view["file"] and self.ws and not storage.exists(self.ws, view["file"]):
+                raise OpError(403, "Its bytes are on another computer.", conflict=LOCKED)
+            held = page_for_file(self.conn, own_hash(view), view["ext"], "id, content") if view is not None else None
+            if held and held[0] != page_id:
+                raise OpError(403, f"Already in the library as “{held[1] or 'Untitled'}”.", conflict=LOCKED)
+        return out
+
     # --- the five ops --------------------------------------------------------
 
     def set(self, op: dict) -> None:
@@ -400,21 +503,29 @@ class _Batch:
             raise OpError(404, f"no such block: {block_id}", missing=block_id, conflict=MISSING)
         self.require_in_page(block_id)
         content, patch = op.get("content"), op.get("props")
+        # a stamp of the vault's or the mirror's on a page root leaves its updated_at (the recents' order)
+        quiet = op.get("quiet") is True and block_id == self.page_id and self.writer != "person"
+        self.quiet += quiet
         if content is None and patch is None:
             return
         if block_id == self.page_id and self.tree:
             raise OpError(403, f"the reserved row {block_id!r} cannot be changed")
+        renamed = content if content != (row[0] or "") else None
+        if self.tree:
+            self.tree_rule({"op": "set", "id": block_id, "content": renamed, "props": patch})
         if patch and block_id == self.page_id and self.share_scoped:
             raise OpError(403, "share editors cannot change page settings")
+        props = json.loads(row[1] or "{}")
         if patch and block_id == self.page_id:
             patch = _parent_patch(self.conn, block_id, _filing_patch(patch), check_chain=not self.mirror)
+        if block_id == self.page_id:
+            patch = self.work_patch(block_id, props, patch, renamed)
         if content is not None and len(content) > MAX_CONTENT:
             raise OpError(413, "content too long")
         if content is not None and op.get("base") is not None:
             content = _merged(self.merges, block_id, op["base"], content, row[0] or "", self.cursor)
-        props = json.loads(row[1] or "{}")
-        if patch and block_id == self.page_id:
-            patch = _attachment_patch(patch, props)
+        if patch:
+            patch = _document_patch(patch)
         base_props = op.get("base_props")
         if patch and base_props:
             patch = self.merge_ink(block_id, props, patch, base_props, op.get("base_ids"))
@@ -422,7 +533,7 @@ class _Batch:
                 if key in patch and key in base_props:
                     patch = {**patch, key: merge(props.get(key), patch[key], base_props[key])}
         echo = {"op": "set", "id": block_id}
-        sets, values = ["updated_at = ?"], [self.now]
+        sets, values = ([], []) if quiet else (["updated_at = ?"], [self.now])
         if content is not None:
             sets.append("content = ?")
             values.append(content)
@@ -510,10 +621,12 @@ class _Batch:
         block_id, parent = op["id"], op["parent"]
         if not valid_block_id(block_id):
             raise OpError(400, f"invalid block id: {block_id!r}")
+        if self.tree:
+            self.tree_rule({"op": "insert", "id": block_id, "parent": parent, "props": op.get("props")})
         content = op.get("content") or ""
         if len(content) > MAX_CONTENT:
             raise OpError(413, "content too long")
-        props = op.get("props") or {}
+        props = _document_patch(op.get("props") or {}, patch=False)
         existing = self.conn.execute(
             "SELECT parent_id, position, content, properties FROM unified_blocks WHERE id = ?",
             (block_id,)).fetchone()
@@ -559,6 +672,8 @@ class _Batch:
         self.require_in_page(block_id)
         if block_id == self.page_id:
             raise OpError(403, "the page itself cannot be moved")
+        if self.tree:
+            self.tree_rule({"op": "move", "id": block_id, "parent": parent})
         self.check_parent(parent, block_id)
         position = self.free_position(parent, op.get("position"), block_id)
         self.conn.execute(
@@ -575,6 +690,8 @@ class _Batch:
             raise OpError(403, f"block {block_id} is outside this page", conflict=MOVED)
         if block_id == self.page_id:
             raise OpError(403, "the page itself cannot be deleted through ops")
+        if self.tree:
+            self.tree_rule({"op": "delete", "id": block_id})
         rows = fetch_subtree(self.conn, block_id)
         delete_subtree(self.conn, block_id)
         comments.orphan(self.conn, [r[0] for r in rows], self.now)  # hidden, and swept unless the blocks return
@@ -583,7 +700,7 @@ class _Batch:
             self.deleted.append(r[0])
             if r[0] in self.people or "@" in (r[3] or ""):
                 self.note_mentions(r[0], r[3] or "", "")
-            self.doc_deleted = self.doc_deleted or '"doc_id"' in (r[4] or "")
+            self.doc_deleted = self.doc_deleted or '"doc_id"' in (r[4] or "") or '"doc"' in (r[4] or "")
         self.dropped |= subtree_refs(rows)
         if self.page_id == FOLDERS:
             # A folder's conversations are never dropped with it, whichever
@@ -770,13 +887,17 @@ def kept_out_of(conn, parent: str) -> dict:
     return patch
 
 
-def _attachment_patch(patch: dict, props: dict) -> dict:
-    """A page root's ``patch`` against its stored ``props``, a
-    ``source_url`` that is the page's ``doc_id``'s stored copy removed
-    instead of stored (blocks_store.redundant_source_url)."""
-    if redundant_source_url(patch.get("doc_id", props.get("doc_id")), patch.get("source_url")):
-        patch = {**patch, "source_url": None}
-    return patch
+def _document_patch(props: dict, *, patch: bool = True) -> dict:
+    """A block's properties patch (``patch`` False: a new block's
+    properties) held to the one shape of a document
+    (``documents.model.document_props``): ``doc`` checked and stored in
+    canonical form, ``None`` removing it from a patch; a flat key a
+    document was kept in before (``LEGACY_KEYS``) refused with a value and
+    dropped as a removal. 400 on what does not check."""
+    try:
+        return document_props(props, patch=patch)
+    except ValueError as e:
+        raise OpError(400, str(e))
 
 
 def _log(conn, page_id: str, actor: str, client: str, now: str, applied: list, after: int = 0, *,
@@ -941,7 +1062,7 @@ def _apply(conn, page_id: str, ops: list[dict], *, actor: str, client: str = "",
     text merges ``_premerge`` computed before the lock. Returns
     ``apply_ops``' result; commits nothing."""
     now = page_now()
-    batch = _Batch(conn, page_id, now, share_scoped, cursor, merges, mirror=client == SYNC_CLIENT)
+    batch = _Batch(conn, page_id, now, share_scoped, cursor, merges, client=client)
     for i, op in enumerate(ops):
         kind = op.get("op")
         try:
@@ -964,7 +1085,8 @@ def _apply(conn, page_id: str, ops: list[dict], *, actor: str, client: str = "",
     # the batch) changed nothing
     dropped = batch.dropped - batch.added
     upload_gc.claim(conn, batch.added - batch.dropped)
-    touch_page(conn, page_id, actor, now=now, follow=client not in UNFOLLOWED)
+    touch_page(conn, page_id, actor, now=now, quiet=bool(ops) and batch.quiet == len(ops),
+               follow=client not in UNFOLLOWED)
     seq = _log(conn, page_id, actor, client, now, batch.applied, batch_id=batch_id, cursor=cursor)
     result = {"page_id": page_id, "seq": seq, "at": now, "actor": actor, "client": client,
               "ops": batch.applied, "deleted_ids": batch.deleted, "dropped_uploads": sorted(dropped),
@@ -1068,7 +1190,7 @@ def commit_ops(ws: str, page_id: str, ops: list[dict], *, actor: str, client: st
 
 def commit_plan(ws: str, page_id: str, ops: list[dict], *, actor: str, client: str, batch_id: str, seq: int) -> dict:
     """A synced vault's plan for a page from another computer
-    (gamma/vault_http.py): every op of it in one transaction, in
+    (gamma/vault/http_remote.py): every op of it in one transaction, in
     ``MAX_OPS`` batches each logged on the page, the first under
     ``batch_id``, or none of them. Planned against the page as it stood at
     ``seq`` (its op log's, ``latest_seq``), so a page written since is
@@ -1268,8 +1390,13 @@ def trash_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> 
     descendants' in order, so a copy reading the feed meets the page
     before the pages inside it — and a copy of the workspace removes its
     copies. ``restore_page`` brings them back, ``delete_page`` removes them
-    for good. Commits; returns the page's trash entry. OpError(404) unless
-    ``page_id`` is a page, 409 when a block holds the reserved id."""
+    for good. A work folder's file leaves as the work-folder rule says
+    (``filing.may_trash``: a person sends only a note that follows), and the
+    vault's trashing (``client`` ``disk``) is stamped ``deleted_by_vault``
+    too: its file is gone or untracked, so a person cannot restore it.
+    Commits; returns the page's trash entry. OpError(404) unless
+    ``page_id`` is a page, 409 when a block holds the reserved id, 403
+    ``LOCKED`` for a file the rule keeps."""
     return trash_pages(ws, conn, [page_id], actor=actor, client=client, each=False)[0]
 
 
@@ -1278,20 +1405,21 @@ def trash_pages(ws: str, conn, page_ids: list[str], *, actor: str, client: str =
     """``trash_page`` for many pages in one transaction committed here, in
     order (the library's bulk trash, ``POST /blocks/bulk``): each page goes
     in a savepoint of it, and one refused (``OpError``: no page any more,
-    or gone with a page before it) is answered in its place while the
-    others go. The rooms hear ``trashed`` and the commit listeners are told
-    after the one commit. ``each`` False raises the first refusal instead,
-    nothing written (``trash_page``). Returns each page's trash entry or
-    its refusal."""
+    gone with a page before it, or a work folder's file the rule keeps) is
+    answered in its place while the others go. The rooms hear ``trashed``
+    and the commit listeners are told after the one commit. ``each`` False
+    raises the first refusal instead, nothing written (``trash_page``).
+    Returns each page's trash entry or its refusal."""
     write_lock(conn)
     out: list[dict | OpError] = []
     gone: list[str] = []
+    memo: dict = {}  # the folder tree, read once for the work folders' files among the pages
     try:
         for page_id in page_ids:
             if each:
                 conn.execute("SAVEPOINT trash_pages")
             try:
-                entry, went = _trash(conn, page_id, actor)
+                entry, went = _trash(conn, page_id, actor, client, memo)
                 gone += [page_id, *went]
             except OpError as e:
                 if not each:
@@ -1311,17 +1439,22 @@ def trash_pages(ws: str, conn, page_ids: list[str], *, actor: str, client: str =
     return out
 
 
-def _trash(conn, page_id: str, actor: str) -> tuple[dict, list[str]]:
+def _trash(conn, page_id: str, actor: str, client: str = "", memo: dict | None = None) -> tuple[dict, list[str]]:
     """``trash_page``'s move of a page and the pages inside it, in the
-    caller's transaction. Returns its trash entry and the pages that went
-    with it."""
-    row = conn.execute("SELECT parent_id, content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    caller's transaction (``memo``: ``_work_rule``'s). Returns its trash
+    entry and the pages that went with it."""
+    row = conn.execute("SELECT parent_id, content, properties FROM unified_blocks WHERE id = ?",
+                       (page_id,)).fetchone()
     if not row or row[0] != "root":
         raise OpError(404, "page not found")
+    writer = work_filing.writer_of(client)
+    _work_rule(work_filing.may_trash, conn, load_props(row[2]), writer, memo)
     if not ensure_reserved(conn, TRASH):
         raise OpError(409, f"a block holds the reserved id {TRASH!r}")
     went = page_descendants(conn, page_id)  # read first: once the page is gone they read as library pages
     stamps = {"deleted_at": page_now(), "deleted_by": actor}
+    if writer == "vault":
+        stamps[DELETED_BY_VAULT] = True
     props = _to_trash(conn, page_id, stamps, actor)
     for sub in went:
         _to_trash(conn, sub, {**stamps, "deleted_with": page_id}, actor)
@@ -1357,18 +1490,30 @@ def restore_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -
     live by ``actor`` (``touch_page``), this one first, so the change feed
     shows the pages (re)created and a copy of the workspace takes them
     back whole; each one's room hears ``reload`` (a tab still open on it
-    refetches and sends what it kept). Commits; returns the page's block
-    dict. OpError(404) unless the page is in the trash."""
+    refetches and sends what it kept). A work folder's file comes back as
+    the work-folder rule says (``filing.may_restore``): a person restores
+    only a note that follows and that its vault did not trash, and a file
+    whose work folder is gone (its vault removed meanwhile) comes back a
+    library page, its stamps dropped. Commits; returns the page's block
+    dict. OpError(404) unless the page is in the trash, 403 ``LOCKED`` for
+    a file the rule keeps there."""
     write_lock(conn)
     try:
         row = conn.execute("SELECT parent_id, properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
         if not row or row[0] != TRASH:
             raise OpError(404, "not in Recently deleted")
+        writer = work_filing.writer_of(client)
         props = json.loads(row[1] or "{}")
+        if writer != "mirror":
+            try:
+                props = work_filing.may_restore(marks.Tree.read(conn), props, writer)
+            except work_filing.Refused as e:
+                raise locked(e) from None
         stamp = props.get("deleted_with")
         parent = props.get(PARENT_PAGE)
         if parent is not None and not (valid_parent_value(parent, page_id) and page_root_id(conn, parent) == parent
-                                       and page_id not in _stored_chain(conn, parent)):
+                                       and page_id not in _stored_chain(conn, parent)
+                                       and (writer == "mirror" or not is_file(conn, parent))):
             del props[PARENT_PAGE]
         _from_trash(conn, page_id, props, actor)
         went = _went_with(conn, page_id)
@@ -1431,14 +1576,14 @@ def _from_trash(conn, page_id: str, props: dict, actor: str) -> None:
     """``restore_page``'s move of one page, in the caller's transaction:
     last under ``root``, ``props`` stored without the stamps the trash
     wrote, touched live."""
-    for key in ("deleted_at", "deleted_by", "deleted_with"):
+    for key in TRASH_STAMPS:
         props.pop(key, None)
     conn.execute("UPDATE unified_blocks SET parent_id = 'root', position = ?, properties = ? WHERE id = ?",
                  (generate_key_between(last_child_position(conn, "root"), None), json.dumps(props), page_id))
     touch_page(conn, page_id, actor)
 
 
-def tree_deletion(conn, tree: str, block_id: str) -> tuple[list, dict, list]:
+def tree_deletion(conn, tree: str, block_id: str, *, client: str = "") -> tuple[list, dict, list]:
     """What deleting the folder or label ``block_id`` of ``tree`` takes, read
     and nothing written: ``(rows, carried, batches)`` — the subtree as it is
     (``fetch_subtree`` rows, parent first), ``{page id: the subtree's ids it
@@ -1446,10 +1591,19 @@ def tree_deletion(conn, tree: str, block_id: str) -> tuple[list, dict, list]:
     the batches ``delete_tree`` applies: the tree's ``delete``, then one
     ``set`` per page taking those ids off. The agent's delete tools read it
     for their card and their revert record. OpError(404) unless
-    ``block_id`` is a block of the tree (the reserved row is none)."""
+    ``block_id`` is a block of the tree (the reserved row is none); 403
+    ``LOCKED`` when ``client`` is a person's and the folder is a work
+    folder, inside one or above one (``filing.tree_op``: its vault deletes
+    its directories, and removing the vault its folder), so a preview
+    refuses as the delete would."""
     if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND page_id = ?",
                         (block_id, tree)).fetchone():
         raise OpError(404, "folder not found" if tree == FOLDERS else "label not found")
+    if tree == FOLDERS and work_filing.writer_of(client) == "person":
+        try:
+            work_filing.tree_op(marks.Tree.read(conn), {"op": "delete", "id": block_id}, "person")
+        except work_filing.Refused as e:
+            raise locked(e) from None
     rows = fetch_subtree(conn, block_id)
     ids = {r[0] for r in rows}
     carried, batches = {}, [(tree, [{"op": "delete", "id": block_id}])]
@@ -1480,7 +1634,7 @@ def delete_tree(ws: str, conn, tree: str, block_id: str, *, actor: str,
     ``OpError``."""
     write_lock(conn)
     try:
-        rows, carried, batches = tree_deletion(conn, tree, block_id)
+        rows, carried, batches = tree_deletion(conn, tree, block_id, client=client)
         results = apply_batches(conn, batches, actor=actor, client=client)
         conn.commit()
     except BaseException:
@@ -1562,7 +1716,7 @@ def ops_since(conn, page_id: str, since: int) -> tuple[list[dict], bool]:
     after it (a restore moved the page's seq forward). Either way the client
     must reload the tree. Each batch names its writer's ``batch`` ("" for
     none): a synced vault of another server asks it whether a batch of its
-    landed (gamma/vault_http.py ``HttpRemote.landed``)."""
+    landed (gamma/vault/http_remote.py ``HttpRemote.landed``)."""
     low = conn.execute(
         "SELECT MIN(seq) FROM page_ops WHERE page_id = ?", (page_id,)).fetchone()[0]
     if low is not None and since < low - 1:

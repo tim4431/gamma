@@ -880,7 +880,7 @@ design change, and why:
   with its `base` and lets the server's three-way merge decide. That merge
   works by characters, which reads a clash as clean (`10:16` changed to
   `10:56` and to `10:31` comes out `10:35`), and keeps Gamma's side when
-  both changed one place. `vault_merge.file_wins` merges word by word
+  both changed one place. `vault.merge.file_wins` merges word by word
   before the write lock and is checked again under it. Where both sides
   changed the same words the file's text stands, and Gamma's is a
   `file_won` conflict written in the transaction of the ops, shown on the
@@ -931,7 +931,7 @@ design change, and why:
   highlights in Gamma. One that pushes only PDFs leaves them editable,
   since a notes file is never read into Gamma there.
 - **Today's links** were taken onto the engine at their first round
-  (`vault_upgrade`): the marker written, `.gamma-sync.json` read into
+  (`vault.upgrade`): the marker written, `.gamma-sync.json` read into
   `vaults.db` and removed, and each note still as the old client wrote it
   written once more by the lens's encoder, the old bytes to the history. The gamma-sync
   client keeps its own state file, gained `pull`, and pushes PDFs only.

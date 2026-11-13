@@ -96,9 +96,14 @@ needs them. What is sent is limited to what the feature requires:
   itself loads no third-party scripts and receives no connection tokens.
   Content is handled by the assistant and its provider under their policies.
   This does not send data to the Gamma developer or require configuring an AI
-  provider inside Gamma.
+  provider inside Gamma. An assistant you allowed to answer feedback (a
+  connection or token made with that access) may also write replies in, and
+  resolve, the comment threads on the files of your work folders, and nothing
+  else.
 - **External assistants (MCP), what Gamma stores**: only a hash of the
-  connection token. Browser sign-in also stores client registration metadata
+  connection token. A comment an assistant writes through a connection stores
+  the connection's name beside your account, so the thread shows who wrote it.
+  Browser sign-in also stores client registration metadata
   and temporary authorization/consent records; authorization codes are stored
   as hashes and expire after two minutes. Tokens expire after 90 days and can
   be revoked in Settings → AI → Integrations.

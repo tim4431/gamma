@@ -17,6 +17,7 @@ from gamma.ink_view import CROP_MIN_SIDE, crop_box
 from gamma.pdf_export import page_with_ink
 
 from ai_fixtures import folder, org  # noqa: F401  (org is a fixture)
+from conftest import doc_props, make_folder
 
 PAGE_W, PAGE_H = 300.0, 400.0
 
@@ -127,7 +128,7 @@ def inked(org, tmp_path_factory):
         assert r.status_code == 200, r.text
         return r.json()
 
-    paper = block("root", "inked paper", {"folders": [ids["readout"]], "doc_id": "e" * 24})
+    paper = block("root", "inked paper", {"folders": [ids["readout"]], **doc_props("e" * 24)})
     drawn = upload(_ink())
     group = block(paper, "circled the key result",
                   {"ink_url": drawn["url"], "pdf_position": drawn["pdf_position"], "ink_strokes": 1})
@@ -202,6 +203,38 @@ def test_text_under_a_highlighter_stays_legible(tmp_path):
     assert all(max(lit(x, y)) < 80 for x, y in glyphs)
     r, g, b = lit(32, 88)                      # paper under the highlighter, left of the text
     assert r > 240 and b < 200 and lit(32, 160) == (255, 255, 255)
+
+
+def test_the_page_s_marks_are_drawn_over_it_as_the_viewer_draws_them(tmp_path):
+    """page_with_ink's ``highlights``: a text highlight's wash multiplies
+    onto the text under it (every glyph pixel stays dark, the paper around
+    them turns its colour), an area note draws its border and a faint fill,
+    as annotations over the stamped content, and a mark on another page is
+    not drawn."""
+    path = _text_pdf(tmp_path / "text.pdf")
+    bare = _raster(page_with_ink(path, 1, [])[0])
+    glyphs = [(x, y) for x in range(40, 280) for y in range(74, 100) if max(bare(x, y)) < 60]
+
+    def mark(rect, color, page=1, area=False):
+        return {"position": {"pageNumber": page, "width": PAGE_W, "height": PAGE_H, "area": area,
+                             "rects": [dict(zip(("x1", "y1", "x2", "y2"), rect))]}, "color": color, "id": "m"}
+    marks = [mark((30, 66, 290, 106), "#ffe066"), mark((60, 200, 240, 320), "#0000ff", area=True),
+             mark((0, 0, 300, 400), "#ff0000", page=2)]
+    data, _ = page_with_ink(path, 1, [], highlights=marks)
+    lit = _raster(data)
+    assert all(max(lit(x, y)) < 80 for x, y in glyphs)
+    r, g, b = lit(32, 88)                                     # paper under the wash, left of the text
+    assert r > 240 and b < 140
+    r, g, b = lit(61, 260)                                    # the area's border
+    assert b > 200 and r < 60 and g < 60
+    r, g, b = lit(150, 260)                                   # its faint fill
+    assert b > 240 and 150 < r < 230 and abs(r - g) < 8
+    assert lit(150, 360) == (255, 255, 255)                   # nothing of the mark on page 2
+    doc = pymupdf.open(stream=data, filetype="pdf")
+    try:
+        assert sorted(a.type[1] for a in doc[0].annots()) == ["Highlight", "Square"]
+    finally:
+        doc.close()
 
 
 def test_a_pen_stays_over_a_highlighter_drawn_after_it(tmp_path):
@@ -339,6 +372,26 @@ def test_view_ink_refusals(stored_pdf, monkeypatch):
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda ws, doc: None)
     text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "view_ink", {"block_id": ids["group"]})
     assert "drawn on blank paper" in text and action["images"]
+
+
+def test_handwriting_on_a_duplicated_page_is_drawn_on_the_pdf_it_shows(inked, monkeypatch):
+    """A duplicated page owns no file but shows the original's: its
+    handwriting is drawn on that PDF's page, not on blank paper."""
+    c, ids = inked
+    asked = []
+    monkeypatch.setattr("gamma.ai_context.pdf_path", lambda ws, doc: asked.append(doc) or ids["pdf"])
+    copies = make_folder(c, "copies")
+    copy = c.post("/api/blocks", json={"parent_id": "root", "content": "inked paper (copy)", "properties": {
+        "folders": [copies], **doc_props(url=f"/api/uploads/{'e' * 24}.pdf")}}).json()["id"]
+    drawn = c.post("/api/upload-ink", json=_ink()).json()
+    r = c.post("/api/blocks", json={"parent_id": copy, "content": "circled on the copy", "properties": {
+        "ink_url": drawn["url"], "pdf_position": drawn["pdf_position"], "ink_strokes": 1}})
+    assert r.status_code == 200, r.text
+    group = r.json()["id"]
+    text, action = run_agent_tool(ids["ws"], folder(copies), "view_ink", {"block_id": group})
+    assert text.startswith(f"Handwriting block [{group}] on PDF page 1"), text
+    assert "blank paper" not in text and action["images"]
+    assert set(asked) == {"e" * 24}
 
 
 def test_a_group_whose_file_is_not_stored_yet_is_still_handwriting(inked, stored_pdf):

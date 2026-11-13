@@ -18,16 +18,18 @@ const tree = libraryTree({
 });
 // Local times, so the date cases hold in any time zone.
 const at = (...parts) => new Date(...parts).toISOString();
+// A page's PDF (its `doc`): stored under `hash`, or read from `url`.
+const pdfDoc = (hash, url = "") => ({ format: "pdf", name: "", hash, ext: ".pdf", at: url ? "url" : "store", ...(url && { url }) });
 const pages = [
   { id: "atom", content: "Atom paper", created_at: at(2025, 2, 14, 12), updated_at: at(2026, 10, 5, 9),
-    properties: { doc_id: "d1", folders: ["ryd"], labels: ["fresh"],
+    properties: { doc: pdfDoc("d1"), folders: ["ryd"], labels: ["fresh"],
       meta: { authors: ["Ana Müller", "Bo Li"], venue: "Physical Review Letters", year: "2020" } } },
   { id: "sub", content: "Inside atom", _parentPage: "atom", created_at: at(2025, 2, 15, 0, 30), updated_at: at(2026, 9, 1),
     properties: { labels: ["toread"], folders: ["deep"] } },
   { id: "loose", content: "Loose note", created_at: at(2024, 11, 31, 23, 59), updated_at: at(2026, 10, 6, 8),
     properties: { pinned: "2026-01-01T00:00:00Z" } },
   { id: "deep1", content: "Deep paper", created_at: at(2025, 0, 1, 0, 0), updated_at: at(2025, 0, 1),
-    properties: { folders: ["deep"], labels: ["cafe"], source_url: "https://x/y.pdf", meta: { year: 2015, venue: "Nature" } } },
+    properties: { folders: ["deep"], labels: ["cafe"], doc: pdfDoc("", "https://x/y.pdf"), meta: { year: 2015, venue: "Nature" } } },
   { id: "arr1", content: "Array paper", created_at: at(2023, 5, 1), updated_at: at(2023, 5, 1),
     properties: { folders: ["arr"], meta: { year: "2019" } } },
   { id: "bio1", content: "Bio paper", created_at: at(2022, 1, 1), updated_at: at(2022, 1, 1),
@@ -71,6 +73,10 @@ test("is: and no:, and their negations", () => {
   assert.deepEqual(ids("is:pinned"), ["loose"]);
   assert.deepEqual(ids("is:pdf,pinned"), ["atom", "loose", "deep1"]);
   assert.deepEqual(ids("-is:pdf"), ["sub", "loose", "arr1", "bio1"]);
+  // a document that is no PDF, or one that cannot be read, is no PDF
+  const text = { id: "tex", properties: { doc: { format: "text", name: "main.tex", hash: "t1", ext: ".tex", at: "store" } } };
+  const unread = { id: "bad", properties: { doc: { format: "pdf", hash: "", ext: ".pdf", at: "store" } } };
+  assert.deepEqual([text, unread].filter(resolve("is:pdf").pageTest), []);
   // a label or folder the tree no longer has is no filing
   assert.deepEqual(ids("no:label"), ["loose", "arr1", "bio1"]);
   assert.deepEqual(ids("no:folder"), ["loose"]);
@@ -210,7 +216,7 @@ test("pageSet: the matching ids, its key moving only with membership", () => {
   assert.equal(pageSet([...pages].reverse(), pdf).key, a.key, "the order is no change");
   const edited = pages.map((p) => (p.id === "loose" ? { ...p, content: "Renamed" } : p));
   assert.equal(pageSet(edited, pdf).key, a.key, "an edit outside the set is no change");
-  const filed = pages.map((p) => (p.id === "loose" ? { ...p, properties: { doc_id: "d9" } } : p));
+  const filed = pages.map((p) => (p.id === "loose" ? { ...p, properties: { doc: pdfDoc("d9") } } : p));
   assert.notEqual(pageSet(filed, pdf).key, a.key);
   assert.notEqual(pageSet(pages, () => false).key, pageSet(pages, () => true).key);
   assert.deepEqual(pageSet(pages, () => false), { ids: [], key: pageSet([], () => true).key });

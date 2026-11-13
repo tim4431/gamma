@@ -17,7 +17,8 @@ as the user sees it. ``pdf_text.render_page`` rasterizes either.
 from . import ink as inkmod
 from . import storage
 from .ai_pictures import page_pdf_path
-from .blocks_store import block_to_dict, fetch_subtree, page_attachment
+from .blocks_store import block_to_dict, fetch_subtree
+from .documents.model import file_hash, is_pdf, page_document
 from .highlights import is_ink
 from .logbuf import log
 from .notebook import is_sheet, normalize_paper, notebook_pdf, sheet_pictures, sheet_text_boxes, sheets_of
@@ -35,10 +36,20 @@ def crop_box(inks, width: float, height: float):
     around every stroke of ``inks`` — padded, at least ``CROP_MIN_SIDE`` a
     side, inside the page; None when nothing is drawn."""
     boxes = [box for ink in inks if (box := inkmod.bounding_box(ink))]
-    if not boxes or width <= 0 or height <= 0:
+    if not boxes:
         return None
-    x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
-    x1, y1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+    return grow_box(min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes),
+                    max(b[3] for b in boxes), width, height)
+
+
+def grow_box(x0: float, y0: float, x1: float, y1: float, width: float, height: float):
+    """``crop_box``'s rule for the box ``(x0, y0, x1, y1)`` (in a ``width``
+    × ``height`` frame, top-left origin): padded, at least
+    ``CROP_MIN_SIDE`` a side, inside the page, as fractions; None for no
+    frame. What a feedback thread's ink anchor is cropped by
+    (gamma/feedback/anchors.py), so its picture is view_ink's."""
+    if width <= 0 or height <= 0:
+        return None
     pad = max(CROP_PAD, 0.1 * max(x1 - x0, y1 - y0))
 
     def side(lo, hi, extent):
@@ -137,8 +148,8 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False, ink
     from .pdf_export import page_with_ink, still_embedded
 
     page_no = ink.space.page
-    attachment = page_attachment(by_id[page_id]["properties"])
-    path = pdf_path(ws, attachment["id"]) if attachment else None
+    view = page_document(by_id[page_id]["properties"])
+    path = pdf_path(ws, file_hash(view)) if is_pdf(view) else None
     # What is added to the page: ink still embedded in the PDF is drawn by
     # the file itself (a selection's strokes are drawn all the same).
     if whole:
@@ -170,16 +181,20 @@ def _render(pdf: bytes, box):
     return image
 
 
-def page_with_handwriting(ws: str, conn, page_id: str, page_no: int, path=None):
+def page_with_handwriting(ws: str, conn, page_id: str, page_no: int, path=None, marks=None):
     """PDF page ``page_no`` of the page ``page_id`` with its pictures and
     text boxes drawn on it and every handwriting group over them, as
     one-page PDF bytes (``pdf_export.page_with_ink``) — what a picture of
     "the page as the user sees it" is rendered from — or ``(b"", pages)``
     when the page has no such PDF page; ``(None, 0)`` for a page without a
     PDF file on this server (``path`` is that file when the caller has it
-    already). Ink the PDF still embeds is drawn by the file itself and never
-    added twice; a box or picture it embeds is drawn as Gamma has it, in
-    place of the original, as the annotated export writes it."""
+    already: another version of the page's PDF draws the same things, page
+    coordinates being the same). Ink the PDF still embeds is drawn by the
+    file itself and never added twice; a box or picture it embeds is drawn
+    as Gamma has it, in place of the original, as the annotated export
+    writes it. ``marks``, highlight marks as ``annotate_pdf`` takes them,
+    are drawn over it all (a feedback thread's region picture,
+    gamma/feedback/pictures.py, picks them); none by default."""
     from .pdf_export import page_with_ink, still_embedded
 
     path = path or page_pdf_path(ws, conn, page_id)
@@ -196,7 +211,7 @@ def page_with_handwriting(ws: str, conn, page_id: str, page_no: int, path=None):
         if ink is not None and ink.space.kind == "pdf-page" and ink.space.page == page_no:
             inks.append(ink)
     try:
-        return page_with_ink(path, page_no, inks, **_placed(conn, blocks, page_id, stored))
+        return page_with_ink(path, page_no, inks, highlights=marks or (), **_placed(conn, blocks, page_id, stored))
     except Exception as e:  # an encrypted or broken file: no handwriting, the page itself still renders
         log.warning(f"[ink-view] could not copy PDF page {page_no} of {page_id}: {e}")
         return b"", 0

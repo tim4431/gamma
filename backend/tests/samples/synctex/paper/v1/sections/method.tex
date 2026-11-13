@@ -1,0 +1,13 @@
+\section{Method}
+We fit a small network to the training set by gradient descent.
+The penalty keeps the weights small, which matters when the
+training set is small compared with the number of parameters,
+as it is in every experiment reported below.
+The loss is defined as
+\begin{equation}
+  L(\theta) = E(\theta)
+  + \lambda R(\theta) ,
+  \label{eq:loss}
+\end{equation}
+where $E$ is the squared error of the fit, $R$ the squared norm of the
+weights, and $\lambda$ weighs the penalty against the fit.

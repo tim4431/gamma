@@ -13,10 +13,13 @@ import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import { rehypeNoteSanitize } from "./noteSanitize.js";
 import {
-  blockColor, blockPage, blockPosition, blockQuote, countBlocks, isFolded, isHighlightBlock, isInkGroup, isLinkBlock,
-  isPlainNote, roughMatchPercent,
+  blockColor, blockPage, blockPosition, blockQuote, countBlocks, isFolded, isInkGroup, isLinkBlock,
+  isPlaceBlock, isPlainNote, isRegionBlock, placeKeyOf, roughMatchPercent,
 } from "../shared/model/blockModel";
+import { lockedRow } from "../vault/notesLock.js";
 import { DEFAULT_HIGHLIGHT, darkPageLine } from "../shared/model/palette.js";
+import { blockStyle, isLineStyle } from "../shared/model/markStyle.js";
+import { MarkGlyph } from "../shared/ui/MarkGlyph.jsx";
 import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
@@ -638,10 +641,15 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
 // the region is re-cropped from the loaded document (App's pdfCaptureRef) and
 // cached here per session, keyed by the document and the rect, so scrolling
 // the notes doesn't re-render the same crop, an edited rect gets a fresh one,
-// and a crop never serves another paper's highlight at the same rect.
+// and a crop never serves another paper's highlight at the same rect. A
+// picture's region (image_position) is cropped the same way, by the image
+// viewer.
 const _areaSnapCache = new Map();
+// A crop that came back empty is asked for again after these waits (ms): the
+// viewer may not hold its document yet (a picture still loading).
+const SNAP_RETRIES = [250, 500, 1000, 2000, 4000];
 function AreaSnapshot({ block, captureArea, docNonce, docKey }) {
-  const r = blockPosition(block)?.boundingRect;
+  const r = blockPosition(block, placeKeyOf(block))?.boundingRect;
   const key = `${docKey || ""}|${block.id}:${blockPage(block)}:${r?.x1},${r?.y1},${r?.x2},${r?.y2}`;
   const [src, setSrc] = useState(() => _areaSnapCache.get(key) || null);
   useEffect(() => {
@@ -649,15 +657,23 @@ function AreaSnapshot({ block, captureArea, docNonce, docKey }) {
     if (cached) { setSrc(cached); return; }
     setSrc(null);
     let cancelled = false;
+    let timer = 0;
+    let tries = 0;
     // docNonce re-runs this once the PDF finishes loading — the first attempt
-    // can land before the viewer has a document and resolve to null.
-    Promise.resolve(captureArea?.(block)).then((img) => {
-      if (cancelled || !img) return;
+    // can land before the viewer has a document and resolve to null; a
+    // picture gives no such signal, so an empty answer is asked again.
+    const attempt = () => Promise.resolve(captureArea?.(block)).then((img) => {
+      if (cancelled) return;
+      if (!img) {
+        if (tries < SNAP_RETRIES.length) timer = setTimeout(attempt, SNAP_RETRIES[tries++]);
+        return;
+      }
       _areaSnapCache.set(key, img);
       while (_areaSnapCache.size > 60) _areaSnapCache.delete(_areaSnapCache.keys().next().value);
       setSrc(img);
     }).catch(() => {});
-    return () => { cancelled = true; };
+    attempt();
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [key, captureArea, docNonce]);
   // Reserve the crop's aspect ratio while it renders so the card doesn't jump.
   const ratio = r && r.y2 > r.y1 ? (r.x2 - r.x1) / (r.y2 - r.y1) : null;
@@ -1090,10 +1106,13 @@ const BlockRow = React.memo(function BlockRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
-  const isHighlight = isHighlightBlock(block);
-  // Its place on the PDF page (null for one placed by its page alone), its
+  // A highlight on the PDF or a region of the picture: both rows have the
+  // dot that jumps to the place, in its colour; a region names no page.
+  const isRegion = isRegionBlock(block);
+  const isHighlight = isPlaceBlock(block);
+  // Its place on the document (null for one placed by its page alone), its
   // colour and the passage it marks.
-  const pos = blockPosition(block), color = blockColor(block), quote = blockQuote(block);
+  const pos = blockPosition(block, placeKeyOf(block)), color = blockColor(block), quote = blockQuote(block);
   // How alike its text and the replaced PDF's were, for one matched roughly.
   const roughPercent = isHighlight ? roughMatchPercent(pos) : null;
   // The highlight made last: its card is the one the guide's highlight tour
@@ -1596,6 +1615,8 @@ const BlockRow = React.memo(function BlockRow({
                     ? t("Matched roughly ({n}%) after the PDF was replaced — jump to it", { n: roughPercent })
                     : pos?.approx
                       ? t("Placed by estimate after the PDF was replaced — jump to it")
+                      : isRegion
+                        ? t("Jump to the region")
                       : pos
                         ? t("Jump to highlight") : block.properties?.linked_highlight_id
                           ? t("Jump to linked highlight") : t("Jump to page (no exact position)")
@@ -1613,6 +1634,9 @@ const BlockRow = React.memo(function BlockRow({
                   backgroundColor: color,
                   borderColor: darkPageLine(color),
                 }} />
+              ) : pos && isLineStyle(blockStyle(block)) ? (
+                // a passage marked by a line: its style in its colour, as the PDF draws it
+                <MarkGlyph style={blockStyle(block)} color={color} size={14} />
               ) : (
                 // backgroundColor in every branch: the one span takes each
                 // look in turn, and a background shorthand would undo
@@ -1675,7 +1699,7 @@ const BlockRow = React.memo(function BlockRow({
 
         <div className="blockBody" data-guide={isInk ? "notes.ink" : isHighlight ? "notes.highlight" : undefined}
           data-guide-recent={isHighlight && recentHighlight ? "" : undefined}>
-          {shownPage ? <div className="blockMeta">{`p.${shownPage}`}</div> : null}
+          {shownPage ? <div className="blockMeta">{`p.${shownPage}`}</div> : isRegion ? <div className="blockMeta">{t("Region of the picture")}</div> : null}
           {recorded && !isRec ? (
             <button type="button" className="replayGlyph" onClick={(e) => { e.stopPropagation(); recordings.playAt(block.properties.t0); }}
               title={t("Play the recording from when this was written")} aria-label={t("Play the recording from when this was written")}>
@@ -1904,7 +1928,7 @@ const BlockRow = React.memo(function BlockRow({
               {quote}
             </div>
           ) : null}
-          {pos?.area && captureArea ? (
+          {(pos?.area || isRegion) && captureArea ? (
             <AreaSnapshot block={block} captureArea={captureArea} docNonce={docNonce} docKey={docKey} />
           ) : null}
           {inlineSheets && isSheet(block) ? <NoteSheet block={block} number={sheetNumber} /> : null}
@@ -2267,9 +2291,9 @@ function AiGhostRow({ content, depth }) {
 // `notesLocked`: the page's notes are written elsewhere (a synced vault that
 // pushes everything and does not pull, vault/vaultState.js): a note's row is
 // drawn as read-only, with no editor, no handles and no drag, while a
-// highlight's row keeps its own, so a highlight is still made and its note
-// written. Unlike `readOnly`, which is the whole workspace's, nothing else of
-// the page is locked.
+// highlight's or a region's row keeps its own (vault/notesLock.js lockedRow),
+// so a highlight is still made and its note written. Unlike `readOnly`,
+// which is the whole workspace's, nothing else of the page is locked.
 // A fold of more blocks than this opens and shuts at once.
 const FOLD_MOVES_MOST = 60;
 
@@ -2311,7 +2335,7 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
         const commentOpen = !!commentOpenFor && commentOpenFor === block.id;
         const sheetNumber = rowProps.sheetNumbers ? rowProps.sheetNumbers.get(block.id) || 0
           : depth === 0 && isSheet(block) ? ++sheets : 0;
-        const locked = notesLocked && !isHighlightBlock(block);
+        const locked = notesLocked && lockedRow(block);
         const selected = underSelected || !!selection?.has(block.id); return (
         <React.Fragment key={block.id}>
           {/* place: the row's index among its siblings and their count. A

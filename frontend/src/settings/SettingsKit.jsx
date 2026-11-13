@@ -156,6 +156,31 @@ export function Row({ icon: Icon, label, hint, title, scope, className = "", chi
   );
 }
 
+// A name typed in place (a colour group's, a highlight preset's): the field
+// keeps what is typed, spaces and all, and hands it on trimmed when it
+// loses the focus or on Enter; an empty one leaves the name as it was
+// (with `allowEmpty`, hands on "": a name that may be none, a text
+// highlighter's), and Escape puts it back. A value that normalizes as it
+// is set (trimming each keystroke) would eat a space typed before the next
+// word.
+export function NameInput({ value, onCommit, allowEmpty = false, ...rest }) {
+  const [draft, setDraft] = React.useState(null);
+  const commit = () => {
+    if (draft === null) return;
+    const next = draft.trim();
+    setDraft(null);
+    if ((next || allowEmpty) && next !== value) onCommit(next);
+  };
+  return (
+    <input type="text" {...rest} value={draft ?? value} onChange={(e) => setDraft(e.target.value)} onBlur={commit}
+      onKeyDown={(e) => {
+        if (composing(e)) return; // an IME's Enter picks its candidate
+        if (e.key === "Enter") e.currentTarget.blur();
+        else if (e.key === "Escape" && draft !== null) { e.stopPropagation(); setDraft(null); }
+      }} />
+  );
+}
+
 export function Toggle({ checked, onChange, disabled, label, ...row }) {
   return (
     <Row label={label} {...row}>
@@ -282,13 +307,13 @@ export function SubDialog({ title, onClose, children, draft, guard = null, class
     if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
     return () => previous?.focus?.();
   }, []);
-  // The question gone (answered, or what it asked about over) took the
-  // focused button with it: the dialog takes the focus back, so Escape
-  // and Tab stay its own.
-  const asked = Boolean(asking);
+  // The focused control gone (the question answered, or what it asked
+  // about over; a button disabled while its work runs): the dialog takes
+  // the focus back, so Escape and Tab stay its own.
   React.useEffect(() => {
-    if (!asked && !ref.current?.contains(document.activeElement)) ref.current?.focus();
-  }, [asked]);
+    const active = document.activeElement;
+    if (!active || active === document.body || active.disabled) ref.current?.focus({ preventScroll: true });
+  });
   return (
     <DialogOverlay className="subDialog" {...backdrop} onClick={(event) => { event.stopPropagation(); backdrop.onClick(event); }}>
       <div className={`reportModal ${className}`} role="dialog" aria-modal="true" aria-label={title} data-guide={guide}

@@ -9,11 +9,12 @@ from fastapi.responses import JSONResponse
 from fractional_indexing import generate_key_between
 from pydantic import BaseModel
 
-from ..auth import actor_of, require_ws, require_ws_writer, resolve_ws, share_scope, share_via
+from ..auth import actor_of, require_ws, require_ws_writer, resolve_ws, share_scope, share_via, writer_client
 from ..blocks_store import (
     BLOCK_COLUMNS,
     FOLDERS,
-    IN_LIBRARY,
+    IN_LISTED,
+    IN_PAGE,
     LABELS,
     MAX_SEARCH_PAGES,
     TREES,
@@ -26,6 +27,7 @@ from ..blocks_store import (
     fetch_subtree,
     filing,
     flatten_tree,
+    folder_subtree_ids,
     free_position,
     get_or_create_doc_page,
     load_json,
@@ -33,20 +35,25 @@ from ..blocks_store import (
     page_for_doc,
     page_parents,
     page_root_id,
+    pages_in_folder,
     pages_in_scope,
+    second_owner_as_copy,
     subtree_refs,
+    top_of,
     trash_entry,
     valid_block_id,
     write_lock,
 )
 from .. import cloud_auth, comments, trash, upload_gc
 from ..db import connect_pages_db, page_now
+from ..documents.model import document_props
 from ..json_response import OrjsonResponse
 from ..markdown_export import build_tree
 from ..ops import (MAX_CONTENT, OpError, StorableBody, after_commits, apply_each, commit_ops, delete_page, delete_pages,
                    latest_seq, move_across_pages, note_reload, trash_page, trash_pages)
 from ..storage import upload_refs
 from ..textnorm import fuzzy_pattern, literal_runs
+from ..work_folders.library import SQL_IN_LISTING
 
 router = APIRouter(prefix="/api", tags=["blocks"])
 
@@ -165,7 +172,7 @@ def _scan_blocks(conn, pattern, runs: list[str], case: bool, limit: int,
     try:
         for n, r in enumerate(conn.execute(
                 "SELECT id, content, kind, updated_at, rowid FROM unified_blocks "
-                f"WHERE content != ''{where} AND {IN_LIBRARY} ORDER BY updated_at DESC, rowid DESC", args)):
+                f"WHERE content != ''{where} AND {IN_PAGE} ORDER BY updated_at DESC, rowid DESC", args)):
             if (reach is None or r[0] in reach) and pattern.search(r[1]):
                 if len(rows) >= limit:  # one more match: the next page has something
                     return [x[:3] for x in rows], False, _cursor_of(rows[-1]) if rows else None
@@ -280,16 +287,17 @@ def block_search(request: Request, q: str = "", ids: str = "", limit: int = 10,
                 return {"blocks": []}
             placeholders = ",".join("?" * len(id_list))
             rows = conn.execute(
-                f"SELECT id, content, kind FROM unified_blocks WHERE id IN ({placeholders}) AND {IN_LIBRARY}",
+                f"SELECT id, content, kind FROM unified_blocks WHERE id IN ({placeholders}) AND {IN_PAGE}",
                 id_list,
             ).fetchall()
             return _blocks_answer(conn, rows, reach, None)
         if not q:
-            # Empty query: recently edited blocks, so the [[ref]] popup (and
-            # the "/link" slash command) can suggest something before the
-            # user types a filter.
+            # Empty query: recently edited blocks of the pages the library
+            # lists, so the [[ref]] popup (and the "/link" slash command) can
+            # suggest something before the user types a filter — never a
+            # work folder's notes a vault rewrote.
             rows = conn.execute(
-                f"SELECT id, content, kind FROM unified_blocks WHERE content != '' AND {IN_LIBRARY} "
+                f"SELECT id, content, kind FROM unified_blocks WHERE content != '' AND {IN_LISTED} "
                 "ORDER BY updated_at DESC" + (" LIMIT ?" if reach is None else ""),
                 (limit,) if reach is None else (),
             ).fetchall()
@@ -352,11 +360,18 @@ def ub_get_or_create_by_doc(doc_id: str, payload: UBByDocCreate, request: Reques
     # The page carrying this PDF, created when absent (PDF ingest from the
     # app and the extension, and "Open as document" on a PDF file block) — a
     # write, so it requires a real session (never the ?share= read principal).
+    # A new page filed in a work folder is refused (``create_page``: a PDF is
+    # its vault's to bring there).
     ws = require_ws(request, write=True)
     with connect_pages_db(ws) as conn:
-        return get_or_create_doc_page(
-            conn, doc_id, payload.default_title, payload.source_url, payload.original_filename,
-            folder=payload.folder or "", ws=ws, actor=actor_of(request))
+        try:
+            return get_or_create_doc_page(
+                conn, doc_id, payload.default_title, payload.source_url, payload.original_filename,
+                folder=payload.folder or "", ws=ws, actor=actor_of(request))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid doc_id")
+        except OpError as e:
+            return op_refusal(e)
 
 
 def _not_found(conn, block_id: str) -> JSONResponse:
@@ -381,31 +396,52 @@ def _reach(conn, block_id: str, scope) -> str | None:
 
 
 @router.get("/blocks/{block_id}/children")
-def ub_get_children(block_id: str, request: Request):
+def ub_get_children(block_id: str, request: Request, within: str = ""):
     """A block's children (block dicts); for ``root``, the library listing:
-    every page as its ``page_summary`` (sub-pages too, each naming its
-    parent and with its preview, which the pinned and recents strips and a
-    label view draw), and the folder and label trees (``_trees``) — what
-    the home view draws, in one request. Sync def: a big library's listing
-    is thousands of queries, in the threadpool."""
+    every page the library lists and every pinned page
+    (``work_folders.library.SQL_IN_LISTING``: a work folder's file only
+    when it is in the library or pinned) as its ``page_summary`` (sub-pages
+    too, each naming its parent and with its preview, which the pinned and
+    recents strips and a label view draw; one whose top is not carried is
+    left out), the folder and label trees (``_trees``) and ``work_counts``
+    (``_work_counts``) — what the home view draws, in one request. A folder
+    share lists the pages it reaches, a work folder's files too.
+    ``within`` (a folder id; 400 through a share): the pages filed in that
+    folder or below it instead, whatever the library lists (``pages_in_folder``),
+    which a synced vault of another server reads its folder by
+    (gamma/vault/http_remote.py). Sync def: a big library's listing is thousands
+    of queries, in the threadpool."""
     scope = share_scope(request)
     if scope is not None and block_id == "root" and not scope.lists_library:
         # A page share may not enumerate the owner's library; a folder share
         # lists the pages it reaches — the share view's home library.
         raise HTTPException(status_code=403, detail="not accessible via this share link")
+    if within and scope is not None:
+        raise HTTPException(status_code=400, detail="a share link lists its own folder")
     with connect_pages_db(resolve_ws(request)) as conn:
         if block_id == "root":
             # one read snapshot for the pages, the trees and the trees' seqs
             if not conn.in_transaction:
                 conn.execute("BEGIN")
-            rows = conn.execute(f"SELECT {SUMMARY_COLUMNS} FROM unified_blocks WHERE parent_id = 'root' "
-                                "ORDER BY position ASC").fetchall()
-            if scope is not None:
+            parents = page_parents(conn)
+            if within:
+                ids = pages_in_folder(conn, within, parents)
+                found = {r[0]: r for r in conn.execute(
+                    f"SELECT {SUMMARY_COLUMNS} FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
+                    (json.dumps(ids),))}
+                rows = [found[i] for i in ids if i in found]
+            elif scope is not None:
+                rows = conn.execute(f"SELECT {SUMMARY_COLUMNS} FROM unified_blocks WHERE parent_id = 'root' "
+                                    "ORDER BY position ASC").fetchall()
                 allowed = set(scope.pages(conn))  # the allows_page rule, in one read
                 rows = [r for r in rows if r[0] in allowed]
-            parents = page_parents(conn)
-            out = {"children": [page_summary(r, _page_preview(conn, r[0]), parents.get(r[0], "")) for r in rows],
-                   **_trees(conn, scope, rows)}
+            else:
+                rows = conn.execute(f"SELECT {SUMMARY_COLUMNS} FROM unified_blocks INDEXED BY idx_ub_listing "
+                                    f"WHERE parent_id = 'root' AND {SQL_IN_LISTING} ORDER BY position ASC").fetchall()
+                carried = {r[0] for r in rows}
+                rows = [r for r in rows if top_of(parents, r[0]) in carried]
+            out = {"children": [page_summary(r, page_preview(conn, r[0]), parents.get(r[0], "")) for r in rows],
+                   **_trees(conn, scope, rows), "work_counts": _work_counts(conn, scope)}
             conn.rollback()
             return OrjsonResponse(out)
         if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (block_id,)).fetchone():
@@ -439,15 +475,32 @@ def _trees(conn, scope, rows) -> dict:
             LABELS: {"children": [{**label, "children": []} for label in labels]}}
 
 
+def _work_counts(conn, scope) -> dict[str, int]:
+    """The listing's ``work_counts``: ``{folder id: n}``, the files filed
+    directly in each directory of every work folder (their ``first_folder``,
+    by ``idx_ub_dir``), which the listing leaves out and a folder's count
+    still shows; a folder share's only for the folders it reaches."""
+    counts = {folder: n for folder, n in conn.execute(
+        "SELECT first_folder, COUNT(*) FROM unified_blocks INDEXED BY idx_ub_dir WHERE parent_id = 'root' "
+        "AND work_folder IS NOT NULL GROUP BY first_folder") if isinstance(folder, str)}
+    if scope is not None:
+        reach = folder_subtree_ids(conn, scope.folder)
+        counts = {folder: n for folder, n in counts.items() if folder in reach}
+    return counts
+
+
 # What the library listing carries of a page's properties: what the home
 # view's cards and filters, quick open, the chat and link pickers and the
-# DOI / arXiv link matching read (docs/dev/api.md "The library listing"),
-# and the marks of a PDF read where it is (linked_file) and of the page that
-# holds such PDFs (opened_files), which the page menus read. The rest —
-# bibtex, ppt_cite, summary, the rest of meta, … — comes with the page itself
-# (GET /blocks/{id}).
-SUMMARY_PROPS = ("doc_id", "source_url", "original_filename", "folders", "labels", "pinned", "seeded", "linked_file",
-                 "opened_files")
+# DOI / arXiv link matching read (docs/dev/api.md "The library listing"):
+# the page's document whole (``doc``: its format, name, address, and
+# whether it is read where it is, gamma/documents/model.py), the mark of
+# the page that holds PDFs read in place (opened_files), which the page
+# menus read, and a work folder's stamps (``work_folder``, ``library``,
+# ``file_name``: gamma/work_folders/library.py), by which the client tells a
+# file from a library page. The rest — bibtex, ppt_cite, summary, the rest
+# of meta, … — comes with the page itself (GET /blocks/{id}).
+SUMMARY_PROPS = ("doc", "folders", "labels", "pinned", "seeded", "opened_files", "work_folder", "library",
+                 "file_name")
 SUMMARY_META = ("title", "authors", "year", "venue", "volume", "doi", "arxiv_id")
 SUMMARY_COLUMNS = ("id, position, content, created_at, updated_at, json_extract(properties, "
                    + ", ".join([f"'$.{k}'" for k in SUMMARY_PROPS] + [f"'$.meta.{k}'" for k in SUMMARY_META])
@@ -476,7 +529,7 @@ PREVIEW_CHARS = 240
 _PREVIEW_BLOCKS = 5
 
 
-def _page_preview(conn, page_id: str) -> str:
+def page_preview(conn, page_id: str) -> str:
     """A page's ``preview`` in the library listing — the first ~PREVIEW_CHARS
     characters of its first few child blocks that are no highlight, joined
     with " · "; "" when it has none. One index seek (idx_ub_parent walks the
@@ -529,7 +582,7 @@ def ub_get_backlinks(block_id: str, request: Request):
     with connect_pages_db(resolve_ws(request)) as conn:
         # (a page in Recently deleted links to nothing)
         rows = conn.execute(
-            f"SELECT id, content FROM unified_blocks WHERE id != ? AND content LIKE ? AND {IN_LIBRARY} "
+            f"SELECT id, content FROM unified_blocks WHERE id != ? AND content LIKE ? AND {IN_PAGE} "
             "ORDER BY updated_at DESC LIMIT 50",
             (block_id, f"%[[{block_id}]]%"),
         ).fetchall()
@@ -565,18 +618,26 @@ def ub_get_block(block_id: str, request: Request):
     return block_to_dict(row)
 
 
-def _ops(ws: str, page_id: str, ops: list[dict], request: Request, scope) -> dict:
-    """Apply ops to a page on behalf of the request: a share editor is
-    confined to the shared pages, every op error is its HTTP status."""
+def op_refusal(e: OpError) -> JSONResponse:
+    """A refused write as a route answers it: ``{detail, conflict?}`` with
+    its status, the conflict saying what refused it (``ops.LOCKED``: a work
+    folder's file or directory is its vault's, docs/dev/work_folders.md "The
+    op rule"), as the ops route answers one (routers/collab.py)."""
+    return JSONResponse(status_code=e.status,
+                        content={"detail": e.detail, **({"conflict": e.conflict} if e.conflict else {})})
+
+
+def _ops(ws: str, page_id: str, ops: list[dict], request: Request, scope, client: str = "") -> dict:
+    """Apply ops to a page on behalf of the request, logged under
+    ``client`` (``writer_client``'s, where the route takes the vault's): a
+    share editor is confined to the shared pages; a refused batch raises
+    its OpError, which the route answers (``op_refusal``)."""
     if scope is not None:
         with connect_pages_db(ws) as conn:
             if not scope.allows_page(conn, page_id):
                 raise HTTPException(status_code=403, detail="not accessible via this share link")
-    try:
-        return commit_ops(ws, page_id, ops, actor=actor_of(request),
-                          share_scoped=scope is not None, via=share_via(request))
-    except OpError as e:
-        raise HTTPException(status_code=e.status, detail=e.detail)
+    return commit_ops(ws, page_id, ops, actor=actor_of(request), client=client, share_scoped=scope is not None,
+                      via=share_via(request))
 
 
 @router.post("/blocks")
@@ -584,6 +645,10 @@ def ub_create_block(payload: UBCreateRequest, request: Request):
     block_id = new_block_id()
     ws = require_ws_writer(request)
     scope = share_scope(request)
+    try:
+        props = document_props(payload.properties)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if payload.parent_id == "root":
         # A new page: not an op on any page. Share editors never get here.
         if scope is not None:
@@ -595,8 +660,12 @@ def ub_create_block(payload: UBCreateRequest, request: Request):
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"invalid before/after: {e}")
         with connect_pages_db(ws) as conn:
-            return create_page(conn, payload.content, payload.properties, actor=actor_of(request),
-                               block_id=block_id, position=new_pos)
+            write_lock(conn)  # the owner looked up and the page made as one step
+            try:  # judged by the work-folder rule (blocks_store.create_page)
+                return create_page(conn, payload.content, second_owner_as_copy(conn, props), actor=actor_of(request),
+                                   client=writer_client(request), block_id=block_id, position=new_pos)
+            except OpError as e:
+                return op_refusal(e)
     with connect_pages_db(ws) as conn:
         page_id = page_root_id(conn, payload.parent_id)
     if not page_id:
@@ -605,9 +674,12 @@ def ub_create_block(payload: UBCreateRequest, request: Request):
         position = generate_key_between(payload.before, payload.after)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"invalid before/after: {e}")
-    _ops(ws, page_id, [{"op": "insert", "id": block_id, "parent": payload.parent_id,
-                        "position": position, "content": payload.content,
-                        "props": payload.properties}], request, scope)
+    try:
+        _ops(ws, page_id, [{"op": "insert", "id": block_id, "parent": payload.parent_id,
+                            "position": position, "content": payload.content,
+                            "props": props}], request, scope)
+    except OpError as e:
+        return op_refusal(e)
     with connect_pages_db(ws) as conn:
         row = conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
     if not row:  # deleted by someone else the moment it was made
@@ -646,7 +718,10 @@ def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
             op["base_props"] = payload.base_properties
             if payload.base_ids is not None:
                 op["base_ids"] = payload.base_ids
-    result = _ops(ws, page_id, [op], request, scope)
+    try:
+        result = _ops(ws, page_id, [op], request, scope)
+    except OpError as e:
+        return op_refusal(e)
     out = {"ok": True, "updated_at": result["at"], "seq": result["seq"]}
     if block_id in result.get("ink_conflicts", {}):
         out["ink_conflict"] = result["ink_conflicts"][block_id]
@@ -674,21 +749,25 @@ def ub_delete_block(block_id: str, request: Request):
             # reload, which surfaces the 404.
             if scope is not None:
                 raise HTTPException(status_code=403, detail="share editors cannot delete the shared page")
-            actor = actor_of(request)
+            actor, client = actor_of(request), writer_client(request)
             if cloud_auth.settings()["share_host"]:
-                delete_page(ws, conn, block_id, actor=actor)
+                delete_page(ws, conn, block_id, actor=actor, client=client)
                 return {"ok": True, "id": block_id}
             try:
-                entry = trash_page(ws, conn, block_id, actor=actor)
+                entry = trash_page(ws, conn, block_id, actor=actor, client=client)
             except OpError as e:
-                raise HTTPException(status_code=e.status, detail=e.detail)
+                return op_refusal(e)
             return {"ok": True, "id": block_id, "trashed": trash.named([entry])[0]}
-    _ops(ws, page_id, [{"op": "delete", "id": block_id}], request, scope)
+    try:
+        _ops(ws, page_id, [{"op": "delete", "id": block_id}], request, scope, writer_client(request))
+    except OpError as e:
+        return op_refusal(e)
     return {"ok": True, "id": block_id}
 
 
-def _refused(block_id: str, status: int, detail: str) -> dict:
-    return {"id": block_id, "ok": False, "status": status, "detail": detail}
+def _refused(block_id: str, status: int, detail: str, conflict: str = "") -> dict:
+    return {"id": block_id, "ok": False, "status": status, "detail": detail,
+            **({"conflict": conflict} if conflict else {})}
 
 
 @router.post("/blocks/bulk")
@@ -698,7 +777,7 @@ def ub_bulk(payload: BulkRequest, request: Request):
     many blocks (``patches``), in one transaction, each page checked and
     answered as its own request would be, and one refused leaving the
     others to go. → ``{results: [{id, ok: true, …} | {id, ok: false,
-    status, detail}]}``, in the order asked: a trashed page carries
+    status, detail, conflict?}]}``, in the order asked: a trashed page carries
     ``trashed`` (its entry), a patch ``seq``, ``updated_at`` and the
     ``properties`` applied. Workspace editors, never through a share link
     (a share editor may neither delete a page nor change a page root's
@@ -712,7 +791,7 @@ def ub_bulk(payload: BulkRequest, request: Request):
     asked = payload.trash if payload.trash is not None else [p.id for p in payload.patches]
     if len(asked) > MAX_BULK:
         raise HTTPException(status_code=413, detail=f"too many pages in one request (>{MAX_BULK})")
-    actor = actor_of(request)
+    actor, client = actor_of(request), writer_client(request)
     out: dict[int, dict] = {}
     with connect_pages_db(ws) as conn:
         roots = [page_root_id(conn, block_id) for block_id in asked]
@@ -726,15 +805,16 @@ def ub_bulk(payload: BulkRequest, request: Request):
             todo = [i for i in range(len(asked)) if i not in out]
             ids = [asked[i] for i in todo]
             if cloud_auth.settings()["share_host"]:  # a share host's pages go for good, as one DELETE's
-                done = [_refused(block_id, r.status, r.detail) if isinstance(r, OpError)
+                done = [_refused(block_id, r.status, r.detail, r.conflict) if isinstance(r, OpError)
                         else {"id": block_id, "ok": True}
-                        for block_id, r in zip(ids, delete_pages(ws, conn, ids, actor=actor))]
+                        for block_id, r in zip(ids, delete_pages(ws, conn, ids, actor=actor, client=client))]
             else:
-                entries = trash_pages(ws, conn, ids, actor=actor)
+                entries = trash_pages(ws, conn, ids, actor=actor, client=client)
                 shown = trash.named([e for e in entries if not isinstance(e, OpError)])
                 done = []
                 for block_id, entry in zip(ids, entries):
-                    done.append(_refused(block_id, entry.status, entry.detail) if isinstance(entry, OpError)
+                    done.append(_refused(block_id, entry.status, entry.detail, entry.conflict)
+                                if isinstance(entry, OpError)
                                 else {"id": block_id, "ok": True, "trashed": shown.pop(0)})
             out.update(zip(todo, done))
         else:
@@ -745,14 +825,14 @@ def ub_bulk(payload: BulkRequest, request: Request):
             batches = [(roots[i], [{"op": "set", "id": asked[i], "props": payload.patches[i].properties}])
                        for i in todo]
             try:
-                results = apply_each(conn, batches, actor=actor)
+                results = apply_each(conn, batches, actor=actor, client=client)
                 conn.commit()
             except BaseException:
                 conn.rollback()
                 raise
             after_commits(ws, conn, [r for r in results if not isinstance(r, OpError)])
             for i, r in zip(todo, results):
-                out[i] = (_refused(asked[i], r.status, r.detail) if isinstance(r, OpError)
+                out[i] = (_refused(asked[i], r.status, r.detail, r.conflict) if isinstance(r, OpError)
                           else {"id": asked[i], "ok": True, "updated_at": r["at"], "seq": r["seq"],
                                 "properties": r["ops"][0].get("props", payload.patches[i].properties)})
     return {"results": [out[i] for i in range(len(asked))]}
@@ -795,6 +875,11 @@ def ub_put_children(block_id: str, payload: UBPutChildrenRequest, request: Reque
         raise HTTPException(status_code=400, detail="cannot replace the children of root")
     now = page_now()
     rows = _tree_rows(payload.blocks, block_id, now)
+    for r in rows:
+        try:
+            r["properties"] = document_props(r["properties"])
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     ws = require_ws_writer(request)
     scope = share_scope(request)
     with connect_pages_db(ws) as conn:
@@ -873,6 +958,9 @@ def ub_reorder_block(block_id: str, payload: UBReorderRequest, request: Request)
             move_across_pages(ws, conn, block_id, parent, new_pos, src_page, dst_page,
                               actor=actor_of(request))
             return {"ok": True, "id": block_id, "position": new_pos}
-    result = _ops(ws, src_page, [{"op": "move", "id": block_id, "parent": parent,
-                                    "position": new_pos}], request, scope)
+    try:
+        result = _ops(ws, src_page, [{"op": "move", "id": block_id, "parent": parent,
+                                        "position": new_pos}], request, scope)
+    except OpError as e:
+        return op_refusal(e)
     return {"ok": True, "id": block_id, "position": result["ops"][0]["position"]}

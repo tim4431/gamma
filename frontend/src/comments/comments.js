@@ -4,9 +4,15 @@
 // before the server answers. Pure, so node tests it (tests/comments.test.mjs).
 //
 // A thread is the server's `{id, block_id, page_id, resolved_at,
-// resolved_by, created_at, last_at, comments}`, its comments oldest first,
-// each `{id, thread_id, author, body, created_at, updated_at, deleted}`. A
-// thread's root has `thread_id === id`; `author` is a username.
+// resolved_by, resolved_agent, made_on, sent, created_at, last_at,
+// comments}`, its comments oldest first, each `{id, thread_id, author,
+// agent, body, created_at, updated_at, deleted}`. A thread's root has
+// `thread_id === id`; `author` is a username, and `agent` the name of the
+// integration token that wrote it through the author's connection ("" for
+// the person's own); `made_on` the file the thread was opened on, `sent`
+// the Send waiting on it (docs/dev/feedback.md).
+import { t } from "../shared/i18n/i18n.js";
+import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, pdfAnchorOf } from "../shared/model/blockModel.js";
 import { plainSnippet } from "../search/snippets.js";
 
 export const MAX_COMMENT = 20000; // characters, as the server (comments.MAX_BODY)
@@ -198,23 +204,98 @@ export function deleteComment(threads, id) {
   return rest.length ? upsertThread(threads, { ...thread, comments: rest }) : dropThread(threads, thread.id);
 }
 
-// A thread resolved by `by` at `at`, or reopened.
+// A thread resolved by `by` at `at` (the reader, so by no agent), or
+// reopened.
 export function resolveThread(threads, id, resolved, by, at) {
   return threads.map((th) => (th.id === id
-    ? { ...th, resolved_at: resolved ? at : null, resolved_by: resolved ? by : null, last_at: later(th.last_at, at) }
+    ? { ...th, resolved_at: resolved ? at : null, resolved_by: resolved ? by : null, resolved_agent: "", last_at: later(th.last_at, at) }
     : th));
 }
 
-// Whether `me` (a username) may change a comment's text, or delete it (the
-// workspace's owner deletes anyone's). A tombstone is no one's to change.
-export const canEditComment = (comment, me) => !!me && !comment.deleted && comment.author === me;
-export const canDeleteComment = (comment, me, owner = false) => !comment.deleted && (owner || canEditComment(comment, me));
+// Whether `me` (a username) may change a comment's text: their own, written
+// by them, not one an agent wrote through their connection, which is the
+// agent's to change. Delete: their own, the agent's included, and the
+// workspace's owner anyone's. A tombstone is no one's to change.
+export const canEditComment = (comment, me) => !!me && !comment.deleted && !comment.agent && comment.author === me;
+export const canDeleteComment = (comment, me, owner = false) => !comment.deleted && (owner || (!!me && comment.author === me));
 // Report (support/reportContent.js): anyone's comment but one's own, a
 // link visitor's too; a tombstone has nothing left to report.
 export const canReportComment = (comment, me) => !comment.deleted && (!me || comment.author !== me);
 
 // A comment whose text was changed after it was written.
 export const isEdited = (comment) => !comment.deleted && !!comment.updated_at && comment.updated_at !== comment.created_at;
+
+// Who a comment reads as written by: the agent that wrote it through its
+// author's connection ("Claude Code"), else its author. `authorTitle` is
+// its avatar's title, which names the connection for an agent.
+export const authorLabel = (comment) => comment.agent || comment.author;
+export const authorTitle = (comment) => (comment.agent
+  ? t("Written by {agent} with {who}'s connection", { agent: comment.agent, who: comment.author || t("Someone") })
+  : comment.author);
+
+// A Send its requester withdrew: the server's `failed` with "withdrawn".
+export const isWithdrawn = (request) => request?.state === "failed" && request.detail === "withdrawn";
+
+// The chip of a thread a Send waits on (`thread.sent`, {request_id, state,
+// at, detail}), {state, label, title, tone} (`tone` the uiTag's): Sent
+// while the request waits for the agent, what the agent is at while it
+// works, Failed with its reason in the title. null for none, and for a Send
+// withdrawn: the thread is open, the person's to send again.
+export function sentChip(thread) {
+  const sent = thread?.sent;
+  if (!sent || isWithdrawn(sent)) return null;
+  const { state, detail } = sent;
+  if (state === "failed") {
+    return { state, label: t("Failed"), title: detail ? t("Failed: {reason}", { reason: detail }) : t("Failed"), tone: "failed" };
+  }
+  if (state === "running") return { state, label: t("The agent is working"), title: detail || t("The agent is working"), tone: "pending" };
+  return { state, label: t("Sent"), title: t("Waiting for the agent"), tone: "pending" };
+}
+
+// What a thread is on, in the Comments window's words: the highlight's
+// quote, else the block's text, else for an ink group on a PDF page
+// "Handwriting on page 3", for a region of a picture "Region of the
+// picture"; "" for a block without words.
+export function anchorWords(block) {
+  const words = blockQuote(block) || block?.content || "";
+  if (words) return words;
+  if (isRegionBlock(block)) return t("Region of the picture");
+  if (!isInkGroup(block)) return "";
+  const page = pdfAnchorOf(block)?.page;
+  return page ? t("Handwriting on page {n}", { n: page }) : "";
+}
+
+// What became of the place a thread hangs on once its file was rebuilt:
+// "moved" (a highlight placed again roughly: its pdf_position's approx),
+// "lost" (one not found again), "earlier" (an ink group drawn on another
+// build than `docHash`, the file the page shows now: ink is never placed
+// again, so it stands where that build had its content; a region of a
+// picture drawn on another version than `docHash`, its image_position's
+// `hash`: regions are never placed again either, and stay where they were
+// on the new picture), else "". `block` is the thread's as the tree holds
+// it now, `made_on` (the thread's) the file it was opened on.
+export function threadPlace(thread, block, docHash) {
+  if (isRegionBlock(block)) {
+    const { hash } = block.properties.image_position;
+    return hash && docHash && hash !== docHash ? "earlier" : "";
+  }
+  const pos = pdfAnchorOf(block)?.position;
+  if (!pos) return "";
+  if (isHighlightBlock(block)) return pos.lost ? "lost" : pos.approx ? "moved" : "";
+  return thread?.made_on && docHash && thread.made_on !== docHash ? "earlier" : "";
+}
+
+// The top of a comment anchor's first line on its page (a highlight's
+// rects, an ink group's box), in px of the page box `pageH` tall: its rects
+// are in the frame of `position.height`. Where the anchor's margin card
+// stands (marginSlot.jsx).
+export function anchorTop(anchor, pageH) {
+  const pos = anchor.position || {};
+  let top = Infinity;
+  for (const r of pos.rects || []) top = Math.min(top, r.y1);
+  if (!Number.isFinite(top)) top = pos.boundingRect?.y1 || 0;
+  return top * pageH / (pos.height || 1);
+}
 
 // A text as one line of at most `max` characters: in the Comments window,
 // what a thread is on ("" for a block the page no longer shows, or one

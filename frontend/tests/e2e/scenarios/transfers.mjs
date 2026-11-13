@@ -973,7 +973,7 @@ open(sys.argv[3], 'wb').write(b"noteSN_FILE_VER_20230015" + bytes(64))
       // The page carries one PDF, the note's PDF page and its paper page; an
       // ink group per page; the text box and the picture on page 1; the recording.
       const imported = (await alice.api("/api/blocks/root/children")).children.find((p) => p.content === "E2E Notability note");
-      assert(imported?.properties?.doc_id, "the note keeps a PDF");
+      assert(imported?.properties?.doc?.hash, "the note keeps a PDF");
       const blocks = (await alice.api(`/api/blocks/${imported.id}/subtree`)).block.children;
       const groups = blocks.filter((b) => b.properties?.ink_url);
       assertEq(groups.length, 2, "an ink group per page");
@@ -1057,7 +1057,7 @@ open(sys.argv[1], 'wb').write(n.bytes())
       // A sheet per page on its paper; the ink, the box and the picture on the
       // squared one; the recording after them.
       const imported = (await alice.api("/api/blocks/root/children")).children.find((p) => p.content === "E2E GoodNotes notebook");
-      assert(imported && !imported.properties?.doc_id, "a notebook of sheets, no PDF");
+      assert(imported && !imported.properties?.doc?.hash, "a notebook of sheets, no PDF");
       const [cover, squared, recording] = (await alice.api(`/api/blocks/${imported.id}/subtree`)).block.children;
       assertEq(`${cover.properties.sheet.color} ${squared.properties.sheet.pattern} ${squared.properties.sheet.spacing}`,
         "#51d7f5 grid 16", "the cover's colour, the squared paper's ruling");
@@ -1126,7 +1126,7 @@ open(sys.argv[1], 'wb').write(n.bytes())
       const copies = (await alice.api("/api/blocks/root/children")).children.filter((p) => p.content === "E2E Notability note");
       assertEq(copies.length, 2, "the note came in as a page of its own");
       const back = copies.find((p) => p.id !== original.id);
-      assertEq(back.properties.doc_id, original.properties.doc_id, "the same PDF");
+      assertEq(back.properties.doc?.hash, original.properties.doc?.hash, "the same PDF");
       const content = async (pageId) => {
         const blocks = (await alice.api(`/api/blocks/${pageId}/subtree`)).block.children;
         const strokes = [];

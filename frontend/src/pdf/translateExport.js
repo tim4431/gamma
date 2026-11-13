@@ -4,6 +4,7 @@
 // redacts each block's original lines and lays its translation out in their
 // box). Pure, so the tests run it in Node: a document's view
 // (translateState.snapshot) in, the pages to write out.
+import { pdfFileHash } from "../documents/pageDocument.js";
 import { docIdOf, proxiedSourceOf } from "./pdfSource.js";
 import { translatable } from "./transBlock.js";
 import { textParts } from "./translateReply.js";
@@ -76,19 +77,18 @@ export function exportLayout(view, key, spanOf = null) {
 }
 
 // The file a page's annotated PDF writes the translation into, or "" when it
-// writes none. The job reads the file the page names (`attachment`, its
-// pageAttachment: `id` is its doc_id) and refuses another, so the address
-// the viewer opens for the page (`url`, the one its translation is kept
-// under) must be that file: the upload itself, or the proxy reading the
-// page's link, whose saved copy
-// the job reads (a link page with no copy kept fails its annotated PDF,
-// translated or not). A duplicated page names no doc_id (only
-// /api/uploads/<file>.pdf as its address): its annotated PDF has no file to
-// write into, and it exports the file it shows.
-export function exportFile(url, attachment) {
-  const file = attachment?.id || "";
+// writes none. The job reads the stored file the page's document names
+// (`doc`, its pageDocument: pdfFileHash, a duplicated page's the original's)
+// and refuses another, so the address the viewer opens for the page (`url`,
+// the one its translation is kept under) must be that file: the upload
+// itself, or the proxy reading the page's link, whose saved copy the job
+// reads (a link page with no copy kept fails its annotated PDF, translated
+// or not). A page shown from an address alone names no stored file, and
+// writes none.
+export function exportFile(url, doc) {
+  const file = pdfFileHash(doc);
   if (!file) return "";
-  return docIdOf(url) === file || (!docIdOf(url) && proxiedSourceOf(url) === attachment.url) ? file : "";
+  return docIdOf(url) === file || (!docIdOf(url) && proxiedSourceOf(url) === doc.url) ? file : "";
 }
 
 // How many pages exportLayout would write, without laying them out: what the

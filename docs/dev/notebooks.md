@@ -284,14 +284,19 @@ No schema change: sheets are blocks and properties.
   place, while its replay plays. The context is a new object on each App
   render, so the sheets among the notes re-render with App.
 - `app/App.jsx`:
-  - `nbSheets` are the open page's sheets. `hasSheets`: it has some and
-    no PDF, so the notebook view can show them. `notebook`: the notebook
-    view is on for the page (`nbViewPages`, set by `setNotebookView`,
-    kept in localStorage `gamma-notebook-view:<user>@<workspace>`). It is
-    the layout switch beside `pageAttach`: the viewer's close button,
-    controls and ink strip show for it, and `viewerHidden` (a closed PDF)
-    never hides it. `openBlock` gives a page with sheets and no saved zoom
-    `page-width`.
+  - `nbSheets` are the open page's sheets. The layout comes from one
+    rule, `documentView` (`documents/documentView.js`, which a tab
+    group's `PagePane` shows by too), App's `docView`:
+    `notebookAvailable` (App's `hasSheets`): the page has sheets and its
+    document, if any, has no pane of its own (no PDF), so the notebook
+    view can show them. `notebook`: the notebook view is on for the page
+    (`nbViewPages`, set by `setNotebookView`, kept in localStorage
+    `gamma-notebook-view:<user>@<workspace>`); `viewer` is then
+    `"notebook"` and `DocumentPane` mounts `NotebookViewer` in the
+    viewer's place. The viewer's close button, controls and ink strip
+    show for it (`shown`), and a closed PDF's pane (`hidden`) never hides
+    it. `openBlock` gives a page with sheets, no document pane and no
+    saved zoom `page-width`.
   - The place: `tabScrollRef` keeps `{place}` for a page with sheets,
     read off whichever view shows them (`readSheetPlace`) when the tab is
     left and when `setNotebookView(pageId, on, place?)` switches. The

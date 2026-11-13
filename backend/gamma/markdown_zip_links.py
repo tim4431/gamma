@@ -12,8 +12,8 @@ import re
 import unicodedata
 from urllib.parse import unquote
 
+from .documents.formats import IMAGE_MEDIA_TYPES
 from .note_markup import LITERAL_SPANS
-from .storage import IMAGE_MEDIA_TYPES
 
 _MD_EXTS = (".md", ".markdown")
 _NOTION_ID_RE = re.compile(r"(?<!\s)\s+[0-9a-f]{32}$", re.I)
@@ -77,7 +77,7 @@ def _nearest(base_dir, paths):
 
 def resolve_path(base_dir, href, lower, stems, files_by_name, page_exts=_MD_EXTS, absent=None):
     """A link target → the path it names, or None: the one rule of a zip's
-    links and a synced vault's (gamma/vault_links.py). Relative to the note
+    links and a synced vault's (gamma/vault/links.py). Relative to the note
     first (Markdown links), then by exact vault path, then by basename
     anywhere (wikilinks, "shortest path" Markdown links), ignoring case, the
     name NFC. ``lower``: lower-cased path → path, notes and files;

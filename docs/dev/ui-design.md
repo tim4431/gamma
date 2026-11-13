@@ -441,21 +441,30 @@ view by.
 Each viewer supplies only the two commits, since anchoring depends on its
 layout. The PDF's re-bases scroll and lets its zoom-anchor effect re-place
 the point (`pdf/PdfViewer.jsx`). The notebook's names the sheet and the
-fraction of it to hold ([notebooks.md](notebooks.md)).
+fraction of it to hold ([notebooks.md](notebooks.md)). The picture's
+(`documents/viewers/FileViews.jsx` `ImageViewer`) holds the point of the
+picture under the cursor or under the fingers' midpoint, in the picture's
+own pixels, and puts it back there at the new scale; a fit ("page-width",
+the PDF's word) is `comments/marginLayout.js fitBeside`: the whole picture
+within the pane, never enlarged by fitting, and beside the comment column
+while the document has cards, which the PDF's fit-width never leaves room
+for. A resize at fit refits.
 
 **How the committed scale reaches the content.** A commit renders the
 viewer, never its pages or sheets:
 
 - The viewer writes the scale as `--viewer-scale` (`SCALE_VAR` in
-  `viewerZoom.js`) on its content layer, `.pdfZoomLayer` or `.nbColumn`.
+  `viewerZoom.js`) on its content layer, `.pdfZoomLayer`, `.nbColumn` or
+  `.imgLayer`.
 - `registerScaleVar` (`viewerZoom.js`, run as the first viewer installs
   its gestures) registers it with `CSS.registerProperty` as a `<number>`
   that does not inherit. An inherited custom property restyles every
   element under the layer each time it changes, every text-layer span and
   ink path, which costs more than the renders it saves.
 - What sizes with the zoom picks the variable up with
-  `--viewer-scale: inherit`: a page box, a sheet, a built text layer, a
-  translation layer. Anything else that reads it gets 1, silently.
+  `--viewer-scale: inherit`: a page box, a sheet, a picture's box
+  (`.imgBox`), a built text layer, a translation layer. Anything else that
+  reads it gets 1, silently.
 - Each of those carries an inline style written by script: React's `style`
   or the text layer's build. WebKit's matched-properties cache gives an
   element with no inline style, or only one parsed from markup, the value
@@ -737,9 +746,10 @@ work names itself through `SubDialog`'s `guard` (`{question, keep,
 leave}`). The import review before Import is the example: "Stop uploading
 …?" while the file goes up, "Close without importing?" once the review is
 in. The question goes away when the work ends on its own (the upload
-fails). When it goes, by Keep or on its own, the dialog takes the focus
-back from its button. The footer's Cancel stays direct: it is the labelled way
-to stop. It asks only for a draft.
+fails). When the focused control goes, the question by Keep or on its own,
+a button disabled while its work runs (the feedback view's Send), the
+dialog takes the focus back, so Escape still closes it. The footer's Cancel
+stays direct: it is the labelled way to stop. It asks only for a draft.
 
 A dialog takes the focus as it opens, unless something inside it holds it
 already, and gives it back on close to what had it as it opened. When
@@ -748,6 +758,45 @@ the connect dialog), the editor holds the focus, Escape closes the editor
 alone and Settings has the focus back; a second Escape closes Settings and
 the tile has it. Closing Settings closes its editor too, so the next visit
 to the pane never shows the one left open.
+
+**The tracking dialog** (Choose files…, `explorer/TrackDialog.jsx`,
+[work_folders.md](work_folders.md) "The tracking dialog") is the import
+review's shape: a `SubDialog` (`.reportModal.trackDialog`) holding a header
+with the directory's name, a toolbar of format filters that tick (`uiBtn sm`
+with `aria-pressed`, `.on` while every file of theirs is ticked) beside
+Select all and Deselect all, the import review's `ImportTree` with a
+tri-state box per row (`boxOf`) and its folders read as they open
+("Reading…"), a `role="status"` summary line from the server's preview (a
+`<details>` names the pages that leave), the library switch as a
+`Toggle`, and Cancel and Save. A row's muted hint says "git ignores it",
+why it is never tracked, or that Gamma reads it later; its kind chip names
+the format. Cancel of a work folder still being made removes it, so it is
+the one footer Cancel that asks first, with the `settingsUnsaved` row in
+place of the footer ("Cancel making this work folder?"); Choose files…
+asks through its draft once something changed ("Leave without saving?").
+
+**The feedback view** (Feedback, `feedback/FeedbackDialog.jsx`,
+[feedback.md](feedback.md) "In the app") is one `SubDialog`
+(`.reportModal.feedbackDialog`) holding both the view and Send: a
+`Segmented` scope switch (This file or This folder, and the work folder)
+when the scope opened on is not the work folder itself; the open threads
+grouped by file (`.feedbackFileName` a muted caption, then a
+`.feedbackEntry` button per thread: the kind's icon, the heading
+`feedbackText.entryHeading` with the Sent chip, a muted line with where
+the passage was found again and its source line, the first comment with
+its `PersonAvatar` and two clamped lines, and the region's picture at the
+right, 96 px tall, lazily loaded), a click opening the thread on its page
+(`openThreadAt`) and closing the dialog; under them the instruction
+`textarea` beside the primary Send button, which counts the comments and is
+disabled at none or while sending; and the work folder's requests
+(`.feedbackRequest` rows: when it was sent and how many comments, the
+instruction muted, the state at the right — `--ok` once done, `--danger`
+once failed — and Withdraw on the person's own while it waits or runs).
+A paused work folder shows a muted notice over the list. It is opened
+from the work folder's list bar (a `uiBtn sm` Feedback beside the sort),
+the Comments window's header (a `ctlBtn` with the bot icon on a work
+folder's file) and the vault chip's card (Feedback…), each writing the
+`feedback/useFeedback.js` store that `FeedbackHost` reads.
 
 Destructive affordances all read from one set of tokens — `--danger`,
 `--danger-bg`, `--danger-border` — so the solid confirm button
@@ -1210,9 +1259,19 @@ own controls.
   or a pen reaches it through a visible way in, rule 1 under [Adding a
   control](#adding-a-control): the selection popup's ⋯ (`MenuButton`), and
   a failed paragraph's mark.
+- **One region drag.** The pointer's part of an area drag is
+  `shared/ui/regionDrag.js` `beginRegionDrag`, which the PDF page and the
+  picture's view share: the primary pointer alone, document-level move and
+  up listeners so the drag survives leaving the box, the rectangle clamped
+  to the box and coalesced to one update per frame, under 6 px either way a
+  click (`regionGeometry.js`), the click after the release swallowed
+  (`press.js swallowClick`). Each viewer keeps its own gate: the PDF's area
+  key and rectangle mode (`PdfPage.beginAreaDrag`), the picture's mouse,
+  pen and region-mode finger.
 - **A second finger** turns a one-finger gesture into a pinch: it cancels
-  an area drag (`beginAreaDrag` takes the primary pointer only) as it
-  cancels a finger's ink stroke ([handwriting.md](handwriting.md)).
+  an area drag (`beginRegionDrag` takes the primary pointer only) as it
+  cancels a finger's ink stroke ([handwriting.md](handwriting.md)). Under a
+  pen another touch is a palm and changes nothing.
 - **The highlight tip.** The selection listeners subscribe once while
   annotating is allowed, not on every App render, so the pending
   `selectionchange` timer (350 ms) of a touch selection survives. The tip
@@ -1245,6 +1304,77 @@ own controls.
   scrolled (App's `notesPlaceRef`, `captureScrollPos`), and its tab lands
   there again, without the landing's flash. A text-only page also syncs
   that row in `read-pos` (`{page: 0, block}`), what a reload lands on.
+
+### The code view
+
+A text document's pane (`documents/viewers/TextViewer.jsx`,
+[documents.md](documents.md) "Viewers"): a read-only CodeMirror view in
+its own chunk.
+
+- **Read-only, not disabled.** `EditorState.readOnly` and
+  `EditorView.editable.of(false)`, never a contenteditable with `readOnly`:
+  a tap would raise the virtual keyboard. The content carries `tabindex="0"`
+  and an `aria-label`, so it takes the focus for Ctrl+F, Ctrl+A and copy;
+  the selection is the browser's own (no `drawSelection`), as in the block
+  editor, so no selection colours are needed.
+- **Colours.** The grammar's tokens are mapped to the `.hljs-*` classes
+  app.css colours for every theme (`viewers/hljsTags.js`, the notes' and
+  the chat's fenced code), so the view brings no colour and no
+  `EditorView.darkTheme`; its chrome, gutters, panel, field and buttons are
+  the tokens (`viewers/viewers.css`).
+- **Keys and touch.** Ctrl+F is CodeMirror's own search panel, at the top
+  (the pane's foot holds the × and the full-screen box; the scroller pads
+  its bottom 56 px for them); App's `app.search` declines inside
+  `.docTextView`, so the panel opens alone. A finger has no Ctrl+F, so the
+  bar carries **Find** (rule 1 under [Adding a control](#adding-a-control)),
+  beside **Wrap** (on by default in the phone layout; session state) and
+  **Download**. Ctrl+wheel over the text is the text size, through
+  `useTextScale` on the scroller (`--text-scale`), not a page zoom. Escape
+  closes the panel.
+- **The head first.** A file opens with one Range request of its first
+  2 MiB (`viewers/textLoad.js`), cut at its last whole line (a file that is
+  one line, a minified bundle, shows that line) and at 10,000 characters a
+  line; a bar at the foot says what shows and **Show all** reads the rest,
+  up to 16 MiB. A byte-order mark picks the encoding; invalid
+  UTF-8 shows as � with a line saying so; a NUL in the first bytes means the
+  file was no text, and the pane hands over to the file pane.
+- **The bar's word** is the Format column's (`formatLabel`: MATLAB, INI),
+  not the grammar's name.
+- **Place.** The top line (`{line}`) is what the view reports and opens at,
+  so a tab group's pane and the live page stand at the same line; a closed
+  pane opens again at the line it showed.
+
+### The image view
+
+A picture's pane (`ImageViewer` in `documents/viewers/FileViews.jsx`): one
+page of a PDF viewer in all but rendering.
+
+- **Zoom and fit** as [above](#zoom-gestures-in-a-viewer): the shared
+  gestures, the zoom column's buttons through App's `zoomTo`, a fit that
+  leaves room for the comment column. No inversion in a dark theme; a
+  checkerboard of the surface tones under a transparent picture.
+- **What a drag does.** A picture has no text to select, so a mouse or a
+  pen drag draws a region with no key held; a finger pans, and draws only
+  with the strip's region toggle (`viewer.selectMode`, the PDF's text /
+  rectangle toggle, which reads "Draw a region with a finger" here); two
+  fingers always pinch. Never from a comment card, a note badge or the tip,
+  and not at all when the page is read-only (a share, a tab group's pane).
+  The rubber band is `.regionMarquee`; on release the tip (the PDF
+  selection popup's look, `TipMarks area`) offers the colours, Comment,
+  Note and Ask AI, and the drawn box stays until it is answered or
+  dismissed (a press outside, Escape).
+- **Regions** are drawn as the PDF draws areas, in percent of the box, with
+  the `commented` and `active` looks, dashed with a title when drawn on an
+  earlier version of the picture, flashed once by a jump; each carries
+  `data-hl-id`, so the thread popover, the margin's outside-press rule and
+  the comment card find it as they find a highlight. Threads stand in the
+  same margin (`CommentMarginSlot`, page 1) while the column has room, else
+  a note badge (`comments/NoteBadge.jsx`, the PDF's) opens the popover.
+- **A replaced picture** keeps the scale and the scroll fractions; its
+  regions stay where they were, dashed. One that would not load shows the
+  file pane until the next version of the file, which gets a picture with
+  its zoom and gestures again.
+- **A closed pane** keeps its fit and zoom, and opens again where it stood.
 
 ### Adding a control
 
@@ -1555,6 +1685,19 @@ started elsewhere landing, and the server's view history landing after
 it. Each marks what it sets, and a change is still when all it
 changed was read that way, so a delete right after a load still moves.
 
+A work folder's list (`explorer/FolderList.jsx`, [work_folders.md](work_folders.md)
+"The folder's list view") is the listing's list view in place of either
+view: the same `.fileList` rows (`.workList`), its directories first as
+`folderRow`s, then its files as `fileRow`s, and one column table that draws
+the header and every row (Name, then `fileRowFormat`, `fileRowSize`,
+`fileRowDate`, `fileRowComments`, the pin slot and the ⋯), so they line up;
+a narrow list drops Comments and the date as the library's drops its date.
+The bar keeps the filter box ("Filter by name") and a sort `MenuSelect` of
+its own (Name, Format, File size, Modified), never inherited from the
+library's sort, and hides the view and kind toggles. Its `scope` is the
+folder, sort, filter text and how many pages of rows are loaded, and a read
+again of its rows comes still.
+
 The small lists are on it too. An empty state can be an item of its own
 (its key "empty"), so it fades in as the last item leaves; a section's
 header is one, so it goes with its last row.
@@ -1762,6 +1905,10 @@ page's notes refuse what the single-block action refuses
 | File | Owns |
 |---|---|
 | `app/App.jsx` | routing, block-tree editor state, docks, the page's live session glue, AI chat glue (decomposition in progress) |
+| `documents/formats.js`, `documents/pageDocument.js`, `documents/documentView.js`, `documents/viewers.js`, `documents/DocumentPane.jsx` | a page's document ([documents.md](documents.md)): a file name's format and language (twin of `gamma/documents/formats.py`), the one read of what a block carries (`pageDocument`, the view, and its predicates `ownHash`, `fileHash`, `isPdf`, `pdfFileHash`, `inPlace`, `isListed`, `sourceAddress`; `documentViewerUrl`, `documentFileUrl`, `copyDocument`), which viewer a page shows and whether it shows (`documentView`, App's `docView` and `PagePane`'s), the viewer registry and what each pane brings to the frame (`viewers.js`), and the pane that draws the viewer it names: the PDF and the notebook from the host's render functions, every other format from its own lazily loaded viewers, given one surface object |
+| `documents/viewers/TextViewer.jsx`, `documents/viewers/FileViews.jsx`, `documents/viewers/textLoad.js`, `documents/viewers/hljsTags.js`, `documents/viewers/viewers.css` | the code view ([above](#the-code-view)), the picture ([above](#the-image-view)), the player and the file pane; the file's head and its decoding; the grammar tokens mapped to the notes' `.hljs-*` palette; their layout and the CodeMirror chrome on the tokens |
+| `shared/ui/regionDrag.js`, `shared/ui/regionGeometry.js` | the one region drag of the PDF page and the picture ([The PDF viewer](#the-pdf-viewer)), and its arithmetic: the drag's rectangle, the click threshold, the picture's frame, a region's stored `image_position` and the fractions it is drawn by |
+| `comments/NoteBadge.jsx` | the speech-bubble badge at a highlight's or a region's edge: a note's hover tip, the threads' count, the popover's anchor where no margin card shows them |
 | `collaboration/usePageCollab.js`, `shared/model/blockOps.js`, `collaboration/Presence.jsx` | the live session (ops out, ops + presence in), the pure tree diff/apply, the avatar stack / row chips ([collab.md](collab.md)), and `PersonAvatar`, the avatar of someone not on the page by username (a share's owner, a person to mention, a comment's author, an Inbox item's actor) |
 | `collaboration/MirrorPopover.jsx`, `collaboration/MergeResolver.jsx`, `collaboration/conflictKinds.js`, `settings/SettingsMirrors.jsx` | a clone's sync pill with its settings and conflicts views, the conflict card + the row chip, what each kind of conflict row says (pure), Settings → Workspaces → Clones and Zotero links ([mirror.md](mirror.md)) |
 | `app/boot.js`, `app/theme.js` | the first load's reads, sent as `main.jsx` starts and taken once by the code that would ask for them (`startBootReads`, `takeBootRead`: the server's config, the session), and the account's theme and language put on from the session's `profile` (`adoptAccountLook`, `languageSeen`; [settings.md](settings.md), [i18n.md](i18n.md)); the theme list (`THEMES`, `DARK_THEMES`, `themeScheme`) and `applyTheme`, which changes every colour in one frame ([Motion](#motion)) |
@@ -1775,7 +1922,7 @@ page's notes refuse what the single-block action refuses
 | `settings/BackupTasks.jsx` | Settings → Backups' task table and its editor `SubDialog` (scope `Segmented`, workspace and weekday `ToggleGroup`s, frequency and retention `MenuSelect`s, the cron preview); each row's `ActionMenu` ([settings.md](settings.md)) |
 | `settings/SettingsCloudSignIn.jsx` | Settings → Server › Sign-in (the account server, the server client, the unknown-accounts policy) and the Account pane's Gamma Cloud row ([cloud_accounts.md](cloud_accounts.md)) |
 | `transfers/ImportExport.jsx`, `transfers/transferFormats.js`, `shared/illustrations/` | the Import/Export dialogs, their format/source rules (`resolveExport` / `resolveImport`) and the decorative previews ([import_export.md](import_export.md)) |
-| `transfers/ImportReviewDialog.jsx`, `transfers/ImportTree.jsx`, `transfers/importApi.js`, `transfers/importReview.js` | the import review: upload → review → import → summary in one `SubDialog` (filter `Segmented`, source and destination trees with checkboxes), the `/api/jobs/import-preview` and `/api/import/review` calls, and the pure selection/filter/tree helpers ([import_export.md](import_export.md)) |
+| `transfers/ImportReviewDialog.jsx`, `transfers/ImportTree.jsx`, `transfers/importApi.js`, `transfers/importReview.js` | the import review: upload → review → import → summary in one `SubDialog` (filter `Segmented`, source and destination trees with checkboxes), the `/api/jobs/import-preview` and `/api/import/review` calls, and the pure selection/filter/tree helpers ([import_export.md](import_export.md)); `ImportTree` also draws the tracking dialog's tree, whose folders are read as they open (`onOpenFolder`) and whose boxes are its own (`boxOf`) |
 | `shared/lib/xhrUpload.js` | the one multipart upload: progress, a processing callback, abort by function or `AbortSignal`, the workspace and tab-identity headers; behind `FileChip.postFile`, PDF uploads, backup restores and the import review |
 | `shared/lib/keepalive.js` | the page's one ledger of `fetch` `keepalive` requests: each sender asks it for room in the browser's 64 KiB of keepalive bodies by priority (the queued page edits, then the small recoverable requests, then handwriting), and a request that does not fit goes as a plain fetch ([collab.md](collab.md) "Keepalive") |
 | `pdf/noteAnchor.js` | where a highlight's note badge sits: the geometric last line of its rects, not the last stored rect |
@@ -1786,7 +1933,7 @@ page's notes refuse what the single-block action refuses
 | `shared/lib/viewerZoom.js`, `shared/model/zoom.js` | the Ctrl+wheel and two-finger pinch/pan gestures both zooming viewers read, and the zoom limits every entry point clamps to (above) |
 | `shared/lib/stableActions.js`, `shared/lib/keepIfSame.js` | what a memoized row or page relies on: one stable wrapper per handler name calling the latest handler (`useStableActions` for the page tools, `makeStableActions` for the outliner's `rowProps`), and a derived map or object kept by identity while it reads the same (`keepIfSame` with `sameMap` / `sameObject`) ([frontend-refactor.md](frontend-refactor.md)) |
 | `chat/ChatDock.jsx` | the AI chat panel (incl. agent wiring); header = a `.ctlBtnRow` of `.ctlBtn` icon buttons (the PDF zoom column's buttons laid flat) with the ⚙ settings popover |
-| `pdf/PdfViewer.jsx` | the custom pdf.js viewer. A highlight's colour (`#rrggbbaa`, `shared/model/palette.js`) rides in `--hl` beside the dark-page variant the viewer derives for it (`darkPageColor`: the same hue, saturated, at a middle lightness, mostly transparent; `--hl-dark`, and `--hl-dark-line` for an area outline, which also draws a commented passage's underline on a light page), so on a dark page — Flip page colors or Gamma Dark — app.css draws that with normal blending in place of the screened pastel, whatever app the colour came from. The selection popup's swatches are the account's wash palette (`usePalette`, `shared/ui/paletteContext.js`). A jump to a highlight (its note's dot, a deep link, a search hit) pulses it once in its own hue: App's `triggerFlash` → `flashHighlightId` → `.pdfHlFlash` on its rects, a still ring under reduced motion |
+| `pdf/PdfViewer.jsx` | the custom pdf.js viewer. A highlight's colour (`#rrggbbaa`, `shared/model/palette.js`) rides in `--hl` beside the dark-page variant the viewer derives for it (`darkPageColor`: the same hue, saturated, at a middle lightness, mostly transparent; `--hl-dark`, and `--hl-dark-line` for an area outline, which also draws a commented passage's underline on a light page), so on a dark page — Flip page colors or Gamma Dark — app.css draws that with normal blending in place of the screened pastel, whatever app the colour came from. The selection popup's swatches are the account's wash palette (`usePalette`, `shared/ui/paletteContext.js`), drawn in a one-shot style, then the account's text highlighters as square glyph buttons (`.markBtn`, `pdf/MarkTools.jsx`, [settings.md](settings.md#text-highlighters)), every mark's hit area at least 30 px through an `::after` past its edge; a passage marked by a line draws it by `data-hl-style` in `--hl-mark`, its colour's line tone (`lineColor`), and a flipped page's `--hl-dark-line`. A jump to a highlight (its note's dot, a deep link, a search hit) pulses it once in its own hue: App's `triggerFlash` → `flashHighlightId` → `.pdfHlFlash` on its rects, a still ring under reduced motion |
 | `ink/ink.js`, `ink/finishStroke.js`, `ink/inkInput.js`, `ink/stabilizer.js`, `ink/shapes.js`, `ink/gestures.js`, `ink/fingerChords.js`, `ink/stripKeys.js`, `ink/pencilActions.js`, `ink/hostInk.js`, `ink/ruler.js`, `ink/shapeTool.js`, `ink/zoomWindow.js`, `ink/surfaceScale.js`, `ink/inkStore.js`, `ink/inkFlush.js`, `ink/inkJournal.js`, `ink/inkLive.js`, `ink/grain.js`, `ink/InkStylePicker.jsx`, `ink/ZoomWindow.jsx`, `ink/InkLayer.jsx` | handwriting ([handwriting.md](handwriting.md)): the stroke codec + geometry (pure), the finish pipeline and brush table (the only width laws), pointer sampling, Smoothing, the shape recogniser, scribble detection, finger chords, the strip's keys, the Pencil mapping, the iPad shell's side of a stroke, the ruler, the Shapes tool's drag, the zoom window's rules, a screen distance in a surface's points (Duplicate's offset), the files/drafts store, the flush plan, the drafts journal, the peers' wet strokes, the pencil grain, the Style picker, the zoom window's panel, and the page layer + selection menu (`.inkEditMenu`, placed by `useSelectionMenuAnchor`) + notes card + `ColorChoices`, the swatches and custom colour that a pen preset's row, a text box's style and the selection menu's Color and Fill rows share |
 | `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx`, `markup/PageTools.jsx` | the tool strip (`.pdfInkBar`: `ctlBtn`s and `colorBtn` swatches; the Text tool's `TypeIcon`), the one mount of a page surface's layers (text boxes, then ink), and the tools context they read, with `armedClasses` for a surface's armed-tool classes ([handwriting.md](handwriting.md)) |
 | `markup/TextBoxLayer.jsx`, `markup/useTextBoxes.js`, `markup/textBox.js`, `markup/markup.css` | text boxes ([text_boxes.md](text_boxes.md)): the boxes of a page (frame, width handle and band in screen pixels over a box sized in the page's points), the box menu (the handwriting menu's `inkEditMenu` rows: `TextSizeIcon`, `PaletteIcon`, `PaintBucketIcon`, then Duplicate, Show note, Delete), and `TextStyleChoices`, the size numbers, the pen palette through `ColorChoices`, and the four backgrounds ("none" a struck-out swatch, `.textNoBackground`) that the menu and the strip's Text row share; the notes row's `TypeIcon` marker (`.textBoxMarker`) |
@@ -1817,10 +1964,10 @@ page's notes refuse what the single-block action refuses
 | `editor/slashCommands.js`, `editor/SlashMenu.jsx`, `editor/useSlashMenu.js` (their text-only insertions in `editor/slashInserts.js`) | the "/" command catalog and its matching (pure, `tests/slashCommands.test.mjs`): headings, to-do, lists, quote, callout, divider, equations, `/page` (a new library page, linked) and `/note` (a sheet of paper), table, code, mermaid, image, date, link, embed, highlight, and the `hidden` text/background color commands from `mdMarks.TEXT_COLORS` that show only when the query matches. The bare "/" list is the catalog in order under the `SLASH_GROUPS` titles (Text, Math, Insert, Link, Style); a typed query is one ranked list, by tier: the command's own name, a name it begins, a word of its label it begins, a keyword it begins, then a VS Code-style fuzzy match of the name or label (anchored on the first letter, jumping to word starts: `/cb` → Code block), like the `\command` completion's ([latex_editing.md](latex_editing.md)). A command that `needs` an ability (`newPage`, `sheet`, `image`, `embed`) is left out where the editor lacks it (`filterSlashCommands`' `can`: a share's editor makes no library page, a comment's field writes text only). `SlashMenuPopup` draws a row as an icon tile (`MENU_ICONS` by the item's `icon` key; the colors keep a tinted "A" `glyph`), the label over a one-line description, and the `/name` to type at the right, the matched letters marked with search's `mark.searchMark` in the name or the label, wherever they matched; a key-hint footer (Tab or Enter inserts). The same popup is the "Paste as" chooser shown after a URL paste (gamma block link → mention/synced block/URL, other URLs → URL/titled link), without names. `useSlashMenu.js` owns the menu's trigger (typed only, never inside math or a code fence), its keys and the run of a command, for a note row and a comment's field; BlockTree owns the "Paste as" chooser |
 | `editor/RefPicker.jsx`, `editor/refLists.js` | the `[[` link picker: a caret-anchored popup (the "/" menu's placement) with pages matched by title, then by their folder and label chips and a sub-page's path (`rankRefPages`, the library matcher) above note blocks from `/api/block-search`, each block one plain line under its page path (`refBlockText` / `refBlockPath`, search's `plainSnippet`); when that search stopped at the server's time budget (`partial`) the key-hint footer leads with a "stopped early" line; the typed text is marked with search's `MarkedText` and a page row says `pageKindLabel()` ("Page" / "PDF"), as Search, Quick Open and the library do. `pageByTitle` is the hand-typed rule: `[[title]]` closed by hand becomes `[[id]]` when exactly one page has that title, else it renders as a dashed `.unlinkedRef` chip; `refQueryAt`, `refInsertEdit` and `typedTitleLink` are the typed `[[query`, a picked row's edit and the hand-typed rule's edit. `editor/useRefPicker.js` owns the trigger, the block search, the keys and the insertion, for a note row and a comment's field |
 | `editor/mentions.js`, `editor/MentionMenu.jsx`, `editor/useMentionMenu.js`, `app/useReminders.js`, `app/ReminderAlerts.jsx` | the `@` menu and mentions ([mentions.md](mentions.md)): the pure syntax, date words, rows and chip text (`mentions.js`); the menu's trigger, keys and insertion for a note row and a comment's field (`useMentionMenu.js`); the popup on the `[[` picker's surface and rows (`refPopup mentionMenu`; Date, People with a `PersonAvatar` each, Link to page with where the page is as the meta line (a sub-page's path, else its folder); a row's aside such as "(You)" muted in `.mentionAside`); the chip (`.mentionChip`, the ref chip's shape in the quiet fill, a reminder accent-coloured behind a masked alarm clock, red once due), drawn by the rendered view and the editor alike; the due reminders as `.reminderCard`s on the floating surface in the bottom right corner (Open a `uiBtn sm`, dismiss a `uiClose uiCloseSm`) |
-| `comments/ThreadPopover.jsx`, `comments/Thread.jsx`, `comments/CommentMargin.jsx`, `comments/CommentComposer.jsx`, `comments/CommentsPanel.jsx`, `comments/comments.css` | comments ([comments.md](comments.md) "In the app"): the row's `ctlBtn` control after the body (the open count in the accent, else revealed with the row like the ×), the thread popover (a portalled `.popover` placed by `useFloatingPosition` from its anchor, `PersonAvatar` + name + time over each comment rendered by `BlockMarkdown`, a `MenuButton` per comment, Resolve / Reopen as a `ctlBtn` icon on the first comment's author line), the composer (the note editor, `BlockCmEditor` with the `blockEditorCm` look in the comment's type, which grows to 40vh and then scrolls, inside a bordered `.commentBox` on the field surface that takes the focus ring while focused within; the chat's round `chatCircleBtn` send inside the box at the right, at `--ctl-icon-btn-xs` with a 12px arrow, on the text's line while it is one line and at its last line once it wraps; the note's `[[`, `@`, "/" and LaTeX popups over the popover), the PDF note badge's `.hasThread` accent, the PDF margin's cards (a `.commentCard` on `--bg-card` with a `--border` hairline, `--radius-md` and `--shadow-1`, lifted to `--shadow-2` while active, holding the popover's thread view), and the Comments dock window (an Open / Resolved `Segmented` in its header, a row per thread) |
+| `comments/ThreadPopover.jsx`, `comments/Thread.jsx`, `comments/CommentMargin.jsx`, `comments/CommentComposer.jsx`, `comments/CommentsPanel.jsx`, `comments/comments.css` | comments ([comments.md](comments.md) "In the app"): the row's `ctlBtn` control after the body (the open count in the accent, else revealed with the row like the ×), the thread popover (a portalled `.popover` placed by `useFloatingPosition` from its anchor, `PersonAvatar` + name + time over each comment rendered by `BlockMarkdown`, a `MenuButton` per comment, Resolve / Reopen as a `ctlBtn` icon on the first comment's author line), the composer (the note editor, `BlockCmEditor` with the `blockEditorCm` look in the comment's type, which grows to 40vh and then scrolls, inside a bordered `.commentBox` on the field surface that takes the focus ring while focused within; the chat's round `chatCircleBtn` send inside the box at the right, at `--ctl-icon-btn-xs` with a 12px arrow, on the text's line while it is one line and at its last line once it wraps; the note's `[[`, `@`, "/" and LaTeX popups over the popover), the PDF note badge's `.hasThread` accent, the PDF margin's cards (a `.commentCard` on `--bg-card` with a `--border` hairline, `--radius-md` and `--shadow-1`, lifted to `--shadow-2` while active, holding the popover's thread view; a card stands beside a highlight or an ink group, `data-card-for` naming it), and the Comments dock window (an Open / Resolved `Segmented` in its header, a row per thread, and on a work folder's file a `ctlBtn` Feedback with the bot icon). An agent's comment reads under the token's name (`comments.js` `authorLabel`), the connection it wrote through in the avatar's title; the first comment's line carries the Sent chip (`uiTag pending`, Sent or The agent is working; `uiTag failed`, Failed) while a Send waits on the thread, and under it a muted `.commentThreadState` line says when its passage moved or was not found in the new build, or that the handwriting was drawn on an earlier one ([feedback.md](feedback.md)) |
 | `inbox/InboxButton.jsx`, `inbox/InboxPanel.jsx`, `inbox/inbox.css` | the Inbox ([comments.md](comments.md) "The Inbox"): the topbar bell, an `iconBtn` with an accent count badge (`.inboxBadge`, after `.navBackBadge`, "9+" past nine; inline as a More sheet row's `trailing`), and the header popover under it: a `popoverTitle` row with Mark all read as `uiBtn ghost sm`, an Unread / All / Archived `Segmented`, `popoverSection` day captions, and a row per item (`PersonAvatar`, the sentence in bold while unread with an accent dot, the snippet behind a left rule, muted meta, `ctlBtn` actions revealed on hover and focus) |
 | `editor/BacklinksPanel.jsx` | "Linked from N pages" under a page's notes: App's `/blocks/{id}/backlinks` list grouped by page, each linking block a three-line rendered snippet; a click opens its page at the block (`openBlockLink`, a link jump); the section is off until the account turns it on (`backlinksVisible`, Settings → Reading & editing › Notes — off, no backlinks are fetched), and its fold is the browser pref `backlinksCollapsed` |
-| `editor/SubPagesPanel.jsx` | "N pages inside" under a page's notes, above Linked from ([home_library.md](home_library.md#sub-pages)): the open page's sub-pages from `GET /pages/{id}/family`, a row each (a 14 px `FileGlyph`, the PDF one when the entry says `pdf`, and the title, a button that opens the page, then the row's `MenuButton` "⋯" outside a share view, shown with the row as a `.rowMenuHost`'s, the page menu also on a right-click or a held finger through `menuPress`), and where the library may be changed a last "New page inside" row with a plus; there a row drags a page and wears `.dragOver` (the accent's background and a 1 px ring) while a page dragged over it would go inside. It borrows the backlinks panel's head, caret, rows and box (`.subPagesPanel` joins `.backlinksPanel`'s rule), folds in `Collapse`, and its fold is the browser pref `subPagesCollapsed`; a page with no sub-pages shows nothing |
+| `editor/SubPagesPanel.jsx` | "N pages inside" under a page's notes, above Linked from ([home_library.md](home_library.md#sub-pages)): the open page's sub-pages from `GET /pages/{id}/family`, a row each (a 14 px `FileGlyph` of the entry's `format`, the family answer's, so the PDF one for `pdf`, and the title, a button that opens the page, then the row's `MenuButton` "⋯" outside a share view, shown with the row as a `.rowMenuHost`'s, the page menu also on a right-click or a held finger through `menuPress`), and where the library may be changed a last "New page inside" row with a plus; there a row drags a page and wears `.dragOver` (the accent's background and a 1 px ring) while a page dragged over it would go inside. It borrows the backlinks panel's head, caret, rows and box (`.subPagesPanel` joins `.backlinksPanel`'s rule), folds in `Collapse`, and its fold is the browser pref `subPagesCollapsed`; a page with no sub-pages shows nothing |
 | `editor/PageCrumbs.jsx` | the crumbs at the top of a sub-page's header (`nav.pageCrumbs`, "Pages this page is in"): a `crumbBtn` per page above it, top first, each opening that page, each followed by a `/` `crumbSep`, the title below; one muted `--fs-xs` line, long titles cut with an ellipsis (`library.css`), a crumb in the accent while a page dragged over it would go inside its page (`.dragOver`, as the folder path's crumbs); nothing for a library page |
 | `editor/BlockProperties.jsx`, `editor/blockProps.js`, `editor/blockProperties.css` | the Properties popover ([above](#the-properties-popover)): the surface, loaded on first use (head, status chips, Details / JSON, the row menu, placement, the server read), and the pure model it draws (`tests/blockProps.test.mjs`): a block's kind by the server's `block_kind` order (`blockKind`, `effectiveKind`), its sections of rows, one `CATALOG` entry per key of the [block properties catalog](../research/block-properties.md#the-catalog) and the rest under Other keys, the status chips, the key and SQL paths; the menus' Properties rows and `block.properties` / `app.pageProperties` use `BracesIcon` |
 | `editor/noteSanitize.js` | `rehypeNoteSanitize`, the sanitizer every rendered note goes through between `rehype-raw` and KaTeX ([One control set, everywhere](#one-control-set-everywhere)) |
@@ -1828,8 +1975,10 @@ page's notes refuse what the single-block action refuses
 | `editor/codeHighlight.js` | the highlight.js (`lib/common`) wrapper and the code card's copy button, shared by editor + renderer; token colors are theme-aware `.hljs-*` rules in app.css. `editor/fences.js` reads `mdCode.codeFences` for the editor: `scanFences` (the source editor's cards, ``` fences at no depth) and `fenceInnerAt` (what Enter, Tab and the popups read as code, [hotkeys.md](hotkeys.md)) |
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |
 | `library/trashList.js` | the Recently deleted list asked for ahead of its dialog, as the pointer or the focus reaches the trash button (`prefetchTrash`, `aheadTrash`, `dropTrash`; [home_library.md](home_library.md) "Recently deleted") |
-| `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder, and "with N pages inside" for a page deleted with its sub-pages) with Restore and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |
-| `library/libraryUtils.js` | the library's folder and label helpers over the folder and label trees ([home_library.md](home_library.md) "Folders and labels"), where a page sits among pages (`pageAncestors`, `topPageOf`, `pagePathLabel`, `pageDescendants`, [home_library.md](home_library.md#sub-pages)), and `pageAttachment`, what a page carries |
+| `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder, and "with N pages inside" for a page deleted with its sub-pages) with Restore (a muted "Comes back when its file is tracked again." in its place for a work folder's file the server says a person may not restore) and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |
+| `explorer/workFolders.js`, `explorer/knownPages.js`, `explorer/useFolderRows.js`, `explorer/useSummaries.js`, `explorer/FolderList.jsx`, `explorer/TrackDialog.jsx`, `explorer/trackSelection.js` | work folders ([work_folders.md](work_folders.md)): the rules a file and a work folder's folders follow (twin of `gamma/work_folders/filing.py`), the page rows the listing does not carry merged into App's (`mergeKnown`), a directory's files read a page of rows at a time and the summaries of files open in tabs or recents, the folder's list view ([Lists that change](#lists-that-change)), and the tracking dialog ([Dialogs](#dialogs)) with its pure choice |
+| `feedback/FeedbackHost.jsx`, `feedback/FeedbackDialog.jsx`, `feedback/feedbackView.js`, `feedback/feedbackText.js`, `feedback/useFeedback.js`, `feedback/feedback.css` | feedback on a work folder's files ([feedback.md](feedback.md) "In the app"): the dialog's store each opener writes and the host App mounts, the view and Send dialog ([Dialogs](#dialogs), *The feedback view*), its pure part (the scope read, the entries by file, the requests listed, Withdraw's rule, a Send's body) and its words (an entry's heading, where it was placed, its source line, a request's line and state) |
+| `library/libraryUtils.js` | the library's folder and label helpers over the folder and label trees ([home_library.md](home_library.md) "Folders and labels"), where a page sits among pages (`pageAncestors`, `topPageOf`, `pagePathLabel`, `pageDescendants`, [home_library.md](home_library.md#sub-pages)), and the library's page rows (`pageBlocksOf`, each with its document, `_doc`) |
 | `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, tabs that come, go and move through `ListMotion`, and on overflow a "⌄ n" popover listing every tab with a filter); `useMenuTrigger` in Menus is the menus a toolbar's buttons open on the press ([Menus and submenus](#menus-and-submenus)) |
 | `shared/styles/motion.css`, `shared/ui/motion.js` | how things move ([Motion](#motion)): the recipes, keyed by the surfaces' classes and the widgets' markup, on the motion tokens; and the pure side (`reducedMotion`, `textSplit`, `longestMs`, `arriving`, `listGlides`, `sameKeys`; `tests/motion.test.mjs`) |
 | `shared/ui/Surfaces.jsx`, `shared/ui/leave.js` | the shells of the surfaces that come and go (`DialogOverlay`, `Popover`), and a closed surface's way out through a still copy (`useLeave`, `leave`, `stillCopy`, `standing`, `standBack`; `tests/leave.test.mjs`) |

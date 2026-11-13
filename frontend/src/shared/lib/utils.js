@@ -8,6 +8,9 @@ import { fmtBytes } from "./format.js";
 import { keepaliveFetch } from "./keepalive.js";
 import { dispositionName, saveBlob } from "./saveFile.js";
 import { sha256Hex } from "./sha256.js";
+import { pdfProxyUrl } from "../../documents/pageDocument.js";
+// An incoming file is a PDF (re-exported below): the library's routing rule.
+import { isPdfFile } from "../../transfers/fileRouting.js";
 // The paper metadata source wording (re-exported below), a module of its own
 // so the node tests import it without the browser.
 import { isUnverifiedPaperMeta, metaSourceInfo } from "./metaSource.js";
@@ -205,6 +208,8 @@ async function sha256(text) {
   return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// The stem a PDF read from an address is kept under, its document's hash
+// (gamma/documents/model.py url_hash, the twin).
 async function getDocIdForUrl(sourceUrl) {
   return (await sha256(sourceUrl)).slice(0, 24);
 }
@@ -284,13 +289,6 @@ async function copyRich(html, plain) {
   return legacyCopy(plain, html);
 }
 
-const isPdfFile = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name || "");
-const isMarkdownFile = (f) => /\.(?:md|markdown)$/i.test(f.name || "")
-  || /^(?:text\/markdown|text\/x-markdown)$/i.test(f.type || "");
-// The file pickers' filter for the files the library takes in as pages (the
-// Add menu's Upload files…, "Start your library").
-const PAGE_FILE_ACCEPT = ".pdf,.md,.markdown,application/pdf,text/markdown";
-
 // FastAPI errors come as {"detail": "..."} — show the human message, not raw JSON.
 // The thrown Error carries `status` and the parsed JSON body as `data`, so
 // callers can act on structured conflicts (e.g. a 409 naming another page).
@@ -366,23 +364,6 @@ async function resolvePdfUrl(rawUrl, allowOa = true) {
   });
 }
 
-// Same-origin proxy for an external PDF. `save` caches a copy in uploads;
-// `share` carries the read token in the public view.
-function pdfProxyUrl(sourceUrl, { save = false, share = "" } = {}) {
-  return `${API}/pdf?source_url=${encodeURIComponent(sourceUrl)}`
-    + (save ? "&save=1" : "")
-    + (share ? `&share=${encodeURIComponent(share)}` : "");
-}
-
-// Where the viewer loads a page's PDF from, given its attachment's `url`
-// (pageAttachment): a stored copy as it is, anything else through the
-// proxy; a share visitor's requests carry the read token. "" for none.
-function attachmentViewerUrl(src, { share = "" } = {}) {
-  if (!src) return "";
-  if (!src.startsWith("/api/")) return pdfProxyUrl(src, { share });
-  return share ? `${src}${src.includes("?") ? "&" : "?"}share=${encodeURIComponent(share)}` : src;
-}
-
 // Headers-only check that the proxy can really deliver this PDF: resolution
 // only picks a candidate URL, and the download behind it still fails on
 // paywalls, blocked server-side fetches, or HTML pretending to be a paper.
@@ -427,4 +408,4 @@ async function readNdjson(res, onBatch) {
   }
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, isUnverifiedPaperMeta, metaSourceInfo, apiJson, apiError, proxyRefusal, noteDeletingWorkspace, setShareView, getShareToken, withShare, withWorkspace, blockLinkUrl, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, attachmentViewerUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson, downloadFetched };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, apiError, proxyRefusal, noteDeletingWorkspace, setShareView, getShareToken, withShare, withWorkspace, blockLinkUrl, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson, downloadFetched };

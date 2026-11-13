@@ -13,6 +13,7 @@ highlight palette the frontend ships; the Logseq import and export map
 their colour names onto it by nearest hue.
 """
 
+import math
 import re
 
 # The default wash set (palette.js WASH_COLORS): the four highlight colours
@@ -66,6 +67,58 @@ def normalize_color(value) -> str | None:
 def with_alpha(color, alpha: float) -> str | None:
     c = parse_color(color)
     return "#" + "".join(_hex2(v) for v in c[:3]) + _hex2(alpha) if c else None
+
+
+def _to_hsl(r: float, g: float, b: float) -> tuple[float, float, float]:
+    """(r, g, b) 0..1 → (h 0..360, s, l), as palette.js toHsl."""
+    mx, mn = max(r, g, b), min(r, g, b)
+    light = (mx + mn) / 2
+    if mx == mn:
+        return 0.0, 0.0, light
+    d = mx - mn
+    s = d / (2 - mx - mn) if light > 0.5 else d / (mx + mn)
+    if mx == r:
+        h = (g - b) / d + (6 if g < b else 0)
+    elif mx == g:
+        h = (b - r) / d + 2
+    else:
+        h = (r - g) / d + 4
+    return h * 60, s, light
+
+
+def _from_hsl(h: float, s: float, light: float) -> tuple[float, float, float]:
+    """(h, s, l) → (r, g, b) 0..255, as palette.js fromHsl."""
+    def f(n):
+        k = (n + h / 30) % 12
+        a = s * min(light, 1 - light)
+        return light - a * max(-1, min(k - 3, 9 - k, 1))
+    return f(0) * 255, f(8) * 255, f(4) * 255
+
+
+def _byte(x: float) -> str:
+    """A channel 0..255 as two hex digits, rounded half up as Math.round."""
+    return f"{math.floor(min(max(x, 0.0), 255.0) + 0.5):02x}"
+
+
+LINE_MAX_LIGHTNESS = 0.6
+
+
+def line_color(color) -> str | None:
+    """The colour a highlight drawn as a line (an underline, a wavy
+    underline, a strikethrough: the block's ``style``) takes, ``#rrggbb``,
+    opaque: its own colour when that is dark enough to read as a thin line,
+    and for a light one (the wash colours) a deeper tone of the same hue, a
+    gray a darker gray. palette.js lineColor is the same; None when not a
+    colour."""
+    c = parse_color(color)
+    if not c:
+        return None
+    h, s, light = _to_hsl(*c[:3])
+    if light <= LINE_MAX_LIGHTNESS:
+        rgb = tuple(v * 255 for v in c[:3])
+    else:
+        rgb = _from_hsl(h, s if s < 0.15 else max(s, 0.7), 0.42)
+    return "#" + "".join(_byte(v) for v in rgb)
 
 
 def highlight_color(swatch) -> str | None:

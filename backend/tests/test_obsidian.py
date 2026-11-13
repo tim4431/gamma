@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 
-from conftest import folder_names, label_names, make_folder, make_label, make_page
+from conftest import doc_props, folder_names, label_names, make_folder, make_label, make_page
 
 from gamma.markdown_import import md_to_blocks, parse_frontmatter
 from gamma.obsidian_export import VaultContext, render_vault_page, vault_name
@@ -260,8 +260,7 @@ def test_obsidian_export_writes_a_vault(guest):
 def test_obsidian_export_bundles_pdf_and_links_highlight_pages(guest):
     up = guest.post("/api/uploads", files={"file": ("paper.pdf", _blank_pdf_bytes(), "application/pdf")})
     assert up.status_code == 200, up.text
-    props = {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
-             "folders": [make_folder(guest, "ovp/inner")]}
+    props = {**doc_props(up.json()["doc_id"]), "folders": [make_folder(guest, "ovp/inner")]}
     page_id = make_page(guest, "Paper", properties=props)["id"]
     _put_children(guest, page_id, [
         _highlight("oh-1", "quoted text\nsecond", note="my note", page=3) | {"children": [
@@ -287,7 +286,7 @@ def test_obsidian_export_bundles_pdf_and_links_highlight_pages(guest):
     md = z.read("ovp/inner/Paper.md").decode()
     assert "attachments/Paper.pdf" not in z.namelist()
     assert "> [!quote] p. 3\n> quoted text" in md and "[[Paper.pdf" not in md
-    assert f"source: {props['source_url']}" in md
+    assert f"source: {up.json()['source_url']}" in md
 
     # Dropping highlights keeps the note as a plain block (with its child).
     r = guest.get(f"/api/pages/{page_id}/export", params={"mode": "obsidian", "highlights": 0})
@@ -301,8 +300,7 @@ def test_obsidian_export_writes_text_boxes_as_notes_with_their_page(guest):
     bullet in a list); on a sheet it is just the note."""
     up = guest.post("/api/uploads", files={"file": ("boxes.pdf", _blank_pdf_bytes(), "application/pdf")})
     assert up.status_code == 200, up.text
-    props = {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
-             "folders": [make_folder(guest, "ovb")]}
+    props = {**doc_props(up.json()["doc_id"]), "folders": [make_folder(guest, "ovb")]}
     page_id = make_page(guest, "Boxed", properties=props)["id"]
     box = {"x": 40, "y": 60, "w": 180}
     _put_children(guest, page_id, [

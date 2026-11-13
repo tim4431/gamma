@@ -1,0 +1,16 @@
+/* The tracking dialog (explorer/TrackDialog.jsx): the import review's tree
+   (transfers/importReview.css) in a dialog of one column, with the format
+   filters over it and the preview's summary under it. */
+.reportModal.trackDialog { width: min(720px, calc(100vw - 32px)); max-width: 720px; max-height: calc(100dvh - 48px); }
+.trackDialog .settingsDialogContent { min-height: 0; overflow-y: auto; }
+.trackFilters { display: flex; flex-wrap: wrap; gap: 6px; }
+.trackTree { height: min(46vh, 480px); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 6px 10px 12px; }
+.importTree .importTreeHint { margin-left: 8px; color: var(--text-muted); font-size: var(--fs-2xs); }
+.trackSummary { margin: 12px 0 4px; font-size: var(--fs-sm); }
+.trackSummary p { margin: 4px 0; }
+.trackSummary details { margin: 4px 0; }
+.trackSummary summary { cursor: pointer; }
+.trackSummary ul { max-height: 140px; overflow: auto; padding-left: 20px; margin: 6px 0 0; }
+.trackSummary li { padding: 3px 0; overflow-wrap: anywhere; }
+.trackSummary li span { color: var(--text-muted); font-size: var(--fs-xs); }
+.trackLibrary { margin: 8px 0; }

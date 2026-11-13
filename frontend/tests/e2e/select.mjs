@@ -59,6 +59,9 @@ export const GROUPS = [
   { id: "translation", files: ["translation.mjs"], s: 10 },
   { id: "recording", files: ["recording.mjs"], s: 10 },
   { id: "vaults", files: ["vaults.mjs"], s: 20 },
+  { id: "work-folders", files: ["workFolders.mjs"], s: 30 },
+  { id: "feedback", files: ["feedback.mjs"], s: 60 },
+  { id: "viewers", files: ["viewers.mjs"], s: 60 },
   { id: "mirror", files: ["mirror.mjs"], s: 7 },
   { id: "ink-zoom", files: ["inkZoom.mjs"], s: 7 },
   { id: "trash", files: ["trash.mjs"], s: 5 },
@@ -116,9 +119,15 @@ export const RULES = [
   ["frontend/src/shared/illustrations/**", GUIDES],
   ["frontend/src/shared/**", ALL],
   ["frontend/src/app/**", ALL],
+  // the panes a document of another format than PDF gets (the code view, the picture, the player,
+  // the file pane; docs/dev/documents.md "Viewers"): a work folder's files are pages of theirs, a
+  // tab group's pane reads one, a share's visitor sees one (the share steps are notes-pdf-share's)
+  ["frontend/src/documents/viewers/**", ["viewers", "work-folders", "tab-groups", "notes-pdf-share"]],
+  ["frontend/src/documents/**", ALL], // the document a page carries decides its layout
   // the tab groups' pure model and the read view of a page in a group that is not live
+  // (viewers: a code view read in a pane)
   ["frontend/src/workspace/tabLayout.js", ["tab-groups"]],
-  ["frontend/src/workspace/PagePane.jsx", ["tab-groups"]],
+  ["frontend/src/workspace/PagePane.jsx", ["tab-groups", "viewers"]],
   ["frontend/src/workspace/**", ALL], // the frames every page stands in
   ["frontend/src/main.jsx", ALL],
   ["frontend/src/guide/**", GUIDES],
@@ -148,10 +157,13 @@ export const RULES = [
   // the replay store every handwriting replay and a recording's player run on
   ["frontend/src/replay/**", ["ink", "ink-editing", "notebooks", "recording"]],
   ["frontend/src/recording/**", ["recording"]],
-  // the row control, the thread popover, the Comments window, the page's threads over the socket
-  ["frontend/src/comments/**", ["comments", "collab", "inbox"]],
-  // the bell, its panel and the jumps (a thread's opens through comments/)
-  ["frontend/src/inbox/**", ["inbox"]],
+  // the row control, the thread popover, the Comments window, the page's threads over the socket;
+  // feedback: an agent's comments, the Sent chip, the ink cards and the Feedback button
+  ["frontend/src/comments/**", ["comments", "collab", "inbox", "feedback"]],
+  // the bell, its panel and the jumps (a thread's opens through comments/); feedback: an agent's items
+  ["frontend/src/inbox/**", ["inbox", "feedback"]],
+  // the feedback view and Send (docs/dev/feedback.md "In the app")
+  ["frontend/src/feedback/**", ["feedback"]],
   ["frontend/src/pdf/**", PDF_VIEW],
   // (a text box's editor and read mode are the notes')
   // the "N pages inside" panel and the crumbs over a sub-page's title (/page makes one in notes)
@@ -183,7 +195,13 @@ export const RULES = [
   ["frontend/src/collaboration/zoteroLink.css", ["zotero-link"]],
   ["frontend/src/collaboration/**", ALL], // the page's live session carries every edit
   // a page's standing with this computer in the desktop app: the chip, its card and dialogs, the banner, the notes lock
-  ["frontend/src/vault/**", ["vaults"]],
+  ["frontend/src/vault/**", ["vaults", "work-folders"]],
+  // the pages the listing does not carry, merged into every page list the app has
+  ["frontend/src/explorer/knownPages.js", ALL],
+  // the work-folder rules every page and folder menu, drop and the open page's title ask
+  ["frontend/src/explorer/workFolders.js", ["work-folders", "vaults", "folders", "sub-pages", "trash", "files", "quick-open"]],
+  // a work folder's list view and the tracking dialog
+  ["frontend/src/explorer/**", ["work-folders", "vaults"]],
   ["frontend/src/library/QuickOpen.jsx", ["quick-open", "sub-pages"]],
   ["frontend/src/library/RecentlyDeleted.jsx", ["trash", "sub-pages"]],
   // the library's bulk actions: delete (a folder's pages too), file and label, move into a page, duplicate
@@ -232,12 +250,20 @@ export const RULES = [
   ["backend/gamma/integrations.py", ["mcp", "mirror", "settings"]],
   ["backend/gamma/routers/integrations.py", ["mcp", "mirror", "settings"]],
   // synced vaults and PDFs read where they are: the routes a page reads and the engine behind them
-  // (the vaults scenario; the shell's side is the desktop app's suite, desktop/test/e2e.js)
-  ["backend/gamma/folder_links.py", ["vaults"]],
-  ["backend/gamma/routers/folder_links.py", ["vaults"]],
-  ["backend/gamma/linked_files.py", ["vaults"]],
-  ["backend/gamma/vault_*.py", ["vaults"]],
+  // (the vaults scenario; the shell's side is the desktop app's suite, desktop/test/e2e.js);
+  // feedback: a work folder's rounds write its feedback files and keep the commented version;
+  // viewers: the engine's class `file` makes a page of every file a work folder tracks
+  ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback"]],
+  ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders"]],
+  ["backend/gamma/linked_files.py", ["vaults", "work-folders", "feedback"]],
+  ["backend/gamma/vault/**", ["vaults", "work-folders", "feedback", "viewers"]],
+  // feedback on a work folder's files: the reader, the pictures, the SyncTeX map, the requests, the files and the routes
+  // (viewers: a region of a picture and a thread on a picture's page as entries with their pictures)
+  ["backend/gamma/feedback/**", ["feedback", "viewers"]],
+  ["backend/gamma/routers/feedback.py", ["feedback"]],
   ["backend/gamma/md_lens.py", ["vaults"]],
+  // work folders: the library rule, the op rule, .gammaignore, the takeover (docs/dev/work_folders.md)
+  ["backend/gamma/work_folders/**", ["work-folders", "vaults"]],
   ["backend/gamma/folder_sync.py", []],
   ["backend/gamma/gamma_sync.py", []],
   // the clones' engine and the clock the Zotero link's rounds run on (sync_clock.py), its conflicts and log tables (sync_engine.py)
@@ -338,10 +364,11 @@ export const RULES = [
   // comments: their storage and API, and the hooks every block writer runs
   // (orphan, place and purge on deletes, moves and page purges; the copies
   // of a backup merge and an import; after_write feeds the inbox)
-  ["backend/gamma/comments.py", ["comments", "inbox", "notes-pdf-share", "collab", "transfers"]],
-  ["backend/gamma/routers/comments.py", ["comments", "inbox"]],
-  // the Inbox: its producers' items, the listing and its settle, the marks
-  ["backend/gamma/inbox.py", ["inbox", "comments"]],
+  // feedback: an agent's writes, the anchors and the listeners that keep the feedback files current
+  ["backend/gamma/comments.py", ["comments", "inbox", "notes-pdf-share", "collab", "transfers", "feedback"]],
+  ["backend/gamma/routers/comments.py", ["comments", "inbox", "feedback"]],
+  // the Inbox: its producers' items, the listing and its settle, the marks; feedback: an agent's items
+  ["backend/gamma/inbox.py", ["inbox", "comments", "feedback"]],
   ["backend/gamma/routers/inbox.py", ["inbox"]],
   ["backend/gamma/publisher_sessions.py", ["settings"]],
   ["backend/gamma/routers/publisher_sessions.py", ["settings"]],

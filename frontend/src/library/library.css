@@ -105,7 +105,7 @@
   word-break: break-word;
   mask-image: linear-gradient(to bottom, #000 70%, transparent);
 }
-.pageCard:hover .fileGlyph:not(.pdf), .pageCard.selected .fileGlyph:not(.pdf) { color: var(--accent); }
+.pageCard:hover .fileGlyph:not(.pdf, .image, .audio, .video), .pageCard.selected .fileGlyph:not(.pdf, .image, .audio, .video) { color: var(--accent); }
 .pageCardBody {
   display: flex;
   flex-direction: column;
@@ -495,7 +495,7 @@
   width: 20px;
   height: 20px;
 }
-.fileRow:hover .fileGlyph:not(.pdf), .fileRow.selected .fileGlyph:not(.pdf) { color: var(--accent); }
+.fileRow:hover .fileGlyph:not(.pdf, .image, .audio, .video), .fileRow.selected .fileGlyph:not(.pdf, .image, .audio, .video) { color: var(--accent); }
 .fileRowName {
   flex: 1;
   min-width: 0;
@@ -561,7 +561,19 @@
   color: var(--text-dim);
   user-select: none;
 }
-.fileListHead .fileRowKind, .fileListHead .fileRowDate { font-size: inherit; color: inherit; }
+/* A work folder's list (explorer/FolderList.jsx) has its own columns after
+   the name: the format, the file's size, the date and the open comments. */
+.fileRowFormat, .fileRowSize, .fileRowComments {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fileRowFormat { flex: 0 0 80px; }
+.fileRowSize { flex: 0 0 72px; text-align: right; }
+.fileRowComments { flex: 0 0 72px; text-align: right; }
+.fileListHead :is(.fileRowKind, .fileRowDate, .fileRowFormat, .fileRowSize, .fileRowComments) { font-size: inherit; color: inherit; }
 .fileListHead .fileRowMenuSlot { height: 0; }
 .fileListHeadName { flex: 1; min-width: 0; padding-left: 30px; }
 /* A narrow list keeps the name readable: no date column, a tighter kind
@@ -570,6 +582,8 @@
   .fileRowDate { display: none; }
   .fileRowKind { flex-basis: 52px; }
   .fileList .fileRowLabels { max-width: 34%; }
+  .fileRowComments { display: none; }
+  .fileRowFormat { flex-basis: 64px; }
 }
 /* Chip line on a file row (shared base above): capped so it never pushes the
    kind/pin off the row. Order in the row: name … [labels] PDF date pin ⋯. */
@@ -631,8 +645,14 @@
 .tileGlyph { width: 52px; height: 52px; flex-shrink: 0; }
 .folderGlyph { color: var(--accent); }
 .labelGlyph { color: var(--text-secondary); }
+/* A page's glyph by its document's format (Icons.jsx FileGlyph): a PDF in
+   its own scheme constant, a text file in the accent, a picture and a
+   recording in the warn tone, a plain file and a note muted. */
 .fileGlyph { color: var(--text-muted); }
 .fileGlyph.pdf { color: var(--kind-pdf); }
+.fileGlyph.text { color: var(--accent); }
+.fileGlyph.image, .fileGlyph.audio, .fileGlyph.video { color: var(--warn); }
+.fileGlyph.binary { color: var(--text-secondary); }
 .tileRenameInput {
   width: 100%;
   border-color: var(--accent-fill);
@@ -734,6 +754,8 @@
 .phoneUI .fileRow .fileRowDate { grid-area: 1 / 4; width: 110px; line-height: 20px; }
 .phoneUI .fileRow :is(.fileRowPin, .fileRowPinSlot) { grid-area: 1 / 5; }
 .phoneUI .fileRow .fileRowMenu { grid-area: 1 / 6; }
+/* A work folder's rows keep one line of fixed columns on a phone too. */
+.phoneUI .workList .fileRow { display: flex; align-items: center; }
 @media (max-width: 600px) {
   .phoneUI .fileRow { grid-template-columns: 20px minmax(0, 1fr) auto auto auto; }
   .phoneUI .fileRow .fileRowKind { width: 52px; }

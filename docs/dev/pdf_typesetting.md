@@ -38,7 +38,14 @@ is unchanged.
 
 `/api/pages/{id}/export-pdf`: highlights become standard `/Highlight` (or
 `/Square` for area notes) annotations with the note text in the popup
-(`gamma/pdf_export.py`) — `?highlights=0` skips that layer entirely. Every
+(`gamma/pdf_export.py`) — `?highlights=0` skips that layer entirely. A
+highlight marked by a line (its `style`) is the markup of that name,
+`/Underline`, `/Squiggly` or `/StrikeOut`, over the same quads, its `/C`
+the colour's line tone (`colors.line_color`: the wash colours are too pale
+for a thin line) at `/CA` 1 and the stored colour in the private
+`/GammaColor`; like `/Highlight` it carries no appearance stream: pdf.js
+and MuPDF draw the line from the quads and `/C` (checked against both;
+other readers not yet). Every
 `/Square` carries an `/NM` id (`Zotero-<key>`, deterministic from the block
 id): Zotero's pdf-worker maps `/Square`→image annotation but silently DROPS
 one without an id, while `/Highlight` imports id-less — without `/NM`, area

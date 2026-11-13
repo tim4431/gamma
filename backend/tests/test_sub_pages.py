@@ -5,7 +5,8 @@ Recently deleted, a cycle and an over-deep chain read as no parent), the
 row writers' and the op path's rules for the key, POST /api/pages with
 ``parent_page``, GET /api/pages/{id}/family, the library listing's
 ``parent``, the filing rule (a sub-page is filed where its top is), the
-share scope's reach, a duplicate, and migration step 47."""
+share scope's reach, a duplicate, a work folder's file (never a sub-page,
+and no page is one of it), and migration step 47."""
 
 import json
 import sqlite3
@@ -13,13 +14,16 @@ from contextlib import closing
 
 import pytest
 
-from conftest import account_of, fresh_client, login, make_folder, make_label, make_user, workspace_of
+from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_label, make_user,
+                      mark_work_folder, work_props, workspace_of)
 from gamma import blocks_store, db, migrations, seed
-from gamma.auth import ShareScope
+from gamma.auth import DISK_CLIENT, ShareScope
 from gamma.blocks_store import (MAX_PAGE_DEPTH, create_page, page_ancestors, page_descendants, page_in_folder,
                                 page_parent, page_parents, page_root_props, page_top, pages_in_folder, pages_in_scope,
                                 root_pages, sub_pages, valid_parent_value, with_sub_pages)
 from gamma.db import connect_pages_db, connect_users_db
+from gamma.integrations import create_token
+from gamma.ops import LOCKED, SYNC_CLIENT, OpError, commit_ops
 
 USER, PASSWORD = "sp_owner", "pw-sp-1"
 
@@ -249,20 +253,26 @@ def test_the_family_names_the_ancestors_and_the_sub_pages(owner):
 
 
 def test_the_family_says_which_sub_pages_carry_a_pdf(owner):
-    """A sub-page carrying a PDF (blocks_store.page_attachment: a doc_id, or
-    a source_url alone) is marked ``pdf: true``, for its glyph under a share too."""
+    """A sub-page carrying a document (``page_document``: stored, at an
+    address, a copy) is marked with its ``format``, for its glyph under a
+    share too."""
     a = _page(owner, "fampdf A")
     with conn() as cx:
-        stored = create_page(cx, "fampdf stored", {"parent_page": a, "doc_id": "d" * 24}, actor=account_of(USER))["id"]
-        linked = create_page(cx, "fampdf linked", {"parent_page": a, "source_url": "https://example.org/x.pdf"},
+        stored = create_page(cx, "fampdf stored", {"parent_page": a, **doc_props("d" * 24)},
                              actor=account_of(USER))["id"]
+        linked = create_page(cx, "fampdf linked", {"parent_page": a, **doc_props(url="https://example.org/x.pdf")},
+                             actor=account_of(USER))["id"]
+        copy = create_page(cx, "fampdf copy", {"parent_page": a, **doc_props(url=f"/api/uploads/{'d' * 24}.pdf")},
+                           actor=account_of(USER))["id"]
     note = _page(owner, "fampdf note", parent_page=a)
     kids = {x["id"]: x for x in owner.get(f"/api/pages/{a}/family").json()["sub_pages"]}
-    assert kids[stored]["pdf"] is True and kids[linked]["pdf"] is True and "pdf" not in kids[note]
+    assert [kids[k].get("format") for k in (stored, linked, copy, note)] == ["pdf", "pdf", "pdf", None]
+    assert not any("pdf" in kid for kid in kids.values())
     anon = fresh_client()
     share = {"share": owner.post(f"/api/share/{a}", json={"audience": "anyone"}).json()["token"]}
     shared = anon.get(f"/api/pages/{a}/family", params=share).json()["sub_pages"]
-    assert [(x["id"], x.get("pdf", False)) for x in shared] == [(stored, True), (linked, True), (note, False)]
+    assert [(x["id"], x.get("format")) for x in shared] == [(stored, "pdf"), (linked, "pdf"), (copy, "pdf"),
+                                                             (note, None)]
 
 
 def test_a_share_reads_the_family_it_reaches(owner):
@@ -364,12 +374,42 @@ def test_a_parent_in_recently_deleted_is_walked_too(owner):
 
 def test_the_mirror_stores_a_merged_cycle(owner):
     a, b, _, _ = _tree(owner, "mcycle")
-    r = owner.post(f"/api/pages/{a}/ops", json={"client": "sync", "ops": [
+    mirror = fresh_client()
+    mirror.headers["Authorization"] = "Bearer " + create_token(account_of(USER), workspace_of(USER), "sp-mirror", 90,
+                                                               scope="write")["token"]
+    r = mirror.post(f"/api/pages/{a}/ops", json={"client": "sync", "ops": [
         {"op": "set", "id": a, "props": {"parent_page": b}}]})
     assert r.status_code == 200, r.text  # the engine's own batch: what two copies merged is stored
     with conn() as cx:
         assert a not in page_parents(cx) and b not in page_parents(cx)  # read as library pages
     assert _set(owner, a, {"parent_page": b}).status_code == 400  # any other writer is refused
+    r = owner.post(f"/api/pages/{b}/ops", json={"client": "sync", "ops": [  # a session's "sync" is no mirror's
+        {"op": "set", "id": b, "props": {"parent_page": a}}]})
+    assert r.status_code == 400 and r.json()["conflict"] == "cycle", r.text
+
+
+def test_no_page_is_inside_a_work_folder_s_file_and_no_file_inside_a_page(owner):
+    work = make_folder(owner, "sp-work")
+    mark_work_folder(owner, work)
+    lib = _page(owner, "sp-work library page")
+    with conn() as cx:
+        file = create_page(cx, "notes", work_props(work, "notes.md"), actor=account_of(USER),
+                           client=DISK_CLIENT)["id"]
+        for client in ("", DISK_CLIENT):  # a person, and the vault: neither makes a page inside a file
+            with pytest.raises(OpError) as e:
+                create_page(cx, "inside a file", {"parent_page": file}, actor=account_of(USER), client=client)
+            assert e.value.status == 403 and e.value.conflict == LOCKED
+        assert create_page(cx, "the mirror's", {"parent_page": file}, actor=account_of(USER),
+                           client=SYNC_CLIENT)["properties"] == {"parent_page": file}
+    r = _set(owner, lib, {"parent_page": file})
+    assert r.status_code == 403 and r.json()["conflict"] == LOCKED, r.text
+    r = _set(owner, file, {"parent_page": lib})
+    assert r.status_code == 403 and r.json()["conflict"] == LOCKED, r.text
+    with pytest.raises(OpError) as e:  # the vault is held to the shape too
+        commit_ops(workspace_of(USER), file, [{"op": "set", "id": file, "props": {"parent_page": lib}}],
+                   actor=account_of(USER), client=DISK_CLIENT)
+    assert e.value.conflict == LOCKED
+    assert "parent_page" not in _props(file) and "parent_page" not in _props(lib)
 
 
 def test_a_parent_change_revalidates_the_share_peers(owner, monkeypatch):
@@ -439,8 +479,9 @@ def test_step_47_gives_a_workspace_stamped_46_the_parent_page_column(data_dir):
     db.close_workspace_connections("spOld")
     with closing(sqlite3.connect(str(path))) as old:  # the file as release 46 left it
         db.register_functions(old)
-        for column in ("deleted_with", "parent_page"):  # (step 48's column came after it)
-            old.execute(f"DROP INDEX idx_ub_{column}")
+        for index in ("listing", "dir", "work_folder", "deleted_with", "parent_page"):
+            old.execute(f"DROP INDEX idx_ub_{index}")
+        for column in ("first_folder", "work_folder", "deleted_with", "parent_page"):  # (48's and 53's came after)
             old.execute(f"ALTER TABLE unified_blocks DROP COLUMN {column}")
         old.execute("INSERT INTO unified_blocks (id, parent_id, position, content, properties, created_at, "
                     "updated_at, page_id) VALUES ('spKid', 'root', 'a5', 'kid', '{\"parent_page\": \"spTop\"}', "
@@ -454,16 +495,18 @@ def test_step_47_gives_a_workspace_stamped_46_the_parent_page_column(data_dir):
         with connect_pages_db("spOld") as cx:
             assert cx.execute("SELECT parent_page FROM unified_blocks WHERE id = 'spKid'").fetchone() == ("spTop",)
             assert cx.execute("SELECT 1 FROM sqlite_master WHERE name = 'idx_ub_parent_page'").fetchone()
-            assert cx.execute("PRAGMA user_version").fetchone()[0] == 48
+            assert cx.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION  # the newest step
             ddl = cx.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0]
             migrations._v47_parent_page("spOld", cx, None)  # re-runnable: nothing to do
             assert cx.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0] == ddl
             cols = [r[1] for r in cx.execute("PRAGMA table_xinfo(unified_blocks)")]
-            assert cols[-5:] == ["page_id", "kind", "doc_id", "parent_page", "deleted_with"]  # a fresh table's order
+            assert cols[-7:] == ["page_id", "kind", "doc_id", "parent_page", "deleted_with",  # a fresh table's order
+                                 "work_folder", "first_folder"]
     finally:
         db.close_workspace_connections("spOld")
     migrations._v47_parent_page("", sqlite3.connect(":memory:"), None)  # a copy without the table
     assert (47, "parent_page", migrations._v47_parent_page) in migrations.WORKSPACE_STEPS
     assert 47 not in [v for v, _, _ in migrations.STEPS]  # a workspace step only
-    assert migrations.workspace_format() == 44  # a derived column: copies on either side still sync
+    # a derived column: copies on either side still sync (the format, 55, is step 55's positions)
+    assert 47 in migrations.DERIVED_STEPS and migrations.workspace_format() == 55
     assert blocks_store.PARENT_PAGE == "parent_page"

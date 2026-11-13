@@ -10,7 +10,7 @@ stored — and every record says what tied it to the document (meta.match).
 
 import json
 
-from conftest import make_page
+from conftest import doc_props, make_page
 
 from gamma.ai_client import AllowanceExhausted
 from gamma.routers import metadata
@@ -50,7 +50,7 @@ CITED_META = {
 
 
 def _paper_page(guest, text, monkeypatch, ai_enabled=False):
-    page = make_page(guest, "paper.pdf", properties={"doc_id": "d" * 24})
+    page = make_page(guest, "paper.pdf", properties=doc_props("d" * 24))
     monkeypatch.setattr(metadata, "_pdf_excerpt", lambda u, d, limit: (text, None, len(text)))
     monkeypatch.setattr(metadata, "_ensure_indexed", lambda u, d: True)
     monkeypatch.setattr(metadata, "ai_runtime", lambda u: {"enabled": ai_enabled})
@@ -284,7 +284,7 @@ def test_issue_clipped_pdf_finds_trailer_doi(guest, monkeypatch):
             + "entanglement by\nquantum Zeno dynamics\nGiovanni Barontini\n"
             + "abstract and body text " * 100)
     tail = "last page text, article ends here. 10.1000/zeno754 more trailer."
-    page = make_page(guest, "paper.pdf", properties={"doc_id": "d" * 24})
+    page = make_page(guest, "paper.pdf", properties=doc_props("d" * 24))
 
     def fake_excerpt(u, d, limit, offset=0, start_page=1, with_pages=False):
         if start_page > 1:
@@ -308,7 +308,7 @@ def test_page_title_feeds_crossref_query(guest, monkeypatch):
     """A page titled with the paper name (renamed by hand, or a title-like
     filename) becomes the first Crossref query when no identifier confirms."""
     text = "junk from another article " * 80 + ZENO_TITLE + " abstract follows " * 50
-    page = make_page(guest, ZENO_TITLE, properties={"doc_id": "d" * 24})
+    page = make_page(guest, ZENO_TITLE, properties=doc_props("d" * 24))
     monkeypatch.setattr(metadata, "_pdf_excerpt", lambda u, d, limit: (text, None, len(text)))
     monkeypatch.setattr(metadata, "_ensure_indexed", lambda u, d: True)
     monkeypatch.setattr(metadata, "ai_runtime", lambda u: {"enabled": False})
@@ -339,7 +339,7 @@ def _clipped_page(guest, monkeypatch, web_meta, text=None, crossref=None):
     the page and the queries Crossref was asked."""
     props = {"web_url": "https://repo.example/item", "web_meta": web_meta}
     if text is not None:
-        props["doc_id"] = "d" * 24
+        props.update(doc_props("d" * 24))
         monkeypatch.setattr(metadata, "_pdf_excerpt", lambda u, d, limit: (text, None, len(text)))
         monkeypatch.setattr(metadata, "_ensure_indexed", lambda u, d: True)
     monkeypatch.setattr(metadata, "ai_runtime", lambda u: {"enabled": False})
@@ -452,7 +452,7 @@ def test_the_pdfs_largest_type_is_asked_before_the_text_head(guest, monkeypatch)
     Crossref query after the page's record and before the page title and
     the text head; a query asked once is not asked again."""
     text = "Downloaded from https://journal.example on 1 May 2024 " * 30 + ZENO_TITLE
-    page = make_page(guest, ZENO_TITLE, properties={"doc_id": "d" * 24})
+    page = make_page(guest, ZENO_TITLE, properties=doc_props("d" * 24))
     monkeypatch.setattr(metadata, "_pdf_excerpt", lambda u, d, limit: (text, None, len(text)))
     monkeypatch.setattr(metadata, "_ensure_indexed", lambda u, d: True)
     monkeypatch.setattr(metadata, "ai_runtime", lambda u: {"enabled": False})
@@ -470,7 +470,7 @@ def test_web_url_supplies_trusted_doi(guest, monkeypatch):
     """The publisher page a clip came from (web_url) is scanned for
     identifiers too, with URL-level trust."""
     page = make_page(guest, "p", properties={
-        "doc_id": "d" * 24, "web_url": "https://doi.org/10.1000/zeno754"})
+        **doc_props("d" * 24), "web_url": "https://doi.org/10.1000/zeno754"})
     monkeypatch.setattr(metadata, "_pdf_excerpt",
                         lambda u, d, limit: ("no identifiers here", None, 19))
     monkeypatch.setattr(metadata, "_ensure_indexed", lambda u, d: True)
@@ -485,8 +485,7 @@ def test_web_url_supplies_trusted_doi(guest, monkeypatch):
 def test_arxiv_id_from_source_url_is_trusted(guest, monkeypatch):
     """URL-derived ids stay authoritative even when the text is garbage (a
     scanned PDF must not lose its arXiv record to a failed title match)."""
-    page = make_page(guest, "paper", properties={
-        "source_url": "https://arxiv.org/abs/2601.00001"})
+    page = make_page(guest, "paper", properties=doc_props(url="https://arxiv.org/abs/2601.00001"))
     meta = {"title": "Scanned Preprint", "authors": ["A"], "year": "2026",
             "venue": "arXiv:2601.00001", "volume": "", "pages": "", "doi": "",
             "arxiv_id": "2601.00001", "source": "arxiv"}
@@ -538,7 +537,7 @@ def _qpm_page(guest, monkeypatch, ai_enabled, pick=None, refuse=False):
     check with ``pick`` (or refusing it) and reading the note itself. Returns
     the page and the record listings the AI was shown."""
     page = make_page(guest, "Quasi-phase-matching",
-                     properties={"doc_id": "d" * 24, "auto_title": "Quasi-phase-matching"})
+                     properties={**doc_props("d" * 24), "auto_title": "Quasi-phase-matching"})
     monkeypatch.setattr(metadata, "_pdf_excerpt", lambda u, d, limit: (QPM_TEXT, None, len(QPM_TEXT)))
     monkeypatch.setattr(metadata, "_ensure_indexed", lambda u, d: True)
     monkeypatch.setattr(metadata, "ai_runtime", lambda u: {"enabled": ai_enabled})
@@ -955,7 +954,7 @@ def test_a_heading_naming_a_cited_review_is_not_confirmed(guest, monkeypatch):
             "[PDF page 2]\n[1] M. Aspelmeyer et al., Rev. Mod. Phys. 86, 1391 (2014), doi:10.1103/RevModPhys.86.1391\n")
     review = {"title": "Cavity optomechanics", "authors": ["Markus Aspelmeyer", "Tobias J. Kippenberg"],
               "year": "2014", "doi": "10.1103/RevModPhys.86.1391", "source": "doi", "kind": "journalArticle"}
-    page = make_page(guest, "notes.pdf", properties={"doc_id": "d" * 24, "auto_title": "notes.pdf"})
+    page = make_page(guest, "notes.pdf", properties={**doc_props("d" * 24), "auto_title": "notes.pdf"})
     monkeypatch.setattr(metadata, "_pdf_excerpt", lambda u, d, limit: (note, None, len(note)))
     monkeypatch.setattr(metadata, "_ensure_indexed", lambda u, d: True)
     monkeypatch.setattr(metadata, "ai_runtime", lambda u: {"enabled": False})

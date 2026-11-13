@@ -1,7 +1,8 @@
-"""gamma/vault_disk.py: a synced vault's directory as files, with real files in
+"""gamma/vault/disk.py: a synced vault's directory as files, with real files in
 ``tmp_path``: the scan, moves, the write that replaces a note, the trash
 (docs/dev/synced_vaults.md "A round", "Rules that keep files safe")."""
 
+import json
 import os
 import stat
 import sys
@@ -12,10 +13,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from gamma import vault_disk
-from gamma.vault_disk import (MARKER, TRASH, Found, Known, Offline, Stopped, check_marker, clean_temps, free_name,
-                              make_marker, move, moved, pair_moves, pdf_id, purge, racy, read_marker, refusal,
-                              replace_note, scan, similarity, trash_path, walk, write_new)
+from gamma.vault import disk as vault_disk
+from gamma.vault.disk import (MARKER, TRASH, Found, Known, Offline, Outside, Stopped, check_marker, clean_temps,
+                              free_name, make_marker, move, moved, pair_moves, pdf_id, purge, racy, read_marker,
+                              refusal, replace_note, scan, similarity, sweep_own, trash_path, walk, write_new,
+                              write_own)
+from gamma.work_folders import ignore_rules
+from gamma.work_folders.ignore_rules import Rules
+
+EVERYTHING = Rules.parse("")    # a .gammaignore that leaves nothing out
 
 WINDOWS = sys.platform == "win32"
 
@@ -45,15 +51,22 @@ def pdf(trailer=b"/ID [<ABCDEF0123><99887766>]", head=b""):
 
 def test_a_marker_is_made_once_in_a_hidden_directory(tmp_path):
     root = tmp_path / "new vault"
-    marker = make_marker(root, notes_folder="Notes", ignore=["*.tmp"])
-    assert read_marker(root) == marker and marker["format"] == "gamma-vault-1" and len(marker["id"]) == 32
-    assert marker["notes_folder"] == "Notes" and marker["ignore"] == ["*.tmp"]
+    marker = make_marker(root, notes_folder="Notes")
+    assert read_marker(root).items() >= marker.items() and marker["format"] == "gamma-vault-1"
+    assert len(marker["id"]) == 32 and marker["notes_folder"] == "Notes"
+    assert json.loads((root / MARKER).read_text()) == marker and "ignore" not in marker
     if WINDOWS:
         assert os.stat(root / ".gamma").st_file_attributes & stat.FILE_ATTRIBUTE_HIDDEN
     with pytest.raises(FileExistsError):
         make_marker(root)
-    assert check_marker(root, marker["id"]) == marker
+    assert check_marker(root, marker["id"]).items() >= marker.items()
     assert [p.name for p in (root / ".gamma").iterdir()] == ["vault.json"]
+
+
+def test_an_older_markers_ignore_globs_are_not_read(tmp_path):
+    root, vault_id = vault(tmp_path, a_md="a", b_md="b")
+    (root / MARKER).write_text(json.dumps({**json.loads((root / MARKER).read_text()), "ignore": ["a.md", "*.pdf"]}))
+    assert not read_marker(root).get("ignore") and sorted(scan(root, vault_id).files) == ["a.md", "b.md"]
 
 
 def test_a_directory_that_is_not_the_vault_stops_it(tmp_path):
@@ -86,7 +99,7 @@ def test_a_root_that_is_gone_is_offline_and_never_made_again(tmp_path):
 
 # --- the scan -------------------------------------------------------------------
 
-def test_a_scan_lists_notes_and_papers_and_counts_the_rest(tmp_path):
+def test_a_scan_lists_notes_and_papers_counts_pictures_and_by_default_leaves_out_the_rest(tmp_path):
     root, vault_id = vault(tmp_path, a_md="a", sub__b_md="b", sub__deep__p_pdf=pdf())
     write(root, "x.markdown", b"x")
     write(root, "pic.PNG", b"png")
@@ -98,7 +111,19 @@ def test_a_scan_lists_notes_and_papers_and_counts_the_rest(tmp_path):
     st = os.stat(root / "a.md")
     assert found.files["a.md"] == Found("notes", st.st_size, st.st_mtime_ns, str(st.st_ino))
     assert sorted(found.dirs) == ["empty", "sub", "sub/deep"] and found.dirs["sub"] == str(os.stat(root / "sub").st_ino)
-    assert (found.pictures, found.untracked, found.refused, found.temps) == (1, 2, [], [])
+    assert (found.pictures, found.untracked, found.refused, found.temps) == (1, 0, [], [])
+    assert found.excluded == {"data.csv", "empty/.keep"} and found.rules is ignore_rules.DEFAULT
+    every = scan(root, vault_id, EVERYTHING)
+    assert every.files == found.files and (every.pictures, every.untracked, every.excluded) == (1, 2, set())
+    # a work folder's scan lists every file the rules take, pictures and files of no class as files
+    work = scan(root, vault_id, EVERYTHING, work=True)
+    assert sorted(work.files) == ["a.md", "data.csv", "empty/.keep", "pic.PNG", "sub/b.md", "sub/deep/p.pdf", "x.markdown"]
+    assert {work.files[p].kind for p in ("data.csv", "empty/.keep", "pic.PNG")} == {"file"}
+    assert work.files["a.md"].kind == "notes" and work.files["sub/deep/p.pdf"].kind == "pdf"
+    st = os.stat(root / "pic.PNG")
+    assert work.files["pic.PNG"] == Found("file", st.st_size, st.st_mtime_ns, str(st.st_ino))
+    assert (work.pictures, work.untracked, work.images, work.excluded) == (0, 0, [], set())
+    assert sorted(scan(root, vault_id, work=True).files) == ["a.md", "pic.PNG", "sub/b.md", "sub/deep/p.pdf", "x.markdown"]
 
 
 def test_a_directory_not_yet_a_vault_is_walked_and_nothing_written(tmp_path):
@@ -107,21 +132,59 @@ def test_a_directory_not_yet_a_vault_is_walked_and_nothing_written(tmp_path):
     write(root, "a.md", "a")
     write(root, "p.pdf", pdf())
     before = sorted(p.name for p in root.rglob("*"))
-    found = walk(root, ["p.*"])
-    assert list(found.files) == ["a.md"] and sorted(p.name for p in root.rglob("*")) == before
+    found = walk(root, Rules.parse("p.*"))
+    assert list(found.files) == ["a.md"] and found.excluded == {"p.pdf"}
+    assert sorted(p.name for p in root.rglob("*")) == before
 
 
 def test_a_scan_leaves_out_what_is_no_one_s_note(tmp_path):
+    """The fixed rules come first: no line of the .gammaignore takes back a
+    dot directory, node_modules, a temporary name or the file itself."""
     root, vault_id = vault(tmp_path, a_md="a")
     for rel in (".obsidian/workspace.md", ".git/x.md", ".trash/old.md", "node_modules/pkg/readme.md",
                 "build/out.md", "drafts/keep.md", "drafts/skip.tmp.md", "~$report.md", ".~lock.a.md#", "._a.pdf"):
         write(root, rel, "x")
     write(root, ".gamma-1234.tmp", "x")
     write(root, "sub/b.pdf.gamma-sync-part", "x")
-    (root / MARKER).write_text((root / MARKER).read_text().replace('"ignore": []', '"ignore": ["build/", "*.tmp.md"]'))
-    found = scan(root, vault_id)
-    assert sorted(found.files) == ["a.md", "drafts/keep.md"]
+    write(root, ignore_rules.NAME, "build/\n*.tmp.md\n!.git/\n!node_modules/\n!.obsidian/\n!~$*\n!.gammaignore\n")
+    found = scan(root, vault_id, ignore_rules.read(root))
+    assert sorted(found.files) == ["a.md", "drafts/keep.md"] and found.untracked == 0
+    assert found.excluded == {"build/", "drafts/skip.tmp.md"}
     assert sorted(found.temps) == [".gamma-1234.tmp", "sub/b.pdf.gamma-sync-part"]
+
+
+def test_a_directory_the_rules_leave_out_is_never_entered(tmp_path, monkeypatch):
+    root, vault_id = vault(tmp_path, a_md="a", venv__lib__x_md="x", notes__b_md="b", notes__c_pdf=pdf())
+    write(root, "notes/data.json", "{}")
+    write(root, "notes/fig.png", b"png")
+    entered, real = [], vault_disk._entries
+    monkeypatch.setattr(vault_disk, "_entries", lambda directory: entered.append(Path(directory).name) or real(directory))
+    rules = Rules.parse("/venv/\n/notes/*.pdf\n")
+    found = scan(root, vault_id, rules)
+    assert sorted(found.files) == ["a.md", "notes/b.md"] and found.rules is rules and "venv" not in found.dirs
+    assert found.excluded == {"venv/", "notes/c.pdf"} and not {"venv", "lib"} & set(entered)
+    assert (found.pictures, found.untracked, found.images) == (1, 1, ["notes/fig.png"])   # data.json: chosen, unread
+    assert scan(root, vault_id, Rules.parse("*.json")).untracked == 0
+
+
+def test_the_gammaignore_is_never_listed_and_one_below_the_root_is_no_rules(tmp_path):
+    root, vault_id = vault(tmp_path, a_md="a", sub__b_md="b")
+    write(root, ignore_rules.NAME, "!*\n")
+    write(root, "sub/.gammaignore", "*\n")
+    write(root, "sub/deeper/.GammaIgnore", "*\n")
+    write(root, "sub/.gammaignore.md", "a note")
+    found = scan(root, vault_id, ignore_rules.read(root))
+    assert sorted(found.files) == ["a.md", "sub/.gammaignore.md", "sub/b.md"]
+    assert (found.untracked, found.excluded) == (0, set())
+
+
+def test_a_name_the_rules_leave_out_is_never_reported(tmp_path, monkeypatch):
+    root, vault_id = vault(tmp_path)
+    listing = [Entry(root, n) for n in ("CON.md", "a?.md", "Same.md", "same.md", "fine.md")]
+    monkeypatch.setattr(vault_disk, "_entries", lambda directory: listing if directory == root else [])
+    found = scan(root, vault_id, Rules.parse("/CON.md\n/a\\?.md\n/same.md\n"))
+    assert list(found.files) == ["fine.md"] and found.refused == []
+    assert found.excluded == {"CON.md", "a?.md", "Same.md", "same.md"}
 
 
 def test_a_cloud_placeholder_is_listed_and_never_read(tmp_path):
@@ -139,6 +202,8 @@ def test_a_cloud_placeholder_is_listed_and_never_read(tmp_path):
     assert found.files["_underscore.md"].placeholder and not found.files["a.md"].placeholder
     if WINDOWS:
         assert found.files["online.md"].placeholder and found.files["online.md"].file_id == ""
+    left = scan(root, vault_id, Rules.parse("/sub/paper.pdf"))      # a stub is decided by the name it stands for
+    assert "sub/Paper.pdf" not in left.files and left.excluded == {"sub/Paper.pdf"}
 
 
 @pytest.mark.skipif(not WINDOWS, reason="junctions are Windows'")
@@ -152,6 +217,8 @@ def test_a_junction_is_reported_and_never_followed(tmp_path):
     found = scan(root, vault_id)
     assert sorted(found.files) == ["a.md"] and "j" not in found.dirs
     assert found.refused == [("j", vault_disk._LINK)]
+    left = scan(root, vault_id, Rules.parse("/j/"))       # decided as the directory it stands for
+    assert left.refused == [] and left.excluded == {"j"} and sorted(left.files) == ["a.md"]
 
 
 def test_a_symlink_is_reported_and_never_followed(tmp_path):
@@ -159,12 +226,16 @@ def test_a_symlink_is_reported_and_never_followed(tmp_path):
     write(tmp_path, "outside.md", "x")
     try:
         os.symlink(tmp_path / "outside.md", root / "link.md")
+        os.symlink(tmp_path / "outside.md", root / "link.txt")
         os.symlink(tmp_path, root / "dirlink", target_is_directory=True)
     except OSError:
         pytest.skip("this account may not make symlinks")
     found = scan(root, vault_id)
     assert sorted(found.files) == ["a.md"]
-    assert sorted(found.refused) == [("dirlink", vault_disk._LINK), ("link.md", vault_disk._LINK)]
+    assert sorted(found.refused) == [("dirlink", vault_disk._LINK), ("link.md", vault_disk._LINK),
+                                     ("link.txt", vault_disk._LINK)]
+    left = scan(root, vault_id, Rules.parse("/dirlink/\n*.txt\n"))
+    assert left.refused == [("link.md", vault_disk._LINK)] and left.excluded == {"dirlink", "link.txt"}
 
 
 class Entry:
@@ -201,11 +272,13 @@ def test_names_windows_refuses_and_names_alike_but_for_case_are_left(tmp_path, m
     listing = [Entry(root, n) for n in ("CON.md", "a?.md", "trail. .md ", "Same.md", "same.md", "fine.md")]
     listing += [Entry(root, "Dir", folder=True), Entry(root, "dir", folder=True), Entry(root, "vanished.md", gone=True)]
     monkeypatch.setattr(vault_disk, "_entries", lambda directory: listing if directory == root else [])
-    found = scan(root, vault_id)
+    found = scan(root, vault_id, EVERYTHING)
     assert list(found.files) == ["fine.md"] and found.dirs == {}
     assert sorted(path for path, _why in found.refused) == ["CON.md", "Dir", "Same.md", "a?.md", "dir", "same.md",
                                                             "trail. .md "]
     assert dict(found.refused)["same.md"] == vault_disk._CASE
+    found = scan(root, vault_id)        # a file of no class, which the default leaves out
+    assert "trail. .md " not in dict(found.refused) and "trail. .md " in found.excluded
 
 
 def test_refusal_names_what_windows_cannot_hold():
@@ -310,6 +383,21 @@ def test_a_file_comes_back_to_its_page_where_it_lived_or_by_its_file_id_never_by
     assert vault_disk.came_back(tombs, [note("n.md", "a different note under the old name", "77")]) == {}
 
 
+def test_a_listed_file_comes_back_where_it_lived_by_its_id_or_its_size():
+    """A work folder's file past the keep limit has no hash, so one deleted
+    and put back (a branch switched there and back) made a second page while
+    the old one stayed in Recently deleted."""
+    gone = Known("weights.ckpt", "file", 70_000_000, "", "41", mtime_ns=1)
+    assert vault_disk.came_back([gone], [Known("weights.ckpt", "file", 70_000_000, "", "99", mtime_ns=2)]) == {"weights.ckpt": 0}
+    assert vault_disk.came_back([gone], [Known("weights.ckpt", "file", 70_000_010, "", "41", mtime_ns=2)]) == {"weights.ckpt": 0}
+    assert vault_disk.came_back([gone], [Known("weights.ckpt", "file", 70_000_010, "", "99", mtime_ns=2)]) == {}
+    assert vault_disk.came_back([gone], [Known("old/weights.ckpt", "file", 70_000_000, "", "99", mtime_ns=2)]) == {}
+    assert vault_disk.came_back([gone], [Known("old/weights.ckpt", "file", 70_000_000, "", "41", mtime_ns=1)]) == \
+        {"old/weights.ckpt": 0}                                             # moved: its id with its size and time
+    hashed = Known("data.bin", "file", 300, "h-data", "41", mtime_ns=1)
+    assert vault_disk.came_back([hashed], [Known("data.bin", "file", 300, "", "41", mtime_ns=2)]) == {}  # a hash says
+
+
 def test_a_freed_inode_under_another_name_is_the_next_file_not_the_old_one():
     """The daily note of one day deleted and the next made from the same
     template: ext4 gave the new file the old one's inode, so a file id that
@@ -377,6 +465,8 @@ def test_a_name_pull_writes_is_one_the_scan_lists():
     assert vault_disk.listed("Plan.md") and not vault_disk.listed("~$Plan.md") and not vault_disk.listed(".gamma-x.tmp")
     assert vault_disk.listed("node_modules.md") and not vault_disk.listed("node_modules", directory=True)
     assert not vault_disk.listed(".hidden", directory=True) and vault_disk.listed("_node_modules", directory=True)
+    assert not vault_disk.listed(".gammaignore") and not vault_disk.listed(".GammaIgnore")
+    assert vault_disk.listed(".gammaignore.md") and vault_disk.listed(".env")
 
 
 def test_a_free_name_is_free_among_the_rows_too(tmp_path):
@@ -549,6 +639,60 @@ def test_stale_temps_go_and_a_write_going_on_stays(tmp_path):
     write(root, "~$theirs.md", "z")
     assert clean_temps(root, scan(root, vault_id).temps) == 1
     assert not old.exists() and young.exists() and (root / "~$theirs.md").exists()
+
+
+def test_write_own_writes_gammas_file_below_gamma_over_whatever_is_there(tmp_path, monkeypatch):
+    root, _id = vault(tmp_path)
+    assert write_own(root, ".gamma/feedback/open.json", b"{}\n") is True
+    assert (root / ".gamma/feedback/open.json").read_bytes() == b"{}\n" and leftovers(root) == []
+    assert write_own(root, ".gamma/feedback/open.json", b"[]\n") is True
+    assert (root / ".gamma/feedback/open.json").read_bytes() == b"[]\n" and leftovers(root) == []
+    with pytest.raises(ValueError):
+        write_own(root, "notes/open.json", b"x")
+    with pytest.raises(Outside):
+        write_own(root, ".gamma/../open.json", b"x")
+    assert not (root / "notes").exists() and not (tmp_path / "open.json").exists()
+    if WINDOWS:   # a reader holding it to the last try: nothing written, no temporary left, False
+        monkeypatch.setattr(vault_disk, "REPLACE_RETRY_S", 0.01)
+        with open(root / ".gamma/feedback/open.json", "rb"):
+            assert write_own(root, ".gamma/feedback/open.json", b"{}\n") is False
+        assert (root / ".gamma/feedback/open.json").read_bytes() == b"[]\n" and leftovers(root) == []
+    gone = tmp_path / "unplugged"   # an empty mount point: nothing made
+    gone.mkdir()
+    with pytest.raises(Offline):
+        write_own(gone, ".gamma/feedback/open.json", b"x")
+    assert list(gone.iterdir()) == []
+
+
+def test_write_own_never_writes_below_a_junction(tmp_path):
+    root, _id = vault(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    if WINDOWS:
+        import _winapi
+
+        _winapi.CreateJunction(str(elsewhere), str(root / ".gamma" / "feedback"))
+    else:
+        try:
+            os.symlink(elsewhere, root / ".gamma" / "feedback", target_is_directory=True)
+        except OSError:
+            pytest.skip("this account may not make symlinks")
+    with pytest.raises(Outside):
+        write_own(root, ".gamma/feedback/open.json", b"x")
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_sweep_own_takes_gammas_stale_temps_of_a_directory_the_scan_never_enters(tmp_path):
+    root, vault_id = vault(tmp_path)
+    then = time.time() - 3600
+    old, young = write(root, ".gamma/feedback/.gamma-old.tmp", "x"), write(root, ".gamma/feedback/.gamma-young.tmp", "y")
+    theirs = write(root, ".gamma/feedback/~$theirs.md", "z")
+    for path in (old, theirs):
+        os.utime(path, (then, then))
+    assert scan(root, vault_id).temps == []
+    assert sweep_own(root, ".gamma/feedback") == 1
+    assert not old.exists() and young.exists() and theirs.exists()
+    assert sweep_own(root, ".gamma/feedback/img") == 0
 
 
 # --- names, moves and the trash ---------------------------------------------------------

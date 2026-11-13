@@ -78,6 +78,9 @@ import { authScenarios } from "./scenarios/auth.mjs";
 import { zoteroLinkScenarios } from "./scenarios/zotero-link.mjs";
 import { blockPropertiesScenarios } from "./scenarios/blockProperties.mjs";
 import { vaultScenarios } from "./scenarios/vaults.mjs";
+import { workFolderScenarios } from "./scenarios/workFolders.mjs";
+import { feedbackScenarios } from "./scenarios/feedback.mjs";
+import { viewerScenarios } from "./scenarios/viewers.mjs";
 import { GROUPS, changedFromGit, selectGroups, shardOf } from "./select.mjs";
 
 const RUNNERS = {
@@ -113,6 +116,9 @@ const RUNNERS = {
   "collab-soak": collabSoakScenarios,
   "mirror": mirrorScenarios,
   "vaults": vaultScenarios,
+  "work-folders": workFolderScenarios,
+  "feedback": feedbackScenarios,
+  "viewers": viewerScenarios,
   "zotero-link": zoteroLinkScenarios,
   "transfers": transferScenarios,
   "mcp": mcpScenarios,

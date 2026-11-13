@@ -10,7 +10,7 @@ import {
   GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, encodeStroke, eraserKeep, inkBytes, newCanvasInk, newInk, pdfPositionOf, strokeBytes,
 } from "../src/ink/ink.js";
 import {
-  eraseAlongChanges, eraseManyChanges, freshInk, missingGroups, overBudget, pasteTooBig, splitsGroup, withGroupBlocks,
+  currentGroup, eraseAlongChanges, eraseManyChanges, freshInk, missingGroups, overBudget, pasteTooBig, splitsGroup, withGroupBlocks,
 } from "../src/ink/inkEdits.js";
 
 const stroke = (id, x = 10, extra = {}) => encodeStroke({ id, ch: "xy", pen: false, size: 1, samples: [{ x, y: -40 }, { x, y: 40 }], ...extra });
@@ -33,6 +33,18 @@ test("the byte budget refuses an edit that takes a group past MAX_BYTES, but let
   assert.equal(inkBytes(exact), MAX_BYTES);
   assert.equal(overBudget([{ before: small, after: exact }]), false, "exactly MAX_BYTES");
   assert.equal(overBudget([{ before: small, after: page(sized(MAX_BYTES - inkBytes(page()) + 2)) }]), true, "one byte past it");
+});
+
+test("the group the next stroke joins: the surface's current one while its block is on the page, a new one once a comment thread closed it", () => {
+  const group = (id) => ({ id, content: "", properties: { ink_url: "/u/a.ink", ink_strokes: 1 }, children: [] });
+  const tree = [group("g1"), { id: "n", content: "a note", properties: {}, children: [] }];
+  assert.equal(currentGroup({ page: 1, id: "g1" }, 1, tree), tree[0]);
+  assert.equal(currentGroup({ page: 1, id: "g1" }, 2, tree), null, "a stroke on another surface");
+  assert.equal(currentGroup(null, 1, tree), null, "no stroke yet, or the page left");
+  assert.equal(currentGroup({ page: 1, id: "g9" }, 1, tree), null, "its block gone from the tree");
+  assert.equal(currentGroup({ page: 1, id: "n" }, 1, tree), null, "not a group");
+  assert.equal(currentGroup({ page: 1, id: "g1" }, 1, tree, (id) => id === "g1"), null, "closed by a comment thread");
+  assert.equal(currentGroup({ page: 1, id: "g1" }, 1, tree, (id) => id === "g2"), tree[0], "another group's thread");
 });
 
 test("a change that leaves strokes in a group with no block in the tree puts the block back", () => {

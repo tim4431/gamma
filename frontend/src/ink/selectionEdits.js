@@ -160,22 +160,38 @@ export function splitPlan(sel, inkOf, makeId) {
   return { changes, items: [{ id, ids: picked.strokes.map((s) => s.id) }] };
 }
 
+// The group a selection is the whole of: the id of its one group when
+// every stroke of that group is selected, else null (part of a group,
+// several groups, pictures alone).
+export function wholeGroup(sel, inkOf) {
+  if (sel?.items?.length !== 1) return null;
+  const { id, ids } = sel.items[0];
+  const strokes = inkOf(id)?.strokes;
+  if (!strokes?.length || strokes.length !== ids.length) return null;
+  const want = new Set(ids);
+  return strokes.every((s) => want.has(s.id)) ? id : null;
+}
+
 // Merge into note: a selection of one whole group appended to the
 // surface's previous group, and itself emptied, as one entry →
 // {changes, items} (the strokes as they landed). The previous group is
 // the nearest before it with strokes, in the order `surfaces` (the page's
-// groups by surface) gives, else the first after it. A group whose block
-// (in `tree`) holds a caption or notes is {refused}, since its block would
-// stay behind empty, and so is a merge past MAX_STROKES. null when there
-// is nothing to merge.
-export function mergePlan(sel, inkOf, tree, surfaces) {
+// groups by surface) gives, else the first after it; a group with a
+// comment thread (`threaded(id)`, comments/useInkThreads.js) takes no
+// strokes, so it is passed over. A group whose block (in `tree`) holds a
+// caption or notes is {refused}, since its block would stay behind empty,
+// and so is one with a thread, which would lose its drawing, and a merge
+// past MAX_STROKES. null when there is nothing to merge.
+export function mergePlan(sel, inkOf, tree, surfaces, threaded = () => false) {
   const picked = selectedStrokes(sel, inkOf);
   if (!picked || sel.items.length !== 1) return null;
   const page = sel.page, from = sel.items[0].id, source = inkOf(from);
   if (!source || source.strokes.length !== picked.strokes.length) return null;
+  if (threaded(from)) return { refused: t("Not merged: this handwriting has comments.") };
   const block = findBlock(tree, from);
   if ((block?.content || "").trim() || block?.children?.length) return { refused: t("Not merged: this note has a caption or notes under it.") };
-  const groups = (surfaces.get(page) || []).map((b) => b.id).filter((gid) => inkOf(gid)?.strokes?.length);
+  const groups = (surfaces.get(page) || []).map((b) => b.id)
+    .filter((gid) => inkOf(gid)?.strokes?.length && (gid === from || !threaded(gid)));
   const at = groups.indexOf(from);
   const targetId = at > 0 ? groups[at - 1] : groups.find((gid) => gid !== from);
   const target = targetId ? inkOf(targetId) : null;

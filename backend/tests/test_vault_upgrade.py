@@ -1,5 +1,5 @@
 """A folder kept on disk before synced vaults, taken onto the engine at its
-first round (gamma/vault_upgrade.py, docs/research/vaults.md "In steps" 4): a
+first round (gamma/vault/upgrade.py, docs/research/vaults.md "In steps" 4): a
 directory the gamma-sync client wrote (notes changed on disk and not, a paper
 and its PDF, a sub-page, a picture, a subfolder), its marker written and said
 in the status, its files and directories in vaults.db, its state file gone,
@@ -24,8 +24,10 @@ import time
 
 import pytest
 
-from conftest import account_of, login, make_folder, make_page, make_user, workspace_of
-from gamma import folder_links, gamma_sync, md_lens, vault_disk, vault_store, vault_sync
+from conftest import account_of, doc_props, login, make_folder, make_page, make_user, workspace_of
+from gamma import folder_links, gamma_sync, md_lens
+from gamma.vault import disk as vault_disk, kinds, store as vault_store, sync as vault_sync
+from gamma.vault.local_remote import LocalRemote
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.integrations import create_token
 from gamma.obsidian_export import anchor_marker
@@ -54,7 +56,7 @@ def owner(client):
 def settled(monkeypatch):
     """Files the client wrote a moment ago read as settled, and a missing one
     removed at its second scan."""
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     monkeypatch.setattr(gamma_sync, "SETTLE_S", 0)
     monkeypatch.setattr(vault_store, "MISSING_S", 0)
 
@@ -70,7 +72,7 @@ def _lab(c, name) -> dict:
     folder, sub = make_folder(c, name), make_folder(c, f"{name}/Sub")
     pdf = _blank_pdf(pages=1) + name.encode()
     up = c.post("/api/uploads", files={"file": ("p.pdf", pdf, "application/pdf")}).json()
-    paper = make_page(c, "UP paper", {"doc_id": up["doc_id"], "original_filename": "p.pdf", "folders": [folder]})
+    paper = make_page(c, "UP paper", {**doc_props(up["doc_id"], name="p.pdf"), "folders": [folder]})
     _children(c, paper["id"], [
         {"id": f"up-hl-{paper['id']}", "content": "why it matters", "children": [],
          "properties": {"quote": "the quoted words", "color": "rgba(255, 226, 143, 0.65)", "pdf_position": _position()}},
@@ -181,17 +183,19 @@ def test_a_folder_kept_before_is_taken_onto_the_engine_at_its_first_round(owner,
     paper_md.write_text(paper_md.read_text(encoding="utf-8") + "\na line from disk\n", encoding="utf-8")
     os.utime(paper_md, (then, then))
     status = _sync(owner, link["id"])
-    assert status["counts"]["sent"] == 1 and "a line from disk" in _texts(ws, lab["paper"])
+    assert status["counts"]["sent"] == 2 and "a line from disk" in _texts(ws, lab["paper"])
     assert status["kept"] == [{"path": "UP plain.md", "why": vault_sync.UNKNOWN, "force": True}]
     assert "my own line" not in " ".join(_texts(ws, lab["plain"]))
+    picture = vault_store.files(link["id"])[f"attachments/{lab['png']}"]     # a work folder's picture is a file: a page
+    assert picture["kind"] == "file" and picture["page_id"] and picture["page_id"] in _pages_of(lab["folder"])
 
     # renamed on disk, it is still that page's, by the gamma_id it carries: never a second page
-    pages = len(vault_sync.LocalRemote(ws, lab["folder"], account_of(OWNER)).layout().pages)
+    pages = len(LocalRemote(ws, lab["folder"], account_of(OWNER)).layout().pages)
     plain.rename(dest / "Renamed plain.md")
     status = _sync(owner, link["id"])
     rows = vault_store.files(link["id"])
     assert "UP plain.md" not in rows and rows["Renamed plain.md"]["page_id"] == lab["plain"]
-    assert len(vault_sync.LocalRemote(ws, lab["folder"], account_of(OWNER)).layout().pages) == pages
+    assert len(LocalRemote(ws, lab["folder"], account_of(OWNER)).layout().pages) == pages
     assert status["kept"] == [{"path": "Renamed plain.md", "why": vault_sync.UNKNOWN, "force": True}]
 
     # a force pull makes it Gamma's page, with no gamma_id, its bytes in the history
@@ -423,6 +427,31 @@ def test_a_folder_kept_before_whose_state_file_is_gone_writes_nothing_beside_its
         owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
+def test_the_upgrade_takes_what_the_directorys_gammaignore_tracks(owner, disk, over_http, settled):
+    """With no state file, the upgrade's pass reads the files its rounds
+    will: one the directory's ``.gammaignore`` leaves out is no file of the
+    vault, and one that cannot be read stops the upgrade before it takes
+    anything."""
+    lab, dest = _lab(owner, "UP ignored"), disk / "Ignored"
+    _kept(lab, dest, _token()["token"])
+    link = _create(owner, folder=lab["folder"], path=str(dest))
+    (dest / gamma_sync.STATE).unlink()
+    (dest / ".gammaignore").mkdir()
+    try:
+        status = _sync(owner, link["id"])
+        assert "cannot be read" in status["last_error"] and vault_store.files(link["id"]) == {}, status
+        assert folder_links.older(folder_links.get_link(link["id"]))
+        (dest / ".gammaignore").rmdir()
+        (dest / ".gammaignore").write_text("/UP plain/\n", encoding="utf-8")
+        status = _sync(owner, link["id"])
+        assert status["upgraded_at"] and not status["last_error"], status
+        rows = vault_store.files(link["id"])
+        assert rows["UP paper.pdf"]["page_id"] == lab["paper"] and rows["UP plain.md"]["page_id"] == lab["plain"]
+        assert not [p for p in rows if p.startswith("UP plain/")] and (dest / "UP plain/UP child.md").exists()
+    finally:
+        owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
 def test_a_scan_sweeps_no_state_file_below_the_vaults_root(owner, disk, over_http, settled, monkeypatch):
     """The sweep of Gamma's temporary names took any
     ``.gamma-sync.json`` below the vault, a nested older link's before its
@@ -505,7 +534,7 @@ def test_a_pdf_changed_on_disk_and_in_gamma_is_kept_until_a_force_decides(owner,
         assert {"path": "UP paper.pdf", "why": vault_sync.BOTH_PDF, "force": True} in status["kept"]
         assert _sync(owner, link["id"])["counts"]["sent"] == 0       # the page's chip says why from then on
         assert vault_store.files(link["id"])["UP paper.pdf"]["problem"] == vault_sync.BOTH_PDF
-        assert owner.get(f"/api/blocks/{lab['paper']}").json()["properties"]["doc_id"] == up["doc_id"]
+        assert owner.get(f"/api/blocks/{lab['paper']}").json()["properties"]["doc"]["hash"] == up["doc_id"]
         assert (dest / "UP paper.pdf").read_bytes() == disk_pdf
         _sync(owner, link["id"], force="pull", confirm=1)
         assert gamma_sync.doc_of(dest / "UP paper.pdf") == up["doc_id"]
@@ -564,7 +593,14 @@ def test_a_state_file_another_program_holds_is_left_to_the_sweep(owner, disk, ov
 # --- counter-examples on one engine, a second set --------------------------------------------------
 
 def _pages_of(folder) -> set:
-    return set(vault_sync.LocalRemote(workspace_of(OWNER), folder, account_of(OWNER)).layout().pages)
+    return set(LocalRemote(workspace_of(OWNER), folder, account_of(OWNER)).layout().pages)
+
+
+def _picture_page(link, lab) -> set:
+    """The page of the lab's picture, which pushing everything makes (a work
+    folder's picture is a file with a page), as a set to add to the pages
+    the vault had before."""
+    return {vault_store.files(link["id"])[f"attachments/{lab['png']}"]["page_id"]}
 
 
 @pytest.mark.parametrize("at", ["UP plain.md", "UP paper.pdf"])
@@ -601,7 +637,7 @@ def test_a_disk_unplugged_during_the_upgrades_pass_takes_nothing(owner, disk, ov
         assert owner.patch(f"/api/folder-links/{link['id']}", json={"push": "everything"}).status_code == 200
         for _ in range(2):
             _sync(owner, link["id"])
-        assert _files_of(dest) == files and _pages_of(lab["folder"]) == pages
+        assert _files_of(dest) == files and _pages_of(lab["folder"]) == pages | _picture_page(link, lab)
         assert "my own line" in plain.read_text(encoding="utf-8")
     finally:
         owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
@@ -851,6 +887,6 @@ def test_a_sub_pages_note_the_client_put_beside_its_parents_is_that_pages(owner,
         assert owner.patch(f"/api/folder-links/{link['id']}", json={"push": "everything"}).status_code == 200
         for _ in range(2):
             _sync(owner, link["id"])
-        assert _files_of(dest) == files and _pages_of(lab["folder"]) == pages
+        assert _files_of(dest) == files and _pages_of(lab["folder"]) == pages | _picture_page(link, lab)
     finally:
         owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()

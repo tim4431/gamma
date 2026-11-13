@@ -13,6 +13,12 @@ test("a highlight shape's rectangle becomes a box of page fractions", () => {
   assert.equal(regionBox(null), null);
 });
 
+test("a region of a picture (image_position, the picture's own pixels) becomes a box of its fractions the same way", () => {
+  const region = { width: 1200, height: 800, boundingRect: { x1: 120, y1: 80, x2: 600, y2: 240 }, rects: [{ x1: 120, y1: 80, x2: 600, y2: 240 }], hash: "i1" };
+  assert.deepEqual(regionBox(region), [0.1, 0.1, 0.5, 0.3]);
+  assert.deepEqual(regionPicture("area", "p1", 1, regionBox(region)), { kind: "area", page_id: "p1", page: 1, box: [0.1, 0.1, 0.5, 0.3] });
+});
+
 test("region pictures name their page and box, and read as URLs the server renders", () => {
   const area = regionPicture("area", "p1", 4, [0.1, 0.2, 0.3, 0.4]);
   assert.deepEqual(area, { kind: "area", page_id: "p1", page: 4, box: [0.1, 0.2, 0.3, 0.4] });

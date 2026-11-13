@@ -7,7 +7,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Layer | Storage | Examples |
 |---|---|---|
 | Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-pen-writes-pdf`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-lasso-pictures`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`) and whether a page's "N pages inside" section is (`gamma-sub-pages-collapsed`, `subPagesCollapsed`; it shows whenever the page has sub-pages, [home_library.md](home_library.md#sub-pages)); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) and the papers this browser left showing their translation (`gamma-translated:<user>@<workspace>`, `pdf/translateRecall.js`, [translation.md](translation.md#a-paper-opened-again)) |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, how a replaced PDF's highlights are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) — the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), the strip's text highlighter's colour (`highlighterColor`: the last swatch picked for a text highlight, as a highlight stores it, set where it acts, [below](#bars-order-and-modes)), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, how a replaced PDF's highlights are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) — the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), the text highlighters (`highlightPresets`, [Text highlighters](#text-highlighters)) and the released builds' highlighter colour, which only seeds the first (`highlighterColor`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
@@ -342,7 +342,12 @@ Preferences:
   hex alone. A changed swatch is what the pickers offer from then on;
   stored highlights and strokes keep the colour they have. The first
   shape of the preference, `{wash, ink}`, still reads: it becomes the two
-  default groups, **Library**: the live card demo
+  default groups. A group's name, like a text highlighter's, is a
+  `NameInput` (`SettingsKit.jsx`): what is typed stays as typed, spaces and
+  all, and is handed on trimmed when the field loses the focus or on Enter
+  (an empty one keeps the old name, or with `allowEmpty` hands on "";
+  Escape puts it back), since the palette trims a name as it is set.
+  **Library**: the live card demo
   with the thumbnails / folders / labels switches
   ([SettingsLibraryDisplay.jsx](../../frontend/src/settings/SettingsLibraryDisplay.jsx)),
   **Interface** (this browser's): the interface size, the status bar and
@@ -638,13 +643,17 @@ AI:
   while browser sign-in is unavailable. **Connected assistants** lists each
   connection: how it signed in (browser sign-in — the `(OAuth)` suffix the
   provider mints — or token), what it reads ("Reads A, B", all workspaces, or
-  read and write for a token's workspace), the connected and expiry dates, an
-  icon-only **Choose workspaces** (read connections) that opens the
-  checklist under the row with Save and Cancel, and an icon-only Disconnect.
-  **Tokens (advanced)**, folded, makes a token by hand: its name, its scope as
-  a `Segmented` (read-only for assistants, read and write for an offline copy
-  of the open workspace on another Gamma, [mirror.md](mirror.md)) and, read
-  only, its workspaces. The checklist (`WorkspacePicker.jsx`, the page
+  read and write for a token's workspace; a feedback connection adds
+  "answers feedback"), the connected and expiry dates, an
+  icon-only **Choose workspaces** (read and feedback connections) that opens
+  the checklist under the row with Save and Cancel, and an icon-only
+  Disconnect. **Tokens (advanced)**, folded, makes a token by hand: its name,
+  its scope as a `Segmented` (read-only for assistants; read and answer
+  feedback for an agent or script that replies to and resolves the comments
+  on work folders' files, [feedback.md](feedback.md) "Tokens and MCP"; read
+  and write for an offline copy of the open workspace on another Gamma,
+  [mirror.md](mirror.md)) and, but for read and write, its workspaces. The
+  checklist (`WorkspacePicker.jsx`, the page
   picker's `.docPickerItem` rows) leads with **All workspaces, and those added
   later**; the pane shows it only to an account with more than one workspace,
   the MCP consent screen always. Each command box carries its copy button in
@@ -1100,13 +1109,15 @@ Selection mode there too and off a touch screen, Notebook paper and Notes
 view outside a notebook (Paper on a read-only one as well). A tool in use is pinned to
 the strip whatever its mode, so what was switched on from ⋯ stays in reach
 to switch off: the pen while its tools are open, Record while it records,
-the text highlighter while it is on, Translate while it translates or shows a translation, Paper while its panel
+the armed text highlighter while one is on (its button alone, when the
+item is hidden), Translate while it translates or shows a translation, Paper while its panel
 is open, Selection mode in rectangle mode. While some applicable tool is
 hidden the strip ends with a ⋯ button ("More tools"). Its menu opens beside
 the strip, where the translate button's menu opens (`stripMenuAt` in App),
 and lists the hidden tools in the layout's order: Zoom out, Zoom in and Fit
 to width; Handwriting tools; Record audio, or Stop recording; Text
-highlighter, or Turn off the text highlighter; Translate's
+highlighters ▸, a row per highlighter with its key, which arms it, and Turn
+off the highlighter while one is on; Translate's
 current action; Paper of this page; Notes view; Toggle selection mode;
 then Customize…. A row closes the menu. Translate hidden is how the
 translate button is turned off, so there is no separate translate switch:
@@ -1114,31 +1125,11 @@ Language and Translation › Viewer & selection › Translation button sets
 the same mode (on, always; off, hidden), and `SECTION_PREFS` lists
 `viewerTools` under both sections.
 
-**The text highlighter.** Its button toggles App's `highlighterOn`
-(session state, like the rectangle mode) and draws its colour as a bar
-under the icon (`.stripInkBtn`, the markup strip's `.inkToolInk`). Its
-right-click or long press opens the Highlight picker's swatches beside the
-strip; a pick is its colour and turns it on. While it is on, PdfViewer's
-`highlighter` prop is that colour: a text selection ended by a mouse's
-`mouseup` or a pen's lift (`pdf/penSelect.js`), not a finger's, goes to
-`onSelectionFinished` with `{highlighter: true}` instead of opening the
-popup, and App adds it in `highlighterColor` with its note open for typing,
-as the popup's. App returns the new highlight's id, and at once for a pen,
-once the mouse moves on for a mouse (as the popup would,
-[ui-design.md](ui-design.md#the-pdf-viewer)),
-the popup opens over that highlight instead (`kind: "made"`, `PlainTip`'s
-`recolor`): its swatches change the highlight's colour and set
-`highlighterColor`, its Comment and Link act on it as its context menu's
-do (PdfViewer's `onHighlightAction`), and the note keeps the focus. The viewer sets `--selection-color`, so
-the selection is drawn in that colour as it is made. A finger's selection,
-an area drag and a selection that places a highlight waiting to be moved
-still get the popup. `highlighterColor` (`gamma-highlighter-color`, account)
-is the last swatch picked for a text or area highlight, in the popup or in
-the button's menu, stored as a highlight stores it (`#rrggbbaa`); "" until
-then, which is the Highlight picker's first swatch. The popup's Comment
-does not set it. Opening the pen's strip turns the highlighter off and
-turning it on closes the strip: both take a drag on the page.
-`SECTION_PREFS` holds it under Viewer tools, which shows no row for it.
+**The text highlighters** are the item's buttons, one per highlighter on
+the strip ([Text highlighters](#text-highlighters)), in a `.stripMarks`
+group (`data-guide="viewer.highlighter"`, set off by hairlines once it
+holds two). The Viewer tools row (*Text highlighter buttons*) shows or
+hides the group as one, as Zoom's three buttons go together.
 
 **Ways to the setting.** A right-click or a held finger (`menuPress`) on
 the topbar's own background or one of its items' buttons, not on a link,
@@ -1196,6 +1187,155 @@ call site), settings-search entries from the registry, and App rendering
 is a registry entry, its icon in the pane's map and its renderer in App.
 `tests/topbarItems.test.mjs` and `tests/viewerToolItems.test.mjs` hold the
 two registries to the model.
+
+## Text highlighters
+
+How a text highlight marks its passage is its style
+([api.md](api.md) "The highlight shape", `shared/model/markStyle.js`):
+the wash, an underline, a wavy underline or a strikethrough. A line draws
+in the colour's line tone (`palette.js lineColor`, `gamma/colors.py
+line_color`, held to the same answers by `tests/shared/colors.json`): the
+colour itself, opaque, when it is dark enough to read as a thin line, else
+a deeper tone of its hue (lightness 0.42); a flipped page draws
+`darkPageLine`. The PDF draws each of the passage's line boxes with a
+`data-hl-style` (app.css): a gradient line at its foot or across its
+middle, or a masked wave, about a tenth of the line's height and 1.5 px at
+the least, and a faint wash under the pointer or while it is the active
+card's. The notes draw a line highlight's marker as its glyph
+(`shared/ui/MarkGlyph.jsx`) in place of the dot.
+
+**A highlighter** is a style and a colour, named if the person likes: the
+account's `highlightPresets` (`normalizePresets`, the only shape a write
+stores), an ordered list of up to 12 `{id, name, style, color: {hex,
+alpha}, hidden?}`. `name` is `""` for one called by its look ("Underline in
+Blue", `presetName`), which follows its edits; `color` is a swatch, concrete
+as a swatch is (a palette edit never moves it); `hidden` takes it off the
+strip. The list is the shown ones first, at most four
+(`MAX_SHOWN_PRESETS`; a fifth is written hidden), then the hidden ones,
+and its order is the strip's, the popup's, Settings' and the keys' (1–9,
+`presetKeys`). The normalizer keeps a name as typed, keys it does not
+know while an item serialises under 512 bytes (as the pen presets do,
+[handwriting.md](handwriting.md)), and shows the first when all are hidden;
+it is idempotent, so two devices converge.
+
+An account starts with none stored (`[]`), and the list in effect is the
+seed (`seedPresets`): one wash highlighter, `h0`, in the colour the
+released builds' single highlighter had (`highlighterColor`, which this
+build only reads), else the Text highlights group's first swatch: an
+upgraded account sees the button it had. The first edit of any kind stores
+the whole list in effect (useTextHighlighter's `setPresets` applies its
+updater to that list). Released builds go on writing `highlighterColor`
+after that, and this build ignores it: until they update, the same account
+can show another colour for its first highlighter there.
+
+**Which one is armed** is session state, like the pen strip's armed pen
+(`pdf/highlighterState.js`, held by `pdf/useTextHighlighter.js`, which App
+calls once): its id, resolved against the list on render, so one removed
+elsewhere turns the highlighter off. Armed only where a highlight can be
+made (a PDF the reader may write on). While one is, PdfViewer's
+`highlighter` prop is its selection tint (`selectionTint`: the wash it
+lays, or its line's tone at a quarter): a text selection ended by a
+mouse's `mouseup` or a pen's lift (`pdf/penSelect.js`), not a finger's,
+goes to `onSelectionFinished` with `{highlighter: true}` instead of
+opening the popup, and App adds it in the armed highlighter's look with
+its note open for typing. App returns the new highlight's id, and at once
+for a pen, once the mouse moves on for a mouse
+([ui-design.md](ui-design.md#the-pdf-viewer)), the bar over that highlight
+opens (`kind: "made"`). A finger's selection still gets the popup, with the
+armed highlighter in it ringed (`.armed`, `aria-current`; one armed from the
+hidden ones joins the row, as on the strip), so one tap marks with it. An
+area drag gets the popup with its swatches alone, and a selection that
+places a highlight waiting to be moved only the Move button. Opening the pen's strip turns the highlighter off and arming one closes
+the strip: both take a drag on the page.
+
+**Nothing but a highlighter's own edits changes it.** A swatch or a style
+picked in the popup, the bar over a highlight and a highlight's menu each
+change one highlight and write no preference.
+
+The tools (`pdf/MarkTools.jsx` on App's `MarkToolsContext`, the hook's
+`markTools`; `pdf/HighlighterStrip.jsx`):
+
+- **The strip** (`HighlighterStrip`): a button per shown highlighter, its
+  look (`HighlighterGlyph`: the marker icon over a bar of its colour for
+  the wash, as the single button always drew; its line in its colour
+  otherwise), and one armed from the hidden ones pinned after them
+  (`.pinned`, a dashed top line) so it can be turned off. A tap arms it, a
+  tap on the armed one turns it off, a right-click or a held finger opens
+  its menu. Named "Text highlighter: {name}", titled with its look, its key
+  and both gestures (and, while it is the only one, that Duplicate makes
+  more). A short viewer scrolls the strip's column
+  (`.pdfZoomOverlay` max-height) rather than run it into the boxes above
+  and below.
+- **Its menu** (`HighlighterMenu`), an editor: its glyph and its name
+  (typed straight into the list, whose saves wait a moment, `prefs.js`;
+  its look as the placeholder), its style row and its swatches (each edit
+  keeps the menu open), *Color group ▸* (the Text highlights picker's
+  group, with two groups or more), then *Highlight with {name}* or *Turn
+  off the highlighter*, *Move up* / *Move down* within its group (the pill
+  names its new key), *Duplicate* (an unnamed copy right after it, armed,
+  the menu going on to the copy; past a full strip it is hidden, and the
+  pill offers *Put it on the strip*, `swapIntoStrip`), *Hide from the
+  strip* or *Show on the strip* (the pill's *Show*), *Hidden highlighters
+  ▸* (a row arms one, pinned while armed), *Remove* (the pill's *Undo*
+  puts that one item back at its place, `restorePreset`) and *Edit
+  highlighters…*. Hide and Remove are greyed at the last shown one: the
+  strip never empties.
+- **The selection popup** (`TipMarks` in `PlainTip`): one row of the Text
+  highlights swatches, drawn in the popup's one-shot style (the wash until
+  the fold says otherwise; a line style draws each swatch as its line,
+  `.markLine`), the shown highlighters as glyph buttons (`.markBtn`, a
+  square, "Highlight as {name}"), but a wash highlighter in exactly a
+  swatch's colour is that swatch (its name, key and ring on it:
+  `popupMarks`), the fold's button (a chevron, or the one-shot style while
+  that is a line), then the popup's tools. The fold holds the one-shot
+  style row (*Mark as*, local to this popup), *More highlighters* (the
+  hidden ones), the colour group (two groups or more) and *Edit
+  highlighters…*, which puts the popup away and opens Settings at the
+  section (the `highlighters` entry, `settings/settingsNavigation.js`).
+  Keys 1–9 press the highlighter at that key while it is open, and Enter
+  the armed one unless a control has the focus (`popupKey`; not in a field,
+  a dialog or a menu, nor over an area).
+- **The bar over a highlight just made** (`made`, its look `own`): the
+  swatches in its own style, "Change to {color}", change its colour alone;
+  the highlighters ("Change to {name}") its look; the fold's style row
+  restyles it in place and the bar stays; *Save look as highlighter*
+  (while no highlighter has its look); and *Remove highlight*, which
+  deletes it (PdfViewer's `onHighlightAction`: "mark", "style", "save",
+  "remove", "comment", "link").
+- **A highlight's menu** (`MarkMenuRows`, its right-click or held finger;
+  a translated paragraph's Highlight row, `nested`): the swatches in its
+  style and the highlighters, a press giving it that colour or look and
+  closing the menu; for a passage (not an area or a link region) the style
+  row, which restyles it in place and keeps the menu open for a colour;
+  *More highlighters ▸* (not when `nested`: a flyout of its own would close
+  the one it is in); *Save look as highlighter* while no highlighter has
+  its look (the pill says where it went: the strip, or Hidden highlighters
+  with *Put it on the strip*). Restyling keeps the block, its notes,
+  comments and place (App's `changeHighlightMark`).
+- **Keys** while one is armed (`highlighterKey`, the hook's window
+  keydown): 1–9 arm the highlighter at that key, its own key or Escape
+  turns it off; never in a field, a dialog, a menu, a popover or a review
+  card (whose Escape closes it), or while the pen's strip is open (whose 1–9 are its presets'). After a release the new
+  highlight's note has the focus, so they act once it leaves the note. The
+  palette commands *Text highlighter on or off* (`pdf.textHighlighter`:
+  the last one armed, else the first) and *Next text highlighter*
+  (`pdf.nextHighlighter`) are unbound, for a chord with a modifier, which a
+  note lets through ([hotkeys.md](hotkeys.md)).
+
+**Settings → Appearance › Text highlighters** (`settings/TextHighlighters.jsx`,
+after Viewer tools; `SECTION_PREFS` "Text highlighters": `highlightPresets`):
+the list, the shown ones and, under a "Hidden — not on the strip" line,
+the hidden ones, a row each: a grip (`useDragOrder`, within its group; the
+arrow keys too, and a polite count), its look, its name (`NameInput
+allowEmpty`, its look as the placeholder), its key, On the strip (greyed at
+four, or at the last shown one), Edit (its style row, the Text highlights
+swatches and Another colour, the `ColorPicker`), Duplicate and Remove;
+then *Add highlighter* (the next look none has: a wash in the first swatch
+no wash highlighter has, then an underline, and so on). No set of
+highlighters comes ready-made beyond the seed: what each one means is the
+reader's, made with Add highlighter, Duplicate or Save look as
+highlighter. Reset stores `[]` again, which brings the seed back; it leaves
+`highlighterColor` alone, which released builds still read.
 
 ## Chat settings are global
 

@@ -136,7 +136,7 @@ async function preview(candidate) {
 }
 
 async function setDetection(tabId, candidate) {
-  const st = await setTabState(tabId, { candidate, hit: null, preview: null, looked: false });
+  const st = await setTabState(tabId, { candidate, hit: null, preview: null, looked: false, pageLooked: false });
   const auth = await checkAuth();
   if (!auth.configured) return st;
   if (auth.auth === false) return setTabState(tabId, { auth: false });
@@ -665,6 +665,106 @@ async function downloadFirst(urls, tabId, log) {
   throw lastErr;
 }
 
+// ---------- web clips ----------
+//
+// A page that names no paper saves as a web clip: its article (Mozilla's
+// Readability, in clip.js), the text selected on it, or only its link
+// (docs/dev/extension.md "Web clips"). The browser reads the page and fetches
+// its pictures — with its own session, which a site's hotlink rules let
+// through — uploads them, and sends the article with the clip; the server
+// makes the page's blocks of it (gamma/web_clip.py).
+
+const CLIP_MODES = ["article", "selection", "link"];
+// The pictures the server stores (storage.ALLOWED_IMAGE_TYPES), by what
+// their first bytes say when a site sends no type or a wrong one.
+const PICTURE_EXT = { "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "image/svg+xml": ".svg" };
+const MAX_PICTURES = 60;                  // per clip; the rest keep their address on the web
+const PICTURE_BYTES = 20 * 1024 * 1024;
+
+// The tab's article or selection, from clip.js: {html, title, byline, site,
+// published, images, inline}.
+async function clipTab(tabId, mode) {
+  await chrome.scripting.executeScript({ target: { tabId }, files: ["lib/Readability.js", "clip.js"] });
+  const [{ result } = {}] = await chrome.scripting.executeScript({
+    target: { tabId }, func: (m) => globalThis.gammaClip(m), args: [mode],
+  });
+  if (!result) throw new Error("the page gave no answer");
+  return result;
+}
+
+async function pictureType(blob, declared) {
+  const type = String(declared || blob.type || "").split(";")[0].trim().toLowerCase();
+  if (PICTURE_EXT[type]) return type;
+  const head = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+  const text = String.fromCharCode(...head);
+  if (head[0] === 0x89 && text.slice(1, 4) === "PNG") return "image/png";
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image/jpeg";
+  if (text.startsWith("GIF8")) return "image/gif";
+  if (text.startsWith("RIFF") && text.slice(8, 12) === "WEBP") return "image/webp";
+  if (/^\s*<(?:\?xml|svg)/i.test(text)) return "image/svg+xml";
+  return "";
+}
+
+// The clip's pictures uploaded (POST /api/upload-image), four at a time: a
+// picture's address on the page (or clip.js's `gamma-inline:<n>` for a
+// data: one) → its stored copy. One that can't be fetched or stored keeps
+// its address, so it still shows while the site serves it; an answer that
+// says the save itself can't go on (signed out, another server, the server
+// gone, no room) ends it.
+async function uploadPictures(got, tabId, pin, log) {
+  const all = [...got.images.map((url) => ({ key: url, url })),
+               ...got.inline.map((url, i) => ({ key: `gamma-inline:${i}`, url }))];
+  const list = all.slice(0, MAX_PICTURES);
+  if (all.length > list.length) log.step(`${all.length - list.length} more pictures keep their address`);
+  const stored = {};
+  let done = 0;
+  const one = async ({ key, url }) => {
+    try {
+      const res = await fetch(url, { credentials: "include", signal: AbortSignal.timeout(20_000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      if (blob.size > PICTURE_BYTES) throw new Error(`${formatBytes(blob.size)} is too large`);
+      const type = await pictureType(blob, res.headers.get("content-type"));
+      if (!type) throw new Error(`not a PNG, JPEG, GIF, WebP or SVG (${blob.type || "no type"})`);
+      const form = new FormData();
+      form.append("file", new Blob([blob], { type }), `picture${PICTURE_EXT[type]}`);
+      stored[key] = (await api("/upload-image", { form, ...pin })).url;
+    } catch (err) {
+      if (err instanceof ApiError && [0, 401, 403, 409, 507].includes(err.status)) throw err;
+      log.step(`picture ${url.startsWith("data:") ? "(inline)" : url}: kept its address (${err.message})`);
+    }
+    done += 1;
+    if (tabId != null) await progress(tabId, `saving pictures… ${done}/${list.length}`);
+  };
+  const queue = [...list];
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+    while (queue.length) await one(queue.shift());
+  }));
+  if (all.length) log.step(`pictures: ${Object.keys(stored).length} of ${all.length} stored in Gamma`);
+  return stored;
+}
+
+// What a web clip sends as `article` (ClipArticle in gamma/routers/clip.py):
+// the tab read in `mode`, its pictures uploaded. A page that can't be read
+// (a browser page, a store page Chrome keeps scripts out of) or has nothing
+// to clip sends no HTML, and the server keeps the link and says why.
+async function webClip(tabId, mode, pin, log) {
+  if (tabId != null) await progress(tabId, mode === "selection" ? "reading the selection…" : "reading the article…");
+  let got = null;
+  try { got = await clipTab(tabId, mode); }
+  catch (err) { log.step(`couldn't read the page: ${err.message}`); }
+  if (!got || !got.html) {
+    if (got) log.step(got.error ? `nothing clipped: ${got.error}` : `no ${mode === "selection" ? "selection" : "article text"} on the page`);
+    return { article: { kind: mode, html: "" }, title: "" };
+  }
+  log.step(`${mode}: ${formatBytes(got.html.length)} of HTML, ${got.images.length + got.inline.length} pictures`);
+  const images = await uploadPictures(got, tabId, pin, log);
+  return {
+    article: { kind: mode, html: got.html, site: got.site || "", byline: got.byline || "", published: got.published || "", images },
+    title: mode === "article" ? got.title || "" : "",
+  };
+}
+
 // A save's log, kept for copying: in the tab's state (the popup's "Copy the
 // save log") and among the recent ones (the options page).
 async function keepLog(tabId, log) {
@@ -674,7 +774,7 @@ async function keepLog(tabId, log) {
   if (tabId != null) await setTabState(tabId, { log: text });
 }
 
-async function savePaper({ tabId, candidate, folder, folder_path, make, labels, title, source_url, asPage = false }) {
+async function savePaper({ tabId, candidate, folder, folder_path, make, labels, title, source_url, asPage = false, mode }) {
   const settings = await getSettings();
   // Where this save goes, start to end: its uploaded bytes and the clip
   // that files them must land in the same library even if the choice
@@ -742,6 +842,15 @@ async function savePaper({ tabId, candidate, folder, folder_path, make, labels, 
       labels: labels != null ? labels : settings.labels,
       allow_oa: settings.allowOa, save_copy: settings.saveCopy,
     };
+    // A page naming no paper is a web clip: the popup's choice, else the one
+    // last picked there (`webClip`: the shortcut, the context menu). Only a
+    // tab can be read.
+    const clipMode = CLIP_MODES.includes(mode) ? mode : CLIP_MODES.includes(settings.webClip) ? settings.webClip : "article";
+    if (cand.kind === "none" && tabId != null && clipMode !== "link") {
+      const clipped = await webClip(tabId, clipMode, pin, log);
+      payload.article = clipped.article;
+      if (clipped.title && title == null) payload.title = clipped.title;
+    }
     let browserErr = null;  // why this browser couldn't download the PDF, once it tried
     // The tab is the PDF — upload the bytes the browser already has access
     // to instead of making the server re-download (it may not be able to).
@@ -784,8 +893,7 @@ async function savePaper({ tabId, candidate, folder, folder_path, make, labels, 
     log.step(`done: ${out.existed ? "already in your library" : "saved"} as "${out.title || ""}"`);
     // The folder saved into becomes the default; labels are per-paper, so they
     // are not remembered (each popup starts from the options-page defaults).
-    await rememberFolder(settings, filing).catch((err) => console.warn(`[gamma] couldn't remember the folder: ${err.message}`));
-    await keepLog(tabId, log);
+    await rememberFolder(settings, filing).catch((err) => console.warn(`[gamma] couldn't remember the folder: ${err.message}`));    await keepLog(tabId, log);
     if (tabId != null && sameLibrary({ origin: settings.server, ws: pin.workspace }, await getSettings())) {
       // Saved as the web page rather than the paper it names: the tab now
       // reads as that page, not the paper's preview.
@@ -882,6 +990,19 @@ async function ensureDetection(tabId) {
   return setDetection(tabId, candidate);
 }
 
+// A page naming no paper is looked up by its address only when the popup
+// opens on it, so the popup says when it is clipped already: the badge's
+// look-up on every page load would tell the server every address the browser
+// visits. Once per page and library (`pageLooked`, cleared with the rest).
+async function lookupWebPage(tabId, st) {
+  const c = st.candidate;
+  if (!c || c.kind !== "none" || st.hit || st.pageLooked || !/^https?:/i.test(c.source_url || "")) return st;
+  let hit = null;
+  try { hit = await api("/library/lookup", { params: { url: c.source_url } }); }
+  catch (err) { if (!(err instanceof ApiError) || err.status !== 404) return st; }
+  return setTabState(tabId, { hit, pageLooked: true });
+}
+
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   if (info.url) bindHandoff(tabId, info.url, tab && tab.openerTabId).catch(() => {});
   if (info.status === "loading" && info.url) {
@@ -955,7 +1076,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const auth = await checkAuth(!!msg.forceAuth);
         let st = {};
         if (msg.tabId != null) {
-          st = auth.configured && auth.auth ? await ensureDetection(msg.tabId) : await getTabState(msg.tabId);
+          st = auth.configured && auth.auth ? await lookupWebPage(msg.tabId, await ensureDetection(msg.tabId))
+            : await getTabState(msg.tabId);
           if (!st.candidate) {
             try { const tab = await chrome.tabs.get(msg.tabId); st.candidate = candidateFromUrl(tab.url, tab.title); } catch {}
           }
@@ -1049,10 +1171,14 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 async function savePageFromTab(tab) {
-  const st = await ensureDetection(tab.id);
+  // Asked to save, so a page naming no paper may be looked up by its address
+  // (lookupWebPage) before it is clipped again for nothing.
+  const st = await lookupWebPage(tab.id, await ensureDetection(tab.id));
   if (st.hit) { await notify(`Already in your library: ${st.hit.title}`, await openInGamma(st.hit, st.ws || "")); return; }
   const cand = st.candidate || candidateFromUrl(tab.url, tab.title);
-  if (cand.kind === "none") { await notify("No paper or PDF found on this page."); return; }
+  if (cand.kind === "none" && !/^https?:/i.test(tab.url || "")) { await notify("Gamma can't save this page."); return; }
+  // A page naming no paper saves as a web clip, the way the popup last
+  // clipped one (savePaper).
   try {
     const out = await savePaper({ tabId: tab.id, candidate: cand });
     await notify(`${out.existed ? "Already in your library" : "Saved"}: ${out.title}`, await openInGamma(out));
@@ -1093,7 +1219,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     const settings = await getSettings();
     for (const [k, st] of Object.entries(await chrome.storage.session.get(null))) {
       if (k.startsWith("tab:") && !sameLibrary(st, settings)) {
-        await setTabState(Number(k.slice(4)), { hit: null, last: null, looked: false, auth: null, saving: "", error: "" });
+        await setTabState(Number(k.slice(4)), { hit: null, last: null, looked: false, pageLooked: false, auth: null, saving: "", error: "" });
       }
     }
   })().catch(() => {});

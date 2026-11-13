@@ -2,9 +2,9 @@
 // is and every key it stores, as sections of rows the popover renders
 // without working anything out itself. The keys are the catalog of
 // docs/research/block-properties.md "The catalog" (CATALOG mirrors it, one
-// entry per key, plus the fields of pdf_position, text_box, picture, sheet
-// and recording the rows name); a key the catalog does not list goes under
-// Other keys, rendered by its value's shape.
+// entry per key, plus the fields of pdf_position, text_box, picture, sheet,
+// recording and doc the rows name); a key the catalog does not list goes
+// under Other keys, rendered by its value's shape.
 //
 // A row is a descriptor {id, path, field, key, keyPath, sqlPath, label,
 // hint, type, value, copy, copyJson, display, nav?, step?, tags?}: `path`
@@ -15,9 +15,10 @@
 // everything a function returns is already translated.
 // Pure: tests/blockProps.test.mjs.
 import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
-import { blockPosition, closestPlace, getParentInfo, isHighlightBlock, isInkGroup, isLinkBlock, isNum, isRecord, placedToCheck,
-  roughMatchPercent, sameJson } from "../shared/model/blockModel.js";
+import { blockPosition, closestPlace, getParentInfo, isHighlightBlock, isInkGroup, isLinkBlock, isNum, isPlaceBlock, isRecord,
+  isRegionBlock, placedToCheck, roughMatchPercent, sameJson } from "../shared/model/blockModel.js";
 import { DEFAULT_HIGHLIGHT, LINK_COLOR, colorName, hexColor, normalizeColor, parseColor } from "../shared/model/palette.js";
+import { STYLE_NAMES, isLineStyle } from "../shared/model/markStyle.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { isPicture, normalizePicture } from "../markup/picture.js";
 import { isLandscape, isSheet, normalizePaper, paperSizeKey, sheetOfBlock, sheetsOf } from "../notebook/notebook.js";
@@ -27,6 +28,7 @@ import { metaSourceInfo } from "../shared/lib/metaSource.js";
 import { itemTypeFields, itemTypeLabel, itemTypeOf } from "../shared/lib/itemTypes.js";
 import { fmtClock } from "../replay/clock.js";
 import { fmtBytes } from "../shared/lib/format.js";
+import { isPdf, pageDocument, uploadUrl } from "../documents/pageDocument.js";
 
 // A table's own entry for a key: a stored key named like an Object
 // member ("constructor", "toString") is no entry.
@@ -34,8 +36,9 @@ const ownEntry = (table, key) => (Object.hasOwn(table, key) ? table[key] : null)
 // A value as JSON has it: a key holding undefined (App sets some that way)
 // is no key.
 const asJson = (v) => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
-// A link key, a pin or an attachment that is "" or null is unset (older
-// tabs and peers still write ""): its row is hidden.
+// A link key or a pin that older tabs and peers wrote as "", or a document's
+// name, hash or address that is "" (none), is unset, as is null: its row is
+// hidden.
 const unset = (v) => v === undefined || v === null || v === "";
 // Points as the rows show them: a tenth at most.
 const pt = (v) => String(Math.round((Number(v) || 0) * 10) / 10);
@@ -63,9 +66,11 @@ export const KINDS = {
 // a page (under root or the trash), a folder or a label (in their trees),
 // from the flags or the dict's parent_id / page_id; then ink (an ink_url
 // key), text_box, picture, sheet, recording (an object there), link (a
-// link_url or link_page_id that is set), highlight (a pdf_position object),
-// note. The per-kind predicates each test one step; chained, they are the
-// server's rule (tests/shared/blockkind.json pins both).
+// link_url or link_page_id that is set), highlight (a pdf_position,
+// image_position or text_position object: a place on a PDF page, a region
+// of a picture, a range of a text file), note. The per-kind predicates each
+// test one step; chained, they are the server's rule
+// (tests/shared/blockkind.json pins both).
 export function blockKind(b, { isPage = false, isFolder = false, isLabel = false } = {}) {
   if (isPage || b?.parent_id === "root" || b?.parent_id === "trash") return "page";
   if (isFolder || b?.page_id === "folders") return "folder";
@@ -77,8 +82,8 @@ export function blockKind(b, { isPage = false, isFolder = false, isLabel = false
   if (isRecordingBlock(b)) return "recording";
   if (isLinkBlock(b)) return "link";
   // Ink, text box, picture and sheet are ruled out above, so this is the
-  // pdf_position object test alone.
-  if (isHighlightBlock(b)) return "highlight";
+  // position object test alone.
+  if (isPlaceBlock(b) || isRecord(b?.properties?.text_position)) return "highlight";
   return "note";
 }
 
@@ -94,10 +99,12 @@ export function effectiveKind(live, server) {
 // laid out as a note.
 const onHighlight = (b, kind) => !unset(b?.properties?.linked_highlight_id) && (kind === "highlight" || kind === "note");
 
-// The kind's word, refined: a note on a highlight, an area highlight.
+// The kind's word, refined: a note on a highlight, an area highlight, a
+// region of a picture.
 export function kindLabel(b, kind = blockKind(b)) {
   if (onHighlight(b, kind)) return t("Note on a highlight");
   if (kind === "highlight" && b?.properties?.pdf_position?.area) return t("Area highlight");
+  if (kind === "highlight" && !isHighlightBlock(b) && isRegionBlock(b)) return t("Region of the picture");
   return t(ownEntry(KINDS, kind)?.label || KINDS.note.label);
 }
 
@@ -113,6 +120,7 @@ export const CATALOG = {
   // highlights and link regions
   color: { section: "kind", type: "color", label: T("Colour"), hint: T("The highlight's colour as stored, #rrggbbaa.") },
   quote: { section: "kind", type: "quote", label: T("Quote"), hint: T("The passage this highlight marks.") },
+  style: { section: "kind", type: "text", label: T("Style"), hint: T("How the highlight marks its passage: an underline, a wavy underline or a strikethrough. None is the wash.") },
   pdf_position: { section: "kind", type: "place", label: T("Place"), hint: T("Where this sits on the PDF page, in the frame its page width and height give.") },
   "pdf_position.pageNumber": { section: "kind", type: "number", label: T("Page"), hint: T("The PDF page, counted from 1.") },
   "pdf_position.width": { section: "kind", type: "number", label: T("Page width"), hint: T("The width of the page the place was measured on: the viewer's page at its zoom then (points for handwriting and imported annotations).") },
@@ -126,6 +134,13 @@ export const CATALOG = {
   "pdf_position.match": { section: "kind", type: "number", label: T("Match"), hint: T("How alike its text and the text found for it read, 0 to 1.") },
   "pdf_position.prev": { section: "kind", type: "json", label: T("Before replacement"), hint: T("Where it was before the PDF was replaced.") },
   "pdf_position.closest": { section: "kind", type: "json", label: T("Closest match"), hint: T("The best place found for a lost passage, too unlike it to apply.") },
+  // regions of a picture
+  image_position: { section: "kind", type: "json", label: T("Region"), hint: T("Where this sits on the picture, in the picture's own pixels as it was drawn.") },
+  "image_position.width": { section: "kind", type: "number", label: T("Picture width"), hint: T("The width of the picture the region was drawn on, in its own pixels.") },
+  "image_position.height": { section: "kind", type: "number", label: T("Picture height"), hint: T("The height of the picture the region was drawn on, in its own pixels.") },
+  "image_position.boundingRect": { section: "kind", type: "json", label: T("Frame"), hint: T("The box drawn, from the picture's top-left corner, in its pixels.") },
+  "image_position.rects": { section: "kind", type: "json", label: T("Boxes"), hint: T("The one box of the region, the same as its frame.") },
+  "image_position.hash": { section: "kind", type: "mono", label: T("Drawn on"), hint: T("The stored picture the region was drawn on; another than the page's means it was drawn on an earlier version.") },
   link_url: { section: "kind", type: "url", label: T("Links to"), hint: T("The web or document address this region opens.") },
   link_page_id: { section: "kind", type: "page", label: T("Links to page"), hint: T("The Gamma page this region opens.") },
   link_block_id: { section: "kind", type: "block", label: T("Lands on"), hint: T("The highlight on the linked page this region scrolls to.") },
@@ -169,10 +184,11 @@ export const CATALOG = {
   linked_highlight_id: { section: "timing", type: "block", label: T("Attached to"), hint: T("The highlight on the PDF this note is attached to.") },
   zotero_readonly: { section: "timing", type: "flag", label: T("Zotero"), hint: T("A Zotero link does not write this block back.") },
   zotero_author: { section: "timing", type: "text", label: T("Zotero author"), hint: T("The group member whose Zotero annotation this is.") },
-  // the attachment
-  original_filename: { section: "document", type: "text", label: T("File name"), hint: T("The PDF's name when it was added.") },
-  doc_id: { section: "document", type: "mono", label: T("Stored copy"), hint: T("The stored PDF's content hash.") },
-  source_url: { section: "document", type: "url", label: T("Source address"), hint: T("Where the PDF is read from, when that is not the stored copy.") },
+  // the page's document (doc, documents/pageDocument.js): its fields
+  // without an entry show under their own names
+  "doc.name": { section: "document", type: "text", label: T("File name"), hint: T("The PDF's name when it was added.") },
+  "doc.hash": { section: "document", type: "mono", label: T("Stored copy"), hint: T("The stored PDF's content hash.") },
+  "doc.url": { section: "document", type: "url", label: T("Source address"), hint: T("Where the PDF is read from, when that is not the stored copy.") },
   // the paper record
   meta: { section: "paper", type: "json", label: T("Paper record"), hint: T("The bibliographic record: title, authors, venue, identifiers.") },
   "meta.title": { section: "paper", type: "text", label: T("Title"), hint: T("The work's title.") },
@@ -203,6 +219,7 @@ export const CATALOG = {
   web_url: { section: "imported", type: "url", label: T("Clipped from"), hint: T("The web page this was saved from.") },
   web_meta: { section: "imported", type: "json", label: T("Page's citation tags"), hint: T("The citation tags the saved web page carried.") },
   web_clips: { section: "imported", type: "flag", label: T("Web clips page"), hint: T("The page web clips are saved to.") },
+  original_filename: { section: "imported", type: "text", label: T("File name"), hint: T("The name of the Markdown file this page was imported from.") },
   markdown_import: { section: "imported", type: "mono", label: T("Markdown file"), hint: T("The imported Markdown file's hash, so a re-import finds this page.") },
   notion_id: { section: "imported", type: "mono", label: T("Notion page"), hint: T("The Notion page this was imported from.") },
   aliases: { section: "imported", type: "text", label: T("Aliases"), hint: T("Other names from the imported file's front matter.") },
@@ -370,9 +387,10 @@ function placeBoxText(b, frame) {
 
 // A highlight's place as its row shows it: {page, text (the summary), box,
 // frame {width, height}, rects (for the mini-map), area, dashed, hollow,
-// chips [{id, text, tone}], prev, closest}. `currentDocId` is the page's
-// PDF (attachmentFile of its attachment), to tell a place measured on an
-// older one; undefined when the block is not on the open page.
+// chips [{id, text, tone}], prev, closest}. `currentDocId` is the stem of
+// the stored PDF the open page shows (fileHash of its document), to tell a
+// place measured on an older one; undefined when the block is not on the
+// open page.
 export function placeSummary(pos, { currentDocId } = {}) {
   const p = isRecord(pos) ? pos : {};
   const page = p.pageNumber ?? null;
@@ -604,7 +622,7 @@ function placeNav(block, ctx, server) {
 
 function placeRow(section, block, pos, ctx, css, server) {
   // only the open page's blocks are measured against the open page's PDF
-  const currentDocId = ctx.lookupBlock?.(block.id) ? ctx.pageAttachId : undefined;
+  const currentDocId = ctx.lookupBlock?.(block.id) ? ctx.pageFileHash : undefined;
   const summary = placeSummary(pos, { currentDocId });
   return makeRow(section, ["pdf_position"], { type: "place", value: pos, display: { ...summary, color: css },
     nav: placeNav(block, ctx, server) });
@@ -635,11 +653,14 @@ function kindRows(kind, block, p, ctx, server) {
   const used = new Set();
   const take = (...keys) => keys.forEach((k) => used.add(k));
   if (kind === "highlight" || kind === "link") {
-    take("color", "quote", "pdf_position", "link_url", "link_page_id", "link_block_id");
+    take("color", "style", "quote", "pdf_position", "image_position", "link_url", "link_page_id", "link_block_id");
     const color = colorSummary(p.color);
     rows.push(makeRow(s, ["color"], { type: "color", value: p.color, display: color }));
+    if (isLineStyle(p.style)) rows.push(makeRow(s, ["style"], { type: "text", value: p.style, display: plain(t(STYLE_NAMES[p.style])) }));
+    else if (!unset(p.style)) rows.push(valueRow(s, ["style"], p.style, ctx)); // one no build writes, as stored
     if (!unset(p.quote)) rows.push(valueRow(s, ["quote"], p.quote, ctx));
     if (isRecord(p.pdf_position)) rows.push(placeRow(s, block, p.pdf_position, ctx, color.css, server));
+    if (isRecord(p.image_position)) rows.push(valueRow(s, ["image_position"], p.image_position, ctx));
     if (!unset(p.link_url)) rows.push(valueRow(s, ["link_url"], p.link_url, ctx));
     if (!unset(p.link_page_id)) rows.push(valueRow(s, ["link_page_id"], p.link_page_id, ctx));
     if (!unset(p.link_block_id)) {
@@ -782,8 +803,38 @@ function paperRows(p, ctx) {
   return rows;
 }
 
+// The Document section (properties.doc, documents/pageDocument.js): the
+// file's name with the paperclip, the stored file with its way to the PDF,
+// the address it is read from, then the doc's other fields (format, ext,
+// at, size, copy) under their own names, as stored. A doc that is no record
+// shows as it is.
+function documentRows(doc, ctx) {
+  const s = "document";
+  if (unset(doc)) return [];
+  if (!isRecord(doc)) return [valueRow(s, ["doc"], doc, ctx, null)];
+  const view = pageDocument({ properties: { doc } });
+  const rows = [];
+  // no name, no hash (an address alone) or no address: no row, as for a key
+  // not stored
+  if (typeof doc.name === "string" && doc.name) {
+    rows.push(makeRow(s, ["doc", "name"], { type: "text", value: doc.name, display: { text: doc.name, icon: "paperclip" } }));
+  }
+  if (!unset(doc.hash)) {
+    rows.push(valueRow(s, ["doc", "hash"], doc.hash, ctx, undefined,
+      isPdf(view) ? { nav: { action: "openPdf", url: uploadUrl(view.file), label: t("Open PDF") } } : {}));
+  }
+  if (!unset(doc.url)) rows.push(valueRow(s, ["doc", "url"], doc.url, ctx));
+  const worded = new Set(rows.map((r) => r.path[1]));
+  for (const [field, value] of Object.entries(doc)) {
+    if (!worded.has(field) && !(["name", "hash", "url"].includes(field) && unset(value))) {
+      rows.push(valueRow(s, ["doc", field], value, ctx, null));
+    }
+  }
+  return rows;
+}
+
 // A catalog key's row outside the kind's section, with what its key adds
-// (a file's icon, the PDF's link, a filing's chips).
+// (a filing's chips, a pin's moment, a flag's word).
 function keyRow(section, key, value, ctx) {
   if (key === "folders" || key === "labels") {
     const ids = Array.isArray(value) ? value.filter((id) => typeof id === "string") : [];
@@ -802,13 +853,6 @@ function keyRow(section, key, value, ctx) {
   if (key === "pinned") {
     const time = timeDisplay(value, ctx.now);
     if (time) return makeRow(section, [key], { type: "time", value, display: { ...time, text: t("Pinned {when}", { when: time.relative }), title: time.text } });
-  }
-  if (key === "original_filename" && typeof value === "string") {
-    return makeRow(section, [key], { type: "text", value, display: { text: value, icon: "paperclip" } });
-  }
-  if (key === "doc_id" && typeof value === "string") {
-    return makeRow(section, [key], { type: "mono", value, display: { text: value, short: shortHash(value) },
-      nav: { action: "openPdf", url: `/api/uploads/${value}.pdf`, label: t("Open PDF") } });
   }
   if (key === "collapsed" && typeof value === "boolean") {
     return makeRow(section, [key], { type: "flag", value, display: { text: value ? t("Folded") : t("Unfolded"), tone: null } });
@@ -910,7 +954,8 @@ const CLOSED = new Set(["imported", "zotero", "technical"]);
 // own section's id is the kind ("highlight"). `block` is the block as this
 // tab has it (the server's dict when there is no live one); `server` the
 // server's dict once fetched; `kind` the kind to show (effectiveKind).
-// ctx: {pages, libTree, lookupBlock, refCache, pageAttachId, pageId,
+// ctx: {pages, libTree, lookupBlock, refCache, pageFileHash (the stem of
+// the stored PDF the open page shows, placeSummary's currentDocId), pageId,
 // pageTitle, tree, now, isOpenPage, inkStrokes(block), tabId}.
 export function propertySections(block, { kind, server = null, ctx = {} } = {}) {
   const c = { now: Date.now(), ...ctx };
@@ -922,6 +967,7 @@ export function propertySections(block, { kind, server = null, ctx = {} } = {}) 
   out.kind = own.rows;
   out.parts = own.parts;
   out.technical.push(...own.technical);
+  out.document.push(...documentRows(p.doc, c));
   out.paper = paperRows(p, c);
   const paperKeys = new Set(["meta", "cite_key", "bibtex", "ppt_cite"]);
   const oldPage = (layout === "highlight" || layout === "link") && p.pdf_page !== undefined;
@@ -938,7 +984,7 @@ export function propertySections(block, { kind, server = null, ctx = {} } = {}) 
     out[section].push(keyRow(section, key, value, c));
   }
   for (const key of Object.keys(p)) {
-    if (Object.hasOwn(CATALOG, key)) continue;
+    if (Object.hasOwn(CATALOG, key) || key === "doc") continue;
     out.other.push({ ...valueRow("other", [key], p[key], c, null), tags: [{ text: t("Not in the catalog"), tone: null }] });
   }
   out.block = block ? blockRows(block, server, shownKind, c) : [];
@@ -965,7 +1011,7 @@ export const DIFFER_MS = 4000;
 // The head's status chips, [{id, text, tone, action?}], tone null,
 // "pending", "warn" or "failed", action "refetch" or "retry". `live` is the
 // block as this tab has it, `server` the fetched dict, `err` the fetch's
-// error (status, data). ctx: {pageAttachId (undefined for a block not on
+// error (status, data). ctx: {pageFileHash (undefined for a block not on
 // the open page), differSince (when this tab's block started to differ from
 // the server's, or the server's copy last moved while it did), readAt (when
 // the last read that answered was asked for), gone (the live block was
@@ -987,7 +1033,7 @@ export function statusChips(live, server, err, ctx = {}) {
   if (missing && live && !ctx.gone && !server && !err.data?.trashed) chips.push({ id: "unsaved", tone: "pending", text: t("Not saved yet") });
   if (!unset(p.deleted_at) || (missing && err.data?.trashed)) chips.push({ id: "deleted", tone: "failed", text: t("In Recently deleted") });
   if (isHighlightBlock(block) && isRecord(p.pdf_position)) {
-    chips.push(...placeSummary(p.pdf_position, { currentDocId: ctx.pageAttachId }).chips);
+    chips.push(...placeSummary(p.pdf_position, { currentDocId: ctx.pageFileHash }).chips);
   }
   if (!unset(p.zotero_readonly)) chips.push({ id: "zotero", tone: null, text: t("Not written back to Zotero") });
   if (p.transcript) chips.push({ id: "transcript", tone: null, text: t("Transcript") });

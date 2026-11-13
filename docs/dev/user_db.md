@@ -117,8 +117,10 @@ All state is SQLite + files on disk under a data directory (env
     `actor` (an account id; `cloud:<subject>` for a request to join), where it happened (`workspace_id`, `page_id`, `block_id` — a
     folder share's folder —, `thread_id`, `comment_id`, `''` where the kind
     has none), the `share_token` when the recipient reaches the page only
-    through a share (one naming it, or the one the event came through), a `snippet` of the text at the time, `at`, and the
-    recipient's `read_at` / `archived_at`; indexed per recipient and time,
+    through a share (one naming it, or the one the event came through), a `snippet` of the text at the time, `at`, the
+    recipient's `read_at` / `archived_at`, and `agent`, the display name of
+    the integration token whose write made the item (`''` for a person's;
+    step 54); indexed per recipient and time,
     per recipient's unread rows (partial) and per comment (partial). No
     unique index: the writers dedupe. A listing archives the items that
     lead nowhere any more, a daily sweep deletes old ones, and they go
@@ -135,8 +137,12 @@ All state is SQLite + files on disk under a data directory (env
     `(user_id, host)`, each sealed with its account's id, imported by the
     Connector ([extension.md](extension.md));
   - `integration_tokens` — hashed assistant tokens per account, each of one
-    workspace (with a `scope`, read or write, and `workspaces`, what a read
-    token's MCP connection reads beside it: `''`, `'*'` or a JSON list), and `mcp_oauth` — the OAuth flow's
+    workspace (with a `scope` — `read`, `write`, or `feedback`, a read token
+    that may also reply to and resolve the threads on a work folder's files
+    ([comments.md](comments.md) "Who may comment"); free text, so a scope
+    this server does not know reads as `read` — and `workspaces`, what a read
+    or feedback token's MCP connection reads beside it: `''`, `'*'` or a JSON
+    list), and `mcp_oauth` — the OAuth flow's
     expiring records ([mcp.md](mcp.md));
   - `mirrors` — the offline copies of remote workspaces: the local workspace,
     the remote's address and workspace, the write token (Fernet-encrypted
@@ -162,7 +168,14 @@ All state is SQLite + files on disk under a data directory (env
     workspace, `page_id`, the file's path). The direction is `pull`
     (1: Gamma's changes reach the disk; 0 on a file vault, which Gamma
     never writes) and `push` (0 off, 1 PDFs, 2 everything; 1 on a file
-    vault; the API's words `off`, `pdfs`, `everything`). `state` holds the
+    vault; the API's words `off`, `pdfs`, `everything`). A folder vault of
+    this server's folder that pushes everything is a work folder
+    ([work_folders.md](work_folders.md)); `library` is its switch, whether
+    the pages of the files it tracks are library documents too (0 for a new
+    one unless it is made with it on; migration step 53 turned it on for the
+    vaults it found that became work folders, and turning a kept folder's
+    push to everything turns it on, so their pages stay in the library).
+    `state` holds the
     vault marker's id (`state.vault`) for a folder vault and what a file
     vault's rounds know of its file. Each keeps the change-log seq the last
     round saw and its status, and for a folder or page on another Gamma
@@ -185,8 +198,10 @@ All state is SQLite + files on disk under a data directory (env
   names. Its statements (`db.VAULTS_SCHEMA`) are `CREATE ... IF NOT EXISTS`,
   applied as a connection opens and never migrated. A file id is text: it
   can pass 63 bits. Tables:
-  - `linked_files` — PDFs read where they are, by `(ws, name, path)`: the
-    stored name a page reads them by (`<doc_id>.pdf`), the path, the size,
+  - `linked_files` — files read where they are, by `(ws, name, path)`: the
+    stored name a page reads them by (`<hash><ext>`: a PDF's `.pdf`, a
+    work folder's file under its own extension; the page's document at
+    `path`, [documents.md](documents.md)), the path, the size,
     time and file id when last read, the page (`''` for a vault's picture),
     the account that opened the file, whom a change of it is made as
     (`actor`), and why the last
@@ -194,8 +209,9 @@ All state is SQLite + files on disk under a data directory (env
     have several paths; a path has one page;
   - `vault_files` — a vault's files as the last round left them, one row a
     path (`link_id`, `path`; a trashed file's path is its trash path, with
-    `was` where it lived): the page, the `kind` (`notes`, `pdf` or
-    `picture`), the hash, size, time and file id and when they were read
+    `was` where it lived): the page, the `kind` (its class, `notes`, `pdf`,
+    `picture` or `file`, [synced_vaults.md](synced_vaults.md) "The
+    classes"), the hash, size, time and file id and when they were read
     (`read_at`, for the racy rule), a note's base `text`, its `nodes`
     (`[{id, g, m?, a?}]` in document order, `a` the block's anchor) and
     `gone` (the blocks the file dropped, `[{id, hash, anchor, props,
@@ -222,11 +238,12 @@ All state is SQLite + files on disk under a data directory (env
   children are its subfolders) and `labels` (flat): `content` is the name,
   `position` the order, `properties.pinned` a pin; a page is filed by id, in
   `properties.folders` and `properties.labels` (lists of block ids;
-  [home_library.md](home_library.md) "Folders and labels"). A page may CARRY a PDF
-  attachment (`doc_id` / `source_url` / `original_filename`, read through
-  `blocks_store.page_attachment()`; a page stores no `source_url` that is
-  its own `doc_id`'s stored copy, `/api/uploads/<doc_id>.pdf`, which the
-  attachment derives). Highlights, link regions and ink groups on a PDF page
+  [home_library.md](home_library.md) "Folders and labels"). A page may CARRY one
+  document, a PDF so far: one property, `properties.doc`, `{format, name,
+  hash, ext, at, url?, size?, copy?}`, read through
+  `documents.model.page_document` ([documents.md](documents.md); its stored
+  file is `hash + ext`, read from the uploads, a path on this computer or
+  an address by `at`). Highlights, link regions and ink groups on a PDF page
   are blocks with a `pdf_position` in their JSON `properties` column (the
   page, the page size once, the rectangles: `gamma/highlights.py`,
   [api.md](api.md) "The highlight shape"); the block id is the highlight's
@@ -253,10 +270,12 @@ All state is SQLite + files on disk under a data directory (env
     in the trees (from `page_id`), else `ink` (an `ink_url` key,
     `highlights.is_ink`), `text_box`, `picture`, `sheet`, `recording` (an
     object there), `link` (a non-empty `link_url` or `link_page_id`,
-    `highlights.is_link`), `highlight` (a `pdf_position` object), `note`,
-    tested in that order
-    (`db.BLOCK_HOT_COLUMNS`; `picture` since step 44,
-    [migrations.md](migrations.md)). The filters read the column (its
+    `highlights.is_link`), `highlight` (a `pdf_position`, `image_position`
+    or `text_position` object: a place on a PDF page, a region of a
+    picture, a range of a text file; `highlights.is_highlight` and
+    `is_region` each read their own key), `note`, tested in that order
+    (`db.BLOCK_HOT_COLUMNS`; `picture` since step 44, the region and the
+    range since step 55, [migrations.md](migrations.md)). The filters read the column (its
     index); the block dict computes the same rule in Python from the
     properties it has parsed anyway (`blocks_store.block_kind`, checked
     against the column by `tests/test_block_columns.py` on the cases of
@@ -270,9 +289,13 @@ All state is SQLite + files on disk under a data directory (env
     over root pages: a Zotero import's look-up of the pages an item key
     made (`_zotero_existing_page`), once per item. A query uses it only
     when it names that expression with `parent_id = 'root'`.
-  - `doc_id` — generated: `properties.doc_id`. "Which page carries this
-    PDF" (`page_for_doc`) and "which files are still in use" read its
-    partial index (`WHERE doc_id IS NOT NULL`).
+  - `doc_id` — generated: the hash of the document the row owns,
+    `properties.doc.hash`, NULL on a row without one, on a document shown
+    from an address alone and on a copy (`doc.copy`, a duplicated page; its
+    definition since migration step 52, [documents.md](documents.md#in-sql)).
+    "Which page carries this PDF" (`page_for_doc`, with
+    `work_folders.library.SQL_LIBRARY_PDF`) and "which files are still in use"
+    read its partial index (`WHERE doc_id IS NOT NULL`).
   - `parent_page` — generated: `properties.parent_page`, the page a
     sub-page is inside ([home_library.md](home_library.md#sub-pages)),
     NULL on every other row (migration step 47). Its partial index
@@ -288,9 +311,22 @@ All state is SQLite + files on disk under a data directory (env
     `idx_ub_deleted_with` holds those rows alone, so "what went with P"
     (`ops._went_with`: a restore, Delete permanently, the mirror) is an
     indexed read, not a walk of the trash's properties.
+  - `work_folder` — generated: `properties.work_folder` when it is
+    non-empty text, the work folder a page is a file of (its vault stamps
+    it, [work_folders.md](work_folders.md)), NULL on every other row
+    (migration step 53). `first_folder` — generated:
+    `properties.folders[0]`, a file's directory. Three partial indexes read
+    them: `idx_ub_listing` on `(parent_id, position)` over the root pages
+    the library listing carries (`db.SQL_IN_LISTING`, which a query must
+    repeat for SQLite to use it: no work folder, in the library, or
+    pinned), `idx_ub_dir` on `(parent_id, first_folder)` over the root
+    pages with a `work_folder` (a directory's files and their counts), and
+    `idx_ub_work_folder` on `work_folder` (a work folder's files, those in
+    Recently deleted included).
 
   The op log and the mirror carry `properties` alone; nothing writes `kind`,
-  `doc_id`, `parent_page` or `deleted_with`. Next to it:
+  `doc_id`, `parent_page`, `deleted_with`, `work_folder` or `first_folder`.
+  Next to it:
   - `page_ops` — the per-page operation log: one row per applied batch,
     `seq` counting up per page, with the client's name for the batch
     (`batch_id`, unique per page and client where it is set) and the
@@ -343,15 +379,23 @@ All state is SQLite + files on disk under a data directory (env
     export carry them with no code of their own; a page's chats go when the
     page is deleted for good (`ops.delete_page`), not while it is in
     Recently deleted; a deleted folder's are filed into `home`'s history;
-  - `comments` — the threads on notes, pages and highlights
+  - `comments` — the threads on notes, pages, highlights and handwriting
     ([comments.md](comments.md)): a row per comment with its thread (the
     root's id), its anchor block, the page it was on (a hint for the
     purges), the author's id and username at the time, the text, its
     times, the root's resolution, a tombstone mark and `orphaned_at` (its
-    block was deleted; swept seven days on). Kept beside the blocks, never
-    in them, so no block reader skips them; a backup and a Gamma export
-    carry them, a page deleted for good takes its own with it, and a
-    comment write touches no page;
+    block was deleted; swept seven days on), the integration token that
+    wrote it or resolved it (`agent`, `agent_id`, `resolved_agent`) and the
+    root's `anchor`, the place it was opened on (step 54). Kept beside the
+    blocks, never in them, so no block reader skips them; a backup and a
+    Gamma export carry them, a page deleted for good takes its own with
+    it, and a comment write touches no page;
+  - `feedback_requests` and `feedback_request_threads` — a work folder's
+    Sends and the threads each names, with when an agent or another
+    account answered each ([feedback.md](feedback.md) "Requests"). From
+    `db.PAGES_SCHEMA` as the file opens (no workspace step); a restore in
+    place copies them, no merge, export or mirror does, and a sweep beside
+    the comments' deletes the finished ones 90 days after their last state;
   - `page_follows` — who hears of every comment on a page
     ([comments.md](comments.md) "Following a page"): a row per page and
     account, `level` `all` or `replies`, `at`. A person who creates, edits
@@ -418,7 +462,9 @@ All state is SQLite + files on disk under a data directory (env
   kept translations `pdf_translations` / `pdf_translation_briefs`
   (`gamma/translate_store.py`, [translation.md](translation.md) "Kept
   translations"; asked of the model again, at its cost, when they are
-  gone) and the PDF text index `pdf_fts` / `pdf_fts_docs` (extracted PDF
+  gone), the region pictures of a work folder's comment threads
+  `feedback_pictures` (JPEG bytes by key, at most 48 MB, the oldest going
+  first; drawn again when asked, [feedback.md](feedback.md)) and the PDF text index `pdf_fts` / `pdf_fts_docs` (extracted PDF
   text per page — schema + queries `gamma/pdf_index.py`, extraction
   `routers/search.py`; extracted again by the next search), with its
   `pdf_fts_rows` side table mapping a paper to its rows' rowids, so a
@@ -427,8 +473,8 @@ All state is SQLite + files on disk under a data directory (env
   `pdf_fts_docs` row (`chars`, what `GET /api/metadata/status` reads; an
   index from before it gains the column and counts each paper once). The index is built on demand (a search starts the workspace's
   indexing job), a few hundred PDF pages per transaction; the rows of
-  papers no block carries, by `doc_id` or by a duplicated page's upload
-  address, are purged when a page or a PDF goes
+  papers no block's document names (its `hash`, a duplicated page's
+  included) are purged when a page or a PDF goes
   (`pdf_index.purge_unused`). Derived data: no migration step — the
   tables are `CREATE ... IF NOT EXISTS`, the index's from
   `pdf_index.SCHEMA` (a new `pdf_fts_rows` takes over the rows already
@@ -439,7 +485,8 @@ All state is SQLite + files on disk under a data directory (env
 
 - `workspaces/<id>/uploads/` — PDFs, images and generic file attachments
   (`/api/upload-file`), filenames are content sha256[:24] + extension (dedup;
-  a PDF the proxy or a clip cached is named by its URL's hash instead), and
+  a PDF the proxy or a clip cached is named by its URL's hash instead;
+  a document's is `hash + ext`, `documents.model.stored_name`), and
   `.partial/`, where a write in progress lives until it is complete
   ("Stored files" below).
 - `backups/<time>-<label>/` — snapshots of the whole data directory's
@@ -650,8 +697,10 @@ track of the ones nothing uses.
   the files' off-site copies
   ([debugging.md](debugging.md#off-site-copies-in-a-bucket)).
 - **Linked files.** On the desktop app's own server a name may instead be
-  a PDF read where it is on this computer (`vaults.db` `linked_files`,
-  [synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)).
+  a PDF read where it is on this computer: a page's document at `path`
+  ([documents.md](documents.md)), whose stored name a `vaults.db`
+  `linked_files` row maps to the path
+  ([synced_vaults.md](synced_vaults.md#a-file-read-where-it-is)).
   `open_path`, and what reads through it, find one when its size and time
   are as recorded; one whose stat moved reads as nothing and the read tells
   `gamma/linked_files.py` (`storage.linked_moved`), whose worker hashes it
@@ -700,9 +749,15 @@ track of the ones nothing uses.
   remote announced is refused before the check ([mirror.md](mirror.md)).
 - **What counts as a reference.** `storage.upload_refs`, the one grammar:
   `/api/uploads/<name>` anywhere in a block's content or properties (images,
-  file chips, `ink_url`, a picture's `picture.url`, `source_url`), a
-  block's `doc_id` (its PDF, `<doc_id>.pdf`), and a highlight's
-  `pdf_position.doc_id` and `pdf_position.prev.doc_id`. Those two name the
+  file chips, `ink_url`, a picture's `picture.url`, a document's `doc.url`
+  when that is an upload's address), a block's document (its stored file,
+  `hash + ext`, the view's `file`: stored, read in place, a URL page's
+  cached copy and a duplicated page's original alike;
+  [documents.md](documents.md)), and a highlight's
+  `pdf_position.doc_id` and `pdf_position.prev.doc_id` (a picture's
+  region names the version it was drawn on in `image_position.hash`, which
+  holds nothing: regions are never relocated, and the version a thread on
+  one needs is held by the thread's anchor). Those two name the
   file a highlight's rectangles were measured on, after a replacement: a
   pending highlight's `prev` (and a lost one's `doc_id`) is its reference,
   the version it is matched from at every later replacement, and stays
@@ -723,11 +778,17 @@ track of the ones nothing uses.
   conversation's pictures count as well: `/api/uploads/<name>` in the
   `chats` and `chat_history` messages ([ai.md](ai.md#pictures));
   `upload_gc.referenced` reads both. So does the PDF an open `zotero_file`
-  conflict keeps (its `base`'s `doc_id`): Zotero's file, kept when Gamma's
+  conflict keeps (its `base`'s `doc_id`, `<doc_id>.pdf`, which
+  `upload_gc` reads itself, since no block holds it): Zotero's file, kept when Gamma's
   went over it, for that conflict's "theirs"
   ([zotero_sync.md](zotero_sync.md#pdfs)). Once the conflict is kept or the
   link is removed it is an ordinary file again; "theirs" makes it the
-  page's PDF.
+  page's PDF. And **an open thread holds the version it was opened on**:
+  the file its root's `anchor.doc_id` names (`feedback.anchors.held_file`,
+  `<doc_id>.pdf`) while the root is neither resolved nor orphaned, held
+  (in `names`, never in `shown`), so a work folder's build that a
+  comment was made on outlives the rebuilds after it until the thread is
+  resolved ([feedback.md](feedback.md) "The commented version kept").
 - **Unreferenced files are kept for 30 days.** When the last reference to a
   file goes (its block deleted, a page's PDF detached or replaced by a new
   version), the file stays on disk and is served as before. Its name is
@@ -756,7 +817,7 @@ track of the ones nothing uses.
   pending one's `prev`, a lost one's `doc_id`): the run claims the files its
   written positions name, which removes the row, so the version a highlight
   waits on keeps the usual 30 days once it is let go. A file some block still shows (another page's
-  `doc_id`, a duplicated page's `source_url`, an image) gets no row: it is
+  document, a duplicated page's included, an image) gets no row: it is
   no build let go of, and keeps its 30 days for when that reference goes
   too. The keep counts from both the record and the mtime, as the 30 days
   do. A reference written to the file again removes the row

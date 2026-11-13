@@ -217,6 +217,8 @@ async def session_middleware(request: Request, call_next):
     request.state.auth = "session"
     request.state.token_ws = ""
     request.state.token_scope = ""
+    request.state.token_id = ""
+    request.state.token_name = ""
     expired_guest = None
     bearer = _api_bearer(request) if not token else None
     if bearer:
@@ -229,7 +231,8 @@ async def session_middleware(request: Request, call_next):
         if not found:
             resp = JSONResponse({"detail": "invalid or expired token"}, status_code=401)
             return _finish_request_log(request, resp, started, None, "bad-token")
-        request.state.user_id, request.state.user, request.state.token_ws, request.state.token_scope = found
+        (request.state.user_id, request.state.user, request.state.token_ws, request.state.token_scope,
+         request.state.token_id, request.state.token_name) = found
         request.state.auth = "token"
     if token:
         row, expired_guest = await _off_loop(_middleware_session, token)
@@ -658,9 +661,31 @@ LINK_ACTOR_PREFIX = "link:"
 MIRROR_ACTOR = "mirror"  # a mirror's round (gamma/sync_engine.py), the other writer that is no account
 ZOTERO_ACTOR = "zotero"  # a Zotero link's round (gamma/zotero_sync.py), shown as "Zotero"
 ZOTERO_CLIENT = "zotero"  # ...and the op-log client its writes carry (zotero_sync.CLIENT)
-DISK_CLIENT = "disk"  # the op-log client of a synced vault's writes (gamma/vault_sync.py), as the account that made it
+DISK_CLIENT = "disk"  # the op-log client of a synced vault's writes (gamma/vault/sync.py), as the account that made it
 LINK_NAME_MAX = 40
 ANONYMOUS_NAME = "Anonymous"
+# The writer a route that takes no op batch names itself by (a vault of
+# another computer, gamma/vault/http_remote.py; the mirror): ``writer_client``.
+CLIENT_HEADER = "x-gamma-client"
+# The op clients the work-folder rule trusts (gamma/work_folders/filing.py
+# ``writer_of``): the vault's, and the mirror's (ops.SYNC_CLIENT).
+_RULED_CLIENTS = (DISK_CLIENT, "sync")
+
+
+def writer_client(request: Request, claimed: str = "") -> str:
+    """The op client a write is made under: ``claimed`` (a batch's
+    ``client``), else the ``X-Gamma-Client`` header, cut to 32 characters.
+    The vault's ``disk`` and the mirror's ``sync``, which the work-folder
+    rule lets change a work folder's files, are taken only from an
+    integration token on a request with no ``?share=``, and are "" from
+    anyone else; any other name is the writer's own (a tab's id). A token
+    that claims ``disk`` is trusted as a vault: an integrity rule for the
+    app's own writers, not a guard against a script that holds a token
+    (docs/dev/work_folders.md)."""
+    client = (claimed or request.headers.get(CLIENT_HEADER, ""))[:32]
+    if client in _RULED_CLIENTS and not (is_token(request) and not request.query_params.get("share")):
+        return ""
+    return client
 
 
 def link_name(raw) -> str:
@@ -820,21 +845,30 @@ def require_ws_writer(request: Request) -> str:
     return require_ws(request, write=True)
 
 
-def require_commenter(request: Request, page_id: str) -> str:
+def require_commenter(request: Request, page_id: str, *, answer: bool = False) -> str:
     """The workspace in which this request may write a comment on the page
     ``page_id`` (docs/dev/comments.md "Who may comment"): the one
     ``resolve_ws`` reads — any member, viewers included, or any signed-in
     account a share admits, view or edit, confined to the share's pages.
     403 for a link visitor (no account to sign the comment with: "sign in
-    to comment") and for an integration token without the write scope.
-    Whether the page is a page of the library is the writer's check. 423
-    while a delete holds the workspace."""
+    to comment") and for an integration token without the write scope,
+    but a ``feedback`` token's ``answer`` (a reply, a resolve) on a work
+    folder's file. Whether the page is a page of the library is the
+    writer's check. 423 while a delete holds the workspace."""
     ws = resolve_ws(request)
     if is_link_visitor(request):
         raise HTTPException(status_code=403, detail="sign in to comment")
-    if is_token(request) and request.state.token_scope != "write":
+    scope = request.state.token_scope if is_token(request) else ""
+    if scope and scope != "write" and not (scope == "feedback" and answer):
         raise HTTPException(status_code=403, detail="this token is read-only")
     _refuse_deleting(ws)
+    if scope == "feedback":
+        with connect_pages_db(ws) as conn:
+            row = conn.execute("SELECT work_folder FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
+                               (page_id,)).fetchone()
+        if not (row and row[0]):
+            raise HTTPException(status_code=403,
+                                detail="a feedback token answers comments on a work folder's files only")
     scope = share_scope(request)
     if scope is not None:
         with connect_pages_db(ws) as conn:

@@ -7,10 +7,12 @@ threadpool."""
 
 import inspect
 import io
+from contextlib import closing
 
 import pytest
 
-from conftest import login, make_folder, make_page, make_user
+from conftest import doc_props, login, make_folder, make_page, make_user, workspace_of
+from gamma.db import connect_pages_db
 from gamma.routers import uploads as uploads_router
 
 USER, PASSWORD = "sus_owner", "pw-sus-1"
@@ -36,13 +38,21 @@ def _image(c, tag: bytes) -> str:
     return r.json()["url"]
 
 
-def _pdf() -> bytes:
+def _pdf(tag: str = "") -> bytes:
     from pypdf import PdfWriter
     w = PdfWriter()
     w.add_blank_page(width=200, height=200)
+    if tag:
+        w.add_metadata({"/Title": tag})
     buf = io.BytesIO()
     w.write(buf)
     return buf.getvalue()
+
+
+def _upload_pdf(c, tag: str = "") -> str:
+    r = c.post("/api/uploads", files={"file": ("p.pdf", _pdf(tag), "application/pdf")})
+    assert r.status_code == 200, r.text
+    return r.json()["doc_id"]
 
 
 def _note(c, parent, content):
@@ -79,8 +89,8 @@ def test_a_page_share_reads_its_own_files_only(owner, anon, traced):
     parent = _note(owner, page["id"], "a note")
     _note(owner, parent, f"![fig]({mine})")  # nested: the subtree counts
     _note(owner, other["id"], f"![fig]({theirs})")
-    doc = owner.post("/api/uploads", files={"file": ("p.pdf", _pdf(), "application/pdf")}).json()["doc_id"]
-    assert owner.put(f"/api/blocks/{page['id']}", json={"properties": {"doc_id": doc}}).status_code == 200
+    doc = _upload_pdf(owner)
+    assert owner.put(f"/api/blocks/{page['id']}", json={"properties": doc_props(doc)}).status_code == 200
     token = _share(owner, page["id"])
 
     traced.clear()
@@ -92,6 +102,66 @@ def test_a_page_share_reads_its_own_files_only(owner, anon, traced):
     # none scanned the workspace's blocks.
     scans = [s for s in traced if "instr(content" in s]
     assert scans and all("WHERE page_id IN" in s for s in scans)
+
+
+def test_a_page_share_reads_the_file_its_document_shows(owner, anon):
+    """The file a shared page's ``doc`` names is the share's to read, of
+    any kind of document: one shown from an address whose copy is stored
+    under its hash, and the stored file a copy (a duplicated page) shows.
+    No other file."""
+    cached, copied, private = (_upload_pdf(owner, tag) for tag in ("cached", "copied", "private"))
+    by_url = _share(owner, make_page(owner, "Shown from an address",
+                                     doc_props(cached, url="https://example.org/sus.pdf"))["id"])
+    duplicate = make_page(owner, "A duplicate", doc_props(url=f"/api/uploads/{copied}.pdf"))
+    assert owner.get(f"/api/blocks/{duplicate['id']}").json()["properties"]["doc"]["copy"] is True
+    by_copy = _share(owner, duplicate["id"])
+    make_page(owner, "Owner of the private one", doc_props(private))
+    assert anon.get(f"/api/uploads/{cached}.pdf", params={"share": by_url}).status_code == 200
+    assert anon.get(f"/api/uploads/{copied}.pdf", params={"share": by_copy}).status_code == 200
+    assert anon.get(f"/api/pdf-info/{copied}", params={"share": by_copy}).status_code == 200
+    for token in (by_url, by_copy):
+        assert anon.get(f"/api/uploads/{private}.pdf", params={"share": token}).status_code == 403
+    assert anon.get(f"/api/uploads/{copied}.pdf", params={"share": by_url}).status_code == 403
+    # a whole export through the share carries the same files (_pages_upload_names)
+    with closing(connect_pages_db(workspace_of(USER))) as conn:
+        assert uploads_router._pages_upload_names(conn, [duplicate["id"]]) == {f"{copied}.pdf"}
+
+
+def test_a_page_share_reads_a_document_of_any_format(owner, anon):
+    """A shared page's document is the share's to read whatever its format
+    (a figure's PNG); another page's is refused."""
+    from gamma.documents.model import document
+
+    def png(tag):
+        r = owner.post("/api/upload-file", files={"file": ("fig.png", b"\x89PNG\r\n\x1a\n" + tag * 16, "image/png")})
+        assert r.status_code == 200, r.text
+        return r.json()["url"].rsplit("/", 1)[1]
+
+    mine, theirs = png(b"\x21"), png(b"\x22")
+    page = make_page(owner, "A figure", properties={"doc": document(mine[:-4], name="fig.png", format="image", ext=".png")})
+    make_page(owner, "Another figure", properties={"doc": document(theirs[:-4], name="fig2.png", format="image", ext=".png")})
+    token = _share(owner, page["id"])
+    assert anon.get(f"/api/uploads/{mine}", params={"share": token}).status_code == 200
+    assert anon.get(f"/api/uploads/{theirs}", params={"share": token}).status_code == 403
+
+
+def test_a_page_share_reads_the_file_a_copy_inside_it_shows(owner, anon):
+    """A block inside the page that shows a stored file as a copy: the
+    share reads it, as any upload a block names, and an export through it
+    packs it. A document a block inside owns is no file of the share."""
+    copied, owned = _upload_pdf(owner, "nested copy"), _upload_pdf(owner, "nested own")
+    page = make_page(owner, "Holds a copy")
+    r = owner.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [
+        {"op": "insert", "id": "shNestedCopy", "parent": page["id"], "content": "",
+         "props": doc_props(url=f"/api/uploads/{copied}.pdf")},
+        {"op": "insert", "id": "shNestedOwn", "parent": page["id"], "content": "", "props": doc_props(owned)}]})
+    assert r.status_code == 200, r.text
+    token = _share(owner, page["id"])
+    assert anon.get(f"/api/uploads/{copied}.pdf", params={"share": token}).status_code == 200
+    assert anon.get(f"/api/pdf-info/{copied}", params={"share": token}).status_code == 200
+    assert anon.get(f"/api/uploads/{owned}.pdf", params={"share": token}).status_code == 403
+    with closing(connect_pages_db(workspace_of(USER))) as conn:
+        assert uploads_router._pages_upload_names(conn, [page["id"]]) == {f"{copied}.pdf"}
 
 
 def test_a_folder_share_reads_the_files_of_its_pages(owner, anon):

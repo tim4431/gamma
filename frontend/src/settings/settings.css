@@ -785,6 +785,28 @@ button.aiModelTag:disabled { cursor: default; }
 .paletteEditorSide .uiBtn { align-self: flex-start; }
 .paletteEditor > .uiClose { margin-left: auto; }
 @media (max-width: 560px) { .paletteEditor { flex-wrap: wrap; } }
+/* Appearance › Text highlighters (TextHighlighters.jsx): a row per
+   highlighter — grip, look, name, key, On the strip, Edit, Duplicate,
+   Remove — the hidden ones muted under their line, and a row's editor (its
+   style, its colours) under it. */
+.hlHint { margin: 0 8px 6px; }
+.hlRow { display: flex; flex-direction: column; gap: 8px; padding: 4px 8px; border-radius: var(--radius-md); transition: opacity var(--dur-fast); }
+.hlRow.lifted { opacity: 0.4; }
+/* on a narrow pane its buttons wrap under the name rather than widen it */
+.hlRowHead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.hlRowHead .hlName { flex: 1 1 6em; min-width: 6em; font-weight: 500; }
+.hlRow.off .hlName, .hlRow.off .markGlyph { opacity: 0.6; }
+.hlKey {
+  min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-xs);
+  color: var(--text-dim); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums;
+}
+.hlKey.none { border-color: transparent; }
+.hlOpen { transform: rotate(180deg); }
+.hlRowEditor { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 0 0 6px 28px; }
+.hlSep { margin: 6px 8px 2px; color: var(--text-dim); font-size: var(--fs-xs); border-top: 1px solid var(--border-subtle); padding-top: 6px; }
+.hlActions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px; }
 
 /* The colour picker (shared/ui/ColorPicker.jsx): the square, the two bars
    and the fields. Its gradients are inline styles. */

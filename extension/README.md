@@ -73,6 +73,15 @@ Edge and other Chromium browsers load it the same way. Firefox needs a
   the tab is a bare PDF). ✓ means the paper is already in your library, and
   clicking opens it. If that library page carries a different title, the
   popup says so.
+- On a page that isn't a paper (a blog post, a news story, an issue), the
+  popup offers **Save as** **Article**, **Selection** or **Link**: the
+  page's article as notes (its headings, lists, code, tables, pictures and
+  math, without the site's menus and footers), the text you selected, or
+  only the link. Pictures are fetched by your browser and stored in Gamma;
+  one it can't fetch keeps its web address. Text selected when you open the
+  popup picks Selection; otherwise the popup starts with what you picked
+  last between Article and Link, which the shortcut and *Save page to
+  Gamma* use too.
 - Paywalled PDF your browser can see (institutional login, a bot check you
   passed)? The bytes are uploaded from your browser automatically when the
   server can't fetch them itself, also from a publisher's PDF reader such as
@@ -82,8 +91,9 @@ Edge and other Chromium browsers load it the same way. Firefox needs a
   *Copy recent saves* on the options page, for the shortcut and the context
   menu) gives a step-by-step report to paste into a bug report: what was
   detected, each download tried and the server's answers.
-- Right-click: *Save link to Gamma*, *Save page to Gamma*, *Clip selection
-  to Gamma* (a quoted block under the matching paper, else a "Web clips" page).
+- Right-click: *Save link to Gamma*, *Save page to Gamma* (a page that isn't
+  a paper as a web clip), *Clip selection to Gamma* (a quoted block under the
+  matching paper, else a "Web clips" page).
 - <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> saves the current page.
 
 ## Connect a publisher session
@@ -125,12 +135,13 @@ See [backend storage details](../docs/dev/paper_metadata.md#connected-publisher-
 
 | File | Role |
 |---|---|
-| `manifest.json` | MV3 manifest: service worker, content scripts, popup, options, command |
+| `manifest.json` | MV3 manifest: service worker, content scripts, popup, options, command, the `scripting` permission the web clipper is injected with |
 | `worker.js` | per-tab detection state + badge, save pipeline, context menus, popup message API, the tabs that fetch PDFs for the AI chat |
 | `handoff.js` | which URLs the browser tries for a save or a chat fetch, and when a chat fetch's tab needs the user, pure |
 | `saveLog.js` | a save's step-by-step log, the text the popup and options page copy, pure |
 | `ids.js` | DOI-in-path and arXiv-id rules shared by the content script and the worker |
 | `detect.js` | content script: identifier extraction (meta tags, URL, JSON-LD, DOI fallback) |
+| `clip.js`, `lib/Readability.js` | the web clipper, injected only when a clip starts: the page's article (Mozilla's Readability, Apache-2.0) or selection as clean HTML |
 | `bridge.js` | content script: answers the Gamma app's questions about the Connector (installed, can it fetch this request) |
 | `api.js` | settings in `chrome.storage.sync` + the fetch wrapper (cookie session, error parsing) |
 | `publisherSessions.js` | publisher-host validation, connection flow, automatic-refresh rules and session status text |

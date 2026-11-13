@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { PLACED, applyOps, diffTrees, displacedRow, propsPatch, pushOp, seedPositions, withMerges } from "../src/shared/model/blockOps.js";
-import { blockPage, isHighlightBlock } from "../src/shared/model/blockModel.js";
+import { POSITION_KEY, anchorOf, blockPage, blockPosition, blocksToHighlights, freshCopy, isHighlightBlock, isPlaceBlock,
+  isRegionBlock, pdfAnchorOf, placeKeyOf, positionKeyOf } from "../src/shared/model/blockModel.js";
 import { mergePicture } from "../src/markup/picture.js";
 import { mergeTextBox } from "../src/markup/textBox.js";
 
@@ -260,6 +261,67 @@ test("a position, a text box and a sheet are objects, never arrays, as the serve
   assert.equal(isHighlightBlock(N("h", "", [], { sheet: {}, pdf_position: pos })), false);
   assert.equal(blockPage(N("h", "", [], { text_box: [], pdf_page: 5, pdf_position: pos })), 2, "placed by its position");
   assert.equal(blockPage(N("h", "", [], { text_box: { x: 1 }, pdf_page: 5, pdf_position: pos })), 5);
+});
+
+test("a region of a picture: a block placed by image_position that no other kind claims, listed under the image key", () => {
+  const region = { width: 1200, height: 800, boundingRect: { x1: 10, y1: 20, x2: 300, y2: 200 }, rects: [{ x1: 10, y1: 20, x2: 300, y2: 200 }], hash: "i1" };
+  const pos = { pageNumber: 2, width: 612, height: 792, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [] };
+  const r = N("r", "a thought", [], { image_position: region, color: "#ffe066aa" });
+  assert.equal(isRegionBlock(r), true);
+  assert.equal(isHighlightBlock(r), false, "no place on a PDF page");
+  assert.equal(isPlaceBlock(r), true);
+  assert.equal(isPlaceBlock(N("h", "", [], { pdf_position: pos })), true);
+  assert.equal(isPlaceBlock(N("n", "", [], {})), false);
+  for (const other of [{ ink_url: "" }, { text_box: { x: 1 } }, { picture: { url: "/api/uploads/p.png" } }, { sheet: {} }]) {
+    assert.equal(isRegionBlock(N("x", "", [], { ...other, image_position: region })), false, JSON.stringify(other));
+  }
+  assert.equal(isRegionBlock(N("x", "", [], { image_position: [1] })), false, "an array is no region");
+  assert.equal(isRegionBlock(N("x", "", [], { image_position: "r" })), false);
+  // the position by the page's document's key
+  assert.deepEqual(POSITION_KEY, { pdf: "pdf_position", image: "image_position" });
+  assert.equal(positionKeyOf({ format: "image" }), "image_position");
+  assert.equal(positionKeyOf({ format: "pdf" }), "pdf_position");
+  assert.equal(positionKeyOf({ format: "text" }), "pdf_position", "the PDF's for any other document");
+  assert.equal(positionKeyOf(null), "pdf_position");
+  assert.equal(blockPosition(r), null, "no PDF place");
+  assert.equal(blockPosition(r, "image_position"), region);
+  // the block's own key: a region's image_position, any other block's pdf_position
+  assert.equal(placeKeyOf(r), "image_position");
+  assert.equal(blockPosition(r, placeKeyOf(r)), region);
+  assert.equal(placeKeyOf(N("h", "", [], { pdf_position: pos })), "pdf_position");
+  assert.equal(placeKeyOf(N("n", "", [], {})), "pdf_position");
+  assert.equal(blockPosition(N("x", "", [], { image_position: { width: 1, height: 1, hash: "i1" } }), "image_position"), null, "no rectangles");
+  // the viewer's list under the image key: regions alone, as areas, with whether they are on the shown version
+  const tree = [r, N("h", "", [], { pdf_position: pos, quote: "q" }), N("old", "", [], { image_position: { ...region, hash: "i0" } })];
+  const regions = blocksToHighlights(tree, "image_position", "i1");
+  assert.deepEqual(regions.map((h) => [h.id, h.position.area, h.position.onVersion, h.style]), [["r", true, true, "highlight"], ["old", true, false, "highlight"]]);
+  assert.equal(regions[0].note, "a thought");
+  assert.equal(regions[0].position.hash, "i1");
+  assert.equal("area" in region, false, "the stored shape carries no area");
+  assert.equal(blocksToHighlights(tree, "image_position")[0].position.onVersion, false, "no file to compare with");
+  assert.deepEqual(blocksToHighlights(tree).map((h) => h.id), ["h"], "the PDF key leaves the regions out");
+  // the anchor a comment card stands beside
+  assert.deepEqual(anchorOf(r, "image_position"), { page: null, position: region });
+  assert.equal(anchorOf(r), null);
+  assert.equal(anchorOf(N("h", "", [], { pdf_position: pos }), "image_position"), null);
+  assert.deepEqual(anchorOf(N("h", "", [], { pdf_position: pos })), pdfAnchorOf(N("h", "", [], { pdf_position: pos })));
+  // Duplicate leaves the region with the original, as it does the PDF place
+  const copy = freshCopy({ ...r, children: [] });
+  assert.deepEqual(copy.properties, { color: "#ffe066aa" });
+  assert.notEqual(copy.id, "r");
+});
+
+test("a comment thread stands on the PDF on a highlight, a link region or an ink group with a position", () => {
+  const pos = { pageNumber: 2, width: 612, height: 792, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [] };
+  assert.deepEqual(pdfAnchorOf(N("h", "", [], { pdf_position: pos, quote: "q" })), { page: 2, position: pos });
+  assert.deepEqual(pdfAnchorOf(N("l", "", [], { pdf_position: pos, link_url: "https://example.org" })), { page: 2, position: pos });
+  assert.deepEqual(pdfAnchorOf(N("g", "", [], { ink_url: "/api/uploads/a.ink", pdf_position: pos })), { page: 2, position: pos });
+  assert.equal(pdfAnchorOf(N("g", "", [], { ink_url: "/api/uploads/a.ink" })), null, "a group on a sheet");
+  assert.equal(pdfAnchorOf(N("b", "", [], { text_box: { x: 1 }, pdf_page: 2, pdf_position: pos })), null, "a text box");
+  assert.equal(pdfAnchorOf(N("i", "", [], { picture: PIC, pdf_page: 5, pdf_position: pos })), null, "a picture");
+  assert.equal(pdfAnchorOf(N("n", "a note")), null);
+  assert.equal(pdfAnchorOf(N("h", "", [], { pdf_position: [] })), null, "an array is no position");
+  assert.deepEqual(pdfAnchorOf(N("h", "", [], { pdf_position: { boundingRect: pos.boundingRect } })).page, null, "no page");
 });
 
 test("a diff of a large flat reorder stays minimal", () => {
