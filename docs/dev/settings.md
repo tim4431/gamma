@@ -634,9 +634,10 @@ AI:
   ([mcp.md](mcp.md)). **Connect an assistant** is a `Segmented` of Claude
   Code, Codex, DeepSeek Harness and Other, each tab numbered `Step`s: Claude
   Code's connection command (with the optional plugin and the address-change
-  commands folded under it), Codex's setup command, DeepSeek Harness's
-  workspaces and its one-time setup command (shown on a button press, gone
-  once a new connection is listed), and the MCP URL for any other client.
+  commands folded under it), Codex's and DeepSeek Harness's setup commands
+  (DeepSeek Harness's signs in for it, opening the consent page with a code
+  to check, [mcp.md](mcp.md) "A setup command's sign-in"), and the MCP URL
+  for any other client.
   The last step of the first three folds **Remove Gamma from …**: the
   commands that undo the setup, then a reminder to disconnect. The
   three that sign in through the browser show the public-URL notice instead

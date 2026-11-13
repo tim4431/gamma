@@ -18,7 +18,7 @@ Codex does not invoke Gamma's AI provider.
 | `gamma/mcp_export.py` | `export_page`: a page as Markdown text or an embedded PDF, over `routers/export.py` |
 | `gamma/integrations.py` | integration tokens (`integration_tokens` table, hashes only), the workspaces each may read (`grant`, `resolve_connection`) and their resolution |
 | `gamma/server_settings.py` | the admin-confirmed public URL and the MCP host allowlist |
-| `gamma/routers/integrations.py` | the session-only connection management API, account-wide; the one-time setup codes a token-only client claims |
+| `gamma/routers/integrations.py` | the session-only connection management API, account-wide; a setup command's sign-in for a client without its own |
 | `users.db` tables `integration_tokens`, `mcp_oauth` | part of the baseline schema (steps 0–19 are folded into it); `integration_tokens.workspaces` is step 51 ([migrations.md](migrations.md) "Versions") |
 | `frontend/src/settings/SettingsIntegrations.jsx`, `frontend/src/settings/WorkspacePicker.jsx`, `frontend/src/auth/McpConsent.jsx` | the Integrations pane, the workspace checklist it and the consent screen share, the consent screen |
 | `plugins/gamma/`, `tools/package_plugins.py`, `tools/release_plugins.py`, `tools/install-gamma-*.{ps1,sh}`, `.github/workflows/codex-plugin.yml` | the shared Codex / Claude Code plugin, the DeepSeek Harness bundle in the same directory, their setup scripts and packaging |
@@ -124,13 +124,12 @@ and the package holds no per-user values. Without a connection the module logs
 a warning and mounts the skill alone, so dsh still boots (a failing row would
 stop it).
 
-**Setup.** **Settings → AI → Integrations → DeepSeek Harness** has three steps:
-tick the workspaces (shown when the account has more than one), show the setup
-command, and open DeepSeek Harness. **Show the setup command** asks
-`POST /api/integrations/setup-codes` for a one-time code (ten minutes, while the
-asking session lasts) and shows `dshSetupCommand` (`assistantSetup.js`), which
-downloads `install-gamma-dsh.ps1` / `.sh` from the latest release and runs it
-with this server's MCP URL and the code. The script:
+**Setup.** **Settings → AI → Integrations → DeepSeek Harness** has the same
+three steps as Codex: run the setup command, choose what it may read in the
+browser, and open DeepSeek Harness. The command, `dshSetupCommand`
+(`assistantSetup.js`), names only this server's MCP URL, so the tab shows it
+at once: it downloads `install-gamma-dsh.ps1` / `.sh` from the latest release
+and runs it with that URL. The script:
 
 1. finds the dsh CLIs: the desktop app's own
    (`%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd`,
@@ -148,18 +147,27 @@ with this server's MCP URL and the code. The script:
    profile or a re-add fails with `ERR_PNPM_MISSING_TARBALL_INTEGRITY`); a local
    file installs into any number of profiles and updates in place. pnpm warns
    about the unresolved peer dependencies; the running dsh provides them;
-4. claims the code (`POST /api/integrations/claim`) for the connection's read
-   token and writes `gamma.json` (no byte-order mark: dsh parses it as JSON;
-   mode 600 on macOS / Linux).
+4. signs in for dsh, which has no browser sign-in of its own ("A setup
+   command's sign-in" below): it asks Gamma for a sign-in, prints its code,
+   opens `/?gamma_device=<code>` in the browser (an address it builds itself,
+   never one from the reply), where the user checks the code, ticks the
+   workspaces and allows it, and asks every two seconds until it may collect
+   the connection's token;
+5. writes the token to `gamma.json` (no byte-order mark: dsh parses it as
+   JSON; mode 600 on macOS / Linux).
 
-A failure in steps 1–3 leaves the code unused, so the same command can run
-again; a used or expired code asks for a new command. Connecting again (a new
+A failure in steps 1–3 asks nothing of Gamma, so the same command can run
+again; so can one whose sign-in expired or was cancelled. A command from a
+Gamma before this sign-in passes a one-time setup code (`-SetupCode`, the sh
+script's second argument), which the script still claims
+(`POST /api/integrations/claim` on that server). Connecting again (a new
 token, other workspaces) finds the plugin in place and only saves the new
 connection, so the app need not be quit; it reads the file at its next start.
 `-Bundle <tarball>` (`GAMMA_DSH_BUNDLE` for the sh script) installs a local
 build instead of the release's, for development; `-Remove` undoes the setup
-("Remove Gamma from an assistant" below). The tab works without browser
-sign-in, since it needs none.
+("Remove Gamma from an assistant" below). The tab works without the
+confirmed public address the other assistants' browser sign-in needs: the
+sign-in is the account's own session on the page the script opened.
 
 The tools appear as `mcp__gamma__<tool>` and the skill as `gamma`. An expired or
 revoked token shows in Gamma's log as a 401 `authentication-required` on `/mcp`;
@@ -172,8 +180,9 @@ download URL and digest pinned in (`__GAMMA_DSH_*__`), and
 builds the tarball in Python (npm layout, `package/` prefix, fixed timestamps,
 reproducible), stamping the release version into `package.json`.
 `tools/test_release_dsh_plugin.py` runs the real scripts (PowerShell on
-Windows, sh elsewhere) with only the download, the claim and the dsh CLI
-stubbed. For local development, `dsh plugin --profile web add ./plugins/gamma`
+Windows, sh elsewhere) with only the download, Gamma's replies (a sign-in
+that waits once, then is allowed or cancelled; an older Gamma's claim), the
+browser and the dsh CLI stubbed. For local development, `dsh plugin --profile web add ./plugins/gamma`
 links the checkout (dsh 0.1.7 or later), or run the setup script from
 `tools/` with `-Bundle` and a tarball from `write_dsh_bundle`. Verified against
 dsh 0.2.2-rc.1 (the Windows desktop app's CLI and pnpm 11): the plugin added to
@@ -411,8 +420,8 @@ resolve of such a thread, and setting a Send request's state over the HTTP
 API. A manual token gets the scope in the Tokens pane (**Read and answer
 feedback**); a browser sign-in gets it from the consent page's checkbox
 ("Browser sign-in protocol"). A `write` token answers through the comment
-API as before and is read-only on MCP, as it always was; setup codes mint
-read tokens.
+API as before and is read-only on MCP, as it always was. A setup command's
+sign-in gets it from the same checkbox.
 
 - **Two tools of the adapter's own**, `reply_feedback` and `resolve_feedback`
   (`gamma/feedback/agent.py`: their schemas, descriptions and executors;
@@ -574,15 +583,35 @@ POST   /api/integrations/tokens       {"name":"Codex","expires_in_days":90,"scop
                                       scope: read (the default), feedback or write (the current workspace alone)
 PATCH  /api/integrations/tokens/{id}  {"workspaces":[…]} or {"all_workspaces":true}   a read or feedback token
 DELETE /api/integrations/tokens/{id}
-POST   /api/integrations/setup-codes  {"name":"DeepSeek Harness","workspaces":[…]}
-POST   /api/integrations/claim        {"code":"…"}   no session: the code is the credential
 ```
 
-A setup code is a token-only client's connection waiting to be claimed: the
-signed-in browser asks for one, the setup command claims it once within ten
-minutes (rate-limited per address) and gets the read token, minted then, so the
-connection appears only once something has it. Signing out of the session that
-asked ends its codes. The code may sit in shell history; the token never does.
+### A setup command's sign-in
+
+A client without browser sign-in of its own (DeepSeek Harness) is signed in
+by its setup command, the way a TV or a CLI signs in: OAuth's device flow
+(RFC 8628) in Gamma's own shape, on its own endpoints, not advertised in the
+OAuth metadata. The command holds nothing secret, so the tab shows it at once.
+
+```text
+POST /api/integrations/device          {"name":"DeepSeek Harness"}   no session; rate-limited per address
+     → {device_code, user_code: "BCDF-GHJK", expires_in: 600, interval: 2}
+GET  /api/integrations/device/request?user_code=…   session: who asks, the code, the workspaces, a csrf
+POST /api/integrations/device/consent  {user_code, csrf, workspaces | all_workspaces, feedback, approve}
+POST /api/integrations/device/token    {device_code}   no session: 202 {"status":"pending"} while it waits,
+     then {token, name, expires_at} once; 403 cancelled; 400 expired, used or signed out
+```
+
+The command opens `/?gamma_device=<user_code>`, which App routes to the
+consent page (`McpConsent.jsx`) as it does `?gamma_oauth=`: sign in if need
+be, the same workspace checklist and feedback checkbox, and the code to check
+against the terminal's, since a sign-in someone else started would show
+another. Allowed, the page says to go back to the terminal; the token is
+minted only when the command collects it, so the connection appears only
+once something has it, and only while the session that allowed it is still
+signed in. The user code is eight letters without vowels, read in any case
+and with or without its dash; the device code, the command's credential,
+never leaves the terminal. Each step is a record of `mcp_oauth`'s store
+(ten minutes) and is spent once.
 
 ## Codex plugin and distribution
 
@@ -735,7 +764,8 @@ workspace isolation, permissions, expiration, and revocation; one connection
 reading several workspaces (ids finding theirs, a search across them, a named
 one, a link's own, the ones it may not read refused, the HTTP API kept to the
 first), changing a connection's workspaces, all of them following a new one, a
-deleted one leaving the grant, and a setup code claimed once; a feedback
+deleted one leaving the grant, and a setup command's sign-in (pending,
+allowed, cancelled, spent once, ended by signing out); a feedback
 connection's answering tools (listed for it alone, refused to a read
 connection even right after a feedback one listed them, a reply with its
 stamp, the room and the Inbox told, a retried id written once, a resolve
@@ -762,4 +792,5 @@ and account deletion through the admin API and `manage.py delete-user`.
 schema upgrades. Browser scenarios cover sign-in, ticking a second workspace,
 approval, cancellation, and MCP reads, each assistant's tab, a token's
 workspaces and changing them, the account-wide list and revocation, and the
-DeepSeek Harness setup command and its code claimed once.
+DeepSeek Harness setup command, shown at once, and its sign-in allowed in the
+browser and collected once.

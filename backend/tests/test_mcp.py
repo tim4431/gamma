@@ -1,6 +1,7 @@
 """Exercise the real SDK transport, scoped credentials, and shared dispatch;
 a feedback connection's answering tools (gamma/feedback/agent.py)."""
 
+import re
 import time
 
 import pytest
@@ -476,20 +477,46 @@ def test_access_changes_and_follows_the_workspaces(client, connection):
                 workspaces.delete(gone)
 
 
-def test_setup_code_is_claimed_once_for_a_token(client, anon, connection):
+def _device(anon):
+    """A setup command's sign-in, as it starts it: ``(device_code, user_code)``."""
+    started = anon.post("/api/integrations/device", json={"name": "DeepSeek Harness"})
+    assert started.status_code == 201, started.text
+    body = started.json()
+    assert body["expires_in"] == 600 and body["interval"] == 2
+    assert re.fullmatch(r"[A-Z]{4}-[A-Z]{4}", body["user_code"])
+    return body["device_code"], body["user_code"]
+
+
+def _allow(c, user_code, approve=True, **access):
+    details = c.get("/api/integrations/device/request", params={"user_code": user_code})
+    assert details.status_code == 200, details.text
+    assert details.json()["client_name"] == "DeepSeek Harness"
+    assert details.json()["user_code"] == user_code.upper()[:4] + "-" + user_code.upper().replace("-", "")[4:]
+    return c.post("/api/integrations/device/consent", json={"user_code": user_code, "csrf": details.json()["csrf"],
+                                                            "approve": approve, **access})
+
+
+def test_setup_command_signs_in_through_the_browser(client, anon, connection):
     from gamma import workspaces
 
     c, ws, _ = connection
     lab = workspaces.create("Setup lab", account_of("mcp-reader"))["id"]
+    poll = lambda code: anon.post("/api/integrations/device/token", json={"device_code": code})  # noqa: E731
     try:
-        assert anon.post("/api/integrations/setup-codes", json={"name": "DeepSeek Harness"}).status_code == 401
-        made = c.post("/api/integrations/setup-codes", json={"name": "DeepSeek Harness", "workspaces": [ws, lab]})
-        assert made.status_code == 201, made.text
-        code = made.json()["code"]
-        assert made.json()["expires_in"] == 600
-        # no connection until the setup command claims it
+        device_code, user_code = _device(anon)
+        # waiting: nothing granted, and the page needs a session
+        assert poll(device_code).status_code == 202
+        assert anon.get("/api/integrations/device/request", params={"user_code": user_code}).status_code == 401
         assert all(t["name"] != "DeepSeek Harness" for t in c.get("/api/integrations/tokens").json()["tokens"])
-        claimed = anon.post("/api/integrations/claim", json={"code": code})
+        # a consent bound to another sign-in's csrf is refused
+        other_device, other_code = _device(anon)
+        csrf = c.get("/api/integrations/device/request", params={"user_code": other_code}).json()["csrf"]
+        refused = c.post("/api/integrations/device/consent", json={"user_code": user_code, "csrf": csrf, "approve": True})
+        assert refused.status_code == 403
+        # the code is read in any case, with or without its dash
+        allowed = _allow(c, user_code.lower().replace("-", ""), workspaces=[ws, lab])
+        assert allowed.status_code == 200, allowed.text
+        claimed = poll(device_code)
         assert claimed.status_code == 200, claimed.text
         assert claimed.headers["cache-control"] == "no-store"
         token = claimed.json()["token"]
@@ -497,15 +524,23 @@ def test_setup_code_is_claimed_once_for_a_token(client, anon, connection):
         assert names == [ws, lab]
         row = next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["name"] == "DeepSeek Harness")
         assert row["scope"] == "read" and row["workspaces"] == [ws, lab]
-        assert anon.post("/api/integrations/claim", json={"code": code}).status_code == 400
-        assert anon.post("/api/integrations/claim", json={"code": "x" * 43}).status_code == 400
+        # once: the token, the consent and an unknown code are all spent
+        assert poll(device_code).status_code == 400
+        assert c.get("/api/integrations/device/request", params={"user_code": user_code}).status_code == 400
+        assert poll("x" * 43).status_code == 400
         c.delete(f"/api/integrations/tokens/{row['id']}")
-        # signing out ends the codes that session asked for
+        # cancelled: the command hears so, and nothing is connected
+        assert _allow(c, other_code, approve=False).status_code == 200
+        assert poll(other_device).status_code == 403
+        assert poll(other_device).status_code == 400
+        assert all(t["name"] != "DeepSeek Harness" for t in c.get("/api/integrations/tokens").json()["tokens"])
+        # signing out before the command collects ends the sign-in
         make_user("mcp-setup-out", "pw")
         leaving = login("mcp-setup-out", "pw")
-        late = leaving.post("/api/integrations/setup-codes", json={"name": "DeepSeek Harness"}).json()["code"]
+        late_device, late_code = _device(anon)
+        assert _allow(leaving, late_code).status_code == 200
         leaving.post("/api/logout")
-        assert anon.post("/api/integrations/claim", json={"code": late}).status_code == 400
+        assert poll(late_device).status_code == 400
         leaving.close()
     finally:
         workspaces.delete(lab)

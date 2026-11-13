@@ -83,5 +83,19 @@ listing its tools.
   Windows layout and Electron's defaults; no Mac or Linux install was read.
 - Publishing dsh-gamma to npm would let the app's Plugins page install it by
   name while running; the connection would still need the setup command.
-- dsh's MCP client might take OAuth later (its SDK has it); the setup code
-  would then be unnecessary.
+- dsh's MCP client might take OAuth later (its SDK has it); its own sign-in
+  would then replace the setup command's.
+
+## Later: the setup command signs in
+
+The setup code made the tab differ from Codex's for no reason of dsh's own: a
+code had to be asked for with a button, since it was a credential on screen,
+and the workspaces were ticked in the tab before it. The script now signs in
+for dsh the way a CLI or a TV does (OAuth's device flow, RFC 8628): it asks
+Gamma for a sign-in, prints a short code and opens the consent page on it,
+where the user checks the code, ticks the workspaces and allows it, and
+collects the token. PowerShell could have run Codex's loopback redirect, but a
+POSIX `sh` has no listener of its own (only `nc`, `python` or Node, none of
+them sure to be there), and asking every two seconds needs only `curl`. The
+command now holds nothing secret, so the tab shows it at once, as Codex's
+does ([dev/mcp.md](../dev/mcp.md#a-setup-commands-sign-in)).
