@@ -1179,9 +1179,14 @@ empty list), but `fetch`, which any member may ask for.
 ### Computers (`routers/computers.py` on every server, `routers/computer_links.py` on the desktop app's own) — see [computers.md](computers.md)
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/computers/announce` | a `computer` token only: `{computer: {id, name}, app, vaults: [{kind: "folder", folder_id, paused} \| {kind: "file", page_id, paused}], assistants: [{name, label, found, ready, version, code}]}` → `{account: {id, username}, computer, workspace: {id}, version, wait}`; 400 malformed, 413 past 64 KiB |
+| POST | `/computers/announce` | a `computer` token only: `{computer: {id, name}, app, vaults: [{kind: "folder", folder_id, paused, agent?} \| {kind: "file", page_id, paused}], assistants: [{name, label, found, ready, version, code}]}` → `{account: {id, username}, computer, workspace: {id}, version, wait}`; 400 malformed, 413 past 64 KiB |
 | GET | `/computers/poll?v=&wait=` | a `computer` token only, held up to 25 s: `{announce: true}` (unknown here, another version, or woken for it), `{wake: [...]}`, or `{}`; 401 when the token went meanwhile |
-| GET | `/pages/{id}/computer` | the signed-in account's computers that keep the page: `{computers: [{id, name, online, since, vault: {kind, name, paused}, assistants}]}`; a session only (a token or the guest 403, a share 404) |
+| GET | `/computers/sends` | a `computer` token only: the Sends waiting for it and its runs withdrawn `{sends: [{id, folder_id, page_id?, at}], withdrawn: [{id, run}]}` ([computers.md](computers.md) "The Sends") |
+| POST | `/computers/sends/{id}/claim` | `{run, agent}` → `{request, entries, seen, threads}`: the Send claimed for that run (again: held; another run: 409) |
+| POST | `/computers/sends/{id}/progress` | `{run, detail}` → `{ok}`; 409 from another run or once it is no longer running |
+| GET | `/computers/threads/{id}/picture?at=now\|before` | a held request's thread's region picture |
+| POST | `/computers/sends/{id}/answers` | `{run, replies: [{id, thread_id, text, resolve}], state, summary, changed, error?}` → `{ok, written}`: the replies written by this server signed `local:<agent>`, idempotent, then the end |
+| GET | `/pages/{id}/computer` | the signed-in account's computers that keep the page: `{computers: [{id, name, online, since, vault: {kind, name, paused, agent}, assistants}]}`; a session only (a token or the guest 403, a share 404) |
 | GET | `/computer-links` | the desktop app's own server: the account's channels to other servers `{links: [{id, remote_url, workspace_id, account, username, status: {state, error, at}, created_at}]}` |
 | POST | `/computer-links` | the shell's word: `{remote_url, workspace, token, token_id}` → 201 `{link, replaced: {token_id} \| null}`; 400 a refused token or one of another workspace, 409 an older server, 502 unreachable |
 | DELETE | `/computer-links/{id}` | the shell's word: `{ok, token_id}` |

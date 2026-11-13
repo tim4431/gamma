@@ -301,10 +301,10 @@ def test_the_page_shows_its_makers_computers_and_nobody_elses(owner, stranger, a
                                         name="LAPTOP", computer_id="cm-laptop"))["version"]
     assert _poll(computer, version) == (200, {})
     shown = _shown(owner, filed["id"])                       # a subfolder's page: the folder vault keeps it
-    assert [(c["name"], c["vault"]) for c in shown] == [("TIM-PC", {"kind": "folder", "name": "CM lab", "paused": True})]
+    assert [(c["name"], c["vault"]) for c in shown] == [("TIM-PC", {"kind": "folder", "name": "CM lab", "paused": True, "agent": None})]
     shown = _shown(owner, loose["id"])
     assert shown == [{"id": "cm-laptop", "name": "LAPTOP", "online": True, "since": None,
-                      "vault": {"kind": "file", "name": "CM loose paper", "paused": False},
+                      "vault": {"kind": "file", "name": "CM loose paper", "paused": False, "agent": None},
                       "assistants": [{"name": "codex", "label": "Codex", "found": True, "ready": True,
                                       "version": "0.167.0", "code": ""}]}]
     assert _shown(owner, elsewhere["id"]) == [] and _shown(owner, "no-such-page") == []
@@ -352,9 +352,9 @@ def test_the_vault_that_keeps_the_page_is_named_and_a_workspace_deleted_takes_it
     vaults = [{"kind": "folder", "folder_id": ROOT, "paused": True}, {"kind": "folder", "folder_id": inner},
               {"kind": "folder", "folder_id": nest, "paused": True}]
     _announce(computer, _body(*vaults))           # the whole library first, as the computer lists them by age
-    assert _shown(owner, page["id"])[0]["vault"] == {"kind": "folder", "name": "Inner", "paused": False}
+    assert _shown(owner, page["id"])[0]["vault"] == {"kind": "folder", "name": "Inner", "paused": False, "agent": None}
     _announce(computer, _body(*vaults, {"kind": "file", "page_id": page["id"], "paused": True}))
-    assert _shown(owner, page["id"])[0]["vault"] == {"kind": "file", "name": "CM nested paper", "paused": True}
+    assert _shown(owner, page["id"])[0]["vault"] == {"kind": "file", "name": "CM nested paper", "paused": True, "agent": None}
 
     # its workspace deleted, a computer's row and its presence go in that transaction
     me = account_of("cptr_owner")

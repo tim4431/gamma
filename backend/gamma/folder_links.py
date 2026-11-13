@@ -106,6 +106,7 @@ import time
 import uuid
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
@@ -238,8 +239,9 @@ def work_vault(link: dict) -> bool:
     finds that server let go of it (``LET_GO_THERE``). A vault of another
     server that pushes everything into a folder made otherwise stays a kept
     folder. The life cycle asks this (making, marking, letting go,
-    removing, its tracking dialog); the agent, the feedback files and a
-    page's chip keep to ``work_folder_link``."""
+    removing, its tracking dialog) and whether its agent here answers its
+    Sends (``agent_folder``); the feedback files, a page's chip and the
+    chat keep to ``work_folder_link``."""
     from .work_folders import takeover
 
     if work_folder_link(link):
@@ -247,6 +249,21 @@ def work_vault(link: dict) -> bool:
     return bool(link["kind"] == "folder" and link["remote_url"] and link["folder_id"] != folder_sync.ROOT
                 and link["push"] == PUSH_ALL and link["state"].get(takeover.TAKEN_OVER)
                 and not link["state"].get(LET_GO_THERE))
+
+
+def agent_folder(link: dict) -> bool:
+    """Whether an agent on this computer may answer the vault's Sends: a
+    work folder of this server (``work_folder_link``), or one of another
+    server (``work_vault``; step 4c of docs/research/agent-collab.md), whose
+    Sends that server hands this computer over its channel. Asking in the
+    chat stays a work folder of this server's."""
+    return work_vault(link)
+
+
+def server_name(link: dict) -> str:
+    """The other server a vault keeps a folder of, as its host names it
+    (``NAS``), for the words of a refusal."""
+    return urlsplit(link["remote_url"]).hostname or link["remote_url"]
 
 
 def choosing(link: dict) -> bool:
@@ -1293,21 +1310,30 @@ def set_agent(link_id: str, agent: str, *, by: str) -> int:
     turned off or changed, the folder's open pages hear ``{t: "vault"}``
     (their chip and the comments' @ menu read the agent again), and an
     agent turned on (or changed) takes the Sends that wait now → how many
-    it took. The route checks who may and whether the agent is ready.
-    LinkError for a vault that is no work folder; 0 for no such link."""
+    it took. The route checks who may and whether the agent is ready. A
+    work folder of another server (``agent_folder``; step 4c) needs this
+    computer shown there (its channel, gamma/computers/channel.py), which
+    then announces the agent and asks that server for the Sends that wait
+    (0 here). LinkError for a vault that is no work folder, or one of
+    another server not shown there; 0 for no such link."""
+    from .computers import channel  # local: it imports this module
     from .local_agents import runner, store as agents  # local: the runner imports the feedback modules
 
     link = get_link(link_id)
     if link is None:
         return 0
-    if agent and not work_folder_link(link):
+    if agent and not agent_folder(link):
         raise LinkError("Only a work folder can have an agent.")
+    if agent and link["remote_url"] and channel.of_vault(link) is None:
+        raise LinkError(f"Show this computer on {server_name(link)} first.")
     had = (agents.agent_of(link_id) or {}).get("agent", "")
     agents.set_agent(link_id, agent, by=by)
     if had and had != agent:
         _stop_agent(link_id)
     if had != agent:
         _tell_open_pages(link)
+        if link["remote_url"]:
+            _vaults_changed()   # its channel announces the folder's agent there
     if agent and agent != had:
         return runner.queue_folder(link["workspace_id"], link_id)
     return 0

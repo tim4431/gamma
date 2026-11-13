@@ -556,15 +556,19 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
     ``claude`` turns it on, which the desktop app asks with its shell's
     word (``_from_shell``: an agent that edits a directory is the
     computer's decision), and the answer's ``queued`` says how many waiting
-    Sends it took; ``""`` turns it off, the maker's alone. 404 on a server
-    that runs no agents, 400 for a vault that is no work folder, an agent
-    Gamma does not know or one not ready (its problem). ``agent_runs`` is
-    what that agent may run (``folder_links.set_agent_runs``): ``ask`` lets
-    its chat's turns ask the person, which the desktop app asks with its
-    shell's word (403 without), ``never`` the maker's alone; the gate of
-    ``agent``, then 400 for another value or a folder with no agent on
-    (after the PATCH's own ``agent``). A resume hands the agent the Sends
-    made since it was turned on that wait."""
+    Sends it took; ``""`` turns it off, the maker's alone. A work folder of
+    another server takes one too (step 4c: its Sends made there run here),
+    once this computer is shown there (400 "Show this computer on NAS
+    first."); its channel asks that server for the Sends that wait
+    (``queued`` 0). 404 on a server that runs no agents, 400 for a vault
+    that is no work folder, an agent Gamma does not know or one not ready
+    (its problem). ``agent_runs`` is what that agent may run
+    (``folder_links.set_agent_runs``): ``ask`` lets its chat's turns ask
+    the person, which the desktop app asks with its shell's word (403
+    without), for a work folder of this server only (409), ``never`` the
+    maker's alone; the gate of ``agent``, then 400 for another value or a
+    folder with no agent on (after the PATCH's own ``agent``). A resume
+    hands the agent the Sends made since it was turned on that wait."""
     changes = (payload.notes is not None or payload.push is not None or payload.pull is not None
                or payload.library is not None or bool(payload.token) or payload.agent is not None
                or payload.agent_runs is not None)
@@ -603,7 +607,8 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
 
 def _agent_allowed(request: Request, link: dict, agent: str) -> None:
     """The PATCH's gate for ``agent``, in order, past ``_made``: a server
-    that runs agents (404), a work folder (400); for an agent turned on or
+    that runs agents (404), a work folder, of this server or of another
+    (``folder_links.agent_folder``; 400); for an agent turned on or
     changed, the shell's word (403), an agent Gamma knows (400) and one
     ready now (400 with its problem: this asks it afresh, a process or two).
     Turning it off needs nothing more."""
@@ -612,7 +617,7 @@ def _agent_allowed(request: Request, link: dict, agent: str) -> None:
 
     if not local_agents.enabled():
         raise HTTPException(status_code=404, detail="Agents run on the desktop app's own server.")
-    if not folder_links.work_folder_link(link):
+    if not folder_links.agent_folder(link):
         raise HTTPException(status_code=400, detail="Only a work folder can have an agent.")
     if not agent:
         return
@@ -629,31 +634,38 @@ def _runs_allowed(request: Request, link: dict, runs: str, agent: str | None) ->
     """The PATCH's gate for ``agent_runs``, in order, past ``_made``: a
     server that runs agents (404), a work folder (400), ``never`` or
     ``ask`` (400), an agent on once the PATCH's ``agent`` is set (400);
-    for ``ask``, the shell's word (403: letting an agent ask to run
-    commands is the computer's decision). ``never`` needs nothing more."""
+    for ``ask``, a work folder of this server (409: asking is in the chat,
+    which a work folder of another server has not here) and the shell's
+    word (403: letting an agent ask to run commands is the computer's
+    decision). ``never`` needs nothing more."""
     from .. import local_agents
     from ..local_agents import store
 
     if not local_agents.enabled():
         raise HTTPException(status_code=404, detail="Agents run on the desktop app's own server.")
-    if not folder_links.work_folder_link(link):
+    if not folder_links.agent_folder(link):
         raise HTTPException(status_code=400, detail="Only a work folder can have an agent.")
     if runs not in store.RUNS:
         raise HTTPException(status_code=400, detail="What an agent may run is never or ask.")
     if not (agent if agent is not None else (store.agent_of(link["id"]) or {}).get("agent")):
         raise HTTPException(status_code=400, detail="Turn an agent on first.")
     if runs == "ask":
+        if not folder_links.work_folder_link(link):
+            raise HTTPException(status_code=409, detail="Asking in the chat is for a work folder of this computer's "
+                                                        "server.")
         _from_shell(request, "Only the desktop app may let an agent ask to run commands in this folder.")
 
 
 def _hand_waiting(link: dict) -> None:
     """A work folder that writes its directory again (resumed, its files
-    chosen): its agent takes the Sends that wait for it (``runner.waiting``).
-    An error is logged; the change it follows stands."""
+    chosen): its agent takes the Sends that wait for it (``runner.waiting``;
+    one of another server, those that server hands it, which its channel
+    asks for: ``runner.queue_folder``). An error is logged; the change it
+    follows stands."""
     from .. import local_agents
     from ..local_agents import runner, store
 
-    if not local_agents.enabled() or not folder_links.work_folder_link(link):
+    if not local_agents.enabled() or not folder_links.agent_folder(link):
         return
     try:
         if store.agent_of(link["id"]) is not None:

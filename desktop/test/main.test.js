@@ -496,7 +496,7 @@ test('a vault of another server keeps pulling and pushes PDFs at most: its switc
   assert.deepEqual(patches(), [{ pull: true }], 'turned on, as the rule wants');
 });
 
-test('a work folder of another server pushes everything and pulls: its switches refuse the rest, and it has no agent here; its library switch is the host\'s', async () => {
+test('a work folder of another server pushes everything and pulls: its switches refuse the rest, and it has no agent here until this computer is shown there; its library switch is the host\'s', async () => {
   fresh();
   const s = server('Host');
   s.fake.vaults = [vaultLink({ workspace_id: 'nas-ws', remote_url: 'http://nas.lan:9001', token_id: 't1', push: 'everything', work: true, mine: true })];
@@ -509,10 +509,72 @@ test('a work folder of another server pushes everything and pulls: its switches 
   await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'pull', false), rule);
   await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'push', 'pdfs'), rule);
   await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'push', 'off'), rule);
-  await assert.rejects(shell.setAgent(s.srv.id, 'v1', 'codex', true), /another server has no agent/);
+  await assert.rejects(shell.setAgent(s.srv.id, 'v1', 'codex', true), /^Error: Show this computer on .+ first\.$/);
   assert.deepEqual(patches(), [], 'nothing was changed');
   await shell.keepingAction('vault', s.srv.id, 'v1', 'library', true);
   assert.deepEqual(patches().map((c) => [c.body, c.headers['X-Gamma-Workspace']]), [[{ library: true }, undefined]], 'the account\'s, no workspace of the host');
+});
+
+test('the agent of a work folder of another server this computer is shown on: offered, asked with what that server can then do, the shell\'s word, never asking in the chat', async () => {
+  fresh();
+  registry.addRemote('NAS', 'http://nas.lan:9001');
+  const s = server('Host');
+  const far = (agent) => vaultLink({ workspace_id: 'nas-ws', remote_url: 'http://nas.lan:9001', token_id: 't1', push: 'everything', work: true, mine: true, agent });
+  const codexOn = { name: 'codex', label: 'Codex', ready: true, problem: '', running: null, runs: 'never' };
+  s.fake.vaults = [far(null)];
+  s.fake.routes = (p, init) => {
+    if (p === '/api/local-agents') return { agents: [{ name: 'codex', label: 'Codex', found: true, ready: true, problem: '' }] };
+    if (p === '/api/computer-links') {
+      return { links: [{ id: 'c1', remote_url: 'http://nas.lan:9001', workspace_id: 'nas-ws', account: 'u_1', username: 'tim', status: { state: 'connected', error: '', at: '2026-11-13T10:00:00Z' } }] };
+    }
+    if (p === '/api/folder-links/v1' && init.method === 'PATCH') {
+      const body = JSON.parse(init.body);
+      if (body.agent_runs === 'ask') return { failWith: 409, body: { detail: 'Asking in the chat is for a work folder of this computer\'s server.' } };
+      s.fake.vaults = [far(body.agent ? codexOn : null)];
+      return { ...s.fake.vaults[0], queued: 0 };
+    }
+    return null;
+  };
+  const patches = () => s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH');
+  await shell.refreshKeeping();
+  let [item] = shell.keeping().items;
+  assert.deepEqual([item.work, item.agentHere, item.agents.map((a) => a.name), item.computer.state], [true, true, ['codex', 'claude'], 'connected']);
+
+  // asked first with what NAS can then do, over plain http from outside this computer; no Sends counted here, where none wait
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex');
+  assert.deepEqual(patches(), [], 'nothing turned on');
+  assert.equal(shell.asked.at(-1), 'Let Codex work in C:\\Papers? Codex will answer the Sends you make on this folder: it edits files in this directory and runs commands in its sandbox, without network.' +
+    ' Whoever can sign in to NAS as tim, and whoever runs NAS, can send work to Codex here. Codex reads your files and its answers are stored on NAS.' +
+    ' NAS is reached without encryption: someone on your network could read what is sent and pose as NAS.');
+  assert.ok(!s.fake.calls.some((c) => c.path === '/api/local-agents/waiting'), 'the host counts no Sends of another server');
+
+  shell.answers.push(0);
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex');
+  const [on] = patches();
+  assert.deepEqual(on.body, { agent: 'codex' });
+  assert.equal(on.headers['X-Gamma-Shell'], shell.shellSecret, 'turning an agent on is the computer\'s word');
+  assert.equal(on.headers['X-Gamma-Workspace'], undefined, 'the account\'s, no workspace of the host');
+  assert.equal(shell.notice(), 'Codex now answers the Sends on Papers.');
+  await shell.refreshKeeping();
+  [item] = shell.keeping().items;
+  assert.deepEqual([item.agent, item.agentRuns], ['codex', 'never']);
+
+  // never asking in the chat: refused before anything is asked or sent
+  const asks = shell.asked.length;
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'ask'), /^Error: Asking in the chat is for a work folder of this computer's server\.$/);
+  assert.equal(await shell.setAgentRuns(s.srv.id, 'v1', 'never'), false);
+  assert.equal(shell.asked.length, asks, 'nothing asked');
+  assert.equal(patches().length, 1);
+
+  // no longer shown there: no agent offered, none turned on; turning it off still goes
+  s.fake.routes = ((routes) => (p, init) => (p === '/api/computer-links' ? { links: [] } : routes(p, init)))(s.fake.routes);
+  await shell.refreshKeeping();
+  [item] = shell.keeping().items;
+  assert.deepEqual([item.agentHere, item.agents, item.computer.state], [false, null, 'none']);
+  await assert.rejects(shell.setAgent(s.srv.id, 'v1', 'claude', true), /^Error: Show this computer on NAS first\.$/);
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', '');
+  assert.deepEqual(patches().at(-1).body, { agent: '' });
+  assert.equal(patches().at(-1).headers['X-Gamma-Shell'], undefined);
 });
 
 test('a work folder choosing its files is shown so, its Choose files… opens its tracking dialog in the window, and its library switch is the server\'s', async () => {

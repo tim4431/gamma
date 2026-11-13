@@ -351,7 +351,17 @@ host's window the same way. Its push stays everything and its pull on
 (`REMOTE_WORK_RULE`), its agent row stays local-only (`item.agentHere`),
 and removing it while that server cannot be reached asks first (*Remove
 anyway* forgets it with `force=1`, the folder staying a work folder there
-until the workspace's owner lets go of it). The vaults of a remote workspace
+until the workspace's owner lets go of it). Once this computer is shown
+there (`item.agentHere`), its agent row is offered as a local work
+folder's ([local_agents.md](../../docs/dev/local_agents.md) "A work folder
+of another server"): turning it on asks with the local sentence, then
+*Whoever can sign in to NAS as tim, and whoever runs NAS, can send work
+to Codex here. Codex reads your files and its answers are stored on
+NAS.*, and, for a server reached over plain `http:` that is not this
+computer (127.0.0.1, localhost, ::1), *NAS is reached without encryption:
+someone on your network could read what is sent and pose as NAS.*; no
+waiting count is asked (those Sends wait on the NAS); *What it may run*
+stays hidden (`FAR_RUNS_RULE`). The vaults of a remote workspace
 are the host's links with that origin and workspace (`listLinks`; the
 chooser lists only the folders'). `settings.folderHost` remembers the host
 so it starts at launch like the clones' hosts (`startBackgroundHosts`), and

@@ -92,6 +92,9 @@ test("a Send's line: when and how many, then what became of it", () => {
   assert.equal(requestLine({ ...sent, state: "failed" }, now).detail, "");
   assert.deepEqual(requestLine({ ...sent, state: "failed", detail: "withdrawn", state_by: "tim" }, now),
     { line, state: "Withdrawn", detail: "", kind: "withdrawn" });
+  // the computer that keeps the folder runs the reader's Sends
+  assert.deepEqual(requestLine(sent, now, "TIM-PC"), { line, state: "Waiting for TIM-PC", detail: "", kind: "sent" });
+  assert.equal(requestLine({ ...sent, state: "running", state_by: "Codex" }, now, "TIM-PC").state, "Codex is working");
 });
 
 test("Withdraw's title says it stops the agent only where an agent on this computer holds the request", () => {
@@ -133,4 +136,17 @@ test("the Send block: the folder's agent named, its limit, its problem, others' 
   assert.equal(sendWords(plan("offer", { label: "" }), 2).notes[0].text,
     "To have Codex or Claude Code answer here, turn one on in the sync panel: the sync button in the title bar, then ⋯ on this folder.");
   assert.deepEqual(sendWords(plan("", { label: "" }), 2), { button: "Send 2 comments", notes: [], blocked: false });
+});
+
+test("the Send block of the computer that keeps the folder: named with that computer, waiting while it is offline", () => {
+  const plan = (mode, extra = {}) => ({ mode, label: "Codex", problem: "", why: "", computer: "TIM-PC", online: true, ...extra });
+  const ready = sendWords(plan("ready"), 2, 0);
+  assert.equal(ready.button, "Send 2 comments to Codex");
+  assert.deepEqual(ready.notes, [{ tone: "hint", text: "Codex works on TIM-PC, in this folder's directory there, and answers each comment." }]);
+  const away = sendWords(plan("away", { online: false }), 2, 0);
+  assert.equal(away.button, "Send 2 comments to Codex", "still named: it runs once TIM-PC connects");
+  assert.deepEqual(away.notes, [{ tone: "hint", text: "TIM-PC is offline: this runs when it connects." }]);
+  assert.equal(sendWords(plan("away", { online: false }), 101).blocked, true, "its limit holds");
+  assert.deepEqual(sendWords(plan("not_ready", { problem: "Codex is not signed in on TIM-PC." }), 2).notes,
+    [{ tone: "warn", text: "Codex is not signed in on TIM-PC. This Send fails until then." }]);
 });

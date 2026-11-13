@@ -153,12 +153,17 @@ export class Server {
     throw new Error(`backend did not come up:\n${this.log().slice(-2000)}`);
   }
   log() { try { return fs.readFileSync(this.logPath, "utf8"); } catch { return ""; } }
-  async stop() {
+  // The process ended, its data dir kept: start() again runs the same Gamma
+  // on another port (a computer gone and back, remoteSends.mjs).
+  async halt() {
     if (this.proc && this.proc.exitCode == null) {
       if (process.platform === "win32") { try { execFileSync("taskkill", ["/pid", String(this.proc.pid), "/t", "/f"], { stdio: "ignore" }); } catch {} }
       else this.proc.kill("SIGTERM");
       await sleep(300);
     }
+  }
+  async stop() {
+    await this.halt();
     // The temp dir survives on --keep and after any failure (its failures/
     // folder holds the screenshots and log tails), a failure's without the
     // copy of the build, which says nothing about it.

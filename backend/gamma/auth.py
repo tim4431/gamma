@@ -40,9 +40,12 @@ SESSION_COOKIE = "session"
 SESSION_MAX_AGE = 365 * 24 * 3600
 WORKSPACE_HEADER = "x-gamma-workspace"
 _AUTH_PATHS = {"/api/login", "/api/login-guest", "/api/logout", "/api/session"}
-# A computer's channel (gamma/computers/): the only routes a token of the
-# ``computer`` scope opens. The poll is held up to half a minute, by design.
-CHANNEL_PATHS = {"/api/computers/announce", "/api/computers/poll"}
+# A computer's channel (gamma/computers/, gamma/routers/computers.py): the
+# only routes a token of the ``computer`` scope opens are below this prefix
+# (the announce, the poll, and its Sends' claims, progress, answers and
+# pictures), and nothing else lives there. The poll is held up to half a
+# minute, by design.
+CHANNEL_PREFIX = "/api/computers/"
 _HELD_PATHS = {"/api/computers/poll"}
 CHANNEL_ONLY = "This token is a computer's channel; it opens nothing else."
 
@@ -240,7 +243,7 @@ async def session_middleware(request: Request, call_next):
         (request.state.user_id, request.state.user, request.state.token_ws, request.state.token_scope,
          request.state.token_id, request.state.token_name) = found
         request.state.auth = "token"
-        if found.scope == "computer" and request.url.path not in CHANNEL_PATHS:
+        if found.scope == "computer" and not request.url.path.startswith(CHANNEL_PREFIX):
             # A computer's token is its channel, never a credential for the
             # workspace's data, its reads included.
             resp = JSONResponse({"detail": CHANNEL_ONLY}, status_code=403)

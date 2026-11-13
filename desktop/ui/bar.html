@@ -657,7 +657,8 @@
   // A work folder's agent row (its maker's alone): the segment, then as
   // visible lines the problem of the chosen agent and of each one that
   // cannot be chosen, what the chosen one does, and what it does now; with
-  // an agent on, the row What it may run and its line.
+  // an agent on, the row What it may run and its line (none for a work
+  // folder of another server, whose agent asks nothing in the chat).
   function agentRow(i) {
     const box = document.createElement('div');
     box.className = 'agentRow';
@@ -674,7 +675,7 @@
     for (const p of problems) line(p, true);
     line(AGENT_SAYS[i.agent] || AGENT_SAYS[''], false);
     if (i.agentRunning) line(`Now: ${i.agentLabel} is working · ${i.agentRunning}`, false);
-    if (i.agent) {
+    if (i.agent && !i.remoteUrl) {
       box.appendChild(switchRow([['What it may run', runsSeg(i.agentRuns, (word) => runKept(i, 'agent-runs', word))]]));
       if (RUNS_SAYS[i.agent]) line(RUNS_SAYS[i.agent], false);
     }
@@ -793,7 +794,7 @@
           farWork ? '' : i.remoteUrl ? FAR_PUSH : i.whole && i.push !== 'everything' ? WHOLE_PUSH : '', farWork ? FAR_WORK : '')]])];
       // a work folder's switch: whether the PDFs and notes it finds are added to the library too
       if (i.work) rows.push(switchRow([['Add its PDFs and notes to the library', switchOf('vaultLibrary', 'Add its PDFs and notes to the library', i.library, (on) => runKept(i, 'library', on))]]));
-      // and its agent, its maker's choice on a server that runs agents (a work folder of the server's own, for now)
+      // and its agent, its maker's choice on a server that runs agents (one of another server once this computer is shown there)
       if (i.agentHere && i.mine && i.agents) rows.push(agentRow(i));
       for (const sw of rows) {
         if (shut) {

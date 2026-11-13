@@ -245,7 +245,7 @@ import { isVaultConflict } from "../collaboration/conflictKinds.js";
 import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
 import { usePageComputer } from "../vault/usePageComputer.js";
-import { addsToLibrary, carriesToServer, computerAgent, isOpenedPdf, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, vaultConflictsPath } from "../vault/vaultState.js";
+import { addsToLibrary, carriesToServer, computerAgent, isOpenedPdf, keeperAgent, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, vaultConflictsPath } from "../vault/vaultState.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
@@ -4894,9 +4894,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const vaultConflicts = vaultConflictsPath(vaultState);
   const vaultConflictCount = vaultState?.vault?.conflicts || 0;
   // The work folder's agent on this computer that the maker names in a
-  // comment (`@codex`, vaultState.js mentionAgent): the comment fields'
-  // `links.agent`, never MentionContext, which reaches the notes.
-  const commentAgent = useMemo(() => (IS_DESKTOP ? mentionAgent(vaultState) : null), [vaultState]);
+  // comment (`@codex`, vaultState.js mentionAgent), else, in any window,
+  // the agent of the computer that keeps a work folder of the page's server
+  // (keeperAgent: "Codex on TIM-PC"): the comment fields' `links.agent`,
+  // never MentionContext, which reaches the notes.
+  const pageComputers = pageComputer.computers;
+  const commentAgent = useMemo(() => (IS_DESKTOP ? mentionAgent(vaultState) : null) || keeperAgent(pageComputers),
+    [vaultState, pageComputers]);
   // The same agent for the chat's computer side (vaultState.js computerAgent).
   const chatComputer = useMemo(() => (IS_DESKTOP ? computerAgent(vaultState) : null), [vaultState]);
 
@@ -12593,6 +12597,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onStatus={setStatus}
             // what a thread is on: a highlight's quote, else the note's text, else the handwriting's page
             anchorText={(id) => anchorWords(treeById.get(id))}
+            // the agent that answers the reader's Sends, so a row's chip reads as its thread's card
+            agent={commentAgent}
             // on a work folder's file, for a member who may edit: the feedback view (feedback/)
             onFeedback={focusedFile && canWriteWorkspace ? () => openFeedback({ kind: "file", id: focusedBlockId }) : undefined}
             labelOf={(id) => { const rb = treeById.get(id) || refCache[id]; return rb ? refLabelOf(rb) : null; }}

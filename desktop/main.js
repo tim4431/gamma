@@ -1449,8 +1449,11 @@ async function vaultOn(serverId, linkId) {
   const at = await localServer(serverId);
   const link = ((await at.api(at.origin, '/api/folder-links')).links || []).find((l) => l.id === linkId);
   if (!link) throw new Error('That vault is no longer synced with this computer');
+  // One of another server says whether this computer is shown there (its agent's condition), unsaid when that list does not answer.
+  const shown = link.remote_url ? await at.api(at.origin, '/api/computer-links').catch(() => null) : null;
+  const computers = shown && Array.isArray(shown.links) ? { links: shown.links, name: COMPUTER_NAME } : null;
   // A vault of the server's own workspace is changed in that workspace; one of a remote's is the account's.
-  return { ...at, link, item: keeping.vault(at.srv, link, registry.load().servers),
+  return { ...at, link, item: keeping.vault(at.srv, link, registry.load().servers, null, null, computers),
     headers: link.remote_url ? {} : { 'X-Gamma-Workspace': link.workspace_id } };
 }
 
@@ -1568,13 +1571,15 @@ async function setLibrary(serverId, linkId, on) {
 // Cancel), and the PATCH carries the shell's word, which a page of Gamma
 // cannot. The server checks the agent meanwhile ("Checking Codex…") and
 // refuses one that is not ready with why. Turning it off asks nothing. A
-// work folder of another server has none, for now (item.agentHere).
+// work folder of another server has one once this computer is shown there
+// (item.agentHere): its question says what that server can then do, and
+// counts no Sends, which wait there, not on this computer's server.
 async function setAgent(serverId, linkId, name, confirmed) {
   const word = name || '';
   if (word && !Object.prototype.hasOwnProperty.call(keeping.AGENT_LABELS, word)) throw new Error(`An agent is codex or claude, not ${word}`);
   const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
   if (!item.work) throw new Error('Only a work folder can have an agent.');
-  if (!item.agentHere) throw new Error('A work folder of another server has no agent, for now.');
+  if (word && !item.agentHere) throw new Error(`Show this computer on ${item.remote} first.`);
   if (word === item.agent) return false;
   const patch = (extra) => api(origin, `/api/folder-links/${link.id}`, {
     method: 'PATCH', headers: { ...headers, ...JSON_TYPE, ...extra }, body: JSON.stringify({ agent: word }),
@@ -1588,7 +1593,7 @@ async function setAgent(serverId, linkId, name, confirmed) {
   if (!confirmed) {
     // The Sends the agent would be handed, counted by the server's own rule
     // (the maker's, made in Gamma); not said when it does not answer.
-    const counted = await api(origin, `/api/local-agents/waiting?link=${encodeURIComponent(link.id)}`,
+    const counted = link.remote_url ? null : await api(origin, `/api/local-agents/waiting?link=${encodeURIComponent(link.id)}`,
       { signal: AbortSignal.timeout(5000) }).catch(() => null);
     const waiting = counted && Number.isInteger(counted.waiting) ? counted.waiting : null;
     const q = keeping.agentAsk(item, word, waiting);
@@ -1613,12 +1618,14 @@ async function setAgent(serverId, linkId, name, confirmed) {
 // Letting it ask is the computer's decision, as turning the agent on is:
 // asked first (`confirmed` answers in tests, where the question takes
 // Cancel), and the PATCH carries the shell's word. Back to 'never' asks
-// nothing.
+// nothing. A work folder of another server never lets it ask (the server
+// refuses it too).
 async function setAgentRuns(serverId, linkId, runs, confirmed) {
   if (runs !== 'never' && runs !== 'ask') throw new Error(`What an agent may run is never or ask, not ${runs}`);
   const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
   if (!item.agentHere || !item.agent) throw new Error('Turn an agent on first.');
   if (runs === item.agentRuns) return false;
+  if (runs === 'ask' && link.remote_url) throw new Error(keeping.FAR_RUNS_RULE);
   if (runs === 'ask' && !confirmed) {
     const q = keeping.runsAsk(item);
     if (await ask({ type: 'question', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 0, cancelId: 1 }, 1) !== 0) return null;

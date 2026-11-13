@@ -39,6 +39,17 @@ A withdraw meanwhile writes nothing more in Gamma: the run ends ``stopped``.
 Every write of the runner expects the request ``running`` (``only_from``), so
 a withdraw that lands between two of them is never overwritten.
 
+A work folder of another server kept here (step 4c of
+docs/research/agent-collab.md) runs its Sends the same way, the request's
+reads and writes through its home (gamma/local_agents/home.py ``HttpHome``,
+a local one's ``LocalHome``): that server decides whose Send it is, and the
+channel (gamma/computers/channel.py) queues each for its vault
+(``queue_remote``), keyed ``(link id, "send", request id)`` so it never
+reads as a request of a workspace here (``running``), and stops a run whose
+request was withdrawn there (``withdraw_remote``). The claim is that
+server's, keyed by the run's id; its answers are written by that server at
+the run's end, signed as the agent's. A Send never asks.
+
 A turn of the chat's computer side (gamma/local_agents/chats.py,
 ``queue_chat``) waits in the same queue of its vault and takes the same
 slots, keyed ``(ws, "chat", turn id)`` beside a Send's ``(ws, "send",
@@ -92,7 +103,7 @@ from ..db import account_names, connect_pages_db, connect_users_db, page_now
 from ..feedback import requests
 from ..feedback.entries import FeedbackError
 from ..logbuf import log
-from . import catalog, chats, enabled, events, procs, prompt, store
+from . import catalog, chats, enabled, events, home, procs, prompt, store
 
 RUN_TIMEOUT_S = 1800              # env GAMMA_AGENT_RUN_TIMEOUT: a turn running this long is stopped
 MAX_RUNS = 2                      # runs at once on this server, at most one per folder
@@ -218,6 +229,40 @@ def _consider(ws: str, request_id: str) -> bool:
     return True
 
 
+def queue_remote(link_id: str, request_id: str) -> bool:
+    """A Send of the work folder of another server that the vault
+    ``link_id`` keeps, which that server gave this computer (the channel's
+    ``GET /api/computers/sends``), at the end of the vault's queue unless it
+    is there or runs → whether it is queued or runs now. The run checks the
+    vault and its agent again before it claims it there."""
+    if not enabled():
+        return False
+    key = (link_id, SEND, request_id)
+    with _lock:
+        run = _active.get(key)
+        if key in _queued or (run is not None and not (run["stop"].is_set() and not run["claimed"])):
+            return True
+        _enqueue(link_id, key)
+    return True
+
+
+def withdraw_remote(link_ids, request_id: str, run_id: str = "") -> bool:
+    """The request ``request_id`` of another server was withdrawn there (or
+    is no longer running): the run of one of the vaults ``link_ids`` that
+    holds it (``run_id``, when that server names it) stops and writes
+    nothing more → whether one did."""
+    stopped = False
+    with _lock:
+        for link_id in link_ids:
+            run = _active.get((link_id, SEND, request_id))
+            if run is None or run["stop"].is_set() or (run_id and run.get("run_id") and run["run_id"] != run_id):
+                continue
+            run["reason"] = WITHDRAWN
+            run["stop"].set()
+            stopped = True
+    return stopped
+
+
 def _enqueue(link_id: str, key: tuple) -> None:
     """``key`` at the end of the vault's queue, its worker started when it
     has none. Under ``_lock``."""
@@ -254,13 +299,20 @@ def waiting(ws: str, link: dict) -> list[str]:
 
 def queue_folder(ws: str, link_id: str) -> int:
     """Hand the agent of the vault ``link_id`` its work folder's Sends that
-    wait (``waiting``) → how many it takes."""
+    wait (``waiting``) → how many it takes; for a work folder of another
+    server, its channel asks that server for them (``channel.ask_sends``)
+    → 0."""
     from .. import folder_links  # local: folder_links imports this package's modules inside functions
 
     if not enabled():
         return 0
     link = folder_links.get_link(link_id)
     if link is None or link["workspace_id"] != ws:
+        return 0
+    if link["remote_url"]:
+        from ..computers import channel  # local: it imports folder_links
+
+        channel.ask_sends()   # that server decides which wait for it: the channel asks it
         return 0
     count = 0
     for request_id in waiting(ws, link):
@@ -303,13 +355,15 @@ def running(ws: str, request_id: str) -> bool:
 
 
 def at_work(link_ids) -> dict[str, dict]:
-    """``{link id: {kind, ws, id, detail}}`` of the vaults among
+    """``{link id: {kind, ws, id, detail, remote}}`` of the vaults among
     ``link_ids`` whose agent works now: a Send it claimed (``detail`` "":
-    the request's own is read), a chat turn that runs (``detail`` what its
-    step shows a member, ``_said``)."""
+    the request's own is read; a Send of another server's, ``remote``, the
+    progress the run wrote there last), a chat turn that runs (``detail``
+    what its step shows a member, ``_said``)."""
     wanted = set(link_ids)
     with _lock:
-        return {run["link_id"]: {"kind": kind, "ws": ws, "id": key_id, "detail": run.get("detail", "")}
+        return {run["link_id"]: {"kind": kind, "ws": ws, "id": key_id, "detail": run.get("detail", ""),
+                                 "remote": bool(run.get("remote"))}
                 for (ws, kind, key_id), run in _active.items() if run["link_id"] in wanted and run["claimed"]}
 
 
@@ -499,10 +553,17 @@ def recover() -> None:
     still wait for it (``waiting``), as turning it on does. A workspace
     behind on its migrations is waited for (the background walk upgrades
     it, ``migrations.warming``), at most ``RECOVER_WAIT_S``: a chat turn
-    not failed by then stays open for the next start."""
+    not failed by then stays open for the next start. A run of a work folder
+    of another server fails there, in the background (``_fail_remote``);
+    its Sends that wait are the channel's to hear once it announces."""
     from .. import folder_links, migrations  # local: folder_links imports this package's modules inside functions
 
+    links = {link["id"]: link for link in folder_links.all_links()}
+    remote = []
     for run in store.open_runs():
+        if (links.get(run["link_id"]) or {}).get("remote_url"):
+            remote.append(run)
+            continue
         label = catalog.label(run["agent"])
         try:
             with connect_pages_db(run["ws"]) as conn:
@@ -514,14 +575,16 @@ def recover() -> None:
         except Exception as e:  # noqa: BLE001 — one workspace never keeps the others
             log.warning(f"[agents] failing the run {run['id']} left open in workspace {run['ws']}: {e}")
         store.end_run(run["id"], state="failed", error="Gamma stopped while the run was open.")
-    links = {link["id"]: link for link in folder_links.all_links()}
     store.forget_links(set(links))
     agents = store.agents_of(links)
     # The chat turns first: a vault's queue may hold none of them again.
     jobs = [(turn["ws"], f"the chat turn {turn['id']} left open", lambda turn=turn: _fail_left_open(turn))
             for turn in store.open_turns()]
     jobs += [(links[link_id]["workspace_id"], f"the waiting Sends of vault {link_id}",
-              lambda link_id=link_id: queue_folder(links[link_id]["workspace_id"], link_id)) for link_id in agents]
+              lambda link_id=link_id: queue_folder(links[link_id]["workspace_id"], link_id)) for link_id in agents
+             if not links[link_id]["remote_url"]]
+    if remote:
+        threading.Thread(target=_fail_remote, args=(remote,), name="agent-recover-remote", daemon=True).start()
 
     def when_upgraded():
         left, end = jobs, time.monotonic() + RECOVER_WAIT_S
@@ -546,6 +609,45 @@ def recover() -> None:
 
     if jobs:
         threading.Thread(target=when_upgraded, name="agent-recover", daemon=True).start()
+
+
+_settling: set[str] = set()   # the ids of the runs left open that a ``_fail_remote`` fails now
+
+
+def _fail_remote(runs: list[dict]) -> None:
+    """The runs of work folders of other servers a server that stopped left
+    open fail there, each its request too (``HttpHome.fail_left_open``); one
+    whose server is not reached stays open for the next start, or the next
+    announce of its channel (``fail_remote_of``)."""
+    with _lock:
+        runs = [run for run in runs if run["id"] not in _settling]
+        _settling.update(run["id"] for run in runs)
+    try:
+        for run in runs:
+            try:
+                settled = home.HttpHome(run["link_id"]).fail_left_open(run)
+            except Exception as e:  # noqa: BLE001 — one run never keeps the others
+                log.warning(f"[agents] failing the run {run['id']} left open in workspace {run['ws']} there: {e}")
+                continue
+            if settled:
+                store.end_run(run["id"], state="failed", error="Gamma stopped while the run was open.")
+    finally:
+        with _lock:
+            _settling.difference_update(run["id"] for run in runs)
+
+
+def fail_remote_of(link_ids) -> None:
+    """The channel of another server announced this computer there again
+    (gamma/computers/channel.py): the runs of the vaults ``link_ids`` left
+    open while that server could not be reached (their end or their claim
+    unanswered), none of them running now, fail there in the background
+    (``_fail_remote``), not only at the next start."""
+    link_ids = set(link_ids)
+    with _lock:
+        running = {run.get("run_id") for run in _active.values() if run.get("run_id")}
+    runs = [run for run in store.open_runs() if run["link_id"] in link_ids and run["id"] not in running]
+    if runs:
+        threading.Thread(target=_fail_remote, args=(runs,), name="agent-fail-remote", daemon=True).start()
 
 
 def _fail_left_open(turn: dict) -> None:
@@ -917,6 +1019,12 @@ class _Run(_Turning):
 
     def __init__(self, ws: str, request_id: str, link_id: str, run: dict):
         super().__init__(ws, request_id, link_id, run)
+        # Where the request lives: this server's pages.db, or another
+        # server's work folder (a remote run's key names its vault: its
+        # workspace is that server's).
+        self.home = home.home_for(ws, link_id)
+        self.ws = self.home.ws
+        run["remote"] = self.home.remote
         self.request_id = request_id
         self.link: dict | None = None
         self.record: dict | None = None
@@ -928,6 +1036,7 @@ class _Run(_Turning):
         self.unwritten = False  # the request's last write failed: the run's row stays open for ``recover``
         self.tracked: set[str] = set()  # the vault's files, by path folded: what the request's words may name
         self.seen_at = ""  # when the run read its entries: the requests made since are the next run's
+        self.summary = ""  # the done's words before the files changed
         self.read: dict[str, list[str]] = {}  # the ids of the comments it read, by thread
         self._shown, self._shown_at = "", 0.0
 
@@ -936,16 +1045,8 @@ class _Run(_Turning):
     def _write(self, state: str, detail: str) -> bool:
         """The request ``state`` with ``detail``, as the agent, only while
         it is running → whether it was written (False: withdrawn
-        meanwhile)."""
-        try:
-            with connect_pages_db(self.ws) as conn:
-                requests.set_state(self.ws, conn, self.request_id, state, detail=_cut(detail), by_name=self.label,
-                                   writer="agent", only_from=("running",))
-            return True
-        except FeedbackError as e:
-            if e.status == 409 or e.status == 404:
-                return False
-            raise
+        meanwhile; ``home.write``)."""
+        return self.home.write(self, state, _cut(detail))
 
     def _fail(self, detail: str, error: str = "") -> None:
         """The request failed with ``detail`` (what members read), the run
@@ -962,8 +1063,7 @@ class _Run(_Turning):
         running for any other reason): nothing more is written in Gamma."""
         if self.run["reason"] == WITHDRAWN:
             return True
-        row = _request_row(self.ws, self.request_id)
-        return row is None or row[0] != "running"
+        return self.home.withdrawn(self)
 
     def _check_stop(self) -> None:
         """At a step's end: a run stopped meanwhile ends here."""
@@ -1011,42 +1111,47 @@ class _Run(_Turning):
                               error=(self.end.get("error") or "")[-MAX_ERROR:],
                               session=getattr(self.turn, "session", "") or "", changes=self.changes,
                               built=self.built, steps=self.steps, pid=getattr(self.turn, "pid", 0) or 0)
+            if self.home.remote and (self.changes or self.built):
+                self._push()
+
+    def _push(self) -> None:
+        """A work folder of another server pushes what the run changed now,
+        not at the next round (no hot round runs for it); a vault paused
+        (its maker keeps the edits off that server), choosing its files or
+        gone pushes nothing: the next round after it resumes does."""
+        from .. import folder_links  # local: folder_links imports this package's modules inside functions
+
+        try:
+            link = folder_links.get_link(self.link_id)
+            if link is None or link["status"].get(folder_links.PAUSED) or folder_links.choosing(link):
+                return
+            folder_links.run_in_background(self.link_id, direction="push")
+        except Exception as e:  # noqa: BLE001 — the next round pushes it
+            log.warning(f"[agents] pushing what the run of request {self.request_id} changed: {e}")
 
     def _claim(self) -> bool:
         """Step 1: the vault, its agent and its maker checked again, the
-        request taken and the run recorded → whether it is this run's."""
-        from .. import workspaces
-
+        request taken (``home.claim``) and the run recorded → whether it is
+        this run's."""
         if self.stop.is_set():
             return False  # stopped while it waited for a slot: the Send stays sent (``_consider`` queues it again)
-        row = _request_row(self.ws, self.request_id)
-        if row is None or row[0] != "sent":
-            return False
-        link = requests._local_link(self.ws, row[3])
-        if link is None or link["id"] != self.link_id or not _ours(link, row[2], row[4]):
-            return False
-        agent = store.agent_of(link["id"])
-        if agent is None or agent["agent"] not in catalog.AGENTS:
-            return False
-        if not workspaces.at_least(workspaces.role_of(self.ws, link["created_by"]), "editor"):
-            return False
-        self.link, self.agent, self.label = link, agent["agent"], catalog.label(agent["agent"])
-        self.maker = link["created_by"]
-        with connect_users_db() as users:
-            self.maker_name = account_names(users, {self.maker}).get(self.maker, "")
-        self.run["agent"] = self.agent
-        with connect_pages_db(self.ws) as conn:
-            self.record = requests.claim(self.ws, conn, self.request_id, by_name=self.label,
-                                         detail=f"Starting {self.label}")
+        self.record = self.home.claim(self)
         if self.record is None:
+            if self.home.unsure:
+                # The claim's answer never came from the other server: it
+                # may hold the request for this run. Recorded open, never
+                # this run's to end, so that server is told it failed once
+                # reached (``fail_remote_of``, ``recover``).
+                store.start_run(ws=self.ws, link_id=self.link_id, request_id=self.request_id, agent=self.agent,
+                                run_id=self.home.run_id)
             return False  # someone else took it, or it was withdrawn
         with _lock:
             self.run["claimed"] = True
-        self.run_id = store.start_run(ws=self.ws, link_id=self.link_id, request_id=self.request_id, agent=self.agent)
+        self.run_id = store.start_run(ws=self.ws, link_id=self.link_id, request_id=self.request_id, agent=self.agent,
+                                      run_id=self.home.run_id)
         return True
 
     def _work(self) -> None:
-        from ..feedback import entries
         from ..vault import store as vault_store
 
         # 2. the agent, asked afresh, and whether this server writes
@@ -1054,21 +1159,19 @@ class _Run(_Turning):
         self._check_stop()
         if not found["ready"]:
             self._fail(found["problem"] or f"{self.label} is not ready on this computer.")
-        refused = _cannot_write(self.ws)
+        refused = self.home.cannot_write()
         if refused:
             self._fail(refused)
 
         # 3. what there is to answer
         files = vault_store.files(self.link_id)
         self.tracked = {path.casefold() for path in files}
-        self.seen_at = page_now()
-        with connect_pages_db(self.ws) as conn:
-            found_entries = requests.entries_of(self.ws, conn, self.record, paths=entries.paths_of(files))
+        self.seen_at, found_entries = self.home.entries(self, files)
         self.read = {e["id"]: [c["id"] for c in e.get("comments") or []] for e in found_entries}
         # A thread an earlier run answered here while a person spoke in it
         # unread (a mention made during that run) is still to answer.
         last = store.threads_of(self.link_id, [e["id"] for e in found_entries])
-        spoken = _spoken_after(self.ws, {t: (row["seen_at"], set(row["read"])) for t, row in last.items()
+        spoken = self.home.spoken_after({t: (row["seen_at"], set(row["read"])) for t, row in last.items()
                                          if row["comment_id"]})
         todo = prompt.pending(found_entries, {t: last[t]["comment_id"] for t in spoken})
         self.tracked |= {e["source"]["file"].casefold() for e in todo if (e.get("source") or {}).get("file")}
@@ -1089,6 +1192,7 @@ class _Run(_Turning):
         argv = catalog.command(self.agent)
         if argv is None:
             self._fail(f"{self.label} is not on this computer.")
+        self.home.pictures(todo, root)
         text = prompt.build(agent=self.agent, owner=self.maker_name, work_folder=self.record["work_folder"]["name"],
                             note=self.record["note"], entries=todo, root=root)
         session = self._session(todo, last)
@@ -1126,6 +1230,8 @@ class _Run(_Turning):
         detail = summary or f"Answered {written} of {len(todo)} comment{'' if len(todo) == 1 else 's'}"
         if not detail.endswith((".", "!", "?")):
             detail += "."
+        # Another server's end names the files changed itself (``HttpHome.write``).
+        self.summary = detail + (" The PDF was rebuilt." if self.built else "")
         if self.changes:  # by name only the files the vault tracks (``_named``)
             named = [p for p in self.changes if p.casefold() in self.tracked][:CHANGES_NAMED]
             more = len(self.changes) - len(named)
@@ -1186,6 +1292,9 @@ class _Run(_Turning):
         if self.stop.is_set() or detail == self._shown or (not force and now - self._shown_at < DETAIL_EVERY_S):
             return
         self._shown, self._shown_at = detail, now
+        if self.home.remote:   # the panel reads a remote run's progress here (``at_work``), not in a pages.db
+            with _lock:
+                self.run["detail"] = detail
         if not self._write("running", detail):
             with _lock:
                 if not self.stop.is_set():
@@ -1199,30 +1308,19 @@ class _Run(_Turning):
         stays open for it), until a withdraw (the run's stop) ends the
         writing → ``(replies written, the first refusal's words)``. Each
         write says when the run read the thread (``seen``), so a request
-        made since is not answered by it."""
-        from .. import comments
-        from ..blocks_store import new_block_id
-        from ..feedback import agent as feedback_agent
-        from ..integrations import Connection
-
-        # Signed as the agent's label; its id ``local:<name>`` makes the
-        # comment read as an agent on this computer's (comments.LOCAL_AGENT).
-        connection = Connection(user_id=self.maker, workspaces=[self.ws], scope="feedback",
-                                token_id=f"{comments.LOCAL_AGENT}{self.agent}", name=self.label,
-                                username=self.maker_name)
+        made since is not answered by it. A work folder of another server's
+        are held for the run's end, which that server writes
+        (``HttpHome``)."""
         written, refusal = 0, ""
         for item in valid:
             if self.stop.is_set():  # withdrawn meanwhile: nothing more is written in Gamma
                 break
             thread_id = item["thread_id"]
             try:
-                _, out = feedback_agent.reply(connection, self.ws, "", {"thread_id": thread_id, "body": item["reply"],
-                                                                        "id": new_block_id()}, seen=self.seen_at)
+                self.home.reply(self, thread_id, item["reply"])
                 written += 1
-                self._answered(thread_id, out["comment_id"])
-                unread = _spoken_after(self.ws, {thread_id: (self.seen_at, set(self.read.get(thread_id, ())))})
-                if item["outcome"] == "fixed" and not unread:
-                    feedback_agent.resolve(connection, self.ws, "", {"thread_id": thread_id}, seen=self.seen_at)
+                if item["outcome"] == "fixed":
+                    self.home.resolve(self, thread_id)
             except ValueError as e:
                 refusal = refusal or str(e)
         return written, refusal

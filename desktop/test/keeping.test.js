@@ -80,11 +80,23 @@ test('a work folder is a folder of the server\'s own that pushes everything; one
   assert.match(choosing.title, /^Nothing is tracked yet: Choose files… opens its tracking dialog in Gamma/);
 });
 
-test('a work folder is what the link says: one of another server is made so there, pushes everything and pulls, and has no agent here', () => {
+test('a work folder is what the link says: one of another server is made so there, pushes everything and pulls, and has an agent here once this computer is shown there', () => {
   const nas = { remote_url: 'http://nas.lan:9001', push: 'everything', status: { last_sync: now, folder_path: ['Paper'] } };
-  const far = keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Paper', pull: true, mine: true, work: true, ...nas },
-    servers, null, [{ name: 'codex', label: 'Codex', found: true, ready: true }]);
+  const codex = [{ name: 'codex', label: 'Codex', found: true, ready: true }];
+  const farOf = (computers) => keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', workspace_id: 'lab', dest: 'C:\\Paper', pull: true, mine: true, work: true, ...nas },
+    servers, null, codex, computers);
+  const far = farOf(null);
   assert.deepEqual([far.work, far.agentHere, far.agents, far.remote, far.push, far.pull], [true, false, null, 'NAS', 'everything', true]);
+  // not shown there (another workspace's link does not count): no agent; shown, in any state of its link: one is offered
+  const link = (more = {}) => ({ id: 'c1', remote_url: 'http://nas.lan:9001', workspace_id: 'lab', username: 'tim', status: { state: 'connected' }, ...more });
+  assert.equal(farOf({ links: [link({ workspace_id: 'other' })], name: 'TIM-PC' }).agentHere, false);
+  for (const state of ['connected', 'unreachable', 'connecting']) {
+    const shown = farOf({ links: [link({ status: { state } })], name: 'TIM-PC' });
+    assert.deepEqual([shown.agentHere, shown.agents.map((a) => a.name), shown.computer.who], [true, ['codex', 'claude'], 'tim'], state);
+  }
+  // a kept folder of another server, shown there, is no work folder and has none
+  assert.equal(keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', workspace_id: 'lab', dest: 'C:\\Paper', pull: true, mine: true, work: false, ...nas },
+    servers, null, codex, { links: [link()], name: 'TIM-PC' }).agentHere, false);
   assert.match(far.title, /Notes, PDFs, new files, renames and deletions are pulled and pushed\.$/);
   // a kept folder of another server that pushes everything stays one; the link's word wins over the push
   assert.equal(folder({ ...nas, work: false }).work, false);
@@ -181,6 +193,22 @@ test('turning on a work folder\'s agent is asked with what it may do and the Sen
   assert.equal(keeping.agentSaid(item, 'codex', 0), 'Codex now answers the Sends on Quantum.');
   assert.equal(keeping.agentSaid(item, 'claude', 3), 'Claude Code now answers the Sends on Quantum; 3 waiting were handed to it.');
   assert.equal(keeping.agentSaid(item, ''), 'Codex no longer answers the Sends on Quantum: they wait for an agent you run yourself.');
+});
+
+test('turning on the agent of a work folder of another server says what that server can then do, and the plain http of one outside this computer', () => {
+  const far = (remoteUrl, who = 'tim') => ({ name: 'Paper', dest: 'C:\\Paper', remote: 'NAS', remoteUrl, computer: { state: 'connected', who } });
+  const said = 'Codex will answer the Sends you make on this folder: it edits files in this directory and runs commands in its sandbox, without network.' +
+    ' Whoever can sign in to NAS as tim, and whoever runs NAS, can send work to Codex here. Codex reads your files and its answers are stored on NAS.';
+  const plain = ' NAS is reached without encryption: someone on your network could read what is sent and pose as NAS.';
+  const https = keeping.agentAsk(far('https://nas.example.org'), 'codex');
+  assert.deepEqual([https.message, https.detail, https.buttons], ['Let Codex work in C:\\Paper?', said, ['Turn on Codex', 'Cancel']]);
+  assert.equal(keeping.agentAsk(far('http://nas.lan:9001'), 'codex').detail, said + plain);
+  for (const url of ['http://127.0.0.1:9100', 'http://localhost:9100', 'http://[::1]:9100']) {
+    assert.equal(keeping.agentAsk(far(url), 'codex').detail, said, `${url} is this computer's own`);
+  }
+  assert.match(keeping.agentAsk(far('https://nas.example.org', ''), 'claude').detail,
+    /runs no commands\. Whoever can sign in to NAS as your account, and whoever runs NAS, can send work to Claude Code here\. Claude Code reads your files/);
+  assert.equal(keeping.FAR_RUNS_RULE, 'Asking in the chat is for a work folder of this computer\'s server.');
 });
 
 test('letting a work folder\'s agent ask in the chat is asked with what it may ask for and the risk; the outcome is said', () => {
