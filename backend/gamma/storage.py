@@ -763,6 +763,19 @@ def is_linked(ws: str, name: str) -> bool:
                             (ws, name)).fetchone() is not None
 
 
+def linked_names(ws: str, names) -> set[str]:
+    """Which of ``names`` a linked file goes by (``is_linked`` for many, in
+    one query): what the search index probes before it counts a document
+    pending. Empty where links are not kept."""
+    names = [*names]  # not list(): this module's own list() would shadow it
+    if not names or not config.folder_links_enabled():
+        return set()
+    with connect_vaults_db() as conn:
+        return {r[0] for r in conn.execute(
+            "SELECT DISTINCT name FROM linked_files WHERE ws = ? AND name IN (SELECT value FROM json_each(?))",
+            (ws, json.dumps(names)))}
+
+
 def delete(ws: str, name: str) -> None:
     """Remove the stored file; one already gone is no error."""
     stamp, before = _stamp(ws), size(ws, name)

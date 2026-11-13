@@ -986,8 +986,9 @@ def test_the_panels_post_search_keeps_to_the_share_whatever_pages_it_names(bob, 
     assert {b["id"] for b in bob.post("/api/block-search", json={"q": "wombatneedle"}).json()["blocks"]} == {
         note["id"], filed_note["id"], secret["id"]}
     assert anon.post("/api/block-search", json={"q": "wombatneedle"}).status_code == 401
-    # The PDF group is a member's: a share token is no way in, as on the GET.
+    # The document group is a member's: a share token is no way in, as on GET /search.
     for token in (folder_token, page_token):
-        get = anon.get("/api/pdf-search", params={"share": token, "q": "wombatneedle"}).status_code
-        r = anon.post("/api/pdf-search", params={"share": token}, json={"q": "wombatneedle", "pages": [filed["id"]]})
+        get = anon.get("/api/search", params={"share": token, "q": "wombatneedle"}).status_code
+        r = anon.post("/api/document-search", params={"share": token},
+                      json={"q": "wombatneedle", "pages": [filed["id"]]})
         assert r.status_code == get == 401

@@ -153,6 +153,20 @@ NAMES: dict[str, tuple[str, str]] = {
     ".env": ("text", "shell"),
 }
 
+# What a text file's language is called: the chat's context here, the
+# library's Format column on the client (libraryUtils.js LANGUAGE_LABELS;
+# tests/shared/formats.json "language_names"). Every language of the tables
+# but plaintext, which is just text.
+LANGUAGE_NAMES = {
+    "latex": "LaTeX", "bibtex": "BibTeX", "csv": "CSV", "tsv": "TSV", "json": "JSON", "yaml": "YAML", "toml": "TOML",
+    "xml": "XML", "ini": "INI", "python": "Python", "mathematica": "Mathematica", "matlab": "MATLAB", "html": "HTML",
+    "javascript": "JavaScript", "typescript": "TypeScript", "jsx": "JSX", "tsx": "TSX", "css": "CSS", "scss": "SCSS",
+    "c": "C", "cpp": "C++", "rust": "Rust", "go": "Go", "java": "Java", "kotlin": "Kotlin", "swift": "Swift",
+    "ruby": "Ruby", "php": "PHP", "shell": "Shell", "r": "R", "julia": "Julia", "lua": "Lua", "sql": "SQL",
+    "perl": "Perl", "haskell": "Haskell", "scala": "Scala", "diff": "Diff", "rst": "reStructuredText",
+    "typst": "Typst", "makefile": "Makefile", "dockerfile": "Dockerfile", "cmake": "CMake",
+}
+
 # The serving views of the table.
 IMAGE_MEDIA_TYPES: dict[str, str] = {e: x.media for e, x in EXTENSIONS.items() if x.format == "image"}
 IMAGE_EXTENSIONS: dict[str, str] = {}

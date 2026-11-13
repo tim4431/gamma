@@ -110,6 +110,9 @@ To remove Gamma from Codex, run `codex mcp remove gamma`,
 Paste a Gamma page or share link with your question. The assistant uses
 `read_gamma_link` to resolve and read it. Copy the page URL directly from your
 browser's address bar, or use an existing block or share link.
+The assistant searches and reads pages, notes, PDFs and the text of files (a work
+folder's LaTeX sources, code, data), and cites a PDF's page or a file's line with a
+link that opens it there.
 All three assistants use the same workflow. Follow-up questions keep the last supplied
 page as context until you send a different reference.
 

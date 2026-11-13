@@ -13,7 +13,7 @@ data/                repo-root runtime data, outside backend source
 ├── users.db          global: accounts, sessions, workspaces + members, shares, personal prefs (schema-versioned)
 └── workspaces/<id>/  one directory per workspace (pages.db, data.db, uploads/)
     ├── pages.db        the block tree, AI chats, notes index (see gamma/README.md for schema)
-    ├── data.db         derived only: PDF text index, PDF manifests, cover snapshots
+    ├── data.db         derived only: document text index (PDFs and text files), PDF manifests, cover snapshots
     └── uploads/        PDFs & images, named <sha256[:24]>
 ```
 

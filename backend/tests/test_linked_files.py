@@ -26,14 +26,16 @@ import pymupdf
 from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_label, make_page, make_user,
                       thread_on, workspace_of)
 from gamma import (ai_tools, app as app_mod, backups, comments, config, db, db_maintenance, folder_links, gamma_sync,
-                   integrity, jobs, linked_files, offsite, pdf_index, pdf_meta, seed, storage, upload_gc, workspaces,
-                   ws_backup)
+                   integrity, jobs, linked_files, offsite, pdf_meta, seed, storage, upload_gc, workspaces, ws_backup)
 from gamma.ai_context import pdf_path
 from gamma.feedback import kept
 from gamma.blocks_store import pages_for_docs
 from gamma.db import connect_data_db, connect_pages_db, connect_users_db, connect_vaults_db
-from gamma.routers import pages as pages_mod, search as search_mod
+from gamma.documents import text
+from gamma.routers import pages as pages_mod
 from gamma.routers.clip import find_page
+from gamma.search import index as text_index, indexer
+from gamma.search.index import Doc
 from test_disk_push import _pdf, _write
 from test_folder_links import _create, _sync, disk  # noqa: F401: the disk fixture
 from test_highlight_relocate import SIZE, _line_rect, _pdf as _lines, _position
@@ -86,6 +88,23 @@ def _disk_pdf(disk, name, text):  # noqa: F811: the fixture's value
     path = disk / name
     _write(path, data)
     return path, data, storage.content_digest(data)
+
+
+def _index(ws, doc, format="pdf", ext=".pdf"):
+    """Index the document ``doc`` read in place now, as the indexing job
+    does: extracted, and stored unless it was out of reach."""
+    found = indexer.index_doc(ws, Doc(doc, format, ext, "path"))
+    if found is not None:
+        with connect_data_db(ws) as conn:
+            text_index.store_docs(conn, [found])
+
+
+def _indexed(ws, doc):
+    """The units the index recorded for ``doc``, None when it recorded
+    nothing."""
+    with connect_data_db(ws) as conn:
+        info = text_index.doc_info(conn, doc)
+    return None if info is None else info["units"]
 
 
 def _props(c, page_id) -> dict:
@@ -144,7 +163,7 @@ def test_a_pdf_opened_is_read_where_it_is_and_copied_nowhere(owner, ws, disk):
     info = owner.get(f"/api/pdf-info/{doc}")
     assert info.status_code == 200 and info.json()["pages"] == 1 and info.json()["bytes"] == len(data)
     assert Path(pdf_path(ws, doc)) == f.resolve()
-    search_mod._index_doc(ws, doc)
+    _index(ws, doc)
     hits = owner.get("/api/search", params={"q": "wombats western"}).json()["results"]
     assert [h["page_id"] for h in hits if h["source"] == "pdf"] == [page]
 
@@ -804,28 +823,98 @@ def test_a_linked_file_out_of_reach_starts_no_indexing_and_is_not_waited_for(dis
     away = f.with_suffix(".away")
     f.rename(away)
     started = []
-    monkeypatch.setattr(search_mod, "_index_missing_async", lambda ws, docs: started.append(docs))
+    monkeypatch.setattr(indexer, "index_missing_async", lambda ws, docs: started.append(sorted(docs)))
 
     def pending():
-        return [c.get(f"/api/{route}", params={"q": "quokka"}).json()["indexing"] for route in ("search", "pdf-search")]
+        return [c.get("/api/search", params={"q": "quokka"}).json()["indexing"],
+                c.post("/api/document-search", json={"q": "quokka"}).json()["indexing"]]
 
     assert pending() == [0, 0] and started == []
     away.rename(f)                                                         # within reach again: its turn comes
     assert pending() == [1, 1] and started == [[doc], [doc]]
 
 
+def test_a_text_file_read_in_place_is_indexed_and_left_for_later_out_of_reach(owner, ws, disk):
+    """A ``.tex`` read where it is goes into the index like a PDF: its run
+    found by a word of its line; out of reach, nothing is recorded and a
+    later search tries again."""
+    f = disk / "inplace" / "method.tex"
+    _write(f, b"\\section{Method}\nWe fit the wombat model by LF stochastic descent.\n")
+    seen = linked_files.hash_any(f)
+    doc = seen[0]
+    page = make_page(owner, "method.tex", properties=doc_props(doc, name="method.tex", at="path", format="text",
+                                                                ext=".tex"))["id"]
+    linked_files._put_row(ws, str(f), seen, page, ext=".tex")
+    away = f.with_suffix(".away")
+    f.rename(away)
+    _index(ws, doc, "text", ".tex")
+    assert _indexed(ws, doc) is None                                       # out of reach: nothing recorded
+    away.rename(f)
+    _index(ws, doc, "text", ".tex")
+    assert _indexed(ws, doc) == 1
+    hits = owner.post("/api/document-search", json={"q": "stochastic descent", "pages": [page]}).json()["results"]
+    assert [(h["source"], h["page_id"], h["line"]) for h in hits] == [("file", page, 2)]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a byte-range lock that refuses other readers is Windows'")
+def test_a_text_file_its_writer_has_locked_is_left_for_later(owner, ws, disk):
+    """A ``.tex`` a build holds locked is out of reach like a PDF: nothing
+    recorded, read once the lock goes."""
+    import msvcrt
+
+    f = disk / "locked" / "main.tex"
+    data = b"\\section{Locked}\nLF the locked wombat burrow.\n"
+    _write(f, data)
+    seen = linked_files.hash_any(f)
+    doc = seen[0]
+    page = make_page(owner, "main.tex", properties=doc_props(doc, name="main.tex", at="path", format="text",
+                                                              ext=".tex"))["id"]
+    linked_files._put_row(ws, str(f), seen, page, ext=".tex")
+    with open(f, "r+b") as held:
+        msvcrt.locking(held.fileno(), msvcrt.LK_NBLCK, len(data))
+        try:
+            _index(ws, doc, "text", ".tex")
+            assert _indexed(ws, doc) is None
+        finally:
+            msvcrt.locking(held.fileno(), msvcrt.LK_UNLCK, len(data))
+    _index(ws, doc, "text", ".tex")
+    assert _indexed(ws, doc) == 1
+
+
+def test_pending_probes_a_bounded_number_of_linked_files(ws, disk, monkeypatch):
+    """A work folder's unindexed in-place files are ``linked_files`` rows:
+    ``pending`` finds which are linked in one query and tests at most
+    PROBE_LIMIT of them for reach, so a search over thousands asks no more;
+    the rest count as pending until the job has been through them."""
+    names = {f"{n:064x}": Doc(f"{n:064x}", "text", ".tex", "path") for n in range(1, 301)}
+    with connect_vaults_db() as conn:
+        conn.executemany(
+            "INSERT INTO linked_files (ws, name, path, size, mtime_ns, file_id, page_id, actor) "
+            "VALUES (?, ?, ?, 1, 1, '', '', '')",
+            [(ws, doc.name, f"Z:/nowhere/{h}.tex") for h, doc in names.items()])
+    probed = []
+    real = storage.readable
+    monkeypatch.setattr(storage, "readable", lambda w, name: probed.append(name) or real(w, name))
+    try:
+        with connect_data_db(ws) as conn:
+            found = text_index.pending(ws, conn, names)
+        assert len(probed) == text_index.PROBE_LIMIT == 200
+        assert found == sorted(names)[200:]                                # the probed ones are out of reach
+    finally:
+        with connect_vaults_db() as conn:
+            conn.execute("DELETE FROM linked_files WHERE ws = ? AND path LIKE 'Z:/nowhere/%'", (ws,))
+
+
 def test_a_linked_file_that_reads_but_does_not_parse_is_recorded_once(owner, ws, disk, monkeypatch):
     f, data, doc = _disk_pdf(disk, "broken.pdf", "LF readable and broken")
     _opened(owner, f)
 
-    def broken(path):
+    def broken(path, format, *, name=""):
         raise ValueError("cannot parse")
 
-    monkeypatch.setattr(search_mod, "_extract_pages", broken)
-    search_mod._index_doc(ws, doc)
-    with connect_data_db(ws) as conn:
-        pdf_index.ensure_schema(conn)
-        assert conn.execute("SELECT pages FROM pdf_fts_docs WHERE doc_id = ?", (doc,)).fetchone() == (0,)
+    monkeypatch.setattr(text, "extract", broken)
+    _index(ws, doc)
+    assert _indexed(ws, doc) == 0
 
 
 def _clocked(monkeypatch):
@@ -953,9 +1042,7 @@ def test_a_file_out_of_reach_is_not_stamped_indexed_and_has_no_file_for_now(owne
     page = _opened(owner, f)["page"]
 
     def stamped():
-        with connect_data_db(ws) as conn:
-            pdf_index.ensure_schema(conn)
-            return conn.execute("SELECT pages FROM pdf_fts_docs WHERE doc_id = ?", (doc,)).fetchone()
+        return _indexed(ws, doc)
 
     def has_file():
         return storage.readable(ws, f"{doc}.pdf")
@@ -965,12 +1052,12 @@ def test_a_file_out_of_reach_is_not_stamped_indexed_and_has_no_file_for_now(owne
     assert has_file() is True
     away = f.with_suffix(".away")
     f.rename(away)
-    search_mod._index_doc(ws, doc)
-    assert stamped() is None and has_file() is False                     # a stored file gone would be stamped pages=0
+    _index(ws, doc)
+    assert stamped() is None and has_file() is False                     # a stored file gone would be stamped units=0
     assert owner.get(f"/api/pdf-info/{doc}").status_code == 404
     away.rename(f)
-    search_mod._index_doc(ws, doc)
-    assert stamped() == (1,) and has_file() is True
+    _index(ws, doc)
+    assert stamped() == 1 and has_file() is True
 
 
 # --- into the library --------------------------------------------------------------------
@@ -1950,11 +2037,9 @@ def test_a_file_its_writer_has_locked_is_refused_and_left_for_later(owner, ws, d
             r = _open(owner, other)
             assert r.status_code == 400 and "Cannot read" in r.json()["detail"]
 
-            search_mod._index_doc(ws, doc)                                # out of reach: nothing recorded
+            _index(ws, doc)                                               # out of reach: nothing recorded
             assert owner.get(f"/api/pdf-info/{doc}").status_code == 404   # and no ``pages = 0`` kept
-            with connect_data_db(ws) as conn:
-                pdf_index.ensure_schema(conn)
-                assert not conn.execute("SELECT 1 FROM pdf_fts_docs WHERE doc_id = ?", (doc,)).fetchone()
+            assert _indexed(ws, doc) is None
 
             os.utime(f, (time.time() - 30, time.time() - 30))             # the stat moved: a look finds it locked
             linked_files.follow(ws, f"{doc}.pdf")

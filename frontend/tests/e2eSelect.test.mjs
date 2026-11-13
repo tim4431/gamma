@@ -127,6 +127,12 @@ test("a change selects the groups that exercise it", () => {
     "backend/gamma/routers/zotero_sync.py", "backend/gamma/zotero_notes.py"]) assert.ok(pick([file]).includes("zotero-link"), file);
   assert.ok(pick(["backend/gamma/zotero_sync.py"]).includes("transfers"), "an import asks whether a link keeps its workspace");
   assert.ok(!pick(["backend/gamma/zotero_export.py"]).includes("zotero-link"), "the export is no part of the link");
+  // text in search and the chat: the index, the one text reader, the path pair, the line link's
+  // readers, the Files group and the code view's mark select the group that drives them all
+  for (const file of ["backend/gamma/search/indexer.py", "backend/gamma/documents/text.py", "backend/gamma/routers/search.py",
+    "backend/gamma/work_folders/paths.py", "backend/gamma/mcp_links.py", "backend/gamma/ai_tools.py", "frontend/src/search/SearchPanel.jsx",
+    "frontend/src/documents/viewers/textMark.js", "frontend/src/documents/viewers/TextViewer.jsx"]) assert.ok(pick([file]).includes("text-search"), file);
+  assert.ok(pick(["backend/gamma/work_folders/paths.py"]).includes("feedback"), "the feedback entries name their files by it");
   // a scenario helper selects the scenarios importing it
   const notes = pick(["frontend/tests/e2e/scenarios/notes.mjs"]);
   for (const id of ["notes-pdf-share", "collab", "files", "diagrams"]) assert.ok(notes.includes(id), id);

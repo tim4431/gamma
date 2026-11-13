@@ -18,7 +18,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from conftest import doc_props, login, make_folder, make_user, workspace_of
-from gamma import ops, pdf_index, storage, upload_gc
+from gamma import ops, storage, upload_gc
+from gamma.search import index as text_index
 from gamma.db import connect_pages_db, page_now, ws_uploads_dir
 
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
@@ -155,8 +156,8 @@ def test_a_deleted_page_hands_over_its_files(ann):
 def test_only_a_deleted_pdf_block_costs_the_library_wide_cleanup(ann, monkeypatch):
     c, ws = ann
     calls = []
-    real = pdf_index.purge_unused
-    monkeypatch.setattr(pdf_index, "purge_unused", lambda w, conn: (calls.append(w), real(w, conn)))
+    real = text_index.purge_unused
+    monkeypatch.setattr(text_index, "purge_unused", lambda w, conn: (calls.append(w), real(w, conn)))
     page = _page(c)
     _ops(c, page, [{"op": "insert", "id": "gcL1", "parent": page, "content": "plain"},
                    {"op": "insert", "id": "gcL2", "parent": page, "content": "", "props": doc_props("d" * 24)}])

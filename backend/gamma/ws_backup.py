@@ -47,7 +47,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import comments, config, integrity, jobs, pdf_index, storage, upload_gc, zotero_remote
+from . import comments, config, integrity, jobs, storage, upload_gc, zotero_remote
 from .backups import snapshot_db
 from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_PAGE, LABELS, PARENT_PAGE, PATH_SEP, TRASH, TREES,
                            delete_subtree, existing_in, fetch_subtree, filing, folder_paths, last_child_position,
@@ -61,6 +61,7 @@ from .logbuf import log
 from .note_app_import import page_kind
 from .normalize import (block_columns, block_fts, folder_blocks, highlight_shape, normalize_data_db,
                         normalize_pages_db, page_changes, page_ops_batch_id, pages_db_chats)
+from .search import index as text_index
 from .seed import create_workspace_files
 from .work_folders.library import SQL_LIBRARY_DOC, STAMPS, library_document, work_folder_of
 from .work_folders.marks import Tree, filing_targets
@@ -538,7 +539,7 @@ def _replace(ws: str, root: Path, tdir: Path, by: str) -> dict:
         restored.append("data.db")
     if live_ids - restored_ids:  # the PDF rows of papers that went (data.db may not have come with the backup)
         with connect_pages_db(ws) as conn:
-            pdf_index.purge_unused(ws, conn)
+            text_index.purge_unused(ws, conn)
     _announce(ws)
     return {"restored": restored, "pages_removed": len(removed)}
 

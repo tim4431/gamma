@@ -84,8 +84,8 @@ def test_a_reader_that_does_not_load_stores_no_manifest_and_no_index(guest, monk
 
     import pytest
 
-    from gamma.pdf_index import ensure_schema
-    from gamma.routers import search as search_mod
+    from gamma.search import indexer
+    from gamma.search.index import Doc, doc_info, store_docs
 
     doc_id = _upload(guest, _pdf(pages=2))
     ws = workspace_of(guest_name())
@@ -99,19 +99,20 @@ def test_a_reader_that_does_not_load_stores_no_manifest_and_no_index(guest, monk
 
     def indexed():
         with sqlite3.connect(ws_db_path(ws, "data.db")) as conn:
-            ensure_schema(conn)
-            return conn.execute("SELECT pages FROM pdf_fts_docs WHERE doc_id = ?", (doc_id,)).fetchone()
+            return doc_info(conn, doc_id)
 
+    doc = Doc(doc_id, "pdf", ".pdf", "store")
     with monkeypatch.context() as m:
         m.setattr(pdf_text, "_mupdf", None)
         m.setitem(sys.modules, "pymupdf", None)  # `import pymupdf` raises ImportError
         with pytest.raises(ImportError):
             pdf_meta.ensure(ws, doc_id)
         with pytest.raises(ImportError):
-            search_mod._index_doc(ws, doc_id)
+            indexer.index_doc(ws, doc)
     assert pdf_meta.get(ws, doc_id) is None and indexed() is None
     assert pdf_meta.ensure(ws, doc_id)["pages"] == 2
-    search_mod._index_doc(ws, doc_id)
+    with sqlite3.connect(ws_db_path(ws, "data.db")) as conn:
+        store_docs(conn, [indexer.index_doc(ws, doc)])
     assert indexed() is not None
 
 

@@ -4,7 +4,8 @@ frontend/tests/textnorm.test.mjs, ink.test.mjs, inkRender.test.mjs,
 finishStroke.test.mjs, notebook.test.mjs, mentions.test.mjs, textBox.test.mjs,
 picture.test.mjs, shapes.test.mjs, shapeTool.test.mjs, itemTypes.test.mjs,
 palette.test.mjs, linkName.test.mjs, personColor.test.mjs,
-passageBudget.test.mjs, libraryUtils.test.mjs and blockOps.test.mjs; a case
+passageBudget.test.mjs, libraryUtils.test.mjs, blockOps.test.mjs,
+textLoad.test.mjs and gammaLinks.test.mjs; a case
 added here fails whichever side drifts. Other pytest modules read the rest
 (blockkind.json test_block_columns.py, pastemath.json test_paste_math.py,
 slug.json test_publish.py, zoterotext.json and zoteroshown.json the text box
@@ -916,6 +917,38 @@ def test_format_stored(case):
     from gamma.documents import formats
     head = None if case["head"] is None else case["head"].encode("latin-1")
     assert formats.stored_format(case["name"], case["ext"], head) == (case["format"], case["language"])
+
+
+TEXTDECODE = _load("textdecode.json")
+
+
+@pytest.mark.parametrize("case", TEXTDECODE["cases"], ids=[c["name"] for c in TEXTDECODE["cases"]])
+def test_text_decode(case):
+    """A text file's bytes decoded as the viewer decodes them: by the mark, else UTF-8 with replacement."""
+    from gamma.documents import text
+    got = text.decode(base64.b64decode(case["bytes"]))
+    assert (got.text, got.encoding, got.bad, got.binary) == (case["text"], case["encoding"], case["bad"], case["binary"])
+
+
+def test_language_names():
+    """What a text file's language is called, the client's Format column's words: every language of the tables but plaintext."""
+    from gamma.documents import formats
+    assert formats.LANGUAGE_NAMES == FORMATS["language_names"]
+    langs = {row.language for row in formats.EXTENSIONS.values() if row.language} | {
+        language for _, language in formats.NAMES.values() if language}
+    assert set(formats.LANGUAGE_NAMES) == langs - {"plaintext"}
+
+
+LINELINKS = _load("linelinks.json")
+
+
+@pytest.mark.parametrize("case", LINELINKS["cases"], ids=[c["name"] for c in LINELINKS["cases"]])
+def test_line_link(case):
+    """A line link's line=N[-M] and its quote, as read_gamma_link takes them and the client draws a pill."""
+    from gamma import mcp_links
+    assert (mcp_links.MAX_LINE, mcp_links.MAX_QUOTE) == (LINELINKS["max_line"], LINELINKS["max_quote"])
+    span = mcp_links.line_span(case["line"]) if case["quote_chars"] <= mcp_links.MAX_QUOTE else None
+    assert span == (tuple(case["parsed"]) if case["parsed"] else None)
 
 
 FRACTIONALKEYS = _load("fractionalkeys.json")

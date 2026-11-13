@@ -188,6 +188,24 @@ def parse(text) -> dict | None:
     return value
 
 
+def place_words(anchor: dict) -> str:
+    """Where a thread is, in words, from its anchor: "the whole file", "a
+    region of the picture", "a note", or on a PDF page "page 3, “the loss
+    is defined…”" (a passage's quote cut at 60), "page 5, an area", "page
+    2, handwriting". What the feedback tools' answers and the chat's
+    context name a thread's place by."""
+    if anchor["kind"] == "file":
+        return "the whole file"
+    if anchor["kind"] == "region":
+        return "a region of the picture"
+    if not anchor.get("page"):
+        return "a note"
+    quote = " ".join((anchor.get("quote") or "").split())
+    what = {"passage": f"“{quote[:60]}{'…' if len(quote) > 60 else ''}”", "area": "an area",
+            "ink": "handwriting"}.get(anchor["kind"], "a note")
+    return f"page {anchor['page']}, {what}"
+
+
 def held_file(text) -> str:
     """The stored file an anchor holds while its thread is open:
     ``stored_name(doc_id, ext)`` (the stem through

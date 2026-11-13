@@ -1336,13 +1336,24 @@ its own chunk.
   one line, a minified bundle, shows that line) and at 10,000 characters a
   line; a bar at the foot says what shows and **Show all** reads the rest,
   up to 16 MiB. A byte-order mark picks the encoding; invalid
-  UTF-8 shows as � with a line saying so; a NUL in the first bytes means the
-  file was no text, and the pane hands over to the file pane.
+  UTF-8 shows as � with a line saying so; a NUL, or more than 5% of the
+  text �, means the file was no text, and the pane hands over to the file
+  pane.
 - **The bar's word** is the Format column's (`formatLabel`: MATLAB, INI),
   not the grammar's name.
 - **Place.** The top line (`{line}`) is what the view reports and opens at,
   so a tab group's pane and the live page stand at the same line; a closed
-  pane opens again at the line it showed.
+  pane opens again at the line it showed, and Back scrolls to the line the
+  reader left (no mark).
+- **The marked line.** A line link's lines (`.docLineMark`) are the PDF
+  citation mark's accent wash (`--accent` at 16%, still: a code line is
+  read, not found) with a 3 px accent bar at the gutter's edge, whole lines
+  and every wrapped part of them; the view centres a line, and puts a
+  range's first line at the top. Moved, lost
+  and past-the-end say so in `.docMarkNotice`, a bar under the toolbar in
+  the `.docTextNote` place with the same accent bar, `--bg-elevated`; the
+  plain "Line N marked." is for a screen reader alone (`.srOnly`). Escape
+  or a press off the marked lines ends both, as the PDF's mark ends.
 
 ### The image view
 
@@ -1926,7 +1937,7 @@ page's notes refuse what the single-block action refuses
 | `shared/lib/xhrUpload.js` | the one multipart upload: progress, a processing callback, abort by function or `AbortSignal`, the workspace and tab-identity headers; behind `FileChip.postFile`, PDF uploads, backup restores and the import review |
 | `shared/lib/keepalive.js` | the page's one ledger of `fetch` `keepalive` requests: each sender asks it for room in the browser's 64 KiB of keepalive bodies by priority (the queued page edits, then the small recoverable requests, then handwriting), and a request that does not fit goes as a plain fetch ([collab.md](collab.md) "Keepalive") |
 | `pdf/noteAnchor.js` | where a highlight's note badge sits: the geometric last line of its rects, not the last stored rect |
-| `shared/model/gammaLinks.js`, `GammaLinkCard` / `CitationPill` in `shared/ui/Widgets.jsx` | links into this library (page / block / citation) classified once and drawn the same in the chat and in notes: a page or block link as a card, a citation as a compact pill with a hover preview ([pdf_citations.md](pdf_citations.md)) |
+| `shared/model/gammaLinks.js`, `GammaLinkCard` / `CitationPill` in `shared/ui/Widgets.jsx` | links into this library (page / block / citation / line) classified once and drawn the same in the chat and in notes: a page or block link as a card, a citation of a PDF passage or of a text file's lines as a compact pill with a hover preview ([pdf_citations.md](pdf_citations.md)) |
 | `pdf/pdfCitation.js`, `pdf/PdfCitationOverlay.jsx` | a citation link → the quoted passage highlighted on the cited PDF page ([pdf_citations.md](pdf_citations.md)) |
 | `shared/lib/copyImage.js` | a shown picture (an `<img>` or an inline `<svg>`) to the clipboard as an image: the async clipboard writes only `image/png` and, in current Chromium, `image/svg+xml`, so a PNG goes as it is, another bitmap is redrawn as a PNG pixel for pixel, and a vector picture goes as its SVG at the shown size on the shown background (`shownSvg`) plus a PNG of that at twice the size. The `ClipboardItem` takes promised blobs, so Safari keeps the click's gesture; `canCopyImage` is false outside a secure context, where no legacy copy carries an image |
 | `shared/lib/canvasSize.js`, `pdf/verticalScrollSnap.js` | the canvas backing-store cap and the one-finger vertical scroll alignment ([pdf_loading.md](pdf_loading.md)) |

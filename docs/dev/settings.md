@@ -762,8 +762,9 @@ Library:
   rounds themselves: [debugging.md](debugging.md) "Off-site copies in a
   bucket".
 - **Maintenance** (the pane's head says Library maintenance): workspace
-  storage, search-index rebuilding and the per-paper metadata / fetched /
-  text / index health table.
+  storage, rebuilding the search indexes (the notes index and the
+  document text index of every PDF and text file) and the per-paper
+  metadata / fetched / text / index health table.
 
 Administration (admins only):
 

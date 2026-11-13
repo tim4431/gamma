@@ -395,8 +395,8 @@ SCHEMA_VERSION = 35   # gamma/db.py
   (`normalize.block_fts`, in a workspace part) before the server writes a
   block of it under the new rules, which the workspace part's run on first
   open guarantees — a restore rebuilds a backup's on its own. Bump
-  `textnorm.INDEX_VERSION` with it: that re-extracts the PDF index, which
-  is versioned per paper.
+  `textnorm.INDEX_VERSION` with it: that re-extracts the document text
+  index, which is versioned per document.
 - A change to block *content* shapes (a renamed property, a syntax) goes into
   `normalize.py` as a `LIKE`-filtered idempotent rewrite, called from the
   step's workspace part, which a restore runs too (step 52's

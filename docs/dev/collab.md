@@ -214,7 +214,7 @@ names its ops stop and start referencing. The names it takes up clear their
 (`dropped_uploads` on the result; a cut and paste within the batch drops
 nothing) go to `upload_gc.schedule`, a check on its own thread, never in
 the request ([user_db.md](user_db.md) "Stored files"). The data.db purge
-(`pdf_index.purge_unused`, the PDF rows of papers nothing carries) runs only
+(`search.index.purge_unused`, the index rows of documents nothing carries) runs only
 when a deleted block carried a PDF.
 
 A batch may carry `batch`, the client's id for it, the same on every retry.

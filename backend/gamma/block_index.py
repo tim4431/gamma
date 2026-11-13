@@ -5,10 +5,10 @@ it exact).
 
 Every block inside a page is indexed under its page, highlights included
 (their note text is a note like any other; the quoted PDF passage is in the
-PDF index, ``pdf_fts`` in data.db, gamma/pdf_index.py) — a page's own row
-is not. Text is indexed in its search form (gamma.textnorm, the PDF index's
-rules too) so one query matches both. A page in Recently deleted keeps its
-rows; a search reads only the pages it reaches. ``rebuild`` is the whole
+document index, ``text_fts`` in data.db, gamma/search/index.py) — a page's
+own row is not. Text is indexed in its search form (gamma.textnorm, the
+document index's rules too) so one query matches both. A page in Recently
+deleted keeps its rows; a search reads only the pages it reaches. ``rebuild`` is the whole
 recovery path: migration step 28 and every restore run it
 (normalize.block_fts), and so does Settings' rebuild (POST
 /api/search-reindex).

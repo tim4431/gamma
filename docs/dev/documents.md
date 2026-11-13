@@ -14,18 +14,21 @@ lookups of "the page of this file" never count one.
 
 Code: `gamma/documents/formats.py` (the format registry),
 `gamma/documents/model.py` (the stored shape, its builder, its read and the
-predicates), `gamma/normalize.py` `document_shape` and `page_documents`
+predicates), `gamma/documents/text.py` (a document's text, "Text
+extraction" below), `gamma/normalize.py` `document_shape` and `page_documents`
 (older rows rewritten, migration step 52), `db.BLOCK_HOT_COLUMNS["doc_id"]`
 (the generated column), and on the client `frontend/src/documents/`:
 `formats.js` and `pageDocument.js`, the twins, `viewers.js` (the viewer
 registry), `documentView.js` and `DocumentPane.jsx`, which decide and draw
 the viewer a page shows, `viewerSurface.js` and `viewers/`, the panes of
 its own ("Viewers" below). Tests:
-`backend/tests/test_documents.py`, `test_shared_fixtures.py`,
-`test_migrations.py` (`test_v52_*`), `test_restore_consistency.py` (a
-backup from before step 52), `frontend/tests/documents.test.mjs` and
-`libraryUtils.test.mjs`, over the fixtures `tests/shared/formats.json` and
-`tests/shared/document.json` ("Fixtures" below).
+`backend/tests/test_documents.py`, `test_documents_text.py`,
+`test_shared_fixtures.py`, `test_migrations.py` (`test_v52_*`),
+`test_restore_consistency.py` (a backup from before step 52),
+`frontend/tests/documents.test.mjs`, `libraryUtils.test.mjs`,
+`viewerSurface.test.mjs`, `textLoad.test.mjs` and `textMark.test.mjs`, over the fixtures `tests/shared/formats.json`,
+`tests/shared/document.json` and `tests/shared/textdecode.json`
+("Fixtures" below).
 
 ## Formats
 
@@ -155,7 +158,7 @@ step that brought it, 55, moves the workspace format
 
 Two more hold across the shape's history. The hash of every page that had
 a doc id before step 52 is that doc id, so every record keyed by a file's
-hash stays valid untouched: `data.db`'s `pdf_docs`, `pdf_fts*` and
+hash stays valid untouched: `data.db`'s `pdf_docs`, `text_fts*` and
 `pdf_translations*`, highlights' `pdf_position.doc_id` and `prev.doc_id`,
 `vaults.db`'s `linked_files` and `vault_files`, the Zotero link's
 records, job keys (`<page>:<hash>`), translation memory (`doc:<stem>`)
@@ -344,8 +347,9 @@ PDF), so a duplicated page reads the file it shows as the original does: the AI'
 window, `view_pdf_page`, `clip_region`, `ai_pictures.page_doc_id`,
 `ink_view.picture`), the exports (the graph and Obsidian bundles, the
 Zotero RDF's PDF, the annotated PDF and its translation, Notability), the
-highlight relocation, translation memory, the PDF index's live set
-(`pdf_index._live_docs`: a copy keeps the rows of the file it shows), the
+highlight relocation, translation memory, the text index's live set
+(`gamma/search/index.py` `purge_unused`: a copy keeps the rows of the file
+it shows), the
 Zotero link's comparison of files, a folder chat's PDF search
 (`ai_tools._scope_pages`), and on the client `pdfStored`, the viewer's `fileId`, the translation scope, the
 annotated PDF's translation (`translateExport.exportFile`,
@@ -364,6 +368,63 @@ preview's match and the record lookup on open. Every other PDF reader
 takes a PDF stored or read in place alike (`is_pdf`, `own_hash`): a
 lookup asked by hand (`POST /metadata/fetch`, the Paper metadata button),
 `findPageForUrl`, the AI, search and the Zotero link.
+
+## Text extraction
+
+`gamma/documents/text.py` reads a document's text by its format. It is
+the one reader the search index reads every document through, and what
+the chat reads a text document with; it imports `textnorm` and, inside
+`extract`, `pdf_text` (a server without PyMuPDF still reads text files),
+and nothing of the routers, the index or the AI.
+
+| Function | What it answers |
+|---|---|
+| `extract(path, format, *, name)` | the index's units (`Unit(no, text)`, normalized as the index stores them) with `lines`, `chars`, `truncated`, `encoding`, `bad`. A PDF's units are its pages (`pdf_text.extract_pages`, past the chat's page cache), each cut at `PAGE_CHARS` (20,000), empty pages dropped; ImportError and every other failure raise, for the indexer to decide what to record. A text file's are runs of `RUN_LINES` (40) lines, each line `normalize_text`'d and cut at `LINE_CHARS` (500), so `RUN_LINES * LINE_CHARS == PAGE_CHARS` and a run and a page rank as units of one size; a run of empty lines is dropped but keeps its number. Any other format is a ValueError: callers test `INDEXED_FORMATS` (`pdf`, `text`) |
+| `unit_lines(unit, lines)` | the first and last line of a run: `((unit-1)*40+1, min(unit*40, lines))`. The index stores no line columns; a change to `RUN_LINES` bumps `textnorm.INDEX_VERSION` |
+| `read_lines(path, from_line, to_line, *, budget)` | a `Window(lines, last, total, decoded)`: the lines raw, each cut at `VIEW_LINE_CHARS` (10,000, the viewer's) with `…[line cut]`, read 64 KiB at a time until `to_line` or until their characters reach `budget`; the rest of the file is then counted from its bytes, never decoded (a 1 MiB read's `\n` and `\r`, a `\r\n` once), so a 64 MB log read for its first lines decodes a few hundred KB and counts the rest in ~40 ms. `from_line` below 1 reads from 1; past the end gives no lines and the right `total`. A NUL in what was decoded, or too many U+FFFD, is `ValueError("not a text file")` |
+| `outline(lines, language, *, from_line, budget, cut)` | `[(line, text)]` of where things are, from `from_line` on, each text at most 80 characters, within `budget` (an entry costs its text and 10), sampled every k-th when the rule finds more: LaTeX's sectioning commands (with a `\label` on the line or the next), `abstract`, figures and tables with their first caption, `\input`, `\include` and `\bibliography` as written; the headings of Markdown, reStructuredText and Typst; Python's classes and functions, nested by indentation; JavaScript's and TypeScript's functions, classes, exports, top-level function or object constants and tests; the C family's definitions with their imports folded into one entry; JSON's top-level keys, an array's length (shown whatever `from_line`), a notebook's cells; YAML's, TOML's and INI's top-level keys and tables; BibTeX's entries with their titles; a table's header and its count of rows (shown whatever `from_line`); anything else by its paragraphs. A rule that finds fewer than three entries is filled in by the paragraphs, in the budget its own entries leave (they are never sampled away). A file under 40 lines has none; lines that are only the file's first (`cut`: the read stopped at `MAX_TEXT_LINES` or `MAX_TEXT_CHARS`) end it with "(the outline stops at line N)", N the last line read (`outline_stop`). The regexes are anchored and linear, so a crafted file does not hold the thread |
+| `locate(unit_text, query, first_line)` | the line of a run a search hit matched, and its text cut to 200 characters around the match, by FTS5's token model: the normalized query's runs of letters and digits, each a whole word on the line, the last a prefix, case and diacritics aside (`section` finds `\section`, never `\subsection`; `fig:loss` finds `\ref{fig: loss}`); the line holding the most wins, the earliest of equals; none (a phrase across a line break) gives the run's first non-empty line |
+| `numbered(lines, from_line)` | the lines as the chat sends them, `cat -n`'s shape: the number right-aligned in six columns, a tab, the line |
+
+**The caps.** A text file is indexed, outlined and counted up to
+`MAX_TEXT_LINES` (50,000) lines or `MAX_TEXT_CHARS` (2,000,000) decoded
+characters, whichever comes first; `extract` reads at most
+`MAX_TEXT_CHARS * 4 + 3` bytes (enough for the cap in UTF-8), so a 3 GB
+log is never read whole, and a file cut there ends at its last whole line
+with `truncated` set. A single long line is cut, not truncated: a
+minified file is one unit of `LINE_CHARS`.
+
+**The encodings** (`decode`): a byte-order mark picks UTF-8 (`utf-8-sig`),
+UTF-16LE (what Windows PowerShell 5.1 writes) or UTF-16BE, the mark being no
+text; anything else is UTF-8 with each bad sequence a U+FFFD, `bad` when one
+was replaced. `binary` when the decoded text holds a NUL anywhere, or U+FFFD
+past `BAD_SHARE` (5%) of its characters; its text is then `""`. There is
+no code-page guess. The viewer's `textLoad.decodeText` applies the same
+rule to a whole file, and `tests/shared/textdecode.json` holds both.
+
+**Secrets.** `is_secret(name)` is the one exception to what leaves the
+computer for the model: a file whose leaf, lowercased, is one of
+`SECRET_NAMES` (`.env`, `.netrc`, `.npmrc`, `.pypirc`, `.htpasswd`,
+`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`), starts with `.env.` or ends
+with `.pem`, `.key`, `.p12` or `.pfx` is never indexed (it is recorded with
+no text), never put in a chat's context and never read by a tool. The
+index is keyed by the bytes and the rule by the name, so a search applies
+it again to every page a hit reaches (`search.hits.docs_of` leaves a
+secrets file's page out of the scope, `hits.build` gives it no hit): a file
+indexed as `settings.txt` and renamed `.env`, or a copy named `.env`, is
+never a hit, and a `.env` never indexed is indexed once renamed. The
+viewer still shows it on the person's own screen. `formats.NAMES` still
+reads `.env` as `text` in `shell`: what a file is and what the model may
+see are two questions.
+
+**Where the PDF readers stay.** The index reads PDFs through `extract`.
+The chat's PDF head and windows (`ai_context.pdf_excerpt`, through
+`pdf_text.extract_text_pages`, cached per page, with `[PDF page N]`
+labels), the selection placement, `GET /pdf-text-status`, the translation
+briefs, metadata's title guess, `fetch_paper`'s bytes, glyph boxes and
+rasters keep `pdf_text`: they need page labels and a cache the index must
+not share, since a walk over a library would evict the papers a chat is
+reading.
 
 ## In SQL
 
@@ -397,12 +458,13 @@ NULL on a row without a document, on one shown from an address alone and
 on a copy. It covers every row, nested and trashed ones included, with the
 partial index `idx_ub_doc`. Its name is the column's from before step 52,
 so the statements that read it (`page_for_doc`, the upload references,
-the PDF index purge) read it as they did. The share checks
+the text index purge) read it as they did. The share checks
 (`routers/uploads.py`) read `doc.hash` and `doc.ext` instead, of any
 document, copies and a URL's cached copy included: a page's own, and the
 copy a block inside it shows. `root_pages`
-answers `CASE WHEN SQL_PDF THEN doc_id END`, `""` for a page whose
-document is no PDF. The column reads `$.doc.hash` raw, so a malformed
+answers the column for a document of any format, with its `format`,
+`ext` and `at`, for the search to keep the formats it indexes
+(`text.INDEXED_FORMATS`). The column reads `$.doc.hash` raw, so a malformed
 `doc` with a hash passes it; a reader that reads the row's view as well
 (`clip.find_page`) skips a row `page_document` refuses. The library
 listing's summary (`routers/blocks.py` `SUMMARY_PROPS`) carries `doc`
@@ -536,7 +598,9 @@ them:
 The library's rows (`library/libraryUtils.js` `pageBlocksOf`) carry
 `_doc`, the page's view. `duplicable` leaves out pages read in place,
 `pageKindLabel(doc)` says the format's word (`formatLabel`: "PDF",
-"LaTeX", "Picture", "File") or "Page", `defaultPageTitle(doc)` titles a
+"LaTeX", "Picture", "File"; a language's word is `LANGUAGE_LABELS`', the
+server's `formats.LANGUAGE_NAMES` too, which the chat's context names it
+by, both held to `tests/shared/formats.json` "language_names") or "Page", `defaultPageTitle(doc)` titles a
 page from its document's name or address, and `findPageForUrl` matches a
 link against `sourceAddress` (a copy's upload address holds no DOI or
 arXiv id). `FileGlyph` (`shared/ui/Icons.jsx`) takes a `format` and draws
@@ -628,7 +692,7 @@ image view"); what they are:
 
 | Pane | Shows | Takes from the surface |
 |---|---|---|
-| `text` | the file's text read-only in CodeMirror, coloured by `codeLanguageName`, with line numbers, Find (CodeMirror's panel at the top; Ctrl+F in `.docTextView` is left to it by `app.search`), Wrap and Download in its bar, Ctrl+wheel for the text size (`useTextScale`, as the notes and the chat; no A−/A+ buttons, since none of them has any); a binary after all, a file the server refuses (404: a work folder's file on another computer), or no `fileUrl`, hands over to `FilePane` | `doc`, `fileUrl`, `phone`, `hidden`, `place {line}`, `onPlace`, `reportRef`, `onReveal` |
+| `text` | the file's text read-only in CodeMirror, coloured by `codeLanguageName`, with line numbers, Find (CodeMirror's panel at the top; Ctrl+F in `.docTextView` is left to it by `app.search`), Wrap and Download in its bar, Ctrl+wheel for the text size (`useTextScale`, as the notes and the chat; no A−/A+ buttons, since none of them has any); a binary after all, a file the server refuses (404: a work folder's file on another computer), or no `fileUrl`, hands over to `FilePane`; a line link's lines marked (below) | `doc`, `fileUrl`, `phone`, `hidden`, `place {line}`, `onPlace`, `reportRef`, `mark`, `onMarkDone`, `onReveal` |
 | `image` | the picture at fit or at App's zoom, its regions drawn as the PDF draws areas (dashed with "Drawn on an earlier version of this picture" when `image_position.hash` is not the file's), the comment margin beside it or a badge per commented region, the region drag and its tip (Comment, Note, Ask AI); a picture that will not load, or no `fileUrl`, hands over to `FilePane`, and the next version of the file mounts a picture again | `doc`, `fileUrl`, `readOnly`, `hidden`, `scale`, `place {top, left, scale}`, `onPlace`, `reportRef`, `regions`, `anchors`, `flashId`, `regionMode`, `onRegion`, `onRegionJump`, `onRegionContext`, `onRegionThread`, `commentMargin`, `marginRef`, `onMarginLost`, `scrollRef`, `captureRef`, `onAskRegion`, `onReveal` |
 | `media` | `<audio>` or `<video>` with the browser's controls (a `.webm` a video until its metadata says it has no picture), paused when the pane closes | `doc`, `fileUrl`, `hidden`, `onReveal` |
 | `file` | the format's glyph, the name, the format and size (`doc.size`, else one HEAD's `Content-Length`), one sentence (a binary, a listed file, a document at an address, whose `fileUrl` is `""`, a file whose bytes are on another computer, a file that would not play or was binary after all), Download (not for a listed file, nor one with no `fileUrl`, nor one the HEAD answered 404; no HEAD is sent for those) and Show in folder where `onReveal` is given | `doc`, `fileUrl`, `onReveal`, `sentence` (the other panes' hand-over) |
@@ -645,13 +709,14 @@ place, onPlace, reportRef, regions, scale}`):
 | `doc`, `fileUrl`, `pageId` | the page's document, `documentFileUrl(doc, {asset: assetUrl})`, the page |
 | `readOnly`, `hidden`, `phone`, `preview` | the workspace's, `pdfHidden`, `isPhone`; `preview` a tab group's pane (presses only) |
 | `scale: {value, onZoomTo, onEffectiveScale}` | `pdfScale`, `zoomTo`, `setPdfEffScale`: the picture's zoom is the PDF's state, so the strip's buttons and the pill work unchanged |
-| `place`, `onPlace`, `reportRef` | where the page's pane last stood (`tabScrollRef`, the code view's `{line}`, the picture's `{top, left, scale}`), read once as the pane mounts; `onPlace` writes it back, and `captureScrollPos` calls `reportRef` before leaving a pane that is not the PDF's. A closed pane (`hidden`: still mounted, `display: none`, which drops the scroll) reports where it last stood in view, keeps its box and so its fit, and is put back there as it opens |
+| `place`, `onPlace`, `reportRef` | where the page's pane last stood (`tabScrollRef`, the code view's `{line}`, the picture's `{top, left, scale}`), read once as the pane mounts; `onPlace` writes it back, and `captureScrollPos` calls `reportRef` before leaving a pane that is not the PDF's, as `navEntry` does for Back (below). A closed pane (`hidden`: still mounted, `display: none`, which drops the scroll) reports where it last stood in view, keeps its box and so its fit, and is put back there as it opens |
 | `regions`, `anchors`, `flashId`, `regionMode` | `highlights` and `anchors`, which are the document's (`pageHighlights` / `commentAnchors` with `positionKeyOf(doc)` and `fileHash(doc)`: a PDF's highlights or a picture's regions, so the jumps, the margin, the chat and the comment cleanup take a region with no branch); `flashingId`; `areaSelectMode` off a share |
 | `onRegion(position, {color, comment})` | `addRegion`: `addHighlight({quote: "", position, color}, {place: "image_position"})`, then `commentOnNewHighlight` for a comment (its abandoned-comment cleanup is the passage's); null when read-only |
 | `onRegionJump`, `onRegionContext`, `onRegionThread` | the PDF's highlight handlers (`highlightPressed`, the highlight menu, `openThread` with the margin) |
 | `commentMargin`, `marginRef`, `onMarginLost`, `scrollRef`, `captureRef` | the PDF's `commentMargin`, `pdfMarginRef`, `marginLost`, `scrollToRef`, `pdfCaptureRef`: one viewer mounts at a time, so one set of refs serves both |
 | `onAskRegion(position)` | the chat's picture of the region (`regionPicture("area", pageId, 1, regionBox(position))`); null on a share |
 | `onReveal` | the desktop shell's `reveal-on-disk` for a work folder's file; null elsewhere |
+| `mark`, `onMarkDone` | `pageTarget` when it is a line link's (`{kind: "line", pageId, line, to, quote}`) on the open page, else null; `onMarkDone()` clears `pageTarget`, `onMarkDone(mark)` only while it is `mark` |
 
 **The text reader** (`viewers/textLoad.js`): one Range request for the
 first 2 MiB (a 206's `Content-Range` gives the size; a server that ignores
@@ -661,12 +726,56 @@ PowerShell writes, UTF-16BE), else as UTF-8 with replacement, the view
 then saying "Some bytes are not UTF-8 and show as �."; a head drops its
 partial last line (a head with no line break at all, a minified file, is
 kept as its one line) and every line is cut at 10,000 characters; a NUL
-in the first 8 KiB means binary, and the pane hands over to `FilePane`'s
+anywhere in what was decoded, or U+FFFD past 5% of its characters, means
+binary (`notText`, the server's `text.decode` rule, pinned for both by
+`tests/shared/textdecode.json`), and the pane hands over to `FilePane`'s
 sentence; Show all reads the rest up to 16 MiB, past which (by the size
 the response says, else once that many bytes came) the bar says to
 download, the body left unread. One read at a time: a new version of the
 file (a new `fileUrl`) cancels a Show all under way and reloads at the
 same top line.
+
+**The line mark.** A line link (`/?page=<id>&line=N[-M][&quote=…]`,
+[pdf_citations.md](pdf_citations.md) "Line links": the chat's pill, a
+note's, the search panel's Files hit, a pasted address on a cold load or
+a share's) sets App's `pageTarget` to `{kind: "line", pageId, line, to,
+quote}`; the PDF's passage is the same state with `kind: "citation"`, each
+viewer taking its own kind. Once the file's text is in and the pane shows,
+`viewers/textMark.js` `placeMark(lines, target)` says where: line N, unless
+the quote (the first line's verbatim text) is not that line's trimmed text,
+when the nearest line whose trimmed text is the quote, else whose text
+with its spaces folded is it, else which holds it, is marked instead
+(`moved`), the range as long as it was; a quote no line holds marks the
+number (`lost`). A line is scrolled to the middle once (a range, its first
+line to the top) and the lines are drawn with a line decoration (`.docLineMark`, a wrapped line whole), and the notice
+`.docMarkNotice` (a polite live region) says "Line N marked." to a screen
+reader alone, and on screen "The line moved: marked where its text is
+now." or "Its text is not in the file now: marked by its number.". A line
+or a quote past the 2 MiB head reads the whole file first (Show all's
+read), and only then is a line past the end: nothing is marked and the
+notice says "The file has N lines now; line L is past its end." (past
+the 16 MiB cap, "Line L is past the part of the file shown here.
+Download it to read it all."). A new version of the file (read whole
+again for a mark past its head), or the whole file read for the mark,
+places it again without scrolling; pressing Show all ends it like any
+press outside the marked lines. Escape, or a press anywhere but on the
+marked lines, ends it and calls `onMarkDone`. A binary or listed document
+shows `FilePane`, marks nothing and ends the mark; the view going (the
+reader left the page by Quick open, Back or a tab) ends the mark it placed
+(`onMarkDone(mark)`, which clears `pageTarget` only while it is that
+mark), and `openBlock` drops a target of another page than the one it
+opens, so a page opened again later opens at its own place. A tab group's
+pane (`PagePane`'s read-only surface) takes no mark: only the live page
+marks a line.
+
+**Back's place.** `navEntry` asks the pane's `reportRef` and keeps the
+page's place (`place`, the code view's `{line}`) beside the PDF's scroll.
+`goBackNav` to another page writes it to `tabScrollRef` before opening the
+page, whose pane mounts there; on the same page (a line link to the open
+file pushed the entry) it sets `pageTarget` to `{kind: "line", line,
+scrollOnly: true}`, which the mounted view scrolls to (its top line, no
+mark, no notice) and ends at once. Back returns to where the reader was;
+the mark is for links.
 
 **The region tool**: one drag for the PDF's area and the picture's region
 (`shared/ui/regionDrag.js`; `shared/ui/regionGeometry.js` turns the drag
@@ -702,6 +811,13 @@ pictures ([highlight_relocation.md](highlight_relocation.md)).
   trashed and nested rows and runs the step) and `copies` (the doc a
   duplicate writes: `copyDocument`, the client alone; null for a listed
   file).
+- `tests/shared/textdecode.json`: `cases` (bytes in base64; the text,
+  `bad` and `binary` out, both sides; `encoding`, the backend's codec name,
+  the backend alone): a file of each byte-order mark, bytes that are no
+  UTF-8, a NUL at byte 5,000 and at byte 12,000 of 16 KB (past the first
+  8 KiB: anywhere in the text decides), mostly bad bytes, an empty file, a
+  character cut at the end. Read by `test_shared_fixtures.py` and
+  `textLoad.test.mjs`.
 - `tests/shared/blockkind.json`: a block whose one property is a document
   is a note; a region of a picture, and a range of a text file, are
   highlights.
@@ -709,7 +825,7 @@ pictures ([highlight_relocation.md](highlight_relocation.md)).
 A rule that changes on one side is a case added to the fixture, which
 fails the side that drifts ([debugging.md](debugging.md)). Tests make
 pages with `backend/tests/conftest.py` `doc_props(hash, *, url, name, at,
-copy)`, which builds `{"doc": …}` through `document`; only the migration's
+copy, format, ext, size)`, which builds `{"doc": …}` through `document`; only the migration's
 and the restore's tests write the flat keys, on purpose.
 
 ## As built (step 3)

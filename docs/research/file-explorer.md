@@ -11,8 +11,8 @@ local agents (Claude Code, Codex) as structured documents. The owner
 offered a rewrite from the bottom up and asked first whether the idea is
 possible at all.
 
-Status: **a plan; steps 0, 1, 2 and 3 are built** ("As built (step 0)" to
-"As built (step 3)" under "In steps"), the rest is not. This note surveys
+Status: **a plan; steps 0 to 4 are built** ("As built (step 0)" to
+"As built (step 4)" under "In steps"), the rest is not. This note surveys
 what
 the stored model and the code assumed before step 0, weighs three shapes a
 file could take, and lays the chosen one out in layers from the bottom,
@@ -1242,6 +1242,178 @@ Where it differs from the plan above, the whole list:
     rows in the highlight menu (the PDF's rows show); the AI title for a
     non-PDF document (`docId` is the PDF's); an admin setting for the keep
     limit.
+
+**As built (step 4).** Built as its row says
+([dev/documents.md](../dev/documents.md) "Text extraction" and "Viewers",
+[dev/api.md](../dev/api.md) "Search", [dev/ai_context.md](../dev/ai_context.md)
+"A text file", [dev/ai_tools.md](../dev/ai_tools.md),
+[dev/mcp.md](../dev/mcp.md), [dev/pdf_citations.md](../dev/pdf_citations.md)
+"Line links", [dev/work_folders.md](../dev/work_folders.md) "Paths"). The
+one reader of a document's text is `gamma/documents/text.py`: `extract` by
+format for the index, `decode`, `read_lines` (a window streamed, the rest
+of the file counted from its bytes), `outline` by language, `locate` and
+`is_secret`; its decode rule is the code view's too, held by
+`tests/shared/textdecode.json`. The index is the package `gamma/search/`
+(`index` the tables and queries, `indexer` the lazy `indexing` job,
+batched, `hits` the one hit builder) in place of `pdf_index.py`, with no
+shim: data.db's `text_fts`, `text_fts_docs` and `text_fts_rows`, keyed by
+hash, a PDF's unit its page and a text file's a run of 40 lines with each
+line cut at 500 characters, so a run and a page are units of one size
+and rank together. An index of the old layout is dropped at its first use
+and filled again by the job; there is no migration step, and the
+workspace format stays 55. A file hit is `{source: "file", path,
+work_folder, language, line, lines, snippet, …}`, its line found again in
+its run by FTS5's own token rule. `POST /api/document-search` is the
+panel's document group; folder and label chips go to it and to
+`/block-search` as ids, resolved on the server
+(`routers/search.scope_pages`), so a work folder's chip reaches its
+20,000 files. A path resolves to a page through
+`gamma/work_folders/paths.py` (`page_path`, `page_at_path`,
+`work_of_path` and the name rule `work_folders_named`), on which
+feedback's file names are built too. The chat's context for a text
+document is its numbered lines, whole or a head and an outline from the
+first line not shown (`ai_context.text_head`, cached per file version),
+with the page's open threads and a note's file chips; `read_page` reads by
+`from_line` and `to_line` or by `path`, `list_pages` names a file's path,
+and `search_library` lists file hits. The line link
+`/?page=<id>&line=N[-M][&quote=…]`, its quote the first line's verbatim
+text, is a fourth kind of Gamma link (`gammaLinks.js`,
+`mcp_links.resolve_link`), drawn as the citation's pill and opening the
+code view at its lines, marked (`documents/viewers/textMark.js`). The
+browser group is `text-search`. Where it differs from the plan above, the
+whole list:
+
+1. The chat's PDF reader stays `pdf_text` (`pdf_excerpt`, labelled,
+   cached): the one extractor fronts the index for every format and the
+   chat's and tools' reading of a text file, and the chat's PDF path keeps
+   its page labels and its cache, which a library-wide index must not
+   share.
+2. The path pair lives in `gamma/work_folders/paths.py`, not
+   `blocks_store`, which that package imports. The work folder name rule
+   (exact, then ignoring case by `blocks_store.named`'s `lower()`) is
+   stated there, and feedback's lookup is built on it, its `casefold()`
+   gone.
+3. A listing-side predicate (`year:`, `author:`, `is:pinned`) still travels
+   as page ids. Only a chip, or a `folder:` or `label:` clause naming one
+   folder or label, is a scope sent as ids: a negated clause, or one naming
+   several, stays a predicate, since the server intersects its ids. Beside
+   a predicate a work folder's chip leaves out the files the library does
+   not list ([dev/work_folders.md](../dev/work_folders.md) "Known gaps").
+   There is no `is:text`; `in:files` is the files' switch.
+4. The index's unit column is `unit`, with no line columns: a run's lines
+   follow from its number and `RUN_LINES`, and the matched line is found
+   by re-scanning the run on the server (`text.locate`).
+5. `/pdf-search` (GET and POST) is gone with no shim; `GET /api/search`
+   keeps its shape and gains file hits; the two routes and `search_library`
+   share `search/hits.py`. A PDF hit names its document's first page in
+   `GET /search` and every page of it in `/document-search`; a file hit
+   names every page whose document it is, so two files of equal bytes are
+   two hits.
+6. No "This file" find group for the open code view: CodeMirror's panel is
+   its find, and the Files group lists the open file's hits, tagged *this
+   file*.
+7. A cited file page the reader never opened has no source name on its
+   pill: the model is told to write the file's name in the link's text,
+   and the preview says "This file".
+8. The composer takes no text files. A note's file chips are read, three a
+   page, each its first 4,000 characters with no outline (an outline would
+   read the whole file); the tracking dialog says what leaves the computer.
+9. Threads of every page are in the context, not only a text document's,
+   placed from the thread's stored anchor as the feedback entries are.
+10. The outline goes to the plain chat too; the call to read on with
+    `read_page` is written only for a chat with tools.
+11. The decode rule is UTF-8 with replacement after a BOM check, a NUL
+    anywhere or more than 5% U+FFFD making a file no text, for the server
+    and the code view alike (the code view's first-8-KiB test is gone); no
+    code-page guess.
+12. A secrets file's text never reaches the model, the index or a chip
+    (`text.is_secret`: `.env` and `.env.*`, `.netrc`, `.npmrc`, `.pypirc`,
+    `.htpasswd`, the ssh keys, `.pem`, `.key`, `.p12`, `.pfx`); the code
+    view shows it. This is the one exception to "What leaves the computer"'s
+    third rule.
+13. The indexer still downloads a PDF at an address, as before, through the
+    chat's guarded resolver: a search finds what the page shows.
+14. The scoped search's budget is 800 ms, not 150: each request reads every
+    file page's document (`root_pages`, `pages_in_scope`), about 450 ms p95
+    at 20,000 files measured beside other suites
+    ([dev/debugging.md](../dev/debugging.md) "Performance budgets"). The
+    other budgets of `test_search_scale.py` hold as planned.
+15. A duplicated page's document is searched by the agent only, as before:
+    the panel's and `GET /search`'s maps leave copies out.
+16. A file's old version's rows go at once when the vault replaces its
+    document (`purge_doc`); when the file crosses the keep limit
+    (`set_doc`) they wait for the next `purge_unused`.
+17. The line mark: a quote no line holds marks the number and says its
+    text is gone; a line beyond the part shown of a file too large to show
+    whole (past 16 MiB) says so in words of its own, not as a line past the
+    end. Back to the same page scrolls to its line as a target with no
+    mark. Only the live pane marks; a tab group's read pane never does.
+18. The extractor: `read_lines` counts the rest of a file by its `\n`, or
+    by `\r` in a read that holds no `\n` (a CR-only file), so a lone `\r`
+    beside a `\n` past the window is not counted; a binary file is a
+    `ValueError`, and its `Decoded` is empty text with `bad` False, the
+    shape the code view answers (the fixture's node half compares `text`,
+    `bad` and `binary`; `encoding` carries Python's codec names). A run's
+    text is its lines' up to `PAGE_CHARS` plus the newlines between them.
+    `locate` folds diacritics as unicode61 does and, with no token on any
+    line, gives the run's first non-empty line. An outline's caption is cut
+    to the entry's 80 characters, and the paragraph fill takes only the
+    budget the language's own entries leave. `page_path` answers `""` for
+    a page in no work folder, where feedback's `file_path` answered its
+    title.
+19. The index: `hits.build` answers its hits with `more` (the `next` of
+    `/document-search`) and takes `fan_out`, the agent listing a PDF's
+    pages itself. `store_docs` stores a document of more than `STORE_CHUNK`
+    units alone, in chunks, so a book never holds the write lock; the job
+    flushes its batch at 50 documents or `BATCH_UNITS` units, and its stop
+    is `Job.progress` raising `Cancelled`, the batch stored first.
+    `is_secret` reads the names of the pages that own the hash (a secret
+    name winning), not the title, so a renamed page is caught; the metadata
+    lookup passes the page's view to `ensure_indexed`, so a PDF at an
+    address keeps `at: "url"`. The `first_folder` arm for
+    `pages_in_folder` was measured slower and not taken.
+20. The chat and the tools: `TextHead` holds the numbered lines alone, and
+    the label, the outline block and the call to read on are written per
+    turn, so one cached entry serves a plain chat and a chat with tools and
+    the prompt stays stable; `text_head` reads a file once for its head and
+    outline, keyed by hash, extension, language and budget, a missing file
+    not cached, the outline's budget at most half the text's. A chip's page
+    is found by hash and extension among root pages (`page_for_file`
+    answers library pages only), so a work folder's file is named; a chip's
+    format is its name's, a `.bin` never text. A thread reads `author
+    (agent), date: "body"`, its source after its place; `read_page` brings
+    a page's threads with its first window when the chat's context does
+    not hold that page. On MCP a `line` beside a bare folder link is
+    ignored, as `pdf_page` is there, and `line=9-9` is kept as written. A
+    text file's size is given in bytes, other formats' rounded.
+21. The client: `isSourceLink` states the pill's rule once and `linePlace`
+    its words; the paste-as chooser takes a range too; a pill's own label
+    may name lines (`l.`, `ll.`, `line`, `lines`); `coverage.js` walks
+    merged spans, since a text entry's lines run to millions. The panel
+    sends `exclude` only when the open page shows a PDF, keys a document
+    hit by its page too (`docHitKey`), clears another filter's hits at once
+    rather than holding them back, puts the indexing hint and Show more
+    after both document groups, and asks again when an indexing job it
+    waited on ends (App's `indexed`), while each answer counts fewer
+    documents pending, since a linked file out of reach stays pending. The
+    code view's `decodeText` applies the one rule to the head and to the
+    whole; the mark is the accent's wash and a bar at the gutter, a range's
+    first line scrolled to the top; "Line N marked." is for screen readers
+    only; a press on an unmarked line dismisses the mark too. The task row
+    reads "Indexing documents for search" and counts documents; the home
+    box offers "Search inside notes, PDFs and files".
+22. The browser group `text-search` types its query again until the Files
+    hit shows, since the first search starts the index; its selection rules
+    also name `chat/**`, `editor/**`, `ai_tools.py`, `mcp_server.py` and
+    `work_folders/paths.py`, the last with `feedback`.
+23. Not built in step 4: the Files window and server-side quick open (step
+    5); `text_position` anchors and a selection of lines reaching the chat
+    (step 6); eager indexing on a vault round; a per-format index budget for
+    data-ish text (`csv` and `log` share the text caps);
+    `view_image(page_id=…)` for a picture page (the context names no tool
+    for one); a scoped search that does not read every file page per
+    request (one query for the scope's documents, or a docs map kept by
+    the workspace's change sequence), which item 14's budget waits on.
 
 ## Still to decide
 

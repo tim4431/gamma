@@ -1140,10 +1140,10 @@ PAGES_SCHEMA = [
 # deleted, and everything in it comes back on demand: the cover
 # thumbnails, the viewer's PDF manifests and the kept translations below
 # (made again by a model, so the one thing here that costs tokens to come
-# back), and the PDF text index (pdf_fts, extracted again by the next
-# search), whose tables gamma/pdf_index.py applies itself
-# (pdf_index.SCHEMA), since that is where an index older than its side
-# table is taken over. Nothing a person wrote lives here: the chats, the
+# back), and the document text index (text_fts, extracted again by the
+# next search), whose tables gamma/search/index.py applies itself
+# (index.SCHEMA), since that is where an index of an older layout is
+# dropped and made again. Nothing a person wrote lives here: the chats, the
 # notes index and the translation glossary are in pages.db.
 DATA_SCHEMA = [
     # page_snaps = the recents-card cover thumbnails (small JPEG data URLs
@@ -1959,8 +1959,8 @@ def connect_pages_db(ws: str) -> Connection:
 
 def connect_data_db(ws: str) -> Connection:
     """THE way to open a workspace's data.db: WAL mode, the busy timeout and
-    the schema statements (``DATA_SCHEMA``), like pages.db. The PDF text
-    index adds its own tables (gamma/pdf_index.py)."""
+    the schema statements (``DATA_SCHEMA``), like pages.db. The document
+    text index adds its own tables (gamma/search/index.py)."""
     return _cached(ws_db_path(ws, "data.db"), ws, _open_ws_db, DATA_SCHEMA, False)
 
 

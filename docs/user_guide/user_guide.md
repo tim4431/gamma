@@ -13,10 +13,10 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Notes](#notes) | Markdown and math that render as you type |
 | [Pages side by side](#pages-side-by-side) | A paper in one pane, your notes in the other; split, drag, join |
 | [Outline and links between pages](#outline-and-links-between-pages) | Nesting, moving notes, `[[` links, `@` mentions and reminders |
-| [AI chat](#ai-chat) | Ask about the paper, with clickable citations; every AI service you can connect |
+| [AI chat](#ai-chat) | Ask about the paper or a file, with clickable citations and line links; every AI service you can connect |
 | [The library agent](#the-library-agent) | Let the AI organize and edit, with your approval; what each tool does |
 | [Library](#library) | Labels or folders and how to file a paper, files of any kind and their viewers, pages inside pages, Recently deleted |
-| [Search](#search) | Everything at once, Ctrl+P to jump |
+| [Search](#search) | Everything at once, your files' text too, Ctrl+P to jump |
 | [Metadata and citations](#metadata-and-citations) | Title, authors, BibTeX |
 | [Share a page](#share-a-page) | Links for viewers and editors |
 | [Workspaces](#workspaces) | Personal and shared libraries, editing together |
@@ -203,8 +203,10 @@ Read a paper on one side while you write up your notes on the other, each in a p
 Open the chat from the **View menu (≡) → AI Chat**. Gamma has no AI of its own: connect a service in Settings → AI → Connections and the chat uses your account with it. Keys stay on the server and are never sent back to the browser; a server administrator can also add connections everyone on the server shares.
 
 - The chat reads the open paper by itself. The **PDF** button sends the file with every message while it is on, so the model sees figures and tables. The file stays at the start of the conversation, so after the first message the provider can serve it from its prompt cache.
+- **A text file** ([files of any kind](#files-of-any-kind): a LaTeX source, code, a log) is read the same way, its lines numbered: the whole file, or for a long one its first part and an outline of the rest (sections, functions, keys), which the chat reads on by line when its tools are on. A file attached to a note, as its chip, is read with the note, its first lines at most. The open comment threads of the page, a paper's or a file's, go with it.
+- **What is sent**: the text of a file in the chat goes to the AI service, as a paper's does. A secrets file (`.env`, `.npmrc`, `id_rsa`, a `.pem` or `.key` file) never does: its code view shows it, but its text is never sent to the chat, searched or read by an [assistant](#assistants).
 - **Add more**: paste images, Ctrl+drag a region of the page, click highlights to quote them, type **@** to attach another paper.
-- **Citations are clickable**: `p. 12` jumps the PDF to the passage and highlights it.
+- **Citations are clickable**: `p. 12` jumps the PDF to the passage and highlights it, and `method.tex:12` opens the file at line 12 and marks it. When the file has changed since, the line is found again by its text, and the code view says it moved.
 - The **model chip** switches the model, reasoning effort and speed. Each reply says what wrote it and what it cost in tokens.
 - Select part of a note and ask for a change: the assistant rewrites only that selection.
 - Each paper and folder keeps its own conversation. **New chat** starts over and keeps the old one in History; Alt+click it to throw the old one away.
@@ -246,11 +248,11 @@ On the home page or in a folder, the chat can act on your library: list, read an
 | Permission | Tools | What they do |
 |---|---|---|
 | **Read your library** | | |
-| List pages | `list_pages`, `list_folders`, `list_deleted` | Browse page titles, folders, metadata and Recently deleted; a long library in batches (folder chats) |
-| Read pages | `read_page`, `read_chats`, `cite` | Read PDF text, highlights, notes, earlier chats and citation records (metadata, BibTeX) |
+| List pages | `list_pages`, `list_folders`, `list_deleted` | Browse page titles, folders, metadata and Recently deleted, a work folder's files by their paths; a long library in batches (folder chats) |
+| Read pages | `read_page`, `read_chats`, `cite` | Read PDF text, a text file's lines, highlights, notes, earlier chats and citation records (metadata, BibTeX) |
 | Read note blocks | `read_block` | Read individual notes and their outline |
 | View pages and handwriting | `view_pdf_page`, `view_ink`, `view_image` | Look at figures, tables, scanned pages, your handwriting and the pictures in your notes and on your pages |
-| Search library | `search_library` | Find text in your notes and PDFs |
+| Search library | `search_library` | Find text in your notes, PDFs and text files |
 | **Web research** | | |
 | Search papers online | `search_papers`, `related_papers`, `search_web` | Find papers on Crossref, arXiv and OpenAlex, follow their citations, and search the web through your AI connection, Brave Search or SearXNG (Tool usage → Online search) |
 | Fetch documents | `fetch_paper`, `read_paper` | Read a DOI, arXiv id or URL without saving it; a paywall or sign-in hands the fetch to your browser |
@@ -307,11 +309,12 @@ A page can carry any file, not only a PDF: a LaTeX source, a data file, a figure
 - **From your notes**: right-click a file chip → **Add to library** makes the page for that file, whatever its format, filed with the page you are on; **Open page** takes you there afterwards.
 - **The paperclip** (Document) on any page: **Upload a file…** attaches one, **Replace the file…** swaps it for a new version of the same format (a PDF's highlights are found again in the new file; a picture's regions stay where they were), **Detach the file…** takes it off. A page keeps its document's format: to give a picture page a text file, detach the picture first.
 - **Text and code** open in a code view: line numbers, the language's colours (LaTeX, Python, JSON, YAML and many more), **Find** (Ctrl+F, or the bar's button), **Wrap**, **Download**, and Ctrl+wheel for the text size. Select all and copy work as in any text. A large file shows its first 2 MB, with **Show all** at the foot.
+- **A line link** (`/?page=…&line=12`, or `line=12-20` for a range: a search hit, a chat's `method.tex:12`, or such a link in a note) opens the code view at that line and marks it; **Escape** or a click elsewhere clears the mark. A link that carries the line's text finds it again after the file changed, and says it moved; a line past the end says the file is shorter now. **Back** returns to the line you were reading.
 - **Pictures** open fitted to the pane; Ctrl+wheel or a pinch zooms around the pointer, the zoom buttons step and Fit to width restores. Drag a rectangle on the picture to draw a **region**: the bar that opens makes it a note in your notes (its row shows the crop), comments on it ([Comments](#comments-and-inbox)) or asks the AI about it. On a touch screen, turn on the strip's region toggle and draw with a finger. A region is kept in the picture's own pixels, so a figure rebuilt at another size keeps it in place; after the picture is replaced by another version it stays where it was, drawn dashed, and says so when you rest the pointer on it.
 - **Audio and video** play in the pane; closing the pane pauses them.
 - **Anything else** shows a card with the file's name, format and size, and **Download**.
 - **Words and glyphs**: the list's Format column says what a file is (LaTeX, JSON, Picture, Audio, File…), its tab shows the format's glyph, and the View menu and the pane's × name the pane (Text, Picture, Player, File). A file of a [work folder](#work-folders) is titled by its whole name (`main.tex`, `fig.png`); a PDF keeps its stem.
-- **What stays the PDF's**: the record, its citation and the metadata lookup. A file's text is not searched yet: Ctrl+F in its code view finds in the file alone.
+- **What stays the PDF's**: the record, its citation and the metadata lookup. A text file's text is [searched](#search) and read by the [AI chat](#ai-chat) as a paper's is; Ctrl+F in its code view finds in the file alone.
 
 ### Pages inside pages
 
@@ -330,8 +333,9 @@ A page can live inside another page, as in Notion: the minutes of each group mee
 
 <img alt="Ctrl+F opens the search, a query is typed, results appear grouped as titles, this paper's notes and the text of every PDF, a folder chip narrows them, and the chosen paper opens at the match" src="assets/search.svg" width="100%">
 
-- **Ctrl+F** on a page, **Ctrl+Shift+F** anywhere: titles, notes, highlights and the full text of every PDF, at once. "3000" finds "3,000-qubit".
-- Type a folder or label name and press Tab for a **filter chip**.
+- **Ctrl+F** on a page, **Ctrl+Shift+F** anywhere: titles, notes, highlights, the full text of every PDF and the text of every text file (a LaTeX source, code, a log, a data file, in the library or a [work folder](#work-folders)), at once. "3000" finds "3,000-qubit".
+- **Files** lists the lines of text files that match: the file's directory in its work folder, its name, the line's number and the line. Click one to open the file's [code view](#files-of-any-kind) at that line, marked. The open file's own lines are listed too, tagged *this file*. A file new or changed since the last search is indexed in the background, which the list says, and its lines fill in once that is done.
+- Type a folder or label name and press Tab for a **filter chip**. A work folder's chip reaches all of its files, those the library does not list too.
 - Narrow with **qualifiers** beside the words. They work in the search popover (Ctrl+F on a page, Ctrl+Shift+F anywhere); typed in the home page's filter box or Ctrl+P, Enter hands them over to it. Spaces mean all of them, commas list alternatives (`year:2019,2021`), a leading `-` leaves out, and quotes hold a name with spaces (`label:"quantum optics"`). Start typing a key and the list under the box completes it with Tab.
 
   | Type | To find |
@@ -344,7 +348,7 @@ A page can live inside another page, as in Notion: the minutes of each group mee
   | `author:Lukin`, `venue:nature` | words in a paper's authors or journal |
   | `year:>=2020` | papers from 2020 on (also `2020`, `<2015`, `2019..2021`) |
   | `updated:>=@today-7d` | pages edited in the last week (also `created:`, `2025-03`, `@today`) |
-  | `in:highlights` | the words only in highlights (also `title`, `notes`, `links`, `pdf`) |
+  | `in:highlights` | the words only in highlights (also `title`, `notes`, `links`, `pdf`, `files`) |
   | `-in:pdf` | the words only in your own writing |
 
   Words with a colon that are not qualifiers, like `arXiv:2301.12345` or `10:30`, are searched as text. So is a qualifier Gamma cannot apply, such as a label name that does not exist, and a line under the box says why.
@@ -462,6 +466,7 @@ A synced vault of a folder that pushes everything is a **work folder**: a direct
 - **One place**: a file is where its directory has it, named by its file. Rename, move and delete it on disk; a file unticked in Choose files… goes to Recently deleted with no Restore, and comes back, with its notes and comments, when it is ticked again. Its file is never moved. The directories inside a work folder follow the disk too: the work folder itself may be renamed or moved in the library, never deleted (remove the vault instead).
 - **Notes follow Gamma** where the work folder pulls: rename a note's page and its `.md` file is renamed, move it to another of its directories, delete it, or make a new page in the work folder and its note is written there.
 - **Figures and other files**: a figure of the directory is a page where you draw regions and comment on them, and a build that rewrites it shows the new picture at once, the regions staying where they were, dashed. Your comments on it reach the [feedback files](#comments-and-inbox) with a crop of each region, a comment on the picture's page with the whole picture. A file past the size Gamma keeps is listed with its name and size, its bytes never read; make it smaller and the page shows it.
+- **Search and the chat**: a tracked text file's lines are [searched](#search) with the rest, under its path, and the [AI chat](#ai-chat) and assistants read it by its lines, with its open comments. As *Choose files…* says, the chat sends a tracked file's text to the AI service when the file is in its context, as it sends a PDF's; a secrets file's never. A file the selection leaves out is never read.
 
 ### PDFs read where they are
 
@@ -571,12 +576,13 @@ The browser extension saves the paper you are reading in one click: PDF, metadat
 
 <img alt="In a terminal an @Gamma question is typed, the assistant searches the library and reads the page, and answers with a page number while Gamma highlights the passage" src="assets/assistant.svg" width="100%">
 
-Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your papers, notes, highlights and PDF text, read-only, in the workspaces you choose. Gamma runs an MCP server at `<your Gamma>/mcp`; the assistant connects to it and brings its own model. Gamma's own chat does not connect to outside MCP servers.
+Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your papers, notes, highlights, PDF text and the text of your files, read-only, in the workspaces you choose. Gamma runs an MCP server at `<your Gamma>/mcp`; the assistant connects to it and brings its own model. Gamma's own chat does not connect to outside MCP servers.
 
 - Settings → AI → Integrations shows the setup for each assistant: run it where you use the assistant, tick the workspaces it may read, then ask: *"@Gamma, in the blockade paper, how is the blockade radius measured?"*
 - One connection can read several workspaces, or all of them (those you add later too). A search covers them all; the **Choose workspaces** button on a connection's row changes them without connecting again.
 - To remove Gamma from an assistant, open **Remove Gamma from …** at the end of its tab and run the commands there (for DeepSeek Harness, with the app quit: it takes the plugin out and deletes the saved connection), then **Disconnect** the connection under **Connected assistants**.
 - Paste a Gamma page, block or share link into the question and the assistant reads that page, in whichever of the connection's workspaces it is.
+- Its answers link what they cite, as the chat's do: a PDF's passage, or a file's line (`method.tex:12`), which opens in Gamma marked.
 - A remotely hosted Gamma needs its **Public server URL** confirmed once in Settings → Server. A connection expires after 90 days; the same pane lists every connection of your account and disconnects one.
 
 ### Connect an assistant
@@ -593,9 +599,9 @@ Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your
 | Tool | What it returns |
 |---|---|
 | `list_folders` | The folder tree, each folder with its path and page counts |
-| `list_pages` | Pages with titles, folders, labels and metadata; filter by folder, label or title |
-| `search_library` | Full-text hits in notes and PDF text, with where each one is |
-| `read_page` | A page's notes, highlights, properties and PDF text in windows |
+| `list_pages` | Pages with titles, folders, labels and metadata, a work folder's files with their paths; filter by folder, label or title |
+| `search_library` | Full-text hits in notes, PDF text and text files, with where each one is: a PDF's page, a file's line |
+| `read_page` | A page's notes, highlights, properties and PDF text in windows, a text file by its lines; a work folder's file also by its path |
 | `read_block` | One note block or a page's note outline |
 | `read_chats` | The AI chat kept with a page or folder |
 | `view_pdf_page` | One PDF page as a picture: a scan, a figure, a table |
@@ -603,7 +609,7 @@ Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your
 | `view_image` | The pictures a note embeds, or a picture placed on a page |
 | `cite` | The citation record kept with a page: metadata and BibTeX |
 | `list_workspaces` | The workspaces the connection may read |
-| `read_gamma_link` | A pasted page, block or share link, read in place; a folder share lists its pages |
+| `read_gamma_link` | A pasted page, block or share link, read in place (a line link from its line); a folder share lists its pages |
 | `export_page` | A page as Markdown, or as a PDF: the annotated paper or the notes typeset |
 
 The first ten are the chat's own reading tools; each takes an optional workspace. An assistant never gets the write tools or the web tools: the connection is read-only, and the assistant has web access of its own.

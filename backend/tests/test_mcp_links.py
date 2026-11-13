@@ -3,7 +3,7 @@ from urllib.parse import urlencode
 
 import pytest
 
-from conftest import account_of, login, make_folder, make_page, make_user, thread_on
+from conftest import account_of, doc_props, login, make_folder, make_page, make_user, thread_on
 from gamma.blocks_store import PATH_SEP
 from gamma.db import connect_pages_db, connect_users_db, page_now
 from test_mcp import call, connection, rpc
@@ -113,6 +113,41 @@ def test_pdf_location_and_quote_are_preserved(client, connection, monkeypatch):
         assert result["structuredContent"]["selected_quote"] == quote
         assert "PDF content at physical page 5" in result["content"][0]["text"]
     assert seen == [5, 5, 5]
+
+
+def test_a_line_link_reads_the_file_from_its_line(client, connection, monkeypatch):
+    """``line=N`` reads the page's text file from line N (the window decides
+    where it ends), ``line=N-M`` those lines; the reference names both
+    numbers and its canonical link keeps the line; a line beside a PDF page,
+    or no line number, is refused."""
+    c, ws, credential = connection
+    page = make_page(c, "method.tex", properties=doc_props("ab12" * 6, name="method.tex", format="text", ext=".tex"))
+    seen = []
+
+    def report(conn, workspace, page_id, budget, offset, pdf_page, **kw):
+        seen.append((kw.get("from_line"), kw.get("to_line")))
+        return f"lines from {kw.get('from_line')}"
+    monkeypatch.setattr("gamma.ai_tools.page_report_section", report)
+    quote = "We fit a small network to the training set by gradient descent."
+    result = read(client, credential["token"], url="http://localhost/?" + urlencode({
+        "ws": ws, "page": page["id"], "line": 2, "quote": quote}))
+    assert not result["isError"], result
+    ref = result["structuredContent"]
+    assert ref["line"] == 2 and ref["end"] is None and ref["selected_quote"] == quote
+    assert ref["url"] == f"http://localhost/?ws={ws}&page={page['id']}&line=2"
+    assert "lines from 2" in result["content"][0]["text"] and seen[-1] == (2, None)
+    result = read(client, credential["token"], url=f"http://localhost/?ws={ws}&page={page['id']}&line=4-9")
+    assert result["structuredContent"]["line"] == 4 and result["structuredContent"]["end"] == 9
+    assert result["structuredContent"]["url"].endswith("&line=4-9") and seen[-1] == (4, 9)
+    # a range that starts on a blank line: its quote is empty, the number alone
+    result = read(client, credential["token"], url=f"http://localhost/?ws={ws}&page={page['id']}&line=40-52&quote=")
+    assert not result["isError"], result
+    assert result["structuredContent"]["line"] == 40 and "selected_quote" not in result["structuredContent"]
+    for bad, says in (("line=0", "line must be"), ("line=9-4", "line must be"), ("line=1.5", "line must be"),
+                      ("line=10000001", "line must be"), ("line=２", "line must be"),
+                      ("line=3&pdf_page=2", "not both")):
+        result = read(client, credential["token"], url=f"http://localhost/?ws={ws}&page={page['id']}&{bad}")
+        assert result["isError"] and says in result["content"][0]["text"], (bad, result)
 
 
 def test_link_canonical_origin_and_revoked_connection(client, connection, monkeypatch):

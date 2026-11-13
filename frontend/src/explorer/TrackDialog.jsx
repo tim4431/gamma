@@ -290,6 +290,7 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
             hint={t("Each new file's page joins the library too; files already tracked keep their place")}
             checked={library} onChange={setLibrary} />
         </div>
+        <p className="reportModalHint">{t("The AI chat sends a tracked file's text to the model provider when the file is in its context, as it sends a PDF's.")}</p>
       </> : null}
       {problem ? (
         <p role="alert" className="importWarning">{problem.text}{" "}

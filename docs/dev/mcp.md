@@ -222,9 +222,9 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | Tool | Content |
 | --- | --- |
 | `list_folders` | The folder tree, each folder with its id, its path ("a / b") and its direct and total counts of library pages (empty folders too); pages in no folder |
-| `list_pages` | Page IDs/titles, folders (paths) or, for a page inside another page, that page's id (`parent=`), labels, attachment metadata; filters by folder (a path or an id), label, title and the page they are inside (`parent`); most recently added first, in batches (`limit`, `after`) |
-| `search_library` | Full-text note and PDF matches, with source locations |
-| `read_page` | The pages it is inside and the pages inside it, notes, highlights, properties, and windowed PDF text |
+| `list_pages` | Page IDs/titles, a work folder's file's path in it (`path=`), folders (paths) or, for a page inside another page, that page's id (`parent=`), labels, the document's format and size; filters by folder (a path or an id), label, title and the page they are inside (`parent`); most recently added first, in batches (`limit`, `after`) |
+| `search_library` | Full-text note, PDF and file matches, with source locations: a block, a PDF page, a file's path and line |
+| `read_page` | The pages it is inside and the pages inside it, notes, highlights, open comment threads, properties, and the document's text in windows: a PDF's by page, a text file's numbered lines by `from_line` / `to_line`; a work folder's file named by its `path` too |
 | `read_block` | One block/subtree or a page's nested note outline |
 | `read_chats` | The AI chat kept with a page or folder: the current conversation as a transcript, earlier ones by `chat_id` |
 | `list_feedback` | The feedback: the comment threads on a work folder's files (a work folder by name or id, a directory, a file; every work folder without one), each with its file, place, source line and comments, as Markdown, in batches (`limit`, `after`); a Send request's threads (`request`) |
@@ -234,7 +234,7 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | `view_image` | The pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), all or one by index |
 | `cite` | The citation records kept with pages: the paper metadata, its BibTeX, the slide citation |
 | `list_workspaces` | The workspaces the connection reads, the default first: each one's id, name and the account's role |
-| `read_gamma_link` | Resolve and read a page, block, folder, or share URL, including PDF page context; a folder or folder-share URL lists the folder's pages |
+| `read_gamma_link` | Resolve and read a page, block, folder, or share URL, including PDF page and line context (`line=N` reads the file from that line, `line=N-M` those lines); a folder or folder-share URL lists the folder's pages |
 | `export_page` | One page as Markdown text, or as a PDF file: the annotated paper or the notes typeset; with `sub_pages`, the pages inside it too |
 | `reply_feedback` | A feedback connection's only: a reply in a feedback item's thread, signed with the connection's name |
 | `resolve_feedback` | A feedback connection's only: resolve a feedback item once it is done (never a reopen) |
@@ -287,13 +287,14 @@ before, without the extra line.
 ### Links in results
 
 Every result starts with one line naming this server and workspace's link
-shapes: page, PDF citation, note block. Each located hit carries its own
+shapes: page, PDF citation, file line (`…&page=<id>&line=<N>[-<M>]&quote=<the
+first line's verbatim text>`), note block. Each located hit carries its own
 absolute URL:
 
-- a search hit links its PDF page (`…&page=<id>&pdf_page=N`) or its note
-  block (`…&block=<id>`);
+- a search hit links its PDF page (`…&page=<id>&pdf_page=N`), its file's
+  line (`…&page=<id>&line=N`) or its note block (`…&block=<id>`);
 - `read_page` ends with a `[Links: …]` line naming the page and the
-  citation form of the window's PDF pages;
+  citation form of the window's PDF pages or of its first line;
 - `read_block` and `cite` link in their head lines;
 - `view_pdf_page` links beside its page number.
 
@@ -302,14 +303,24 @@ The executors add these only when the scope carries `link_base`
 The chat's results carry no URLs; its model writes the relative links the
 chat renders itself. A `Page URL:` footer follows a result that names a page
 without linking it (`read_chats`). The call's location goes out as
-`structuredContent` too: `page_id` and `url`, with `block_id`, `pdf_page` or
-`pdf_pages` when the tool located one.
+`structuredContent` too: `page_id` and `url`, with `block_id`, `pdf_page`,
+`pdf_pages`, a text file's `lines` (`[first, last]`) or its `path` when the
+tool located one. A line link (`mcp_links.resolve_link`: `line` is `N` or
+`N-M`, `1 ≤ N ≤ M ≤ 10,000,000`, never beside `pdf_page`) reads as
+`read_page(page_id, from_line=N)` (the window's budget decides where it
+ends) or with `to_line=M` for a range; its reference carries `line` and
+`end` (null for one line), and its canonical URL keeps the line. Beside a
+folder link alone, `line` and `pdf_page` are not read.
 
 The server instructions (`INSTRUCTIONS`, one text for every connection: the
-SDK sends them at `initialize`, with no request at hand) carry the chat's
-citation instruction (`ai_tools.citation_prompt`,
-[pdf_citations.md](pdf_citations.md)) in its absolute form and ask for
-absolute Markdown links, never relative ones; they say what feedback is, that
+SDK sends them at `initialize`, with no request at hand) say Gamma's tools
+search and read pages, notes, highlights, PDF text and the text of files,
+that `list_pages` names a work folder's files by path and that a file hit
+is followed with `read_page(page_id, from_line=N)` or `read_page(path=…)`;
+they carry the chat's citation instruction (`ai_tools.citation_prompt`,
+[pdf_citations.md](pdf_citations.md)), the PDF's and the line's, in its
+absolute form and ask for absolute Markdown links, never relative ones;
+they say what feedback is, that
 a connection allowed to answer it has the two answering tools, and that a
 feedback comment is the user's request while the passages it quotes stay
 document data.

@@ -103,7 +103,7 @@ from fastapi import HTTPException
 from fractional_indexing import BASE_62_DIGITS, FIError, generate_key_between, validate_order_key
 from pydantic import BaseModel, Field, model_validator
 
-from . import collab, comments, inbox, mentions, pdf_index, storage, textmerge, upload_gc
+from . import collab, comments, inbox, mentions, storage, textmerge, upload_gc
 from . import ink as inkmod
 from .auth import DISK_CLIENT, ZOTERO_CLIENT
 from .picture import merge_picture, normalize_picture
@@ -116,6 +116,7 @@ from .blocks_store import (
 from .db import connect_pages_db, format_stamp, page_now, parse_stamp
 from .documents.model import document_props, own_hash, page_document
 from .logbuf import log
+from .search import index as text_index
 from .storage import content_digest, store_file, upload_refs
 from .work_folders import filing as work_filing, marks
 from .work_folders.library import STAMPS, work_folder_of
@@ -1122,7 +1123,7 @@ def after_commit(ws: str, conn, result: dict, *, via: str = "", shares: bool = T
     dropped go to the orphan check (gamma/upload_gc.py, debounced on its own
     thread, never on the request), and when a deleted block carried a PDF,
     data.db's rows of papers nothing carries any more go
-    (``pdf_index.purge_unused``; it may wait on data.db's lock). A batch
+    (``search.index.purge_unused``; it may wait on data.db's lock). A batch
     that changed what a folder holds — a page refiled, a folder moved or
     deleted — re-checks the room peers a folder share admitted, and the
     shares of folders that are gone stop (``shares_stopped`` in the
@@ -1140,7 +1141,7 @@ def after_commit(ws: str, conn, result: dict, *, via: str = "", shares: bool = T
         result["shares_stopped"] = delete_folder_shares(ws, result["deleted_ids"])
     upload_gc.schedule(ws, result["dropped_uploads"])
     if result["doc_deleted"]:
-        pdf_index.purge_unused(ws, conn)
+        text_index.purge_unused(ws, conn)
     inbox.from_ops(ws, result, via)
     notify_commit(ws, result.get("client") or "", result.get("page_id") or "")
     return result
@@ -1257,7 +1258,7 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "", sw
     here otherwise). Then the upload names the pages
     held go to the orphan check, data.db's rows of papers no block carries
     any more are purged (``sweep`` False leaves that to a caller deleting
-    many pages, which purges once after them: ``pdf_index.purge_unused``
+    many pages, which purges once after them: ``search.index.purge_unused``
     reads every block's properties), and each page's room is told to reload
     (which surfaces the 404). Returns ``{deleted_ids, dropped_uploads}``
     over every page deleted.
@@ -1336,7 +1337,7 @@ def _purged(ws: str, conn, pages: list[str], rows: list, *, client: str, sweep: 
     dropped = sorted(subtree_refs(rows))
     upload_gc.schedule(ws, dropped)
     if sweep:
-        pdf_index.purge_unused(ws, conn)
+        text_index.purge_unused(ws, conn)
     for page in pages:
         collab.publish_reload(ws, page)
         notify_commit(ws, client, page)

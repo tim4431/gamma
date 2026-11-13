@@ -8,7 +8,7 @@
 // search: typo-tolerant, on the title or the folder/label chips (a sub-page
 // on its top's folders, and also on the pages it is in, its row's second
 // line), title hits first — in sections of their own with the matched
-// characters marked, and ends with two actions: search inside notes and PDFs
+// characters marked, and ends with two actions: search notes, PDFs and files
 // for the query (Ctrl+Enter; the workspace search opens with it) and create
 // a page titled with it (Shift+Enter). ↑↓ moves, Enter opens, Esc closes.
 //
@@ -143,7 +143,7 @@ export default function QuickOpen({
         <button {...props} data-action={r.action}>
           {search ? <SearchIcon size={16} /> : <PlusIcon size={16} />}
           <span className="quickOpenAction">
-            {search ? t("Search inside notes and PDFs for “{q}”", { q }) : t("Create page “{q}”", { q })}
+            {search ? t("Search notes, PDFs and files for “{q}”", { q }) : t("Create page “{q}”", { q })}
           </span>
           <em className="quickOpenTag quickOpenKey">{chordLabel(search ? SEARCH_CHORD : CREATE_CHORD)}</em>
         </button>

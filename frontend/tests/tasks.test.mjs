@@ -41,6 +41,7 @@ test("progress: a local fraction, a job's counts, or nothing to tell", () => {
   assert.equal(progressCounts({ done: 1, total: 1, unit: "files" }), "1 of 1 file");
   assert.equal(progressCounts({ done: 1536, total: 3 * 1073741824, unit: "bytes" }), "2 KB of 3.0 GB");
   assert.equal(progressCounts({ done: 1, total: 2, unit: "highlights" }), "1 of 2 highlights");
+  assert.equal(progressCounts({ done: 3, total: 7, unit: "documents" }), "3 of 7 documents");
   assert.equal(progressCounts({}), "");
   assert.equal(progressText(job({ progress: { phase: "packing", done: 2, total: 5, unit: "files" } })), "Packing the files · 2 of 5 files");
   assert.equal(progressText(job({ progress: { done: 1, total: 3, unit: "pages", item: "Attention" } })), "1 of 3 pages · Attention");

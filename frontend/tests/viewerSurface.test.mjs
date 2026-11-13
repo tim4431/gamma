@@ -49,8 +49,21 @@ test("the surface carries the state, the scale's three and the handlers given, n
   surface.scale.onZoomTo(1.2);
   surface.onRegion({ width: 1 }, { color: "#f00" });
   assert.deepEqual(calls, [["zoom", 1.2], ["region", { width: 1 }, { color: "#f00" }]]);
-  for (const k of ["onReveal", "onPlace", "onRegionJump", "onRegionContext", "onRegionThread", "onMarginLost", "onAskRegion"]) {
+  for (const k of ["onReveal", "onPlace", "onMarkDone", "onRegionJump", "onRegionContext", "onRegionThread", "onMarginLost", "onAskRegion"]) {
     assert.equal(surface[k], null, `${k} is null when App gives none`);
   }
   assert.equal(surface.scale.onEffectiveScale, null);
+  assert.equal(surface.mark, null, "no line link, no mark");
+});
+
+test("a line link's mark rides the surface, and onMarkDone reaches App's handler", () => {
+  const mark = { kind: "line", pageId: "p1", line: 2, to: null, quote: "gradient descent" };
+  let done = 0;
+  const { surface } = surfaceOf(
+    { doc: { format: "text", name: "method.tex" }, fileUrl: "/api/uploads/b2.tex", pageId: "p1", mark },
+    { onMarkDone: () => { done++; } },
+  );
+  assert.equal(surface.mark, mark);
+  surface.onMarkDone();
+  assert.equal(done, 1);
 });

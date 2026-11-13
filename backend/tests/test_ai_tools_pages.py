@@ -472,7 +472,7 @@ def test_document_map_starts_after_the_excerpt(org):
     model picks the next page to read from it, not one it already has."""
     from gamma.ai_context import document_map
     from gamma.db import connect_data_db
-    from gamma.pdf_index import store_doc
+    from gamma.search.index import store_doc
 
     _, ids = org
     doc = "f" * 24
@@ -763,14 +763,142 @@ def test_a_duplicated_page_reads_the_pdf_it_shows(org, monkeypatch, tmp_path):
     text, _ = run_agent_tool(ids["ws"], scope, "list_pages", {})
     assert f"id={copy}" in text and "attachments=[pdf]" in text
     text, _ = run_agent_tool(ids["ws"], scope, "read_page", {"page_id": copy})
-    assert "attachment: PDF" in text and "TextOfTheOriginalsPdf" in text, text
+    assert "document: PDF" in text and "TextOfTheOriginalsPdf" in text, text
     text, action = run_agent_tool(ids["ws"], scope, "view_pdf_page", {"page_id": copy, "pdf_page": 2})
     assert text.startswith("PDF page 2 of 2"), text
     assert action["images"]
     assert asked and set(asked) == {"d" * 24}  # the original's file, by its hash
     # the folder chat's search reads that PDF's text too
     searched = []
-    monkeypatch.setattr("gamma.ai_tools.search_pdf",
-                        lambda database, match, limit, docs: searched.append(dict(docs)) or [])
+    monkeypatch.setattr("gamma.search.index.search",
+                        lambda database, match, limit, docs, offset=0, per_doc=0: searched.append(dict(docs)) or [])
     run_agent_tool(ids["ws"], scope, "search_library", {"query": "TextOfTheOriginalsPdf"})
-    assert searched and searched[0] == {"d" * 24: "cavity paper (copy)"}, searched
+    assert searched and [(d.hash, d.format) for d in searched[0].values()] == [("d" * 24, "pdf")], searched
+
+
+# A LaTeX file of 120 lines: a section, its lines, subsections at 70, 85 and 100.
+METHOD = [{1: "\\section{Method}", 70: "\\subsection{Data}", 85: "\\subsection{Noise}",
+           100: "\\subsection{Later work}"}.get(n, f"line {n} of the method") for n in range(1, 121)]
+
+
+def _text_page(c, ws, folder_id, name, text, *, ext=".tex"):
+    """A library page whose document is the stored text file ``name``."""
+    from gamma import storage
+    from gamma.documents.model import stored_name
+
+    data = text.encode()
+    stem = storage.content_digest(data)
+    storage.put_upload(ws, stored_name(stem, ext), data)
+    r = c.post("/api/blocks", json={"parent_id": "root", "content": name, "properties": {
+        "folders": [folder_id], **doc_props(stem, name=name, format="text", ext=ext, size=len(data))}})
+    assert r.status_code == 200, r.text
+    return r.json()["id"], stem
+
+
+def test_read_page_reads_a_text_file_by_lines(org):
+    """A text file reads by lines: the first window is its head and the
+    outline of the rest, a window from_line..to_line is numbered as the
+    file is, each ends naming the next from_line, the chip and the links
+    carry the lines, and the PDF's arguments are answered and ignored."""
+    c, ids = org
+    texts = make_folder(c, "text files")
+    page, stem = _text_page(c, ids["ws"], texts, "method.tex", "\n".join(METHOD) + "\n")
+    scope = folder(texts)
+    listed_text, _ = run_agent_tool(ids["ws"], scope, "list_pages", {})
+    assert f"id={page}" in listed_text and "attachments=[text:latex]" in listed_text and "size=" in listed_text
+
+    text, chip = run_agent_tool(ids["ws"], scope, "read_page", {"page_id": page, "pdf_chars": 1500})
+    assert 'Document: text file "method.tex" (LaTeX; 120 lines,' in text
+    assert "document: text \"method.tex\"" in text
+    first, last = chip["lines"]
+    assert first == 1 and 10 < last < 60 and chip["summary"] == f"Read “method.tex” l. 1–{last}"
+    assert f"[Lines 1–{last} of 120." in text and "     1\t\\section{Method}" in text
+    assert f"read them with read_page(page_id, from_line={last + 1})" in text
+    assert f"call read_page again with from_line={last + 1} to continue" in text
+    assert "[OUTLINE — where the rest is, by line; pick the lines to read with read_page(from_line=N)]" in text
+    assert "l.100  \\subsection{Later work}" in text
+
+    text, chip = run_agent_tool(ids["ws"], scope, "read_page", {"page_id": page, "from_line": 50, "to_line": 52})
+    assert chip["lines"] == [50, 52] and chip["summary"].endswith("l. 50–52")
+    assert "[Lines 50–52 of 120." in text and "    50\tline 50 of the method" in text
+    assert "    52\tline 52 of the method" in text and "line 53 of" not in text
+    assert "from_line=53 to continue" in text and "[OUTLINE" not in text
+    assert "line 2 of the method" not in text  # the notes ride with the first window only
+    # The lines a read ends on reach the end of the file: no next window.
+    text, chip = run_agent_tool(ids["ws"], scope, "read_page", {"page_id": page, "from_line": 118})
+    assert chip["lines"] == [118, 120] and "to continue" not in text
+    text, chip = run_agent_tool(ids["ws"], scope, "read_page", {"page_id": page, "from_line": 500})
+    assert "from_line 500 is past the end — the file is 120 lines long." in text and "lines" not in chip
+    text, _ = run_agent_tool(ids["ws"], scope, "read_page", {"page_id": page, "pdf_page": 3, "from_line": 60,
+                                                              "to_line": 60})
+    assert "is a text file: use from_line" in text and "    60\tline 60 of the method" in text
+    # On MCP the links name the line.
+    base = f"http://localhost/?ws={ids['ws']}"
+    text, _ = run_agent_tool(ids["ws"], {**scope, "link_base": base}, "read_page",
+                             {"page_id": page, "from_line": 7, "to_line": 9})
+    assert f"line 7: {base}&page={page}&line=7 (a range: &line=N-M" in text
+    # A PDF answers lines with a line and reads as before.
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_page", {"page_id": ids["a"], "from_line": 5,
+                                                                               "pdf_chars": 0})
+    assert "is a PDF: use pdf_page and pdf_offset" in text
+    c.delete(f"/api/blocks/{page}")
+
+
+def test_read_page_skips_the_lines_the_context_holds(org):
+    """The chat's coverage entry of a text file names the lines its head
+    shows: a read continues from the first line not shown, a range inside
+    them and a file held whole are not read again, and the agent prompt
+    says where to read on."""
+    from gamma.ai_tools import coverage_lines
+
+    c, ids = org
+    texts = make_folder(c, "text files held")
+    page, stem = _text_page(c, ids["ws"], texts, "method.tex", "\n".join(METHOD) + "\n")
+    cover = {"page_id": page, "doc_id": stem, "format": "text", "title": "method.tex", "native": False,
+             "partial": True, "lines": 120, "lines_shown": 30, "pages": 0, "pages_shown": 0, "notes": False}
+    scope = {**folder(texts), "coverage": [cover]}
+    text, chip = run_agent_tool(ids["ws"], scope, "read_page", {"page_id": page})
+    assert ('Lines 1–30 of "method.tex" are in the conversation context above and are not repeated; '
+            "this read continues from line 31.") in text
+    assert "    31\tline 31 of the method" in text and "     1\t" not in text and chip["lines"][0] == 31
+    text, chip = run_agent_tool(ids["ws"], scope, "read_page", {"page_id": page, "from_line": 3, "to_line": 9})
+    assert "Lines 3–9 of \"method.tex\" are in the conversation context above" in text and "lines" not in chip
+    text, chip = run_agent_tool(ids["ws"], {**scope, "coverage": [{**cover, "partial": False, "lines_shown": 120}]},
+                                "read_page", {"page_id": page})
+    assert 'The whole text of "method.tex" (120 lines) is in the conversation context above' in text
+    assert "lines" not in chip
+    lines = coverage_lines([cover], True)
+    assert 'Lines 1–30 of 120 of "method.tex"' in lines and "read_page(page_id, from_line=31)" in lines
+    assert "read_page" not in coverage_lines([cover], False)
+    assert "whole text of" in coverage_lines([{**cover, "partial": False}], True)
+    c.delete(f"/api/blocks/{page}")
+
+
+def test_a_secrets_file_and_a_listed_file_are_not_read(org):
+    """A secrets file's text never reaches the model, whoever reads it; a
+    file listed without its bytes says there is nothing to read; a picture
+    page names what no tool shows."""
+    c, ids = org
+    texts = make_folder(c, "text files kept")
+    secret, _ = _text_page(c, ids["ws"], texts, ".env", "API_KEY=sk-live-123\n", ext=".env")
+    text, chip = run_agent_tool(ids["ws"], folder(texts), "read_page", {"page_id": secret})
+    assert "its text is kept from the model: a secrets file" in text and "sk-live" not in text
+    assert "lines" not in chip
+    text, _ = run_agent_tool(ids["ws"], folder(texts), "read_page", {"page_id": secret, "from_line": 1, "to_line": 1})
+    assert "sk-live" not in text and "a secrets file" in text
+    r = c.post("/api/blocks", json={"parent_id": "root", "content": "data.h5", "properties": {
+        "folders": [texts], **doc_props("", name="data.h5", at="listed", format="binary", ext=".h5",
+                                        size=1_200_000_000)}})
+    listed = r.json()["id"]
+    text, _ = run_agent_tool(ids["ws"], folder(texts), "read_page", {"page_id": listed})
+    assert 'Document: "data.h5" is listed without its bytes (1.1 GB): nothing to read here' in text
+    page_list, _ = run_agent_tool(ids["ws"], folder(texts), "list_pages", {})
+    assert "attachments=[binary listed]" in page_list and "size=1200000000" in page_list
+    r = c.post("/api/blocks", json={"parent_id": "root", "content": "fig.png", "properties": {
+        "folders": [texts], **doc_props("f1" * 12, name="fig.png", format="image", ext=".png", size=4096)}})
+    text, _ = run_agent_tool(ids["ws"], folder(texts), "read_page", {"page_id": r.json()["id"]})
+    assert 'Document: picture "fig.png" (PNG, 4 KB): no tool shows a page\'s picture here' in text
+    text, _ = run_agent_tool(ids["ws"], folder(texts), "view_pdf_page", {"page_id": secret, "pdf_page": 1})
+    assert text == '".env" is a text file: read it with read_page'
+    for page in (secret, listed, r.json()["id"]):
+        c.delete(f"/api/blocks/{page}")

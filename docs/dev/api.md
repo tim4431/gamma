@@ -231,7 +231,7 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   Inbox's marks (`/inbox/…`) and `/admin/hosted/sync` (`hosted.READ_ONLY_ALLOWED`,
   [cloud_accounts.md](cloud_accounts.md) "Hosted containers"). The reads
   sent as a POST, because their ids do not fit a URL (`/pages/by-docs`,
-  `POST /block-search` and `POST /pdf-search`: `hosted.POST_READS`), are
+  `POST /block-search` and `POST /document-search`: `hosted.POST_READS`), are
   reads there: they pass and move no last write.
 - A workspace a delete holds (its job running, the final copy being
   written, until it is stopped or the workspace is gone) takes no more
@@ -309,7 +309,7 @@ never returned by the generic endpoint.
 | PUT | `/blocks/{id}/children` | replace the whole subtree (delete + reinsert, one transaction) — bulk paths only (duplicating a page, tests); the page's room gets a `reload`, the upload names the old subtree held and the new one lacks go to the orphan check ([user_db.md](user_db.md) "Stored files"). Node ids must have the block-id shape (a node without one gets a fresh id), a node's `properties`, when given, must be an object, and text is capped like an op's: 400 / 413; the body's numbers and strings are checked like a create's (a `NaN` is a 400, a lone surrogate is stored as U+FFFD); an id another block already has is a 409 and leaves the old children in place. 400 for `root`: the library's pages are created and deleted one by one. The editor itself sends ops |
 | POST | `/blocks/{id}/reorder` | move within the page (an op) or, with `parent_id` on another page, across pages (the source room sees a `delete`, the target reloads); either way a key a sibling holds is re-keyed and the answer's `position` is the stored one |
 | GET | `/block-search` | fuzzy note/page/highlight search (`case`, `whole` word), the newest `limit` matches, each `{id, content, kind, page_root_id, page_title, ancestors?}` (`kind` the stored one, below); empty `q` returns recently edited blocks of the pages the library lists (feeds the `[[ref]]` popup's initial suggestions; never the notes of a work folder's file the library does not list, which a query finds); `ids=a,b` looks blocks up (ref chips, Gamma-link titles, and the page a block link opens: a deep link's, or a card pressed before its title came). Through a share token every mode sees only the blocks the share reaches — others are dropped from the answer, never refused. The query is always text: `regex=1` is refused (400) — a catastrophic pattern would hold the GIL, i.e. the whole server. SQLite skips the blocks without the query's literal runs (`textnorm.literal_runs`), the fuzzy pattern runs over the rest; past 2 s the answer is what was found so far plus `"partial": true`, which the Ctrl+F panel's notes group (and its compact find bar) and the `[[` picker's footer show as a "stopped early" line. With `q`, `scope` (comma-separated folder and label ids; the panel sends its filters to the POST below instead) keeps to the pages inside every one of them (a folder with its subfolders; an id that is neither finds nothing), before the `limit`. The scan runs newest first by `(updated_at, rowid)`, a total order, and an answer that stopped before the end carries `next`: after its last match when another follows, after the last block read when the 2 s ran out. Passed back as `cursor`, it continues the scan from there with a fresh 2 s, so pages never repeat or skip a block (400 for a malformed cursor). Sync `def` (threadpool) |
-| POST | `/block-search` | the Ctrl+F panel's notes group: the GET's `q` mode with the filters in a body, `{q, limit=10, case=false, whole=false, cursor="", pages?, kinds?}`, since a URL cannot carry a library's page ids. `pages` keeps to those pages (the panel's chips and typed qualifiers, evaluated on the library listing): left out, the whole library or share; `[]`, none (`{blocks: []}`); more than 50,000 (`blocks_store.MAX_SEARCH_PAGES`) is 413 with a `detail`. An id that is no page of the library (a folder, a trashed page, a foreign id) finds nothing. `kinds` keeps to those stored kinds (`[]` or left out: all); one no block has is 400. The answer, its `partial`, `next` and `cursor`, and a share token's reach (`?share=`: `pages` only narrows what it reaches) are the GET's. It has no recent-blocks mode: a `q` with nothing to search, empty included, answers `{blocks: [], error: "empty query"}`, as the GET does only for a `q` of spaces or punctuation. A read, though a POST (`hosted.POST_READS`). Sync `def` (threadpool) |
+| POST | `/block-search` | the Ctrl+F panel's notes group: the GET's `q` mode with the filters in a body, `{q, limit=10, case=false, whole=false, cursor="", pages?, folders?, labels?, kinds?}`, since a URL cannot carry a library's page ids. `folders` and `labels` (the panel's chips and its `folder:` and `label:` qualifiers) resolve on the server and `pages` (the page ids its other qualifiers keep, evaluated on the library listing) narrows them: the scope rule of [Search](#search-searchpy-gammablock_indexpy-gammasearch); none of them, the whole library or share; `[]`, none (`{blocks: []}`); more than 50,000 (`blocks_store.MAX_SEARCH_PAGES`) is 413 with a `detail`. An id that is no page of the library (a folder, a trashed page, a foreign id) finds nothing. `kinds` keeps to those stored kinds (`[]` or left out: all); one no block has is 400. The answer, its `partial`, `next` and `cursor`, and a share token's reach (`?share=`: the scope only narrows what it reaches) are the GET's. It has no recent-blocks mode: a `q` with nothing to search, empty included, answers `{blocks: [], error: "empty query"}`, as the GET does only for a `q` of spaces or punctuation. A read, though a POST (`hosted.POST_READS`). Sync `def` (threadpool) |
 
 Route order matters: the static-prefix routes (`by-doc`, `children`,
 `subtree`) must stay registered before `/blocks/{block_id}`.
@@ -701,13 +701,37 @@ pages has an endpoint, and a work folder's directory a read of its own:
 | GET | `/folders/{folder_id}/pages` | a work folder's directory (its root or a folder below it), page by page: the files filed right in it (their first folder, `idx_ub_dir`), whatever the library lists → `{folder, pages: [<page summary> + {open_comments}], offset, next, total}`, each row as the library listing has it but with no preview and no parent (a file is inside no page), and `open_comments` its threads neither resolved nor deleted (`comments.open_counts`); `next` the offset of the next page, null at the end. `?sort=name\|format\|size\|modified` (the file's name then the title; a note's format is `markdown`; no size last; the default `name`), `&order=asc\|desc` (`modified` starts with the newest), `&offset=0&limit=200` (at most 500). The directory's folders are no rows: the client lists them from the folder tree. 400 for a folder in no work folder ("the library lists this folder's pages"), a sort, order or offset there is none of; any member, or a folder share that covers the folder (403 otherwise) |
 | DELETE | `/labels/{label_id}` | delete the label and take it off every page → `{ids, pages, chats: 0, shares: 0}` |
 
-### Search (`search.py`, `gamma/block_index.py`, `gamma/pdf_index.py`)
+### Search (`search.py`, `gamma/block_index.py`, `gamma/search/`)
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/search?q=&limit=&scope=` | one search over the knowledge base: notes (`block_fts`) + PDF text (`pdf_fts`). `scope` = `""` (library) or a folder's id (the pages filed in that folder or below it, with the pages inside them; an id that is no folder finds nothing). → `{"results": [...], "indexing": n}`; results are notes hits first (bm25 order) then PDF hits, each capped at `limit` (default 20, max 100). A notes hit is `{"source": "notes", "block_id", "page_id", "title", "snippet"}` (`block_id` = the matched block, `page_id` its page root, `title` the page's); a PDF hit is `{"source": "pdf", "block_id", "page_id", "doc_id", "title", "page", "snippet"}` (`block_id` = `page_id` = the page carrying the PDF, `page` the 1-based PDF page). `indexing` = the PDFs the background extractor hasn't reached (the notes index is never behind: a note is found the moment its write commits). Any member |
-| GET | `/pdf-search?q=&limit=&scope=&cursor=&exclude=` | the PDF-only predecessor (same `pdf_fts` index; hits `{block_id, doc_id, title, page, snippet}`) — the Ctrl+F panel's library group still uses it, as the POST below (with `/block-search` for notes: substring matching + case / whole-word flags that FTS does not offer). `scope` takes folder and label ids as `GET /block-search` does, `exclude` a page whose PDF is left out (the open paper, whose matches the panel finds with pdf.js); both apply before the ranking. A paper lists at most its best 3 hits (`PDF_HITS_PER_PAPER`) before every other paper has listed its best 3, then its next 3, and so on, so one long book can't fill a page. `limit` (default 20, max 100) hits from `cursor` (the hits listed before, an offset) on; `next` is the following page's cursor, there when more hits follow (400 for a malformed cursor) |
-| POST | `/pdf-search` | the Ctrl+F panel's library group: the GET with a body, `{q, limit=20, cursor="", exclude="", pages?}`, where `pages` (page ids; left out, the whole library; `[]`, none; more than 50,000 is 413) stands in for `scope`. The papers of those pages only, the same per-paper rounds, `next`, `indexing` (counted over those pages) and 400 for a bad cursor. Any member, as the GET: a share token is no way in. A read, though a POST (`hosted.POST_READS`) |
-| POST | `/search-reindex` | full rebuild (the notes index rebuilt from the blocks in the request, PDF text re-extracted in the background), or just `doc_ids` from the body → `{scheduled, busy}`. The extraction is the workspace's `indexing` job ([tasks.md](tasks.md)): its members see it in `GET /api/jobs`, and its editors stop it with `POST /api/jobs/{id}/cancel` (it finishes the paper it is on; the rest stay stale and index on the next search) |
+| GET | `/search?q=&limit=&scope=` | one search over the knowledge base: notes (`block_fts`) + the documents' text (`text_fts`: PDF pages and text files' runs of lines). `scope` = `""` (library) or a folder's id (the pages filed in that folder or below it, with the pages inside them; an id that is no folder finds nothing). → `{"results": [...], "indexing": n}`; results are notes hits first (bm25 order), then the documents' hits in one rank order over PDF pages and file runs, the notes and the documents each capped at `limit` (default 20, max 100) hits of their index. A notes hit is `{"source": "notes", "block_id", "page_id", "title", "snippet"}` (`block_id` = the matched block, `page_id` its page root, `title` the page's); a PDF hit is `{"source": "pdf", "block_id", "page_id", "doc_id", "title", "page", "snippet"}` (`block_id` = `page_id` = the first page carrying the PDF, `page` the 1-based PDF page); a file hit is below. `indexing` = the documents the background extractor hasn't reached (the notes index is never behind: a note is found the moment its write commits). Any member |
+| POST | `/document-search` | the Ctrl+F panel's document group: `{q, limit=20, cursor="", exclude="", pages?, folders?, labels?, formats?}` → `{results: [PDF and file hits], next?, indexing}`. The scope is the scope rule below; `exclude` a page whose document is left out (the open PDF, whose matches the panel finds with pdf.js); `formats` `["pdf"]`, `["text"]` or both (left out; 400 for another). Both apply before the ranking. A document lists at most its best 3 hits (`HITS_PER_DOCUMENT`) before every other document has listed its best 3, then its next 3, and so on, so one long book can't fill a page; a hit is listed on every page of its document (two files of equal bytes at two paths are two hits). `limit` (default 20, max 100) of the index's hits from `cursor` (the hits listed before, an offset) on; `next` is the following page's cursor, there when more hits follow (400 for a malformed cursor); more than 50,000 `pages` is 413. `indexing` counts the scope's documents not indexed yet. Any member: a share token is no way in. A read, though a POST (`hosted.POST_READS`) |
+| POST | `/search-reindex` | full rebuild (the notes index rebuilt from the blocks in the request, the documents' text re-extracted in the background), or just `doc_ids` from the body → `{scheduled, busy}`. The extraction is the workspace's `indexing` job ([tasks.md](tasks.md)): its members see it in `GET /api/jobs`, and its editors stop it with `POST /api/jobs/{id}/cancel` (it finishes the document it is on and stores what it read; the rest stay stale and index on the next search) |
+
+A file hit is `{"source": "file", "block_id", "page_id", "doc_id", "title",
+"path", "work_folder", "format": "text", "language", "line", "lines":
+[first, last], "snippet"}`: `title` the page's (a work folder's file's is
+its leaf), `path` the file's path in its work folder
+(`work_folders.paths.page_path`; `""` for a library text document),
+`work_folder` the work folder's root id (`""` for a library document),
+`language` the view's (`formats.language_of`), `line` the line the query
+matched, `lines` the span of the run it is in, `snippet` that line cut
+around the match. The line is found on the server by scanning the run's
+lines with FTS5's own token rule (`documents.text.locate`: the query's
+runs of letters and digits, each a whole word, the last a prefix), never
+read off the snippet: `normalize_text` keeps a run's line breaks, not its
+spaces. `GET /search` and `POST /document-search` build their hits, and
+the agent's `search_library` its lines, through `search.hits.build`, the
+one place the PDF and file dicts are made.
+
+**The scope rule** (`routers/search.scope_pages`, both POSTs): `folders`
+and `labels` resolve on the server through `pages_in_scope` (each chip's
+pages, intersected, as `scope` of the GET forms), so a folder chip on a
+work folder travels as one id and reaches its 20,000 files; with `pages`
+too, the result is the scope's pages among `pages`; `pages` alone is
+`pages`; none of them, the whole library. `pages` is what the panel's
+listing-side predicates keep (`year:`, `author:`, `is:pinned`…), which the
+server cannot evaluate. `POST /block-search` takes the same three fields.
 
 The notes index is `block_fts` in pages.db, kept by triggers inside every
 block write's own transaction ([user_db.md](user_db.md) "The notes index"):
@@ -715,19 +739,34 @@ every block inside a page, highlights included, never a page's own row. A
 page in Recently deleted keeps its rows; `block_index.search_blocks` takes
 the page ids the search reaches (the library, or the `scope` folder's) and
 matches only those, in SQL, before the `limit`. Snippets come from FTS5's
-`snippet()` over the normalized text. The PDF index (`pdf_fts` in data.db) is the one built lazily. FTS5 finds rows
-only by rowid or MATCH, so `pdf_fts_rows` maps each paper to its rows'
-rowids: every delete goes by rowid, and `search_pdf` keeps to its papers by
-their rowids, in SQL before the ranking and its `limit` / `offset` (read
-off the matches, not looked up one rowid at a time, which a prefix query
-makes slow); an index written before that table
-existed is taken over once when it is created. Deleting a page for good,
-deleting a block that carries a PDF or detaching a PDF drops the `pdf_fts`
-rows and manifests of papers no block carries
-(`pdf_index.purge_unused`). The `pdf_fts` schema and its shared queries
-(`pdf_missing`, `search_pdf`, `store_doc`, `doc_pages`) live in
-`gamma/pdf_index.py`; extraction and the background indexer in `search.py`
-(a paper's rows are written a few hundred pages per transaction).
+`snippet()` over the normalized text. The document index (`text_fts` in
+data.db, `gamma/search/index.py`) is the one built lazily: a row is a unit,
+a PDF's page or a text file's run of 40 lines (`documents.text.RUN_LINES`;
+the run's lines follow from its number), each at most 20,000 characters, so
+bm25 ranks pages and runs together. Indexed are `pdf` and `text`
+documents; never a Markdown file (its blocks are notes), a picture, a
+recording, a binary file, a listed file, or a secrets file's text
+(`documents.text.is_secret`: recorded with no text, as a PDF without a text
+layer is, and a page whose name is a secrets file's now is no hit, whatever
+its bytes were indexed as). One rule normalizes indexes and queries (`textnorm`), code
+included: `f(1,2)` indexes as `f(12)`, which its query matches. FTS5 finds
+rows only by rowid or MATCH, so `text_fts_rows` maps each document to its
+rows' rowids: every delete goes by rowid, and `index.search` keeps to its
+documents by their rowids, in SQL before the ranking and its `limit` /
+`offset` (read off the matches, not looked up one rowid at a time, which a
+prefix query makes slow). An index of another layout (an older Gamma's
+`pdf_fts`) is dropped and made again, empty, on first use, and every
+document indexes again lazily. Deleting a page for good, deleting a block
+that carries a document or detaching one drops the rows and manifests of
+documents no block carries (`index.purge_unused`); a replacement drops the
+one hash it let go when no block owns it any more (`index.purge_doc`, one
+indexed lookup). A search counts as pending the documents the index lacks,
+less the linked files out of reach: which are linked is one query
+(`storage.linked_names`), and at most `PROBE_LIMIT` (200) of them are
+tested for reach per search. Extraction and the job are
+`gamma/search/indexer.py` (documents written in batches of about 500 units
+per transaction; a PDF at an address is read through the chat's guarded
+resolver, `ai_context.pdf_path`, which downloads it when it is not stored).
 
 #### Search matching and display
 
@@ -741,8 +780,12 @@ extraction or normalization changes so old indexes rebuild. Add shared cases
 to `tests/shared/textnorm.json` and run both Python and Node coverage.
 
 `search/SearchPanel.jsx` groups titles, the current page's notes and PDF,
-other notes, reference links, and library PDF hits. It can collapse into a
-compact find bar.
+other notes, reference links, library PDF hits and Files (the text files'
+lines: a row names the file's directory and its line, and opens the code
+view at that line, marked). It can collapse into a compact find bar. The
+browser group `text-search` (`tests/e2e/scenarios/textSearch.mjs`) runs a
+work folder's `.tex` files through the panel, the chat's line link, a
+note's line pill and MCP.
 
 The box takes qualifiers beside its text, parsed in the browser: the
 grammar is `search/queryParse.js` (spaces AND, commas list alternatives, a
@@ -754,17 +797,27 @@ smart quotes count; keys fold case), and Gamma's table is
 library listing (`GET /blocks/root/children`, which carries each page's
 filing, pin, dates and paper metadata) through the same libraryUtils reads
 as the label and folder chips. The chips are unchanged and combine with
-the typed qualifiers. The ids of the pages kept go to `POST /block-search`
-and `POST /pdf-search` as `pages`, so the server ranks and limits inside
-them and a match in the chosen folder is found however many elsewhere
-outrank it. The ids travel in a body because a URL cannot carry them: the
+the typed qualifiers. The chips, and a `folder:` or `label:` qualifier
+naming one folder or label, go to `POST /block-search` and `POST
+/document-search` as `folders` and `labels` (the scope rule above); a
+negated one, or one naming several (`folder:a,b`, a name two folders
+share), stays a predicate, since the server intersects the ids it is sent
+and has no OR or NOT. The ids of the pages the predicates keep go as
+`pages`, so the server ranks and limits inside them and a match
+in the chosen folder is found however many elsewhere outrank it. The ids
+travel in a body because a URL cannot carry them: the
 iPad and Android servers run uvicorn on h11, whose request head stops at
 16 KiB, and `-label:read` over 1,500 pages is already about 22 KB. Dates
 resolve in the reader's local time, which the server does not know. A
-search runs again when a listing refresh changes which pages match, and a
+search runs again when a listing refresh changes which pages match, and
+when an indexing job ends while its answer counted documents not indexed
+yet (App's `indexed`, the ended jobs' ids; again only while each answer
+counts fewer, so a linked file out of reach, which stays pending, does not
+start the job over and over), and a
 "Show more" sends the ids its first page was asked with. `in:` picks the
-groups (`title`, `notes`, `highlights`, `links`, `pdf`) and, through
-`kinds`, the block kinds of the notes search; a group left out sends no
+groups (`title`, `notes`, `highlights`, `links`, `pdf`, `files`) and,
+through `kinds`, the block kinds of the notes search and, through
+`formats`, the documents' (`pdf`, `text`); a group left out sends no
 request. The free text is the query with the applied qualifiers cut out;
 with none it is the query as typed, so `3000` still finds `3,000-qubit`.
 A token with an unknown key (`arXiv:2301.12345`, `doi:`, `10:30`) is text.
@@ -772,9 +825,9 @@ So is a known key whose value cannot be applied (`year:abc`, `is:foo`, a
 label or folder name that does not exist), and an amber line says why: a
 typo finds nothing or the literal text, never more than was asked for.
 
-The groups start at 8 titles, 20 notes and 15 PDF pages; each has a "Show more"
-that appends the next page (`search/searchPages.js`): the notes and PDF
-groups send the last answer's `next` back as `cursor`, and the titles,
+The groups start at 8 titles, 20 notes and 15 document hits (`DOC_PAGE`);
+each has a "Show more" that appends the next page (`search/searchPages.js`):
+the notes and document groups send the last answer's `next` back as `cursor`, and the titles,
 matched in the browser, just show 8 more. A notes scan cut short by its 2 s
 budget keeps its "stopped early" line, and its "Show more" goes on from
 where it stopped. An answer for a search the panel has moved past (a new

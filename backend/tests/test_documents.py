@@ -363,7 +363,8 @@ def test_the_page_of_a_file_is_a_library_pdf_it_owns(owner):
         assert pages_for_docs(conn, [h]) == {h: {"id": own["id"], "title": "f itself"}}
         pages = root_pages(conn)
     assert pages[own["id"]]["doc_id"] == h
-    assert pages[text["id"]]["doc_id"] == ""  # a document that is no PDF
+    assert pages[text["id"]] == {"title": "f as text", "doc_id": h, "format": "text", "ext": ".txt",
+                                 "at": "store", "name": pages[text["id"]]["name"]}  # a document of any format
     assert pages[host["id"]]["doc_id"] == ""
 
 

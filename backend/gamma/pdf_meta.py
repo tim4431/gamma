@@ -2,7 +2,7 @@
 pdf.js has parsed a byte — its size in bytes, page count, and every page's
 size in points — derived once per stored file into the workspace's
 ``data.db`` (``pdf_docs``, a table of ``db.DATA_SCHEMA``), next to the
-other derived per-document data (the PDF text index). Read by
+other derived per-document data (the document text index). Read by
 ``GET /api/pdf-info/{doc_id}``; the viewer lays out its page boxes from it
 while the bytes are still arriving, and picks the transport (one download
 or range requests) from the byte size (docs/dev/pdf_loading.md).
@@ -14,7 +14,7 @@ is stored with ``pages = 0`` so it is not parsed again on every open; a
 PyMuPDF that does not load stores nothing (``page_sizes`` raises its
 ImportError), so the file is measured once it loads. Rows of documents
 no page carries any more are purged with the text index
-(``pdf_index.purge_unused``)."""
+(``search.index.purge_unused``, and ``purge_doc`` for a replaced file)."""
 
 import json
 import threading
@@ -120,3 +120,8 @@ def purge(conn, live_docs) -> int:
     stale = [r[0] for r in conn.execute("SELECT doc_id FROM pdf_docs").fetchall() if r[0] not in live_docs]
     conn.executemany("DELETE FROM pdf_docs WHERE doc_id = ?", [(d,) for d in stale])
     return len(stale)
+
+
+def drop(conn, doc_ids) -> None:
+    """Delete the manifests of these documents. The caller commits."""
+    conn.executemany("DELETE FROM pdf_docs WHERE doc_id = ?", [(d,) for d in doc_ids])

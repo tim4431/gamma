@@ -72,7 +72,7 @@ These describe the implementation unless explicitly marked as plans.
 | Run commands, test selection, browser tests, timing budgets, and diagnostics | [Running, testing, and debugging](debugging.md) |
 | CI, packaging, and release workflows | [GitHub Actions](github_actions.md) |
 | HTTP endpoints and authorization | [API](api.md) |
-| Search normalization, indexing, and result highlighting | [Search](api.md#search-searchpy-gammablock_indexpy-gammapdf_indexpy) |
+| Search normalization, indexing, and result highlighting | [Search](api.md#search-searchpy-gammablock_indexpy-gammasearch) |
 | Accounts, databases, stored files, quotas, and logs | [Storage and accounts](user_db.md) |
 | Workspace roles, sharing, and backups | [Workspaces](workspaces.md) |
 | Data-directory upgrades | [Migrations](migrations.md) |

@@ -8,9 +8,10 @@ from contextlib import closing
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import account_of, login, make_folder, make_page, make_user, workspace_of, guest_name
-from gamma import pdf_index, pdf_meta, upload_gc
+from conftest import account_of, doc_props, login, make_folder, make_page, make_user, workspace_of, guest_name
+from gamma import pdf_meta, upload_gc
 from gamma.db import connect_data_db, connect_pages_db, ws_uploads_dir
+from gamma.search import index as text_index
 
 PDF_BYTES = b"%PDF-1.4 pages test\n" + b"z" * 2000
 
@@ -248,8 +249,8 @@ def test_detach_keeps_a_file_another_page_still_uses(guest, no_grace):
 def _indexed(ws):
     """The papers data.db holds search rows for."""
     with closing(connect_data_db(ws)) as conn:
-        pdf_index.ensure_schema(conn)
-        return {r[0] for r in conn.execute("SELECT doc_id FROM pdf_fts_docs")}
+        text_index.ensure_schema(conn)
+        return {r[0] for r in conn.execute("SELECT doc_id FROM text_fts_docs")}
 
 
 def test_replace_swaps_the_pdf_and_keeps_the_page(guest, no_grace):
@@ -265,7 +266,7 @@ def test_replace_swaps_the_pdf_and_keeps_the_page(guest, no_grace):
         "parent_id": page["id"], "content": "quoted", "properties": {"pdf_position": position}}).json()
     assert pdf_meta.ensure(ws, old)["doc_id"] == old  # the old file's manifest...
     with closing(connect_data_db(ws)) as conn:
-        pdf_index.store_doc(conn, old, [(1, "old text")])  # ...and search rows
+        text_index.store_doc(conn, old, [(1, "old text")])  # ...and search rows
     assert old in _indexed(ws)
 
     new = _upload_pdf(guest, PDF_BYTES + b"r2")
@@ -294,6 +295,31 @@ def test_replace_swaps_the_pdf_and_keeps_the_page(guest, no_grace):
     assert (ws_uploads_dir(ws) / f"{old}.pdf").is_file()
     # nothing carries the old paper, so its search rows and manifest went
     assert old not in _indexed(ws) and pdf_meta.get(ws, old) is None
+
+
+def test_a_replacement_purges_the_outgoing_hash_alone(guest, no_grace):
+    """A replacement lets go of one hash and purges that one (``purge_doc``,
+    no pass over every block): another document's rows nobody carries wait
+    for the next sweep; a copy still showing the outgoing file keeps its
+    bytes, and its document is pending again, for the next search that
+    reaches it (the agent's, which searches what a copy shows)."""
+    ws = workspace_of(guest_name())
+    old = _upload_pdf(guest, PDF_BYTES + b"p1")
+    page = guest.post("/api/pages", json={"title": "Replaced"}).json()
+    guest.post(f"/api/pages/{page['id']}/attachment", json={"doc_id": old, "original_filename": "a.pdf"})
+    copy = make_page(guest, "Replaced (copy)", properties=doc_props(url=f"/api/uploads/{old}.pdf"))
+    with closing(connect_data_db(ws)) as conn:
+        text_index.store_doc(conn, old, [(1, "outgoing text")])
+        text_index.store_doc(conn, "pgstale0001", [(1, "nobody's text")])
+    new = _upload_pdf(guest, PDF_BYTES + b"p2")
+    r = guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new, "original_filename": "a-v2.pdf"})
+    assert r.status_code == 200, r.text
+    held = _indexed(ws)
+    assert old not in held and "pgstale0001" in held
+    assert guest.get(f"/api/blocks/{copy['id']}").json()["properties"]["doc"]["hash"] == old
+    assert (ws_uploads_dir(ws) / f"{old}.pdf").is_file()
+    with closing(connect_data_db(ws)) as conn:
+        assert text_index.pending(ws, conn, {old: text_index.Doc(old, "pdf", ".pdf", "store")}) == [old]
 
 
 def test_replace_a_proxied_pdf_with_an_upload_drops_its_address(guest):

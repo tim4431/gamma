@@ -1025,10 +1025,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [inputUrl, setInputUrl] = useState(initialUrl); // current page's source URL (shown in page properties)
   const [addUrl, setAddUrl] = useState(""); // "+" popover: URL to open
   const [pdfUrl, setPdfUrl] = useState("");
-  // A pasted citation URL on a cold load opens the paper at the passage.
-  const [pdfCitation, setPdfCitation] = useState(() => {
+  // The place a link opens its page at: a PDF passage ({kind: "citation"})
+  // or a text file's lines ({kind: "line"}, docs/dev/pdf_citations.md "Line
+  // links"); a pasted one on a cold load, a share's too, opens there.
+  const [pageTarget, setPageTarget] = useState(() => {
     const link = parseGammaLink(window.location.href, window.location.origin);
-    return link?.kind === "citation" ? link : null;
+    return link?.kind === "citation" || link?.kind === "line" ? link : null;
   });
   const [focusedBlockId, setFocusedBlockId] = useState("");
   const [focusedBlock, setFocusedBlock] = useState(null);
@@ -2998,6 +3000,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const { addLocal: addTask, updateLocal: updateTask } = tasks;
   // The search indexer of the open workspace runs (Settings shows it).
   const indexing = tasks.jobs.some((job) => job.kind === "indexing" && job.workspace === workspace?.id && isActive(job));
+  // The ones there that ended, as a key: the search asks again when it moves.
+  const indexed = tasks.jobs.filter((job) => job.kind === "indexing" && job.workspace === workspace?.id && !isActive(job))
+    .map((job) => job.id).join(",");
   // So does a batch metadata lookup there (Settings → Maintenance).
   const metadataJob = tasks.jobs.find((job) => job.kind === "metadata" && job.workspace === workspace?.id && isActive(job)) || null;
   const transferByUrlRef = useRef({});
@@ -3141,7 +3146,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The Recently deleted dialog (library/RecentlyDeleted.jsx).
   const [trashOpen, setTrashOpen] = useState(false);
   // A query handed to the workspace search as it opens (the listing's
-  // "Search inside notes and PDFs"); cleared whenever the search is closed,
+  // "Search inside notes, PDFs and files"); cleared whenever the search is closed,
   // so a later plain open keeps whatever was typed in it.
   const [searchSeed, setSearchSeed] = useState("");
   useEffect(() => { if (openPopover !== "search") setSearchSeed(""); }, [openPopover]);
@@ -5386,13 +5391,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Gamma's own links (chat citations, copied page/block links) open in
   // place wherever they are rendered — the chat, a note, an embed card —
-  // through GammaNavContext.
-  async function openPageLink(id, citation) {
-    if (shareMode && id !== focusedBlockId) return;
-    if (citation && id === focusedBlockId) pushNav();
-    setPdfCitation(citation ? { ...citation } : null);
+  // through GammaNavContext; `target` the place it opens at (pageTarget).
+  // In a share view openBlock goes through goSharedPage, which opens only
+  // the pages the share reaches.
+  async function openPageLink(id, target) {
+    if (target && id === focusedBlockId) pushNav();
+    setPageTarget(target ? { ...target } : null);
     if (id !== focusedBlockId) await openBlock(id, { pushNav: true, link: true });
-    if (citation) { setPdfHidden(false); setPhonePanel(null); }
+    if (target) { setPdfHidden(false); setPhonePanel(null); }
   }
 
   // A [[ref]] chip or a copied block link: scroll to it on this page, else
@@ -6750,6 +6756,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // its tree lands, never by an open a later one took over.
   async function openBlock(blockId, opts) {
     if (!blockId) return;
+    // A link's place is its own page's: another page opened spends it.
+    setPageTarget((target) => (target && target.pageId !== blockId ? null : target));
     if (shareMode) {
       if (opts?.block) pendingBlockScrollRef.current = pendingJumpRef.current = opts.block;
       // Back records the jump once the page has opened: one the share does
@@ -7184,14 +7192,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // Where the reader is, for Back to return to: the page, the folder, the
-  // PDF's scroll and zoom.
+  // PDF's scroll and zoom, and a pane of DocumentPane's own its place (the
+  // code view's {line}, reported through the surface's onPlace).
   function navEntry() {
     const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
+    if (ownPane) viewerReport.current?.();
     return {
       blockId: focusedBlockId || null,
       folder: folderFilter,
       top: scroller ? scroller.scrollTop : null,
       scale: pdfEffScale,
+      place: ownPane ? tabScrollRef.current[focusedBlockId] || null : null,
     };
   }
   // `entry`: one taken before an open that may not happen (openBlock's
@@ -7206,9 +7217,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!entry) return;
     setNavStack((prev) => prev.slice(0, -1));
     guideEvents.emit("nav.back");
+    // A code view's line: on its page the mounted view scrolls back to it
+    // (the target's scrollOnly, no mark); another page's view opens there.
     if (entry.blockId && entry.blockId === focusedBlockId) {
-      restorePdfScroll(entry, entry.blockId, pdfUrl); // same document — just return to the reading position
+      if (entry.place?.line) setPageTarget({ kind: "line", pageId: entry.blockId, line: entry.place.line, to: null, quote: "", scrollOnly: true });
+      else restorePdfScroll(entry, entry.blockId, pdfUrl); // same document — just return to the reading position
     } else if (entry.blockId) {
+      if (entry.place) tabScrollRef.current[entry.blockId] = entry.place;
       const openedUrl = await openBlock(entry.blockId);
       restorePdfScroll(entry, entry.blockId, openedUrl);
     } else {
@@ -10069,17 +10084,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The surface of the panes DocumentPane draws itself (documents/
   // viewerSurface.js): the document and where its bytes are read, the
   // PDF's zoom, place, margin and ref contracts, the page's regions and
-  // anchors (`highlights` and `anchors` are the document's), and App's
-  // handlers; null handlers leave a control out (no region drag when
-  // read-only, no Ask AI on a share, Show in folder on the desktop alone).
+  // anchors (`highlights` and `anchors` are the document's), a line link's
+  // mark on this page, and App's handlers; null handlers leave a control
+  // out (no region drag when read-only, no Ask AI on a share, Show in
+  // folder on the desktop alone).
   const { surface: viewerSurface, reportRef: viewerReport } = useViewerSurface({
     doc, fileUrl: documentFileUrl(doc, { asset: assetUrl }), pageId: focusedBlockId, readOnly, hidden: pdfHidden, phone: isPhone,
-    scale: pdfScale, regions: highlights, anchors, flashId: flashingId, regionMode: areaSelectMode && !shareMode,
+    scale: pdfScale, mark: pageTarget?.kind === "line" && pageTarget.pageId === focusedBlockId ? pageTarget : null,
+    regions: highlights, anchors, flashId: flashingId, regionMode: areaSelectMode && !shareMode,
     commentMargin, marginRef: pdfMarginRef, scrollRef: scrollToRef, captureRef: pdfCaptureRef,
   }, {
     onZoomTo: zoomTo, onEffectiveScale: setPdfEffScale,
     placeOf: () => tabScrollRef.current[focusedBlockId] || null,
     onPlace: (p) => { if (focusedBlockId) tabScrollRef.current[focusedBlockId] = p; },
+    // `done`: the mark a viewer that goes ended, never a newer link's
+    onMarkDone: (done) => setPageTarget((target) => (done && target !== done ? target : null)),
     onRegion: readOnly ? null : addRegion,
     onRegionJump: highlightPressed,
     onRegionContext: setHighlightMenu,
@@ -12748,8 +12767,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         homeBlocks={homeBlocks}
         tree={libTree}
         openBlock={openBlock}
+        openPageLink={openPageLink}
         pdfSearchRef={pdfSearchRef}
         wakeTasks={tasks.wake}
+        indexed={indexed}
         scrollToRef={scrollToRef}
         cancelCoarseRestoreRef={cancelCoarseRestoreRef}
         setPdfHidden={setPdfHidden}
@@ -13872,7 +13893,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               by the page so it opens at the page's own place. */}
           <DocumentPane key={ownPane ? focusedBlockId : "host"} view={docView} surface={viewerSurface} render={{ pdf: () => (
             <PdfViewer url={pdfUrl} highlights={highlights} anchors={anchors}
-              citation={pdfCitation?.pageId === focusedBlockId ? pdfCitation : null}
+              citation={pageTarget?.kind === "citation" && pageTarget.pageId === focusedBlockId ? pageTarget : null}
               hideEmbeddedAnnots={embAnnots === "hide"}
               smoothWheel={smoothWheel}
               onPageInView={onPageInView}

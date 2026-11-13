@@ -1,7 +1,7 @@
 {
   "name": "gamma",
   "version": "0.2.1",
-  "description": "Search and read Gamma PDF libraries, pages, highlights, and notes.",
+  "description": "Search and read Gamma libraries: pages, notes, highlights, PDFs and the text of files.",
   "author": {
     "name": "Gamma",
     "url": "https://github.com/tim4431/Gamma"
@@ -12,7 +12,7 @@
   "interface": {
     "displayName": "Gamma PDF",
     "shortDescription": "Read Gamma page links, notes, and highlights.",
-    "longDescription": "Use a configured Gamma MCP connection to search your workspace and answer questions with citations to pages and PDF passages.",
+    "longDescription": "Use a configured Gamma MCP connection to search your workspace and answer questions with citations to pages, PDF passages and the lines of files.",
     "developerName": "Gamma",
     "category": "Productivity",
     "composerIcon": "./skills/gamma/assets/icon.png",

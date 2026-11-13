@@ -5,18 +5,20 @@
 // panel, at the top), Wrap, Download and Ctrl+wheel text size. The file's
 // head comes first (textLoad.js: one Range request), the rest on Show all;
 // a new version of the file (a new fileUrl) reloads and keeps the top line.
-// A file that is binary after all, or whose bytes are elsewhere, hands over
-// to the file pane. The CodeMirror packages the view brings are imported
-// here alone, so they come in this chunk (DocumentPane.jsx).
+// A line link opens it at its lines, marked (textMark.js). A file that is
+// binary after all, or whose bytes are elsewhere, hands over to the file
+// pane. The CodeMirror packages the view brings are imported here alone, so
+// they come in this chunk (DocumentPane.jsx).
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Compartment, EditorState } from "@codemirror/state";
-import { EditorView, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
+import { Decoration, EditorView, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
 import { selectAll } from "@codemirror/commands";
 import { LanguageDescription, syntaxHighlighting } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { openSearchPanel, search, searchKeymap } from "@codemirror/search";
 import { HLJS_CLASSES } from "./hljsTags.js";
 import { loadText } from "./textLoad.js";
+import { placeMark } from "./textMark.js";
 import { FilePane } from "./FileViews.jsx";
 import { codeLanguageName } from "../codeLanguages.js";
 import { formatLabel } from "../../library/libraryUtils.js";
@@ -39,9 +41,11 @@ const loadLanguage = (name) => {
   }
   return LOADED.get(desc.name);
 };
+// The lines CodeMirror splits the text into (\r\n, \r or \n ends one).
 const countLines = (text) => {
   let n = 1;
-  for (let i = text.indexOf("\n"); i >= 0; i = text.indexOf("\n", i + 1)) n++;
+  const breaks = /\r\n?|\n/g;
+  while (breaks.exec(text)) n++;
   return n;
 };
 // The line at the top of the view, 1-based.
@@ -50,16 +54,34 @@ const showLine = (view, n) => {
   const line = view.state.doc.line(Math.max(1, Math.min(n, view.state.doc.lines)));
   view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: "start" }) });
 };
+const LINE_MARK = Decoration.line({ class: "docLineMark" });
+// What the notice says of a mark (placeMark's answer for `mark`, `count`
+// lines loaded, `whole` whether that is the file): {text, shown}, `shown`
+// false for the plain sentence, which a screen reader alone is told.
+function markWords(got, mark, count, whole) {
+  if (got.past) {
+    return { shown: true, text: whole ? tn("The file has {n} line now; line {line} is past its end.",
+      "The file has {n} lines now; line {line} is past its end.", count, { line: mark.line })
+      : t("Line {line} is past the part of the file shown here. Download it to read it all.", { line: mark.line }) };
+  }
+  const said = got.to > got.from ? t("Lines {from}–{to} marked.", { from: got.from, to: got.to }) : t("Line {line} marked.", { line: got.from });
+  if (got.moved) return { shown: true, text: `${said} ${t("The line moved: marked where its text is now.")}` };
+  if (got.lost) return { shown: true, text: `${said} ${t("Its text is not in the file now: marked by its number.")}` };
+  return { shown: false, text: said };
+}
 
 // `doc`, `fileUrl`: the document and where its bytes are read ("" for none
 // here: the file pane); `phone`: a phone's layout, where lines wrap by
 // default; `hidden`: the pane is closed, still mounted (display: none, which
 // loses the scroll), so it shows its line again as it opens; `place` {line}
 // where it opens, `onPlace` where it stands, `reportRef` read by the host
-// before it leaves (App's captureScrollPos); `onReveal` the desktop's Show
-// in folder, for the file pane it may hand over to.
+// before it leaves (App's captureScrollPos, navEntry); `mark` a line link's
+// target {line, to, quote}, marked until Escape or a click away, which call
+// `onMarkDone` (with `scrollOnly`, Back's return: scrolled to, not marked);
+// `onReveal` the desktop's Show in folder, for the file pane it may hand
+// over to.
 export default function TextViewer({ doc, fileUrl, phone = false, hidden = false, place = null, onPlace = null, reportRef = null,
-  onReveal = null }) {
+  mark = null, onMarkDone = null, onReveal = null }) {
   const host = useRef(null);
   const viewRef = useRef(null);
   const [wrap, setWrap] = useState(phone);
@@ -75,7 +97,7 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
     if (v && !hiddenRef.current) standRef.current = topLine(v);
     return standRef.current;
   };
-  const compartments = useMemo(() => ({ lang: new Compartment(), wrap: new Compartment() }), []);
+  const compartments = useMemo(() => ({ lang: new Compartment(), wrap: new Compartment(), mark: new Compartment() }), []);
   const textScale = useTextScale();
   const phrases = useMemo(() => ({
     Find: t("Find"), next: t("next"), previous: t("previous"), all: t("all"), "match case": t("match case"), regexp: t("regexp"),
@@ -85,8 +107,10 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
 
   // The file's head, again for a new version of the file, which keeps the
   // top line; Show all reads the rest. One read at a time: a new one (a new
-  // version, Show all) cancels the one under way.
+  // version, Show all) cancels the one under way. A new version is read
+  // whole again for a mark past its head (`wholeFor`, below).
   const readCtl = useRef(null);
+  const wholeFor = useRef(null); // the mark the whole file was read for, in this version
   const read = useCallback((whole) => {
     readCtl.current?.abort();
     const ctl = new AbortController();
@@ -102,12 +126,14 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
     });
   }, [fileUrl]);
   useEffect(() => {
+    wholeFor.current = null;
     if (fileUrl) read(false);
     return () => readCtl.current?.abort();
   }, [read, fileUrl]);
 
   // The view, once the first text is in, opened at the kept line; later
-  // texts (Show all, a new version) replace the document and keep it.
+  // texts (Show all, a new version) replace the document and keep it, the
+  // marked lines placed on the new text again (below).
   const ready = load.status === "ready";
   const textRef = useRef("");
   textRef.current = ready ? load.text : "";
@@ -125,6 +151,7 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
           highlightSpecialChars(),
           compartments.lang.of([]),
           compartments.wrap.of([]),
+          compartments.mark.of([]),
           syntaxHighlighting(HLJS_CLASSES),
           search({ top: true }),
           keymap.of([...searchKeymap, { key: "Mod-a", run: selectAll }]),
@@ -141,10 +168,10 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
   useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view || !ready || view.state.doc.length === load.text.length && view.state.doc.toString() === load.text) return;
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: load.text } });
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: load.text }, effects: compartments.mark.reconfigure([]) });
     if (keepLine.current > 1) showLine(view, keepLine.current);
     keepLine.current = 0;
-  }, [ready, load.text]);
+  }, [ready, load.text, compartments]);
   useEffect(() => {
     viewRef.current?.dispatch({ effects: compartments.wrap.reconfigure(wrap ? EditorView.lineWrapping : []) });
   }, [wrap, ready, compartments]);
@@ -185,7 +212,73 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
     if (shown && v && standRef.current > 1) showLine(v, standRef.current);
   }, [hidden]);
 
-  if (!fileUrl || load.status === "binary" || load.status === "gone") return <FilePane doc={doc} fileUrl={fileUrl} onReveal={onReveal} />;
+  // A line link's lines: once this file's text is in and the pane shows,
+  // placed (textMark.js), scrolled to once (a line centred, a range from its
+  // top) and marked, the notice saying where; a line or quote past what is
+  // loaded reads the whole file first (again in a new version), and only
+  // then is a line past the end. A new version of the file, or the whole
+  // file read for the mark, places it again without scrolling; pressing
+  // Show all ends it, as any press outside the marked lines does. Back's
+  // return (`scrollOnly`) scrolls to its line and ends at once. The mark
+  // ends too when the view goes (the reader left the page) or hands over
+  // to the file pane, which marks nothing.
+  const onMarkDoneRef = useRef(onMarkDone);
+  onMarkDoneRef.current = onMarkDone;
+  const [marked, setMarked] = useState(null); // {text, shown}: the notice of the mark shown
+  const placedRef = useRef(null); // the mark scrolled to
+  useEffect(() => () => { if (placedRef.current) onMarkDoneRef.current?.(placedRef.current); }, []);
+  const filePane = !fileUrl || load.status === "binary" || load.status === "gone";
+  useEffect(() => { if (mark && filePane) onMarkDoneRef.current?.(mark); }, [mark, filePane]);
+  const unmark = useCallback(() => {
+    if (placedRef.current) viewRef.current?.dispatch({ effects: compartments.mark.reconfigure([]) });
+    placedRef.current = null;
+    setMarked(null);
+  }, [compartments]);
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!mark) { unmark(); return; }
+    if (!ready || hidden || !view) return;
+    if (mark.scrollOnly) {
+      unmark();
+      showLine(view, mark.line);
+      onMarkDoneRef.current?.();
+      return;
+    }
+    // the file's lines, the empty one after a final line break not one of them
+    const lines = view.state.doc.toJSON();
+    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    const got = placeMark(lines, mark);
+    if ((got.past || got.lost) && !load.whole && !load.tooLarge && wholeFor.current !== mark) {
+      wholeFor.current = mark;
+      read(true);
+      return;
+    }
+    const first = placedRef.current !== mark;
+    placedRef.current = mark;
+    const effects = [compartments.mark.reconfigure(got.past ? [] : EditorView.decorations.of(Decoration.set(
+      Array.from({ length: got.to - got.from + 1 }, (_, i) => LINE_MARK.range(view.state.doc.line(got.from + i).from)))))];
+    if (first && !got.past) {
+      effects.push(EditorView.scrollIntoView(view.state.doc.line(got.from).from, { y: got.to > got.from ? "start" : "center", yMargin: 48 }));
+    }
+    view.dispatch({ effects });
+    setMarked(markWords(got, mark, lines.length, !!load.whole));
+  }, [mark, ready, hidden, load.text, load.whole, load.tooLarge, read, compartments, unmark]);
+  // Escape, or a press outside the marked lines, ends the mark (the PDF
+  // citation's rule, PdfViewer.jsx).
+  useEffect(() => {
+    if (!marked) return undefined;
+    const done = () => { unmark(); onMarkDoneRef.current?.(); };
+    const onKey = (e) => { if (e.key === "Escape") done(); };
+    const clickAway = (e) => { if (!(host.current?.contains(e.target) && e.target.closest?.(".docLineMark"))) done(); };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("click", clickAway, true);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("click", clickAway, true);
+    };
+  }, [marked, unmark]);
+
+  if (filePane) return <FilePane doc={doc} fileUrl={fileUrl} onReveal={onReveal} />;
   const lines = ready ? countLines(load.text) : 0;
   const word = formatLabel(doc);
   return (
@@ -207,6 +300,7 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
         </a>
       </div>
       {ready && load.bad ? <div className="docTextNote" role="note">{t("Some bytes are not UTF-8 and show as �.")}</div> : null}
+      {ready ? <div className={`docMarkNotice${marked?.shown ? "" : " srOnly"}`} role="status" aria-live="polite">{marked?.text || ""}</div> : null}
       <div className="docTextBody">
         {textScale.badge}
         <div className="docTextHost" ref={host} aria-busy={!ready || undefined} />
