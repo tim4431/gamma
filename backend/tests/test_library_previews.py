@@ -95,11 +95,13 @@ def test_a_folder_share_lists_its_pages_with_the_same_previews(owner, anon):
 
 def test_summaries_carry_the_listings_previews(owner):
     """POST /api/pages/summaries answers a page as the listing has it, its
-    preview the same text."""
+    preview the same text, with its notes and its open threads counted."""
     listed = owner.get("/api/blocks/root/children").json()["children"]
     r = owner.post("/api/pages/summaries", json={"ids": [p["id"] for p in reversed(listed)]})
     assert r.status_code == 200, r.text
-    assert r.json()["pages"] == list(reversed(listed))
+    pages = r.json()["pages"]
+    assert [{k: v for k, v in p.items() if k not in ("notes", "open_comments")} for p in pages] == list(reversed(listed))
+    assert all(isinstance(p["notes"], int) and p["open_comments"] == 0 for p in pages)
 
 
 def test_previews_seek_the_parent_index():

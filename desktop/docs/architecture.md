@@ -166,6 +166,7 @@ is (`PAGE_ASKS` in `preload.js`) and exposes nothing:
 | `relocate-file {ws, page}` (the banner's *Locate…*) | `shell:relocate-from-page` | `relocateFile` |
 | `carry-to-server {ws, page}` (*Add to library…*'s *Another server…*) | `shell:carry-from-page` | `carryToServer` ("Opening PDF files") |
 | `continue-in-terminal {ws, page}` (the chat's computer side, *Continue in a terminal*) | `shell:terminal-from-page` | `terminalFromPage` |
+| `tracked {link, cancelled}` (the host's tracking dialog of a work folder of another server, saved or cancelled) | `shell:tracked-from-page` | `trackedFromPage` |
 
 *Continue in a terminal* takes no command from the page: `terminalFromPage`
 asks the open server, which must be one on this computer (a remote's page
@@ -323,7 +324,34 @@ by then.
 **host**, the first local server, which `ensureHost` makes, starts and
 signs into when needed (the clones' host too), and reads the folder over
 HTTP with the token: only that folder's files come down. From the shell it
-pulls, and pushes PDFs at most for now. The vaults of a remote workspace
+pulls, and pushes PDFs at most (`keeping.REMOTE_RULE`), unless it is a
+**work folder of that server**: an empty folder there (`remotePages` 0)
+with a directory of notes or PDFs (`firstPush`, as for a local one), on a
+server that says `work_folders` in `GET /api/sync/whoami` to an account
+that may write there (`remoteWorkRefusal`, else the vault dialog asks as
+before, push off, the reason in a notice, as it does when the host or that
+server refuses one: `keeping.remoteWorkRefused`), goes to
+`makeRemoteWorkFolder`, which mints a write token there with the
+window's session, posts the host `{folder, path, notes, pull: true, push:
+"everything", choose: true, remote_url, workspace, token, token_id}` with
+the shell's word, shows the computer there (`showComputer`), and opens
+**the host's own window** at its own workspace with `?track=<link id>`:
+the tracking dialog is the host's, so no directory listing goes through
+that server ([work_folders.md](../../docs/dev/work_folders.md) "Work
+folders of another server"). The minted token's id is remembered
+(`tracking`, by the link's id) until the dialog's page ask `tracked`
+answers: saved, the window goes back to that server with the folder open;
+cancelled (the dialog deleted the link), the token is revoked and the
+computer hidden there when no other vault of that server and workspace
+stays (`releaseRemote`); a cancel the host refused (that server not
+reached) leaves the link choosing and the token kept, and the bar says
+so. Removing one whose server the removal's question could not reach
+asks only whether to remove it anyway (`force=1`). *Choose files…* on such a folder opens the
+host's window the same way. Its push stays everything and its pull on
+(`REMOTE_WORK_RULE`), its agent row stays local-only (`item.agentHere`),
+and removing it while that server cannot be reached asks first (*Remove
+anyway* forgets it with `force=1`, the folder staying a work folder there
+until the workspace's owner lets go of it). The vaults of a remote workspace
 are the host's links with that origin and workspace (`listLinks`; the
 chooser lists only the folders'). `settings.folderHost` remembers the host
 so it starts at launch like the clones' hosts (`startBackgroundHosts`), and

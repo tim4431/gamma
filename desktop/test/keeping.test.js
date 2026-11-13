@@ -80,6 +80,34 @@ test('a work folder is a folder of the server\'s own that pushes everything; one
   assert.match(choosing.title, /^Nothing is tracked yet: Choose files… opens its tracking dialog in Gamma/);
 });
 
+test('a work folder is what the link says: one of another server is made so there, pushes everything and pulls, and has no agent here', () => {
+  const nas = { remote_url: 'http://nas.lan:9001', push: 'everything', status: { last_sync: now, folder_path: ['Paper'] } };
+  const far = keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Paper', pull: true, mine: true, work: true, ...nas },
+    servers, null, [{ name: 'codex', label: 'Codex', found: true, ready: true }]);
+  assert.deepEqual([far.work, far.agentHere, far.agents, far.remote, far.push, far.pull], [true, false, null, 'NAS', 'everything', true]);
+  assert.match(far.title, /Notes, PDFs, new files, renames and deletions are pulled and pushed\.$/);
+  // a kept folder of another server that pushes everything stays one; the link's word wins over the push
+  assert.equal(folder({ ...nas, work: false }).work, false);
+  assert.equal(folder({ push: 'everything', work: false, status: {} }).work, false);
+  assert.equal(folder({ ...nas, folder_id: 'root', work: true }).work, false, 'never the whole library');
+  const here = folder({ push: 'everything', work: true, status: {} });
+  assert.deepEqual([here.work, here.agentHere], [true, true]);
+  assert.equal(keeping.REMOTE_WORK_RULE, 'A work folder of another server pushes everything and pulls: remove the vault to stop.');
+  // an empty folder there that cannot be one: why, while the vault dialog asks instead
+  assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', 'NAS is older than this app and keeps no work folders'),
+    '“Lab” cannot be a work folder of NAS: NAS is older than this app and keeps no work folders. It can be synced as a vault that pulls instead.');
+  assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', 'A clone keeps no work folder.'),
+    '“Lab” cannot be a work folder of NAS: A clone keeps no work folder. It can be synced as a vault that pulls instead.');
+  assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', ''), '“Lab” cannot be a work folder of NAS: NAS refused it. It can be synced as a vault that pulls instead.');
+  // removing it: its files go to Recently deleted there; that server not reached, the vault is forgotten here only if asked
+  assert.match(keeping.removalAsk(far, { pages: 4, files: 3, in_library: 1 }).detail,
+    /^Its 3 files not in the library go to Recently deleted on NAS; its page in the library stays\. /);
+  const q = keeping.farRemovalAsk(far, 'NAS cannot be reached: remove the vault when it can, or let go of the folder there');
+  assert.equal(q.message, 'NAS cannot be reached: remove the work folder “Paper” all the same?');
+  assert.match(q.detail, /^NAS cannot be reached: remove the vault when it can, or let go of the folder there\. Remove anyway, and this computer forgets it; the folder stays a work folder on NAS, its files locked, until the workspace's owner lets go of it there\./);
+  assert.deepEqual(q.buttons, ['Remove anyway', 'Cancel']);
+});
+
 test('a work folder\'s agent: who made it, the agent and how it stands, the agents found here, and a run that works reads busy', () => {
   const work = (link, agents) => keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Papers\\Quantum', remote_url: '',
     pull: true, push: 'everything', status: { last_sync: now }, ...link }, servers, null, agents);
@@ -465,7 +493,7 @@ test('the dialog shuts Sync for a vault that would be refused, and says why', ()
   assert.deepEqual(say({}, { pull: false, push: 'off' }), { ok: false, text: 'A vault pulls, pushes, or both: turn one of them on.' });
   assert.equal(say({}, { remote: true, push: 'everything' }).ok, false);
   assert.deepEqual(say({}, { remote: true, pull: false, push: 'pdfs' }), { ok: false, text: keeping.REMOTE_RULE }, 'the rule the vault\'s switches keep to');
-  assert.equal(keeping.REMOTE_RULE, 'A vault of another server pulls, and pushes PDFs at most, for now.');
+  assert.equal(keeping.REMOTE_RULE, 'A vault of another server pulls, and pushes PDFs at most: a work folder there is made from an empty folder.');
   assert.equal(say({}, { remote: true, push: 'pdfs' }).ok, true, 'a remote\'s folder may push its PDFs');
   assert.deepEqual(say({}, { whole: true, push: 'everything' }), { ok: false, text: keeping.WHOLE_RULE }, 'the server\'s words');
   assert.equal(say({ notes: 2 }, { whole: true, push: 'pdfs' }).ok, true, 'the whole library pulls, and pushes PDFs');

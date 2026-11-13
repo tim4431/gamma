@@ -164,10 +164,12 @@ def set_doc(remote, page_id: str, doc: dict) -> tuple[int, int]:
     return before, after
 
 
-def remote_for(link: dict):
+def remote_for(link: dict, *, ask: bool = False):
     """A link's remote: for a folder of another server ``HttpRemote``
     (gamma/vault/http_remote.py) with the link's token (``folder_links.get_link``
-    with ``with_token``); on this server its workspace, as its maker. Left out
+    with ``with_token``), each request waiting as a round's may, or with
+    ``ask`` as a question between rounds (a dialog, a switch, a removal:
+    ``folder_links.ASK_TIMEOUT_S``); on this server its workspace, as its maker. Left out
     are the pages of the links below it, and of those made before it that
     are not above it (a page filed below two is the first's; the second
     reports it, ``Layout.shared``), that may take a page from it: one that
@@ -184,6 +186,8 @@ def remote_for(link: dict):
     if link["remote_url"]:
         from .http_remote import HttpRemote  # local: it imports this module
 
+        if ask:
+            return HttpRemote(link, folder_links.remote_server(link, folder_links.ASK_TIMEOUT_S))
         return HttpRemote(link, folder_links.remote_server(link))
     with connect_pages_db(link["workspace_id"]) as conn:
         leave_out, siblings = left_out(link, lambda folder_id: folder_subtree_ids(conn, folder_id))

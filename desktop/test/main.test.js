@@ -484,15 +484,35 @@ test('a vault of a workspace its maker left is listed as no access, and its make
 test('a vault of another server keeps pulling and pushes PDFs at most: its switches refuse the rest, as its dialog does', async () => {
   fresh();
   const s = server('Host');
-  s.fake.vaults = [vaultLink({ workspace_id: 'nas-ws', remote_url: 'http://nas.lan:9001', token_id: 't1' })];
+  s.fake.vaults = [vaultLink({ workspace_id: 'nas-ws', remote_url: 'http://nas.lan:9001', token_id: 't1', work: false })];
   s.fake.routes = (p, init) => (p === '/api/folder-links/v1' && init.method === 'PATCH' ? vaultLink() : null);
   const patches = () => s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH').map((c) => c.body);
   await shell.refreshKeeping();
-  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'pull', false), /^Error: A vault of another server pulls, and pushes PDFs at most, for now\.$/);
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'pull', false),
+    /^Error: A vault of another server pulls, and pushes PDFs at most: a work folder there is made from an empty folder\.$/);
   await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'push', 'everything'), /pushes PDFs at most/);
   assert.deepEqual(patches(), [], 'nothing was changed');
   await shell.keepingAction('vault', s.srv.id, 'v1', 'pull', true);
   assert.deepEqual(patches(), [{ pull: true }], 'turned on, as the rule wants');
+});
+
+test('a work folder of another server pushes everything and pulls: its switches refuse the rest, and it has no agent here; its library switch is the host\'s', async () => {
+  fresh();
+  const s = server('Host');
+  s.fake.vaults = [vaultLink({ workspace_id: 'nas-ws', remote_url: 'http://nas.lan:9001', token_id: 't1', push: 'everything', work: true, mine: true })];
+  s.fake.routes = (p, init) => (p === '/api/folder-links/v1' && init.method === 'PATCH' ? vaultLink() : null);
+  const patches = () => s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH');
+  await shell.refreshKeeping();
+  const [item] = shell.keeping().items;
+  assert.deepEqual([item.work, item.agentHere, item.agents, item.push, item.pull], [true, false, null, 'everything', true]);
+  const rule = /^Error: A work folder of another server pushes everything and pulls: remove the vault to stop\.$/;
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'pull', false), rule);
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'push', 'pdfs'), rule);
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'push', 'off'), rule);
+  await assert.rejects(shell.setAgent(s.srv.id, 'v1', 'codex', true), /another server has no agent/);
+  assert.deepEqual(patches(), [], 'nothing was changed');
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'library', true);
+  assert.deepEqual(patches().map((c) => [c.body, c.headers['X-Gamma-Workspace']]), [[{ library: true }, undefined]], 'the account\'s, no workspace of the host');
 });
 
 test('a work folder choosing its files is shown so, its Choose files… opens its tracking dialog in the window, and its library switch is the server\'s', async () => {
@@ -795,9 +815,9 @@ test('a folder with pages still asks in the bar: the vault dialog stays shown un
 // for the tests of this computer shown on a remote: `host` and `nas` fakes
 // of server(). The NAS mints `t<n>`; the host keeps the links it is handed
 // (POST, its answer `replaced` as `replace` says, or `fail`), forgets one on
-// DELETE and answers its token.
+// DELETE and answers its token. The NAS's whoami is `state.whoami`.
 function computerRoutes(host, nas, { replace = null, fail = null } = {}) {
-  const state = { links: [], minted: [], fail };
+  const state = { links: [], minted: [], fail, whoami: { user: 'admin', role: 'owner', scope: 'session', work_folders: 1 } };
   const routes = host.fake.routes;
   host.fake.routes = (p, init) => {
     if (p === '/api/computer-links' && init.method === 'POST') {
@@ -825,7 +845,10 @@ function computerRoutes(host, nas, { replace = null, fail = null } = {}) {
       return minted;
     }
     if (p.startsWith('/api/integrations/tokens/') && init.method === 'DELETE') return { ok: true };
+    if (p === '/api/sync/whoami') return state.whoami;
     if (p === '/api/sync/folders') return FOLDERS;
+    // Kept lab holds pages there; Empty lab none
+    if (p === '/api/sync/folders/f1') return { pages: [{ id: 'a1' }, { id: 'a2' }, { id: 'a3' }] };
     return null;
   };
   return state;
@@ -975,6 +998,171 @@ test('from the panel, Show this computer there and Stop showing on a vault of an
     await shell.keepingAction('vault', host.srv.id, 'v4', 'hide-computer');
     assert.equal(shell.notice(), `${shell.computerName} is no longer shown on NAS, but its token there could not be revoked: remove “Gamma desktop: ${shell.computerName}” in NAS's Settings → Integrations, signed in as the account that made it.`);
     nas.fake.routes = routes;
+  } finally {
+    delete electron.session.defaultSession.fetch;
+  }
+});
+
+test('an empty folder of another server synced with a directory of notes becomes a work folder there: a write token, the host\'s vault made choosing, this computer shown, the host\'s own window on its tracking dialog, and its answer takes the window back', async () => {
+  fresh();
+  const host = server('Host');
+  const nas = server('NAS', [], { remote: 'http://nas.lan:9001' });
+  const picked = fs.mkdtempSync(path.join(dir, 'FarWork-'));
+  let refuse = null;
+  host.fake.routes = (p, init) => {
+    if (p === '/api/folder-links/preview') return previewOf(picked);
+    if (p === '/api/folder-links' && init.method === 'POST') {
+      if (refuse) return refuse;
+      const body = JSON.parse(init.body);
+      const made = vaultLink({ id: 'w1', folder_id: body.folder, path: picked, dest: picked, workspace_id: 'team', remote_url: 'http://nas.lan:9001',
+        token_id: body.token_id, push: 'everything', work: true, choosing: true, mine: true });
+      host.fake.vaults = [made];
+      return made;
+    }
+    return null;
+  };
+  const shown = computerRoutes(host, nas);
+  const realStart = sidecar.start;
+  sidecar.start = async () => ({ url: 'http://127.0.0.1:50999', port: 50999 });
+  // a Cancel revokes with the window's session, signed into the remote
+  electron.session.defaultSession.fetch = async (url, init = {}) => nas.fake.answer(new URL(url).pathname, init, new URL(url));
+  const view = windowOn(host.fake, [{ origin: 'http://nas.lan:9001', fake: nas.fake }], 'team');
+  const made = () => host.fake.calls.filter((c) => c.path === '/api/folder-links' && c.method === 'POST');
+  process.env.GAMMA_SHELL_PICK_DIR = picked;
+  try {
+    shell.pretendShown(nas.srv, view, appWindow);
+    const link = await shell.addFolderVault('team', 'f2');
+    assert.equal(link.id, 'w1');
+    assert.equal(shell.vaultAsk(), null, 'nothing asked in the bar: its tracking dialog says what it tracks');
+    const [vaultToken, computer] = shown.minted;
+    assert.deepEqual([vaultToken.scope, vaultToken.expires_in_days, computer.scope], ['write', 365, 'computer'], 'a token that may write, then this computer\'s own');
+    const [create] = made();
+    assert.deepEqual(create.body, { folder: 'f2', path: picked, notes: true, pull: true, push: 'everything', choose: true,
+      remote_url: 'http://nas.lan:9001', workspace: 'team', token: vaultToken.token, token_id: vaultToken.id });
+    assert.equal(create.headers['X-Gamma-Shell'], shell.shellSecret, 'the shell\'s word, to the host');
+    assert.equal(create.headers['X-Gamma-Workspace'], undefined, 'no workspace of the host');
+    assert.equal(host.fake.calls.filter((c) => c.path === '/api/computer-links' && c.method === 'POST').length, 1, 'this computer shown there');
+    for (const c of nas.fake.calls) {
+      assert.equal(c.headers['X-Gamma-Shell'], undefined, 'the word never goes to the remote');
+      assert.ok(!(c.body && JSON.stringify(c.body).includes(picked)), 'nor a path');
+    }
+    // the host's own window, over its own workspace, never the remote's ids
+    assert.equal(shell.current().id, host.srv.id);
+    const at = new URL(view.loaded.at(-1));
+    assert.equal(at.origin, 'http://127.0.0.1:50999');
+    assert.deepEqual([at.searchParams.get('ws'), at.searchParams.get('folder'), at.searchParams.get('track')], ['mine', null, 'w1']);
+    assert.equal(shell.registry.getSettings().folderHost, host.srv.id, 'the host is remembered for launch');
+
+    // only the dialog the shell opened is taken, and only while the window shows its host
+    assert.equal(await shell.trackedFromPage('mine', 'other', false), null);
+    // Saved (the host chose its files): the window goes back to that server, the folder open
+    host.fake.vaults = host.fake.vaults.map((v) => ({ ...v, choosing: false }));
+    assert.equal(await shell.trackedFromPage('mine', 'w1', false), true);
+    assert.equal(shell.current().id, nas.srv.id);
+    assert.equal(view.loaded.at(-1), 'http://nas.lan:9001/?ws=team&folder=f2');
+    assert.match(shell.notice(), /pushes the files you chose to NAS/);
+    assert.deepEqual(revoked(nas), [], 'nothing revoked');
+    assert.equal(await shell.trackedFromPage('mine', 'w1', true), null, 'answered once');
+
+    // Choose files… from the panel opens the host's window the same way; its Cancel of a fresh dialog removed the vault (the page's DELETE)
+    await shell.refreshKeeping();
+    await shell.keepingAction('vault', host.srv.id, 'w1', 'choose');
+    assert.equal(shell.current().id, host.srv.id);
+    assert.deepEqual([...new URL(view.loaded.at(-1)).searchParams], [['ws', 'mine'], ['track', 'w1']]);
+    host.fake.vaults = [];
+    assert.equal(await shell.trackedFromPage('mine', 'w1', true), true);
+    assert.deepEqual(revoked(nas), [`${vaultToken.id}@team`, `${computer.id}@team`], 'its token revoked there, and this computer no longer shown');
+    assert.equal(host.fake.calls.filter((c) => c.path === '/api/computer-links/c1' && c.method === 'DELETE').length, 1);
+    assert.equal(shell.current().id, nas.srv.id, 'and the window back there');
+    assert.equal(shell.registry.getSettings().folderHost, '', 'the host keeps nothing of remotes now');
+
+    // a Cancel the host refused (NAS not reached): the vault stays choosing, its token kept, and the bar says so
+    assert.equal((await shell.addFolderVault('team', 'f2')).id, 'w1');
+    const kept = revoked(nas).length;
+    assert.equal(await shell.trackedFromPage('mine', 'w1', false), true);
+    assert.equal(revoked(nas).length, kept, 'nothing revoked');
+    assert.equal(shell.notice(), '“Empty lab” could not be cancelled, NAS not reached: it waits for its files to be chosen. Choose files… in the sync panel, or remove the vault once NAS answers.');
+    assert.equal(shell.current().id, nas.srv.id);
+    host.fake.vaults = [];
+
+    // what cannot be a work folder there is asked in the vault dialog, pushing nothing to start, the reason in the bar
+    shell.pretendShown(nas.srv, view); // (no app window: the dialog lays nothing out)
+    const refused = async (words) => {
+      const flow = shell.addFolderVault('team', 'f2');
+      await until(() => shell.vaultAsk(), 'the dialog is up');
+      assert.deepEqual([shell.vaultAsk().remote, shell.vaultAsk().push, shell.vaultAsk().pull], [true, 'off', true]);
+      assert.equal(shell.notice(), `“Empty lab” cannot be a work folder of NAS: ${words} It can be synced as a vault that pulls instead.`);
+      shell.answerVault(shell.vaultAsk().id, null);
+      assert.equal(await flow, null);
+      assert.equal(shell.current().id, nas.srv.id, 'the window stays');
+    };
+    // the host refuses it (that folder holds pages there after all): the token minted for it is revoked
+    const before = made().length;
+    refuse = { failWith: 409, body: { detail: 'That folder of NAS is not empty: a work folder of another server starts empty.' } };
+    await refused('That folder of NAS is not empty: a work folder of another server starts empty.');
+    assert.equal(revoked(nas).at(-1), `${shown.minted.at(-1).id}@team`);
+    assert.equal(shown.minted.at(-1).scope, 'write');
+    assert.equal(made().length, before + 1, 'asked of the host once');
+    refuse = null;
+    // that server keeps no work folders, or the account may only view there: nothing minted, nothing asked of the host
+    const minted = shown.minted.length;
+    shown.whoami = { user: 'admin', role: 'owner', scope: 'session' };
+    await refused('NAS is older than this app and keeps no work folders.');
+    shown.whoami = { user: 'admin', role: 'viewer', scope: 'session', work_folders: 1 };
+    await refused('Your account may only view this workspace there.');
+    assert.deepEqual([shown.minted.length, made().length], [minted, before + 1]);
+    const whoami = nas.fake.calls.filter((c) => c.path === '/api/sync/whoami');
+    assert.equal(whoami.at(-1).headers['X-Gamma-Workspace'], 'team', 'asked of that workspace, with the window\'s session');
+  } finally {
+    sidecar.start = realStart;
+    delete process.env.GAMMA_SHELL_PICK_DIR;
+    delete electron.session.defaultSession.fetch;
+    shell.pretendShown(null, null);
+  }
+});
+
+test('removing a work folder of another server that cannot be reached: refused, then forgotten here only when asked', async () => {
+  fresh();
+  const host = server('Host');
+  const nas = server('NAS', [], { remote: 'http://nas.lan:9001' });
+  host.fake.vaults = [vaultLink({ workspace_id: 'team', remote_url: 'http://nas.lan:9001', token_id: 'vt', push: 'everything', work: true })];
+  computerRoutes(host, nas);
+  const routes = host.fake.routes;
+  host.fake.routes = (p, init) => (p === '/api/folder-links/v1' && init.method === 'DELETE' ? { ok: true } : routes(p, init));
+  // the host refuses a removal it cannot let go of there, unless forced
+  const answer = host.fake.answer.bind(host.fake);
+  host.fake.answer = async (p, init, url) => {
+    if (p !== '/api/folder-links/v1' || init.method !== 'DELETE' || url.search.includes('force=1')) return answer(p, init, url);
+    host.fake.calls.push({ path: p, query: url.search, method: 'DELETE', headers: init.headers || {}, body: null });
+    return { ok: false, status: 409, json: async () => ({ detail: 'NAS cannot be reached: remove the vault when it can, or let go of the folder there' }) };
+  };
+  const deletes = () => host.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'DELETE').map((c) => c.query);
+  electron.session.defaultSession.fetch = async (url, init = {}) => nas.fake.answer(new URL(url).pathname, init, new URL(url));
+  try {
+    await shell.refreshKeeping();
+    // the question takes Cancel under the harness: nothing forgotten
+    assert.equal(await shell.removeVault(host.srv.id, 'v1', 'keep'), false);
+    assert.deepEqual(deletes(), ['?files=keep']);
+    assert.match(shell.asked.at(-1), /^NAS cannot be reached: remove the work folder “Papers” all the same\? NAS cannot be reached: remove the vault when it can/);
+    shell.answers.push(0);
+    assert.equal(await shell.removeVault(host.srv.id, 'v1', 'keep'), true);
+    assert.deepEqual(deletes(), ['?files=keep', '?files=keep', '?files=keep&force=1']);
+    assert.deepEqual(revoked(nas), ['vt@team'], 'its token revoked there, as far as that server answers');
+    assert.match(shell.notice(), /^Papers is no longer synced with this computer; on NAS its folder stays a work folder until the workspace's owner lets go of it there\./);
+
+    // asked from the panel: the host could not count its files there, so that question comes first, never the usual one
+    host.fake.vaults = [vaultLink({ workspace_id: 'team', remote_url: 'http://nas.lan:9001', token_id: 'vt', push: 'everything', work: true })];
+    host.fake.routes = (p, init) => (p === '/api/folder-links/v1/removal' ? { pages: 4, files: 0, in_library: 4, in_place: 0, bytes: 0, unreachable: true }
+      : p === '/api/folder-links/v1' && init.method === 'DELETE' ? { ok: true } : routes(p, init));
+    await shell.refreshKeeping();
+    shell.asked.length = 0;
+    assert.equal(await shell.removeVault(host.srv.id, 'v1'), false);
+    assert.deepEqual(shell.asked, ['NAS cannot be reached: remove the work folder “Papers” all the same? NAS does not answer. Remove anyway, and this computer forgets it; the folder stays a work folder on NAS, its files locked, until the workspace\'s owner lets go of it there. Or cancel, and remove it once NAS answers.']);
+    assert.equal(deletes().length, 3, 'nothing removed');
+    shell.answers.push(0);
+    assert.equal(await shell.removeVault(host.srv.id, 'v1'), true);
+    assert.equal(shell.asked.length, 2, 'one question');
+    assert.deepEqual(deletes().slice(3), ['?files=keep&force=1'], 'forced at once, its files kept');
   } finally {
     delete electron.session.defaultSession.fetch;
   }

@@ -390,12 +390,15 @@ def _leaving(link: dict, selected: set) -> list:
     dialog says what leaves: ``[{path, page, title, notes, open_comments}]``,
     ``path`` its PDF's (else its notes'), ``notes`` how many blocks of its
     own hold something, ``open_comments`` its open threads. A page already
-    in Recently deleted is left out."""
+    in Recently deleted is left out. A work folder of another server asks
+    that server (``_leaving_there``)."""
     from .. import comments  # local: it reaches the page writers
 
     gone = {page: paths for page, paths in _pages(link).items() if not any(p in selected for p in paths)}
     if not gone:
         return []
+    if link["remote_url"]:
+        return _leaving_there(link, gone)
     ids = json.dumps(sorted(gone))
     with connect_pages_db(link["workspace_id"]) as conn:
         titles = dict(conn.execute("SELECT id, content FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?)) "
@@ -413,6 +416,38 @@ def _leaving(link: dict, selected: set) -> list:
     return sorted(out, key=lambda x: x["path"])
 
 
+def _leaving_there(link: dict, gone: dict) -> list:
+    """``_leaving`` for a work folder of another server: its pages as that
+    server's summaries have them (``HttpRemote.summaries``: those in Recently
+    deleted there left out), each titled by its row here when that server's
+    has none, ``notes`` and ``open_comments`` null from a server older than
+    this app; every page by its row's title, its counts null, from one that
+    cannot be asked now."""
+    from .. import folder_links  # local: it imports this module's callers
+    from ..ops import OpError
+    from ..vault.http_remote import HttpRemote
+    from ..vault.remote import Refused
+
+    titles = {}
+    for row in vault_store.files(link["id"]).values():
+        if row["page_id"] in gone:
+            titles.setdefault(row["page_id"], row["title"] or "")
+    keyed = folder_links.get_link(link["id"], with_token=True) or link
+    try:
+        found = HttpRemote(keyed, folder_links.remote_server(keyed, folder_links.ASK_TIMEOUT_S)).summaries(sorted(gone))
+    except (OpError, Refused):
+        found = None
+    out = []
+    for page, paths in gone.items():
+        if found is not None and page not in found:
+            continue
+        there = (found or {}).get(page, {})
+        main = next((p for p in paths if kinds.class_of(p) is kinds.PDF), paths[0])
+        out.append({"path": main, "page": page, "title": there.get("content") or titles.get(page, ""),
+                    "notes": there.get("notes"), "open_comments": there.get("open_comments")})
+    return sorted(out, key=lambda x: x["path"])
+
+
 def preview(link: dict, selection: dict) -> dict:
     """What saving ``selection`` would do (``evaluate``): ``{files, bytes,
     by_format: {pdf, markdown, image, other}, large, keep_bytes, over_cap,
@@ -423,17 +458,28 @@ def preview(link: dict, selection: dict) -> dict:
     without their bytes), whether they are more than the vault's rounds read
     (``cap_of``), the pages that leave (``_leaving``), the ``.gammaignore``
     it writes (``text``), and whether that replaces nothing a person wrote
-    (``rules_ours``: the vault has none, or Gamma's)."""
+    (``rules_ours``: the vault has none, or Gamma's). A work folder of
+    another server stores every ticked file there, which its dialog says:
+    ``uploads: {files, bytes}``, the files whose bytes go there and what
+    they weigh (all but the ``large`` ones, listed without their bytes),
+    and ``secrets``, the ticked files whose names say they hold secrets
+    (gamma/documents/text.py ``is_secret``), by their paths."""
+    from ..documents.text import is_secret
+
     chosen = evaluate(link, selection)
     files, selected = chosen.walk.files, chosen.selected
     formats = Counter(files[p][1] if files[p][1] in _SHOWN else "other" for p in selected)
     cap, keep = cap_of(link), config.vault_keep_bytes()
-    return {"files": len(selected), "bytes": sum(files[p][0] for p in selected),
-            "by_format": {k: formats[k] for k in (*_SHOWN, "other")},
-            "large": sum(1 for p in selected if files[p][0] > keep and kinds.class_of(p, work=True) is kinds.FILE),
-            "keep_bytes": keep, "over_cap": len(selected) > cap, "cap": cap,
-            "leaving": _leaving(link, selected), "joined": chosen.joined, "text": text_of(chosen),
-            "rules_ours": not chosen.rules.exists or chosen.rules.ours}
+    large = {p for p in selected if files[p][0] > keep and kinds.class_of(p, work=True) is kinds.FILE}
+    out = {"files": len(selected), "bytes": sum(files[p][0] for p in selected),
+           "by_format": {k: formats[k] for k in (*_SHOWN, "other")},
+           "large": len(large), "keep_bytes": keep, "over_cap": len(selected) > cap, "cap": cap,
+           "leaving": _leaving(link, selected), "joined": chosen.joined, "text": text_of(chosen),
+           "rules_ours": not chosen.rules.exists or chosen.rules.ours}
+    if link["remote_url"]:
+        out["uploads"] = {"files": len(selected) - len(large), "bytes": sum(files[p][0] for p in selected - large)}
+        out["secrets"] = sorted(p for p in selected if is_secret(p))
+    return out
 
 
 def check(link: dict, chosen: Chosen, base_hash: str) -> None:

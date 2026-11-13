@@ -88,7 +88,7 @@ import {
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph, HighlightIcon, SquareCheckIcon,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, IndentIcon, InfoIcon, LabelGlyph, LabelIcon, OutdentIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
-  RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
+  RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UnlinkIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
   PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, OnePaneIcon,
   StopIcon, GlobeIcon, ChevronRightIcon, FlagIcon,
@@ -9655,6 +9655,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // renames, and whether it is in the library.
   const work = useWorkFolderActions({
     tree: workTree, pages: pagesById, focusedId: focusedBlockId, focusedBlock, vault, setStatus, confirm: setConfirmBox, openPage, tasks,
+    owner: !shareMode && actingRole(workspace) === "owner",
     reload: async (ids) => {
       await fetchHomeBlocks();
       if (ids.includes(focusedBlockIdRef.current)) loadBlocksForBlock(focusedBlockIdRef.current);
@@ -15114,6 +15115,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               const [up, down] = [folderNeighbour(libTree, id, -1), folderNeighbour(libTree, id, 1)];
               const stepping = lib.organize && homeMode && homeSort === "manual" && folders.length === 1 && !inWork;
               const choose = folders.length === 1 && lib.organizeIn(id).chooseFiles ? work.chooser(id) : null;
+              // A work folder no vault of this server keeps: its owner's way out.
+              const letGo = folders.length === 1 ? work.letGo(id) : null;
               // Move to: the library's folders every one of them may go
               // into, in the flyout's order (folderRules moveTargets).
               const into = folders.map((f) => new Set(lib.organizeIn(f).moveTargets));
@@ -15195,6 +15198,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   ),
                 ],
                 [
+                  letGo && (
+                    <MenuItem key="letgo" icon={UnlinkIcon} danger
+                      title={t("Free this folder from the computer that syncs it, when that computer is gone")}
+                      onClick={() => { setHomeMenu(null); letGo(); }}>{t("Let go of this work folder…")}</MenuItem>
+                  ),
                   lib.organizeIn(id).delete && (
                     <MenuItem key="delete" icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolder(id); }}>{t("Delete")}</MenuItem>
                   ),

@@ -533,8 +533,8 @@ def create_mirror(owner: str, remote_url: str, token: str, *, name: str = "", mo
             from .folder_links import pushing_vault  # local: only a link to an existing workspace asks
 
             if pushing_vault(workspace_id):
-                raise ValueError("that workspace has a synced vault that pushes everything from this computer: "
-                                 "let it push only PDFs, or only pull, first")
+                raise ValueError("that workspace has a synced vault that pushes everything into it, from this "
+                                 "computer or another: let it push only PDFs, or remove it, first")
         with connect_users_db() as conn:  # (gamma/zotero_sync.py imports this module: plain SQL here)
             if conn.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ?", (workspace_id,)).fetchone():
                 raise ValueError("that workspace is kept in step with a Zotero library — remove that link first")

@@ -552,10 +552,12 @@
     return r;
   }
 
-  // Push: off / PDFs / everything, as three buttons; `everything` shut where it cannot be, `noEverything` saying why.
-  const FAR_PUSH = 'A vault of another server pushes PDFs at most, for now';
+  // Push: off / PDFs / everything, as three buttons; `everything` shut where it cannot be, `noEverything` saying why;
+  // with `locked`, every one but the setting shut, `locked` saying why (a work folder of another server).
+  const FAR_PUSH = 'A vault of another server pushes PDFs at most: a work folder there is made from an empty folder';
+  const FAR_WORK = 'A work folder of another server pushes everything and pulls: remove the vault to stop';
   const WHOLE_PUSH = 'A vault of the whole library cannot push everything: make one of a folder';
-  function pushSeg(value, onPick, noEverything) {
+  function pushSeg(value, onPick, noEverything, locked) {
     const seg = document.createElement('span');
     seg.className = 'seg';
     seg.setAttribute('role', 'group');
@@ -565,7 +567,10 @@
       b.dataset.push = word;
       b.textContent = text;
       b.setAttribute('aria-pressed', String(value === word));
-      if (word === 'everything' && noEverything) {
+      if (locked && value !== word) {
+        b.disabled = true;
+        b.title = locked;
+      } else if (word === 'everything' && noEverything) {
         b.disabled = true;
         b.title = noEverything;
       }
@@ -745,7 +750,7 @@
   function openVault(i) {
     vaultView = i.key;
     renderSync();
-    if (i.work && i.mine && i.agents) runKept(i, 'check-agents');
+    if (i.agentHere && i.mine && i.agents) runKept(i, 'check-agents');
   }
 
   // A vault's own view: where it is and how it stands, its switches (a work
@@ -780,13 +785,16 @@
     const shut = i.seen ? 'Another account made this vault: it, or an editor of the workspace, acts on it.'
       : i.away ? 'Your account is no longer a member of its workspace: nothing is pulled or pushed.' : '';
     if (i.scope === 'folder') {
-      const rows = [switchRow([['Pull', pullSwitch('vaultPull', i.pull, (on) => runKept(i, 'pull', on), i.remoteUrl && 'A vault of another server pulls, for now')],
+      // a vault of another server keeps pulling; a work folder there pushes everything too, both locked
+      const farWork = Boolean(i.remoteUrl && i.work);
+      const rows = [switchRow([['Pull', pullSwitch('vaultPull', i.pull, (on) => runKept(i, 'pull', on),
+        farWork ? FAR_WORK : i.remoteUrl && 'A vault of another server pulls')],
         ['Push', pushSeg(i.push, (word) => runKept(i, 'push', word),
-          i.remoteUrl ? FAR_PUSH : i.whole && i.push !== 'everything' ? WHOLE_PUSH : '')]])];
+          farWork ? '' : i.remoteUrl ? FAR_PUSH : i.whole && i.push !== 'everything' ? WHOLE_PUSH : '', farWork ? FAR_WORK : '')]])];
       // a work folder's switch: whether the PDFs and notes it finds are added to the library too
       if (i.work) rows.push(switchRow([['Add its PDFs and notes to the library', switchOf('vaultLibrary', 'Add its PDFs and notes to the library', i.library, (on) => runKept(i, 'library', on))]]));
-      // and its agent, its maker's choice on a server that runs agents
-      if (i.work && i.mine && i.agents) rows.push(agentRow(i));
+      // and its agent, its maker's choice on a server that runs agents (a work folder of the server's own, for now)
+      if (i.agentHere && i.mine && i.agents) rows.push(agentRow(i));
       for (const sw of rows) {
         if (shut) {
           sw.title = shut;

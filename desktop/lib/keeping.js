@@ -251,10 +251,13 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // rest (a PDF a push could not deliver, a file in the way) and the names
 // its scan refused (`status.refused`: two names that differ only by case,
 // a name Windows refuses, a link), which never become pages. `whole`: a
-// vault of the whole library. `work`: a work folder (a folder of the
-// server's own that pushes everything, docs/dev/work_folders.md), with its
-// library switch (`library`) and whether its files wait to be chosen in
-// Gamma (`choosing`).
+// vault of the whole library. `work`: a work folder (docs/dev/work_folders.md),
+// as the link's `work` says (a server from before it: a folder of the
+// server's own that pushes everything), with its library switch (`library`)
+// and whether its files wait to be chosen in Gamma (`choosing`). A work
+// folder of another server, made from an empty folder there, pushes
+// everything and pulls, both locked (REMOTE_WORK_RULE). `agentHere`: a work
+// folder of the server's own, the only one an agent works in, for now.
 //
 // `roles` is the workspaces the server's account may open, as its `GET
 // /api/session` lists them (`[{id, role}]`; null: not read). The server
@@ -302,9 +305,11 @@ function vault(server, link, servers, roles = null, agents = null, computers = n
     changed, left: left.length, untracked: s.untracked || 0,
     away: Boolean(roles && !link.remote_url && !roles.some((w) => w.id === link.workspace_id)), seen: !link.dest,
     whole: scope === 'folder' && link.folder_id === 'root',
-    work: scope === 'folder' && !link.remote_url && link.folder_id !== 'root' && pushWord(link.push) === 'everything',
+    work: scope === 'folder' && link.folder_id !== 'root'
+      && (typeof link.work === 'boolean' ? link.work : !link.remote_url && pushWord(link.push) === 'everything'),
     library: Boolean(link.library), choosing: Boolean(link.choosing), mine: Boolean(link.mine),
   };
+  item.agentHere = item.work && !link.remote_url;
   const agent = link.agent || null;
   const run = agent && agent.running;
   Object.assign(item, {
@@ -312,7 +317,7 @@ function vault(server, link, servers, roles = null, agents = null, computers = n
     agentReady: agent ? (agent.ready === undefined ? null : agent.ready) : null, agentProblem: (agent && agent.problem) || '',
     agentRunning: run ? String(run.detail || 'Working') : '', agentChat: Boolean(run && run.kind === 'chat'),
     agentRuns: agent && agent.runs === 'ask' ? 'ask' : 'never',
-    agents: item.work && Array.isArray(agents) ? agentChoices(agents) : null,
+    agents: item.agentHere && Array.isArray(agents) ? agentChoices(agents) : null,
   });
   item.computer = link.remote_url && !item.seen && computers && Array.isArray(computers.links)
     ? computerLine(item, link, computers) : null;
@@ -550,10 +555,25 @@ function summarize(items) {
 
 // --- what the shell says about a vault ---------------------------------------------
 
-// What a vault of another server may be, for now: it pulls, and pushes PDFs
-// at most (docs/research/vaults.md "Not built"). The dialog, the vault's
-// view and the shell's switches (main.js setPull, changePush) keep to it.
-const REMOTE_RULE = 'A vault of another server pulls, and pushes PDFs at most, for now.';
+// What a vault of another server may be: it pulls, and pushes PDFs at most,
+// unless it is a work folder there, which is made from an empty folder of
+// that server (main.js makeRemoteWorkFolder) and only then pushes
+// everything. The dialog, the vault's view and the shell's switches
+// (main.js setPull, changePush) keep to it.
+const REMOTE_RULE = 'A vault of another server pulls, and pushes PDFs at most: a work folder there is made from an empty folder.';
+
+// What a work folder of another server is, whatever its switches are asked:
+// it pushes everything and pulls, until it is removed (the server refuses
+// the rest too: its release would read this computer's library).
+const REMOTE_WORK_RULE = 'A work folder of another server pushes everything and pulls: remove the vault to stop.';
+
+// Why the empty folder `folder` of server `remote` did not become a work
+// folder there (`reason`: that server older than this app, the account only
+// a viewer there, or that server's or the host's refusal), for the bar while
+// the vault dialog asks how it is synced instead (main.js addFolderVault).
+function remoteWorkRefused(remote, folder, reason) {
+  return `“${folder}” cannot be a work folder of ${remote}: ${said(String(reason || `${remote} refused it`))} It can be synced as a vault that pulls instead.`;
+}
 
 // What a vault of the whole library may not be: a work folder, which needs
 // a folder of its own (the server's words, gamma/folder_links.py). One that
@@ -621,8 +641,8 @@ function firstRound({ path: dir, preview = {}, pull, push, folder, newFolder = f
 // A file's vault never touches its file; a vault whose directory is not
 // there, or is no longer its own (stopped: the marker gone or another
 // vault's), is forgotten without touching the disk. A work folder's files
-// not in the library go to Recently deleted, and those in it stay: both are
-// said.
+// not in the library go to Recently deleted (of the other server, for a work
+// folder there), and those in it stay: both are said.
 function removalAsk(item, removal = {}) {
   if (item.scope === 'file') {
     return { message: `Remove the synced vault of “${item.name}”?`,
@@ -634,7 +654,7 @@ function removalAsk(item, removal = {}) {
   const kept = removal.in_library || 0;
   const inPlace = removal.in_place || 0;
   const pagesSaid = files
-    ? `${files === 1 ? 'Its file not in the library goes' : `Its ${files} files not in the library go`} to Recently deleted` +
+    ? `${files === 1 ? 'Its file not in the library goes' : `Its ${files} files not in the library go`} to Recently deleted${item.remoteUrl ? ` on ${item.remote}` : ''}` +
       (kept ? `; ${kept === 1 ? 'its page in the library stays' : `its ${kept} pages in the library stay`}` : '')
     : pages ? `${pages === 1 ? 'Its page stays' : `Its ${pages} pages stay`} in Gamma` : 'It holds no pages yet';
   const stays = pagesSaid +
@@ -651,6 +671,17 @@ function removalAsk(item, removal = {}) {
   return { message,
     detail: `${stays} Keep the files in ${item.dest} as they are, or move the files the sync wrote to its trash, .gamma/trash; files you added or changed stay.`,
     buttons: ['Remove, keep the files', 'Remove, move them to the trash', 'Cancel'], choices: ['keep', 'trash', null] };
+}
+
+// The question when a work folder of another server cannot be removed as it
+// should, its server not reached (`reason`, the host's words): `{ message,
+// detail, buttons }`, button 0 removing it all the same, which forgets it on
+// this computer and leaves the folder a work folder there until its owner
+// lets go of it.
+function farRemovalAsk(item, reason) {
+  return { message: `${item.remote} cannot be reached: remove the work folder “${item.name}” all the same?`,
+    detail: `${said(String(reason || `${item.remote} does not answer`))} Remove anyway, and this computer forgets it; the folder stays a work folder on ${item.remote}, its files locked, until the workspace's owner lets go of it there. Or cancel, and remove it once ${item.remote} answers.`,
+    buttons: ['Remove anyway', 'Cancel'] };
 }
 
 // The question before a force pull (the files become what Gamma holds) or
@@ -750,6 +781,6 @@ function roundSaid(item, status) {
   return `${item.name} is up to date${parts.length ? `: ${parts.join(', ')}` : ''}.`;
 }
 
-module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, WHOLE_RULE, firstRound, removalAsk, forceAsk,
+module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, REMOTE_WORK_RULE, remoteWorkRefused, WHOLE_RULE, firstRound, removalAsk, farRemovalAsk, forceAsk,
   goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, runsAsk, runsSaid, computerLine, computerFailed, computerSaid,
   computerStranded, computerOtherAccount };
