@@ -66,7 +66,7 @@ export async function mcpScenarios(env) {
       code_challenge_method: "S256", state: "browser-test", scope });
     return { url: `${server.base}/oauth/authorize?${params}`, client, redirect, verifier };
   }
-  const FEEDBACK_BOX = "Also let it answer my comments on work-folder files (reply and resolve)";
+  const FEEDBACK_BOX = "Answer my comments on work-folder files";
 
   await step("mcp: browser login, workspace approval, token exchange and revocation", async () => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });

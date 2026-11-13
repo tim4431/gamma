@@ -998,7 +998,9 @@ load the library." and a Try again button.
 
 `AuthShell` in `auth/LoginPage.jsx` frames every page shown before or
 instead of the app: the login (also a share link's sign-in gate), an
-unavailable workspace, a session conflict and a blocked share link. It
+unavailable workspace, a session conflict, a blocked share link and an
+assistant's consent (wider, with the settings' `Section` and `Toggle`
+inside, [mcp.md](mcp.md) "Asking first"). It
 shows the brand mark (`shared/ui/BrandMark.jsx`, the favicon artwork) over the name, or over the
 situation's headline on a status page. The card hangs at a fixed height near
 the optical centre instead of being centred, so an error that appears

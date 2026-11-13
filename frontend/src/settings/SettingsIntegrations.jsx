@@ -1,7 +1,7 @@
 import React from "react";
 import { guideEvents } from "../guide/events.js";
 import { API, apiJson } from "../shared/lib/utils";
-import { CopyField, PaneHead, Section, Row, Segmented, Step } from "./SettingsKit";
+import { CopyField, PaneHead, Section, Row, Segmented, Step, Toggle } from "./SettingsKit";
 import { LinkIcon, KeyIcon, MonitorIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon } from "../shared/ui/Icons";
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshSetupCommand,
   claudeRemoveCommands, codexRemoveCommands, dshRemoveCommand } from "./assistantSetup";
@@ -243,11 +243,9 @@ export function IntegrationSettings({ workspaceId }) {
         {editing?.id === item.id ? <div className="integrationDetails integrationEdit">
           <WorkspacePicker workspaces={spaces} value={editing.access} disabled={busy} roles={item.scope !== "write"}
             label={t("Workspaces {name} may read", { name: item.name })} onChange={(value) => setEditing({ ...editing, access: value })} />
-          {editsIn(editing.access) ? <label className="integrationAsk">
-            <input type="checkbox" checked={editing.asks} disabled={busy} onChange={(e) => setEditing({ ...editing, asks: e.target.checked })} />
-            <span>{t("Ask me before each change it makes")}
-              <span className="settingDesc">{t("The assistant shows Gamma's question in its own window. One that cannot show it changes nothing while this is on.")}</span></span>
-          </label> : null}
+          {editsIn(editing.access) ? <Toggle icon={ShieldIcon} label={t("Ask me before each change it makes")} checked={editing.asks}
+            disabled={busy} onChange={(asks) => setEditing({ ...editing, asks })}
+            hint={t("The assistant shows Gamma's question in its own window. One that cannot show it changes nothing while this is on.")} /> : null}
           <div className="integrationActions">
             <button className="uiBtn primary" disabled={busy || !(editing.access.all || editing.access.ids.length)} onClick={saveAccess}>{t("Save")}</button>
             <button className="uiBtn" disabled={busy} onClick={() => setEditing(null)}>{t("Cancel")}</button>

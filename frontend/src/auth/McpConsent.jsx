@@ -1,9 +1,11 @@
 import React from "react";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { API, apiJson, setExpectedUser } from "../shared/lib/utils";
-import { LoginPage, SessionConflictPage } from "./LoginPage";
+import { AuthShell, LoginPage, SessionConflictPage } from "./LoginPage";
+import { Section, Toggle } from "../settings/SettingsKit";
 import { WorkspacePicker, accessBody, edits } from "../settings/WorkspacePicker";
 import { Splash } from "../shared/ui/BrandMark";
+import { AlertCircleIcon, CheckIcon, EyeIcon, LockIcon, MessageSquareIcon, PenIcon, ShieldIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
 // A standalone sign-in gate: no workspace/session restoration runs while the
@@ -120,52 +122,57 @@ export default function McpConsent({ requestId, userCode }) {
   const editing = edits(access);
   // The splash stays until the request is read: the card shows whole.
   if (!details && !error) return <Splash />;
-  return <div className="app mcpConsentPage"><div className="loginPage"><div className="loginCard mcpConsent">
-    <div className="loginTitle">{t("Gamma")}</div>
-    <h1 className="loginSubtitle">{t("Connect your library")}</h1>
-    {done ? <p role="status">{done === "allowed"
-      ? t("{name} is connected. Go back to your terminal: the setup finishes there.", { name: details.client_name })
-      : t("{name} was not connected. You can close this page.", { name: details.client_name })}</p>
+  const name = details?.client_name || t("An assistant");
+  // What the connection may do, as the choices above stand: one line each.
+  const can = [
+    [EyeIcon, t("Read pages, notes, highlights, and PDF text.")],
+    editing ? [PenIcon, t("Create, edit and move notes in the workspaces marked Edit. Never deletes anything, or changes pages, folders or settings.")] : null,
+    editing ? [ShieldIcon, asks ? t("Asks you before each change, in the assistant's own window; one that cannot ask changes nothing.")
+      : t("Changes notes without asking you first.")] : null,
+    feedback ? [MessageSquareIcon, t("Answer comments on your work folders' files: reply and resolve.")] : null,
+    editing || feedback ? null : [LockIcon, t("Cannot edit or delete your library.")],
+  ].filter(Boolean);
+  return <AuthShell headline={details ? t("Connect {name}", { name }) : t("Connect your library")} className="mcpConsent">
+    {details ? <p className="mcpWho">
+      <span>{t("Signed in as {username}", { username: <strong>{details.username}</strong> })}</span>
+      {done ? null : <button type="button" className="uiBtn ghost sm" disabled={busy} onClick={switchAccount}>{t("Use another account")}</button>}
+    </p> : null}
+    {done ? <div className="loginNotice" role="status"><CheckIcon size={16} aria-hidden="true" /><span>{done === "allowed"
+      ? t("{name} is connected. Go back to your terminal: the setup finishes there.", { name })
+      : t("{name} was not connected. You can close this page.", { name })}</span></div>
     : details ? <>
-      <p><strong>{details.client_name}</strong> {t("wants to connect to Gamma.")}</p>
-      {device ? <p className="mcpDeviceCode">{t("Check that your terminal shows this code:")} <strong>{details.user_code}</strong></p> : null}
-      <p className="loginConflictHint">{t("Signed in as")} <strong>{details.username}</strong>.</p>
-      <label>{t("Workspaces it may read")}</label>
-      <WorkspacePicker workspaces={details.workspaces} value={access} onChange={setAccess} disabled={busy}
-        label={t("Workspaces it may read")} roles />
-      {editing ? <label className="mcpFeedback">
-        <input type="checkbox" checked={asks} disabled={busy} onChange={(e) => setAsks(e.target.checked)} />
-        {" "}{t("Ask me before each change it makes")}
-      </label> : null}
-      <label className="mcpFeedback">
-        <input type="checkbox" checked={feedback} disabled={busy} onChange={(e) => setFeedback(e.target.checked)} />
-        {" "}{t("Also let it answer my comments on work-folder files (reply and resolve)")}
-      </label>
-      <div className="mcpPermissions">
-        <strong>{editing ? t("Read and edit notes") : feedback ? t("Read and answer feedback") : t("Read-only access")}</strong>
-        <ul><li>{t("Read pages, notes, highlights, and PDF text.")}</li>
-          {editing ? <li>{t("Create, edit and move notes in the workspaces marked Edit. Never deletes anything, or changes pages, folders or settings.")}</li> : null}
-          {editing ? <li>{asks ? t("Asks you before each change, in the assistant's own window; one that cannot ask changes nothing.")
-            : t("Changes notes without asking you first.")}</li> : null}
-          {feedback ? <li>{t("Answer comments on your work folders' files: reply and resolve.")}</li> : null}
-          {editing || feedback ? null : <li>{t("Cannot edit or delete your library.")}</li>}</ul>
-        <p className="loginConflictHint">{t("Content the assistant reads is shared with its provider.")}</p>
-      </div>
-      <p className="loginConflictHint">{t("Access lasts 90 days. Change the workspaces or disconnect any time in Settings → AI → Integrations.")}</p>
-      {device ? <p className="loginConflictHint">{t("Only allow it if you ran its setup command yourself and the codes match.")}</p>
+      {device ? <div className="mcpCode">
+        <span className="settingDesc">{t("Check that your terminal shows this code:")}</span>
+        <strong>{details.user_code}</strong>
+      </div> : null}
+      <Section title={t("Workspaces it may read")}>
+        <WorkspacePicker workspaces={details.workspaces} value={access} onChange={setAccess} disabled={busy}
+          label={t("Workspaces it may read")} roles />
+      </Section>
+      <Section title={t("Permissions")}>
+        {editing ? <Toggle icon={ShieldIcon} label={t("Ask me before each change it makes")} checked={asks} onChange={setAsks}
+          disabled={busy} hint={t("Gamma's question shows in the assistant's own window.")} /> : null}
+        <Toggle icon={MessageSquareIcon} label={t("Answer my comments on work-folder files")} checked={feedback}
+          onChange={setFeedback} disabled={busy} hint={t("Reply to and resolve them")} />
+      </Section>
+      <Section title={editing ? t("Read and edit notes") : feedback ? t("Read and answer feedback") : t("Read-only access")}>
+        <ul className="mcpCan">{can.map(([Icon, text]) => <li key={text}><Icon size={14} aria-hidden="true" />{text}</li>)}</ul>
+      </Section>
+      <p className="settingDesc mcpFoot">{t("Content the assistant reads is shared with its provider.")}{" "}
+        {t("Access lasts 90 days. Change the workspaces or disconnect any time in Settings → AI → Integrations.")}</p>
+      {device ? <p className="settingDesc mcpFoot">{t("Only allow it if you ran its setup command yourself and the codes match.")}</p>
         : <details className="mcpConnectionDetails"><summary>{t("Connection details")}</summary>
-          <p className="loginConflictHint">{t("The assistant provided its name. Only approve if you started this connection.")}</p>
-          <p className="loginConflictHint mcpCallback">{t("Returns to: {redirect_uri}", { redirect_uri: details.redirect_uri })}</p>
+          <p className="settingDesc">{t("The assistant provided its name. Only approve if you started this connection.")}</p>
+          <p className="settingDesc mcpCallback">{t("Returns to: {redirect_uri}", { redirect_uri: details.redirect_uri })}</p>
         </details>}
       <div className="mcpConsentActions">
-      <button className="loginBtn" disabled={busy || !(access.all || access.ids.length)} onClick={() => decide(true)}>
-        <MorphText>{busy ? t("Connecting…") : editing ? t("Allow reading and editing")
-          : feedback ? t("Allow reading and answering") : t("Allow read-only access")}</MorphText>
-      </button>
-      <button className="loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>
+        <button className="loginBtn" disabled={busy || !(access.all || access.ids.length)} onClick={() => decide(true)}>
+          <MorphText>{busy ? t("Connecting…") : editing ? t("Allow reading and editing")
+            : feedback ? t("Allow reading and answering") : t("Allow read-only access")}</MorphText>
+        </button>
+        <button className="loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>
       </div>
     </> : null}
-    {error ? <p className="loginError" role="alert">{error}</p> : null}
-    {done ? null : <button className="loginGuestBtn" disabled={busy} onClick={switchAccount}>{t("Use another account")}</button>}
-  </div></div></div>;
+    {error ? <div className="loginError" role="alert"><AlertCircleIcon size={16} aria-hidden="true" /><span>{error}</span></div> : null}
+  </AuthShell>;
 }

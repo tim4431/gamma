@@ -42,9 +42,9 @@ codex mcp add gamma --url https://gamma.example.com/mcp
 
 Codex opens the browser. If sign-in is interrupted, run `codex mcp login gamma`
 to retry. Sign in with your Gamma account, tick the workspaces, mark any
-whose notes it may also edit **Edit** ("Editing notes"), and approve, or tick
-**Also let it answer my comments on work-folder files** to let it reply to
-and resolve them ("Answering feedback").
+whose notes it may also edit **Edit** ("Editing notes"), and approve, or turn
+on **Answer my comments on work-folder files** to let it reply to and
+resolve them ("Answering feedback").
 Start a new Codex chat. There is no token to copy
 and no environment variable to set. This works with local browser-based Gamma
 and self-hosted servers; the Gamma desktop app is not required. Local installations
@@ -579,10 +579,21 @@ way and not the client's own prompt or a step-up sign-in:
   show a question, or it connected before the connection could edit) gets
   `CANNOT_ASK`: nothing changed, and the steps to restart it or to turn
   asking off. So does one whose `elicit_form` fails.
-- **Where it is set.** On the consent page, **Ask me before each change it
-  makes** under the workspaces once one is Edit (ticked; its summary says
-  which way); in a connection's **Choose workspaces**, the same box; the
-  connection's row adds "changes without asking" once it is off.
+- **Where it is set.** On the consent page, the switch **Ask me before each
+  change it makes** under Permissions once a workspace is Edit (on; its
+  summary says which way); in a connection's **Choose workspaces**, the same
+  `Toggle`; the connection's row adds "changes without asking" once it is
+  off.
+
+**The consent page** (`auth/McpConsent.jsx`, an MCP client's sign-in and a
+setup command's) is `AuthShell`'s card, wider (`.loginCard.mcpConsent`),
+built from the settings' own widgets: the headline "Connect Codex" over who
+is signed in, with **Use another account** beside it; a setup command's code
+in a box of its own; `Section`s for the workspaces (the `WorkspacePicker`
+rows with View / Edit), the Permissions (`Toggle` rows: asking first, once a
+workspace is Edit; answering feedback) and what it may do (one icon line
+each, the section named Read-only access, Read and edit notes or Read and
+answer feedback); the footnotes; then the primary Allow and Cancel.
 
 ## Self-hosted and remote connections
 
@@ -633,9 +644,9 @@ Two scopes exist, `gamma:read` and `gamma:feedback` (`mcp_oauth.SCOPES`): a
 client may register with and ask for either or both, every client is stored
 with both, and the 401 challenge still names `gamma:read` alone, so a client
 that reads it asks to read. What the connection may do is decided on the
-consent page, not by the request: its checkbox **Also let it answer my
-comments on work-folder files** is ticked when the client asked for
-`gamma:feedback`, and the person may tick or untick it either way. Ticked,
+consent page, not by the request: its switch **Answer my comments on
+work-folder files** is on when the client asked for `gamma:feedback`, and
+the person may turn it on or off either way. Ticked,
 the code carries both scopes, the token is made with the `feedback` scope
 and the token response says `gamma:read gamma:feedback`; unticked, a read
 token as before. `gamma:write` is refused at registration
