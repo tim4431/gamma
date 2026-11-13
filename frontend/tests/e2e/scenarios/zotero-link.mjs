@@ -663,7 +663,7 @@ export async function zoteroLinkScenarios(env) {
         assertEq(await button(card, "Download now").count(), 0, "nothing to download");
         await pop.getByText("Attach a document", { exact: true }).waitFor();
         const chooser = page.waitForEvent("filechooser");
-        await pop.locator(".ctxMenuItem", { hasText: "Upload a PDF…" }).click();
+        await pop.locator(".ctxMenuItem", { hasText: "Upload a file…" }).click();
         await (await chooser).setFiles({ name: "my-linked-paper.pdf", mimeType: "application/pdf",
           buffer: Buffer.from(makePdf([["My own copy of the linked paper"]])) });
         await waitForPdf(page);

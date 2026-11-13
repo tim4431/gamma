@@ -39,7 +39,7 @@ export async function vaultScenarios(env) {
     const texts = async (id) => (await blocksOf(id)).map((b) => b.content);
     const pageTitled = async (title) => (await user.api("/api/blocks/root/children")).children.find((p) => (p.content || p.title) === title);
     // A file written as an editor that finished a while ago would leave it: a
-    // round takes a note only once it has settled (vault_sync SETTLE_NOTE_S).
+    // round takes a note only once it has settled (vault.kinds.SETTLE_NOTE_S).
     const write = (file, text) => {
       fs.writeFileSync(file, text);
       const before = new Date(Date.now() - 10_000);
@@ -234,7 +234,7 @@ export async function vaultScenarios(env) {
         await page.click("button[aria-label='Document']");
         const doc = page.locator(".attachPopover");
         await doc.locator(".ctxMenuItem", { hasText: "Download the PDF" }).waitFor();
-        for (const gone of ["Replace the PDF…", "Push from a file on this computer…", "Detach the PDF…"]) {
+        for (const gone of ["Replace the file…", "Push from a file on this computer…", "Detach the file…"]) {
           assertEq(await doc.locator(".ctxMenuItem", { hasText: gone }).count(), 0, `no ${gone}`);
         }
         await page.click("button[aria-label='Document']");
@@ -391,7 +391,7 @@ export async function vaultScenarios(env) {
 
         await page.goto(at(doc.id));
         await page.click("button[aria-label='Document']");
-        await page.locator(".attachPopover .ctxMenuItem", { hasText: "Replace the PDF…" }).waitFor();
+        await page.locator(".attachPopover .ctxMenuItem", { hasText: "Replace the file…" }).waitFor();
         const push = page.locator('.attachPopover [data-guide="page.pushFile"]');
         assertEq((await push.innerText()).trim(), "Push from a file on this computer…", "the item and its guide anchor");
         await push.click();

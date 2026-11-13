@@ -4,8 +4,8 @@ The server's half of the gamma-sync client's folder sync: the two reads a
 round of ``gamma_sync.Round`` needs, Gamma to disk, which the client
 (gamma/gamma_sync.py) asks for over HTTP with a read-scope token
 (``/api/sync/folders*``). The desktop app's synced vaults pull through their
-own engine (gamma/vault_sync.py); a folder one of them kept before, with
-the layout below, is taken onto it (gamma/vault_upgrade.py).
+own engine (gamma/vault/sync.py); a folder one of them kept before, with
+the layout below, is taken onto it (gamma/vault/upgrade.py).
 
 - The folder's **manifest** (``manifest``): its subfolders as directory
   paths and, per page, the paths its files take — the page's PDF and its

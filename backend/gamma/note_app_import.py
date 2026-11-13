@@ -95,9 +95,11 @@ class Stop(Exception):
 
 
 def page_kind(props: dict) -> str:
-    """A report entry's ``kind`` (the review's PDF or page mark): "pdf" for a
-    page that owns its PDF."""
-    return "pdf" if own_hash(page_document(props)) else "page"
+    """A report entry's ``kind`` (the review's PDF or page mark): the format
+    of the document a page owns ("pdf" for a PDF, the format word for any
+    other), "page" for one that owns none."""
+    view = page_document(props)
+    return view["format"] if own_hash(view) else "page"
 
 
 def open_upload(data, refused: str, refuse=None):

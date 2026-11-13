@@ -17,7 +17,8 @@ import pytest
 
 from conftest import (account_of, doc_props, login, make_folder, make_page, make_user, mark_work_folder, work_props,
                       workspace_of)
-from gamma import folder_links, vault_disk, vault_store, vault_sync, workspaces
+from gamma import folder_links, workspaces
+from gamma.vault import disk as vault_disk, store as vault_store, sync as vault_sync
 from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page, new_block_id
 from gamma.db import connect_pages_db
@@ -193,9 +194,10 @@ def test_the_tree_lists_the_directory_whole_and_what_is_never_tracked_closed(own
     assert tree["dir"] == "" and tree["base"] == "file" and tree["capped"] is False
     assert tree["rules"] == {"exists": False, "ours": False, "hash": ""} and str(root) not in json.dumps(tree)
     tex = rows["main.tex"]
-    assert (tex["directory"], tex["format"], tex["language"], tex["kind"]) == (False, "text", "latex", "")
+    assert (tex["directory"], tex["format"], tex["language"], tex["kind"]) == (False, "text", "latex", "file")
     assert tex["size"] == len("\\documentclass{article}\n") and tex["mtime"] == (root / "main.tex").stat().st_mtime_ns // 10**6
-    assert rows["refs.bib"]["language"] == "bibtex" and rows["fig/a.png"]["kind"] == "picture"
+    assert rows["refs.bib"]["language"] == "bibtex" and rows["fig/a.png"]["kind"] == "file"   # a work folder's picture is a file
+    assert rows["notes.md"]["kind"] == "notes" and rows["paper.pdf"]["kind"] == "pdf"
     assert rows["fig"]["directory"] and rows["fig"]["walked"] is True and rows["sub/deep"]["walked"] is True
     assert rows[".hidden"]["never"] == "dot" and rows[".hidden"]["walked"] is False
     assert rows["node_modules"]["never"] == "node_modules" and rows[".gamma"]["never"] == "dot"
@@ -336,11 +338,15 @@ def test_the_preview_counts_what_a_selection_tracks_and_what_leaves(owner, disk,
     assert seen["files"] == 6 and seen["by_format"] == {"pdf": 3, "markdown": 2, "image": 1, "other": 0}
     assert seen["bytes"] == sum((root / p).stat().st_size for p in ("paper.md", "a.md", "figs/f1.pdf", "figs/f2.pdf",
                                                                     "pic.png", "paper.pdf"))
-    assert seen["leaving"] == [] and seen["joined"] == [] and seen["unread"] == 0 and seen["rules_ours"] is True
-    assert seen["over_cap"] is False and seen["cap"] == selection.MAX_FILES
+    assert seen["leaving"] == [] and seen["joined"] == [] and seen["large"] == 0 and seen["rules_ours"] is True
+    assert seen["over_cap"] is False and seen["cap"] == selection.MAX_FILES and seen["keep_bytes"] == 64 * 1024 * 1024
 
     seen = _preview(owner, link, changes=[{"path": "figs/", "on": False}, {"format": "latex", "on": True}])
-    assert seen["files"] == 6 and seen["unread"] == 2 and seen["by_format"]["other"] == 2
+    assert seen["files"] == 6 and seen["large"] == 0 and seen["by_format"]["other"] == 2
+    with monkeypatch.context() as m:        # the keep limit: files of other formats than notes and PDFs past it are listed
+        m.setenv("GAMMA_VAULT_KEEP_MB", "0")
+        small = _preview(owner, link, changes=[{"path": "figs/", "on": False}, {"format": "latex", "on": True}])
+    assert small["large"] == 3 and small["keep_bytes"] == 0 and small["files"] == 6
     assert [(x["path"], x["page"], x["notes"], x["open_comments"]) for x in seen["leaving"]] == [
         ("figs/f1.pdf", f1, 1, 1), ("figs/f2.pdf", _page_of(link, "figs/f2.pdf"), 0, 0)]
     rules = ignore_rules.Rules.parse(seen["text"])

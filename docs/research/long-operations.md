@@ -236,7 +236,7 @@ files 120 / 3,400 · 1.2 GB / 8.0 GB", read every 3 s while the round runs
 folder link's `Round` took a `progress` callback in place of the `say`
 the server threw away: the files fetched of those to fetch and the PDFs'
 bytes by the manifest's `pdf_size`. Folder links have since become synced
-vaults, and a vault's round (`vault_sync.Round`) takes the same callback:
+vaults, and a vault's round (`vault.sync.Round`) takes the same callback:
 the files push takes and then the pages pull looks at, and the bytes of
 the PDFs it pushes. `folder_links._progress_writer` writes it into the
 vault's status once the round has run a second and at most once a second

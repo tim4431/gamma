@@ -8,6 +8,7 @@ import zipfile
 from conftest import doc_props, make_folder, make_page
 
 from gamma.markdown_export import build_tree, collect_and_rewrite, render_readable, slugify
+from gamma.routers.export import _collect_cards, _collect_marks
 
 
 def _put_children(guest, page_id, tree):
@@ -425,6 +426,25 @@ def test_logseq_export_without_area_highlights_never_opens_the_pdf(tmp_path, mon
     assert render_area_images(tmp_path / "paper.pdf", "paper", [text]) == []
     assert render_area_images(tmp_path / "paper.pdf", "paper", []) == []
     assert opens == []
+
+
+def test_the_annotated_pdfs_marks_and_cards_leave_a_pictures_region_out():
+    """A region of a picture is a highlight to the kind column but no place
+    on a PDF page: the annotated PDF's marks and cards read is_highlight,
+    so a page that carries one (its picture replaced by a PDF, say) exports
+    without a KeyError and without a mark for it."""
+    pos = {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": {"x1": 1, "y1": 2, "x2": 3, "y2": 4},
+           "rects": [{"x1": 1, "y1": 2, "x2": 3, "y2": 4}]}
+    region = {"width": 1200, "height": 800, "boundingRect": {"x1": 10, "y1": 20, "x2": 300, "y2": 200},
+              "rects": [{"x1": 10, "y1": 20, "x2": 300, "y2": 200}], "hash": "i1"}
+    blocks = [{"id": "h1", "parent_id": "p", "position": "a0", "content": "on the page", "kind": "highlight",
+               "properties": {"pdf_position": pos, "color": "#ffe066aa"}},
+              {"id": "r1", "parent_id": "p", "position": "a1", "content": "on the picture", "kind": "highlight",
+               "properties": {"image_position": region, "color": "#ffe066aa"}},
+              {"id": "n1", "parent_id": "p", "position": "a2", "content": "a note", "kind": "note", "properties": {}}]
+    assert [m["id"] for m in _collect_marks(blocks)] == ["h1"]
+    cards = _collect_cards(blocks, notes=True, threads={"r1": [["a thread"]]})
+    assert len(cards) == 1 and cards[0]["position"] == pos
 
 
 def test_missing_page_404(guest):

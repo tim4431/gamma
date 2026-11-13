@@ -1,11 +1,13 @@
 """Page-first endpoints (/api/pages*): create a page, look pages up by file
-or by id, make a page from a stored markdown file, attach, replace or
-detach a page's PDF, and put a work folder's file in the library or take it
-out. A
-page is a root block that may CARRY a PDF; the PDF is an action on an
-existing page, not the way pages come into being. (``POST
+or by id, make a page from a stored markdown file or from a stored file of
+any other format (``by-file``), attach, replace or detach a page's document,
+and put a work folder's file in the library or take it out. A page is a
+root block that may CARRY a document (a PDF, a picture, a text file, a
+recording, any stored file: docs/dev/documents.md); the document is an
+action on an existing page, not the way pages come into being. (``POST
 /api/blocks/by-doc/{doc_id}`` is the lookup-or-create BY ATTACHMENT path for
-PDF ingest and the extension's dedup.)
+PDF ingest and the extension's dedup; ``by-file`` is the same for a stored
+file named with its extension.)
 
 Every endpoint but ``by-docs`` and ``summaries`` (any member, or for
 ``summaries`` a share, which reads the pages it reaches), ``family`` (any
@@ -26,7 +28,7 @@ from pydantic import BaseModel, Field
 
 from .. import config, folder_links, highlight_relocate, jobs, linked_files, pdf_index, pdf_meta, publish, storage, \
     upload_gc
-from ..auth import (actor_of, link_ratelimit, require_user_id, require_ws, require_ws_writer, resolve_ws,
+from ..auth import (DISK_CLIENT, actor_of, link_ratelimit, require_user_id, require_ws, require_ws_writer, resolve_ws,
                     share_scope, writer_client)
 from ..blocks_store import (
     BLOCK_COLUMNS,
@@ -40,17 +42,19 @@ from ..blocks_store import (
     get_or_create_doc_page,
     load_props,
     page_ancestors,
-    page_for_doc,
+    page_for_file,
     page_parents,
     page_root_id,
     pages_for_docs,
+    pages_for_files,
     sub_pages,
     valid_block_id,
     write_lock,
 )
 from ..db import connect_pages_db, connect_users_db, get_profile, safe_doc_id
-from ..documents.model import (document, document_props, document_title, file_hash, in_place, is_pdf, own_hash,
-                               page_document, stored_name)
+from ..documents.formats import SNIFF_BYTES, stored_format
+from ..documents.model import (FORMAT_EXT, document, document_props, document_title, file_hash, in_place, is_listed,
+                               is_pdf, own_hash, page_document, parse_upload_url, stored_name, upload_url)
 from ..json_response import OrjsonResponse
 from ..markdown_zip_import import markdown_page
 from ..logbuf import log
@@ -86,6 +90,7 @@ class PageCreate(BaseModel):
 class AttachRequest(BaseModel):
     doc_id: str = ""              # content hash of an uploaded PDF, or the URL hash a proxied one gets
     source_url: str = ""          # where the viewer loads it from (not stored when it is doc_id's own upload path)
+    file: str = ""                # a stored file of any format by its name, <hash><ext> (alone: no doc_id, no source_url)
     original_filename: str = ""   # display name; becomes the title while it is still automatic
     # PUT only: how long the replaced stored file is kept once nothing needs it
     # (upload_gc.retain; a sync sending each new build keeps a day of the ones before)
@@ -227,21 +232,27 @@ def page_family(page_id: str, request: Request):
 
 
 class DocsLookup(BaseModel):
-    doc_ids: list[str] = []
+    doc_ids: list[str] = []   # PDFs and markdown files by hash
+    files: list[str] = []     # stored files of any format by name, <hash><ext>
 
 
 @router.post("/pages/by-docs")
 def pages_by_docs(payload: DocsLookup, request: Request):
-    """Which pages these stored files became: ``{doc_ids: [<hash>, ...]}`` →
-    ``{"pages": {hash: {id, title}}}`` — a hash matches the page owning it
-    as its PDF (``doc.hash``) or the note page made from it (a markdown file's
-    ``markdown_import``); hashes with no page are absent. The file chips ask
-    this once per page render to show the "open page" button and label the
-    menu "Open page" / "Open as page". Any member."""
+    """Which pages these stored files became: ``{doc_ids: [<hash>, ...],
+    files: ["<hash><ext>", ...]}`` → ``{"pages": {hash: {id, title}},
+    "files": {name: {id, title}}}`` — a hash matches the page owning it as
+    its PDF (``doc.hash``) or the note page made from it (a markdown file's
+    ``markdown_import``), a name the library page owning that stored file as
+    its document, of any format, or the note page made from a markdown one
+    (``pages_for_files``); hashes and names with no page are absent. The
+    file chips ask this once per page render, by name, to show the "open
+    page" button and label the menu "Open page" / "Add to library". Any
+    member."""
     ws = require_ws(request)
     ids = [d for d in dict.fromkeys(payload.doc_ids[:500]) if d]
+    names = [n for n in dict.fromkeys(payload.files[:500]) if n]
     with connect_pages_db(ws) as conn:
-        return {"pages": pages_for_docs(conn, ids)}
+        return {"pages": pages_for_docs(conn, ids), "files": pages_for_files(conn, names)}
 
 
 class SummariesLookup(BaseModel):
@@ -319,13 +330,116 @@ def page_from_file(payload: FromFile, request: Request):
     return {"page": block_to_dict(row), "created": True, "imported": result["imported"]}
 
 
-def _attachment_body(payload: AttachRequest) -> tuple[str, str]:
-    """The checked ``(doc_id, source_url)`` of an attach or replace body:
-    ``doc_id`` is validated in shape only (like ``by-doc``, a URL-opened
-    PDF's id is the URL hash and the proxy fetches the file lazily), and
-    one of the two is required."""
+MARKDOWN_IS_A_NOTE = "A Markdown file becomes a note (POST /pages/from-file)"
+NAME_THE_FILE = "Attach a stored file by its name (file)"  # a non-PDF upload's address is no PDF to show from there
+
+
+class StoredFile:
+    """A stored file a request names (``<hash><ext>``, an upload of any
+    format), read for what it is: ``hash`` and ``ext`` its stored name's,
+    ``format`` settled on the server (``formats.stored_format`` over the
+    shown ``name``, the extension and the file's first bytes), ``size`` its
+    bytes. HTTPException 400 for a name that is no stored file's or a
+    Markdown file (``MARKDOWN_IS_A_NOTE``: a note is made from it, never a
+    document), 404 for one the workspace does not hold. A file whose bytes
+    are a PDF under another extension (an arXiv download named by its id)
+    is stored again as ``<hash>.pdf`` and read as that PDF: a PDF document
+    is always ``.pdf``; for a synced vault's write (``vault``) it stays the
+    binary the vault's file class read it as (gamma/vault/kinds.py
+    ``file_format``: a PDF is a PDF by its name there). A name only a file
+    on this computer holds (a work folder's file a note links, served where
+    it is, gamma/linked_files.py) has its bytes stored first, as *Save a
+    copy to library* stores them: the page made of it carries the bytes
+    whatever becomes of the file; 409 ``FILE_CHANGED`` when the file there
+    is other bytes by now."""
+
+    def __init__(self, ws: str, name: str, shown: str = "", *, vault: bool = False):
+        parsed = parse_upload_url(upload_url(name))
+        if not parsed:
+            raise HTTPException(status_code=400, detail="file must be a stored <hash><ext> upload")
+        self.hash, self.ext = parsed
+        path = find_upload_file(name, ws)
+        if not path:
+            raise HTTPException(status_code=404, detail="file not found")
+        try:
+            with open(path, "rb") as f:
+                head = f.read(SNIFF_BYTES)
+        except OSError:
+            raise HTTPException(status_code=404, detail="file not found")
+        self.format, _language = stored_format(shown, self.ext, head)
+        if self.format == "markdown":
+            raise HTTPException(status_code=400, detail=MARKDOWN_IS_A_NOTE)
+        if self.format == "pdf" and self.ext != ".pdf":
+            if vault:
+                self.format = "binary"
+            else:
+                with open(path, "rb") as f:
+                    self.hash, _existed, _size = storage.store_pdf_stream(ws, f)
+                self.ext = ".pdf"
+        if not storage.exists(ws, stored_name(self.hash, self.ext)):
+            try:
+                linked_files.store_linked(ws, stored_name(self.hash, self.ext), str(path))
+            except folder_links.LinkError:
+                raise HTTPException(status_code=409, detail=FILE_CHANGED)
+        self.size = storage.size(ws, stored_name(self.hash, self.ext))
+
+
+class ByFile(BaseModel):
+    file: str              # a stored upload of any format, ``<hash><ext>``
+    name: str = ""         # the file's shown name (the chip's text, the upload's name): the page's title and doc.name
+    folder: str = ""       # a folder id: files a new page; ignored when the page exists
+
+
+@router.post("/pages/by-file")
+def page_by_file(payload: ByFile, request: Request):
+    """"Add to library" on a file chip of any format, and the library's
+    upload of any file: the library page whose document is the stored file
+    ``file``, made when there is none (``get_or_create_doc_page``: one page
+    per stored file, by hash and extension). Its doc is ``{format, name,
+    hash, ext, at: "store", size}``, the format settled here from the name,
+    the extension and the file's first bytes (``StoredFile``,
+    ``formats.stored_format``), titled by ``name``, filed in ``folder`` (a
+    library folder: one in a work folder is refused as ``by-doc`` refuses
+    it, 403 ``locked``); no ``auto_title`` and no manifest for a document
+    that is no PDF. A ``.pdf``, and a file whose bytes are a PDF under
+    another extension (stored again as ``<hash>.pdf``), goes the ``by-doc``
+    way. → ``{page, created}``. 400 for a name that is no stored file's or a
+    Markdown file (``MARKDOWN_IS_A_NOTE``: ``POST /pages/from-file`` makes
+    its note), 404 when the file is not in this workspace. Workspace
+    editors."""
+    ws = require_ws(request, write=True)
+    stored = StoredFile(ws, (payload.file or "").strip(), payload.name)
+    with connect_pages_db(ws) as conn:
+        write_lock(conn)  # the lookup and the create as one step: one page per file
+        created = page_for_file(conn, stored.hash, stored.ext) is None
+        try:
+            page = get_or_create_doc_page(conn, stored.hash, "", None, payload.name, folder=payload.folder.strip(),
+                                          ws=ws, actor=actor_of(request), format=stored.format, ext=stored.ext,
+                                          size=stored.size)
+        except OpError as e:
+            return op_refusal(e)
+    return {"page": page, "created": created}
+
+
+def _attachment_body(ws: str, payload: AttachRequest, vault: bool = False) -> tuple[str, str, str, str, int | None]:
+    """The checked ``(hash, source_url, format, ext, size)`` of an attach or
+    replace body. ``file`` names a stored file of any format (``StoredFile``:
+    its format settled here, as a synced vault's file class settles it when
+    the write is the vault's, ``vault``) and comes alone; else ``doc_id``
+    and/or ``source_url`` name a PDF as they always did, ``doc_id``
+    validated in shape only (like ``by-doc``, a URL-opened PDF's id is the
+    URL hash and the proxy fetches the file lazily). A ``source_url`` that
+    is a stored file's address of another extension than ``.pdf`` is
+    refused (``NAME_THE_FILE``): it is no PDF to show from an address, and
+    an older server would have made one."""
+    file = (payload.file or "").strip()
     doc_id = (payload.doc_id or "").strip()
     source_url = (payload.source_url or "").strip()
+    if file:
+        if doc_id or source_url:
+            raise HTTPException(status_code=400, detail="file names the stored file: no doc_id or source_url with it")
+        stored = StoredFile(ws, file, payload.original_filename, vault=vault)
+        return stored.hash, "", stored.format, stored.ext, stored.size
     if doc_id:
         try:
             doc_id = safe_doc_id(doc_id)
@@ -333,17 +447,21 @@ def _attachment_body(payload: AttachRequest) -> tuple[str, str]:
             raise HTTPException(status_code=400, detail="invalid doc_id")
     if not doc_id and not source_url:
         raise HTTPException(status_code=400, detail="doc_id or source_url required")
-    return doc_id, source_url
+    own = parse_upload_url(source_url)
+    if own and own[1] != ".pdf":
+        raise HTTPException(status_code=400, detail=NAME_THE_FILE)
+    return doc_id, source_url, "pdf", ".pdf", storage.size(ws, stored_name(doc_id, ".pdf")) if doc_id else None
 
 
-def _held_elsewhere(conn, doc_id: str):
-    """The 409 for a ``doc_id`` a page carries already (``{"detail",
+def _held_elsewhere(conn, hash: str, ext: str):
+    """The 409 for a stored file a page carries already as its document
+    (``page_for_file``: by hash and extension, any format; ``{"detail",
     "page_id"}``, so the client can offer to open that page), else None.
-    Callers ask only for a ``doc_id`` the page itself does not carry, so
-    any page found is another. A page that is no library document (one
-    reading those bytes from a file on this computer, a work folder's file
-    not in the library) refuses nothing (``page_for_doc`` leaves it out)."""
-    other = page_for_doc(conn, doc_id) if doc_id else None
+    Callers ask only for a file the page itself does not carry, so any page
+    found is another. A page that is no library document (one reading those
+    bytes from a file on this computer, a work folder's file not in the
+    library) refuses nothing (``page_for_file`` leaves it out)."""
+    other = page_for_file(conn, hash, ext) if hash else None
     if other:
         return JSONResponse(status_code=409, content={
             "detail": "attachment belongs to another page", "page_id": other[0]})
@@ -379,19 +497,21 @@ def _zotero_pdf_refusal(ws: str, page: dict) -> str | None:
     return ZOTERO_PDF_COMING if _zotero_keeps(ws) else ""
 
 
-def _attachment_op(page: dict, hash: str, url: str, name: str, *,
-                   at: str | None = None) -> tuple[dict, str, dict, bool]:
-    """The op that makes the PDF ``hash`` / ``url`` named ``name`` the
-    page's document (``documents.model.document``), whatever it carried
-    before, with the page's title and properties after it. ``at`` says
-    where its bytes are read from; by default a page that read its PDF in
-    place (``in_place``) goes on reading the new one there, unless it now
-    comes from an address. While the title is still automatic
-    ("Untitled"/empty) it becomes the file name (or URL tail,
-    ``document_title``) and is marked ``auto_title``, the marker metadata
-    may replace (same semantics as get_or_create_doc_page; an explicit
-    rename clears it). Any other title stays. When the file changes
-    (another own PDF or address than the page showed), a failed metadata
+def _attachment_op(page: dict, hash: str, url: str, name: str, *, at: str | None = None,
+                   format: str = "pdf", ext: str | None = None, size: int | None = None) -> tuple[dict, str, dict, bool]:
+    """The op that makes the file ``hash`` / ``url`` named ``name``, of
+    ``format`` with the stored extension ``ext`` (a PDF's by default) and
+    ``size`` bytes, the page's document (``documents.model.document``),
+    whatever it carried before, with the page's title and properties after
+    it. ``at`` says where its bytes are read from; by default a page that
+    read its document in place (``in_place``) goes on reading the new one
+    there, unless it now comes from an address. While the title is still
+    automatic ("Untitled"/empty) it becomes the file name (or URL tail,
+    ``document_title``), and a PDF's is marked ``auto_title``, the marker
+    metadata may replace (same semantics as get_or_create_doc_page; an
+    explicit rename clears it); another format's title is never looked up,
+    so it carries no marker. Any other title stays. When the file changes
+    (another own file or address than the page showed), a failed metadata
     lookup's ``meta_error`` goes: that lookup read the file the page
     carried, and the new one is looked up again. OpError 400 for a hash
     that can be no stored file's. → ``(op, title, properties, file
@@ -400,7 +520,8 @@ def _attachment_op(page: dict, hash: str, url: str, name: str, *,
     before = page_document(page["properties"])
     props = {k: v for k, v in page["properties"].items() if k not in ATTACHMENT_KEYS}
     try:
-        props["doc"] = document(hash, url, name, at=at or ("path" if in_place(before) and not url else None))
+        props["doc"] = document(hash, url, name, at=at or ("path" if in_place(before) and not url else None),
+                                format=format, ext=ext, size=size)
     except ValueError:
         raise OpError(400, "invalid doc_id")
     after = page_document(props)
@@ -410,7 +531,8 @@ def _attachment_op(page: dict, hash: str, url: str, name: str, *,
     content = page["content"]
     if not content.strip() or content.strip() == "Untitled":
         content = document_title(name, url, hash) or content
-        props["auto_title"] = content
+        if format == "pdf":
+            props["auto_title"] = content
     op = {"op": "set", "id": page["id"], "props": props_patch(page["properties"], props)}
     if content != page["content"]:
         op["content"] = content
@@ -419,19 +541,21 @@ def _attachment_op(page: dict, hash: str, url: str, name: str, *,
 
 @router.post("/pages/{page_id}/attachment")
 def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
-    """Attach a PDF to an existing page that has none. Body: ``doc_id``
-    and/or ``source_url``, plus an optional ``original_filename``
-    (``_attachment_body``). 409 when the page already carries an attachment
-    (``PUT`` replaces one), when another page already carries this
-    ``doc_id`` (``_held_elsewhere``), or while something brings the PDF its
-    Zotero item holds (``_zotero_pdf_refusal``: a page whose mark nothing
-    honours any more takes the PDF, and loses the mark). An automatic title
-    becomes the file name (``_attachment_op``). Returns the updated block."""
+    """Attach a document to an existing page that has none. Body: a PDF's
+    ``doc_id`` and/or ``source_url``, or ``file`` (a stored file of any
+    format by its name, its format settled here), plus an optional
+    ``original_filename`` (``_attachment_body``). 409 when the page already
+    carries an attachment (``PUT`` replaces one), when another page already
+    carries this file (``_held_elsewhere``), or while something brings the
+    PDF its Zotero item holds (``_zotero_pdf_refusal``: a page whose mark
+    nothing honours any more takes the PDF, and loses the mark). An
+    automatic title becomes the file name (``_attachment_op``). Returns the
+    updated block."""
     ws = require_ws(request, write=True)
-    doc_id, source_url = _attachment_body(payload)
+    hash, source_url, format, ext, size = _attachment_body(ws, payload)
     with connect_pages_db(ws) as conn:
         # The checks below and the write as one step: two pages attaching the
-        # same PDF at once can't both pass "no other page carries it".
+        # same file at once can't both pass "no other page carries it".
         write_lock(conn)
         page = _load_page(conn, page_id)
         if page_document(page["properties"]):
@@ -439,11 +563,12 @@ def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
         refusal = _zotero_pdf_refusal(ws, page)
         if refusal:
             raise HTTPException(status_code=409, detail=refusal)
-        conflict = _held_elsewhere(conn, doc_id)
+        conflict = _held_elsewhere(conn, hash, ext)
         if conflict:
             return conflict
         try:
-            op, content, props, _moved = _attachment_op(page, doc_id, source_url, payload.original_filename)
+            op, content, props, _moved = _attachment_op(page, hash, source_url, payload.original_filename,
+                                                        format=format, ext=ext, size=size)
         except OpError as e:
             raise HTTPException(status_code=e.status, detail=e.detail)
         if refusal == "":  # a Zotero mark nothing honours any more goes with the attach
@@ -459,13 +584,20 @@ def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
 
 @router.put("/pages/{page_id}/attachment")
 def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
-    """Make this PDF the page's attachment, in place of the one it carries
-    (a new version of the file: a paper compiled again from its TeX). Body
-    and 409s as ``POST``'s; a page without an attachment gets this one as
-    ``POST`` would give it. The page keeps its id, title, notes and
-    highlights. The same attachment again changes nothing. The work,
-    described there, is ``replace_attachment``'s, which the Zotero link
-    calls too.
+    """Make this file the page's attachment, in place of the one it carries
+    (a new version of the file: a paper compiled again from its TeX, a
+    figure drawn again). Body and 409s as ``POST``'s; a page without an
+    attachment gets this one as ``POST`` would give it. The page keeps its
+    format (``keep_format``: a body whose settled format differs from the
+    page's document's is a 400, "This page's document is {format}; detach it
+    first"), its id, title, notes and highlights; a synced vault's write
+    (``writer_client`` the vault's, a work folder of another computer
+    sending its file's new bytes) may change the format, as the vault's own
+    server lets it (gamma/vault/local_remote.py ``replace_doc``: a file
+    whose name says nothing and whose bytes sniff otherwise now), and reads
+    a PDF under another name as the binary that vault read. The same
+    attachment again changes nothing. The work, described there, is
+    ``replace_attachment``'s, which the Zotero link and a vault call too.
 
     Returns the updated block, with the relocation job as ``job``, or,
     when no run started, the reason as ``relocation_error``: the account's
@@ -474,11 +606,13 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
     alone (``NOT_STORED``: no file to read). The replacement stands
     either way."""
     ws = require_ws(request, write=True)
-    doc_id, source_url = _attachment_body(payload)
+    client = writer_client(request)
+    hash, source_url, format, ext, size = _attachment_body(ws, payload, vault=client == DISK_CLIENT)
     try:
-        done = replace_attachment(ws, page_id, doc_id, source_url, payload.original_filename,
-                                  actor=actor_of(request), client=writer_client(request), owner=request.state.user_id,
-                                  keep_old_days=payload.keep_old_days)
+        done = replace_attachment(ws, page_id, hash, source_url, payload.original_filename,
+                                  actor=actor_of(request), client=client, owner=request.state.user_id,
+                                  keep_old_days=payload.keep_old_days, format=format, ext=ext, size=size,
+                                  keep_format=client != DISK_CLIENT)
     except HeldElsewhere as e:
         return e.answer()
     except OpError as e:
@@ -506,54 +640,67 @@ def replaced_answer(done: dict) -> dict:
 def replace_attachment(ws: str, page_id: str, hash: str, url: str = "", name: str = "", *, at: str | None = None,
                        actor: str, client: str = "", owner, check_held: bool = True, props: dict | None = None,
                        check=None, rows=None, check_zotero: bool = True,
-                       keep_old_days: int | None = None) -> dict | None:
-    """Make the PDF ``hash`` / ``url`` named ``name`` the page's document,
-    in place of what it carries (or as its first), in one transaction under
+                       keep_old_days: int | None = None, format: str = "pdf", ext: str | None = None,
+                       size: int | None = None, keep_format: bool = False) -> dict | None:
+    """Make the file ``hash`` / ``url`` named ``name``, of ``format`` with
+    the stored extension ``ext`` and ``size`` bytes (a PDF's by default:
+    the callers that name a PDF pass nothing), the page's document, in
+    place of what it carries (or as its first), in one transaction under
     the write lock, then start placing its highlights. ``at`` says where its
     bytes are read from (``_attachment_op``: by default a page that read its
-    PDF in place goes on doing so). PUT /pages/{id}/attachment and the
+    document in place goes on doing so). PUT /pages/{id}/attachment and the
     Zotero link (gamma/zotero_local.py, ``check_held=False``: linked items
-    may share one PDF, and ``page_for_doc`` then answers the oldest page)
-    both go through here, and so do a synced vault's and gamma-sync's new
-    builds of a file.
+    may share one PDF, and ``page_for_file`` then answers the oldest page)
+    both go through here, and so do a synced vault's (gamma/vault/, a file
+    of any format, whose format may change when its name's says nothing and
+    its bytes sniff otherwise) and gamma-sync's new builds of a file.
 
     In the transaction: ``check(conn)``, a caller's compare-and-set, runs
     first (False: nothing is written, and the answer is None); the page is
     read (OpError 404 when it is gone or trashed, 400 for a block that is
     no page; unless ``check_zotero`` is False, 409 while something brings
     its Zotero item's PDF, ``_zotero_pdf_refusal``, and a mark nothing
-    honours any more is dropped with the write); unless ``check_held`` is
-    False, a ``hash`` another page owns is refused (``HeldElsewhere``,
+    honours any more is dropped with the write); with ``keep_format``, a
+    page whose document is of another format than ``format`` is refused
+    (OpError 400 "This page's document is {format}; detach it first": PUT
+    keeps a page's format, a page with none takes any); unless ``check_held``
+    is False, a file another page owns is refused (``HeldElsewhere``,
     409; a page reading those bytes from a file on this computer is passed
-    by, ``page_for_doc``); the attachment op (``_attachment_op``: an
+    by, ``page_for_file``); the attachment op (``_attachment_op``: an
     automatic title becomes the file name, a failed lookup's ``meta_error``
     goes when the file changes) is written, with ``props`` (a page property
     patch the caller adds, such as dropping ``zotero_pdf``) merged into it.
-    When the file changes (whatever the page showed it from: its own PDF,
+    When the file changes (whatever the page showed it from: its own file,
     or only an address or the file a copy shows, as on a duplicated
     document page), the blocks imported from the old file's embedded
     annotations are marked gone from the file (``imports.originals_gone``),
     so PDF export draws them again. When the stored file changes
-    (``file_hash``: a duplicated page's is the file it shows) and the page
-    has highlights placed on its PDF, each of them that names no file yet
-    gets the outgoing file's hash as ``pdf_position.doc_id`` (the file its
-    rectangles were measured on; ``storage.UNSTORED`` for a page
-    that showed its file from a URL alone), and a lost one's ``closest`` (a
-    place in the outgoing file) goes. ``rows(conn)`` runs last, for a
-    caller's own rows in the same transaction. The batches are logged under
-    ``actor`` and ``client``. After the commit (inside the connection's
-    block) the room hears the batches, and when the stored file changed the
-    old file's search rows and manifest go; unless something else
-    references it the file is purged after 30 days (gamma/upload_gc.py), or
-    ``keep_old_days`` (1 to 30) after (``upload_gc.retain``: a sync sending
-    each new build keeps a day of the builds before, gamma/gamma_sync.py
-    ``KEEP_OLD_DAYS``). The same attachment again writes no op (only
-    ``rows``) and answers ``results`` [].
+    (``file_hash``: a duplicated page's is the file it shows), the outgoing
+    and the incoming documents are both PDFs, and the page has highlights
+    placed on its PDF, each of them that names no file yet gets the
+    outgoing file's hash as ``pdf_position.doc_id`` (the file its
+    rectangles were measured on; ``storage.UNSTORED`` for a page that
+    showed its file from a URL alone), and a lost one's ``closest`` (a
+    place in the outgoing file) goes; a picture replaced by a picture
+    writes no stamp (its regions read as drawn on another version by their
+    own ``hash``, docs/dev/highlight_relocation.md), and a change of format
+    leaves the old format's positions as they are. ``rows(conn)`` runs
+    last, for a caller's own rows in the same transaction. The batches are
+    logged under ``actor`` and ``client``. After the commit (inside the
+    connection's block) the room hears the batches, and when the stored
+    file changed the old file's search rows and manifest go; unless
+    something else references it the file is purged after 30 days
+    (gamma/upload_gc.py), or ``keep_old_days`` (1 to 30) after
+    (``upload_gc.retain``: a sync sending each new build keeps a day of the
+    builds before, gamma/gamma_sync.py ``KEEP_OLD_DAYS``). The same
+    attachment again writes no op (only ``rows``) and answers ``results``
+    [].
 
     Then, when highlights were stamped and the new file is stored, the
     ``relocate-highlights`` job owned by ``owner`` starts
     (``_start_relocation``): each highlight is found again in the new file
     by its text and moved there; until it is done they sit where they were.
+    Only a PDF replaced by a PDF starts one.
 
     → ``{page (as read), content, props (the page's title and properties
     after), results (the batches' results), placed ([(block id, props)] of
@@ -574,12 +721,14 @@ def replace_attachment(ws: str, page_id: str, hash: str, url: str = "", name: st
                 props = {**(props or {}), "zotero_pdf": None}
             old_doc = page_document(page["properties"])
             old = own_hash(old_doc)
+            if keep_format and old_doc is not None and old_doc["format"] != format:
+                raise OpError(400, f"This page's document is {old_doc['format']}; detach it first")
             if check_held and hash and hash != old:
-                other = page_for_doc(conn, hash)
+                other = page_for_file(conn, hash, ext or FORMAT_EXT.get(format, ""))
                 if other:
                     raise HeldElsewhere(other[0])
             had = old_doc is not None
-            op, content, after, moved = _attachment_op(page, hash, url, name, at=at)
+            op, content, after, moved = _attachment_op(page, hash, url, name, at=at, format=format, ext=ext, size=size)
             if props:
                 for key, value in props.items():
                     if value is None:
@@ -600,7 +749,8 @@ def replace_attachment(ws: str, page_id: str, hash: str, url: str = "", name: st
                         "relocation_error": ""}
             marks = originals_gone(conn, page_id) if had and moved else []
             swapped = had and moved and not (outgoing and outgoing == incoming)  # another file, not another address
-            placed = highlight_relocate.page_highlights(conn, page_id) if swapped else []
+            pdfs = is_pdf(old_doc) and format == "pdf"  # the highlights' file is a PDF before and after
+            placed = highlight_relocate.page_highlights(conn, page_id) if swapped and pdfs else []
             stamps = []
             for bid, p in placed:
                 # the file its rects were measured on, where it names none, and no closest place a lost one kept:
@@ -740,12 +890,13 @@ def relocate_highlights(payload: RelocateRequest, request: Request):
 
 @router.delete("/pages/{page_id}/attachment")
 def detach_pdf(page_id: str, request: Request):
-    """Remove the page's PDF attachment (``ATTACHMENT_KEYS``: its ``doc``,
-    stored, read in place or at an address, and the ``original_filename``
-    a Markdown import left). Highlight blocks keep their ``pdf_position``;
-    the file stays on disk, and unless something else references it the
-    orphan bookkeeping purges it after 30 days (gamma/upload_gc.py) — a
-    re-attach before then finds it. → ``{"ok", "block"}``."""
+    """Remove the page's document (``ATTACHMENT_KEYS``: its ``doc``, of any
+    format, stored, read in place or at an address, and the
+    ``original_filename`` a Markdown import left). Highlight blocks keep
+    their positions; the file stays on disk, and unless something else
+    references it the orphan bookkeeping purges it after 30 days
+    (gamma/upload_gc.py) — a re-attach before then finds it. → ``{"ok",
+    "block"}``."""
     ws = require_ws(request, write=True)
     with connect_pages_db(ws) as conn:
         write_lock(conn)  # the check and the write as one step, like attach_pdf
@@ -775,6 +926,7 @@ def detach_pdf(page_id: str, request: Request):
 
 NOT_HERE = "Its bytes are on another computer."
 FILE_CHANGED = "The file changed: try again after the next sync."
+TOO_LARGE = "This file is too large to keep in Gamma."  # a listed file (documents.model.is_listed) has no bytes to store
 
 
 class LibraryFiling(BaseModel):
@@ -810,23 +962,31 @@ def _library_folder(conn, folder: str) -> None:
 
 def _held_by_library(conn, page: dict) -> None:
     """``HeldElsewhere`` (409, with its ``page_id``) when another library
-    page owns the file's PDF (``page_for_doc``: the library rule's)."""
-    other = page_for_doc(conn, own_hash(page_document(page["properties"])), "id, content")
+    page owns the file's document (``page_for_file``: the library rule's,
+    by hash and extension, any format)."""
+    view = page_document(page["properties"])
+    other = page_for_file(conn, own_hash(view), view["ext"], "id, content") if view else None
     if other and other[0] != page["id"]:
         raise HeldElsewhere(other[0], f"Already in the library as “{other[1] or 'Untitled'}”.")
 
 
 def _store_bytes(ws: str, page: dict) -> None:
-    """The file's PDF stored here when it is not yet, from the path this
-    server reads it at (``linked_files.store_page_bytes``: the bytes its hash
-    names). 409 ``NOT_HERE`` when no path here holds it (a vault of another
-    computer), ``FILE_CHANGED`` when the file there is other bytes by now. A
-    note, or a PDF stored already, needs nothing."""
+    """The file's document stored here when it is not yet, from the path
+    this server reads it at (``linked_files.store_page_bytes``: the bytes
+    its hash names, under the document's extension). 409 ``TOO_LARGE`` for
+    a listed file (``is_listed``: too large to keep, it has no bytes here
+    or anywhere in Gamma), ``NOT_HERE`` when no path here holds it (a vault
+    of another computer), ``FILE_CHANGED`` when the file there is other
+    bytes by now. A note, or a document stored already, needs nothing."""
     view = page_document(page["properties"])
-    if view is None or storage.exists(ws, view["file"]):
+    if view is None:
+        return
+    if is_listed(view):
+        raise HTTPException(status_code=409, detail=TOO_LARGE)
+    if not view["file"] or storage.exists(ws, view["file"]):
         return
     try:
-        stored = is_pdf(view) and config.folder_links_enabled() and linked_files.store_page_bytes(
+        stored = config.folder_links_enabled() and linked_files.store_page_bytes(
             ws, page["id"], view["file"], own_hash(view))
     except folder_links.LinkError:
         raise HTTPException(status_code=409, detail=FILE_CHANGED)
@@ -855,17 +1015,17 @@ def _addable(conn, page_id: str, folder: str) -> dict:
 @router.post("/pages/{page_id}/library")
 def add_file_to_library(page_id: str, payload: LibraryFiling, request: Request):
     """*Add to library…* on a work folder's file: it becomes a library
-    document as well, the same page at its path. Its PDF's bytes are stored
-    first (``_store_bytes``), then one op on the page sets ``library`` and
-    files it in its directory and in ``folder`` (a library folder) when one
-    is given, and a PDF's title turns automatic (``auto_title``), so its
-    record may title it as an upload's does; the PDF's manifest is
-    scheduled (``pdf_meta.schedule``). → ``{page}``, its ``page_summary``.
-    400 for a page that is no file or is in the library already, or a
-    ``folder`` that is no library folder; 409 with ``page_id`` when a
-    library page owns those bytes already ("Already in the library as …"),
-    409 when the bytes cannot be had (``NOT_HERE``, ``FILE_CHANGED``).
-    Workspace editors."""
+    document as well, the same page at its path. Its document's bytes, of
+    any format, are stored first (``_store_bytes``), then one op on the page
+    sets ``library`` and files it in its directory and in ``folder`` (a
+    library folder) when one is given, and a PDF's title turns automatic
+    (``auto_title``), so its record may title it as an upload's does; the
+    PDF's manifest is scheduled (``pdf_meta.schedule``). → ``{page}``, its
+    ``page_summary``. 400 for a page that is no file or is in the library
+    already, or a ``folder`` that is no library folder; 409 with ``page_id``
+    when a library page owns those bytes already ("Already in the library
+    as …"), 409 when the bytes cannot be had (``TOO_LARGE``, ``NOT_HERE``,
+    ``FILE_CHANGED``). Workspace editors."""
     ws = require_ws(request, write=True)
     folder = payload.folder.strip()
     try:
@@ -896,9 +1056,11 @@ def remove_file_from_library(page_id: str, request: Request):
     """*Remove from library* on a work folder's file in the library: one op
     on the page drops ``library`` (and with it the library folders it was
     filed in, ``work_folders.filing.root_patch``) and ``auto_title``, and
-    gives it its file's name for a title (the stem of ``file_name``). Its
-    stored bytes stay while the page shows them. → ``{page}``. 400 for a
-    page that is no file or not in the library. Workspace editors."""
+    gives it its file's name for a title, as the vault titles it: a PDF's
+    stem (``_stem``: a paper's own title is the record's), any other file's
+    whole ``file_name`` (gamma/vault/kinds.py ``FILE``). Its stored bytes
+    stay while the page shows them. → ``{page}``. 400 for a page that is no
+    file or not in the library. Workspace editors."""
     ws = require_ws(request, write=True)
     with connect_pages_db(ws) as conn:
         write_lock(conn)
@@ -906,8 +1068,10 @@ def remove_file_from_library(page_id: str, request: Request):
         if not _in_library(page):
             raise HTTPException(status_code=400, detail="the file is not in the library")
         op = {"op": "set", "id": page_id, "props": {"library": None, "auto_title": None}}
-        if _stem(page) and _stem(page) != page["content"]:
-            op["content"] = _stem(page)
+        name = page["properties"].get("file_name")
+        title = _stem(page) if is_pdf(page_document(page["properties"])) else name if isinstance(name, str) else ""
+        if title and title != page["content"]:
+            op["content"] = title
         try:
             after_commit(ws, conn, apply_ops(conn, page_id, [op], actor=actor_of(request)))
         except OpError as e:
@@ -917,35 +1081,39 @@ def remove_file_from_library(page_id: str, request: Request):
 
 @router.post("/pages/{page_id}/library-copy")
 def copy_file_to_library(page_id: str, payload: LibraryFiling, request: Request):
-    """*Save a copy to library…* on a work folder's PDF: its bytes as they
-    are now stored (``_store_bytes``) and a library page made of them
-    (``get_or_create_doc_page``: titled by the file's name, filed in
-    ``folder``, a library folder), with no blocks, comments or stamps of the
-    file's: it is annotated apart. A library page that owns those bytes
-    already (the file once added, an earlier copy) answers instead. →
-    ``{page, existed}``; the manifest is scheduled for a page made. 400 for
-    a page that is no file with a PDF, or a ``folder`` that is no library
-    folder; 409 when the bytes cannot be had. Workspace editors."""
+    """*Save a copy to library…* on a work folder's file with a document (a
+    PDF, a figure, a data file: every format but a note, whose content is
+    its blocks): its bytes as they are now stored (``_store_bytes``) and a
+    library page made of them (``get_or_create_doc_page``: titled by the
+    file's name, filed in ``folder``, a library folder), with no blocks,
+    comments or stamps of the file's: it is annotated apart, a figure's
+    version kept apart. A library page that owns those bytes already (the
+    file once added, an earlier copy) answers instead. → ``{page,
+    existed}``; a PDF's manifest is scheduled for a page made. 400 for a
+    page that is no file with a document, or a ``folder`` that is no
+    library folder; 409 when the bytes cannot be had (a listed file among
+    them, ``TOO_LARGE``). Workspace editors."""
     ws = require_ws(request, write=True)
     folder = payload.folder.strip()
     with connect_pages_db(ws) as conn:
         page = _work_file(conn, page_id)
         view = page_document(page["properties"])
-        if not is_pdf(view) or not own_hash(view):
-            raise HTTPException(status_code=400, detail="only a work folder's PDF is copied to the library")
+        if view is None:
+            raise HTTPException(status_code=400, detail="only a work folder's file with a document is copied to the library")
         _library_folder(conn, folder)
     _store_bytes(ws, page)
     doc_id = own_hash(view)
     with connect_pages_db(ws) as conn:
-        write_lock(conn)  # whether the PDF has a library page, and its making, as one step
+        write_lock(conn)  # whether the file has a library page, and its making, as one step
         _library_folder(conn, folder)
-        existed = page_for_doc(conn, doc_id) is not None
+        existed = page_for_file(conn, doc_id, view["ext"]) is not None
         try:
             block = get_or_create_doc_page(conn, doc_id, _stem(page), original_filename=view["name"], folder=folder,
-                                           ws=ws, actor=actor_of(request))
+                                           ws=ws, actor=actor_of(request), format=view["format"], ext=view["ext"],
+                                           size=view["size"])
         except OpError as e:
             return op_refusal(e)
         out = _summary(conn, block["id"])
-    if not existed:
+    if not existed and is_pdf(view):
         pdf_meta.schedule(ws, doc_id)
     return {"page": out, "existed": existed}

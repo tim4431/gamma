@@ -3,14 +3,17 @@
 A *work folder* is a folder of the workspace kept by a synced vault of
 this computer's server that pushes everything: a directory of working
 files (a paper's LaTeX project, a repository) whose tracked files are each
-a page. Its pages are *files*. They follow the disk: a file is filed in
-its directory's folder, named by its file, and leaves when its file is
-deleted or untracked. They are not library pages: the library lists none
-of them unless a file is added to it by hand, and a PDF in a work folder
-is no paper (no record looked up, no "one page per document") until it
-is. Every other folder vault (pull only, PDFs only, a vault of the whole
-library, a vault of another server) is a *kept folder* and behaves as
-before ([synced vaults](synced_vaults.md)).
+a page, whatever their format: a note, a PDF, a LaTeX source, a figure, a
+data file, a build (step 3, the class `file` of
+[synced vaults](synced_vaults.md) "The classes"). Its pages are *files*.
+They follow the disk: a file is filed in its directory's folder, named by
+its file, and leaves when its file is deleted or untracked. They are not
+library pages: the library lists none of them unless a file is added to it
+by hand, and a PDF in a work folder is no paper (no record looked up, no
+"one page per document") until it is. Every other folder vault (pull only,
+PDFs only, a vault of the whole library, a vault of another server) is a
+*kept folder* and behaves as before: notes and PDFs are its pages, and its
+pictures are read for its notes' links alone.
 
 The plan is [research/file-explorer.md](../research/file-explorer.md)
 (step 1). Code: `gamma/work_folders/` (`library.py` the library rule,
@@ -33,7 +36,10 @@ git where git is on PATH), the round's (`test_work_folder_rounds.py`,
 (`test_track_routes.py`), the client's `knownPages.test.mjs` and
 `trackSelection.test.mjs`, the scale check (`test_work_folder_scale.py`,
 timing tests that run with `-m perf`) and the browser suite's
-`work-folders` group (`frontend/tests/e2e/scenarios/workFolders.mjs`).
+`work-folders` group (`frontend/tests/e2e/scenarios/workFolders.mjs`) and
+its `viewers` group (`scenarios/viewers.mjs`: a work folder of eight
+formats, each file opened in its pane, a region's comment reaching the
+feedback document).
 
 The words used here:
 
@@ -119,15 +125,21 @@ once a bulk trash, when a rule needs it.
 | `file_name` | the leaf name of the page's file (`main.pdf`, `notes.md`) | vault, mirror | the list view's Name column, and the path a later step builds from it |
 
 - `library` exists only beside `work_folder`; clearing it deletes the key.
-- `file_name` is the PDF's leaf for a page with a document (`doc.name`),
-  else the note's. It is written at create, by a move or rename on disk, by
-  pull's rename of a note, and by pull's first write of a note made in
-  Gamma; a note made in Gamma has none until then. It is stored because a
-  library file's title is free and the vault's rows exist only on the
-  desktop.
-- `doc.size` is written for every PDF a work folder's vault reads (a new
-  page, a new version, the takeover, a file vault taken in): the size the
-  list view shows. Notes have none ("—").
+- `file_name` is the document's file's leaf for a page with a document
+  (`doc.name`: the PDF's, or the file's of any other format), else the
+  note's. It is written at create, by a move or rename on disk, by pull's
+  rename of a note, and by pull's first write of a note made in Gamma; a
+  note made in Gamma has none until then. It is stored because a library
+  file's title is free and the vault's rows exist only on the desktop.
+- `doc.size` is written for every document a work folder's vault reads (a
+  new page, a new version, the takeover, a file vault taken in), listed
+  ones included: the size the list view shows. Notes have none ("—").
+- A file of another format than a note or a PDF has its document at `path`
+  (`{format, name, hash, ext, at, size}`; its `ext` is
+  `formats.vault_extension`, a blocked one `.bin`) or, past the keep limit
+  (`GAMMA_VAULT_KEEP_MB`, 64), at `listed` with no hash: the page lists it
+  without its bytes ([documents.md](documents.md) "The listed state"). Its
+  title is the file's leaf, where a PDF's is its stem.
 - A file never carries `parent_page`: no sub-pages in a work folder.
 - `deleted_by_vault: true` is a trash stamp beside `deleted_at` /
   `deleted_by`, which `trash_page` writes for the op client `disk`: the
@@ -289,7 +301,7 @@ are, and they stop being W's once the mark goes):
 | Key or action | A person | |
 |---|---|---|
 | R1 `work_folder`, `file_name` | refused | the vault's; a patch that repeats the value passes |
-| R2 `doc` | refused | a file is read-only in Gamma; the vault's `replace_pdf` passes |
+| R2 `doc` | refused | a file is read-only in Gamma; the vault's replacement (`LocalRemote.replace_doc` over `replace_attachment`) passes |
 | R3 `folders[0]` | only when P follows and the new one is in W | pull moves the note |
 | R4 `folders[1:]` | while P is in the library, library folders only | |
 | R5 the title | while P is in the library (before or after the write), or follows | asked only when the title changes |
@@ -427,7 +439,8 @@ case-insensitive and NFC, so one file reads the same on every system and
 - **No file** is the default, `DEFAULT_TEXT`: notes, PDFs and pictures
   (every extension of those formats in `documents.formats`, `.jpeg` among
   them), the three classes a vault has always read. A taken-over vault
-  has no file and tracks what it tracked. Gamma writes a file into a
+  has no file and tracks what it tracked, its pictures now pages (a work
+  folder's picture is a file). Gamma writes a file into a
   directory unasked only once: a vault whose marker names an older app's
   `ignore` globs and that has no file gets them written at its first whole
   round (`Round._globs_written`: the header, the default, then each glob
@@ -519,12 +532,15 @@ state and its round.
   when it is opened (below a git-ignored one, all of it). It writes
   nothing.
 - `POST …/selection/preview {selection}`: what a selection comes to: files,
-  bytes, by format, what Gamma does not read yet, the cap, the pages that
+  bytes, by format, how many are past the keep limit (`large`, with
+  `keep_bytes`: files of other formats than notes and PDFs the vault lists
+  without their bytes), the cap, the pages that
   leave (with their notes and open comments), the files joined to their
   page's other file, the `.gammaignore` a Save would write, and
   `rules_ours`, true when that replaces nothing a person wrote (no file
   there, or Gamma's own), so the dialog warns only before it rewrites a
-  hand-written one.
+  hand-written one. Every file it tracks is a page (the tree's `kind`:
+  `notes`, `pdf` or `file`).
 - `PUT …/selection {selection, base_hash, library?}`: refused (409, with
   the hash there now) when the file changed on disk since it was read,
   checked again under the link's lock; else takes in the file vaults
@@ -566,10 +582,12 @@ what the base leaves out of it). Its summary line is the preview, asked
 400 ms after the last change, and Save waits for the preview of the
 choice as it stands, since saving confirms what leaves; the files the
 preview joins to their page's other file show ticked, not to be unticked
-alone, and the summary lists them. It carries the library switch (off to start for a new work folder, else the
-link's); Save writes the selection and the folder's list is read again
-once the round is over; Cancel on a new work folder asks first, then
-removes it.
+alone, and the summary lists them, and says how many chosen files are over
+the keep limit and are listed without their bytes. It carries the library
+switch (off to start for a new work folder, else the link's; it adds notes
+and PDFs, never a file of another format); Save writes the selection and
+the folder's list is read again once the round is over; Cancel on a new
+work folder asks first, then removes it.
 
 ## The folder's list view
 
@@ -606,22 +624,46 @@ Pinned strip, and the chat's pickers offer it.
 
 ## The round in a work folder
 
-([synced vaults](synced_vaults.md) holds the round itself.)
+([synced vaults](synced_vaults.md) holds the round itself, and "The
+classes" the class `file`.)
 
+- **Every tracked file is a page**: a note (`notes`), a PDF (`pdf`), or a
+  file of any other format, pictures included (`file`: its document the
+  file, read where it is, or listed without its bytes past the keep limit,
+  `GAMMA_VAULT_KEEP_MB`). A picture is no longer only what a note links:
+  the default selection makes every picture a page, and a note's
+  `![[fig.png]]` keeps its Gamma text `![](/api/uploads/<hash>.png)`, which
+  the picture's page's row serves. A PDF by its bytes alone, under another
+  name, is a binary file; a `.bat` is stored as `.bin`.
 - **New pages** are stamped: `work_folder`, `file_name`, `library` from
-  the switch, `doc.size` for a PDF. The front matter's `parent:` makes no
-  sub-page.
+  the switch for a note or a PDF (never a file of another format),
+  `doc.size` on every document. A file of another format is titled by its
+  leaf (`main.tex`), a PDF by its stem. The front matter's `parent:` makes
+  no sub-page.
 - **A move or rename on disk** refiles `folders[0]` to the new directory,
   keeping the folders outside every work folder, and sets `file_name`; the
   title follows the stem only for a file not in the library whose note has
-  no `title:`.
-- **Pull** moves or renames only notes that follow, never a PDF; writes a
+  no `title:`, and the leaf for a file of another format. A new name that
+  says another format or extension (`a.txt` to `a.png`) settles the
+  document again with the same hash; one that changes the class (`a.txt`
+  to `a.md`) is a removal and a new page.
+- **A change** of a file read in place replaces its document (its
+  versions stored while it is in the library or has an open thread); a
+  touch with the same bytes keeps it served. A file that crosses the keep
+  limit either way, or is listed with a new size, has its document set
+  anew.
+- **Pull** moves or renames only notes that follow, never a PDF or a file
+  of another format, and writes no note beside such a file (its notes are
+  Gamma's own); writes a
   note made in Gamma only where the selection tracks its path (else it
   reports it and tries again next round), and writes or takes no other
   path the rules leave out (a picture a note links, a file back from the
   trash, an older note it would adopt as a page's); never copies a PDF
-  into the directory; buries the row in place when a page is trashed, for
-  its PDF, a paper's notes and a note the rules leave out, so that file is
+  into the directory; writes a picture a note made in Gamma links where
+  tracked, which the next whole round makes a page; buries the row in
+  place when a page is trashed, for
+  its PDF, a paper's notes, a file of another format and a note the rules
+  leave out, so that file is
   never moved; renames and moves no directory (a folder below W renamed in
   Gamma by a mirror of an older copy, or a restore, leaves the disk as it
   is).
@@ -677,9 +719,9 @@ file on disk that would not follow (a PDF stored in Gamma, any page where
 the vault does not pull), and the sub-pages below it with none either, is
 no file, which no round would trash and no person could: it stays a library
 page, filed only in its folders outside every work folder. The cap is the
-larger of `MAX_FILES` and what a scan under the vault's rules counts, as the
-round counts it (pictures and files of no class included). It is
-idempotent per page, so a killed
+larger of `MAX_FILES` and what a scan under the vault's rules counts, as a
+work folder's round counts it (every file the rules take, pictures
+included). It is idempotent per page, so a killed
 takeover resumes at the next round; the rows' `seq` moves with the page
 where it was level, so pull rewrites no note, and a row's recorded folder
 is corrected to its directory's. The link's state with `work_folder_at`
@@ -694,15 +736,22 @@ stamped the same way, in the library.
 
 `release(link, remote, *, trash_files)` unstamps every live page of W
 (quietly), sends the files not in the library to Recently deleted instead
-when `trash_files`, then removes the mark. A link that stops being a work
-folder (its push lowered) is released at its next round, its files
-library pages. Lowering the push is refused while a file is not in the
-library.
+when `trash_files`, forgets the vault's rows of files of other formats
+(their pages keep their documents; a kept folder's round compares no such
+class), then removes the mark. A link that stops being a work folder (its
+push lowered) is released at its next round, its files library pages.
+Lowering the push is refused while a file is not in the library.
 
 ## Removing a work folder
 
 Removing the vault stores every PDF read in place (a trashed page's too, so
-a restore has its bytes), releases W with `trash_files`: library files
+a restore has its bytes) and nothing for a file of another format: Gamma
+copies nothing of a directory but what was asked to be kept, a library
+file's versions and a commented version, which are stored already, and
+every live page whose bytes are stored shows the stored copy from then on
+(its document at `store`, whatever its format); such a file's page in
+Recently deleted reads its file as missing. It releases W
+with `trash_files`: library files
 stay as library pages and every other file goes to Recently deleted. Then
 the directory folders below W that hold no live page are deleted, deepest
 first, and W with them when it is empty. A link that was a work folder and
@@ -719,21 +768,28 @@ library.
 Pages routes, so a NAS serves them too ([api.md](api.md)):
 
 - `POST /api/pages/{id}/library {folder?}`: a file not in the library
-  becomes a library document, one page still at its path: its bytes are
-  stored (from this computer's path when they are not), `library: true`,
-  for a PDF `auto_title` set to its title as it stands so its record may
-  title it, filed in a library folder when given, its PDF's manifest
-  scheduled (`pdf_meta.schedule`; the record's lookup stays the client's,
-  as on any library PDF). Bytes another library page owns answer 409 with
-  that page; bytes no path here holds, or a file changed since, answer 409
-  too.
+  becomes a library document, one page still at its path, whatever its
+  format (a PDF, a figure, a data file): its bytes are stored under the
+  document's extension (from this computer's path when they are not),
+  `library: true`, for a PDF `auto_title` set to its title as it stands so
+  its record may title it, filed in a library folder when given, a PDF's
+  manifest scheduled (`pdf_meta.schedule`; the record's lookup stays the
+  client's, as on any library PDF). Bytes another library page owns answer
+  409 with that page; bytes no path here holds, or a file changed since,
+  answer 409 too, and so does a listed file (409 `TOO_LARGE`, "This file is
+  too large to keep in Gamma."): past the keep limit there are no bytes to
+  store.
 - `DELETE /api/pages/{id}/library`: back to a file alone, its library
-  folders and `auto_title` dropped and its title reset to the file's stem.
+  folders and `auto_title` dropped and its title reset to the file's name
+  as the vault titles it: a PDF's stem, any other file's whole leaf
+  (`fig.png`).
 - `POST /api/pages/{id}/library-copy {folder?}`: *Save a copy to library*,
-  for a file with a PDF: a new library page from the bytes as they are now
-  (`get_or_create_doc_page`, titled by the file's name), annotated apart; a
-  library page that owns those bytes already answers instead (`existed`,
-  which the client says, offering that page, rather than a copy made). The
+  for a file with a document (every format but a note, whose content is
+  its blocks): a new library page from the bytes as they are now
+  (`get_or_create_doc_page`, titled by the file's name), annotated apart, a
+  figure's version kept apart; a library page that owns those bytes already
+  answers instead (`existed`, which the client says, offering that page,
+  rather than a copy made); a listed file is the same 409 `TOO_LARGE`. The
   menus offer it only for a file not in the library, whose own page the
   copy would otherwise be.
 
@@ -816,6 +872,16 @@ into a work folder or one of its directories (`import_review.destination`).
 - Label views list library pages only.
 - A vault of another server is never a work folder in step 1.
 - A deselected file's last edits are pushed until the next whole round.
+- A note's link to a file of another format names its stored address
+  (`/api/uploads/<hash><ext>`), a chip, never a mention of the file's page;
+  links by path are step 5's. The chip's *Add to library* stores the
+  bytes it names and makes a library page of them, a page apart from the
+  file's own (`POST /api/pages/by-file`), rather than adding the file's
+  page. A picture replaced on disk leaves a note's
+  embed of the old address reading nothing until the note's own text
+  changes.
+- The keep limit is an environment setting (`GAMMA_VAULT_KEEP_MB`), not a
+  setting in the app.
 - A clone from before step 1 shows files in its library until it upgrades:
   degraded, not lost.
 - A work folder still choosing runs no round, so a note made in Gamma in

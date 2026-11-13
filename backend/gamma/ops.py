@@ -111,7 +111,7 @@ from .text_box import merge_text_box, normalize_text_box
 from .blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, MAX_PAGE_DEPTH, PARENT_PAGE, TRASH, TREES, block_to_dict, delete_subtree,
     ensure_reserved, fetch_subtree, filing, filing_ids, folder_inserts, free_position, is_file, is_op_page,
-    label_inserts, last_child_position, load_props, move_subtree_to_page, page_descendants, page_for_doc, page_root_id,
+    label_inserts, last_child_position, load_props, move_subtree_to_page, page_descendants, page_for_file, page_root_id,
     subtree_refs, touch_page, trashed_page, valid_block_id, valid_parent_value, write_lock)
 from .db import connect_pages_db, format_stamp, page_now, parse_stamp
 from .documents.model import document_props, own_hash, page_document
@@ -488,7 +488,7 @@ class _Batch:
             view = page_document(before)
             if view is not None and view["file"] and self.ws and not storage.exists(self.ws, view["file"]):
                 raise OpError(403, "Its bytes are on another computer.", conflict=LOCKED)
-            held = page_for_doc(self.conn, own_hash(view), "id, content") if view is not None else None
+            held = page_for_file(self.conn, own_hash(view), view["ext"], "id, content") if view is not None else None
             if held and held[0] != page_id:
                 raise OpError(403, f"Already in the library as “{held[1] or 'Untitled'}”.", conflict=LOCKED)
         return out
@@ -1190,7 +1190,7 @@ def commit_ops(ws: str, page_id: str, ops: list[dict], *, actor: str, client: st
 
 def commit_plan(ws: str, page_id: str, ops: list[dict], *, actor: str, client: str, batch_id: str, seq: int) -> dict:
     """A synced vault's plan for a page from another computer
-    (gamma/vault_http.py): every op of it in one transaction, in
+    (gamma/vault/http_remote.py): every op of it in one transaction, in
     ``MAX_OPS`` batches each logged on the page, the first under
     ``batch_id``, or none of them. Planned against the page as it stood at
     ``seq`` (its op log's, ``latest_seq``), so a page written since is
@@ -1716,7 +1716,7 @@ def ops_since(conn, page_id: str, since: int) -> tuple[list[dict], bool]:
     after it (a restore moved the page's seq forward). Either way the client
     must reload the tree. Each batch names its writer's ``batch`` ("" for
     none): a synced vault of another server asks it whether a batch of its
-    landed (gamma/vault_http.py ``HttpRemote.landed``)."""
+    landed (gamma/vault/http_remote.py ``HttpRemote.landed``)."""
     low = conn.execute(
         "SELECT MIN(seq) FROM page_ops WHERE page_id = ?", (page_id,)).fetchone()[0]
     if low is not None and since < low - 1:

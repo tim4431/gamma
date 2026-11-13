@@ -17,7 +17,8 @@ import time
 import pytest
 
 from conftest import account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, workspace_of
-from gamma import config, folder_links, gamma_sync, vault_disk, vault_store, vault_sync
+from gamma import config, folder_links, gamma_sync
+from gamma.vault import disk as vault_disk, kinds, local_remote, store as vault_store, sync as vault_sync
 from gamma.db import connect_users_db
 from gamma.feedback import files as feedback_files
 from gamma.integrations import create_token
@@ -143,13 +144,13 @@ def test_a_paused_link_runs_only_when_asked_and_no_round_undoes_the_pause(owner,
     assert _due(link["id"]) == "both"
 
     # paused while a round runs: the round's own status write leaves the pause in place
-    layout = vault_sync.LocalRemote.layout
+    layout = local_remote.LocalRemote.layout
 
     def pausing(self, page_id=""):
         folder_links.set_paused(link["id"], True)
         return layout(self, page_id)
 
-    monkeypatch.setattr(vault_sync.LocalRemote, "layout", pausing)
+    monkeypatch.setattr(local_remote.LocalRemote, "layout", pausing)
     assert _sync(owner, link["id"])["paused_at"]
     assert _due(link["id"]) == ""
     owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
@@ -261,7 +262,7 @@ def test_a_vaults_round_shows_its_progress_while_it_runs(owner, disk, monkeypatc
     most that often and once all is done; a quicker round writes none, the
     round's own status at the end has none, and a mark no round holds shows
     none."""
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     monkeypatch.setattr(gamma_sync, "SETTLE_S", 0)
     dest, sizes = disk / "FL progress", []
     for name in ("A paper.pdf", "B paper.pdf"):
@@ -355,15 +356,15 @@ def test_a_failed_round_is_reported_and_retried_later(owner, disk, monkeypatch):
     folder = make_folder(owner, "FL failing")
     make_page(owner, "FL f", {"folders": [folder]})
     link = _create(owner, folder=folder, path=str(disk / "Failing"))
-    layout = vault_sync.LocalRemote.layout
-    monkeypatch.setattr(vault_sync.LocalRemote, "layout",
+    layout = local_remote.LocalRemote.layout
+    monkeypatch.setattr(local_remote.LocalRemote, "layout",
                         lambda self, page_id="": (_ for _ in ()).throw(vault_sync.Refused("disk full")))
     status = _sync(owner, link["id"])
     assert status["last_error"] == "disk full" and status["running"] is False and status["failed_at"]
     assert _due(link["id"]) == ""                                       # waits RETRY_S
     monkeypatch.setattr(folder_links, "RETRY_S", 0)
     assert _due(link["id"]) == "both"
-    monkeypatch.setattr(vault_sync.LocalRemote, "layout", layout)
+    monkeypatch.setattr(local_remote.LocalRemote, "layout", layout)
     assert _sync(owner, link["id"])["last_error"] == ""
     owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
 
@@ -539,7 +540,7 @@ def test_the_hot_loop_gives_a_pulled_page_a_round_of_its_own(owner, disk, monkey
     link = _create(owner, folder=folder, path=str(disk / "Hot"))
     _sync(owner, link["id"])
     monkeypatch.setattr(folder_links, "HOT_S", 0)
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)    # the note pull wrote a moment ago is read as settled
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)    # the note pull wrote a moment ago is read as settled
     _note(owner, paper["id"], "a hot thought")
     key = (workspace_of("fl_owner"), paper["id"])
     assert key in folder_links._dirty

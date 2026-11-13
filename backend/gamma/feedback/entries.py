@@ -20,12 +20,13 @@ writes, and nothing renders: a picture is named by its key
 import json
 from typing import NamedTuple
 
-from .. import comments, storage
+from .. import comments, highlights, storage
 from ..blocks_store import load_props
-from ..documents.model import file_hash, page_document
+from ..documents.model import file_hash, is_image, page_document
+from ..highlights import COORDS
 from ..work_folders.library import work_folder_of
 from ..work_folders.marks import Tree
-from ..vault_store import in_place
+from ..vault.store import in_place
 from . import anchors, pictures
 
 FORMAT = "gamma-feedback-1"
@@ -33,6 +34,7 @@ MAX_ENTRIES = 500       # entries one document carries; the rest is counted as `
 MAX_NOTE = 1000         # characters of a note's text in ``where.note``
 STATES = comments.STATES
 PLACED = ("passage", "area", "ink")         # the kinds that have a page
+REGION = "region"                           # the kind that has a place on a picture
 ON_THIS_BUILD = ("exact", "rough", "estimate")  # a place on the page's current file
 
 # How to answer, the same in every document (and in a request's file, with
@@ -89,7 +91,7 @@ def file_path(tree: Tree, props: dict, paths: dict | None = None, *, page_id: st
 
 
 def paths_of(rows: dict) -> dict:
-    """``{page id: path}`` from a vault's rows (``vault_store.files``): each
+    """``{page id: path}`` from a vault's rows (``vault.store.files``): each
     page at its file's row, else its notes file's; tombstones (``was``, or
     in place) left out. What ``file_path`` reads first on the computer that
     holds the disk."""
@@ -205,6 +207,33 @@ def _placed(kind: str, pos, recorded: dict | None, current: str, gone: bool) -> 
     return "exact"
 
 
+def _region_placed(pos, place: dict, current: str, view) -> str:
+    """How a region stands (``where.placed``): ``exact`` when the version it
+    was drawn on is the page's current picture, ``earlier`` when another (a
+    region is never placed again, and stays where it was), ``lost`` when
+    the page's document is no longer a picture."""
+    if not is_image(view):
+        return "lost"
+    drawn = pos["hash"] if isinstance(pos, dict) and isinstance(pos.get("hash"), str) and pos["hash"] else place["doc_id"]
+    return "exact" if drawn == current else "earlier"
+
+
+def _frame(pos) -> tuple[list, list] | None:
+    """A region's rectangle and its picture's size in the picture's own
+    pixels, whole (``where.rect``, ``where.size``); None without a frame or
+    a placed rectangle."""
+    if not isinstance(pos, dict):
+        return None
+    size, bound = highlights._size(pos), pos.get("boundingRect")
+    if not size or not highlights.placed(bound):
+        return None
+    return [round(bound[k]) for k in COORDS], [round(v) for v in size]
+
+
+def _has_place(kind: str) -> bool:
+    return kind in PLACED or kind == REGION
+
+
 class _Item(NamedTuple):
     thread: dict
     file: str
@@ -216,58 +245,71 @@ class _Item(NamedTuple):
     color: str             # the colour of the block the place is read from
     current: str           # the page's file now
     props: dict            # the page's properties
+    view: dict | None      # the page's document (page_document)
 
 
 def _item(conn, thread: dict, stored: str | None, title: str, props: dict, tree: Tree, paths) -> _Item:
     page_id, block_id = thread["page_id"], thread["block_id"]
-    current = file_hash(page_document(props)) or ""
+    view = page_document(props)
+    current = file_hash(view) or ""
     recorded = anchors.parse(stored)
     live = anchors.anchor_of(conn, page_id, recorded["block"] if recorded else block_id)
     kind = (recorded or live)["kind"]
-    gone = bool(recorded) and kind in PLACED and (live["kind"] not in PLACED or live["block"] != recorded["block"])
+    gone = bool(recorded) and _has_place(kind) and (not _has_place(live["kind"]) or live["block"] != recorded["block"])
     where: dict = {}
     place, color = None, ""
-    if kind in PLACED:
-        # An area or ink keeps the anchor's place (page, box, rectangles) while
-        # the file is the anchor's, as its picture does (pictures.now): a block
-        # dragged on the same build does not move the thread. A passage follows
-        # its highlight, and every kind the relocation on a new build.
+    if _has_place(kind):
+        # An area, ink or a region keeps the anchor's place (page, box,
+        # rectangles) while the file is the anchor's, as its picture does
+        # (pictures.now): a block dragged on the same build does not move the
+        # thread. A passage follows its highlight, and every kind on a PDF the
+        # relocation on a new build; a region is never placed again.
         kept = recorded is not None and (gone or (kind != "passage" and live["doc_id"] == recorded["doc_id"]))
         source = recorded if kept else live
         row = None if gone else conn.execute("SELECT properties FROM unified_blocks WHERE id = ?",
                                              (live["block"],)).fetchone()
         block = load_props(row[0]) if row else {}
-        pos = block.get("pdf_position")
         color = block.get("color") if isinstance(block.get("color"), str) else ""
-        placed = _placed(kind, pos, recorded, current, gone)
         box = source["box"]
         place = {**source, "kind": kind, "box": box}
-        if source["page"]:
-            where["page"] = source["page"]
-        if kind == "passage" and source["quote"]:
-            where["quote"] = source["quote"]
-        if kind != "passage" and box:
-            where["box"] = box
-        where["placed"] = placed
-        if placed == "rough":
-            where["match"] = pos["match"]
+        if kind == REGION:
+            pos = block.get("image_position")
+            if box:
+                where["box"] = box
+            frame = _frame(pos)
+            if frame:
+                where["rect"], where["size"] = frame
+            where["placed"] = _region_placed(pos, source, current, view)
+        else:
+            pos = block.get("pdf_position")
+            placed = _placed(kind, pos, recorded, current, gone)
+            if source["page"]:
+                where["page"] = source["page"]
+            if kind == "passage" and source["quote"]:
+                where["quote"] = source["quote"]
+            if kind != "passage" and box:
+                where["box"] = box
+            where["placed"] = placed
+            if placed == "rough":
+                where["match"] = pos["match"]
     if kind == "note" or (kind != "file" and block_id != (place or {}).get("block", block_id)):
         row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
         text = (row[0] or "").strip() if row else ""
         if text:
             where["note"] = text[:MAX_NOTE]
     return _Item(thread, file_path(tree, props, paths, page_id=page_id, title=title), kind, where, place,
-                 recorded or live, bool(recorded), color, current, props)
+                 recorded or live, bool(recorded), color, current, props, view)
 
 
 def _order(item: _Item) -> tuple:
     """Files by name; in a file the whole file's threads first, then by page,
-    top and left edge, the threads without a page after; then by when."""
+    top and left edge, the threads without a page after: a picture's regions
+    by top and left edge, then the notes; then by when."""
     page = item.where.get("page")
     place = item.place or {}
     box = place.get("box")
     left = box[0] if box else min((min(r[0], r[2]) for r in place.get("rects") or ()), default=0.0)
-    return (item.file.casefold(), item.file, item.kind != "file", page is None, page or 0,
+    return (item.file.casefold(), item.file, item.kind != "file", page is None, page or 0, item.kind == "note",
             anchors.top(place) if place else 0.0, left, item.thread["created_at"], item.thread["id"])
 
 
@@ -278,7 +320,8 @@ def _source(ws, conn, item: _Item, live_sources: bool) -> dict | None:
     (and this computer holds its vault and its SyncTeX), else the one
     recorded when the thread was opened."""
     place = item.place
-    if (live_sources and place and item.where.get("placed") in ON_THIS_BUILD and place["doc_id"] == item.current):
+    if (live_sources and item.kind in PLACED and place and item.where.get("placed") in ON_THIS_BUILD
+            and place["doc_id"] == item.current):
         from . import sources  # local: it reaches the vaults (folder_links), loaded where a source is asked for
 
         found = sources.source_for(ws, conn, item.thread["page_id"], item.props,
@@ -300,11 +343,17 @@ def _source_fields(found: dict) -> dict:
 
 def _pictures(ws, conn, item: _Item, regions: dict | None, memo: dict) -> tuple[str | None, str | None]:
     """``(picture, before)``: the region as it is now, while the place is on
-    the current file, and as it was commented on, while that earlier file is
-    stored; each ``img/<key>.jpg`` (gamma/feedback/pictures.py), ``regions``
-    gaining ``{key: (page id, Region)}``. ``memo`` is the pass's, which
-    reads each page's marks once."""
-    if item.kind not in PLACED or not item.place:
+    the current file (a region of a picture, which stays where it was on a
+    new version, and the whole picture for a thread on its page, always),
+    and as it was commented on, while that earlier file is stored; each
+    ``img/<key>.jpg`` (gamma/feedback/pictures.py), ``regions`` gaining
+    ``{key: (page id, Region)}``. ``memo`` is the pass's, which reads each
+    page's marks once."""
+    if item.kind in PLACED and item.place:
+        on_this_build = item.where.get("placed") in ON_THIS_BUILD
+    elif item.kind == REGION or (item.kind == "file" and is_image(item.view)):
+        on_this_build = True
+    else:
         return None, None
     page_id = item.thread["page_id"]
 
@@ -316,7 +365,6 @@ def _pictures(ws, conn, item: _Item, regions: dict | None, memo: dict) -> tuple[
             regions[key] = (page_id, region)
         return f"img/{key}.jpg"
 
-    on_this_build = item.where.get("placed") in ON_THIS_BUILD
     picture = named(pictures.now(conn, page_id, item.props, item.anchor, memo=memo)) if on_this_build else None
     before = None
     anchor = item.anchor
@@ -328,8 +376,7 @@ def _pictures(ws, conn, item: _Item, regions: dict | None, memo: dict) -> tuple[
 
 
 def _entry(ws, conn, item: _Item, *, link_base: str, live_sources: bool, regions: dict | None, memo: dict) -> dict:
-    thread = item.thread
-    view = page_document(item.props)
+    thread, view = item.thread, item.view
     picture, before = _pictures(ws, conn, item, regions, memo)
     return {"id": thread["id"], "file": item.file, "format": view["format"] if view else "markdown",
            "page_id": thread["page_id"], "block_id": thread["block_id"], "kind": item.kind, "where": item.where,
@@ -375,7 +422,8 @@ def entries(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None =
             sources: bool = True, threads=None, regions: dict | None = None) -> list[dict]:
     """The entries of the scope's threads in ``state`` (open, resolved or
     all), in the document's order (files by name; in a file the whole
-    file's threads, then by page and place, the notes last). ``paths``:
+    file's threads, then by page and place, a picture's regions, the notes
+    last). ``paths``:
     ``{page id: path}`` (``paths_of``) for the files' names; ``link_base``
     goes before each thread's link (MCP's absolute base; "" for a link
     that is its query alone); ``sources`` false leaves the live SyncTeX

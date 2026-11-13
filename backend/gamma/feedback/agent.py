@@ -75,13 +75,16 @@ def _thread(conn, args: dict) -> dict:
 
 def _named(conn, thread: dict) -> str:
     """The file and the place the thread is on, as an answer names them:
-    "main.pdf, page 3, “the loss is defined…”"."""
+    "main.pdf, page 3, “the loss is defined…”", "fig.png, a region of the
+    picture"."""
     row = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = ?", (thread["page_id"],)).fetchone()
     where = file_path(Tree.read(conn), load_props(row[1]), page_id=thread["page_id"], title=row[0] or "")
     row = conn.execute("SELECT anchor FROM comments WHERE id = ?", (thread["id"],)).fetchone()
     anchor = anchors.parse(row[0] if row else None) or anchors.anchor_of(conn, thread["page_id"], thread["block_id"])
     if anchor["kind"] == "file":
         return f"{where}, the whole file"
+    if anchor["kind"] == "region":
+        return f"{where}, a region of the picture"
     if not anchor.get("page"):
         return f"{where}, a note"
     quote = " ".join((anchor.get("quote") or "").split())

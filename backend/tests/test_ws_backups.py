@@ -363,6 +363,39 @@ def test_a_merge_brings_no_work_folder_and_matches_library_documents_only():
     assert {figure, paper, page, held} <= listed and own_file not in listed
 
 
+def test_a_merge_matches_a_library_document_of_any_format_by_its_stored_file():
+    """The review's ``kind`` is the document's format; a backup's figure
+    matches the workspace's page of the same stored file (its hash and
+    extension) and is skipped for it, while the same bytes stored under
+    another extension are another file and match no page."""
+    from gamma import ws_backup
+    from gamma.documents.model import document
+
+    def library(name):
+        make_user(name, f"pw-{name}")
+        c = login(name, f"pw-{name}")
+        return c, workspace_of(name)
+
+    png, text = "4d" * 16, "5e" * 16
+    src, src_ws = library("bk_fmt_from")
+    figure = make_page(src, "a figure", properties={"doc": document(png, name="fig.png", format="image", ext=".png")})["id"]
+    notes = make_page(src, "a text", properties={"doc": document(text, name="notes.txt", format="text", ext=".txt")})["id"]
+    paper = make_page(src, "a paper", properties=doc_props("6f" * 16))["id"]
+    dst, dst_ws = library("bk_fmt_to")
+    held = make_page(dst, "the workspace's figure", properties={
+        "doc": document(png, name="figure.png", format="image", ext=".png")})["id"]
+    make_page(dst, "the same bytes as a log", properties={"doc": document(text, name="notes.log", format="text", ext=".log")})
+    zpath = ws_backup.backup_path(src_ws, ws_backup.create(src_ws, label="formats")["name"])
+    review = {p["id"]: p for p in ws_backup.preview_zip(dst_ws, zpath)["pages"]}
+    assert figure not in review  # listed as the workspace's page it is
+    assert (review[held]["action"], review[notes]["action"], review[paper]["action"]) == ("skip", "create", "create")
+    assert (review[held]["kind"], review[notes]["kind"], review[paper]["kind"]) == ("image", "text", "pdf")
+    merged = ws_backup.restore_zip(dst_ws, zpath, "merge")
+    assert figure not in merged["added"] and {notes, paper} <= set(merged["added"])
+    listed = {p["id"] for p in dst.get("/api/blocks/root/children").json()["children"]}
+    assert {held, notes, paper} <= listed and figure not in listed
+
+
 def test_dropping_the_snapshots_waits_for_one_being_written(owner):
     # ws_backup.remove_all takes the workspace's snapshot lock: a snapshot
     # half written when the workspace goes finishes first, then its folder

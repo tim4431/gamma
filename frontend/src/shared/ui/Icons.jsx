@@ -501,29 +501,47 @@ export function LabelGlyph({ dashed } = {}) {
   );
 }
 
+// What the sheet shows of each format (documents/formats.js FORMATS): a
+// PDF its stamp, text a pair of brackets, a picture a mountain under a sun,
+// audio a note, video a play triangle, a binary nothing (a plain sheet), a
+// note (markdown, or a page with no document) its lines.
+const GLYPH_MARKS = {
+  text: <><path d="M9.5 12 7.5 15l2 3" /><path d="m14.5 12 2 3-2 3" /></>,
+  image: <><path d="M7 19l3.5-4.5 2.5 3 1.8-2.2L17 19" /><circle cx="14.5" cy="12.5" r="1.2" /></>,
+  audio: <><path d="M14 11v6.5" /><circle cx="12" cy="17.5" r="2" /><path d="M14 11c0-1.5 1.5-2 3-1.5" /></>,
+  video: <path d="M9.5 11.5v7l6-3.5z" fill="currentColor" stroke="none" />,
+  binary: null,
+};
+// The formats drawn as a band at the small size, like the PDF's lettering.
+const BAND_FORMATS = new Set(["image", "audio", "video"]);
+
 // Big file glyph — a document sheet with a folded corner. `format` is the
 // page's document's (pageDocument(...).format, "" for none): a PDF gets a
-// small "PDF" tab so it reads as an annotated paper at a glance.
+// small "PDF" tab so it reads as an annotated paper at a glance, and every
+// other format a mark of its own (GLYPH_MARKS); a note, its lines.
 // `size` draws it as a small kind icon (search results, tabs, Ctrl+P), the
-// "PDF" lettering a solid band there; without it the surface's CSS sizes
-// the tile. A PDF's glyph carries `.pdf`, tinted with --kind-pdf.
+// "PDF" lettering and a picture's, audio's or video's mark a solid band
+// there; without it the surface's CSS sizes the tile. The glyph carries its
+// format as a class (`.pdf`, `.image`, …), which library.css tints.
 // `label`: a short format stamp on the page (the PDF card's "PDF", the
 // bibliography card's "BIB"); a file-format token, so it is not translated.
 export function FileGlyph({ format = "", label = "", size }) {
   const pdf = format === "pdf";
   const small = !!size && size < 24;
   const stamp = pdf ? "PDF" : label;
+  const mark = !stamp && Object.hasOwn(GLYPH_MARKS, format) ? GLYPH_MARKS[format] : undefined;
+  const band = small && (stamp || (mark && BAND_FORMATS.has(format)));
   return (
-    <svg className={`tileGlyph fileGlyph${pdf ? " pdf" : ""}${size ? " kindGlyph" : ""}`}
+    <svg className={`tileGlyph fileGlyph${format ? ` ${format}` : ""}${size ? " kindGlyph" : ""}`}
       style={size ? { width: size, height: size } : undefined} aria-hidden="true"
       viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={small ? iconStroke(size) : 1.5} strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="var(--bg-raised)" />
       <path d="M14 2v6h6" />
-      {stamp && small ? (
+      {band ? (
         <rect x="7.5" y="12.5" width="9" height="5" rx="1" fill="currentColor" stroke="none" />
       ) : stamp ? (
         <text x="12" y="17" textAnchor="middle" fontSize="5" fontWeight="700" fill="currentColor" stroke="none">{stamp}</text>
-      ) : (
+      ) : mark !== undefined ? mark : (
         <>
           <line x1="8" y1="13" x2="16" y2="13" />
           <line x1="8" y1="17" x2="13" y2="17" />

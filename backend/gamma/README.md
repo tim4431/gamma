@@ -42,6 +42,22 @@ sync_tree.py       a page's tree as a flat snapshot, and the ops between two (th
 sync_engine.py     mirrors: a local workspace kept in step with one on another Gamma server (docs/dev/mirror.md)
 sync_clock.py      the sync engines' clock: when each linked workspace gets a round, and their users.db rows (LinkTable)
 publish.py         publishing a page to the free share host (docs/dev/mirror.md "Publishing")
+folder_links.py    synced vaults: the links' rows, making, changing and removing one, the tick and the hot loop (docs/dev/synced_vaults.md)
+vault/             the vault engine: a folder of Gamma and a directory kept in step (docs/dev/synced_vaults.md)
+vault/sync.py      a vault's rounds: Round, sync, sync_page (push, then pull)
+vault/kinds.py     the class registry: what a file is to a vault by its name (notes, pdf, picture; in a work folder file, any other format as a page), and what a round does with each class
+vault/remote.py    what a round reads and writes Gamma through, shared by both remotes: Page, Info, Layout, Edit, the refusals, remote_for
+vault/local_remote.py  LocalRemote: this server's workspace, in-process
+vault/http_remote.py   HttpRemote: a folder on another Gamma server, over HTTP with the link's token
+vault/disk.py      the directory as files: the marker, the scan, the evidence of a move, the writes, the trash
+vault/store.py     vaults.db's rows of a vault: the bases, the journal, tombstones, directories, history
+vault/merge.py     the three-way merge of a note changed on disk
+vault/links.py     links, pictures and highlights, block by block, between the file's text and Gamma's
+vault/upgrade.py   a folder kept on disk before synced vaults, taken onto the engine
+md_lens.py         the lens between a Markdown file and a page's blocks
+linked_files.py    files read where they are on this computer: a vault's PDFs, Opened files, the follow worker
+work_folders/      a work folder's rules: the library switch, the op rule, .gammaignore, the tracking dialog, the takeover (docs/dev/work_folders.md)
+feedback/          comments on a work folder's files as feedback files an agent reads and answers (docs/dev/feedback.md)
 zotero_sync.py     Zotero links: a personal workspace kept in step with a Zotero library (docs/dev/zotero_sync.md): the registry, the round, conflicts, the clock
 zotero_sync_rows.py    what the engine's parts share: the link's row, the round's state, pages.db rows, conflict rows and log lines
 zotero_sync_reads.py   what a round's units read of both sides: a page, the projections compared, Zotero's objects read ahead

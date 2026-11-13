@@ -127,6 +127,24 @@ def test_a_page_share_reads_the_file_its_document_shows(owner, anon):
         assert uploads_router._pages_upload_names(conn, [duplicate["id"]]) == {f"{copied}.pdf"}
 
 
+def test_a_page_share_reads_a_document_of_any_format(owner, anon):
+    """A shared page's document is the share's to read whatever its format
+    (a figure's PNG); another page's is refused."""
+    from gamma.documents.model import document
+
+    def png(tag):
+        r = owner.post("/api/upload-file", files={"file": ("fig.png", b"\x89PNG\r\n\x1a\n" + tag * 16, "image/png")})
+        assert r.status_code == 200, r.text
+        return r.json()["url"].rsplit("/", 1)[1]
+
+    mine, theirs = png(b"\x21"), png(b"\x22")
+    page = make_page(owner, "A figure", properties={"doc": document(mine[:-4], name="fig.png", format="image", ext=".png")})
+    make_page(owner, "Another figure", properties={"doc": document(theirs[:-4], name="fig2.png", format="image", ext=".png")})
+    token = _share(owner, page["id"])
+    assert anon.get(f"/api/uploads/{mine}", params={"share": token}).status_code == 200
+    assert anon.get(f"/api/uploads/{theirs}", params={"share": token}).status_code == 403
+
+
 def test_a_page_share_reads_the_file_a_copy_inside_it_shows(owner, anon):
     """A block inside the page that shows a stored file as a copy: the
     share reads it, as any upload a block names, and an export through it

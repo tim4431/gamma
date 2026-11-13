@@ -12,7 +12,7 @@
 // the person's own); `made_on` the file the thread was opened on, `sent`
 // the Send waiting on it (docs/dev/feedback.md).
 import { t } from "../shared/i18n/i18n.js";
-import { blockQuote, isHighlightBlock, isInkGroup, pdfAnchorOf } from "../shared/model/blockModel.js";
+import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, pdfAnchorOf } from "../shared/model/blockModel.js";
 import { plainSnippet } from "../search/snippets.js";
 
 export const MAX_COMMENT = 20000; // characters, as the server (comments.MAX_BODY)
@@ -254,22 +254,31 @@ export function sentChip(thread) {
 
 // What a thread is on, in the Comments window's words: the highlight's
 // quote, else the block's text, else for an ink group on a PDF page
-// "Handwriting on page 3"; "" for a block without words.
+// "Handwriting on page 3", for a region of a picture "Region of the
+// picture"; "" for a block without words.
 export function anchorWords(block) {
   const words = blockQuote(block) || block?.content || "";
-  if (words || !isInkGroup(block)) return words;
+  if (words) return words;
+  if (isRegionBlock(block)) return t("Region of the picture");
+  if (!isInkGroup(block)) return "";
   const page = pdfAnchorOf(block)?.page;
   return page ? t("Handwriting on page {n}", { n: page }) : "";
 }
 
-// What became of the place a thread hangs on once its PDF was rebuilt:
+// What became of the place a thread hangs on once its file was rebuilt:
 // "moved" (a highlight placed again roughly: its pdf_position's approx),
 // "lost" (one not found again), "earlier" (an ink group drawn on another
 // build than `docHash`, the file the page shows now: ink is never placed
-// again, so it stands where that build had its content), else "". `block`
-// is the thread's as the tree holds it now, `made_on` (the thread's) the
-// file it was opened on.
+// again, so it stands where that build had its content; a region of a
+// picture drawn on another version than `docHash`, its image_position's
+// `hash`: regions are never placed again either, and stay where they were
+// on the new picture), else "". `block` is the thread's as the tree holds
+// it now, `made_on` (the thread's) the file it was opened on.
 export function threadPlace(thread, block, docHash) {
+  if (isRegionBlock(block)) {
+    const { hash } = block.properties.image_position;
+    return hash && docHash && hash !== docHash ? "earlier" : "";
+  }
   const pos = pdfAnchorOf(block)?.position;
   if (!pos) return "";
   if (isHighlightBlock(block)) return pos.lost ? "lost" : pos.approx ? "moved" : "";

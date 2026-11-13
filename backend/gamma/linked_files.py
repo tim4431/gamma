@@ -23,9 +23,14 @@ file only touched is no failure. ``sweep``, from the links' tick, looks at
 every row's stat, which also picks up what the worker could not take, and
 forgets what nobody kept.
 
-A PDF a vault's round reads (its page has a ``vault_files`` row of kind
-``pdf``) is that round's to replace, and nothing here touches it: one
-replacer per file (``_in_vault``).
+A file a vault's round reads (its page has a ``vault_files`` row of a class
+read in place, a PDF's or a work folder's file's) is that round's to
+replace, and nothing here touches it: one replacer per file (``_in_vault``).
+A work folder's file of any format has its row here too, named
+``<hash><ext>`` (``_put_row`` with its ``ext``; ``hash_any`` hashes it with
+no header check, ``restat`` refreshes a touched one, ``store_page_bytes``
+stores its version under its own extension), while *Opened files* and the
+follow worker stay PDFs.
 
 An opened PDF is a page inside the one page *Opened files*, found by its
 property (``OPENED_FILES``) and made on demand, newest first: a sub-page is
@@ -59,6 +64,7 @@ from .blocks_store import (BLOCK_COLUMNS, FOLDERS, PARENT_PAGE, TRASH, TREES, bl
                            free_position, load_props, page_for_doc, page_root_id, touch_page, with_sub_pages,
                            write_lock)
 from .db import connect_pages_db, connect_users_db, connect_vaults_db, format_stamp
+from .documents import formats
 from .documents.model import SQL_IN_PLACE, document, document_at, in_place, own_hash, page_document, stored_name
 from .feedback import kept
 from .logbuf import log
@@ -96,24 +102,33 @@ _IDLE = ("SELECT p.id FROM unified_blocks p WHERE p.parent_page = ? AND p.parent
          "AND NOT EXISTS (SELECT 1 FROM chat_history h WHERE h.bucket = p.id)")
 
 
-def hash_file(path) -> tuple[str, int, int, str]:
-    """``(doc_id, size, mtime_ns, file_id)`` of the PDF at ``path``, read
-    through once and copied nowhere: the id its bytes would get if stored.
-    ValueError for no ``%PDF`` header or a file that changed under the read;
-    OSError for one that cannot be read."""
+def hash_any(path) -> tuple[str, int, int, str, bytes]:
+    """``(hash, size, mtime_ns, file_id, head)`` of the file at ``path``, read
+    through once and copied nowhere: the stem its bytes would be stored
+    under, and its first ``formats.SNIFF_BYTES`` for what it is
+    (``formats.format_of``). ValueError for a file that changed under the
+    read; OSError for one that cannot be read."""
     before = os.stat(path)
     digest = hashlib.sha256()
     with open(path, "rb") as f:
         chunk = f.read(storage.SPOOL_CHUNK)
-        if not storage.is_pdf(chunk):
-            raise ValueError("not a valid PDF (missing %PDF header)")
+        head = chunk[:formats.SNIFF_BYTES]
         while chunk:
             digest.update(chunk)
             chunk = f.read(storage.SPOOL_CHUNK)
     after = os.stat(path)
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
         raise ValueError("the file changed while it was read")
-    return storage.digest_id(digest), after.st_size, after.st_mtime_ns, str(after.st_ino)
+    return storage.digest_id(digest), after.st_size, after.st_mtime_ns, str(after.st_ino), head
+
+
+def hash_file(path) -> tuple[str, int, int, str]:
+    """``(doc_id, size, mtime_ns, file_id)`` of the PDF at ``path``
+    (``hash_any``): ValueError for no ``%PDF`` header too."""
+    doc_id, size, mtime_ns, file_id, head = hash_any(path)
+    if not storage.is_pdf(head):
+        raise ValueError("not a valid PDF (missing %PDF header)")
+    return doc_id, size, mtime_ns, file_id
 
 
 def _read(path: str) -> tuple[str, int, int, str]:
@@ -125,19 +140,35 @@ def _read(path: str) -> tuple[str, int, int, str]:
         raise folder_links.LinkError(f"Cannot read {path}: {e}") from e
 
 
-def _put_row(ws: str, path: str, seen: tuple, page_id: str, actor: str = "", *, name: str = "") -> None:
-    """``path`` as the file ``seen`` (``hash_file``) of the page, ``actor``
-    the account whose dialog named it, whom its changes are made as while it
-    may edit (``_sink``), under the name of its PDF, or ``name`` (a vault's
-    picture, with no page). The same name at the same path keeps what its row
-    says of the highlights."""
-    doc_id, size, mtime_ns, file_id = seen
+def _put_row(ws: str, path: str, seen: tuple, page_id: str, actor: str = "", *, name: str = "",
+             ext: str = ".pdf") -> None:
+    """``path`` as the file ``seen`` (``hash_file``, ``hash_any``'s first
+    four) of the page, ``actor`` the account whose dialog named it, whom its
+    changes are made as while it may edit (``_sink``), under the name of its
+    document (its hash and ``ext``), or ``name`` (a vault's picture, with no
+    page). The same name at the same path keeps what its row says of the
+    highlights; a row with no page takes the page (a vault's picture made a
+    page of)."""
+    doc_id, size, mtime_ns, file_id = seen[:4]
     with connect_vaults_db() as conn:
         conn.execute("INSERT INTO linked_files (ws, name, path, size, mtime_ns, file_id, page_id, actor) "
                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (ws, name, path) DO UPDATE SET size = excluded.size, "
                      "mtime_ns = excluded.mtime_ns, file_id = excluded.file_id, page_id = excluded.page_id, "
                      "actor = excluded.actor",
-                     (ws, name or stored_name(doc_id, ".pdf"), path, size, mtime_ns, file_id, page_id, actor))
+                     (ws, name or stored_name(doc_id, ext), path, size, mtime_ns, file_id, page_id, actor))
+    storage.forget_linked_stat(path)
+
+
+def restat(ws: str, name: str, path: str, seen: tuple) -> None:
+    """The row ``name`` at ``path`` brought to the stat ``seen`` of the same
+    bytes (a file touched, or saved again with the very bytes it held), when
+    it still stands: what a vault's round does for a file read in place
+    whose hash did not move, so that ``storage.open_path`` goes on serving
+    it (a row whose stat differs from the file's reads as nothing)."""
+    _hash, size, mtime_ns, file_id = seen[:4]
+    with connect_vaults_db() as conn:
+        conn.execute("UPDATE linked_files SET size = ?, mtime_ns = ?, file_id = ? WHERE ws = ? AND name = ? AND path = ?",
+                     (size, mtime_ns, file_id, ws, name, path))
     storage.forget_linked_stat(path)
 
 
@@ -218,11 +249,25 @@ def _at_rest(rows: list[tuple], name: str) -> str:
 
 
 def _in_vault(page_id: str) -> bool:
-    """Whether a vault's round reads the page's PDF: the round alone replaces
-    it, and no reader's path may."""
+    """Whether a vault's round reads the page's document where it is (a row
+    of a class read in place, gamma/vault/kinds.py ``in_place``: a PDF's or
+    a work folder's file's): the round alone replaces it, and no reader's
+    path may."""
     with connect_vaults_db() as conn:
-        return conn.execute("SELECT 1 FROM vault_files WHERE page_id = ? AND kind = 'pdf' LIMIT 1",
+        return conn.execute("SELECT 1 FROM vault_files WHERE page_id = ? AND kind IN ('pdf', 'file') LIMIT 1",
                             (page_id,)).fetchone() is not None
+
+
+def drop_pageless(ws: str, root: Path) -> None:
+    """The rows of no page below ``root`` (a vault's pictures read where they
+    are, gamma/vault/local_remote.py ``link_file``) whose name a page's row
+    serves now: a work folder's picture became a page, and that page's row
+    serves the name (one statement, nothing when there are none)."""
+    below = str(root).rstrip("\\/") + os.sep
+    with connect_vaults_db() as conn:
+        conn.execute("DELETE FROM linked_files WHERE ws = ? AND page_id = '' AND substr(path, 1, ?) = ? AND EXISTS "
+                     "(SELECT 1 FROM linked_files f WHERE f.ws = linked_files.ws AND f.name = linked_files.name "
+                     "AND f.page_id != '')", (ws, len(below), below))
 
 
 def _sink(ws: str, actor: str) -> folder_links.LocalSink:
@@ -563,31 +608,40 @@ def _linked_page(ws: str, page_id: str) -> dict:
     return page
 
 
-def _store(ws: str, doc_id: str, path: str) -> None:
-    """The file at ``path``, which should be the bytes of ``doc_id``, stored
-    (``store_pdf_stream``). LinkError for one that cannot be read or is
-    something else by now."""
+def store_linked(ws: str, name: str, path: str) -> None:
+    """The file at ``path``, which should be the bytes of the stored file
+    ``name`` (``<hash><ext>``), stored: a ``.pdf`` through
+    ``store_pdf_stream`` (which schedules its manifest), any other extension
+    through ``store_file_stream`` (a ``.webm`` must open as audio or video,
+    ``storage.content_refusal``). LinkError for one that cannot be read or
+    stored, or is something else by now."""
+    ext = os.path.splitext(name)[1]
     try:
         with open(path, "rb") as f:
-            stored, _existed, _size = storage.store_pdf_stream(ws, f)
+            if ext == ".pdf":
+                stored, _existed, _size = storage.store_pdf_stream(ws, f)
+                stored = stored_name(stored, ext)
+            else:
+                stored, _existed = storage.store_file_stream(ws, f, ext)
     except (OSError, ValueError) as e:
         raise folder_links.LinkError(f"Cannot read {path}: {e}") from e
-    if stored != doc_id:
+    if stored != name:
         raise folder_links.LinkError("The file changed while it was read: try again in a moment.")
 
 
 def store_page_bytes(ws: str, page_id: str, name: str, doc_id: str) -> bool:
-    """The page's PDF, the stored file ``name`` of the bytes ``doc_id``,
-    stored from a path this server reads it at (one of the page's rows that
-    is there). → False when no path here holds it (a vault of another
-    computer, a server that keeps no links: vaults.db is never made for
-    the asking); LinkError when the file there is other bytes by now."""
+    """The page's document, the stored file ``name`` (``<hash><ext>``, of
+    any format) of the bytes ``doc_id``, stored from a path this server
+    reads it at (one of the page's rows that is there). → False when no path
+    here holds it (a vault of another computer, a server that keeps no
+    links: vaults.db is never made for the asking); LinkError when the file
+    there is other bytes by now."""
     if not config.folder_links_enabled():
         return False
     path = next((p for n, p, _size, _mtime in _rows_of(ws, page_id) if n == name and storage.linked_stat(p)), "")
     if not path:
         return False
-    _store(ws, doc_id, path)
+    store_linked(ws, name, path)
     return True
 
 
@@ -626,7 +680,7 @@ def _add(ws: str, page_id: str, folder_id: str, keep_pushing: bool, actor: str, 
         if folder_id and folder_id not in folder_paths(conn):
             raise folder_links.LinkError("That folder does not exist.")
     view = page_document(page["properties"])
-    doc_id, name = own_hash(view), view["file"]
+    name = view["file"]
     rows = _rows_of(ws, page_id)
     path = _at_rest(rows, name)
     if not path and (keep_pushing or not storage.exists(ws, name)):
@@ -634,7 +688,7 @@ def _add(ws: str, page_id: str, folder_id: str, keep_pushing: bool, actor: str, 
     if target != ws:
         return _carry(ws, page, target, folder_id, keep_pushing, path, actor)
     if not storage.exists(ws, name):
-        _store(ws, doc_id, path)
+        store_linked(ws, name, path)
     link = folder_links.create_file_link(ws, page_id, path, actor) if keep_pushing else None
     commit_ops(ws, page_id, [{"op": "set", "id": page_id, "props": {
         "doc": document_at(view, "store"), PARENT_PAGE: None, FOLDERS: [folder_id] if folder_id else None}}], actor=actor)
@@ -832,7 +886,7 @@ def _carry(ws: str, page: dict, target: str, folder_id: str, keep_pushing: bool,
              doc_id: path or str(storage.find_upload_file(stored_name(doc_id, ".pdf"), ws))}
     for doc, at in files.items():  # stored there before the export, which reads a file that moved as nothing
         if not storage.exists(target, stored_name(doc, ".pdf")):
-            _store(target, doc, at)
+            store_linked(target, stored_name(doc, ".pdf"), at)
     with tempfile.TemporaryDirectory(prefix="gamma-carry-") as td:
         zpath = Path(td) / "page.zip"
         page_gamma_zip(ws, page_id, zpath, {PARENT_PAGE: None, FOLDERS: [folder_id] if folder_id else None})
@@ -937,12 +991,14 @@ def locate(ws: str, page_id: str, path: str, actor: str) -> dict:
 
 
 def missing(ws: str, page_id: str) -> bool:
-    """Whether the page has lost its file: no copy of its bytes is stored here
-    and none of its paths holds a file. Another page's file of the same bytes
-    does not count: it goes its own way."""
+    """Whether the page has lost its file: no copy of its bytes (its
+    document's stored name, of any format) is stored here and none of its
+    paths holds a file. Another page's file of the same bytes does not
+    count: it goes its own way."""
     with connect_pages_db(ws) as conn:
-        row = conn.execute("SELECT doc_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-    if row and row[0] and storage.exists(ws, stored_name(row[0], ".pdf")):
+        row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    view = page_document(load_props(row[0])) if row else None
+    if view and view["file"] and storage.exists(ws, view["file"]):
         return False
     return not any(storage.linked_stat(path) for _name, path, _size, _mtime_ns in _rows_of(ws, page_id))
 

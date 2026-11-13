@@ -280,7 +280,7 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
   });
 
   // --- the shell: files the system opened in the app (docs/dev/ipad.md "Opened files") ---
-  await step("ipad shell: files the app was given open as picked ones do: a PDF its page, Markdown a note, an .ntb the Notability review, a .goodnotes the GoodNotes review, a .zip the Import dialog; a workspace others see asks first, a read-only one sends them to the personal workspace; images alone stay in the workspace shown, and with no page in view are let go before any question", async () => {
+  await step("ipad shell: files the app was given open as picked ones do: a PDF its page, Markdown a note, an .ntb the Notability review, a .goodnotes the GoodNotes review, a .zip the Import dialog, a text file its page, an executable let go; a workspace others see asks first, a read-only one sends them to the personal workspace; images alone stay in the workspace shown, and with no page in view are let go before any question", async () => {
     // Accounts of its own: the workspaces it shares, and the notices they
     // bring, stay out of the steps that follow. A server admin makes the
     // shared workspaces, then stops being one.
@@ -375,10 +375,17 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       await report.getByRole("button", { name: "Done", exact: true }).click();
       await until(async () => (await pages()).some((p) => p.content === "Vault note"), { what: "the vault's note is a page" });
 
-      // A file Gamma does not open is let go, and the status says so.
+      // A file of any other format is a page of its own, as the library's upload makes one.
       await hand(page, { id: "F5", name: "notes.txt", type: "text/plain", b64: b64("plain text") });
       await fileDone(page, "F5");
-      await page.getByRole("status").filter({ hasText: "Gamma does not open notes.txt." }).waitFor();
+      await until(async () => (await page.locator(".docTextView .cm-content").innerText().catch(() => "")).includes("plain text"),
+        { what: "the text file reads in the code view" });
+      assert((await pages()).some((p) => p.content === "notes.txt"), `the text file is a page titled with its name: ${(await pages()).map((p) => p.content).join(" | ")}`);
+
+      // An executable, which the server refuses, is let go, and the status says so.
+      await hand(page, { id: "F7", name: "setup.exe", type: "application/x-msdownload", b64: b64("MZ") });
+      await fileDone(page, "F7");
+      await page.getByRole("status").filter({ hasText: "Gamma does not open setup.exe." }).waitFor();
       assertEq(await page.evaluate(() => window.e2eHeld.length), 0, "the shell holds nothing more");
       assertNoProblems(page);
     } finally { await ctx.close(); }

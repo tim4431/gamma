@@ -888,12 +888,34 @@ def test_format_media(case):
     assert (case["ext"] in formats.SANDBOXED_EXTENSIONS) == case["sandboxed"]
 
 
+def test_format_media_rows_hold_every_image_row():
+    """The fixture's image/ rows are the image rows (the client's IMAGE_MEDIA_TYPES is held to them)."""
+    from gamma.documents import formats
+    pictures = {c["ext"]: c["media"] for c in FORMATS["media"] if (c["media"] or "").startswith("image/")}
+    assert pictures == formats.IMAGE_MEDIA_TYPES
+
+
 @pytest.mark.parametrize("case", FORMATS["sniff"], ids=[c["note"] for c in FORMATS["sniff"]])
 def test_format_sniff(case):
     from gamma.documents import formats
     head = b"a" * case["pad"] + case["head"].encode("latin-1")
     assert formats.sniff(head) == (case["format"], case["language"])
     assert formats.format_of("unknown.xyz", head) == (case["format"], case["language"])
+
+
+@pytest.mark.parametrize("case", FORMATS["vault"], ids=[c["name"] for c in FORMATS["vault"]])
+def test_format_vault_extension(case):
+    """The extension a work folder's file is stored under: stored_extension's answer, a blocked one .bin."""
+    from gamma.documents import formats
+    assert formats.vault_extension(case["name"]) == case["ext"]
+
+
+@pytest.mark.parametrize("case", FORMATS["stored"], ids=[c["note"] for c in FORMATS["stored"]])
+def test_format_stored(case):
+    """stored_format: the stored extension's row unless .bin or unknown, else the whole name, else the name's extension, else the bytes."""
+    from gamma.documents import formats
+    head = None if case["head"] is None else case["head"].encode("latin-1")
+    assert formats.stored_format(case["name"], case["ext"], head) == (case["format"], case["language"])
 
 
 FRACTIONALKEYS = _load("fractionalkeys.json")

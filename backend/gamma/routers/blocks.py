@@ -409,7 +409,7 @@ def ub_get_children(block_id: str, request: Request, within: str = ""):
     ``within`` (a folder id; 400 through a share): the pages filed in that
     folder or below it instead, whatever the library lists (``pages_in_folder``),
     which a synced vault of another server reads its folder by
-    (gamma/vault_http.py). Sync def: a big library's listing is thousands
+    (gamma/vault/http_remote.py). Sync def: a big library's listing is thousands
     of queries, in the threadpool."""
     scope = share_scope(request)
     if scope is not None and block_id == "root" and not scope.lists_library:

@@ -470,8 +470,10 @@ highlights), `test_vault_merge.py` (the three-way merge), `test_vault_disk.py`
 (the scan, the marker, the writes), `test_vault_store.py` (vaults.db, the
 journal, tombstones, history), `test_vault_sync.py` (every step of push and
 pull, a kill at each point of the journal, the echo, a vault of 2,000
-notes), `test_vault_upgrade.py` (a folder kept before synced vaults taken
-onto the engine), `test_vault_http.py` (a vault of another server, over a
+notes), `test_vault_kinds.py` (the class registry, `gamma/vault/kinds.py`: a
+class by name), `test_vault_files.py` (the class `file`: a work folder's
+files of every format as pages), `test_vault_upgrade.py` (a folder kept
+before synced vaults taken onto the engine), `test_vault_http.py` (a vault of another server, over a
 TestClient standing in for it), `test_vault_routes.py` (the routes, the
 refusals, the hot loop, the page's own routes, the shell's secret) and
 `test_linked_files.py` (PDFs read where they are, and a server that keeps

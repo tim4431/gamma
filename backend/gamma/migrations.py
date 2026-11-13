@@ -1982,6 +1982,24 @@ def _v54_comment_agents(ws: str, pages: sqlite3.Connection, data) -> None:
             pages.execute(f"ALTER TABLE comments ADD COLUMN {name} {definition}")
 
 
+def _v55_positions(ws: str, pages: sqlite3.Connection, data) -> None:
+    """The generated ``kind`` reads a region of a picture
+    (``image_position``, gamma/highlights.py ``is_region``) and a range of a
+    text file (``text_position``, a later step's writer, defined now so one
+    rebuild serves both) as ``highlight``, beside ``pdf_position``:
+    ``block_columns`` finds the column's stored definition outdated and
+    adds it again, with the generated columns after it (``doc_id``,
+    ``parent_page``, ``deleted_with``, ``work_folder``, ``first_folder``)
+    and their seven indexes; no rowid moves. It commits what it rebuilt
+    itself, ahead of the stamp; a rerun finds the current definition and
+    changes nothing. Nothing is stamped or touched, but the format moves
+    (not in ``DERIVED_STEPS``): an older copy reads a region as a note and
+    refuses a listed document (documents.model AT ``listed``, which lands
+    with this step), so a clone and its origin pause until both run it."""
+    if _columns(pages, "unified_blocks"):  # an old copy without the table gets it from the schema statements
+        block_columns(pages)
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -2026,6 +2044,7 @@ WORKSPACE_STEPS = [
     (52, "page_documents", _v52_page_documents),
     (53, "work_folders", _v53_work_folders),
     (54, "feedback", _v54_comment_agents),
+    (55, "positions", _v55_positions),
 ]
 
 # The workspace steps that only add a column SQLite derives from the rows

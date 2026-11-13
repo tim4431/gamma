@@ -12,18 +12,18 @@ was or done by a kill at any point, the row's state being the commit point:
 until it names the marker, the state file is the link's knowledge and the
 next round starts over; from then on vaults.db holds it all.
 
-1. The marker written (``vault_disk.make_marker``), or the one an earlier try
+1. The marker written (``disk.make_marker``), or the one an earlier try
    wrote taken, when no other link holds it: ``.gamma/`` is all a round
    writes beside the files, and the status says so (``upgraded_at``, kept in
    the row's state from the commit point on).
 2. The state file's files and directories into vaults.db, in one transaction
-   (``vault_store.take``), each file with the stat the client recorded or,
+   (``store.take``), each file with the stat the client recorded or,
    when it is as recorded (``gamma_sync.modified``'s rule), the file's own:
    - a PDF: its page and identity, made by pull (``ours``); one changed on
      disk whose page's PDF Gamma replaced too is kept, as the client keeps
      it, until it changes again or a force decides;
    - a note: its page, and a base that names none of its blocks
-     (``vault_sync._unknown``). One as the client wrote it keeps its hash, so
+     (``sync._unknown``). One as the client wrote it keeps its hash, so
      the first pull writes it once more by the lens's encoder, the bytes it
      held going to the vault's history, and its base is known from then on;
      one changed on disk keeps none, so it is kept and reported as the
@@ -33,7 +33,7 @@ next round starts over; from then on vaults.db holds it all.
      (``obsidian_export.page_dir``); a sub-page's directory is no folder.
    A cloud placeholder is taken by its stat and never read: a note as the
    client wrote it has its hash learnt by the first pull that finds its
-   bytes here (``vault_sync.UNREAD``), a PDF keeps its identity. A file that
+   bytes here (``sync.UNREAD``), a PDF keeps its identity. A file that
    is not there is not taken: pull writes it again. But a pass during which
    the disk went (the marker gone by its end) is ``Offline``, nothing taken,
    as a scan's is: files the disk no longer answers for are not files gone.
@@ -46,11 +46,11 @@ next round starts over; from then on vaults.db holds it all.
 4. The state file goes, read-only or not. A kill just before, or another
    program holding it open, leaves it for the scan's sweep of Gamma's
    temporary names, which ``.gamma-sync.json`` at the vault's root is one of
-   (``vault_disk``), and for the vault's removal, which takes it first: from
+   (``disk``), and for the vault's removal, which takes it first: from
    the commit point on it stands for nothing.
 
 The ``gamma_id`` line those notes carry is read where a file has it, when its
-row does not say which page it is (``vault_sync._gamma_id``), and no pull
+row does not say which page it is (``sync._gamma_id``), and no pull
 writes it again.
 """
 
@@ -58,30 +58,31 @@ import stat
 import time
 from pathlib import Path
 
-from . import folder_links, gamma_sync, vault_disk, vault_store
-from .db import page_now
-from .folder_sync import ROOT
-from .logbuf import log
-from .obsidian_export import page_dir
-from .vault_sync import BOTH_PDF, UNREAD, _gamma_id
-from .work_folders import ignore_rules
+from .. import folder_links, gamma_sync
+from ..db import page_now
+from ..folder_sync import ROOT
+from ..logbuf import log
+from ..obsidian_export import page_dir
+from ..work_folders import ignore_rules
+from . import disk, store
+from .sync import BOTH_PDF, UNREAD, _gamma_id
 
 UPGRADED = "upgraded_at"   # the state's key, and the status's, of when the folder was taken onto the engine
 
 
 def old_state(root: Path) -> dict | None:
     """The state file the gamma-sync client keeps in ``root`` (its ``files``
-    and ``dirs``), None when there is none. ``vault_disk.Offline`` when the
+    and ``dirs``), None when there is none. ``disk.Offline`` when the
     directory does not answer; ``gamma_sync.SyncError`` for one of another
     version."""
     try:
         if not root.is_dir():
-            raise vault_disk.Offline("the vault's directory is not there")
+            raise disk.Offline("the vault's directory is not there")
         if not (root / gamma_sync.STATE).is_file():
             return None
         return gamma_sync.Link.load(root).state
     except OSError as e:
-        raise vault_disk.Offline(f"the vault's directory does not answer: {e.strerror or type(e).__name__}") from e
+        raise disk.Offline(f"the vault's directory does not answer: {e.strerror or type(e).__name__}") from e
     except ValueError as e:
         raise gamma_sync.SyncError(f"{gamma_sync.STATE} cannot be read") from e
 
@@ -99,7 +100,7 @@ def pages_of(link: dict) -> int:
     when it cannot be read): what removing it would leave."""
     try:
         state = old_state(Path(link["path"])) or {}
-    except (vault_disk.Offline, gamma_sync.SyncError):
+    except (disk.Offline, gamma_sync.SyncError):
         state = {}
     return len({e["page"] for e in (state.get("files") or {}).values() if e.get("page")})
 
@@ -108,21 +109,21 @@ def upgrade(link: dict, remote=None) -> dict:
     """The older folder ``link`` taken onto the engine (the module doc); its
     directories' folders read from ``remote``'s layout (none without one: a
     removal's, which needs no folder). → the link with its new state.
-    ``vault_disk.Offline`` when the directory does not answer, ``Stopped`` when
+    ``disk.Offline`` when the directory does not answer, ``Stopped`` when
     it holds another vault's marker or another folder's state file."""
     root = Path(link["path"])
     try:
         state = old_state(root)
     except gamma_sync.SyncError as e:
-        raise vault_disk.Stopped(str(e)) from e
+        raise disk.Stopped(str(e)) from e
     if state is not None and not belongs(link, state):
-        raise vault_disk.Stopped("the directory holds another folder's files")
-    marker = vault_disk.read_marker(root)
+        raise disk.Stopped("the directory holds another folder's files")
+    marker = disk.read_marker(root)
     if marker is not None and any(o["state"].get("vault") == marker["id"] for o in folder_links.all_links()
                                   if o["id"] != link["id"]):
-        raise vault_disk.Stopped("the directory's vault marker is another vault's: was it copied?")
+        raise disk.Stopped("the directory's vault marker is another vault's: was it copied?")
     if marker is None:
-        marker = vault_disk.make_marker(root)
+        marker = disk.make_marker(root)
     try:
         if state is not None:
             docs = {page_id: info.doc_id for page_id, info in remote.layout().pages.items()} if remote is not None else {}
@@ -131,17 +132,17 @@ def upgrade(link: dict, remote=None) -> dict:
             files = _found(root, link, remote) if remote is not None else {}
         dirs = _dirs(root, link, remote) if remote is not None else {}
     except OSError as e:
-        raise vault_disk.Offline(f"the vault's directory stopped answering: {vault_disk._why(e)}") from e
-    if vault_disk.read_marker(root) is None:     # the disk went during the pass: what it missed is not gone
-        raise vault_disk.Offline("the vault's directory lost its marker while its files were read")
-    vault_store.take(link["id"], files, dirs)
+        raise disk.Offline(f"the vault's directory stopped answering: {disk._why(e)}") from e
+    if disk.read_marker(root) is None:     # the disk went during the pass: what it missed is not gone
+        raise disk.Offline("the vault's directory lost its marker while its files were read")
+    store.take(link["id"], files, dirs)
     link = {**link, "state": {**link["state"], "vault": marker["id"], UPGRADED: page_now()}}
     folder_links.keep_state(link["id"], link["state"])
     if state is not None:
         try:
-            vault_disk.remove(root / gamma_sync.STATE)
+            disk.remove(root / gamma_sync.STATE)
         except OSError as e:     # another program holds it: the scan's sweep takes it later
-            log.info(f"[vault] {root}: {gamma_sync.STATE} stays for the sweep ({vault_disk._why(e)})")
+            log.info(f"[vault] {root}: {gamma_sync.STATE} stays for the sweep ({disk._why(e)})")
     return link
 
 
@@ -150,21 +151,21 @@ def _files(root: Path, link: dict, entries: dict, docs: dict) -> dict:
     ``docs``: each page's PDF in Gamma now. A PDF changed on disk whose page's
     PDF Gamma replaced too, which the client keeps, is kept: its stat the
     file's, so that push reads it once it changes again (a PDF replaced in
-    Gamma stands until then), and pull reports it (``vault_sync.BOTH_PDF``).
+    Gamma stands until then), and pull reports it (``sync.BOTH_PDF``).
     A cloud placeholder is never read: a note as the client wrote it waits
-    for its hash (``vault_sync.UNREAD``), a PDF keeps no ``/ID``."""
+    for its hash (``sync.UNREAD``), a PDF keeps no ``/ID``."""
     out, now = {}, time.time()
     for path, entry in entries.items():
         kind = gamma_sync.kind(entry)
         if not gamma_sync.safe_rel(path) or kind == "notes" and not link["notes"]:
             continue
         try:
-            st = vault_disk.lstat(root, path)
-        except vault_disk.Outside:
+            st = disk.lstat(root, path)
+        except disk.Outside:
             continue
         if st is None or not stat.S_ISREG(st.st_mode):
             continue
-        cloud = vault_disk._placeholder(st)
+        cloud = disk._placeholder(st)
         same = _as_written(st, entry)
         both = kind == "pdf" and not same and docs.get(entry.get("page")) not in (None, "", entry.get("doc"))
         if same or both:
@@ -178,9 +179,9 @@ def _files(root: Path, link: dict, entries: dict, docs: dict) -> dict:
             row["problem"] = BOTH_PDF
         if kind == "pdf":
             row.update(kind="pdf", hash=entry.get("doc") or "",
-                       text=vault_disk.pdf_id(root / path) if same and not cloud else "")
+                       text=disk.pdf_id(root / path) if same and not cloud else "")
         elif kind == "notes":
-            hashed = (UNREAD if cloud else vault_disk.sha(vault_disk.read(root, path))) if same else ""
+            hashed = (UNREAD if cloud else disk.sha(disk.read(root, path))) if same else ""
             row.update(kind="notes", text="", nodes=None, hash=hashed)
         else:
             row.update(kind="picture", page_id="", hash=path.rsplit("/", 1)[-1])
@@ -208,21 +209,21 @@ def _found(root: Path, link: dict, remote) -> dict:
     try:
         rules = ignore_rules.read(root)
     except ignore_rules.Unreadable as e:
-        raise vault_disk.Stopped(f"its .gammaignore cannot be read: {e.why}") from e
+        raise disk.Stopped(f"its .gammaignore cannot be read: {e.why}") from e
     pages = remote.layout().pages
     docs = {info.doc_id: page_id for page_id, info in pages.items() if info.doc_id}
     out, now = {}, time.time()
-    for path, found in vault_disk.walk(root, rules).files.items():
+    for path, found in disk.walk(root, rules).files.items():
         if found.placeholder:
             continue
-        target = vault_disk.path(root, path)
+        target = disk.path(root, path)
         try:
             if found.kind == "notes":
-                text = vault_disk.read(root, path).decode("utf-8", "replace")
+                text = disk.read(root, path).decode("utf-8", "replace")
                 page_id, entry = _gamma_id(text), {"kind": "notes", "hash": "", "text": "", "nodes": None}
             else:
                 doc = gamma_sync.doc_of(target)
-                page_id, entry = docs.get(doc, ""), {"kind": "pdf", "hash": doc, "text": vault_disk.pdf_id(target)}
+                page_id, entry = docs.get(doc, ""), {"kind": "pdf", "hash": doc, "text": disk.pdf_id(target)}
         except OSError:
             continue
         if page_id not in pages or any(row["page_id"] == page_id and row["kind"] == entry["kind"] for row in out.values()):
@@ -250,8 +251,8 @@ def _dirs(root: Path, link: dict, remote) -> dict:
         if not path or path in out:
             continue
         try:
-            st = vault_disk.lstat(root, path)
-        except vault_disk.Outside:
+            st = disk.lstat(root, path)
+        except disk.Outside:
             continue
         if st is not None and stat.S_ISDIR(st.st_mode):
             out[path] = (folder_id, str(st.st_ino))

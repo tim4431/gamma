@@ -226,6 +226,22 @@ def test_a_file_whose_bytes_another_library_page_owns_stays_out_of_the_library(w
     r = _send(w, PERSON, page, [{"op": "set", "id": page, "props": {"library": True}}])
     _refused(r)
     assert r.json()["detail"] == "Its bytes are on another computer."
+    # a document of any format, by its stored file: a figure another library page owns
+    png = b"\x89PNG\r\n\x1a\n" + secrets.token_bytes(16)
+    digest = storage.store_file(w.ws, png, ".png")[0][:-4]
+    with _conn(w) as cx:
+        create_page(cx, "The figure's owner", {"doc": document(digest, name="fig.png", format="image", ext=".png")},
+                    actor=w.account)
+    page = _vault_page(w, "fig.png", work_props(w.W, "fig.png", doc=document(
+        digest, name="fig.png", at="path", format="image", ext=".png")))
+    r = _send(w, PERSON, page, [{"op": "set", "id": page, "props": {"library": True}}])
+    _refused(r)
+    assert r.json()["detail"] == "Already in the library as “The figure's owner”."
+    # the same bytes stored under another extension are another file, which no page owns
+    storage.store_file(w.ws, png, ".txt")
+    page = _vault_page(w, "fig.txt", work_props(w.W, "fig.txt", doc=document(
+        digest, name="fig.txt", at="path", format="text", ext=".txt")))
+    assert _send(w, PERSON, page, [{"op": "set", "id": page, "props": {"library": True}}]).status_code == 200
 
 
 def test_a_refused_op_says_which_op_and_why(w):

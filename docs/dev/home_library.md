@@ -404,7 +404,7 @@ page" (`rankLibraryPages`' `first`), before the recent pages.
 **Opened files.** In the desktop app a PDF opened from this computer
 (*Open with*, `Server → Open a PDF…`) is read where it lies: a page inside
 the one page *Opened files* (`opened_files`), its document read in place
-(`doc.at: "path"`), made on demand, newest first ([synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)).
+(`doc.at: "path"`), made on demand, newest first ([synced_vaults.md](synced_vaults.md#a-file-read-where-it-is)).
 Being a sub-page keeps it out of the library's list. Such a page leaves
 *Opened files* only through **Add to library…**, which stores its bytes
 first (`POST /folder-links/opened/{id}/add`): the page menu and a tab's menu
@@ -671,10 +671,13 @@ empty line. Nothing of the user's means no library pages, or only seeded ones
 tour's offer uses. The panel sits above the New page / New folder items and
 the Welcome page: a dashed card with the mark and four action cards. They
 open a paper from a link (the Add popover, its URL field focused), upload
-files (the Add menu's file types, `PAGE_FILE_ACCEPT` in
-`shared/lib/utils.js`), start a blank note page (`createPage`) and open the
-Import dialog. A footer offers the first tour when it can start, and the
-drop tip. The panel shows only once the listing has loaded, only where the
+files (any file, with no picker filter: a PDF and a Markdown note as
+before, any other file as a page whose document it is,
+`transfers/documentUploads.js`; a dropped folder leaves its dot entries,
+`node_modules`, temporary names and executables out, `dropFilter`, and
+asks first past 100 files), start a blank note page (`createPage`) and open
+the Import dialog. A footer offers the first tour when it can start, and
+the drop tip. The panel shows only once the listing has loaded, only where the
 library can be organized (`lib.organize`: not for a workspace viewer or a
 share visitor), and never in a folder or label view, which keep their own
 messages. It goes with the first page of the user's own. Its anchor is

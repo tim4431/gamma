@@ -2216,7 +2216,7 @@ a library page filed by its folders, which the report shows with `parent`
 `""`.
 
 A page that reads its PDF where it is on this computer (`doc.at` "path",
-[synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)) travels as
+[synced_vaults.md](synced_vaults.md#a-file-read-where-it-is)) travels as
 bytes: the file is read through `storage.files` into `uploads/` like a
 stored one, and the copy's pages have their document stored (`at`
 "store", `_GammaBuilder.finish`), so where the export lands the page is an
@@ -2718,7 +2718,7 @@ inside) — `test_obsidian.py` has the round trip, and
 without `sub_pages`, and their round trips.
 
 A synced vault writes a highlight in a dialect of its own, on purpose
-(`gamma/vault_links.py`, [synced_vaults.md](synced_vaults.md#links-and-highlights)):
+(`gamma/vault/links.py`, [synced_vaults.md](synced_vaults.md#links-and-highlights)):
 the whole highlight is one callout, the person's note inside it, so that the
 lens reads it back as one block, and its anchor stands on its own line after
 it, Obsidian's rule for a quote:

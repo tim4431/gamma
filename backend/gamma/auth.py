@@ -661,11 +661,11 @@ LINK_ACTOR_PREFIX = "link:"
 MIRROR_ACTOR = "mirror"  # a mirror's round (gamma/sync_engine.py), the other writer that is no account
 ZOTERO_ACTOR = "zotero"  # a Zotero link's round (gamma/zotero_sync.py), shown as "Zotero"
 ZOTERO_CLIENT = "zotero"  # ...and the op-log client its writes carry (zotero_sync.CLIENT)
-DISK_CLIENT = "disk"  # the op-log client of a synced vault's writes (gamma/vault_sync.py), as the account that made it
+DISK_CLIENT = "disk"  # the op-log client of a synced vault's writes (gamma/vault/sync.py), as the account that made it
 LINK_NAME_MAX = 40
 ANONYMOUS_NAME = "Anonymous"
 # The writer a route that takes no op batch names itself by (a vault of
-# another computer, gamma/vault_http.py; the mirror): ``writer_client``.
+# another computer, gamma/vault/http_remote.py; the mirror): ``writer_client``.
 CLIENT_HEADER = "x-gamma-client"
 # The op clients the work-folder rule trusts (gamma/work_folders/filing.py
 # ``writer_of``): the vault's, and the mirror's (ops.SYNC_CLIENT).

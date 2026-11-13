@@ -1128,6 +1128,8 @@ MD5 = "0" * 32
 
 
 PLACED = {"pageNumber": 1, "width": 612, "height": 792, "rects": [{"x1": 1, "y1": 1, "x2": 9, "y2": 9}]}
+REGION = {"width": 1200, "height": 800, "boundingRect": {"x1": 10, "y1": 20, "x2": 300, "y2": 200},
+          "rects": [{"x1": 10, "y1": 20, "x2": 300, "y2": 200}], "hash": "i1"}
 
 
 @pytest.mark.parametrize("props, annotation, may", [
@@ -1148,6 +1150,8 @@ PLACED = {"pageNumber": 1, "width": 612, "height": 792, "rects": [{"x1": 1, "y1"
     ({"sheet": {"w": 1}, "pdf_position": {"pageNumber": 1}}, False, False),
     ({"picture": {"url": "/api/uploads/p.png", "x": 1, "y": 1, "w": 9, "h": 9}, "pdf_page": 1}, False, False),
     ({"picture": {"url": "/api/uploads/p.png"}, "pdf_position": PLACED}, False, False),  # a picture, never a highlight
+    ({"image_position": REGION}, False, False),                             # a region of a picture: no PDF page
+    ({"image_position": REGION, "quote": "q"}, False, False),
     ({"recording": {}}, False, False),
     ({}, False, False),
 ])
@@ -1179,6 +1183,16 @@ def test_one_rule_says_why_an_annotation_block_is_held_and_eligible_reads_it(pro
     assert za.eligible(block, "0" * 32, "0" * 32) is (reason == "")
     view = type("View", (), {"annotations": [zotero_local.Annotation(block, [], "p", 1, False, "p")]})()
     assert zotero_sync_blocks.held_blocks(view) == ({"b"} if reason else set())
+
+
+def test_a_pictures_region_is_held_for_no_reason_and_is_no_annotation():
+    """A region's ``kind`` is highlight, but it has no ``pdf_position``:
+    hold_reason answers "" without reading one, and the engine never
+    writes it to Zotero."""
+    block = {"id": "b", "content": "", "properties": {"image_position": REGION, "quote": "q"}}
+    assert za.hold_reason(block) == ""
+    assert not za.is_annotation_block(block) and not za.eligible(block, MD5, MD5)
+    assert za.page_number(block["properties"]) is None
 
 
 def test_on_a_sheet_ink_and_boxes_are_no_annotations():

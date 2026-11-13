@@ -62,7 +62,7 @@ from .. import pdf_meta, storage, upload_gc
 from ..storage import put_upload, url_filename
 from ..web_clip import MAX_HTML_CHARS, article_blocks
 from ..work_folders.filing import refusal_text
-from ..work_folders.library import SQL_LIBRARY_PDF, SQL_LISTED
+from ..work_folders.library import SQL_LIBRARY_PDF, SQL_LISTED, is_library_pdf
 from ..work_folders.marks import Tree, filing_targets
 from .metadata import fetch_page_metadata, registry_record, web_names_a_work, web_record
 from .pdf import ARXIV_ID, download_pdf, resolve_source
@@ -387,11 +387,13 @@ def _append_selection(ws: str, actor: str, conn, page_id: str, payload: ClipRequ
 
 def _maybe_start_metadata(ws: str, actor: str, payload: ClipRequest, block: dict) -> None:
     """Start the page's lookup when the clip asks for one, the page has no
-    record yet and something names a work: its PDF, an identifier, a DOI
-    from the web page's text or a citation record (``web_names_a_work``)."""
+    record yet and something names a work: its PDF (a library PDF the page
+    owns, ``is_library_pdf``: a document of another format names no paper),
+    an identifier, a DOI from the web page's text or a citation record
+    (``web_names_a_work``)."""
     props = block.get("properties") or {}
     if payload.fetch_metadata and not props.get("meta") and (
-            own_hash(page_document(props)) or web_names_a_work(props.get("web_meta"))):
+            is_library_pdf(props) or web_names_a_work(props.get("web_meta"))):
         _start_metadata(ws, actor, block["id"])
 
 

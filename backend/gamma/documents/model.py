@@ -9,11 +9,15 @@ workspace's uploads (a content hash, the hash of the address a PDF was
 opened from, or the name a stripped PDF kept); ``ext`` the stored file's
 extension, so its stored name is ``hash + ext`` (``stored_name``); ``at``
 where the bytes are read from: ``store`` (the uploads), ``path`` (a file on
-this computer, gamma/linked_files.py) or ``url`` (an address, which only
-this one carries); ``size`` its bytes when a writer knows them; ``copy``
-true on a page that shows a stored file it does not own (a duplicated
-page): no lookup of "the page of this file" finds it, and the generated
-``doc_id`` column (db.BLOCK_HOT_COLUMNS) leaves it out.
+this computer, gamma/linked_files.py), ``url`` (an address, which only
+this one carries) or ``listed`` (a work folder's file too large to hash
+and serve, config.vault_keep_bytes: no hash, no address, never a copy,
+its ``size`` required, and never a PDF or a Markdown file, which no limit
+measures); ``size`` its bytes when a writer knows them (every attach and
+replace, and every document a work folder's vault makes); ``copy`` true on
+a page that shows a stored file it does not own (a duplicated page): no
+lookup of "the page of this file" finds it, and the generated ``doc_id``
+column (db.BLOCK_HOT_COLUMNS) leaves it out.
 
 ``document`` is the one builder of a stored doc and ``check_document`` the
 check of one a writer supplies; ``page_document`` is the one read of what a
@@ -33,9 +37,10 @@ from . import formats
 # The page properties a document was kept in before it was one property
 # (normalize.document_shape rewrites them): no writer stores them.
 LEGACY_KEYS = ("doc_id", "source_url", "linked_file")
-AT = ("store", "path", "url")
+AT = ("store", "path", "url", "listed")
 FIELDS = ("format", "name", "hash", "ext", "at", "url", "size", "copy")
 FORMAT_EXT = {"pdf": ".pdf"}  # the extension a format implies; any other format names its own
+NEVER_LISTED = ("pdf", "markdown")  # the keep limit is the file class's alone (gamma/vault/kinds.py)
 
 # Conditions on a unified_blocks row, spliced into WHERE clauses: its
 # document is a PDF; it is read in place. Which page is a library document
@@ -84,8 +89,9 @@ def document(hash: str = "", url: str = "", name: str = "", *, at: str | None = 
     stored; ``url`` that is the stored address of ``hash`` itself is no
     address. ``at`` defaults to ``url`` when an address is left, else
     ``store``. A file stored or read in place has a hash and no address; one
-    at an address has one; only a stored one is a copy. ``name`` is reduced
-    to its display leaf (``storage.display_filename``)."""
+    at an address has one; a listed one has neither, names its ``size`` and
+    is no PDF or Markdown file; only a stored one is a copy. ``name`` is
+    reduced to its display leaf (``storage.display_filename``)."""
     from ..storage import display_filename  # local: storage imports this module
 
     if format not in formats.FORMATS:
@@ -102,6 +108,8 @@ def document(hash: str = "", url: str = "", name: str = "", *, at: str | None = 
         if value is not None and not isinstance(value, str):
             raise ValueError("a document's hash, url and name are strings")
     hash, url = (hash or "").strip(), (url or "").strip()
+    if at == "listed" and (hash or url):
+        raise ValueError("a listed file has no hash and no address")
     if hash:
         safe_doc_id(hash)
     if not hash and url:
@@ -121,6 +129,11 @@ def document(hash: str = "", url: str = "", name: str = "", *, at: str | None = 
     if at == "url":
         if not url:
             raise ValueError("a document at an address needs one")
+    elif at == "listed":
+        if format in NEVER_LISTED:
+            raise ValueError(f"a {format} document is never listed")
+        if size is None:
+            raise ValueError("a listed file names its size")
     elif not hash or url:
         raise ValueError(f"a document {'stored' if at == 'store' else 'read in place'} has a hash and no address")
     if not isinstance(copy, bool):
@@ -199,9 +212,10 @@ def page_document(props: dict | None) -> dict | None:
     ``{format, language, name, hash, ext, size, at, url, file, copy}``:
     ``language`` a text document's (formats.language_of), ``size`` None
     when not stored, ``url`` where the document is fetched from (its
-    address at ``url``, else its stored file's), ``file`` the stored name
-    (``stored_name``, "" without a hash; whether the bytes exist is
-    storage's question), ``copy`` a bool."""
+    address at ``url``, else its stored file's; "" for a listed one, which
+    has no bytes here), ``file`` the stored name (``stored_name``, ""
+    without a hash; whether the bytes exist is storage's question),
+    ``copy`` a bool."""
     raw = props.get("doc") if isinstance(props, dict) else None
     if raw is None:
         return None
@@ -218,7 +232,7 @@ def page_document(props: dict | None) -> dict | None:
         "ext": doc["ext"],
         "size": doc.get("size"),
         "at": doc["at"],
-        "url": doc["url"] if doc["at"] == "url" else upload_url(file),
+        "url": doc["url"] if doc["at"] == "url" else upload_url(file) if file else "",
         "file": file,
         "copy": bool(doc.get("copy")),
     }
@@ -240,9 +254,23 @@ def is_pdf(view) -> bool:
     return view is not None and view["format"] == "pdf"
 
 
+def is_image(view) -> bool:
+    """Whether the document is a picture (its ``format``, never its stored
+    extension: an image attached under ``.bin`` is one)."""
+    return view is not None and view["format"] == "image"
+
+
 def in_place(view) -> bool:
     """Whether the document is read where it is on this computer."""
     return view is not None and view["at"] == "path"
+
+
+def is_listed(view) -> bool:
+    """Whether the document is a work folder's file listed without its
+    bytes (too large to keep, config.vault_keep_bytes): no hash, no
+    address, nothing to read, store or look up; ``library.follows`` still
+    keeps its page following the disk."""
+    return view is not None and view["at"] == "listed"
 
 
 def pdf_file_hash(view) -> str:

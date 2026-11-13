@@ -1,12 +1,12 @@
-"""The version of a PDF a comment thread was opened on, kept while the
-thread is open (docs/dev/feedback.md "The commented version kept").
+"""The version of a document a comment thread was opened on, kept while
+the thread is open (docs/dev/feedback.md "The commented version kept").
 
 A page whose document is read in place (``documents.model.in_place``: a
-work folder's build, an Opened file, a vault's PDF) has no stored copy of
-its bytes, and the next build at its path takes them away. While such a
-page has an open thread it keeps the bytes it shows stored
-(``uploads/<hash>.pdf``), so the version the thread was opened on stays
-readable: the relocation run places the highlights again from it
+work folder's build or figure, an Opened file, a vault's PDF) has no stored
+copy of its bytes, and the next build at its path takes them away. While
+such a page has an open thread it keeps the bytes it shows stored
+(``uploads/<hash><ext>``), so the version the thread was opened on stays
+readable: the relocation run places a PDF's highlights again from it
 (``find_upload_file`` looks in the store before a linked path), and the
 feedback reader draws the region as it was commented on
 (gamma/feedback/pictures.py).
@@ -18,7 +18,7 @@ feedback reader draws the region as it was commented on
   gamma/feedback/sources.py), which the next build's ``.synctex.gz`` no
   longer describes.
 - At every replacement while it holds (``keeps_bytes``), the incoming bytes
-  are stored first (``vault_sync.LocalRemote.replace_pdf``,
+  are stored first (``vault.local_remote.LocalRemote.replace_doc``,
   ``linked_files._take_bytes``): the outgoing ones, stored at the open or at
   the replacement before, are the run's reference and get the
   replacement's short life (``upload_gc.retain``).
@@ -45,7 +45,7 @@ from fastapi import HTTPException
 from .. import comments, storage, upload_gc
 from ..blocks_store import load_props, write_lock
 from ..db import connect_pages_db
-from ..documents.model import SQL_IN_PLACE, file_hash, in_place, is_pdf, page_document
+from ..documents.model import SQL_IN_PLACE, file_hash, in_place, page_document
 from ..logbuf import log
 from ..work_folders.library import work_folder_of
 from . import anchors
@@ -118,8 +118,8 @@ def after_comment(ws: str, event: dict) -> None:
 
 def repair(ws: str, page_ids) -> int:
     """Store the current bytes of each of the pages ``page_ids`` that has an
-    open thread, reads its PDF in place, has no stored copy of it and whose
-    file is still the one its row hashed (``storage.linked_path``): what a
+    open thread, reads its document in place, has no stored copy of it and
+    whose file is still the one its row hashed (``storage.linked_path``): what a
     file busy on Windows, the quota or a crash between a thread's commit
     and the worker left unstored. A quota refusal is logged when it
     changes. Returns how many pages' bytes it stored."""
@@ -153,9 +153,9 @@ def wait(timeout: float = 10.0) -> bool:
 
 
 def _unstored(ws: str, view) -> bool:
-    """Whether the document ``view`` is a PDF read in place with no stored
-    copy of its bytes."""
-    return is_pdf(view) and in_place(view) and bool(view["file"]) and not storage.exists(ws, view["file"])
+    """Whether the document ``view`` is read in place with no stored copy of
+    its bytes (a listed file has none to store)."""
+    return in_place(view) and bool(view["file"]) and not storage.exists(ws, view["file"])
 
 
 def _queue(key: tuple) -> None:

@@ -13,11 +13,12 @@ import uuid
 import pytest
 
 from conftest import account_of, doc_props, login, make_folder, make_page, make_user, workspace_of
-from gamma import folder_links, gamma_sync, pdf_meta, storage, vault_disk, vault_store, vault_sync
+from gamma import folder_links, gamma_sync, pdf_meta, storage
+from gamma.vault import disk as vault_disk, kinds, local_remote, store as vault_store, sync as vault_sync
 from gamma.auth import DISK_CLIENT
 from gamma.db import connect_pages_db
 from gamma.ops import commit_ops
-from gamma.vault_sync import LocalRemote
+from gamma.vault.local_remote import LocalRemote
 from gamma.work_folders import takeover
 from gamma.work_folders.selection import MAX_FILES
 from test_vault_sync import Vault, _pdf
@@ -38,7 +39,7 @@ def owner(client):
 @pytest.fixture(autouse=True)
 def quick(monkeypatch):
     monkeypatch.setenv("GAMMA_FOLDER_LINKS", "1")
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     monkeypatch.setattr(gamma_sync, "SETTLE_S", 0)
     monkeypatch.setattr(vault_store, "MISSING_S", 0)
     monkeypatch.setattr(pdf_meta, "schedule", lambda ws, doc_id: None)
@@ -145,7 +146,7 @@ def test_a_takeover_again_changes_nothing_and_one_killed_at_each_page_resumes(ol
     next, until one finishes; a takeover once finished writes nothing."""
     v = old()
     pages, *_ = _lab(v, owner)
-    real, tries, done = vault_sync.apply_batches, {"n": 0}, []
+    real, tries, done = local_remote.apply_batches, {"n": 0}, []
 
     def dying(conn, batches, **kw):
         if any(op.get("quiet") for _page, ops in batches for op in ops):
@@ -154,8 +155,8 @@ def test_a_takeover_again_changes_nothing_and_one_killed_at_each_page_resumes(ol
                 raise Killed()
         return real(conn, batches, **kw)
     with monkeypatch.context() as m:
-        m.setattr(vault_sync, "apply_batches", dying)
-        m.setattr(vault_sync, "MAX_OPS", 1)
+        m.setattr(local_remote, "apply_batches", dying)
+        m.setattr(local_remote, "MAX_OPS", 1)
         for _ in range(len(pages) + 1):
             tries["n"] = 0
             try:

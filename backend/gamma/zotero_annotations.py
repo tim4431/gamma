@@ -1081,16 +1081,17 @@ def page_number(props: dict, ink_file=None, *, on_sheet: bool = False) -> int | 
 def is_annotation_block(block: dict, *, on_sheet: bool = False) -> bool:
     """Whether a block is of a kind that is a Zotero annotation: an ink
     group on a PDF page, a text box on a PDF page (not on a sheet: the
-    nearest sheet wins), a highlight (not a link region), whatever its
-    state. A block with a row that still is one is held while it is not
-    ``eligible``, never gone."""
+    nearest sheet wins), a highlight on a PDF page (not a link region, and
+    not a region of a picture: Zotero's "image" annotation is an area of a
+    PDF page), whatever its state. A block with a row that still is one is
+    held while it is not ``eligible``, never gone."""
     props = block.get("properties") or {}
     kind = _kind(props)
     if kind == "ink":
         return not on_sheet and isinstance(props.get("pdf_position"), dict)
     if kind == "text_box":
         return text_box.box_page(props, on_sheet) is not None
-    return kind == "highlight"
+    return kind == "highlight" and highlights.is_highlight(props)
 
 
 def hold_reason(block: dict) -> str:
@@ -1108,7 +1109,7 @@ def hold_reason(block: dict) -> str:
     kind = _kind(props)
     if kind == "ink":
         return "" if props.get("ink_url") else WAIT_PLACING
-    if kind != "highlight":  # a text box, or no annotation
+    if kind != "highlight" or not highlights.is_highlight(props):  # a text box, a picture's region, or no annotation
         return ""
     pos = props["pdf_position"]
     if pos.get("lost"):

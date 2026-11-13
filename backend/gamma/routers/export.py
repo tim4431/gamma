@@ -157,15 +157,16 @@ def _children_by_id(blocks) -> dict:
 
 
 def _collect_marks(blocks) -> list[dict]:
-    """Highlight blocks (``kind`` ``highlight``: not the link regions,
-    Gamma navigation aids, nor ink) → annotate_pdf marks (position, colour,
-    style, the popup's note). Skips annotations that came from the PDF
-    itself and are STILL embedded in it (``still_embedded``)."""
+    """Highlight blocks on the PDF's pages (``highlights.is_highlight``,
+    which leaves out ink and a picture's regions; a link region's ``kind``
+    is ``link``) → annotate_pdf marks (position, colour, style, the popup's
+    note). Skips annotations that came from the PDF itself and are STILL
+    embedded in it (``still_embedded``)."""
     children_by_id = _children_by_id(blocks)
     marks = []
     for b in blocks:
         props = b["properties"]
-        if b["kind"] != "highlight" or still_embedded(props):
+        if b["kind"] != "highlight" or not is_highlight(props) or still_embedded(props):
             continue
         marks.append({
             "position": props["pdf_position"],
@@ -200,7 +201,7 @@ def _collect_cards(blocks, *, notes: bool, threads: dict) -> list[dict]:
 
     cards = []
     for b in blocks:
-        if b["kind"] != "highlight":
+        if b["kind"] != "highlight" or not is_highlight(b["properties"]):
             continue
         shown = highlight_note_blocks(b, children_by_id) if notes else []
         ids = {bid for _depth, _md, bid in shown}

@@ -8,9 +8,14 @@
 
 import { EXTENSION_RE, FORMATS, languageOf, strip } from "./formats.js";
 
-const AT = ["store", "path", "url"];
+// Where a document's bytes are read from: the uploads, a file on this
+// computer, an address, or nowhere (`listed`: a work folder's file too large
+// to keep, with no hash and no address, its size alone).
+const AT = ["store", "path", "url", "listed"];
 // The extension a format's document has when none is given.
 const FORMAT_EXT = { pdf: ".pdf" };
+// The formats no keep limit measures, so never listed.
+const NEVER_LISTED = ["pdf", "markdown"];
 const FIELDS = ["format", "name", "hash", "ext", "at", "url", "size", "copy"];
 // A stored file's stem (db.safe_doc_id).
 const HASH_RE = /^[A-Za-z0-9_.-]{1,128}$/;
@@ -40,6 +45,7 @@ function canonical({ hash = "", url = "", name = "", at = null, format = "pdf", 
   if (!ext || !EXTENSION_RE.test(ext) || (format === "pdf" && ext !== ".pdf")) return null;
   hash = strip(hash);
   url = strip(url);
+  if (at === "listed" && (hash || url)) return null;
   if (hash && (hash === "." || hash === ".." || !HASH_RE.test(hash))) return null;
   if (!hash && url) {
     const own = parseUploadUrl(url);
@@ -57,7 +63,9 @@ function canonical({ hash = "", url = "", name = "", at = null, format = "pdf", 
   }
   at = at ?? (url ? "url" : "store");
   if (!AT.includes(at)) return null;
-  if (at === "url" ? !url : !hash || url) return null;
+  if (at === "url" && !url) return null;
+  if (at === "listed" && (NEVER_LISTED.includes(format) || size === null)) return null;
+  if (at !== "url" && at !== "listed" && (!hash || url)) return null;
   if (copy && at !== "store") return null;
   if (size !== null && !(Number.isInteger(size) && size >= 0)) return null;
   const doc = { format, name: displayName(name), hash, ext, at };
@@ -84,8 +92,9 @@ function checkDocument(value) {
 // What a block carries: the view {format, language, name, hash, ext, size,
 // at, url, file, copy}, or null for no document (or one that cannot be
 // read). `url` is where it is fetched from (its address when it is read from
-// one, else its stored file's); `file` the stored file's name ("" when it
-// has no hash), whether or not the bytes are there.
+// one, else its stored file's; "" for a listed file, which has no bytes
+// here); `file` the stored file's name ("" when it has no hash), whether or
+// not the bytes are there.
 export function pageDocument(block) {
   const doc = checkDocument(block?.properties?.doc);
   if (!doc) return null;
@@ -98,7 +107,7 @@ export function pageDocument(block) {
     ext: doc.ext,
     size: doc.size ?? null,
     at: doc.at,
-    url: doc.at === "url" ? doc.url : uploadUrl(file),
+    url: doc.at === "url" ? doc.url : file ? uploadUrl(file) : "",
     file,
     copy: !!doc.copy,
   };
@@ -117,6 +126,9 @@ export const isPdf = (doc) => doc?.format === "pdf";
 export const pdfFileHash = (doc) => (isPdf(doc) ? fileHash(doc) : "");
 // Read in place from a file on this computer (gamma/linked_files.py).
 export const inPlace = (doc) => doc?.at === "path";
+// A work folder's file listed without its bytes (too large to keep): no hash,
+// no address, nothing to read; its pane says so (viewers.js).
+export const isListed = (doc) => doc?.at === "listed";
 // The address a document is read from, when it is one ("" for a stored file
 // or one read in place).
 export const sourceAddress = (doc) => (doc?.at === "url" ? doc.url : "");
@@ -140,6 +152,23 @@ export function pdfViewerUrl(src, { share = "" } = {}) {
 
 // Where the viewer loads a page's PDF document from; "" for no PDF.
 export const documentViewerUrl = (doc, options) => (isPdf(doc) ? pdfViewerUrl(doc.url, options) : "");
+
+// Where a document's bytes are read: every <img>, <audio> and <video> src
+// and every fetch of a document goes through it. A stored file or one read
+// in place is its upload address, through `asset` — the host passes
+// `assetUrl` (shared/lib/utils.js), which adds the workspace and this
+// view's share token; this module stays pure, so it cannot import it — with
+// `share` carried when given, as pdfViewerUrl carries it. A PDF at an
+// address goes through the proxy; "" for a listed file and for any other
+// document at an address, which has no file here. Never navigated to and
+// never framed: an SVG is only ever an <img>.
+export function documentFileUrl(doc, { share = "", asset = (url) => url } = {}) {
+  if (!doc) return "";
+  if (doc.at === "url") return isPdf(doc) ? pdfViewerUrl(doc.url, { share }) : "";
+  if (!doc.file) return "";
+  const url = asset(doc.url);
+  return share && !/[?&]share=/.test(url) ? `${url}${url.includes("?") ? "&" : "?"}share=${encodeURIComponent(share)}` : url;
+}
 
 // The stored doc a duplicate of a page writes, from its view, canonical: a
 // stored file is shown as a copy (the original keeps owning it), an address

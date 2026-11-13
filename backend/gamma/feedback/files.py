@@ -44,7 +44,7 @@ import threading
 import time
 from pathlib import Path
 
-from .. import vault_disk, vault_store
+from ..vault import disk as vault_disk, store as vault_store
 from ..db import account_names, connect_pages_db, connect_users_db
 from ..logbuf import log
 from . import entries, kept, markdown, pictures, requests
@@ -256,14 +256,21 @@ def _requests(ws: str, conn, root: Path, w: str, paths: dict, regions: dict) -> 
 
 def _stands(current: dict | None, rev: int) -> bool:
     """Whether a done or failed request's file is as a pass leaves it: it
-    carries the row's ``rev`` and no entry placed on this build waits for
-    its picture (a Send answered before a pass drew them, or past the cap,
-    has null pictures until one does)."""
+    carries the row's ``rev`` and no entry that gets a picture waits for it
+    (a Send answered before a pass drew them, or past the cap, has null
+    pictures until one does): one placed on this build, a region of a
+    picture (drawn whatever version it was made on) or a thread on a
+    picture's page (``entries._pictures``)."""
     if current is None or current.get("rev") != rev or not isinstance(current.get("entries"), list):
         return False
-    return not any(isinstance(e, dict) and e.get("picture") is None and e.get("kind") in pictures.KINDS
-                   and isinstance(e.get("where"), dict) and e["where"].get("placed") in entries.ON_THIS_BUILD
-                   for e in current["entries"])
+
+    def drawn(e: dict) -> bool:
+        if e.get("kind") == entries.REGION or (e.get("kind") == "file" and e.get("format") == "image"):
+            return True
+        return (e.get("kind") in pictures.KINDS and isinstance(e.get("where"), dict)
+                and e["where"].get("placed") in entries.ON_THIS_BUILD)
+
+    return not any(isinstance(e, dict) and e.get("picture") is None and drawn(e) for e in current["entries"])
 
 
 def _pictures(ws: str, conn, root: Path, regions: dict) -> tuple[set, int]:

@@ -58,10 +58,11 @@ from .feedback.kept import held_files
 from .db import (DATA_SCHEMA, PAGES_SCHEMA, account_names, connect_pages_db, connect_users_db, copy_chats,
                  page_now, register_functions, safe_ws_id, ws_dir)
 from .logbuf import log
+from .note_app_import import page_kind
 from .normalize import (block_columns, block_fts, folder_blocks, highlight_shape, normalize_data_db,
                         normalize_pages_db, page_changes, page_ops_batch_id, pages_db_chats)
 from .seed import create_workspace_files
-from .work_folders.library import SQL_LIBRARY_PDF, STAMPS, is_library_pdf, work_folder_of
+from .work_folders.library import SQL_LIBRARY_DOC, STAMPS, library_document, work_folder_of
 from .work_folders.marks import Tree, filing_targets
 from .zotero_sync_rows import CONFLICT_KINDS
 
@@ -79,6 +80,19 @@ DELETED_KEEP_DAYS = 90             # final copies of deleted workspaces (backups
 STALE_TEMP_S = 3600                # a snapshot's work file this old was left by a killed process
 NAME_RE = re.compile(r"^\d{8}-\d{6}-[A-Za-z0-9_.-]{1,40}$")
 LABEL_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
+# The stored name of a row's own document (``stored_name``: the generated
+# ``doc_id`` column, which leaves a copy out, and the doc's extension): what a
+# backup's page and the workspace's match by, one library page per stored
+# file of any format (blocks_store.page_for_file), beside ``SQL_LIBRARY_DOC``.
+SQL_LIBRARY_FILE = "doc_id || json_extract(properties, '$.doc.ext')"
+
+
+def _library_file(props: dict) -> str:
+    """The stored name of the document a page owns as a library document
+    (``SQL_LIBRARY_FILE`` over the page's properties), "" for none: a copy,
+    a page with no document, a work folder's file not in the library."""
+    view = page_document(props)
+    return view["file"] if own_hash(view) and library_document(props) else ""
 
 
 class BackupError(ValueError):
@@ -569,9 +583,8 @@ def _review_import(ws, tdir, upload_names):
         # the library's blocks: a page only in Recently deleted comes back (``_merge``)
         live_pages = {r[0]: (r[1], json.loads(r[2] or "{}"))
                       for r in live.execute(f"SELECT id, content, properties FROM unified_blocks WHERE {IN_PAGE}")}
-        live_docs = dict(live.execute(
-            f"SELECT doc_id, id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' "
-            f"AND {SQL_LIBRARY_PDF}").fetchall())
+        live_docs = dict(live.execute(f"SELECT {SQL_LIBRARY_FILE}, id FROM unified_blocks WHERE doc_id IS NOT NULL "
+                                      f"AND parent_id = 'root' AND {SQL_LIBRARY_DOC}").fetchall())
         live_chats = {(table, key) for table, key, _, _ in live.execute(conversations)}
         live_paths = folder_paths(live)
         live_parents = page_parents(live)
@@ -591,10 +604,9 @@ def _review_import(ws, tdir, upload_names):
         roots = src.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id='root' ORDER BY position").fetchall()
         src_props = {row[0]: json.loads(row[4] or "{}") for row in roots}
         src_parents = page_parents(src)
-        destinations = {}  # the backup's page id → the workspace's page it is (the same id, or the same PDF)
+        destinations = {}  # the backup's page id → the workspace's page it is (the same id, or the same document)
         for page_id, props in src_props.items():
-            found = page_id if page_id in live_pages else (
-                live_docs.get(own_hash(page_document(props))) if is_library_pdf(props) else None)
+            found = page_id if page_id in live_pages else live_docs.get(_library_file(props))
             if found:
                 destinations[page_id] = found
         for row in roots:
@@ -634,7 +646,7 @@ def _review_import(ws, tdir, upload_names):
                           "folders": folders, "parent": parent,
                           **({"folders_alone": folders} if top_folders else {}),
                           "selection_ids": [selection_id],
-                          "kind": "pdf" if own_hash(page_document(destination_props)) else "page",
+                          "kind": page_kind(destination_props),
                           "action": "skip" if destination_id else "create",
                           "source_paths": ["pages.db", *[f"uploads/{n}" for n in sorted(uploads)]],
                           "warnings": warnings, "missing": bool(missing),
@@ -808,8 +820,9 @@ def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
     is a library page (``_refiled``) and every folder it makes a plain one
     (``_merge_trees``), for the vault that marked them is the computer's
     that made the backup; a page of the backup matches the workspace's of
-    the same PDF only when both are library documents
-    (``SQL_LIBRARY_PDF``). Nothing in the backup's data.db is touched."""
+    the same document (the stored file, by hash and extension, of any
+    format) only when both are library documents (``SQL_LIBRARY_DOC``,
+    ``SQL_LIBRARY_FILE``). Nothing in the backup's data.db is touched."""
     from fractional_indexing import generate_n_keys_between
 
     from . import ops
@@ -827,12 +840,12 @@ def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
                 targets = set(filing_targets(Tree.read(dst)))
                 in_trash = {r[0] for r in dst.execute("SELECT id FROM unified_blocks WHERE parent_id = ?", (TRASH,))}
                 live_docs = dict(dst.execute(
-                    f"SELECT doc_id, id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' "
-                    f"AND {SQL_LIBRARY_PDF}").fetchall())
-                new_roots, same = [], {}  # same: a page skipped for the workspace's of its PDF → that page
-                # the library rule on the backup's side too: its file of a work folder is no page of its PDF
-                for row in src.execute(f"SELECT id, CASE WHEN {SQL_LIBRARY_PDF} THEN doc_id END FROM unified_blocks "
-                                       "WHERE parent_id = 'root' ORDER BY position ASC").fetchall():
+                    f"SELECT {SQL_LIBRARY_FILE}, id FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' "
+                    f"AND {SQL_LIBRARY_DOC}").fetchall())
+                new_roots, same = [], {}  # same: a page skipped for the workspace's of its document → that page
+                # the library rule on the backup's side too: its file of a work folder is no page of its document
+                for row in src.execute(f"SELECT id, CASE WHEN {SQL_LIBRARY_DOC} THEN {SQL_LIBRARY_FILE} END "
+                                       "FROM unified_blocks WHERE parent_id = 'root' ORDER BY position ASC").fetchall():
                     doc_id = row[1]
                     if (row[0] in taken and row[0] not in in_trash) or (doc_id and doc_id in live_docs):
                         if not (row[0] in taken and row[0] not in in_trash):

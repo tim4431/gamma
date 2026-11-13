@@ -198,9 +198,10 @@ All state is SQLite + files on disk under a data directory (env
   names. Its statements (`db.VAULTS_SCHEMA`) are `CREATE ... IF NOT EXISTS`,
   applied as a connection opens and never migrated. A file id is text: it
   can pass 63 bits. Tables:
-  - `linked_files` — PDFs read where they are, by `(ws, name, path)`: the
-    stored name a page reads them by (`<hash>.pdf`, the page's document
-    at `path`, [documents.md](documents.md)), the path, the size,
+  - `linked_files` — files read where they are, by `(ws, name, path)`: the
+    stored name a page reads them by (`<hash><ext>`: a PDF's `.pdf`, a
+    work folder's file under its own extension; the page's document at
+    `path`, [documents.md](documents.md)), the path, the size,
     time and file id when last read, the page (`''` for a vault's picture),
     the account that opened the file, whom a change of it is made as
     (`actor`), and why the last
@@ -208,8 +209,9 @@ All state is SQLite + files on disk under a data directory (env
     have several paths; a path has one page;
   - `vault_files` — a vault's files as the last round left them, one row a
     path (`link_id`, `path`; a trashed file's path is its trash path, with
-    `was` where it lived): the page, the `kind` (`notes`, `pdf` or
-    `picture`), the hash, size, time and file id and when they were read
+    `was` where it lived): the page, the `kind` (its class, `notes`, `pdf`,
+    `picture` or `file`, [synced_vaults.md](synced_vaults.md) "The
+    classes"), the hash, size, time and file id and when they were read
     (`read_at`, for the racy rule), a note's base `text`, its `nodes`
     (`[{id, g, m?, a?}]` in document order, `a` the block's anchor) and
     `gone` (the blocks the file dropped, `[{id, hash, anchor, props,
@@ -268,10 +270,12 @@ All state is SQLite + files on disk under a data directory (env
     in the trees (from `page_id`), else `ink` (an `ink_url` key,
     `highlights.is_ink`), `text_box`, `picture`, `sheet`, `recording` (an
     object there), `link` (a non-empty `link_url` or `link_page_id`,
-    `highlights.is_link`), `highlight` (a `pdf_position` object), `note`,
-    tested in that order
-    (`db.BLOCK_HOT_COLUMNS`; `picture` since step 44,
-    [migrations.md](migrations.md)). The filters read the column (its
+    `highlights.is_link`), `highlight` (a `pdf_position`, `image_position`
+    or `text_position` object: a place on a PDF page, a region of a
+    picture, a range of a text file; `highlights.is_highlight` and
+    `is_region` each read their own key), `note`, tested in that order
+    (`db.BLOCK_HOT_COLUMNS`; `picture` since step 44, the region and the
+    range since step 55, [migrations.md](migrations.md)). The filters read the column (its
     index); the block dict computes the same rule in Python from the
     properties it has parsed anyway (`blocks_store.block_kind`, checked
     against the column by `tests/test_block_columns.py` on the cases of
@@ -696,7 +700,7 @@ track of the ones nothing uses.
   a PDF read where it is on this computer: a page's document at `path`
   ([documents.md](documents.md)), whose stored name a `vaults.db`
   `linked_files` row maps to the path
-  ([synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)).
+  ([synced_vaults.md](synced_vaults.md#a-file-read-where-it-is)).
   `open_path`, and what reads through it, find one when its size and time
   are as recorded; one whose stat moved reads as nothing and the read tells
   `gamma/linked_files.py` (`storage.linked_moved`), whose worker hashes it
@@ -750,7 +754,10 @@ track of the ones nothing uses.
   `hash + ext`, the view's `file`: stored, read in place, a URL page's
   cached copy and a duplicated page's original alike;
   [documents.md](documents.md)), and a highlight's
-  `pdf_position.doc_id` and `pdf_position.prev.doc_id`. Those two name the
+  `pdf_position.doc_id` and `pdf_position.prev.doc_id` (a picture's
+  region names the version it was drawn on in `image_position.hash`, which
+  holds nothing: regions are never relocated, and the version a thread on
+  one needs is held by the thread's anchor). Those two name the
   file a highlight's rectangles were measured on, after a replacement: a
   pending highlight's `prev` (and a lost one's `doc_id`) is its reference,
   the version it is matched from at every later replacement, and stays

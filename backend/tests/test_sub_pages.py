@@ -507,6 +507,6 @@ def test_step_47_gives_a_workspace_stamped_46_the_parent_page_column(data_dir):
     migrations._v47_parent_page("", sqlite3.connect(":memory:"), None)  # a copy without the table
     assert (47, "parent_page", migrations._v47_parent_page) in migrations.WORKSPACE_STEPS
     assert 47 not in [v for v, _, _ in migrations.STEPS]  # a workspace step only
-    # a derived column: copies on either side still sync (the format, 52, is step 52's documents)
-    assert 47 in migrations.DERIVED_STEPS and migrations.workspace_format() == 52
+    # a derived column: copies on either side still sync (the format, 55, is step 55's positions)
+    assert 47 in migrations.DERIVED_STEPS and migrations.workspace_format() == 55
     assert blocks_store.PARENT_PAGE == "parent_page"

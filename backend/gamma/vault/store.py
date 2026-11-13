@@ -3,18 +3,18 @@
 each vault's files as its last round left them (``vault_files``), its
 directories (``vault_dirs``) and the bytes its writes replaced
 (``vault_history``), only where links are kept
-(``config.folder_links_enabled``). The rounds (gamma/vault_sync.py) write
+(``config.folder_links_enabled``). The rounds (gamma/vault/sync.py) write
 them; besides, gamma/folder_links.py reads a page's rows for its chip and its
 file editor, keeps the history of a write from that editor, makes the row of
 a file vault a new vault takes in, and drops a vault's rows when it goes;
-gamma/vault_upgrade.py writes the rows a folder kept on disk before synced
-vaults starts from (``take``), gamma/vault_http.py keeps the text a clash on
+gamma/vault/upgrade.py writes the rows a folder kept on disk before synced
+vaults starts from (``take``), gamma/vault/http_remote.py keeps the text a clash on
 another server took from Gamma, and gamma/linked_files.py reads whether a PDF
 is a vault's.
 
 A file's row is its **base**: what the file was when the round last took it,
 its hash and stat and when they were read (``read_at``, for
-``vault_disk.racy``), a note's text and its blocks (``nodes``, ``[{id, g,
+``disk.racy``), a note's text and its blocks (``nodes``, ``[{id, g,
 m?}]`` in document order) and ``gone``, the blocks the file dropped, each kept
 ``GONE_DAYS`` with its properties so that rectangles come back with the text.
 Before a round does anything to a file it writes what it is about to make the
@@ -26,7 +26,7 @@ decide, never a base that says what is not so.
 A file whose page went to Recently deleted keeps its row, a **tombstone**
 (``bury``): ``path`` is where the trash holds the file and ``was`` where it
 lived, so that the same file come back finds its page
-(``vault_disk.came_back``) and a restored page finds its file. A work
+(``disk.came_back``) and a restored page finds its file. A work
 folder's file its ``.gammaignore`` leaves out stays where it is, and so does
 a PDF of a work folder whose page went: its tombstone is **in place**
 (``bury_in_place``), ``path`` ``KEPT`` and ``was`` (no file of the trash's,
@@ -51,7 +51,7 @@ import time
 import zlib
 from datetime import datetime, timedelta, timezone
 
-from .db import connect_vaults_db, format_stamp
+from ..db import connect_vaults_db, format_stamp
 
 GONE_DAYS = 30                  # how long a block the file dropped can come back with its id
 MISSING_S = 10                  # a file missing from scans this far apart is removed
@@ -112,6 +112,14 @@ def forget(link_id: str, path: str) -> None:
         conn.execute("DELETE FROM vault_files WHERE link_id = ? AND path = ?", (link_id, path))
 
 
+def forget_kind(link_id: str, kind: str) -> None:
+    """Every row of the vault's files of class ``kind``, tombstones included:
+    a work folder let go forgets its ``file`` rows, whose pages keep their
+    documents (gamma/work_folders/takeover.py ``release``)."""
+    with connect_vaults_db() as conn:
+        conn.execute("DELETE FROM vault_files WHERE link_id = ? AND kind = ?", (link_id, kind))
+
+
 def forget_link(link_id: str) -> None:
     """Everything kept of a vault that was removed."""
     with connect_vaults_db() as conn:
@@ -130,7 +138,7 @@ def take(link_id: str, files: dict, dirs: dict) -> None:
     """A vault's rows written whole, in one transaction, in place of any it
     had: ``files`` ``{path: fields}`` (each with its ``kind``), ``dirs``
     ``{path: (folder id, file id)}``. What a folder kept on disk before
-    synced vaults starts from (gamma/vault_upgrade.py)."""
+    synced vaults starts from (gamma/vault/upgrade.py)."""
     with connect_vaults_db() as conn:
         conn.execute("DELETE FROM vault_files WHERE link_id = ?", (link_id,))
         conn.execute("DELETE FROM vault_dirs WHERE link_id = ?", (link_id,))
@@ -149,12 +157,14 @@ def take(link_id: str, files: dict, dirs: dict) -> None:
 def put_pending(link_id: str, path: str, kind: str, pending: dict) -> None:
     """What a round is about to make the base of ``path``, before it touches
     anything: ``pending`` holds its ``token`` (the op batch's id) and the base
-    to be. A new file's row is made with it, and no base."""
+    to be. A new file's row is made with it, and no base; a row that is there
+    takes ``kind``, its class now (a kept folder's picture row at a path a
+    work folder reads as a file)."""
     if not pending.get("token"):
         raise ValueError("a pending base needs its token")
     with connect_vaults_db() as conn:
         conn.execute("INSERT INTO vault_files (link_id, path, kind, pending) VALUES (?, ?, ?, ?) "
-                     "ON CONFLICT (link_id, path) DO UPDATE SET pending = excluded.pending",
+                     "ON CONFLICT (link_id, path) DO UPDATE SET pending = excluded.pending, kind = excluded.kind",
                      (link_id, path, kind, json.dumps(pending)))
 
 

@@ -1,7 +1,7 @@
 """A synced vault from before work folders taken over as one, and a work
 folder let go (docs/dev/work_folders.md "The takeover"). Run by the round's
 caller under the link's lock (gamma/folder_links.py ``_vault_round``), on
-this server's workspace (``vault_sync.LocalRemote``): only a vault of this
+this server's workspace (``vault.local_remote.LocalRemote``): only a vault of this
 computer's server is a work folder.
 
 ``take_over`` writes the mark on the vault's folder, then stamps each page
@@ -19,15 +19,17 @@ row records its directory's folder. The link's state with ``TAKEN_OVER`` is
 the commit point, written by the caller.
 
 ``release`` unstamps every live file of the work folder, the files not in
-the library sent to Recently deleted instead when the vault is removed, and
-then takes the mark off: they are library pages, filed where they were.
+the library sent to Recently deleted instead when the vault is removed,
+forgets the rows of its files of other formats (gamma/vault/kinds.py
+``FILE``, a work folder's class alone) and then takes the mark off: they
+are library pages, filed where they were.
 Files in Recently deleted keep their stamps, which a restore drops once no
 mark names their work folder (``filing.may_restore``)."""
 
 import os
 from pathlib import Path
 
-from .. import vault_disk, vault_store
+from ..vault import disk as vault_disk, kinds, store as vault_store
 from ..db import page_now
 from . import selection
 from .library import STAMPS, work_folder_of
@@ -122,21 +124,24 @@ def take_over(link: dict, remote) -> dict:
     """The vault ``link`` taken over as a work folder through ``remote``
     (the module doc). → the state to keep: the link's, with ``TAKEN_OVER``
     and the cap of files a round reads (``cap``: ``MAX_FILES``, or the
-    files it tracks now when they are more, counted as the round counts
-    them, pictures and files of no class included). ``Offline`` for a
-    directory that does not answer, before anything is written."""
+    files it tracks now when they are more, counted as a work folder's
+    round counts them: every file the rules take, pictures included).
+    ``Offline`` for a directory that does not answer, before anything is
+    written."""
     w = link["folder_id"]
     root = Path(link["path"])
-    found = vault_disk.walk(root, selection.rules_of(root))
+    found = vault_disk.walk(root, selection.rules_of(root), work=True)
     seen = len(found.files) + found.pictures + found.untracked
     write_mark(link, remote)
     layout = remote.layout()
     rows = vault_store.files(link["id"])
     files: dict = {}
     for path, row in rows.items():
-        if row["page_id"] and row["kind"] in ("notes", "pdf"):
+        cls = kinds.by_kind(row["kind"])
+        if row["page_id"] and cls is not None and cls.makes_pages:
             files.setdefault(row["page_id"], {})[row["kind"]] = (path, row)
-    main = {page_id: kinds.get("pdf") or kinds["notes"] for page_id, kinds in files.items() if page_id in layout.pages}
+    main = {page_id: next(by_kind[k] for k in (kinds.PDF.name, kinds.NOTES.name, kinds.FILE.name) if k in by_kind)
+            for page_id, by_kind in files.items() if page_id in layout.pages}
     dirs = _folders(remote, link, {_dir(path) for path, _row in main.values()}, layout.folders)
     tree = remote.work_tree()
     pull = mark_of(link)["pull"]
@@ -163,7 +168,7 @@ def take_over(link: dict, remote) -> dict:
             patch["folders"] = filed
         if props.get("parent_page"):
             patch["parent_page"] = None
-        doc, pdf = props.get("doc"), files.get(page_id, {}).get("pdf")
+        doc, pdf = props.get("doc"), files.get(page_id, {}).get(kinds.PDF.name)
         if pdf and isinstance(doc, dict) and doc.get("size") is None and pdf[1]["size"]:
             patch["doc"] = {**doc, "size": pdf[1]["size"]}
         return patch or None
@@ -186,7 +191,10 @@ def take_over(link: dict, remote) -> dict:
 def release(link: dict, remote, *, trash_files: bool) -> None:
     """The work folder of ``link`` let go (the module doc): its live files
     unstamped, quietly, or, with ``trash_files``, those not in the library
-    sent to Recently deleted; then its mark taken off."""
+    sent to Recently deleted; the rows of its files of other formats
+    forgotten (a kept folder's round compares no such class, and would move
+    a file a page in Recently deleted left behind: their pages keep their
+    documents, stored where they were kept); then its mark taken off."""
     w = link["folder_id"]
     pages = remote.work_pages()
     if trash_files:
@@ -201,5 +209,6 @@ def release(link: dict, remote, *, trash_files: bool) -> None:
         return {key: None for key in STAMPS if key in props} or None
 
     remote.stamp(list(pages), plan)
+    vault_store.forget_kind(link["id"], kinds.FILE.name)
     if remote.mark() is not None:
         remote.folder_op({"op": "set", "id": w, "props": {"vault": None}})

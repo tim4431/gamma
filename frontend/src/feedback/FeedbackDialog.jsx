@@ -37,7 +37,7 @@ function Entry({ entry, onOpen }) {
   const chip = sentChip(entry);
   const first = firstComment(entry);
   const picture = pictureOf(entry);
-  const meta = [placedText(entry.where), sourceText(entry.source)].filter(Boolean).join(" · ");
+  const meta = [placedText(entry.where, entry.kind), sourceText(entry.source)].filter(Boolean).join(" · ");
   return (
     <button type="button" className="feedbackEntry" data-thread-id={entry.id} onClick={() => onOpen(entry)}>
       <span className="feedbackEntryIcon"><Icon size={16} /></span>

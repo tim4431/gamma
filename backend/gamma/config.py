@@ -43,6 +43,23 @@ def folder_links_enabled() -> bool:
     return _env_on("GAMMA_FOLDER_LINKS")
 
 
+DEFAULT_VAULT_KEEP_MB = 64
+
+
+def vault_keep_bytes() -> int:
+    """How large a work folder's file may be for the vault to hash and
+    serve it (gamma/vault/kinds.py, the class ``file``): past it the file
+    is listed, its page a document at ``listed`` with no bytes
+    (docs/dev/documents.md "The listed state"). ``GAMMA_VAULT_KEEP_MB``,
+    64 unless set; read when asked, so a test can lower it. PDFs and notes
+    are never measured against it."""
+    try:
+        mb = int(os.environ.get("GAMMA_VAULT_KEEP_MB", "").strip() or DEFAULT_VAULT_KEEP_MB)
+    except ValueError:
+        mb = DEFAULT_VAULT_KEEP_MB
+    return max(0, mb) * 1024 * 1024
+
+
 def shell_secret() -> str:
     """What the desktop app sends as ``X-Gamma-Shell`` on the routes that
     take a path on this computer (routers/folder_links.py): a page of Gamma

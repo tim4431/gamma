@@ -90,7 +90,7 @@ from .blocks_store import (BLOCK_ID_RE, FOLDERS, LABELS, PATH_SEP, TRASH, block_
                            tree_parents, valid_block_id, write_lock)
 from .comments import STATES as THREAD_STATES
 from .db import account_names, connect_data_db, connect_pages_db, connect_users_db
-from .documents.model import page_document, pdf_file_hash
+from .documents.model import is_pdf, page_document, pdf_file_hash
 from .highlights import is_ink
 from .ops import (MAX_OPS, after_commit, after_commits, apply_batches, apply_ops, delete_tree, ensure_filing,
                   move_across_pages, tree_deletion)
@@ -900,7 +900,7 @@ def _run_view_pdf_page(conn, ws: str, scope: dict, args: dict):
         return error, None
     page_id, title, props, _ = loaded
     view = page_document(props)
-    if not view:
+    if not is_pdf(view):
         return f'"{title}" has no PDF attachment to look at', None
     try:
         page_no = max(1, int(args.get("pdf_page", 1)))
@@ -1090,7 +1090,7 @@ def _plan_clip_region(conn, scope: dict, args: dict):
     if error:
         return None, error
     page_id, title, props, _ = loaded
-    if not page_document(props):
+    if not is_pdf(page_document(props)):
         return None, f'error: "{title}" has no PDF attachment to clip from'
     try:
         page_no = int(args.get("pdf_page") or 0)

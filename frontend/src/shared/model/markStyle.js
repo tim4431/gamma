@@ -3,8 +3,9 @@
 // an underline, a wavy underline or a strikethrough. A highlight block
 // stores a line as `properties.style`: "underline", "squiggly" or
 // "strikeout", the names of the PDF annotations the annotated PDF writes
-// for them; no style is the wash. An area highlight is a box whatever it
-// stores. Beside the styles, the account's text highlighters (the
+// for them; no style is the wash. An area highlight, and a region of a
+// picture (an image_position), is a box whatever it stores. Beside the
+// styles, the account's text highlighters (the
 // `highlightPresets` preference, docs/dev/settings.md "Text
 // highlighters"): an ordered list of a style and a colour each, named if
 // the person likes, the first MAX_SHOWN_PRESETS of them buttons on the
@@ -24,15 +25,20 @@ export const STYLE_NAMES = Object.freeze({
 export const markStyle = (value) => (MARK_STYLES.includes(value) ? value : "highlight");
 // Whether `style` draws a line rather than a wash.
 export const isLineStyle = (style) => style !== "highlight" && MARK_STYLES.includes(style);
-// A highlight block's style; an area's is always the wash's box.
-export const blockStyle = (b) => (b?.properties?.pdf_position?.area ? "highlight" : markStyle(b?.properties?.style));
+// A box rather than a passage: an area highlight, or a region of a picture.
+const isBox = (props) => Boolean(props?.pdf_position?.area)
+  || (props?.image_position !== null && typeof props?.image_position === "object" && !Array.isArray(props?.image_position));
+
+// A highlight block's style; an area's, and a region's, is always the
+// wash's box.
+export const blockStyle = (b) => (isBox(b?.properties) ? "highlight" : markStyle(b?.properties?.style));
 
 // A highlight's properties with `style` set: a line is stored, the wash is
 // no key at all (so a block that never had a style keeps none), and an
-// area takes none.
+// area or a region takes none.
 export function withStyle(props, style) {
   const { style: _old, ...rest } = props || {};
-  return isLineStyle(style) && !rest.pdf_position?.area ? { ...rest, style } : rest;
+  return isLineStyle(style) && !isBox(rest) ? { ...rest, style } : rest;
 }
 
 // What a style in a colour (a stored #rrggbbaa or a swatch) is called:

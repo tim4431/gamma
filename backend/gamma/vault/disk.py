@@ -1,7 +1,7 @@
 """A synced vault's directory on this computer, as files (docs/research/vaults.md
 "Where everything lives"): the marker, the scan, the evidence that a file
 moved, the write that replaces a note, the vault's trash. It knows nothing of
-pages: the rounds (gamma/vault_sync.py) read and write through it.
+pages: the rounds (gamma/vault/sync.py) read and write through it.
 
 **The marker** is ``.gamma/vault.json`` (``make_marker``, once, when the vault
 is made; no round changes it), in a hidden directory: the vault's id, so a
@@ -21,8 +21,10 @@ first, and no line of a vault's undoes them: dot-directories,
 PDFs and pictures) says what else it leaves out (``Scan.excluded``), a
 directory left out never entered. A round reads and writes nothing it would
 not see either (``path``: no ``..``, nothing below a link). One stat a file:
-notes (``.md``, ``.markdown``) and papers (``.pdf``) are listed, pictures and
-the files of no class the rules take only counted. A link, a name Windows
+the files of a class that makes pages (gamma/vault/kinds.py, by the name
+alone: notes and PDFs, and in a work folder's scan, ``work``, every file
+the rules take) are listed, in a kept folder's pictures and the files of no
+class the rules take only counted. A link, a name Windows
 refuses, and two names one directory holds that differ only by case, are
 reported and left, unless the rules leave them out first (a link decided as
 the directory it may stand for, so the default reports every one). A cloud
@@ -35,7 +37,9 @@ removed.
 id with the same size, hash, PDF ``/ID`` or a similar text; a hash no other file
 on either side has; a PDF's trailer ``/ID``, the same way; a note's text, at
 least ``MOVE_SIMILAR`` alike, the name only breaking ties, ``MOVE_COMPARES``
-comparisons at most. A file whose time is within ``RACY_S`` of when it was read
+comparisons at most. A file of the class ``file`` (a work folder's) has no
+text and no ``/ID``: its id with its size or hash and the file's own time,
+or a unique hash; one listed without a hash, its id alone. A file whose time is within ``RACY_S`` of when it was read
 counts as changed at the next scan, whatever its stat says (``moved``): a
 coarse clock (exFAT, SMB) gives a save in the same tick the same time.
 
@@ -74,18 +78,16 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import gamma_sync
-from .documents.formats import IMAGE_MEDIA_TYPES
-from .obsidian_export import unique_name
-from .work_folders import ignore_rules
+from .. import gamma_sync
+from ..obsidian_export import unique_name
+from ..work_folders import ignore_rules
+from . import kinds
 
 MARKER_DIR = ".gamma"
 MARKER = ".gamma/vault.json"
 TRASH = ".gamma/trash"
 FORMAT = "gamma-vault-1"
 TEMP = ".gamma-"                # what Gamma's own temporary files in a vault are called
-NOTES = (".md", ".markdown")
-PAPERS = (".pdf",)
 RACY_S = 2.0                    # a file written this near when it was read may hide a later save in the same tick
 MOVE_SIMILAR = 0.6              # how alike a removed note and a new one must be to be one note moved
 ID_SIMILAR = 0.3                # how alike they must be when they have one file id
@@ -129,7 +131,7 @@ class Outside(OSError):
 class Found:
     """A file as the scan found it. ``placeholder``: its bytes are in the
     cloud, so it is never read or removed."""
-    kind: str               # "notes" or "pdf"
+    kind: str               # its class's name (kinds.py): a notes', a pdf's or, in a work folder, a file's
     size: int
     mtime_ns: int
     file_id: str
@@ -138,12 +140,14 @@ class Found:
 
 @dataclass(slots=True)
 class Scan:
-    """One walk of a vault: its notes and papers (``files``), its directories
-    with their file ids (``dirs``), paths relative to the root with ``/``;
-    how many pictures and files of no class the rules take (``untracked``:
-    chosen, read once Gamma reads any file), and where the pictures are
-    (``images``, for the links of its notes); what the rules (``rules``) left
-    out (``excluded``, a directory with a ``/`` at its end); what it left and
+    """One walk of a vault: the files of a class that makes pages
+    (``files``: notes and papers, in a work folder every file the rules
+    take), its directories with their file ids (``dirs``), paths relative to
+    the root with ``/``; in a kept folder how many pictures and files of no
+    class the rules take (``pictures``, ``untracked``; 0 in a work folder,
+    whose every file is listed), and where the pictures are (``images``, for
+    the links of its notes); what the rules (``rules``) left out
+    (``excluded``, a directory with a ``/`` at its end); what it left and
     why (``refused``, ``(path, why)``); and Gamma's temporary files it met,
     for ``clean_temps``."""
     files: dict = field(default_factory=dict)
@@ -278,17 +282,6 @@ def marker_file(root: Path) -> str:
 
 # --- the scan -------------------------------------------------------------------
 
-def kind_of(name: str) -> str:
-    """What a file is to a vault by its name: ``notes``, ``pdf``, ``picture``,
-    or "" for anything else."""
-    ext = os.path.splitext(name)[1].lower()
-    if ext in NOTES:
-        return "notes"
-    if ext in PAPERS:
-        return "pdf"
-    return "picture" if ext in IMAGE_MEDIA_TYPES else ""
-
-
 def refusal(name: str) -> str:
     """Why Windows refuses ``name`` as a file or directory name ("" when it
     takes it): a device name with any extension, a character it reserves, or a
@@ -313,7 +306,7 @@ def _temp_of_gamma(rel: str, name: str) -> bool:
     """Whether a temporary name the walk met in the directory ``rel`` is one
     of Gamma's that a write may have left: its own temporary files, and the
     gamma-sync client's state at the vault's root, which a folder kept before
-    leaves when its upgrade dies before taking it away (gamma/vault_upgrade.py).
+    leaves when its upgrade dies before taking it away (gamma/vault/upgrade.py).
     Below the root that file is another link's or a gamma-sync directory's:
     never swept."""
     if name == gamma_sync.STATE:
@@ -411,11 +404,12 @@ def _junction(entry) -> bool:
     return tag == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
 
 
-def walk(root: Path, rules: ignore_rules.Rules | None = None) -> Scan:
+def walk(root: Path, rules: ignore_rules.Rules | None = None, *, work: bool = False) -> Scan:
     """What the directory ``root`` holds under ``rules`` (None:
     ``ignore_rules.DEFAULT``), as the module doc says: ``Offline`` for any
     error of the walk, so that what it returns is all of it. A file gone
-    between its listing and its stat is gone."""
+    between its listing and its stat is gone. ``work``: a work folder's
+    walk, which lists every file the rules take (``kinds.class_of``)."""
     if rules is None:
         rules = ignore_rules.DEFAULT
     out, pending = Scan(rules=rules), [("", root)]
@@ -462,19 +456,22 @@ def walk(root: Path, rules: ignore_rules.Rules | None = None) -> Scan:
                     raise Offline(f"the vault's directory stopped answering at {path}: {_why(e)}") from e
                 pending.append((f"{path}/", Path(entry.path)))
             else:
-                _count(out, entry, path, stub, root)
+                _count(out, entry, path, stub, root, work)
     return out
 
 
-def _count(out: Scan, entry, path: str, stub: bool, root: Path) -> None:
-    """A file of the walk the rules take, listed or counted."""
-    kind = kind_of(path)
-    if kind == "picture":
+def _count(out: Scan, entry, path: str, stub: bool, root: Path, work: bool = False) -> None:
+    """A file of the walk the rules take, listed or counted: one of a class
+    that makes pages is listed with its stat, a picture counted and kept for
+    the links, a file of no class counted (``kinds.class_of``; in a work
+    folder's walk every file is of a class that makes pages)."""
+    cls = kinds.class_of(path, work=work)
+    if cls is kinds.PICTURE:
         out.pictures += 1
         if not stub:
             out.images.append(path)
         return
-    if not kind:
+    if cls is None:
         out.untracked += 1
         return
     try:
@@ -487,15 +484,16 @@ def _count(out: Scan, entry, path: str, stub: bool, root: Path) -> None:
         return
     except OSError as e:
         raise Offline(f"the vault's directory stopped answering at {path}: {_why(e)}") from e
-    out.files[path] = Found(kind, 0 if stub else st.st_size, 0 if stub else st.st_mtime_ns, file_id, placeholder)
+    out.files[path] = Found(cls.name, 0 if stub else st.st_size, 0 if stub else st.st_mtime_ns, file_id, placeholder)
 
 
-def scan(root: Path, vault_id: str, rules: ignore_rules.Rules | None = None) -> Scan:
-    """The vault ``vault_id``'s directory walked under ``rules`` (``walk``),
-    its marker checked before (``check_marker``) and after: one gone by the
-    end means the disk went during the walk, ``Offline``."""
+def scan(root: Path, vault_id: str, rules: ignore_rules.Rules | None = None, *, work: bool = False) -> Scan:
+    """The vault ``vault_id``'s directory walked under ``rules`` (``walk``;
+    ``work`` a work folder's), its marker checked before (``check_marker``)
+    and after: one gone by the end means the disk went during the walk,
+    ``Offline``."""
     check_marker(root, vault_id)
-    found = walk(root, rules)
+    found = walk(root, rules, work=work)
     after = read_marker(root)
     if after is None:
         raise Offline("the vault's directory lost its marker during the scan")
@@ -678,7 +676,9 @@ def came_back(tombs: list, found: list) -> dict:
     share one. A file at the very path the page's file had answers to that
     first evidence alone, whatever its id: the next note written under a name
     its page was deleted under is that name's new note, not the old one back,
-    and a freed inode would otherwise say it was."""
+    and a freed inode would otherwise say it was. A work folder's file listed
+    without its bytes (no hash: past the keep limit) is back where it lived
+    by its id or its size, as ``_alike`` takes a size with the id."""
     out, taken = {}, set()
     for f in found:
         for k, g in enumerate(tombs):
@@ -688,7 +688,8 @@ def came_back(tombs: list, found: list) -> dict:
             where_it_lived = _fold(g.path) == _fold(f.path)
             here = where_it_lived and bool(
                 (g.hash and g.hash == f.hash) or (f.kind == "pdf" and f.pdf_id and f.pdf_id == g.pdf_id)
-                or (f.kind == "notes" and similarity(g.text or "", f.text or "") >= MOVE_SIMILAR))
+                or (f.kind == "notes" and similarity(g.text or "", f.text or "") >= MOVE_SIMILAR)
+                or (f.kind == "file" and not g.hash and not f.hash and (same_id or g.size == f.size)))
             if here or (not where_it_lived and same_id and _alike(g, f)):
                 out[f.path] = k
                 taken.add(k)

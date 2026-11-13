@@ -397,6 +397,6 @@ def test_client_sends_pdfs_back_when_asked_and_follows_a_file(owner, token, tmp_
     assert capsys.readouterr().out.strip() == "sent"
     props = owner.get(f"/api/blocks/{draft['id']}").json()["properties"]
     assert props["doc"] == {"format": "pdf", "name": "main.pdf", "hash": mod.doc_of(build), "ext": ".pdf",
-                            "at": "store"}
+                            "at": "store", "size": build.stat().st_size}
     assert mod.main([*args, "--token", write]) == 0
     assert capsys.readouterr().out.strip() == "up to date"

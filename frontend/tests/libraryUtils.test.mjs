@@ -268,7 +268,11 @@ test("pageBlocksOf gives each row its document; a card says PDF or Page by it", 
   assert.equal(b._doc, null);
   assert.equal(pageKindLabel(a._doc), "PDF");
   assert.equal(pageKindLabel(b._doc), "Page");
-  assert.equal(pageKindLabel({ format: "text" }), "Page", "only a PDF is named");
+  assert.equal(pageKindLabel({ format: "text" }), "Text", "a document's format names the page");
+  assert.equal(pageKindLabel({ format: "text", language: "latex" }), "LaTeX", "a text file by its language, never 'Page'");
+  assert.equal(pageKindLabel({ format: "image" }), "Picture");
+  assert.equal(pageKindLabel({ format: "binary" }), "File");
+  assert.equal(pageKindLabel({ format: "nonsense" }), "Page", "a format without a word");
 });
 
 test("pageBlocksOf: a work folder's file, its name and size, and whether the library lists a page", () => {

@@ -30,21 +30,25 @@ code keeps them apart (decided 2026-09-13, see *Files and documents* below):
   per page, download or open in a tab, no semantics. Whether it is still in
   use follows the textual reference; one nothing references is kept 30
   days, then purged ([user_db.md](user_db.md) "Stored files").
-- A **document** is the ONE file a page *carries*, a PDF so far: one
-  property, `properties.doc` (`{format, name, hash, ext, at, url?, size?,
-  copy?}`; the stored file is `uploads/<hash><ext>`, and `at` says whether
-  the bytes are read from there, from a path on this computer or from an
-  address; [documents.md](documents.md)), with `web_url` beside it for
-  the page a clip came from. The viewer, highlights, metadata, the PDF
-  search index, AI context and `by-doc` dedup all key on it. Code reads it
-  through ONE function on each side — `documents.model.page_document(props)`
+- A **document** is the ONE file a page *carries*, of any format (a PDF,
+  a picture, a text file, a recording, a data file): one property,
+  `properties.doc` (`{format, name, hash, ext, at, url?, size?, copy?}`;
+  the stored file is `uploads/<hash><ext>`, and `at` says whether the
+  bytes are read from there, from a path on this computer, from an address
+  or nowhere (a work folder's file too large to keep, `listed`);
+  [documents.md](documents.md)), with `web_url` beside it for the page a
+  clip came from. The viewer, highlights, metadata, the PDF search index,
+  AI context and the `by-doc` / `by-file` dedup all key on it. Code reads
+  it through ONE function on each side — `documents.model.page_document(props)`
   (backend) / `pageDocument(block)` (frontend) — returning the view
   `{format, language, name, hash, ext, size, at, url, file, copy}` or
   null, held to the same answers by `tests/shared/document.json`. Nothing
   else may read `doc` off a page directly to decide *what the page is*.
   Each reader names the file it means: the one the page owns
   (`own_hash` / `ownHash`; a duplicated page owns none) or the one it shows
-  (`file_hash` / `fileHash`; a duplicated page's is the original's). Until
+  (`file_hash` / `fileHash`; a duplicated page's is the original's). The
+  paper features (the record, Zotero, the clipper, the PDF search index)
+  ask for a PDF (`is_pdf`, `is_library_pdf`), never for a document. Until
   migration step 52 the document was flat keys (`doc_id`, `source_url`,
   `original_filename`, `linked_file`, and a duplicated page's bare upload
   address), read through `page_attachment` / `pageAttachment` and held by
@@ -104,6 +108,18 @@ as `markdown_import` (the importer always did), which is how the chip
 finds it afterwards (`pages_for_docs` matches `doc_id` and
 `markdown_import`). Same rule as the PDF: one page per file, the second
 "Add to library" opens the existing one.
+
+A **file of any other format** (a figure, a data file, a recording, a
+LaTeX source) promotes as the PDF does, through `POST /pages/by-file
+{file: "<hash><ext>", name, folder}`: the page carries the stored file as
+its document (its viewer, notes, comments and chat;
+[documents.md](documents.md) "Writing a document"), the format settled on
+the server from the name, the extension and the first bytes, and one page
+per stored file, keyed by hash *and* extension (the same bytes as `a.txt`
+and `a.log` are two files). The chips ask `POST /pages/by-docs {files}` by
+stored name; the client's routing is `transfers/documentUploads.js`
+(`promoteChip`: a PDF by-doc, a Markdown file from-file, the rest by-file).
+Only an executable's chip, which the server never stored, offers nothing.
 
 **Sub-pages.** A page can sit inside another page, as in Notion, and is
 then reached through it instead of being listed in the library. It is not
@@ -435,13 +451,16 @@ project page links both; side-by-side reading is a second tab or dock window.
 A multi-PDF viewer with `attachment_id` on highlights is not planned.
 
 - **Backend.** `POST /upload-file` takes any extension except
-  `storage.BLOCKED_EXTENSIONS` (executables); unknown ones are served as
+  `formats.BLOCKED_EXTENSIONS` (executables); unknown ones are served as
   `application/octet-stream` downloads, a name without one is stored as
-  `.bin` (`storage.upload_extension`). `POST /pages/by-docs` answers "which
-  page carries each of these hashes" in one query (`blocks_store.pages_for_docs`)
-  so the chips label PDFs once per page render. `POST /blocks/by-doc/{id}`
-  takes `folder` for a page it creates. The Obsidian/markdown zip import
-  stores bundled files under the same rule (`markdown_zip_import._is_asset_ext`).
+  `.bin` (`formats.stored_extension`), an image keeps its own extension
+  when it is an image row of the declared type. `POST /pages/by-docs`
+  answers "which page carries each of these files" in one query
+  (`blocks_store.pages_for_docs` by hash, `pages_for_files` by stored name,
+  any format) so the chips label their files once per page render. `POST
+  /blocks/by-doc/{id}` and `POST /pages/by-file` take `folder` for a page
+  they create. The Obsidian/markdown zip import stores bundled files under
+  the same rule (`markdown_zip_import._is_asset_ext`).
 - **Frontend.** `transfers/FileChip.jsx`: the chip — every file looks the same (a
   small card: kind icon, name, download arrow). A PDF or markdown chip
   whose page exists shows an "open page" button before the arrow; its

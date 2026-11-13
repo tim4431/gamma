@@ -2,25 +2,33 @@
 what the picture now draws (the page's own highlights measured on its file,
 not a lost one, one still placed in another file, a link region or one the
 file embeds; its handwriting), its content key (the same for the same
-marks, moved by a mark on its page, not by one on another), the picture as
-commented on (the held version, the thread's own rectangles), the
-renderer's refusals and the data.db cache's cap."""
+marks, moved by a mark on its page, not by one on another; a PDF's the key
+of step 2), the picture as commented on (the held version, the thread's
+own rectangles), a picture's regions and the whole picture cut from the
+current version and from the held one, the renderer's refusals and the
+data.db cache's cap."""
 
+import hashlib
 import io
+import json
 
 import pymupdf
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from conftest import doc_props, login, make_page, make_user, workspace_of
 from gamma import storage
 from gamma.blocks_store import load_props, new_block_id
 from gamma.db import connect_data_db, connect_pages_db
+from gamma.documents.model import document
 from gamma.feedback import anchors, pictures
+from gamma.pdf_text import RENDER_MAX_SIDE
 from test_highlight_relocate import SIZE, _line_rect, _position
 
 LINE = "the quick brown wombat digs a long burrow"
 FIGURE = (300, 420, 420, 520)   # a black figure on the first version, top-left origin
+COORDS = ("x1", "y1", "x2", "y2")
+BLUE = (0, 0, 200)
 
 
 @pytest.fixture(scope="module")
@@ -79,13 +87,42 @@ def _image(data):
     return Image.open(io.BytesIO(data)).convert("RGB")
 
 
+def _png(width, height, figure=None, color=BLUE) -> bytes:
+    """A white PNG with a ``figure`` (a box, top-left origin) in ``color``."""
+    image = Image.new("RGB", (width, height), "white")
+    if figure:
+        ImageDraw.Draw(image).rectangle(figure, fill=color)
+    out = io.BytesIO()
+    image.save(out, "PNG")
+    return out.getvalue()
+
+
+def _picture(c, ws, data, name="fig.png") -> tuple[str, str]:
+    """A page showing the stored picture ``data``: ``(page id, stored name)``."""
+    stored, _ = storage.store_file(ws, data, ".png")
+    page = make_page(c, name, {"doc": document(stored[:-4], name=name, format="image", ext=".png")})["id"]
+    return page, stored
+
+
+def _set_doc(c, page, doc):
+    r = c.put(f"/api/blocks/{page}", json={"properties": {"doc": doc}})
+    assert r.status_code == 200, r.text
+
+
+def _region(*rect, hash, color="#ff0000"):
+    """A region over ``rect`` of a 1200 × 800 picture, drawn on its version ``hash``."""
+    box = dict(zip(COORDS, rect))
+    return {"image_position": {"width": 1200, "height": 800, "boundingRect": box, "rects": [box], "hash": hash},
+            "color": color}
+
+
 def test_the_key_is_the_marks_of_the_page_and_moves_only_with_one_of_them(owner, ws):
     doc = _upload(owner, _paper(2))
     page = make_page(owner, "Keys", doc_props(doc))["id"]
     passage = _insert(owner, page, _mark())
     first = _now(ws, page, passage)
     assert first == _now(ws, page, passage) and pictures.key(first) == pictures.key(_now(ws, page, passage))
-    assert first.file_hash == doc and first.page == 1 and first.box[1] < 100 / 792 < first.box[3]
+    assert first.file == f"{doc}.pdf" and first.page == 1 and first.box[1] < 100 / 792 < first.box[3]
     assert [d[1] for d in first.drawn if d[0] == "hl"] == [passage] and len(pictures.key(first)) == 16
 
     _insert(owner, page, _mark(page=2))                               # another page's mark
@@ -146,7 +183,8 @@ def test_the_picture_as_commented_on_draws_the_held_version_and_the_thread_s_own
     assert _now(ws, page, area) is None                               # still placed in the old file: not drawn now
 
     region = pictures.made(anchor, "#ff0000")
-    assert region.file_hash == held and region.drawn == (("anchor", "area", "#ff0000", tuple(map(tuple, anchor["rects"]))),)
+    assert region.file == f"{held}.pdf"
+    assert region.drawn == (("anchor", "area", "#ff0000", tuple(map(tuple, anchor["rects"]))),)
     assert pictures.key(region) != pictures.key(pictures.made(anchor))          # the colour is in it
     image = _image(pictures.render(ws, connect_pages_db(ws), page, region))
     width, height = image.size
@@ -156,7 +194,7 @@ def test_the_picture_as_commented_on_draws_the_held_version_and_the_thread_s_own
 
     _set(owner, page, area, {"pdf_position": _position(1, rect, area=True)})  # placed on the new build
     now = _now(ws, page, area)
-    assert now.file_hash == current and now.box == region.box
+    assert now.file == f"{current}.pdf" and now.box == region.box
     image = _image(pictures.render(ws, connect_pages_db(ws), page, now))
     assert min(image.getpixel((image.size[0] // 2, image.size[1] // 2))) > 150  # no figure on the new build
 
@@ -166,16 +204,93 @@ def test_the_picture_as_commented_on_draws_the_held_version_and_the_thread_s_own
     assert pictures.made({**anchor, "doc_id": storage.UNSTORED}) is None
 
 
+def test_a_region_of_a_picture_is_cut_from_the_current_version_with_the_pages_regions_drawn(owner, ws):
+    page, stored = _picture(owner, ws, _png(1200, 800, (200, 100, 400, 300)))
+    region = _insert(owner, page, _region(180, 80, 420, 320, hash=stored[:-4]))
+    now = _now(ws, page, region)
+    assert now == pictures.Region(stored, 0, (0.145, 0.095, 0.355, 0.405),
+                                  (("region", region, "#ff0000", ((0.15, 0.1, 0.35, 0.4),), True),))
+    with connect_pages_db(ws) as conn:
+        props = load_props(conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page,)).fetchone()[0])
+        whole = pictures.now(conn, page, props, anchors.anchor_of(conn, page, page))      # the page's thread
+        assert pictures.now(conn, page, props, anchors.anchor_of(conn, page, _insert(owner, page, {}))) is None
+    assert whole == pictures.Region(stored, 0, (0.0, 0.0, 1.0, 1.0), now.drawn)
+    assert pictures.key(whole) != pictures.key(now) and len(pictures.key(now)) == 16
+
+    # the crop: the blue figure under the region's red wash, the outline at its edge, white paper around
+    image = _image(pictures.render(ws, connect_pages_db(ws), page, now))
+    width, height = image.size
+    assert (width, height) == (1008, 992)                              # 252 × 248 of the picture's pixels at 4×
+    r, g, b = image.getpixel((width // 2, height // 2))
+    assert b > 120 and g < 40 and 40 < r < 100                          # blue through a 25 % red wash
+    assert min(image.getpixel((5, 5))) > 240                            # the padding around the region
+    r, g, b = image.getpixel((round((0.15 - 0.145) / 0.21 * width) + 1, height // 2))
+    assert r > 150 and g < 90 and b < 90                                # the outline
+    drawn = _image(pictures.render(ws, connect_pages_db(ws), page, whole))
+    assert max(drawn.size) == RENDER_MAX_SIDE
+
+    other = _insert(owner, page, _region(600, 400, 900, 700, hash=stored[:-4], color="#00ff00"))
+    later = _now(ws, page, region)
+    assert pictures.key(later) != pictures.key(now) and {d[1] for d in later.drawn} == {region, other}
+    memo = {}
+    assert _now(ws, page, region, memo) == later and _now(ws, page, other, memo).drawn == later.drawn
+    assert len([k for k in memo if k[0] == "blocks"]) == 1
+
+
+def test_the_picture_as_commented_on_a_picture_is_the_held_versions_crop(owner, ws):
+    page, held = _picture(owner, ws, _png(1200, 800, (200, 100, 400, 300), color=(0, 0, 0)))
+    region = _insert(owner, page, _region(180, 80, 420, 320, hash=held[:-4]))
+    with connect_pages_db(ws) as conn:
+        anchor = anchors.anchor_of(conn, page, region)
+    assert (anchor["kind"], anchor["ext"], anchors.held_file(anchor)) == ("region", ".png", held)
+    current, _ = storage.store_file(ws, _png(1200, 800), ".png")
+    _set_doc(owner, page, document(current[:-4], name="fig.png", format="image", ext=".png"))
+
+    before = pictures.made(anchor, "#ff0000")
+    assert before == pictures.Region(held, 0, tuple(anchor["box"]),
+                                     (("anchor", "region", "#ff0000", ((0.15, 0.1, 0.35, 0.4),)),))
+    image = _image(pictures.render(ws, connect_pages_db(ws), page, before))
+    assert max(image.getpixel((image.width // 2, image.height // 2))) < 90   # the black figure of the held version
+    now = _now(ws, page, region)
+    assert now.file == current and now.drawn[0][4] is False   # drawn on an earlier version, cut from the current one
+    image = _image(pictures.render(ws, connect_pages_db(ws), page, now))
+    assert min(image.getpixel((image.width // 2, image.height // 2))) > 150    # no figure on the new version
+
+    whole = pictures.made({**anchor, "kind": "file", "rects": [], "box": None})
+    assert whole == pictures.Region(held, 0, (0.0, 0.0, 1.0, 1.0), (("anchor", "file", "", ()),))
+    assert pictures.made({**anchor, "kind": "note"}) is None and pictures.made({**anchor, "kind": "area"}) is None
+    binary = f"{held[:-4]}.bin"                       # a picture attached under .bin is a picture
+    assert pictures.made({**anchor, "ext": ".bin"}, "#ff0000") == before._replace(file=binary)
+    assert pictures.made({**anchor, "kind": "file", "ext": ".bin", "rects": [], "box": None}) == whole._replace(file=binary)
+    assert pictures.made({**anchor, "kind": "file", "ext": ".pdf"}) is None and pictures.made({**anchor, "kind": "file", "ext": ""}) is None
+    assert pictures.made({**anchor, "box": None}) is None
+
+
+def test_a_pdfs_key_is_step_twos_and_a_pictures_differs():
+    drawn = (("hl", "H", "#ffe28fa6", False, "highlight", ((0.1, 0.2, 0.3, 0.4),)),)
+    region = pictures.Region(f"{'a' * 24}.pdf", 2, (0.1, 0.2, 0.3, 0.4), drawn)
+    made_of = json.dumps([1, "a" * 24, 2, [0.1, 0.2, 0.3, 0.4], RENDER_MAX_SIDE, drawn], separators=(",", ":"))
+    assert pictures.key(region) == hashlib.sha256(made_of.encode("utf-8")).hexdigest()[:16]
+    assert pictures.key(region._replace(file=f"{'a' * 24}.png", page=0)) != pictures.key(region)
+
+
 def test_a_page_past_the_end_or_a_file_not_here_has_no_picture(owner, ws):
     doc = _upload(owner, _paper())
     page = make_page(owner, "Short", doc_props(doc))["id"]
     conn = connect_pages_db(ws)
-    assert pictures.render(ws, conn, page, pictures.Region(doc, 1, (0, 0, 1, 1), ())) is not None
-    assert pictures.render(ws, conn, page, pictures.Region(doc, 3, (0, 0, 1, 1), ())) is None
-    assert pictures.render(ws, conn, page, pictures.Region("c" * 24, 1, (0, 0, 1, 1), ())) is None
+    assert pictures.render(ws, conn, page, pictures.Region(f"{doc}.pdf", 1, (0, 0, 1, 1), ())) is not None
+    assert pictures.render(ws, conn, page, pictures.Region(f"{doc}.pdf", 3, (0, 0, 1, 1), ())) is None
+    assert pictures.render(ws, conn, page, pictures.Region(f"{'c' * 24}.pdf", 1, (0, 0, 1, 1), ())) is None
     broken = storage.content_digest(b"%PDF-1.7\nnot a pdf at all")
     storage.put(ws, f"{broken}.pdf", b"%PDF-1.7\nnot a pdf at all")
-    assert pictures.render(ws, conn, page, pictures.Region(broken, 1, (0, 0, 1, 1), ())) is None
+    assert pictures.render(ws, conn, page, pictures.Region(f"{broken}.pdf", 1, (0, 0, 1, 1), ())) is None
+    # a picture not here or that does not draw
+    page, stored = _picture(owner, ws, _png(100, 100))
+    assert pictures.render(ws, conn, page, pictures.Region(stored, 0, (0, 0, 1, 1), ())) is not None
+    assert pictures.render(ws, conn, page, pictures.Region(f"{'c' * 24}.png", 0, (0, 0, 1, 1), ())) is None
+    broken = storage.content_digest(b"\x89PNG\r\n\x1a\nnot a png")
+    storage.put(ws, f"{broken}.png", b"\x89PNG\r\n\x1a\nnot a png")
+    assert pictures.render(ws, conn, page, pictures.Region(f"{broken}.png", 0, (0, 0, 1, 1), ())) is None
 
 
 def test_the_cache_answers_by_key_and_keeps_the_newest_within_its_cap(owner, ws, monkeypatch):

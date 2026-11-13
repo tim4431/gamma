@@ -1,4 +1,4 @@
-"""gamma/vault_store.py: a vault's base in vaults.db, its journal, tombstones,
+"""gamma/vault/store.py: a vault's base in vaults.db, its journal, tombstones,
 missing files, dropped blocks and history (docs/dev/synced_vaults.md "What
 lands on disk", "History", "Rules that keep files safe")."""
 
@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from gamma import vault_store as store
+from gamma.vault import store
 
 LINK = "link-1"
 NODES = [{"id": "b1", "g": "first"}, {"id": "b2", "g": "second", "m": {"x": "[[X]]"}}]
@@ -54,6 +54,17 @@ def test_a_new_files_pending_is_its_row_until_promoted(own_vaults_db):
     assert (row["page_id"], row["hash"], row["text"], row["nodes"], row["seq"], row["pending"]) == (
         "fresh", "h", "x\n", NODES, 12, None)
     assert store.pending(LINK) == []
+
+
+def test_a_pending_gives_a_row_its_class_now(own_vaults_db):
+    """A kept folder's picture row at a path a work folder reads as a file:
+    the create's pending makes the row a file's, promoted so."""
+    store.put(LINK, "img/pic.png", kind="picture", hash="abc.png", size=3, mtime_ns=1, file_id="9")
+    store.put_pending(LINK, "img/pic.png", "file", {"op": "create", "token": "t1", "hash": "h" * 24, "page_id": "p1"})
+    assert store.get(LINK, "img/pic.png")["kind"] == "file"
+    store.promote(LINK, "img/pic.png", "t1", size=3, mtime_ns=1, file_id="9", read_at=1.0)
+    row = store.get(LINK, "img/pic.png")
+    assert row["kind"] == "file" and row["page_id"] == "p1" and row["hash"] == "h" * 24 and row["pending"] is None
 
 
 def test_a_pending_dropped_leaves_the_base_or_no_row(own_vaults_db):

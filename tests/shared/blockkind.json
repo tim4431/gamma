@@ -1,5 +1,5 @@
 {
-  "about": "A block's kind (docs/dev/user_db.md, the unified_blocks kind column): the generated kind column (gamma/db.py BLOCK_HOT_COLUMNS), gamma/blocks_store.py block_kind and frontend/src/editor/blockProps.js blockKind. props holds a block's properties and the kind they make, the first rule winning in the column's order: ink (an ink_url key, whatever its value), text_box, picture, sheet, recording (an object there), link (a link_url or link_page_id neither missing, null nor ''), highlight (a pdf_position object), note. tree holds the rows whose place decides first: a page under root or the trash, a folder or a label in their trees. backend/tests/test_block_columns.py writes every props row through SQL and checks the column, block_kind and the API agree; frontend/tests/blockProps.test.mjs checks blockKind.",
+  "about": "A block's kind (docs/dev/user_db.md, the unified_blocks kind column): the generated kind column (gamma/db.py BLOCK_HOT_COLUMNS), gamma/blocks_store.py block_kind and frontend/src/editor/blockProps.js blockKind. props holds a block's properties and the kind they make, the first rule winning in the column's order: ink (an ink_url key, whatever its value), text_box, picture, sheet, recording (an object there), link (a link_url or link_page_id neither missing, null nor ''), highlight (a pdf_position, image_position or text_position object: a place on a PDF page, a region of a picture, a range of a text file), note. tree holds the rows whose place decides first: a page under root or the trash, a folder or a label in their trees. backend/tests/test_block_columns.py writes every props row through SQL and checks the column, block_kind and the API agree; frontend/tests/blockProps.test.mjs checks blockKind.",
   "props": [
     {"note": "no properties: a note", "props": {}, "kind": "note"},
     {"note": "an ink group", "props": {"ink_url": "/api/uploads/x.gamma-ink"}, "kind": "ink"},
@@ -48,7 +48,21 @@
     {"note": "a position that is a list is a note", "props": {"pdf_position": [1, 2]}, "kind": "note"},
     {"note": "a quote with a null position is a note", "props": {"pdf_position": null, "quote": "q"}, "kind": "note"},
     {"note": "a page number alone is a note", "props": {"pdf_page": 1}, "kind": "note"},
-    {"note": "a document alone is a note", "props": {"doc": {"format": "pdf", "name": "", "hash": "eeeeeeeeeeeeeeeeeeeeeeee", "ext": ".pdf", "at": "store"}}, "kind": "note"}
+    {"note": "a document alone is a note", "props": {"doc": {"format": "pdf", "name": "", "hash": "eeeeeeeeeeeeeeeeeeeeeeee", "ext": ".pdf", "at": "store"}}, "kind": "note"},
+    {"note": "a region of a picture", "props": {"image_position": {"width": 2400, "height": 1600, "boundingRect": {"x1": 120, "y1": 64, "x2": 530, "y2": 284}, "rects": [{"x1": 120, "y1": 64, "x2": 530, "y2": 284}], "hash": "9f2c"}}, "kind": "highlight"},
+    {"note": "a region with a quote", "props": {"image_position": {"width": 10, "height": 10, "boundingRect": {"x1": 1, "y1": 1, "x2": 2, "y2": 2}, "rects": [{"x1": 1, "y1": 1, "x2": 2, "y2": 2}], "hash": "9f2c"}, "quote": "q"}, "kind": "highlight"},
+    {"note": "a region that is a string is a note", "props": {"image_position": "1"}, "kind": "note"},
+    {"note": "a region that is a list is a note", "props": {"image_position": [1, 2]}, "kind": "note"},
+    {"note": "a null region is a note", "props": {"image_position": null}, "kind": "note"},
+    {"note": "ink before a region", "props": {"ink_url": "", "image_position": {}}, "kind": "ink"},
+    {"note": "a text box before a region", "props": {"text_box": {"x": 1}, "image_position": {}}, "kind": "text_box"},
+    {"note": "a picture before a region", "props": {"picture": {}, "image_position": {}}, "kind": "picture"},
+    {"note": "a sheet before a region", "props": {"sheet": {}, "image_position": {}}, "kind": "sheet"},
+    {"note": "a recording before a region", "props": {"recording": {}, "image_position": {}}, "kind": "recording"},
+    {"note": "a link before a region", "props": {"link_url": "u", "image_position": {}}, "kind": "link"},
+    {"note": "both positions are a highlight", "props": {"pdf_position": {"pageNumber": 1}, "image_position": {}}, "kind": "highlight"},
+    {"note": "a range of a text file is a highlight", "props": {"text_position": {}}, "kind": "highlight"},
+    {"note": "a range that is a string is a note", "props": {"text_position": "1-3"}, "kind": "note"}
   ],
   "tree": [
     {"note": "under root: a page, whatever it holds", "parent_id": "root", "page_id": "p1", "props": {"pdf_position": {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": {"x1": 60, "y1": 312, "x2": 480, "y2": 330}, "rects": [{"x1": 60, "y1": 312, "x2": 480, "y2": 330}]}}, "kind": "page"},

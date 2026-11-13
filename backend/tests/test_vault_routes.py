@@ -1,5 +1,5 @@
 """Synced vaults through their routes (routers/folder_links.py, gamma/folder_links.py
-wired to gamma/vault_sync.py): a vault made from a directory, what /preview
+wired to gamma/vault/sync.py): a vault made from a directory, what /preview
 finds and refuses, the refusals of ``check_vault`` on making, changing and
 each round, the conflicts the file won kept apart from a mirror's and
 Zotero's, the hot loop and its marks, removing a vault both ways, the page's
@@ -20,8 +20,10 @@ import pymupdf
 import pytest
 
 from conftest import account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, workspace_of
-from gamma import (collab, config, folder_links, gamma_sync, inbox, pdf_meta, publish, storage, sync_engine, vault_disk,
-                   vault_store, vault_sync, workspaces, zotero_sync)
+from gamma import (collab, config, folder_links, gamma_sync, inbox, pdf_meta, publish, storage, sync_engine, workspaces,
+                   zotero_sync)
+from gamma.vault import disk as vault_disk, kinds, store as vault_store, sync as vault_sync
+from gamma.vault.local_remote import LocalRemote
 from gamma.blocks_store import FOLDERS, block_kind, new_block_id
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
 from gamma.integrations import create_token
@@ -51,7 +53,7 @@ def disk(tmp_path, monkeypatch):
     monkeypatch.setattr(folder_links, "run_in_background", lambda link_id, **kw: None)
     monkeypatch.setattr(folder_links, "due", lambda link: False)
     monkeypatch.setattr(folder_links, "HOT_S", 3600)
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     monkeypatch.setattr(gamma_sync, "SETTLE_S", 0)
     monkeypatch.setattr(vault_store, "MISSING_S", 0)
     monkeypatch.setattr(pdf_meta, "schedule", lambda ws, doc_id: None)
@@ -123,7 +125,7 @@ def _made_in(c, title, folder) -> str:
 
 
 def _blocks(link, page_id) -> dict:
-    return vault_sync.LocalRemote(link["workspace_id"], link["folder_id"], link["created_by"]).page(page_id).blocks
+    return LocalRemote(link["workspace_id"], link["folder_id"], link["created_by"]).page(page_id).blocks
 
 
 def _texts(link, page_id) -> list:
@@ -398,7 +400,7 @@ def test_a_sync_goes_one_way_forces_either_way_and_goes_on_past_the_guard_when_c
     status = _sync(owner, link["id"])
     assert status["held"] == {"removals": 8, "total": 12} and status["last_error"] == ""
     assert owner.get(f"/api/folder-links/{link['id']}").json()["status"]["held"] == status["held"]
-    remote = vault_sync.LocalRemote(link["workspace_id"], link["folder_id"], link["created_by"])
+    remote = LocalRemote(link["workspace_id"], link["folder_id"], link["created_by"])
     assert all(remote.state(p) == "live" for p in pages)
     _sync(owner, link["id"], confirm=1)
     assert [remote.state(p) for p in pages] == ["trashed"] * 8 + ["live"] * 3
@@ -558,7 +560,7 @@ def test_a_page_open_in_a_window_follows_its_file_without_a_scan(owner, disk, mo
             break
         time.sleep(0.05)
     assert _texts(link, page) == ["saved in an editor"]
-    remote = vault_sync.LocalRemote(link["workspace_id"], link["folder_id"], link["created_by"])
+    remote = LocalRemote(link["workspace_id"], link["folder_id"], link["created_by"])
     assert remote.state(gone) == "live"                        # a hot round never removes
     monkeypatch.setattr(folder_links, "run_page", lambda *a: pytest.fail("a quiet page had a round"))
     folder_links.hot_tick()
@@ -611,7 +613,7 @@ def test_removing_a_vault_keeps_its_files_and_pages_and_stores_its_pdfs_first(ow
     with connect_vaults_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM linked_files WHERE ws = ? AND path LIKE ?",
                             (ws, f"{root}%")).fetchone()[0] == 0
-    remote = vault_sync.LocalRemote(ws, link["folder_id"], link["created_by"])
+    remote = LocalRemote(ws, link["folder_id"], link["created_by"])
     assert all(remote.state(p) == "live" for p in pages.values())
     assert not any(key in _props(link, p) for p in pages.values() for key in ("work_folder", "library", "file_name"))
     assert remote.mark() is None                                                   # library pages, filed as they were
@@ -631,7 +633,7 @@ def test_removing_a_work_folder_sends_its_files_out_of_the_library_to_recently_d
     assert r.json() | {"bytes": 0} == {"pages": 4, "in_place": 1, "bytes": 0, "files": 3, "in_library": 1}
 
     assert owner.delete(f"/api/folder-links/{link['id']}").status_code == 200
-    remote = vault_sync.LocalRemote(ws, link["folder_id"], link["created_by"])
+    remote = LocalRemote(ws, link["folder_id"], link["created_by"])
     assert {rel: remote.state(p) for rel, p in pages.items()} == {"a.md": "trashed", "deep/b.md": "trashed",
                                                                   "kept/c.md": "live", "Paper.pdf": "trashed"}
     assert not any(key in _props(link, kept) for key in ("work_folder", "library", "file_name"))
@@ -651,7 +653,7 @@ def test_removing_a_vault_with_its_files_trashes_only_those_its_pulls_made(owner
     trashed = sorted(p.relative_to(root / ".gamma" / "trash").as_posix() for p in (root / ".gamma" / "trash").rglob("*.md"))
     assert len(trashed) == 2 and "old/kept.md" in trashed and any(t.endswith("/Trash from Gamma.md") for t in trashed)
     assert not (root / vault_disk.MARKER).exists()
-    assert vault_sync.LocalRemote(link["workspace_id"], "", "").state(pages["gamma"]) == "live"
+    assert LocalRemote(link["workspace_id"], "", "").state(pages["gamma"]) == "live"
 
 
 def test_a_removal_that_cannot_store_a_pdf_removes_nothing(owner, disk, monkeypatch):
@@ -913,11 +915,11 @@ def test_a_page_round_that_finds_its_file_being_written_keeps_its_mark(owner, di
     link = _vault(owner, root, {"s.md": "s\n"})
     page, ws = _page_of(link, "s.md"), link["workspace_id"]
     url = f"/api/folder-links/page/{page}/file"
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 3600)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 3600)
     owner.put(url, json={"text": "s, from the editor\n", "hash": owner.get(url).json()["hash"]}).raise_for_status()
     folder_links.hot_tick()
     assert (ws, page) in folder_links._dirty and _texts(link, page) == ["s"]
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     for _ in range(50):
         folder_links.hot_tick()
         if (ws, page) not in folder_links._dirty:
@@ -1495,7 +1497,7 @@ def test_only_the_vaults_maker_changes_what_its_disk_sends_forces_it_or_removes_
         assert r.status_code == 403, (method, path, params)
     assert bob.patch(url, json={"paused": True}).status_code == 200 and bob.post(f"{url}/sync").status_code == 200
     assert alice.patch(url, json={"paused": False, "push": "off"}).json()["push"] == "off"
-    pages = vault_sync.LocalRemote(ws, link["folder_id"], link["created_by"]).layout().pages
+    pages = LocalRemote(ws, link["folder_id"], link["created_by"]).layout().pages
     assert folder_links.get_link(link["id"]) and not any("private diary" in t for p in pages for t in _texts(link, p))
 
 
@@ -1602,12 +1604,12 @@ def test_a_round_asked_for_while_a_relink_holds_the_vault_starts_when_it_lets_go
     link = _vault(owner, disk / "Relinking", {"r.md": "r\n"})
     started = []
     monkeypatch.setattr(folder_links, "run_in_background", lambda link_id, **kw: started.append(kw))
-    real = vault_sync.LocalRemote.relink
+    real = LocalRemote.relink
 
     def asking(self, old, new):
         folder_links.run_link(link["id"], force="pull", confirm=True)      # the relink holds the lock: kept
         return real(self, old, new)
-    monkeypatch.setattr(vault_sync.LocalRemote, "relink", asking)
+    monkeypatch.setattr(LocalRemote, "relink", asking)
     folder_links.relink(link["id"], str(disk / "Relinking"))
     assert started[0] == {"force": "pull", "direction": "both", "confirm": True}
     assert link["id"] not in folder_links._again
