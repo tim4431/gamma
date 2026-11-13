@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from conftest import make_folder, make_label
+from conftest import doc_props, make_folder, make_label
 
 from ai_fixtures import ALL_PERMS, ALLOW_ALL, FakeResp, ai_provider, org, props  # noqa: F401  (fixtures)
 
@@ -167,9 +167,10 @@ def test_chat_page_scope_arms_read_tools(org, monkeypatch):
     assert r.status_code == 200
     # Anthropic's own API hosts a web search, so Automatic arms search_web.
     assert [t["name"] for t in seen["tools"]] == [
-        "read_page", "read_block", "read_chats", "view_pdf_page", "view_ink", "view_image", "cite", "search_library",
-        "search_papers", "related_papers", "search_web", "fetch_paper", "read_paper", "save_paper", "edit_block",
-        "create_block", "move_block", "delete_block", "clip_region", "update_plan"]
+        "read_page", "read_block", "read_chats", "list_feedback", "read_feedback", "view_pdf_page", "view_ink",
+        "view_image", "cite", "search_library", "search_papers", "related_papers", "search_web", "fetch_paper",
+        "read_paper", "save_paper", "edit_block", "create_block", "move_block", "delete_block", "clip_region",
+        "update_plan"]
     assert f'page_id "{ids["a"]}"' in seen["system"]
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     reads = [l["action"] for l in lines if "action" in l]
@@ -183,9 +184,9 @@ def test_paper_chat_kicks_indexing_for_unindexed_doc(org, monkeypatch):
     c, ids = org
     import gamma.ai_context as ctx
     import gamma.routers.ai as ai_mod
-    import gamma.routers.search as search_mod
     from gamma.db import page_now, ws_db_path
-    from gamma.pdf_index import ensure_schema
+    from gamma.search import indexer
+    from gamma.search.index import Doc, ensure_schema
     from gamma.textnorm import INDEX_VERSION
 
     # A provider so the chat runs (idempotent: earlier tests may have added one).
@@ -193,13 +194,13 @@ def test_paper_chat_kicks_indexing_for_unindexed_doc(org, monkeypatch):
                   json={"protocol": "anthropic", "api_key": "sk-test-key-123",
                         "models": "claude-solo"}).status_code == 200
     kicked = []
-    monkeypatch.setattr(search_mod, "_index_missing_async",
+    monkeypatch.setattr(indexer, "index_missing_async",
                         lambda user, doc_ids: kicked.append((user, list(doc_ids))) or True)
     monkeypatch.setattr(ai_mod, "_open_ai", lambda *a, **kw: FakeResp([
         {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}]))
     doc = "e" * 24
     fresh = c.post("/api/blocks", json={"parent_id": "root", "content": "fresh paper",
-                                        "properties": {"doc_id": doc}}).json()["id"]
+                                        "properties": doc_props(doc)}).json()["id"]
     # Plain (tools off) chat still kicks it — the index is what a later
     # tools-on turn needs, and it costs one query to check.
     r = c.post("/api/ai/chat", json={"prompt": "hi", "page_id": fresh, "stream": True})
@@ -208,16 +209,16 @@ def test_paper_chat_kicks_indexing_for_unindexed_doc(org, monkeypatch):
     # Already indexed at the current version: nothing to kick.
     with __import__("sqlite3").connect(ws_db_path(ids["ws"], "data.db")) as db:
         ensure_schema(db)
-        db.execute("INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) "
+        db.execute("INSERT OR REPLACE INTO text_fts_docs (doc_id, indexed_at, units, ver) "
                    "VALUES (?, ?, 1, ?)", (doc, page_now(), INDEX_VERSION))
         db.commit()
-    assert ctx.ensure_indexed(ids["ws"], doc) is True
+    assert ctx.ensure_indexed(ids["ws"], Doc(doc, "pdf", ".pdf", "store")) is True
     assert len(kicked) == 1
     # A stale index version counts as missing.
     with __import__("sqlite3").connect(ws_db_path(ids["ws"], "data.db")) as db:
-        db.execute("UPDATE pdf_fts_docs SET ver = ? WHERE doc_id = ?", (INDEX_VERSION - 1, doc))
+        db.execute("UPDATE text_fts_docs SET ver = ? WHERE doc_id = ?", (INDEX_VERSION - 1, doc))
         db.commit()
-    assert ctx.ensure_indexed(ids["ws"], doc) is False
+    assert ctx.ensure_indexed(ids["ws"], Doc(doc, "pdf", ".pdf", "store")) is False
     assert kicked[-1] == (ids["ws"], [doc])
 
 
@@ -226,12 +227,12 @@ def test_chat_reports_context_coverage(org, monkeypatch):
     paper reports pages shown / total, a native attachment reports native."""
     c, ids = org
     import gamma.routers.ai as ai_mod
-    import gamma.routers.search as search_mod
+    from gamma.search import indexer
 
     assert c.post("/api/ai/providers",
                   json={"protocol": "anthropic", "api_key": "sk-test-key-123",
                         "models": "claude-solo"}).status_code == 200
-    monkeypatch.setattr(search_mod, "_index_missing_async", lambda user, doc_ids: True)
+    monkeypatch.setattr(indexer, "index_missing_async", lambda user, doc_ids: True)
     monkeypatch.setattr(ai_mod, "_open_ai", lambda *a, **kw: FakeResp([
         {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}]))
     doc = "".join(f"[{i:04d}]" for i in range(200))  # 1200 chars
@@ -313,8 +314,8 @@ def test_full_pdf_rides_on_the_oldest_turn_of_every_message(org, monkeypatch):
     provider that refuses file parts gets the head excerpt instead."""
     c, ids = org
     import gamma.routers.ai as ai_mod
-    import gamma.routers.search as search_mod
-    monkeypatch.setattr(search_mod, "_index_missing_async", lambda user, doc_ids: True)
+    from gamma.search import indexer
+    monkeypatch.setattr(indexer, "index_missing_async", lambda user, doc_ids: True)
     monkeypatch.setattr("gamma.ai_context.pdf_path", lambda u, d: "fake.pdf")
     monkeypatch.setattr("gamma.ai_context.extract_text_pages",
                         lambda src, limit, empty_page_cap=50, start_page=1, label_pages=False:
@@ -511,10 +512,80 @@ def test_chat_context_from_text_only_page(org, monkeypatch):
     user_turn = seen["messages"][-1]["content"]
     title_a = props(c, ids["a"])["content"]
     assert "### Reading plan" in user_turn and "- read the cat-qubit review" in user_turn
-    assert f"### {title_a}" in user_turn and "attachment: PDF" in user_turn
+    assert f"### {title_a}" in user_turn and "document: PDF" in user_turn
     titles = [e["title"] for e in [json.loads(l) for l in r.text.splitlines() if l.strip()][0]["context"]]
     assert titles == ["Reading plan", title_a]
     c.delete(f"/api/blocks/{page['id']}")
+
+
+def test_chat_context_from_a_text_file_page(org, monkeypatch):
+    """A page whose document is a text file gives its lines, numbered, under
+    a label naming them, and the outline of the rest: a plain chat is never
+    told to call read_page, an agent is; the page's open threads ride along
+    with the source line their stored anchor names; the coverage entry
+    counts lines."""
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+    from conftest import thread_on
+    from gamma import storage
+    from gamma.db import connect_pages_db
+    from gamma.documents.model import stored_name
+    from gamma.search import indexer
+
+    monkeypatch.setattr(indexer, "index_missing_async", lambda ws, docs: True)
+    lines = [{1: "\\section{Method}", 60: "\\subsection{Data}", 80: "\\subsection{Noise}",
+              100: "\\subsection{Results}"}.get(n, f"line {n} of the method") for n in range(1, 121)]
+    data = ("\n".join(lines) + "\n").encode()
+    stem = storage.content_digest(data)
+    storage.put_upload(ids["ws"], stored_name(stem, ".tex"), data)
+    page = c.post("/api/blocks", json={"parent_id": "root", "content": "method.tex", "properties": doc_props(
+        stem, name="method.tex", format="text", ext=".tex", size=len(data))}).json()["id"]
+    thread = thread_on(c, page, page, "make the legend larger")
+    with connect_pages_db(ids["ws"]) as conn:
+        conn.execute("UPDATE comments SET anchor = json_set(anchor, '$.source', json(?)) WHERE id = ?",
+                     (json.dumps({"file": "sections/method.tex", "line": 118}), thread["id"]))
+        conn.commit()
+    seen = {}
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        seen["messages"], seen["system"] = messages, system
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    r = c.post("/api/ai/chat", json={"prompt": "where is the noise model?", "page_id": page, "stream": True,
+                                     "context_char_limit": 1500})
+    assert r.status_code == 200, r.text
+    user_turn = seen["messages"][-1]["content"]
+    (cover,) = [json.loads(l) for l in r.text.splitlines() if l.strip()][0]["context"]
+    assert cover["format"] == "text" and cover["doc_id"] == stem and cover["lines"] == 120
+    shown = cover["lines_shown"]
+    assert cover["partial"] is True and 10 < shown < 60 and cover["native_requested"] is False
+    assert 'Document: text file "method.tex" (LaTeX; 120 lines, ' in user_turn
+    assert f"[Lines 1–{shown} of 120. The number and tab before each line are its line number" in user_turn
+    assert f"Lines {shown + 1}–120 are NOT shown below.]" in user_turn
+    assert "     1\t\\section{Method}" in user_turn
+    assert "[OUTLINE — where the rest is, by line]" in user_turn and "l.80  \\subsection{Noise}" in user_turn
+    assert "read_page" not in user_turn  # a plain chat has no tool to call
+    assert "Open comment threads (1; the comments are the user's requests about this page" in user_turn
+    assert (f'- thread {thread["id"]} on the whole file (source sections/method.tex:118): '
+            in user_turn) and '"make the legend larger"' in user_turn
+    assert "a text file" in seen["system"] and "line number" in seen["system"]
+    assert "[<file name>:N](/?page=PAGE_ID&line=N&quote=URL_ENCODED_LINE)" in seen["system"]
+    # An agent is told where to read on, in the context and in its prompt.
+    r = c.post("/api/ai/chat", json={"prompt": "where is the noise model?", "page_id": page, "stream": True,
+                                     "context_char_limit": 1500, "agent_scope": "page", "permissions": ALLOW_ALL})
+    assert r.status_code == 200, r.text
+    user_turn = next(m["content"] for m in seen["messages"] if m["role"] == "user")
+    assert f"NOT shown below: read them with read_page(page_id, from_line={shown + 1})." in user_turn
+    assert "[OUTLINE — where the rest is, by line; pick the lines to read with read_page(from_line=N)]" in user_turn
+    assert f'Lines 1–{shown} of 120 of "method.tex"' in seen["system"]
+    # The whole file fits a larger budget: no outline, no cut.
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "page_id": page, "stream": True})
+    (cover,) = [json.loads(l) for l in r.text.splitlines() if l.strip()][0]["context"]
+    assert cover["partial"] is False and cover["lines_shown"] == 120
+    assert "[The whole file, 120 lines." in seen["messages"][-1]["content"]
+    assert "OUTLINE" not in seen["messages"][-1]["content"]
+    c.delete(f"/api/blocks/{page}")
 
 
 def test_models_flag_native_pdf_capability(org, monkeypatch):
@@ -574,9 +645,9 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
                                                      "organize_delete": "off", "block_edit": "off"}})
     assert r.status_code == 200
     assert [t["name"] for t in seen["tools"]] == [
-        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page",
-        "view_ink", "view_image", "cite", "search_library", "search_papers", "related_papers", "search_web",
-        "fetch_paper", "read_paper", "list_deleted"]
+        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "list_feedback", "read_feedback",
+        "view_pdf_page", "view_ink", "view_image", "cite", "search_library", "search_papers", "related_papers",
+        "search_web", "fetch_paper", "read_paper", "list_deleted"]
     assert seen["blocked"].startswith("error: tool not enabled")
     assert props(c, ids["a"])["content"] == before  # nothing was renamed
 

@@ -606,11 +606,11 @@ a pen or highlighter stroke is claimed.
    thing Swift decides about the pen; its rules (`HoldWatch`) are a pure
    part, tested with the time given. The page answers at once, from the
    samples (the claim's `hold`, `InkLayer.jsx`):
-   - with strokes on the handwriting clipboard and no sample more than 2
-     CSS px from the first, `{cancel: true}`, and *Paste here* opens where
-     the pen went down ([handwriting.md](handwriting.md) "Copy, cut and
-     paste"). The shell takes the line away and keeps the touch, so palms
-     stay swallowed, and at the lift sends `stroke` with no samples;
+   - with strokes or pictures on the handwriting clipboard and no sample
+     more than 2 CSS px from the first, `{cancel: true}`, and *Paste here*
+     opens where the pen went down ([handwriting.md](handwriting.md) "Copy,
+     cut and paste"). The shell takes the line away and keeps the touch, so
+     palms stay swallowed, and at the lift sends `stroke` with no samples;
    - with *Draw and hold* on (and for a highlighter its preset's
      straight not *Off*), `recognise` runs over the samples in page
      points (lines only for a highlighter; through the preset's
@@ -683,6 +683,27 @@ at the lift, and it never prevents anything, so what stops the pan and
 the palm there is the page's `onTouch`. An ended touch stays in the
 `ClaimQueue` for half a second as any unclaimed one does, so a stroke at
 that spot within that time is the page's own.
+
+**A lift that never comes.** Everything the page does with an unclaimed
+Pencil touch ends on that pointer's `pointerup` or `pointercancel`: an
+eraser pass, the lasso, a move, a Shapes drag, a stroke the shell did
+not take, the text selection and the rectangle with nothing armed, a press
+on a strip button. iPadOS's WebKit now and then sends neither for the
+Pencil. Without them a pen stayed down for the page: every finger on
+the PDF was a palm (no scroll, pinch or tap), the page's marks took no
+pointer while the text selection held them off (`data-pen-select`), the
+layer ignored the Pencil's next press, and the double tap waited for a
+stroke that was over, until the app was left. So whatever holds a pen's
+contact also ends it when the pen is plainly up (`penLifted`,
+`shared/ui/press.js`). The Pencil hovering is a pen move with no button
+pressed, which WebKit sends on an iPad with Pencil hover. The Pencil
+going down again counts too, since there is one pen to a screen and an
+iPad without hover has only that. It ends as its lift would, where the pen
+last touched: `InkLayer.jsx` `penGone` (the drag, the shell's pointer, the
+pen's place among the contacts), `pdf/penSelect.js`, `shared/ui/regionDrag.js`,
+`shared/ui/useDragOrder.js` and the finger chords' palm rule
+(`ink/fingerChords.js`). Which touches lose their lift, and why, is device
+check 38.
 
 **Gestures.** `PencilGestures` (`UIPencilInteraction`) forwards the double
 tap as `pencil`, and the squeeze in its phases: `squeeze` `began` when it
@@ -825,12 +846,12 @@ before a reload waits until a page can take it. The web half is
    file takes. A PDF or a Markdown note becomes a page at the library's
    top, as *Upload files…* makes one, and a single one opens. A PDF keeps
    the upload's rules: an already-known file opens its page, and the
-   annotations another reader saved in it are imported. A `.note` or
-   `.ntb` opens the Notability import's review, several of them as one
-   `.zip`, as the picker sends them, and a `.goodnotes` the GoodNotes
-   import's the same way. A `.zip` opens the Import dialog with the file
+   annotations another reader saved in it are imported. A `.note`, `.ntb`
+   or `.goodnotes` opens the Notability & GoodNotes import's review,
+   several of them, either app's, as one `.zip`, as the picker sends them.
+   A `.zip` opens the Import dialog with the file
    already chosen. It asks which export it is, offering the sources that
-   read an archive (Zotero, Markdown, Notability, GoodNotes, Notion, Gamma), and
+   read an archive (Zotero, Markdown, Notability & GoodNotes, Notion, Gamma), and
    goes on to that source's review with no picker.
    An image becomes a picture where the Picture button puts one: the
    surface in view, else the sheet among the notes that shows the most of
@@ -838,10 +859,8 @@ before a reload waits until a page can take it. The web half is
    land before the share's PDFs are uploaded, since a page that opens
    would stop their placing.
 3. **What it cannot.** One import dialog shows at a time. With
-   Notability notes in the same share, the review takes them, and a
-   `.goodnotes` or a `.zip` with them is named in the status, to be
-   opened again; GoodNotes notebooks without Notability notes take the
-   review the same way. A second
+   notes of either app in the same share, the review takes them all, and
+   a `.zip` with them is named in the status, to be opened again. A second
    `.zip` is named the same way. A file Gamma does not open is let go,
    and the status names it. So is an image with no surface in view, as
    the Picture button asks for a page first. Nothing keeps it for a later
@@ -853,7 +872,7 @@ before a reload waits until a page can take it. The web half is
 ### Pictures
 
 Pictures on a page ([pictures.md](pictures.md#adding-a-picture)) are the
-web app's, with no native code. The iPad differs in four ways:
+web app's, with no native code. The iPad differs in five ways:
 
 - **The picker.** The strip's Picture button opens the system file picker
   (`shared/lib/pickFiles.js`, `accept="image/*"`), which WebKit shows as
@@ -870,6 +889,10 @@ web app's, with no native code. The iPad differs in four ways:
   and 8192 in desktop Chromium and Firefox). So a picture re-encoded there (a HEIC, a TIFF, one past
   24 MP) comes out within those caps, and so does Copy image's PNG. A PNG,
   JPEG, GIF or WebP up to 24 MP goes up as it is, as on every device.
+- **An SVG in the exports.** This iPad's server draws one itself, in the
+  app's process and with no time limit, where another server draws it in
+  a process it kills after 10 s ([What runs](#what-runs)). An SVG that
+  takes MuPDF minutes holds this iPad's PDF work that long.
 
 ### The local server
 
@@ -891,10 +914,13 @@ answers. Nothing in it knows what the server holds.
   supports iOS since 3.13 (PEP 730), and the app embeds it as
   [its iOS guide](https://docs.python.org/3/using/ios.html) describes.
 - **The backend from `backend/`, unchanged**: `app.py` and the `gamma`
-  package, copied into the bundle at build time. The server has no iPad
-  branch. It reads the environment the desktop's sidecars are given
-  ([desktop.md](desktop.md)), and it spawns no processes, which iOS would
-  not allow.
+  package, copied into the bundle at build time. It reads the environment
+  the desktop's sidecars are given ([desktop.md](desktop.md)), and it
+  spawns no processes, which iOS would not allow. Its one iPad branch is
+  where another server would start one, to draw an SVG picture under a
+  time limit: it knows iOS by `sys.platform == "ios"` and draws the SVG
+  itself, with no limit, as on Android
+  ([pictures.md](pictures.md#svg-pictures)).
 - **The built web app** from `frontend/dist`, served at the server's root
   (`GAMMA_STATIC_DIR`). This iPad therefore shows the web app of the app's
   own build, as a desktop's local server does; another server shows its
@@ -1360,11 +1386,15 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   menu off, and a colour (which clears the selection) or a selection in
   the title turns it on. A scroll by touch closes the popup and brings it
   back where the selection is. A stand-in without `editMenu` is told
-  nothing, and its popup has no Copy. The stand-in also
+  nothing, and its popup has no Copy. An eraser pass whose lift never
+  comes holds fingers as palms until the Pencil hovers, after which the
+  double tap acts again, or until its next touch. A text selection whose
+  lift never comes holds the page's marks off until the Pencil hovers.
+  The stand-in also
   holds opened files, read in 1000-byte chunks. A PDF held when the page
   loads becomes its page at the library's top and opens. Files handed
   while the page is up, with `filesOpened`, follow: a Markdown note
-  becomes a page, an `.ntb` goes through the Notability review, a `.zip`
+  becomes a page, an `.ntb` goes through the note apps' review, a `.zip`
   opens the Import dialog without Logseq and imports as Markdown, and a
   `.txt` is let go with a status. In a shared workspace the question
   shows: *Cancel* adds nothing, and the personal workspace's button
@@ -1607,6 +1637,23 @@ Only an iPad can show these, and none has been run yet:
     the keyboard stays up through the focus change of a New block tap, that
     the bar sits on the real keyboard, and that a finger's sideways pan of
     the bar's tools works (`touch-action: pan-x`).
+38. The Pencil's lost lifts ("A lift that never comes"), first reported on
+    iPad Air (M2, M3) with Pencil hover: after the double tap arms the
+    eraser, after the Pencil taps a strip button, and with nothing armed.
+    Log `pointerdown`, `pointerup`, `pointercancel` and pen moves with
+    their `pointerId` and `buttons` (Safari's Web Inspector from a Mac) to
+    see which touches end without a lift, and whether the hover comes
+    with its own `pointerId`. Try with Scribble on and off, and in Safari
+    beside the app. Fingers must scroll and tap the PDF once the Pencil
+    hovers or touches again.
+39. SVG pictures ([pictures.md](pictures.md#svg-pictures)). Playwright's
+    WebKit on Linux draws an SVG's `<img>` as Chromium does, under the
+    file's own policy. On the iPad: an SVG from Files placed on a page and
+    stretched (its whole frame filled, its inline styles kept, no script
+    run), an SVG shared to the app landing as a picture, and its URL opened
+    in Safari (downloaded, or shown with no script run). Then an annotated
+    PDF and a Notability export of that page on This iPad, whose server
+    draws the SVG itself, with no time limit.
 
 ### Not built yet
 
@@ -1717,12 +1764,17 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
   row's, a highlight's) closes the panel over it (`showOnPage`,
   `jumpToHighlightId`). Show note on the page brings the notes up
   (`showInNotes`): the Notes panel, or on a page with sheets its notes
-  view.
+  view. The Files window is a panel too, beside an open page only (on the
+  library the listing is the explorer), from More's Files row or the
+  command, with no bottom tab of its own: its rows are 44px tall with a
+  44px chevron, a tap on a file opens it (which closes the panel, as every
+  navigation does) and a held finger opens a row's menu.
 - **More** is the account button (`header.account`) under another name:
   its sheet is the account menu with the rest of the topbar on top —
   Background tasks, the open folder's Share this folder, and the View
-  menu's rows (`viewMenuItems`; of the window toggles only PDF, since the
-  tabs switch Notes and Chat, and in the iPad app *Server bar*, then Undo,
+  menu's rows (`viewMenuItems`; of the window toggles only PDF and,
+  beside an open page, Files, since the tabs switch Notes and Chat, and in
+  the iPad app *Server bar*, then Undo,
   Redo, Go to page and Command palette). The tasks, folder-share and View buttons are
   not rendered; their popovers open from those rows in the sheet's place.
   A flyout (the account menu's Tours) opens inline under its row, since

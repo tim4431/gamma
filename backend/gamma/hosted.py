@@ -88,13 +88,16 @@ READ_ONLY_ALLOWED = (
     "/api/admin/hosted/sync",
 )
 # Reads sent as a POST, because their ids do not fit a URL: the file chips'
-# page lookup and the Ctrl+F panel's two searches, with the page ids its
-# filters keep. The gate treats them as reads: a read-only server lets
-# them through, and they move no last write. Whole paths.
+# page lookup, the summaries of the tabs' and recents' pages the listing
+# does not carry, and the Ctrl+F panel's two searches, with the scope of
+# its chips and the page ids its predicates keep. The gate treats them as
+# reads: a read-only server lets them through, and they move no last
+# write. Whole paths.
 POST_READS = (
     "/api/pages/by-docs",
+    "/api/pages/summaries",
     "/api/block-search",
-    "/api/pdf-search",
+    "/api/document-search",
 )
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 

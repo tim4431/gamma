@@ -29,6 +29,21 @@ export function pageLeft(viewerW, pageW, withMargin) {
   return beside ?? Math.max(0, (viewerW - pageW) / 2);
 }
 
+// The scale that fits a page `w` × `h` (at scale 1) whole into a viewer
+// `viewerW` × `viewerH`, and beside its column while the document has cards
+// (`withMargin`): within the width less what the column takes (CARD_W,
+// COLUMN_GAP and EDGE at both sides), so a fitted picture keeps its cards
+// in view, which the PDF's fit-width never does. Never above 1 by fitting:
+// a small picture shows at its own size, and only the zoom enlarges it. A
+// viewer too narrow for the column fits the full width (the margin has no
+// room there either); one not laid out yet, or a page of no size, is 1.
+export function fitBeside(viewerW, viewerH, w, h, withMargin) {
+  if (!(viewerW > 0) || !(viewerH > 0) || !(w > 0) || !(h > 0)) return 1;
+  const beside = viewerW - CARD_W - COLUMN_GAP - 2 * EDGE;
+  const width = withMargin && beside > 0 ? beside : viewerW;
+  return Math.max(0.05, Math.min(1, width / w, viewerH / h));
+}
+
 // The cards' tops, by key. `items`: {key, top (its highlight's first line,
 // px from the page's top), height}, in the order cards with the same top
 // should stand. Sorted by top, each card goes at its highlight's top, or

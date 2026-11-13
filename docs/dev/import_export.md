@@ -31,7 +31,12 @@ highlights) into highlight blocks — each a `pdf_position` in the page's
 points (the page box once, the quads as bare rects, `area: true` for a
 /Square or /Circle; [api.md](api.md) "The highlight shape") under a block
 id of its own, which is the highlight's id — idempotent via `properties.imported_annot`
-keys; opacity honors the annotation's `/GammaAlpha`, else its `/CA`, so a
+keys. A /Highlight is the wash; an /Underline, a /Squiggly and a
+/StrikeOut are highlights in that `style` (`underline`, `squiggly`,
+`strikeout`; a Zotero copy's `/GammaStyle` names the line its /Underline
+stands for). Opacity honors the annotation's `/GammaAlpha`, else its `/CA`, and a
+line's colour is its `/GammaColor` when it has one (Gamma's export keeps
+the stored colour there, its `/C` being the line tone), so a
 Gamma export → re-import round-trips exact colors (a Zotero copy keeps its
 alpha in the first, [below](#zotero-rdf-export)), and each channel is rounded, not truncated (an
 app that writes 0.831 means 212); pypdf's `.get()` hands back `IndirectObject`s unresolved, always
@@ -170,7 +175,9 @@ that make blocks, replies included.
 
 The Logseq import (`POST /api/import/logseq`, a .pdf + .edn and an optional
 .md) goes into the page carrying that PDF, made when there is none, under
-the write lock like every lookup by attachment. Highlights already on the
+the write lock like every lookup by attachment (a new page's `doc` has no
+name: the by-doc call the client makes next gives it the file's).
+Highlights already on the
 page are skipped by their quote and notes by their text (a note written
 twice in the .md stays twice), so running it again adds nothing. A note's
 Logseq image size, `![alt](url){:width N}`, comes in as Gamma's
@@ -222,20 +229,33 @@ The View menu's single "Import…" entry → `ImportDialog` in `transfers/Import
 export dialog's counterpart. Step one is a source card: annotations embedded
 in this PDF, a Logseq .pdf + .edn, a Zotero library (its export folder or a
 .zip of it), Markdown notes (one
-`.md` or a `.zip`), Notability notes (one or more
-`.note` files, or a `.zip` of them), GoodNotes notebooks (one or more
-`.goodnotes` files, or a `.zip` of them), Notion pages (the `.zip` of a Notion
-export), or a Gamma export .zip. Double-click
+`.md` or a `.zip`), Notability & GoodNotes (one or more
+`.note`, `.ntb` or `.goodnotes` files, either app's or both, or a `.zip` of
+them), Notion pages (the `.zip` of a Notion export), or a Gamma export .zip. Double-click
 or Next confirms. Only Zotero gets a review step, its export guide.
 Annotations in this PDF imports at once, and it and Zotero (for the
 annotations inside its exported PDFs) send the strip preference above.
-Markdown, Notability, GoodNotes, Notion, Logseq and Gamma open the
+Markdown, Notability & GoodNotes, Notion, Logseq and Gamma open the
 file picker directly, with their preparation notes under the selected card.
 `resolveImport` in `transfers/transferFormats.js` decides both.
-The Notability and GoodNotes pickers take several files, which go up as one
-`.zip` (`folderZip.js` `filesUpload`, a name picked twice numbered), and take
+The note apps' picker takes several files, which go up as one
+`.zip` (`folderZip.js` `filesUpload`, a name picked twice numbered), and takes
 any file on an iPhone or iPad, whose Safari greys out a `.note` or a
 `.goodnotes`.
+The two note apps share one card. Its source, `note-apps`
+(`note_app_import.import_note_apps`), walks the upload once and finds
+Notability's notes (`notability.find_bundles`) and GoodNotes' notebooks
+(`goodnotes.find_notebooks`) in it, each read by its own app's import into
+one report, so one review holds a mixed pick or a mixed `.zip`. A notebook
+found inside a note's folder (or the other way round) is that note's file,
+not a second page. Each app keeps its own re-import key
+(`notability_import`, `goodnotes_import`). The preview's `stage` names each
+note's app (`note_apps`), and the import job's params carry the apps of the
+selected notes (`apps`), which `useAppJobs` turns into one
+`import.finished` per app, so only an import that brought Notability notes
+offers the Notability setup guide. The one-app sources `notability` and
+`goodnotes` stay for scripts and the plain endpoints, and a review staged
+on one of them reopens on the card (`importApi.js` `dialogSource`).
 Zotero is the default source (a numbered step guide reusing
 settingsKit's `Step`); with a PDF open, that PDF's own annotations win.
 
@@ -244,20 +264,22 @@ one shared to the app from another app ([ipad.md "Opened files"](ipad.md#opened-
 [android.md](android.md) "Opened files"). The
 dialog is then titled with the file's name and asks which export it is.
 It offers only the sources that read an archive (`archive` in
-`resolveImport`: Zotero, Markdown, Notability, GoodNotes, Notion and Gamma). Its
+`resolveImport`: Zotero, Markdown, Notability & GoodNotes, Notion and Gamma). Its
 button is *Import*, and the file goes straight to that source's review
-with no picker. A `.note` or `.ntb` shared to the app skips the dialog and
-opens the Notability review, a `.goodnotes` the GoodNotes review.
+with no picker. A `.note`, `.ntb` or `.goodnotes` shared to the app skips
+the dialog and opens the note apps' review, those of one share together.
 
-Zotero, Markdown (ZIP or one file), Obsidian/Notion ZIPs, Notability notes,
-GoodNotes notebooks and Gamma exports share one review flow: Upload → Review →
+Zotero, Markdown (ZIP or one file), Obsidian/Notion ZIPs, Notability notes
+and GoodNotes notebooks, and Gamma exports share one review flow: Upload → Review →
 Import → Summary.
 
 - The review is a background job ([tasks.md](tasks.md)):
   `POST /api/jobs/import-preview` takes the file, its `source` (`zotero`,
-  `markdown-zip`, `markdown-file`, `gamma`, `notability`, `goodnotes`), an optional `folder` (the
+  `markdown-zip`, `markdown-file`, `gamma`, `note-apps`, `notability`, `goodnotes`), an optional `folder` (the
   destination folder's id, `""` the library's top; 400 when it is no
-  folder, `import_review.destination`) and `strip`.
+  folder, or is a work folder or one of its directories, which follow the
+  disk ([work_folders.md](work_folders.md); `import_review.destination`))
+  and `strip`.
   It stages the upload and starts the job (`import-preview`), which runs
   the source's preview, reporting its items, and keeps the two trees
   beside the upload; `GET /api/import/review/{id}` reads them, with the
@@ -290,8 +312,13 @@ Import → Summary.
   uploads are known by their names in the zip, and step 41 converts a
   stroke file of an older backup, as a restore's copy does.
 - Staging (`gamma/import_staging.py`): a directory per review, bound to the
-  account and workspace, expiring after two hours (`TTL`; expired ones are
-  swept on the next upload). The review's job drops the upload when it
+  account and workspace, under the OS temp dir in a root of the instance's
+  own that only the server's account may open (0700: a root an earlier
+  version made is narrowed, and one another account made first is
+  refused), made with the first review, expiring after two hours (`TTL`;
+  `import_staging.sweep` removes expired ones before each upload and
+  hourly from the app lifespan, so a review whose dialog went away goes
+  though no upload follows). The review's job drops the upload when it
   fails or is stopped. The import job holds a claim (`running/`
   mkdir; a `DELETE` meanwhile answers 409) while it reads the upload, and
   removes the review when it ends — done, failed or stopped. An import is
@@ -301,8 +328,8 @@ Import → Summary.
   leave the disk with less than 1 GB free is refused (507,
   `import_staging.MIN_FREE_BYTES`). A review expires two hours after its
   last activity (a part, a claim, the dialog's keep-alive, the import's
-  start), so a long upload in parts does not run out. Until the next
-  upload's sweep removes it, an expired review comes back on a keep-alive
+  start), so a long upload in parts does not run out. Until a sweep
+  removes it, an expired review comes back on a keep-alive
   or the import's start (`import_staging.touch`); once swept, both answer
   404.
 - Selection ids are source ids (`page:<id>` / `chat:<id>` for a Gamma
@@ -753,10 +780,14 @@ The rest of this section holds for every dialect unless it says otherwise:
   then leave unclosed).
 - **Gamma specifics**: the front matter's `source:` restores the PDF when it
   is bundled (`assets/<sha>.pdf`, or the vault export's quoted
-  `"[[Paper.pdf]]"` → `doc_id`, the page becomes a paper again) or the
-  remote URL (`source_url`) when it isn't; the export writes the page's
-  attachment URL there, derived from `doc_id` for a stored copy
-  (`page_attachment`); `doi`/`authors`/`year` →
+  `"[[Paper.pdf]]"` → the page's `doc`, stored: the page becomes a paper
+  again) or the remote URL (a `doc` at that address) when it isn't; the
+  export writes there the address the page's document is fetched from
+  (`page_document`'s `url`: its stored file's, a duplicated page's
+  included, or the address it is shown from;
+  [documents.md](documents.md)). Such a PDF's `doc.name` is empty, and
+  `original_filename` stays the note's own file name (the Markdown
+  provenance beside `markdown_import`); `doi`/`authors`/`year` →
   `properties.meta` (`source: manual`; `authors` as a YAML list or a comma
   string), the ```` ```bibtex ```` block → `properties.bibtex`. Highlights come back as their quote blocks, not as
   positioned highlights — the Gamma format (`?mode=gamma`) is the lossless
@@ -964,8 +995,8 @@ shared `import_embedded_annotations` (reader annotations arrive inside the
 exported PDFs; `strip` follows the client's embedded-annotations preference).
 Zotero writes each of its kinds as a standard annotation
 ([research/zotero-annotations.md](../research/zotero-annotations.md)): a
-highlight and an underline become highlights (Gamma has no underline; the
-quote is the text under it), an image an area highlight, ink handwriting, a
+highlight becomes a highlight and an underline a highlight drawn as an
+underline (`style`; the quote is the text under it), an image an area highlight, ink handwriting, a
 note a text box, and a text annotation a Zotero box, a text box laid out as
 Zotero's reader lays it out ([text_boxes.md](text_boxes.md#zotero-boxes)). A text
 annotation turned in Zotero
@@ -989,7 +1020,9 @@ block drops it, as it drops `imported_annot`.
 writes.
 Merging only fills gaps: existing meta/bibtex/files are kept, the folders
 and labels union (the page's own ids first, those that still exist —
-`existing_in`).
+`existing_in`). A page that owns no PDF is given the item's as its own;
+one that shows a file it does not own (a duplicated page, one opened from
+an address) goes on showing it, under its name (`_own_zotero_pdf`).
 Each item's PDF is stored first, outside any transaction
 (`_zotero_prepare`), and so are the pictures in its notes. New pages and
 their note trees then go in `ZOTERO_PAGES_PER_COMMIT` (50) at a time, in
@@ -1151,7 +1184,7 @@ rechecks the current library, and leaves actual results and warnings in the dial
 
 ## Notability notes
 
-`POST /api/import/notability` (View menu ≡ → Import… → Notability notes;
+`POST /api/import/notability` (View menu ≡ → Import… → Notability & GoodNotes;
 `gamma/notability_import.py`, which reads a note through
 `gamma/notability.py` and `gamma/notability_archive.py` and places it through
 `gamma/notability_map.py`) imports Notability's "Note" export. A `.note` is a
@@ -1166,7 +1199,9 @@ shared with the [GoodNotes import](#goodnotes-notebooks)
 dialog packs them into one `.zip`), a `.zip` of them (a library's export),
 or a zip of an unzipped note folder (`.nbn`, iCloud's form). Each note
 becomes one page. It is a source of the
-reviewed import above (`source` `notability`), so the import itself is the
+reviewed import above (`source` `note-apps` from the dialog's card, which
+reads GoodNotes notebooks in the same upload; `notability` alone for
+scripts), so the import itself is the
 `import` job. The format, its sources and what was decided where they
 disagree are in [research/notability-format.md](../research/notability-format.md).
 
@@ -1600,7 +1635,7 @@ the same way.
 
 ## GoodNotes notebooks
 
-`POST /api/import/goodnotes` (View menu ≡ → Import… → GoodNotes notebooks;
+`POST /api/import/goodnotes` (View menu ≡ → Import… → Notability & GoodNotes;
 `gamma/goodnotes_import.py`, which reads a notebook through
 `gamma/goodnotes.py`, `gamma/goodnotes_codec.py` and `gamma/rtf.py` and
 places it through `gamma/goodnotes_map.py`) imports GoodNotes' own format,
@@ -1608,7 +1643,7 @@ the `.goodnotes` its iPad, iPhone and Mac apps export. The upload is one
 `.goodnotes`, several picked together (the dialog packs them into one
 `.zip`), a `.zip` of a folder's export, or a `.goodnotes.zip` backup. Each
 notebook becomes one page. It is a source of the reviewed import (`source`
-`goodnotes`), and it shares the run over the upload, its guards, the
+`note-apps` from the dialog's card, `goodnotes` alone for scripts), and it shares the run over the upload, its guards, the
 commit, the storing of pictures and the report with the Notability import
 (`gamma/note_app_import.py`): what [Notability notes](#notability-notes)
 says of one note at a time, of folders, of a 507 and a note skipped, of the
@@ -2018,8 +2053,10 @@ Memos.
 
 What Zotero takes from the copies, by its pdf-worker's `readRawAnnotation`
 (Zotero 9.0.6; [research/zotero-annotations.md](../research/zotero-annotations.md)):
-`/Highlight` → highlight, `/Square` → image, `/Ink` → ink, `/FreeText` →
-text (Zotero 7+). A `/Stamp` is drawn from its appearance and imported as
+`/Highlight` → highlight, `/Underline` → underline, `/Square` → image, `/Ink` → ink, `/FreeText` →
+text (Zotero 7+). It drops a `/Squiggly` and a `/StrikeOut`, so the copies
+write a wavy underline and a strikethrough as `/Underline`, with the style
+in `/GammaStyle` for Gamma's own import. A `/Stamp` is drawn from its appearance and imported as
 nothing, so a picture stays part of the PDF. An `/Ink`, `/Square` or
 `/FreeText` without a Zotero id (`/NM` `Zotero-<key>`) is dropped, so each
 carries one from its block id (`zotero_annot_key`); a `/FreeText` also needs
@@ -2077,8 +2114,9 @@ fetch, `build_tree`, a progress report) and feeds each page to a per-format
 `_LogseqBuilder`, `_ZoteroBuilder`, `_GammaBuilder`. The builder accumulates zip parts, and
 `save(dest)` writes the download, returning its name and media type. The
 job saves to its file; `response()` saves to a temporary file and answers
-with it. `begin(conn, root_ids)` shows a builder the whole export set before
-the walk; the DB connection is closed by the time `save` runs. A generated
+with it ([Temporary downloads](#temporary-downloads)).
+`begin(conn, root_ids)` shows a builder the whole export set before the
+walk; the DB connection is closed by the time `save` runs. A generated
 part too big to hold (an annotated PDF) is `spool`ed to a temporary file
 and packed from there, and a bundled upload is packed straight from the
 uploads directory. The zip stores PDFs and already-compressed media as
@@ -2110,6 +2148,10 @@ is a zip of them, `<subfolder>/<Title>.pdf`, the directories mirroring the
 page's first folder path below the exported folder (`Filing`,
 `obsidian_export.page_dir`), and a sub-page's in its parent's directory
 when the parent's PDF is in the zip (`Review.pdf`, `Review/Cited.pdf`). A
+duplicated page (a `doc` that is a `copy`) is exported on the stored file
+it shows, as the page it was copied from is, here and in every export that
+packs or draws on a PDF (Zotero RDF, Logseq, Obsidian, Notability: they
+read `file_hash`, [documents.md](documents.md)). A
 page with sheets of paper and no PDF is exported as its sheets. A page with
 neither is left out, and the finished export lists it. A folder, or a page
 and the pages inside it, with no PDF at all fails with the reason. A page
@@ -2129,6 +2171,27 @@ download as bytes, with `sub_pages` the pages inside too). They raise `HTTPExcep
 routes. The MCP `export_page` tool is their other caller ([mcp.md](mcp.md)
 "Export a page").
 
+### Temporary downloads
+
+An export answered in the request (`response()`, and `/export` and
+`/export-all` in `routers/ws_backups.py`) is written to a temporary file
+and sent from there (`gamma/downloads.py`). `temp_file` makes the file and
+removes it when its writer raises; `TempFileResponse` sends it and removes
+it once the answer ends: sent, refused for its Range (416, or 400 for a
+malformed one), a send that fails or a cancelled request. A FileResponse's
+background task runs only after a complete send, so it left the file, a
+copy of the library, behind in each of those. FileResponse has closed the
+file before it is removed, which Windows needs (its close is shielded from
+a cancel, so `requirements.txt` and `requirements-mobile.txt` pin
+starlette). A process killed mid-download leaves its file in the OS temp
+dir, named `gamma-download-*`: `downloads.sweep`, at startup and hourly
+from the app lifespan (`app.sweep_temp`), removes those older than a day
+(`STALE_S`; the temp dir may be another instance's too, sending one now).
+A job's file is no temporary one: it is the job's artifact
+([tasks.md](tasks.md)); and the admin's server-backup download writes no
+file, its zip streamed as it is made (`backups.stream_zip`,
+[migrations.md](migrations.md#backups-gammabackupspy)).
+
 ## Gamma-to-Gamma export
 
 `?mode=gamma` (`_GammaBuilder`): a *scoped account backup* in the same
@@ -2141,7 +2204,8 @@ and their AI chats — each page's bucket whole, the active conversation and
 its history, plus on a folder export the folder views' own buckets, the
 folder's and its subfolders' ids (`db.copy_chats`) — `uploads/` with just the referenced
 files (`storage.upload_refs`, the reference rule the orphan check uses:
-doc_id PDFs + `/api/uploads/…` in content/properties), and a
+the file of each block's document, `doc`, + `/api/uploads/…` in
+content/properties), and a
 `manifest.json`. No `data.db`: everything in it is rebuilt (since schema
 version 28; an older export carries its chats in one, and the import moves
 them as a restore does). **There is no new import code**: any Gamma
@@ -2150,8 +2214,14 @@ imports it through the existing `/api/import-data?mode=merge` — additive
 that block, else the one at the same path, or a label of the same name, else
 it is added there; the pages are filed under the workspace's ids for them
 and the folder chats follow — `ws_backup._merge_trees`, `_refiled`; a
-reviewed import brings only the folders and labels its chosen pages need),
-deduped by block id / doc id / conversation / content hash, so re-importing
+reviewed import brings only the folders and labels its chosen pages need;
+nothing lands inside a work folder, whose directories are its vault's: a
+folder that would land there stands for the one it would land in, which
+files none of its pages, and the pages come as library pages, a work
+folder's stamps and mark dropped, [work_folders.md](work_folders.md) "The
+readers, classified"),
+deduped by block id / the PDF a page owns (the `doc_id` column, a library
+PDF: `SQL_LIBRARY_PDF`) / conversation / content hash, so re-importing
 adds nothing. A folder's export names its folder in the manifest
 (`scope.folder`), and the merge's report then carries `folder`: the
 workspace's id for it, the folder it became (one of the same name already
@@ -2163,6 +2233,11 @@ Import dialog's "Gamma export (.zip)" source reviews the zip like the
 other library sources, then merges the selected pages (`restore_zip` merge
 with a selection) as the import job; guests can't import. A Gamma export is
 a complete copy, so the Export dialog has no switches for it.
+
+The review (`ws_backup._review_import`) reads the workspace through
+`connect_pages_db`, so one nobody has opened since the server's upgrade is
+upgraded first, and its pages are matched in the shape the backup's are
+brought to ([migrations.md](migrations.md)).
 
 Pages inside pages ([home_library.md](home_library.md) "Sub-pages") keep
 their `parent_page`. The review (`ws_backup._review_import`) gives each
@@ -2182,11 +2257,12 @@ any `folders` of its own; otherwise it drops `parent_page`, and the page is
 a library page filed by its folders, which the report shows with `parent`
 `""`.
 
-A page that reads its PDF where it is on this computer (`linked_file`,
-[synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)) travels as
+A page that reads its PDF where it is on this computer (`doc.at` "path",
+[synced_vaults.md](synced_vaults.md#a-file-read-where-it-is)) travels as
 bytes: the file is read through `storage.files` into `uploads/` like a
-stored one, and the copy's pages lose the `linked_file` mark, so where the
-export lands the page is an ordinary one with no path to read from. The
+stored one, and the copy's pages have their document stored (`at`
+"store", `_GammaBuilder.finish`), so where the export lands the page is an
+ordinary one with no path to read from. The
 same export (`page_gamma_zip`, with the page's properties patched first) is
 how *Add to library…* takes an opened PDF to another workspace of the server
 with everything on it.
@@ -2684,7 +2760,7 @@ inside) — `test_obsidian.py` has the round trip, and
 without `sub_pages`, and their round trips.
 
 A synced vault writes a highlight in a dialect of its own, on purpose
-(`gamma/vault_links.py`, [synced_vaults.md](synced_vaults.md#links-and-highlights)):
+(`gamma/vault/links.py`, [synced_vaults.md](synced_vaults.md#links-and-highlights)):
 the whole highlight is one callout, the person's note inside it, so that the
 lens reads it back as one block, and its anchor stands on its own line after
 it, Obsidian's rule for a quote:

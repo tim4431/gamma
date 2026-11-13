@@ -546,3 +546,65 @@ share view's read of kept translations, compressing the rows, a bigger
 chunk (still 10 units / 2,500 characters), a shorter patience for a busy
 account (still two minutes), and multi-letter italic names (`exp` in
 Times-Italic is still a word).
+
+## Services and tokens
+
+Issue #163 (November 2026): two papers translated into Simplified Chinese
+by a service, judging by its renderings ("Table 1." as "表1。", "inductive"
+as "归纳法", the reasoning sense), left the second part of a paragraph a
+column break cut in English: on one page the text at the top of the right
+column after a table, on the other after nothing that showed. Neither had
+the failed mark, the queued wash or a count in the job's end message.
+The service path explained it. Microsoft's free endpoint keeps a `{v1}`
+token as a rule, but it dropped the token, and the word before it, from
+"droplets,{v1} but it is difficult to detect…", a text shaped as the
+screenshot's second part sent on its own, as the planner sends one that
+opens after a float (the papers were not read here, below, so that each
+page's part went that way is inferred). Joined to its first part with
+`{br}`, the same paragraph came back whole. The server then sent the
+broken text back verbatim, on purpose
+not `failed` (the same text would come back the same way), so the viewer
+drew the original as a paragraph that came back as its source, the page
+counted as done and nothing asked again.
+
+**The probe.** Sixteen texts shaped like a paper's (fragment openings,
+tokens after a comma, two tokens side by side, a token first, `{v1}–{v2}`),
+sent to `edge.microsoft.com/translate/translatetext` in eight languages
+with the tokens in four forms. A text is broken when its tokens do not
+come back exactly once each, read as tolerantly as the server reads them:
+
+| Form | zh-Hans | zh-Hant | ja | ko | de | fr | es | ru | All |
+|---|---|---|---|---|---|---|---|---|---|
+| `{v1}` (as sent until then) | 2 | 1 | 3 | 5 | 1 | 0 | 0 | 0 | 12 / 128 |
+| `[v1]` | 0 | 1 | 2 | 1 | 0 | 0 | 1 | 0 | 5 / 128 |
+| `⟦1⟧` | 3 | 4 | 9 | 8 | 2 | 1 | 0 | 0 | 27 / 128 |
+| `{1}` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 / 128 |
+
+The two zh-Hans failures of `{v1}` were the two shapes of the issue's
+screenshots, a text opening on "droplets,{v1}" and one on "changes the
+resistance … the change{v1}". `{1}` is the placeholder of software's own
+message catalogs (ICU, .NET, Java's `MessageFormat`), which translation
+services are built to keep. The endpoint ignores `textType=html`: a
+`<span class="notranslate">` came back with its attribute translated
+(`类=“notranslate”`), so markup cannot protect a token there. It dropped
+`{br}` in "water{br}droplets" and wrote 水滴 for the two words; the viewer
+already cuts a reply that lost its marker by length.
+
+**What was built** ([dev/translation.md](../dev/translation.md)
+"Machine-translation services"): every service gets the tokens as `{1}`;
+a text whose tokens still break is sent once more as `[v1]`, the form
+whose failures fell on other texts than `{v1}`'s; one broken both ways
+comes back verbatim and named in `failed`, so the viewer marks it, counts
+it and asks for it again. Separately, every chunk with a paragraph that
+did not come back, its request failed or the server could not translate
+it, is asked once more at the end of the job's queue, as the chunks
+without the brief already were.
+
+Not measured: Google and Youdao (no keys here; they get the same forms),
+a probe of more than sixteen texts, and the papers themselves (the IEEE
+one is not open, and the SAGE one sits behind a bot check). Left open: the
+planner joins a paragraph only to the next block in the flow, so a second
+part opening after a table or a figure at the top of a column goes as a
+text of its own, which a chat model translates well with its Before
+context and a service sees as a fragment. Joining across a float would
+change what the 142 measured papers send, and was not tried.

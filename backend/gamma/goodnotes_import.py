@@ -24,9 +24,9 @@ from . import goodnotes as gn
 from . import goodnotes_map as gmap
 from . import note_app_import as app
 from . import notability as nb
-from .blocks_store import attachment_props
+from .documents.model import document
 from .logbuf import log
-from .note_app_import import Skip, Stop, compose_pdf
+from .note_app_import import Skip, Stop, compose_pdf, page_kind
 from .pdf_text import page_raster
 from .storage import display_filename, store_pdf
 
@@ -43,12 +43,12 @@ def import_goodnotes(ws: str, data, conn, folder: str = "", *, name: str = "", a
     nothing; ``selected`` the notebooks' paths to import (None: all);
     400 for an upload with no notebook."""
     name = display_filename(name)
-    run = _Import(ws, conn, folder, actor, preview, progress)
+    run = Import(ws, conn, folder, actor, preview, progress)
     return run.run_upload(data, selected, refused=gn.NO_NOTEBOOKS_REASON,
                           find=lambda entries: gn.find_notebooks(entries, name), nested=gn.nested_zip)
 
 
-class _Import(app.AppImport):
+class Import(app.AppImport):
     KEY = "goodnotes_import"
     TAG = "goodnotes"
     LEFT_OUT = gn.LEFT_OUT
@@ -135,7 +135,7 @@ class _Import(app.AppImport):
             del data
             if not existed:
                 self.report["pdfs_stored"] += 1
-            props.update(attachment_props(doc_id, "", f"{title}.pdf")[0])
+            props["doc"] = document(doc_id, name=f"{title}.pdf")
             self.progress(item=title)
         groups = self.store_ink(plan, self._strokes(members, notebook), title)
         sides = {}  # each picture file's longer side at its largest frame, in canvas units: a sticker is drawn for it
@@ -169,7 +169,7 @@ class _Import(app.AppImport):
             self.report["pictures_imported"] += counts["pictures"]
             self.report["recordings_imported"] += len(recordings)
             entry["created"] = True
-            entry["kind"] = "pdf" if props.get("doc_id") else "page"
+            entry["kind"] = page_kind(props)
         return written
 
     def _pdfs(self, members, notebook: gn.Notebook) -> tuple[dict, dict, dict, dict]:
@@ -194,7 +194,7 @@ def notebook_pdfs(members, notebook: gn.Notebook) -> tuple[dict, dict, dict, dic
         if found is None:
             missing.append(path)
             continue
-        opened = app.open_pdf(found, attachment, _Import.TAG)
+        opened = app.open_pdf(found, attachment, Import.TAG)
         if opened is None:
             continue
         pages[attachment], readers[attachment], sources[attachment] = opened

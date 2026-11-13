@@ -4,9 +4,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  abandonedCommentHighlight, addComment, anchorSnippet, canDeleteComment, canEditComment, canReportComment, commentOnlyHighlight, deleteComment,
-  EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, keepThreads, laterComments, popoverThreads, resolveThread, shortCount, threadLink, threadsIn,
-  upsertThread,
+  abandonedCommentHighlight, addComment, anchorSnippet, anchorWords, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment,
+  commentOnlyHighlight, deleteComment, EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, isWithdrawn, keepThreads,
+  laterComments, mentionHint, popoverThreads, resolveThread, sendRefusal, sentChip, shortCount, threadLink, threadPlace, threadsIn, upsertThread,
 } from "../src/comments/comments.js";
 
 const c = (id, thread, author, at, extra = {}) => ({
@@ -128,6 +128,120 @@ test("who may edit and delete: the author, and for deleting the owner too; a tom
   assert.ok(canDeleteComment(mine, "ben", true), "the owner deletes anyone's");
   assert.ok(!canDeleteComment(mine, "ben"));
   assert.ok(!canDeleteComment({ ...mine, deleted: true }, "ann", true));
+});
+
+test("an agent's comment: its name on the line and the connection in the title; the person deletes it, never edits it", () => {
+  const agents = c("x", "x", "ann", "t", { agent: "Claude Code" });
+  assert.equal(authorLabel(agents), "Claude Code");
+  assert.equal(authorTitle(agents), "Written by Claude Code with ann's connection");
+  assert.equal(authorTitle({ ...agents, author: "" }), "Written by Claude Code with Someone's connection", "an account gone");
+  const local = c("z", "z", "tim", "t", { agent: "Codex", agent_kind: "local" });
+  assert.equal(authorLabel(local), "Codex");
+  assert.equal(authorTitle(local), "Written by Codex on tim's computer", "an agent Gamma ran on the computer");
+  assert.equal(authorTitle({ ...local, author: "" }), "Written by Codex on Someone's computer");
+  assert.ok(!canEditComment(local, "tim"));
+  const own = c("y", "y", "ann", "t", { agent: "" });
+  assert.equal(authorLabel(own), "ann");
+  assert.equal(authorTitle(own), "ann");
+  assert.ok(!canEditComment(agents, "ann"), "the agent's to change");
+  assert.ok(canEditComment(own, "ann"));
+  assert.ok(canDeleteComment(agents, "ann"), "the person's to delete");
+  assert.ok(canDeleteComment(agents, "ben", true), "the owner's, any");
+  assert.ok(!canDeleteComment(agents, "ben"), "another's, none");
+  assert.ok(!canDeleteComment(agents, ""), "a link visitor's, none");
+  assert.ok(!canDeleteComment({ ...agents, deleted: true }, "ann"));
+});
+
+test("a thread resolved here names no agent; an agent's resolve is the server's", () => {
+  const list = page().map((x) => (x.id === "t3" ? { ...x, resolved_agent: "Claude Code" } : x));
+  const reopened = resolveThread(list, "t3", false, "ann", "2026-10-10T00:00:00.000000Z");
+  assert.equal(reopened.find((x) => x.id === "t3").resolved_agent, "");
+  const again = resolveThread(list, "t3", true, "ann", "2026-10-10T00:00:00.000000Z");
+  assert.equal(again.find((x) => x.id === "t3").resolved_agent, "");
+});
+
+test("what a thread is on, in words: the quote, the text, else a caption-less ink group's page", () => {
+  const pos = { pageNumber: 4, width: 612, height: 792, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [] };
+  assert.equal(anchorWords({ id: "h", content: "my note", properties: { quote: "the quote", pdf_position: pos } }), "the quote");
+  assert.equal(anchorWords({ id: "n", content: "a note", properties: {} }), "a note");
+  assert.equal(anchorWords({ id: "g", content: "", properties: { ink_url: "/api/uploads/a.ink", pdf_position: pos } }), "Handwriting on page 4");
+  assert.equal(anchorWords({ id: "g", content: "the arrow", properties: { ink_url: "/api/uploads/a.ink", pdf_position: pos } }), "the arrow",
+    "a caption");
+  assert.equal(anchorWords({ id: "g", content: "", properties: { ink_url: "/api/uploads/a.ink" } }), "", "a group on a sheet");
+  const region = { width: 1200, height: 800, boundingRect: { x1: 10, y1: 20, x2: 300, y2: 200 }, rects: [{ x1: 10, y1: 20, x2: 300, y2: 200 }], hash: "i1" };
+  assert.equal(anchorWords({ id: "r", content: "", properties: { image_position: region } }), "Region of the picture");
+  assert.equal(anchorWords({ id: "r", content: "the legend", properties: { image_position: region } }), "the legend", "a region's note");
+  assert.equal(anchorWords(undefined), "", "a block the page does not show");
+});
+
+test("the Send chip: Sent while the request waits, the agent at work, Failed with its reason; none without one, or withdrawn", () => {
+  const on = (state, detail = "") => ({ ...page()[0], sent: { request_id: "r1", state, at: "2026-11-10T13:59:00.000000Z", detail } });
+  assert.deepEqual(sentChip(on("sent")), { state: "sent", label: "Sent", title: "Waiting for the agent", tone: "pending" });
+  assert.deepEqual(sentChip(on("running", "Editing sections/method.tex")),
+    { state: "running", label: "The agent is working", title: "Editing sections/method.tex", tone: "pending" });
+  assert.equal(sentChip(on("running")).title, "The agent is working");
+  const named = (detail) => ({ ...page()[0], sent: { request_id: "r1", state: "running", at: "2026-11-10T13:59:00.000000Z", detail, state_by: "Codex" } });
+  assert.deepEqual(sentChip(named("Editing main.tex")), { state: "running", label: "Codex is working", title: "Editing main.tex", tone: "pending" });
+  assert.equal(sentChip(named("")).title, "Codex is working");
+  assert.deepEqual(sentChip(on("failed", "the build failed")), { state: "failed", label: "Failed", title: "Failed: the build failed", tone: "failed" });
+  assert.equal(sentChip(on("failed")).title, "Failed");
+  assert.ok(isWithdrawn(on("failed", "withdrawn").sent));
+  assert.ok(!isWithdrawn(on("running", "withdrawn").sent));
+  assert.equal(sentChip(on("failed", "withdrawn")), null, "the person took it back");
+  assert.equal(sentChip({ ...page()[0], sent: null }), null);
+  assert.equal(sentChip(page()[0]), null);
+});
+
+test("a field naming the agent on this computer says what sending does: the thread, or the file's open comments", () => {
+  const agent = { name: "codex", label: "Codex", ready: true, problem: "" };
+  const sends = (text) => ({ text, warn: false });
+  const warns = (text) => ({ text, warn: true });
+  assert.deepEqual(mentionHint({ agent, text: "@codex use the British spelling" }), sends("Sends this thread to Codex on this computer."));
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", file: true }), sends("Sends this file's open comments to Codex on this computer."));
+  assert.deepEqual(mentionHint({ agent: { ...agent, ready: false, problem: "Codex is not signed in." }, text: "@codex go" }), warns("Codex is not signed in."));
+  assert.deepEqual(mentionHint({ agent: { ...agent, ready: null }, text: "@codex go" }), sends("Sends this thread to Codex on this computer."), "still checking");
+  assert.equal(mentionHint({ agent, text: "ask `@codex` later" }), null, "inside code");
+  assert.equal(mentionHint({ agent, text: "@Codex go" }), null, "the name exactly");
+  assert.equal(mentionHint({ agent, text: "@codex again", initial: "@codex go" }), null, "an edit that keeps an old mention sends nothing");
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go" }), sends("Sends this thread to Codex on this computer."), "an edit that adds one");
+  // an edit the server will not send says why before it is saved
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go", refused: "not_newest" }),
+    warns("Mention Codex in a new reply to send this thread again."));
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go", refused: "closed" }), warns("Reopen this thread to send it to Codex again."));
+  assert.equal(mentionHint({ agent, text: "go on", initial: "go", refused: "closed" }), null, "no mention, nothing to say");
+  assert.equal(mentionHint({ agent: null, text: "@codex go" }), null);
+});
+
+test("a mention the server did not send to the agent says why, worded here by its code, else in the server's words", () => {
+  const refused = (code, why = "") => ({ agent: "Codex", refused: code, why });
+  assert.equal(sendRefusal(refused("closed")), "Reopen this thread to send it to Codex again.");
+  assert.equal(sendRefusal(refused("not_newest")), "Mention Codex in a new reply to send this thread again.");
+  assert.equal(sendRefusal(refused("viewer")), "Only the workspace's owners and editors can send comments to Codex.");
+  assert.equal(sendRefusal(refused("too_many")), "Codex takes at most 100 comments at a time: mention it in the threads you want answered.");
+  assert.equal(sendRefusal(refused("writes", "This server takes no writes.")), "Not sent to Codex: This server takes no writes.");
+  assert.equal(sendRefusal(refused("nothing", "Nothing new since the last answers.")), "Not sent to Codex: Nothing new since the last answers.");
+  assert.equal(sendRefusal({ agent: "Codex", request_id: "c1", scope: "thread", threads: 1 }), "", "sent");
+  assert.equal(sendRefusal(undefined), "", "no agent named");
+});
+
+test("what became of a thread's place after a rebuild: a highlight moved or lost, ink or a region drawn on an earlier build", () => {
+  const pos = (extra = {}) => ({ pageNumber: 1, width: 612, height: 792, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [], ...extra });
+  const hl = (extra) => ({ id: "h", content: "", properties: { quote: "q", pdf_position: pos(extra) } });
+  assert.equal(threadPlace({ made_on: "a" }, hl(), "b"), "", "a highlight placed again exactly");
+  assert.equal(threadPlace({ made_on: "a" }, hl({ approx: true, match: 0.8 }), "b"), "moved");
+  assert.equal(threadPlace({ made_on: "a" }, hl({ approx: true, lost: true }), "b"), "lost");
+  const region = (hash) => ({ id: "r", content: "", properties: { image_position: { width: 12, height: 8, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [], hash } } });
+  assert.equal(threadPlace({ made_on: "a" }, region("i0"), "i1"), "earlier", "drawn on another version of the picture");
+  assert.equal(threadPlace({ made_on: "a" }, region("i1"), "i1"), "", "the version it was drawn on, whatever the thread says");
+  assert.equal(threadPlace({ made_on: "a" }, region("i0"), ""), "", "a page that shows no file");
+  assert.equal(threadPlace({ made_on: "a" }, region(""), "i1"), "", "a region that names no version");
+  const ink = { id: "g", content: "", properties: { ink_url: "/api/uploads/a.ink", pdf_position: pos() } };
+  assert.equal(threadPlace({ made_on: "a" }, ink, "b"), "earlier");
+  assert.equal(threadPlace({ made_on: "b" }, ink, "b"), "", "the build it was drawn on");
+  assert.equal(threadPlace({ made_on: "" }, ink, "b"), "", "a thread from before the file was named");
+  assert.equal(threadPlace({ made_on: "a" }, ink, ""), "", "a page that shows no file");
+  assert.equal(threadPlace({ made_on: "a" }, { id: "n", content: "a note", properties: {} }, "b"), "", "a note");
+  assert.equal(threadPlace({ made_on: "a" }, undefined, "b"), "", "a block the page no longer shows");
 });
 
 test("who may report: anyone but the author, a link visitor too; a tombstone no one", () => {

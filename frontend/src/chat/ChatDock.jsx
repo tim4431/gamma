@@ -16,9 +16,10 @@ import FetchHandoffCards, { LiveHandoffCards } from "./FetchHandoffCards";
 import ReplyPapers from "./ReplyPapers";
 import ApprovalCard from "./ApprovalCard";
 import PlanCard from "./PlanCard";
-import AgentChanges, { ACTION_ICONS } from "./AgentChanges";
+import AgentChanges, { ACTION_ICONS, refusalCopy, sendRevert } from "./AgentChanges";
 import RevertChanges from "./RevertChanges";
-import { forReplay, markReverted, revertible } from "./aiRevert.js";
+import { forReplay, markReverted, revertRefusal, revertible } from "./aiRevert.js";
+import { changeSteps, noteReview } from "./noteReview.js";
 import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, heldSummary, readGrants, waitsForPapers, withGrant,
   withoutGrants, withoutPaperWait, writeGrants } from "./approvals.js";
 import { approvePlanPrompt, canActOnPlan, continuesPlanning, planStatus, replyPlan, sentPlanning } from "./plan.js";
@@ -32,7 +33,8 @@ import {
 import { charCount, keptNote, keptTitle, passageShares } from "./passageBudget.js";
 import { recencySections } from "../library/PageOption";
 import { rankLibraryPages } from "../library/librarySearch";
-import { filedIn, pageAttachment, topPageOf } from "../library/libraryUtils";
+import { filedIn, topPageOf } from "../library/libraryUtils";
+import { fileHash, isPdf, pageDocument, pdfFileHash } from "../documents/pageDocument.js";
 import { ActionMenu, ContextMenu, MenuButton, MenuItem, MenuSelect } from "../shared/ui/Menus";
 import { backdropPress, menuPress } from "../shared/ui/press.js";
 import { useAltVariant } from "../shared/ui/altVariant.js";
@@ -57,6 +59,8 @@ import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import ListMotion from "../shared/ui/ListMotion";
 import { UsageRing } from "../shared/ui/UsageRing";
+import ComputerChat, { ChatSides, ComputerHeader } from "./computer/ComputerChat.jsx";
+import { useChatSide, useComputerChat } from "./computer/useComputerChat.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 // A conversation this tab has nothing of yet (one array, never written).
@@ -101,12 +105,13 @@ function relAge(iso) {
 
 // What the model was given for a reply, per document — streamed by
 // /api/ai/chat as its first line and saved on the message. Shown only when
-// it matters: the paper was truncated, or the PDF file was requested but
-// text went instead (the provider refused it, or it was too large or
-// missing). A notes-only page asks for no file. A full native attachment or a
-// paper that fit whole stays silent. The pill folds in what the reply's
-// tools read on their own ("pages 1–2 of 7 · read 3–5 with tools") and
-// which pages nobody saw; a selection says where the server placed it
+// it matters: the paper or text file was truncated, or the PDF file was
+// requested but text went instead (the provider refused it, or it was too
+// large or missing). A notes-only page asks for no file. A full native
+// attachment or a document that fit whole stays silent. The pill folds in
+// what the reply's tools read on their own ("pages 1–2 of 7 · read 3–5 with
+// tools", a text file's in lines) and which pages or lines nobody saw; a
+// selection says where the server placed it
 // ("p. 7 · Methods › Noise model") and whether a picture of it went along
 // (its text layer looked like a formula or table). Four more pills, per
 // reply: the oldest messages left out of a conversation the model can't
@@ -380,7 +385,7 @@ function ChipPreview({ text }) {
   );
 }
 
-function SelChip({ kind, icon, label, note, cut, auto = false, text, title, onRemove, removeTitle }) {
+export function SelChip({ kind, icon, label, note, cut, auto = false, text, title, onRemove, removeTitle }) {
   const Glyph = SEL_CHIP_ICONS[icon];
   return (
     <div className={`chatSelChip${kind ? ` ${kind}` : ""}${auto ? " auto" : ""}`} title={title ?? text}>
@@ -438,6 +443,13 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings, intent }) {
   );
 }
 
+// The stored file of a page's PDF (a copy's is its original's), "" for one
+// read from an address alone, null for a page without a PDF.
+function pdfFileOf(page) {
+  const doc = pageDocument(page);
+  return isPdf(doc) ? fileHash(doc) : null;
+}
+
 export default function ChatDock({
   session,
   readOnly = false,
@@ -445,7 +457,13 @@ export default function ChatDock({
   // only editors change them: the conversation stays in this tab (no
   // history, New chat starts over locally). App's session saves nothing then.
   canSave = true,
-  docId, pageAttach, focusedBlockId, homeBlocks, libraryTree, pageTitle, openTabs,
+  // The open page's document (documents/pageDocument.js pageDocument).
+  // `homeBlocks`: every page row App knows, the listing's and those read
+  // beside it (a work folder's files: explorer/knownPages.js), which the
+  // chips and the context name; `pickerPages` the ones the @ and context
+  // pickers list (App's pickerPages: the library's, and the files of the
+  // open tabs and recents).
+  doc, focusedBlockId, homeBlocks, pickerPages = homeBlocks, libraryTree, pageTitle, openTabs,
   // App's recents queue ([{id, at}]): with the open tabs, what the page
   // pickers list first (rankLibraryPages).
   recentViews,
@@ -507,6 +525,10 @@ export default function ChatDock({
   // {id, text}: a message App asks the chat to send (a handwriting block's
   // "Transcribe with AI"), with whatever is attached at that moment.
   askSignal = null,
+  // The work folder's agent on this computer the open page's chat can talk
+  // to instead (vaultState computerAgent: the vault's maker, in the desktop
+  // app), else null: the header's switch and the side chat/computer/ draws.
+  computer = null,
   onGrip, onFold, collapsed, onClose,
 }) {
   const [loadedMessages, setChatMessages] = useState(NO_MESSAGES);
@@ -518,6 +540,12 @@ export default function ChatDock({
   // another. A rename or a move keeps the bucket; deleting the folder files
   // its conversations into "home"'s history (DELETE /api/folders/{id}).
   const chatKey = focusedBlockId || organizeFolder || "home";
+  // Which side the page's chat shows: Gamma AI's, or with `computer` the
+  // agent on this computer (chat/computer/), whose state is its own; each
+  // side keeps its draft across a switch.
+  const [side, setSide] = useChatSide(focusedBlockId, !!computer && !readOnly);
+  const onComputer = side === "computer";
+  const computerChat = useComputerChat(onComputer ? focusedBlockId : "", setStatus, computer?.label || "");
   // The draft comes back after a remount in the conversation it was typed
   // in; loading another conversation empties it (below).
   const [chatInput, setChatInput] = useState(() => (kept.key === chatKey ? kept.draft : ""));
@@ -581,7 +609,10 @@ export default function ChatDock({
   // Which of the three chat kinds this is — each has its own tool permission
   // map in Settings → AI → Tool usage (app/prefDefs.js CHAT_KINDS): the folder chat, a
   // page with a PDF, a page of notes.
-  const chatKind = folderChat ? "folder" : pageAttach ? "pdf" : "notes";
+  const chatKind = folderChat ? "folder" : isPdf(doc) ? "pdf" : "notes";
+  // The stored file of the open page's PDF, which a copy shares with its
+  // original: what a message records it carried (pdfDocs).
+  const pdfFile = pdfFileHash(doc);
   const chatKindLabel = chatKindName(chatKind);
   // The chat settings shortcut edits the same global preferences as Settings.
   const chatToolPerms = agentPerms?.[chatKind] || {};
@@ -604,9 +635,10 @@ export default function ChatDock({
     writeGrants(next);
     return next;
   });
-  // Approvals answered here: the steps pill names the running call again
-  // while it runs, instead of waiting.
-  const [answeredApprovals, setAnsweredApprovals] = useState(() => new Set());
+  // Approvals answered here, id → decision: the steps pill names the running
+  // call again while it runs, instead of waiting, and a card answered from
+  // the note its edit is drawn in says so as if answered on it.
+  const [answeredApprovals, setAnsweredApprovals] = useState(() => new Map());
   const toggleTools = () => setAgentEnabled(!agentEnabled);
   // What the agent may do here after applying the shared permissions.
   const agentReads = READ_TOOLS.some(perm);
@@ -646,17 +678,24 @@ export default function ChatDock({
   // conversation leave their card under the reply instead of holding it.
   const neverWaitHere = () =>
     updateGrants((store) => withoutPaperWait(store, activeUser(), conversationId(chatMessages)));
-  // The user's answer on an approval card: the server runs the call or
+  // The user's answer on an approval card, or on the bar of the note the
+  // card's edit is drawn in (chat/noteReview.js): the server runs the call or
   // leaves it; "Allow in this chat" is kept for the conversation and
   // "Always allow" sets the permission in Settings — once the server took it.
   async function decideApproval(approval, decision, note = "") {
     await apiJson(`${API}/ai/approvals/${encodeURIComponent(approval.id)}`, {
       method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ decision, ...(note ? { note } : {}) }),
     });
-    setAnsweredApprovals((done) => new Set(done).add(approval.id));
+    setAnsweredApprovals((done) => new Map(done).set(approval.id, decision));
+    noteReview.settle(approval.id);
     if (decision === "chat") updateGrants((store) => withGrant(store, activeUser(), conversationId(chatMessages), approval.perm));
     if (decision === "always") changePermission(setAgentPerms, chatKind, approval.perm, "allow");
   }
+  // The note's bar answers through the latest render's, as the card does:
+  // the reply's own closure would file a grant under the conversation as it
+  // stood before its first message.
+  const decideRef = useRef(decideApproval);
+  decideRef.current = decideApproval;
   // The block the user's cursor is on shows as a "Cursor" chip (like a PDF
   // selection) and rides with the message as focus_block_id; its × leaves it
   // out for that block until the cursor moves.
@@ -764,7 +803,7 @@ export default function ChatDock({
   const [chatDocs, setChatDocs] = useState([]);
   // The PDF switch shows only while a PDF is in context: the open
   // page's, or an attached page's.
-  const pdfInContext = !!pageAttach || chatDocs.some((id) => pageAttachment(homeBlocks.find((b) => b.id === id)));
+  const pdfInContext = isPdf(doc) || chatDocs.some((id) => isPdf(pageDocument(homeBlocks.find((b) => b.id === id))));
   const [chatIncludeNotes, setChatIncludeNotes] = useState(false);
   const [chatFiles, setChatFiles] = useState([]); // uploaded PDFs ({name, data}) pending send
   const [docPicker, setDocPicker] = useState(false); // "Add pages" modal
@@ -820,7 +859,37 @@ export default function ChatDock({
     const pages = [...new Set([answer?.page_id, ...touched].filter(Boolean))];
     if (pages.length) onNotesChange?.(pages);
     if (indexes.some((i) => message?.actions?.[i] && changePlace(message.actions[i]) === "library")) onLibraryChange?.();
+    // A note showing the change as tracked changes stops: the row says it now.
+    for (const i of indexes) if (message?.actions?.[i]?.block_id) noteReview.forget(message.actions[i].block_id);
   };
+  // The bar under a note that shows the AI's change (chat/noteReview.js)
+  // reverts one step of it as a row of its reply does, and marks it in the
+  // conversation the reply belongs to, whichever the dock shows now. A
+  // refusal comes back as the row would say it; one whose row would show
+  // what reverting anyway writes sends the user there.
+  const notesChangeRef = useRef(onNotesChange);
+  notesChangeRef.current = onNotesChange;
+  useEffect(() => noteReview.connect(async (step, { force }) => {
+    let answer;
+    try {
+      answer = await sendRevert(step.action, { force });
+    } catch (err) {
+      const refusal = revertRefusal(err);
+      if (refusal.preview?.diff?.length) {
+        return { text: t("The note changed since. Its row in the chat shows what reverting anyway would do."), force: "" };
+      }
+      const copy = refusalCopy(refusal, false);
+      return { text: copy.text, force: copy.force || "" };
+    }
+    const messages = session.getSnapshot().replies.get(step.key)?.messages
+      || (chatKeyRef.current === step.key ? loadedRef.current : null);
+    const next = messages && markReverted(messages, step.reply, [step.index], true);
+    if (next && next !== messages) {
+      session.edit(step.key, next)?.catch((err) => setStatus(t("Couldn't save the conversation: {message}", { message: err.message })));
+    }
+    notesChangeRef.current?.([answer?.page_id || step.action.page_id].filter(Boolean));
+    return null;
+  }), [session]); // eslint-disable-line react-hooks/exhaustive-deps -- the latest state is read through refs
 
   // Show a conversation that came from the server (bucket switch, or a
   // history entry opened). PDF button: on for a conversation without
@@ -842,9 +911,9 @@ export default function ChatDock({
     setChatIncludeNotes(!!lastUser?.includeNotes);
     setChatTitle(title || "");
     const carried = !lastUser || (lastUser.pdfDocs
-      ? (docId && lastUser.pdfDocs.includes(docId)) || lastUser.pdfDocs.includes(focusedBlockId)
-        || (!docId && references.some((id) => lastUser.pdfDocs.includes(id)
-          || lastUser.pdfDocs.includes(pageAttachment(homeBlocks.find((b) => b.id === id))?.id)))
+      ? (pdfFile && lastUser.pdfDocs.includes(pdfFile)) || lastUser.pdfDocs.includes(focusedBlockId)
+        || (!pdfFile && references.some((id) => lastUser.pdfDocs.includes(id)
+          || lastUser.pdfDocs.includes(pdfFileOf(homeBlocks.find((b) => b.id === id)))))
       : !!lastUser.pdfs?.length);
     attachPdfManualRef.current = false;
     setAttachPdf(carried && nativePdf);
@@ -895,7 +964,7 @@ export default function ChatDock({
         setLoadedFor(chatKey);
       });
     return () => { cancelled = true; };
-  }, [chatKey, docId, readOnly, session]);
+  }, [chatKey, pdfFile, readOnly, session]);
 
   // Back in this tab: another tab or member may have moved the conversation
   // on (a newer answer, a New chat), so the stored copy is read again and
@@ -1228,6 +1297,8 @@ export default function ChatDock({
   const chatProgScrollRef = useRef(false);
   const chatLastScrollTopRef = useRef(0);
   useEffect(() => { chatStickRef.current = true; }, [chatKey]);
+  // `onComputer`: back from the computer side, the transcript mounts again
+  // at its top and follows its end as it did.
   useEffect(() => {
     const el = chatScrollRef.current;
     if (!el || !chatStickRef.current) return;
@@ -1236,7 +1307,7 @@ export default function ChatDock({
       chatProgScrollRef.current = true;
       el.scrollTop = target;
     }
-  }, [chatMessages, busyHere]);
+  }, [chatMessages, busyHere, onComputer]);
 
   // What the message points at inside the notes: the chips, and the cursor
   // block's selection when it has one (first, as the server labels it S1).
@@ -1374,8 +1445,8 @@ export default function ChatDock({
     const contextIds = [...new Set([focusedBlockId, ...selectedDocs].filter(Boolean))];
     const pdfPages = contextIds.flatMap((id) => {
       const page = homeBlocks.find((b) => b.id === id);
-      const attachment = id === focusedBlockId ? pageAttach : pageAttachment(page);
-      return attachment ? [{ id: attachment.id, title: page?.content || (id === focusedBlockId ? pageTitle : "") || t("Untitled") }] : [];
+      const file = id === focusedBlockId ? (isPdf(doc) ? pdfFile : null) : pdfFileOf(page);
+      return file != null ? [{ id: file, title: page?.content || (id === focusedBlockId ? pageTitle : "") || t("Untitled") }] : [];
     });
     const sendingPdf = attachPdf && pdfPages.length > 0;
     const pdfNames = [
@@ -1409,6 +1480,7 @@ export default function ChatDock({
     chatStickRef.current = true; // sending always snaps back to the bottom
     const ctrl = new AbortController();
     if (!session.start(sendKey, [...prevMessages, userMsg], chatTitle, ctrl)) return;
+    noteReview.replying(sendKey, true);
     // Under Unlimited a reply runs until it is done or stopped. A row in
     // Background tasks shows it, and its Stop reaches it from any folder or
     // page (stopChat only stops the conversation on screen). The row follows
@@ -1484,6 +1556,11 @@ export default function ChatDock({
             helpers = withHelper(helpers, ev.helper);
           } else if (ev.approval) {
             approval = ev.approval;
+            // A note edit's card: the note draws the edit too, and its bar
+            // answers the card with the card's four answers.
+            const asked = ev.approval;
+            noteReview.ask(asked, (decision) => decideRef.current(asked, decision),
+              { permission: permissionLabel(asked.perm), kind: chatKindLabel });
           } else if (ev.handoff) {
             // A fetch met a wall: the reply waits on this card until the
             // user's browser sends the PDF, or they skip it.
@@ -1491,11 +1568,15 @@ export default function ChatDock({
           } else if (ev.action) {
             running = null;
             helpers = [];
+            if (approval) noteReview.settle(approval.id);
             approval = null;
             actions.push(ev.action);
             // Live: the notes panel lights up the block the agent just
-            // read/edited (and reloads the tree for an applied edit).
+            // read/edited (and reloads the tree for an applied edit), and the
+            // note shows what an edit changed until the user keeps or
+            // reverts it (chat/noteReview.js).
             onAgentEvent?.({ type: "action", action: ev.action });
+            noteReview.landed({ action: ev.action, key: sendKey, reply: replyId, index: actions.length - 1 });
           } else if (ev.progress) {
             // The agent is still writing a note edit — the block types it in.
             onAgentEvent?.({ type: "progress", ...ev.progress });
@@ -1563,6 +1644,9 @@ export default function ChatDock({
       if (taskId) removeTask?.(taskId);
       session.finish(sendKey);
       onAgentEvent?.({ type: "done", key: sendKey });
+      // A card the reply left waiting (stopped, or the stream failed) goes from its note too.
+      if (approval) noteReview.settle(approval.id);
+      noteReview.replying(sendKey, false);
       // Agent tools changed the library — reload the home feed. Read-only
       // tool calls (list/read/search) render as chips but change nothing.
       if (actions.some(isChange)) onLibraryChange?.();
@@ -1585,6 +1669,7 @@ export default function ChatDock({
     if (!askSignal?.id || askSignal.id === kept.asked || !aiInfo || loadedFor !== chatKey) return;
     kept.asked = askSignal.id;
     if (aiOff || readOnly) return;
+    setSide("ai"); // an ask from App is Gamma AI's
     if (busyHere) setChatInput(askSignal.text);
     else sendChatRef.current?.(askSignal.text, { planning: false }); // a command to carry out, never a plan
   }, [askSignal, aiInfo, aiOff, readOnly, busyHere, loadedFor, chatKey]);
@@ -1823,8 +1908,25 @@ export default function ChatDock({
   // conversation to lose (a viewer's chat is never kept, an empty one has
   // nothing to drop).
   const discardArmed = newChatAlt && canSave && chatMessages.length > 0;
-  const headerContent = aiOff || !aiKnown ? null : (
+  // The switch between the two sides leads the header, whether Gamma AI is
+  // set up or not: an account with an agent here and no AI still has a chat.
+  const sides = computer && !readOnly ? <ChatSides side={side} onSide={setSide} label={computer.label} /> : null;
+  if (onComputer) {
+    return (
+      <DockWindow title={t("Chat")} guide="chat.grip" onGrip={onGrip} onFold={onFold}
+        collapsed={collapsed} onClose={onClose} headerContent={<>
+          {sides}
+          <ComputerHeader chat={computerChat} label={computer.label}
+            openPopover={openPopover} setOpenPopover={setOpenPopover} askConfirm={askConfirm} />
+        </>}>
+        <ComputerChat key={focusedBlockId} chat={computerChat} computer={computer} pageId={focusedBlockId}
+          pdfSelections={pdfSelections} setPdfSelections={setPdfSelections} />
+      </DockWindow>
+    );
+  }
+  const headerContent = aiOff || !aiKnown ? sides : (
     <>
+      {sides}
       <div className="ctlBtnRow chatPanelHeaderBtns">
         {/* First in the strip: a button right of ⚙ would push its popover
             (right-aligned under it) past a narrow panel's edge. */}
@@ -2220,7 +2322,8 @@ export default function ChatDock({
                     {!isUser && m.actions?.length ? (
                       <AgentChanges actions={m.actions} onOpenPage={onOpenPage} busy={busyHere}
                         onReverted={!readOnly && m.id ? (indexes, answer, reverted) => changesReverted(m.id, indexes, answer, reverted) : undefined}
-                        onRevertMany={!readOnly && m.id && revertibleCount > 1 ? () => setRevertFrom(m.id) : undefined} />
+                        onRevertMany={!readOnly && m.id && revertibleCount > 1 ? () => setRevertFrom(m.id) : undefined}
+                        onShowChange={m.id ? (i) => noteReview.show(changeSteps(chatMessages, m.id, i, chatKey)) : undefined} />
                     ) : null}
                     {isUser && m.contextPages?.length ? <div className="chatMsgPdfs">
                       {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={14} /><span className="linkChipText">{p.title}</span></button>)}
@@ -2237,7 +2340,7 @@ export default function ChatDock({
                     ) : null}
                     {isResponding && m.approval ? (
                       <ApprovalCard key={m.approval.id} approval={m.approval} kindLabel={chatKindLabel}
-                        titleOf={pageTitleOf} onDecide={decideApproval} />
+                        titleOf={pageTitleOf} onDecide={decideApproval} answered={answeredApprovals.get(m.approval.id) || ""} />
                     ) : null}
                     {isResponding && m.handoffs?.length ? (
                       <LiveHandoffCards handoffs={m.handoffs} readOnly={readOnly || aiOff}
@@ -2413,7 +2516,7 @@ export default function ChatDock({
         <>
         <PaperMentionInput
           key={chatKey}
-          pages={homeBlocks} tree={libraryTree} recentViews={recentViews} openTabs={openTabs}
+          pages={pickerPages} tree={libraryTree} recentViews={recentViews} openTabs={openTabs}
           currentPageId={focusedBlockId} selected={chatDocs}
           onAttach={(id) => setChatDocs((prev) => prev.includes(id) ? prev : [...prev, id])}
           onSend={sendChatMessage}
@@ -2629,10 +2732,10 @@ export default function ChatDock({
               {(() => {
                 // Every page can be context — a page of notes as much as a
                 // paper; the server adds PDF text for pages that carry one.
-                if (!homeBlocks.length) return <div className="popoverHint">{t("No pages yet — create one first.")}</div>;
+                if (!pickerPages.length) return <div className="popoverHint">{t("No pages yet — create one first.")}</div>;
                 // Quick open's ranking, as the @ picker's: the query's matches,
                 // or recents, open tabs and the rest under their headings.
-                const rows = rankLibraryPages(homeBlocks, libraryTree, docPickerQuery, { recentViews, openTabs, limit: Infinity });
+                const rows = rankLibraryPages(pickerPages, libraryTree, docPickerQuery, { recentViews, openTabs, limit: Infinity });
                 if (!rows.length) return <div className="popoverHint">{t("No pages match “{docPickerQuery}”.", { docPickerQuery: docPickerQuery.trim() })}</div>;
                 const sectionTitle = recencySections();
                 // A sub-page's row names the pages it is in after its title.
@@ -2661,7 +2764,7 @@ export default function ChatDock({
               <input type="checkbox" checked={chatIncludeNotes} onChange={(e) => setChatIncludeNotes(e.target.checked)} />
               <span className="attachName">{t("Include my notes & highlights")}</span>
             </label>
-            {!chatDocs.length && docId ? (
+            {!chatDocs.length && pdfFile ? (
               <div className="popoverHint">{t("Nothing selected — the open page is used.")}</div>
             ) : null}
             <div className="reportModalBtns">

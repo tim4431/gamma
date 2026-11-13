@@ -4,8 +4,8 @@ The server's half of the gamma-sync client's folder sync: the two reads a
 round of ``gamma_sync.Round`` needs, Gamma to disk, which the client
 (gamma/gamma_sync.py) asks for over HTTP with a read-scope token
 (``/api/sync/folders*``). The desktop app's synced vaults pull through their
-own engine (gamma/vault_sync.py); a folder one of them kept before, with
-the layout below, is taken onto it (gamma/vault_upgrade.py).
+own engine (gamma/vault/sync.py); a folder one of them kept before, with
+the layout below, is taken onto it (gamma/vault/upgrade.py).
 
 - The folder's **manifest** (``manifest``): its subfolders as directory
   paths and, per page, the paths its files take — the page's PDF and its
@@ -24,17 +24,26 @@ folder of papers. A sub-page's files sit in a directory named for its
 parent, beside the parent's, as in the vault export. Images and other
 uploads go to ``attachments/`` at the top, by their content-hash name,
 linked relative to the note.
+
+The whole library (``ROOT``) is what the library lists: a work folder's
+file only once it is in the library, and no work folder's directories
+(docs/dev/work_folders.md), so a repository a work folder tracks is never
+copied by it. A folder's manifest is that folder's, a work folder's too.
 """
 
 import hashlib
 import json
 
-from .blocks_store import fetch_subtree, folder_paths, load_props, newest_change_seq, pages_in_folder
+from .blocks_store import (fetch_subtree, folder_paths, live_pages, load_props, newest_change_seq, pages_in_folder,
+                           top_of)
 from .db import safe_doc_id
+from .documents.model import is_pdf, own_hash, page_document, stored_name
 from .markdown_export import block_ref_resolver, build_tree, collect_and_rewrite
 from .obsidian_export import (Filing, VaultContext, link_texts, name_files, page_dir, referenced_blocks,
                               render_vault_page)
 from .storage import find_upload_file
+from .work_folders.library import listed
+from .work_folders.marks import Tree
 
 ID_KEY = "gamma_id"   # the front-matter property naming the page
 ROOT = "root"         # the folder id that means the whole library
@@ -42,15 +51,20 @@ MAX_NOTES = 200       # pages one notes request renders
 
 
 def _page_rows(conn, folder_id: str, parents: dict) -> list[tuple]:
-    """``(id, content, properties, updated_at, seq)`` of the library pages the
-    folder reaches — filed in it or below, ``pages_in_folder``'s rule; every
-    page for ``ROOT`` — in library order, each followed by its sub-pages
-    (``parents``: ``page_parents``' map), ``seq`` the page's latest op."""
-    ids = pages_in_folder(conn, None if folder_id == ROOT else folder_id, parents)
+    """``(id, content, properties, updated_at, seq)`` of the pages the folder
+    reaches — filed in it or below, ``pages_in_folder``'s rule, a work
+    folder's files among them; for ``ROOT`` every page the library lists
+    (``library.listed``: a work folder's file only once it is in the
+    library) — in library order, each followed by its sub-pages (``parents``:
+    ``page_parents``' map), ``seq`` the page's latest op."""
+    ids = live_pages(conn, parents) if folder_id == ROOT else pages_in_folder(conn, folder_id, parents)
     rows = {r[0]: r for r in conn.execute(
         "SELECT p.id, p.content, p.properties, p.updated_at, "
         "(SELECT COALESCE(MAX(o.seq), 0) FROM page_ops o WHERE o.page_id = p.id) "
         "FROM unified_blocks p WHERE p.id IN (SELECT value FROM json_each(?))", (json.dumps(ids),))}
+    if folder_id == ROOT:
+        shown = {i for i, r in rows.items() if i not in parents and listed(load_props(r[2]))}
+        return [rows[i] for i in ids if i in rows and top_of(parents, i) in shown]
     return [rows[i] for i in ids if i in rows]
 
 
@@ -59,12 +73,12 @@ def _digest(text: str) -> str:
 
 
 def _stored_pdf(ws: str, doc_id: str):
-    """The stored file of a page's ``doc_id``, or None (no PDF, a proxied
-    one that was never stored, a bad id)."""
+    """The stored file of the PDF ``doc_id`` a page owns, or None (no PDF, a
+    proxied one that was never stored, a bad id)."""
     if not doc_id:
         return None
     try:
-        return find_upload_file(f"{safe_doc_id(doc_id)}.pdf", ws)
+        return find_upload_file(stored_name(safe_doc_id(doc_id), ".pdf"), ws)
     except ValueError:
         return None
 
@@ -90,11 +104,17 @@ def layout(conn, ws: str, folder_id: str) -> dict | None:
     changes whenever the notes file would: the page's latest op and stamp,
     the names of its labels, and the text a sub-page's front matter names
     its parent by (``link_texts``: the parent's title, or its path when
-    another file has that name)."""
+    another file has that name). The whole library's leaves every work
+    folder out (``Tree.work_of``), its directories and the folders inside:
+    a repository is never copied by a whole library's sync, and a file in
+    the library is laid out by its other folders."""
     top = [] if folder_id == ROOT else folder_paths(conn).get(folder_id)
     if top is None:
         return None
     fil = Filing(conn, None if folder_id == ROOT else folder_id)
+    if folder_id == ROOT:
+        tree = Tree.read(conn)
+        fil.paths = {f: names for f, names in fil.paths.items() if not tree.work_of(f)}
     dirs = [{"id": f, "path": page_dir(names).rstrip("/")} for f, names in fil.paths.items() if names]
 
     rows = [(pid, content, load_props(props_text), updated_at, seq)
@@ -107,7 +127,8 @@ def layout(conn, ws: str, folder_id: str) -> dict | None:
         parent = fil.parents.get(pid, "")
         parent = parent if parent in stems else ""
         tags = fil.tags(props)
-        doc_id = str(props.get("doc_id") or "")
+        view = page_document(props)
+        doc_id = own_hash(view) if is_pdf(view) else ""  # a copy owns none: its file stays the original's
         pdf = _stored_pdf(ws, doc_id)
         version = f"{seq}:{updated_at or ''}"
         if tags:

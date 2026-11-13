@@ -105,9 +105,9 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await page.keyboard.press("Control+z");
     await page.getByText("Nothing to undo in handwriting.", { exact: true }).waitFor();
     assertEq(await page.locator(paths).count(), 2, "empty ink history does not fall through to note undo");
-    // Row one is fixed; More adds the second row, every button a 36 px target.
+    // Row one is fixed (Comment while the person may comment); More adds the second row, every button a 36 px target.
     const first = await menu().locator(".inkEditRow .ctlBtn").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
-    assertEq(JSON.stringify(first), JSON.stringify(["Color", "Width and style", "Copy", "Convert", "More", "Delete"]), "the first row, in order");
+    assertEq(JSON.stringify(first), JSON.stringify(["Color", "Width and style", "Copy", "Convert", "More", "Comment", "Delete"]), "the first row, in order");
     for (const name of first) {
       const box = await menu().getByRole("button", { name, exact: true }).boundingBox();
       assert(box.width >= 36 && box.height >= 36, `${name} retains a touch target`);
@@ -1007,7 +1007,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
       await vpage.keyboard.press("Control+p");
       const palette = vpage.getByRole("dialog", { name: "Open a page" });
       await palette.waitFor();
-      await palette.getByRole("textbox", { name: "Search pages by title or label" }).fill("Slow to load");
+      await palette.getByRole("textbox", { name: "Search pages, files, folders and labels" }).fill("Slow to load");
       await palette.locator('[role="option"][data-kind="page"]', { hasText: "Slow to load" }).click();
       await until(() => new URL(vpage.url()).searchParams.get("block") === next.id, { what: "the next paper open" });
       // the strip stays open with nothing armed: the pen, then Ctrl+V

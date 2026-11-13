@@ -7,7 +7,15 @@ text exports. The size rule itself is pinned by tests/shared/picture.json."""
 
 import base64
 import io
+import os
+import struct
+import subprocess
+import sys
+import threading
+import time
 import zipfile
+from collections import OrderedDict
+from pathlib import Path
 
 import pymupdf
 import pytest
@@ -21,7 +29,7 @@ from test_picture_pdf import (QUADRANTS, WHITE, _entry, _imported, _near, _pic, 
                               _stamps, _stored, _upload_image)
 from test_text_box import CROP, _kids, _pdf, _put_children, _upload_pdf
 
-from gamma import note_app_import, notability_export, pdf_image, picture, storage
+from gamma import ai_pictures, note_app_import, notability_export, pdf_image, pdf_text, picture, storage
 from gamma.ai_tools import run_agent_tool
 from gamma.pdf_export import annotate_pdf
 
@@ -54,6 +62,14 @@ def _doubled(link: bytes, ident: bytes = b"g@", head: bytes = b"", ns: bytes = X
     groups = b"".join(b'<g id="' + at(ident, i) + b'">' + at(link, i - 1) * 2 + b"</g>" for i in range(1, levels + 1))
     return (head + SVG_HEAD + ns + b' width="10" height="10"><defs><g id="e"/><rect id="' + at(ident, 0)
             + b'" width="1" height="1"/>' + groups + b'</defs><use xlink:href="#' + at(ident, levels) + b'"/></svg>')
+
+
+# Thousands of translucent layers over the whole picture: a file of 1 MB,
+# well inside the bounds, that MuPDF takes minutes to draw.
+LAYERED = (SVG_HEAD + b' width="1000" height="1000">'
+           + b'<g opacity="0.5"><rect width="1000" height="1000" fill="#f00"/></g>' * 20_000 + b"</svg>")
+# Groups 500 deep: inside the bounds, and a file MuPDF refuses to open.
+DEEP = SVG_HEAD + b' width="10" height="10">' + b"<g>" * 500 + b'<rect width="1" height="1"/>' + b"</g>" * 500 + b"</svg>"
 
 
 def _png_b64(width: int, height: int) -> str:
@@ -274,6 +290,140 @@ def test_an_svg_reads_nothing_outside_itself(tmp_path):
         assert doc[0].get_images() == []
     finally:
         doc.close()
+
+
+# --- the time limit -----------------------------------------------------------------------------
+
+
+@pytest.fixture
+def processes(monkeypatch):
+    """The drawing processes the test starts, by the PNG's side, and
+    nothing drawn before it remembered."""
+    started, popen = [], subprocess.Popen
+
+    def counted(command, **kw):
+        started.append(int(command[3]))  # python -P svg_draw.py <side> <cap> [box]
+        return popen(command, **kw)
+    monkeypatch.setattr(pdf_image, "_svg_drawn", OrderedDict())
+    monkeypatch.setattr(pdf_image.subprocess, "Popen", counted)
+    return started
+
+
+def test_an_svg_that_draws_too_long_is_killed_and_holds_no_lock(tmp_path, monkeypatch, processes):
+    """MuPDF draws an SVG in a process of its own, killed past
+    SVG_DRAW_SECONDS: a timeout is a ValueError as any SVG that does not
+    draw. Meanwhile the PyMuPDF lock is free for every other request. Kept
+    as one that does not draw, it costs the export no second wait, and the
+    export leaves it out."""
+    monkeypatch.setattr(pdf_image, "SVG_DRAW_SECONDS", 1)
+    pdf_image._check_svg(LAYERED)
+    failed = []
+
+    def draw():
+        with pytest.raises(ValueError, match="SVG_DRAW_SECONDS") as error:
+            pdf_image.svg_png(LAYERED, pdf_image.SVG_DRAW_SIDE)
+        failed.append(error)
+    began = time.monotonic()
+    drawing = threading.Thread(target=draw)
+    drawing.start()
+    time.sleep(0.3)
+    assert pdf_text.page_raster(_pdf(), 1, 0.1)[0] is not None and drawing.is_alive()   # the lock is free
+    drawing.join(30)
+    assert failed and time.monotonic() - began < 10
+    uploads, url = _stored(tmp_path, LAYERED, ext="svg")
+    began = time.monotonic()
+    assert annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url))])[1] == 0
+    with pytest.raises(ValueError, match="SVG_DRAW_SECONDS"):
+        pdf_image.svg_pdf(LAYERED)
+    assert time.monotonic() - began < 1 and processes == [pdf_image.SVG_DRAW_SIDE]
+
+
+def test_a_drawing_is_kept_by_the_files_content(processes, monkeypatch):
+    """What a drawing came to is kept by the file's content and the side
+    it was drawn at: a file drawn again, or the same file under another
+    name, starts no process, and nor does one MuPDF could not read, whose
+    reason is kept. The oldest goes past SVG_CACHE_BYTES."""
+    side = pdf_image.SVG_DRAW_SIDE
+    pdf = pdf_image.svg_pdf(QUADS)
+    assert pdf_image.svg_pdf(QUADS) == pdf and pdf_image.svg_png(QUADS, side)[1:] == (side, side // 2)
+    assert pdf_image.svg_png(QUADS, 300)[1:] == (300, 150)
+    assert processes == [side, 300]
+    for _ in range(2):
+        with pytest.raises(ValueError, match="broken"):
+            pdf_image.svg_pdf(DEEP)
+    assert processes == [side, 300, side]
+    kept = pdf_image._svg_drawn_bytes(next(iter(pdf_image._svg_drawn.values())))
+    monkeypatch.setattr(pdf_image, "SVG_CACHE_BYTES", kept)
+    pdf_image.svg_png(QUADS, 200)
+    pdf_image.svg_pdf(QUADS)
+    assert processes == [side, 300, side, 200, side]
+
+
+def test_a_region_is_drawn_alone_in_the_process(processes, monkeypatch):
+    """A region of an SVG (``svg_png``'s box: a picture page's region,
+    ``ai_pictures.image_region``) is drawn in the process too, that region
+    alone with its longer side the side asked, and kept by its box. The
+    server draws none of it itself, and only the drawing ``svg_pdf`` reads
+    keeps the PDF."""
+    def drawn_here(*_args, **_kw):
+        raise AssertionError("drawn in the server")
+    monkeypatch.setattr(pdf_text, "page_raster", drawn_here)
+    png, width, height = pdf_image.svg_png(QUADS, 100, (0.5, 0.5, 1.0, 1.0))
+    shown = Image.open(io.BytesIO(png)).convert("RGB")
+    assert (width, height) == shown.size == (100, 50) and _near(shown.getpixel((50, 25)), QUADRANTS["BR"])
+    assert pdf_image.svg_png(QUADS, 100, (0.5, 0.5, 1.0, 1.0))[0] == png and processes == [100]
+    image, frame = ai_pictures._svg_region(QUADS, (0.0, 0.0, 0.5, 0.5))   # 150 × 75 of 300 × 150, zoomed 4×
+    assert image.size == (600, 300) and frame == (300, 150, 0.0, 0.0, 4.0) and processes == [100, 600]
+    assert _near(image.getpixel((300, 150)), QUADRANTS["TL"])
+    assert [pdf for pdf, _png in pdf_image._svg_drawn.values()] == [b"", b""]
+    pdf_image.svg_pdf(QUADS)
+    assert [pdf[:5] for pdf, _png in pdf_image._svg_drawn.values()] == [b"", b"", b"%PDF-"]
+
+
+def test_in_the_mobile_apps_an_svg_is_drawn_in_the_servers_own_process(monkeypatch):
+    """The iPad and Android apps run the server in their own process, with
+    no Python to start another: there MuPDF draws an SVG in the server's,
+    as before, with no time limit. The drawing is the same, a region too,
+    and a file it cannot read is still a ValueError."""
+    def refused(*_args, **_kw):
+        raise AssertionError("a process started")
+    monkeypatch.setattr(pdf_image, "SVG_APART", False)
+    monkeypatch.setattr(pdf_image.subprocess, "Popen", refused)
+    doc = pymupdf.open(stream=pdf_image.svg_pdf(QUADS), filetype="pdf")
+    try:
+        assert tuple(doc[0].rect)[2:] == (300, 150)
+    finally:
+        doc.close()
+    png, width, height = pdf_image.svg_png(QUADS, 200)
+    shown = Image.open(io.BytesIO(png)).convert("RGB")
+    assert (width, height) == shown.size == (200, 100)
+    assert _near(shown.getpixel((10, 10)), QUADRANTS["TL"]) and _near(shown.getpixel((190, 90)), QUADRANTS["BR"])
+    png, width, height = pdf_image.svg_png(QUADS, 100, (0.5, 0.5, 1.0, 1.0))
+    shown = Image.open(io.BytesIO(png)).convert("RGB")
+    assert (width, height) == shown.size == (100, 50) and _near(shown.getpixel((50, 25)), QUADRANTS["BR"])
+    with pytest.raises(ValueError, match="broken"):
+        pdf_image.svg_png(DEEP, 200)
+
+
+def test_the_frozen_desktop_server_draws_an_svg_through_its_own_entry(monkeypatch):
+    """A frozen server has no Python to run svg_draw with, so it starts
+    itself with --draw-svg, and its entry runs the drawing: the PDF's
+    length, the PDF and the PNG on stdout."""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    cap = str(pdf_image.SVG_DRAW_MEMORY)
+    assert pdf_image._svg_draw_command(300) == [sys.executable, "--draw-svg", "300", cap]
+    assert pdf_image._svg_draw_command(300, (0.5, 0, 1, 1))[2:] == ["300", cap, "0.5", "0", "1", "1"]
+    entry = Path(__file__).resolve().parents[2] / "desktop" / "backend_entry.py"
+    backend = str(Path(pdf_image.__file__).resolve().parents[1])
+    done = subprocess.run([sys.executable, str(entry), "--draw-svg", "300", cap],
+                          input=picture.svg_sized(QUADS), capture_output=True, timeout=60,
+                          env={**os.environ, "PYTHONPATH": backend})
+    assert done.returncode == 0, done.stderr
+    (length,) = struct.unpack(">Q", done.stdout[:8])
+    assert done.stdout[8:13] == b"%PDF-" and picture.image_size(done.stdout[8 + length:]) == (300, 150)
+    deep = subprocess.run([sys.executable, str(entry), "--draw-svg", "300", cap],
+                          input=DEEP, capture_output=True, timeout=60, env={**os.environ, "PYTHONPATH": backend})
+    assert deep.returncode == 1 and b"broken" in deep.stderr and deep.stdout == b""
 
 
 # --- where an SVG is not taken ------------------------------------------------------------------

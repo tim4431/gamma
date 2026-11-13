@@ -59,6 +59,12 @@ export const GROUPS = [
   { id: "translation", files: ["translation.mjs"], s: 10 },
   { id: "recording", files: ["recording.mjs"], s: 10 },
   { id: "vaults", files: ["vaults.mjs"], s: 20 },
+  { id: "work-folders", files: ["workFolders.mjs"], s: 30 },
+  { id: "feedback", files: ["feedback.mjs"], s: 60 },
+  { id: "local-agents", files: ["localAgents.mjs"], s: 40 },
+  { id: "viewers", files: ["viewers.mjs"], s: 60 },
+  { id: "text-search", files: ["textSearch.mjs"], s: 26 },
+  { id: "explorer", files: ["explorer.mjs"], s: 70 },
   { id: "mirror", files: ["mirror.mjs"], s: 7 },
   { id: "ink-zoom", files: ["inkZoom.mjs"], s: 7 },
   { id: "trash", files: ["trash.mjs"], s: 5 },
@@ -116,9 +122,16 @@ export const RULES = [
   ["frontend/src/shared/illustrations/**", GUIDES],
   ["frontend/src/shared/**", ALL],
   ["frontend/src/app/**", ALL],
+  // the panes a document of another format than PDF gets (the code view, the picture, the player,
+  // the file pane; docs/dev/documents.md "Viewers"): a work folder's files are pages of theirs, a
+  // tab group's pane reads one, a share's visitor sees one (the share steps are notes-pdf-share's);
+  // text-search: a line link marks its line in the code view
+  ["frontend/src/documents/viewers/**", ["viewers", "work-folders", "tab-groups", "notes-pdf-share", "text-search"]],
+  ["frontend/src/documents/**", ALL], // the document a page carries decides its layout
   // the tab groups' pure model and the read view of a page in a group that is not live
+  // (viewers: a code view read in a pane)
   ["frontend/src/workspace/tabLayout.js", ["tab-groups"]],
-  ["frontend/src/workspace/PagePane.jsx", ["tab-groups"]],
+  ["frontend/src/workspace/PagePane.jsx", ["tab-groups", "viewers"]],
   ["frontend/src/workspace/**", ALL], // the frames every page stands in
   ["frontend/src/main.jsx", ALL],
   ["frontend/src/guide/**", GUIDES],
@@ -148,22 +161,35 @@ export const RULES = [
   // the replay store every handwriting replay and a recording's player run on
   ["frontend/src/replay/**", ["ink", "ink-editing", "notebooks", "recording"]],
   ["frontend/src/recording/**", ["recording"]],
-  // the row control, the thread popover, the Comments window, the page's threads over the socket
-  ["frontend/src/comments/**", ["comments", "collab", "inbox"]],
-  // the bell, its panel and the jumps (a thread's opens through comments/)
-  ["frontend/src/inbox/**", ["inbox"]],
+  // the row control, the thread popover, the Comments window, the page's threads over the socket;
+  // feedback: an agent's comments, the Sent chip, the ink cards and the Feedback button;
+  // local-agents: the byline of a reply an agent on this computer wrote
+  ["frontend/src/comments/**", ["comments", "collab", "inbox", "feedback", "local-agents"]],
+  // the bell, its panel and the jumps (a thread's opens through comments/); feedback: an agent's items
+  ["frontend/src/inbox/**", ["inbox", "feedback"]],
+  // the feedback view and Send (docs/dev/feedback.md "In the app"); local-agents: Send naming the
+  // folder's agent on this computer, its lines and the request it works
+  ["frontend/src/feedback/**", ["feedback", "local-agents"]],
   ["frontend/src/pdf/**", PDF_VIEW],
   // (a text box's editor and read mode are the notes')
   // the "N pages inside" panel and the crumbs over a sub-page's title (/page makes one in notes)
   ["frontend/src/editor/SubPagesPanel.jsx", ["sub-pages", "notes-pdf-share"]],
-  ["frontend/src/editor/PageCrumbs.jsx", ["sub-pages", "notes-pdf-share"]],
+  ["frontend/src/editor/PageCrumbs.jsx", ["sub-pages", "notes-pdf-share", "explorer"]],
   // the @ menu and its chips (the reminders are App's, under app/**)
   ["frontend/src/editor/mentions.js", ["note-mentions", "notes-pdf-share"]],
   ["frontend/src/editor/MentionMenu.jsx", ["note-mentions", "notes-pdf-share", "inbox"]],
   // the @ menu's state and keys, a note row's and a comment field's
   ["frontend/src/editor/useMentionMenu.js", ["note-mentions", "notes-pdf-share", "comments", "inbox"]],
-  ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties"]],
-  ["frontend/src/chat/**", [...CHAT, "ink-zoom"]], // ink-zoom: a selection's Transcribe reaches the chat's request
+  // a note's link by path, opened through the work folder it is in (the e2e explorer group)
+  ["frontend/src/editor/PathLink.jsx", ["sub-pages", "notes-pdf-share", "explorer"]],
+  ["frontend/src/editor/pathLinkContext.js", ["sub-pages", "notes-pdf-share", "explorer"]],
+  // (text-search: a note's line link is a pill)
+  ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search"]],
+  // the chat's computer side: the switch, the strip, a turn of the agent on this computer, Stop, New chat and History
+  ["frontend/src/chat/computer/**", ["local-agents"]],
+  ["frontend/src/chat/ChatDock.jsx", [...CHAT, "ink-zoom", "text-search", "local-agents"]], // the switch to that side
+  // ink-zoom: a selection's Transcribe reaches the chat's request; text-search: a reply's line link
+  ["frontend/src/chat/**", [...CHAT, "ink-zoom", "text-search"]],
   // the Inbox notifications row
   ["frontend/src/settings/SettingsAppearance.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "inbox", "zotero-link"]],
   // the Zotero link's dialog, opened from Workspaces › Clones and Zotero links only (the Account row is SettingsZotero.jsx, below)
@@ -183,14 +209,27 @@ export const RULES = [
   ["frontend/src/collaboration/zoteroLink.css", ["zotero-link"]],
   ["frontend/src/collaboration/**", ALL], // the page's live session carries every edit
   // a page's standing with this computer in the desktop app: the chip, its card and dialogs, the banner, the notes lock
-  ["frontend/src/vault/**", ["vaults"]],
-  ["frontend/src/library/QuickOpen.jsx", ["quick-open", "sub-pages"]],
+  // (local-agents: the agent the maker's comments name and the chat's computer side talks to)
+  ["frontend/src/vault/vaultState.js", ["vaults", "work-folders", "local-agents"]],
+  ["frontend/src/vault/**", ["vaults", "work-folders"]],
+  // the pages the listing does not carry, merged into every page list the app has
+  ["frontend/src/explorer/knownPages.js", ALL],
+  // the work-folder rules every page and folder menu, drop and the open page's title ask
+  ["frontend/src/explorer/workFolders.js", ["work-folders", "vaults", "folders", "sub-pages", "trash", "files", "quick-open"]],
+  // quick open's Files group: the server's rows and marks
+  ["frontend/src/explorer/fileSearch.js", ["quick-open", "sub-pages", "explorer"]],
+  ["frontend/src/explorer/useFileSearch.js", ["quick-open", "sub-pages", "explorer"]],
+  // a file's path, its crumbs and a note's relative link (BlockTree's renderer asks isRelativeHref)
+  ["frontend/src/explorer/workPaths.js", ["work-folders", "vaults", "explorer", "notes-pdf-share", "sub-pages"]],
+  // a work folder's list view and the tracking dialog; the Files window, its owner and its rows
+  ["frontend/src/explorer/**", ["work-folders", "vaults", "explorer"]],
+  ["frontend/src/library/QuickOpen.jsx", ["quick-open", "sub-pages", "explorer"]],
   ["frontend/src/library/RecentlyDeleted.jsx", ["trash", "sub-pages"]],
   // the library's bulk actions: delete (a folder's pages too), file and label, move into a page, duplicate
   ["frontend/src/library/pageBatch.js", ["trash", "folders", "quick-open", "sub-pages", "files"]],
   ["frontend/src/library/**", ALL], // the home view every scenario opens on
-  // folders, sub-pages: the panel's filter chips and typed qualifiers
-  ["frontend/src/search/**", ["notes-pdf-share", "quick-open", "folders", "sub-pages"]],
+  // folders, sub-pages: the panel's filter chips and typed qualifiers; text-search: the Files group
+  ["frontend/src/search/**", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search"]],
   // cloud-sign-in: the people invited by e-mail and the requests to join
   ["frontend/src/sharing/**", ["notes-pdf-share", "publish", "collab", "cloud-sign-in"]],
   // the Zotero account and links' calls (Account & sync › Zotero, the link dialog)
@@ -220,24 +259,51 @@ export const RULES = [
   // the fake Zotero the Zotero link scenario's second Gamma talks to, and the library it serves
   ["backend/tests/zotero_fake.py", ["zotero-link"]],
   ["backend/tests/zotero_fixtures.py", ["zotero-link"]],
+  // the 20,000 files the explorer group's quick open searches
+  ["backend/tests/seed_work_folder.py", ["explorer"]],
+  // the stand-ins for Codex and Claude Code the local agents scenario's server starts
+  ["backend/tests/fake_agents/**", ["local-agents"]],
   ["backend/tests/**", []],
   ["backend/gamma/ai_protocols/**", [...CHAT, "settings"]],
   // the AI client is the translated view's path to the model too
   ["backend/gamma/ai_client.py", [...CHAT, "settings", "ink-zoom", "translation"]],
+  // text-search: read_page by lines and search_library's file hits, over MCP
+  ["backend/gamma/ai_tools.py", [...CHAT, "settings", "ink-zoom", "text-search"]],
   ["backend/gamma/ai_*.py", [...CHAT, "settings", "ink-zoom"]],
   ["backend/gamma/chatgpt_oauth.py", ["settings"]],
   ["backend/gamma/routers/ai.py", [...CHAT, "settings", "ink-zoom", "translation"]],
   ["backend/gamma/routers/chats.py", CHAT],
+  // a line link read through read_gamma_link
+  ["backend/gamma/mcp_links.py", ["mcp", "text-search"]],
+  ["backend/gamma/mcp_server.py", ["mcp", "text-search"]],
   ["backend/gamma/mcp_*", ["mcp"]],
   ["backend/gamma/integrations.py", ["mcp", "mirror", "settings"]],
   ["backend/gamma/routers/integrations.py", ["mcp", "mirror", "settings"]],
   // synced vaults and PDFs read where they are: the routes a page reads and the engine behind them
-  // (the vaults scenario; the shell's side is the desktop app's suite, desktop/test/e2e.js)
-  ["backend/gamma/folder_links.py", ["vaults"]],
-  ["backend/gamma/routers/folder_links.py", ["vaults"]],
-  ["backend/gamma/linked_files.py", ["vaults"]],
-  ["backend/gamma/vault_*.py", ["vaults"]],
+  // (the vaults scenario; the shell's side is the desktop app's suite, desktop/test/e2e.js);
+  // feedback: a work folder's rounds write its feedback files and keep the commented version;
+  // viewers: the engine's class `file` makes a page of every file a work folder tracks;
+  // local-agents: a work folder's agent on this computer, turned on and off by the PATCH
+  ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback", "local-agents"]],
+  ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders", "local-agents"]],
+  ["backend/gamma/linked_files.py", ["vaults", "work-folders", "feedback"]],
+  ["backend/gamma/vault/**", ["vaults", "work-folders", "feedback", "viewers", "explorer"]],
+  // feedback on a work folder's files: the reader, the pictures, the SyncTeX map, the requests, the files and the routes
+  // (viewers: a region of a picture and a thread on a picture's page as entries with their pictures)
+  // (local-agents: a request claimed and worked by an agent on this computer, the document's `agent`)
+  ["backend/gamma/feedback/**", ["feedback", "viewers", "local-agents"]],
+  ["backend/gamma/routers/feedback.py", ["feedback", "local-agents"]],
+  // an agent on this computer answering a Send (docs/dev/local_agents.md): finding the CLIs, the
+  // drivers, the runner, what this computer keeps, and GET /api/local-agents
+  ["backend/gamma/local_agents/**", ["local-agents"]],
+  ["backend/gamma/routers/local_agents.py", ["local-agents"]],
   ["backend/gamma/md_lens.py", ["vaults"]],
+  // a file's path in its work folder: the feedback entries' file, a search hit's path, read_page(path=…),
+  // quick open's file rows and a path link's file
+  ["backend/gamma/work_folders/paths.py", ["work-folders", "vaults", "feedback", "text-search", "explorer"]],
+  // work folders: the library rule, the op rule, .gammaignore, the takeover (docs/dev/work_folders.md);
+  // files by name (file_search.py)
+  ["backend/gamma/work_folders/**", ["work-folders", "vaults", "explorer"]],
   ["backend/gamma/folder_sync.py", []],
   ["backend/gamma/gamma_sync.py", []],
   // the clones' engine and the clock the Zotero link's rounds run on (sync_clock.py), its conflicts and log tables (sync_engine.py)
@@ -263,12 +329,14 @@ export const RULES = [
   ["backend/gamma/picture.py", [...EXPORTS, "notebooks", "pictures", ...CHAT]],
   ["backend/gamma/pdf_meta.py", PDF_VIEW],
   ["backend/gamma/pdf_text.py", PDF_VIEW],
-  ["backend/gamma/pdf_index.py", ["notes-pdf-share", "quick-open"]],
+  // the one reader of a document's text: the index's of every format, the chat's and the tools' of a text file
+  ["backend/gamma/documents/text.py", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search"]],
+  ["backend/gamma/search/**", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search"]], // the document text index
   ["backend/gamma/highlight_relocate.py", ["notes-pdf-share"]], // the highlights found again in a replaced PDF
   ["backend/gamma/routers/pdf.py", PDF_VIEW],
   ["backend/gamma/textnorm.py", ["notes-pdf-share", "quick-open"]],
   ["backend/gamma/block_index.py", ["notes-pdf-share", "quick-open"]],
-  ["backend/gamma/routers/search.py", ["notes-pdf-share", "quick-open", "folders", "sub-pages"]],
+  ["backend/gamma/routers/search.py", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search"]],
   ["backend/gamma/markdown_zip_import.py", [...EXPORTS, "sub-pages"]], // a Notion export's pages inside pages
   ["backend/gamma/markdown_zip_links.py", [...EXPORTS, "sub-pages"]], // a parent: is read as a link
   ["backend/gamma/notion_import.py", [...EXPORTS, "sub-pages"]],
@@ -333,15 +401,18 @@ export const RULES = [
   ["backend/gamma/translate.py", ["translation", "notes-pdf-share"]],
   // the translated view's endpoint, and the services' keys Settings stores
   ["backend/gamma/routers/translate.py", ["settings", "notes-pdf-share", "translation"]],
-  // deleting a folder or a label (the trees' other writes are ops, ALL below)
-  ["backend/gamma/routers/folders.py", ["folders", "notes-pdf-share"]],
+  // deleting a folder or a label (the trees' other writes are ops, ALL below); a work folder's
+  // directory read, its files by name (GET /files) and a path resolved (GET /folders/{id}/at)
+  ["backend/gamma/routers/folders.py", ["folders", "notes-pdf-share", "work-folders", "explorer"]],
   // comments: their storage and API, and the hooks every block writer runs
   // (orphan, place and purge on deletes, moves and page purges; the copies
   // of a backup merge and an import; after_write feeds the inbox)
-  ["backend/gamma/comments.py", ["comments", "inbox", "notes-pdf-share", "collab", "transfers"]],
-  ["backend/gamma/routers/comments.py", ["comments", "inbox"]],
-  // the Inbox: its producers' items, the listing and its settle, the marks
-  ["backend/gamma/inbox.py", ["inbox", "comments"]],
+  // feedback: an agent's writes, the anchors and the listeners that keep the feedback files current
+  // local-agents: a local agent's comment (agent_kind) and a Send's state_by on its threads
+  ["backend/gamma/comments.py", ["comments", "inbox", "notes-pdf-share", "collab", "transfers", "feedback", "local-agents"]],
+  ["backend/gamma/routers/comments.py", ["comments", "inbox", "feedback"]],
+  // the Inbox: its producers' items, the listing and its settle, the marks; feedback: an agent's items
+  ["backend/gamma/inbox.py", ["inbox", "comments", "feedback"]],
   ["backend/gamma/routers/inbox.py", ["inbox"]],
   ["backend/gamma/publisher_sessions.py", ["settings"]],
   ["backend/gamma/routers/publisher_sessions.py", ["settings"]],

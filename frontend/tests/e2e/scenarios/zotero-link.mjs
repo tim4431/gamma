@@ -308,7 +308,7 @@ export async function zoteroLinkScenarios(env) {
         assert(paper, "the paper page came");
         paperId = paper.id;
         const props = (await inWs(linkWs).api(`/api/blocks/${paperId}`)).properties;
-        assert(props.doc_id, "its PDF came along");
+        assert(props.doc?.hash, "its PDF came along");
         assertEq(props.meta.venue, "Nature", "its record came along");
         paperKey = props.zotero_key.split("/").pop();
         assert(props.zotero_key === `http://zotero.org/${LIB}/items/${paperKey}`, props.zotero_key);
@@ -596,7 +596,7 @@ export async function zoteroLinkScenarios(env) {
         const reading = (await inWs(labWs).api("/api/blocks/root/children")).children.find((p) => p.content === "Group reading");
         assert(reading, "the group's paper came");
         const before = (await inWs(labWs).api(`/api/blocks/${reading.id}`)).properties;
-        assert(!before.doc_id && before.zotero_pdf?.state === "remote", `its PDF waits in Zotero (${JSON.stringify(before.zotero_pdf)})`);
+        assert(!before.doc?.hash && before.zotero_pdf?.state === "remote", `its PDF waits in Zotero (${JSON.stringify(before.zotero_pdf)})`);
         assertNoProblems(page);
 
         // the page opened asks for its PDF once; held here until the card has been seen
@@ -622,7 +622,7 @@ export async function zoteroLinkScenarios(env) {
         await until(async () => (await page.locator('[data-page="1"] [data-hl-id]').count()) >= 2, { timeout: 15000, what: "the group's highlights drawn" });
         assertEq(asked.length, 1, "asked once");
         const after = (await inWs(labWs).api(`/api/blocks/${reading.id}`)).properties;
-        assert(after.doc_id && !after.zotero_pdf, "the page holds its PDF now");
+        assert(after.doc?.hash && !after.zotero_pdf, "the page holds its PDF now");
         // another member's annotation is read-only in Zotero: a badge on its row
         await page.getByRole("img", { name: "carol's annotation: read-only in Zotero", exact: true }).waitFor();
         assertNoProblems(page);
@@ -663,12 +663,12 @@ export async function zoteroLinkScenarios(env) {
         assertEq(await button(card, "Download now").count(), 0, "nothing to download");
         await pop.getByText("Attach a document", { exact: true }).waitFor();
         const chooser = page.waitForEvent("filechooser");
-        await pop.locator(".ctxMenuItem", { hasText: "Upload a PDF…" }).click();
+        await pop.locator(".ctxMenuItem", { hasText: "Upload a file…" }).click();
         await (await chooser).setFiles({ name: "my-linked-paper.pdf", mimeType: "application/pdf",
           buffer: Buffer.from(makePdf([["My own copy of the linked paper"]])) });
         await waitForPdf(page);
         const props = (await inWs(labWs).api(`/api/blocks/${paper.id}`)).properties;
-        assert(props.doc_id, "the page holds the PDF attached here");
+        assert(props.doc?.hash, "the page holds the PDF attached here");
         // a round later Zotero still has only its linked file: the copy stays in Gamma
         await syncFromPopover(page);
         const children = (await fakeApi(`${GROUP}/items/${parentKey}/children`)).map((c) => c.data.linkMode);

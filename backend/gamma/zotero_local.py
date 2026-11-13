@@ -44,10 +44,11 @@ from . import storage, upload_gc
 from .auth import ZOTERO_ACTOR, ZOTERO_CLIENT
 from . import ink as inkmod
 from .bibtex import build_entry, clean_key
-from .blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, TRASH, TREES, attachment_file, batch_page, block_to_dict,
-                           existing_in, fetch_subtree, filing, insert_page_tree, label_names, load_props,
-                           new_block_id, page_attachment, page_root_id, valid_block_id, write_lock)
+from .blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, TRASH, TREES, batch_page, block_to_dict, existing_in,
+                           fetch_subtree, filing, insert_page_tree, label_names, load_props, new_block_id,
+                           page_root_id, valid_block_id, write_lock)
 from .db import connect_pages_db
+from .documents.model import page_document, pdf_file_hash, stored_name
 from .logbuf import log
 from .markdown_export import block_ref_resolver, build_tree
 from .note_markup import WIDTH_SUFFIX, alt_and_width
@@ -333,23 +334,25 @@ def move_block_across(ws: str, block_id: str, to_page: str, *, parent: str | Non
     return position
 
 
-def set_pdf(ws: str, page_id: str, doc_id: str, *, owner: str, original_filename: str = "", source_url: str = "",
-            props: dict | None = None, check=None, rows=None) -> dict:
-    """Make a stored PDF the page's (a Zotero download, or Zotero's file
-    replacing Gamma's) through ``routers.pages.replace_attachment`` with
-    client ``CLIENT``, actor ``ACTOR``, the relocation job owned by the
-    link's ``owner``, and no one-page-per-PDF check (linked items may share
-    a file). ``zotero_pdf`` goes in the same op, with ``props`` (more page
-    properties to set or, as None, drop); the engine's rows go in the same
-    transaction. → ``replace_attachment``'s answer (``job`` None and
-    ``relocation_error`` set when the highlights' run did not start: the
-    page's annotation pushes then stay held). Raises ``Changed`` when
-    ``check`` fails, OpError 404 for a page gone or trashed."""
+def set_pdf(ws: str, page_id: str, doc_id: str, *, owner: str, name: str = "", props: dict | None = None,
+            check=None, rows=None) -> dict:
+    """Make the stored PDF ``doc_id`` (its file named ``name``) the page's
+    (a Zotero download, or Zotero's file replacing Gamma's) through
+    ``routers.pages.replace_attachment`` with client ``CLIENT``, actor
+    ``ACTOR``, the relocation job owned by the link's ``owner``, and no
+    one-page-per-PDF check (linked items may share a file); a page that
+    reads its PDF in place keeps reading it so. ``zotero_pdf`` goes in the
+    same op, with ``props`` (more page properties to set or, as None, drop);
+    the engine's rows go in the same transaction. → ``replace_attachment``'s
+    answer (``job`` None and ``relocation_error`` set when the highlights'
+    run did not start: the page's annotation pushes then stay held). Raises
+    ``Changed`` when ``check`` fails, OpError 404 for a page gone or
+    trashed."""
     from .routers.pages import replace_attachment  # local: keep gamma.* free of the routers package
 
-    done = replace_attachment(ws, page_id, doc_id, source_url, original_filename, actor=ACTOR, client=CLIENT,
-                              owner=owner, check_held=False, props={"zotero_pdf": None, **(props or {})},
-                              check=check, rows=rows, check_zotero=False)
+    done = replace_attachment(ws, page_id, doc_id, "", name, actor=ACTOR, client=CLIENT, owner=owner,
+                              check_held=False, props={"zotero_pdf": None, **(props or {})}, check=check, rows=rows,
+                              check_zotero=False)
     if done is None:
         raise Changed(page_id)
     return done
@@ -395,8 +398,8 @@ class PageView(NamedTuple):
     ``gamma_notes`` the page's Gamma-notes region (None when it has none),
     their ``html`` with keyed pictures as Zotero's tag. ``folders``: the
     folder ids it is filed in that exist; ``labels``: ``{label id: name}``
-    of its labels. ``doc_id``: the stored PDF's ("" for none), ``pdf`` its
-    path when the file is there."""
+    of its labels. ``doc_id``: the hash of the PDF it shows (``pdf_file_hash``,
+    "" for none), ``pdf`` its path when the file is there."""
     page_id: str
     title: str
     props: dict
@@ -547,9 +550,9 @@ def read_page(conn, page_id: str, *, note_roots=None, image_key=None, notes: boo
                 gamma_notes = _region(tree, exclude=roots, resolve_ref=resolve_ref, image_key=image_key)
 
     known = label_names(conn)
-    doc_id = attachment_file(page_attachment(props))
+    doc_id = pdf_file_hash(page_document(props))
     ws = getattr(conn, "ws", "")
-    pdf = storage.open_path(ws, f"{doc_id}.pdf") if doc_id and ws else None
+    pdf = storage.open_path(ws, stored_name(doc_id, ".pdf")) if doc_id and ws else None
     return PageView(page_id=page_id, title=root["content"] or "", props=props, page=root, nodes=nodes,
                     annotations=annotations, regions=regions, gamma_notes=gamma_notes,
                     folders=existing_in(conn, FOLDERS, filing(props, FOLDERS)),

@@ -16,7 +16,7 @@ import { createPortal, flushSync } from "react-dom";
 import { ContextMenu, MenuDivider, MenuItem, useMenuTrigger } from "../shared/ui/Menus";
 import { IconSwap } from "../shared/ui/MotionWidgets";
 import {
-  ClipboardIcon, CopyIcon, DuplicateIcon, FileTextIcon, FlipHIcon, FlipVIcon, HighlightIcon, LineWidthIcon, MergeIcon, MoreIcon, NotebookPenIcon,
+  ClipboardIcon, CopyIcon, DuplicateIcon, FileTextIcon, FlipHIcon, FlipVIcon, HighlightIcon, LineWidthIcon, MergeIcon, MessageSquareIcon, MoreIcon, NotebookPenIcon,
   PaletteIcon, PenIcon, PlayIcon, RectSelectIcon, ScissorsIcon, StopIcon, TrashIcon, SparklesIcon,
   PaintBucketIcon, DownloadIcon, ShapesIcon, TypeIcon,
 } from "../shared/ui/Icons";
@@ -40,11 +40,11 @@ import {
   stretchRuler, turnRuler,
 } from "./ruler.js";
 import { toolShape } from "./shapeTool.js";
-import { clickAt, doublePress, swallowClick } from "../shared/ui/press.js";
+import { clickAt, doublePress, penLifted, swallowClick } from "../shared/ui/press.js";
 import { scrollBox } from "../shared/ui/placement.js";
 import { ARROWS, TransformHandles, arrowSign, pct } from "../markup/TransformHandles.jsx";
 import { usePageTools } from "../markup/PageTools.jsx";
-import { MAX_COORD, lassoTakes, normalizePicture, turnedBox } from "../markup/picture.js";
+import { MAX_COORD, lassoTakes, normalizePicture, pictureAt, turnedBox } from "../markup/picture.js";
 import { pictureShape } from "./overPictures.js";
 import { selectedPictures } from "./selectionEdits.js";
 import { makeStabilizer } from "./stabilizer.js";
@@ -863,7 +863,8 @@ function samplesBox(samples, pad) {
 // eraserMode: "stroke" (whole strokes) | "partial" (cuts through them),
 // eraserSize its S/M/L index; lassoMode: "free" (a drawn loop) | "box";
 // lassoPictures: the lasso takes the unlocked pictures it circles with the
-// strokes (markup/picture.js lassoTakes); blocks: this page's ink blocks;
+// strokes (markup/picture.js lassoTakes), and a tap with it one with no
+// stroke over it (pictureAt); blocks: this page's ink blocks;
 // pictures: its pictures' blocks (markup/picture.js picturesBySurface),
 // over which a highlighter multiplies whatever the page's blend ("a
 // highlighter over a picture" above); selection: {page, items: [{id,
@@ -887,7 +888,7 @@ function samplesBox(samples, pad) {
 // scribble's targets;
 // onUndoGesture('undo' | 'redo'): a finger chord; onHoldStatus({text, once}):
 // the pill a snapped stroke raises. clip: the handwriting clipboard holds
-// strokes — a pen or mouse held still with a writing tool, or a mouse
+// something — a pen or mouse held still with a writing tool, or a mouse
 // right-click on blank page with a tool armed, then offers "Paste here",
 // which calls onPaste(page, pt, {width, height}); keys: {copy, cut,
 // duplicate}, the chord labels the selection menu's titles name.
@@ -915,6 +916,8 @@ function samplesBox(samples, pad) {
 // onZoom(page, {x, y} | {mag} | {at, size}) while a window is open.
 // aiWork: the handwriting on this surface the AI is redrawing or
 // converting, {box, landed?} (useInkSelection.js), washed over (InkAiWork).
+// The page tools' ink.canComment (the reader may comment on the page) gives
+// a PDF page's selection menu its Comment; a sheet's has none.
 export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures, tool, penTool, penInk, onPenDrag, penOnly, pressure, eraserMode,
   eraserSize = 1, eraserFilter = "all", drawHold = false, scribble = false, fingerUndo = "off", lassoMode = "free", lassoPictures = true,
   selection, flash, clip = false, keys, hoverPreview = true, ruler = null, rulerUnits = "pt", aiWork = null, onCarry,
@@ -922,6 +925,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
   onFingerScroll, onUndoGesture, onHoldStatus, onInkFeatures, onInkLive, onHaptic, onRuler,
   chrome = true, zoom = null, onZoom, onZoomStroke, view = false }) {
   useInkVersion();
+  const canComment = !!usePageTools()?.ink?.canComment && typeof pageNumber === "number";
   const canvasRef = useRef(null);
   const wetRef = useRef(null);
   const washRef = useRef(null);
@@ -1126,12 +1130,33 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
     };
     const trackDown = (e) => {
       contacts.add(e.pointerId);
+      if (e.pointerType === "pen") lastPen = e.pointerId;
       if (pending && pending.id !== e.pointerId && !pending.pen) clearPending(true);
       if (e.pointerType === "pen") fingerHint = false;
       // A second finger makes a finger's stroke a pinch: the stroke goes.
       if (drawing?.pointerType === "touch" && e.pointerType === "touch" && drawing.id !== e.pointerId) {
         finish({ pointerId: drawing.id }, true);
       }
+    };
+    // A pen's lift that never came (shared/ui/press.js penLifted): seen on
+    // the document before any layer's own press, the pen hovering or going
+    // down again ends what its last contact held here — a drag as its lift
+    // would end it, where the pen last touched (`d.at`, noted by onDown and
+    // onMove), a page's drag and a tap as a cancel, the host's pointer, and
+    // its place among the contacts. Else fingers would stay palms on every
+    // page, this layer would ignore the next press, and the Pencil's
+    // gestures would wait for a stroke that is over.
+    let lastPen = null; // the pen pointer last down here, while it is in `contacts`
+    const note = (d, e) => { d.at = { clientX: e.clientX, clientY: e.clientY, timeStamp: e.timeStamp, shiftKey: !!e.shiftKey }; };
+    const penGone = (e) => {
+      if (penLifted(e, lastPen)) { contacts.delete(lastPen); lastPen = null; }
+      if (penLifted(e, hostOwned)) hostOwned = null;
+      if (pending?.pen && penLifted(e, pending.id)) clearPending(true);
+      const d = drawing;
+      if (d?.pointerType !== "pen" || !penLifted(e, d.id)) return;
+      if (d.mode === "page" || !d.at) { drawing = null; return; }
+      if (!hostClaims.get(d.id)?.taken) hostClaims.delete(d.id);
+      finish({ type: "pointerup", pointerId: d.id, pointerType: "pen", button: 0, buttons: 0, pressure: 0, ...d.at }, false);
     };
     // On the document: the page's own drag may end anywhere. Its touch was
     // cancelled (onTouch), so a tap's click is sent from here, past what a
@@ -1633,7 +1658,12 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
         }, drop);
     };
 
+    // A press, and on the pen drag it began, where the pen touched (penGone).
     const onDown = (e) => {
+      press(e);
+      if (drawing?.id === e.pointerId && drawing.pointerType === "pen") note(drawing, e);
+    };
+    const press = (e) => {
       // the touch whose hold opened Paste here is over once its pointer goes down again
       if (e.pointerId === pasteHold) pasteHold = null;
       if (e.target.closest?.(NOT_INK)) { hideCursor(); return; }
@@ -1671,7 +1701,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
         if (!probe) return;
         const pt = probe.toPt(e);
         const hit = nearestInkStroke(L.groups, pt.x, pt.y, (e.pointerType === "touch" ? 10 : 5) / probe.k);
-        pending = { id: e.pointerId, x: e.clientX, y: e.clientY, hit, shown: false, pen: e.pointerType === "pen" };
+        pending = { id: e.pointerId, x: e.clientX, y: e.clientY, pt, hit, shown: false, pen: e.pointerType === "pen" };
         if (hit && e.pointerType === "touch" && !passive) {
           pending.timer = setTimeout(() => {
             if (!pending || drawing) return;
@@ -1760,6 +1790,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
       if (pending?.id === e.pointerId && Math.hypot(e.clientX - pending.x, e.clientY - pending.y) > 8) clearPending(true);
       const d = drawing;
       if (!d || e.pointerId !== d.id || d.mode === "page") return;
+      note(d, e);
       e.preventDefault();
       if (d.mode === "erase") {
         sweepAdd(d, coalesced(e));
@@ -1819,13 +1850,14 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
             e.preventDefault(); e.stopPropagation(); swallowClick();
             return;
           }
-          if (L.onSelect) L.onSelect(pageNumber, p.hit ? [p.hit] : []);
+          const pic = p.hit || !L.onSelect ? null : tappedPicture(L, p.pt);
+          if (L.onSelect) L.onSelect(pageNumber, p.hit ? [p.hit] : [], pic ? [pic] : []);
           else if (p.hit) L.onJump?.(p.hit.id);
-          if (!p.hit && !L.selBox && L.onZoom && L.width && !e.target?.closest?.(ABOVE_PASSIVE_INK)) {
+          if (!p.hit && !pic && !L.selBox && L.onZoom && L.width && !e.target?.closest?.(ABOVE_PASSIVE_INK)) {
             const rect = el.getBoundingClientRect(), k = rect.width / L.width;
             zoomAt({ x: (p.x - rect.left) / k, y: (p.y - rect.top) / k });
           }
-          if (p.hit || L.selBox) { e.preventDefault(); e.stopPropagation(); swallowClick(); }
+          if (p.hit || pic || L.selBox) { e.preventDefault(); e.stopPropagation(); swallowClick(); }
         }
         return;
       }
@@ -1868,7 +1900,9 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
         const items = [], taken = [];
         if (d.poly.every(([x, y]) => Math.hypot(x - d.start.x, y - d.start.y) * d.k <= 8)) {
           const hit = nearestInkStroke(L.groups, d.start.x, d.start.y, 10 / d.k);
+          const pic = hit ? null : tappedPicture(L, d.start);
           if (hit) items.push(hit);
+          else if (pic) taken.push(pic);
           else if (!L.selBox) zoomAt(d.start);
         } else if (d.poly.length >= 3) {
           for (const g of L.groups) {
@@ -1888,6 +1922,11 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
       commitStroke(d);
       liveEnd(d);
     };
+    // A tap with the lasso armed where no stroke is: the picture under it
+    // that a lasso round it would take (pictureAt: the topmost, unless
+    // locked), unless the lasso's row leaves pictures out. Strokes lie over
+    // pictures, so a stroke under the tap is taken first.
+    const tappedPicture = (L, pt) => (L.lassoPictures && L.tool?.tool === "select" ? pictureAt(L.pictures, pt.x, pt.y) : null);
     // While a zoom window is open (onZoom), a tap or a lasso's click on a
     // blank spot of this page centres the window there (one that only
     // dismisses a selection does not); never the panel's own layer, which
@@ -1960,6 +1999,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
     };
     const onBlur = () => { hideCursor(); clearPending(true); contacts.clear(); if (drawing) finish({ pointerId: drawing.id }, true); };
     el.addEventListener("contextmenu", onContext);
+    document.addEventListener("pointerdown", penGone, true);
+    document.addEventListener("pointermove", penGone, true);
     document.addEventListener("pointerdown", trackDown, true);
     document.addEventListener("pointerup", trackUp, true);
     document.addEventListener("pointercancel", trackUp, true);
@@ -1980,6 +2021,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
       el.removeEventListener("lostpointercapture", onCancel);
       window.removeEventListener("blur", onBlur);
       el.removeEventListener("contextmenu", onContext);
+      document.removeEventListener("pointerdown", penGone, true);
+      document.removeEventListener("pointermove", penGone, true);
       document.removeEventListener("pointerdown", trackDown, true);
       document.removeEventListener("pointerup", trackUp, true);
       document.removeEventListener("pointercancel", trackUp, true);
@@ -2096,7 +2139,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
         style={{ left: pct(hitBox[0], width), top: pct(hitBox[1], height),
           width: pct(hitBox[2] - hitBox[0], width), height: pct(hitBox[3] - hitBox[1], height) }} /> : null}
       {selBox && onAction && chrome && !dragging ? <InkSelectionMenu surface={pageNumber} wrapRef={wrapRef} ignoreRef={menuIgnore} box={selBox} width={width}
-        strokes={selectedStrokes}
+        strokes={selectedStrokes} canComment={canComment}
         canMerge={canMergeSelection(groups, selectedIds)} keys={keys}
         onAction={onAction} onClose={() => onSelect(pageNumber, [])} /> : null}
       {pasteMenu && onPaste ? (
@@ -2685,7 +2728,8 @@ let moreOpen = false;
 
 // The selection's menu: two rows of 36 px buttons, at most seven each (a
 // hard cap for every later addition), the first fixed — Color, Width and
-// style, Copy, Convert, More, Delete — and More adding the second: Cut,
+// style, Copy, Convert, More, Comment (with `canComment`: a thread on the
+// selected handwriting, docs/dev/comments.md), Delete — and More adding the second: Cut,
 // Duplicate, Flip horizontal, Flip vertical, New note — Merge into note in
 // its place when `canMerge` (New note would change nothing then) —, Select
 // note and Show note. Convert's menu (InkConvertMenu) holds Transcribe in
@@ -2697,12 +2741,12 @@ let moreOpen = false;
 // open (the page, and the zoom window, whose layer drags the selection
 // too). `surface`: the page or sheet the selection is on, whose scale sets
 // Duplicate's offset. A selection of pictures alone (no `strokes`) greys
-// what acts on strokes alone: Color, Width and style, Copy, Convert, Cut,
-// New note and Select note. The menus its own buttons open (the style
-// row's brush menu, Convert's) are measured once, at the press, so a
-// scroll or anything else that moves this menu closes them rather than
-// leave them where its buttons were.
-function InkSelectionMenu({ surface, wrapRef, ignoreRef, box, width, strokes, canMerge, keys, onAction, onClose }) {
+// what acts on strokes alone: Color, Width and style, Convert, Comment,
+// New note and Select note (Copy and Cut take the pictures). The menus
+// its own buttons open (the style row's brush menu, Convert's) are
+// measured once, at the press, so a scroll or anything else that moves
+// this menu closes them rather than leave them where its buttons were.
+function InkSelectionMenu({ surface, wrapRef, ignoreRef, box, width, strokes, canComment = false, canMerge, keys, onAction, onClose }) {
   const [options, setOptions] = useState(null);
   const [more, setMoreState] = useState(moreOpen);
   // The menus its buttons open, one at a time (Menus.jsx useMenuTrigger):
@@ -2752,14 +2796,15 @@ function InkSelectionMenu({ surface, wrapRef, ignoreRef, box, width, strokes, ca
       <div className="inkEditRow">
         <button className={"ctlBtn" + (options === "color" ? " modeActive" : "")} aria-label={t("Color")} title={t("Color")} aria-expanded={options === "color"} disabled={inkless} onClick={() => toggleOptions("color")}><PaletteIcon aria-hidden="true" /></button>
         <button className={"ctlBtn" + (options === "style" ? " modeActive" : "")} aria-label={t("Width and style")} title={t("Width and style")} aria-expanded={options === "style"} disabled={inkless} onClick={() => toggleOptions("style")}><LineWidthIcon aria-hidden="true" /></button>
-        <button className="ctlBtn" aria-label={t("Copy")} title={withKey(t("Copy"), keys?.copy)} disabled={inkless} onClick={() => onAction("copy")}><CopyIcon aria-hidden="true" /></button>
+        <button className="ctlBtn" aria-label={t("Copy")} title={withKey(t("Copy"), keys?.copy)} onClick={() => onAction("copy")}><CopyIcon aria-hidden="true" /></button>
         <button className={"ctlBtn" + (menus.kind === "convert" ? " modeActive" : "")} {...menus.trigger("convert")} aria-label={t("Convert")}
           title={t("Transcribe, redraw or convert the selected handwriting")} disabled={inkless}><SparklesIcon aria-hidden="true" /></button>
         <button className={"ctlBtn" + (more ? " modeActive" : "")} aria-label={t("More")} title={t("More edits")} aria-expanded={more} onClick={() => setMore(!more)}><MoreIcon aria-hidden="true" /></button>
+        {canComment ? <button className="ctlBtn" aria-label={t("Comment")} title={t("Comment on the selected handwriting")} disabled={inkless} onClick={() => onAction("comment")}><MessageSquareIcon aria-hidden="true" /></button> : null}
         <button className="ctlBtn inkDeleteBtn" aria-label={t("Delete")} title={t("Delete selected handwriting")} onClick={() => onAction("delete")}><TrashIcon aria-hidden="true" /></button>
       </div>
       {more ? <div className="inkEditOptions inkEditMore" aria-label={t("More edits")}>
-        <button className="ctlBtn" aria-label={t("Cut")} title={withKey(t("Cut"), keys?.cut)} disabled={inkless} onClick={() => onAction("cut")}><ScissorsIcon aria-hidden="true" /></button>
+        <button className="ctlBtn" aria-label={t("Cut")} title={withKey(t("Cut"), keys?.cut)} onClick={() => onAction("cut")}><ScissorsIcon aria-hidden="true" /></button>
         <button className="ctlBtn" aria-label={t("Duplicate")} title={withKey(t("Duplicate"), keys?.duplicate)} onClick={() => onAction("duplicate", duplicateOffset(surface))}><DuplicateIcon aria-hidden="true" /></button>
         <button className="ctlBtn" aria-label={t("Flip horizontal")} title={t("Flip horizontal: mirror left to right")} onClick={() => onAction("flip", { axis: "h" })}><FlipHIcon aria-hidden="true" /></button>
         <button className="ctlBtn" aria-label={t("Flip vertical")} title={t("Flip vertical: mirror top to bottom")} onClick={() => onAction("flip", { axis: "v" })}><FlipVIcon aria-hidden="true" /></button>

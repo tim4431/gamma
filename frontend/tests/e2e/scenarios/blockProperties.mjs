@@ -305,8 +305,8 @@ export async function blockPropertiesScenarios({ server, browser, makePdf, step,
       await card.click({ button: "right" });
       await page.getByRole("menuitem", { name: "Properties", exact: true }).click();
       await pop(page).waitFor();
-      await until(async () => (await pop(page).locator('.propsRow[data-key="original_filename"]').count()) === 1, { what: "the Document section" });
-      assert((await valueOf(page, "original_filename")).includes("props.pdf"), "the file name");
+      await until(async () => (await pop(page).locator('.propsRow[data-key="doc.name"]').count()) === 1, { what: "the Document section" });
+      assert((await valueOf(page, "doc.name")).includes("props.pdf"), "the file name");
       // the server's whole record, not the listing's summary of it: nothing reads as unsaved
       assertEq(await valueOf(page, "kind"), "Page", "the kind");
       assertEq(await pop(page).locator(".propsStatus [data-chip]").count(), 0, "no sync chip on a library page");

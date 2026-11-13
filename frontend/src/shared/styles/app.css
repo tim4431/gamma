@@ -127,7 +127,8 @@
   .chatInput,
   .titleEdit,
   .metaInput,
-  .mdImgCaptionInput
+  .mdImgCaptionInput,
+  .hlMenuName
 ):focus-visible,
 :is(.homeFindBox, .searchInputWrap, .pdfPageWidget, .chatComposer, .commentBox):focus-within {
   outline: none;
@@ -1289,10 +1290,11 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 /* An embed whose source is in Recently deleted or gone: the card, quiet. */
 .blockEmbedCard.gone { border-left-color: var(--border); }
 
-/* An @ mention (editor/mentions.js mentionChip): a date, a reminder or a
-   person — the ref chip's shape in the quiet fill, a token rather than a
-   link. A reminder is accent-coloured behind an alarm clock (a mask, so
-   the editor's widget and the rendered chip share it), red once it is due. */
+/* An @ mention (editor/mentions.js mentionChip): a date, a reminder, a
+   person or the agent on this computer — the ref chip's shape in the quiet
+   fill, a token rather than a link. A reminder is accent-coloured behind an
+   alarm clock (a mask, so the editor's widget and the rendered chip share
+   it), red once it is due; the agent stands behind a bot, the Bot icon's. */
 .mentionChip {
   display: inline-block;
   padding: 0 4px;
@@ -1307,7 +1309,8 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 }
 .mentionChip.mention-remind { color: var(--accent-bright); }
 .mentionChip.mention-remind.overdue { color: var(--danger); }
-.mentionChip.mention-remind::before {
+.mentionChip.mention-remind::before,
+.mentionChip.mention-agent::before {
   content: "";
   display: inline-block;
   width: 0.95em;
@@ -1318,6 +1321,11 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   --alarm: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='13' r='8'/%3E%3Cpath d='M12 9v4l2 2M5 3 2 6M22 6l-3-3M6.38 18.7 4 21M17.64 18.67 20 21'/%3E%3C/svg%3E");
   -webkit-mask: var(--alarm) center / contain no-repeat;
   mask: var(--alarm) center / contain no-repeat;
+}
+.mentionChip.mention-agent::before {
+  --bot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 8V4H8M2 14h2M20 14h2M15 13v2M9 13v2'/%3E%3Crect x='4' y='8' width='16' height='12' rx='2'/%3E%3C/svg%3E");
+  -webkit-mask: var(--bot) center / contain no-repeat;
+  mask: var(--bot) center / contain no-repeat;
 }
 .cmMentionChip { cursor: text; }
 
@@ -1453,6 +1461,140 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 }
 .plainTip .colorBtn.rowMenuBtn:hover { background: var(--bg-hover); }
 
+/* How a highlight marks its passage (pdf/MarkTools.jsx): the colours, the
+   account's highlighters as glyph buttons (.markBtn), the four styles as
+   one segmented control in the popup's fold and the menus, each drawn in
+   the colour it would take (MarkGlyph). */
+.markGlyph { display: block; flex: none; }
+.markStyles {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--bg-block);
+}
+.markStyleBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.markStyleBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.markStyleBtn.selected {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--border-hover);
+}
+/* A swatch drawn as a line: the line in the swatch's colour on the popup's
+   own ground, so it shows what it makes. */
+.colorBtn.markLine {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+/* A highlighter: its look in a square, so it reads apart from the round
+   colours beside it. */
+.markBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.markBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.markBtn.selected { border-color: var(--border); box-shadow: 0 0 0 2px var(--border); }
+/* The armed highlighter, its own button or the swatch standing for it: a
+   finger's selection makes it in one tap. */
+:is(.markBtn, .colorBtn).armed { box-shadow: 0 0 0 2px var(--accent); }
+/* Every mark a pointer presses is at least 30 px to a finger, the layout as
+   it is: its hit area reaches past its edge, into the row's gap (6 to 8 px,
+   so two meet at most in its middle). */
+:is(.plainTip .colorBtn, .markMenu .colorBtn, .markBtn, .markStyleBtn) { position: relative; }
+:is(.plainTip .colorBtn, .markMenu .colorBtn, .markBtn, .markStyleBtn)::after { content: ""; position: absolute; inset: -4px; }
+/* the style buttons sit 2 px apart: theirs meet in the gap */
+.markStyles .markStyleBtn::after { inset: -4px -1px; }
+.markRow { display: flex; flex-wrap: wrap; gap: 6px; }
+/* The fold's button: a chevron, or the one-shot style while it is not the
+   wash, so a line about to be made shows at a glance. */
+.plainTip .markFoldBtn.on { color: var(--text-primary); background: var(--bg-active); }
+/* The popup's fold: the one-shot style, the hidden highlighters, the
+   colour group, Save look and Edit highlighters. */
+.markFold {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+.markFoldRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.markFoldLabel { min-width: 72px; color: var(--text-dim); font-size: var(--fs-xs); }
+.markFoldActions { display: flex; flex-wrap: wrap; gap: 6px; }
+.markGroups { display: grid; gap: 1px; }
+.markGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.markGroup:hover { background: var(--bg-hover); }
+.markGroup.selected { background: var(--bg-active); }
+.markGroupDots { display: inline-flex; gap: 3px; flex: none; }
+.markGroupDots > span {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-full);
+}
+.markGroupName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.markGroupMore { color: var(--text-dim); font-size: var(--fs-2xs); }
+/* A menu's marking rows (a highlight's, a strip highlighter's): wide enough
+   for four highlighters and four colours on a line. */
+.markMenu {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  min-width: 200px;
+  padding: 8px 12px 6px;
+}
+.markMenu .colorRow { gap: 6px; }
+/* A strip highlighter's menu: its look and its name, typed in place. */
+.hlMenuHead { display: flex; align-items: center; gap: 8px; width: 100%; }
+.hlMenuName {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input, var(--bg-block));
+  color: var(--text-primary);
+  font: inherit; /* ui-allow font-inherit: an input, which the control reset does not zoom */
+}
+
 /* The selection translator under the color row (PdfViewer SelTranslation):
    a fold-out header, then the selectable translated text. */
 .plainTip:has(.selTrans) { width: min(420px, calc(100vw - 16px)); }
@@ -1544,6 +1686,42 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   animation: aiCaretBlink 0.9s steps(1) infinite;
 }
 @keyframes aiCaretBlink { 50% { opacity: 0; } }
+/* An AI's change drawn in its note as tracked changes (editor/mdDiff.js,
+   chat/noteReview.js). The words' marks are the word diff's (del.mdDiff,
+   ins.mdDiff, with the approval card's below); a code block or display
+   formula that went or came is marked whole, by a bar at its side and the
+   tint; a note the AI made is all new, its text as it renders on the
+   inserted tint. Under it, the bar of editor/NoteReviewBar.jsx. */
+/* In a note's own reading size what went reads as gone: its line the full
+   red (the tint under it would swallow a paler one in a dark theme), its
+   words a step quieter, a little room before what came, bold or not. */
+.mdDiffView del.mdDiff { margin-right: var(--space-1); color: var(--text-secondary); text-decoration-color: var(--danger); }
+/* A line through crosses no formula or picture: what went of those fades. */
+del.mdDiff :is(img, .katex) { opacity: 0.55; }
+:is(del, ins).mdDiff img { outline: 2px solid color-mix(in srgb, var(--danger) 60%, transparent); outline-offset: 2px; }
+ins.mdDiff img { outline-color: color-mix(in srgb, var(--ok) 60%, transparent); }
+.mdDiffBlock { margin: var(--space-2) 0; padding-left: var(--space-3); border-left: 3px solid; border-radius: var(--radius-xs); }
+.mdDiffBlock.del { border-color: var(--danger); background: var(--danger-bg); }
+.mdDiffBlock.del > * { opacity: 0.6; }
+.mdDiffBlock.ins { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.mdDiffBlock.mixed { border-color: var(--warn); background: var(--warn-bg); }
+.blockRendered.mdDiffNew {
+  padding-left: var(--space-3);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+.noteReviewBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+.noteReviewLabel { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+.noteReviewLabel svg { flex: none; color: var(--accent); }
 /* Whole-page read (read_page / read_block on the page id): the outline's
    left edge breathes once. */
 .blockList.aiPageRead { animation: aiPageReadPulse 1.6s ease-in-out 2; }
@@ -1572,6 +1750,9 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   align-items: center;
   justify-content: center;
 }
+/* A passage marked by a line: its style in its colour (MarkGlyph), the
+   letter in the notes' own ink. */
+.highlightDotBtn .markGlyph { color: var(--text-secondary); }
 
 .highlightDot {
   display: inline-block;
@@ -1877,7 +2058,22 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   left: 14px;
   top: 50%;
   transform: translateY(-50%);
+  /* A short viewer (a landscape phone, the zoom window open, a short
+     window) scrolls the column rather than run it into the outline's box
+     above and the full-screen box below; its ⋯ stays reachable. */
+  max-height: calc(100% - 2 * (var(--ctl-icon-btn) + 22px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
 }
+.pdfZoomOverlay::-webkit-scrollbar { display: none; }
+/* its buttons' focus ring drawn inside them, so the scroll box clips none */
+.pdfZoomOverlay button:focus-visible { outline-offset: -2px; }
+/* The text highlighters on the strip (pdf/HighlighterStrip.jsx): a run of
+   buttons, set off by hairlines once there are two; one armed from the
+   hidden ones, pinned, a dashed line over it. */
+.stripMarks:has(> :nth-child(2)) { padding-block: 2px; border-block: 1px solid var(--border); }
+.pdfCtlBox .stripMarkBtn.pinned { border-top: 1px dashed var(--border-hover); }
 .pdfOutlineBox { top: 8px; left: 14px; }
 .pdfFullscreenBox { bottom: 14px; left: 14px; }
 
@@ -3853,15 +4049,17 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-/* A word diff's marks, here and on a highlight's review card (.hlReviewDiff,
-   pdf/HighlightReview.jsx): what went struck out, what came tinted. */
-:is(.chatApprovalDiff, .hlReviewDiff) :is(del, ins) { color: var(--text-primary); border-radius: 2px; }
-:is(.chatApprovalDiff, .hlReviewDiff) del {
+/* A word diff's marks, here, on a highlight's review card (.hlReviewDiff,
+   pdf/HighlightReview.jsx) and in a note showing an AI's change (.mdDiff,
+   editor/mdDiff.js; a note's own ~~strikethrough~~ is a plain <del>): what
+   went struck out, what came tinted. */
+:is(.chatApprovalDiff, .hlReviewDiff) :is(del, ins), :is(del, ins).mdDiff { color: var(--text-primary); border-radius: 2px; }
+:is(.chatApprovalDiff, .hlReviewDiff) del, del.mdDiff {
   background: var(--danger-bg);
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--danger) 60%, transparent);
 }
-:is(.chatApprovalDiff, .hlReviewDiff) ins { background: color-mix(in srgb, var(--ok) 16%, transparent); text-decoration: none; }
+:is(.chatApprovalDiff, .hlReviewDiff) ins, ins.mdDiff { background: color-mix(in srgb, var(--ok) 16%, transparent); text-decoration: none; }
 .chatApprovalArg { color: var(--text-muted); }
 .chatApprovalActions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
 .chatApprovalSpacer { flex: 1; }
@@ -5729,7 +5927,34 @@ a.shareBrand:hover { background: var(--bg-hover); }
   mix-blend-mode: normal !important;
   --hl: var(--hl-dark) !important;
   --hl-line: var(--hl-dark-line);
+  --hl-mark: var(--hl-dark-line) !important;
 }
+/* A passage marked by a line (a highlight's style, shared/model/markStyle.js;
+   PdfViewer sets data-hl-style and the line's colour in --hl-mark,
+   palette.js lineColor, the dark-page line tone above): no wash, the line
+   at the foot of each of its line boxes (underline), wavy there
+   (squiggly) or across their middle (strikeout), about a tenth of the
+   line's height and 1.5 px at the least, so it scales with the text and
+   the zoom. Under the pointer a faint wash shows the passage it marks;
+   the active card's draws it a little stronger (inline). */
+.pdfPageWrap [data-hl-style="underline"] {
+  background: linear-gradient(var(--hl-mark), var(--hl-mark)) left bottom / 100% max(1.5px, 9%) no-repeat;
+}
+.pdfPageWrap [data-hl-style="strikeout"] {
+  background: linear-gradient(var(--hl-mark), var(--hl-mark)) left 56% / 100% max(1.5px, 8%) no-repeat;
+}
+.pdfPageWrap [data-hl-style="squiggly"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: max(3px, 24%);
+  background: var(--hl-mark);
+  /* one period of the wave, its width twice its height, repeated along */
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 4'%3E%3Cpath d='M0 2Q2 .4 4 2T8 2' fill='none' stroke='black' stroke-width='1.3'/%3E%3C/svg%3E") left bottom / auto 100% repeat-x;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 4'%3E%3Cpath d='M0 2Q2 .4 4 2T8 2' fill='none' stroke='black' stroke-width='1.3'/%3E%3C/svg%3E") left bottom / auto 100% repeat-x;
+  pointer-events: none;
+}
+.pdfPageWrap [data-hl-style]:hover { background-color: color-mix(in srgb, var(--hl) 35%, transparent); }
 /* A lost highlight's closest match while its review card shows it
    (pdf/HighlightReview.jsx Show): a dotted line in its colour's line tone
    over a faint wash, taking no pointer; the dark-tuned colour on a flipped
@@ -6314,11 +6539,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   z-index: var(--z-ctxmenu);
   padding: 4px 0;
   min-width: 160px;
-}
-.ctxMenuColors {
-  padding: 8px 12px 6px;
-  margin: 0;
-  border-bottom: 1px solid var(--border-subtle);
 }
 .ctxMenuItem {
   display: block;
@@ -7331,7 +7551,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .viewerWrap.inkZoomOpen :is(.pdfCloseBtn, .pdfFullscreenBox) { bottom: calc(14px + var(--ink-zoom-h, 0px)); }
 .viewerWrap.inkZoomOpen .recordingPill { bottom: calc(12px + var(--ink-zoom-h, 0px)); }
 .viewerWrap.inkZoomOpen .replayBar { bottom: calc(10px + var(--ink-zoom-h, 0px)); }
-.viewerWrap.inkZoomOpen .pdfZoomOverlay { top: calc((100% - var(--ink-zoom-h, 0px)) / 2); }
+.viewerWrap.inkZoomOpen .pdfZoomOverlay { top: calc((100% - var(--ink-zoom-h, 0px)) / 2);
+  max-height: calc(100% - var(--ink-zoom-h, 0px) - 2 * (var(--ctl-icon-btn) + 22px)); }
 /* The ruler (ink/InkLayer.jsx InkRuler): an anchor on its middle line, as
    long as the ruler and turned by its angle; the band 36 css px wide
    (RULER_PX) at any zoom, its edges, ticks and numbers, the angle knob in
@@ -7397,6 +7618,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .mcpConsentPage { overflow: auto; }
 .mcpConsent p { line-height: 1.5; }
 .mcpCallback { overflow-wrap: anywhere; }
+.mcpDeviceCode strong { font-family: var(--font-mono); letter-spacing: 0.08em; white-space: nowrap; }
 .mcpPermissions { margin: 8px 0 16px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
 .mcpPermissions ul { padding-left: 18px; margin: 10px 0; line-height: 1.6; font-size: var(--fs-sm); }
 .mcpPermissions p { margin-bottom: 0; }

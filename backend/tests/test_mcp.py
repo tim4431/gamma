@@ -1,12 +1,15 @@
-"""Exercise the real SDK transport, scoped credentials, and shared dispatch."""
+"""Exercise the real SDK transport, scoped credentials, and shared dispatch;
+a feedback connection's answering tools (gamma/feedback/agent.py)."""
 
+import json
+import re
 import time
 
 import pytest
 
-from conftest import account_of, login, make_folder, make_page, make_user
+from conftest import account_of, doc_props, login, make_folder, make_page, make_user, thread_on
 from gamma.ai_tools import agent_tools, mcp_tools, run_agent_tool
-from gamma.db import connect_users_db
+from gamma.db import connect_pages_db, connect_users_db
 from gamma.integrations import resolve_token
 
 
@@ -48,8 +51,9 @@ def test_initialize_and_read_tools(client, connection):
     # a new one is offered without touching the adapter); the literal makes growth visible.
     assert {t["name"] for t in tools} == mcp_tools() | {"list_workspaces", "read_gamma_link", "export_page"}
     assert {t["name"] for t in tools} == {"list_pages", "list_folders", "read_page", "read_block", "read_chats",
-                                          "view_pdf_page", "view_ink", "view_image", "cite", "search_library",
-                                          "list_workspaces", "read_gamma_link", "export_page"}
+                                          "list_feedback", "read_feedback", "view_pdf_page", "view_ink",
+                                          "view_image", "cite", "search_library", "list_workspaces",
+                                          "read_gamma_link", "export_page"}
     # every tool but the workspace list and a link (which names its own) can be pointed at a workspace
     assert all("workspace" in t["inputSchema"]["properties"] for t in tools
                if t["name"] not in ("list_workspaces", "read_gamma_link"))
@@ -89,7 +93,7 @@ def _pdf_page(c, title):
     w.write(buf)
     up = c.post("/api/uploads", files={"file": ("p.pdf", buf.getvalue(), "application/pdf")})
     assert up.status_code == 200, up.text
-    page = make_page(c, title, properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+    page = make_page(c, title, properties=doc_props(up.json()["doc_id"]))
     rect = {"x1": 100, "y1": 72, "x2": 300, "y2": 92}
     r = c.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": f"{page['id']}-hl", "content": "McpHighlightNote", "properties": {
@@ -130,13 +134,13 @@ def test_results_carry_links_and_structured_content(client, connection, monkeypa
     PDF page, the note block — so an external assistant copies links out of
     results instead of assembling them; the chat's results stay link-free."""
     from gamma.db import connect_data_db
-    from gamma.pdf_index import store_doc
+    from gamma.search.index import store_doc
     from gamma.pdf_text import extract_text
     from gamma.textnorm import normalize_text
 
     c, ws, item = connection
     token = item["token"]
-    paper = make_page(c, "Linked paper", properties={"doc_id": "l" * 24})
+    paper = make_page(c, "Linked paper", properties=doc_props("l" * 24))
     note = c.post("/api/blocks", json={"parent_id": paper["id"], "content": "UniqueLinkedNote"}).json()
     # The search index holds the hit; a read extracts the text from the PDF itself.
     pages = ["(page 1) first-page-body " * 5, "(page 2) UniqueLinkedPassage on the second page " * 3]
@@ -168,6 +172,36 @@ def test_results_carry_links_and_structured_content(client, connection, monkeypa
     text, _ = run_agent_tool(ws, {"type": "folder", "folder": "", "can_write": False},
                              "search_library", {"query": "UniqueLinkedPassage"})
     assert "http://" not in text and f"(page_id {paper['id']}):" in text
+
+
+def test_a_text_files_lines_carry_their_links(client, connection):
+    """A text file reads by lines on MCP: the result names the lines read in
+    its structured content and links the first one; a line link reads from
+    its line, a range to its last line; every result's head names the line
+    link's shape."""
+    from gamma import storage
+    from gamma.documents.model import stored_name
+
+    c, ws, item = connection
+    token = item["token"]
+    data = "\\section{Method}\nWe fit a small network by gradient descent.\nThe step size is fixed.\nThe end.\n"
+    stem = storage.content_digest(data.encode())
+    storage.put_upload(ws, stored_name(stem, ".tex"), data.encode())
+    page = make_page(c, "method.tex", properties=doc_props(stem, name="method.tex", format="text", ext=".tex"))
+    page_url = f"http://localhost/?ws={ws}&page={page['id']}"
+    result = call(client, token, "read_page", {"page_id": page["id"], "from_line": 2, "to_line": 2})
+    text = result["content"][0]["text"]
+    assert not result["isError"] and "     2\tWe fit a small network by gradient descent." in text
+    assert "The step size" not in text and f"; line 2: {page_url}&line=2 (a range: &line=N-M" in text
+    assert result["structuredContent"]["lines"] == [2, 2] and result["structuredContent"]["url"] == page_url
+    assert f"file line http://localhost/?ws={ws}&page=<page_id>&line=<N>[-<M>]&quote=" in text
+    result = call(client, token, "read_gamma_link", {"url": f"{page_url}&line=2-3"})
+    text = result["content"][0]["text"]
+    assert result["structuredContent"]["line"] == 2 and result["structuredContent"]["end"] == 3
+    assert "     3\tThe step size is fixed." in text and "The end." not in text
+    result = call(client, token, "read_gamma_link", {"url": f"{page_url}&line=3"})
+    assert "     3\tThe step size is fixed." in result["content"][0]["text"]
+    assert "     4\tThe end." in result["content"][0]["text"] and "gradient" not in result["content"][0]["text"]
 
 
 def test_cite_and_view_ink(client, connection):
@@ -421,6 +455,10 @@ def test_one_connection_reads_several_workspaces(client, connection):
         # a link reads in its own workspace, among the connection's only
         link = call(client, token, "read_gamma_link", {"url": f"http://localhost/?ws={lab}&page={lab_page['id']}"})
         assert not link["isError"] and link["structuredContent"]["workspace_id"] == lab
+        # a folder link without ws= finds the workspace holding its folder
+        lab_folder = make_folder(c, "Lab folder", {"ws": lab})
+        link = call(client, token, "read_gamma_link", {"url": f"http://localhost/?folder={lab_folder}"})
+        assert not link["isError"] and link["structuredContent"]["workspace_id"] == lab, link
         refused = call(client, token, "read_gamma_link",
                        {"url": f"http://localhost/?ws={hidden}&page={hidden_page['id']}"})
         assert refused["isError"] and "McpSpectraEvidence" not in str(refused)
@@ -470,20 +508,46 @@ def test_access_changes_and_follows_the_workspaces(client, connection):
                 workspaces.delete(gone)
 
 
-def test_setup_code_is_claimed_once_for_a_token(client, anon, connection):
+def _device(anon):
+    """A setup command's sign-in, as it starts it: ``(device_code, user_code)``."""
+    started = anon.post("/api/integrations/device", json={"name": "DeepSeek Harness"})
+    assert started.status_code == 201, started.text
+    body = started.json()
+    assert body["expires_in"] == 600 and body["interval"] == 2
+    assert re.fullmatch(r"[A-Z]{4}-[A-Z]{4}", body["user_code"])
+    return body["device_code"], body["user_code"]
+
+
+def _allow(c, user_code, approve=True, **access):
+    details = c.get("/api/integrations/device/request", params={"user_code": user_code})
+    assert details.status_code == 200, details.text
+    assert details.json()["client_name"] == "DeepSeek Harness"
+    assert details.json()["user_code"] == user_code.upper()[:4] + "-" + user_code.upper().replace("-", "")[4:]
+    return c.post("/api/integrations/device/consent", json={"user_code": user_code, "csrf": details.json()["csrf"],
+                                                            "approve": approve, **access})
+
+
+def test_setup_command_signs_in_through_the_browser(client, anon, connection):
     from gamma import workspaces
 
     c, ws, _ = connection
     lab = workspaces.create("Setup lab", account_of("mcp-reader"))["id"]
+    poll = lambda code: anon.post("/api/integrations/device/token", json={"device_code": code})  # noqa: E731
     try:
-        assert anon.post("/api/integrations/setup-codes", json={"name": "DeepSeek Harness"}).status_code == 401
-        made = c.post("/api/integrations/setup-codes", json={"name": "DeepSeek Harness", "workspaces": [ws, lab]})
-        assert made.status_code == 201, made.text
-        code = made.json()["code"]
-        assert made.json()["expires_in"] == 600
-        # no connection until the setup command claims it
+        device_code, user_code = _device(anon)
+        # waiting: nothing granted, and the page needs a session
+        assert poll(device_code).status_code == 202
+        assert anon.get("/api/integrations/device/request", params={"user_code": user_code}).status_code == 401
         assert all(t["name"] != "DeepSeek Harness" for t in c.get("/api/integrations/tokens").json()["tokens"])
-        claimed = anon.post("/api/integrations/claim", json={"code": code})
+        # a consent bound to another sign-in's csrf is refused
+        other_device, other_code = _device(anon)
+        csrf = c.get("/api/integrations/device/request", params={"user_code": other_code}).json()["csrf"]
+        refused = c.post("/api/integrations/device/consent", json={"user_code": user_code, "csrf": csrf, "approve": True})
+        assert refused.status_code == 403
+        # the code is read in any case, with or without its dash
+        allowed = _allow(c, user_code.lower().replace("-", ""), workspaces=[ws, lab])
+        assert allowed.status_code == 200, allowed.text
+        claimed = poll(device_code)
         assert claimed.status_code == 200, claimed.text
         assert claimed.headers["cache-control"] == "no-store"
         token = claimed.json()["token"]
@@ -491,15 +555,325 @@ def test_setup_code_is_claimed_once_for_a_token(client, anon, connection):
         assert names == [ws, lab]
         row = next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["name"] == "DeepSeek Harness")
         assert row["scope"] == "read" and row["workspaces"] == [ws, lab]
-        assert anon.post("/api/integrations/claim", json={"code": code}).status_code == 400
-        assert anon.post("/api/integrations/claim", json={"code": "x" * 43}).status_code == 400
+        # once: the token, the consent and an unknown code are all spent
+        assert poll(device_code).status_code == 400
+        assert c.get("/api/integrations/device/request", params={"user_code": user_code}).status_code == 400
+        assert poll("x" * 43).status_code == 400
         c.delete(f"/api/integrations/tokens/{row['id']}")
-        # signing out ends the codes that session asked for
+        # cancelled: the command hears so, and nothing is connected
+        assert _allow(c, other_code, approve=False).status_code == 200
+        assert poll(other_device).status_code == 403
+        assert poll(other_device).status_code == 400
+        assert all(t["name"] != "DeepSeek Harness" for t in c.get("/api/integrations/tokens").json()["tokens"])
+        # signing out before the command collects ends the sign-in
         make_user("mcp-setup-out", "pw")
         leaving = login("mcp-setup-out", "pw")
-        late = leaving.post("/api/integrations/setup-codes", json={"name": "DeepSeek Harness"}).json()["code"]
+        late_device, late_code = _device(anon)
+        assert _allow(leaving, late_code).status_code == 200
         leaving.post("/api/logout")
-        assert anon.post("/api/integrations/claim", json={"code": late}).status_code == 400
+        assert poll(late_device).status_code == 400
         leaving.close()
     finally:
+        workspaces.delete(lab)
+
+
+# --- editing notes --------------------------------------------------------------------
+
+EDITING = {"edit_block", "create_block", "move_block", "clip_region"}
+
+
+def _text(ws, block_id):
+    with connect_pages_db(ws) as conn:
+        row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
+    return row[0] if row else None
+
+
+def _child(ws, parent_id, content):
+    with connect_pages_db(ws) as conn:
+        return conn.execute("SELECT id FROM unified_blocks WHERE parent_id = ? AND content = ?",
+                            (parent_id, content)).fetchone()[0]
+
+
+def test_a_connection_edits_notes_only_where_it_may(client, connection):
+    from gamma import workspaces
+
+    c, ws, item = connection
+    lab = workspaces.create("Edit lab", account_of("mcp-reader"))["id"]
+    make_user("mcp-edit-owner", "pw")
+    owned = workspaces.create("Viewed lab", account_of("mcp-edit-owner"), kind="shared")["id"]
+    workspaces.set_member(owned, account_of("mcp-reader"), "viewer", account_of("mcp-edit-owner"))
+    patch = lambda **body: c.patch(f"/api/integrations/tokens/{item['id']}", json=body)  # noqa: E731
+    try:
+        home = _page_with_note(c, ws, "Home notes", "McpHomeNote")
+        lab_page = _page_with_note(c, lab, "Lab notes", "McpLabNote")
+        tools = {t["name"]: t for t in rpc(client, item["token"], "tools/list").json()["result"]["tools"]}
+        assert not EDITING & set(tools)
+        refused = call(client, item["token"], "create_block", {"parent_id": lab_page["id"], "content": "x"})
+        assert refused["isError"] and "may only read" in refused["content"][0]["text"]
+        # edits only what it reads, only where the account edits
+        assert patch(workspaces=[ws, lab], edit_workspaces=[owned]).status_code == 400
+        assert patch(workspaces=[ws, lab, owned], edit_workspaces=[owned]).status_code == 403
+        changed = patch(workspaces=[ws, lab, owned], edit_workspaces=[lab])
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["edit_workspaces"] == [lab] and not changed.json()["edit_all"]
+        row = next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["id"] == item["id"])
+        assert row["edit_workspaces"] == [lab]
+        tools = {t["name"]: t for t in rpc(client, item["token"], "tools/list").json()["result"]["tools"]}
+        assert EDITING <= set(tools) and "delete_block" not in tools
+        assert tools["edit_block"]["annotations"]["destructiveHint"] is True
+        assert tools["create_block"]["annotations"]["readOnlyHint"] is False
+        spaces = call(client, item["token"], "list_workspaces", {})["structuredContent"]["workspaces"]
+        assert [w["editable"] for w in spaces] == [False, True, False]
+        # it asks before each change, and a client on the stateless transport cannot be asked
+        assert row["asks"] is True
+        unasked = call(client, item["token"], "create_block", {"parent_id": lab_page["id"], "content": "McpAddedNote"})
+        assert unasked["isError"] and "cannot show its question" in unasked["content"][0]["text"]
+        assert patch(workspaces=[ws, lab, owned], edit_workspaces=[lab], asks=False).status_code == 200
+        assert next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["id"] == item["id"])["asks"] is False
+        # a note added and appended to in the workspace it edits, as the account through the chat's tools
+        made = call(client, item["token"], "create_block", {"parent_id": lab_page["id"], "content": "McpAddedNote"})
+        assert not made["isError"], made
+        assert _child(lab, lab_page["id"], "McpAddedNote")
+        lab_note = _child(lab, lab_page["id"], "McpLabNote")
+        appended = call(client, item["token"], "edit_block",
+                        {"block_id": lab_note, "content": " McpAppended", "mode": "append"})
+        assert not appended["isError"], appended
+        assert _text(lab, lab_note).endswith("McpAppended")
+        with connect_pages_db(lab) as conn:
+            assert conn.execute("SELECT client FROM page_ops WHERE page_id = ? ORDER BY seq DESC LIMIT 1",
+                                (lab_page["id"],)).fetchone()[0] == "ai"
+        # a whole rewrite needs a read first, which an earlier call counts for
+        rewrite = {"block_id": lab_note, "content": "McpRewritten", "mode": "replace"}
+        unread = call(client, item["token"], "edit_block", rewrite)
+        assert unread["isError"] and "read the block first" in unread["content"][0]["text"]
+        assert not call(client, item["token"], "read_block", {"block_id": lab_note})["isError"]
+        assert not call(client, item["token"], "edit_block", rewrite)["isError"]
+        assert _text(lab, lab_note) == "McpRewritten"
+        # never in a workspace it only reads, never a deletion
+        home_note = _child(ws, home["id"], "McpHomeNote")
+        elsewhere = call(client, item["token"], "edit_block", {"block_id": home_note, "content": " x", "mode": "append"})
+        assert elsewhere["isError"] and "may only read the workspace" in elsewhere["content"][0]["text"]
+        assert _text(ws, home_note) == "McpHomeNote"
+        assert call(client, item["token"], "delete_block", {"block_id": lab_note})["isError"]
+        # every workspace: those the account edits, never the one it views
+        assert patch(all_workspaces=True, edit_all=True).json()["edit_all"]
+        spaces = call(client, item["token"], "list_workspaces", {})["structuredContent"]["workspaces"]
+        assert {w["id"]: w["editable"] for w in spaces} == {ws: True, lab: True, owned: False}
+        assert patch(workspaces=[ws], edit_all=True).status_code == 400
+        # a deleted workspace leaves the edits too
+        assert patch(workspaces=[ws, lab], edit_workspaces=[ws, lab]).status_code == 200
+        workspaces.delete(lab)
+        lab = None
+        row = next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["id"] == item["id"])
+        assert row["edit_workspaces"] == [ws]
+    finally:
+        for gone in (lab, owned):
+            if gone:
+                workspaces.delete(gone)
+
+
+def _events(response):
+    """The JSON-RPC messages of an SSE answer."""
+    return [json.loads(line[5:]) for line in response.text.splitlines() if line.startswith("data:") and line[5:].strip()]
+
+
+def _initialize(client, token, capabilities):
+    return client.post("/mcp", headers={"Host": "localhost", "Authorization": f"Bearer {token}",
+                                        "Accept": "application/json, text/event-stream"},
+                       json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                           "protocolVersion": "2025-11-25", "capabilities": capabilities,
+                           "clientInfo": {"name": "asked", "version": "0"}}})
+
+
+def test_a_client_that_can_be_asked_gets_a_session_of_its_own(client, connection):
+    """A connection that edits and whose client can show a question
+    (elicitation) gets a stateful session at initialize, answering over SSE,
+    which only its own token may use; every other client stays on the
+    stateless JSON transport. The question itself goes out and comes back in
+    the browser suite's MCP group (a real server streams it)."""
+    c, ws, item = connection
+    other = c.post("/api/integrations/tokens", json={"name": "Other"}).json()
+    try:
+        # reading only: no session, whatever the client can show
+        plain = _initialize(client, item["token"], {"elicitation": {"form": {}}})
+        assert plain.status_code == 200 and "mcp-session-id" not in plain.headers
+        assert plain.headers["content-type"].startswith("application/json")
+        assert c.patch(f"/api/integrations/tokens/{item['id']}", json={"workspaces": [ws], "edit_workspaces": [ws]}).status_code == 200
+        # editing, but a client that cannot be asked: no session either
+        for capabilities in ({}, {"elicitation": {"url": {}}}):
+            unasked = _initialize(client, item["token"], capabilities)
+            assert unasked.status_code == 200 and "mcp-session-id" not in unasked.headers
+        opened = _initialize(client, item["token"], {"elicitation": {}})
+        assert opened.status_code == 200, opened.text
+        session = opened.headers["mcp-session-id"]
+        assert opened.headers["content-type"].startswith("text/event-stream")
+        assert _events(opened)[0]["result"]["serverInfo"]["name"] == "Gamma"
+        headers = {"Host": "localhost", "Accept": "application/json, text/event-stream", "Mcp-Session-Id": session,
+                   "MCP-Protocol-Version": "2025-11-25"}
+        mine = {**headers, "Authorization": f"Bearer {item['token']}"}
+        ready = client.post("/mcp", headers=mine, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        assert ready.status_code == 202, ready.text
+        listed = client.post("/mcp", headers=mine, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        assert listed.status_code == 200
+        assert "edit_block" in {t["name"] for t in _events(listed)[0]["result"]["tools"]}
+        # another token, or a session no token opened, finds none
+        theirs = {**headers, "Authorization": f"Bearer {other['token']}"}
+        assert client.post("/mcp", headers=theirs, json={"jsonrpc": "2.0", "id": 3, "method": "tools/list"}).status_code == 404
+        assert client.post("/mcp", headers={**mine, "Mcp-Session-Id": "f" * 32},
+                           json={"jsonrpc": "2.0", "id": 4, "method": "tools/list"}).status_code == 404
+        assert client.delete("/mcp", headers=mine).status_code == 200
+        assert client.post("/mcp", headers=mine, json={"jsonrpc": "2.0", "id": 5, "method": "tools/list"}).status_code == 404
+    finally:
+        c.delete(f"/api/integrations/tokens/{other['id']}")
+
+
+# --- answering feedback ---------------------------------------------------------------
+
+ANSWERING = {"reply_feedback", "resolve_feedback"}
+
+
+@pytest.fixture
+def answering(connection):
+    """A feedback token of the connection's account, made by hand and named
+    as an agent's would be, beside the connection's read token."""
+    c, _ws, _item = connection
+    made = c.post("/api/integrations/tokens", json={"name": "Claude Code", "scope": "feedback"})
+    assert made.status_code == 201, made.text
+    yield made.json()
+    c.delete(f"/api/integrations/tokens/{made.json()['id']}")
+
+
+def _commented_file(c, name):
+    """A work folder ``name`` of the client's workspace with ``main.pdf``
+    and one thread on a passage of it: ``(work, thread)``."""
+    from test_feedback_tools import commented, work_folder
+
+    work = work_folder(c, "mcp-reader", name)
+    return work, commented(c, work.files["main.pdf"], "lambda is never introduced.")
+
+
+def test_a_feedback_connection_replies_and_resolves(client, connection, answering, monkeypatch):
+    c, ws, item = connection
+    token = answering["token"]
+    work, thread = _commented_file(c, "Answered paper")
+    file = work.files["main.pdf"]
+    # Its list has the two answering tools beside the reading ones, the only ones that write.
+    tools = {t["name"]: t for t in rpc(client, token, "tools/list").json()["result"]["tools"]}
+    assert set(tools) == mcp_tools() | {"list_workspaces", "read_gamma_link", "export_page"} | ANSWERING
+    assert all(t["annotations"]["readOnlyHint"] is (name not in ANSWERING) for name, t in tools.items())
+    assert tools["reply_feedback"]["annotations"]["idempotentHint"] is False
+    assert tools["resolve_feedback"]["annotations"]["idempotentHint"] is True
+    assert tools["reply_feedback"]["inputSchema"]["required"] == ["thread_id", "body"]
+    assert set(tools["resolve_feedback"]["inputSchema"]["properties"]) == {"thread_id", "workspace"}
+    # A read connection is refused them, even right after a feedback one listed them (one tool list for all).
+    for listed_by in (token, item["token"]):
+        rpc(client, listed_by, "tools/list")
+        refused = call(client, item["token"], "reply_feedback", {"thread_id": thread["id"], "body": "sneaky"})
+        assert refused["isError"] and "may not answer feedback" in refused["content"][0]["text"]
+    assert not ANSWERING & {t["name"] for t in rpc(client, item["token"], "tools/list").json()["result"]["tools"]}
+
+    published = []
+    monkeypatch.setattr("gamma.collab.publish", lambda *args, **kw: published.append(args))
+    follows = _follows(ws, file)
+    replied = call(client, token, "reply_feedback", {"thread_id": thread["id"], "id": "mcpreply0001",
+                                                     "body": "Defined in 3.1 (sections/method.tex:112)."})
+    assert not replied["isError"], replied
+    url = f"http://localhost/?ws={ws}&page={file}&block={thread['block_id']}&thread={thread['id']}"
+    assert replied["content"][0]["text"] == (
+        f"Replied to the feedback item {thread['id']} on main.pdf, page 1, “the loss is defined as”: {url}")
+    assert replied["structuredContent"] == {"thread_id": thread["id"], "comment_id": "mcpreply0001",
+                                            "page_id": file, "url": url}
+    # signed with the connection's name, the page's room told, the person's Inbox too
+    (shown,) = [t for t in c.get(f"/api/pages/{file}/comments").json()["threads"] if t["id"] == thread["id"]]
+    assert [(m["author"], m["agent"]) for m in shown["comments"]] == [("mcp-reader", ""), ("mcp-reader", "Claude Code")]
+    with connect_pages_db(ws) as conn:
+        assert conn.execute("SELECT agent_id FROM comments WHERE id = 'mcpreply0001'").fetchone()[0] == answering["id"]
+    assert (ws, file, {"t": "comments", "block_id": thread["block_id"], "thread_id": thread["id"]}) in published
+    items = c.get("/api/inbox", params={"filter": "all"}).json()["items"]
+    assert any(i["thread_id"] == thread["id"] and i["kind"] == "reply" and i["agent"] == "Claude Code" for i in items)
+    # the same id again writes nothing twice
+    again = call(client, token, "reply_feedback", {"thread_id": thread["id"], "id": "mcpreply0001", "body": "Again."})
+    assert not again["isError"] and "was written already" in again["content"][0]["text"]
+    assert len(c.get(f"/api/pages/{file}/comments").json()["threads"][0]["comments"]) == 2
+
+    # What is no feedback item, and a server that takes no writes
+    library = make_page(c, "A library paper with a thread")
+    on_library = thread_on(c, library["id"], library["id"], "not feedback")
+    for thread_id, says in (("mcpreply0001", "No feedback item has that id"), ("nosuchthread", "No feedback item"),
+                            (on_library["id"], "That thread is not on a work folder's file.")):
+        refused = call(client, token, "reply_feedback", {"thread_id": thread_id, "body": "x"})
+        assert refused["isError"] and says in refused["content"][0]["text"], refused
+    with monkeypatch.context() as m:
+        m.setattr("gamma.hosted.read_only", lambda: "This server is read-only: its plan has lapsed.")
+        refused = call(client, token, "resolve_feedback", {"thread_id": thread["id"]})
+        assert refused["isError"] and "read-only" in refused["content"][0]["text"]
+    assert not c.get(f"/api/pages/{file}/comments").json()["threads"][0]["resolved_at"]
+
+    # Resolving: once, by the connection's name; again changes nothing; never a reopen
+    resolved = call(client, token, "resolve_feedback", {"thread_id": thread["id"]})
+    assert not resolved["isError"], resolved
+    assert resolved["content"][0]["text"].startswith(f"Resolved the feedback item {thread['id']} on main.pdf, page 1")
+    assert resolved["structuredContent"] == {"thread_id": thread["id"], "page_id": file, "url": url}
+    stored = c.get(f"/api/pages/{file}/comments").json()["threads"][0]
+    assert (stored["resolved_by"], stored["resolved_agent"]) == ("mcp-reader", "Claude Code")
+    again = call(client, token, "resolve_feedback", {"thread_id": thread["id"]})
+    assert not again["isError"] and "was resolved already" in again["content"][0]["text"]
+    assert c.get(f"/api/pages/{file}/comments").json()["threads"][0]["resolved_at"] == stored["resolved_at"]
+    assert call(client, token, "resolve_feedback", {"thread_id": thread["id"], "resolved": False})["isError"]
+    assert c.get(f"/api/pages/{file}/comments").json()["threads"][0]["resolved_at"] == stored["resolved_at"]
+    assert _follows(ws, file) == follows  # what a token writes makes no one follow the page
+
+
+def _follows(ws, page_id):
+    with connect_pages_db(ws) as conn:
+        return conn.execute("SELECT * FROM page_follows WHERE page_id = ? ORDER BY 1, 2", (page_id,)).fetchall()
+
+
+def test_feedback_ids_find_their_workspace(client, connection):
+    from gamma import workspaces
+
+    c, ws, _ = connection
+    lab = workspaces.create("Feedback lab", account_of("mcp-reader"))["id"]
+    in_lab = login("mcp-reader", "pw")
+    in_lab.headers["X-Gamma-Workspace"] = lab
+    made = None
+    try:
+        home, home_thread = _commented_file(c, "Home paper")
+        away, lab_thread = _commented_file(in_lab, "Lab paper")
+        made = c.post("/api/integrations/tokens", json={"name": "Claude Code", "scope": "feedback",
+                                                        "workspaces": [ws, lab]}).json()
+        token = made["token"]
+        # every work folder of every connected workspace, a section each
+        text = call(client, token, "list_feedback", {})["content"][0]["text"]
+        assert f"## Workspace Feedback lab (workspace={lab})" in text
+        assert home_thread["id"] in text and lab_thread["id"] in text and "# Feedback on Lab paper" in text
+        # a thread's id reads and answers in its own workspace
+        read = call(client, token, "read_feedback", {"thread_id": lab_thread["id"]})
+        assert not read["isError"], read
+        assert read["structuredContent"]["workspace_id"] == lab and read["structuredContent"]["pdf_page"] == 1
+        assert f"http://localhost/?ws={lab}&page={away.files['main.pdf']}&block=" in read["content"][0]["text"]
+        (image,) = [part for part in read["content"] if part["type"] == "image"]
+        assert image["mimeType"] == "image/jpeg" and len(image["data"]) > 100
+        replied = call(client, token, "reply_feedback", {"thread_id": lab_thread["id"], "body": "Done."})
+        assert not replied["isError"] and replied["structuredContent"]["workspace_id"] == lab
+        # a work folder's directory by id finds it too; by name, the default workspace's
+        assert lab_thread["id"] in call(client, token, "list_feedback", {"scope": away.w})["content"][0]["text"]
+        named = call(client, token, "list_feedback", {"scope": "Lab paper"})
+        assert named["isError"] or lab_thread["id"] not in named["content"][0]["text"]
+        named = call(client, token, "list_feedback", {"scope": "Lab paper", "workspace": lab})
+        assert lab_thread["id"] in named["content"][0]["text"]
+        # one id in two of them is refused, naming both, until workspace chooses
+        for owner, work in ((c, home), (in_lab, away)):
+            file = work.files["main.pdf"]
+            thread_on(owner, file, file, "the whole file", id="twinthread01")
+        refused = call(client, token, "resolve_feedback", {"thread_id": "twinthread01"})
+        assert refused["isError"] and "more than one connected workspace" in refused["content"][0]["text"]
+        assert "Feedback lab" in refused["content"][0]["text"]
+        chosen = call(client, token, "resolve_feedback", {"thread_id": "twinthread01", "workspace": lab})
+        assert not chosen["isError"] and chosen["structuredContent"]["workspace_id"] == lab
+        assert "main.pdf, the whole file" in chosen["content"][0]["text"]
+    finally:
+        in_lab.close()
+        if made:
+            c.delete(f"/api/integrations/tokens/{made['id']}")
         workspaces.delete(lab)

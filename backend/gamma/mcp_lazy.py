@@ -10,7 +10,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from .integrations import resolve_connection
-from .mcp_oauth import public_base
+from .mcp_oauth import SCOPE, public_base
 
 
 def _load_server():
@@ -85,12 +85,16 @@ async def _authorize(scope, receive, send):
     resource = base + "/mcp" if base else None
     identity = await run_in_threadpool(resolve_connection, token, resource) if scheme.lower() == "bearer" else None
     if identity is None:
+        # The challenge names the read scope alone: a client asks for what
+        # it names, and the consent page decides whether it may also answer
+        # feedback (mcp_oauth.consent).
         await JSONResponse({"detail": "A valid Gamma integration token is required."}, status_code=401,
                            headers={"WWW-Authenticate": (
-                               f'Bearer resource_metadata="{base}/.well-known/oauth-protected-resource/mcp", scope="gamma:read"'
+                               f'Bearer resource_metadata="{base}/.well-known/oauth-protected-resource/mcp", scope="{SCOPE}"'
                                if base else "Bearer"), "Cache-Control": "no-store"})(scope, receive, send)
         return False
-    # (user_id, [the workspaces it may read, the default first])
+    # an integrations.Connection: the account, the workspaces it may read
+    # (the default first), the token's scope, id and name
     request.state.gamma_integration = identity
     # Use the same canonical origin for link resolution and read-tool citations.
     # Manual tokens still support HTTP LAN addresses without an OAuth issuer.

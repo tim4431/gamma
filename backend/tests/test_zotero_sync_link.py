@@ -70,7 +70,7 @@ def _published(fake, owner_id, name):
 
 
 def _page_md5(ws, page) -> str:
-    return file_md5(storage.open_path(ws, f"{_block(ws, page)['props']['doc_id']}.pdf"))
+    return file_md5(storage.open_path(ws, f"{_block(ws, page)['props']['doc']['hash']}.pdf"))
 
 
 def _due_pages(ws) -> None:

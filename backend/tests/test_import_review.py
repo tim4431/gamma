@@ -9,8 +9,8 @@ import zipfile
 import pytest
 from fastapi import HTTPException
 
-from conftest import (account_of, folder_names, label_names, login, make_folder, make_label, make_page, make_user,
-                      workspace_of, guest_name)
+from conftest import (account_of, doc_props, folder_names, label_names, login, make_folder, make_label, make_page,
+                      make_user, mark_work_folder, workspace_of, guest_name)
 from test_zotero_import import RDF, _annotated_pdf
 
 
@@ -170,6 +170,19 @@ def test_a_review_refuses_a_destination_that_is_no_folder(guest):
     assert result.status_code == 400
 
 
+def test_an_import_refuses_a_work_folder_and_its_directories_up_front():
+    make_user("review-work", "pw-review-work")
+    owner = login("review-work", "pw-review-work")
+    work, directory = make_folder(owner, "Paper"), make_folder(owner, "Paper/figures")
+    mark_work_folder(owner, work)
+    for folder in (work, directory):
+        for url, extra in (("/api/import/review", {"source": "markdown-zip"}), ("/api/import/markdown-zip", {})):
+            result = owner.post(url, data={**extra, "folder": folder},
+                                files={"file": ("n.zip", archive({"n.md": "# n"}), "application/zip")})
+            assert result.status_code == 400 and "follow the disk" in result.json()["detail"], result.text
+    assert owner.get("/api/blocks/root/children").json()["children"] == []
+
+
 def test_markdown_repeat_review_shows_existing_destination(accounts):
     owner = accounts["review-owner"]
     content = b"# Repeat review note\nKeep the existing destination."
@@ -214,7 +227,7 @@ def test_staged_upload_is_bound_to_user_and_workspace_and_cancelled(accounts):
 
 def test_an_open_review_is_kept_and_a_swept_one_is_gone(accounts):
     """The dialog's keep-alive and the import's start restart a review's two
-    hours, and bring back one past them that no upload has swept yet; once
+    hours, and bring back one past them that no sweep has removed yet; once
     swept, both answer 404."""
     from gamma import import_staging
     owner, other = accounts["review-owner"], accounts["review-other"]
@@ -258,6 +271,47 @@ def test_an_open_review_is_kept_and_a_swept_one_is_gone(accounts):
     token = owner.post("/api/import/review/parts", json={"source": "markdown-zip", "size": len(data)}).json()["token"]
     assert owner.post(f"/api/import/review/{token}/keepalive").status_code == 409
     owner.delete(f"/api/import/review/{token}")
+
+
+def test_a_left_review_is_swept_without_another_upload(accounts):
+    """A review its dialog left (closed, crashed) goes with the app's hourly
+    sweep once past its TTL, though no upload follows to sweep it; one
+    within its TTL stays. The staging root is the server account's alone."""
+    from gamma import import_staging
+    owner = accounts["review-owner"]
+    me, ws = account_of("review-owner"), workspace_of("review-owner")
+    left = review(owner, archive({"one.md": "# Left review\ntext"}), "markdown-zip")["review_id"]
+    open_ = review(owner, archive({"one.md": "# Open review\ntext"}), "markdown-zip")["review_id"]
+    path = import_staging.get(left, me, ws)[0]
+    then = time.time() - import_staging.TTL - 5
+    os.utime(path, (then, then))
+    import_staging.sweep()
+    assert not path.exists() and import_staging.get(open_, me, ws)
+    if os.name == "posix":
+        assert path.parent.stat().st_mode & 0o077 == 0
+    owner.delete(f"/api/import/review/{open_}")
+
+
+def test_the_staging_root_is_the_server_accounts_own(tmp_path, monkeypatch):
+    """A sweep with nothing staged makes no root (each start of the app
+    sweeps); a root an earlier version made open to all is narrowed to
+    0700; one another account made first is refused."""
+    import tempfile
+    from gamma import import_staging
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    import_staging.sweep()
+    assert list(tmp_path.iterdir()) == []
+    if os.name != "posix":
+        return
+    root = import_staging._root_path()
+    root.mkdir(mode=0o755)
+    root.chmod(0o755)
+    import_staging.sweep()
+    assert root.stat().st_mode & 0o777 == 0o700
+    me = os.getuid()
+    monkeypatch.setattr(os, "getuid", lambda: me + 1)
+    with pytest.raises(RuntimeError):
+        import_staging.sweep()
 
 
 def test_update_adds_to_a_staged_reviews_metadata(accounts):
@@ -334,7 +388,7 @@ def test_a_zotero_reviews_commit_hashes_no_pdf_its_preview_hashed(accounts, monk
     paper = next(p for p in plan["pages"] if p["kind"] == "pdf")
     data = report(commit(owner, plan, paper["selection_ids"]))
     assert data["pages_created"] == 1 and hashed == [entry]
-    assert owner.get(f"/api/blocks/{data['pages'][0]['id']}").json()["properties"]["doc_id"] == content_digest(pdf)
+    assert owner.get(f"/api/blocks/{data['pages'][0]['id']}").json()["properties"]["doc"]["hash"] == content_digest(pdf)
 
 
 def test_upload_in_parts_reviews_and_imports_like_one_request(accounts):
@@ -400,10 +454,10 @@ def test_gamma_selection_keeps_page_dependencies_and_excludes_other_pages(accoun
     donor, receiver = accounts["review-donor"], accounts["review-owner"]
     a_pdf = donor.post("/api/uploads", files={"file": ("a.pdf", _annotated_pdf(b"Selected Gamma PDF"), "application/pdf")}).json()
     b_pdf = donor.post("/api/uploads", files={"file": ("b.pdf", _annotated_pdf(b"Unselected Gamma PDF"), "application/pdf")}).json()
-    a = make_page(donor, "Chosen Gamma page", {"doc_id": a_pdf["doc_id"], "source_url": a_pdf["source_url"],
+    a = make_page(donor, "Chosen Gamma page", {**doc_props(a_pdf["doc_id"]),
                                                "folders": [make_folder(donor, "Research/Chosen")],
                                                "labels": [make_label(donor, "chosen-tag")]})
-    b = make_page(donor, "Excluded Gamma page", {"doc_id": b_pdf["doc_id"], "source_url": b_pdf["source_url"],
+    b = make_page(donor, "Excluded Gamma page", {**doc_props(b_pdf["doc_id"]),
                                                  "folders": [make_folder(donor, "Research/Other")],
                                                  "labels": [make_label(donor, "other-tag")]})
     make_folder(donor, "Research/Empty")
@@ -432,6 +486,47 @@ def test_gamma_selection_keeps_page_dependencies_and_excludes_other_pages(accoun
     repeated = review(receiver, donor.get("/api/export").content, "gamma")
     existing = next(p for p in repeated["pages"] if p["selection_ids"] == chosen["selection_ids"])
     assert existing["title"] == "Renamed Gamma page" and existing["action"] == "skip"
+
+
+def test_a_gamma_review_upgrades_the_workspace_it_reads_first(client, tmp_path):
+    """The review of a Gamma import reads the workspace the one way
+    (``connect_pages_db``): one at stamp 51 that nobody has opened since the
+    server's upgrade is upgraded first, so its library PDF is found and the
+    backup's page of the same PDF, under another id, is that page, skipped."""
+    import json
+    import sqlite3
+    from contextlib import closing
+
+    from gamma import config, db, ws_backup
+    from test_migrations import _at_51
+
+    ws = make_user("review-doc51", "test-password")
+    paper = make_page(login("review-doc51", "test-password"), "Live paper", doc_props("d" * 24))
+    db.close_workspace_connections(ws)
+    pages_db, copy = config.WORKSPACES_DIR / ws / "pages.db", tmp_path / "pages.db"
+    with closing(sqlite3.connect(str(pages_db))) as live, closing(sqlite3.connect(str(copy))) as out:
+        live.backup(out)
+    with closing(sqlite3.connect(str(copy))) as conn:  # the backup: the same PDF on a page of another id
+        db.register_functions(conn)
+        conn.execute("UPDATE unified_blocks SET id = 'review-doc51-backup', page_id = 'review-doc51-backup' "
+                     "WHERE id = ?", (paper["id"],))
+        conn.commit()
+    with closing(sqlite3.connect(str(pages_db))) as conn:  # the workspace as release 51 left it
+        db.register_functions(conn)
+        _at_51(conn)
+        conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps({"doc_id": "d" * 24}),
+                                                                              paper["id"]))
+        conn.execute("PRAGMA user_version = 51")
+        conn.commit()
+    zpath = tmp_path / "backup.zip"
+    with zipfile.ZipFile(zpath, "w") as z:
+        z.write(copy, "pages.db")
+    plan = ws_backup.preview_zip(ws, zpath)
+    entry = next(p for p in plan["pages"] if p["selection_ids"] == ["page:review-doc51-backup"])
+    assert (entry["id"], entry["action"], entry["kind"]) == (paper["id"], "skip", "pdf")
+    db.close_workspace_connections(ws)
+    with closing(sqlite3.connect(str(pages_db))) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
 
 
 def test_guest_cannot_use_review_to_bypass_backup_restriction(guest, accounts):

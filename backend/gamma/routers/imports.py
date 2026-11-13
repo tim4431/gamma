@@ -35,6 +35,8 @@ from ..blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, create_page, existin
                             folder_paths, insert_page_tree, last_child_position, new_block_id, page_for_doc, page_parent,
                             page_parents, page_root_id, refiled, refiled_paths, top_of, touch_page, write_lock)
 from ..colors import DEFAULT_HIGHLIGHT, normalize_color
+from ..documents.formats import IMAGE_MEDIA_TYPES
+from ..documents.model import document, own_hash, page_document, stored_name, upload_url
 from ..highlights import position as highlight_position
 from ..logbuf import log
 from ..ops import (MAX_CONTENT, MAX_OPS, after_commit, after_commits, apply_batches, ensure_filing, note_reload,
@@ -44,16 +46,17 @@ from ..markdown_zip_import import import_markdown_zip, markdown_page
 from ..notability_import import import_notes
 from ..note_markup import obsidian_image_sizes
 from ..goodnotes_import import import_goodnotes
+from ..note_app_import import import_note_apps
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
 from ..pdf_text import GlyphPages, quote_under
-from ..pdf_export import (GAMMA_ALPHA, LOCKED, TEXT_BOX_TYPES, _resolve, annotation_flags, annotation_key,
-                          annotation_shown, copy_pdf, display_size, drop_annotations, first_rect, page_frame,
+from ..pdf_export import (GAMMA_ALPHA, GAMMA_COLOR, GAMMA_STYLE, LOCKED, TEXT_BOX_TYPES, _resolve, annotation_flags,
+                          annotation_key, annotation_shown, copy_pdf, display_size, drop_annotations, first_rect, page_frame,
                           pdf_point_to_viewer, reply_parent)
 from ..pdf_image import DecodeBudget, image_file, stream_data
 from ..text_box import escape_markdown, keep_on_surface, markdown_of, measure, normalize_text_box, plain_text
-from ..storage import (IMAGE_MEDIA_TYPES, content_digest, display_filename, exists as stored_exists,
-                       find_upload_file, pdf_url, put_upload, store_file, store_file_stream, store_pdf_stream,
-                       size as stored_size, stat as stored_stat, touch as stored_touch, upload_refs)
+from ..storage import (content_digest, display_filename, exists as stored_exists, find_upload_file, put_upload,
+                       store_file, store_file_stream, store_pdf_stream, size as stored_size, stat as stored_stat,
+                       touch as stored_touch, upload_refs)
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -66,6 +69,7 @@ from ..zotero_export import GAMMA_NOTE_KEY, GAMMA_PAGE_KEY, IMAGE_MIME
 from ..zotero_import import html_note_text, plan_zotero_archive, same_work
 from ..zotero_notes import store_images
 from ..import_review import destination, parse_selection, selected_warnings, validate_selection
+from ..work_folders.library import is_library_pdf
 from ..workspaces import is_guest_workspace
 
 router = APIRouter(prefix="/api", tags=["import"])
@@ -92,6 +96,7 @@ def _review_source(source):
         "markdown-file": (_preview_markdown_file, _commit_markdown_file),
         "notability": (_preview_notability, _commit_notability),
         "goodnotes": (_preview_goodnotes, _commit_goodnotes),
+        "note-apps": (_preview_note_apps, _commit_note_apps),
         "gamma": (_preview_gamma, _commit_gamma),
     }
     if source not in sources:
@@ -300,7 +305,7 @@ def discard_import_review(token: str, request: Request):
 @router.post("/import/review/{token}/keepalive")
 def keep_import_review(token: str, request: Request):
     """The dialog still shows the review: its two hours start again, also
-    once past them while no upload's sweep has removed it (404 then)."""
+    once past them while no sweep has removed it (404 then)."""
     ws = require_ws(request, write=True)
     import_staging.touch(token, request.state.user_id, ws)
     return {"ok": True}
@@ -359,7 +364,7 @@ def start_import_job(payload: ImportJob, request: Request):
                              title=f"Import {metadata['filename']}",
                              params={"review_id": token, "source": metadata["source"], "filename": metadata["filename"],
                                      "folder": metadata["folder"], "size": upload.stat().st_size,
-                                     "selected": len(selection), "digest": digest})
+                                     "selected": len(selection), "digest": digest, **_apps(metadata, selection)})
     except jobs.Busy as busy:  # a second start raced this one
         return same_review(busy.job)
     if preview is not None:  # the import's row stands for the review from here on
@@ -430,7 +435,7 @@ def import_logseq(
     with connect_pages_db(ws) as conn:
         write_lock(conn)
         row = page_for_doc(conn, digest)
-        block_id = row[0] if row else create_page(conn, title, {"doc_id": digest}, actor=actor)["id"]
+        block_id = row[0] if row else create_page(conn, title, {"doc": document(digest)}, actor=actor)["id"]
 
         # 5. Append blocks, skipping what an earlier import of these files
         #    already put there: highlights by their quote, notes by their
@@ -472,7 +477,8 @@ def import_logseq(
                 touch_page(conn, block_id, actor)
             conn.commit()
 
-    return {"ok": True, "block_id": block_id, "doc_id": digest, "source_url": pdf_url(digest), "imported": inserted}
+    return {"ok": True, "block_id": block_id, "doc_id": digest, "source_url": upload_url(stored_name(digest, ".pdf")),
+            "imported": inserted}
 
 
 # --- Plain Markdown note import -----------------------------------------------
@@ -538,10 +544,28 @@ def _note_app(import_fn, ws, data, meta, *, actor="", preview=False, selection=N
     """A note app's export → a page per note: Notability notes (one .note or
     .ntb, or a .zip of them; ``import_notes``, gamma/notability_import.py) or
     GoodNotes notebooks (one .goodnotes, or a .zip of them;
-    ``import_goodnotes``, gamma/goodnotes_import.py)."""
+    ``import_goodnotes``, gamma/goodnotes_import.py), or either or both in
+    one upload, the Import dialog's card (``import_note_apps``,
+    gamma/note_app_import.py)."""
     with connect_pages_db(ws) as conn:  # the import commits note by note
         return {"ok": True, **import_fn(ws, data, conn, meta.get("folder", ""), name=meta.get("filename", ""),
                                         actor=actor, preview=preview, selected=selection, progress=progress)}
+
+
+def _preview_note_apps(ws, data, meta, progress=jobs.no_progress):
+    return _note_app(import_note_apps, ws, data, meta, preview=True, progress=progress)
+
+
+def _commit_note_apps(ws, actor, data, meta, selection, progress=jobs.no_progress):
+    return _note_app(import_note_apps, ws, data, meta, actor=actor, selection=selection, progress=progress)
+
+
+def _apps(metadata, selection) -> dict:
+    """``{"apps": [...]}``, the note apps of the selected notes of a
+    combined review (its preview's ``note_apps`` stage), for the setup
+    guide that waits on a Notability import (useAppJobs); else nothing."""
+    apps = metadata.get("note_apps")
+    return {"apps": sorted({apps[s] for s in selection if s in apps})} if apps else {}
 
 
 def _preview_notability(ws, data, meta, progress=jobs.no_progress):
@@ -643,6 +667,24 @@ def import_notability(request: Request, file: UploadFile = File(...), folder: st
     return _commit_notability(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))
 
 
+@router.post("/import/note-apps/preview")
+def preview_note_apps(request: Request, file: UploadFile = File(...), folder: str = Form("")):
+    report = _preview_note_apps(require_ws(request, write=True), file.file, _meta(file, folder))
+    report.pop("stage", None)  # no review to keep it for
+    return report
+
+
+@router.post("/import/note-apps")
+def import_note_apps_endpoint(request: Request, file: UploadFile = File(...), folder: str = Form(""),
+                              selected: str | None = Form(None)):
+    """Notability notes and GoodNotes notebooks, either or both in one
+    upload (.note, .ntb, .goodnotes, or a .zip of them) → a page each; the
+    web app goes through the review (``/import/review``, source
+    ``note-apps``)."""
+    ws = require_ws(request, write=True)
+    return _commit_note_apps(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))
+
+
 @router.post("/import/goodnotes/preview")
 def preview_goodnotes(request: Request, file: UploadFile = File(...), folder: str = Form("")):
     return _preview_goodnotes(require_ws(request, write=True), file.file, _meta(file, folder))
@@ -697,6 +739,10 @@ def markdown_blocks(payload: MarkdownBlocksRequest, request: Request):
 # highlights, and the kinds below to their own blocks.
 
 _MARKUP_TYPES = {"/Highlight", "/Underline", "/Squiggly", "/StrikeOut"}
+# A markup's subtype → the style its highlight marks the passage with (the
+# block's ``style``; the wash, /Highlight, stores none), the inverse of
+# pdf_export.MARKUP_SUBTYPES.
+_MARKUP_STYLES = {"/Underline": "underline", "/Squiggly": "squiggly", "/StrikeOut": "strikeout"}
 # Typed text and sticky notes → text boxes (gamma/text_box.py), the inverse
 # of the /FreeText pdf_export.py writes.
 _NOTE_TYPES = TEXT_BOX_TYPES
@@ -1305,7 +1351,10 @@ def _mark_from_annotation(obj, subtype, pnum, pw, ph, contents, glyphs):
     """A markup, square or circle annotation → a highlight record, or None
     without a rectangle. The quote is the text under the quads
     (``pdf_text.quote_under`` over ``glyphs``, a ``GlyphPages``; empty when
-    None, or for an area mark)."""
+    None, or for an area mark). An underline, a squiggly or a strikeout is
+    a highlight in that ``style`` (a Zotero copy's /GammaStyle says which
+    line its /Underline is), its colour the /GammaColor Gamma's export
+    keeps beside the line tone in /C, when there is one."""
     # Quad rects in PDF space (origin bottom-left)
     quads = []
     qp = _resolve(obj.get("/QuadPoints"))
@@ -1335,11 +1384,16 @@ def _mark_from_annotation(obj, subtype, pnum, pw, ph, contents, glyphs):
             color = normalize_color(f"rgba({r}, {g}, {b}, {round(alpha, 3)})") or DEFAULT_HIGHLIGHT
     except Exception:
         pass
+    style = _MARKUP_STYLES.get(subtype)
+    if style:
+        color = normalize_color(str(_resolve(obj.get(GAMMA_COLOR)) or "")) or color
+        named = str(_resolve(obj.get(GAMMA_STYLE)) or "").lstrip("/")
+        style = named if named in _MARKUP_STYLES.values() else style
     # Flipped to top-left origin (what the viewer stores), in the page's points
     position = highlight_position(pnum, pw, ph, [(q[0], ph - q[3], q[2], ph - q[1]) for q in quads],
                                   area=subtype in _AREA_TYPES)
     return {"key": annotation_key(pnum, subtype, quads[0]), "content": contents,
-            "quote": quote, "color": color, "position": position}
+            "quote": quote, "color": color, "position": position, **({"style": style} if style else {})}
 
 
 def _strip_embedded_annotations(ws: str, name: str, pdf_path, keep=frozenset()) -> tuple[int, set]:
@@ -1355,7 +1409,7 @@ def _strip_embedded_annotations(ws: str, name: str, pdf_path, keep=frozenset()) 
     (a reply's legacy key too).
 
     Note the file keeps its content-hash name even though its bytes change —
-    the name is only a key (``doc_id`` property), never re-derived.
+    the name is only a key (the page's ``doc.hash``), never re-derived.
     ``pdf_path`` is the file to read, ``name`` what it is stored as."""
     from pypdf import PdfReader
 
@@ -1444,11 +1498,11 @@ def import_embedded_annotations(ws: str, block_id: str, name: str, pdf_path, str
     row). ``found``
     counts the annotations that make blocks, replies included. Shared by
     the per-paper endpoint below and the Zotero library import.
-    ``name``: the stored file's name, ``<doc_id>.pdf``; ``pdf_path``: the
-    file it reads (``storage.find_upload_file``), whose own name says
-    nothing. ImportError, with nothing written, when a highlight needs its
-    quote and PyMuPDF does not load: the next import makes the block with
-    it."""
+    ``name``: the stored file's name (``stored_name(hash, ".pdf")``);
+    ``pdf_path``: the file it reads (``storage.find_upload_file``), whose
+    own name says nothing. ImportError, with nothing written, when a
+    highlight needs its quote and PyMuPDF does not load: the next import
+    makes the block with it."""
     from pypdf import PdfReader
 
     from ..zotero_sync import get_link  # local: the engine reads the routers' change feed
@@ -1540,7 +1594,7 @@ def import_embedded_annotations(ws: str, block_id: str, name: str, pdf_path, str
                 else:
                     props = {
                         "color": f["color"], "quote": f["quote"], "pdf_position": f["position"],
-                        "imported_annot": f["key"],
+                        "imported_annot": f["key"], **({"style": f["style"]} if f.get("style") else {}),
                     }
                 if f.get("zotero_key"):
                     props["zotero_annotation"] = f["zotero_key"]
@@ -1574,8 +1628,8 @@ def import_embedded_annotations(ws: str, block_id: str, name: str, pdf_path, str
         write_lock(conn)
         try:
             row = conn.execute("SELECT doc_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-            as_read = (not strip and row is not None and row[0] == name.removesuffix(".pdf")
-                       and stored_stat(ws, name) == read_as)
+            as_read = (not strip and row is not None and row[0] is not None
+                       and stored_name(row[0], ".pdf") == name and stored_stat(ws, name) == read_as)
             held = _record_keys(found) if as_read else set()
             marks = [{"op": "set", "id": bid, "props": {"annot_stripped": True if key in gone else None}}
                      for bid, key, done in _imported_blocks(conn, block_id)
@@ -1596,7 +1650,7 @@ def import_embedded_annotations(ws: str, block_id: str, name: str, pdf_path, str
 def import_pdf_annotations(payload: PdfAnnotsRequest, request: Request):
     ws = require_ws(request, write=True)
     try:
-        name = f"{safe_doc_id(payload.doc_id)}.pdf"
+        name = stored_name(safe_doc_id(payload.doc_id), ".pdf")
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid document id")
     pdf_path = find_upload_file(name, ws)
@@ -1757,7 +1811,7 @@ def _zotero_extras(conn, ws, zf, item, block_id, created, doc_id, held, report) 
             if name in names:
                 continue
             names.add(name)  # two attachments of one file make one chip
-            content = _markdown_link(extra["name"], f"/api/uploads/{name}")
+            content = _markdown_link(extra["name"], upload_url(name))
         blocks.append({"content": content, "properties": {ATTACHMENT_KEY: extra["key"]}})
     return blocks, heading
 
@@ -1824,11 +1878,20 @@ def _pdf_stored(ws, digest, size) -> bool:
     file is re-dated, as storing it again would (``storage``'s dedup),
     under the upload GC's guard, so its purge keeps the file the page about
     to be written names."""
-    name = f"{digest}.pdf"
+    name = stored_name(digest, ".pdf")
     if stored_size(ws, name) != size:
         return False
     with upload_gc.guard(ws):
         return stored_touch(ws, name)
+
+
+def _own_zotero_pdf(props: dict, digest: str) -> None:
+    """Give the page whose properties are ``props`` (changed in place) the
+    item's PDF ``digest`` as its own: a page that shows a file it does not
+    own (a duplicated page, one opened from an address) goes on showing it,
+    under its name."""
+    view = page_document(props)
+    props["doc"] = document(digest, view["url"] if view else "", view["name"] if view else "")
 
 
 def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
@@ -1859,23 +1922,24 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
         if created:
             props["zotero_key"] = props["zotero_note"] = item["key"]
     else:
-        if props.get("doc_id") and digest and props["doc_id"] != digest:
+        own = own_hash(page_document(props))
+        if own and digest and own != digest:
             report["warnings"].append({"title": item["title"], "reason": "Existing page keeps its current PDF and annotations; the different exported PDF will not replace it."})
 
         # Attach the file only when the page doesn't already have one — a page
         # found by zotero_key keeps its existing PDF (and the highlights tied to it).
-        if digest and not props.get("doc_id"):
+        if digest and not own:
             if not _pdf_stored(ws, digest, zf.getinfo(item["pdf_entry"]).file_size):
                 with zf.open(item["pdf_entry"]) as src:  # streamed, like its other files
                     _, already_existed, _ = store_pdf_stream(ws, src)
                 if not already_existed:
                     report["pdfs_stored"] += 1
-            props["doc_id"] = digest
+            _own_zotero_pdf(props, digest)
             # Its annotations, imported once the page is written
             # (``_zotero_done``), bring its pictures in with the files they
             # were drawn from: no chip of their own (``_zotero_extras``).
             if any(extra.get("ext") in IMAGE_MEDIA_TYPES for extra in item["extras"]) and (
-                    path := find_upload_file(f"{digest}.pdf", ws)) is not None:
+                    path := find_upload_file(stored_name(digest, ".pdf"), ws)) is not None:
                 pictures = _stamped_pictures(path)
 
         sets_meta = bool(item["meta"]["title"]) and not props.get("meta")
@@ -1943,8 +2007,8 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
             report["warnings"].append({"title": item["title"],
                                        "reason": f"Note text cut: a block longer than {MAX_CONTENT:,} characters"})
         pending += block.get("children") or []
-    extras, heading = _zotero_extras(conn, ws, zf, item, block_id, created, props.get("doc_id"), images | pictures,
-                                     report)
+    extras, heading = _zotero_extras(conn, ws, zf, item, block_id, created, own_hash(page_document(props)),
+                                     images | pictures, report)
     return {"item": item, "row": row, "block_id": block_id, "old": old, "props": props,
             "blocks": blocks, "notes": notes, "extras": extras, "heading": heading, "created": created,
             "parent": parent, "folders": [dest["paths"][f] for f in (
@@ -1967,13 +2031,13 @@ def _zotero_done(prep, report, stored):
     report["pages_created" if created else "pages_merged"] += 1
     report["notes_imported"] += prep["notes"]
     report["attachments_imported"] += len(prep["extras"])
+    doc_id = own_hash(page_document(props))
     report["pages"].append({"id": prep["block_id"], "title": item["title"] if created else prep["row"][2],
-                            "created": created, "kind": "pdf" if props.get("doc_id") else "page",
+                            "created": created, "kind": "pdf" if doc_id else "page",
                             "folders": prep["folders"], "parent": prep["parent"],
                             "source_paths": _zotero_sources(item)})
-    doc_id = props.get("doc_id")
     if doc_id:
-        name = f"{doc_id}.pdf"
+        name = stored_name(doc_id, ".pdf")
         pdf_path = stored(name)
         if pdf_path:
             return prep["block_id"], name, pdf_path
@@ -2115,8 +2179,8 @@ def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
                       "parent": parents.get(row[0], ""),
                       "folders": [paths[f] for f in filing(props_of[top_of(parents, row[0])], FOLDERS) if f in paths]}
             by_id[row[0]] = target
-            if props.get("doc_id"):
-                by_digest.setdefault(props["doc_id"], target)
+            if is_library_pdf(props):  # the pages the commit's page_for_doc finds
+                by_digest.setdefault(own_hash(page_document(props)), target)
             if props.get("zotero_key"):
                 by_key.setdefault(props["zotero_key"], []).append(target)
         for index, item in enumerate(plan["items"]):
@@ -2133,9 +2197,10 @@ def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
             for path in [] if target.get("parent") else _zotero_paths(item, under_path):
                 folders = refiled_paths(folders, path)
             target["folders"] = folders
-            kind = "pdf" if props.get("doc_id") or item["digest"] else "page"
+            own = own_hash(page_document(props))
+            kind = "pdf" if own or item["digest"] else "page"
             warnings = list(item["warnings"])
-            if props.get("doc_id") and item["digest"] and props["doc_id"] != item["digest"]:
+            if own and item["digest"] and own != item["digest"]:
                 warning = {"title": item["title"], "reason": "Existing page keeps its current PDF and annotations; the different exported PDF will not replace it."}
                 warnings.append(warning)
                 plan["warnings"].append(warning)
@@ -2160,8 +2225,8 @@ def _preview_zotero(ws, data, meta, progress=jobs.no_progress):
                 page["source_paths"] = list(dict.fromkeys(prior["source_paths"] + page["source_paths"]))
                 page["missing"] = prior["missing"] or page["missing"]
             pages[target["id"]] = page
-            if item["digest"] and not props.get("doc_id"):
-                props["doc_id"] = item["digest"]
+            if item["digest"] and not own:
+                _own_zotero_pdf(props, item["digest"])
                 by_digest[item["digest"]] = target
             if not item["standalone_note"] and item["meta"]["title"] and not props.get("meta"):
                 props["meta"] = item["meta"]  # what a later item's key is matched with

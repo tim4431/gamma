@@ -1,13 +1,17 @@
 """Unreferenced uploads: kept for RETAIN_S, then purged.
 
 A stored file (``uploads/<name>``) is in use while a block names it —
-``/api/uploads/<name>`` in its content or properties, a page's ``doc_id``,
+``/api/uploads/<name>`` in its content or properties, a block's ``doc``
+(the file it stores, reads in place, caches or shows as a copy),
 or a highlight's ``pdf_position.doc_id`` or ``prev.doc_id``, the file its
 rectangles were measured on, which a pending highlight holds until it is
 resolved (its reference, matched from at every later replacement) (``storage.upload_refs``, the one grammar) — while an AI chat
-names it, and while an open ``zotero_file`` conflict keeps it (Zotero's PDF
+names it, while an open ``zotero_file`` conflict keeps it (Zotero's PDF
 a Zotero link kept when Gamma's went over it, for that conflict's
-"theirs", gamma/zotero_sync_pdfs.py). When the last reference goes the
+"theirs", gamma/zotero_sync_pdfs.py), and while an open comment thread
+holds the version it was opened on (its root's ``anchor``,
+gamma/feedback/kept.py: released at its resolve, claimed again at a
+reopen). When the last reference goes the
 file is NOT deleted: its name goes into the workspace's ``upload_orphans``
 table (pages.db: ``name``, ``since``) and the file stays stored, served as
 before — so an undo, a cut pasted in a later batch, an AI edit, an ink undo
@@ -20,8 +24,8 @@ own ``keep_s`` instead, counted the same way: its row in
 ``upload_retention`` (pages.db: ``name``, ``keep_s``, ``since``) applies
 once nothing references the file, and a reference written to the file
 again removes it. Only a file nothing shows any more gets one: a file
-another page still carries or shows (its ``doc_id``, a ``source_url``, an
-image) or a Zotero conflict keeps holds RETAIN_S for when that reference
+another page still carries or shows (its ``doc``, an image) or a Zotero
+conflict keeps holds RETAIN_S for when that reference
 goes too. Nothing here touches the quota: an unreferenced file counts like
 any stored one until it goes. Files are listed, dated and deleted through
 the store's calls (gamma/storage.py).
@@ -61,12 +65,14 @@ Who notices what:
 Docs: docs/dev/user_db.md "Stored files".
 """
 
+import json
 import sqlite3
 import threading
 import time
 
 from . import storage
 from .db import connect_pages_db, page_now, parse_stamp, workspace_ids, ws_dir
+from .documents.model import stored_name
 from .logbuf import log
 from .storage import UPLOAD_REF_RE, upload_refs
 
@@ -96,31 +102,34 @@ def _references(conn) -> tuple[set[str], set[str]]:
     """``(every name referenced, the names shown)``: every stored-file name
     the workspace's blocks reference, lowercased
     (compared without case, as the old ``LIKE`` did), in one pass over the
-    rows that mention an upload or name a file by id: a page's ``doc_id``,
-    or a ``"doc_id"`` deeper in the properties (a highlight's position and
-    its ``prev``; only rows that hold the word are parsed for it) — every
+    rows that mention an upload or name a file by its stem: a block's
+    ``doc`` (a copy's too, whose address is not stored), or a ``"doc_id"``
+    in the properties (a highlight's position and its ``prev``; only rows
+    that hold the word are parsed for it) — every
     one its AI chats name: a picture attached to a message is a stored
     upload the conversation points at (``/api/uploads/<name>`` in the saved
     messages' JSON, the one grammar; gamma/ai_pictures.py), in the active
-    conversations and the archived ones alike — and the PDF each open
-    ``zotero_file`` conflict keeps (its ``base``'s ``doc_id``): resolved
+    conversations and the archived ones alike — the PDF each open
+    ``zotero_file`` conflict keeps (its ``base``'s ``doc_id``, ``_kept_pdf``): resolved
     ("keep", or "theirs", which makes it a page's PDF) or gone with its
-    link, it is a file like any other. The names shown are the same less
-    those only a highlight's position holds (``storage.upload_refs`` with
+    link, it is a file like any other — and the version each open comment
+    thread was opened on (its root's anchor, ``feedback.kept.held_files``).
+    The names shown are the same less those only a highlight's position or
+    a thread holds, and a work folder's build (``storage.upload_refs`` with
     ``held=False``)."""
     names, shown = set(), set()
     for content, props in conn.execute(
             "SELECT content, properties FROM unified_blocks WHERE instr(content, '/api/uploads/') > 0 "
             "OR instr(properties, '/api/uploads/') > 0 OR doc_id IS NOT NULL "
-            "OR instr(properties, '\"doc_id\"') > 0"):
+            "OR instr(properties, '\"doc_id\"') > 0 OR instr(properties, '\"doc\"') > 0"):
         names.update(n.lower() for n in upload_refs(content or "", props or "{}"))
         shown.update(n.lower() for n in upload_refs(content or "", props or "{}", held=False))
     try:
         kept = conn.execute("SELECT base FROM sync_conflicts WHERE resolved = 0 AND kind = 'zotero_file'").fetchall()
     except sqlite3.OperationalError:  # a database from before the table existed
         kept = []
-    for (base,) in kept:  # the base is JSON, its doc_id read as a page's is
-        found = {n.lower() for n in upload_refs("", base or "{}")}
+    for (base,) in kept:
+        found = {n.lower() for n in _kept_pdf(base)}
         names |= found
         shown |= found
     for table in ("chats", "chat_history"):
@@ -132,7 +141,22 @@ def _references(conn) -> tuple[set[str], set[str]]:
             found = {n.lower() for n in UPLOAD_REF_RE.findall(messages or "")}
             names |= found
             shown |= found
+    from .feedback.kept import held_files  # local: kept reaches comments and blocks_store, which import this module
+
+    names |= {n.lower() for n in held_files(conn)}
     return names, shown
+
+
+def _kept_pdf(base) -> set[str]:
+    """The stored PDF a ``zotero_file`` conflict's ``base`` (JSON,
+    ``{"doc_id": kept, …}``: gamma/zotero_sync_pdfs.py) keeps: none for a
+    malformed one or ``storage.UNSTORED``."""
+    try:
+        kept = json.loads(base or "{}")
+    except ValueError:
+        return set()
+    doc = storage.stored_pdf_stem(kept.get("doc_id") if isinstance(kept, dict) else None)
+    return {stored_name(doc, ".pdf")} if doc else set()
 
 
 def claim(conn, names) -> None:
@@ -157,7 +181,7 @@ def retain(ws: str, name: str, keep_s: int) -> None:
     the last of them goes, unless the relocation run makes it a highlight's
     reference meanwhile (the version a pending one is matched from: the run
     claims the files its written positions name, highlight_relocate._write). A file a block still shows (another page's
-    ``doc_id`` or ``source_url``, an image) is no build let go of: it gets
+    ``doc``, an image) is no build let go of: it gets
     no short life and keeps RETAIN_S. Never makes a referenced file
     purgeable: the purge reads the references again under the write lock."""
     with guard(ws):

@@ -28,8 +28,10 @@ export const SECTION_PREFS = Object.freeze({
     Colors: ["palette"],
     Library: ["recentThumbs", "fileLabels"],
     "Top bar": ["topbar"],
-    // The highlighter's colour has no row: it is set where it acts.
+    // The released builds' highlighter colour has no row: it only seeds the
+    // first text highlighter.
     "Viewer tools": ["viewerTools", "highlighterColor"],
+    "Text highlighters": ["highlightPresets"],
     Tours: ["suggestTours", "tourProgress"],
   }),
   reading: sections({

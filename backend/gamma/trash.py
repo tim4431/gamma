@@ -16,6 +16,13 @@ A page trashed with the pages inside it takes them along, each stamped
 ``deleted_with`` it: the listing shows the page alone (with how many went
 with it), and its restore and its deletion for good take them too, so
 nothing here reaches them but through their page.
+
+A work folder's file comes back as the work-folder rule says
+(gamma/work_folders/filing.py ``may_restore``): one its vault sent here
+(``deleted_by_vault``: its file deleted or untracked) comes back only with
+its file, and a person restores only a note where its work folder pulls.
+Each entry says which it is, so Recently deleted offers Restore only where
+it works.
 """
 
 import json
@@ -23,12 +30,12 @@ from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from . import pdf_index
 from .auth import actor_names
 from .blocks_store import TRASH, load_props, trashed_page, write_lock
 from .db import connect_pages_db, format_stamp, parse_stamp, workspace_ids, ws_dir
 from .logbuf import log
 from .ops import delete_page
+from .search import index as text_index
 
 KEEP_DAYS = 30
 SWEEP_INTERVAL_S = 3600  # the app lifespan runs ``sweep`` at startup and this often
@@ -53,20 +60,25 @@ def named(pages: list[dict]) -> list[dict]:
 
 def list_trash(conn) -> list[dict]:
     """The pages in Recently deleted, the last deleted first: ``{id, title,
-    folders, parent, deleted_at, deleted_by, purge_at, sub_pages}``
-    (``named``; ``folders`` the ids of the folders a restore puts it back
-    in, ``blocks_store.trashed_folders``: a sub-page's are its live parent's
-    top's; ``parent`` the live page a restore puts it back inside, "" for
-    none, ``blocks_store.trashed_parent``; ``sub_pages`` how many pages went there with it,
-    ``ops.trash_page``). A page that went with another still in the trash
-    is not listed: it comes back, and goes for good, with that one. One
-    read of the trash, counted here."""
+    folders, parent, deleted_at, deleted_by, work_folder, deleted_by_vault,
+    restorable?, purge_at, sub_pages}`` (``named``; ``folders`` the ids of the folders a
+    restore puts it back in, ``blocks_store.trashed_folders``: a sub-page's
+    are its live parent's top's; ``parent`` the live page a restore puts it
+    back inside, "" for none, ``blocks_store.trashed_parent``;
+    ``work_folder`` and ``deleted_by_vault`` a work folder's file's, as
+    ``blocks_store.trashed_page`` reads them, and ``restorable`` on a
+    work folder's file whether a person's restore passes
+    (``filing.may_restore``); ``sub_pages`` how many pages
+    went there with it, ``ops.trash_page``). A page that went with another
+    still in the trash is not listed: it comes back, and goes for good,
+    with that one. One read of the trash, counted here."""
     rows = conn.execute("SELECT id, content, properties FROM unified_blocks WHERE parent_id = ?",
                         (TRASH,)).fetchall()
     props = {row[0]: load_props(row[2]) for row in rows}
     went = {page_id: p["deleted_with"] for page_id, p in props.items() if isinstance(p.get("deleted_with"), str)}
     counts = Counter(went.values())
-    pages = named([{**trashed_page(conn, *row), "sub_pages": counts[row[0]]}
+    memo: dict = {}
+    pages = named([{**trashed_page(conn, *row, memo=memo), "sub_pages": counts[row[0]]}
                    for row in rows if went.get(row[0]) not in props])
     for page in pages:
         page["purge_at"] = purge_at(page["deleted_at"])
@@ -138,7 +150,7 @@ def _swept_after(ws: str, conn):
         yield gone
     finally:
         if gone:
-            pdf_index.purge_unused(ws, conn)
+            text_index.purge_unused(ws, conn)
 
 
 def empty(ws: str, *, actor: str = "") -> list[str]:

@@ -124,8 +124,9 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     - a divider, and *Handwriting settings…* (Settings → Reading & editing,
       at the Handwriting section).
   - *Paste handwriting* is greyed, titled "Copy or cut handwriting first",
-    until the handwriting clipboard holds strokes. *Stamp line* is greyed,
-    titled "Show the ruler first", while the ruler is hidden.
+    until the handwriting clipboard holds strokes or pictures. *Stamp
+    line* is greyed, titled "Show the ruler first", while the ruler is
+    hidden.
   - *Ruler*, *Shapes* and *Zoom window* are each ticked while on.
   - *Zoom window* is greyed, titled "The zoom window works on PDF pages",
     while the viewer shows no PDF page (the notebook view, the PDF hidden,
@@ -219,6 +220,10 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
   - The pill says "Blue pen hidden." with *Show*. *Hidden tools* in any
     preset's ⋯ menu brings it back where it was.
   - Keys `1`–`9` always count the visible presets in row order.
+- The **text highlighters** on the viewer's strip are built on the same
+  pattern (a tap arms one, its menu edits, duplicates and hides it; which
+  is armed stays with the session, the list follows the account):
+  [settings.md](settings.md#text-highlighters).
 - **Presets follow the account.** `inkTools` lives in the profile
   ([settings.md](settings.md) "Reading & editing"): a browser that signs
   in takes the account's list, and an account without one is seeded from
@@ -477,14 +482,17 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
   `inkPenOnly` preference), a finger tap or a 450 ms stationary hold
   selects the nearest stroke (10 CSS px hit tolerance, topmost wins).
   - A mouse click in Hand mode and a short tap with the lasso select the
-    same way.
+    same way. With the lasso armed, a tap that finds no stroke selects the
+    unlocked picture under it ([pictures.md](pictures.md#the-lasso)).
   - A swipe still scrolls: more than 8 CSS px of movement, a second
     contact, a pen contact or a cancel drops the pending selection.
   - With finger drawing on, armed tools draw at once. Use Hand to
     tap-select.
 - The **selection menu** opens after a tap or a lasso ("Edit
   handwriting"), up to two rows of 36 px buttons. The first row never
-  changes: Color, Width and style, Copy, Convert, More and Delete.
+  changes: Color, Width and style, Copy, Convert, More, Comment (on a PDF
+  page, for a reader who may comment: "Comments on handwriting" below) and
+  Delete.
   - Color and Width and style open their option rows under whichever rows
     show, one at a time.
   - A blank tap, a press off the page or Escape dismisses the menu and
@@ -534,7 +542,7 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     group and the page has another, since New note would change nothing
     then.
   - A selection of pictures alone greys what acts on strokes alone: Color,
-    Width and style, Copy, Convert, Cut, New note and Select note.
+    Width and style, Convert, Comment, New note and Select note.
   - A row holds at most seven buttons, a hard cap for every later
     addition. Whether the second row is open is remembered for the
     session.
@@ -559,11 +567,14 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     viewport. A text box's menu and a picture's are placed the same way
     (`useSelectionMenuAnchor`).
 - **Copy, cut and paste.** Copy (Ctrl+C, or the menu) keeps the selected
-  strokes on a handwriting clipboard: in memory for this tab, and as a
-  best-effort system clipboard item for other apps ("Client" below).
-  - The pill says "Copied 3 strokes." with *Paste* beside it, the way to
-    paste without a keyboard. Cut (Ctrl+X) copies and deletes, "Cut 3
-    strokes." with *Paste*.
+  strokes, and the pictures the lasso took with them, on a handwriting
+  clipboard: in memory for this tab, and as a best-effort system clipboard
+  item for other apps ("Client" below). The pictures' rules are
+  [pictures.md](pictures.md#copy-cut-and-paste)'s.
+  - The pill says "Copied 3 strokes." ("Copied 3 strokes and 1
+    picture.") with *Paste* beside it, the way to paste without a
+    keyboard. Cut (Ctrl+X) copies and deletes, "Cut 3 strokes." with
+    *Paste*, one undo entry for the strokes and the pictures together.
   - Paste puts down fresh-id copies, keeping each stroke's pressure,
     timing and baked width and dropping a piece's `from`.
   - The copied box's top-left goes at the target, and the box is kept
@@ -582,9 +593,11 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     - A **right-click** on blank page with a tool armed opens the same row.
   - Fingers never open it: a resting palm must not paste.
   - The pasted strokes join the page's current group as one undo entry,
-    "ink paste", and become the selection with the lasso armed.
-  - Select all (Ctrl+A, or More) selects every stroke on that page and
-    arms the lasso. Duplicate is Ctrl+D as well.
+    "ink paste", and become the selection with the lasso armed. Pictures
+    pasted with them make it "selection paste", one entry for both.
+  - Select all (Ctrl+A, or More) selects every stroke on that page, and
+    its unlocked pictures while the lasso's *Pictures* is on, and arms the
+    lasso. Duplicate is Ctrl+D as well.
 - **New note from selection** (More → New note) moves the selected
   strokes out of their blocks into a new ink block on the same page, their
   ids kept, as one undo entry ("ink split").
@@ -602,7 +615,33 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
   - A merge that would put more strokes or bytes in the previous group
     than one file holds is refused on the pill, and the selection stays on
     this group.
+  - A group with a comment thread is never merged: "Not merged: this
+    handwriting has comments." As the target, it is passed over for the
+    next one before it, else after it.
   - Undo brings both groups and the block back together.
+- **Comments on handwriting** ([comments.md](comments.md) "In the app"):
+  a thread hangs on an ink group on a PDF page as it does on a highlight,
+  its card in the margin level with the group's top.
+  - *Comment* in the selection menu opens a new thread's card, its field
+    focused, and lets go of the selection. A selection of one whole group
+    is that group's. Any other (part of a group, strokes of several) is
+    first made a group of its own, as New note makes one ("ink split"),
+    and the card opens on it. If the comment is never written the split
+    stays: it is still the person's drawing.
+  - The lasso selecting one whole group that has open threads opens its
+    thread, its card the active one, and outlines the group. A press on
+    the group keeps the active card open, as one on its highlight does.
+  - A group with a thread, open or resolved, keeps the drawing it was
+    commented on: the next stroke on the page starts a new group, as one
+    past the split budget does; erased empty, it keeps its block (and the
+    thread), as a captioned group does; and Merge leaves it alone (above).
+  - Ink is never placed again after its PDF is rebuilt
+    ([highlight_relocation.md](highlight_relocation.md)). A thread on a
+    group drawn on another build than the one the page shows says "Drawn
+    on an earlier build" under its first comment.
+  - A sheet's groups have no Comment: their threads are a note's, from the
+    row's control. A viewer or a share visitor has no lasso: they open an
+    ink thread's card in the margin.
 - A **finger drag inside the selection** moves it, even in pen-only mode
   (the dashed box is a `touch-action: none` hit surface; fingers outside
   it scroll). A pen with a writing tool clears the selection and writes.
@@ -805,7 +844,8 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     finger** (which turns `inkPenOnly` off). It says so once a session,
     and never after a pen has drawn.
 - Strokes on one page join the **current group** until a stroke on
-  another page, or leaving the page. A group is one block in the notes: a
+  another page, or leaving the page, or a comment thread on the group
+  ("Comments on handwriting" above). A group is one block in the notes: a
   rounded pen marker, the strokes as a picture, and the block's text as
   its caption (children allowed).
   - The marker or the card scrolls the PDF to the group and outlines it
@@ -855,8 +895,9 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
   strokes as an SVG picture
   ([handwriting_ai.md](handwriting_ai.md#what-the-user-sees)).
 - A group erased empty deletes its block, and undo brings it back. A
-  group whose block holds a caption or notes keeps its block, with an
-  empty drawing, so erasing strokes never deletes text.
+  group whose block holds a caption or notes, or that has a comment
+  thread, keeps its block, with an empty drawing, so erasing strokes never
+  deletes text or a thread.
 - Read-only views (workspace viewers, view shares) show ink without tools,
   and edit shares draw.
 - On an iPad this layer runs in Safari or the web app installed to the
@@ -2684,7 +2725,12 @@ reach.
       `LineWidthIcon`, aria-label and title "Width and style",
       `aria-expanded`, `modeActive` while its rows show), Copy, Convert,
       More (`ctlBtn`, `MoreIcon`, aria-label "More", title "More edits",
-      `aria-expanded`), Delete.
+      `aria-expanded`), Comment (`MessageSquareIcon`, title "Comment on the
+      selected handwriting", `onAction("comment")`), Delete.
+      - Comment shows on a PDF page (`pageNumber` a number) when the page
+        tools' `ink.canComment` says the reader may comment, which the layer
+        reads from the context itself; it greys with no strokes selected.
+        The row then holds seven buttons, its cap.
     - Color opens the `.inkEditOptions` row "Selected ink color":
       `ColorChoices` on `pickerColors(palette, …)`, the highlighter's
       colours when every selected stroke is a highlighter and the pen's
@@ -3069,7 +3115,7 @@ reach.
       {left, top, k})` turn a shape record between page points and
       viewport css px (`ink.js` `mapShape`: points moved, lengths scaled,
       angles kept, on the 1/100 grid).
-  - Paste here: with `ink.clip` (the clipboard holds strokes) and a pen or
+  - Paste here: with `ink.clip` (the clipboard holds something) and a pen or
     highlighter preset armed, a pen or mouse down in stroke mode arms the
     draw-and-hold timer, with no size floor for a paste.
     - When it fires (`HOLD_MS` still) before the tip has travelled
@@ -3085,7 +3131,7 @@ reach.
       resting palm cannot paste.
     - The wrapper's `contextmenu` listener opens the same row for a mouse
       right-click when a tool is armed, no stroke is under the pointer and
-      the clipboard holds strokes. It `preventDefault`s only then, and
+      the clipboard holds something. It `preventDefault`s only then, and
       otherwise the page's own menus run.
     - No travel against the hold's size floor keeps the two apart: a tip
       that has travelled cannot paste, one that has not cannot snap.
@@ -3700,15 +3746,18 @@ reach.
     - leaving the page forgets the rest.
 - `ink/useInkSave.js` over `ink/inkSaver.js`: the save.
   - The saver, `createInkSaver({blocksRef, setStatus, liveSaved, inkStore,
-    apiJson, API, keepaliveRoom}) → {flushInk, scheduleInk, pending}`, is
+    apiJson, API, keepaliveRoom, keeps}) → {flushInk, scheduleInk, pending}`, is
     handed the draft store, the API and the keepalive room rather than
     importing them. So `frontend/tests/inkSaver.test.mjs` drives it with
     fakes and mock timers. A real close is the scratch scenario
     `tests/e2e/tabClose.mjs`, apart from the browser suite.
-  - `useInkSave({focusedBlockId, blocksRef, setStatus, liveSaved}) →
+    - A group erased empty is `DELETE`d unless its block holds a caption
+      or notes, or `keeps(id)`: a group with a comment thread
+      (`comments/useInkThreads.js`), which is saved as an empty drawing.
+  - `useInkSave({focusedBlockId, blocksRef, setStatus, liveSaved, keeps}) →
     {flushInk, scheduleInk}` keeps one for the page's life over the real
-    ones. App calls it after the page's collab session, so its listeners
-    register after collab's.
+    ones, asking the latest `keeps` it was given. App calls it after the
+    page's collab session, so its listeners register after collab's.
   - It flushes on `visibilitychange` when a save is pending (with
     keepalive when hidden), on `pagehide` when one is pending or any draft
     is dirty (keepalive, `leaving`), and when the open page changes. A
@@ -3894,6 +3943,9 @@ reach.
   - `missingGroups(changes, present)` and `withGroupBlocks(prev, missing)`
     put back a group's block (`prev` the block tree).
   - `freshInk(page, size)` is a new group's file.
+  - `currentGroup(active, page, blocks, closedGroup)` is the group the next
+    stroke joins: the surface's current one while its block is on the page
+    and no comment thread closed it, else none.
   - `splitsGroup(before, bytes, count)` says when strokes start the
     surface's next group, and `pasteTooBig(page, strokes, size)` when no
     group can hold a paste.
@@ -3901,12 +3953,14 @@ reach.
     through the eraser filter.
 - `ink/useInkStrokes.js`: the strokes, `useInkStrokes({focusedBlockId,
   readOnly, inkStale, blocksRef, nbSheetsRef, applyInk, addSheetAfter,
-  noteSqueezeUse, undoableInkStatus, setStatus}) → {handleInkStroke,
+  noteSqueezeUse, undoableInkStatus, setStatus, closedGroup}) → {handleInkStroke,
   handleInkStrokes, handleHoldStatus}`, which App calls after the
   document.
   - The group the next stroke on a surface joins (`inkActiveRef`, `{page,
-    id}`). Leaving the page forgets it, so the next stroke starts a fresh
-    group.
+    id}`, through `inkEdits.js currentGroup`). Leaving the page forgets
+    it, so the next stroke starts a fresh group, and so does a group that
+    `closedGroup(id)` says has a comment thread
+    (`comments/useInkThreads.js`).
   - A new group is found through `blocksRef`, once a render has put its
     block in the tree.
   - `handleInkStroke(page, stroke, size, {label})` (the layers'
@@ -3925,25 +3979,27 @@ reach.
       true})`; [notebooks.md](notebooks.md)).
     - A stroke while a held squeeze is open marks it used
       (`noteSqueezeUse()`).
-  - `handleInkStrokes(page, strokes, size)` is `handleInkStroke` for
-    several strokes at once (`size` the surface in points, for a fresh
-    group's file).
+  - `handleInkStrokes(page, strokes, size, {label, link})` is
+    `handleInkStroke` for several strokes at once (`size` the surface in
+    points, for a fresh group's file).
     - They join the surface's current group when it can take them all
       under `MAX_STROKES` and `GROUP_SPLIT_BYTES`, else a new group takes
       them all (a paste is never split across groups). They go through
-      `appendStrokes` as one entry, `T("ink paste")`.
+      `appendStrokes` as one entry, `label` (`T("ink paste")` unless given)
+      with `link` when a paste carries pictures.
     - A set no group could hold is refused with "Too much handwriting to
       paste into one note."
-    - It returns `{id, ids}`, the group and the ids as they landed.
+    - It returns `{id, ids}`, the group and the ids as they landed, null
+      when the set was refused, by that or by the byte budget.
   - `handleHoldStatus({text, once})` (`onHoldStatus`) raises
     `undoableInkStatus(text)`, a `once` status at most once a session
     (`straightHintRef`).
 - `ink/useInkSelection.js`: the lasso selection and the handwriting
   clipboard, `useInkSelection({focusedBlockId, readOnly, inkUi,
-  blocksRef, inkOf, applyInk, flushInk, handleInkStrokes, pickInkTool,
-  revealInkStrip, inkBySurface, pasteTarget, onBoxDeselect, showInNotes,
-  transcribe, ai, stepBlocks, touchTextBox, setStatus,
-  undoableInkStatus}) → {inkSelection, inkClip, inkAiWork,
+  lassoPictures, blocksRef, inkOf, applyInk, flushInk, handleInkStrokes,
+  pickInkTool, revealInkStrip, inkBySurface, pasteTarget, onBoxDeselect,
+  showInNotes, transcribe, ai, stepBlocks, touchTextBox, setStatus,
+  undoableInkStatus, onComment, threaded}) → {inkSelection, inkClip, inkAiWork,
   clearInkSelection, restoreInkSelection, handleInkSelect,
   handleInkMoveSelection, deleteInkSelection, selectionStill,
   handleInkAction, copyInkSelection, pasteInk, pasteAtCentre,
@@ -3971,17 +4027,20 @@ reach.
     "ink move") and Delete (`deleteInkSelection`, "ink deletion", which
     lets go of the selection too).
   - An edit that takes the selection's pictures (`takenPictures`, kept on
-    the surface by `surfaceSize`) is one step of both histories
-    (`stepSelection`). Its strokes go through `applyInk` with a `link`, and
-    its pictures through `stepBlocks(link, fn)`, App's `setBlocks`, whose
-    tree carries the link to the block history. Its label is then a
-    "selection" one: "selection move", "selection resize", "selection
-    rotation", "selection flip", "selection deletion", "selection
-    duplication".
+    the surface by `surfaceSize`; Delete and Cut take them by
+    `selectedPictures` alone, a removal needing no size) is one step of
+    both histories (`stepSelection`). Its strokes go through `applyInk`
+    with a `link`, and its pictures through `stepBlocks(link, fn)`, App's
+    `setBlocks`, whose tree carries the link to the block history. Its
+    label is then a "selection" one: "selection move", "selection resize",
+    "selection rotation", "selection flip", "selection deletion",
+    "selection duplication", "selection cut", "selection paste".
   - **The handwriting clipboard** is `inkClipRef`, `{type: "gamma/ink",
-    version: 2, space, box, strokes}`: the file's `space`, the selection's
-    `inkBounds` box `{x1, y1, x2, y2}` in points and the raw stroke
-    objects as the file holds them.
+    version: 2, space, box, strokes, pictures?}` (`clipOf`): the file's
+    `space` (null with no strokes), the selection's box `{x1, y1, x2, y2}`
+    in points, its pictures' turned frames in it, the raw stroke objects as
+    the file holds them, and the pictures as `[{picture, caption}]`, left
+    out when none.
     - Copy and cut fill it and, best effort, write a `ClipboardItem` beside
       it, so another app or a later build can read it. That is
       `writeInkClipboard`: `text/html` a `<div data-gamma-ink>` whose text
@@ -3989,17 +4048,20 @@ reach.
     - A browser that refuses the write loses nothing, since the ref is the
       one source a paste reads (reading the system clipboard back is not
       built).
-    - The ref does not survive a reload. `inkClip` says whether it holds
-      strokes, for the commands' guards and the layers' *Paste here*.
+    - The ref does not survive a reload, and switching workspaces reloads
+      the tab, so the pictures it holds always name uploads of the
+      workspace a paste lands in. `inkClip` says whether it holds
+      anything, for the commands' guards and the layers' *Paste here*.
   - `handleInkAction(action, value)` (the layers' `onAction`) handles
-    these, the selection's strokes, box and space coming from
-    `selectedInk()`:
-    - `copy`, and `cut` (copy, then the selected strokes removed as one
-      entry, `T("ink cut")`, and the selection let go). Both raise
-      `setStatus(tn("Copied {n} stroke.", "Copied {n} strokes.", n) |
-      tn("Cut {n} stroke.", "Cut {n} strokes.", n), {label: t("Paste"),
-      run: pasteAtCentre})`. They take the strokes alone: the pictures
-      stay on the page.
+    these:
+    - `copy`, and `cut` (copy, then the selection removed as Delete
+      removes it, one step, `T("ink cut")` or with pictures
+      `T("selection cut")`, and the selection let go; the notes under a
+      cut picture stay in its place). The clipboard is
+      `clipOf(inkSelection, inkOf, surfacePictures())`. Both raise
+      `setStatus(clipStatus(clip, cut), {label: t("Paste"), run:
+      pasteAtCentre})`: "Copied {what}." or "Cut {what}.", the strokes and
+      the pictures counted. A selection of pictures alone copies too.
     - `flip` (`{axis}` → `flipStrokes` about the selection box's centre,
       `T("ink flip")`, the selection kept). The box takes in the
       selection's pictures (`selectionBox`), and they are mirrored about
@@ -4023,6 +4085,18 @@ reach.
         "Not merged: this note has a caption or notes under it."
       - A merge that would put the target past `MAX_STROKES` is refused
         with the byte budget's pill.
+      - `threaded(id)` (App's, from `comments/useInkThreads.js`) says
+        which groups have a comment thread: the selection's is refused,
+        "Not merged: this handwriting has comments.", and none is a
+        target.
+    - `comment` (`commentInkSelection()`): a selection that is one whole
+      group (`wholeGroup`) lets go of the selection and calls
+      `onComment(id)`, App's `openThread(id, null, {compose: true, pdf:
+      true})` through `useInkThreads`. Any other is split first as `split`
+      does (`splitPlan`, `T("ink split")`), and once `applyInk` applied it
+      the selection goes and `onComment(newId)` runs on the next frame, the
+      new group's block drawn, so its card finds its place in the margin.
+      A refused split says its words and stops.
     - `reshape` (`{id, params}` → `reshapeInk`, the entry `T("ink shape
       edit")`).
     - `transcribe` ("Transcribe a selection", below).
@@ -4044,6 +4118,13 @@ reach.
   - `pasteInk(page, at, size)` makes the copies with `cloneStrokes(strokes,
     dx, dy)`, hands them to `handleInkStrokes`, selects them and arms the
     lasso.
+    - The clipboard's pictures go as new blocks through `stepBlocks`
+      (`pastePictures`), the step's `link` on the strokes' entry, so the
+      paste is one step of both histories, "selection paste". Pictures
+      alone record an entry with no changes and the link, as Delete's do.
+      The link is made only when the pictures land on the tree as it is
+      then, as `stepSelection`'s is: on a sheet gone, the strokes paste
+      alone as "ink paste".
     - `dx, dy` take the clipboard box's top-left to `at` and are then
       clamped so the box stays inside the surface. On a surface too small
       for it, its top-left corner stays on.
@@ -4056,7 +4137,8 @@ reach.
       `duplicateOffset(inkSelection.page)`, the offset the menu's Duplicate
       sends (`ink/surfaceScale.js`).
     - `selectAllInk()` takes the selection's surface, else the one in
-      view.
+      view, and its unlocked pictures while `lassoPictures` is on
+      (`selectAllPictures`).
   - The selection's `style` action: `handleInkAction("style", value)`
     routes each part to its edit, each one entry that goes through
     `applyInk`'s byte budget like any edit:
@@ -4087,8 +4169,9 @@ reach.
       n)}`.
 - `ink/selectionEdits.js` (pure; `frontend/tests/selectionEdits.test.mjs`):
   what `useInkSelection` works out before it edits.
-  - `selectedStrokes(sel, inkOf)` is `selectedInk()`, and
-    `selectionStill(sel, inkOf)` the owner's `selectionStill`.
+  - `selectedStrokes(sel, inkOf)` is the selected strokes with their box
+    and space, and `selectionStill(sel, inkOf)` the owner's
+    `selectionStill`.
   - `selectionChanges(sel, inkOf, edit)` is the changes of
     `editInkSelection`.
   - `actionEdit(action, value, box)` gives each in-place action of
@@ -4099,15 +4182,42 @@ reach.
     `shown`, the picture blocks its surface draws, none locked since. The
     layer and `useInkSelection` both read it. `selectionBox(sel, inkOf,
     shown)` is its box with their turned frames.
-  - `editPictures(tree, ids, fn)` and `removePictures(tree, ids)` are the
-    pictures' half of an edit and of Delete.
+  - `editPictures(tree, ids, fn)` and `removePictures(tree, ids,
+    keepNotes)` are the pictures' half of an edit and of Delete, or with
+    `keepNotes` of Cut, which lifts the notes under each picture into its
+    place.
   - `duplicatePlan`, `splitPlan` and `mergePlan` give Duplicate, New note
     and Merge into note their changes and the strokes to select, or
-    `{refused}` with the pill's words.
-  - `selectAllItems` is select all, and `transcribeGroups` and `inkChips`
-    are Transcribe's groups and chips.
-  - `clipOf`, `pasteShift` and `centredOn` are the clipboard and where a
-    paste lands.
+    `{refused}` with the pill's words. `mergePlan(sel, inkOf, tree,
+    surfaces, threaded)` refuses a group with a comment thread and takes
+    none as its target.
+  - `wholeGroup(sel, inkOf)` is the one group a selection takes every
+    stroke of, else null: Comment's and `useInkThreads`'s test.
+  - `selectAllItems` and `selectAllPictures` are select all, and
+    `transcribeGroups` and `inkChips` are Transcribe's groups and chips.
+  - `clipOf`, `clipStatus`, `pasteShift`, `centredOn` and `pastePictures`
+    are the clipboard, its pill, and where a paste lands with its
+    pictures.
+- `comments/useInkThreads.js`: what a comment thread does to its ink group
+  ("Comments on handwriting" above), `useInkThreads({threadsByBlock,
+  countByBlock, loaded, inkSelection, inkOf, openThread, triggerFlash}) →
+  {closedGroup, keeps, onComment}`, which App calls after the selection.
+  - An effect on the selection: once for each selection that is one whole
+    group on a PDF page with open threads (`countByBlock`), it opens the
+    thread (`openThread(id, null, {pdf: true, toggle: false})`, its card
+    the active one) and outlines the group (`triggerFlash(id)`).
+  - `closedGroup(id)` is the predicate the group has a thread open or
+    resolved (`threadsByBlock`), stable for App's life and read over the
+    threads as they are when asked; `keeps(id)` is the same, and true
+    while the page's threads have not come (`loaded`), so nothing is
+    deleted on a guess. App hands them to `useInkStrokes` (`closedGroup`),
+    `useInkSave` (`keeps`) and `useInkSelection` (`threaded`), composed
+    before it, through arrows, and its `leaveCurrentPage` flushes the
+    pending ink before the page switches, so that flush reads the page's
+    own threads (the saver's own flush on leaving runs once the next
+    page's empty ones show).
+  - `onComment(id)` is `useInkSelection`'s: a new thread's card on the
+    group.
 - `ink/inkAi.js` (pure; `frontend/tests/inkAi.test.mjs`),
   `ink/inkAiClient.js` and `ink/inkSvg.js` (pure;
   `frontend/tests/inkSvg.test.mjs`): the Convert menu's request, the edits
@@ -4487,7 +4597,7 @@ reach.
     - `drawHold` and `scribble` are the account flags, `eraserFilter`
       `'all' | 'pen' | 'highlighter'`, `fingerUndo` `'off' | 'tap' |
       'double'`, and `hoverPreview` this browser's flag.
-    - `ink` also carries `clip` (the clipboard holds strokes) and `keys`
+    - `ink` also carries `clip` (the clipboard holds something) and `keys`
       (`{copy, cut, duplicate}`: the chord labels the selection menu puts
       in its titles).
     - It carries `ruler` (`{surface, x, y, angle, length, snap}`, or null),
@@ -4560,8 +4670,7 @@ reach.
     - `ink.copy` "Copy handwriting" Mod-c, `ink.cut` "Cut handwriting"
       Mod-x and `ink.duplicate` "Duplicate handwriting" Mod-d (12 css px on
       the selection's surface), when the lasso holds a selection
-      (`c.inkSelected`). Copy and cut take its strokes alone and decline a
-      selection of pictures alone;
+      (`c.inkSelected`). Copy and cut take its strokes and its pictures;
     - `ink.paste` "Paste handwriting" Mod-v, when `c.inkOpen && c.inkTool
       && c.inkClip` and `window.getSelection().isCollapsed`
       (`textCollapsed()`);
@@ -4841,7 +4950,8 @@ reach.
     `.ink` only when it is a valid version 2 drawing. Both routes refuse a
     bad file through `parse_upload` (`routers/ink.py`).
   - Editors and edit shares may upload (`require_ws_writer`).
-  - `.ink` is in `storage.FILE_MEDIA_TYPES` (`application/json`), so `GET
+  - `.ink` has its row in `documents.formats.EXTENSIONS` (`application/json`,
+    [documents.md](documents.md#formats)), so `GET
     /api/uploads/<hash>.ink` is the ordinary upload route with its share
     scoping and cache headers.
 - Interchange ([import_export.md](import_export.md),

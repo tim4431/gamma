@@ -2,8 +2,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  addsToLibrary, bannerKey, baseName, carriesToServer, directionText, editsFile, isOpenedPdf, libraryWorkspaces, notesLocked,
-  openedHere, readVault, vaultBanner, vaultChip, vaultConflictsPath,
+  addsToLibrary, agentLine, bannerKey, baseName, carriesToServer, computerAgent, directionText, editsFile, isOpenedPdf, libraryWorkspaces,
+  mentionAgent, notesLocked, openedHere, readVault, vaultBanner, vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
 
@@ -83,6 +83,13 @@ test("the notes lock: a folder vault that does not pull and pushes everything, n
   assert.equal(notesLocked({ vault: { scope: "file", pull: false, push: "pdfs" }, reader: null }), false);
   assert.equal(notesLocked(opened()), false);
   assert.equal(notesLocked(null), false);
+  // the page's document: a work folder's picture or text file has no notes file, so its notes are Gamma's
+  const locked = folder({ pull: false });
+  assert.equal(notesLocked(locked, { format: "pdf", at: "path" }), true);
+  assert.equal(notesLocked(locked, null), true, "a note page");
+  assert.equal(notesLocked(locked, { format: "image", at: "path" }), false);
+  assert.equal(notesLocked(locked, { format: "text", at: "path" }), false);
+  assert.equal(notesLocked(locked, { format: "binary", at: "listed" }), false);
 });
 
 test("the notes file is edited here only where the vault pushes everything and the page has one", () => {
@@ -104,6 +111,7 @@ test("Add to library… is an opened PDF's, and another server's library one who
   assert.equal(carriesToServer(folder()), false);
   assert.equal(carriesToServer(null), false);
 });
+
 
 test("an opened file is this account's unless the server says another account opened it", () => {
   assert.equal(openedHere(opened({ mine: true })), true);
@@ -138,31 +146,83 @@ test("the direction in the switches' words", () => {
   assert.equal(directionText({ pull: true, push: "off" }), "Pull: on · Push: off");
 });
 
-test("an opened PDF is a linked page inside Opened files", () => {
+test("an opened PDF is a page read in place inside Opened files", () => {
+  const here = { _doc: { format: "pdf", at: "path" } };
   const rows = new Map([
     ["opened", { _opened: true }],
-    ["paper", { _linkedFile: true, _parentPage: "opened" }],
-    ["vaultPaper", { _linkedFile: true }],
-    ["inside", { _linkedFile: true, _parentPage: "other" }],
+    ["paper", { ...here, _parentPage: "opened" }],
+    ["vaultPaper", here],
+    ["inside", { ...here, _parentPage: "other" }],
     ["other", {}],
     ["plain", { _parentPage: "opened" }],
+    ["stored", { _doc: { format: "pdf", at: "store" }, _parentPage: "opened" }],
   ]);
   assert.equal(isOpenedPdf("paper", rows), true);
   assert.equal(isOpenedPdf("vaultPaper", rows), false);
   assert.equal(isOpenedPdf("inside", rows), false);
   assert.equal(isOpenedPdf("plain", rows), false);
+  assert.equal(isOpenedPdf("stored", rows), false);
   assert.equal(isOpenedPdf("nowhere", rows), false);
 });
 
 test("App's page list (libraryUtils.pageBlocksOf) carries what isOpenedPdf reads", () => {
+  const doc = (at) => ({ format: "pdf", name: "paper.pdf", hash: "a1b2c3", ext: ".pdf", at });
   const listed = [
     { id: "opened", content: "Opened files", properties: { opened_files: true } },
-    { id: "paper", content: "paper.pdf", _parentPage: "opened", properties: { linked_file: true } },
-    { id: "stored", content: "stored.pdf", _parentPage: "opened", properties: {} },
+    { id: "paper", content: "paper.pdf", _parentPage: "opened", properties: { doc: doc("path") } },
+    { id: "stored", content: "stored.pdf", _parentPage: "opened", properties: { doc: doc("store") } },
+    { id: "notes", content: "Notes", _parentPage: "opened", properties: {} },
   ];
   const rows = new Map(pageBlocksOf(listed, libraryTree({})).map((b) => [b.id, b]));
   assert.equal(rows.get("opened")._opened, true);
-  assert.equal(rows.get("paper")._linkedFile, true);
+  assert.equal(rows.get("paper")._doc.at, "path");
   assert.equal(isOpenedPdf("paper", rows), true);
-  assert.equal(isOpenedPdf("stored", rows), false, "a page there that reads no file of its own");
+  assert.equal(isOpenedPdf("stored", rows), false, "a page there whose PDF is stored");
+  assert.equal(isOpenedPdf("notes", rows), false, "a page there that reads no file of its own");
+});
+
+test("a work folder's agent on this computer: named, its problem while it cannot run, what it is at while it works", () => {
+  const agent = (extra) => folder({ agent: { name: "codex", label: "Codex", ready: true, problem: "", running: null, ...extra } });
+  assert.deepEqual(agentLine(agent()), { line: "Agent: Codex on this computer", problem: "", working: "" });
+  assert.equal(agentLine(agent({ ready: false, problem: "Codex is not on this computer." })).problem, "Codex is not on this computer.");
+  assert.equal(agentLine(agent({ ready: null, problem: "" })).problem, "", "still checking");
+  assert.equal(agentLine(agent({ running: { request_id: "r1", detail: "Editing main.tex" } })).working, "Codex is working: Editing main.tex");
+  assert.equal(agentLine(agent({ running: { request_id: "r1", detail: "" } })).working, "Codex is working", "a member who cannot act on it");
+  assert.equal(agentLine(folder({ agent: null })), null);
+  assert.equal(agentLine(folder()), null);
+  assert.equal(agentLine(opened()), null);
+  assert.equal(agentLine(null), null);
+});
+
+test("the agent a comment names: the work folder's, for its maker alone", () => {
+  const codex = { name: "codex", label: "Codex", ready: true, problem: "", running: null };
+  const work = (over = {}, agent = {}) => folder({ work_folder: true, mine: true, agent: { ...codex, ...agent }, ...over });
+  assert.deepEqual(mentionAgent(work()), { name: "codex", label: "Codex", ready: true, problem: "" });
+  assert.deepEqual(mentionAgent(work({}, { running: { request_id: "r1", detail: "Editing main.tex" } })),
+    { name: "codex", label: "Codex", ready: true, problem: "" }, "working: still named");
+  assert.equal(mentionAgent(work({}, { ready: false, problem: "Codex is not signed in." })).problem, "Codex is not signed in.");
+  assert.equal(mentionAgent(work({}, { ready: null, problem: "stale" })).problem, "", "still checking");
+  assert.equal(mentionAgent(work({ mine: false })), null, "a member who did not make the vault");
+  assert.equal(mentionAgent(work({ work_folder: false })), null);
+  assert.equal(mentionAgent(work({ agent: null })), null, "no agent on");
+  assert.equal(mentionAgent(opened()), null);
+  assert.equal(mentionAgent(null), null);
+});
+
+test("the chat's computer side: the same agent, with its run, the folder's name and whether it is paused", () => {
+  const codex = { name: "codex", label: "Codex", ready: true, problem: "", running: null };
+  const work = (over = {}, agent = {}) => folder({ work_folder: true, mine: true, agent: { ...codex, ...agent }, ...over });
+  assert.deepEqual(computerAgent(work()),
+    { name: "codex", label: "Codex", ready: true, problem: "", running: null, folder: "Papers", paused: false });
+  const running = { kind: "chat", request_id: null, detail: "Editing main.tex" };
+  assert.deepEqual(computerAgent(work({}, { running })).running, running);
+  assert.equal(computerAgent(work({ name: "" })).folder, "Attention.md", "no name: the path's last");
+  assert.equal(computerAgent(work({ paused: true })).paused, true);
+  assert.equal(computerAgent(work({ choosing: true })).paused, true, "still choosing its files");
+  assert.equal(computerAgent(work({}, { ready: false, problem: "Codex is not signed in." })).problem, "Codex is not signed in.");
+  assert.equal(computerAgent(work({ mine: false })), null, "a member who did not make the vault");
+  assert.equal(computerAgent(work({ work_folder: false })), null);
+  assert.equal(computerAgent(work({ agent: null })), null, "no agent on");
+  assert.equal(computerAgent(opened()), null);
+  assert.equal(computerAgent(null), null);
 });

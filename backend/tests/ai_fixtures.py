@@ -8,7 +8,7 @@ import re
 
 import pytest
 
-from conftest import account_of, login, make_folder, make_user, workspace_of
+from conftest import account_of, doc_props, login, make_folder, make_user, workspace_of
 from gamma.ai_tools import agent_tools
 
 ALL_TOOLS = agent_tools("folder")  # the full registry, for the wire tests
@@ -53,7 +53,7 @@ def org(client, request):
                "nondestructive": make_folder(c, "readout/nondestructive"),
                "cooling": make_folder(c, "cooling")}
     ids = {
-        "a": page("cavity paper", {"folders": [folders["readout"]], "doc_id": "d" * 24,
+        "a": page("cavity paper", {"folders": [folders["readout"]], **doc_props("d" * 24),
                                    "meta": {"authors": ["Ada One", "Bo Two"], "year": "2019", "venue": "Nature"}}),
         "b": page("qec paper", {"folders": [folders["nondestructive"], folders["cooling"]]}),
         "note": page("loose note", {}),
@@ -64,9 +64,9 @@ def org(client, request):
 @pytest.fixture(scope="module")
 def indexed_pdf(org):
     """Page a's PDF with a searchable hit on physical page 3, stored the way
-    the indexer stores a paper (pdf_index.store_doc)."""
+    the indexer stores a paper (search.index.store_doc)."""
     from gamma.db import connect_data_db
-    from gamma.pdf_index import store_doc
+    from gamma.search.index import store_doc
     from gamma.textnorm import normalize_text
 
     _, ids = org

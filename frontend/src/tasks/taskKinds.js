@@ -68,7 +68,7 @@ export const TASK_KINDS = {
   },
   indexing: {
     icon: "search",
-    title: () => t("Indexing PDFs for search"),
+    title: () => t("Indexing documents for search"),
   },
   // A recording's transcript (docs/dev/recording.md): the spoken words
   // written under the recording block, each paragraph at its moment.
@@ -179,6 +179,7 @@ export function progressCounts({ done, total, unit } = {}) {
     case "files": return tn("{done} of {total} file", "{done} of {total} files", total, args);
     case "items": return tn("{done} of {total} item", "{done} of {total} items", total, args);
     case "papers": return tn("{done} of {total} paper", "{done} of {total} papers", total, args);
+    case "documents": return tn("{done} of {total} document", "{done} of {total} documents", total, args);
     case "workspaces": return tn("{done} of {total} workspace", "{done} of {total} workspaces", total, args);
     case "highlights": return tn("{done} of {total} highlight", "{done} of {total} highlights", total, args);
     default: return t("{done} of {total}", args);

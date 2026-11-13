@@ -32,9 +32,12 @@ export function conflictMessage(conflict) {
 // (inkStore.js). apiJson, API: the API's fetch and its root
 // (shared/lib/utils). keepaliveRoom(priority): the room the page's
 // keepalive ledger leaves (shared/lib/keepalive.js available).
+// keeps(id): the group's block stays when it is erased empty, as one with
+// a caption or notes does: a group with a comment thread
+// (comments/useInkThreads.js), which the thread hangs on.
 // → {flushInk, scheduleInk, pending}: pending() is whether a save waits
 // on its timer.
-export function createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJson, API, keepaliveRoom }) {
+export function createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJson, API, keepaliveRoom, keeps = () => false }) {
   // The pending-upload timer, 0 when none.
   const inkTimerRef = { current: 0 };
   // What the server's merge dropped or brought back, on the pill.
@@ -76,8 +79,9 @@ export function createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJ
     const groups = inkStore.dirtyDrafts().map((d) => {
       const block = flat.find((b) => b.id === d.id);
       // A group erased empty goes, unless its block holds a caption or
-      // notes: those stay, with an empty drawing an undo can refill.
-      if (!d.ink.strokes.length && !(block?.content || "").trim() && !block?.children?.length) {
+      // notes, or a comment thread hangs on it: those stay, with an empty
+      // drawing an undo can refill.
+      if (!d.ink.strokes.length && !(block?.content || "").trim() && !block?.children?.length && !keeps(d.id)) {
         return { ...d, block, remove: true, inFlight: flight.deletes.has(d.ink) ? "delete" : null };
       }
       const body = d.upload?.body || serializeInk(d.ink);

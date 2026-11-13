@@ -123,17 +123,26 @@ def test_properties_merge_not_replace(guest):
 
 def test_a_new_page_row_follows_one_rule(guest):
     """blocks_store.page_root_props: filing kept only as a list of ids,
-    without repeats, a source_url that is the doc_id's stored copy dropped,
-    any other kept; insert_page_tree (the imports' writer) stores a page's
-    props as it leaves them, as create_page does."""
+    without repeats; the flat keys a document was kept in dropped; a doc
+    kept in canonical form when it checks (the doc's own stored address
+    dropped, an address of a stored file alone a copy of it, any other
+    address kept), else dropped; insert_page_tree (the imports' writer)
+    stores a page's props as it leaves them, as create_page does."""
     from gamma.blocks_store import insert_page_tree, page_root_props
-    from gamma.storage import pdf_url
 
     doc = "a" * 24
-    props = {"folders": "f1", "labels": ["l1", "l1"], "doc_id": doc, "source_url": pdf_url(doc), "web_url": "https://x.test"}
-    kept = {"labels": ["l1"], "doc_id": doc, "web_url": "https://x.test"}
+    stored = {"format": "pdf", "name": "", "hash": doc, "ext": ".pdf", "at": "store"}
+    props = {"folders": "f1", "labels": ["l1", "l1"], "web_url": "https://x.test",
+             "doc": {"hash": doc, "at": "url", "url": f"/api/uploads/{doc}.pdf"}}
+    kept = {"labels": ["l1"], "web_url": "https://x.test", "doc": stored}
     assert page_root_props(props) == kept
-    assert page_root_props({"doc_id": doc, "source_url": "https://x.test/p.pdf"})["source_url"] == "https://x.test/p.pdf"
+    assert page_root_props({"doc": {"hash": doc, "url": "https://x.test/p.pdf"}})["doc"] == {
+        **stored, "at": "url", "url": "https://x.test/p.pdf"}
+    assert page_root_props({"doc": {"url": f"/api/uploads/{doc}.pdf"}})["doc"] == {**stored, "copy": True}
+    assert page_root_props({"doc_id": doc, "source_url": "https://x.test/p.pdf", "linked_file": True,
+                            "web_url": "https://x.test"}) == {"web_url": "https://x.test"}
+    for bad in ("x", None, {"hash": "../x"}, {"hash": doc, "format": "epub"}, {**stored, "pages": 3}):
+        assert page_root_props({"doc": bad, "pinned": True}) == {"pinned": True}, bad
     assert page_root_props(None) == {}
     with connect_pages_db(workspace_of(guest_name())) as conn:
         assert insert_page_tree(conn, "pgRule1", "Imported", props, [{"content": "a"}], actor="me") == 1

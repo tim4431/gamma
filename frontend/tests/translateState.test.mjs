@@ -9,7 +9,7 @@ import { segmentPage } from "../src/pdf/pdfTranslate.js";
 import { BREAK } from "../src/pdf/translatePlan.js";
 import * as translateState from "../src/pdf/translateState.js";
 import { TRANSLATE_PARALLEL_MAX } from "../src/app/prefDefs.js";
-import { attachmentFile, pageAttachment } from "../src/library/libraryUtils.js";
+import { fileHash, pageDocument } from "../src/documents/pageDocument.js";
 import { docIdOf } from "../src/pdf/pdfSource.js";
 
 const PAPER = JSON.parse(fs.readFileSync(new URL("./fixtures/translatePaper.json", import.meta.url)));
@@ -448,19 +448,20 @@ test("the page names the paper, and only the brief's request reads a PDF the ser
 });
 
 test("a PDF opened from its link names the file the server keeps its translations under, which Forget this paper's translations forgets", () => {
-  // The page App builds the scope from: its attachment id is the link's
-  // hash, under which the proxy saves its copy and the server keeps the
-  // paper's translations. The viewer reads it through the proxy, whose URL
-  // names no upload.
+  // The page App builds the scope from: its document's hash is the link's,
+  // under which the proxy saves its copy and the server keeps the paper's
+  // translations. The viewer reads it through the proxy, whose URL names no
+  // upload.
   const link = "https://arxiv.org/pdf/2401.00001";
-  const block = { properties: { doc_id: "0123456789abcdef01234567", source_url: link } };
+  const pdf = (fields) => ({ properties: { doc: { format: "pdf", name: "", ext: ".pdf", ...fields } } });
+  const block = pdf({ hash: "0123456789abcdef01234567", at: "url", url: link });
   const url = `/api/pdf?source_url=${encodeURIComponent(link)}&save=1`;
   assert.equal(docIdOf(url), null, "the viewer's URL alone names no file");
-  const scope = { url, pageId: "page-arxiv", stored: !!docIdOf(url), file: attachmentFile(pageAttachment(block)) };
+  const scope = { url, pageId: "page-arxiv", stored: !!docIdOf(url), file: fileHash(pageDocument(block)) };
   assert.deepEqual(translateState.scopeOf(url, scope), { pageId: "page-arxiv", stored: false, file: "0123456789abcdef01234567" });
-  // A duplicated page carries only its upload's URL.
-  const copy = { properties: { source_url: "/api/uploads/89abcdef0123456789abcdef.pdf" } };
-  assert.equal(attachmentFile(pageAttachment(copy)), "89abcdef0123456789abcdef");
+  // A duplicated page shows the original's stored file: its translations are that file's.
+  const copy = pdf({ hash: "89abcdef0123456789abcdef", at: "store", copy: true });
+  assert.equal(fileHash(pageDocument(copy)), "89abcdef0123456789abcdef");
 });
 
 test("jobs on several documents together send no more chunk requests at once than one job may", async () => {

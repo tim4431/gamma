@@ -44,8 +44,10 @@ does not show comes in chunks of its own, through `lazySurface` and
 | Properties popover (`editor/BlockProperties.jsx`, `blockProperties.css`) | while open | nothing |
 | PDF margin cards (comments) | beside a page with room and an open thread | nothing |
 | Comments window | with its dock window | the window's frame (`DockWindow`), body empty |
+| Files window (`explorer/FilesWindow.jsx` with `FileTree.jsx`, `fileTree.js` and `filesWindow.css`; App imports nothing of them, and its owners `useFilesWindow.js`, `useFilesTree.js`, `useDirectoryRows.js`, `directoryRows.js` and `workPaths.js` are small and in the App chunk) | with its dock window or its phone overlay; fetched at startup when it is open on a desktop, else on the View menu's hover | the window's frame (`DockWindow`), body empty |
 | Inbox panel | while open | nothing |
 | A vault page's Edit the file (`vault/FileSourceDialog.jsx`) and an opened PDF's Add to library… (`vault/FolderPickerDialog.jsx`) | while open | nothing |
+| The code view (`documents/viewers/TextViewer.jsx`, with `@codemirror/search` and `@codemirror/language-data`; each grammar a chunk of its own, fetched when a file of it opens) and the picture, the player and the file pane (`documents/viewers/FileViews.jsx`) | with a page whose document is of their format (`documents/DocumentPane.jsx`); App fetches the chunk as the page starts to open (`preloadViewer`) | the pane's empty shell (`.docViewSkeleton`) |
 | pdf.js and its worker | `loadPdfEngine()` in `pdf/PdfViewer.jsx`, awaited just before `getDocument` | the viewer's skeleton and status pill |
 
 Mermaid was already loaded this way (`shared/lib/mermaidRenderer.js`).
@@ -145,18 +147,40 @@ do: [the bundle note](../research/bundle.md#a-month-later-november-2026).
 Built, like the lazy boundaries. A feature's new state, and the effects
 that keep it, go into an owner module beside the feature, never into
 `app/App.jsx`. The owner is a `use…` hook, as the `ink/` owners,
-`comments/useComments.js`, `inbox/useInbox.js` and `vault/useVault.js` (a
-page's synced-vault standing, its banner and the two vault dialogs) are. State that must
+`comments/useComments.js`, `inbox/useInbox.js`, `vault/useVault.js` (a
+page's synced-vault standing, its banner, the vault dialogs and, on the
+desktop, the workspace's folder vaults and the tracking dialog) and
+`explorer/useFolderRows.js` / `useSummaries.js` (a work folder's rows and
+the pages the listing leaves out), `explorer/useWorkFolderActions.jsx`
+(what may be done with a work folder's files and folders, and the library
+requests and menu rows for its files), `explorer/useFilesWindow.js` (the
+Files window's showing, open folders, keys' row, selection and the file
+rows it hands App), `explorer/useFilesTree.js` with `useDirectoryRows.js`
+(its directory reads, first slot and reveal: a second owner, since what it
+needs of App — the page rows, the phone flag — is made after the known
+rows the first feeds), `explorer/useFileSearch.js` (quick open's files,
+QuickOpen's own) and `comments/useInkThreads.js` (what a comment thread on
+an ink group does to the ink) are. State that must
 outlive a component, or be read outside React, is a store with listeners
 that components read through `useSyncExternalStore` (`pdf/translateState.js`,
 `recording/recorderStore.js`, `replay/playback.js`,
-`settings/settingsReads.js`). App calls the owner and hands its commands on.
+`settings/settingsReads.js`, `feedback/useFeedback.js`: the feedback
+dialog's scope, which each opener writes where it is and
+`feedback/FeedbackHost.jsx` reads, so App renders the dialog and holds
+nothing of it). App calls the owner and hands its commands on.
 
 - **An owner is tested.** Its rules are a pure module with a node test,
   since the frontend has no component tests: `ink/stripState.js` under
   `useInkStrip.js`, `ink/inkSaver.js` under `useInkSave.js`,
   `inbox/inboxText.js` under `useInbox.js`, `vault/vaultState.js` under
-  `useVault.js`.
+  `useVault.js`, `explorer/knownPages.js` beside `useSummaries.js`,
+  `explorer/workFolderActions.js` under `useWorkFolderActions.jsx`,
+  `explorer/trackSelection.js` under `TrackDialog.jsx`,
+  `explorer/directoryRows.js` under `useDirectoryRows.js`, `layoutKeeping`
+  in `useFilesWindow.js`, `explorer/fileSearch.js` under `useFileSearch.js`
+  and
+  `feedback/feedbackView.js` with `feedback/feedbackText.js` under
+  `FeedbackDialog.jsx`.
 - **An owner is narrow.** It takes the few inputs it reads and returns
   state and stable commands. A hook that takes App's variables wholesale
   moves code without giving it an owner.
@@ -252,14 +276,14 @@ Extraction should remove coupled responsibilities, not merely move long
 sections into hooks that accept every variable from App. Keep the existing
 React stack, URL formats, API contracts, and stored preference keys. Follow
 the [block-centric model](block_centric.md): a page owns its block tree and
-may carry a PDF attachment.
+may carry a document (`properties.doc`, [documents.md](documents.md)).
 
 ## Proposed ownership
 
 Paths below are relative to `frontend/src/`. The folders exist except
 `app/preferences/` and `pages/`; the hooks and state owners in this table
-are proposals, but for the `ink/` row's, which are built, and the tab
-groups of the `workspace/` row.
+are proposals, but for the `ink/` and `documents/` rows', which are built,
+and the tab groups of the `workspace/` row.
 
 | Module or area | Responsibility | Existing code to extract |
 |---|---|---|
@@ -271,7 +295,10 @@ groups of the `workspace/` row.
 | `collaboration/` (existing: `usePageCollab.js`) | Queued writes, debounce, retries, explicit flush, unload handling — the live session hook `usePageCollab` ([collab.md](collab.md)); App keeps the transition effect and the remote-apply glue | `commit`, `flush`, `onRemoteOps` |
 | `editor/` | Block editing, caret/focus, undo, and notes rendering | Existing editor files, `editTail`, notes-window markup and editor actions |
 | `library/` | Listing derivation, selection, page/folder/label operations, and library UI | `pageBlocks` through `homeItems`, click handlers, filing, rename/move/delete, carousels |
+| `explorer/` (built: `workFolders.js`, `workFolderActions.js`, `knownPages.js`, `trackSelection.js`, `useFolderRows.js`, `useSummaries.js`, `useWorkFolderActions.jsx`, `FolderList.jsx`, `TrackDialog.jsx`, the Files window's `useFilesWindow.js`, `useFilesTree.js`, `useDirectoryRows.js`, `directoryRows.js`, `fileTree.js`, `FilesWindow.jsx`, `FileTree.jsx`, the path twin `workPaths.js`, quick open's `useFileSearch.js` and `fileSearch.js`, [work_folders.md](work_folders.md)) | Work folders: the rules a file and the folders of one follow, what the menus, drops and open page ask of them, Add to library, Remove from library and Save a copy, a directory's list view read a page of rows at a time, the pages the listing does not carry, the tracking dialog; the Files window, a file's crumbs and path, quick open's files | Extracted: the rules (node-tested twins of the server's), what App asks of them (`workFolderActions.js`, node-tested), the commands and the menus' library rows (`useWorkFolderActions.jsx`), the list view's rows and the two reads, the Files window's state, reads and tree; App merges the rows into `knownBlocks`, hands the list view and the tree the library's row actions, mounts the window in its dock and gates its own menus and drops on the answers |
+| `feedback/` (built: `useFeedback.js`, `FeedbackHost.jsx`, `FeedbackDialog.jsx`, `feedbackView.js`, `feedbackText.js`, [feedback.md](feedback.md)) | Feedback on a work folder's files: the view and Send dialog, the requests and their states | Extracted whole: the dialog's scope is a store each opener writes (the list bar, the Comments window, the vault chip), the host App mounts reads it, and the dialog holds its own reads and state; App only hands it `openThreadAt`, who may send and the vaults, and wires the ink threads' hook (`comments/useInkThreads.js`) into the ink owners |
 | `workspace/` (built: the tab groups, `tabLayout.js`, `TabGroups.jsx`, `PagePane.jsx`, [tab_groups.md](tab_groups.md); the dock arrangement itself is still App's) | Dock arrangement, visibility, panel sizes, drag geometry, and phone presentation; the open tabs' groups side by side | `moveWindow`, `startWindowDock`, `renderSlotGroup`, per-page layout snapshots |
+| `documents/` (built: `pageDocument.js`, `documentView.js`, `viewers.js`, `codeLanguages.js`, `DocumentPane.jsx`, `viewerSurface.js`, `viewers/`, `formats.js`, [documents.md](documents.md)) | What a page carries and which viewer it shows: one rule for the live page and a tab group's (`documentView`), the registry of panes and what each brings to the frame (`viewers.js`), the pane that mounts the viewer it names, the viewers of its own (the code view, the picture, the player, the file pane) and the surface they take | Extracted: the viewer decision (App reads it as `docView` and its gates from `spec`, never a pane's id), the viewer switch, and the surface's memo and the viewer's report ref (`useViewerSurface`, stable closures over App's handlers); App keeps the PDF's and the notebook's render functions and their props |
 | `pdf/` | Viewer controls, PDF/notes jumps, scroll restoration, translation, and snapshots | Existing viewer/translation files, `restorePdfScroll`, zoom and capture logic |
 | `ink/` (built: `buildFence.js`, `useInkStrip.js`, `useInkLive.js`, `useInkSave.js` over `inkSaver.js`, `useInkSurfaces.js`, `useInkDocument.js`, `useInkStrokes.js`, `useInkSelection.js`, `useInkRuler.js`, `useInkZoom.js`, `useStripKeys.js`, `usePencil.js`) | The strip's tools, a page's ink edits and history, saving, the lasso and clipboard, ruler, zoom window, strip keys, Pencil | Extracted: the build fence; `inkUi` with its presets and commands; live co-drawing; `flushInk` and `scheduleInk` (the save as a node-tested factory); the ink by surface and `pasteTarget`; `applyInk`, the stroke history and the erasers; `handleInkStroke` and `handleInkStrokes`; the lasso selection, its actions and the clipboard; the ruler; the zoom window; the strip's key handler; the Pencil's gestures and haptics; their pure parts, node-tested (`stripState.js`, `inkHistory.js`, `inkEdits.js`, `selectionEdits.js`, `inkSurfaces.js`, `inkCommands.js`). App keeps the composition, the page tools, navigation, the chat half of Transcribe ([handwriting.md](handwriting.md) "Client") |
 | `transfers/` | Upload/import/export operations | `uploadFiles`, format imports, backup transfer functions (the Background tasks store, tray and the job handlers in `useAppJobs.js` already live in `tasks/`) |
@@ -283,8 +310,8 @@ groups of the `workspace/` row.
 Split the larger areas into focused files as their state owners emerge.
 For example, library listing selectors, selection state, mutations, and
 `LibraryView` should be separate; do not create one giant `useLibrary` hook.
-Existing helpers such as `pageAttachment` and `useBlockHistory` remain the
-source of truth throughout the moves.
+Existing helpers such as `pageDocument`, `documentView` and `useBlockHistory`
+remain the source of truth throughout the moves.
 
 ## Logic cleanup to do with the extraction
 
@@ -342,10 +369,17 @@ calculation. Keep collapsed headers outside percentage-sized panels, preserve
 window order, and restore ratios only when the target panel structure exists.
 Make all retry timers cancellable on navigation and unmount.
 
+Done of this so far: a fourth window (Files) joined through tables rather
+than another branch per site (the grip anchors' `GRIP_GUIDE`, the
+fold-forget effect's table of hidden flags), and a page's saved layout keeps
+a window whose place is the browser's where it is (`layoutKeeping`, with its
+fold); `windowFrame` and `renderWindow` still branch on the id, and the
+rest of this section is open.
+
 Phone overlays should derive from the same visible-window model while retaining
 the desktop arrangement for the switch back to a wider viewport. Preserve
-notes in the center for pages without a PDF attachment and layout inheritance
-for pages without a saved arrangement.
+notes in the center for pages without a document pane (`documentView`'s
+`center`) and layout inheritance for pages without a saved arrangement.
 
 ### 4. Preference synchronization
 

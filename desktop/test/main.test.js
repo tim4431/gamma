@@ -4,8 +4,9 @@
 // the Zotero links (refreshKeeping -> registry.setZoteroHost, the servers
 // startBackgroundHosts starts at launch), a resume made while a reading
 // runs, one start per server however many ask, and the synced vaults: the
-// panel's actions in the vocabulary, a round followed to its end, a vault
-// made from a directory through the dialog with the shell's word on the
+// panel's actions in the vocabulary, a round followed to its end, a work
+// folder made from a directory and its tracking dialog opened in the window,
+// a folder with pages through the bar's dialog, the shell's word on the
 // routes that take a path, and the focus hint; and a PDF opened with Gamma,
 // where its page is. `npm test` in desktop/.
 
@@ -125,6 +126,7 @@ function server(name, links = [], { zotero = 'list', running: on = true, broken 
       if (routed && routed.failWith) return fails(routed.failWith, routed.body);
       if (routed) return ok(routed);
       if (p === '/api/session') return ok({ user: { id: 'admin', username: 'admin' }, default_workspace: 'mine', workspaces: fake.workspaces });
+      if (p === '/api/sync/changes') return ok({ format: 51, changes: [] });
       if (p === '/api/mirrors') return broken ? fails(500) : ok({ mirrors: [] });
       if (p === '/api/folder-links') return ok({ links: fake.vaults });
       if (p === '/api/zotero/links') {
@@ -493,10 +495,161 @@ test('a vault of another server keeps pulling and pushes PDFs at most: its switc
   assert.deepEqual(patches(), [{ pull: true }], 'turned on, as the rule wants');
 });
 
-test('a synced vault made from a directory with no server open: on the host, in its own workspace, as the dialog says; the routes that take a path carry the word the host was started with', async () => {
+test('a work folder choosing its files is shown so, its Choose files… opens its tracking dialog in the window, and its library switch is the server\'s', async () => {
+  fresh();
+  const s = server('Work');
+  s.fake.vaults = [vaultLink({ push: 'everything', choosing: true, library: false, status: { paused_at: '2026-11-10T10:00:00Z' } })];
+  s.fake.routes = (p, init) => (p === '/api/folder-links/v1' && init.method === 'PATCH' ? vaultLink({ push: 'everything', library: true }) : null);
+  const view = windowOn(s.fake);
+  shell.pretendShown(s.srv, view, appWindow);
+  try {
+    await shell.refreshKeeping();
+    const [item] = shell.keeping().items;
+    assert.deepEqual([item.work, item.choosing, item.state, item.text], [true, true, 'pending', 'Choosing files']);
+    await shell.keepingAction('vault', s.srv.id, 'v1', 'choose');
+    const at = new URL(view.loaded.at(-1));
+    assert.deepEqual([at.searchParams.get('ws'), at.searchParams.get('folder'), at.searchParams.get('track')], ['mine', 'f1', 'v1']);
+    await shell.keepingAction('vault', s.srv.id, 'v1', 'library', true);
+    const patches = s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH');
+    assert.deepEqual(patches.map((c) => c.body), [{ library: true }]);
+    assert.equal(patches[0].headers['X-Gamma-Workspace'], 'mine');
+    assert.match(shell.notice(), /from now on are added to the library too/);
+  } finally {
+    shell.pretendShown(null, null);
+  }
+});
+
+test('a work folder\'s agent from the panel: the agents found are read, turning one on is asked with the Sends waiting and carries the shell\'s word, off asks nothing', async () => {
+  fresh();
+  const s = server('Agents');
+  const codexOn = { name: 'codex', label: 'Codex', ready: true, problem: '', running: null };
+  // the link names its maker by account id, never by username
+  s.fake.vaults = [vaultLink({ push: 'everything', mine: true, created_by: 'u_7Xk3q', agent: null })];
+  const found = [{ name: 'codex', label: 'Codex', found: true, version: '0.167.0', ready: true, problem: '' },
+    { name: 'claude', label: 'Claude Code', found: false, version: '', ready: false, problem: 'Claude Code is not on this computer.' }];
+  s.fake.routes = (p, init) => {
+    if (p === '/api/local-agents') return { agents: found };
+    if (p === '/api/local-agents/waiting') return { waiting: 2 };  // the server counts by its own rule
+    if (p === '/api/folder-links/v1' && init.method === 'PATCH') {
+      const { agent } = JSON.parse(init.body);
+      s.fake.vaults = [vaultLink({ push: 'everything', mine: true, created_by: 'u_7Xk3q', agent: agent ? codexOn : null })];
+      return { ...s.fake.vaults[0], ...(agent ? { queued: 2 } : {}) };
+    }
+    return null;
+  };
+  const patches = () => s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH');
+  await shell.refreshKeeping();
+  let [item] = shell.keeping().items;
+  assert.deepEqual([item.work, item.mine, item.agent], [true, true, '']);
+  assert.deepEqual(item.agents.map((a) => [a.name, a.ready]), [['codex', true], ['claude', false]]);
+  const read = s.fake.calls.find((c) => c.path === '/api/local-agents');
+  assert.equal(read.query, '', 'the panel\'s reading takes what the server has, never a fresh check');
+
+  // asked first, with the maker's Sends that wait; under the harness the question takes Cancel
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex');
+  assert.deepEqual(patches(), [], 'nothing turned on');
+  assert.equal(shell.asked.at(-1), 'Let Codex work in C:\\Papers? Codex will answer the Sends you make on this folder: it edits files in this directory and runs commands in its sandbox, without network. 2 waiting Sends will be handed to it.');
+  const [counted] = s.fake.calls.filter((c) => c.path === '/api/local-agents/waiting');
+  assert.equal(new URLSearchParams(counted.query).get('link'), 'v1');
+  assert.ok(!s.fake.calls.some((c) => c.path === '/api/feedback/requests'), 'the shell counts nothing itself');
+
+  shell.answers.push(0);
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex');
+  const [on] = patches();
+  assert.deepEqual(on.body, { agent: 'codex' });
+  assert.equal(on.headers['X-Gamma-Shell'], shell.shellSecret, 'turning an agent on is the computer\'s word');
+  assert.equal(on.headers['X-Gamma-Workspace'], 'mine');
+  assert.equal(shell.notice(), 'Codex now answers the Sends on Papers; 2 waiting were handed to it.');
+  await shell.refreshKeeping();
+  [item] = shell.keeping().items;
+  assert.deepEqual([item.agent, item.agentLabel, item.agentReady], ['codex', 'Codex', true]);
+
+  // the same agent again changes nothing; a name that is none is refused; off asks nothing and carries no word
+  const asks = shell.asked.length;
+  assert.equal(await shell.setAgent(s.srv.id, 'v1', 'codex'), false);
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'gpt'), /codex or claude/);
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', '');
+  const off = patches().at(-1);
+  assert.deepEqual(off.body, { agent: '' });
+  assert.equal(off.headers['X-Gamma-Shell'], undefined);
+  assert.equal(shell.asked.length, asks, 'nothing asked');
+  assert.equal(shell.notice(), 'Codex no longer answers the Sends on Papers: they wait for an agent you run yourself.');
+
+  // the work folder's view asks the server to look again
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'check-agents');
+  assert.ok(s.fake.calls.some((c) => c.path === '/api/local-agents' && c.query === '?fresh=1'));
+
+  // a folder that is no work folder has no agent; a server that runs none (404) offers none
+  s.fake.vaults = [vaultLink({ mine: true })];
+  s.fake.routes = () => null;
+  await shell.refreshKeeping();
+  [item] = shell.keeping().items;
+  assert.equal(item.agents, null);
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex'), /Only a work folder/);
+});
+
+// What `POST /api/folder-links/preview` finds in the directory `picked`:
+// `pages` in the folder, `notes` in the directory, `refusal` why it may not be.
+const previewOf = (picked, { notes = 2, pages = 0, refusal = '', marker = null } = {}) => ({
+  path: picked, notes, pdfs: 1, pictures: 0, untracked: 0, empty: false, marker, refusal, pages, will_write: ['.gamma/'],
+  gammaignore: { exists: false, ours: false },
+});
+
+// The folders of the workspace the window shows, as `GET /api/sync/folders` lists them.
+const FOLDERS = { folders: [{ id: 'f1', path: ['Kept lab'] }, { id: 'f2', path: ['Empty lab'] }] };
+
+test('a directory added becomes a work folder made to choose its files: nothing asked in the bar, the window goes to its tracking dialog, and the routes that take a path carry the shell\'s word', async () => {
+  fresh();
+  const host = server('Host');
+  const picked = fs.mkdtempSync(path.join(dir, 'Reading-'));
+  let found = previewOf(picked);
+  host.fake.routes = (p, init) => {
+    if (p === '/api/folder-links/preview') return found;
+    if (p === '/api/sync/folders') return FOLDERS;
+    if (p === '/api/folder-links' && init.method === 'POST') {
+      const body = JSON.parse(init.body);
+      return vaultLink({ id: 'w1', folder_id: body.folder || 'made', path: picked, dest: picked, push: 'everything', choosing: true });
+    }
+    return null;
+  };
+  const made = () => host.fake.calls.filter((c) => c.path === '/api/folder-links' && c.method === 'POST');
+  const view = windowOn(host.fake);
+  shell.pretendShown(host.srv, view, appWindow);
+  process.env.GAMMA_SHELL_PICK_DIR = picked;
+  try {
+    const link = await shell.addDirectoryVault();
+    assert.equal(link.id, 'w1');
+    assert.equal(shell.vaultAsk(), null, 'its tracking dialog says what it tracks, not the bar');
+    const [create] = made();
+    assert.deepEqual(create.body, { path: picked, new_folder: true, pull: true, push: 'everything', choose: true, adopt: false });
+    assert.equal(create.headers['X-Gamma-Workspace'], 'mine', 'the account\'s own workspace');
+    const [preview] = host.fake.calls.filter((c) => c.path === '/api/folder-links/preview');
+    for (const c of [create, preview]) assert.equal(c.headers['X-Gamma-Shell'], shell.shellSecret, `${c.path} carries it`);
+    assert.deepEqual(preview.body, { path: picked, folder: '', kind: 'folder' });
+    const at = new URL(view.loaded.at(-1));
+    assert.deepEqual([at.searchParams.get('ws'), at.searchParams.get('folder'), at.searchParams.get('track')], ['mine', 'made', 'w1']);
+
+    // a folder with no pages synced with a directory of notes and PDFs: a work folder too, of that folder
+    await shell.addFolderVault('mine', 'f2');
+    assert.equal(shell.vaultAsk(), null);
+    assert.deepEqual(made().at(-1).body, { path: picked, folder: 'f2', pull: true, push: 'everything', choose: true, adopt: false });
+    assert.equal(new URL(view.loaded.at(-1)).searchParams.get('folder'), 'f2');
+
+    // a refusal the preview tells is said in the bar, and nothing is made
+    found = previewOf(picked, { refusal: `${picked} holds the marker of the synced vault C:\\Other: was it copied?` });
+    assert.equal(await shell.addDirectoryVault(), null);
+    assert.equal(made().length, 2, 'nothing posted');
+    assert.equal(shell.notice(), found.refusal);
+  } finally {
+    delete process.env.GAMMA_SHELL_PICK_DIR;
+    shell.pretendShown(null, null);
+  }
+});
+
+test('a work folder made with no server open: on the host, started with a word of its own that its routes carry', async () => {
   fresh();
   const host = server('Host', [], { running: false });
-  const picked = fs.mkdtempSync(path.join(dir, 'Reading-'));
+  const picked = fs.mkdtempSync(path.join(dir, 'Started-'));
   const infos = [];
   const realStart = sidecar.start;
   sidecar.start = async (ws, _settings, info) => {
@@ -505,89 +658,79 @@ test('a synced vault made from a directory with no server open: on the host, in 
     return { url: 'http://127.0.0.1:50999', port: 50999 };
   };
   host.fake.routes = (p, init) => {
-    if (p === '/api/folder-links/preview') {
-      return { path: picked, notes: 2, pdfs: 1, pictures: 0, untracked: 0, empty: false, marker: null, refusal: '', pages: 0, will_write: ['.gamma/'] };
-    }
-    if (p === '/api/folder-links' && init.method === 'POST') return vaultLink({ path: picked, dest: picked });
+    if (p === '/api/folder-links/preview') return previewOf(picked);
+    if (p === '/api/folder-links' && init.method === 'POST') return { failWith: 400, body: { detail: 'A workspace has at most 10 synced vaults of folders.' } };
     return null;
   };
-  const made = () => host.fake.calls.filter((c) => c.path === '/api/folder-links' && c.method === 'POST');
   process.env.GAMMA_SHELL_PICK_DIR = picked;
   try {
-    const adding = shell.addDirectoryVault();
-    await until(() => shell.vaultAsk(), 'the dialog is up');
-    const ask = shell.vaultAsk();
-    assert.deepEqual([ask.newFolder, ask.pull, ask.push, ask.folder, ask.workspace, ask.server, ask.path],
-      [true, true, 'everything', path.basename(picked), 'Mine', 'Host', picked]);
-    assert.equal(ask.resolve, undefined, 'the bar gets the dialog, never its promise');
-    assert.match(ask.sentences['true:everything'].text, /^Push 2 notes and 1 PDF from .+ into a new folder “Reading-/);
-    assert.equal(ask.sentences['false:off'].ok, false);
-    assert.equal(shell.answerVault(ask.id, { pull: false, push: 'off' }), false, 'an answer its sentence refuses');
-    assert.equal(shell.answerVault(ask.id + 1, { pull: true, push: 'everything' }), false, 'another dialog\'s');
-    assert.equal(shell.answerVault(ask.id, { pull: true, push: 'pdfs' }), true);
-    assert.equal((await adding).dest, picked);
-    assert.equal(shell.vaultAsk(), null);
-    const [create] = made();
-    assert.deepEqual(create.body, { path: picked, new_folder: true, pull: true, push: 'pdfs', adopt: false });
-    assert.equal(create.headers['X-Gamma-Workspace'], 'mine', 'the account\'s own workspace on the host');
+    await assert.rejects(shell.addDirectoryVault(), /at most 10 synced vaults/, 'the server\'s refusal, and no window opened for it');
     assert.equal(infos.length, 1, 'the host was started');
     assert.ok(infos[0].shellSecret && infos[0].shellSecret.length >= 32, 'with a word of its own');
     assert.equal(infos[0].shellSecret, shell.shellSecret);
-    const [preview] = host.fake.calls.filter((c) => c.path === '/api/folder-links/preview');
-    for (const c of [create, preview]) assert.equal(c.headers['X-Gamma-Shell'], infos[0].shellSecret, `${c.path} carries it`);
-    assert.deepEqual(preview.body, { path: picked, folder: '', kind: 'folder' });
-
-    // cancelled: nothing is made
-    const again = shell.addDirectoryVault();
-    await until(() => shell.vaultAsk(), 'the dialog is up again');
-    assert.equal(shell.answerVault(shell.vaultAsk().id, null), true);
-    assert.equal(await again, null);
-    assert.equal(made().length, 1);
+    const [create] = host.fake.calls.filter((c) => c.path === '/api/folder-links' && c.method === 'POST');
+    assert.equal(create.headers['X-Gamma-Shell'], infos[0].shellSecret);
+    assert.equal(create.headers['X-Gamma-Workspace'], 'mine', 'in the account\'s own workspace on the host');
   } finally {
     sidecar.start = realStart;
     delete process.env.GAMMA_SHELL_PICK_DIR;
   }
 });
 
-test('the vault dialog stays shown until it is answered, one ask runs at a time, and the shell\'s word goes to a running local server only', async () => {
+test('a folder with pages still asks in the bar: the vault dialog stays shown until it is answered, one ask runs at a time, and the shell\'s word goes to a running local server only', async () => {
   fresh();
   const host = server('Host');
   const picked = fs.mkdtempSync(path.join(dir, 'Once-'));
   host.fake.routes = (p, init) => {
-    if (p === '/api/folder-links/preview') {
-      return { path: picked, notes: 0, pdfs: 0, pictures: 0, untracked: 0, empty: true, marker: null, refusal: '', pages: 0, will_write: ['.gamma/'] };
-    }
+    if (p === '/api/folder-links/preview') return previewOf(picked, { notes: 0, pages: 3 });
+    if (p === '/api/sync/folders') return FOLDERS;
     if (p === '/api/folder-links' && init.method === 'POST') return vaultLink({ path: picked, dest: picked });
     return null;
   };
   const picks = () => host.fake.calls.filter((c) => c.path === '/api/folder-links/preview').length;
-  const realStart = sidecar.start;
-  sidecar.start = async () => ({ url: 'http://127.0.0.1:50999', port: 50999 });
+  shell.pretendShown(host.srv, windowOn(host.fake));
   process.env.GAMMA_SHELL_PICK_DIR = picked;
   try {
-    const once = shell.oneAsk(shell.addDirectoryVault);
-    const adding = once();
+    const once = shell.oneAsk(shell.addFolderVault);
+    const adding = once('mine', 'f1');
     await until(() => shell.vaultAsk(), 'the dialog is up');
-    const { id } = shell.vaultAsk();
+    const ask = shell.vaultAsk();
+    const { id } = ask;
+    assert.deepEqual([ask.newFolder, ask.pull, ask.push, ask.folder, ask.server, ask.path],
+      [false, true, 'off', 'Kept lab', 'Host', picked]);
+    assert.equal(ask.resolve, undefined, 'the bar gets the dialog, never its promise');
+    assert.match(ask.sentences['true:off'].text, /^Pull 3 pages into .+; nothing there is pushed\./);
+    assert.equal(ask.sentences['false:off'].ok, false);
+    assert.equal(shell.answerVault(id, { pull: false, push: 'off' }), false, 'an answer its sentence refuses');
+    assert.equal(shell.answerVault(id + 1, { pull: true, push: 'off' }), false, 'another dialog\'s');
     // a press in the page shrinks the bar to its strip, but not while the dialog waits
     shell.setBarExpanded(false);
     assert.equal(shell.barExpanded(), true, 'the dialog is not hidden while it waits');
     // a second ask while the first runs (a double click, a page asking in a loop) is dropped
-    assert.equal(await once(), null);
+    assert.equal(await once('mine', 'f1'), null);
     assert.equal(picks(), 1, 'no second directory was looked at');
     assert.equal(shell.vaultAsk().id, id, 'and the dialog the user is answering stays');
     assert.equal(shell.answerVault(id, null), true);
     assert.equal(await adding, null);
     assert.equal(shell.barExpanded(), false, 'answered, the bar goes back to its strip');
-    // once it settled, the next ask runs
-    const again = once();
+    // once it settled, the next ask runs, and an answer makes the vault as it says
+    const again = once('mine', 'f1');
     await until(() => shell.vaultAsk(), 'a later ask shows its dialog');
-    shell.answerVault(shell.vaultAsk().id, null);
-    assert.equal(await again, null);
+    shell.answerVault(shell.vaultAsk().id, { pull: true, push: 'pdfs' });
+    assert.equal((await again).dest, picked);
     assert.equal(picks(), 2);
+    const [create] = host.fake.calls.filter((c) => c.path === '/api/folder-links' && c.method === 'POST');
+    assert.deepEqual(create.body, { folder: 'f1', path: picked, notes: true, pull: true, push: 'pdfs', adopt: false });
+    // the whole library is never a work folder: its dialog starts pulling only, and pushing everything is refused
+    const whole = once('mine', 'root');
+    await until(() => shell.vaultAsk(), 'the whole library\'s dialog');
+    assert.deepEqual([shell.vaultAsk().whole, shell.vaultAsk().push], [true, 'off']);
+    assert.deepEqual(shell.vaultAsk().sentences['true:everything'], { ok: false, text: 'A vault of the whole library cannot push everything: make one of a folder.' });
+    shell.answerVault(shell.vaultAsk().id, null);
+    assert.equal(await whole, null);
   } finally {
-    sidecar.start = realStart;
     delete process.env.GAMMA_SHELL_PICK_DIR;
+    shell.pretendShown(null, null);
   }
   assert.deepEqual(shell.shellWord('http://127.0.0.1:50999'), { 'X-Gamma-Shell': shell.shellSecret });
   registry.addRemote('NAS', 'http://nas.lan:9001');
@@ -651,14 +794,12 @@ test('a third vault of one file in one directory asks first: sync the folder (it
     assert.equal(await shell.addFileVault('mine', 'p3'), null);
     assert.equal(made().length, 2, 'cancelled: nothing made');
 
-    // Sync the folder…: the directory's own dialog, about that directory, with no picker asked
+    // Sync the folder…: that directory becomes a work folder, with no picker asked; its tracking dialog takes the
+    // file vaults in
     shell.answers.push(0);
-    const syncing = shell.addFileVault('mine', 'p3');
-    await until(() => shell.vaultAsk(), 'the vault dialog is up');
-    assert.deepEqual([shell.vaultAsk().path, shell.vaultAsk().newFolder, shell.vaultAsk().workspace], [papers, true, 'Mine']);
-    shell.answerVault(shell.vaultAsk().id, { pull: true, push: 'everything' });
-    assert.equal((await syncing).dest, papers);
-    assert.deepEqual(made().at(-1), { path: papers, new_folder: true, pull: true, push: 'everything', adopt: false });
+    assert.equal((await shell.addFileVault('mine', 'p3')).dest, papers);
+    assert.equal(shell.vaultAsk(), null);
+    assert.deepEqual(made().at(-1), { path: papers, new_folder: true, pull: true, push: 'everything', choose: true, adopt: false });
     assert.equal(made().length, 3);
 
     // a workspace others see: a directory's vault would not land in it, so no folder is offered
@@ -681,7 +822,9 @@ test('a third vault of one file in one directory asks first: sync the folder (it
 function opened(here, { zip, missing = false, mine = true, digest = { digest: 'dg1', pages: ['p1'] }, letGo = { ok: true } } = {}) {
   here.fake.routes = (p, init) => {
     if (p === '/api/folder-links/page/p1') return { vault: null, reader: { path: 'C:\\Downloads\\attention.pdf', missing, mine } };
-    if (p === '/api/blocks/p1' && (init.method || 'GET') === 'GET') return { id: 'p1', content: 'Attention', properties: { doc_id: 'd1' } };
+    if (p === '/api/blocks/p1' && (init.method || 'GET') === 'GET') {
+      return { id: 'p1', content: 'Attention', properties: { doc: { format: 'pdf', name: 'attention.pdf', hash: 'd1', ext: '.pdf', at: 'path' } } };
+    }
     if (p === '/api/pages/p1/export') return zip;
     if (p === '/api/folder-links/opened/p1/carried') return (init.method || 'GET') === 'GET' ? digest : letGo;
     return null;

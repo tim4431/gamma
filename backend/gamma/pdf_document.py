@@ -34,6 +34,7 @@ from pypdf.annotations import Link
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from . import vector_text
+from .documents.model import page_document, source_address
 from .logbuf import log
 from .note_markup import INLINE_RE, LINK_PARTS, LINK_TARGET, MATH, TEXT, WIDTH_SUFFIX, alt_and_width, latex_spans
 from .pdf_export import parse_css_color
@@ -959,7 +960,7 @@ def _emit_page(cv: _Canvas, page: dict, highlights: bool, notes: bool):
     if meta_line:
         cv.gap(2.0)
         cv.paragraph(inline(meta_line), MARGIN_X, width, SMALL_SIZE + 0.6, color=MUTED)
-    source = props.get("source_url") or ""
+    source = source_address(page_document(props))
     doi = meta.get("doi")
     link = f"https://doi.org/{doi}" if doi else (source if source.startswith("http") else "")
     if link:

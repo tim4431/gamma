@@ -9,7 +9,7 @@ import zipfile
 
 import pytest
 
-from conftest import login, make_folder, make_page, make_user
+from conftest import doc_props, login, make_folder, make_page, make_user
 from gamma.markdown_export import slugify
 from test_pdf_export import _blank_pdf, _position
 
@@ -23,8 +23,7 @@ def user(client):
 def _pdf_page(c, title, folder, highlight=True):
     up = c.post("/api/uploads", files={"file": (f"{title}.pdf", _blank_pdf(pages=1) + title.encode(), "application/pdf")})
     assert up.status_code == 200, up.text
-    page = make_page(c, title, {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
-                         "folders": [make_folder(c, folder)]})
+    page = make_page(c, title, {**doc_props(up.json()["doc_id"]), "folders": [make_folder(c, folder)]})
     if highlight:
         r = c.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
             {"id": f"hl-{page['id']}", "content": "a note", "properties": {

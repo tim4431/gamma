@@ -9,6 +9,8 @@ from fastapi import HTTPException
 
 from .blocks_store import folder_path
 from .import_zip import entry_name
+from .work_folders.filing import refusal_text
+from .work_folders.marks import Tree
 
 
 def parse_selection(raw: str | None) -> set[str] | None:
@@ -33,12 +35,16 @@ def destination(conn, folder: str) -> tuple[str, list[str]]:
     the destination folder by id, "" the library's top. Returns ``(the
     folder's id, "" for the top; its path, the names from the top)``, what
     the import files below (``ops.ensure_filing`` ``under=``) and what its
-    review shows the paths under. 400 for an id that is no folder."""
+    review shows the paths under. 400 for an id that is no folder, and for
+    a work folder or one of its directories, which follow the disk
+    (docs/dev/work_folders.md)."""
     if not folder:
         return "", []
     path = folder_path(conn, folder)
     if not path:
         raise HTTPException(status_code=400, detail="the destination folder does not exist")
+    if Tree.read(conn).work_of(folder):
+        raise HTTPException(status_code=400, detail=refusal_text("directories"))
     return folder, path
 
 

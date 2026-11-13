@@ -14,9 +14,12 @@ import anyio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, email_invites
-from . import guests, hosted, inbox, jobs, migrations, offsite, reports, sync_engine, trash, upload_gc, version
-from . import workspaces, ws_backup, zotero_stream
+from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, downloads
+from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, offsite, reports, sync_engine
+from . import trash, upload_gc, version, workspaces, ws_backup, zotero_stream
+from .feedback import listeners as feedback_listeners, requests as feedback_requests
+from . import local_agents
+from .local_agents import runner as local_agents_runner
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
 from .compression import JsonGzip
@@ -36,6 +39,7 @@ from .routers import (
     collab,
     comments as comments_router,
     export,
+    feedback as feedback_router,
     folders,
     imports,
     inbox as inbox_router,
@@ -67,6 +71,7 @@ from .routers import (
     zotero_sync as zotero_sync_router)
 from . import folder_links
 from .routers import folder_links as folder_links_api
+from .routers import local_agents as local_agents_api
 from .seed import ensure_admin_seed
 
 # Worker threads for sync endpoints, streamed replies and file responses
@@ -241,7 +246,8 @@ def _blocked_app(guide: dict) -> FastAPI:
 def _startup_maintenance():
     """After the data directory is current: create users.db on a fresh
     install (and vaults.db on the desktop app's own server, the one server
-    that keeps it), seed the first admin, then per workspace: apply the per-file
+    that keeps it, whose agents' runs a stopped server left fail there:
+    gamma/local_agents/runner.py ``recover``), seed the first admin, then per workspace: apply the per-file
     schema statements (a restored backup gains page_ops, WAL, ...). A
     workspace behind on its own migration steps is skipped: the background
     walk the lifespan starts (``migrations.warming``) upgrades it, or the
@@ -252,6 +258,11 @@ def _startup_maintenance():
     connect_users_db().close()
     if config.folder_links_enabled():
         connect_vaults_db().close()
+    if local_agents.enabled():
+        try:
+            local_agents_runner.recover()  # the runs a stopped server left fail; the Sends waiting are taken
+        except Exception as e:  # noqa: BLE001 — the agents never stop the server
+            log.error(f"[startup] the agents on this computer could not recover their runs: {e}")
     jobs.recover()
     ensure_admin_seed()
     for ws_id in workspace_ids():
@@ -293,6 +304,34 @@ async def read_only_gate(request: Request, call_next):
         raise
     hosted.answered(response.status_code, write)
     return response
+
+
+def sweep_comments() -> None:
+    """The comments' sweep (gamma/comments.py), then the Sends'
+    (gamma/feedback/requests.py), on one timer: the lifespan's ``async
+    with`` is at Python's limit of nested blocks, so the two share a line.
+    The second runs whatever the first did; each logs its own failures."""
+    try:
+        comments.sweep()
+    finally:
+        feedback_requests.sweep()
+
+
+def sweep_temp() -> None:
+    """The leftover temporary files' sweeps, at startup and hourly: the
+    snapshots' work files a killed process left (gamma/ws_backup.py), the
+    import reviews past their TTL (gamma/import_staging.py) and the
+    downloads a killed process left (gamma/downloads.py). One timer for the
+    three, as for ``sweep_comments``'s two: the lifespan's ``async with`` is
+    at Python's limit of nested blocks. Each runs whatever the one before
+    did, and logs its own failure."""
+    for fn, failed in ((ws_backup.sweep_stale_temp, "[backups] temp sweep failed"),
+                       (import_staging.sweep, "[imports] staging sweep failed"),
+                       (downloads.sweep, "[downloads] sweep failed")):
+        try:
+            fn()
+        except Exception:
+            log.exception(failed)
 
 
 @asynccontextmanager
@@ -362,11 +401,11 @@ def create_app() -> FastAPI:
                 every(hosted.SYNC_INTERVAL, hosted.tick, "[hosted] the plan sync failed"), \
                 every(guests.SWEEP_INTERVAL_S, guests.delete_expired, "[guests] sweep failed"), \
                 every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"), \
-                every(comments.SWEEP_INTERVAL_S, comments.sweep, "[comments] sweep failed"), \
+                every(comments.SWEEP_INTERVAL_S, sweep_comments, "[comments] sweep failed"), \
                 every(email_invites.SWEEP_INTERVAL_S, email_invites.sweep, "[invites] sweep failed"), \
                 every(reports.SWEEP_INTERVAL_S, reports.tick, "[reports] round failed"), \
                 every(inbox.SWEEP_INTERVAL_S, inbox.sweep, "[inbox] sweep failed"), \
-                every(ws_backup.STALE_TEMP_S, ws_backup.sweep_stale_temp, "[backups] temp sweep failed"), \
+                every(ws_backup.STALE_TEMP_S, sweep_temp, "[temp] sweep failed"), \
                 every(jobs.SWEEP_INTERVAL_S, jobs.sweep, "[jobs] sweep failed"), \
                 every(db_maintenance.EVERY_S, db_maintenance.tick, "[db] maintenance failed"), \
                 every(offsite.wait_s, offsite.tick, "[offsite] round failed"), \
@@ -452,6 +491,10 @@ def create_app() -> FastAPI:
     app.include_router(folders.router)
     app.include_router(collab.router)
     app.include_router(comments_router.router)
+    app.include_router(feedback_router.router)
+    app.include_router(local_agents_api.router)
+    feedback_listeners.register()  # what keeps the feedback files, requests and kept versions current
+    local_agents_runner.register()  # an agent on this computer takes the Sends of the folders it answers
     app.include_router(reports_router.router)
     app.include_router(sync.router)
     app.include_router(mirrors.router)

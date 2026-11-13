@@ -66,7 +66,7 @@ the file, and a block the change left alone that would read otherwise is
 
 Trees here are lists of ``{id, content, anchor?, children}`` in file space:
 links are the file's, and a page's blocks get here through ``project`` and
-``vault_links``.
+``vault.links``.
 """
 
 import difflib

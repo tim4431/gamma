@@ -11,7 +11,7 @@ from urllib.parse import unquote
 
 import pytest
 
-from conftest import login, make_folder, make_label, make_user
+from conftest import doc_props, login, make_folder, make_label, make_user
 from gamma import notion_export
 from gamma.routers import export as export_router
 from gamma.notion_export import NotionContext, PageLinks, render_notion_page
@@ -301,8 +301,7 @@ def test_a_web_image_stays_at_its_address(user):
 def _pdf_page(c, title, **properties):
     up = c.post("/api/uploads", files={"file": (f"{title}.pdf", _blank_pdf(pages=1) + title.encode(), "application/pdf")})
     assert up.status_code == 200, up.text
-    return _page(c, title, properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"],
-                                       "original_filename": f"{title}.pdf", **properties})
+    return _page(c, title, properties={**doc_props(up.json()["doc_id"], name=f"{title}.pdf"), **properties})
 
 
 @pytest.mark.parametrize("pdf", [0, 1])
@@ -314,7 +313,7 @@ def test_a_page_s_pdf_stays_out_whatever_the_switch_says(user, pdf):
 
 
 def test_a_pdf_from_the_web_is_a_link_with_a_warning(user):
-    page = _page(user, "Web PDF", properties={"source_url": "https://x.org/paper.pdf"})
+    page = _page(user, "Web PDF", properties=doc_props(url="https://x.org/paper.pdf"))
     job = _job(user, page_id=page)
     z = zipfile.ZipFile(io.BytesIO(user.get(f"/api/jobs/{job['id']}/download").content))
     assert _text(z, "Web PDF.md") == "[paper.pdf](https://x.org/paper.pdf)\n"

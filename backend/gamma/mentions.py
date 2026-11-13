@@ -91,6 +91,37 @@ def people_in(content: str) -> set[str]:
     return {t["user"] for t in scan(_CODE_RE.sub(" ", content)) if t["kind"] == "person"}
 
 
+# A mention with the spaces around it on its line, so that taking it out
+# leaves one space between words and none at a line's edge.
+_SPACED_RE = re.compile(rf"(?P<pre>[ \t]*){MENTION_RE.pattern}(?P<post>[ \t]*)")
+
+
+def without(text: str, names) -> str:
+    """``text`` with the mentions of ``names`` (``@codex``) taken out of its
+    prose, its code left as it is, and the spaces they leave collapsed: what
+    a comment that mentions an agent asks of it (gamma/local_agents/mention.py)."""
+    names = set(names)
+    text = text or ""
+    if "@" not in text or not names:
+        return text
+
+    def drop(prose: str) -> str:
+        def cut(m: re.Match) -> str:
+            if m["user"] not in names:
+                return m[0]
+            edge = (m.start() == 0 or prose[m.start() - 1] == "\n" or m.end() == len(prose)
+                    or prose[m.end()] == "\n")
+            return " " if m["pre"] and m["post"] and not edge else ""
+        return _SPACED_RE.sub(cut, prose)
+
+    out, last = [], 0
+    for code in _CODE_RE.finditer(text):
+        out += [drop(text[last:code.start()]), code[0]]
+        last = code.end()
+    out.append(drop(text[last:]))
+    return "".join(out)
+
+
 def reminder_key(block_id: str, token: dict) -> str:
     """What names one reminder in the done list: its block and its time, so
     moving the time makes it a new reminder. A block id has no "/"

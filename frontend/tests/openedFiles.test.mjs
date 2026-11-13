@@ -69,10 +69,10 @@ test("what an opened file becomes", () => {
   assert.equal(kind("notes.md"), "page");
   assert.equal(kind("notes.markdown"), "page");
   assert.equal(kind("README", "text/markdown"), "page");
-  assert.equal(kind("Lecture.note"), "notability");
-  assert.equal(kind("Lecture.ntb"), "notability");
-  assert.equal(kind("Lecture.goodnotes"), "goodnotes");
-  assert.equal(kind("Lecture.GOODNOTES"), "goodnotes");
+  assert.equal(kind("Lecture.note"), "noteapps");
+  assert.equal(kind("Lecture.ntb"), "noteapps");
+  assert.equal(kind("Lecture.goodnotes"), "noteapps");
+  assert.equal(kind("Lecture.GOODNOTES"), "noteapps");
   assert.equal(kind("vault.zip"), "archive");
   assert.equal(kind("export", "application/zip"), "archive");
   for (const name of ["photo.jpg", "photo.JPEG", "shot.png", "loop.gif", "web.webp", "IMG_0001.HEIC", "scan.heif", "plot.SVG"]) {
@@ -81,8 +81,15 @@ test("what an opened file becomes", () => {
   for (const type of ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif", "image/svg+xml"]) {
     assert.equal(kind("Shared photo", type), "picture", type);
   }
-  assert.equal(kind("scan.tiff", "image/tiff"), "", "an image type the app does not declare");
-  assert.equal(kind("notes.txt", "text/plain"), "");
+  // any other file is a page of its own, as the library's upload makes one
+  assert.equal(kind("scan.tiff", "image/tiff"), "page", "an image type the app does not declare as a picture");
+  for (const name of ["notes.txt", "main.tex", "data.json", "Makefile", "blob.bin", "clip.mp4", "tone.wav", "weights.ckpt"]) {
+    assert.equal(kind(name), "page", name);
+  }
+  assert.equal(kind("download"), "page", "no extension: stored as .bin");
+  for (const name of ["setup.exe", "run.bat", "x.ps1", "lib.dll"]) {
+    assert.equal(kind(name), "", "an executable, which the server refuses");
+  }
 });
 
 test("where opened files go: the workspace shown when writable, the personal one otherwise, who else sees them, and images alone only to the one shown", () => {

@@ -717,7 +717,7 @@ def _converged(ws, fake, made, edits) -> None:
         held = [k for k, r in rows.items() if r["kind"] == "attachment" and r["page_id"] == page_id
                 and r["state"] in HELD_ROWS]
         where = f"{key}: {held}\n{edits.history(key)}"
-        doc = page["props"].get("doc_id")
+        doc = (page["props"].get("doc") or {}).get("hash")
         assert len(held) == 1 and doc and held[0] in items, where
         assert items[held[0]].get("md5") == file_md5(storage.open_path(ws, f"{doc}.pdf")), where
     for page_id in made["gone_note_pages"]:  # a note page whose note Zotero removed for good

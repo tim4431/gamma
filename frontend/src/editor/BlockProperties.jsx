@@ -28,7 +28,8 @@ import { CopyBox, useCopied } from "../shared/ui/Widgets";
 import { Chevron, FADE_IN, IconSwap, MorphText, Reveal } from "../shared/ui/MotionWidgets";
 import { Segmented } from "../settings/SettingsKit";
 import { menuPress } from "../shared/ui/press.js";
-import { API, apiJson, assetUrl, attachmentViewerUrl, blockLinkUrl, copyText, usePersistedState } from "../shared/lib/utils";
+import { API, apiJson, assetUrl, blockLinkUrl, copyText, usePersistedState } from "../shared/lib/utils";
+import { pdfViewerUrl } from "../documents/pageDocument.js";
 import { T, t } from "../shared/i18n/i18n.js";
 import { inkFor, subscribe as inkSubscribe, currentVersion as inkVersion } from "../ink/inkStore.js";
 import { CLIENT_ID } from "../collaboration/usePageCollab.js";
@@ -136,7 +137,7 @@ const Tags = ({ tags }) => (tags || []).map((tag, i) => (
 // (the listing holds a summary of its keys), a folder, a label or a block
 // not in this tab. `isOpenPage`: the block is the
 // page on screen. ctx: what the rows resolve ids with ({pages, libTree,
-// lookupBlock, refCache, onFetchRefs, pageAttachId, shareMode, pageId,
+// lookupBlock, refCache, onFetchRefs, pageFileHash, shareMode, pageId,
 // pageTitle, tree}). nav: App's ways somewhere ({openBlockLink (a page or a
 // block, with Alt+← back),
 // showOnPage, jumpToHighlightId, openFolder, openLabel, openMetaPopover,
@@ -237,11 +238,11 @@ export default function BlockProperties({ target, live, isOpenPage = false, ctx,
     if (!block) return [];
     const rowCtx = { ...ctx, now: Date.now(), isOpenPage, tabId: CLIENT_ID, inkStrokes: (b) => inkFor(b)?.strokes?.length ?? null };
     return propertySections(block, { kind, server, ctx: rowCtx });
-  }, [block, kind, server, ctx.tree, ctx.refCache, ctx.pages, ctx.libTree, ctx.pageAttachId, ctx.pageId, ctx.pageTitle, // eslint-disable-line react-hooks/exhaustive-deps
+  }, [block, kind, server, ctx.tree, ctx.refCache, ctx.pages, ctx.libTree, ctx.pageFileHash, ctx.pageId, ctx.pageTitle, // eslint-disable-line react-hooks/exhaustive-deps
     ctx.shareMode, isOpenPage, inkV, minute]);
   const head = block ? headInfo(block, kind) : null;
   // the open page's PDF only measures the open page's blocks
-  const chips = statusChips(mine, server, err, { pageAttachId: live ? ctx.pageAttachId : undefined, differSince, readAt, gone });
+  const chips = statusChips(mine, server, err, { pageFileHash: live ? ctx.pageFileHash : undefined, differSince, readAt, gone });
   const missing = err?.status === 404 && !block;
   const trashed = missing ? err.data?.trashed || null : null;
 
@@ -373,7 +374,7 @@ export default function BlockProperties({ target, live, isOpenPage = false, ctx,
     }
     if (n.action === "openPdf") {
       return (
-        <a className="ctlBtn metaRowBtn" href={assetUrl(attachmentViewerUrl(n.url))} target="_blank" rel="noreferrer" title={n.label} aria-label={named(n.label, row)}>
+        <a className="ctlBtn metaRowBtn" href={assetUrl(pdfViewerUrl(n.url))} target="_blank" rel="noreferrer" title={n.label} aria-label={named(n.label, row)}>
           <ExternalLinkIcon size={14} />
         </a>
       );

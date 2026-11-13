@@ -2,7 +2,8 @@
 // note editor (editor/BlockCmEditor.jsx) with a note's typing aids — chips
 // for [[links]], @people and dates, inline marks and math drawn in place,
 // the "[[" link picker (editor/useRefPicker.js), the "@" menu without
-// reminders or "Invite…" (editor/useMentionMenu.js), the "/" menu of the
+// reminders or "Invite…" but, for a work folder's maker, with its agent on
+// this computer (editor/useMentionMenu.js), the "/" menu of the
 // commands that write text (editor/useSlashMenu.js: no page, sheet, upload
 // or embed), and inside $…$ the live preview and \command completion
 // (editor/useMathUi.js). Return breaks the line as in a note, continuing a
@@ -13,7 +14,7 @@
 // keeps its own undo history. Unsent text is kept by `draftKey` for as long
 // as the tab lives, so closing the popover (a press outside it, Escape,
 // another block's comments) loses none of it.
-import React, { useContext, useEffect, useRef, useState } from "react";
+import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 import { chordLabel, composing } from "../shared/lib/hotkeys.js";
@@ -31,7 +32,7 @@ import { useMathUi } from "../editor/useMathUi.js";
 import { useMentionMenu } from "../editor/useMentionMenu.js";
 import { useRefPicker } from "../editor/useRefPicker.js";
 import { useSlashMenu } from "../editor/useSlashMenu.js";
-import { MAX_COMMENT } from "./comments.js";
+import { MAX_COMMENT, mentionHint } from "./comments.js";
 
 // The unsent texts by field: `new:<block id>`, `reply:<thread id>`,
 // `edit:<comment id>`. Module state: the popover remounts, the tab keeps them.
@@ -39,6 +40,7 @@ const drafts = new Map();
 export const hasDraft = (key) => drafts.has(key);
 
 const NO_LINKS = {};
+const NO_AGENTS = [];
 // What the "/" menu's commands may need that a comment lacks: it makes no
 // page or sheet, uploads no picture and embeds no note (slashCommands.js).
 const COMMENT_ABILITIES = {};
@@ -54,10 +56,15 @@ const fieldKey = (e) => e.key === "F2"
 // text; `onCancel` shows Cancel beside the button (an edit) and drops its
 // draft. `draftKey`: where the field's unsent text is kept. `blockId`: the
 // block the thread is on, left out of the link picker's blocks. `links`:
-// App's {pages, rootId (the open page), lookupBlock, refCache, onCacheRef}
-// for the pickers; `labelsFor(text)`: the labels of the [[links]] in a text.
+// App's {pages, rootId (the open page), lookupBlock, refCache, onCacheRef,
+// agent} for the pickers, `agent` the work folder's agent on this computer
+// that the maker can name (vaultState.js mentionAgent, null for none): the
+// @ menu lists it, the field chips it and says under the text what sending
+// does; `refused`: for an edit the server will not send to the agent, its
+// code (Thread.jsx), said there instead; `labelsFor(text)`: the labels of
+// the [[links]] in a text.
 export function CommentComposer({ initial = "", placeholder, submitLabel, autoFocus = false, people = [], me = "",
-  draftKey = "", blockId = "", links = NO_LINKS, labelsFor, onSubmit, onCancel, onEscape }) {
+  draftKey = "", blockId = "", links = NO_LINKS, refused = "", labelsFor, onSubmit, onCancel, onEscape }) {
   const [text, setText] = useState(() => (draftKey && drafts.has(draftKey) ? drafts.get(draftKey) : initial));
   useEffect(() => {
     if (!draftKey) return;
@@ -66,8 +73,11 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
   }, [draftKey, text, initial]);
   const cancel = onCancel ? () => { if (draftKey) drafts.delete(draftKey); onCancel(); } : null;
   const ref = useRef(null);
-  const mentions = useContext(MentionContext);
-  const { pages, rootId, lookupBlock, refCache, onCacheRef } = links;
+  const { pages, rootId, lookupBlock, refCache, onCacheRef, agent = null } = links;
+  const agents = useMemo(() => (agent ? [agent] : NO_AGENTS), [agent]);
+  // Whom the field's chips name: the page's people, and the agent.
+  const named = useContext(MentionContext);
+  const mentions = useMemo(() => (agent ? { ...named, agents } : named), [named, agent, agents]);
   const { mathUi, setMathUi, mathAcIdx, updateMathUi, acceptCompletion, acKey, tabJumpKey } = useMathUi();
   const refPicker = useRefPicker({
     editorRef: ref, excludeId: blockId, pages, rootId, lookupBlock, refCache, onCacheRef,
@@ -80,7 +90,7 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
       ref.current?.focus();
     },
   });
-  const atPicker = useMentionMenu({ editorRef: ref, people, me, pages, rootId, reminders: false, onCacheRef });
+  const atPicker = useMentionMenu({ editorRef: ref, people, me, pages, rootId, reminders: false, agents, onCacheRef });
   // A command's text replaces the field's in one edit, which the field's
   // undo takes back; "Link to note" opens this field's [[ picker.
   const slash = useSlashMenu({
@@ -120,6 +130,8 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
   };
   const trimmed = text.trim();
   const tooLong = text.length > MAX_COMMENT;
+  // A comment on the page itself sends the file's open comments.
+  const hint = mentionHint({ agent, text, initial, file: blockId === rootId, refused });
   // The button's hover names its key ("Shift+Enter", "⇧↩" on a Mac); on
   // an on-screen keyboard, where Shift+Return breaks the line, Ctrl/⌘+Enter
   // (sendsOnShiftEnter).
@@ -206,9 +218,10 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
           </button>
         )}
       </div>
-      {tooLong || cancel ? (
+      {tooLong || cancel || hint ? (
         <div className="commentComposerBar">
-          {tooLong ? <span className="commentTooLong">{t("At most {n} characters", { n: MAX_COMMENT.toLocaleString() })}</span> : null}
+          {tooLong ? <span className="commentTooLong">{t("At most {n} characters", { n: MAX_COMMENT.toLocaleString() })}</span>
+            : hint ? <span className={`commentAgentHint${hint.warn ? " problem" : ""}`} data-agent-hint>{hint.text}</span> : null}
           <span className="commentComposerSpacer" />
           {cancel ? <button type="button" className="uiBtn sm ghost" onClick={cancel}>{t("Cancel")}</button> : null}
           {cancel ? (

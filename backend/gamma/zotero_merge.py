@@ -52,6 +52,7 @@ from . import item_types, textmerge, zotero_annotations, zotero_fields
 from .blocks_store import block_kind
 from .colors import parse_color
 from .db import parse_stamp
+from .documents.model import is_pdf, own_hash, page_document
 from .note_markup import LITERAL_SPANS
 from .zotero_import import _ARXIV_ID, _work_title
 from .zotero_notes import _BULLET_RE, _ORDERED_RE, block_text, note_html, note_tree, title_text
@@ -1168,16 +1169,18 @@ def _when(value) -> datetime | None:
 def wants_item(props, *, now, send_unrecorded: bool, created_at="") -> str:
     """What a Gamma page without an item becomes in Zotero (see
     docs/dev/zotero_sync.md#what-syncs): ``WANT_PAPER`` for a paper
-    (``is_paper``); for a page with a stored PDF and no record, ``WANT_WAIT``
-    while its lookup may still come (no ``meta``, no ``meta_error``, made less
-    than ``LOOKUP_WAIT_S`` before ``now``), then ``WANT_DOCUMENT`` when the
-    link sends such pages (``send_unrecorded``), else ""; "" for any other page
+    (``is_paper``); for a page with a PDF of its own (``own_hash``: not a
+    duplicated page's) and no record, ``WANT_WAIT`` while its lookup may
+    still come (no ``meta``, no ``meta_error``, made less than
+    ``LOOKUP_WAIT_S`` before ``now``), then ``WANT_DOCUMENT`` when the link
+    sends such pages (``send_unrecorded``), else ""; "" for any other page
     (a note page stays in Gamma). ``now`` and ``created_at`` (the page root's)
     are datetimes or ``page_now`` stamps."""
     props = props or {}
     if is_paper(props):
         return WANT_PAPER
-    if not props.get("doc_id"):
+    view = page_document(props)
+    if not (is_pdf(view) and own_hash(view)):
         return ""
     if not props.get("meta") and not props.get("meta_error"):
         made, at = _when(created_at), _when(now)

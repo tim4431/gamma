@@ -169,6 +169,26 @@ def test_a_scan_cut_short_goes_on_from_its_cursor(owner, monkeypatch):
     assert [r[0] for r in found] == [r[0] for r in whole]
 
 
+def test_the_recent_blocks_are_the_library_lists(owner):
+    """The [[ref]] popup's suggestions before a filter is typed are the
+    latest blocks of the pages the library lists, never the notes of a work
+    folder's file a vault rewrote; a typed query finds those too."""
+    from conftest import account_of, make_folder, mark_work_folder, work_props
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import create_page
+
+    w = make_folder(owner, "bsg-work")
+    mark_work_folder(owner, w)
+    with closing(connect_pages_db(workspace_of(USER))) as conn:
+        file_page = create_page(conn, "a file", work_props(w, "file.md"), actor=account_of(USER), client=DISK_CLIENT)
+    r = owner.post("/api/blocks", json={"parent_id": file_page["id"], "content": "rewritten by its vault"})
+    assert r.status_code == 200, r.text
+    recent = owner.get("/api/block-search", params={"limit": 50}).json()["blocks"]
+    assert recent and "rewritten by its vault" not in [b["content"] for b in recent]
+    found = owner.get("/api/block-search", params={"q": "rewritten by its vault"}).json()["blocks"]
+    assert [b["id"] for b in found] == [r.json()["id"]]
+
+
 def test_block_search_runs_in_the_threadpool():
     assert not inspect.iscoroutinefunction(blocks_router.block_search)
     assert not inspect.iscoroutinefunction(blocks_router.block_search_post)

@@ -26,6 +26,7 @@ way in).
 
 import uuid
 
+from .documents.model import page_document, source_address
 from .highlights import is_highlight, is_link, page_of
 from .colors import logseq_name
 from .pdf_text import page_rasters
@@ -150,7 +151,7 @@ def render_graph_page_md(page, stem, has_pdf):
     title = (page.get("content") or "").strip() or "Untitled"
 
     lines = [f"title:: {title}"]
-    src = props.get("source_url") or ""
+    src = source_address(page_document(props))
     if src and not src.startswith("/api/uploads/"):
         lines.append(f"source:: {src}")
     lines.append("")

@@ -1,7 +1,8 @@
 # Comments and the inbox
 
-People leave comments on a note, on a page and on a PDF highlight, reply to
-them and resolve them. Backend: `gamma/comments.py` (storage, the rules, the
+People leave comments on a note, on a page, on a PDF highlight and on
+handwriting, reply to them and resolve them; an agent holding an integration
+token may too, under its own name. Backend: `gamma/comments.py` (storage, the rules, the
 writers, the sweep) and `gamma/routers/comments.py` (the API); the Inbox,
 which tells people what concerns them, is `gamma/inbox.py` and
 `gamma/routers/inbox.py`. The research
@@ -9,10 +10,10 @@ behind the design is [research/comments-inbox.md](../research/comments-inbox.md)
 
 ## Threads
 
-A thread hangs on one block: a note, a highlight (its block) or the page
-itself (the page's root block). It is a root comment and the replies that
-name it. Its rows are the table `comments` in the workspace's `pages.db`
-(`db.COMMENTS_SCHEMA`):
+A thread hangs on one block: a note, a highlight (its block), an ink group
+or the page itself (the page's root block); the server takes any block of
+the page. It is a root comment and the replies that name it. Its rows are
+the table `comments` in the workspace's `pages.db` (`db.COMMENTS_SCHEMA`):
 
 | Column | Meaning |
 |---|---|
@@ -26,6 +27,9 @@ name it. Its rows are the table `comments` in the workspace's `pages.db`
 | `resolved_at`, `resolved_by` | on the root only: when and by whom the thread was resolved |
 | `deleted_at` | a root deleted while it still has replies: a tombstone, its text gone |
 | `orphaned_at` | set when the anchor block is deleted, cleared when it comes back |
+| `agent`, `agent_id` | the display name (`integrations.display_name`) and id of the integration token that wrote it, `''` for a session; the name is copied because a revoked or expired token's row goes |
+| `resolved_agent` | on the root only: the display name of the token that resolved it, cleared on reopen (`resolved_by` stays the account) |
+| `anchor` | on the root only, JSON: the place the thread was opened on ([feedback.md](feedback.md), `gamma/feedback/anchors.py`); NULL on a reply and on a root from before step 54 |
 
 Indexes: `block_id`, `(thread_id, created_at)`, `page_id`, and a partial one
 on `orphaned_at` for the sweep.
@@ -35,17 +39,33 @@ them. Every block reader (the exports, the AI context, search, folder sync,
 PDF typesetting, the outliner, the three-way merge, undo) therefore keeps
 working without knowing that comments exist.
 
-`comments.threads_for(conn, page_ids, *, state=None)` is the one reader. It
+`comments.threads_for(conn, page_ids, *, state=None)` is the reader. It
 joins each comment to its block (`unified_blocks.page_id`, so a page's own
 thread comes along) and leaves out the orphaned ones. A thread is `{id,
-block_id, page_id, resolved_at, resolved_by, created_at, last_at, comments}`,
-oldest first, and each comment is `{id, thread_id, author, body, created_at,
-updated_at, deleted}`. People are named by username: `author` falls back to
-`author_name`, and `resolved_by` to `""`, once the account is gone. A
-tombstone reads `deleted: true` with an empty body. `last_at` is the newest
-of the thread's writes and its resolution. `state` is `open`, `resolved` or
-`all`. The caller decides which pages may be read; a page in Recently
-deleted is no page of the library.
+block_id, page_id, resolved_at, resolved_by, resolved_agent, made_on, sent,
+created_at, last_at, comments}`, oldest first, and each comment is `{id,
+thread_id, author, agent, body, created_at, updated_at, deleted}`. People
+are named by username: `author` falls back to `author_name`, and
+`resolved_by` to `""`, once the account is gone; `agent` and
+`resolved_agent` are a token's display name, `""` for a person. `made_on` is
+the file the thread was opened on (its anchor's `doc_id`, `""` for none),
+and `sent` the Send waiting on it (`comments._sent`: the newest
+`feedback_request_threads` row of the thread not answered whose request is
+`sent`, `running` or `failed`, as `{request_id, state, at, detail}`), else
+null ([feedback.md](feedback.md) "Requests"). A tombstone reads `deleted:
+true` with an empty body. `last_at` is the newest of the thread's writes
+and its resolution. `state` is `open`, `resolved` or `all`. The caller
+decides which pages may be read; a page in Recently deleted is no page of
+the library. `comments.threads_in_work_folder(conn, w, *, state=None)` gives
+the threads on a work folder's live files the same way, in one query on the
+pages' `work_folder` column (`idx_ub_work_folder`); it is what the feedback
+reader reads.
+
+A thread is **open** when its root is neither resolved nor orphaned, a
+tombstone that still has replies included: what the Comments window lists
+as open. `comments.open_counts(conn, page_ids)` counts them per page (a work
+folder's list view), and `comments.has_open_thread(conn, page_id)` asks it
+of one page.
 
 A comment write never calls `touch_page`. It moves no change feed, starts no
 mirror round and does not reorder the home library. Nothing in
@@ -59,7 +79,9 @@ opens, as do `seed.create_workspace_files`, `ws_backup._normalize_copies`
 and the Gamma export's in-memory database. Step 40 (`comments_inbox`) is a
 global step only ([migrations.md](migrations.md) rule 2), so it does not
 move `migrations.workspace_format()`: the comments never pause clones and
-publications.
+publications. The four columns after `orphaned_at` came with step 54
+(`feedback`), whose workspace part is in `migrations.LOCAL_STEPS`: no copy
+keeps comments in step with another, so it leaves the format at 52 too.
 
 ## Who may comment
 
@@ -72,19 +94,30 @@ publications.
 | link visitor (no account, or a guest account) | the share's pages | no | no | no | no |
 | guest account | in its own workspace | yes | own | own | yes |
 | integration token, read scope | yes | no | no | no | no |
-| integration token, write scope | yes | yes | own | own | yes |
+| integration token, write scope | yes | yes | its own | its own | yes |
+| integration token, feedback scope | yes | a reply on a work folder's file, no new thread | no | no | resolve on a work folder's file, never reopen |
 
-`auth.require_commenter(request, page_id)` decides every comment write. It
-resolves the workspace as a read does (`resolve_ws`), refuses a link visitor
-(403 "sign in to comment": there is no account to sign the comment with) and
-a token without the write scope, then confines a share request to the
-share's pages (`share_scope(request).allows_page`). For an edit, a delete or
+"Own" is the author's account through the writer that wrote it. A session
+edits the comments a session of the account wrote, and a token the ones it
+wrote (`agent_id`): never a comment typed in the app, nor another token's of
+the same account. A session of the account deletes what its tokens wrote
+(their comments are the account's), and the owner signed in deletes any.
+
+`auth.require_commenter(request, page_id, *, answer=False)` decides every
+comment write. It resolves the workspace as a read does (`resolve_ws`),
+refuses a link visitor (403 "sign in to comment": there is no account to
+sign the comment with) and a token without the write scope (403 "this token
+is read-only"), but a `feedback` token's `answer`: a reply (`create` with a
+`thread_id`) or a resolve, on a live work folder's file (its row's
+`work_folder`; 403 "a feedback token answers comments on a work folder's
+files only" elsewhere). It then confines a share request to the share's
+pages (`share_scope(request).allows_page`). For an edit, a delete or
 a resolve, the page is the one the comment's block is on now
 (`comments.page_of`). The router reads it before the write's lock and hands
 it to the writer, which answers 404 when the comment is no longer on that
 page by the time it holds the lock. The owner's delete of someone else's
 comment checks `ws_role(request) == "owner"` for a session, not a token: an
-integration token deletes its own comments only, whoever owns it. An owner
+integration token deletes the comments it wrote only, whoever owns it. An owner
 who opens their own page through a share link (`?share=`) is a share
 visitor there and deletes their own comments only. Reads use `resolve_ws`
 and `share_scope`, as for the page itself.
@@ -106,8 +139,8 @@ refused with a 400.
 | Method | Path | Body | Answer |
 |---|---|---|---|
 | GET | `/api/pages/{page_id}/comments?state=open\|resolved\|all` | | `{threads}`; 404 for a page in Recently deleted or gone, 400 for another `state` |
-| POST | `/api/pages/{page_id}/comments` | `{id?, block_id, body, thread_id?, client?}` | 201 `{comment, thread}` |
-| PATCH | `/api/comments/{id}` | `{body, client?}` | `{comment}` |
+| POST | `/api/pages/{page_id}/comments` | `{id?, block_id, body, thread_id?, client?}` | 201 `{comment, thread, send?}` |
+| PATCH | `/api/comments/{id}` | `{body, client?}` | `{comment, thread?, send?}` |
 | DELETE | `/api/comments/{id}?client=` | | `{deleted: true}` |
 | POST | `/api/comments/{id}/resolve` | `{resolved, client?}` | `{thread}` |
 | GET | `/api/pages/{page_id}/notify` | | `{level}`: `all` or `replies`, the page's Notify me for the session's account ("Following a page" below) |
@@ -117,20 +150,35 @@ refused with a 400.
   otherwise). With `thread_id` the comment is a reply: the id must be a root
   on that same block (400 otherwise). A text that is empty or only spaces is
   a 400, and one past 20,000 characters a 413. `id` is the client's id for
-  the comment. A comment of that id by the same author on the same page is
-  answered as stored and nothing is written again, so a retried request is
-  harmless; a 404 when that comment is hidden since. An id that another
-  author's comment holds, or one of the author's comments on another page,
-  is a 409, so a retry never reads a thread outside the page the request
-  was authorized for.
-- **Edit.** The author only (403 otherwise). An edit that leaves the text as
-  it was keeps `updated_at`.
-- **Delete.** The author, or the workspace's owner (signed in, not through
-  a token or a share link). A root that still has
+  the comment. A comment of that id by the same author and writer (the same
+  token, or a session) on the same page is answered as stored and nothing
+  is written again, so a retried request is harmless; a 404 when that
+  comment is hidden since. An id that another author's or another writer's
+  comment holds, or one of the author's comments on another page, is a 409,
+  so a retry never reads a thread outside the page the request was
+  authorized for. A new thread keeps where it was opened
+  (`anchors.anchor_of`, from the rows under the write's lock). A token's
+  comment is signed with its display name and id (`agent`, `agent_id`).
+- **Edit.** The author through the writer that wrote it (403 "only its
+  author can edit a comment" otherwise). An edit that leaves the text as it
+  was keeps `updated_at`.
+- **A mention of the work folder's agent.** On the desktop app's own
+  server, the vault's maker's comment on a work folder's file that newly
+  names the folder's agent on this computer (`@codex`) is a Send to it as
+  well ([local_agents.md](local_agents.md) "A mention in a comment"): the
+  answer carries `send` (`{agent, request_id, scope, threads}`, or
+  `{agent, refused, why}` with the comment stored anyway) and the thread
+  read again with its Sent chip; an edit's answer carries the thread only
+  then. No `send` for a comment that names no agent.
+- **Delete.** The author, by a session or by the token that wrote it, or
+  the workspace's owner (signed in, not through a token or a share link). A
+  root that still has
   replies becomes a tombstone. Deleting the last reply under a tombstone
   takes the tombstone with it, so a thread always shows a comment.
 - **Resolve.** On a root only (400 for a reply). `resolved: false` reopens.
-  Anyone who may comment on the page may do either.
+  Anyone who may comment on the page may do either; a feedback token
+  resolves only. A token's resolve keeps its name (`resolved_agent`) until
+  a reopen.
 - A comment that is hidden answers 404: its block was deleted (orphaned),
   or its page is in Recently deleted.
 - **Notify me.** Whoever may comment on the page (`require_commenter`),
@@ -140,16 +188,23 @@ refused with a 400.
   it does a comment.
 
 After every write that changes something (an edit to the same text, or a
-resolve of a resolved thread, changes nothing) the router publishes
-`{t: "comments", block_id, thread_id}` to the page's room, to every peer but the writer's tab (`client`,
-`collab.publish(..., exclude=client)`). It then hands the write's event to
+resolve of a resolved thread, changes nothing) the writer calls
+`comments.written(ws, page_id, block_id, thread_id, event, *, client="",
+via="")`. It publishes `{t: "comments", block_id, thread_id}` to the page's
+room, to every peer but the writer's tab (`client`,
+`collab.publish(..., exclude=client)`), then hands the write's event to
 `comments.after_write(ws, event)`. The event is `{kind, actor, page_id,
-block_id, thread_id, comment_id, ...}`, where `kind` is `create`, `reply`,
-`edit` (with `before`), `delete` (`comment_ids`), `resolve` or `reopen`
-(`thread_author`), or `sweep` (`comment_ids`). The router adds `via`, the
-share token the writer came through (`auth.share_via`; `""` for a member).
-It is the one place where the derived work hangs: the Inbox ("The inbox"
-below). It never raises. Create, edit and resolve read the thread they
+block_id, thread_id, comment_id, agent, agent_id, ...}`, where `kind` is
+`create`, `reply`, `edit` (with `before`), `delete` (`comment_ids`),
+`resolve` or `reopen` (`thread_author`), or `sweep` (`comment_ids`), and
+`agent` / `agent_id` name the token that wrote it (`""` for a session).
+`via` is the share token the writer came through (the routes pass
+`auth.share_via`; `""` for a member and for the MCP answering tools). It is
+the one place where the derived work hangs: the Inbox ("The inbox" below),
+then each of `comments.write_listeners` (`fn(ws, event)`, appended by
+`gamma/feedback/listeners.py`: the feedback files, the requests answered,
+the commented version kept), each called in turn with its error logged. It
+never raises. Create, edit and resolve read the thread they
 answer with before their commit, under the write lock, so a batch that
 deletes the block in between cannot leave a stored write without its
 answer or its event.
@@ -180,10 +235,25 @@ paste).
 | a page restored | shown again |
 | a page deleted for good (`ops.delete_page`: Delete permanently, Empty, the 30-day purge, a share host's delete) | its blocks' comments go, and so do its orphaned ones whose block is gone; a thread on a block that lives on another page now stays |
 | `blocks_store.create_page(block_id=)` over a copy in Recently deleted | that copy's comments go with its blocks |
-| a backup restored in place | the table is copied with the rest |
+| a backup restored in place | the table is copied with the rest, the Sends' tables (`feedback_requests`, `feedback_request_threads`) too |
 | a backup merge, a Gamma import, "Add to my library" | copied with the pages they add (below) |
 | a clone, a publication, the share host | not synced ([mirror.md](mirror.md) "What travels") |
 | a Zotero link | not synced: threads stay in Gamma; a highlight's own note and the notes under it travel as the Zotero annotation's comment, which is no thread ([zotero_sync.md](zotero_sync.md#what-syncs)) |
+
+**The anchor.** A root keeps where its thread was opened (`anchor`, JSON;
+[feedback.md](feedback.md) "The anchor"): its kind (`passage`, `area`,
+`ink`, `region`, `note` or `file`), the block the place is read from (a
+note under a highlight takes the highlight's), the file the place was
+measured on and its extension, the PDF page (none for a region of a
+picture), the rectangles and quote as fractions of the page or the picture
+then, and the region picture's crop. `comments.create` computes it from the rows, under
+its lock; the source line SyncTeX maps it to is added after the commit
+(`gamma/feedback/kept.py`). It never changes with the block: it is the
+place as commented, which the feedback reader compares with the block now.
+A reply holds none, and nothing is backfilled for a root from before step
+54, whose place is read from its block. While its thread is open, the file
+it names is held from the upload sweep ([user_db.md](user_db.md) "What
+counts as a reference").
 
 **The sweep.** `comments.sweep` runs at startup and hourly in the app's
 lifespan (`app.py`), beside `trash.sweep`, not in `db_maintenance`. It walks
@@ -200,6 +270,9 @@ have it now), and `comments.copy_rows(dst, rows, blocks=)` inserts them
 into another `pages.db`. A comment id that the destination already has is
 minted afresh, and its thread's replies follow the new id.
 
+- The rows carry every column, the agents' names and the anchors included;
+  the Sends that name the threads stay behind (`copy_rows` mints fresh
+  thread ids, so their rows would name nothing).
 - The Gamma export (`routers/export.py` `_GammaBuilder`) copies the threads
   shown on the exported pages. The authors' ids mean nothing on another
   server, so `author_name` is what shows there.
@@ -227,7 +300,7 @@ and it would notify again on every edit.
 | `comment_mention` | a comment's text gains `@name` (a new comment, a reply, an edit) | each person newly named | `comments.after_write` → `inbox.from_comment` |
 | `reply` | a reply is posted | the authors of the thread's other comments and the people they mention, less those the reply itself mentions | the same |
 | `comment` | a new thread or a reply is posted | the page's followers set to All comments ("Following a page" below), less the people the comment mentions and those told of it as a reply | the same |
-| `resolved` | someone resolves a thread another person started | the thread's author | the same |
+| `resolved` | someone resolves a thread another person started, or an agent resolves one | the thread's author | the same |
 | `shared` | people are invited to a page or folder share | each new invitee, with the share's token | `routers/shares._invite`, from both `_create` and `_update`: it compares the old and the new `share_users`, keeps `added_at` for the people who stay, and `shares.tell` writes the items after the commit; also `shares.invite_cloud`'s linked branch and `shares.claim_pending` for each share joined, from its inviter, and `email_invites.claim` for an invitation by e-mail whose mailed link the person signed in through (only for an entry it added) |
 | `invited` | an account is added to a shared workspace | the new member | `workspaces.set_member` (which returns whether it inserted the membership: a role change tells no one), `invite_cloud`'s linked branch, `claim_pending_memberships` for each workspace joined, from its inviter, `email_invites.claim` likewise (only for a membership it added), and `workspaces.create` for an owner someone else made a shared workspace for (an admin's `POST /api/workspaces` with an owner) |
 | `join_request` | someone with no account here asks to join through a share's link (a refused cloud sign-in under the `invited` policy, [cloud_accounts.md](cloud_accounts.md) "Requests to join") | whoever made the share and the workspace's owners, while they edit there | `join_requests.ask`, for a new request or one that moved to this share. The actor is `cloud:<subject>`, no account (listed as `""`); the snippet is the cloud username, which the sentence names. It settles once the request no longer waits on that page's or folder's share (approved, declined, gone or moved), and a click opens that Share popover |
@@ -237,7 +310,12 @@ names were typed on the other server, so mentions typed in a clone tell no
 one here), of a mirror's round (actor `mirror`), of a Zotero link's writes
 (client or actor `zotero`: typed in Zotero, or a conflict's "theirs" taken
 from there), or of a link visitor's edit (no account to name). The AI's batches carry the chat owner's id, so
-they count as the owner's. A retried batch is answered from the op log and
+they count as the owner's. An integration token's comment (any scope: a
+`write` token's script too) is someone else's to its own account: what an
+agent writes is no one's keystrokes, so the person hears of it by the rules
+above as anyone would (its reply in their thread, its new thread or reply on
+a page they follow, its mention of them, its resolve of their thread), and
+each item names the agent (`agent`). A retried batch is answered from the op log and
 never reaches `after_commit`, so a retry tells no one twice. A reopen tells
 no one.
 
@@ -258,8 +336,9 @@ items are left to the settle, so an undo before it writes nothing new.
 page_id=, block_id=, thread_id=, comment_id=, snippet=, via=)` after its
 own commit. It catches and logs every error and never raises, as the commit
 listeners do (`ops.notify_commit`), so a stored note or comment never
-answers an error because users.db was busy. It leaves out the actor, guest
-accounts and accounts that are gone. Of the first `REACH_CANDIDATES` (100)
+answers an error because users.db was busy. It leaves out the actor (but
+for an agent's write, `emit(..., agent=)`: the token's display name, which
+the row keeps), guest accounts and accounts that are gone. Of the first `REACH_CANDIDATES` (100)
 of the rest, it writes an item for the first `MAX_RECIPIENTS` (25) that
 `reach` admits, so accounts named first who cannot open the page take none
 of the places. A `mention` of someone who has the same block's mention
@@ -304,8 +383,9 @@ set; the app opens such an item through the share link.
 **Reading.** `GET /api/inbox?filter=unread|all|archived&before=&limit=`
 lists the account's items newest first. Each item has `{id, kind, actor,
 workspace_id, workspace_name, page_id, page_title, block_id, thread_id,
-comment_id, share_token, snippet, at, read_at, archived_at}`. `actor` is a
-username (`""` once the account is gone). `page_title` is the page's title
+comment_id, share_token, snippet, at, read_at, archived_at, agent}`. `actor`
+is a username (`""` once the account is gone); `agent` the display name of
+the token whose write made the item, `""` for a person's. `page_title` is the page's title
 now, or the folder's name for a folder share, while the account may still
 read it: always for a member (a trashed page is in its Recently deleted),
 else while its way in still admits it (`_entitled`). An archived item of a
@@ -384,12 +464,18 @@ the live rows on a restore, and no export, clone or merge carries it.
   page's creation (`create_page`, `insert_page_tree`, the imports, a backup
   merge's new pages), an edit (`ops._apply`, `record_ops`, `log_reload`) and
   a restore from Recently deleted all count, and `comments.create` calls it
-  for a new thread or a reply. A backup restored in place follows nothing
+  for a session's new thread or reply. A comment an integration token wrote
+  follows nothing, as the batches of `ops.UNFOLLOWED` do: the account would
+  otherwise follow every file its agent answered on and hear each later
+  comment there. A backup restored in place follows nothing
   (`log_reload(..., follow=False)`): the live rows stay. A writer that is no
   account (`''`, `link:<name>`, `mirror`, `zotero`), the folder and label
   trees, and the batches of `ops.UNFOLLOWED` (an offline copy's `sync`, a
   Zotero link's `zotero`, a synced vault's `disk`: typed elsewhere; the
-  paper-metadata worker's `meta`: no one's keystrokes) follow nothing. The
+  paper-metadata worker's `meta`: no one's keystrokes) follow nothing, nor
+  do the pages those writers make (`create_page` and `insert_page_tree`
+  take the writer's `client`: a work folder's files, which its vault
+  makes, are followed by whoever then edits or comments on them). The
   AI's batches are the chat owner's, so the owner follows what the AI edits.
 - **Without a row.** The owner of a personal workspace follows every page of
   it (`inbox._default_level`): the library is theirs, and its pages from
@@ -400,7 +486,8 @@ the live rows on a restore, and no export, clone or merge carries it.
   workspace (unless they chose Replies and @mentions), then the rows at
   `all`, oldest first. `inbox._from_comment` hands them to `emit` for a
   `create` or a `reply` event, less those already told, so `emit`'s rules
-  apply: no actor, no guest, only those `reach` admits (a follower who lost
+  apply: no actor (but an agent's: its account hears of it when it follows
+  the page), no guest, only those `reach` admits (a follower who lost
   access hears nothing), 25 at most. An edit of a comment tells no follower.
 - **The choice.** `inbox.set_notify_level(ws, page_id, user_id, level)`
   writes the account's row (`ON CONFLICT … DO UPDATE`), which no later edit
@@ -723,9 +810,20 @@ comments", "Comment on this note"); a highlight's own text is its note.
 
 Beside the PDF's pages, as Notion shows comments in a page's right margin,
 each highlight's open threads are cards in a column, level with the
-highlight's first line. Only the PDF has the margin: a note's threads, the
+highlight's first line, and so are an ink group's, level with the
+drawing's top (`pdfAnchorOf`, `commentAnchors`; the ink side is in
+[handwriting.md](handwriting.md) "What the user sees", Comments on
+handwriting). The image view has the margin too: a region of a picture
+(`image_position`, [api.md](api.md) "The highlight shape"; the region tool
+is [documents.md](documents.md) "Viewers") takes threads as a highlight
+does, its card level with the region's top
+(`commentAnchors` with the page's position key; `anchorTop` reads the
+frame the same way), and the picture, one page, is shifted left for the
+column as a PDF page is (`marginLayout.fitBeside`). A note's threads, the
 page's own and the notes pane's controls keep the popover, and the notes
-pane has no comments section.
+pane has no comments section. On the server a thread on a region is a
+`region` anchor and a feedback entry of that kind ([feedback.md](feedback.md)
+"The anchor").
 
 **When it shows.** While the document has a highlight with an open thread,
 or a new thread's card is open, every page with room for the column
@@ -757,9 +855,9 @@ provides `CommentMarginContext` (`comments/marginSlot.jsx`) through the
 viewer's `commentMargin` prop: the page's `threadsByBlock`, the active
 card's target and the popover's props and handlers. A page's
 `CommentMarginSlot` reads it, so a new comment re-renders the margins and
-not the pages, and finds the page's highlights with an open thread (and
-the one a new thread's card is for), each at its first rect's top
-(`highlightTop`). Every page with room draws its column, with or without
+not the pages, and finds the page's anchors (highlights and ink groups) with an open
+thread (and the one a new thread's card is for), each at its first rect's
+top, an ink group at its bounding box's (`anchorTop`, `comments.js`). Every page with room draws its column, with or without
 cards, so a page's first card can grow in and its last one shrink away.
 The cards (`CommentMargin.jsx`) load on first use, which a PDF page
 opening asks for with its tree.
@@ -809,7 +907,13 @@ motion. Refused, the field gets its text back.
 
 **A card.** At rest it is the thread's first comment (avatar, name, time
 and text as comments are drawn, clamped to three lines) and "n replies",
-with neither Resolve nor the "⋯". It is `Thread.jsx`'s `Thread` with
+with neither Resolve nor the "⋯". A comment an agent wrote shows the
+token's name as its author, the account's connection in the title
+(`authorTitle`), and the first comment's line carries the Sent chip while
+a request waits on the thread (`sentChip`, [feedback.md](feedback.md)
+"Requests and their states") and what became of its place after a rebuild
+(`threadPlace`, through `threadPlaceContext.js`'s `ThreadPlaceContext`, a
+module of its own so App's provider imports no surface). It is `Thread.jsx`'s `Thread` with
 `summary`: the popover's own thread view, whose active rule it shares. A
 press on the card (not on a button, link or field), Enter or Space on it,
 or a press on its highlight in the page makes it the active card: the
@@ -950,7 +1054,9 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   Gamma. Highlight notes travel as Zotero comments."
 - **Comments in the other readers.** The exports other than the Gamma zip
   and the annotated PDF (Markdown, Obsidian, Logseq, Zotero), the AI's
-  context and tools, search and the MCP tools leave comments out. The
+  context and tools and search leave comments out. The feedback reader
+  ([feedback.md](feedback.md)) reads the threads on a work folder's files,
+  for an agent, over HTTP, MCP and the files a vault writes. The
   annotated PDF's Comments switch prints the open threads on a highlight
   and on its notes as cards beside the page, as the margin draws them, a
   note's threads (a highlight's own under its own text) under the note
@@ -987,7 +1093,11 @@ has notifications; the iPad's WKWebView has none, and the row says so.
 
 - `backend/tests/test_comments.py`: the writes and their validation, a
   repeated client id answered as stored, and the permission table row by
-  row. Also the events handed to `after_write`, and the lifecycle: Recently
+  row, a token's name and its own comments (the edit and delete rules
+  by writer, a retry by another writer), a feedback token's replies and
+  resolves on a work folder's files. Also the events handed to
+  `after_write`, the write listeners and `written`, the anchor and `sent` on
+  a thread, a work folder's threads, the open count, and the lifecycle: Recently
   deleted, the purges, a delete orphaning and an undo bringing back, the
   sweep, `PUT /blocks/{id}/children`, and a share editor's insert reading no
   other page's threads. The backup merge, the Gamma export round trip and
@@ -1000,7 +1110,9 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   Following a page: who follows (its maker, an editor, a commenter, a
   personal library's owner without a row), one item a person, Notify me
   and its bounds, the batches that follow nothing (`ops.UNFOLLOWED`, no
-  account), the rows gone with the page and with a member who leaves.
+  account) and a token's comments, the rows gone with the page and with a
+  member who leaves. An agent's writes: what its account hears of them, and
+  who else does.
   Also the listing, its paging and its settle, the marks, the cleanups and
   the sweep, the nudge reaching the recipient's sockets only, a users.db
   error never failing a write, a share whose name cannot be read still
@@ -1008,7 +1120,8 @@ has notifications; the iPad's WKWebView has none, and the row says so.
 - `test_collab.py`: `publish_account`. `test_shares.py`: `added_at` and only
   new invitees told. `test_workspaces.py`, `test_pending_memberships.py`:
   the `invited` items. `test_hosted.py`: `/api/inbox/mark` past the
-  read-only gate. `test_migrations.py`: step 40, re-run.
+  read-only gate. `test_migrations.py`: steps 40 and 54, re-run.
+  `test_feedback_anchors.py`: the anchor of each kind.
   `test_restore_consistency.py`: `_fresh_ids`' remap.
 - Frontend node tests: `comments.test.mjs` (folding, ordering, the changes
   shown before the server answers, who may edit, the snippets and the

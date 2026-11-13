@@ -136,6 +136,8 @@
   .vaultBox .switch input:disabled + .switchTrack { opacity: 0.45; }
   .vaultBox .say { color: var(--text-secondary); line-height: 1.45; }
   .vaultBox .say.no { color: var(--danger); }
+  .vaultBox .agentRow { display: flex; flex-direction: column; gap: 5px; }
+  .vaultBox .agentRow .k { width: auto; }
   .vaultBox .btns { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
   .seg button { border: none; background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--fs-2xs); padding: 3px 8px; cursor: pointer; }
@@ -404,7 +406,8 @@
   // and "resume" starts them again; "sync" runs a round now (a detached
   // clone or link has none), and "more" opens a vault's own view, where its
   // switches and the rest are; the panel staying open on the new state
-  // after each of these.
+  // after each of these. A work folder whose files are not chosen yet has
+  // "choose" in place of its pause: its tracking dialog, in Gamma.
   const TONE = { ok: 'on', error: 'off', conflicts: 'warn', held: 'warn', pending: 'warn', waiting: 'warn', queued: 'busy', busy: 'busy' };
   const KEPT_ICON = { clone: 'local', zotero: 'library' };
   function keptRow(i) {
@@ -417,8 +420,10 @@
     const shut = i.seen ? 'Another account\'s vault: it, or an editor of the workspace, acts on it'
       : i.away ? 'No access to its workspace: nothing is pulled or pushed' : '';
     const vault = i.seen ? ['pause', ICONS.pause, shut, true]
+      : i.choosing ? ['choose', ICONS.open, 'Choose files…: what it tracks, in Gamma']
       : i.paused ? ['resume', ICONS.play, 'Resume: sync it again'] : ['pause', ICONS.pause, 'Pause: nothing is pulled or pushed until you resume it'];
-    const sync = (title) => (shut ? ['sync', ICONS.sync, shut, true] : ['sync', ICONS.sync, title]);
+    const sync = (title) => (shut ? ['sync', ICONS.sync, shut, true]
+      : i.choosing ? ['sync', ICONS.sync, 'Its first round runs once its files are chosen', true] : ['sync', ICONS.sync, title]);
     const acts = { // [action, icon, title, disabled]
       clone: [
         i.paused ? ['resume', ICONS.play, 'Resume: follow the origin again; what both sides did meanwhile merges']
@@ -460,7 +465,7 @@
   // A row's or a vault view's action (main.js keepingAction). Those that
   // change the vault or run a round leave the panel open on the new state;
   // the others ask first in a native dialog, or open something.
-  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push'];
+  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'agent', 'check-agents'];
   function runKept(i, action, value) {
     if (!STAYS_OPEN.includes(action)) closeMenu();
     gammaShell.keepingAction(i.kind, i.server, i.id, action, value).catch(() => {});
@@ -508,7 +513,7 @@
     add.className = 'item';
     add.id = 'addVaultBtn';
     add.innerHTML = `<span class="ico">${ICONS.plus}</span><span class="label">Add a synced vault…</span>`;
-    add.title = 'A directory on this computer becomes a folder of Gamma, its notes and PDFs kept in step with it';
+    add.title = 'A directory on this computer becomes a folder of Gamma, and you choose the files it tracks';
     add.onclick = () => { closeMenu(); gammaShell.addVault().catch(() => {}); };
     panel.appendChild(add);
     const ws = currentWorkspace();
@@ -546,7 +551,9 @@
     return r;
   }
 
-  // Push: off / PDFs / everything, as three buttons; `everything` shut where it cannot be.
+  // Push: off / PDFs / everything, as three buttons; `everything` shut where it cannot be, `noEverything` saying why.
+  const FAR_PUSH = 'A vault of another server pushes PDFs at most, for now';
+  const WHOLE_PUSH = 'A vault of the whole library cannot push everything: make one of a folder';
   function pushSeg(value, onPick, noEverything) {
     const seg = document.createElement('span');
     seg.className = 'seg';
@@ -559,7 +566,7 @@
       b.setAttribute('aria-pressed', String(value === word));
       if (word === 'everything' && noEverything) {
         b.disabled = true;
-        b.title = 'A vault of another server pushes PDFs at most, for now';
+        b.title = noEverything;
       }
       b.onclick = (e) => { e.stopPropagation(); if (value !== word) onPick(word); };
       seg.appendChild(b);
@@ -567,12 +574,13 @@
     return seg;
   }
 
-  // Pull: on or off; `shut`, why it cannot be turned off (a vault of another server keeps pulling).
-  function pullSwitch(id, on, onPick, shut) {
+  // A switch named `name`, on or off; `shut`, why it cannot be turned off (a vault of another server keeps pulling).
+  function switchOf(id, name, on, onPick, shut) {
     const sw = document.createElement('label');
     sw.className = 'switch';
-    sw.innerHTML = `<input type="checkbox" role="switch" id="${id}" aria-label="Pull"><span class="switchTrack"></span>`;
+    sw.innerHTML = `<input type="checkbox" role="switch" id="${id}"><span class="switchTrack"></span>`;
     const input = sw.querySelector('input');
+    input.setAttribute('aria-label', name);
     input.checked = on;
     if (shut && on) {
       input.disabled = true;
@@ -582,11 +590,67 @@
     return sw;
   }
 
-  // A vault's two switches in one row, each after its name: Pull, then Push.
-  function switchRow(pull, push) {
+  const pullSwitch = (id, on, onPick, shut) => switchOf(id, 'Pull', on, onPick, shut);
+
+  // A work folder's agent: Off / Codex / Claude Code, as three buttons
+  // (`agents`, keeping.js agentChoices); one not on this computer or not
+  // ready is shut, its problem in its tooltip.
+  function agentSeg(value, agents, onPick) {
+    const seg = document.createElement('span');
+    seg.className = 'seg';
+    seg.id = 'vaultAgent';
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', 'Agent in this folder');
+    for (const a of [{ name: '', label: 'Off' }, ...agents]) {
+      const b = document.createElement('button');
+      b.dataset.agent = a.name;
+      b.textContent = a.label;
+      b.setAttribute('aria-pressed', String(value === a.name));
+      if (a.name && (a.found === false || a.ready === false)) {
+        b.disabled = true;
+        b.title = a.problem || `${a.label} is not ready on this computer`;
+      }
+      b.onclick = (e) => { e.stopPropagation(); if (value !== a.name) onPick(a.name); };
+      seg.appendChild(b);
+    }
+    return seg;
+  }
+
+  // What the agent chosen does in the folder, under the agent row.
+  const AGENT_SAYS = {
+    '': 'Sends wait for an agent you run yourself.',
+    codex: 'Codex answers this folder\'s Sends: it edits the files here and runs commands in its sandbox, without network.',
+    claude: 'Claude Code answers this folder\'s Sends: it edits the files here and runs no commands.',
+  };
+
+  // A work folder's agent row (its maker's alone): the segment, then as
+  // visible lines the problem of the chosen agent and of each one that
+  // cannot be chosen, what the chosen one does, and what it does now.
+  function agentRow(i) {
+    const box = document.createElement('div');
+    box.className = 'agentRow';
+    box.appendChild(switchRow([['Agent in this folder', agentSeg(i.agent, i.agents, (name) => runKept(i, 'agent', name))]]));
+    const line = (text, no) => {
+      const say = document.createElement('div');
+      say.className = `say${no ? ' no' : ''}`;
+      say.textContent = text;
+      box.appendChild(say);
+    };
+    const problems = new Set();
+    if (i.agent && i.agentReady === false && i.agentProblem) problems.add(i.agentProblem);
+    for (const a of i.agents) if (a.ready !== true && a.problem) problems.add(a.problem);
+    for (const p of problems) line(p, true);
+    line(AGENT_SAYS[i.agent] || AGENT_SAYS[''], false);
+    if (i.agentRunning) line(`Now: ${i.agentLabel} is working · ${i.agentRunning}`, false);
+    return box;
+  }
+
+  // A vault's switches in one row, each after its name: `[name, control]`
+  // pairs, Pull then Push, or a work folder's library switch.
+  function switchRow(pairs) {
     const sw = document.createElement('div');
     sw.className = 'switches';
-    for (const [name, control] of [['Pull', pull], ['Push', push]]) {
+    for (const [name, control] of pairs) {
       const k = document.createElement('span'); k.className = 'k'; k.textContent = name;
       sw.append(k, control);
     }
@@ -613,8 +677,9 @@
     boxRow(box, 'Local', a.path, 'path');
     boxRow(box, 'Remote', `${a.server} · ${a.workspace} · ${a.newFolder ? `a new folder “${a.folder}”` : a.folder}`);
     boxRow(box, 'Found', foundText(a.preview || {}));
-    box.appendChild(switchRow(pullSwitch('askPull', askPick.pull, (on) => { askPick = { ...askPick, pull: on }; renderSync(); }),
-      pushSeg(askPick.push, (word) => { askPick = { ...askPick, push: word }; renderSync(); }, a.remote)));
+    box.appendChild(switchRow([['Pull', pullSwitch('askPull', askPick.pull, (on) => { askPick = { ...askPick, pull: on }; renderSync(); })],
+      ['Push', pushSeg(askPick.push, (word) => { askPick = { ...askPick, push: word }; renderSync(); },
+        a.remote ? FAR_PUSH : a.whole ? WHOLE_PUSH : '')]]));
     const said = (a.sentences || {})[`${askPick.pull}:${askPick.push}`] || { ok: false, text: '' };
     const say = document.createElement('div');
     say.className = `say${said.ok ? '' : ' no'}`;
@@ -644,18 +709,22 @@
     panel.appendChild(box);
   }
 
+  // A work folder's view of its maker looks for the agents on this computer
+  // again (main.js checkAgents), so its agent row offers what is there now.
   function openVault(i) {
     vaultView = i.key;
     renderSync();
+    if (i.work && i.mine && i.agents) runKept(i, 'check-agents');
   }
 
-  // A vault's own view: where it is and how it stands, its switches, and
-  // every action. The everyday ones are a bar of buttons under the switches
-  // — the rounds (Sync now, Pull now, Push now), Pause or Resume, and the
-  // directory — each named by its tooltip; the rare and the grave ones keep
-  // their rows, where their words warn: Go on… for a vault its guard held,
-  // Locate… for one whose directory or file is not where it was, Force
-  // pull… and Force push…, Remove the vault….
+  // A vault's own view: where it is and how it stands, its switches (a work
+  // folder's library switch among them), and every action. The everyday ones
+  // are a bar of buttons under the switches — the rounds (Sync now, Pull now,
+  // Push now), Pause or Resume, and the directory — each named by its
+  // tooltip; the rare and the grave ones keep their rows, where their words
+  // warn: Choose files… for a work folder (its tracking dialog, in Gamma), Go
+  // on… for a vault its guard held, Locate… for one whose directory or file
+  // is not where it was, Force pull… and Force push…, Remove the vault….
   function renderVault(panel, i) {
     backRow(panel, () => { vaultView = null; renderSync(); });
     panel.appendChild(label(i.name));
@@ -669,13 +738,20 @@
     const shut = i.seen ? 'Another account made this vault: it, or an editor of the workspace, acts on it.'
       : i.away ? 'Your account is no longer a member of its workspace: nothing is pulled or pushed.' : '';
     if (i.scope === 'folder') {
-      const sw = switchRow(pullSwitch('vaultPull', i.pull, (on) => runKept(i, 'pull', on), i.remoteUrl && 'A vault of another server pulls, for now'),
-        pushSeg(i.push, (word) => runKept(i, 'push', word), Boolean(i.remoteUrl)));
-      if (shut) {
-        sw.title = shut;
-        for (const input of sw.querySelectorAll('input, button')) input.disabled = true;
+      const rows = [switchRow([['Pull', pullSwitch('vaultPull', i.pull, (on) => runKept(i, 'pull', on), i.remoteUrl && 'A vault of another server pulls, for now')],
+        ['Push', pushSeg(i.push, (word) => runKept(i, 'push', word),
+          i.remoteUrl ? FAR_PUSH : i.whole && i.push !== 'everything' ? WHOLE_PUSH : '')]])];
+      // a work folder's switch: whether the PDFs and notes it finds are added to the library too
+      if (i.work) rows.push(switchRow([['Add its PDFs and notes to the library', switchOf('vaultLibrary', 'Add its PDFs and notes to the library', i.library, (on) => runKept(i, 'library', on))]]));
+      // and its agent, its maker's choice on a server that runs agents
+      if (i.work && i.mine && i.agents) rows.push(agentRow(i));
+      for (const sw of rows) {
+        if (shut) {
+          sw.title = shut;
+          for (const input of sw.querySelectorAll('input, button')) input.disabled = true;
+        }
+        box.appendChild(sw);
       }
-      box.appendChild(sw);
     }
     if (shut) {
       const say = document.createElement('div');
@@ -685,12 +761,12 @@
     }
     panel.appendChild(box);
     const folder = i.scope === 'folder';
-    const rounds = !shut;
+    const rounds = !shut && !i.choosing; // a work folder whose files are not chosen yet runs no round
     const quick = [ // [action, icon, title, shown, disabled]
       ['sync', ICONS.sync, folder ? 'Sync now: push, then pull' : 'Push now', rounds],
       ['pull-now', ICONS.pull, 'Pull now: Gamma\'s changes to this computer', rounds && folder, !i.pull],
       ['push-now', ICONS.upload, 'Push now: this computer\'s changes to Gamma', rounds && folder, i.push === 'off'],
-      i.paused ? ['resume', ICONS.play, 'Resume: sync it again', !i.seen]
+      i.paused ? ['resume', ICONS.play, 'Resume: sync it again', !i.seen && !i.choosing]
         : ['pause', ICONS.pause, 'Pause: nothing is pulled or pushed until you resume it', !i.seen],
       ['open', ICONS.open, folder ? 'Open the directory' : 'Show the file in its folder', !i.seen],
     ];
@@ -712,6 +788,7 @@
     if (bar.children.length) panel.appendChild(bar);
     const rows = document.createDocumentFragment();
     const acts = [ // [action, icon, label, shown, disabled, danger]
+      ['choose', ICONS.open, 'Choose files…', !shut && i.work],
       ['go-on', ICONS.play, 'Go on…', rounds && Boolean(i.held)],
       ['locate', ICONS.locate, folder ? 'Locate…' : 'Locate the file…', !i.seen && (!folder || Boolean(i.stopped) || i.offline)],
       ['force-pull', ICONS.force, 'Force pull…', rounds && folder],

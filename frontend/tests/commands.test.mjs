@@ -81,6 +81,32 @@ test("the handwriting commands keep to the strip's selection and clipboard, and 
   assert.deepEqual(calls, ["copy", "all"]);
 });
 
+// Ctrl+F with the focus in the chat window is ChatDock's find-in-chat, and
+// in the code view (documents/viewers/TextViewer.jsx) CodeMirror's own Find
+// panel: the search commands decline there and run anywhere else.
+test("the search commands leave Ctrl+F to the chat's find and to the code view's panel", () => {
+  const saved = globalThis.document;
+  const focusIn = (classes) => {
+    globalThis.document = {
+      querySelectorAll: () => [],
+      activeElement: { closest: (sel) => (sel.split(",").some((s) => classes.includes(s.trim())) ? {} : null) },
+    };
+  };
+  try {
+    const calls = [];
+    const ctx = { search: (everything) => { calls.push(everything); return true; } };
+    for (const where of [[".docTextView"], [".chatPanel"]]) {
+      focusIn(where);
+      assert.equal(commandById("app.search").run(ctx), false, `${where}: Ctrl+F declines`);
+      assert.equal(commandById("app.searchAll").run(ctx), false, `${where}: Ctrl+Shift+F declines`);
+    }
+    focusIn([".pdfViewer"]);
+    assert.equal(commandById("app.search").run(ctx), true);
+    assert.equal(commandById("app.searchAll").run(ctx), true);
+    assert.deepEqual(calls, [false, true]);
+  } finally { globalThis.document = saved; }
+});
+
 test("the PDF's held keys are lone modifiers that never dispatch", () => {
   assert.equal(commandChord("pdf.areaDrag", {}), "Mod", "Ctrl, ⌘ on a Mac");
   assert.equal(commandChord("pdf.peekOriginal", {}), "Alt");
@@ -108,6 +134,23 @@ test("the translation commands apply where the translate button does, and wait f
   const ctx = { translation: { toggle: () => calls.push("toggle"), page: () => calls.push("page"), document: () => calls.push("document") } };
   for (const id of ids) by(id).run(ctx);
   assert.deepEqual(calls, ["toggle", "page", "document"]);
+});
+
+test("the view toggles are unbound palette rows; the Files window is a member's, wherever the page is", () => {
+  const ids = ["app.toggleChat", "app.toggleComments", "app.togglePdf", "app.toggleNotes", "app.toggleFiles"];
+  for (const id of ids) {
+    const cmd = commandById(id);
+    assert.equal(cmd.keys, null, `${id} starts unbound`);
+    assert.equal(cmd.group, "View", id);
+    assert.notEqual(cmd.palette, false, `${id} is a palette row`);
+  }
+  const files = commandById("app.toggleFiles");
+  assert.equal(files.when({ shareMode: true }), false, "a share view's listing is its explorer");
+  assert.equal(files.when({ shareMode: false, homeMode: true }), true, "on the home view");
+  assert.equal(files.when({ shareMode: false, hasPage: true }), true, "beside a page");
+  let toggled = 0;
+  files.run({ toggleFiles: () => { toggled += 1; } });
+  assert.equal(toggled, 1);
 });
 
 test("fixedKeys follows the Enter preference", () => {

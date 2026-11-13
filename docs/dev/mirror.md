@@ -95,13 +95,20 @@ the frontend changes: editing a mirror is editing a workspace.
   same folder alike (`normalize.tree_block_id`, derived from the path), so
   a mirror and its remote upgraded separately find the same tree.
 - **Files**: every upload a page references (`/api/uploads/<hash>.<ext>` in
-  content or properties, a page's `doc_id`), by content hash — fetched when
+  content or properties, the stored file of a block's document, `doc`, of
+  any format: [documents.md](documents.md)), by content hash — fetched when
   missing on the copy, uploaded when missing on the original. A re-run
-  never duplicates. A file past 32 MiB goes up in parts of 8 MiB over the
-  remote's `/api/uploads/parts` (a PDF as `kind: pdf`, anything else as
-  `kind: file`), read from disk a part at a time, since a proxy in front of
-  the remote caps a request's body (Cloudflare at 100 MB); a remote that
-  does not echo the kind (an older server) gets it whole. Every fetched tree's files are checked, not only the
+  never duplicates. A stored name is `<hash>.<ext>` with an extension of 1
+  to 12 characters (`UPLOAD_NAME_RE`, `formats.EXTENSION_RE`'s length: a
+  `.properties` or `.safetensors` travels like a `.pdf`), and lands under
+  the same name on the other side: `/upload-file` keeps an image's own
+  extension (`<hash>.jpeg` stays `.jpeg`, [api.md](api.md) "Uploads"), so a
+  picture document's page reads its file there too. A file past 32 MiB goes
+  up in parts of 8 MiB over the remote's `/api/uploads/parts` (a PDF by its
+  name, `formats.format_of`, as `kind: pdf`, anything else as `kind:
+  file`), read from disk a part at a time, since a proxy in front of the
+  remote caps a request's body (Cloudflare at 100 MB); a remote that does
+  not echo the kind (an older server) gets it whole. Every fetched tree's files are checked, not only the
   changed blocks', and each round ends with a sweep for files the copy's
   pages name but lack (`missing_uploads`), so a round cut short after a
   page landed but before its PDF did heals by itself. The files that
@@ -197,7 +204,7 @@ but no round reads them; "Limits and next steps"), the comments (in
 pages.db beside the pages too: each server keeps its own, and a comment
 write moves no change feed, [comments.md](comments.md)),
 cover snapshots, search indexes (the copy keeps its own: the notes index
-follows the copy's own writes, the PDF index is extracted again).
+follows the copy's own writes, the document text index is extracted again).
 
 ## The page filter
 
@@ -321,7 +328,7 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
   `pending_local` and go with the first round after the update, an
   ordinary three-way merge. The upgrade itself sends nothing: a workspace
   step rewrites both copies alike without touching their pages
-  ([migrations.md](migrations.md) steps 29 and 30).
+  ([migrations.md](migrations.md) steps 29, 30 and 52).
 - **The status** keeps `version_gap: {here, remote}` beside `last_error`
   until a round gets past the check. Every surface reads it through
   `versionGap` (state `outdated`, an amber dot): *Paused · update Gamma*
@@ -335,6 +342,13 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
 - **A remote from before the check** names no `format`, and its rounds run
   as before. The check runs in the copy's engine, so it protects copies
   that run this release or a later one.
+- **Step 55** (`positions`, [migrations.md](migrations.md)) is the newest
+  format move, from 52: the kind column reads a picture's regions
+  (`image_position`) as highlights, and a work folder's file too large to
+  keep is a document at `listed` ([documents.md](documents.md) "The listed
+  state"), which an older copy's op path refuses as a 400 and would stop a
+  push mid-way. Nothing is rewritten: a pair that has run it on both sides
+  has nothing to send for it.
 - **Step 41** (`ink_v2`, [migrations.md](migrations.md)) is a format move
   of this kind. It rewrites every stroke file to `gamma-ink` version 2 as
   a new content-addressed upload, deterministically, so a pair that has
@@ -367,6 +381,20 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
   generated `deleted_with` column and its index the same way
   (`DERIVED_STEPS`), and the stamp it reads is a property of rows in
   Recently deleted, which no round sends.
+- **Step 52** (`page_documents`) moves the format from 44 to 52. It
+  rewrites a block's document from the flat `doc_id`, `source_url`,
+  `original_filename` and `linked_file` into one property, `doc`
+  ([documents.md](documents.md#older-shapes-migration-step-52)), so a pair
+  pauses until both sides have run it, and so does a publication. The step
+  rewrites the copy's stored bases (`sync_pages`) the same way, so the
+  first round after both upgraded sends nothing for the shape; a push in
+  flight from before the upgrade (`~pending`) is resent as it was stored,
+  the remote refuses an op that carries a flat key with a value (400),
+  `_confirm_push` logs it (what landed stays), and the edit is worked out
+  again from the base and the page. The root properties merge one key at
+  a time (`props_patch`), so `doc` travels and merges as one value. A
+  desktop vault on another server and `gamma_sync` check the format too
+  ([synced_vaults.md](synced_vaults.md#a-vault-on-another-server)).
 
 ## One round, one page (`sync_engine._sync_page`)
 
@@ -1374,7 +1402,7 @@ directory on a PC in step as files. Gamma's changes are pulled to the files;
 what goes back, as its switch says, is the PDFs (each its page's new file
 through the replacement) or everything, a note's changes merged into its
 page with the file winning a clash, as client `disk`. A vault of another
-server reads it over HTTP with a token (`gamma/vault_http.py`: the change
+server reads it over HTTP with a token (`gamma/vault/http_remote.py`: the change
 feed, the subtree and the op log) and writes a page's changes as one plan
 (`POST /api/pages/{id}/plan`), refused whole when the page moved meanwhile.
 The gamma-sync client ([synced_vaults.md](synced_vaults.md#the-client))

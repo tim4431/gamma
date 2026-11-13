@@ -45,7 +45,7 @@ gets the same answer ("Ops" below).
 
 | op | fields | notes |
 |---|---|---|
-| `set` | `id`, `content?`, `base?`, `props?`, `base_props?` | `content` replaces the text; with `base` (the text it was edited from) it is merged into a block changed meanwhile ("same-block merge" below); `props` is a PATCH (`{key: value \| null}`, null deletes), so unrelated properties never conflict; `base_props` holds the values the patch was computed from — an ink group's new `ink_url` whose base is not the stored one is merged into the stored drawing by stroke ([handwriting.md](handwriting.md) "Two writers, one group"), a text box's `text_box` into the stored box key by key and a picture's `picture` into the stored picture ("same-box merge" below), other keys stay last-writer-wins |
+| `set` | `id`, `content?`, `base?`, `props?`, `base_props?`, `quiet?` | `content` replaces the text; with `base` (the text it was edited from) it is merged into a block changed meanwhile ("same-block merge" below); `props` is a PATCH (`{key: value \| null}`, null deletes), so unrelated properties never conflict; `base_props` holds the values the patch was computed from — an ink group's new `ink_url` whose base is not the stored one is merged into the stored drawing by stroke ([handwriting.md](handwriting.md) "Two writers, one group"), a text box's `text_box` into the stored box key by key and a picture's `picture` into the stored picture ("same-box merge" below), other keys stay last-writer-wins; `quiet` (the vault's or the mirror's set of a page root, ignored from anyone else) leaves the page's `updated_at` as it is, and a batch of quiet sets writes the page's row of the change log without stamping the page ("The work-folder rule" below) |
 | `insert` | `id`, `parent`, `position?`, `content`, `props` | the client mints id and position (fractional-indexing, the same algorithm on both sides, npm's and PyPI's, held to the same keys by `tests/shared/fractionalkeys.json`); a position no client could mint, the empty one and one with a character outside the base-62 alphabet included, is a 400 (`ops.order_key_error`); a position colliding with a sibling is re-keyed and the applied op echoes the final key; re-inserting an id the page already has (a retry, a rescue) leaves the block as it is, so nobody's newer edit or move is undone, and echoes it |
 | `move` | `id`, `parent`, `position?` | cycle-checked (400), collision-re-keyed |
 | `delete` | `id` | the subtree; an unknown id is a no-op (a retry) |
@@ -60,7 +60,9 @@ inserted. `parent: "root"` is refused: ops never create pages. A bad op
 fails the whole batch and nothing is written. A page root's filing
 (`properties.folders` / `labels`) must be a list of block ids (400
 otherwise); it is stored as written, an id of a folder this copy does not
-have included (next section).
+have included (next section). A work folder's file, and the folders of a
+work folder, go by the work-folder rule as well ("The work-folder rule"
+below).
 
 A page root's `parent_page`, the page a sub-page is inside
 ([home_library.md](home_library.md#sub-pages)), goes through
@@ -77,10 +79,11 @@ since a sub-page is filed where its top is, and the echo carries both. A
 batch sent with client `"sync"` (`ops.SYNC_CLIENT`, a mirror's) skips the
 chain test: two copies may each have moved one page into the other, and
 the cycle their merge makes is stored, and read as two library pages,
-rather than refused on every round. The client name is the caller's to
-give, so this grants nothing: whoever may set a page root's properties may
-already move, refile or delete the page, a share editor may set none, and
-every reader takes a cycle for no parent.
+rather than refused on every round. Over HTTP the routes take `"sync"` and
+`"disk"` only from an integration token (`auth.writer_client`, next
+section), and the skip grants nothing anyway: whoever may set a page
+root's properties may already move, refile or delete the page, a share
+editor may set none, and every reader takes a cycle for no parent.
 
 Such a set is an op on the moved page, so only that page's room hears it:
 nothing reaches the rooms of the page it leaves or the page it goes into,
@@ -88,6 +91,53 @@ nor does a page made inside another (`POST /api/pages` with
 `parent_page`) reach its parent's room. An open parent's Pages inside panel
 reads the change when the window comes back, with the library listing
 ([home_library.md](home_library.md#sub-pages)).
+
+### The work-folder rule
+
+A work folder's files and folders keep the place and the name their vault
+gives them ([work_folders.md](work_folders.md#the-op-rule)). The op path
+holds every batch to that rule beside the page-root rule above, by the
+writer its op client names (`work_folders.filing.writer_of`): `"sync"` the
+mirror, which passes it; `"disk"` the vault, held to the shape a file
+keeps; any other a person, a share editor and the agent included. A
+person's `set` of a file's root (`_Batch.work_patch`) changes neither
+stamp the vault names it by (`work_folder`, `file_name`), nor its
+document, nor its directory (`folders[0]`); `library` it sets to true or
+clears, the library folders going with it. A note where the work folder
+pulls may be renamed and moved between its directories, which pull
+carries to its file, and a file
+in the library may take library folders and a title of its own. A share
+editor's rename of a file goes by the same rule. No page of the library is
+filed in a folder of a work folder, and no `parent_page` names a file. On
+the `folders` tree (`_Batch.tree_rule`) a person renames, moves, deletes
+and makes no folder inside a work folder (a reorder and a pin pass), may
+rename the work folder's own folder and move it out of every work folder
+but never delete it, and never writes the mark. `trash_page`,
+`restore_page`, `tree_deletion` (so the agent's preview card too),
+`create_page` and `insert_page_tree` hold their writes to the same rule.
+Putting a file in the library (`library: true`) needs its bytes stored on
+this server and no other library page owning them.
+
+A refusal is a 403 with conflict `locked` and the rule's words as `detail`,
+never a 409, which the ops route retries for ever. The tab drops that op
+alone and says why: the `detail`, translated where it is one of the rule's
+words (`workFolders.WORDS`), else as sent ("That file's name and place
+follow its work folder." when there is none); its title field and menus
+offer nothing the rule refuses, so only a stale tab meets it.
+
+Over HTTP a writer names itself by its batch's `client`, or by the
+`X-Gamma-Client` header on a route that takes no batch
+(`auth.writer_client`). `"disk"` and `"sync"` are taken only from an
+integration token on a request with no `?share=`; from a session or a
+share link they read as `""`, a person. A token that claims `"disk"` is
+trusted as a vault: the rule keeps the app's own writers consistent, and
+is no guard against a script that holds a token.
+
+A page root's `set` may carry `quiet: true`, honoured for the vault and the
+mirror only: the root keeps its `updated_at`, and a batch of nothing but
+quiet sets writes the page's row of the change log
+(`touch_page(…, quiet=True)`) without stamping the page, so a vault that
+stamps its pages moves nobody's recent pages.
 
 ### The folder and label trees
 
@@ -140,6 +190,8 @@ match what a server without conflict codes answers, so an offline copy's
 engine can match on them against a server of any version. A synced vault's
 plan adds `stale` (409, no `index`): the page's log moved past the seq the
 plan was made at, so the vault plans again from what the page holds now.
+`locked` (403) is no race: the work-folder rule refuses the op ("The
+work-folder rule" above), and a client drops it alone all the same.
 
 Lone UTF-16 surrogates (half an emoji) in any string of a batch are stored
 as U+FFFD (`ops.storable`, also on the block create and update bodies).
@@ -162,7 +214,7 @@ names its ops stop and start referencing. The names it takes up clear their
 (`dropped_uploads` on the result; a cut and paste within the batch drops
 nothing) go to `upload_gc.schedule`, a check on its own thread, never in
 the request ([user_db.md](user_db.md) "Stored files"). The data.db purge
-(`pdf_index.purge_unused`, the PDF rows of papers nothing carries) runs only
+(`search.index.purge_unused`, the index rows of documents nothing carries) runs only
 when a deleted block carried a PDF.
 
 A batch may carry `batch`, the client's id for it, the same on every retry.
@@ -198,9 +250,10 @@ with conflict `stale` (409) when the page's log moved past `seq`, and a
 `batch_id` the log holds answered from its row; `ensure_filing(ws,
 conn, paths=, labels=, under=, actor=, client=)` makes the folders and
 labels a writer files by name where they are missing (one committed batch
-per tree); `tree_deletion(conn, tree, id)` / `delete_tree(ws, conn, tree,
+per tree); `tree_deletion(conn, tree, id, client=)` / `delete_tree(ws, conn, tree,
 id, actor=, client=)` read and run a folder's or label's deletion (the
-endpoints, the agent, a revert's redo). In all
+endpoints, the agent, a revert's redo), both refusing a person a folder of
+a work folder or one that holds one. In all
 of them `ws` is the workspace id and `actor` who makes the change
 (`auth.actor_of`: the account's id, or a label for a writer that is no
 account). Every server-side writer
@@ -267,7 +320,8 @@ sets skip the cycle check, "Ops" above), `"zotero"` (a Zotero
 link's writes, [zotero_sync.md](zotero_sync.md#writing-to-gamma)), `"disk"`
 (`auth.DISK_CLIENT`: a synced vault's writes, actor the account that made
 the vault, which write no Inbox item and wake no hot round of the vault's
-own, [synced_vaults.md](synced_vaults.md#a-round)), `"revert"` (the
+own, [synced_vaults.md](synced_vaults.md#a-round); over HTTP, like
+`"sync"`, only from an integration token, "The work-folder rule"), `"revert"` (the
 user taking an agent change back from the chat, [ai_tools.md](ai_tools.md)
 "Reverting a note change") or `"meta"` (the
 paper-metadata worker's property writes — the one content write opening a

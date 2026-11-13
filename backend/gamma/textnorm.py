@@ -1,6 +1,6 @@
 """Search text normalization and fuzzy matching, shared by the FTS indexes
 (the notes index in pages.db, whose triggers call ``normalize_text`` as the
-SQL function ``textnorm`` — db.register_functions; gamma/pdf_index.py) and
+SQL function ``textnorm`` — db.register_functions; gamma/search/index.py) and
 block search (routers/blocks.py).
 
 The frontend mirrors the normalization and fuzzy rules in

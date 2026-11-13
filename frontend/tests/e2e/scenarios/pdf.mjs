@@ -360,10 +360,11 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
   await step("pdf: a text selection makes a highlight (overlay + note row), persisted with its position", async () => {
     await selectPdfText(page, 1, "entanglement in Rydberg");
     await page.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
-    // The popup is as wide as its buttons, however many colours the palette has.
+    // The popup is as wide as its row (the styles, the colours, the tools),
+    // however many colours the palette has.
     const [left, right] = await page.evaluate(() => {
       const tip = document.querySelector(".plainTip").getBoundingClientRect();
-      const btns = [...document.querySelectorAll(".plainTip .colorRow > button")].map((b) => b.getBoundingClientRect());
+      const btns = [...document.querySelectorAll(".plainTip .colorRow > *")].map((b) => b.getBoundingClientRect());
       return [Math.min(...btns.map((b) => b.left)) - tip.left, tip.right - Math.max(...btns.map((b) => b.right))];
     });
     assert(Math.abs(left - right) < 1, `the popup's space left of its buttons ${left}px, right ${right}px`);
@@ -533,7 +534,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assert((kept.block.children || []).some((b) => b.properties?.color === "#ffe28fa6"), "the earlier highlight keeps its yellow");
       // the recolour menu offers the same swatches
       await page.click(`[data-page="1"] [data-hl-id="${saved.id}"]`, { button: "right" });
-      const swatch = page.locator(".ctxMenuColors .colorBtn").nth(1);
+      const swatch = page.locator(".markMenu .colorBtn").nth(1);
       assertEq(await swatch.getAttribute("aria-label"), "Change to Green");
       await swatch.click();
       await until(async () => {
@@ -548,53 +549,64 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     }
   });
 
-  // The strip's text highlighter: on, a drag over text is a highlight as the
-  // mouse lets go, in the colour picked last, with no popup, and its note
-  // opens for typing as the popup's does; once the mouse moves on, a bar
-  // over it recolours it. Its button's menu picks the colour, and so do the
-  // popup and that bar. A paper of its own, in a tab of its own:
-  // a drag that starts on a highlight is a click on it, and the steps after
-  // this one drag the Rydberg paper's free text.
-  await step("pdf: the text highlighter highlights a selection on release in the colour picked last, its bar recolouring it", async () => {
+  // The text highlighters (docs/dev/settings.md "Text highlighters"): an
+  // account starts with one, the wash in the colour the released
+  // highlighter had, and nothing is stored until it is edited. Armed, a drag
+  // over text is a highlight as the mouse lets go, in its look, with no
+  // popup, its note open for typing; once the mouse moves on, a bar over it
+  // changes that one highlight and never the highlighter. A paper of its
+  // own, in a tab of its own: a drag that starts on a highlight is a click
+  // on it, and the steps after this one drag the Rydberg paper's free text.
+  await step("pdf: the strip's text highlighter marks a selection on release in its look, and the bar over it changes that highlight alone", async () => {
     const up = await account.upload("/api/uploads", makePdf([["Alpha beta gamma delta", "Epsilon zeta eta theta"]]), "highlighter.pdf", "application/pdf");
     const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Highlighter paper", source_url: up.source_url } });
     const p = await openPage(ctx, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
     try {
       await waitForPdf(p, 1);
-      const button = p.getByRole("button", { name: "Text highlighter", exact: true });
-      const made = (needle, color) => until(async () => {
-        const d = await account.api(`/api/blocks/${doc.id}/subtree`);
-        return (d.block.children || []).some((b) => b.properties?.quote === needle && b.properties?.color === color);
-      }, { what: `highlight "${needle}" in ${color}` });
-      const profileColor = (color) => until(async () => (await account.api("/api/prefs/profile")).value?.highlighterColor === color,
-        { what: `the profile's highlighter colour ${color}` });
-      // the button's menu: a colour turns it on
-      await button.click({ button: "right" });
-      await p.locator(".ctxMenuColors .colorBtn").nth(1).click();
-      assertEq(await button.getAttribute("aria-pressed"), "true", "a colour from its menu turns it on");
-      await profileColor("#aaebaaa6");
-      assertEq(await p.locator(".pdfViewer").evaluate((el) => el.style.getPropertyValue("--selection-color")), "#aaebaaa6",
+      const buttons = p.locator('[data-guide="viewer.highlighter"]').getByRole("button");
+      assertEq(await buttons.count(), 1, "one highlighter to start");
+      const button = buttons.first();
+      assertEq(await button.getAttribute("aria-label"), "Text highlighter: Highlight in Yellow");
+      const children = async () => (await account.api(`/api/blocks/${doc.id}/subtree`)).block.children || [];
+      const made = (needle, color) => until(async () => (await children()).some((b) => b.properties?.quote === needle && b.properties?.color === color),
+        { what: `highlight "${needle}" in ${color}` });
+      const untouched = async (what) => {
+        const v = (await account.api("/api/prefs/profile")).value || {};
+        assertEq(JSON.stringify(v.highlightPresets || []), "[]", `${what}: no highlighter stored`);
+        assertEq(v.highlighterColor || "", "", `${what}: the released colour as it was`);
+      };
+      await untouched("at the start");
+      await button.click();
+      assertEq(await button.getAttribute("aria-pressed"), "true", "armed");
+      assertEq(await p.locator(".pdfViewer").evaluate((el) => el.style.getPropertyValue("--selection-color")), "#ffe28fa6",
         "the selection is drawn in its colour");
       const release = await dragSelectPdfText(p, 1, "beta gamma", { highlighted: true, moveOn: false });
-      await made("beta gamma", "#aaebaaa6");
+      await made("beta gamma", "#ffe28fa6");
       assertEq(await p.evaluate(() => window.getSelection().toString()), "", "the selection is gone into the highlight");
       await until(() => p.evaluate(() => !!document.activeElement?.closest(".blockEditorCm")), { what: "the new highlight's note open for typing" });
       await sleep(300);
       assertEq(await p.locator(".plainTip").count(), 0, "no popup while the mouse holds still");
-      // the mouse moves on: the bar over the highlight it made, whose colour
-      // changes it and is the highlighter's from then on; the note stays open
+      // the mouse moves on: the bar over it, whose swatch changes that one highlight; the note stays open
       await movePast(p, release);
       const bar = p.locator(".plainTip");
       await bar.waitFor();
       assertEq(await bar.locator(".tipMoveBtn").count(), 0);
       await bar.getByRole("button", { name: "Change to Purple", exact: true }).click();
       await made("beta gamma", "#e6b4ffa6");
-      await profileColor("#e6b4ffa6");
       await bar.waitFor({ state: "detached" });
       assert(await p.evaluate(() => !!document.activeElement?.closest(".blockEditorCm")), "the note keeps the focus");
       assertEq(await p.evaluate(() => new Set([...document.querySelectorAll("[data-hl-id]")].map((el) => el.dataset.hlId)).size), 1,
         "recoloured, not another highlight");
-      // off, the popup is back; its swatch becomes the highlighter's colour
+      assertEq(await button.getAttribute("aria-label"), "Text highlighter: Highlight in Yellow", "the highlighter keeps its look");
+      await untouched("after the bar");
+      // its Remove takes a highlight made by mistake away again
+      const theta = await dragSelectPdfText(p, 1, "theta", { highlighted: true, moveOn: false });
+      await made("theta", "#ffe28fa6");
+      await movePast(p, theta);
+      await bar.waitFor();
+      await bar.getByRole("button", { name: "Remove highlight", exact: true }).click();
+      await until(async () => !(await children()).some((b) => b.properties?.quote === "theta"), { what: "the mistaken highlight removed" });
+      // off, the popup is back; its swatch makes a wash and leaves the highlighter as it is
       await button.click();
       assertEq(await button.getAttribute("aria-pressed"), "false");
       const zeta = await dragSelectPdfText(p, 1, "zeta eta", { moveOn: false });
@@ -604,18 +616,169 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await p.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
       await p.locator(".plainTip .colorBtn").nth(2).click();
       await made("zeta eta", "#9bcdffa6");
-      await profileColor("#9bcdffa6");
-      await button.click(); // the popup's note is still open for typing, as when you read on
-      await dragSelectPdfText(p, 1, "theta", { highlighted: true });
-      await made("theta", "#9bcdffa6");
+      await untouched("after a swatch");
       // the pen's strip and the highlighter put each other away
+      await button.click();
       await p.locator('[data-guide="pdf.inkButton"]').click();
       await p.locator('[data-guide="ink.toolbar"]').waitFor();
       assertEq(await button.getAttribute("aria-pressed"), "false", "opening the pen's strip turns it off");
       await button.click();
-      await p.locator('[data-guide="ink.toolbar"]').waitFor({ state: "detached", timeout: 5000 }); // turning it on closes the pen's strip
+      await p.locator('[data-guide="ink.toolbar"]').waitFor({ state: "detached", timeout: 5000 }); // arming one closes the pen's strip
+      await button.click();
       assertNoProblems(p);
     } finally { await p.close(); }
+  });
+
+  // The selection popup's one row (shared/model/markStyle.js, pdf/MarkTools.jsx):
+  // the colours, a wash highlighter standing in its swatch, the other
+  // highlighters as glyph buttons, the fold with a one-shot style; a
+  // highlight's menu restyles it in place and keeps its look as a
+  // highlighter, a button on the strip.
+  await step("pdf: the popup marks in a one-shot style, a highlight's menu restyles it in place, and Save look puts its look on the strip", async () => {
+    const up = await account.upload("/api/uploads", makePdf([["Kappa lambda mu nu", "Xi omicron pi rho", "Sigma tau upsilon phi"]]), "styles.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Styles paper", source_url: up.source_url } });
+    const p = await openPage(ctx, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+    const children = async () => (await account.api(`/api/blocks/${doc.id}/subtree`)).block.children || [];
+    const block = (test, what) => until(async () => (await children()).find(test) || null, { what });
+    const profile = (test, what) => until(async () => test((await account.api("/api/prefs/profile")).value || {}), { what });
+    const strip = p.locator('[data-guide="viewer.highlighter"]').getByRole("button");
+    try {
+      await waitForPdf(p, 1);
+      // the row: the colours (the one wash highlighter is its swatch, with its key), no style row, the fold
+      await selectPdfText(p, 1, "lambda mu");
+      const tip = p.locator(".plainTip");
+      await tip.locator(".colorBtn").first().waitFor();
+      assertEq(await tip.locator(".markBtn").count(), 0, "the wash highlighter is its swatch");
+      assertEq(await tip.locator(".colorBtn").first().getAttribute("aria-keyshortcuts"), "1");
+      assertEq(await tip.getByRole("radiogroup", { name: "Style" }).count(), 0, "no style row in the row");
+      // the fold's style is a one-shot: the swatches draw it, a press makes it, nothing is kept
+      await tip.getByRole("button", { name: "More styles and highlighters" }).click();
+      await tip.getByRole("radio", { name: "Underline", exact: true }).click();
+      const blue = tip.locator(".colorRow > .colorBtn").nth(2);
+      assertEq(await blue.getAttribute("aria-label"), "Underline in Blue");
+      assert(await blue.evaluate((el) => el.classList.contains("markLine") && !!el.querySelector(".markGlyph")), "a swatch shows the line it makes");
+      await blue.click();
+      const under = await block((b) => b.properties?.quote === "lambda mu", "the underlined passage");
+      assertEq(JSON.stringify([under.properties.style, under.properties.color]), JSON.stringify(["underline", "#9bcdffa6"]));
+      const mark = p.locator(`[data-page="1"] [data-hl-id="${under.id}"]`).first();
+      assertEq(await mark.getAttribute("data-hl-style"), "underline");
+      await until(() => p.evaluate(() => !!document.activeElement?.closest(".blockEditorCm")), { what: "its note open for typing" });
+      await p.keyboard.type("defines it");
+      await block((b) => b.id === under.id && b.content === "defines it", "its note");
+      await p.keyboard.press("Escape");
+      const row = p.locator(`.blockRowWrap[data-block-id="${under.id}"]`);
+      await row.locator(".highlightDotBtn .markGlyph").waitFor(); // its style's glyph in place of the dot
+      const kept = (await account.api("/api/prefs/profile")).value || {};
+      assertEq(JSON.stringify(kept.highlightPresets || []), "[]", "a one-shot style keeps nothing");
+      assertEq(kept.highlightStyle, undefined, "no sticky style");
+      // the next popup starts at the wash
+      await selectPdfText(p, 1, "omicron pi");
+      await tip.locator(".colorBtn").first().waitFor();
+      assertEq(await tip.locator(".colorRow > .colorBtn").first().getAttribute("aria-label"), "Highlight in Yellow", "the wash again");
+      await p.mouse.click(5, 300);
+      await tip.waitFor({ state: "detached" });
+      // a highlight's menu restyles it in place and stays open for a colour; its note and place stay
+      await mark.click({ button: "right" });
+      const menu = p.locator(".ctxMenu");
+      await menu.getByRole("menuitemradio", { name: "Wavy underline", exact: true }).click();
+      const wavy = await block((b) => b.id === under.id && b.properties?.style === "squiggly", "the passage made wavy");
+      assertEq(wavy.content, "defines it");
+      assertEq(JSON.stringify(wavy.properties.pdf_position), JSON.stringify(under.properties.pdf_position));
+      assertEq(await menu.getByRole("menuitemradio", { name: "Wavy underline", exact: true }).getAttribute("aria-checked"), "true", "the menu stays");
+      assertEq(await menu.getByRole("menuitem", { name: "Color group" }).count(), 0, "a highlight's menu switches no colour group");
+      // Save look as highlighter: its look a button on the strip, and the list stored
+      await menu.getByRole("menuitem", { name: "Save look as highlighter", exact: true }).click();
+      await menu.waitFor({ state: "detached" });
+      await until(async () => await strip.count() === 2, { what: "a second highlighter on the strip" });
+      assertEq(await strip.nth(1).getAttribute("aria-label"), "Text highlighter: Wavy underline in Blue");
+      await profile((v) => v.highlightPresets?.length === 2 && v.highlightPresets[1].style === "squiggly", "the list stored with the look");
+      // its menu no longer offers to save it
+      await mark.click({ button: "right" });
+      await menu.getByRole("menuitemradio", { name: "Wavy underline", exact: true }).waitFor();
+      assertEq(await menu.getByRole("menuitem", { name: "Save look as highlighter", exact: true }).count(), 0, "a look already kept");
+      await p.keyboard.press("Escape");
+      await menu.waitFor({ state: "detached" });
+      // the popup shows it as a glyph button, and its key marks with it
+      await selectPdfText(p, 1, "upsilon phi");
+      await tip.locator(".colorBtn").first().waitFor();
+      assertEq(await tip.locator(".markBtn").count(), 1);
+      assertEq(await tip.locator(".markBtn").getAttribute("aria-label"), "Highlight as Wavy underline in Blue");
+      await p.keyboard.press("2");
+      const keyed = await block((b) => b.properties?.quote === "upsilon phi", "the passage the key marked");
+      assertEq(JSON.stringify([keyed.properties.style, keyed.properties.color]), JSON.stringify(["squiggly", "#9bcdffa6"]));
+      assertNoProblems(p);
+    } finally {
+      await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { highlightPresets: [], palette: DEFAULT_PALETTE } } });
+      await p.close();
+    }
+  });
+
+  // A strip highlighter's menu edits it in place (its style, colour, name),
+  // duplicates it (armed, the menu on the copy), hides it (its key stays;
+  // Hidden highlighters arms it, pinned to the strip while on); armed, a
+  // release marks in its look, the selection tinted by its line; Edit
+  // highlighters… opens the Settings section.
+  await step("pdf: a strip highlighter's menu edits, duplicates and hides it, and an armed line highlighter marks in its look", async () => {
+    const up = await account.upload("/api/uploads", makePdf([["Kappa lambda mu nu", "Xi omicron pi rho"]]), "strip.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Strip paper", source_url: up.source_url } });
+    const p = await openPage(ctx, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+    const children = async () => (await account.api(`/api/blocks/${doc.id}/subtree`)).block.children || [];
+    const profile = (test, what) => until(async () => test((await account.api("/api/prefs/profile")).value || {}), { what });
+    const strip = p.locator('[data-guide="viewer.highlighter"]').getByRole("button");
+    const menu = p.locator(".ctxMenu.hlMenu");
+    try {
+      await waitForPdf(p, 1);
+      // Duplicate the first: a copy right after it, armed, the menu on the copy
+      await strip.first().click({ button: "right" });
+      await menu.waitFor();
+      await menu.getByRole("menuitem", { name: "Duplicate", exact: true }).click();
+      await until(async () => await strip.count() === 2, { what: "the copy on the strip" });
+      assertEq(await strip.nth(1).getAttribute("aria-pressed"), "true", "the copy armed");
+      // the menu edits the copy and stays open: a style, a swatch, its name
+      await menu.getByRole("menuitemradio", { name: "Underline", exact: true }).click();
+      await menu.getByRole("menuitemradio", { name: "Blue for this highlighter", exact: true }).click();
+      await menu.getByRole("textbox", { name: "Name of this highlighter" }).fill("Definition");
+      await until(async () => (await strip.nth(1).getAttribute("aria-label")) === "Text highlighter: Definition", { what: "renamed on the strip" });
+      assert(await menu.isVisible(), "the menu stays for the next edit");
+      await p.keyboard.press("Escape");
+      await menu.waitFor({ state: "detached" });
+      await profile((v) => v.highlightPresets?.[1]?.name === "Definition" && v.highlightPresets[1].style === "underline"
+        && v.highlightPresets[1].color.hex === "#9bcdff", "the edits stored");
+      assertEq(await strip.first().getAttribute("aria-label"), "Text highlighter: Highlight in Yellow", "the first as it was");
+      // armed, a release marks in its look, the selection tinted by its line's tone
+      assertEq(await p.locator(".pdfViewer").evaluate((el) => el.style.getPropertyValue("--selection-color")), "#006bd640");
+      await dragSelectPdfText(p, 1, "lambda mu", { highlighted: true });
+      await until(async () => (await children()).some((b) => b.properties?.quote === "lambda mu" && b.properties.style === "underline"
+        && b.properties.color === "#9bcdffa6"), { what: "an underline from the armed highlighter" });
+      await strip.nth(1).click();
+      assertEq(await strip.nth(1).getAttribute("aria-pressed"), "false", "a press on the armed one turns it off");
+      // Hide it: off the strip, under Hidden highlighters, which arms it pinned
+      await strip.nth(1).click({ button: "right" });
+      await menu.getByRole("menuitem", { name: "Hide from the strip", exact: true }).click();
+      await until(async () => await strip.count() === 1, { what: "hidden from the strip" });
+      await profile((v) => v.highlightPresets?.[1]?.hidden === true, "stored hidden");
+      await strip.first().click({ button: "right" });
+      await menu.getByRole("menuitem", { name: "Hidden highlighters" }).click();
+      await p.locator(".ctxSubMenu").getByRole("menuitemradio", { name: "Definition" }).click();
+      await until(async () => await strip.count() === 2, { what: "pinned while armed" });
+      assert(await strip.nth(1).evaluate((el) => el.classList.contains("pinned") && el.getAttribute("aria-pressed") === "true"), "pinned and pressed");
+      await strip.nth(1).click();
+      await until(async () => await strip.count() === 1, { what: "gone again once off" });
+      // Edit highlighters… opens the section, the hidden one under its line
+      await strip.first().click({ button: "right" });
+      await menu.getByRole("menuitem", { name: "Edit highlighters…", exact: true }).click();
+      const dialog = p.locator(".settingsModal");
+      await dialog.locator(".hlRow").first().waitFor();
+      assertEq(await dialog.locator(".hlRow").count(), 2);
+      assertEq(await dialog.locator(".hlRow.off").count(), 1, "the hidden one muted");
+      await dialog.locator(".hlSep").waitFor();
+      await p.keyboard.press("Escape");
+      await dialog.waitFor({ state: "detached" });
+      assertNoProblems(p);
+    } finally {
+      await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { highlightPresets: [], palette: DEFAULT_PALETTE } } });
+      await p.close();
+    }
   });
 
   await step("pdf: interface scale keeps note badges anchored and Tours consistent", async () => {
@@ -1293,7 +1456,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await p.keyboard.press("Control+p");
       const dialog = p.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
-      const input = dialog.getByRole("textbox", { name: "Search pages by title or label" });
+      const input = dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" });
       await until(() => input.evaluate((el) => el === document.activeElement), { what: "the palette's input takes focus" });
       await input.fill(title);
       const rows = dialog.locator('[role="option"][data-kind="page"]');

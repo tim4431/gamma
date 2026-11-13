@@ -138,10 +138,14 @@
   // script while the tab still shows another page: it says nothing, and
   // answers nothing, until it is shown.
   let last = null;
-  function run() {
+  function run(changed = false) {
     if (document.prerendering) return;
     try {
-      last = detect();
+      const next = detect();
+      // A page that only retitles itself (a counter in its title) says
+      // nothing new.
+      if (changed && last && JSON.stringify(next) === JSON.stringify(last)) return;
+      last = next;
       chrome.runtime.sendMessage({ type: "detected", candidate: last }).catch(() => {});
     } catch {}
   }
@@ -185,9 +189,12 @@
 
   run();
   document.addEventListener("prerenderingchange", run, { once: true });
-  // Single-page apps (OpenReview, publisher platforms) navigate without a reload.
-  let lastHref = location.href;
+  // Single-page apps (OpenReview, publisher platforms, GitHub) navigate
+  // without a reload, and many change the address before the page under it:
+  // a title that changes afterwards is the page arriving, so it is read again.
+  let seen = `${location.href}\n${document.title}`;
   setInterval(() => {
-    if (location.href !== lastHref) { lastHref = location.href; run(); }
+    const now = `${location.href}\n${document.title}`;
+    if (now !== seen) { seen = now; run(true); }
   }, 1500);
 })();

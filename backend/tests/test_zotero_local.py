@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import account_of, login, make_user
+from conftest import account_of, doc_props, login, make_user
 from gamma import blocks_store, highlights, jobs, ops, storage
 from gamma import zotero_annotations as za
 from gamma import zotero_local as zl
@@ -267,7 +267,7 @@ def test_read_page_gives_annotations_at_any_depth_regions_filing_and_the_pdf(sid
     folder = _insert(side.c, "folders", "zlRpF1", "Reading", parent="folders")
     label = _insert(side.c, "labels", "zlRpL1", "to read", parent="labels")
     doc_id, _ = storage.store_pdf(side.ws, b"%PDF-1.4 zotero local read page\n" + b"r" * 400)
-    page = _page(side.c, "Read me", folders=[folder, "zlNoSuchFolder"], labels=[label], doc_id=doc_id)
+    page = _page(side.c, "Read me", folders=[folder, "zlNoSuchFolder"], labels=[label], **doc_props(doc_id))
     _insert(side.c, page, "zlRp1", "a Gamma note")
     _insert(side.c, page, "zlRp2", "my own note", **_placed())
     _insert(side.c, page, "zlRp3", "under the highlight", parent="zlRp2")
@@ -295,6 +295,21 @@ def test_read_page_gives_annotations_at_any_depth_regions_filing_and_the_pdf(sid
     assert [b[0] for b in _view(side.ws, page, note_roots=[]).gamma_notes.blocks] == [page, "zlRp1", "zlRp4"]
     side.c.delete(f"/api/blocks/{page}")
     assert _view(side.ws, page) is None
+
+
+def test_read_page_reads_the_pdf_a_page_shows(side):
+    """The PDF the link compares with Zotero's is the file a page shows: a
+    duplicated page's is its original's, one read in place is read too, and
+    a page shown from an address alone has no file."""
+    doc_id, _ = storage.store_pdf(side.ws, b"%PDF-1.4 zotero local shown\n" + b"s" * 400)
+    copy = _page(side.c, "A copy", **doc_props(url=f"/api/uploads/{doc_id}.pdf"))
+    opened = _page(side.c, "Opened here", **doc_props(doc_id, at="path"))
+    web = _page(side.c, "From an address", **doc_props(url="https://example.org/zl-shown.pdf"))
+    assert _block(side.ws, copy)["properties"]["doc"]["copy"] is True
+    for page in (copy, opened):
+        view = _view(side.ws, page)
+        assert view.doc_id == doc_id and view.pdf is not None, page
+    assert (_view(side.ws, web).doc_id, _view(side.ws, web).pdf) == ("", None)
 
 
 # --- the record and filing ---------------------------------------------------------------
@@ -740,20 +755,21 @@ def test_set_pdf_replaces_the_file_as_zotero_without_the_one_page_check(side):
     assert r.status_code == 409 and r.json() == {"detail": "attachment belongs to another page", "page_id": holder}
     with pytest.raises(zl.Changed):
         zl.set_pdf(side.ws, page, new_doc, owner=side.owner, check=lambda conn: False)
-    assert _block(side.ws, page)["properties"]["doc_id"] == old_doc
+    assert _block(side.ws, page)["properties"]["doc"]["hash"] == old_doc
     with _Heard() as heard:
-        done = zl.set_pdf(side.ws, page, new_doc, owner=side.owner, original_filename="Vaswani 2017.pdf",
+        done = zl.set_pdf(side.ws, page, new_doc, owner=side.owner, name="Vaswani 2017.pdf",
                           rows=_row("ATTA2345", page))
     assert (done["incoming"], done["outgoing"]) == (new_doc, old_doc) and done["job"] is not None
     assert [bid for bid, _ in done["placed"]] == [hl] and all(r["client"] == "zotero" for r in done["results"])
     assert ("zotero", page) in heard.calls and _rows(side.ws)["ATTA2345"] == page
     props = _block(side.ws, page)["properties"]
-    assert props["doc_id"] == new_doc and "zotero_pdf" not in props
+    assert props["doc"] == {"format": "pdf", "name": "Vaswani 2017.pdf", "hash": new_doc, "ext": ".pdf", "at": "store"}
+    assert "zotero_pdf" not in props
     assert tuple(_last_log(side.ws, page))[1] == "zotero"
     finished = jobs.wait(done["job"]["id"])
     assert (finished["state"], finished["owner"], finished["kind"]) == ("done", side.owner, "relocate-highlights")
     # the same file again: no op, the rows still written
-    again = zl.set_pdf(side.ws, page, new_doc, owner=side.owner, original_filename="Vaswani 2017.pdf",
+    again = zl.set_pdf(side.ws, page, new_doc, owner=side.owner, name="Vaswani 2017.pdf",
                        rows=_row("ATTA2345", "again"))
     assert again["results"] == [] and _rows(side.ws)["ATTA2345"] == "again"
     with pytest.raises(ops.OpError) as e:
@@ -764,7 +780,18 @@ def test_set_pdf_replaces_the_file_as_zotero_without_the_one_page_check(side):
 def test_set_pdf_gives_a_page_without_a_pdf_its_first(side):
     doc, _ = storage.store_pdf(side.ws, _pdf("a first file from Zotero"))
     page = _page(side.c, "Untitled")
-    done = zl.set_pdf(side.ws, page, doc, owner=side.owner, original_filename="From Zotero.pdf")
+    done = zl.set_pdf(side.ws, page, doc, owner=side.owner, name="From Zotero.pdf")
     got = _block(side.ws, page)
     assert done["job"] is None and done["relocation_error"] == "" and done["placed"] == []
-    assert got["properties"]["doc_id"] == doc and got["content"] == "From Zotero.pdf"  # the automatic title
+    assert got["properties"]["doc"]["hash"] == doc and got["content"] == "From Zotero.pdf"  # the automatic title
+
+
+def test_set_pdf_keeps_a_page_read_in_place_so(side):
+    """Zotero's file onto a page that reads its PDF where it is on this
+    computer: the page keeps reading in place, now the new file."""
+    old, _ = storage.store_pdf(side.ws, _pdf("a file opened from this computer"))
+    new, _ = storage.store_pdf(side.ws, _pdf("Zotero's file for the opened page"))
+    page = _page(side.c, "Opened from disk", **doc_props(old, name="opened.pdf", at="path"))
+    zl.set_pdf(side.ws, page, new, owner=side.owner, name="From Zotero.pdf")
+    doc = _block(side.ws, page)["properties"]["doc"]
+    assert (doc["hash"], doc["name"], doc["at"]) == (new, "From Zotero.pdf", "path")

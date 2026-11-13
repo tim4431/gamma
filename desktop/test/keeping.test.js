@@ -1,6 +1,7 @@
 // The bar's reading of what this computer keeps (lib/keeping.js): a clone's
 // states in the order Gamma's sync pill checks them, a Zotero link's, a
-// synced vault's of a directory and of one file, the one summary the sync
+// synced vault's of a directory (a work folder's among them) and of one
+// file, the one summary the sync
 // button shows, and what the shell says about a vault: the dialog's first
 // round, the questions before a removal, a force or going on, a round's
 // outcome. `npm test` in desktop/.
@@ -65,6 +66,89 @@ test('a vault of a directory, worst first: syncing, paused, stopped, held, not t
   assert.match(away.title, /^the directory is not there The vault syncs again once it is back; Locate… if it moved\.$/);
   assert.deepEqual([folder({ status: { last_error: 'disk full' } }).state, folder({ status: { last_error: 'disk full' } }).title], ['error', 'disk full']);
   assert.deepEqual([folder({ status: {} }).state, folder({ status: {} }).text], ['new', 'Not synced yet']);
+});
+
+test('a work folder is a folder of the server\'s own that pushes everything; one choosing its files says so first, paused or stopped as it is', () => {
+  const work = folder({ push: 'everything', library: true, status: { last_sync: now } });
+  assert.deepEqual([work.work, work.library, work.choosing], [true, true, false]);
+  for (const kept of [folder({ status: {} }), folder({ push: 'pdfs', status: {} }), folder({ push: 'everything', folder_id: 'root', status: {} }),
+    folder({ push: 'everything', remote_url: 'http://nas.lan:9001', status: {} }), file({ status: {} })]) {
+    assert.equal(kept.work, false, kept.where);
+  }
+  const choosing = folder({ push: 'everything', choosing: true, status: { paused_at: now, stopped: 'choose its files first' } });
+  assert.deepEqual([choosing.choosing, choosing.state, choosing.text], [true, 'pending', 'Choosing files']);
+  assert.match(choosing.title, /^Nothing is tracked yet: Choose files… opens its tracking dialog in Gamma/);
+});
+
+test('a work folder\'s agent: who made it, the agent and how it stands, the agents found here, and a run that works reads busy', () => {
+  const work = (link, agents) => keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Papers\\Quantum', remote_url: '',
+    pull: true, push: 'everything', status: { last_sync: now }, ...link }, servers, null, agents);
+  const found = [{ name: 'codex', label: 'Codex', found: true, version: 'codex-cli 0.167.0', ready: true, problem: '' },
+    { name: 'claude', label: 'Claude Code', found: true, version: '2.1.318', ready: false, problem: 'Claude Code is not signed in on this computer: run `claude` in a terminal and sign in.' }];
+
+  const none = work({ mine: true, agent: null }, found);
+  assert.deepEqual([none.mine, none.agent, none.agentLabel, none.agentReady, none.agentProblem, none.agentRunning], [true, '', '', null, '', '']);
+  assert.deepEqual(none.agents.map((a) => [a.name, a.label, a.ready]), [['codex', 'Codex', true], ['claude', 'Claude Code', false]]);
+  assert.equal(none.state, 'ok');
+
+  const on = work({ mine: true, agent: { name: 'codex', label: 'Codex', ready: false, problem: 'Codex is not signed in on this computer: run `codex login` in a terminal.', running: null } }, found);
+  assert.deepEqual([on.agent, on.agentLabel, on.agentReady, on.agentRunning], ['codex', 'Codex', false, '']);
+  assert.match(on.agentProblem, /^Codex is not signed in/);
+
+  const checking = work({ agent: { name: 'claude', label: 'Claude Code', ready: null, problem: '', running: null } }, found);
+  assert.deepEqual([checking.mine, checking.agentReady], [false, null], 'another account\'s, and the server still checks');
+
+  // a run at work: busy, its detail on the row
+  const running = work({ mine: true, agent: { name: 'codex', label: 'Codex', ready: true, problem: '', running: { request_id: 'r1', detail: 'Editing sections/intro.tex' } } }, found);
+  assert.deepEqual([running.state, running.text, running.agentRunning], ['busy', 'Codex is working · Editing sections/intro.tex', 'Editing sections/intro.tex']);
+  assert.match(running.title, /answering a Send of this folder/);
+  const hidden = work({ agent: { name: 'codex', label: 'Codex', ready: true, problem: '', running: { request_id: 'r1', detail: '' } } }, found);
+  assert.deepEqual([hidden.state, hidden.text], ['busy', 'Codex is working · Working'], 'a member who cannot act reads no detail');
+  assert.deepEqual([keeping.summarize([running]).state, keeping.summarize([running]).text], ['busy', 'Agent working'],
+    'no round runs: the title bar says an agent works, not "Syncing…"');
+  const round = work({ mine: true, agent: { name: 'codex', running: { request_id: 'r1', detail: 'Reading main.tex' } },
+    status: { running: true, progress: { done: 1, total: 4 } } }, found);
+  assert.equal(round.text, 'Syncing 1 / 4', 'a round of the vault reads first');
+  assert.equal(keeping.summarize([running, round]).text, 'Syncing…', 'a round anywhere still reads as syncing');
+
+  // the vault's own problem keeps its row while the agent works, the run said in its title
+  const at = { name: 'codex', label: 'Codex', ready: true, problem: '', running: { request_id: 'r1', detail: 'Editing main.tex' } };
+  const failing = work({ mine: true, agent: at, status: { last_sync: now, last_error: 'The disk is full.' } }, found);
+  assert.deepEqual([failing.state, failing.text], ['error', 'Sync problem']);
+  assert.match(failing.title, /^The disk is full\. Codex is working on a Send meanwhile\.$/);
+  const held = work({ mine: true, agent: at, status: { last_sync: now, held: { removals: 3, total: 9 } } }, found);
+  assert.equal(held.state, 'held');
+  assert.match(held.title, /Codex is working on a Send meanwhile\.$/);
+  assert.equal(keeping.summarize([failing]).state, 'error');
+
+  // a turn of a page's chat works the folder too: busy, said as the chat's, not a Send's
+  const chatting = { name: 'codex', label: 'Codex', ready: true, problem: '', running: { kind: 'chat', request_id: null, detail: 'Editing sections/intro.tex' } };
+  const chat = work({ mine: true, agent: chatting }, found);
+  assert.deepEqual([chat.state, chat.text, chat.agentChat], ['busy', 'Codex is working · Editing sections/intro.tex', true]);
+  assert.equal(chat.title, 'Codex is working in the chat of a file of this folder on this computer: the files here may change meanwhile.');
+  assert.equal(keeping.summarize([chat]).text, 'Agent working');
+  assert.match(work({ mine: true, agent: chatting, status: { last_sync: now, last_error: 'The disk is full.' } }, found).title,
+    /^The disk is full\. Codex is working in the chat meanwhile\.$/);
+  assert.equal(running.agentChat, false, 'a Send\'s run, kind "send" or none, is no chat');
+
+  // a server that runs no agents offers none; one that lists only some reads the others as not here; only a work folder offers them
+  assert.equal(work({ mine: true }, null).agents, null);
+  assert.deepEqual(work({ mine: true }, [found[0]]).agents[1], { name: 'claude', label: 'Claude Code', found: false, ready: false, problem: 'Claude Code is not on this computer.' });
+  assert.equal(work({ mine: true, push: 'pdfs' }, found).agents, null);
+  assert.equal(keeping.itemsOf(local, { links: [{ id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\P', push: 'everything', mine: true, status: {} }], agents: found }, servers)[0].agents.length, 2);
+});
+
+test('turning on a work folder\'s agent is asked with what it may do and the Sends waiting; the outcome is said', () => {
+  const item = { name: 'Quantum', dest: 'C:\\Papers\\Quantum', agentLabel: 'Codex' };
+  const codex = keeping.agentAsk(item, 'codex', 2);
+  assert.equal(codex.message, 'Let Codex work in C:\\Papers\\Quantum?');
+  assert.equal(codex.detail, 'Codex will answer the Sends you make on this folder: it edits files in this directory and runs commands in its sandbox, without network. 2 waiting Sends will be handed to it.');
+  assert.deepEqual(codex.buttons, ['Turn on Codex', 'Cancel']);
+  assert.equal(keeping.agentAsk(item, 'claude', 0).detail, 'Claude Code will answer the Sends you make on this folder: it edits files in this directory and runs no commands.');
+  assert.match(keeping.agentAsk(item, 'claude', 1).detail, / 1 waiting Send will be handed to it\.$/);
+  assert.equal(keeping.agentSaid(item, 'codex', 0), 'Codex now answers the Sends on Quantum.');
+  assert.equal(keeping.agentSaid(item, 'claude', 3), 'Claude Code now answers the Sends on Quantum; 3 waiting were handed to it.');
+  assert.equal(keeping.agentSaid(item, ''), 'Codex no longer answers the Sends on Quantum: they wait for an agent you run yourself.');
 });
 
 test('an up-to-date vault says what it pushed, its conflicts, the files changed here and those not synced', () => {
@@ -322,6 +406,9 @@ test('the dialog shuts Sync for a vault that would be refused, and says why', ()
   assert.deepEqual(say({}, { remote: true, pull: false, push: 'pdfs' }), { ok: false, text: keeping.REMOTE_RULE }, 'the rule the vault\'s switches keep to');
   assert.equal(keeping.REMOTE_RULE, 'A vault of another server pulls, and pushes PDFs at most, for now.');
   assert.equal(say({}, { remote: true, push: 'pdfs' }).ok, true, 'a remote\'s folder may push its PDFs');
+  assert.deepEqual(say({}, { whole: true, push: 'everything' }), { ok: false, text: keeping.WHOLE_RULE }, 'the server\'s words');
+  assert.equal(say({ notes: 2 }, { whole: true, push: 'pdfs' }).ok, true, 'the whole library pulls, and pushes PDFs');
+  assert.equal(folder({ folder_id: 'root', status: {} }).whole, true);
   assert.deepEqual(say({ refusal: 'D:\\Papers holds the marker of the synced vault E:\\Papers: was it copied?' }),
     { ok: false, text: 'D:\\Papers holds the marker of the synced vault E:\\Papers: was it copied?' });
   assert.match(say({ pages: 3, notes: 1 }, { push: 'everything' }).text, /^Both the folder and the directory hold files/);
@@ -355,6 +442,14 @@ test('removing a vault: the pages stay, the PDFs read in place are stored first;
   const f = keeping.removalAsk(file({ status: {} }), { pages: 1 });
   assert.deepEqual(f.choices, ['keep', null]);
   assert.match(f.detail, /^main\.pdf is no longer pushed to the page\. The file and the page stay as they are\.$/);
+});
+
+test('removing a work folder says both numbers: its files not in the library go to Recently deleted, those in it stay', () => {
+  const w = folder({ push: 'everything', status: { last_sync: now, folder_path: ['Paper'] } });
+  assert.match(keeping.removalAsk(w, { pages: 5, files: 3, in_library: 2, in_place: 1, bytes: 2_000 }).detail,
+    /^Its 3 files not in the library go to Recently deleted; its 2 pages in the library stay; 1 PDF read where it is \(2 KB\) is stored in Gamma first\. /);
+  assert.match(keeping.removalAsk(w, { pages: 1, files: 1, in_library: 0 }).detail, /^Its file not in the library goes to Recently deleted\. /);
+  assert.match(keeping.removalAsk(w, { pages: 2, files: 0, in_library: 2 }).detail, /^Its 2 pages stay in Gamma\. /);
 });
 
 test('a force pull or push and going on are counted and asked first', () => {

@@ -11,7 +11,7 @@ import time
 
 import pymupdf
 import pytest
-from conftest import guest_name, workspace_of
+from conftest import doc_props, guest_name, workspace_of
 
 from gamma import highlight_relocate as hr
 from gamma import jobs, storage
@@ -1871,7 +1871,7 @@ def test_replacing_the_pdf_starts_a_job_that_moves_the_highlights(guest):
     r = guest.put(f"/api/pages/{page_id}/attachment", json={"doc_id": new_doc, "original_filename": "paper-v2.pdf"})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["properties"]["doc_id"] == new_doc and "relocation_error" not in body
+    assert body["properties"]["doc"]["hash"] == new_doc and "relocation_error" not in body
     job = body["job"]
     assert job["params"] == {"page_id": page_id, "title": "Replaced paper", "doc_id": new_doc, **DEFAULTS}
     assert job["title"] == "Placing the highlights of “Replaced paper”"
@@ -1888,7 +1888,7 @@ def test_replacing_the_pdf_starts_a_job_that_moves_the_highlights(guest):
     # the same stored file from another address: the file did not change, so nothing is named and nothing runs
     moved = guest.put(f"/api/pages/{page_id}/attachment",
                       json={"doc_id": new_doc, "source_url": "https://example.org/paper-v2.pdf"}).json()
-    assert moved["properties"]["source_url"] == "https://example.org/paper-v2.pdf"
+    assert moved["properties"]["doc"]["url"] == "https://example.org/paper-v2.pdf"
     assert "job" not in moved and "relocation_error" not in moved
     assert "doc_id" not in _props(guest, hl_a)["pdf_position"] and _props(guest, hl_c)["pdf_position"]["doc_id"] == old_doc
 
@@ -1986,7 +1986,7 @@ def test_a_replacement_names_each_highlight_s_file_and_says_when_its_run_cannot_
         m.setattr(jobs, "MAX_ACTIVE_PER_ACCOUNT", 0)
         doc2, body = _replace(guest, page_id, _pdf([[(72, 300, LINE_A), (72, 314, LINE_B)]]), "v2.pdf")
         # the replacement stands, without a run, and says why
-        assert body["properties"]["doc_id"] == doc2 and "job" not in body
+        assert body["properties"]["doc"]["hash"] == doc2 and "job" not in body
         assert "background tasks" in body["relocation_error"]
         # the same commit named the file each highlight was measured on; one that named its file keeps it
         assert _props(guest, hl_a)["pdf_position"] == {**a_before, "doc_id": doc1}
@@ -2116,13 +2116,14 @@ def test_the_highlights_of_a_page_shown_from_a_url_alone_are_placed_by_their_quo
 
 def _duplicate(client, doc, highlights):
     """A copy of a page carrying ``doc``, made as the library's Duplicate
-    makes one: the stored file shown by its address alone, no doc_id, the
+    makes one: the stored file shown without being owned (``copy``), the
     highlight blocks ``[(quote, position)]`` copied; ``(page_id, [ids])``."""
     r = client.post("/api/blocks", json={"parent_id": "root", "content": "Replaced paper (copy)",
-                                         "properties": {"source_url": f"/api/uploads/{doc}.pdf"}})
+                                         "properties": doc_props(url=f"/api/uploads/{doc}.pdf")})
     assert r.status_code == 200, r.text
     page_id = r.json()["id"]
-    assert _props(client, page_id) == {"source_url": f"/api/uploads/{doc}.pdf"}
+    assert _props(client, page_id) == {"doc": {"format": "pdf", "name": "", "hash": doc, "ext": ".pdf",
+                                               "at": "store", "copy": True}}
     ids = []
     for quote, position in highlights:
         r = client.post("/api/blocks", json={"parent_id": page_id, "content": "",
@@ -2161,9 +2162,30 @@ def test_a_pdf_shown_from_a_url_alone_starts_no_run(guest):
     r = guest.put(f"/api/pages/{page['id']}/attachment", json={"source_url": "https://example.org/paper-v2.pdf"})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["properties"]["source_url"] == "https://example.org/paper-v2.pdf" and "job" not in body
+    assert body["properties"]["doc"]["url"] == "https://example.org/paper-v2.pdf" and "job" not in body
     assert body["relocation_error"] == "the PDF is not stored on the server"
     assert _props(guest, hl)["pdf_position"]["doc_id"] == storage.UNSTORED
+
+
+def test_a_pdf_replaced_by_the_vault_with_an_image_starts_no_run(guest):
+    """A work folder's file whose bytes sniff differently now (the vault's
+    file class replaces through ``replace_attachment`` with the new format):
+    the document changes, no highlight is stamped and no run starts; the old
+    format's positions stay as they were."""
+    from conftest import account_of, guest_name, workspace_of
+    from gamma.routers.pages import replace_attachment
+
+    page_id, _old, (hl,) = _page_with(guest, _pdf([[(72, 100, LINE_A)]]), [(LINE_A, _position(1, _line_rect(72, 100, LINE_A)))])
+    before = _props(guest, hl)["pdf_position"]
+    ws, account = workspace_of(guest_name()), account_of(guest_name())
+    png = storage.store_file(ws, b"\x89PNG\r\n\x1a\n" + b"p" * 64, ".png")[0]
+    done = replace_attachment(ws, page_id, png[:-4], name="fig.png", format="image", ext=".png", size=72,
+                              actor=account, owner=account, check_zotero=False)
+    assert done["results"] and done["placed"] == [] and done["job"] is None and done["relocation_error"] == ""
+    assert done["props"]["doc"] == {"format": "image", "name": "fig.png", "hash": png[:-4], "ext": ".png",
+                                    "at": "store", "size": 72}
+    assert _props(guest, hl)["pdf_position"] == before
+    assert not any(j["params"].get("doc_id") == png[:-4] for j in guest.get("/api/jobs").json()["jobs"])
 
 
 def test_the_manual_run_after_a_skipped_one_reads_the_old_file(guest, monkeypatch):

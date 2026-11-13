@@ -435,8 +435,8 @@ async function requestReindex(setStatus, scheduledSuffix, wakeTasks) {
     if (result.scheduled || result.busy) wakeTasks?.();
     setStatus(result.busy
       ? t("Indexing is already running — see Background tasks.") : result.scheduled
-        ? tn("Re-indexing {n} paper {scheduledSuffix}", "Re-indexing {n} papers {scheduledSuffix}", result.scheduled, { scheduledSuffix })
-        : t("No papers with PDFs to index."));
+        ? tn("Re-indexing {n} document {scheduledSuffix}", "Re-indexing {n} documents {scheduledSuffix}", result.scheduled, { scheduledSuffix })
+        : t("No PDFs or text files to index."));
   } catch (err) {
     setStatus(t("Reindex failed: {message}", { message: err.message }));
   }
@@ -479,9 +479,9 @@ function MaintenanceSettings({ value }) {
       <Section title={t("Index")}>
         <Row
           icon={RefreshIcon}
-          label={t("PDF text index")}
-          hint={value.indexing ? t("Rebuilding — progress in Background tasks") : t("Re-extract every paper if results look stale")}
-          title={t("Full-text search reads a per-user index built from the extracted PDF text. Rebuild it when library-wide results look stale or incomplete.")}
+          label={t("Document text index")}
+          hint={value.indexing ? t("Rebuilding — progress in Background tasks") : t("Re-extract every document if results look stale")}
+          title={t("Full-text search reads a per-user index built from the text of the PDFs and text files. Rebuild it when library-wide results look stale or incomplete.")}
         >
           <button className="uiBtn sm" disabled={value.indexing} onClick={() => requestReindex(value.setStatus, t("in the background."), value.wakeTasks)}>
             <MorphText>{value.indexing ? t("Indexing…") : t("Rebuild")}</MorphText>
@@ -708,7 +708,7 @@ function MetaStatusSection({ value }) {
             ]}
           />
           <button className="uiBtn sm iconSq" aria-label={t("Reindex")}
-            title={t("Re-extract every paper into the search index (also fills in the text column)")}
+            title={t("Re-extract every document into the search index (also fills in the text column)")}
             onClick={() => { requestReindex(value.setStatus, t("— text status fills in as it runs."), value.wakeTasks); pollRefresh(); }}>
             <RefreshIcon size={16} />
           </button>

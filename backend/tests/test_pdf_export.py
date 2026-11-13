@@ -2,11 +2,12 @@
 annotation importer, note flattening, and the HTTP endpoint end to end."""
 
 import io
+import zipfile
 from types import SimpleNamespace
 
 import pytest
 
-from conftest import make_page, require_math_renderer, workspace_of, guest_name
+from conftest import doc_props, make_page, require_math_renderer, workspace_of, guest_name
 
 from gamma.pdf_export import annotate_pdf, first_rect, page_with_ink, parse_css_color
 
@@ -237,7 +238,7 @@ def test_a_strip_and_an_export_read_past_an_entry_that_leads_nowhere(guest):
     up = guest.post("/api/uploads", files={"file": ("a.pdf", source, "application/pdf")})
     assert up.status_code == 200, up.text
     doc_id = up.json()["doc_id"]
-    page = make_page(guest, "Damaged", properties={"doc_id": doc_id, "source_url": up.json()["source_url"]})
+    page = make_page(guest, "Damaged", properties=doc_props(doc_id))
 
     r = guest.get(f"/api/pages/{page['id']}/export-pdf")
     assert r.status_code == 200, r.text
@@ -423,6 +424,26 @@ def _plain(obj, drop=frozenset()):
     return str(obj)
 
 
+@pytest.mark.parametrize("rotate", [0, 90])
+def test_a_page_alone_carries_its_marks_as_the_export_writes_them(rotate):
+    """``page_with_ink``'s highlights (a feedback thread's region picture)
+    are written by the export's own mark writer: the one page's highlight
+    and area note are the exported file's, and a mark on another page stays
+    off it."""
+    from pypdf import PdfReader
+
+    marks = [{**m, "position": {**m["position"], "pageNumber": 2}} for m in _every_kind()["highlights"]]
+    elsewhere = {"position": _position(page=1), "color": "#ff0000", "note": "", "id": "off"}
+    exported, written = annotate_pdf(_blank_pdf(pages=2, rotate=rotate), [elsewhere, *marks])
+    alone, pages = page_with_ink(_blank_pdf(pages=2, rotate=rotate), 2, [], highlights=[elsewhere, *marks])
+    assert written == 3 and pages == 2
+
+    def annots(pdf_bytes, index):
+        page = PdfReader(io.BytesIO(pdf_bytes)).pages[index]
+        return [_plain(a) for a in page["/Annots"]]
+    assert annots(alone, 0) == annots(exported, 1) and len(annots(alone, 0)) == 2
+
+
 def test_a_zotero_copy_keeps_the_alpha_of_its_marks_out_of_ca():
     """Zotero blends /C toward white by /CA, so a Zotero copy's highlight
     and area note carry none, their alpha in /GammaAlpha, and differ from
@@ -456,6 +477,77 @@ def test_a_zotero_copy_reimports_at_the_alpha_it_was_drawn_with():
     assert [f["color"] for f in found] == ["#aaebaaa6", "#9bcdffa6"]
 
 
+LINE_STYLES = {"underline": "/Underline", "squiggly": "/Squiggly", "strikeout": "/StrikeOut"}
+
+
+@pytest.mark.parametrize("style", ["underline", "squiggly", "strikeout"])
+def test_a_highlight_marked_by_a_line_is_that_markup_in_its_line_tone(style):
+    """A highlight whose style is a line is written as the standard markup
+    of that name, over the same quads as a /Highlight, its /C the colour's
+    line tone at full strength (the wash yellow is too pale for a thin line)
+    and the stored colour in /GammaColor; the wash stays a /Highlight."""
+    from pypdf import PdfReader
+    from gamma.colors import line_color
+    from gamma.pdf_export import GAMMA_COLOR, GAMMA_STYLE
+
+    marks = [{"position": _position(), "color": "#ffe28fa6", "note": "n", "style": style},
+             {"position": _position(y1=120, y2=140), "color": "#ffe28fa6", "note": ""}]
+    out, written = annotate_pdf(_blank_pdf(), marks, author="tester")
+    assert written == 2
+    line, wash = (a.get_object() for a in PdfReader(io.BytesIO(out)).pages[0]["/Annots"])
+    assert line["/Subtype"] == LINE_STYLES[style] and wash["/Subtype"] == "/Highlight"
+    assert [float(v) for v in line["/QuadPoints"]] == [float(v) for v in _blank_quads(line)]
+    assert tuple(round(float(v), 4) for v in line["/C"]) == tuple(round(v, 4) for v in parse_css_color(line_color("#ffe28fa6"))[:3])
+    assert float(line["/CA"]) == 1.0 and str(line[GAMMA_COLOR]) == "#ffe28fa6"
+    assert GAMMA_STYLE not in line, "the subtype says the style"
+    assert GAMMA_COLOR not in wash and float(wash["/CA"]) == 0.651  # a6 is 166/255
+
+
+def _blank_quads(annot):
+    """The quads a markup over `annot`'s /Rect would carry (one line)."""
+    x1, y1, x2, y2 = (float(v) for v in annot["/Rect"])
+    return (x1, y2, x2, y2, x1, y1, x2, y1)
+
+
+@pytest.mark.parametrize("style", ["underline", "squiggly", "strikeout"])
+def test_a_line_reimports_in_its_style_and_its_own_colour(style):
+    """The importer reads a markup's subtype as the highlight's style and
+    /GammaColor before /C, so an export comes back as it was drawn; an
+    underline another app wrote, with no /GammaColor, keeps its /C."""
+    from pypdf import PdfReader
+    from gamma.routers.imports import _extract_pdf_annotations
+
+    out, _ = annotate_pdf(_blank_pdf(), [{"position": _position(), "color": "#9bcdff80", "note": "", "style": style}])
+    [found] = _extract_pdf_annotations(PdfReader(io.BytesIO(out)))
+    assert found["style"] == style and found["color"] == "#9bcdff80"
+    other = _pdf_with_annots(b"[6 0 R]", b"<</Type/Annot/Subtype/StrikeOut/Rect[100 700 300 720]"
+                             b"/QuadPoints[100 720 300 720 100 700 300 700]/C[0.8 0.1 0.1]/CA 1>>")
+    [theirs] = _extract_pdf_annotations(PdfReader(io.BytesIO(other)))
+    assert theirs["style"] == "strikeout" and theirs["color"] == "#cc1a1aff"
+    plain, _ = annotate_pdf(_blank_pdf(), [{"position": _position(), "color": "#9bcdff80", "note": ""}])
+    [wash] = _extract_pdf_annotations(PdfReader(io.BytesIO(plain)))
+    assert "style" not in wash
+
+
+def test_a_zotero_copy_writes_the_lines_zotero_drops_as_underlines():
+    """Zotero's reader keeps /Highlight and /Underline only: its copy writes
+    a wavy underline and a strikethrough as /Underline, the style in
+    /GammaStyle, which Gamma's importer reads back; an underline is itself."""
+    from pypdf import PdfReader
+    from gamma.pdf_export import GAMMA_STYLE
+    from gamma.routers.imports import _extract_pdf_annotations
+
+    styles = ["underline", "squiggly", "strikeout"]
+    marks = [{"position": _position(y1=72 + 40 * i, y2=92 + 40 * i), "color": "#aaebaaa6", "note": "", "style": s}
+             for i, s in enumerate(styles)]
+    out, written = annotate_pdf(_blank_pdf(), marks, zotero=True)
+    assert written == 3
+    annots = [a.get_object() for a in PdfReader(io.BytesIO(out)).pages[0]["/Annots"]]
+    assert [a["/Subtype"] for a in annots] == ["/Underline"] * 3
+    assert [str(a.get(GAMMA_STYLE, "")) for a in annots] == ["", "/squiggly", "/strikeout"]
+    assert [f["style"] for f in _extract_pdf_annotations(PdfReader(io.BytesIO(out)))] == styles
+
+
 def test_every_annotation_names_its_author_for_zotero_too():
     """Zotero takes an annotation's author from /Zotero:AuthorName, never
     /T: every kind carries both, in either copy, and neither without an
@@ -482,7 +574,7 @@ def test_export_pdf_endpoint(guest):
     up = guest.post("/api/uploads", files={"file": ("p.pdf", _pdf_with_dangling_reference(), "application/pdf")})
     assert up.status_code == 200, up.text
     page = make_page(guest, "Annotated paper",
-                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+                     properties=doc_props(up.json()["doc_id"]))
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": "hl1", "content": "top comment", "properties": {
             "quote": "quoted text",
@@ -495,6 +587,9 @@ def test_export_pdf_endpoint(guest):
             "link_url": "https://example.com",
             "pdf_position": _position(y1=300, y2=320),
         }, "children": []},
+        {"id": "hl2", "content": "", "properties": {
+            "quote": "struck", "color": "#e6b4ffa6", "style": "strikeout", "pdf_position": _position(y1=400, y2=420),
+        }, "children": []},
     ]})
     assert r.status_code == 200, r.text
 
@@ -502,13 +597,45 @@ def test_export_pdf_endpoint(guest):
     assert r.status_code == 200, r.text
     assert r.headers["content-type"] == "application/pdf"
     assert "annotated.pdf" in r.headers["content-disposition"]
-    assert r.headers["x-annotations-written"] == "1"  # link region excluded
+    assert r.headers["x-annotations-written"] == "2"  # link region excluded
+    # a highlight marked by a line is its own markup
+    struck = [a.get_object() for a in PdfReader(io.BytesIO(r.content)).pages[0]["/Annots"]
+              if a.get_object()["/Subtype"] == "/StrikeOut"]
+    assert len(struck) == 1 and str(struck[0]["/GammaColor"]) == "#e6b4ffa6"
 
     obj = next(a.get_object() for a in PdfReader(io.BytesIO(r.content)).pages[0]["/Annots"]
                if a.get_object()["/Subtype"] == "/Highlight")
     assert str(obj["/Subtype"]) == "/Highlight"
     assert str(obj["/Contents"]) == "top comment\n- nested note"
     assert str(obj["/T"]) == guest_name()
+
+
+def test_a_duplicated_page_exports_the_pdf_it_shows(guest):
+    """A duplicated page (``doc.copy``: it shows the original's stored file
+    and owns no PDF) is exported with that file, as the original is: its
+    annotated PDF draws the copy's own highlights on it, and the Zotero RDF
+    and Logseq exports pack it."""
+    from pypdf import PdfReader
+
+    original = _uploaded(guest, _blank_pdf(pages=1) + b"a duplicated page's", "dup.pdf")
+    copy = make_page(guest, "Duplicated paper", properties=doc_props(url=f"/api/uploads/{original}.pdf"))
+    assert guest.get(f"/api/blocks/{copy['id']}").json()["properties"]["doc"] == {
+        "format": "pdf", "name": "", "hash": original, "ext": ".pdf", "at": "store", "copy": True}
+    r = guest.put(f"/api/blocks/{copy['id']}/children", json={"blocks": [
+        {"id": "dup-hl", "content": "on the copy", "children": [], "properties": {
+            "quote": "quoted text", "color": "rgba(155, 205, 255, 0.65)", "pdf_position": _position()}}]})
+    assert r.status_code == 200, r.text
+
+    r = guest.get(f"/api/pages/{copy['id']}/export-pdf")
+    assert r.status_code == 200, r.text
+    assert r.headers["x-annotations-written"] == "1"
+    [mark] = [a.get_object() for a in PdfReader(io.BytesIO(r.content)).pages[0]["/Annots"]
+              if a.get_object()["/Subtype"] == "/Highlight"]
+    assert str(mark["/Contents"]) == "on the copy"
+    for mode in ("zotero-rdf", "logseq-graph"):
+        r = guest.get(f"/api/pages/{copy['id']}/export", params={"mode": mode})
+        assert r.status_code == 200, r.text
+        assert any(n.endswith(".pdf") for n in zipfile.ZipFile(io.BytesIO(r.content)).namelist()), mode
 
 
 def _annotated_pdf(pages=1):
@@ -535,7 +662,7 @@ def test_import_annotations_strip_rewrites_pdf(guest):
     up = guest.post("/api/uploads", files={"file": ("a.pdf", _annotated_pdf(), "application/pdf")})
     assert up.status_code == 200, up.text
     doc_id, source_url = up.json()["doc_id"], up.json()["source_url"]
-    page = make_page(guest, "Strip me", properties={"doc_id": doc_id, "source_url": source_url})
+    page = make_page(guest, "Strip me", properties=doc_props(doc_id))
 
     r = guest.post("/api/import/pdf-annotations",
                    json={"block_id": page["id"], "doc_id": doc_id, "strip": True})
@@ -589,7 +716,7 @@ def test_replacing_the_pdf_marks_imported_annotations_gone(guest):
     their originals with it: replacing the page's PDF marks them
     annot_stripped, so export writes them into the new file."""
     old = _uploaded(guest, _annotated_pdf(pages=3))  # bytes of its own: the strip test strips its file
-    page = make_page(guest, "Replace me", properties={"doc_id": old})
+    page = make_page(guest, "Replace me", properties=doc_props(old))
     r = guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": old})
     assert r.json() == {"ok": True, "found": 2, "imported": 2, "stripped": 0}
     assert not any(b["properties"].get("annot_stripped") for b in _imported(guest, page["id"]))
@@ -610,7 +737,7 @@ def test_import_of_the_new_file_takes_the_mark_off_what_it_holds_again(guest):
     its import adds no block and takes annot_stripped off, so export does
     not write them twice; a stripping import marks them again."""
     old = _uploaded(guest, _annotated_pdf(pages=4))
-    page = make_page(guest, "Same marks", properties={"doc_id": old})
+    page = make_page(guest, "Same marks", properties=doc_props(old))
     guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": old})
     new = _uploaded(guest, _annotated_pdf(pages=5), "b.pdf")
     guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new})
@@ -628,14 +755,14 @@ def test_import_of_the_new_file_takes_the_mark_off_what_it_holds_again(guest):
     assert guest.get(f"/api/pages/{page['id']}/export-pdf").headers["x-annotations-written"] == "2"
 
 
-def test_replacing_a_pdf_shown_by_address_marks_its_imported_annotations(guest):
-    """A duplicated document page shows the original's file by address
-    (``source_url`` alone, no ``doc_id``) and holds copies of its imported
+def test_replacing_the_pdf_of_a_duplicated_page_marks_its_imported_annotations(guest):
+    """A duplicated document page shows the original's file as a copy
+    (``doc.copy``: it owns no PDF) and holds copies of its imported
     blocks: replacing that file marks them too."""
     original = _uploaded(guest, _annotated_pdf(pages=6))
-    page = make_page(guest, "Original", properties={"doc_id": original})
+    page = make_page(guest, "Original", properties=doc_props(original))
     guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": original})
-    copy = make_page(guest, "Copy", properties={"source_url": f"/api/uploads/{original}.pdf"})
+    copy = make_page(guest, "Copy", properties=doc_props(url=f"/api/uploads/{original}.pdf"))
     kids = [{"id": f"copy{i}", "content": b["content"], "properties": b["properties"], "children": []}
             for i, b in enumerate(_imported(guest, page["id"]))]
     assert guest.put(f"/api/blocks/{copy['id']}/children", json={"blocks": kids}).status_code == 200
@@ -652,7 +779,7 @@ def test_an_import_of_the_old_file_leaves_the_marks(guest):
     file the page carried before (a tab that has not caught up, an import
     still running) takes no mark off."""
     old = _uploaded(guest, _annotated_pdf(pages=7))
-    page = make_page(guest, "Old import", properties={"doc_id": old})
+    page = make_page(guest, "Old import", properties=doc_props(old))
     guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": old})
     new = _uploaded(guest, _blank_pdf(pages=7), "b.pdf")
     guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new})
@@ -669,7 +796,7 @@ def test_a_file_rewritten_since_the_import_read_it_takes_no_mark_off(guest, monk
     from gamma.routers import imports
 
     old = _uploaded(guest, _annotated_pdf(pages=8))
-    page = make_page(guest, "Raced", properties={"doc_id": old})
+    page = make_page(guest, "Raced", properties=doc_props(old))
     guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": old})
     new = _uploaded(guest, _annotated_pdf(pages=9), "b.pdf")
     guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new})
@@ -1274,7 +1401,7 @@ def test_export_pdf_comments_switch(guest):
     off as well; a resolved thread stays out, as it leaves the margin."""
     up = guest.post("/api/uploads", files={"file": ("p.pdf", _blank_pdf(), "application/pdf")})
     page = make_page(guest, "Commented",
-                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+                     properties=doc_props(up.json()["doc_id"]))
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": "chl1", "content": "my own note", "properties": {
             "quote": "quoted", "pdf_position": _position(y1=300, y2=320)}, "children": []},
@@ -1313,7 +1440,7 @@ def test_export_pdf_prints_the_threads_on_a_highlights_notes(guest):
     or off."""
     up = guest.post("/api/uploads", files={"file": ("p.pdf", _blank_pdf(), "application/pdf")})
     page = make_page(guest, "Replied",
-                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+                     properties=doc_props(up.json()["doc_id"]))
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": "rhl1", "content": "my own note", "properties": {
             "quote": "quoted", "pdf_position": _position(y1=300, y2=320)}, "children": [
@@ -1333,7 +1460,7 @@ def test_export_pdf_prints_the_threads_on_a_highlights_notes(guest):
 def test_export_pdf_notes_mode(guest):
     up = guest.post("/api/uploads", files={"file": ("p.pdf", _blank_pdf(), "application/pdf")})
     page = make_page(guest, "Rendered notes",
-                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+                     properties=doc_props(up.json()["doc_id"]))
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": "nhl1", "content": "top comment", "properties": {
             "quote": "quoted text", "pdf_position": _position(),
@@ -1367,7 +1494,7 @@ def test_export_pdf_highlights_switch(guest):
     up = guest.post("/api/uploads", files={"file": ("p.pdf", _blank_pdf(), "application/pdf")})
     original = _blank_pdf()
     page = make_page(guest, "Switches",
-                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+                     properties=doc_props(up.json()["doc_id"]))
     r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
         {"id": "shl1", "content": "only the note", "properties": {
             "quote": "quoted text", "pdf_position": _position(),

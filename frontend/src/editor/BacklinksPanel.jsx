@@ -56,12 +56,12 @@ export function BacklinksPanel({ backlinks, pageId, pageTitle, pages, refCache, 
         {tn("Linked from {n} page", "Linked from {n} pages", groups.length)}
       </button>
       <Collapse open={!collapsed}>{groups.map((g) => {
-        const isPdf = !!pages?.find((p) => p.id === g.id)?._attachment;
+        const format = pages?.find((p) => p.id === g.id)?._doc?.format || "";
         return (
           <div key={g.id} className="backlinkGroup">
             <div className="backlinkPage" role="button" tabIndex={0} title={t("Open the page \"{name}\"", { name: g.title })}
               onClick={() => onOpen(g.items[0])} onKeyDown={keyOpen(g.items[0])}>
-              <FileGlyph isPdf={isPdf} size={14} />
+              <FileGlyph format={format} size={14} />
               <span className="backlinkPageTitle">{g.title}</span>
             </div>
             {g.items.map((bl) => (

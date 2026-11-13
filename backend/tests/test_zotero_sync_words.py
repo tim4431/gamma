@@ -74,17 +74,17 @@ def test_a_force_push_takes_zoteros_pdf_whose_annotations_cannot_move(me, made, 
     ws = _link(me)
     _sync(me, ws)
     page = _page_of(ws, keys["attention"])
-    zoteros = _block(ws, page)["props"]["doc_id"]
+    zoteros = _block(ws, page)["props"]["doc"]["hash"]
     mine = _stored_pdf(ws, pdf_bytes("Attention, Gamma's own camera-ready."))
     replace_attachment(ws, page, mine, "", "mine.pdf", actor=owner_id, owner=owner_id)
     me.patch(f"/api/zotero/links/{ws}", json={"upload": False})
     _sync(me, ws)
-    assert _block(ws, page)["props"]["doc_id"] == mine  # parked: Zotero's annotations wait on the PDFs differing
+    assert _block(ws, page)["props"]["doc"]["hash"] == mine  # parked: Zotero's annotations wait on the PDFs differing
     md5 = fake.data(LIB, keys["pdf"])["md5"]
     me.patch(f"/api/zotero/links/{ws}", json={"upload": True})
     _force(me, ws, "push")
     _sync(me, ws)
-    assert _block(ws, page)["props"]["doc_id"] == zoteros  # Zotero's file replaced Gamma's here
+    assert _block(ws, page)["props"]["doc"]["hash"] == zoteros  # Zotero's file replaced Gamma's here
     assert fake.data(LIB, keys["pdf"])["md5"] == md5  # and Gamma's never went over it
     assert "replaced here" in _logged(me, ws, page)
 
@@ -124,7 +124,7 @@ def test_a_pdf_replaced_on_a_paper_whose_zotero_pdf_is_a_linked_file_stays_here_
     _sync(me, ws)
     assert not [p for m, p, _ in fake.calls[calls:] if m == "POST" and p.endswith("/file")]
     assert {d["key"] for d in fake.items(LIB)} == before  # no PDF beside the linked file either
-    assert _block(ws, page)["props"]["doc_id"] == mine
+    assert _block(ws, page)["props"]["doc"]["hash"] == mine
 
 
 @pytest.mark.parametrize("why", ["failed", "files", "quota"])
@@ -167,7 +167,7 @@ def test_a_copy_attached_while_zoteros_pdf_cannot_come_goes_to_zotero_once_it_ca
         _due(ws)
         _sync(me, ws)
     assert _uploads(fake, att, calls) and fake.data(LIB, att)["md5"] != zoteros  # Gamma's went to Zotero
-    assert _block(ws, page)["props"]["doc_id"] == mine
+    assert _block(ws, page)["props"]["doc"]["hash"] == mine
     assert len([c for c in _conflicts(me, ws, "zotero_file") if c["page_id"] == page]) == 1  # Zotero's, kept here
 
 

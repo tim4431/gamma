@@ -388,6 +388,15 @@ export function lassoTakes(pic, polygon) {
   return taken * 2 > LASSO_GRID * LASSO_GRID;
 }
 
+// The picture a tap with the lasso at (x, y) takes, among `shown` ([{id,
+// pic}] in stacking order, the bottom first): the topmost whose turned
+// frame holds the point, unless it is locked. null when none is there, or
+// the one on top is locked.
+export function pictureAt(shown, x, y) {
+  const top = (shown || []).findLast(({ pic }) => pointInPolygon(x, y, turnedCorners(pic)));
+  return top && !top.pic.locked ? top.id : null;
+}
+
 // `pic` scaled and turned with the lasso's strokes by its handles' value
 // {cx, cy, angle (radians), scale} (ink.js transformStrokes): its centre
 // moved as their points are (transformPoint), its frame scaled by `scale`,

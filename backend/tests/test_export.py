@@ -5,9 +5,12 @@ page + EDN + area images)."""
 import io
 import zipfile
 
-from conftest import make_folder, make_page
+import pytest
+
+from conftest import doc_props, make_folder, make_page
 
 from gamma.markdown_export import build_tree, collect_and_rewrite, render_readable, slugify
+from gamma.routers.export import _collect_cards, _collect_marks
 
 
 def _put_children(guest, page_id, tree):
@@ -59,8 +62,7 @@ def test_export_with_asset_returns_zip(guest):
     # A real uploaded PDF so the export must bundle it.
     up = guest.post("/api/uploads", files={"file": ("p.pdf", b"%PDF-1.4 minimal", "application/pdf")})
     assert up.status_code == 200, up.text
-    src = up.json()["source_url"]
-    page = make_page(guest, "Paper", properties={"doc_id": up.json()["doc_id"], "source_url": src})
+    page = make_page(guest, "Paper", properties=doc_props(up.json()["doc_id"]))
     _put_children(guest, page["id"], [_highlight("h", "quote", page=1)])
 
     r = guest.get(f"/api/pages/{page['id']}/export")
@@ -76,7 +78,7 @@ def test_export_with_asset_returns_zip(guest):
 
 def test_export_pdf_opt_out_stays_bare_md(guest):
     up = guest.post("/api/uploads", files={"file": ("q.pdf", b"%PDF-1.4 tiny", "application/pdf")})
-    page = make_page(guest, "No bundle", properties={"source_url": up.json()["source_url"]})
+    page = make_page(guest, "No bundle", properties=doc_props(url=up.json()["source_url"]))  # a duplicated page's
     r = guest.get(f"/api/pages/{page['id']}/export", params={"pdf": 0})
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/markdown")
@@ -272,8 +274,7 @@ def _positioned(hid, quote, page=1, area=False, note=""):
 def test_logseq_graph_export(guest):
     up = guest.post("/api/uploads", files={"file": ("g.pdf", _blank_pdf_bytes(), "application/pdf")})
     assert up.status_code == 200, up.text
-    page = make_page(guest, "Graph paper",
-                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+    page = make_page(guest, "Graph paper", properties=doc_props(up.json()["doc_id"]))
     _put_children(guest, page["id"], [
         _positioned("th", "a text quote", note="my thought"),
         _positioned("ah", "", area=True),
@@ -427,6 +428,64 @@ def test_logseq_export_without_area_highlights_never_opens_the_pdf(tmp_path, mon
     assert render_area_images(tmp_path / "paper.pdf", "paper", [text]) == []
     assert render_area_images(tmp_path / "paper.pdf", "paper", []) == []
     assert opens == []
+
+
+def test_the_annotated_pdfs_marks_and_cards_leave_a_pictures_region_out():
+    """A region of a picture is a highlight to the kind column but no place
+    on a PDF page: the annotated PDF's marks and cards read is_highlight,
+    so a page that carries one (its picture replaced by a PDF, say) exports
+    without a KeyError and without a mark for it."""
+    pos = {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": {"x1": 1, "y1": 2, "x2": 3, "y2": 4},
+           "rects": [{"x1": 1, "y1": 2, "x2": 3, "y2": 4}]}
+    region = {"width": 1200, "height": 800, "boundingRect": {"x1": 10, "y1": 20, "x2": 300, "y2": 200},
+              "rects": [{"x1": 10, "y1": 20, "x2": 300, "y2": 200}], "hash": "i1"}
+    blocks = [{"id": "h1", "parent_id": "p", "position": "a0", "content": "on the page", "kind": "highlight",
+               "properties": {"pdf_position": pos, "color": "#ffe066aa"}},
+              {"id": "r1", "parent_id": "p", "position": "a1", "content": "on the picture", "kind": "highlight",
+               "properties": {"image_position": region, "color": "#ffe066aa"}},
+              {"id": "n1", "parent_id": "p", "position": "a2", "content": "a note", "kind": "note", "properties": {}}]
+    assert [m["id"] for m in _collect_marks(blocks)] == ["h1"]
+    cards = _collect_cards(blocks, notes=True, threads={"r1": [["a thread"]]})
+    assert len(cards) == 1 and cards[0]["position"] == pos
+
+
+def test_an_export_leaves_no_temporary_file(guest, tmp_path, monkeypatch):
+    """The file an export answers with goes once the answer ends: sent, or
+    refused for its Range (a FileResponse's background task runs only
+    after a full send) — gamma/downloads.py."""
+    import tempfile
+    optics = make_folder(guest, "temp/optics")
+    page = make_page(guest, "Temp export", properties={"folders": [optics]})
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    for url in (f"/api/pages/{page['id']}/export", f"/api/folders/{optics}/export"):
+        assert guest.get(url).status_code == 200
+        assert guest.get(url, headers={"Range": "bytes=99999999-"}).status_code == 416
+        assert guest.get(url, headers={"Range": "bytes=oops"}).status_code == 400
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_an_export_whose_file_cannot_be_made_leaves_no_spool(guest, tmp_path, monkeypatch):
+    """A part spooled during the walk (an annotated PDF) goes when the
+    download's own file cannot be made (a full temp dir), as it does once
+    the file is written."""
+    import tempfile
+    from gamma.routers import export as export_router
+    optics = make_folder(guest, "spool/optics")
+    make_page(guest, "Spool export", properties={"folders": [optics]})
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    begin = export_router._Builder.begin
+
+    def begin_and_spool(self, conn, root_ids):
+        begin(self, conn, root_ids)
+        self.spool("annotated.pdf", b"%PDF")
+    monkeypatch.setattr(export_router._Builder, "begin", begin_and_spool)
+
+    def disk_full(suffix):
+        raise OSError("No space left on device")
+    monkeypatch.setattr(export_router, "temp_file", disk_full)
+    with pytest.raises(OSError):
+        guest.get(f"/api/folders/{optics}/export")
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_missing_page_404(guest):

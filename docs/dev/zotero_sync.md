@@ -399,7 +399,7 @@ only the engine writes them.
 | folders | collections | by key; name and parent; trash both ways, never a stripped membership ([Collections and folders](#collections-and-folders)) |
 | labels | manual tags (type 0) | by name, ignoring case; automatic tags (type 1) stay in Zotero and go back unchanged, unless the link brings them (`auto_tags`) |
 | a paper page (a record with a title) | a top-level regular item | the record field by field ([Items and pages](#items-and-pages)) |
-| a page with a stored PDF and no record | a `document` item | only with `send_unrecorded`, after its metadata lookup had two minutes |
+| a page with a PDF of its own and no record | a `document` item | only with `send_unrecorded`, after its metadata lookup had two minutes |
 | a standalone-PDF page | a standalone PDF attachment | its title, tags and collections; a parent item once its record is a person's |
 | a note page made from a standalone note | that standalone note | the note as a block-level diff |
 | the page's record (`meta`, `cite_key`) | the item's fields | `zotero_fields`, per the item type's schema |
@@ -967,7 +967,8 @@ else it is `SETTLED`. A page with no row becomes an item when
 
 - a **paper**, a page whose record has a title: a regular item of
   `write_type`;
-- a page with a stored PDF and no record: it waits while its metadata
+- a page with a PDF of its own (`documents.model.own_hash`: a duplicated
+  page owns none) and no record: it waits while its metadata
   lookup may still bring one (no `meta`, no `meta_error`, made less than
   `LOOKUP_WAIT_S`, two minutes, ago: `HELD`, queued again then), then goes
   as a `document` when the link has `send_unrecorded`, else stays in
@@ -1094,6 +1095,17 @@ smallest key. The attachment bound to the page stays its PDF while it
 still qualifies; when it is trashed, removed or moved to another item, the
 primary is chosen again. The item's other attachments never travel.
 
+On Gamma's side the page's PDF is its document (the page's `doc`
+property, `gamma/documents/model.py`, [documents.md](documents.md)) when
+that is a PDF, and the file
+compared with Zotero's is the stored file it shows
+(`documents.model.pdf_file_hash`): its own, a
+duplicated page's original, one read in place from this computer alike,
+opened through `storage.open_path`. A page whose PDF is shown from an
+address alone has a PDF (`Side.has_pdf`) but no file to compare. Whether
+a page becomes a `document` item depends on the PDF it owns instead
+(`wants_item`): a duplicated page owns none.
+
 The two files are one when their **MD5s** are equal: Zotero's attachment
 carries the MD5 of its stored file, and Gamma reads its own. The
 attachment row keeps both as last synced (`detail.md5`, `detail.gmd5`),
@@ -1101,8 +1113,8 @@ with the stored file's `[size, mtime_ns]` (`detail.fsig`), so no round
 reads a whole library's PDFs again: Gamma's MD5 is taken from the row
 while the file's size and time are unchanged, and otherwise read only when
 a decision asks for it (`zotero_sync_reads._FileMD5`;
-`zotero_annotations.file_md5` caches by path, size and time, never by doc
-id, since stripping embedded annotations rewrites a stored file in place).
+`zotero_annotations.file_md5` caches by path, size and time, never by
+hash, since stripping embedded annotations rewrites a stored file in place).
 Annotations travel only while the two MD5s are equal
 ([Annotations](#annotations)).
 
@@ -1269,9 +1281,9 @@ with `If-Match: <Zotero's MD5 as fetched now>`, or into an attachment with
 no file yet with `If-None-Match: *`. The register's `Last-Modified-Version`
 is recorded on the row, so Gamma's own upload never reads as Zotero's
 change; when Zotero had the bytes already (`{"exists": 1}`) the version is
-read back. The file goes under the page's original file name, else the
-attachment's own, else `<doc id>.pdf`. Then the item is queued again, as
-after a download.
+read back. The file goes under the name of the page's file (`doc.name`),
+else the attachment's own, else `<hash>.pdf`. Then the item is queued
+again, as after a download.
 
 - A 412 (Zotero's file is not the one assumed) sends the decision back to
   the item's unit.
@@ -1312,7 +1324,7 @@ after a download.
 A **new attachment** (`_new_attachment`) is an `imported_file` under the
 item, its key derived with the PDF's MD5 in the seed, its title
 `UPLOAD_TITLE` ("Full Text PDF", as Zotero names a PDF it finds), its file
-name the page's original file name, else its title (`pdf_filename`: at
+name that of the page's file (`doc.name`), else its title (`pdf_filename`: at
 most `FILENAME_TITLE_MAX`, 120, characters of it, `.pdf` added). Its
 row is written pending, the create sent, and the upload queued once the
 create lands.
@@ -1537,7 +1549,7 @@ files differ and comes with the PDF. The reasons are counted in
 
 | Zotero | Gamma |
 |---|---|
-| `highlight`, `underline` | a highlight (an underline stays one: the row's type is sent back) |
+| `highlight`, `underline` | a highlight; an underline is one drawn as an underline (`style`), and a new highlight drawn as any line (an underline, a wavy underline, a strikethrough: Zotero has only the first) goes as an `underline`. An item keeps the type it was made with: a style changed later stays Gamma's |
 | `image` | an area highlight (`pdf_position.area`) |
 | `ink` | an ink group; one item per look |
 | `text` | a Zotero box ([Text boxes](#text-boxes)), its rect the box, upright on the annotation's centre at its font size |
@@ -1780,12 +1792,14 @@ for it a few seconds later ([The round](#the-round)).
 
 ### `replace_attachment`
 
-`routers/pages.py` `replace_attachment(ws, page_id, doc_id, …, actor,
-client, owner, check_held, props, check, rows, check_zotero)` makes a file
-a page's PDF in one transaction and then starts the relocation job that
-places the page's highlights in it. `PUT /pages/{id}/attachment`,
-`zotero_local.set_pdf` (a download) and the `zotero_file` resolver all go
-through it. The link passes `check_held=False` (linked items may share one
+`routers/pages.py` `replace_attachment(ws, page_id, hash, url, name, *,
+at, actor, client, owner, check_held, props, check, rows, check_zotero)`
+makes a file a page's PDF in one transaction and then starts the
+relocation job that places the page's highlights in it.
+`PUT /pages/{id}/attachment`, `zotero_local.set_pdf` (a download) and the
+`zotero_file` resolver all go through it. The link passes the stored
+file's hash and name and no `at`, so a page that reads its PDF in place
+keeps reading it so; `check_held=False` (linked items may share one
 PDF), `check_zotero=False` (the Zotero refusal is for a person's attach),
 `props={"zotero_pdf": None}` and its own `check` and `rows`; the job is
 owned by the link's owner. A job that does not start (the account's jobs

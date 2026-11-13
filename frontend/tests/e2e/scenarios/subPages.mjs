@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { Account, PYTHON, live, wanted } from "../harness.mjs";
+import { Account, PYTHON, live, pressMouseBack, wanted } from "../harness.mjs";
 import { editRow, row } from "./notes.mjs";
 import { openDialog } from "./transfers.mjs";
 
@@ -114,7 +114,7 @@ export async function subPageScenarios(env) {
       await page.keyboard.press("Control+p");
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
-      await dialog.getByRole("textbox", { name: "Search pages by title or label" }).fill("Child one");
+      await dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" }).fill("Child one");
       const option = dialog.locator('[role="option"][data-kind="page"]').filter({ hasText: "Child one" }).first();
       await option.waitFor();
       assert((await option.innerText()).includes("Family top"), `the row names the page it is in: ${await option.innerText()}`);
@@ -276,6 +276,11 @@ export async function subPageScenarios(env) {
       await until(async () => (await page.textContent(".readOnlyTitle")).includes("Child one"), { what: "its title, from the chip" });
       await page.goBack();
       await until(async () => (await page.textContent(".readOnlyTitle")).includes("Family top"), { what: "Back replays the shared page" });
+      // The mouse's back button keeps the window's history here, which is the share view's navigation.
+      await chip.click();
+      await until(() => new URL(page.url()).searchParams.get("page") === childOne, { what: "the chip again" });
+      await pressMouseBack(page);
+      await until(async () => (await page.textContent(".readOnlyTitle")).includes("Family top"), { what: "the mouse's back button replays it too" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
 
@@ -495,7 +500,7 @@ export async function subPageScenarios(env) {
       await page.keyboard.press("Control+p");
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
-      const query = dialog.getByRole("textbox", { name: "Search pages by title or label" });
+      const query = dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" });
       await query.fill("quartz ledger");
       const option = dialog.locator('[role="option"][data-kind="page"]').filter({ hasText: "Ledger inside" });
       await option.waitFor();

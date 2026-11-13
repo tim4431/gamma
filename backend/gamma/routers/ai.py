@@ -100,6 +100,7 @@ from ..blocks_store import PATH_SEP, folder_path, page_root_id
 from ..db import connect_data_db, connect_pages_db, page_now
 from ..logbuf import log
 from ..pdf_text import extract_text
+from ..search.index import doc_info
 from ..textnorm import INDEX_VERSION
 from .uploads import LINK_UPLOADS_PER_5_MIN
 
@@ -124,8 +125,8 @@ class AIChatRequest(BaseModel):
     prompt: str
     # Context is PAGES from the user's knowledge base: `pages` (several — a
     # report across pages) or, when empty, the one page of `page_id` (the
-    # open page; its PDF attachment, if any, is derived server-side via
-    # blocks_store.page_attachment). `doc_id` is the compatibility input:
+    # open page; its PDF, if any, is derived server-side from its document,
+    # documents.model.page_document). `doc_id` is the compatibility input:
     # it resolves to the page carrying that PDF (blocks_store.page_for_doc)
     # and does nothing when no page does — send `page_id`; nothing new may
     # depend on `doc_id`.
@@ -308,13 +309,11 @@ def _search_index_status(ws: str, doc_id: str) -> dict:
     /api/metadata/status (ver mismatch = stale, re-indexed lazily)."""
     try:
         with connect_data_db(ws) as conn:
-            row = conn.execute(
-                "SELECT ver FROM pdf_fts_docs WHERE doc_id = ?", (doc_id,)
-            ).fetchone()
+            info = doc_info(conn, doc_id)
     except sqlite3.OperationalError:
-        row = None  # index tables don't exist yet — search has never run
-    return {"indexed": bool(row and row[0] == INDEX_VERSION),
-            "index_stale": bool(row and row[0] != INDEX_VERSION)}
+        info = None  # the index is busy
+    return {"indexed": bool(info and info["ver"] == INDEX_VERSION),
+            "index_stale": bool(info and info["ver"] != INDEX_VERSION)}
 
 
 # Sync def: extraction runs in the threadpool (PyMuPDF stops at the sample cap).
@@ -411,7 +410,10 @@ def page_image(page_id: str, request: Request, page: int, box: str = "", ink: in
     it, as the page shows them — what a reply's view chip expands to, what
     a region attached to a message shows in the composer and the bubble,
     and what the model embeds (``![p. N](/api/ai/page-image/…)``) to show
-    the user a page it looked at. Any workspace member."""
+    the user a page it looked at. For a page whose document is a picture,
+    the picture itself or its region (``ai_pictures.image_region``; ``page``
+    is 1, any other is 404 "no such page"). 404 "not found" for a page with
+    neither a PDF nor a picture here. Any workspace member."""
     ws = require_ws(request)
     if page < 1:
         raise HTTPException(status_code=400, detail="invalid page")
@@ -450,11 +452,12 @@ def ink_image(block_id: str, request: Request, area: str = "ink"):
 # still work.
 _SYSTEM_PROMPT = (
     "You are a research assistant working inside the user's knowledge base in Gamma: "
-    "pages of nested notes, some of which carry a PDF attachment (a paper, a book, "
-    "lecture notes). The context you are given is one or more of those pages — each "
-    "with its title, properties, the user's own notes and highlights, and, for a page "
-    "with a PDF, either the PDF file itself (attached to the conversation's first "
-    "message) or the document's extracted text, which is usually an EXCERPT, not the "
+    "pages of nested notes, some of which carry a document (a PDF or a text file: a paper, "
+    "a book, lecture notes, a LaTeX source). The context you are given is one or more of "
+    "those pages — each with its title, properties, the user's own notes and highlights, "
+    "and, for a page with a PDF, either the PDF file itself (attached to the conversation's "
+    "first message) or the document's extracted text, for a page with a text file its "
+    "numbered lines; either is usually an EXCERPT, not the "
     "whole document. Anything you state as being in THESE pages or their documents — "
     "a number, a parameter, a method, a result — must come from text you have actually "
     "read here. Never fill such a gap from your knowledge of similar papers: a value "
@@ -463,7 +466,8 @@ _SYSTEM_PROMPT = (
     "General background the user asks you to explain is fine to answer from your own "
     "knowledge — just make clear it is background, not something these pages state. "
     "Be concise; when you cite a specific value from a PDF, give its PDF page number, "
-    "and say when something comes from the user's notes rather than the document.")
+    "from a text file its line number, and say when something comes from the user's "
+    "notes rather than the document.")
 
 # Appended to every chat request, built-in or custom prompt, document or
 # not: what the reply view draws, so the model knows a figure is an option.

@@ -1,7 +1,8 @@
 // What an agent reply changed, listed under its steps pill (grouped by
 // chat/agentSteps.js): renamed, filed, saved, deleted or restored pages,
 // renamed, made, applied or deleted folders and labels, and edited, added or
-// moved notes, each with a link to what changed. A note change, pages the
+// moved notes, each with a link to what changed (a note change's link also
+// draws it in its note again, chat/noteReview.js). A note change, pages the
 // agent renamed, moved, labelled, deleted or restored (one or many in one
 // call), and a deleted folder or label have a revert button
 // (chat/aiRevert.js, gamma/ai_revert.py). A revert keeps what anyone wrote
@@ -138,8 +139,10 @@ export function changeText(a, { page, block }) {
 // conversation. Without it (a viewer, the share view) nothing can be
 // reverted; `busy` (a reply streaming here) holds the buttons.
 // `onRevertMany`: open the dialog on this reply's changes (none: the
-// conversation has fewer than two to take back).
-export default function AgentChanges({ actions, onOpenPage, onReverted, onRevertMany, busy = false }) {
+// conversation has fewer than two to take back). `onShowChange(index)`: a
+// note change's link was pressed — its note draws the change again as
+// tracked changes (chat/noteReview.js) as the link opens it.
+export default function AgentChanges({ actions, onOpenPage, onReverted, onRevertMany, onShowChange, busy = false }) {
   const nav = useContext(GammaNavContext);
   // index → {working} while its request runs, or {refusal, redo} once it stopped
   const [rows, setRows] = useState({});
@@ -168,7 +171,10 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, onRevert
     ? <button type="button" className="chatChangeLink" onClick={() => onOpenPage?.(id)}>{label}</button>
     : <span>{label}</span>;
   const blockLink = (a, label) => a.block_id && nav?.openBlock
-    ? <button type="button" className="chatChangeLink" onClick={() => nav.openBlock(a.block_id, a.page_id)}>{label}</button>
+    ? <button type="button" className="chatChangeLink" onClick={() => {
+      onShowChange?.(actions.indexOf(a));
+      nav.openBlock(a.block_id, a.page_id);
+    }}>{label}</button>
     : pageLink(a.page_id, label);
   const links = { page: pageLink, block: blockLink };
   const many = onReverted && onRevertMany && changes.some(({ a }) => canRevert(a));

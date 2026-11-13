@@ -9,9 +9,8 @@ import { guideEvents } from "../guide/events.js";
 import { wantsSheetAfter } from "../notebook/notebook.js";
 import { t, T } from "../shared/i18n/i18n.js";
 import { makeId } from "../shared/lib/utils";
-import { findBlock, isInkGroup } from "../shared/model/blockModel.js";
 import { appendStroke, appendStrokes, strokeBounds, strokeBytes } from "./ink.js";
-import { freshInk, pasteTooBig, splitsGroup } from "./inkEdits.js";
+import { currentGroup, freshInk, pasteTooBig, splitsGroup } from "./inkEdits.js";
 import * as inkStore from "./inkStore";
 
 // focusedBlockId: the open page; leaving it, the next stroke starts a
@@ -21,26 +20,26 @@ import * as inkStore from "./inkStore";
 // (useInkDocument.js). addSheetAfter(id, {once}): the notebook's next
 // sheet (App's). noteSqueezeUse(): marks a held squeeze used (the
 // Pencil's). undoableInkStatus(msg): the document's pill with Undo.
-// setStatus: the status pill.
+// setStatus: the status pill. closedGroup(id): the group has a comment
+// thread (comments/useInkThreads.js), so it takes no more strokes.
 export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, nbSheetsRef,
-  applyInk, addSheetAfter, noteSqueezeUse, undoableInkStatus, setStatus }) {
+  applyInk, addSheetAfter, noteSqueezeUse, undoableInkStatus, setStatus, closedGroup = () => false }) {
   // The group the next stroke on a surface joins ({page, id}).
   const inkActiveRef = useRef(null);
   // Leaving a page: the next stroke starts a fresh group.
   useEffect(() => () => { inkActiveRef.current = null; }, [focusedBlockId]);
   // The group `count` strokes of `bytes` join on `page` (`size` its
   // {width, height} in points), with its strokes so far: the surface's
-  // current group while its block is on the page, else a new one. Its
-  // strokes are its draft, else its file (loaded first — a stroke must
-  // never replace strokes that just have not arrived yet), else a fresh
-  // file. A group past the split budget (or full of strokes) is left as it
-  // is: the strokes start the page's next group, invisibly (inkEdits.js
+  // current group while its block is on the page and it has no comment
+  // thread (inkEdits.js currentGroup), else a new one. Its strokes are its
+  // draft, else its file (loaded first — a stroke must never replace
+  // strokes that just have not arrived yet), else a fresh file. A group
+  // past the split budget (or full of strokes) is left as it is: the
+  // strokes start the page's next group, invisibly (inkEdits.js
   // splitsGroup). → {id, before}.
   async function groupFor(page, size, bytes, count) {
-    let id = inkActiveRef.current?.page === page ? inkActiveRef.current.id : null;
-    const found = id ? findBlock(blocksRef.current, id) : null;
-    const existing = isInkGroup(found) ? found : null;
-    if (!existing) id = makeId();
+    const existing = currentGroup(inkActiveRef.current, page, blocksRef.current, closedGroup);
+    let id = existing ? existing.id : makeId();
     inkActiveRef.current = { page, id };
     const loaded = !inkStore.draft(id) && existing?.properties.ink_url
       ? await inkStore.loadInk(existing.properties.ink_url) : null;
@@ -73,9 +72,10 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
   // Several strokes at once (a paste): they join the surface's current
   // group when it can take them all under MAX_STROKES and GROUP_SPLIT_BYTES,
   // else a new group takes them all — a paste is never split across groups
-  // — as one entry. → {id, ids} of the group they landed in, null when no
-  // group could hold them.
-  async function handleInkStrokes(page, strokes, size) {
+  // — as one entry, `label` and `link` its (a paste with pictures,
+  // useInkSelection.js). → {id, ids} of the group they landed in, null when
+  // no group could hold them or the byte budget refused them.
+  async function handleInkStrokes(page, strokes, size, { label = T("ink paste"), link = null } = {}) {
     if (readOnly || !focusedBlockId || inkStale || !strokes.length || !size) return null;
     if (pasteTooBig(page, strokes, size)) {
       setStatus(t("Too much handwriting to paste into one note."));
@@ -83,8 +83,7 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
     }
     const { id, before } = await groupFor(page, size, strokes.reduce((n, s) => n + strokeBytes(s), 0), strokes.length);
     const { ink: after, ids } = appendStrokes(before, strokes);
-    applyInk([{ id, page, before, after }], { label: T("ink paste") });
-    return { id, ids };
+    return applyInk([{ id, page, before, after }], { label, link }) ? { id, ids } : null;
   }
   // The pill a snapped stroke raises ("Straightened.", "Shape: circle.",
   // ink/finishStroke.js): Undo is one tap away every time; a `once` status

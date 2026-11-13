@@ -1,5 +1,5 @@
 """A synced vault's links and highlights, block by block
-(``gamma/vault_links.py``): each syntax read into Gamma and written back,
+(``gamma/vault/links.py``): each syntax read into Gamma and written back,
 the memo that tells two links to one target apart, the habit a new link
 takes, and the counter-examples of a link's spelling and a highlight's
 quote that once changed a block nobody edited. Over every block of the vault
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from gamma import md_lens
-from gamma.vault_links import Habit, LinkContext, habit_at, highlight, is_callout, read_habit, to_gamma, written
+from gamma.vault.links import Habit, LinkContext, habit_at, highlight, is_callout, read_habit, to_gamma, written
 
 FIXTURES = Path(__file__).parent / "vault_fixtures"
 ADDRESS = "http://127.0.0.1:9100/?ws=w1"
@@ -300,6 +300,121 @@ def test_written_reads_back_as_what_was_written():
         text, memo = written(g, {}, ctx)
         assert read(text, memo, ctx) == (g, memo)
         assert read(text, {}, ctx)[0] == g
+
+
+# --- a work folder's files: pages ---------------------------------------------------------
+
+WORK_PAGE_OF = {"pNotes": "pNotes", "pMain": "pMain", "pMethod": "pMethod", "bMethod": "pMethod", "pFig1": "pFig1",
+                "pPng": "pPng", "pBig": "pBig", "pHuge": "pHuge"}
+
+
+def work_vault(habit=None) -> LinkContext:
+    """A work folder's vault: notes, and files that are pages — a paper's PDF
+    paired with its note, a .tex in a directory, a PDF and a picture alone,
+    a listed file and a listed picture (no upload name)."""
+    ctx = LinkContext(habit, address=ADDRESS, page_of=WORK_PAGE_OF.get, title_of=TITLES.get)
+    ctx.add_note("notes.md", "pNotes")
+    ctx.add_note("main.md", "pMain")
+    for path, page, name in (("main.pdf", "pMain", "m1.pdf"), ("sections/method.tex", "pMethod", "t1.tex"),
+                             ("figures/fig1.pdf", "pFig1", "g1.pdf"), ("fig.png", "pPng", "f1.png"),
+                             ("data/big.h5", "pBig", ""), ("data/huge.png", "pHuge", "")):
+        ctx.add_page_file(path, page)
+        if name:
+            ctx.add_file(path, name)
+    return ctx
+
+
+WORK_READS = [
+    ("[the method](sections/method.tex)", "[[pMethod]]"),
+    ("[[sections/method.tex]]", "[[pMethod]]"),
+    ("[[method.tex]]", "[[pMethod]]"),                     # by its name, from another directory
+    ("[[sections/method.tex#Intro]]", "[[pMethod]]"),      # a file's "#…" names nothing in its page
+    ("[[main.pdf]]", "[[pMain]]"),                         # a paper's PDF: the page its note is on
+    ("[[figures/fig1.pdf]]", "[[pFig1]]"),
+    ("[[fig1.pdf|the figure]]", "[[pFig1]]"),
+    ("[fig](fig.png)", "[[pPng]]"),                        # a link to a picture: its page
+    ("![[fig.png]]", "![](/api/uploads/f1.png)"),          # an embed: the picture, drawn
+    ("![a|300](fig.png)", "![a|300](/api/uploads/f1.png)"),
+    ("[[big.h5]]", "[[pBig]]"),                            # a listed file, by its name too
+    ("[big](data/big.h5)", "[[pBig]]"),
+    ("![[huge.png]]", "![[huge.png]]"),                    # a listed picture's embed: no bytes, as typed
+]
+
+
+@pytest.mark.parametrize("text,expected", WORK_READS)
+def test_a_work_folders_link_to_a_file_is_a_mention_of_its_page(text, expected):
+    ctx = work_vault().at("notes.md", "pNotes")
+    assert assert_identity(text, ctx)[0] == expected
+    assert not ctx.new_anchors and not ctx.new_files
+
+
+def test_a_papers_note_links_its_own_pdf_as_the_file():
+    """A mention of the page the note is already on would mention itself:
+    its own PDF stays the file's link, a highlight's title too."""
+    ctx = work_vault().at("main.md", "pMain", "main.pdf")
+    assert assert_identity("[[main.pdf]]", ctx)[0] == "[main.pdf](/api/uploads/m1.pdf)"
+    assert assert_identity("[[main.pdf#page=3|p. 3]]", ctx)[0] == "[p. 3](/api/uploads/m1.pdf)"
+    assert assert_identity("[the method](sections/method.tex)", ctx)[0] == "[[pMethod]]"
+
+
+def test_a_kept_folders_link_to_a_file_stays_its_upload():
+    """No page of a file without ``add_page_file``: a kept folder's file is
+    the upload it was."""
+    ctx = vault().at("Note.md", "pNote")
+    assert assert_identity("[[notes.txt]]", ctx)[0] == "[notes.txt](/api/uploads/t1.txt)"
+    assert assert_identity("[[Paper One.pdf]]", ctx)[0] == "[Paper One.pdf](/api/uploads/pdf1.pdf)"
+
+
+@pytest.mark.parametrize("habit,expected", [
+    (Habit(), "[[method.tex]] [[fig1.pdf]] [[main]] [[big.h5]] [[method.tex]]"),
+    (Habit(format="absolute"), "[[sections/method.tex]] [[figures/fig1.pdf]] [[main]] [[data/big.h5]] "
+                               "[[sections/method.tex]]"),
+    (Habit(markdown=True), "[method.tex](method.tex) [fig1.pdf](fig1.pdf) [main](main.md) [big.h5](big.h5) "
+                           "[method.tex](method.tex)"),
+])
+def test_a_mention_of_a_file_page_is_written_by_its_path(habit, expected):
+    """A file page is spelled by its file, the leaf its label; a paper's page
+    by its note; a block in a file page's notes is a link to the file,
+    asking for no anchor (its notes are never written to disk)."""
+    ctx = work_vault(habit).at("notes.md", "pNotes")
+    g = "[[pMethod]] [[pFig1]] [[pMain]] [[pBig]] [[bMethod]]"
+    text, memo = written(g, {}, ctx)
+    assert text == expected
+    assert not ctx.new_anchors
+    assert read(text, memo, ctx)[0] == g
+    assert read(text, {}, ctx)[0] == g.replace("[[bMethod]]", "[[pMethod]]")
+
+
+def test_a_link_to_a_file_page_keeps_its_spelling_through_an_edit_and_a_move():
+    """The memo holds how the file named the page: an edit around it keeps
+    it, and the file moved (the page's path is another) keeps the note's
+    text and Gamma's."""
+    ctx = work_vault().at("notes.md", "pNotes")
+    text = "See [the method](sections/method.tex) and [[main.pdf]]."
+    g, memo = read(text, ctx=ctx)
+    assert g == "See [[pMethod]] and [[pMain]]."
+    assert to_file("Now: " + g, memo, ctx, base=g) == "Now: " + text
+    moved = LinkContext(address=ADDRESS, page_of=WORK_PAGE_OF.get)
+    moved.add_note("notes.md", "pNotes")
+    moved.add_note("main.md", "pMain")
+    moved.add_page_file("main.pdf", "pMain")
+    moved.add_page_file("parts/method.tex", "pMethod")
+    view = moved.at("notes.md", "pNotes")
+    assert read(text, memo, view) == (g, memo)
+    assert to_file(g, memo, view, base=g) == text
+
+
+def test_an_old_upload_link_to_a_file_reads_as_its_page_once_its_block_changes():
+    """A block read before files were pages kept the upload's address; read
+    again (the person edited it), the link is the page's mention."""
+    ctx = vault().at("Note.md", "pNote")
+    g, memo = read("[[notes.txt]]", ctx=ctx)
+    assert g == "[notes.txt](/api/uploads/t1.txt)"
+    work = LinkContext(address=ADDRESS, page_of=PAGE_OF.get)
+    work.add_note("Note.md", "pNote")
+    work.add_page_file("notes.txt", "pTxt")
+    work.add_file("notes.txt", "t1.txt")
+    assert read("[[notes.txt]] edited", memo, work.at("Note.md", "pNote"))[0] == "[[pTxt]] edited"
 
 
 # --- a new link: the vault's habit ---------------------------------------------------------

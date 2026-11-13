@@ -50,6 +50,77 @@ docker build -t gamma .
 docker run -p 9001:9001 -v gamma-data:/data ghcr.io/tim4431/gamma
 ```
 
+### Setting up a Mac
+
+An Apple Silicon Mac runs every check but Android's: the backend and
+frontend suites, the desktop app (run, tested and packaged) and the iPad
+app on a simulator. It needs Xcode from the App Store and these from
+Homebrew:
+
+| Install | For |
+|---|---|
+| Xcode, then `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`, `sudo xcodebuild -license accept`, `xcodebuild -runFirstLaunch`, `xcodebuild -downloadPlatform iOS` | The iPad app and its simulator ([ipad/README.md](../../ipad/README.md)) |
+| `python@3.12` | `backend/venv` (`python3.12 -m venv venv`): the Python of the Docker image, of CI's backend suite and of the desktop app's frozen server |
+| `python@3.13` | `python3.13` on the `PATH`, which `ipad/scripts/build-python.sh` makes its pip venv from |
+| `node@22` or `node@24`, then `brew link --overwrite --force` it | The frontend, the desktop shell, and the web app the iPad carries |
+| `xcodegen`, `xcbeautify` | The iPad's Xcode project; readable `xcodebuild` output |
+
+Then `npm ci` in `frontend/` (with `npx playwright install chromium`) and
+in `desktop/` (with `npx install-electron`), and
+`bash ipad/scripts/build-python.sh` once before `xcodegen generate` in
+`ipad/`.
+
+What differs from the Windows commands elsewhere in these docs and in
+`.claude/skills/`:
+
+- **The venv's interpreter** is `venv/bin/python`, not
+  `venv/Scripts/python.exe`.
+- **Node comes from Homebrew, linked into `/opt/homebrew/bin`**, not from
+  fnm. Xcode runs the iPad's build phases with a minimal `PATH`, to which
+  `build-python.sh` adds only `/opt/homebrew/bin` and `/usr/local/bin`. A
+  Node anywhere else (fnm's, nvm's) is not found there, and the app keeps
+  the web app built before, with a warning.
+- **Node's version**: 22.22.2 or later, or 24.15 or later. jsdom, a
+  frontend test dependency, takes `^22.22.2 || ^24.15.0 || >=26.0.0`. CI
+  runs 22.
+- **A venv is made from a named Python** (`python3.12`, `python3.13`).
+  A Mac's `python3` can be newer than both (python.org's installer puts
+  its own first on the `PATH`), and a newer Python accepts what the
+  others refuse (above).
+- **`node --test` runs as a Mac.** Node defines `navigator.platform`
+  (`MacIntel` here), so `hotkeys.js`'s `IS_MAC` holds and a chord reads
+  `⇧⌘O` where CI's Linux reads `Ctrl+Shift+O`. A test that compares a
+  chord's label takes the label from `chordLabel()` or passes `mac`
+  itself.
+- **The browser suite assumes a Windows or Linux keyboard.** Chromium on
+  a Mac reports a Mac too, so the app expects ⌘ where a scenario presses
+  `Control+…` (about 190 presses; only `diagrams.mjs` uses Playwright's
+  `ControlOrMeta`), and labels chords `⌥`, `⌘` and `⌦`. macOS also moves no caret on Home
+  and End, draws overlay scrollbars that take no room, and falls back to
+  other fonts. On 2026-11-12, 133 of the suite's 811 steps failed on a
+  Mac for these reasons. CI's Linux run is the reference: on a Mac, run
+  the groups a change reaches on `main` and on the branch, and compare.
+- **A directory symlink is removed with `os.unlink`**, not with
+  `os.rmdir`, which removes only a Windows junction. A test that links a
+  directory through its helper removes it by the platform
+  (`tests/test_vault_sync.py`, `tests/test_feedback_files.py`).
+- **The desktop app without a Developer ID**: `backend/venv/bin/python
+  desktop/build_backend.py`, then, in `desktop/`,
+  `CSC_IDENTITY_AUTO_DISCOVERY=false npm run pack` for
+  `dist/mac-arm64/Gamma.app`, or
+  `CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --publish never`
+  for the dmg and the zip. The variable keeps electron-builder from
+  looking for a signing identity in the keychain, and the app is signed
+  ad hoc, as CI's are without one
+  ([desktop/docs/release.md](../../desktop/docs/release.md)).
+- **The iPad suite**: a simulator's id from
+  `xcrun simctl list devices available`, then, in `ipad/`,
+  `xcodebuild test -project GammaIPad.xcodeproj -scheme GammaIPad
+  -destination "id=<udid>" ONLY_ACTIVE_ARCH=YES ARCHS=arm64
+  CODE_SIGNING_ALLOWED=NO | xcbeautify`. A Debug build's web view opens in
+  Safari's Develop menu (Settings → Advanced → *Show features for web
+  developers*).
+
 ### Serving the build
 
 `npm run build` writes a Brotli and a gzip copy beside each compressible file
@@ -470,8 +541,10 @@ highlights), `test_vault_merge.py` (the three-way merge), `test_vault_disk.py`
 (the scan, the marker, the writes), `test_vault_store.py` (vaults.db, the
 journal, tombstones, history), `test_vault_sync.py` (every step of push and
 pull, a kill at each point of the journal, the echo, a vault of 2,000
-notes), `test_vault_upgrade.py` (a folder kept before synced vaults taken
-onto the engine), `test_vault_http.py` (a vault of another server, over a
+notes), `test_vault_kinds.py` (the class registry, `gamma/vault/kinds.py`: a
+class by name), `test_vault_files.py` (the class `file`: a work folder's
+files of every format as pages), `test_vault_upgrade.py` (a folder kept
+before synced vaults taken onto the engine), `test_vault_http.py` (a vault of another server, over a
 TestClient standing in for it), `test_vault_routes.py` (the routes, the
 refusals, the hot loop, the page's own routes, the shell's secret) and
 `test_linked_files.py` (PDFs read where they are, and a server that keeps
@@ -505,12 +578,17 @@ share-link names (`linkname.json`: `auth.link_name` ↔
 `collaboration/linkName.js`), person colours (`personcolor.json`:
 `pdf_cards.person_color` ↔ `collaboration/personColor.js`), the chat's
 passage budget (`passages.json`: `ai_context.fair_shares` ↔
-`chat/passageBudget.js`), what a page carries (`attachment.json`:
-`blocks_store.page_attachment` ↔ `library/libraryUtils.js`), sibling keys
+`chat/passageBudget.js`), what a page carries (`document.json`:
+`documents.model.page_document` ↔ `documents/pageDocument.js`, with the
+backend's rewrite of older rows and the client's copy of a duplicated
+page; [documents.md](documents.md#fixtures)), a file's format by its name
+(`formats.json`: `gamma/documents/formats.py` ↔ `documents/formats.js`,
+with the backend's media types and first-bytes rule), sibling keys
 (`fractionalkeys.json`: the npm and PyPI fractional-indexing libraries) and
 pasted math (`pastemath.json`: `gamma/paste_math.py` ↔
 `editor/pasteMath.js`). The kinds are run against the column by
-`test_block_columns.py`, the pasted math by `test_paste_math.py` and the
+`test_block_columns.py`, the older documents through migration step 52 by
+`test_migrations.py`, the pasted math by `test_paste_math.py` and the
 slugs by `test_publish.py`. Add a case there when a rule changes; whichever
 side drifts fails. `test_every_fixture_is_read_by_both_suites` fails a
 fixture that no node test or no pytest module reads, except those in its
@@ -710,6 +788,44 @@ keystrokes, of a 50-op batch and of a stale set merged into a
 exits with code 5. Under xdist (`-n`) the module skips, since its numbers
 would mean nothing beside the other workers.
 
+The document text index at a work folder's scale is
+`backend/tests/test_search_scale.py` (`-m perf -p no:xdist`): 20,000
+`.tex` files beside 500 library PDFs, 2,000 of them indexed and 18,000
+pending, read in place from paths that are gone.
+
+| Case | Budget (p95) |
+|---|---|
+| `POST /api/document-search {folders: [W]}`, 18,000 pending (one query for what is linked, 200 probes) | 800 ms |
+| `pages_in_scope(conn, [W])` | 100 ms |
+| `index_doc` + `store_docs` of a 3 MB, 60,000-line log | 1,500 ms |
+| the scoped search and a directory's listing while the job runs over the 18,000 | 800 ms, 60 ms |
+| `purge_unused` with 20,500 documents | 300 ms |
+| `purge_doc` of one hash | 5 ms |
+| `documents.text.extract` of a 2 MB `.tex` | 400 ms |
+| `documents.text.read_lines` lines 1–400 of a 64 MB file, with its total | 60 ms |
+
+The scoped search reads every file page's document per request
+(`pages_in_scope` ~70 ms, `root_pages` ~110 ms, `pending` ~65 ms, the MATCH
+~40 ms, measured with other worktrees' tests running, 2026-11): its budget
+is about twice that p95, not 5x an idle one.
+
+A work folder's readers at its scale are
+`backend/tests/test_work_folder_scale.py` (`-m perf -p no:xdist`): 20,000
+files in 11 directories, one of them 10,000, beside 500 library pages,
+the rows inserted by `backend/tests/seed_work_folder.py`. Quick open's
+cases go through the API, so each holds a request's few milliseconds;
+their budgets are about twice the p95 measured with other worktrees' tests
+running (2026-11):
+
+| Case | Budget (p95) |
+|---|---|
+| `GET /api/files?q=file-012` (the runs `file` and `012` as LIKEs, 100 matches ranked) | 25 ms |
+| `GET /api/files?q=dir 3/file-012` (a path term: the leaf's runs, the segment scored) | 22 ms |
+| `GET /api/files?q=nothing-here` (the whole prefilter, nothing ranked) | 16 ms |
+| `GET /api/files?q=图` (no run: every name read from the index, folded and scored) | 95 ms |
+| `GET /api/folders/{W}/at?path=big/file-01234.bin` (one seek of `idx_ub_file_name`) | 11 ms |
+| `POST /pages/summaries`' lookup of 40 ids, on the connection (`+parent_id`; ~11 ms without) | 2 ms |
+
 The budgets are about 5x the p95 an idle Ryzen 9 9950X3D measured (Node
 22.23, Python 3.12, November 2026), rounded up. Cases near a millisecond
 have about 6 to 8x (the warm eraser flush, a restyle, the one-set
@@ -878,7 +994,10 @@ is there too, as `-closed.jpg`: closing a context or a page during a step
 first keeps its last look. The
 `check` workflow runs the suite on every PR and uploads those folders as the
 `e2e-failures-<shard>` artifact. `harness.mjs` holds the server
-lifecycle, `Account` (session cookie + `X-Gamma-Workspace` for API
+lifecycle (`server.manage(...)` runs `manage.py` on the server's data
+dir, `server.python(script, ...)` any script of `backend/` there: the
+`explorer` group seeds a work folder of 20,000 files with
+`tests/seed_work_folder.py`), `Account` (session cookie + `X-Gamma-Workspace` for API
 seeding, browser contexts logged in as that account), `makePdf` (a small
 real PDF with a text layer) and `step()`. It also holds two checks of
 where a surface opens. `assertOpensInPlace` reads a menu or card frame by
@@ -1417,7 +1536,11 @@ The scenarios live in `tests/e2e/scenarios/`:
   - Last, the lasso takes a picture with a stroke and leaves a locked one.
     A drag carries both, and one undo and one redo step both, from the
     strip and by Ctrl+Z. With its row's Pictures off it takes the stroke
-    alone.
+    alone. Select all takes the page's unlocked pictures, by Ctrl+A and
+    More. A tap takes the picture under it, a stroke over it first, never
+    a locked one. Copy and Paste carry a picture with the strokes, placed
+    as they were, one step to undo and redo; Cut is one step; a paste on
+    another paper names the same upload and shows it.
 - `guide.mjs`: the first-run guide ([onboarding.md](onboarding.md)),
   started from the account menu's Tours — every registered home-view anchor
   is present once, the demo step adds a paper by itself (pointed at an

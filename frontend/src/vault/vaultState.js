@@ -2,7 +2,10 @@
 // own server (GET /api/folder-links/page/{id}, routers/folder_links.py
 // `page_state`; docs/research/vaults.md "The words" and "Reading a PDF where
 // it is"): `{vault, reader}`. `vault` is the synced vault that keeps the page
-// (`{id, name, scope, path, pull, push, problem, conflicts, paused}`), `reader`
+// (`{id, name, scope, path, pull, push, problem, conflicts, paused,
+// work_folder, choosing, mine, agent}`, `mine` whether this account made it,
+// `choosing` a work folder still choosing its first files, `agent` a work
+// folder's agent on this computer or null), `reader`
 // the PDF the page reads where it lies (`{path, missing, mine,
 // relocation_error?}`, `mine` whether this account opened the file).
 // What the page shows of it: the chip in the page header and its card
@@ -11,6 +14,7 @@
 // "" for a member who cannot act on the vault: where its files lie is the
 // reading of whoever made it. Pure: tests/vaultState.test.mjs.
 import { t, tn } from "../shared/i18n/i18n.js";
+import { inPlace, isPdf } from "../documents/pageDocument.js";
 
 // The answer, kept only when it says something: null for a page of no vault
 // that reads no file here.
@@ -67,6 +71,62 @@ export function vaultChip(state) {
   };
 }
 
+// What the card says of the agent on this computer that answers the work
+// folder's Sends (`vault.agent`, {name, label, ready, problem, running:
+// {kind, request_id, detail} | null, `kind` "send" or "chat"};
+// docs/dev/local_agents.md): {line, problem,
+// working}, `line` naming it, `problem` why it cannot run (the server's
+// English sentence, "" while ready or not known yet), `working` what it is
+// at during a run ("" otherwise; the detail is "" for a member who cannot
+// act on the vault). Null for a vault with no agent.
+export function agentLine(state) {
+  const agent = state?.vault?.agent;
+  if (!agent || typeof agent !== "object") return null;
+  const name = agent.label || agent.name || "";
+  const detail = agent.running?.detail || "";
+  const working = !agent.running ? ""
+    : detail ? t("{agent} is working: {detail}", { agent: name, detail }) : t("{agent} is working", { agent: name });
+  return {
+    line: t("Agent: {agent} on this computer", { agent: name }),
+    problem: agent.ready === false ? String(agent.problem || "") : "",
+    working,
+  };
+}
+
+// The agent a comment on the page can name (`@codex`): the work folder's
+// agent on this computer, for the vault's maker alone, whose mention of it
+// in a comment is a Send (docs/dev/local_agents.md). The @
+// menu's row, the field's hint and the chip in the maker's own comments
+// read it: {name, label, ready, problem}, `problem` as agentLine's. Null
+// for anyone else, a vault that is no work folder, and a folder with no
+// agent on.
+export function mentionAgent(state) {
+  const vault = state?.vault;
+  const agent = vault?.agent;
+  if (!vault?.work_folder || !vault.mine || !agent || typeof agent !== "object" || !agent.name) return null;
+  return {
+    name: agent.name, label: agent.label || agent.name, ready: agent.ready,
+    problem: agent.ready === false ? String(agent.problem || "") : "",
+  };
+}
+
+// The chat's computer side (chat/computer/): the same agent, by the same rule
+// as mentionAgent, with what the side's strip says before its own read
+// lands: `running` the vault's run ({kind, request_id, detail}, null when
+// idle), `folder` the work folder's name, `paused` whether the vault is
+// paused or still choosing its files (the agent starts nothing then).
+// Null wherever mentionAgent is.
+export function computerAgent(state) {
+  const agent = mentionAgent(state);
+  if (!agent) return null;
+  const { vault } = state;
+  const running = vault.agent.running;
+  return {
+    ...agent, running: running && typeof running === "object" ? running : null,
+    folder: vault.name || baseName(vault.path), paused: !!vault.paused || !!vault.choosing,
+  };
+}
+
 // The banner over the page, in the missing-page notice's slot: a note the
 // vault could not write (`problem`, why), or an opened PDF whose file is
 // gone (`missing`, with Locate… and Remove). Null for neither.
@@ -87,9 +147,13 @@ export function bannerKey(pageId, banner) {
 // note edited here would part from the file, which is where the notes are
 // written. Highlights and chat stay open (BlockTree's `notesLocked`). One
 // that pushes only PDFs never reads a notes file into Gamma, and a vault of
-// one file keeps only its PDF on disk: their notes are Gamma's.
-export function notesLocked(state) {
+// one file keeps only its PDF on disk: their notes are Gamma's. So are the
+// notes of a page whose document is no PDF (`doc`, the page's
+// pageDocument): a work folder's picture or text file has no notes file,
+// the vault never writes one, and its notes stay open.
+export function notesLocked(state, doc = null) {
   const vault = state?.vault;
+  if (doc && !isPdf(doc)) return false;
   return !!vault && vault.scope !== "file" && !vault.pull && vault.push === "everything";
 }
 
@@ -101,7 +165,8 @@ export function editsFile(state) {
   return !!vault && vault.push === "everything" && /\.(md|markdown)$/i.test(vault.path || "");
 }
 
-// Whether the page is an opened PDF that Add to library… takes in.
+// Whether Add to library… takes the page in as an opened PDF (a work
+// folder's file is fileRules' addToLibrary, explorer/workFolders.js).
 export function addsToLibrary(state) {
   return !!state?.reader && !state.vault;
 }
@@ -130,13 +195,14 @@ export function vaultConflictsPath(state) {
   return vault?.id && vault.scope !== "file" ? `/folder-links/${encodeURIComponent(vault.id)}` : "";
 }
 
-// Whether a library row (App's pageBlocks: `_linkedFile`, `_parentPage`,
-// `_opened`) is a PDF opened from this computer, inside *Opened files*: the
-// page Move to library and Move into page… take to Add to library…
-// instead, since its bytes must be stored before it leaves.
+// Whether a library row (App's pageBlocks: `_doc`, `_parentPage`, `_opened`)
+// is a PDF opened from this computer, one whose document is read in place,
+// inside *Opened files*: the page Move to library and Move into page… take
+// to Add to library… instead, since its bytes must be stored before it
+// leaves.
 export function isOpenedPdf(id, pagesById) {
   const row = pagesById?.get(id);
-  return !!row?._linkedFile && !!row._parentPage && !!pagesById.get(row._parentPage)?._opened;
+  return inPlace(row?._doc) && !!row._parentPage && !!pagesById.get(row._parentPage)?._opened;
 }
 
 // The workspaces Add to library… offers (`workspaces`: the session's list,

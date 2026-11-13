@@ -2,16 +2,18 @@
 // (docs/research/vaults.md "The words", "Reading a PDF where it is"), read by
 // vaultState.js: the chip among the page header's buttons, one icon for how
 // the page stands (vaultState's `kind`), with its card (where the file is,
-// Show in folder, Add to library…, Edit the file); and the banner over the
+// a work folder's agent on this computer and what it is at, Show in folder,
+// Add to library…, Feedback…, Edit the file); and the banner over the
 // page, in the missing-page notice's slot, for a note the vault could not
 // write and for an opened PDF whose file is gone (Locate…, Remove). The
 // actions are App's: it posts the shell's messages and opens the dialogs.
 import React from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { AlertCircleIcon, CodeIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, LocateIcon, PauseIcon, SyncIcon, TrashIcon, UploadIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, BotIcon, CodeIcon, CopyIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, LocateIcon, PauseIcon, SquareCheckIcon, SyncIcon,
+  TrashIcon, UploadIcon } from "../shared/ui/Icons";
 import { MenuItem, MenuScope } from "../shared/ui/Menus";
 import { Popover } from "../shared/ui/Surfaces";
-import { addsToLibrary, directionText, editsFile, notesLocked, vaultChip } from "./vaultState.js";
+import { addsToLibrary, agentLine, directionText, editsFile, notesLocked, vaultChip } from "./vaultState.js";
 import "./vault.css";
 
 // The chip's icon, by what the page's standing is (vaultState's `kind`):
@@ -24,11 +26,18 @@ const CHIP_ICONS = { sync: SyncIcon, push: UploadIcon, disk: HardDriveIcon, paus
 // `onReveal()` shows the file in the system's file manager (the desktop
 // app's), `onAdd()` opens Add to library… (`canAdd`: the account may file
 // pages; another server's library is a choice there), `onEdit()` the
-// file's editor.
-export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, canAdd }) {
+// file's editor. `file`, for a work folder's file ({library, pdf}, from the
+// page's row: docs/dev/work_folders.md): Add to library… while it is not
+// in the library, `onRemove()` (Remove from library) while it is, and
+// `onCopy()` (Save a copy to library…) for its PDF while it is not (in the
+// library, the copy would be its own page); `onChoose()`, when
+// given, opens Choose files… of its work folder, and `onFeedback()`, when
+// given, the file's feedback view (docs/dev/feedback.md).
+export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, canAdd, file = null, onRemove, onCopy, onChoose, onFeedback }) {
   const chip = vaultChip(state);
   if (!chip) return null;
   const { vault, reader } = state;
+  const agent = agentLine(state);
   const path = vault ? vault.path : reader.path;
   const Icon = CHIP_ICONS[chip.kind];
   return (
@@ -54,6 +63,18 @@ export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, 
           {reader && !reader.missing ? (
             <div className="popoverHint">{t("Read where it is, not stored in the library. Add it to the library to keep a copy.")}</div>
           ) : null}
+          {file ? (
+            <div className="popoverHint">{file.library
+              ? t("A work folder's file, in the library too: its name on disk and its directory follow the file.")
+              : t("A work folder's file, not in the library: its name and place follow the file.")}</div>
+          ) : null}
+          {agent ? (
+            <div className="popoverHint vaultAgent" data-agent={vault.agent.name || ""}>
+              <div>{agent.line}</div>
+              {agent.problem ? <div className="vaultAgentProblem">{agent.problem}</div> : null}
+              {agent.working ? <div>{agent.working}</div> : null}
+            </div>
+          ) : null}
           {reader?.missing ? <div className="popoverHint">{t("The file is not there any more.")}</div> : null}
           {reader?.relocation_error ? (
             <div className="popoverHint">{t("Its last new version placed no highlights: {reason}", { reason: reader.relocation_error })}</div>
@@ -63,11 +84,32 @@ export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, 
               <MenuItem icon={FolderOpenIcon} onClick={() => { onOpenChange(false); onReveal(); }}
                 title={t("Show the file in this computer's file manager")}>{t("Show in folder")}</MenuItem>
             ) : null}
-            {addsToLibrary(state) && canAdd ? (
+            {(file ? !file.library : addsToLibrary(state)) && canAdd ? (
               <MenuItem icon={FolderPlusIcon} onClick={() => { onOpenChange(false); onAdd(); }}
-                title={t("Store the PDF in the library and file the page in a folder: its highlights, notes and chat come with it")}>
+                title={file ? t("Add the file's page to the library, filed in a library folder too: it stays in its work folder")
+                  : t("Store the PDF in the library and file the page in a folder: its highlights, notes and chat come with it")}>
                 {t("Add to library…")}
               </MenuItem>
+            ) : null}
+            {file?.library && canAdd ? (
+              <MenuItem icon={FolderMinusIcon} onClick={() => { onOpenChange(false); onRemove(); }}
+                title={t("Take the file's page out of the library: it stays in its work folder, with its notes")}>
+                {t("Remove from library")}
+              </MenuItem>
+            ) : null}
+            {file?.pdf && !file.library && canAdd ? (
+              <MenuItem icon={CopyIcon} onClick={() => { onOpenChange(false); onCopy(); }}
+                title={t("Store the PDF as it is now in the library, as a page of its own")}>
+                {t("Save a copy to library…")}
+              </MenuItem>
+            ) : null}
+            {onChoose ? (
+              <MenuItem icon={SquareCheckIcon} onClick={() => { onOpenChange(false); onChoose(); }}
+                title={t("Choose which files of its directory the work folder tracks")}>{t("Choose files…")}</MenuItem>
+            ) : null}
+            {onFeedback ? (
+              <MenuItem icon={BotIcon} onClick={() => { onOpenChange(false); onFeedback(); }}
+                title={t("The file's open comments, to read or send to an agent")}>{t("Feedback…")}</MenuItem>
             ) : null}
             {editsFile(state) ? (
               <MenuItem icon={CodeIcon} onClick={() => { onOpenChange(false); onEdit(); }}

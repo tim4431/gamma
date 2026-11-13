@@ -47,9 +47,9 @@ try {
   await account.file(CURATED.qec, { folders: ['Quantum/Error correction'], labels: ['quantum computing', 'error correction'] });
   await account.file(ATTENTION, { folders: ['Machine learning'], labels: ['machine learning'] });
   await account.api(`/api/chats/${CURATED.atoms}`, { method: 'PUT', body: { messages: CHAT } });
-  // A PDF search schedules the text extraction; wait until every PDF is indexed.
+  // A document search schedules the text extraction; wait until every PDF is indexed.
   for (let i = 0; ; i++) {
-    if (!(await account.api('/api/pdf-search?q=quantum&limit=1')).indexing) break;
+    if (!(await account.api('/api/document-search', { method: 'POST', body: { q: 'quantum', limit: 1 } })).indexing) break;
     if (i === 120) throw new Error('The PDFs were not indexed within two minutes');
     await new Promise(r => setTimeout(r, 1000));
   }

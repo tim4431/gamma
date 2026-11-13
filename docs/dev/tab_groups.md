@@ -27,7 +27,7 @@ the page fills the work area as it always did.
   kept in another shape (stacked, or more than two groups) is drawn as it
   was kept; nothing makes one any more.
 - **What splits.** The groups share the page's place, the middle of the
-  work area. The docked windows (Notes, Chat, Comments) stand around the
+  work area. The docked windows (Notes, Chat, Comments, Files) stand around the
   groups as they stand around the page with one group, at their own
   sizes, as VS Code's side bars stand outside its editor grid.
 - **The live group.** One group is live: its active tab is the page App
@@ -204,7 +204,12 @@ they always did.
 
 A group that is not live shows its active tab through `PagePane`, a view
 of the page drawn with the live page view's own components, so that a
-press making it live changes nothing on screen.
+press making it live changes nothing on screen. What it shows is the live
+page's rule: `documentView` (`documents/documentView.js`) over the page's
+document (`pageDocument`), its sheets, its notebook view and its closed
+pane, with `dock` forcing the notes; when the view shows a viewer,
+`DocumentPane` draws the one it names (`pdf` or `notebook`), else the
+notes. Unlike the live page, a closed PDF is not mounted here.
 
 - **Its tree.** Read once per page shown (`/api/blocks/{id}/subtree`),
   laid over with the page's unsent edits through the collab session's

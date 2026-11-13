@@ -12,23 +12,20 @@ from pydantic import BaseModel
 
 from ..auth import link_ratelimit, require_ws, require_ws_writer, resolve_ws, share_scope
 from .. import linked_files, pdf_meta, upload_parts
+from ..blocks_store import load_props
 from ..db import connect_pages_db
+from ..documents.formats import (ALLOWED_IMAGE_TYPES, IMAGE_EXTENSIONS, IMAGE_MEDIA_TYPES, INLINE_EXTENSIONS,
+                                 SANDBOXED_EXTENSIONS, extension_of, media_type, stored_extension)
+from ..documents.model import page_document, stored_name, upload_url
 from ..server_settings import workspace_quota
 from ..storage import (
-    ALLOWED_IMAGE_TYPES,
-    IMAGE_EXTENSIONS,
-    INLINE_EXTENSIONS,
-    SANDBOXED_EXTENSIONS,
     UPLOAD_REF_RE,
     display_filename,
     exists,
     find_upload_file,
-    pdf_url,
     store_file,
     store_file_stream,
     store_pdf_stream,
-    upload_extension,
-    upload_media_type,
 )
 from .ink import parse_upload
 
@@ -63,7 +60,7 @@ def upload_pdf(request: Request, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
     return {
         "doc_id": doc_id,
-        "source_url": pdf_url(doc_id),
+        "source_url": upload_url(stored_name(doc_id, ".pdf")),
         "size": size,
         "already_existed": already_existed,
     }
@@ -117,9 +114,9 @@ def finish_upload_parts(token: str, request: Request):
     session = upload_parts.get(ws, token)
     stored, already_existed = upload_parts.finish(session)
     if session.kind == "file":
-        return {"url": f"/api/uploads/{stored}", "name": display_filename(session.name, "file"),
+        return {"url": upload_url(stored), "name": display_filename(session.name, "file"),
                 "size": session.size, "already_existed": already_existed}
-    return {"doc_id": stored, "source_url": pdf_url(stored), "size": session.size,
+    return {"doc_id": stored, "source_url": upload_url(stored_name(stored, ".pdf")), "size": session.size,
             "already_existed": already_existed}
 
 
@@ -142,7 +139,7 @@ def upload_image(request: Request, file: UploadFile = File(...)):
     filename, already_existed = store_file_stream(ws, file.file, IMAGE_EXTENSIONS[file.content_type])
     _share_reads_own_upload(request, ws, filename)
     return {
-        "url": f"/api/uploads/{filename}",
+        "url": upload_url(filename),
         "size": file.size,
         "already_existed": already_existed,
     }
@@ -150,13 +147,18 @@ def upload_image(request: Request, file: UploadFile = File(...)):
 
 @router.post("/upload-file")
 def upload_file(request: Request, file: UploadFile = File(...)):
-    """Store any file except executables (``storage.BLOCKED_EXTENSIONS``)
+    """Store any file except executables (``formats.BLOCKED_EXTENSIONS``)
     under its content hash for a block to reference as
-    ``[name](/api/uploads/<hash>.<ext>)`` — a file block. The extension comes
-    from the uploaded name (``.bin`` when it has none; images: from the
-    declared type, same path as /upload-image). A PDF stored this way gets
-    the same ``<hash>.pdf`` name the PDF ingest mints, so it can later be
-    opened as a document page without a second upload (``POST
+    ``[name](/api/uploads/<hash>.<ext>)`` — a file block, or for a page to
+    carry as its document (``POST /pages/by-file``, the attachment's
+    ``file``). The extension comes from the uploaded name (``.bin`` when it
+    has none); an image's from its declared type (same path as
+    /upload-image) unless the name's own extension is an image row of that
+    type, which it keeps (``photo.jpeg`` stays ``.jpeg``: a document's
+    stored name is its hash and extension, and a mirror pushing a
+    ``<hash>.jpeg`` must land it under the same name). A PDF stored this
+    way gets the same ``<hash>.pdf`` name the PDF ingest mints, so it can
+    later be opened as a document page without a second upload (``POST
     /blocks/by-doc/{hash}``). A recording's segment (``.webm``, ``.m4a``,
     ``.ogg``, ``.opus``) must open as that audio container. → ``{url, name,
     size, already_existed}``."""
@@ -164,10 +166,11 @@ def upload_file(request: Request, file: UploadFile = File(...)):
     link_ratelimit(request, "upload", LINK_UPLOADS_PER_5_MIN, 300)
     name = display_filename(file.filename, "file")
     if file.content_type in ALLOWED_IMAGE_TYPES:
-        ext = IMAGE_EXTENSIONS[file.content_type]
+        own = extension_of(name)
+        ext = own if IMAGE_MEDIA_TYPES.get(own) == file.content_type else IMAGE_EXTENSIONS[file.content_type]
     else:
         try:
-            ext = upload_extension(name)
+            ext = stored_extension(name)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
     if ext == ".ink":
@@ -182,7 +185,7 @@ def upload_file(request: Request, file: UploadFile = File(...)):
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
     _share_reads_own_upload(request, ws, filename)
-    return {"url": f"/api/uploads/{filename}", "name": name, "size": file.size,
+    return {"url": upload_url(filename), "name": name, "size": file.size,
             "already_existed": already_existed}
 
 
@@ -198,10 +201,11 @@ _share_reads_lock = threading.Lock()
 
 
 def _share_can_read_upload(ws: str, scope, filename: str) -> bool:
-    """A share link may read only its own pages' PDFs (``<doc_id>.pdf``) or a
-    file one of their subtrees references (embedded images, file chips — any
-    extension, matched textually). Reads the shared pages only, never the
-    rest of the workspace."""
+    """A share link may read only its own pages' documents (a page's
+    ``doc``: the file it stores, caches or shows as a copy) or a file one of
+    their subtrees references (embedded images, file chips — any extension,
+    matched textually). Reads the shared pages only, never the rest of the
+    workspace."""
     key = (ws, scope.page, scope.folder, filename)
     now = time.monotonic()
     with _share_reads_lock:
@@ -232,14 +236,24 @@ def _share_reads_own_upload(request: Request, ws: str, filename: str) -> None:
         _remember_share_read((ws, scope.page, scope.folder, filename), time.monotonic())
 
 
+# The rows of the pages ``reach`` (a JSON list) whose document a share
+# shows: each page's own, and the copy a block inside one shows, read as
+# any upload a block names. One a block inside owns is not shown.
+_SHOWN_DOCS = ("(id IN (SELECT value FROM json_each(:reach)) OR (page_id IN (SELECT value FROM json_each(:reach)) "
+               "AND json_extract(properties, '$.doc.copy') IS NOT NULL))")
+
+
 def _pages_reference(conn, pages: list[str], filename: str) -> bool:
-    """Whether one of ``pages`` carries ``filename`` as its PDF or a block of
-    it names it."""
-    needle = f"/api/uploads/{filename}"
+    """Whether one of ``pages`` carries ``filename`` as its document's
+    stored file (``stored_name`` of its ``doc``: an upload, a URL's cached
+    copy, the file a copy shows; a block's copy too) or a block of it names
+    it."""
+    needle = upload_url(filename)
     reach = json.dumps(pages)
-    if filename.endswith(".pdf") and conn.execute(
-            "SELECT 1 FROM unified_blocks WHERE doc_id = ? AND id IN (SELECT value FROM json_each(?))",
-            (filename[:-4], reach)).fetchone():
+    if conn.execute(
+            f"SELECT 1 FROM unified_blocks WHERE {_SHOWN_DOCS} "
+            "AND json_extract(properties, '$.doc.hash') || json_extract(properties, '$.doc.ext') = :name",
+            {"reach": reach, "name": filename}).fetchone():
         return True
     return conn.execute(
         "SELECT 1 FROM unified_blocks WHERE page_id IN (SELECT value FROM json_each(?)) "
@@ -252,9 +266,13 @@ def _pages_upload_names(conn, pages: list[str]) -> set[str]:
     export: that question costs a scan of the pages' blocks, and an export
     would ask it of each of its files."""
     reach = json.dumps(pages)
-    names = {f"{doc}.pdf" for doc, in conn.execute(
-        "SELECT doc_id FROM unified_blocks WHERE doc_id != '' AND id IN (SELECT value FROM json_each(?))",
-        (reach,))}
+    names = set()
+    for props, in conn.execute(
+            f"SELECT properties FROM unified_blocks WHERE {_SHOWN_DOCS} "
+            "AND instr(properties, '\"doc\"') > 0", {"reach": reach}):
+        view = page_document(load_props(props))
+        if view and view["file"]:
+            names.add(view["file"])
     for content, props in conn.execute(
             "SELECT content, properties FROM unified_blocks WHERE page_id IN (SELECT value FROM json_each(?)) "
             "AND (instr(content, '/api/uploads/') > 0 OR instr(properties, '/api/uploads/') > 0)", (reach,)):
@@ -274,7 +292,7 @@ def pdf_info(doc_id: str, request: Request):
         raise HTTPException(status_code=400, detail="invalid document id")
     ws = resolve_ws(request)
     scope = share_scope(request)
-    if scope is not None and not _share_can_read_upload(ws, scope, f"{doc_id}.pdf"):
+    if scope is not None and not _share_can_read_upload(ws, scope, stored_name(doc_id, ".pdf")):
         raise HTTPException(status_code=403, detail="not accessible via this share link")
     info = pdf_meta.ensure(ws, doc_id)
     if info is None:
@@ -295,8 +313,8 @@ def serve_upload(filename: str, request: Request):
         raise HTTPException(status_code=400, detail="invalid filename")
     stem = filename[:dot]
     ext = filename[dot:].lower()
-    media_type = upload_media_type(ext)
-    if not media_type:
+    media = media_type(ext)
+    if not media:
         raise HTTPException(status_code=400, detail="unsupported file type")
     if not stem or not all(c in "0123456789abcdef" for c in stem):
         raise HTTPException(status_code=400, detail="invalid filename")
@@ -316,7 +334,7 @@ def serve_upload(filename: str, request: Request):
     # Only images, PDFs, plain text and audio render on direct navigation; generic
     # files (office, zip, …) download, and so do svg/html — scriptable in this
     # origin (stored XSS) — which are sandboxed too in case a browser renders
-    # them anyway (storage.INLINE_EXTENSIONS / SANDBOXED_EXTENSIONS): no script,
+    # them anyway (formats.INLINE_EXTENSIONS / SANDBOXED_EXTENSIONS): no script,
     # no fetch, an origin of their own. Inline styles stay, so an SVG drawn
     # under its own policy keeps its look (an <img> draws one with no script).
     if ext not in INLINE_EXTENSIONS:
@@ -338,6 +356,6 @@ def serve_upload(filename: str, request: Request):
     # keeps it unasked, and FileResponse's ETag (its size and time) tells.
     if not exists(ws, filename):
         headers["Cache-Control"] = "no-cache"
-    return FileResponse(path, media_type=media_type, headers=headers)
+    return FileResponse(path, media_type=media, headers=headers)
 
 

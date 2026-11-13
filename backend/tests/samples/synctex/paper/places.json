@@ -1,0 +1,76 @@
+{
+ "v1": {
+  "pages": 2,
+  "width": 612.0,
+  "height": 792.0,
+  "passage": {
+   "quote": "The penalty keeps the weights small, which matters when the training set is small compared with the number of parameters, as it is in every experiment reported below.",
+   "rects": [
+    [0.6734, 0.6066, 0.853, 0.6204],
+    [0.1471, 0.6238, 0.853, 0.6375],
+    [0.1471, 0.6409, 0.5839, 0.6546]
+   ],
+   "bp": [
+    [412.12, 480.47, 522.03, 491.38],
+    [90.0, 494.02, 522.02, 504.93],
+    [90.0, 507.57, 357.35, 518.47]
+   ],
+   "file": "sections/method.tex",
+   "line": 3,
+   "end": 5
+  },
+  "figure": {
+   "rect": [0.3071, 0.3008, 0.6892, 0.491],
+   "bp": [187.98, 238.2, 421.77, 388.91],
+   "file": "main.tex",
+   "line": 22
+  },
+  "equation": {
+   "rect": [0.4155, 0.6697, 0.8529, 0.684],
+   "bp": [254.26, 530.44, 522.0, 541.69],
+   "file": "sections/method.tex",
+   "line": 11
+  },
+  "page_number": {
+   "rect": [0.4955, 0.9138, 0.5045, 0.9275],
+   "bp": [303.27, 723.71, 308.73, 734.62]
+  }
+ },
+ "v2": {
+  "pages": 2,
+  "width": 612.0,
+  "height": 792.0,
+  "passage": {
+   "quote": "The penalty keeps the weights small, which matters when the training set is small compared with the number of parameters, as it is in every experiment reported below.",
+   "rects": [
+    [0.4456, 0.6425, 0.853, 0.6562],
+    [0.1471, 0.6596, 0.853, 0.6733],
+    [0.1471, 0.6767, 0.3611, 0.6905]
+   ],
+   "bp": [
+    [272.72, 508.83, 522.02, 519.74],
+    [90.0, 522.38, 522.03, 533.29],
+    [90.0, 535.93, 221.01, 546.84]
+   ],
+   "file": "sections/method.tex",
+   "line": 6,
+   "end": 8
+  },
+  "figure": {
+   "rect": [0.3071, 0.3016, 0.6892, 0.4918],
+   "bp": [187.98, 238.83, 421.77, 389.54],
+   "file": "main.tex",
+   "line": 22
+  },
+  "equation": {
+   "rect": [0.4155, 0.7072, 0.8529, 0.7214],
+   "bp": [254.26, 560.09, 522.0, 571.35],
+   "file": "sections/method.tex",
+   "line": 14
+  },
+  "page_number": {
+   "rect": [0.4955, 0.9138, 0.5045, 0.9275],
+   "bp": [303.27, 723.71, 308.73, 734.62]
+  }
+ }
+}

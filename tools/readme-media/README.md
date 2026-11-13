@@ -46,6 +46,15 @@ npm --prefix frontend run build -- --outDir ../artifacts/readme-media/dist
 $env:GAMMA_E2E_DIST = (Resolve-Path artifacts/readme-media/dist).Path
 ```
 
+`artifacts/readme-media/demo.zip` keeps the workspace in the shape the
+server that exported it stored. An import converts an older one (a restore
+runs the migration steps above its stamp), but `make-notability-note.py`
+reads the zip's own `pages.db` and finds a page's PDF through its `doc`
+property, the shape of workspace data format 52 and later
+([documents.md](../../docs/dev/documents.md)). A zip exported by a server
+below 52, whose pages still say `doc_id`, has to be exported again with
+`export-demo.py` from a server at 52 or later.
+
 On Unix use `backend/venv/bin/python` and
 `export GAMMA_E2E_DIST="$PWD/artifacts/readme-media/dist"`.
 Initialize fnm normally if Node is not on PATH. If the browser is installed in a
@@ -107,7 +116,7 @@ import goes through Gamma's real Notability reader. The repository's
 Notability samples are not cleared for publication, so a note is generated
 rather than shown.
 
-The story: the library home, ≡ View → Import… → Notability notes → Choose
+The story: the library home, ≡ View → Import… → Notability & GoodNotes → Choose
 files… (answered by `setFiles`, so no picker shows), the review with the note
 under "Library after import", Import to library, Import complete, Done; the
 new page opens with the pencil marks and their ink cards in Notes; then

@@ -19,7 +19,7 @@ import { decodeStroke, encodePoints, mod, round2 } from "./ink.js";
 // css px from where it snapped refits the shape, and one more than
 // CANCEL_PX from it within CANCEL_MS of the snap drops it, so a stroke that
 // merely paused goes on freehand. The same timer, armed at the down while
-// the clipboard holds strokes, opens "Paste here" if the tip has not
+// the clipboard holds something, opens "Paste here" if the tip has not
 // travelled PASTE_MOVE css px by then.
 export const HOLD_MS = 600, HOLD_MOVE = 3, HOLD_MIN_MS = 250, REFIT_PX = 6, CANCEL_PX = 12, CANCEL_MS = 150, PASTE_MOVE = 2;
 

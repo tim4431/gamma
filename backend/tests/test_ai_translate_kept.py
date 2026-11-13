@@ -2,7 +2,7 @@
 and brief kept in the workspace's data.db, read before the server's memory,
 written when the request asks to keep them and its account may
 change the workspace, counted, cleared and forgotten through
-/api/translations, and dropped with the PDF (pdf_index.purge_unused)."""
+/api/translations, and dropped with the PDF (search.index.purge_unused)."""
 
 import json
 import sqlite3
@@ -12,7 +12,7 @@ from contextlib import closing
 import pytest
 
 from ai_fixtures import JsonResp, segmented, texts_of
-from conftest import account_of, login, make_user, workspace_of
+from conftest import account_of, doc_props, login, make_user, workspace_of
 
 MODEL = "claude-test"
 BRIEF_SYSTEM = "You prepare a translator's brief"
@@ -315,14 +315,15 @@ def test_stats_clear_and_forget(monkeypatch, client):
 
 
 def test_a_duplicated_page_is_the_paper_it_was_copied_from(frank, monkeypatch):
-    """A duplicated page carries only the stored upload's URL, no doc_id
-    (blocks_store.attachment_file): the viewer counts it as stored, so the
-    server reads it as that file, kept with it, and forgetting the file's
-    translation (the menu on the copy) makes the copy translate afresh."""
+    """A duplicated page shows the original's stored file without owning it
+    (a copy: documents.model.file_hash, no own hash): the viewer counts it as
+    stored, so the server reads it as that file, kept with it, and forgetting
+    the file's translation (the menu on the copy) makes the copy translate
+    afresh."""
     ws = workspace_of("tkept_frank")
     page, doc = _paper(frank, "duplicated")
     r = frank.post("/api/blocks", json={"parent_id": "root", "content": "Paper duplicated (copy)",
-                                        "properties": {"source_url": f"/api/uploads/{doc}.pdf"}})
+                                        "properties": doc_props(url=f"/api/uploads/{doc}.pdf")})
     assert r.status_code == 200, r.text
     copy = r.json()["id"]
     batches = _fake(monkeypatch)
@@ -340,7 +341,7 @@ def test_forgetting_a_pdf_without_a_stored_copy_makes_its_page_translate_afresh(
     its translations live in memory under its page, which the forget names
     beside the file id it would have had."""
     r = frank.post("/api/blocks", json={"parent_id": "root", "content": "Linked paper",
-                                        "properties": {"source_url": "https://example.org/paper.pdf"}})
+                                        "properties": doc_props(url="https://example.org/paper.pdf")})
     assert r.status_code == 200, r.text
     page = r.json()["id"]
     batches = _fake(monkeypatch)
@@ -535,7 +536,7 @@ def test_the_lookup_answers_kept_rows_and_none_where_nothing_is_kept(frank, monk
     # No page, or a page with no stored file: nothing is kept.
     assert _lookup(frank, ["looked up one"])["translations"] == [None]
     linked = frank.post("/api/blocks", json={"parent_id": "root", "content": "Linked lookup",
-                                             "properties": {"source_url": "https://example.org/l.pdf"}}).json()["id"]
+                                             "properties": doc_props(url="https://example.org/l.pdf")}).json()["id"]
     assert _lookup(frank, ["looked up one"], page_id=linked)["translations"] == [None]
     # The lookup never fills the account's memory.
     with translate._LOCK:
@@ -636,7 +637,8 @@ def test_the_lookup_has_the_translation_request_s_caps(frank):
 
 
 def test_purge_unused_drops_the_kept_translations_of_a_pdf_no_page_carries(frank, monkeypatch):
-    from gamma import pdf_index, translate_store
+    from gamma import translate_store
+    from gamma.search import index as text_index
     from gamma.db import connect_pages_db
 
     ws = workspace_of("tkept_frank")
@@ -647,23 +649,23 @@ def test_purge_unused_drops_the_kept_translations_of_a_pdf_no_page_carries(frank
     translate_store.put(ws, gone, "zh-CN", MODEL, [("h", "of a deleted paper")], brief=True)
     translate_store.put_brief(ws, gone, "zh-CN", MODEL, "a deleted paper's brief")
     with closing(connect_pages_db(ws)) as conn:
-        pdf_index.purge_unused(ws, conn)
+        text_index.purge_unused(ws, conn)
     assert translate_store.lookup(ws, gone, "zh-CN", MODEL, ["h"]) == {}
     assert translate_store.get_brief(ws, gone, "zh-CN", MODEL) is None
     assert _kept(ws, live, ["a paragraph of a live paper"]) == {"a paragraph of a live paper": "T:a paragraph of a live paper"}
 
 
 def test_a_duplicated_page_keeps_the_kept_translations_of_the_file_it_shows(frank, monkeypatch):
-    """A copy carries only the upload's address, and shows the same file
-    with the same kept translations. The original deleted for good takes
-    neither away; the last page showing the file deleted for good does."""
+    """A copy owns no file, and shows the same file with the same kept
+    translations. The original deleted for good takes neither away; the
+    last page showing the file deleted for good does."""
     from gamma.db import connect_pages_db
-    from gamma import pdf_index
+    from gamma.search import index as text_index
 
     ws = workspace_of("tkept_frank")
     page, doc = _paper(frank, "duplicated")
     copy = frank.post("/api/blocks", json={"parent_id": "root", "content": "Paper duplicated (copy)",
-                                           "properties": {"source_url": f"/api/uploads/{doc}.pdf"}}).json()["id"]
+                                           "properties": doc_props(url=f"/api/uploads/{doc}.pdf")}).json()["id"]
     batches = _fake(monkeypatch)
     text = "a paragraph translated on the copy"
     _translate(frank, [text], page_id=copy)
@@ -680,7 +682,7 @@ def test_a_duplicated_page_keeps_the_kept_translations_of_the_file_it_shows(fran
     # In Recently deleted the copy can still come back, with them.
     assert frank.delete(f"/api/blocks/{copy}").status_code == 200
     with closing(connect_pages_db(ws)) as conn:
-        pdf_index.purge_unused(ws, conn)
+        text_index.purge_unused(ws, conn)
     assert _kept(ws, doc, [text]) == {text: f"T:{text}"}
 
     assert frank.delete(f"/api/trash/{copy}").status_code == 200
@@ -688,15 +690,16 @@ def test_a_duplicated_page_keeps_the_kept_translations_of_the_file_it_shows(fran
 
 
 @pytest.mark.parametrize("tag,stored", [
-    ("list", '["source_url"]'),
-    ("string", '"source_url"'),
-    pytest.param("json5", '{"source_url": "x",}', marks=pytest.mark.skipif(
+    ("list", '["copy"]'),
+    ("string", '"copy"'),
+    pytest.param("json5", '{"doc": {"copy": true},}', marks=pytest.mark.skipif(
         sqlite3.sqlite_version_info < (3, 45), reason="this SQLite refuses JSON5 as properties")),
 ])
 def test_properties_no_parser_reads_as_an_object_never_stop_the_sweep(frank, tag, stored):
     """A merged backup copies rows as they are, so a row may hold what no
     writer here stores. It carries no paper, and the sweep goes on."""
-    from gamma import pdf_index, translate_store
+    from gamma import translate_store
+    from gamma.search import index as text_index
     from gamma.db import connect_pages_db
 
     ws = workspace_of("tkept_frank")
@@ -708,8 +711,8 @@ def test_properties_no_parser_reads_as_an_object_never_stop_the_sweep(frank, tag
                      "updated_at, page_id) VALUES ('oddrow', ?, 'a', '', ?, '', '', ?)", (page, stored, page))
         conn.commit()
         try:
-            assert live in pdf_index._live_docs(conn)
-            pdf_index.purge_unused(ws, conn)
+            assert live in text_index._live_docs(conn)
+            text_index.purge_unused(ws, conn)
         finally:
             conn.execute("DELETE FROM unified_blocks WHERE id = 'oddrow'")
             conn.commit()

@@ -42,6 +42,23 @@ sync_tree.py       a page's tree as a flat snapshot, and the ops between two (th
 sync_engine.py     mirrors: a local workspace kept in step with one on another Gamma server (docs/dev/mirror.md)
 sync_clock.py      the sync engines' clock: when each linked workspace gets a round, and their users.db rows (LinkTable)
 publish.py         publishing a page to the free share host (docs/dev/mirror.md "Publishing")
+folder_links.py    synced vaults: the links' rows, making, changing and removing one, the tick and the hot loop (docs/dev/synced_vaults.md)
+vault/             the vault engine: a folder of Gamma and a directory kept in step (docs/dev/synced_vaults.md)
+vault/sync.py      a vault's rounds: Round, sync, sync_page (push, then pull)
+vault/kinds.py     the class registry: what a file is to a vault by its name (notes, pdf, picture; in a work folder file, any other format as a page), and what a round does with each class
+vault/remote.py    what a round reads and writes Gamma through, shared by both remotes: Page, Info, Layout, Edit, the refusals, remote_for
+vault/local_remote.py  LocalRemote: this server's workspace, in-process
+vault/http_remote.py   HttpRemote: a folder on another Gamma server, over HTTP with the link's token
+vault/disk.py      the directory as files: the marker, the scan, the evidence of a move, the writes, the trash
+vault/store.py     vaults.db's rows of a vault: the bases, the journal, tombstones, directories, history
+vault/merge.py     the three-way merge of a note changed on disk
+vault/links.py     links, pictures and highlights, block by block, between the file's text and Gamma's
+vault/upgrade.py   a folder kept on disk before synced vaults, taken onto the engine
+md_lens.py         the lens between a Markdown file and a page's blocks
+linked_files.py    files read where they are on this computer: a vault's PDFs, Opened files, the follow worker
+documents/         a page's document (docs/dev/documents.md): formats (the format registry), model (the stored shape and its view), text (a document's text for the index and the chat)
+work_folders/      a work folder's rules: the library switch, the op rule, .gammaignore, the tracking dialog, the takeover, a file's path in it (paths), files found by name or path (file_search) (docs/dev/work_folders.md)
+feedback/          comments on a work folder's files as feedback files an agent reads and answers (docs/dev/feedback.md)
 zotero_sync.py     Zotero links: a personal workspace kept in step with a Zotero library (docs/dev/zotero_sync.md): the registry, the round, conflicts, the clock
 zotero_sync_rows.py    what the engine's parts share: the link's row, the round's state, pages.db rows, conflict rows and log lines
 zotero_sync_reads.py   what a round's units read of both sides: a page, the projections compared, Zotero's objects read ahead
@@ -77,7 +94,7 @@ ink_view.py        handwriting as a picture for a vision model (the view_ink too
 notebook.py        notebook pages: paper rules, sheets, the notebook as a PDF (docs/dev/notebooks.md)
 recording.py       audio recordings: the recording block's rules, its label and export line, the transcribe job
 block_index.py     the notes index (block_fts in pages.db, kept by triggers): its queries
-pdf_index.py       the PDF text index (pdf_fts in data.db): schema, writes, queries
+search/            the document text index (text_fts in data.db): index (schema, writes, queries), indexer (extraction, the indexing job), hits (the one hit builder)
 pdf_meta.py        a PDF's manifest for the viewer: bytes, page count, page sizes (data.db)
 pdf_text.py        PDF reading through PyMuPDF: text, glyphs, labels, a page as pixels (page_raster, page_rasters)
 textnorm.py        search text normalization and fuzzy matching (both indexes, block search)

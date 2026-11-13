@@ -9,14 +9,16 @@ from mcp.server.auth.provider import AuthorizationCode, AuthorizationParams, Aut
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 from .db import connect_users_db
-from .integrations import create_token, grant, granted, token_digest
-from .mcp_oauth import SCOPE, TTL, load, store
+from .integrations import create_token, edit_grant, editing, grant, granted, token_digest
+from .mcp_oauth import FEEDBACK_SCOPE, TTL, load, offered, store
 
 
 class GammaCode(AuthorizationCode):
     user_id: str
     workspace_id: str
     workspaces: str = ""  # the stored grant (integrations.grant): "", "*" or a JSON list
+    edits: str = ""  # the ones of them it may edit (integrations.edit_grant)
+    asks: bool = True  # whether each change there asks first
     session_hash: str
 
 
@@ -41,8 +43,10 @@ class Provider:
             raise AuthorizeError("invalid_request", "The resource must be this Gamma MCP URL.")
         if not re.fullmatch(r"[A-Za-z0-9_-]{43}", params.code_challenge):
             raise AuthorizeError("invalid_request", "A valid S256 PKCE challenge is required.")
-        if params.scopes is not None and params.scopes != [SCOPE]:
-            raise AuthorizeError("invalid_scope", "Only gamma:read is supported.")
+        if params.scopes is not None and not offered(params.scopes):
+            raise AuthorizeError("invalid_scope", "Gamma offers gamma:read and gamma:feedback.")
+        # The request keeps its scopes: the consent page ticks "answer
+        # feedback" when they ask for it (mcp_oauth.consent_details).
         request_id = secrets.token_urlsafe(32)
         await run_in_threadpool(store, "request", self.base, request_id,
                                 {"client_id": client.client_id, "params": params.model_dump(mode="json")}, 600)
@@ -65,15 +69,19 @@ class Provider:
             sessions = conn.execute("SELECT token FROM sessions WHERE user_id = ?", (value["user_id"],)).fetchall()
         if not user or user[0] or not any(token_digest(s[0]) == value["session_hash"] for s in sessions):
             raise TokenError("invalid_grant", "Workspace access is no longer available.")
+        # The consent's answer: a feedback token when the person let it answer feedback.
+        scope = "feedback" if FEEDBACK_SCOPE in value["scopes"] else "read"
         try:
             wanted = granted(value["workspace_id"], value.get("workspaces", ""))
-            primary, stored = grant(value["user_id"], wanted)
+            primary, stored = grant(value["user_id"], wanted, scope)
+            edits = edit_grant(value["user_id"], primary, stored, editing(value.get("edits", "")))
             issued = create_token(value["user_id"], primary,
                                   (client.client_name or "MCP assistant")[:65] + " (OAuth)", 90,
-                                  oauth_resource=self.resource, workspaces=stored)
+                                  oauth_resource=self.resource, scope=scope, workspaces=stored, edits=edits,
+                                  asks=value.get("asks", True))
         except HTTPException as exc:
             raise TokenError("invalid_grant", str(exc.detail)) from exc
-        return OAuthToken(access_token=issued["token"], expires_in=TTL, scope=SCOPE)
+        return OAuthToken(access_token=issued["token"], expires_in=TTL, scope=" ".join(value["scopes"]))
 
     async def load_refresh_token(self, client, refresh_token):
         return None

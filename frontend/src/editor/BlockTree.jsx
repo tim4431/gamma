@@ -13,11 +13,14 @@ import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import { rehypeNoteSanitize } from "./noteSanitize.js";
 import {
-  blockColor, blockPage, blockPosition, blockQuote, countBlocks, isFolded, isHighlightBlock, isInkGroup, isLinkBlock,
-  isPlainNote, roughMatchPercent,
+  blockColor, blockPage, blockPosition, blockQuote, countBlocks, isFolded, isInkGroup, isLinkBlock,
+  isPlaceBlock, isPlainNote, isRegionBlock, placeKeyOf, roughMatchPercent,
 } from "../shared/model/blockModel";
+import { lockedRow } from "../vault/notesLock.js";
 import { DEFAULT_HIGHLIGHT, darkPageLine } from "../shared/model/palette.js";
-import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
+import { blockStyle, isLineStyle } from "../shared/model/markStyle.js";
+import { MarkGlyph } from "../shared/ui/MarkGlyph.jsx";
+import { citesSeveralSources, gammaLinkId, isSourceLink, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
 import { RecordingCard } from "../recording/RecordingCard";
@@ -32,15 +35,20 @@ import { picturesDrag } from "../markup/pictureUpload.js";
 import { chordFromEvent, composing } from "../shared/lib/hotkeys.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
-import { CitationPill, GammaLinkCard, handleMarkdownCopy, useDockFolded } from "../shared/ui/Widgets";
+import { CitationPill, GammaLinkCard, handleMarkdownCopy, linePlace, useDockFolded } from "../shared/ui/Widgets";
 import { Collapse } from "../shared/ui/MotionWidgets";
 import { DiagramFigure, diagramCodeProps } from "../shared/ui/DiagramFigure";
 import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidth } from "../shared/lib/diagramMarkdown.js";
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
 import { blockSpans, mathTex, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
+import { diffMarkdown, rehypeDiffMarks } from "./mdDiff.js";
+import { NoteReviewBar } from "./NoteReviewBar";
+import { useNoteAsk, useNoteChange } from "../chat/noteReview.js";
 import { ImageIcon, LinkIcon, LocateIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
+import { isRelativeHref } from "../explorer/workPaths.js";
+import { PathLink, PathLinkScope } from "./PathLink";
 import { findMathAtCursor, LatexAcPopup, MathLivePreview } from "./LatexEditor";
 import { useMathUi } from "./useMathUi.js";
 import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
@@ -399,12 +407,14 @@ function BlockEmbedCard({ refId, refBlock, refLabels, onBlockRefClick, onEmbedEd
             placeholder={t("Edit the source note…")}
           />
         ) : refBlock?.content ? (
-          <BlockMarkdown content={refBlock.content} blockId={`embed:${refId}`} refLabels={refLabels}
-            onBlockRefClick={onBlockRefClick} nested
-            onTaskToggle={editable ? stableTask : undefined}
-            onImageEdit={editable ? stableImg : undefined}
-            onTableEdit={editable ? stableTbl : undefined}
-            onDiagramEdit={editable ? stableDiagram : undefined} />
+          <PathLinkScope pageId={refBlock.page_root_id}>
+            <BlockMarkdown content={refBlock.content} blockId={`embed:${refId}`} refLabels={refLabels}
+              onBlockRefClick={onBlockRefClick} nested
+              onTaskToggle={editable ? stableTask : undefined}
+              onImageEdit={editable ? stableImg : undefined}
+              onTableEdit={editable ? stableTbl : undefined}
+              onDiagramEdit={editable ? stableDiagram : undefined} />
+          </PathLinkScope>
         ) : (
           // A source in Recently deleted names its page (the click opens the
           // notice that offers Restore); one that no page holds says so.
@@ -467,8 +477,12 @@ function HighlightedCodePre({ children }) {
 // when the content or a resolved [[ref]] chip label actually changes; ref
 // labels are resolved by the caller so the comparison here stays a string
 // check. onBlockRefClick/onTaskToggle are deliberately excluded from the
-// comparison — the caller passes identity-stable wrappers.
-export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onDiagramEdit, onObjectAction, nested }) {
+// comparison — the caller passes identity-stable wrappers. `diff`: the
+// content is an AI change merged with its marks (editor/mdDiff.js), drawn
+// as tracked changes.
+const NOTE_REHYPE = [rehypeRaw, rehypeNoteSanitize, rehypeKatex];
+const DIFF_REHYPE = [rehypeRaw, rehypeNoteSanitize, rehypeDiffMarks, rehypeKatex];
+export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockId, refLabels, onBlockRefClick, onTaskToggle, onEmbedEdit, onImageEdit, onTableEdit, onDiagramEdit, onObjectAction, nested, diff = false }) {
   // GFM task-list checkboxes render in document order; this counter maps the
   // nth rendered checkbox back to the nth `[ ]`/`[x]` marker in the source so
   // clicking one toggles the right marker. Reset per render — the whole
@@ -481,14 +495,14 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
   // (they still consume an index so the mapping stays aligned).
   const tableInfo = useMemo(() => scanTables(content || ""), [content]);
   const diagramInfo = useMemo(() => scanDiagramFences(content || ""), [content]);
-  const citesSeveral = useMemo(() => citesSeveralPapers(content), [content]);
+  const citesSeveral = useMemo(() => citesSeveralSources(content), [content]);
   return (
     <ReactMarkdown
       // remark-breaks: a single Enter inside a note renders as a real line
       // break (the editor lets you type them), not markdown's soft-break space.
       // remarkCallouts must run before it (it eats the marker line's "\n").
       remarkPlugins={[remarkGfm, remarkMath, remarkCallouts, remarkBreaks, remarkDiagrams]}
-      rehypePlugins={[rehypeRaw, rehypeNoteSanitize, rehypeKatex]}
+      rehypePlugins={diff ? DIFF_REHYPE : NOTE_REHYPE}
       // Upload URLs get the workspace / share token here (assetUrl): the
       // browser fetches <img> src and link hrefs without the API header.
       urlTransform={(url) => /^(blockref|blockembed|unlinked|mention):/.test(url) ? url : assetUrl(defaultUrlTransform(url))}
@@ -538,16 +552,17 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
               />
             );
           }
-          // A link into this library is not an external chip: a citation
-          // (pasted from a chat answer) is the chat's pill, a copied
-          // page/block link a card. Its id has to resolve here, which also
-          // supplies the card's page title. refLabels holds ids this block's
-          // content mentions, so an id that isn't in the library falls
-          // through to the external chip below, whatever host the URL names.
+          // A link into this library is not an external chip: a citation of
+          // a PDF passage or a file's lines (pasted from a chat answer) is
+          // the chat's pill, a copied page/block link a card. Its id has to
+          // resolve here, which also supplies the card's page title.
+          // refLabels holds ids this block's content mentions, so an id that
+          // isn't in the library falls through to the external chip below,
+          // whatever host the URL names.
           const gl = parseGammaLink(href, window.location.origin);
           const glRef = gl ? refLabels?.[gammaLinkId(gl)] : null;
           if (gl && (!gl.foreign || glRef)) {
-            if (gl.kind === "citation") return <CitationPill link={{ ...gl, href }} multi={citesSeveral}>{children}</CitationPill>;
+            if (isSourceLink(gl)) return <CitationPill link={{ ...gl, href }} multi={citesSeveral}>{children}</CitationPill>;
             return (
               <GammaLinkCard link={{ ...gl, href }} label={glRef?.page_title || glRef?.content}>
                 {children}
@@ -560,6 +575,8 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
           if (parseUploadUrl(href) && !/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(href)) {
             return <FileChip href={href} text={textOf(children)} />;
           }
+          // A path relative to the note: in a work folder, the file it names.
+          if (isRelativeHref(href)) return <PathLink href={href}>{children}</PathLink>;
           return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
         },
         // A foldable callout's title (callouts.js → <details><summary>):
@@ -628,6 +645,7 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
 }, (prev, next) =>
   prev.content === next.content
   && prev.nested === next.nested
+  && prev.diff === next.diff
   && Object.keys(prev.refLabels).length === Object.keys(next.refLabels).length
   && Object.entries(next.refLabels).every(([id, r]) =>
     prev.refLabels[id]?.content === r.content && prev.refLabels[id]?.page_title === r.page_title
@@ -638,10 +656,15 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
 // the region is re-cropped from the loaded document (App's pdfCaptureRef) and
 // cached here per session, keyed by the document and the rect, so scrolling
 // the notes doesn't re-render the same crop, an edited rect gets a fresh one,
-// and a crop never serves another paper's highlight at the same rect.
+// and a crop never serves another paper's highlight at the same rect. A
+// picture's region (image_position) is cropped the same way, by the image
+// viewer.
 const _areaSnapCache = new Map();
+// A crop that came back empty is asked for again after these waits (ms): the
+// viewer may not hold its document yet (a picture still loading).
+const SNAP_RETRIES = [250, 500, 1000, 2000, 4000];
 function AreaSnapshot({ block, captureArea, docNonce, docKey }) {
-  const r = blockPosition(block)?.boundingRect;
+  const r = blockPosition(block, placeKeyOf(block))?.boundingRect;
   const key = `${docKey || ""}|${block.id}:${blockPage(block)}:${r?.x1},${r?.y1},${r?.x2},${r?.y2}`;
   const [src, setSrc] = useState(() => _areaSnapCache.get(key) || null);
   useEffect(() => {
@@ -649,15 +672,23 @@ function AreaSnapshot({ block, captureArea, docNonce, docKey }) {
     if (cached) { setSrc(cached); return; }
     setSrc(null);
     let cancelled = false;
+    let timer = 0;
+    let tries = 0;
     // docNonce re-runs this once the PDF finishes loading — the first attempt
-    // can land before the viewer has a document and resolve to null.
-    Promise.resolve(captureArea?.(block)).then((img) => {
-      if (cancelled || !img) return;
+    // can land before the viewer has a document and resolve to null; a
+    // picture gives no such signal, so an empty answer is asked again.
+    const attempt = () => Promise.resolve(captureArea?.(block)).then((img) => {
+      if (cancelled) return;
+      if (!img) {
+        if (tries < SNAP_RETRIES.length) timer = setTimeout(attempt, SNAP_RETRIES[tries++]);
+        return;
+      }
       _areaSnapCache.set(key, img);
       while (_areaSnapCache.size > 60) _areaSnapCache.delete(_areaSnapCache.keys().next().value);
       setSrc(img);
     }).catch(() => {});
-    return () => { cancelled = true; };
+    attempt();
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [key, captureArea, docNonce]);
   // Reserve the crop's aspect ratio while it renders so the card doesn't jump.
   const ratio = r && r.y2 > r.y1 ? (r.x2 - r.x1) / (r.y2 - r.y1) : null;
@@ -821,6 +852,21 @@ const BlockRow = React.memo(function BlockRow({
   // the read visibly sweeps down the outline. A row with its own mark keeps
   // that instead.
   const scanIdx = !aiMark && aiScan ? aiScan.order.get(block.id) : undefined;
+  // The AI's change to this block, drawn in it as tracked changes
+  // (chat/noteReview.js, editor/mdDiff.js): an edit waiting on its approval
+  // card, against what the block says now, or one that landed, while the
+  // block still says what the AI wrote. An open editor or the text being
+  // written shows instead, and a row that cannot be edited shows its text.
+  // A new block's text is all new: shown as it renders, marked whole. A
+  // preview tree draws it too, without the bar, as it edits nothing.
+  const aiChange = useNoteChange(block.id);
+  const aiAsk = useNoteAsk(block.id);
+  const review = readOnly || editing || aiText != null ? null
+    : aiAsk ? { ask: aiAsk, before: block.content || "", after: aiAsk.text }
+      : aiChange && aiChange.after === (block.content || "") ? { change: aiChange, before: aiChange.before, after: aiChange.after }
+        : null;
+  const reviewSource = useMemo(() => (review?.before ? diffMarkdown(review.before, review.after) : null),
+    [review?.before, review?.after]);
   // Identity-stable wrapper so the memoized BlockMarkdown never sees a fresh
   // callback (rowProps closures are rebuilt every App render) yet always
   // calls the latest one — same idiom as pdfViewer's stableCbs.
@@ -1090,10 +1136,13 @@ const BlockRow = React.memo(function BlockRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
-  const isHighlight = isHighlightBlock(block);
-  // Its place on the PDF page (null for one placed by its page alone), its
+  // A highlight on the PDF or a region of the picture: both rows have the
+  // dot that jumps to the place, in its colour; a region names no page.
+  const isRegion = isRegionBlock(block);
+  const isHighlight = isPlaceBlock(block);
+  // Its place on the document (null for one placed by its page alone), its
   // colour and the passage it marks.
-  const pos = blockPosition(block), color = blockColor(block), quote = blockQuote(block);
+  const pos = blockPosition(block, placeKeyOf(block)), color = blockColor(block), quote = blockQuote(block);
   // How alike its text and the replaced PDF's were, for one matched roughly.
   const roughPercent = isHighlight ? roughMatchPercent(pos) : null;
   // The highlight made last: its card is the one the guide's highlight tour
@@ -1175,8 +1224,9 @@ const BlockRow = React.memo(function BlockRow({
   }
 
   // A gamma block link pastes as mention chip / synced embed / plain URL; a
-  // page or citation link pastes as the link card; any other URL pastes
-  // as-is (the link chip) or as a titled markdown link.
+  // page link pastes as the link card, a citation or a file's line link as
+  // the citation pill; any other URL pastes as-is (the link chip) or as a
+  // titled markdown link.
   function pasteAsItems(link) {
     if (link?.kind === "block") {
       const blockId = link.blockId;
@@ -1189,6 +1239,15 @@ const BlockRow = React.memo(function BlockRow({
     if (link?.kind === "citation") {
       return [
         { name: "gamma", icon: "citation", label: T("Citation"), hint: t("passage on p. {page}", { page: link.page }) },
+        { name: "url", icon: "url", label: "URL", hint: T("keep the link") },
+      ];
+    }
+    if (link?.kind === "line") {
+      const hint = link.to > link.line
+        ? t("lines {from}–{to} of the file", { from: link.line, to: link.to })
+        : t("line {n} of the file", { n: link.line });
+      return [
+        { name: "gamma", icon: "citation", label: T("Line link"), hint },
         { name: "url", icon: "url", label: "URL", hint: T("keep the link") },
       ];
     }
@@ -1278,16 +1337,20 @@ const BlockRow = React.memo(function BlockRow({
       // Stored host-free: the note keeps working when this library moves to
       // another server (a desktop sidecar, the NAS, a mirror).
       const url = relativeGammaLink(pm.url, window.location.origin);
-      const pageId = gammaLinkId(pm.link);
-      const fallback = pm.link.kind === "citation" ? `p. ${pm.link.page}` : "page";
+      const link = pm.link;
+      const pageId = gammaLinkId(link);
+      // A line link reads as the file's name and line ("method.tex:7",
+      // "method.tex:3–5"), what the AI's citation rule writes.
+      const lines = link.to > link.line ? `${link.line}–${link.to}` : `${link.line}`;
+      const fallback = link.kind === "citation" ? `p. ${link.page}` : link.kind === "line" ? linePlace(link) : "page";
       fetch(withShare(`${API}/block-search?ids=${encodeURIComponent(pageId)}`))
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           const b = d?.blocks?.[0];
           const title = (b?.page_title || b?.content || "").replace(/[[\]\n]/g, " ").trim();
-          const label = pm.link.kind === "citation"
-            ? (title ? `${title}, p. ${pm.link.page}` : fallback)
-            : (title || fallback);
+          const label = !title ? fallback
+            : link.kind === "citation" ? `${title}, p. ${link.page}`
+              : link.kind === "line" ? `${title}:${lines}` : title;
           doReplace(`[${label}](${url})`);
         })
         .catch(() => doReplace(`[${fallback}](${url})`));
@@ -1508,6 +1571,14 @@ const BlockRow = React.memo(function BlockRow({
             // (or, on a gap line, where the block below the gap starts).
             const content = block.content || "";
             const rendered = e.currentTarget.querySelector(".blockRendered");
+            // The AI's change drawn in place holds text the source does not:
+            // the editor puts the caret at the press's point instead.
+            if (rendered?.hasAttribute("data-diff")) {
+              clickPosRef.current = { x: e.clientX, y: e.clientY, offset: null };
+              e.preventDefault();
+              onStartEdit(block.id, true, clickPosRef.current);
+              return;
+            }
             // A press on an object frame's margin (beside a picture or
             // table): the caret goes to the object's near end — the editor
             // keeps it rendered there, and the caret is right where the
@@ -1596,6 +1667,8 @@ const BlockRow = React.memo(function BlockRow({
                     ? t("Matched roughly ({n}%) after the PDF was replaced — jump to it", { n: roughPercent })
                     : pos?.approx
                       ? t("Placed by estimate after the PDF was replaced — jump to it")
+                      : isRegion
+                        ? t("Jump to the region")
                       : pos
                         ? t("Jump to highlight") : block.properties?.linked_highlight_id
                           ? t("Jump to linked highlight") : t("Jump to page (no exact position)")
@@ -1613,6 +1686,9 @@ const BlockRow = React.memo(function BlockRow({
                   backgroundColor: color,
                   borderColor: darkPageLine(color),
                 }} />
+              ) : pos && isLineStyle(blockStyle(block)) ? (
+                // a passage marked by a line: its style in its colour, as the PDF draws it
+                <MarkGlyph style={blockStyle(block)} color={color} size={14} />
               ) : (
                 // backgroundColor in every branch: the one span takes each
                 // look in turn, and a background shorthand would undo
@@ -1675,7 +1751,7 @@ const BlockRow = React.memo(function BlockRow({
 
         <div className="blockBody" data-guide={isInk ? "notes.ink" : isHighlight ? "notes.highlight" : undefined}
           data-guide-recent={isHighlight && recentHighlight ? "" : undefined}>
-          {shownPage ? <div className="blockMeta">{`p.${shownPage}`}</div> : null}
+          {shownPage ? <div className="blockMeta">{`p.${shownPage}`}</div> : isRegion ? <div className="blockMeta">{t("Region of the picture")}</div> : null}
           {recorded && !isRec ? (
             <button type="button" className="replayGlyph" onClick={(e) => { e.stopPropagation(); recordings.playAt(block.properties.t0); }}
               title={t("Play the recording from when this was written")} aria-label={t("Play the recording from when this was written")}>
@@ -1870,6 +1946,13 @@ const BlockRow = React.memo(function BlockRow({
             <div className="blockRendered aiStreaming">
               {aiText.trim() ? <BlockMarkdown content={aiText} blockId={block.id} refLabels={refLabels} /> : null}
             </div>
+          ) : review ? (
+            // The AI's change as tracked changes; a press opens the editor
+            // on the text as it is (no source offset: the view holds what went).
+            <div className={`blockRendered mdDiffView${reviewSource == null ? " mdDiffNew" : ""}`} data-diff="">
+              <BlockMarkdown content={reviewSource ?? review.after} diff={reviewSource != null} blockId={block.id}
+                refLabels={refLabels} onBlockRefClick={stableRefClick} />
+            </div>
           ) : (
             <div className="blockRendered" ref={renderedRef} onCopy={handleMarkdownCopy}
               onMouseMove={readOnly ? undefined : trackGapLine}
@@ -1898,13 +1981,14 @@ const BlockRow = React.memo(function BlockRow({
               {remoteCursors ? <RenderedCarets peers={remoteCursors} source={block.content || ""} containerRef={renderedRef} /> : null}
             </div>
           )}
+          {review && !preview ? <NoteReviewBar change={review.change} ask={review.ask} onStatus={onStatus} /> : null}
 
           {quote.trim() ? (
             <div className="blockQuote">
               {quote}
             </div>
           ) : null}
-          {pos?.area && captureArea ? (
+          {(pos?.area || isRegion) && captureArea ? (
             <AreaSnapshot block={block} captureArea={captureArea} docNonce={docNonce} docKey={docKey} />
           ) : null}
           {inlineSheets && isSheet(block) ? <NoteSheet block={block} number={sheetNumber} /> : null}
@@ -2267,9 +2351,9 @@ function AiGhostRow({ content, depth }) {
 // `notesLocked`: the page's notes are written elsewhere (a synced vault that
 // pushes everything and does not pull, vault/vaultState.js): a note's row is
 // drawn as read-only, with no editor, no handles and no drag, while a
-// highlight's row keeps its own, so a highlight is still made and its note
-// written. Unlike `readOnly`, which is the whole workspace's, nothing else of
-// the page is locked.
+// highlight's or a region's row keeps its own (vault/notesLock.js lockedRow),
+// so a highlight is still made and its note written. Unlike `readOnly`,
+// which is the whole workspace's, nothing else of the page is locked.
 // A fold of more blocks than this opens and shuts at once.
 const FOLD_MOVES_MOST = 60;
 
@@ -2311,7 +2395,7 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
         const commentOpen = !!commentOpenFor && commentOpenFor === block.id;
         const sheetNumber = rowProps.sheetNumbers ? rowProps.sheetNumbers.get(block.id) || 0
           : depth === 0 && isSheet(block) ? ++sheets : 0;
-        const locked = notesLocked && !isHighlightBlock(block);
+        const locked = notesLocked && lockedRow(block);
         const selected = underSelected || !!selection?.has(block.id); return (
         <React.Fragment key={block.id}>
           {/* place: the row's index among its siblings and their count. A

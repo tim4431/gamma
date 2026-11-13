@@ -30,33 +30,42 @@ code keeps them apart (decided 2026-09-13, see *Files and documents* below):
   per page, download or open in a tab, no semantics. Whether it is still in
   use follows the textual reference; one nothing references is kept 30
   days, then purged ([user_db.md](user_db.md) "Stored files").
-- A **document** is the ONE PDF a page *carries*: `properties.doc_id`
-  (content hash → `uploads/<doc_id>.pdf`) plus `source_url` /
-  `original_filename` / `web_url` describing where it came from. A page
-  stores `source_url` only when the file is fetched from elsewhere (a
-  proxied URL, a copy without the `doc_id`): the stored copy's
-  `/api/uploads/<doc_id>.pdf` is derived by the helpers below, and no
-  writer stores it (`attachment_props`, `create_page`, the op path). The viewer,
-  highlights, metadata, the PDF search index, AI context and `by-doc` dedup
-  all key on it. Code reads it through ONE helper on each side —
-  `page_attachment(props)` (backend) / `pageAttachment(block)` (frontend)
-  returning `{kind: "pdf", id, url, name} | null`, held to the same answers
-  by `tests/shared/attachment.json`. Nothing else may read
-  `doc_id`/`source_url` off a page directly to decide *what the page is*.
-  Code that reads the file itself takes the stored file the attachment
-  shows from `attachment_file(attachment)` / `attachmentFile(attachment)`:
-  its `id`, else the upload a copy's `/api/uploads/<doc_id>.pdf` address
-  serves, else none.
+- A **document** is the ONE file a page *carries*, of any format (a PDF,
+  a picture, a text file, a recording, a data file): one property,
+  `properties.doc` (`{format, name, hash, ext, at, url?, size?, copy?}`;
+  the stored file is `uploads/<hash><ext>`, and `at` says whether the
+  bytes are read from there, from a path on this computer, from an address
+  or nowhere (a work folder's file too large to keep, `listed`);
+  [documents.md](documents.md)), with `web_url` beside it for the page a
+  clip came from. The viewer, highlights, metadata, the PDF search index,
+  AI context and the `by-doc` / `by-file` dedup all key on it. Code reads
+  it through ONE function on each side — `documents.model.page_document(props)`
+  (backend) / `pageDocument(block)` (frontend) — returning the view
+  `{format, language, name, hash, ext, size, at, url, file, copy}` or
+  null, held to the same answers by `tests/shared/document.json`. Nothing
+  else may read `doc` off a page directly to decide *what the page is*.
+  Each reader names the file it means: the one the page owns
+  (`own_hash` / `ownHash`; a duplicated page owns none) or the one it shows
+  (`file_hash` / `fileHash`; a duplicated page's is the original's). The
+  paper features (the record, Zotero, the clipper, the PDF search index)
+  ask for a PDF (`is_pdf`, `is_library_pdf`), never for a document. Until
+  migration step 52 the document was flat keys (`doc_id`, `source_url`,
+  `original_filename`, `linked_file`, and a duplicated page's bare upload
+  address), read through `page_attachment` / `pageAttachment` and held by
+  `tests/shared/attachment.json`; `original_filename` stays only as the
+  name of the Markdown file a page was made from.
 
 A page is the only container: at most one document, any number of files in
 its body, and optionally a bibliographic record (`meta`). There are no page
 types.
 
-**Reading window.** Opening a page whose attachment is a PDF shows the viewer
+**Reading window.** Opening a page whose document is a PDF shows the viewer
 beside the notes; a page without one centers the notes. Same page component,
 same dock, only the presence of a viewer differs — and the viewer is
-collapsible (`pdfHidden`) rather than a mode. Layout derives from
-`pageAttachment(page)`, never from a `pdfUrl` state variable.
+collapsible (`pdfHidden`) rather than a mode. Layout derives from the
+page's document (`documentView` over `pageDocument(page)`,
+[documents.md](documents.md#which-viewer-a-page-shows)), never from a
+`pdfUrl` state variable.
 
 **Kinds.** No page-type enum: the block table's `kind` calls every page
 `page`. Cards, badges and AI listings describe a page by what it carries
@@ -100,6 +109,18 @@ finds it afterwards (`pages_for_docs` matches `doc_id` and
 `markdown_import`). Same rule as the PDF: one page per file, the second
 "Add to library" opens the existing one.
 
+A **file of any other format** (a figure, a data file, a recording, a
+LaTeX source) promotes as the PDF does, through `POST /pages/by-file
+{file: "<hash><ext>", name, folder}`: the page carries the stored file as
+its document (its viewer, notes, comments and chat;
+[documents.md](documents.md) "Writing a document"), the format settled on
+the server from the name, the extension and the first bytes, and one page
+per stored file, keyed by hash *and* extension (the same bytes as `a.txt`
+and `a.log` are two files). The chips ask `POST /pages/by-docs {files}` by
+stored name; the client's routing is `transfers/documentUploads.js`
+(`promoteChip`: a PDF by-doc, a Markdown file from-file, the rest by-file).
+Only an executable's chip, which the server never stored, offers nothing.
+
 **Sub-pages.** A page can sit inside another page, as in Notion, and is
 then reached through it instead of being listed in the library. It is not
 a new structure: a sub-page is a root page like any other whose
@@ -110,10 +131,16 @@ the shapes weighed, a zoom-in on a subtree among them, are in
 [research/sub-pages.md](../research/sub-pages.md)). `/page` makes one.
 The flat library with folders and labels stays the navigation model: a
 sub-page is reached by a link, its parent's Pages inside panel or its own
-crumbs, never a page tree in a sidebar. A Logseq-style zoom-in on a
+crumbs. The Files window is a view of the folders, which stay the model
+with the labels: it lists a folder's top pages, not a page tree. A Logseq-style zoom-in on a
 block's subtree is another thing and is still open (below).
 
 ## Where the code still says "page = PDF" (inventory, 2026-09-02)
+
+The entries keep the names of their time. The helpers they name
+(`page_attachment`, `pageAttachment`, `attachment_props`) gave way to
+`page_document`, `pageDocument` and `document` when the document became one
+property, `doc` (migration step 52, [documents.md](documents.md)).
 
 Backend
 - `blocks_store.get_or_create_doc_page` + `GET/POST /blocks/by-doc/{doc_id}`
@@ -128,7 +155,8 @@ Backend
 - ~~`search.py`: the only FTS index is `pdf_fts(doc_id, page, content)`;
   `/pdf-search` returns nothing for users without PDFs; there is no block FTS
   (`/block-search` is a Python scan).~~ `block_fts` + `GET /api/search`
-  (stage 2). `/pdf-search` and `/block-search` remain until the frontend
+  (stage 2). `/pdf-search` (since 2026-11 `POST /document-search`, over PDFs and
+  text files) and `/block-search` remain until the frontend
   switches.
 - ~~`ai_context.py`: context is framed as "Here is the PDF text"; a page with
   no `doc_id` contributes only via `include_notes`. `AIChatRequest` takes both
@@ -168,7 +196,7 @@ Frontend (all cleared 2026-09-02 except the search panel)
 - ~~Cards say PDF/Note, tooltips "paper".~~ `pageKindLabel`, copy says page.
 - ~~Chat picker lists only PDF pages; chat sends `doc_id`.~~ Every page;
   the request carries `page_id` (the page is the unit of context).
-- Search panel: the Ctrl+F panel keeps `/block-search` + `/pdf-search` —
+- Search panel: the Ctrl+F panel keeps `/block-search` + `/pdf-search` (now `/document-search`) —
   deliberately (fuzzy/regex + case/word flags that FTS bm25 does not offer);
   `/api/search` serves the AI tools. Group copy says "Other PDFs".
 - ~~Settings nav group "Reading".~~ "Editor".
@@ -197,7 +225,7 @@ every renamed property or syntax lived twice in the code. The block-centric
 work replaced that with ONE idempotent normalization pass,
 `gamma/normalize.py`, which a restore applies to imported files stamped
 below the base: a backup from before the workspace stamps, a scoped Gamma
-export (`ws_backup._normalize_copies`). The versioned migration runner
+export from before release 52 (`ws_backup._normalize_copies`). The versioned migration runner
 ([migrations.md](migrations.md)) ran it in its baseline migration too,
 until that migration was dropped with every one below `MIN_UPGRADABLE`; a
 new content shape is rewritten by a function there that a numbered step's
@@ -210,6 +238,13 @@ longer lazy `ALTER TABLE` on connect.
 Per-workspace `pages.db`
 - `properties.sourceUrl` (camelCase, earliest pages) → `source_url`; the old
   key is removed.
+- The flat keys of a page's document (`doc_id`, `source_url`,
+  `original_filename`, `linked_file`) → one property, `doc`: migration step
+  52's workspace part (`normalize.document_shape`, the states and what each
+  becomes in [documents.md](documents.md#older-shapes-migration-step-52)),
+  which a restore runs on every older copy before the content
+  normalizers. It reads `sourceUrl` as well, so on a restore the bullet
+  above finds nothing left.
 - Logseq image size `![alt](url){:width N}` in block content, outside
   code → Obsidian `![alt|N](url)`.
 - Pages still titled `PDF Notes - <name>` with no `auto_title` marker: title
@@ -246,7 +281,9 @@ backup restore only (`tests/test_restore_consistency.py`).
 ## Roadmap
 
 Each stage is independently shippable and leaves the app working. No schema
-change until stage 4.
+change until stage 4. The stages are history and name the helpers of their
+time; what a page carries is read as [documents.md](documents.md)
+describes.
 
 ### Stage 0 — one source of truth for "what does this page carry"
 *(frontend done 2026-09-02: `pageAttachment`/`pageKindLabel`/`defaultPageTitle`
@@ -337,7 +374,7 @@ stage.)*
   root's `updated_at` moved, the version bumped, or a block writer called
   `mark_page_dirty`; pruned with the page — since 2026-10 the index is
   `block_fts` in pages.db, kept by triggers in every write's transaction,
-  [user_db.md](user_db.md) "The notes index"), `gamma/pdf_index.py` (the
+  [user_db.md](user_db.md) "The notes index"), `gamma/pdf_index.py` (since 2026-11 `gamma/search/`, `text_fts`; the
   `pdf_fts` schema plus the two queries every consumer shares —
   `pdf_missing`, `search_pdf`; extraction stays in `routers/search.py`),
   `blocks_store.root_pages` (the one library/folder page scan the search,
@@ -416,13 +453,16 @@ project page links both; side-by-side reading is a second tab or dock window.
 A multi-PDF viewer with `attachment_id` on highlights is not planned.
 
 - **Backend.** `POST /upload-file` takes any extension except
-  `storage.BLOCKED_EXTENSIONS` (executables); unknown ones are served as
+  `formats.BLOCKED_EXTENSIONS` (executables); unknown ones are served as
   `application/octet-stream` downloads, a name without one is stored as
-  `.bin` (`storage.upload_extension`). `POST /pages/by-docs` answers "which
-  page carries each of these hashes" in one query (`blocks_store.pages_for_docs`)
-  so the chips label PDFs once per page render. `POST /blocks/by-doc/{id}`
-  takes `folder` for a page it creates. The Obsidian/markdown zip import
-  stores bundled files under the same rule (`markdown_zip_import._is_asset_ext`).
+  `.bin` (`formats.stored_extension`), an image keeps its own extension
+  when it is an image row of the declared type. `POST /pages/by-docs`
+  answers "which page carries each of these files" in one query
+  (`blocks_store.pages_for_docs` by hash, `pages_for_files` by stored name,
+  any format) so the chips label their files once per page render. `POST
+  /blocks/by-doc/{id}` and `POST /pages/by-file` take `folder` for a page
+  they create. The Obsidian/markdown zip import stores bundled files under
+  the same rule (`markdown_zip_import._is_asset_ext`).
 - **Frontend.** `transfers/FileChip.jsx`: the chip — every file looks the same (a
   small card: kind icon, name, download arrow). A PDF or markdown chip
   whose page exists shows an "open page" button before the arrow; its
@@ -455,6 +495,7 @@ and trash entry ([home_library.md](home_library.md#sub-pages)).
 
 ## Non-goals (for now)
 - No page-type enum — describe pages by what they carry.
-- No page-tree sidebar replacing folders; the library stays the
-  navigation surface.
+- No page tree replacing folders: the Files window
+  ([home_library.md](home_library.md) "Work folders") is a view of the
+  folders, which stay the model with the labels.
 - No rewrite of the viewer; it remains the PDF attachment's renderer.

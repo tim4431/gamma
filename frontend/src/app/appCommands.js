@@ -6,23 +6,28 @@
 // Delete, Ctrl+, and Ctrl+Shift+O (the translation shown or hidden) have
 // defaults; the rest are palette entries until the account gives them a
 // chord.
-// ctx: { shareMode, homeMode, hasPage, hasPdf, readOnly, commentsOn (the
+// ctx: { shareMode, homeMode, hasPage, hasPdf (the open page shows a PDF),
+// hasDoc (it carries a document of any format), readOnly, commentsOn (the
 // page shows comments: not a publication, readable), homePick (the one
 // page selected on the home library), homePicks (how many), organize (the
 // library may be changed: library/libraryAccess.js), search(all),
 // palette(prefix), back(), undo(redo), renameTitle(), deletePages(), recentlyDeleted(), toggleChat(),
-// toggleComments(), togglePdf(), toggleNotes(), splitTab(side) and joinGroups()
+// toggleComments(), togglePdf(), toggleNotes(), toggleFiles() (the Files
+// window; on a phone its overlay), splitTab(side) and joinGroups()
 // with phone (one view at a time: no groups) and groups (how many tab groups),
 // openSettings(pane), exportAs(format),
 // downloadPdf(), importDialog(), newPage(), share(), metadata(), pageProperties(), attach(),
 // reportProblem(), and for the handwriting group (docs/dev/handwriting.md
 // "Copy, cut and paste"): inkOpen (the markup strip is open), inkTool (a
 // tool other than the hand is armed), inkSelected (the lasso holds a
-// selection), inkClip (the handwriting clipboard holds strokes), inkCopy(),
-// inkCut(), inkPaste(), inkDuplicate(), inkSelectAll(), and translation (the
-// PDF's translated view, docs/dev/translation.md "The button"; null where the
-// translate button does not apply): {pages, shown, running, current,
-// docDone, as the viewer reports them, toggle(), page(), document()} }.
+// selection), inkClip (the handwriting clipboard holds strokes or
+// pictures), inkCopy(), inkCut(), inkPaste(), inkDuplicate(),
+// inkSelectAll(), and translation (the PDF's translated view,
+// docs/dev/translation.md "The button"; null where the translate button
+// does not apply): {pages, shown, running, current, docDone, as the viewer
+// reports them, toggle(), page(), document()}, and highlighter (the text
+// highlighters, docs/dev/settings.md "Text highlighters"; null where they
+// do not apply): {toggle(), next()} }.
 import { t } from "../shared/i18n/i18n.js";
 import { isTextField } from "../shared/lib/hotkeys.js";
 
@@ -73,18 +78,19 @@ const inPalette = (dialog) => dialog.classList.contains("quickOpenOverlay");
 export const APP_COMMANDS = [
   // The built-in search over notes, highlights and PDF text — not the
   // browser's find. In a dialog it goes to the dialog's search box; focus in
-  // the chat window leaves the key to ChatDock's find-in-chat; on the home
-  // library the plain key goes to the listing's search box (only rendered
-  // there — DOM presence stands in for homeMode) and Ctrl+Shift+F still
-  // opens the full panel.
+  // the chat window leaves the key to ChatDock's find-in-chat, and in the
+  // code view (documents/viewers/TextViewer.jsx) to CodeMirror's own Find
+  // panel; on the home library the plain key goes to the listing's search
+  // box (only rendered there — DOM presence stands in for homeMode) and
+  // Ctrl+Shift+F still opens the full panel.
   cmd("app.search", t("Search"), GROUP_NAVIGATION, "Mod-f", (c) => {
     const dialog = topDialog();
     if (dialog) return findInDialog(dialog);
-    if (document.activeElement?.closest?.(".chatPanel")) return false;
+    if (document.activeElement?.closest?.(".chatPanel, .docTextView")) return false;
     return c.search(false);
   }, { inDialog: () => true }),
   cmd("app.searchAll", t("Search everything"), GROUP_NAVIGATION, "Mod-Shift-f", (c) => {
-    if (document.activeElement?.closest?.(".chatPanel")) return false;
+    if (document.activeElement?.closest?.(".chatPanel, .docTextView")) return false;
     return c.search(true);
   }),
   // A share view has no library to pick from. In the open palette the two
@@ -108,7 +114,7 @@ export const APP_COMMANDS = [
   cmd("app.share", t("Share this page…"), GROUP_PAGE, null, (c) => { c.share(); }, { when: (c) => c.hasPage && !c.shareMode }),
   cmd("app.metadata", t("Paper metadata…"), GROUP_PAGE, null, (c) => { c.metadata(); }, { when: (c) => c.hasPdf }),
   cmd("app.pageProperties", t("Page properties"), GROUP_PAGE, null, (c) => { c.pageProperties(); }, { when: (c) => c.hasPage }),
-  cmd("app.attach", t("Attach a PDF…"), GROUP_PAGE, null, (c) => { c.attach(); }, { when: (c) => c.hasPage && !c.hasPdf && !c.readOnly }),
+  cmd("app.attach", t("Attach a document…"), GROUP_PAGE, null, (c) => { c.attach(); }, { when: (c) => c.hasPage && !c.hasDoc && !c.readOnly }),
   cmd("app.exportAnnotated", t("Export the annotated PDF"), GROUP_PAGE, null, (c) => { c.exportAs("pdf"); }, { when: (c) => c.hasPdf }),
   cmd("app.exportNotesPdf", t("Export the notes as a PDF"), GROUP_PAGE, null, (c) => { c.exportAs("notespdf"); }, { when: (c) => c.hasPage }),
   cmd("app.exportMarkdown", t("Export the notes as Markdown"), GROUP_PAGE, null, (c) => { c.exportAs("markdown"); }, { when: (c) => c.hasPage }),
@@ -118,6 +124,7 @@ export const APP_COMMANDS = [
   cmd("app.toggleComments", t("Show or hide the comments"), GROUP_VIEW, null, (c) => { c.toggleComments(); }, { when: (c) => c.hasPage && c.commentsOn }),
   cmd("app.togglePdf", t("Show or hide the PDF"), GROUP_VIEW, null, (c) => { c.togglePdf(); }, { when: (c) => c.hasPdf }),
   cmd("app.toggleNotes", t("Show or hide the notes"), GROUP_VIEW, null, (c) => { c.toggleNotes(); }, { when: (c) => c.hasPdf }),
+  cmd("app.toggleFiles", t("Show or hide the Files window"), GROUP_VIEW, null, (c) => { c.toggleFiles(); }, { when: (c) => !c.shareMode }),
   // Tab groups (docs/dev/tab_groups.md): the page's place splits once, the
   // open page's tab into a pane of its own on the right, and every tab back
   // in one group. A phone has one view at a time, so no groups.
@@ -163,6 +170,13 @@ export const APP_COMMANDS = [
     { when: (c) => !!c.translation && !c.translation.running && !c.translation.current }),
   cmd("pdf.translateDocument", t("Translate whole document"), GROUP_PDF, null, (c) => { c.translation.document(); },
     { when: (c) => !!c.translation && !c.translation.running && !c.translation.docDone }),
+  // The text highlighters, as the strip's buttons: on (the one armed last,
+  // else the first) or off, and the next one; unbound, so a reader binds
+  // one with a modifier, which a note being typed into lets through.
+  cmd("pdf.textHighlighter", t("Text highlighter on or off"), GROUP_PDF, null, (c) => { c.highlighter.toggle(); },
+    { when: (c) => !!c.highlighter }),
+  cmd("pdf.nextHighlighter", t("Next text highlighter"), GROUP_PDF, null, (c) => { c.highlighter.next(); },
+    { when: (c) => !!c.highlighter }),
   // Mod, not Ctrl: a Mac's Ctrl+click is the right click, so it boxes with ⌘.
   held("pdf.areaDrag", t("Hold to box a region of the PDF"), "Mod"),
   held("pdf.peekOriginal", t("Hold to see the original of a translated page"), "Alt"),

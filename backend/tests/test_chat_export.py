@@ -15,7 +15,7 @@ from gamma import ai_pictures
 from gamma.db import connect_pages_db
 
 from ai_fixtures import org  # noqa: F401  (fixture)
-from conftest import login, make_user
+from conftest import doc_props, login, make_user
 from test_ai_pictures import _ink, _pdf, _png
 
 MISSING_UPLOAD = f"/api/uploads/{'0' * 64}.png"
@@ -32,7 +32,7 @@ def chatted(org, tmp_path_factory):
         assert r.status_code == 200, r.text
         return r.json()["id"]
 
-    paper = block("root", "export paper", {"doc_id": "f" * 24})
+    paper = block("root", "export paper", doc_props("f" * 24))
     drawn = c.post("/api/upload-ink", json=_ink()).json()
     group = block(paper, "circled", {"ink_url": drawn["url"], "pdf_position": drawn["pdf_position"], "ink_strokes": 1})
     r = c.post("/api/ai/pictures", files={"file": ("fig.png", _png(900, 600, "navy"), "image/png")})

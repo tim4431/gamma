@@ -393,6 +393,16 @@ def test_to_items_writes_a_highlight_as_the_reader_would(framed):
     (under,) = za.to_items(_highlight_block(page), page, zotero_type="underline")
     assert under.fields["annotationType"] == "underline"
     assert "annotationAuthorName" not in under.fields
+    # a highlight marked by a line goes as an underline (Zotero has no wavy
+    # one, no strikethrough); an item keeps the type it was made with
+    for style in ("underline", "squiggly", "strikeout"):
+        block = _highlight_block(page)
+        block["properties"]["style"] = style
+        (line,) = za.to_items(block, page)
+        assert line.fields["annotationType"] == "underline", style
+        assert line.fields["annotationText"] == f["annotationText"]
+        (kept,) = za.to_items(block, page, zotero_type="highlight")
+        assert kept.fields["annotationType"] == "highlight", style
 
 
 def test_to_items_writes_an_area_as_an_image_without_text(framed):
@@ -513,7 +523,8 @@ def test_from_item_reads_every_kind(framed):
     assert (pos["width"], pos["height"], pos["pageNumber"]) == (round(w, 2), round(h, 2), 1)
     rect0 = json.loads(items["highlight"]["annotationPosition"])["rects"][0]
     assert hl["props"]["imported_annot"] == annotation_key(1, "/Highlight", rect0)
-    assert made["underline"]["kind"] == "highlight"
+    assert made["underline"]["kind"] == "highlight" and made["underline"]["props"]["style"] == "underline"
+    assert "style" not in hl["props"], "a highlight is the wash"
     assert made["image"]["props"]["pdf_position"]["area"] is True and made["image"]["props"]["quote"] == ""
     k = made["ink"]
     assert k["kind"] == "ink" and k["slot"] == "0" and k["stroke_ids"] == ("zKKKKKKK2-0", "zKKKKKKK2-1")
@@ -1117,6 +1128,8 @@ MD5 = "0" * 32
 
 
 PLACED = {"pageNumber": 1, "width": 612, "height": 792, "rects": [{"x1": 1, "y1": 1, "x2": 9, "y2": 9}]}
+REGION = {"width": 1200, "height": 800, "boundingRect": {"x1": 10, "y1": 20, "x2": 300, "y2": 200},
+          "rects": [{"x1": 10, "y1": 20, "x2": 300, "y2": 200}], "hash": "i1"}
 
 
 @pytest.mark.parametrize("props, annotation, may", [
@@ -1137,6 +1150,8 @@ PLACED = {"pageNumber": 1, "width": 612, "height": 792, "rects": [{"x1": 1, "y1"
     ({"sheet": {"w": 1}, "pdf_position": {"pageNumber": 1}}, False, False),
     ({"picture": {"url": "/api/uploads/p.png", "x": 1, "y": 1, "w": 9, "h": 9}, "pdf_page": 1}, False, False),
     ({"picture": {"url": "/api/uploads/p.png"}, "pdf_position": PLACED}, False, False),  # a picture, never a highlight
+    ({"image_position": REGION}, False, False),                             # a region of a picture: no PDF page
+    ({"image_position": REGION, "quote": "q"}, False, False),
     ({"recording": {}}, False, False),
     ({}, False, False),
 ])
@@ -1168,6 +1183,16 @@ def test_one_rule_says_why_an_annotation_block_is_held_and_eligible_reads_it(pro
     assert za.eligible(block, "0" * 32, "0" * 32) is (reason == "")
     view = type("View", (), {"annotations": [zotero_local.Annotation(block, [], "p", 1, False, "p")]})()
     assert zotero_sync_blocks.held_blocks(view) == ({"b"} if reason else set())
+
+
+def test_a_pictures_region_is_held_for_no_reason_and_is_no_annotation():
+    """A region's ``kind`` is highlight, but it has no ``pdf_position``:
+    hold_reason answers "" without reading one, and the engine never
+    writes it to Zotero."""
+    block = {"id": "b", "content": "", "properties": {"image_position": REGION, "quote": "q"}}
+    assert za.hold_reason(block) == ""
+    assert not za.is_annotation_block(block) and not za.eligible(block, MD5, MD5)
+    assert za.page_number(block["properties"]) is None
 
 
 def test_on_a_sheet_ink_and_boxes_are_no_annotations():

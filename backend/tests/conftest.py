@@ -19,7 +19,8 @@ os.environ["GAMMA_DATA_DIR"] = own_folder("gamma-test-")
 os.environ["GAMMA_SYNC_INTERVAL"] = "0"  # mirror rounds run only when a test asks
 for var in ("GAMMA_STATIC_DIR", "GAMMA_AI_ANTHROPIC_API_KEY", "GAMMA_AI_OPENAI_API_KEY",
             "GAMMA_AI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GAMMA_AI_MODELS", "GAMMA_AI_MODEL",
-            "GAMMA_ADMIN_USER", "GAMMA_ADMIN_PASSWORD", "GAMMA_FOLDER_LINKS", "GAMMA_SHELL_SECRET"):
+            "GAMMA_ADMIN_USER", "GAMMA_ADMIN_PASSWORD", "GAMMA_FOLDER_LINKS", "GAMMA_SHELL_SECRET",
+            "GAMMA_AGENT_CODEX", "GAMMA_AGENT_CLAUDE", "GAMMA_LOCAL_AGENTS", "GAMMA_AGENT_RUN_TIMEOUT"):
     os.environ.pop(var, None)
 # Nor a developer's off-site bucket: a test server's startup round must never
 # copy into it (gamma/offsite.py reads these at every round). Nor a Zotero
@@ -413,6 +414,70 @@ def make_page(guest, title="Test page", properties=None):
         r = guest.put(f"/api/blocks/{block['id']}", json={"properties": properties})
         assert r.status_code == 200, r.text
     return block
+
+
+def doc_props(hash="", *, url="", name="", at=None, copy=False, format="pdf", ext=None, size=None) -> dict:
+    """The properties of a page whose document is ``hash`` (a PDF, else
+    ``format`` stored as ``ext``): stored, read in place (``at="path"``),
+    at the address ``url``, listed (``at="listed"`` with ``size``), or a
+    copy; ``documents.model.document``'s canonical doc. ``doc_props(url=
+    "/api/uploads/X.pdf")`` is a copy of X, as a duplicated page stores it."""
+    from gamma.documents.model import document
+
+    return {"doc": document(hash, url, name, at=at, format=format, ext=ext, size=size, copy=copy)}
+
+
+def mark_work_folder(owner, folder_id, *, pull=True, library=False) -> dict:
+    """Make the folder ``folder_id`` of the client ``owner``'s workspace (its
+    ``X-Gamma-Workspace``, else the account's own) a work folder's root, as
+    its vault does: the mark ``properties.vault = {pull, library}`` set on
+    the folder block as ``DISK_CLIENT``, the one writer a person's op may
+    not stand in for (docs/dev/work_folders.md "The mark"). Returns the
+    mark."""
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import FOLDERS
+    from gamma.ops import commit_ops
+
+    session = owner.get("/api/session").json()
+    ws = owner.headers.get("X-Gamma-Workspace") or session["default_workspace"]
+    mark = {"pull": pull, "library": library}
+    commit_ops(ws, FOLDERS, [{"op": "set", "id": folder_id, "props": {"vault": mark}}],
+               actor=account_of(session["user"]), client=DISK_CLIENT)
+    return mark
+
+
+def work_props(folder_id, file_name, *, library=False, doc=None, directory="") -> dict:
+    """The properties of a work folder's file as its vault stamps them: a
+    file of the work folder ``folder_id`` named ``file_name``, filed in its
+    directory's folder (``directory``, else the work folder's top), in the
+    library when ``library``, with the document ``doc`` (a canonical doc,
+    ``documents.model.document``) when it has one. A person's write drops
+    the stamps: make such a page as the vault (``DISK_CLIENT``)."""
+    props = {"work_folder": folder_id, "file_name": file_name, "folders": [directory or folder_id]}
+    if library:
+        props["library"] = True
+    if doc is not None:
+        props["doc"] = doc
+    return props
+
+
+def token_for(owner, scope="write", name="Script") -> str:
+    """A token the account of the client ``owner`` makes by hand (Settings →
+    AI → Integrations → Tokens, ``POST /api/integrations/tokens``) for the
+    workspace it has open (its ``X-Gamma-Workspace``, else its own), of
+    ``scope`` and named ``name``: what a script or a local agent holds."""
+    r = owner.post("/api/integrations/tokens", json={"name": name, "scope": scope})
+    assert r.status_code == 201, r.text
+    return r.json()["token"]
+
+
+def thread_on(owner, page_id, block_id, body="A comment", **more) -> dict:
+    """A new thread the client ``owner`` opens on the block ``block_id`` of
+    the page ``page_id`` (the page itself when they are one) in the
+    workspace it has open; the thread as the API answers it."""
+    r = owner.post(f"/api/pages/{page_id}/comments", json={"block_id": block_id, "body": body, **more})
+    assert r.status_code == 201, r.text
+    return r.json()["thread"]
 
 
 def files_in(folder):

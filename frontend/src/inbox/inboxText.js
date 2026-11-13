@@ -7,8 +7,10 @@
 //
 // An item is the server's `{id, kind, actor, workspace_id, workspace_name,
 // page_id, page_title, block_id, thread_id, comment_id, share_token,
-// snippet, at, read_at, archived_at}` (GET /api/inbox); `actor` is a
-// username ("" once the account is gone). A `join_request` comes from
+// snippet, at, read_at, archived_at, agent}` (GET /api/inbox); `actor` is a
+// username ("" once the account is gone), and `agent` the name of the
+// integration token whose write made the item ("" for a person's): the
+// actor's own agent tells them too. A `join_request` comes from
 // someone with no account here: its snippet is their Gamma Cloud username.
 import { fmtDate, t } from "../shared/i18n/i18n.js";
 import { parseStamp } from "../library/libraryUtils.js";
@@ -29,8 +31,14 @@ export function inFilter(item, filter) {
 export const isFolderShare = (item) => (item.kind === "shared" || item.kind === "join_request")
   && !item.page_id && !!item.block_id;
 
-// Who the item is from: the account, or the Gamma Cloud username asking to join.
-export const inboxActor = (item) => (item.kind === "join_request" ? item.snippet : item.actor) || "";
+// Who the item is from: the agent that wrote through an account's
+// connection, the account, or the Gamma Cloud username asking to join.
+// `inboxActorTitle` is the row's avatar's title, which names the connection
+// for an agent.
+export const inboxActor = (item) => item.agent || (item.kind === "join_request" ? item.snippet : item.actor) || "";
+export const inboxActorTitle = (item) => (item.agent
+  ? t("{agent}, with {who}'s connection", { agent: item.agent, who: item.actor || t("Someone") })
+  : inboxActor(item));
 
 // What happened, in one sentence.
 export function inboxSentence(item) {

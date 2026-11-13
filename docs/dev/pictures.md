@@ -17,7 +17,8 @@ shared images (`frontend/src/transfers/openedFiles.js`, the document types
 in `ipad/project.yml`), `gamma/picture.py`
 (the server's rules and the picture in a PDF), the `/Stamp` writer in
 `gamma/pdf_export.py`, the reader in `gamma/routers/imports.py`, the images
-in `gamma/pdf_image.py`, `gamma/notebook.py` `placed_ops`, and, for the
+in `gamma/pdf_image.py` (an SVG drawn by `gamma/svg_draw.py`),
+`gamma/notebook.py` `placed_ops`, and, for the
 Notability and GoodNotes imports, the picture storing they share
 (`gamma/note_app_import.py` `AppImport.store_picture`) and the mapping it
 goes through (`gamma/notability_map.py` `picture_block`). Tests are listed
@@ -197,9 +198,17 @@ The lasso takes pictures with the strokes it circles, as GoodNotes' does
   frame inside the loop or the box. The frame is weighed at five by five
   points, as a stroke is taken by more than half its samples
   (`picture.js` `lassoTakes`).
-- A tap with the lasso selects the nearest stroke alone.
+- **A tap** with the lasso selects the nearest stroke. Where no stroke is,
+  it selects the picture under it, as a loop round it would: the topmost
+  whose turned frame holds the point, unless that one is locked
+  (`picture.js` `pictureAt`). Strokes lie over pictures, so a stroke under
+  the tap wins. A finger's tap with *Draws with: Pen only* does the same
+  while the lasso is armed. With the hand armed a click still selects the
+  picture itself, with its own menu and handles.
+- **Select all** (Ctrl+A, More → Select all) takes every unlocked picture
+  of the surface with its strokes (`selectAllPictures`).
 - **Pictures** in the lasso's row (this browser's `inkLassoPictures`, on to
-  start) chooses whether it takes them.
+  start) chooses whether the loop, a tap and Select all take them.
 - **A locked picture** is never taken. One locked after it was taken, or
   gone to another surface since, drops out of the selection, and no edit
   moves it (`selectedPictures`).
@@ -213,15 +222,18 @@ The lasso takes pictures with the strokes it circles, as GoodNotes' does
   (`carriedPicture`).
 - Each picture is kept on the surface, and no side goes under 8 pt. Its
   crop, flips, lock, opacity and `z` stay.
+- The handles scale the pictures uniformly, aspect kept. Alt stretches a
+  picture on its own handle only: the lasso's handle never stretched with
+  Alt, so it has no stretch to carry.
 - **Per action**:
-  - Move, resize, rotate, the flips, Delete and Duplicate take the
-    pictures too.
+  - Move, resize, rotate, the flips, Delete, Duplicate, Copy and Cut take
+    the pictures too.
   - A flip mirrors each picture about the box's centre line: its centre
     mirrored, its image flipped and its turn reversed (`mirrorPicture`).
   - Duplicate puts each copy just over its original, as far off as the
     strokes' copies, and selects the copies (`duplicatePicture`).
-  - Copy and Cut take the strokes alone, since the handwriting clipboard
-    holds strokes. Cut leaves the pictures on the page.
+  - Copy and Cut put the pictures on the handwriting clipboard with the
+    strokes ([Copy, cut and paste](#copy-cut-and-paste)).
   - Color, Width and style, New note, Merge into note, Select note and
     Convert (Transcribe in the chat, Redraw as shapes, Convert to text,
     Copy as SVG and Download SVG) act on the strokes alone; the SVG
@@ -229,7 +241,7 @@ The lasso takes pictures with the strokes it circles, as GoodNotes' does
     Redraw as shapes, which selects the new shapes alone, and Convert to
     text, which lets the selection go
     ([handwriting_ai.md](handwriting_ai.md)).
-  - A selection of pictures alone greys those buttons and Copy and Cut.
+  - A selection of pictures alone greys those buttons and Comment.
   - Show note shows the first group's note, else the first picture's.
 - **One step to undo.** A lasso step that changed pictures keeps its
   strokes in the stroke history and its pictures in the block history.
@@ -238,13 +250,53 @@ The lasso takes pictures with the strokes it circles, as GoodNotes' does
   - Ctrl+Z with the strip closed steps the block history, and the strokes
     with it.
   - Both pills name it "selection move", "selection resize", "selection
-    rotation", "selection flip", "selection deletion" or "selection
-    duplication", the stroke entry's label.
+    rotation", "selection flip", "selection deletion", "selection
+    duplication", "selection cut" or "selection paste", the stroke entry's
+    label.
   - Convert to text makes the same linked step of the strokes it removes
     and the text box it adds, "ink conversion to text"
     ([handwriting_ai.md](handwriting_ai.md#one-step-for-both)).
+  - The two histories stay two, linked rather than merged: each half
+    undoes on its own once the other history has moved on, and the pill
+    says which half stayed ([Not built yet](#not-built-yet)).
 - **Collab** carries both halves as any edit: the pictures through
   `setBlocks`, the strokes through the ink save.
+
+#### Copy, cut and paste
+
+The lasso's clipboard is the handwriting one
+([handwriting.md](handwriting.md#what-the-user-sees), "Copy, cut and
+paste"), and a selection's pictures ride on it with its strokes.
+
+- **Copy** (Ctrl+C, the menu) keeps each selected picture as it is placed,
+  with its caption, not the notes under it, as Duplicate copies one. The
+  box a paste places takes in their turned frames. The pill counts both:
+  "Copied 2 strokes and 1 picture."
+- **Cut** (Ctrl+X, More → Cut) copies, then removes both halves as one
+  step, through the link Delete uses ("selection cut"). The notes under a
+  cut picture stay, in its place in the notes, since the paste brings back
+  only the picture and its caption; Delete takes them with it.
+- **Paste** puts the copies down as the strokes' are: the copied box at the
+  centre of the surface in view, at a held pen's or a right-click's point,
+  kept on the surface. Each picture keeps its place against the strokes
+  and the other pictures, its crop, flips and opacity. The copies go over
+  the surface's pictures in the order the originals stacked, and become
+  the selection with the strokes. Strokes and pictures are one step of
+  both histories ("selection paste"); a paste of strokes alone is still
+  "ink paste".
+- **The file.** A picture names its upload, `/api/uploads/<hash>.<ext>`
+  in the workspace's own store. A pasted copy names the same upload, as a
+  Duplicate does, on any page or sheet of the workspace. A cut picture's
+  file stays stored for 30 days after nothing names it
+  ([user_db.md](user_db.md#stored-files)), so a paste after a cut finds
+  it.
+- **Another workspace or server** never gets the paste. The clipboard is
+  this tab's memory, and switching workspaces or servers reloads the tab,
+  so a paste is always in the workspace whose uploads its pictures name.
+  The system clipboard's copy carries the pictures in its JSON for other
+  apps, but no paste reads it back.
+- Copy image, on a picture's own menu, stays a PNG on the system
+  clipboard, which a paste places as a new picture.
 
 ### Undo, the notes and other views
 
@@ -483,10 +535,10 @@ are in [text_boxes.md](text_boxes.md#client) and
     `orderPicture`, `onTop` and `duplicatePicture` (the menu's Duplicate
     and the lasso's); the drawing's `pictureLayout`.
   - The lasso's: `lassoTakes` (what a loop takes, through `ink.js`
-    `pointInPolygon`), `transformPicture` (the handles' scale and turn,
-    through `ink.js` `transformPoint`), `mirrorPicture` (a flip about the
-    selection's centre line) and `carriedPicture` (a picture as the
-    selection's live preview shows it).
+    `pointInPolygon`), `pictureAt` (what a tap takes), `transformPicture`
+    (the handles' scale and turn, through `ink.js` `transformPoint`),
+    `mirrorPicture` (a flip about the selection's centre line) and
+    `carriedPicture` (a picture as the selection's live preview shows it).
   - An SVG's: `svgSize` (twin of `picture.svg_size`), `svgFill` (its
     stretch) and `isSvgUrl` ([SVG pictures](#svg-pictures)).
   - `captionText` and `pictureMarkdown`, the `![caption](url)` line, which
@@ -554,7 +606,8 @@ are in [text_boxes.md](text_boxes.md#client) and
   (below).
 - `placed.js`: what a text box and a picture share as objects on a surface:
   `withPlaced(tree, id, key, fn)`, one placed value's edit, and
-  `addPlaced(tree, surface, id, properties)`, where a new one goes.
+  `addPlaced(tree, surface, id, properties, content)`, where a new one
+  goes, `content` a pasted picture's caption.
 - `MarkupLayers.jsx` mounts the picture layer, `MarkupToolbar.jsx` has the
   button (`onPicture`), and `PageTools.jsx` carries the `onPicture…`
   actions among the page's actions.
@@ -601,14 +654,18 @@ are in [text_boxes.md](text_boxes.md#client) and
   `undoLinked(s, o, link, redo)` steps the newest entry only when it
   carries `link`.
 - `ink/`: the lasso's half ([handwriting.md](handwriting.md#client)).
-  `InkLayer.jsx` takes the pictures a loop circles (`lassoPictures`),
-  draws the selection's box round them and reports its preview
-  (`onCarry`). `selectionEdits.js` has `selectedPictures`,
-  `selectionBox`, `editPictures`, `removePictures` and the pictures'
-  half of `actionEdit`. `selectedPictures` is the one rule for the
-  selection's pictures: those its surface draws, none locked since. The
-  layer's box and every edit read it. `useInkSelection.js` makes each step
-  (`stepSelection`), and `useInkDocument.js` and `inkHistory.js` keep its
+  `InkLayer.jsx` takes the pictures a loop circles and the one a tap is
+  on (`lassoPictures`, `tappedPicture`), draws the selection's box round
+  them and reports its preview (`onCarry`). `selectionEdits.js` has
+  `selectedPictures`, `selectionBox`, `editPictures`, `removePictures`,
+  the pictures' half of `actionEdit`, `selectAllPictures`, and the
+  clipboard's: `clipOf` (the pictures with their captions), `clipStatus`
+  (the pill) and `pastePictures` (paste's half in the tree).
+  `selectedPictures` is the one rule for the selection's pictures: those
+  its surface draws, none locked since. The layer's box and every edit
+  read it. `useInkSelection.js` makes each step
+  (`stepSelection`; a paste's link goes through `useInkStrokes.js`
+  `handleInkStrokes`), and `useInkDocument.js` and `inkHistory.js` keep its
   `link` (`takeEntry`, `picturesStayed`).
 - `shared/model/blockModel.js`: `isHighlightBlock` refuses a picture, and
   `blockPage` reads its `pdf_page`. It tests for one itself
@@ -987,7 +1044,7 @@ them. Its scripts run nowhere.
 `GET /api/uploads/{filename}` (`routers/uploads.py` `serve_upload`), on the
 app, the share host and the page hosts alike.
 
-- An SVG (`storage.SANDBOXED_EXTENSIONS`, with HTML) opened at its URL
+- An SVG (`documents.formats.SANDBOXED_EXTENSIONS`, with HTML) opened at its URL
   downloads (`Content-Disposition: attachment`), so it never runs as a
   document in the app's origin.
 - In case a browser draws it anyway it carries `Content-Security-Policy:
@@ -1063,9 +1120,62 @@ counts whatever its prefix, as MuPDF reads the literal `xlink:href` first.
 A repeated id counts as its heaviest element, and a line break in an id
 matches a space.
 
-**As pixels** (`pdf_image.svg_png`): MuPDF's page of it drawn by
-`pdf_text.page_raster`, its longer side a given size, clear where it draws
-nothing.
+**Drawn under a time limit** (`pdf_image._svg_drawing`, `gamma/svg_draw.py`).
+Inside those bounds MuPDF can still take minutes to draw an SVG, and nothing
+stops a call into it. Measured on PyMuPDF 1.28: the conversion to a PDF is
+quick (1.3 s for 8 MiB of path data), the drawing is not. At 2048 px a path
+of 600 000 points took 190 s, 100 000 translucent layers over the picture
+more than 5 minutes, 10 000 masks 13 s, a page of large text 9 to 25 s.
+Tiny dashes, gradients of 100 000 stops, patterns, nested clips and a huge
+viewBox drew at once; groups 500 deep do not open.
+
+- MuPDF converts and draws an SVG file only in a process of its own
+  (`gamma/svg_draw.py`). The process is killed past `SVG_DRAW_SECONDS`
+  (10 s). Its address space is capped at `SVG_DRAW_MEMORY` (1 GiB; the 40 MP
+  of embedded pictures the bounds let through take 300 MB) where the system
+  holds a process to one, which is Linux. macOS and Windows have no such cap.
+- The PDF (`svg_pdf`) is converted there and drawn once at `SVG_DRAW_SIDE`
+  (2048 px on its longer side), to prove it draws in time. An AI picture
+  of a whole page holding the SVG draws it smaller (at most
+  `RENDER_MAX_SIDE`, 1568), and the Notability PNG, 2048 too, shares the
+  drawing. A PNG of another side or of a region (`svg_png`: the AI's PNG,
+  a picture page's region) is a drawing of its own, in its own process.
+- The server holds no lock while the process works: other PDF requests go
+  on. At most two such processes run at once (`_SVG_DRAWS`).
+- An SVG that does not draw in time is a `ValueError`, as any SVG that does
+  not draw, so every caller leaves it out as before: the PDFs with a log
+  line, the Notability export counted, the AI told.
+- A process takes 80 ms from a cold start, importing PyMuPDF included,
+  against 20 ms for the same small drawing in the server. What a drawing
+  came to (the PNG, or why it does not draw) is kept by the file's content,
+  the side and the region, `SVG_CACHE_BYTES` (64 MiB) in all, the oldest
+  going first. Only the drawing at `SVG_DRAW_SIDE` keeps the PDF too. A page
+  exported again starts no process, and a file that does not draw in time
+  costs its 10 s once until the server restarts.
+- The process is the server's own Python running `svg_draw.py` as a script
+  (`-P`, so nothing beside it shadows a module). The frozen desktop server
+  has no Python, so it runs itself: `gamma-server --draw-svg <side> <cap>`
+  (`desktop/backend_entry.py`). It reads the sized SVG on stdin, and a
+  region as four more arguments. It writes the PDF's length, the PDF and
+  the PNG on stdout. `subprocess` starts it: fork and exec in C on Linux and
+  macOS, with no Python run between them in a threaded server, and
+  `CreateProcess` with no console window on Windows.
+- The iPad and Android apps run the server inside their own process, with
+  no Python to start another, and iOS starts no process at all.
+  `sys.platform` is `ios` on an iPad and its simulator and `android` on
+  Android. There an SVG is converted and drawn in the server, under the
+  PyMuPDF lock, with no time limit and nothing kept, as before
+  (`SVG_APART`).
+- An SVG is not drawn when it is added. The browser draws it on the page
+  without MuPDF, and MuPDF reads less than a browser: a file it cannot draw
+  in time is still a good picture on screen, and is left out only of what
+  MuPDF makes. A check at upload would cost every upload a process and
+  miss the files that come by other ways (the imports, a mirror, a clone).
+
+**As pixels** (`pdf_image.svg_png`): MuPDF's page of it, or a region of
+that page, drawn in the drawing's process, its longer side a given size,
+clear where it draws nothing. In the mobile apps `pdf_text.page_raster`
+draws it.
 
 - The Notability export: Notability takes no SVG, so a picture of one goes
   in as a PNG of it, `notability_export.SVG_PNG_SIDE` (2048) px on its
@@ -1075,6 +1185,10 @@ nothing.
   a PNG of one, `RENDER_MAX_SIDE` on its longer side. `view_image` shows a
   note's SVG images so too, and says of one that does not draw that it does
   not read as a picture.
+- A picture page's picture (`ai_pictures.image_region`: the chat's picture
+  of a picture page or of its region, the feedback reader's): the region
+  alone, its longer side `RENDER_MAX_SIDE`, zoomed at most 4, on white
+  ([ai.md](ai.md#pictures) "A picture page's region").
 
 **As it came.** The Notability and GoodNotes imports store an SVG picture
 as its file (`note_app_import.picture_file`, `picture.picture_type`). The
@@ -1153,17 +1267,22 @@ format.
 - `frontend/tests/pictureEdits.test.mjs`: crop mode's geometry, the z-order
   (`orderPicture`'s `z`, the block left in place, a locked picture left
   as it is, a duplicate just over its original), the lasso (what a loop
-  takes of an upright and a turned frame, never a locked one; the
-  handles' scale and turn and a drag's move as the strokes' points go; a
-  flip that shows the mirror image), the line a row copies
+  takes of an upright and a turned frame, never a locked one; what a tap
+  takes, the topmost and never a locked one; the handles' scale and turn
+  and a drag's move as the strokes' points go; a flip that shows the
+  mirror image), the line a row copies
   as, what a file becomes before it goes up and what its upload answers
   (an SVG as it is, at `svgSize`), and which drags a surface takes.
 - `frontend/tests/selectionEdits.test.mjs`: the lasso selection's
   pictures (on its surface, none locked since, its box round their turned
-  frames, kept aside with them), their half of an edit and of Delete, and
-  which actions carry them. `inkHistory.test.mjs`: a lasso step's `link`,
-  the entry a linked undo takes, why its pictures stayed and its pill.
-- `frontend/tests/placed.test.mjs`: `withPlaced` and `addPlaced`.
+  frames, kept aside with them), their half of an edit and of Delete,
+  which actions carry them, select all's, the clipboard's pictures and
+  captions, its pill, and a paste's (the same upload, shifted with the
+  strokes, over the surface's pictures in the order they stacked).
+  `inkHistory.test.mjs`: a lasso step's `link`, the entry a linked undo
+  takes, why its pictures stayed and its pill.
+- `frontend/tests/placed.test.mjs`: `withPlaced` and `addPlaced`, a
+  caption with it.
 - `frontend/tests/overPictures.test.mjs`: where the highlighter's mask puts
   a picture, its crop's corners on `turnedCorners` as the flips mirror
   them.
@@ -1185,7 +1304,11 @@ format.
   download, the copy MuPDF reads sized as the browser shows it, the stamp's
   vectors drawn as the screen draws them (stretched too), the SVG read back
   by the import and kept in a round trip, the bounds MuPDF never passes
-  (every way of writing a reference too), nothing read outside the file,
+  (every way of writing a reference too), a drawing past its time killed
+  with the PyMuPDF lock free meanwhile and left out, a drawing kept by its
+  content, a region drawn alone in the process (a picture page's too), the
+  mobile apps' drawing in the server, the frozen server's `--draw-svg`,
+  nothing read outside the file,
   the Notability export's PNG (of an old box's SVG too), the AI's PNG and
   its word for one that does
   not draw, and the file as it came in a GoodNotes import and the text
@@ -1238,7 +1361,11 @@ format.
   mask's opacity there and in Gamma Dark), a sheet, two people on one
   picture, and the lasso (a picture and a stroke taken, a locked picture
   left, both carried by a drag, undone and redone in one step from the
-  strip and by Ctrl+Z, Pictures off). `select.mjs` runs it for changes under
+  strip and by Ctrl+Z, Pictures off; Select all by Ctrl+A and More; a tap
+  on a picture, on a stroke over it and on a locked one; Copy and Paste
+  of both, placed as they were, undone and redone as one step, Cut as one
+  step with the notes under the picture left, and a paste on another
+  paper showing the same upload). `select.mjs` runs it for changes under
   `frontend/src/markup/`, `ink/`, `notebook/`, `editor/`, `pdf/`, and
   `backend/gamma/picture.py` and `text_box.py`. `transfers.mjs` checks a Notability import's picture on
   screen and in the round trip.
@@ -1268,17 +1395,32 @@ format.
     the pictures alone.
   - After a stroke drawn since, Ctrl+Z takes back the pictures alone, and
     its pill says the handwriting stays.
-- The lasso copies, cuts and pastes strokes alone: the handwriting
-  clipboard holds no pictures. Select all and a tap with the lasso select
-  strokes alone.
-- The lasso's handle has no Alt stretch, so the pictures it holds scale
-  uniformly.
 - An SVG in the PDFs is what MuPDF draws of it, which is not always what a
   browser draws: CSS beyond inline styles, filters, masks and web fonts may
   differ. Its text is set in MuPDF's fonts.
-- WebKit (Safari, the iPad app) is not checked: whether it draws an SVG's
-  `<img>` under the file's own policy (inline styles are allowed for it),
-  and an SVG shared to the app.
+- WebKit was checked in Playwright's WPE build on Linux, not in Safari or
+  on an iPad. There an SVG's `<img>` draws under the file's own policy as in
+  Chromium: its `<style>` and `style` attributes kept, its script not run,
+  nothing it names fetched. Its natural size is Chromium's (a viewBox alone
+  300 × 150, one side from the viewBox's aspect, an em 16 px), so `svgFill`
+  stretches it alike. Opened at its URL, that build shows the SVG instead
+  of downloading it, in an opaque origin with no script run: the policy's
+  `sandbox` is what holds there. Safari's download, and an SVG on an iPad,
+  shared to the app or opened at its URL, wait for a device
+  ([ipad.md](ipad.md#device-checks), check 39).
+- In the iPad and Android apps an SVG has no time limit: one that takes
+  MuPDF minutes holds This iPad's or This device's PDF work that long
+  ([SVG pictures](#svg-pictures)).
+- The time limit counts from a drawing's start, not the wait for one of
+  the two at once. A drawing kept stays until the server restarts or newer
+  ones push it out, so a file that timed out under a passing load stays out
+  of the PDFs until then.
+- A PDF that holds an SVG as vectors is drawn by the server itself, under
+  the PyMuPDF lock: the AI's and the feedback reader's pictures of a PDF
+  page with a picture on it (`ink_view.page_with_handwriting`). The drawing
+  at `SVG_DRAW_SIDE` proved the SVG draws in time that large, and such a
+  picture is at most `RENDER_MAX_SIDE` a side, but a crop zoomed up to 4×
+  can draw the SVG larger than the proof did, with no time limit.
 - An SVG in a Zotero note without the PDF copy is embedded as a data URI.
   Whether Zotero's note editor shows one is unchecked.
 - A highlighter over a faded picture on a dark page or dark paper is not

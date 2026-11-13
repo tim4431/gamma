@@ -1,0 +1,103 @@
+/* The feedback view (feedback/FeedbackDialog.jsx): a dialog of one column,
+   the scope switch over the entries grouped by file, each a row with its
+   kind, heading, chip, place and first comment beside the picture of its
+   region, then the instruction and Send, then the requests. */
+.reportModal.feedbackDialog { width: min(760px, calc(100vw - 32px)); max-width: 760px; max-height: calc(100dvh - 48px); }
+.feedbackDialog .settingsDialogContent { min-height: 0; overflow-y: auto; }
+.feedbackScope { display: flex; margin-bottom: var(--space-3); }
+.feedbackNotice { margin: 0 0 var(--space-3); font-size: var(--fs-sm); color: var(--text-muted); }
+.feedbackEntries { display: flex; flex-direction: column; gap: var(--space-3); }
+.feedbackFile { display: flex; flex-direction: column; gap: var(--space-1); }
+.feedbackFileName {
+  margin: var(--space-2) 0 var(--space-1);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: none;
+}
+.feedbackEntry {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-3);
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.feedbackEntry:hover { background: var(--bg-hover); }
+.feedbackEntry:focus-visible { outline: none; border-color: var(--accent); }
+.feedbackEntryIcon { flex-shrink: 0; margin-top: 2px; color: var(--text-muted); display: inline-flex; }
+.feedbackEntryMain { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.feedbackEntryHead { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.feedbackEntryTitle { font-size: var(--fs-md); font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feedbackEntryMeta { font-size: var(--fs-xs); color: var(--text-muted); }
+.feedbackEntryFirst { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
+.feedbackEntryFirst > .peerAvatar { flex-shrink: 0; border: none; }
+.feedbackEntryText {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-ui);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.feedbackEntryPicture {
+  flex-shrink: 0;
+  height: 96px;
+  max-width: 40%;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+.feedbackEmpty { margin: var(--space-4) 0; color: var(--text-muted); font-size: var(--fs-sm); }
+.feedbackSend { display: flex; align-items: flex-end; gap: var(--space-3); margin-top: var(--space-4); }
+.feedbackNote {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: vertical;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-ui);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.feedbackNote:focus-visible { outline: none; border-color: var(--accent); }
+/* What the Send says of an agent on this computer: where it works, why it
+   cannot run yet, whose comments are context. */
+.feedbackAgent { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
+.feedbackAgent:empty { margin-top: 0; } /* kept mounted (a live region), so it takes no room while it says nothing */
+.feedbackAgentNote { margin: 0; font-size: var(--fs-xs); line-height: var(--lh-ui); color: var(--text-muted); }
+.feedbackAgentNote[data-tone="warn"] { color: var(--danger); }
+.feedbackRequests { margin-top: var(--space-4); }
+.feedbackRequests ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.feedbackRequest {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-sm);
+  border-radius: var(--radius-sm);
+}
+.feedbackRequestLine { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.feedbackRequestNote { font-size: var(--fs-xs); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feedbackRequestDetail {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.feedbackRequest[data-state="failed"] .feedbackRequestDetail { color: var(--danger); }
+.feedbackRequestState { flex-shrink: 0; font-size: var(--fs-xs); color: var(--text-muted); }
+.feedbackRequest[data-state="failed"] .feedbackRequestState { color: var(--danger); }
+.feedbackRequest[data-state="done"] .feedbackRequestState { color: var(--ok); }

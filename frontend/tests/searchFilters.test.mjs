@@ -1,5 +1,6 @@
 // Gamma's search qualifiers (search/searchFilters.js): what each asks of a
-// listing page, what in: keeps, the clauses searched as text and why, the
+// listing page, which go to the server as a scope and which as page
+// predicates, what in: keeps, the clauses searched as text and why, the
 // filter's key and page set, and the dropdown's rows and what they do.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -18,16 +19,18 @@ const tree = libraryTree({
 });
 // Local times, so the date cases hold in any time zone.
 const at = (...parts) => new Date(...parts).toISOString();
+// A page's PDF (its `doc`): stored under `hash`, or read from `url`.
+const pdfDoc = (hash, url = "") => ({ format: "pdf", name: "", hash, ext: ".pdf", at: url ? "url" : "store", ...(url && { url }) });
 const pages = [
   { id: "atom", content: "Atom paper", created_at: at(2025, 2, 14, 12), updated_at: at(2026, 10, 5, 9),
-    properties: { doc_id: "d1", folders: ["ryd"], labels: ["fresh"],
+    properties: { doc: pdfDoc("d1"), folders: ["ryd"], labels: ["fresh"],
       meta: { authors: ["Ana Müller", "Bo Li"], venue: "Physical Review Letters", year: "2020" } } },
   { id: "sub", content: "Inside atom", _parentPage: "atom", created_at: at(2025, 2, 15, 0, 30), updated_at: at(2026, 9, 1),
     properties: { labels: ["toread"], folders: ["deep"] } },
   { id: "loose", content: "Loose note", created_at: at(2024, 11, 31, 23, 59), updated_at: at(2026, 10, 6, 8),
     properties: { pinned: "2026-01-01T00:00:00Z" } },
   { id: "deep1", content: "Deep paper", created_at: at(2025, 0, 1, 0, 0), updated_at: at(2025, 0, 1),
-    properties: { folders: ["deep"], labels: ["cafe"], source_url: "https://x/y.pdf", meta: { year: 2015, venue: "Nature" } } },
+    properties: { folders: ["deep"], labels: ["cafe"], doc: pdfDoc("", "https://x/y.pdf"), meta: { year: 2015, venue: "Nature" } } },
   { id: "arr1", content: "Array paper", created_at: at(2023, 5, 1), updated_at: at(2023, 5, 1),
     properties: { folders: ["arr"], meta: { year: "2019" } } },
   { id: "bio1", content: "Bio paper", created_at: at(2022, 1, 1), updated_at: at(2022, 1, 1),
@@ -37,10 +40,12 @@ const pagesById = new Map(pages.map((p) => [p.id, p]));
 const now = new Date(2026, 10, 6, 15, 0); // Friday 6 November 2026, 15:00 local
 const ctx = { tree, pagesById, now };
 const resolve = (q, chips = []) => resolveFilters(q, chips, ctx);
+// The listing pages the whole filter keeps (its scope and its predicates).
 const ids = (q, chips) => {
-  const { pageTest } = resolve(q, chips);
-  return pageTest ? pages.filter(pageTest).map((p) => p.id) : null;
+  const { listTest } = resolve(q, chips);
+  return listTest ? pages.filter(listTest).map((p) => p.id) : null;
 };
+const kept = (test) => pages.filter(test).map((p) => p.id);
 
 test("label: by name, folded for case and diacritics; negated; commas are alternatives", () => {
   assert.deepEqual(ids('label:"Fresh, label"'), ["atom"]);
@@ -71,6 +76,13 @@ test("is: and no:, and their negations", () => {
   assert.deepEqual(ids("is:pinned"), ["loose"]);
   assert.deepEqual(ids("is:pdf,pinned"), ["atom", "loose", "deep1"]);
   assert.deepEqual(ids("-is:pdf"), ["sub", "loose", "arr1", "bio1"]);
+  // a document that is no PDF, or one that cannot be read, is no PDF
+  const text = { id: "tex", properties: { doc: { format: "text", name: "main.tex", hash: "t1", ext: ".tex", at: "store" } } };
+  const unread = { id: "bad", properties: { doc: { format: "pdf", hash: "", ext: ".pdf", at: "store" } } };
+  assert.deepEqual([text, unread].filter(resolve("is:pdf").pageTest), []);
+  // no is:text: a predicate runs over the listing, which carries no work
+  // folder's file, so in:files is the way to the files
+  assert.deepEqual(resolve("is:text x").problems.map((p) => p.reason), ["is: takes pdf, pinned"]);
   // a label or folder the tree no longer has is no filing
   assert.deepEqual(ids("no:label"), ["loose", "arr1", "bio1"]);
   assert.deepEqual(ids("no:folder"), ["loose"]);
@@ -133,23 +145,41 @@ test("created: and updated: as local-time intervals, with the boundaries of > >=
   assert.deepEqual(ids("-updated:>=@today-7d"), ["sub", "deep1", "arr1", "bio1"]);
 });
 
-test("in: keeps groups and kinds; the full set asks for every kind; -in:pdf drops the PDFs", () => {
+test("in: keeps groups, kinds and formats; the full set asks for every one; -in:pdf drops the PDFs", () => {
   const all = resolve("atom");
-  assert.deepEqual([...all.sources], ["title", "notes", "highlights", "links", "pdf"]);
+  assert.deepEqual([...all.sources], ["title", "notes", "highlights", "links", "pdf", "files"]);
   assert.equal(all.kinds, null);
+  assert.equal(all.formats, null);
   assert.equal(all.pageTest, null);
+  assert.equal(all.scope, null);
   const own = resolve("-in:pdf atom");
-  assert.deepEqual([...own.sources], ["title", "notes", "highlights", "links"]);
+  assert.deepEqual([...own.sources], ["title", "notes", "highlights", "links", "files"]);
   assert.equal(own.kinds, null);
+  assert.deepEqual(own.formats, ["text"]);
   assert.equal(own.text, "atom");
   assert.equal(own.pageTest, null, "in: is no page filter");
+  assert.equal(own.listTest, null);
   const hl = resolve("in:highlights atom");
   assert.deepEqual([...hl.sources], ["highlights"]);
   assert.deepEqual(hl.kinds, ["highlight"]);
+  assert.deepEqual(hl.formats, [], "no document request");
   assert.deepEqual(resolve("in:notes,links").kinds, ["note", "text_box", "picture", "sheet", "recording", "ink", "link"]);
   assert.deepEqual(resolve("in:title").kinds, ["page"]);
   assert.deepEqual(resolve("in:pdf").kinds, []);
+  assert.deepEqual(resolve("in:pdf").formats, ["pdf"]);
   assert.deepEqual([...resolve("in:pdf,notes -in:notes").sources], ["pdf"]);
+});
+
+test("in:files is the text files' group: the document search asks for text alone", () => {
+  const files = resolve("in:files gradient");
+  assert.deepEqual([...files.sources], ["files"]);
+  assert.deepEqual(files.kinds, [], "no notes request");
+  assert.deepEqual(files.formats, ["text"]);
+  assert.equal(files.text, "gradient");
+  assert.equal(resolve("in:pdf,files").formats, null);
+  assert.deepEqual(resolve("-in:files").formats, ["pdf"]);
+  assert.notEqual(resolve("in:files").key, resolve("in:pdf").key);
+  assert.deepEqual(suggest("in:fi", 5, { tree }).map((r) => [r.value, r.desc]), [["files", "the text of the files"]]);
 });
 
 test("chips join the typed clauses as positive filters by id", () => {
@@ -162,6 +192,44 @@ test("chips join the typed clauses as positive filters by id", () => {
   assert.deepEqual(resolve("narwhal", [deep]).text, "narwhal");
 });
 
+test("a chip, or a clause naming one folder or label, is the server's scope; the rest are page predicates", () => {
+  const deep = { kind: "folder", id: "deep", name: "Deep" };
+  const phys = { kind: "folder", id: "phys", name: "Physics" };
+  const fresh = { kind: "label", id: "fresh", name: "Fresh, label" };
+  // a folder chip alone: its id, and no page test, so no ids travel
+  const chip = resolve("atom", [deep]);
+  assert.deepEqual(chip.scope, { folders: ["deep"], labels: [] });
+  assert.equal(chip.pageTest, null);
+  assert.deepEqual(kept(chip.listTest), ["deep1"], "the listing still keeps to it");
+  assert.deepEqual(resolve("", [fresh]).scope, { folders: [], labels: ["fresh"] });
+  // typed: a folder by its path, a label by its name
+  const typed = resolve("folder:physics label:cafe atom");
+  assert.deepEqual(typed.scope, { folders: ["phys"], labels: ["cafe"] });
+  assert.equal(typed.pageTest, null);
+  assert.equal(typed.text, "atom");
+  // a predicate alone: a page test, and no scope
+  const year = resolve("year:2020");
+  assert.equal(year.scope, null);
+  assert.deepEqual(kept(year.pageTest), ["atom"]);
+  // both: the predicate's pages go as ids, the server keeps them to the scope
+  const both = resolve("-is:pdf", [phys]);
+  assert.deepEqual(both.scope, { folders: ["phys"], labels: [] });
+  assert.deepEqual(kept(both.pageTest), ["sub", "loose", "arr1", "bio1"]);
+  assert.deepEqual(kept(both.listTest), ["sub", "arr1"]);
+  // the server intersects its ids and has no "not": a clause negated, or
+  // naming several (commas, a name two folders share), is a predicate
+  for (const q of ["-folder:physics", "folder:deep,biology", "folder:Rydberg", "label:toread,cafe", "-label:toread"]) {
+    const f = resolve(q);
+    assert.equal(f.scope, null, q);
+    assert.deepEqual(kept(f.pageTest), ids(q), q);
+  }
+  // one name spelled twice is one id; a chip and a clause on one folder too
+  assert.deepEqual(resolve("label:cafe,Café").scope, { folders: [], labels: ["cafe"] });
+  assert.deepEqual(resolve("folder:deep", [deep]).scope, { folders: ["deep"], labels: [] });
+  // the key names the scope as before: an equal filter, however reached
+  assert.equal(resolve("folder:deep x").key, resolve("Folder:DEEP y").key);
+});
+
 test("a known key it cannot apply is searched as text, and the problem says why", () => {
   const cases = {
     "is:foo x": "is: takes pdf, pinned",
@@ -172,7 +240,7 @@ test("a known key it cannot apply is searched as text, and the problem says why"
     "label:nosuch x": "no label is named nosuch",
     "folder:nowhere x": "no folder is named nowhere",
     "folder: x": "folder: needs a value",
-    "in:situ x": "in: takes title, notes, highlights, links, pdf",
+    "in:situ x": "in: takes title, notes, highlights, links, pdf, files",
     "label:fresh,nosuch x": "no label is named fresh",
   };
   for (const [q, reason] of Object.entries(cases)) {
@@ -181,10 +249,12 @@ test("a known key it cannot apply is searched as text, and the problem says why"
     assert.deepEqual(f.problems, [{ raw, from: 0, to: raw.length, reason }], q);
     assert.equal(f.text, q, `${q}: searched as typed`);
     assert.equal(f.pageTest, null, `${q}: no filter`);
+    assert.equal(f.listTest, null, `${q}: no filter`);
+    assert.equal(f.scope, null, `${q}: no scope`);
   }
   const gaas = resolve("In:GaAs substrate");
   assert.equal(gaas.text, "In:GaAs substrate");
-  assert.equal(gaas.sources.size, 5);
+  assert.equal(gaas.sources.size, 6);
   // the clauses that apply still do
   const mixed = resolve("is:pdf year:abc atom");
   assert.equal(mixed.text, "year:abc atom");
@@ -195,7 +265,7 @@ test("key: the same filter however it is spelled; a different one differs", () =
   const key = (q, chips) => resolve(q, chips).key;
   assert.equal(key("label:cafe is:PDF x"), key("IS:pdf  Label:Café y"));
   assert.equal(key("label:toread,cafe"), key("label:cafe,toread"));
-  assert.equal(key("-in:pdf"), key("in:title,notes,highlights,links"));
+  assert.equal(key("-in:pdf"), key("in:title,notes,highlights,links,files"));
   assert.notEqual(key("label:cafe"), key("-label:cafe"));
   assert.notEqual(key("is:pdf"), key("is:pdf", [{ kind: "label", id: "fresh", name: "Fresh, label" }]));
   assert.equal(key("atom"), "");
@@ -210,7 +280,7 @@ test("pageSet: the matching ids, its key moving only with membership", () => {
   assert.equal(pageSet([...pages].reverse(), pdf).key, a.key, "the order is no change");
   const edited = pages.map((p) => (p.id === "loose" ? { ...p, content: "Renamed" } : p));
   assert.equal(pageSet(edited, pdf).key, a.key, "an edit outside the set is no change");
-  const filed = pages.map((p) => (p.id === "loose" ? { ...p, properties: { doc_id: "d9" } } : p));
+  const filed = pages.map((p) => (p.id === "loose" ? { ...p, properties: { doc: pdfDoc("d9") } } : p));
   assert.notEqual(pageSet(filed, pdf).key, a.key);
   assert.notEqual(pageSet(pages, () => false).key, pageSet(pages, () => true).key);
   assert.deepEqual(pageSet(pages, () => false), { ids: [], key: pageSet([], () => true).key });

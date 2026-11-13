@@ -244,11 +244,13 @@ def test_read_only_refuses_writes_but_lets_people_leave_with_their_data(plan, ad
     assert admin.delete(f"/api/blocks/{page['id']}").status_code == 423
     # reads, exports, notices, sign-out and sign-in still work
     assert admin.get(f"/api/blocks/{page['id']}").status_code == 200
-    # and so do the reads sent as a POST: the panel's searches, the file chips' lookup
+    # and so do the reads sent as a POST: the panel's searches, the file chips' lookup, the tabs' summaries
     r = admin.post("/api/block-search", json={"q": "read-only", "pages": [page["id"]]})
     assert r.status_code == 200, r.text
-    assert admin.post("/api/pdf-search", json={"q": "read-only", "pages": [page["id"]]}).status_code == 200
-    assert admin.post("/api/pages/by-docs", json={"doc_ids": ["nope"]}).json() == {"pages": {}}
+    assert admin.post("/api/document-search", json={"q": "read-only", "pages": [page["id"]]}).status_code == 200
+    assert admin.post("/api/pages/by-docs", json={"doc_ids": ["nope"]}).json() == {"pages": {}, "files": {}}
+    r = admin.post("/api/pages/summaries", json={"ids": [page["id"]]})
+    assert r.status_code == 200 and [p["id"] for p in r.json()["pages"]] == [page["id"]], r.text
     r = admin.post("/api/jobs/workspace-export", json={"uploads": False})
     assert r.status_code == 200, r.text
     assert admin.get(f"/api/pages/{page['id']}/export?mode=readable").status_code == 200
@@ -349,8 +351,9 @@ def test_the_last_write(plan, admin, monkeypatch):
     # a read, a read sent as a POST and a write that failed leave it
     assert admin.get("/api/notices").status_code == 200
     assert admin.post("/api/block-search", json={"q": "ho last write"}).status_code == 200
-    assert admin.post("/api/pdf-search", json={"q": "ho last write", "pages": []}).status_code == 200
+    assert admin.post("/api/document-search", json={"q": "ho last write", "pages": []}).status_code == 200
     assert admin.post("/api/pages/by-docs", json={"doc_ids": []}).status_code == 200
+    assert admin.post("/api/pages/summaries", json={"ids": []}).status_code == 200
     assert admin.post("/api/blocks", json={}).status_code == 422
     hosted.sync_now()
     assert plan.reports[-1]["last_write_at"] is None

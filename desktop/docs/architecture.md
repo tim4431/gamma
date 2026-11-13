@@ -140,7 +140,10 @@ servers keep vaults (started with `GAMMA_FOLDER_LINKS=1`); the rounds, the
 marker, the status and the rules are theirs
 ([docs/dev/synced_vaults.md](../../docs/dev/synced_vaults.md)). A NAS keeps
 none: it answers the reads, the ops and the uploads a vault of its folder
-sends it. The shell adds the native pickers, the dialog, the tokens, the
+sends it, and a vault of its folder waits, its reason in its status, while
+the NAS keeps its pages in another shape than the app's own server (the
+change feed's workspace data format, as a clone pauses): update the NAS
+with the app. The shell adds the native pickers, the dialog, the tokens, the
 word that lets a path through, and the ways in:
 
 | Where | What the user picks | Flow |
@@ -195,9 +198,11 @@ the host runs).
    answers what it found, the marker it holds, the folder's pages and any
    refusal. For a remote folder the host cannot count the pages, so the
    shell reads them from the remote (`GET /api/sync/folders/<id>`).
-4. The dialog (below) starts with Pull on, and Push off while the folder
-   has pages; an empty folder and a directory with notes or PDFs start
-   pushing everything (`firstPush`; never a remote's folder).
+4. An empty folder of a local server synced with a directory of notes or
+   PDFs would push everything (`firstPush`): it becomes a **work folder**
+   (below), and the bar asks nothing. Any other asks the dialog (below),
+   which starts with Pull on and Push off: a folder with pages, a
+   directory with no notes or PDFs, a remote's folder, the whole library.
 5. On *Sync*: on a local server `POST /api/folder-links {folder, path,
    notes, pull, push, adopt}` in the folder's workspace. `adopt` takes up
    the marker of a vault no link holds any more, which the preview reported.
@@ -208,15 +213,31 @@ the host runs).
    `token_id`; a vault that fails to be made revokes the token.
 
 **A directory's vault** (`addDirectoryVault`): the picked directory
-becomes a new folder named after it (`new_folder`), the dialog starting
-with Pull on and Push everything. It needs no open server. It lands
-(`vaultPlace`, `openFiles.readerPlace`) on the open local server, through
-the window's session, in the workspace the window shows when the account
-writes there, it is no clone and no one else sees it, or else in the
-account's own workspace there; otherwise on the host, started and signed
-into in its own session, in the account's personal workspace. A shared
-workspace takes a directory through its folder's *Sync with this
-computer…*, which names it.
+becomes a work folder (below) in a new folder named after it
+(`new_folder`). It needs no open server. It lands (`vaultPlace`,
+`openFiles.readerPlace`) on the open local server, through the window's
+session, in the workspace the window shows when the account writes there,
+it is no clone and no one else sees it, or else in the account's own
+workspace there; otherwise on the host, started and signed into in its own
+session, in the account's personal workspace. A shared workspace takes a
+directory through its folder's *Sync with this computer…*, which names it.
+
+**A work folder** (`makeWorkFolder`; [docs/dev/work_folders.md](../../docs/dev/work_folders.md))
+is a vault of a local server's folder that pushes everything, whose files
+the person chooses in the web app's tracking dialog. The shell asks nothing
+of its own: a refusal the preview tells (a marker another vault holds) is
+said in the bar and nothing is made; else it posts `POST /api/folder-links
+{path, new_folder | folder, pull: true, push: "everything", choose: true,
+adopt}` with the shell's word, which makes the vault paused and *choosing*,
+its marker written and no round run. Then it hands over: the server's window
+(opened when another shows) goes to the vault's folder with its dialog,
+`openGammaWorkspace(ws, {folder, track: <link id>})`, which loads
+`?ws=…&folder=…&track=…`. That is all the shell gives the page: the dialog
+lists, previews and saves through the server's routes, which take the link
+by its id and never a path, so still nothing passes from the shell to the
+page. Its Save writes the `.gammaignore` and runs the first round; its
+Cancel removes the vault and what making it made. The panel's *Choose
+files…* (`choose`) navigates the same way for a work folder there is.
 
 **A file's vault** (`addFileVault`) pushes, never pulls: each new version
 of the file becomes the page's PDF, as *Replace the PDF…* makes it, and the
@@ -230,10 +251,12 @@ workspace already sit in the picked file's directory, and a directory's
 vault there would land in that very workspace, it asks "3 files in
 D:\Papers are synced one by one. Sync the folder instead?" *Sync the
 folder…* runs `addDirectoryVault` on that directory with no picker, and
-the new vault takes the files' pages in; *Push this file only* goes on.
+the new work folder takes the files' pages in when its dialog saves;
+*Push this file only* goes on.
 
 Each flow ends with a notice in the bar, offers background mode while it
-is off (all of them sync only while Gamma runs), and reads the panel again.
+is off (all of them sync only while Gamma runs), and reads the panel again;
+a work folder's ends on its tracking dialog instead of a notice.
 
 **The vault dialog** is a view of the sync panel in `ui/bar.html`, as the
 folder chooser is, not a native dialog (`askVault`, the shell state's
@@ -241,11 +264,14 @@ folder chooser is, not a native dialog (`askVault`, the shell state's
 folder, or "a new folder “name”"), *Found* (the preview's notes, PDFs,
 pictures and untracked files, or an empty directory), the switch **Pull**,
 **Push** as *off / PDFs / everything* (*everything* shut for a remote's
-folder), one sentence saying what the first round does, and *Cancel* and
-*Sync*. The sentences are `keeping.firstRound`'s, made in `main.js` for
-each setting of the two switches before the dialog shows. One that is not
-`ok` says why and shuts *Sync*: both switches off, a remote's folder asked
-to push everything or not to pull, the preview's refusal, a folder with
+folder and for the whole library, which starts pulling only), one sentence
+saying what the first round does, and *Cancel* and *Sync*. The sentences
+are `keeping.firstRound`'s, made in `main.js` for each setting of the two
+switches before the dialog shows. One that is not `ok` says why and shuts
+*Sync*: both switches off, a remote's folder asked to push everything or
+not to pull, the whole library asked to push everything
+(`keeping.WHOLE_RULE`: a work folder needs a folder of its own), the
+preview's refusal, a folder with
 pages and a directory with files that would push everything into each
 other. `answerVault` takes only an answer whose sentence is `ok`. While the
 dialog is up the bar stays expanded on it (`setBarExpanded`), so a look at
@@ -259,7 +285,10 @@ the panel on it again (`takeState`).
 **The shell's word.** The routes that take a path on this computer answer
 only a request that carries `X-Gamma-Shell` with the secret the sidecar
 was started with: `POST /api/folder-links`, `/preview`, `/<id>/relink`,
-`/open` and `/opened/<id>/locate`. The shell makes the secret at each start
+`/open` and `/opened/<id>/locate`, and so does `PATCH /api/folder-links/<id>`
+that turns a work folder's agent on (the agent edits the directory:
+[docs/dev/local_agents.md](../../docs/dev/local_agents.md) "Who turns it
+on"). The shell makes the secret at each start
 (`SHELL_SECRET`, 32 random bytes) and hands it to every local server as
 `GAMMA_SHELL_SECRET` (`lib/sidecar.js`), so a page of Gamma, which shares
 its server's origin and session, cannot name a path itself. `shellWord(origin)`
@@ -324,7 +353,9 @@ computer keeps of Gamma: the clones, the Zotero links and the synced
 vaults of every running local server, whichever server the window shows.
 It reads *Synced*, *Syncing…*, *Conflicts*, *Held*, *n problems*, *Not
 synced yet*, *Starting…*, *Waiting*, *Changes queued* and the like, with a
-matching icon and colour, and shows once a server is open, anything is
+matching icon and colour (*Agent working* when the only thing at work is a
+work folder's agent: a vault's own problem still ranks above it and keeps
+its row, the run said in the row's tooltip), and shows once a server is open, anything is
 kept or the vault dialog is up; its tooltip counts them ("1 clone and 2
 synced vaults on this computer: synced"). Its **panel** lists three
 groups, *Clones*, *Zotero links* and *Synced vaults*, each row with its
@@ -376,7 +407,25 @@ other asks for a directory (`shell:add-folder-vault` → `addFolderVault`).
 and *State* (the state's tooltip on it), and for a folder's vault the two
 switches as the dialog has them: a remote's folder keeps *Pull* on and
 *everything* shut (`keeping.REMOTE_RULE`, which `setPull` and `setPush`
-refuse too). Its everyday actions follow as a bar of round buttons
+refuse too). A work folder adds the switch *Add its PDFs and notes to the
+library* (`setLibrary`, `PATCH {library}`): whether the files it finds from
+now on are library documents too; the files it holds keep theirs. On a
+server that runs agents, the vault's maker (`item.mine`) also gets the
+agent row ([docs/dev/local_agents.md](../../docs/dev/local_agents.md)),
+pushed with the switches so the lock of a vault whose workspace the
+account left shuts it too: *Agent in this folder*, a segmented *Off* | *Codex* | *Claude Code*
+(`agentSeg`, `item.agents` from `keeping.agentChoices`), an agent not on
+this computer or not ready shut with its problem in its tooltip; under it,
+as visible lines, the problem of the chosen agent and of each one that
+cannot be chosen, one line of what the choice does (*Sends wait for an
+agent you run yourself.*; *Codex answers this folder's Sends: it edits the
+files here and runs commands in its sandbox, without network.*; *Claude
+Code answers this folder's Sends: it edits the files here and runs no
+commands.*), and while a run works *Now: Codex is working · Editing
+main.tex*. Opening a work folder's view as its maker looks for the agents
+again (`check-agents`, `checkAgents`: `GET /api/local-agents?fresh=1`,
+then a reading). Its
+everyday actions follow as a bar of round buttons
 (`.vaultBar`: *Sync now*, *Pull now*, *Push now*, *Pause* or *Resume*, and
 the directory), each named by its tooltip; the rare and the grave ones
 keep their rows, where their words warn. Each goes through
@@ -385,33 +434,57 @@ keep their rows, where their words warn. Each goes through
 
 | Action | Shown | Does |
 |---|---|---|
-| *Sync now* (*Push now* for a file) | always | `POST …/sync?direction=both`, followed to its end |
+| *Sync now* (*Push now* for a file) | but while a work folder chooses its files | `POST …/sync?direction=both`, followed to its end |
 | *Pull now*, *Push now* | a folder's vault; shut while that switch is off | `…?direction=pull`, `…?direction=push` |
-| *Pause*, *Resume* | always | `PATCH {paused}` |
+| *Pause*, *Resume* | always; no *Resume* while a work folder chooses its files | `PATCH {paused}` |
+| *Choose files…* | a work folder | its tracking dialog in the window (`chooseFiles`, as a work folder's making hands over) |
 | *Go on…* | a vault held by its guard | the question `keeping.goOnAsk`, then `…?confirm=1` |
 | *Locate…* (*Locate the file…*) | a stopped vault or one whose directory is not there; a file's vault always | the picker, then `POST …/relink {path}` with the shell's word; the directory's marker must be the vault's |
 | *Open the directory*, *Show in folder* | always | `openDirectory`, `revealFile` |
 | *Force pull…*, *Force push…* | a folder's vault | the page count from `GET …/removal`, a warning (`keeping.forceAsk`), then `…?force=pull` or `force=push` |
 | *Remove the vault…* | always | the counts from `GET …/removal`, the question `keeping.removalAsk`, then `DELETE …?files=keep` or `files=trash` |
-| the switches | a folder's vault | `PATCH {pull}`, `PATCH {push}` (`setPush`, above) |
+| the switches | a folder's vault | `PATCH {pull}`, `PATCH {push}` (`setPush`, above), a work folder's `PATCH {library}` |
+| the agent row | a work folder of its maker, on a server that runs agents | `setAgent`: turning one on asks first, then `PATCH {agent}` with the shell's word; off is `PATCH {agent: ""}` |
 
 The changes and the rounds (*pause*, *resume*, *sync*, *Pull now*, *Push
-now* and the switches) leave the panel open on the new state
-(`STAYS_OPEN`); the others close it, since they ask first or open
-something. *Remove the vault…* offers *Remove, keep the files* and
+now*, the switches and the agent row) leave the panel open on the new
+state (`STAYS_OPEN`, the same list in `main.js` and `bar.html`); the
+others close it, since they ask first or open something.
+
+**Turning an agent on** (`setAgent`) is the computer's decision. The shell
+first asks the server how many Sends of the folder would be handed to the
+agent (`GET /api/local-agents/waiting?link=<id>`, counted by the rule the
+server hands them over by; left out when it does not answer) and asks
+(`keeping.agentAsk`): *Let Codex work in
+D:\Papers\thesis?*, with "Codex will answer the Sends you make on this
+folder: it edits files in this directory and runs commands in its sandbox,
+without network. 2 waiting Sends will be handed to it." (Claude Code: "…
+it edits files in this directory and runs no commands."), buttons *Turn on
+Codex* and *Cancel*. Then `PATCH /api/folder-links/<id> {agent}` with the
+shell's word, which `vaultOn`'s headers alone do not carry, while the bar
+reads *Checking Codex…* (the server asks the agent afresh and refuses one
+not ready with why), and a notice says what came of it
+(`keeping.agentSaid`: "Codex now answers the Sends on thesis; 2 waiting
+were handed to it."). Turning it off asks nothing. *Remove the vault…* offers *Remove, keep the files* and
 *Remove, move them to the trash* (the files the sync wrote go to
 `.gamma/trash`; files the user added or changed stay). A vault of one file,
 a vault whose directory is not there and a stopped one (its marker gone or
 another's) offer only *Remove the vault*, which touches nothing on disk.
-The pages stay in every case. A remote's vault then has its token revoked
-(`releaseRemote`).
+The pages stay in every case but a work folder's files that are not in the
+library, which go to Recently deleted; the question says both numbers
+(`removal`'s `files` and `in_library`). A remote's vault then has its token
+revoked (`releaseRemote`).
 
-A folder's vault reads, worst first: *Syncing 30 / 120* while a round
+A folder's vault reads, worst first: *Choosing files* for a work folder
+whose files are not chosen yet (drawn as pending; its row has *Choose
+files…* in place of *pause*, and *sync* shut); *Syncing 30 / 120* while a round
 runs, the files push has taken and the pages pull has looked at, of those
 the round knows so far (the status's `progress`, written as the round goes),
 its tooltip the bytes of the PDFs it pushes and the file at hand, or
 *Syncing…* before the round has compared the folder with
-the directory or when its round says nothing of itself; *Paused · 14:02*;
+the directory or when its round says nothing of itself; *Codex is working ·
+Editing main.tex* while its agent answers a Send (busy: the files may
+change meanwhile); *Paused · 14:02*;
 *Stopped* (its marker gone or another vault's: *Locate…* says where the
 directory is now); *Held · 12 of 20 files gone* (the guard against many
 files gone at once: nothing was pulled or pushed until *Go on…*);
@@ -463,8 +536,9 @@ a time), so two processes never race for its port and data directory
 (`test/main.test.js` and `test/registry.test.js`, `npm test`).
 
 `refreshKeeping` reads every running local server's `GET /api/mirrors`,
-`GET /api/zotero/links` (none from a server that has no such list) and
-`GET /api/folder-links` every 15 s, every 2 s while something syncs, when
+`GET /api/zotero/links` (none from a server that has no such list),
+`GET /api/folder-links` and `GET /api/local-agents` (5 s at most; none
+from a server that runs no agents, which answers 404) every 15 s, every 2 s while something syncs, when
 the panel opens and after each action. A call while a reading runs gets the
 reading that starts once that one ends, and the running reading's result is
 dropped: an action calls it right after changing something on a server,
@@ -705,9 +779,10 @@ A paper opened on a train does not go to the NAS.
    file opened before as its page again; anything else
    is a new page inside the one page *Opened files* (a page inside a page
    stays out of the library's list), titled with the file's stem, its PDF
-   read from the path (`linked_file`).
+   read from the path (the page's `doc` at `path`).
 4. For a new page the annotations another reader saved in the file become
-   Gamma's (`POST /api/import/pdf-annotations`, as below).
+   Gamma's (`POST /api/import/pdf-annotations` with the hash of the page's
+   `doc`, read from `GET /api/blocks/<id>`, as below).
 5. The bar says where the file is read ("main is read from this computer,
    under Opened files in Personal on Local."), every time, a page that was
    there already too, and the window loads `<origin>/?ws=<id>&page=<id>`.
@@ -722,7 +797,8 @@ of another server of the registry (`carryPage`):
 
 1. It checks the page: it reads a file here that is there
    (`GET /api/folder-links/page/<id>`'s `reader`), the window's account
-   opened that file (`reader.mine`), and it has a PDF. As with another
+   opened that file (`reader.mine`), and it has a PDF of its own (its
+   `doc`: format `pdf`, a hash, no `copy`). As with another
    workspace of this server, carrying an opened PDF away is its opener's
    alone: the file is on that account's computer, and another editor of the
    workspace would take that account's page away with its notes and chat.
@@ -734,9 +810,14 @@ of another server of the registry (`carryPage`):
    through its own, started when it is not running. The window must still
    show the page's server (`stillOn`).
 3. It refuses when the target has the page's id, or a page of its PDF
-   (`GET /api/blocks/by-doc/<doc>`), live or in Recently deleted: a 404
+   (`GET /api/blocks/by-doc/<hash>`), live or in Recently deleted: a 404
    that names `trashed` holds the page too, and the merge would replace
-   such a copy for good (`holds`).
+   such a copy for good (`holds`). It refuses as well a target whose
+   change feed (`GET /api/sync/changes?limit=1`) names an older workspace
+   data format than the page's server: the pages go in that server's
+   shape, which an older release cannot read. The export is stamped with
+   its release besides (`PRAGMA user_version`), and such a release refuses
+   it on its own ("made by a newer Gamma").
 4. `GET /api/folder-links/opened/<id>/carried` gives the digest of what
    the export takes (the page and the pages inside it, their blocks,
    comments and chats) and those pages' ids; it refuses while a page inside
@@ -744,13 +825,14 @@ of another server of the registry (`carryPage`):
    the target as in step 3. Then `GET /api/pages/<id>/export?mode=gamma&sub_pages=1`
    exports the page
    with the pages inside it, the PDF's bytes taken from the file and the
-   link to the file left behind. The zip must hold `uploads/<doc>.pdf`
+   link to the file left behind (the document at `store` in the export).
+   The zip must hold the document's stored name, `uploads/<hash><ext>`
    (`lib/zipNames.js`): a file gone or just changed is left out of an
    export, and the carry stops. So does a page inside it whose PDF the
    target has a page of, which the merge would skip. Nothing has been sent
    to the target yet.
 5. `POST /api/import-data?mode=merge` on the target, which must add the
-   page, and add every page inside it (`pages_skipped` none); then `PUT
+   page, and add every page inside it (`pages_skipped` none). Then `PUT
    /api/blocks/<id> {properties: {parent_page: null}}` takes it out of the
    *Opened files* it does not have there.
 6. Only then does the page here go: `POST
@@ -1104,6 +1186,10 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   app can read ([release.md](release.md#mac-app-store)).
 - `backend_entry.py` — entry for the frozen server (`--port`, `--data-dir`;
   sets env before importing gamma, serves the bundled `frontend_dist`).
+  `--draw-svg <side> <cap> [<x0> <y0> <x1> <y1>]` runs the server's SVG
+  drawing process instead (`gamma/svg_draw.py`): a frozen server has no
+  Python to start one with, so it starts itself
+  ([pictures.md](../../docs/dev/pictures.md#svg-pictures)).
 - `build_backend.py` — PyInstaller onedir freeze into
   `dist-backend/gamma-server/` (collects uvicorn's string-resolved modules,
   PyMuPDF's native libraries — MuPDF and its C++ wrapper beside the

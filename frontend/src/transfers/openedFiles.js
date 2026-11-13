@@ -9,6 +9,7 @@
 // picked file is one, a picture on the page in view, or an import's review.
 import { nativeHost, onHostMessage, postToHost } from "../shared/lib/host.js";
 import { t } from "../shared/i18n/i18n.js";
+import { routeFile } from "./fileRouting.js";
 
 // The host holds opened files for the page (HostInfo.openFiles).
 export const hostOpensFiles = () => Boolean(nativeHost()?.openFiles);
@@ -57,24 +58,22 @@ export function doneWithOpenedFile(id) {
   return postToHost({ type: "fileDone", id }).then(() => undefined, () => undefined);
 }
 
-// What an opened file becomes: "page" (a PDF or a Markdown note, as the
-// Add menu's upload makes one: the same test as utils.js's isPdfFile and
-// isMarkdownFile, kept apart so this stays a leaf module), "picture" (a
-// JPEG, PNG, GIF, WebP, HEIC, HEIF or SVG, the image types the app
-// declares, to the page in view as a picked picture goes), "notability" (a
-// .note or .ntb, to the Notability import's review), "goodnotes" (a
-// .goodnotes, to the GoodNotes import's review), "archive" (a .zip, whose
-// kind the import dialog asks), or "" (nothing Gamma opens).
+// What an opened file becomes: "picture" (a JPEG, PNG, GIF, WebP, HEIC, HEIF
+// or SVG, the image types the app declares, to the page in view as a picked
+// picture goes), "noteapps" (a .note, .ntb or .goodnotes, to the Notability &
+// GoodNotes import's review), "archive" (a .zip, whose kind the import dialog
+// asks), "" (an executable, which the server refuses), else "page": a PDF, a
+// Markdown note or a file of any other format, as the library's upload makes
+// one (transfers/fileRouting.js routeFile).
 export function openedKind(file) {
   const name = file?.name || "";
   const type = file?.type || "";
-  if (/\.pdf$/i.test(name) || type === "application/pdf") return "page";
-  if (/\.(?:md|markdown)$/i.test(name) || /^text\/(?:x-)?markdown$/i.test(type)) return "page";
+  const routed = routeFile(file);
+  if (routed === "pdf" || routed === "markdown") return "page";
   if (/\.(?:jpe?g|png|gif|webp|hei[cf]|svg)$/i.test(name) || /^image\/(?:jpeg|png|gif|webp|hei[cf]|svg\+xml)$/i.test(type)) return "picture";
-  if (/\.(?:note|ntb)$/i.test(name)) return "notability";
-  if (/\.goodnotes$/i.test(name)) return "goodnotes";
+  if (/\.(?:note|ntb|goodnotes)$/i.test(name)) return "noteapps";
   if (/\.zip$/i.test(name) || /^application\/(?:x-)?zip(?:-compressed)?$/i.test(type)) return "archive";
-  return "";
+  return routed ? "page" : "";
 }
 
 // Who else sees what lands in workspace `w` (a /api/session entry), as the

@@ -22,11 +22,14 @@ tools are armed, and the chat's tool loop shows :func:`approval_preview` to
 the user before such a call runs.
 
 Reads: list the pages and the folder tree (folder scope only); read a page
-(its notes and highlights, plus the extracted text of its PDF attachment when
-it has one); read a page's note outline with block ids; read the AI chat kept
-with a page or folder; look at a PDF page or the user's handwriting as a
+(its notes, highlights and open comment threads, plus its document's text
+when it has one: a PDF's extracted text by pages, a text file's lines by
+number; a work folder's file by its path too); read a page's note outline
+with block ids; read the AI chat kept
+with a page or folder; read the comment threads on a work folder's files,
+the user's feedback; look at a PDF page or the user's handwriting as a
 picture; the citation records kept with pages; full-text-search the reachable
-pages' notes and PDF text via the two FTS indexes; search the scholarly record
+pages' notes and documents' text via the two FTS indexes; search the scholarly record
 and read a document that is not in the library (``ai_web.py`` — read-only,
 nothing stored); list Recently deleted.  Writes: rename pages, file them
 into (sub)folders, label them, move them to Recently deleted and restore
@@ -60,6 +63,7 @@ with ``PATH_SEP``, "Physics / QEC" — with its id beside it where it may pass
 one back, and a label as its name.
 """
 
+import base64
 import hashlib
 import json
 import re
@@ -68,6 +72,7 @@ import threading
 import time
 from collections import Counter
 from difflib import SequenceMatcher
+from typing import NamedTuple
 from urllib.parse import urlencode, urlsplit
 
 from fractional_indexing import generate_key_between
@@ -77,16 +82,19 @@ from . import item_types
 from .ai_permissions import permission_state
 from .ai_pictures import (parts as _parts, ink_picture_url, page_doc_id, parse_box, picture_url_of_page, read_stored,
                           render_region, store_picture, upload_name)
-from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
-                         handwriting_label, page_report_section, paths_text, pdf_path, picture_text, placed_label,
-                         quoted_paths, render_area_crops, under_sheet)
+from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, NOTE_IMAGE_RE, area_highlight, canonical_tool, chip_lines,
+                         handwriting_label, is_text_document, page_report_section, paths_text, pdf_path, picture_text,
+                         placed_label, quoted_paths, render_area_crops, under_sheet)
+from .block_index import fts_query, search_blocks
 from .blocks_store import (BLOCK_ID_RE, FOLDERS, LABELS, PATH_SEP, TRASH, block_kind, block_to_dict, descend,
                            existing_in, fetch_subtree, filed_folders, filing, folder_chain, folder_inserts,
                            folder_paths, folder_subtree_ids, label_by_name, label_inserts, label_names, load_props,
-                           named, page_ancestors, page_attachment, page_descendants, page_in_folder, page_parent,
+                           named, page_ancestors, page_descendants, page_in_folder, page_parent,
                            page_parents, page_root_id, root_pages, top_of, trashed_folders, tree_children,
                            tree_parents, valid_block_id, write_lock)
-from .db import connect_data_db, connect_pages_db
+from .comments import STATES as THREAD_STATES
+from .db import account_names, connect_data_db, connect_pages_db, connect_users_db
+from .documents.model import file_hash, is_listed, is_pdf, page_document, pdf_file_hash
 from .highlights import is_ink
 from .ops import (MAX_OPS, after_commit, after_commits, apply_batches, apply_ops, delete_tree, ensure_filing,
                   move_across_pages, tree_deletion)
@@ -94,12 +102,15 @@ from .jobs import error_text
 from .logbuf import log
 from .notebook import is_sheet
 from .paste_math import dollar_math, paste_math
-from .pdf_index import pdf_pending, search_pdf
 from .pdf_text import RENDER_MAX_SIDE, image_part, render_page
 from .picture import caption_text, is_picture, normalize_picture
+from .search import hits as search_hits, indexer
 from .storage import exists as _upload_exists, upload_refs
 from .text_box import is_text_box
 from .trash import KEEP_DAYS, list_trash
+from .work_folders import filing as work_filing, paths as work_paths
+from .work_folders.library import listed, work_folder_of
+from .work_folders.marks import Tree
 
 # Runaway guards for the tool loop, not workload caps: MAX_TOOL_ACTIONS bounds
 # the real work (mutations only), while the round limit stops a loop that
@@ -134,18 +145,25 @@ _BLOCK_CONTENT_MAX = 100_000
 # What read_block puts where it snipped a long child (see _run_read_block):
 # a replace carrying it was built from the snippet, not the block.
 _TRUNCATED_MARK = "[truncated — read_block("
+# How a passage is marked, as a page's outline names it: a highlight block's
+# style (frontend shared/model/markStyle.js) → its word; the wash, no style,
+# is a highlight.
+_MARK_WORDS = {"underline": "underline", "squiggly": "wavy underline", "strikeout": "strikethrough"}
 # The zero-hit search retry: drop glue words shorter than this, keep at most
 # this many of the longest remaining terms.
 _RELAX_MIN_TERM_LEN = 3
 _RELAX_MAX_TERMS = 3
 
 
-def citation_prompt(link: str) -> str:
+def citation_prompt(link: str, line_link: str) -> str:
     """The clickable-citation instruction (docs/dev/pdf_citations.md) with
-    the link written as ``link``: the chat's relative shape
-    (``CITATION_PROMPT``), or the absolute one the MCP adapter's results
-    carry. Appended to the chat's system prompt whenever a document is in
-    context, and part of the MCP server's instructions."""
+    a PDF passage's link written as ``link`` and a text file's line's as
+    ``line_link``: the chat's relative shapes (``CITATION_PROMPT``), or the
+    absolute ones the MCP adapter's results carry. Appended to the chat's
+    system prompt whenever a document is in context, and part of the MCP
+    server's instructions. The quote of a line link is always the first
+    line's verbatim text: the file may change under its links, and the
+    viewer finds the line again by it (the one statement of that rule)."""
     return (
         "When citing a passage from a library PDF, provide a clickable citation "
         f"as [p. N]({link}). "
@@ -153,26 +171,32 @@ def citation_prompt(link: str) -> str:
         "PDF page number from [PDF page N] labels (not printed page numbers), and a "
         "verbatim, distinctive quote of 8-2000 characters contained on that page, preferably one sentence. "
         "Percent-encode the quote, including spaces, ampersands and parentheses. "
+        "When citing a line of a text file, write [<file name>:N]"
+        f"({line_link}) — N the 1-based line number the context and read_page print before each "
+        "line, or a search hit's l.N; a range is [<file name>:N–M](…&line=N-M). Always add "
+        "&quote=<the percent-encoded verbatim text of line N (the first line of a range), as printed "
+        "after its tab>: the file may change under its links, and the viewer finds the line again by it. "
         "These links only navigate and visually highlight text; they never create notes. "
-        "Never invent quotes, IDs or page numbers. If the location is unknown, read the "
+        "Never invent quotes, IDs, page or line numbers. If the location is unknown, read the "
         "page first when tools are available, otherwise use an ordinary page link. "
         "Do not use these links for external or uploaded files without a Gamma page ID."
     )
 
 
-CITATION_PROMPT = citation_prompt("/?page=PAGE_ID&pdf_page=N&quote=URL_ENCODED_QUOTE")
+CITATION_PROMPT = citation_prompt("/?page=PAGE_ID&pdf_page=N&quote=URL_ENCODED_QUOTE",
+                                  "/?page=PAGE_ID&line=N&quote=URL_ENCODED_LINE")
 
 # Base role prompt — the user-editable part (prompt editor, "Library agent");
 # agent_system() appends the mechanical scope/permission lines to it.
 AGENT_PROMPT = (
     "You are also the user's library agent in Gamma, their knowledge base of pages: "
-    "each page is an outline of notes, and some pages carry a PDF attachment (a "
-    "paper, a book, lecture notes). Pages are filed in folders, which nest (a page "
+    "each page is an outline of notes, and some pages carry a document (a PDF or a "
+    "text file: a paper, a book, lecture notes, a LaTeX source). Pages are filed in folders, which nest (a page "
     "may be in several; a folder may be empty), and carry flat labels; a folder's "
     "path reads 'Physics / QEC', its names from the top. Never guess page ids. Use the reading tools to answer "
-    "questions about the pages themselves — their notes as much as their PDFs — "
-    "e.g. to compare papers or write a summary; cite a PDF by its page number and "
-    "say when something comes from the user's own notes. When asked to organize, "
+    "questions about the pages themselves — their notes as much as their documents — "
+    "e.g. to compare papers or write a summary; cite a PDF by its page number and a "
+    "text file by its line, and say when something comes from the user's own notes. When asked to organize, "
     "apply an explicit bulk instruction (e.g. a naming scheme) to every matching "
     "page without asking again; ask first when the request is ambiguous. Delete "
     "only what the user asked to delete. After making changes, finish with a "
@@ -284,14 +308,17 @@ def _not_a_folder(conn, text: str) -> str | None:
     return None
 
 
-def _resolve_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
+def _resolve_folder(conn, scope: dict, raw, *, write: bool = False) -> tuple[dict | None, str | None]:
     """The folder a tool's ``folder`` argument names: a folder id, or a path
     as the tools show it ("Physics / QEC"; "Physics/QEC" too, where that is
     no folder's name). A folder chat reads it inside its folder — a path
     that starts with the folder's own path from there, any other as a path
     below it — and "" is the chat's folder itself; a page chat reads it from
     the top, "" being the library root. Each name matches exactly, else
-    ignoring case (``blocks_store.named``).
+    ignoring case (``blocks_store.named``). For a ``write`` (a page filed,
+    a folder made) a path passes by every work folder with its directories
+    (``descend``'s ``works``), so a name they share makes a library folder;
+    a read reaches them.
 
     Returns ``(target, error)``: ``{"id", "path"}`` for a folder that exists
     (id "" = the library root), ``{"id": "", "path", "under", "names"}``
@@ -301,6 +328,7 @@ def _resolve_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
     no folder's (``_not_a_folder``)."""
     base = _scope_folder(scope)
     kids, paths = tree_children(conn, FOLDERS), folder_paths(conn)
+    works = set(Tree.read(conn).roots()) if write else ()
     text = str(raw or "").strip()
     if not text:
         return {"id": base, "path": PATH_SEP.join(paths.get(base, []))}, None
@@ -314,7 +342,7 @@ def _resolve_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
                                for sep in (PATH_SEP, "/")):
         if own and [n.lower() for n in names[:len(own)]] == own:
             names = names[len(own):]  # the chat's own path, then below it
-        level, rest = descend(kids, base or FOLDERS, names)
+        level, rest = descend(kids, base or FOLDERS, names, works=works)
         if len(level) > 1:
             return None, (f'error: "{text}" names {len(level)} folders — pass the one you mean by its id: '
                           + ", ".join(f'{f} ("{PATH_SEP.join(paths[f])}")' for f in level))
@@ -364,13 +392,52 @@ def _page_in_scope(conn, scope: dict, page_id: str, folders: list[str], reach=_N
 _NO_PAGE = "error: no such page — use exact page ids"  # a batch's id of no id's shape too (_batch)
 
 
+def _page_by_path(conn, scope: dict, path: str) -> tuple[str | None, str | None]:
+    """The page a work folder's file ``path`` names (``work_folders.paths``):
+    in the work folder of the chat's folder, else of a page chat's page,
+    else the one the path's first segment names. ``(page_id, error)``; the
+    error names the pages when several share the path."""
+    tree = Tree.read(conn)
+    work, rest = tree.work_of(_scope_folder(scope)), path
+    if not work and scope.get("type") == "page":
+        row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?",
+                           (str(scope.get("page_id") or ""),)).fetchone()
+        work = work_folder_of(load_props(row[0])) if row else ""
+    found = work_paths.page_at_path(conn, tree, work, path) if work else []
+    if not found:
+        try:
+            named_work = work_paths.work_of_path(conn, tree, path)
+        except ValueError as e:
+            return None, f"error: {e}"
+        if named_work:
+            work, rest = named_work
+            found = work_paths.page_at_path(conn, tree, work, rest)
+        elif not work:
+            first = str(path).replace("\\", "/").strip("/").split("/", 1)[0]
+            return None, (f'error: no work folder is named "{first}" — list_folders shows them, '
+                          "or pass a page id")
+    if not found:
+        return None, (f'error: no file is at "{path}" in the work folder "{tree.names.get(work, "")}" — '
+                      'list_pages(folder="…") lists its files with their paths')
+    if len(found) > 1:
+        return None, (f'error: "{path}" names {len(found)} pages — pass the one you mean by its id: '
+                      + ", ".join(found))
+    return found[0], None
+
+
 def _load_scoped_page(conn, scope: dict, args: dict, reach=_NO_REACH):
     """Fetch the target page and enforce the scope. Returns
     ``((page_id, title, props, folders), error)`` — ``folders`` the ids it
     is filed in, which for a sub-page are its top page's (blocks_store's
     filing rule); exactly one side is set. ``reach``: the chat's
-    (``_reach``) when the caller worked it out already."""
+    (``_reach``) when the caller worked it out already. Without a
+    ``page_id``, a ``path`` names a work folder's file (``_page_by_path``)."""
     page_id = str(args.get("page_id") or "").strip()
+    path = args.get("path")
+    if not page_id and isinstance(path, str) and path.strip():
+        page_id, error = _page_by_path(conn, scope, path.strip())
+        if error:
+            return None, error
     row = conn.execute(
         "SELECT parent_id, content, properties FROM unified_blocks WHERE id = ?",
         (page_id,),
@@ -385,9 +452,12 @@ def _load_scoped_page(conn, scope: dict, args: dict, reach=_NO_REACH):
 
 
 def _scope_pages(conn, scope: dict) -> dict:
-    """Titles and PDF ids for the base scope plus read-only context pages:
-    a page chat's page, with the pages inside it for a reading tool
-    (``inside``), or a folder chat's pages."""
+    """Titles and documents for the base scope plus read-only context
+    pages: a page chat's page, with the pages inside it for a reading tool
+    (``inside``), or a folder chat's pages (``root_pages``), in
+    ``root_pages``' shape ({page_id: {title, doc_id, format, ext, at, name}}).
+    Every page gives the document it shows (``file_hash``), a duplicated
+    page's included."""
     page_ids = list(scope.get("context_pages") or [])
     if scope.get("type") == "page":
         pages = {}
@@ -395,13 +465,26 @@ def _scope_pages(conn, scope: dict) -> dict:
         page_ids[:0] = [page_id] + (page_descendants(conn, page_id) if scope.get("inside") else [])
     else:
         pages = root_pages(conn, _scope_folder(scope))
+        # root_pages answers the documents the pages own: a copy's is the file it shows
+        bare = [page_id for page_id, page in pages.items() if not page["doc_id"]]
+        for page_id, raw in conn.execute(
+                "SELECT id, properties FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?)) "
+                "AND instr(properties, '\"copy\"') > 0", (json.dumps(bare),)):
+            pages[page_id] = _scope_page(pages[page_id]["title"], page_document(load_props(raw)))
     for page_id in page_ids:
         loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id})
         if not error:
             page_id, title, props, _ = loaded
-            attachment = page_attachment(props)
-            pages[page_id] = {"title": title, "doc_id": attachment["id"] if attachment else ""}
+            pages[page_id] = _scope_page(title, page_document(props))
     return pages
+
+
+def _scope_page(title: str, view) -> dict:
+    """A ``_scope_pages`` entry: the page's title and the document it
+    shows."""
+    return {"title": title, "doc_id": file_hash(view), "format": view["format"] if view else "",
+            "ext": view["ext"] if view else "", "at": view["at"] if view else "",
+            "name": view["name"] if view else ""}
 
 
 def _load_scoped_block(conn, scope: dict, block_id) -> tuple:
@@ -506,14 +589,25 @@ def _call_text(name: str, args: dict) -> str:
 
 
 def _page_line(paths: dict, names: dict, page_id: str, content, props: dict, folders: list,
-               page_labels: list, updated, parent: str) -> str:
-    """One list_pages line: the page's id, title, attachments, the page it
-    is inside (``parent``, a sub-page's) or else its folder paths, labels,
-    cached paper metadata and last-update date."""
-    attachment = page_attachment(props)
-    bits = [f"id={page_id}",
-            f'title="{(content or "Untitled")[:120]}"',
-            f"attachments=[{attachment['kind']}]" if attachment else "attachments=[]"]
+               page_labels: list, updated, parent: str, *, tree: Tree | None = None) -> str:
+    """One list_pages line: the page's id, title, a work folder's file's
+    path in it (``work_folders.paths.page_path`` over ``tree``), its
+    document's format (a text file's with its language; ``listed`` for one
+    listed without its bytes) and size, the page it is inside (``parent``,
+    a sub-page's) or else its folder paths, labels, cached paper metadata
+    and last-update date."""
+    view = page_document(props)
+    bits = [f"id={page_id}", f'title="{(content or "Untitled")[:120]}"']
+    path = work_paths.page_path(tree, props) if tree and work_folder_of(props) else ""
+    if path:
+        bits.append(f"path={json.dumps(path[:300], ensure_ascii=False)}")
+    if not view:
+        bits.append("attachments=[]")
+    else:
+        kind = view["format"] + (f":{view['language']}" if view["language"] else "")
+        bits.append(f"attachments=[{kind}{' listed' if is_listed(view) else ''}]")
+        if view["size"] is not None:
+            bits.append(f"size={view['size']}")
     if parent:
         bits.append(f"parent={parent}")
     elif folders:
@@ -543,7 +637,11 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
     ``list_labels`` lists the labels with their page counts instead, the
     busiest ``limit`` of them. A sub-page is filed where its top page is
     (blocks_store's filing rule), so the folder filters and the chat's
-    folder reach it through that page."""
+    folder reach it through that page. At the library root the pages are
+    those the library lists (``work_folders.library.listed``, by the top):
+    a work folder's files come only where the chat's folder or ``folder``
+    names one they are filed in, and the label counts and ``label=`` count
+    listed pages."""
     reach = _reach(conn, scope)
     paths, names = folder_paths(conn), label_names(conn)
     path = PATH_SEP.join(paths.get(_scope_folder(scope), []))
@@ -589,8 +687,12 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
     matches, earlier = [], 0
     for page_id, content, _, updated, position in rows:
         props = props_of[page_id]
-        folders = [f for f in filing(props_of[top_of(parents, page_id)], FOLDERS) if f in paths]
+        top = props_of[top_of(parents, page_id)]
+        folders = [f for f in filing(top, FOLDERS) if f in paths]
         if page_id not in context and not _filed_in(reach, folders):
+            continue
+        # a file the library does not list: only where a folder named (the chat's, or `folder`) files it
+        if page_id not in context and reach is None and not listed(top) and not (below and below & set(folders)):
             continue
         page_labels = [lab for lab in filing(props, LABELS) if lab in names]
         if want_labels:
@@ -634,7 +736,7 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
                           else f"Listed {total} page{'s' if total != 1 else ''} in {where_full}")}
     if not total:
         no = ("No pages match those filters." if (label or title_q or parent)
-              else "The folder is empty." if (sub or path) else "The library is empty.")
+              else "The folder is empty." if (sub or path) else "The library lists no page.")
         return no, action
     if not shown:
         return f"No pages come after that one in {where_full} — it was the last of {total}.", action
@@ -651,9 +753,10 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
     # The next call goes in the header too: a saved chip keeps only the
     # first _DETAIL_CAP characters, and Continue replays the saved chat.
     span = f"; {earlier + 1}–{earlier + len(shown)} shown" if partial else ""
+    tree = Tree.read(conn) if any(work_folder_of(m[2]) for m in shown) else None
     text = (f"Pages in {where_full} ({total}, most recently added first{span}"
             + (f"; next: {nxt}" if nxt else "") + "):\n"
-            + "\n".join(_page_line(paths, names, *m) for m in shown))
+            + "\n".join(_page_line(paths, names, *m, tree=tree) for m in shown))
     if nxt:
         text += f"\n[… {rest} more page{'s' if rest != 1 else ''} — call {nxt} to continue]"
     return text, action
@@ -723,13 +826,25 @@ def _read_cap(value) -> int:
     return min(cap, READ_CHARS_MAX) if cap > 0 else READ_CHARS_CAP
 
 
-def _window_args(scope: dict, args: dict) -> tuple[int, int, int]:
-    """The document-text window a read asks for: ``(budget, offset, page)``
-    from the call's ``pdf_chars`` (default and cap from the read-window
-    preference), ``pdf_offset`` and 1-based ``pdf_page``. Shared by
-    read_page and fetch_paper; a malformed value falls back to its default.
-    A scope may set its own default window (``read_default``: a helper reads
-    in the widest one)."""
+class Window(NamedTuple):
+    """The document-text window a read asks for (``_window_args``):
+    ``budget`` characters, a PDF's ``offset`` and 1-based ``page``, a text
+    file's ``from_line`` and ``to_line`` (1-based, inclusive; None: as many
+    as fit ``budget``)."""
+    budget: int
+    offset: int
+    page: int
+    from_line: int
+    to_line: int | None
+
+
+def _window_args(scope: dict, args: dict) -> Window:
+    """The document-text window a read asks for, from the call's
+    ``pdf_chars`` (default and cap from the read-window preference),
+    ``pdf_offset``, 1-based ``pdf_page``, ``from_line`` and ``to_line``.
+    Shared by read_page and fetch_paper (which reads the first three); a
+    malformed value falls back to its default. A scope may set its own
+    default window (``read_default``: a helper reads in the widest one)."""
     cap = _read_cap(scope.get("read_chars"))
     default = min(scope.get("read_default") or READ_CHARS_DEFAULT, cap)
     try:
@@ -744,21 +859,38 @@ def _window_args(scope: dict, args: dict) -> tuple[int, int, int]:
         page = max(1, int(args.get("pdf_page", 1)))
     except (TypeError, ValueError):
         page = 1
-    return budget, offset, page
+    try:
+        from_line = max(1, int(args.get("from_line") or 1))
+    except (TypeError, ValueError):
+        from_line = 1
+    try:
+        to_line = int(args["to_line"]) if args.get("to_line") not in (None, "") else None
+    except (TypeError, ValueError):
+        to_line = None
+    return Window(budget, offset, page, from_line, max(to_line, from_line) if to_line is not None else None)
 
 
-def gamma_link(scope: dict, page_id: str, *, pdf_page: int = 0, block_id: str = "") -> str:
-    """An absolute link into the library — a page, one PDF page of it, or a
-    note block — for a caller whose scope sets ``link_base`` (the MCP
+def gamma_link(scope: dict, page_id: str, *, pdf_page: int = 0, line: int = 0, end: int = 0, block_id: str = "",
+               thread_id: str = "") -> str:
+    """An absolute link into the library — a page, one PDF page of it, a
+    line of its text file (``&line=N``, a range ``&line=N-M`` with ``end``),
+    a note block, or with ``thread_id`` a comment thread on the block
+    ``block_id`` of the page (``&page=&block=&thread=``, the address the
+    Inbox opens) — for a caller whose scope sets ``link_base`` (the MCP
     adapter: ``https://host/?ws=<id>``, so an external assistant copies URLs
     out of results instead of assembling them). "" for the chat, whose model
     writes the relative ``/?page=<id>`` links the chat renders itself."""
     base = scope.get("link_base")
     if not base:
         return ""
-    params = {"block": block_id} if block_id else {"page": page_id}
+    if thread_id:
+        params = {"page": page_id, "block": block_id or page_id, "thread": thread_id}
+    else:
+        params = {"block": block_id} if block_id else {"page": page_id}
     if pdf_page:
         params["pdf_page"] = pdf_page
+    if line:
+        params["line"] = f"{line}-{end}" if end and end > line else str(line)
     return base + "&" + urlencode(params)
 
 
@@ -780,10 +912,11 @@ def _int_arg(args: dict, key: str, default: int, lo: int, hi: int) -> int:
 
 def context_cover(scope: dict, page_id: str) -> dict | None:
     """What the conversation context already holds of a page (the chat's
-    coverage report, riding in the scope): ``{pages_shown, pages, partial,
-    notes, native}`` — the head-excerpt span of its PDF text (none when the
-    file went natively, or the page has no PDF) and whether its notes are
-    there. None for a page not in context."""
+    coverage report, riding in the scope): ``{format, pages_shown, pages,
+    lines_shown, lines, partial, notes, native}`` — the head-excerpt span
+    of its PDF text (none when the file went natively, or the page has no
+    PDF), or of its text file's lines, and whether its notes are there.
+    None for a page not in context."""
     for entry in scope.get("coverage") or ():
         if entry.get("page_id") == page_id:
             return entry
@@ -792,21 +925,53 @@ def context_cover(scope: dict, page_id: str) -> dict | None:
 
 def _run_read_page(conn, ws: str, scope: dict, args: dict):
     """A page's text in windows — minus what the conversation already
-    holds: PDF pages the head excerpt shows in full are never sent again (a
-    read of them continues from the page the excerpt cut short), a
-    document the excerpt holds whole is not re-read at all, and the notes
-    come once — with the first window of a read, or on ``notes: true`` —
-    and not when the chat's context already carries them."""
+    holds: PDF pages the head excerpt shows in full, and a text file's
+    lines its head shows, are never sent again (a read of them continues
+    from the page the excerpt cut short, or the first line not shown), a
+    document the context holds whole is not re-read at all, and the notes
+    and open threads come once — with the first window of a read, or on
+    ``notes: true`` — and not when the chat's context already carries
+    them. A text file reads by lines (``from_line``, ``to_line``), a PDF by
+    pages and offsets; the other kind's arguments are answered with a line
+    and ignored. The page may be named by a work folder's ``path``."""
     loaded, error = _load_scoped_page(conn, scope, args)
     if error:
         return error, None
     page_id, title, props, _ = loaded
-    budget, offset, page = _window_args(scope, args)
-    first_window = offset == 0 and page == 1
+    view = page_document(props)
+    text_file = is_text_document(view)
+    budget, offset, page, from_line, to_line = _window_args(scope, args)
+    lead = []
+    if text_file:
+        if args.get("pdf_offset") or args.get("pdf_page") not in (None, "", 1, "1"):
+            lead.append(f'"{title}" is a text file: use from_line (and to_line) — pdf_page and pdf_offset '
+                        "are ignored.")
+        offset, page = 0, 1
+        first_window = from_line <= 1
+    else:
+        if args.get("from_line") or args.get("to_line"):
+            lead.append(f'"{title}" is ' + ("a PDF: use pdf_page and pdf_offset" if is_pdf(view) else
+                                            "no text file") + " — from_line and to_line are ignored.")
+        from_line, to_line = 1, None
+        first_window = offset == 0 and page == 1
     cover = context_cover(scope, page_id)
     notes_wanted = bool(args.get("notes")) or first_window
-    lead = []
-    if cover and cover.get("pages_shown") and cover.get("doc_id") and not cover.get("native"):
+    if text_file and cover and cover.get("format") == "text" and cover.get("lines_shown"):
+        shown, total = cover["lines_shown"], cover.get("lines") or 0
+        if not cover.get("partial"):
+            lead.append(f'The whole text of "{title}" ({total:,} lines) is in the conversation context above '
+                        "— answer from it; nothing more to read.")
+            budget = 0
+        elif to_line is not None and to_line <= shown:
+            lead.append(f'Lines {from_line:,}–{to_line:,} of "{title}" are in the conversation context above '
+                        "— answer from them; nothing more to read.")
+            budget = 0
+        elif from_line <= shown:
+            lead.append(f'Lines 1–{shown:,} of "{title}" are in the conversation context above and are not '
+                        f"repeated; this read continues from line {shown + 1:,}.")
+            from_line = shown + 1
+    elif (not text_file and cover and cover.get("pages_shown") and cover.get("doc_id")
+          and not cover.get("native")):
         shown, total = cover["pages_shown"], cover.get("pages") or 0
         if not cover.get("partial"):
             lead.append(f'The whole PDF text of "{title}" is in the conversation context above '
@@ -823,31 +988,43 @@ def _run_read_page(conn, ws: str, scope: dict, args: dict):
     section = page_report_section(conn, ws, page_id, budget, offset, page,
                                   include_notes=include_notes,
                                   notes_budget=_read_cap(scope.get("read_chars")), report=report,
-                                  notes_seen=notes_seen(scope), listing=scope.get("type") != "page")
+                                  notes_seen=notes_seen(scope), listing=scope.get("type") != "page",
+                                  from_line=from_line, to_line=to_line, threads=notes_wanted and cover is None)
     if not section:
         return f'"{title}" has no readable content', None
     if notes_wanted and notes_in_context:
         lead.append("(The page's notes and highlights are in the conversation context above.)")
     elif not include_notes:
-        lead.append("(Notes and highlights come with the first window of a read, or with notes: true.)")
+        lead.append("(Notes, highlights and open comment threads come with the first window of a read, "
+                    "or with notes: true.)")
     text = ("\n".join(lead) + "\n\n" + section) if lead else section
     chip = {"kind": "read", "page_id": page_id, "summary": f"Read “{title[:60]}”"}
     first, last = report.get("pdf_pages") or (0, 0)
     if last:
         chip["pdf_pages"] = [first, last]
         chip["summary"] = f"Read “{title[:60]}” p. {first}" + (f"–{last}" if last > first else "")
+    line_first, line_last = report.get("lines") or (0, 0)
+    if line_last:
+        chip["lines"] = [line_first, line_last]
+        chip["summary"] = f"Read “{title[:60]}” l. {line_first}" + (f"–{line_last}" if line_last > line_first else "")
+    if work_folder_of(props):
+        path = work_paths.page_path(Tree.read(conn), props)
+        if path:
+            chip["path"] = path
     url = gamma_link(scope, page_id)
     if url:
         text += f"\n[Links: page {url}"
         if last:
             text += (f"; PDF page {first}: {gamma_link(scope, page_id, pdf_page=first)}, the other pages "
                      "likewise — add &quote=<percent-encoded verbatim passage> to open at the passage")
+        if line_last:
+            text += (f"; line {line_first}: {gamma_link(scope, page_id, line=line_first)} (a range: "
+                     "&line=N-M; add &quote=<the first line's verbatim text, percent-encoded> to open at it)")
         text += "]"
     # The area highlights' pictures go with the result (the loop moves
     # them onto the tool message, like view_pdf_page's page).
-    attachment = page_attachment(props)
-    images = (render_area_crops(ws, attachment["id"], report["areas"], title, page_id)
-              if attachment and report.get("areas") else [])
+    images = (render_area_crops(ws, pdf_file_hash(view), report["areas"], title, page_id)
+              if view and report.get("areas") else [])
     if images:
         chip["images"] = _parts(images)
     return text, chip
@@ -863,14 +1040,16 @@ def _run_view_pdf_page(conn, ws: str, scope: dict, args: dict):
     if error:
         return error, None
     page_id, title, props, _ = loaded
-    attachment = page_attachment(props)
-    if not attachment:
+    view = page_document(props)
+    if is_text_document(view):
+        return f'"{title}" is a text file: read it with read_page', None
+    if not is_pdf(view):
         return f'"{title}" has no PDF attachment to look at', None
     try:
         page_no = max(1, int(args.get("pdf_page", 1)))
     except (TypeError, ValueError):
         page_no = 1
-    path = pdf_path(ws, attachment["id"])
+    path = pdf_path(ws, pdf_file_hash(view))
     if not path:
         return "error: the PDF file is not available on this server", None
     image, total = render_page(str(path), page_no, RENDER_MAX_SIDE)
@@ -940,18 +1119,15 @@ def _run_view_ink(conn, ws: str, scope: dict, args: dict):
     return text, chip
 
 
-# A note's pictures: the markdown images in its text that name a stored
-# upload (the editor writes `![alt](/api/uploads/<hash>.png)`, sized
-# Obsidian-style as `![alt|300](…)`).
-_NOTE_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(\s*(/api/uploads/[^\s)]+)")
 MAX_VIEW_IMAGES = 6  # pictures one view_image call shows
 
 
 def note_pictures(content: str) -> list[tuple[str, str]]:
-    """``[(alt, url)]`` of the pictures a block's markdown embeds, in order;
-    the alt without its size suffix."""
+    """``[(alt, url)]`` of the pictures a block's markdown embeds
+    (``ai_context.NOTE_IMAGE_RE``: the markdown images that name a stored
+    upload), in order; the alt without its size suffix."""
     out = []
-    for alt, url in _NOTE_IMAGE_RE.findall(content or ""):
+    for alt, url in NOTE_IMAGE_RE.findall(content or ""):
         if upload_name(url):
             out.append((alt.split("|", 1)[0].strip(), url))
     return out
@@ -1054,7 +1230,9 @@ def _plan_clip_region(conn, scope: dict, args: dict):
     if error:
         return None, error
     page_id, title, props, _ = loaded
-    if not page_attachment(props):
+    if is_text_document(page_document(props)):
+        return None, f'error: "{title}" is a text file, with no PDF page to clip from: read it with read_page'
+    if not is_pdf(page_document(props)):
         return None, f'error: "{title}" has no PDF attachment to clip from'
     try:
         page_no = int(args.get("pdf_page") or 0)
@@ -1180,7 +1358,8 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
     """The note outline under a block (or a whole page), every line prefixed
     with its block id — the ids the editing tools take. The requested block's
     own text is never truncated; children are snipped per line and the listing
-    stops at the read budget."""
+    stops at the read budget. A text file a note's chip links shows its
+    first lines under it (``ai_context.chip_lines``)."""
     loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
     if error:
         return error, None
@@ -1195,6 +1374,7 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
 
     areas: list = []  # (page, box) of the area highlights whose picture goes along
     per_page: dict = {}
+    chips: dict = {}  # the file chips whose text is shown (ai_context.chip_lines)
 
     def line(block_id, content, props, depth, on_sheet, full=False):
         quote = (props.get("quote") or "").strip()
@@ -1204,7 +1384,8 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
         text = (picture_text(props, text) or text) + more
         bits = [f"[{block_id}]"]
         if quote:
-            bits.append(f'(highlight: "{quote[:200]}")')
+            # how the reader marked it: a wash, or a line (the block's style)
+            bits.append(f'({_MARK_WORDS.get(props.get("style"), "highlight")}: "{quote[:200]}")')
         elif area := area_highlight(props):
             page, box = area
             per_page[page] = per_page.get(page, 0) + 1
@@ -1217,6 +1398,9 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
         if label := placed_label(props, on_sheet, above=True) or handwriting_label(props):
             bits.append(label)
         bits.append(text or "(empty)")
+        linked = chip_lines(conn, ws, content or "", chips)
+        if linked:
+            bits[-1] += "\n" + linked
         pad = "  " * depth
         return pad + "- " + "\n".join(
             l if i == 0 else pad + "  " + l
@@ -1387,6 +1571,200 @@ def _run_read_chats(conn, ws: str, scope: dict, args: dict):
         more = "\n(older conversations not shown)" if len(history) > _LIST_CAP else ""
         parts.append("Earlier conversations (read one with chat_id):\n" + "\n".join(lines) + more)
     return "\n\n".join(parts), action
+
+
+# --- feedback --------------------------------------------------------------------
+# The open comment threads on a work folder's files, read as the user's
+# requests (gamma/feedback/, docs/dev/feedback.md). The reader's modules
+# load on the first call: they bring SyncTeX and the region pictures, which
+# no other tool needs.
+
+_FEEDBACK_BATCH = (20, 50)  # list_feedback's items a call: by default, at most
+_NOT_FEEDBACK = "This page is no work folder's file: its comments are not feedback."
+_NO_ITEM = "error: no feedback item has that id — list_feedback lists them"
+
+
+def _feedback_refusal(error) -> str:
+    """A ``feedback.entries.FeedbackError`` as the model reads it."""
+    return f"error: {error.detail}"
+
+
+def _feedback_origin(scope: dict) -> str:
+    """The server's address an entry's links start from, ``https://host/``
+    for a caller with ``link_base`` (MCP), "" for the chat: an entry's link
+    is its query alone, ``?ws=…&page=…&thread=…`` (feedback.entries)."""
+    return (scope.get("link_base") or "").partition("?")[0]
+
+
+def _reader_name(scope: dict) -> str:
+    """The username of the account the tools read as: the feedback
+    document's ``owner``."""
+    actor = scope.get("actor") or ""
+    with connect_users_db() as users:
+        return account_names(users, [actor]).get(actor, "")
+
+
+def _feedback_scopes(conn, scope: dict, named: str):
+    """The feedback scopes (``entries.Scope``) a list_feedback call reads:
+    ``named`` (a work folder by id or name, a directory's folder id, a
+    file's page id), else a page chat's page, else every work folder the
+    chat reaches. Returns ``(scopes, answer)``: ``answer`` a refusal, or for
+    a page chat on a library page the line that says it has none."""
+    from .feedback import entries
+
+    if scope.get("type") == "page":
+        loaded, error = _load_scoped_page(conn, scope, {"page_id": named or scope.get("page_id")})
+        if error:
+            return None, error
+        if not work_folder_of(loaded[2]):
+            return None, _NOT_FEEDBACK
+        named = loaded[0]
+    tree = Tree.read(conn)
+    if not named:
+        reach = _reach(conn, scope)
+        roots = [w for w in tree.roots() if _filed_in(reach, [w])]
+        if not roots and tree.work_of(_scope_folder(scope)):
+            roots = [_scope_folder(scope)]  # a chat on a directory of a work folder
+        return [entries.resolve_scope(conn, w, tree) for w in roots], None
+    try:
+        if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (named,)).fetchone():
+            found = entries.resolve_scope(conn, named, tree)
+        else:
+            found = entries.work_folder_named(conn, named, tree)
+    except entries.FeedbackError as e:
+        return None, _feedback_refusal(e)
+    if found.kind == "file":
+        _, error = _load_scoped_page(conn, scope, {"page_id": found.id})
+        if error:
+            return None, error
+    elif scope.get("type") == "page" or not _filed_in(_reach(conn, scope), [found.id]):
+        return None, "error: that folder is outside this chat's scope"
+    return [found], None
+
+
+def _run_list_feedback(conn, ws: str, scope: dict, args: dict):
+    """The feedback of a work folder, a directory of one or a file (every
+    work folder the chat reaches, a section each, when it names none), or
+    the threads of one Send request, in the Markdown form
+    (``feedback.markdown``) a batch at a time: ``after`` is the thread the
+    previous batch ended at, and the next call is named when more are
+    left."""
+    from .feedback import entries, markdown, requests
+
+    state = str(args.get("state") or "open")
+    if state not in THREAD_STATES:
+        return "error: state is open, resolved or all", None
+    limit = _int_arg(args, "limit", _FEEDBACK_BATCH[0], 1, _FEEDBACK_BATCH[1])
+    after = str(args.get("after") or "").strip()
+    request_id = str(args.get("request") or "").strip()
+    owner, origin = _reader_name(scope), _feedback_origin(scope)
+    record = None
+    if request_id:
+        record = requests.get(conn, request_id)
+        if not record:
+            return "error: no Send request has that id", None
+        # its threads in the chat's reach, as they are now
+        sent = [e for e in requests.entries_of(ws, conn, record, link_base=origin)
+                if (state == "all" or e["state"] == state)
+                and not _load_scoped_page(conn, scope, {"page_id": e["page_id"]})[1]]
+        found = [entries.Scope(record["scope"]["kind"], record["scope"]["id"], record["work_folder"]["id"],
+                               record["scope"]["name"])]
+        docs = [{"scope": record["scope"], "work_folder": record["work_folder"], "owner": owner, "state": state,
+                 "entries": sent}]
+    else:
+        found, answer = _feedback_scopes(conn, scope, str(args.get("scope") or "").strip())
+        if found is None:
+            return answer, (None if answer.startswith("error") else {
+                "kind": "list", "summary": "Listed the feedback: none on this page"})
+        if not found:
+            where = "this chat's folder" if _scope_folder(scope) else "this workspace"
+            return (f"No work folder is in {where}: feedback is the comment threads on the files of a work "
+                    "folder, a directory the user syncs with Gamma."), {"kind": "list",
+                                                                       "summary": "Listed the feedback: none"}
+        docs = [entries.document(ws, conn, s, state=state, owner=owner, link_base=origin) for s in found]
+    items = [(n, e) for n, doc in enumerate(docs) for e in doc["entries"]]
+    if after:
+        at = next((i for i, (_, e) in enumerate(items) if e["id"] == after), None)
+        if at is not None:
+            items = items[at + 1:]
+        else:
+            # answered or resolved since its batch: go on from where it stands among them all
+            every = [e["id"] for e in requests.entries_of(ws, conn, record)] if record else [
+                e["id"] for s in found for e in entries.entries(ws, conn, s, state="all", sources=False)]
+            if after not in every:
+                return f"error: {after} is no thread of this listing — list again without after", None
+            later = set(every[every.index(after) + 1:])
+            items = [(n, e) for n, e in items if e["id"] in later]
+    batch, more = items[:limit], len(items) > limit
+    shown: dict = {}
+    for n, e in batch:
+        shown.setdefault(n, []).append(e)
+    parts = []
+    if record:
+        line = f"Send request {record['id']}: {record['state']}"
+        if record.get("detail"):
+            line += f" ({record['detail']})"
+        line += f", sent by {record['by']} at {record['at']}"
+        parts.append(line + (f'. Its instruction: "{record["note"]}"' if record.get("note") else "."))
+    for n, doc in enumerate(docs):
+        if n in shown or (len(docs) == 1 and not after):
+            parts.append(markdown.render({**doc, "entries": shown.get(n, [])}, pictures="tool"))
+    if len(parts) == (1 if record else 0):
+        what = "comments" if state == "all" else f"{state} comments"
+        parts.append("Nothing more after that thread." if after else f"No {what} on the files of "
+                     + ", ".join(f"“{doc['work_folder']['name']}”" for doc in docs) + ".")
+    if more:
+        call = {k: args[k] for k in ("scope", "state", "request", "limit") if args.get(k)}
+        hint = "".join(f'{k}="{v}", ' if isinstance(v, str) else f"{k}={v}, " for k, v in call.items())
+        parts.append(f'More: list_feedback({hint}after="{batch[-1][1]["id"]}") lists the next batch '
+                     f"({len(items) - limit} left).")
+    action = {"kind": "list", "summary": ("Listed the threads of a Send request" if record
+                                          else f"Listed the feedback on “{found[0].name[:60]}”" if len(found) == 1
+                                          else f"Listed the feedback of {len(found)} work folders")}
+    if len(found) == 1 and found[0].kind == "file":
+        action["page_id"] = found[0].id
+    return "\n\n".join(parts), action
+
+
+def _run_read_feedback(conn, ws: str, scope: dict, args: dict):
+    """One feedback item, any state: its Markdown form, then the entry as
+    JSON with the routes of its pictures, and the pictures themselves (its
+    region now, then as it was commented on) on the action under
+    ``images``, as ``view_pdf_page`` does, unless the model reads text
+    only."""
+    from .feedback import entries, markdown, pictures
+
+    thread_id = str(args.get("thread_id") or "").strip()
+    origin, regions = _feedback_origin(scope), {}
+    entry = entries.entry(ws, conn, thread_id, link_base=origin, regions=regions) if thread_id else None
+    if entry is None:
+        return _NO_ITEM, None
+    loaded, error = _load_scoped_page(conn, scope, {"page_id": entry["page_id"]})
+    if error:
+        return error, None
+    w = work_folder_of(loaded[2])
+    doc = {"scope": {"kind": "file", "id": entry["page_id"], "name": entry["file"]},
+           "work_folder": {"id": w, "name": Tree.read(conn).names.get(w, "")},
+           "owner": _reader_name(scope), "state": entry["state"], "entries": [entry]}
+    text = markdown.render(doc, pictures="tool")
+    text += ("\n```json\n" + json.dumps(entries.with_urls(entry, origin.rstrip("/")), ensure_ascii=False, indent=2)
+             + "\n```")
+    action = {"kind": "read", "page_id": entry["page_id"], "block_id": entry["block_id"],
+              "summary": f"Read a feedback item on “{entry['file'][:60]}”"}
+    if entry["where"].get("page"):
+        action["pdf_page"] = entry["where"]["page"]
+    images = []
+    for name in ([] if scope.get("pictures") is False else (entry["picture"], entry["before"])):
+        page_id, region = regions.get(entries.key_of(name), (None, None))
+        data = pictures.cached(ws, conn, page_id, region) if region else None
+        if data:
+            images.append(("image/jpeg", base64.standard_b64encode(data).decode("ascii")))
+    if images:
+        action["images"] = images
+        text += ("\n\nThe region's picture is attached" if len(images) == 1 else
+                 "\n\nThe region's pictures are attached, now and as it was commented on") + (
+            ": read it visually. A picture is not kept in the chat history.")
+    return text, action
 
 
 _CITE_MAX = 50  # pages one cite call formats
@@ -1647,12 +2025,15 @@ def _plan_edit_block(conn, scope: dict, args: dict):
 
 
 def _preview_edit_block(conn, scope: dict, args: dict):
+    # `text`: the block's whole new text, which the note shows as tracked
+    # changes against what it says while the card waits (the card's `diff`
+    # cuts long unchanged stretches).
     plan, answer = _plan_edit_block(conn, scope, args)
     if not plan:
         return None, answer
     return {"page_id": plan["page_id"], "title": plan["title"], "block_id": plan["block"]["id"],
             "mode": plan["mode"], "diff": text_diff(plan["block"]["content"] or "", plan["text"]),
-            **_preview_pictures(plan["text"], plan["block"]["content"])}, None
+            "text": plan["text"], **_preview_pictures(plan["text"], plan["block"]["content"])}, None
 
 
 def missing_uploads(scope: dict, content: str, before: str = "") -> str:
@@ -1942,11 +2323,13 @@ def _run_move_block(conn, ws: str, scope: dict, args: dict):
 
 def _run_search_library(conn, ws: str, scope: dict, args: dict):
     """FTS snippets from the in-scope pages: their notes (block_fts, current
-    with every write) and the text of their PDF attachments (pdf_fts — same
-    index and query rules as /api/search). Notes hits come first, with block
-    ids the note tools take; PDF hits carry page numbers. Un-indexed PDFs
-    are kicked to the background indexer and reported, so the model knows
-    results may be incomplete."""
+    with every write) and the text of their documents (text_fts, the PDFs'
+    pages and the text files' runs of lines — the hits gamma/search/hits.py
+    builds for /api/search too). Notes hits come first, with block ids the
+    note tools take; then the documents' hits in the index's one rank
+    order, a PDF's with its page number, a file's with its path and line.
+    Un-indexed documents are kicked to the background indexer and
+    reported, so the model knows results may be incomplete."""
     query = str(args.get("query") or "").strip()
     if not query:
         return "error: empty query", None
@@ -1958,14 +2341,7 @@ def _run_search_library(conn, ws: str, scope: dict, args: dict):
     if not pages:
         return ("No pages are reachable from this chat.",
                 {"kind": "search", "summary": f"Searched library for “{query[:60]}” — no pages"})
-    docs = {info["doc_id"]: info["title"] for info in pages.values() if info["doc_id"]}
-    doc_pages = {}
-    for page_id, info in pages.items():
-        if info["doc_id"]:
-            doc_pages.setdefault(info["doc_id"], []).append(page_id)
-    # Local import: keep gamma.* module load free of the routers package.
-    from .block_index import fts_query, search_blocks
-    from .routers.search import _index_missing_async
+    docs, doc_pages, titles = search_hits.docs_of(pages)
 
     def fts(database, text):
         match = fts_query(text)
@@ -1975,20 +2351,24 @@ def _run_search_library(conn, ws: str, scope: dict, args: dict):
         for block_id, page_id, snippet in search_blocks(conn, match, limit, pages):
             found.append(f'- note [{block_id}] in "{pages[page_id]["title"][:80]}" '
                          f"({_where(scope, page_id, block_id=block_id)}): {snippet}")
-        for doc_id, page, snippet in search_pdf(database, match, limit, docs):
-            ids = doc_pages[doc_id]  # one PDF may hang on several pages: link the first
-            url = gamma_link(scope, ids[0], pdf_page=page)
-            found.append(f'- PDF "{docs[doc_id][:80]}" p.{page} '
-                         f'(page_id {", ".join(ids)}{f"; {url}" if url else ""}): {snippet}')
+        for hit in search_hits.build(ws, conn, database, match, docs, doc_pages, titles, limit, query=text):
+            if hit["source"] == "file":
+                url = gamma_link(scope, hit["page_id"], line=hit["line"])
+                first, last = hit["lines"]
+                found.append(f'- file "{(hit["path"] or hit["title"])[:200]}" l.{hit["line"]} (lines {first}–{last}; '
+                             f'page_id {hit["page_id"]}{f"; {url}" if url else ""}): {hit["snippet"]}')
+                continue
+            ids = doc_pages[hit["doc_id"]]  # one PDF may hang on several pages: link the first
+            url = gamma_link(scope, ids[0], pdf_page=hit["page"])
+            found.append(f'- PDF "{hit["title"][:80]}" p.{hit["page"]} '
+                         f'(page_id {", ".join(ids)}{f"; {url}" if url else ""}): {hit["snippet"]}')
         return found
 
     relaxed = ""
     missing: list = []
     with connect_data_db(ws) as database:
         if docs:
-            missing = pdf_pending(ws, database, docs)
-            if missing:
-                _index_missing_async(ws, missing)
+            missing = indexer.kick(ws, database, docs)
         lines = fts(database, query)
         if not lines:
             # The MATCH ANDs every term, and agents write long natural-language
@@ -2011,15 +2391,15 @@ def _run_search_library(conn, ws: str, scope: dict, args: dict):
                f'"{relaxed}" ({len(lines)}) — verify them by reading before '
                "trusting them:\n" + "\n".join(lines))
     elif lines:
-        out = (f'Matches for "{query}" ({len(lines)}; notes first, then PDF text):\n'
-               + "\n".join(lines))
+        out = (f'Matches for "{query}" ({len(lines)}; notes first, then the documents\' text, PDF pages '
+               "and files' lines in rank order):\n" + "\n".join(lines))
     else:
-        out = (f'No notes or PDF text match "{query}" or any part of it. Try the exact '
+        out = (f'No notes or document text match "{query}" or any part of it. Try the exact '
                "words the page would use, or read the likely pages directly. If you "
                "still cannot find it, tell the user it is not in their pages — do "
                "not answer from your own knowledge.")
     if missing:
-        out += (f"\n({len(missing)} PDF(s) not indexed yet — indexing started, "
+        out += (f"\n({len(missing)} document(s) not indexed yet — indexing started, "
                 "search again shortly for complete results)")
     about = "≈" if relaxed else ""
     return out, {"kind": "search",
@@ -2286,7 +2666,8 @@ def _run_fetch_paper(conn, ws: str, scope: dict, args: dict):
     title = re.sub(r"\s+", " ", str(args.get("title") or "")).strip()[:300]
     published_only = str(args.get("version") or "any").lower() == "published"
     probe = str(args.get("mode") or "read").lower() == "probe"
-    budget, offset, page = _window_args(scope, args)
+    window_asked = _window_args(scope, args)
+    budget, offset, page = window_asked.budget, window_asked.offset, window_asked.page
     # A fetched document has no "notes only" reading; a probe reads only the
     # front matter, whatever the window preference allows.
     budget = PROBE_CHARS if probe else max(1, budget)
@@ -2471,7 +2852,7 @@ def _save_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
     page chat from the top, else the open page's first folder — where the
     reply's Save to library files it."""
     if scope.get("type") == "folder" or str(raw or "").strip():
-        return _resolve_folder(conn, scope, raw)
+        return _resolve_folder(conn, scope, raw, write=True)
     loaded, _ = _load_scoped_page(conn, scope, {"page_id": scope.get("page_id")})
     paths = folder_paths(conn)
     first = next((f for f in (loaded[3] if loaded else []) if f in paths), "")
@@ -2837,20 +3218,37 @@ def _batch_text(head: str, plans: list, batch: dict, *, links: bool = False) -> 
     return text
 
 
-def _plan_rename_one(conn, scope: dict, page_id: str, title: str, reach) -> tuple:
+def _work_refusal(check) -> str | None:
+    """What the work-folder rule (gamma/work_folders/filing.py) answers a
+    change ``check()`` asks it of, as a tool answers it: "error: " and the
+    words the op path refuses it with, None when it passes. The tools ask
+    up front, as a person (``client`` "ai"), so the model reads why."""
+    try:
+        check()
+    except work_filing.Refused as e:
+        return f"error: {e.detail}"
+    return None
+
+
+def _plan_rename_one(conn, scope: dict, page_id: str, title: str, reach, tree: Tree) -> tuple:
     """One page of a rename_page call: ``({page_id, title, before, to,
     after}, None)`` — its title now as it reads, as it is stored
     (``before``: "" for an untitled page, which a revert gives back) and
-    the new one — or ``(None, answer)`` for a page it does not change."""
+    the new one — or ``(None, answer)`` for a page it does not change, and
+    for a work folder's file named by its file (``tree``, the folders as
+    the rule reads them)."""
     loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id}, reach)
     if error:
         return None, error
-    page_id, old, _, _ = loaded
+    page_id, old, props, _ = loaded
     new = _one_line(title)
     if not new:
         return None, "error: empty title"
     if new == old:
         return None, "ok — title already is that"
+    refused = _work_refusal(lambda: work_filing.root_patch(tree, props, None, new, "person"))
+    if refused:
+        return None, refused
     raw = old if old != "Untitled" else (conn.execute(
         "SELECT content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()[0] or "")
     return {"page_id": page_id, "title": old, "before": raw, "to": new, "after": new}, None
@@ -2864,12 +3262,12 @@ def _plan_rename_page(conn, scope: dict, args: dict):
     pairs, error = _renames_arg(args)
     if error:
         return None, error
-    reach, times = _reach(conn, scope), Counter(page_id for page_id, _ in pairs)
+    reach, times, tree = _reach(conn, scope), Counter(page_id for page_id, _ in pairs), Tree.read(conn)
 
     def one(pair):
         if times[pair[0]] > 1:
             return None, "error: named twice with different titles — send it once"
-        return _plan_rename_one(conn, scope, pair[0], pair[1], reach)
+        return _plan_rename_one(conn, scope, pair[0], pair[1], reach, tree)
     return (None, _batch(pairs, one)), None
 
 
@@ -2917,28 +3315,47 @@ def _run_rename_page(conn, ws: str, scope: dict, args: dict):
              "revert": revert})
 
 
-def _plan_move_one(conn, scope: dict, page_id: str, target: dict, reach, chain: set) -> tuple:
+def _moved_into(p: dict, folder_id: str) -> list:
+    """The folders a move_page leaves a page in (``folder_id`` the target,
+    "" the library root): those it stays in, then the target — first for a
+    work folder's file moved to another directory of its work folder
+    (``lead``), whose directory leads its folders."""
+    target = [folder_id] if folder_id else []
+    return target + p["stays"] if p.get("lead") else p["stays"] + target
+
+
+def _plan_move_one(conn, scope: dict, page_id: str, target: dict, reach, chain: set, tree: Tree) -> tuple:
     """One page of a move_page call: ``({page_id, title, folders, stays,
-    before, after}, None)`` — the folders it is in now (ids that still are
-    folders; ``before`` too) and the ones it stays in beside the target:
-    those outside the chat's folder, less any above the target (``chain``:
-    the target's folders from the top), which give way as ``refiled`` has
-    them — or ``(None, answer)`` for a page already there, and for a
-    sub-page, which is filed where the page it is inside is."""
+    lead, before, after}, None)`` — the folders it is in now (ids that
+    still are folders; ``before`` too) and the ones it stays in beside the
+    target: those outside the chat's folder, less any above the target
+    (``chain``: the target's folders from the top), which give way as
+    ``refiled`` has them, and a work folder's file its directory, unless
+    the target is another directory of its work folder (``lead``) — or
+    ``(None, answer)`` for a page already there, for a sub-page, which is
+    filed where the page it is inside is, and for a move the work-folder
+    rule refuses (``tree``, the folders as it reads them)."""
     loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id}, reach)
     if error:
         return None, error
-    page_id, title, _, folders = loaded
+    page_id, title, props, folders = loaded
     parent = page_parent(conn, page_id)
     if parent:
         return None, (f"error: that page is inside page {parent} and is filed where that page is — "
                       "move the outermost page instead")
     folders = existing_in(conn, FOLDERS, folders)
     stays = [f for f in folders if reach is not None and f not in reach and f not in chain]
+    work = work_folder_of(props)
+    lead = bool(work and target["id"] and tree.work_of(target["id"]) == work)
+    if work and folders and not lead:
+        stays = [folders[0], *(f for f in stays if f != folders[0])]
     if not target.get("names") and set(stays + ([target["id"]] if target["id"] else [])) == set(folders):
         return None, "ok — page is already there"
-    return {"page_id": page_id, "title": title, "folders": folders, "stays": stays, "before": folders,
-            "after": stays}, None
+    plan = {"page_id": page_id, "title": title, "folders": folders, "stays": stays, "lead": lead, "before": folders,
+            "after": stays}
+    refused = _work_refusal(lambda: work_filing.root_patch(tree, props, {FOLDERS: _moved_into(plan, target["id"])},
+                                                           None, "person"))
+    return (None, refused) if refused else (plan, None)
 
 
 def _plan_move_page(conn, scope: dict, args: dict):
@@ -2951,13 +3368,16 @@ def _plan_move_page(conn, scope: dict, args: dict):
     ids, error = _page_ids_arg(args)
     if error:
         return None, error
-    target, error = _resolve_folder(conn, scope, args.get("folder"))
+    target, error = _resolve_folder(conn, scope, args.get("folder"), write=True)
     if error:
         return None, error
-    reach = _reach(conn, scope)
+    reach, tree = _reach(conn, scope), Tree.read(conn)
+    if target.get("names") and tree.work_of(target["under"]):
+        return None, f"error: {work_filing.refusal_text('directories')}"
     # A folder to make sits below `under`: its chain is under's, plus itself (no page is in it yet).
     chain = set(folder_chain(conn, target["id"] or target.get("under") or ""))
-    return (target, _batch(ids, lambda page_id: _plan_move_one(conn, scope, page_id, target, reach, chain))), None
+    return (target, _batch(ids, lambda page_id: _plan_move_one(conn, scope, page_id, target, reach, chain,
+                                                               tree))), None
 
 
 def _move_digest(target: dict, plans: list) -> str:
@@ -3010,7 +3430,7 @@ def _run_move_page(conn, ws: str, scope: dict, args: dict):
             if tree_ops:
                 results += apply_batches(conn, [(FOLDERS, tree_ops)], actor=actor, client="ai")
             folder_id = made[tuple(target["names"])]
-        afters = [p["stays"] + ([folder_id] if folder_id else []) for p in plans]  # = refiled(kept, folder_id)
+        afters = [_moved_into(p, folder_id) for p in plans]  # = refiled(kept, folder_id)
         results += apply_batches(conn, [(p["page_id"], [{"op": "set", "id": p["page_id"], "props": {FOLDERS: after}}])
                                         for p, after in zip(plans, afters)], actor=actor, client="ai")
         return results, (paths, afters)
@@ -3069,11 +3489,13 @@ def _back_with(n: int) -> str:
     return "the page inside it comes back with it" if n == 1 else f"the {n} pages inside it come back with it"
 
 
-def _plan_restore_one(conn, trash: dict, reach, page_id: str) -> tuple:
+def _plan_restore_one(conn, trash: dict, reach, page_id: str, tree: Tree) -> tuple:
     """One page of a restore_page call: ``(entry, None)`` — its Recently
     deleted entry (``trash.list_trash``'s) with ``page_id``, ``before``
     (when it was deleted) and ``after`` (the folders it goes back to) — or
-    ``(None, answer)`` for a page it cannot restore."""
+    ``(None, answer)`` for a page it cannot restore: a work folder's file
+    comes back with its file (``tree``, the folders as the rule reads
+    them)."""
     page = trash.get(page_id)
     if page is None:
         if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'", (page_id,)).fetchone():
@@ -3081,6 +3503,10 @@ def _plan_restore_one(conn, trash: dict, reach, page_id: str) -> tuple:
         return None, "error: no such page in Recently deleted — use ids from list_deleted"
     if not _filed_in(reach, page["folders"]):
         return None, "error: that page was not filed in this chat's folder — restore it from the library root"
+    props = load_props(conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()[0])
+    refused = _work_refusal(lambda: work_filing.may_restore(tree, props, "person"))
+    if refused:
+        return None, refused
     return {**page, "page_id": page["id"], "before": page["deleted_at"], "after": page["folders"]}, None
 
 
@@ -3090,8 +3516,8 @@ def _plan_restore_page(conn, scope: dict, args: dict):
     ids, error = _page_ids_arg(args, "list_deleted")
     if error:
         return None, error
-    trash, reach = {p["id"]: p for p in list_trash(conn)}, _reach(conn, scope)
-    return _batch(ids, lambda page_id: _plan_restore_one(conn, trash, reach, page_id)), None
+    trash, reach, tree = {p["id"]: p for p in list_trash(conn)}, _reach(conn, scope), Tree.read(conn)
+    return _batch(ids, lambda page_id: _plan_restore_one(conn, trash, reach, page_id, tree)), None
 
 
 def _preview_restore_page(conn, scope: dict, args: dict):
@@ -3160,19 +3586,24 @@ def _run_restore_page(conn, ws: str, scope: dict, args: dict):
              "items": items, "revert": revert})
 
 
-def _plan_trash_one(conn, scope: dict, page_id: str, reach) -> tuple:
+def _plan_trash_one(conn, scope: dict, page_id: str, reach, tree: Tree) -> tuple:
     """One page of a delete_page call: ``({page_id, title, inside, before,
     after}, None)`` — its title and the pages inside it, which go to
     Recently deleted with it (``inside``: ids, ``page_descendants``), both
     held by the digest (``before``) — or ``(None, answer)``: a page in
-    Recently deleted already, one outside the chat's reach, no page."""
+    Recently deleted already, one outside the chat's reach, no page, a
+    work folder's file that leaves with its file (``tree``, the folders as
+    the rule reads them)."""
     loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id}, reach)
     if error:
         if error == _NO_PAGE and conn.execute(
                 "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = ?", (page_id, TRASH)).fetchone():
             return None, "ok — that page is in Recently deleted already"
         return None, error
-    page_id, title, _, _ = loaded
+    page_id, title, props, _ = loaded
+    refused = _work_refusal(lambda: work_filing.may_trash(tree, props, "person"))
+    if refused:
+        return None, refused
     inside = page_descendants(conn, page_id)
     return {"page_id": page_id, "title": title, "inside": inside, "before": [title, inside], "after": TRASH}, None
 
@@ -3185,8 +3616,8 @@ def _plan_delete_page(conn, scope: dict, args: dict):
     ids, error = _page_ids_arg(args)
     if error:
         return None, error
-    reach = _reach(conn, scope)
-    batch = _batch(ids, lambda page_id: _plan_trash_one(conn, scope, page_id, reach))
+    reach, tree = _reach(conn, scope), Tree.read(conn)
+    batch = _batch(ids, lambda page_id: _plan_trash_one(conn, scope, page_id, reach, tree))
     outer = {sub: p["page_id"] for p in batch["plans"] for sub in p["inside"]}
     for p in [p for p in batch["plans"] if p["page_id"] in outer]:
         batch["plans"].remove(p)
@@ -3395,7 +3826,8 @@ def _plan_rename_folder(conn, scope: dict, args: dict):
     """``(plan, None)``: the folder (``id``, ``path``) and its path after the
     rename (``to``); ``(None, answer)`` for a call that changes nothing. The
     server does not keep sibling names apart, so this does, the way the
-    app's rename does (``named``: exactly, else ignoring case)."""
+    app's rename does (``named``: exactly, else ignoring case). A work
+    folder's directories are named by the disk (the work-folder rule)."""
     found, error = _find_folder(conn, scope, args.get("folder"))
     if error:
         return None, error
@@ -3411,6 +3843,10 @@ def _plan_rename_folder(conn, scope: dict, args: dict):
     paths = folder_paths(conn)
     if new == paths[folder_id][-1]:
         return None, "ok — the folder already has that name"
+    refused = _work_refusal(lambda: work_filing.tree_op(Tree.read(conn), {"op": "set", "id": folder_id, "content": new},
+                                                        "person"))
+    if refused:
+        return None, refused
     parent = tree_parents(conn, FOLDERS)[folder_id]
     if named([c for c in tree_children(conn, FOLDERS).get(parent, []) if c[0] != folder_id], new):
         where = PATH_SEP.join(paths.get(parent, [])) or "the top level"
@@ -3687,7 +4123,8 @@ def _plan_delete_folder(conn, scope: dict, args: dict):
     chat's own folder (one above it is out of reach already), a folder
     outside the chat's reach, a folder with a share link anywhere in it —
     the deletion would stop the link for good, so the user stops sharing
-    first — and one too large to record for a revert."""
+    first — one too large to record for a revert, and a work folder's
+    directory or root, or a folder with one inside (the work-folder rule)."""
     from .routers.shares import shared_folders  # local: keep gamma.* free of the routers package
 
     found, error = _find_folder(conn, scope, args.get("folder"))
@@ -3699,6 +4136,9 @@ def _plan_delete_folder(conn, scope: dict, args: dict):
     if folder_id == _scope_folder(scope):
         return None, (f'error: "{path}" is this chat\'s own folder — it can be deleted only from the folder '
                       "above it or from the library chat")
+    refused = _work_refusal(lambda: work_filing.tree_op(Tree.read(conn), {"op": "delete", "id": folder_id}, "person"))
+    if refused:
+        return None, refused
     rows, carried, _ = tree_deletion(conn, FOLDERS, folder_id)
     ids, paths = {r[0] for r in rows}, folder_paths(conn)
     shared = shared_folders(scope["ws"], ids)
@@ -3856,9 +4296,14 @@ TOOLS = [
             "name": "list_pages",
             "description": (
                 "List the pages in the folder the user is viewing, one per line: id, "
-                "title, attachments (`[pdf]` when the page carries a PDF, `[]` for a "
-                "text-only page), the paths of its folders, its labels, cached paper "
-                "metadata (first author, year, venue) and last-update date. A page can "
+                "title, attachments (its document's format: `[pdf]` for a PDF, `[text:latex]` "
+                "for a text file with its language, `[binary listed]` for a file listed "
+                "without its bytes, `[]` for a page of notes alone) with the document's "
+                "`size` in bytes, the paths of its folders, its labels, cached paper "
+                "metadata (first author, year, venue) and last-update date. A work "
+                "folder's file carries `path=`, its path inside the work folder, and "
+                "read_page(path=…) reads it; at the library root a work folder's files "
+                "are listed only inside a folder that files them (`folder=`). A page can "
                 "sit inside another page as its sub-page: its line shows "
                 "`parent=<id>`, the id of the page it is inside, in place of folders "
                 "(it is filed where the outermost page around it is). Call this "
@@ -3926,31 +4371,47 @@ TOOLS = [
             "description": (
                 "Read one page this chat can reach: its title and properties, the "
                 "pages it is inside and the pages inside it (its sub-pages, with their "
-                "ids), the user's highlighted passages and notes, and — when the page "
-                "carries a PDF attachment — an excerpt of the attachment's extracted text. A page "
-                "without an attachment returns its notes (they are its content). Use it "
-                "to answer questions about specific pages or to write summaries/reports "
-                "across several. `pdf_chars` sets how much attachment text to include "
+                "ids), the user's highlighted passages and notes, its open comment "
+                "threads, and — when the page carries a document — its text: a PDF's "
+                "extracted text, or a text file's lines, each line numbered (the number "
+                "and tab before it are no text). A page without a document returns its "
+                "notes (they are its content). Use it to answer questions about specific "
+                "pages or to write summaries/reports across several. Name the page by "
+                "`page_id`, or a work folder's file by its `path` inside the work folder "
+                "('sections/method.tex'; in a work folder's chat relative to it, else "
+                "starting with the work folder's name). `pdf_chars` sets the window's "
+                "characters — for a text file, as many lines as fit from `from_line` "
                 "(default {read_default}, up to {read_cap}; 0 = notes only — ask only "
-                "for what you need). A long document doesn't fit in one call: "
+                "for what you need). A long document doesn't fit in one call. A PDF: "
                 "`pdf_page` (1-based) starts the excerpt at that PDF page — pass a "
                 "search_library hit's page number to read around the match — and "
                 "`pdf_offset` starts it that many characters further in; when more "
-                "text remains the excerpt ends by naming the next offset, so keep "
-                "calling to read as far as you need. What the conversation context "
-                "already holds is not repeated: PDF pages shown there in full are "
-                "skipped (a read of them continues from the first page not in context) "
-                "and the notes come once, with the first window of a read, or with "
-                "`notes: true`."),
+                "text remains the excerpt ends by naming the next offset. A text file: "
+                "`from_line` (1-based) starts the window at that line — pass a file "
+                "hit's l.N — and `to_line` ends it there (inclusive); when more lines "
+                "remain the window ends by naming the next from_line, and the first "
+                "window of a long file ends with an outline saying where the rest is. "
+                "Keep calling to read as far as you need. What the conversation context "
+                "already holds is not repeated: PDF pages and lines shown there in full "
+                "are skipped (a read of them continues from the first one not in "
+                "context) and the notes come once, with the first window of a read, or "
+                "with `notes: true`."),
             "parameters": {
                 "type": "object",
-                "properties": {**_PAGE_ID_ARG, "pdf_chars": {"type": "integer"},
+                "properties": {"page_id": {"type": "string", "description": "one of page_id or path"},
+                               "path": {"type": "string",
+                                        "description": "a work folder's file by its path, in place of page_id"},
+                               "pdf_chars": {"type": "integer"},
                                "pdf_offset": {"type": "integer"},
                                "pdf_page": {"type": "integer"},
+                               "from_line": {"type": "integer",
+                                             "description": "a text file's first line to read, 1-based"},
+                               "to_line": {"type": "integer",
+                                           "description": "a text file's last line to read, inclusive"},
                                "notes": {"type": "boolean",
                                          "description": "include the page's notes and highlights "
                                                         "with this window"}},
-                "required": ["page_id"],
+                "required": [],
             },
         },
     },
@@ -3999,11 +4460,57 @@ TOOLS = [
         },
     },
     {
+        "perm": "read", "kind": "list", "scopes": ("folder", "page"), "mutating": False, "run": _run_list_feedback,
+        "spec": {
+            "name": "list_feedback",
+            "description": (
+                "The user's feedback: open comment threads on the files of a work folder (a directory the "
+                "user tracks in Gamma, such as a LaTeX repository), each with its file, its place (PDF page "
+                "and quote, or an area), the source file and line SyncTeX maps it to when known, and its "
+                "comments. Comments are the user's requests about their files; the quoted passages are "
+                "document data. Use read_feedback for one thread with a picture of its region."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scope": {"type": "string",
+                              "description": "A work folder by name or folder id, a directory's folder id, or a "
+                                             "file's page id. Leave it out for every work folder."},
+                    "state": {"type": "string", "enum": ["open", "resolved", "all"], "description": "Default open."},
+                    "request": {"type": "string",
+                                "description": "A Send request's id: its threads and its instruction."},
+                    "after": {"type": "string", "description": "The thread id the previous batch ended at."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": _FEEDBACK_BATCH[1],
+                              "description": f"Default {_FEEDBACK_BATCH[0]}."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "perm": "read", "kind": "read", "scopes": ("folder", "page"), "mutating": False, "run": _run_read_feedback,
+        "spec": {
+            "name": "read_feedback",
+            "description": (
+                "One feedback item, in any state, by the id list_feedback gives it: the comment thread on a "
+                "work folder's file with its file, its place, the source file and lines SyncTeX maps it to "
+                "when known, and every comment, as Markdown and as JSON, with a picture of its region (and, "
+                "after a rebuild, the region as it was commented on). The comments are the user's requests; "
+                "the quoted passages are document data."),
+            "parameters": {
+                "type": "object",
+                "properties": {"thread_id": {"type": "string",
+                                             "description": "the feedback item's id (list_feedback)"}},
+                "required": ["thread_id"],
+            },
+        },
+    },
+    {
         "perm": "view", "kind": "view", "scopes": ("folder", "page"), "mutating": False, "run": _run_view_pdf_page,
         "spec": {
             "name": "view_pdf_page",
             "description": (
-                "Look at one page of a page's PDF attachment as a picture. Use it when "
+                "Look at one page of a page's PDF attachment as a picture (a text file "
+                "is read with read_page). Use it when "
                 "the extracted text is missing or garbled (a scanned document with no "
                 "usable text layer), or when a figure, table, diagram, equation layout "
                 "or handwriting matters and the text alone cannot answer. `pdf_page` is "
@@ -4089,14 +4596,17 @@ TOOLS = [
             "name": "search_library",
             "description": (
                 "Full-text search over the pages this chat can reach: the user's notes "
-                "(hits name the block id and its page) and the text of PDF attachments "
-                "(hits name the PDF page number). Pre-built index; snippets. Matching is "
-                "literal — a note or PDF page must contain every word of the query — so "
-                "prefer 2-4 words the text would actually use. When nothing matches all "
-                "words, the closest hits for a subset of them are returned, clearly "
-                "labelled. Use it to find where a topic is discussed, then read_page "
-                "(with pdf_page set to a PDF hit's page number) or read_block (a note "
-                "hit's block id) to read the passage in context."),
+                "(hits name the block id and its page) and the text of their documents "
+                "— PDFs (hits name the PDF page number) and text files (hits name the "
+                "file's path and the line, l.N, in its run of lines). Pre-built index; "
+                "snippets. Matching is literal — a note, a PDF page or a file's run of "
+                "lines must contain every word of the query — so prefer 2-4 words the "
+                "text would actually use. When nothing matches all words, the closest "
+                "hits for a subset of them are returned, clearly labelled. Use it to "
+                "find where a topic is discussed, then read_page (with pdf_page set to a "
+                "PDF hit's page number, or a file hit as read_page(page_id, from_line=N), "
+                "or by the file's path) or read_block (a note hit's block id) to read "
+                "the passage in context."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -4793,13 +5303,29 @@ def coverage_lines(coverage: list, can_read: bool) -> str:
     """The prompt lines naming what the conversation context already holds
     of each page's PDF (the chat's coverage report), so the model reads the
     pages that are missing instead of the ones it has: "pages 1–5 of 19 are
-    in context; read pages 5–19 with read_page(pdf_page=N)". A PDF that went
-    as a file is named as attached; read_page still reads its text."""
+    in context; read pages 5–19 with read_page(pdf_page=N)", and of each
+    text file's lines: "lines 1–400 of 2,310 … read from line 401 with
+    read_page(page_id, from_line=401)". A PDF that went as a file is named
+    as attached; read_page still reads its text."""
     lines = []
     for entry in coverage:
         if not entry.get("doc_id"):
             continue
         title, page_id = entry.get("title") or "Untitled", entry.get("page_id") or ""
+        if entry.get("format") == "text":
+            shown, total = entry.get("lines_shown") or 0, entry.get("lines") or 0
+            if not shown:
+                continue
+            if not entry.get("partial"):
+                lines.append(f'The context holds the whole text of "{title}" (page_id "{page_id}", '
+                             f"{total:,} lines); no read_page is needed for it.")
+            else:
+                lines.append(f'Lines 1–{shown:,} of {total:,} of "{title}" (page_id "{page_id}") are in the '
+                             "context above."
+                             + (f" Read from line {shown + 1:,} with read_page(page_id, from_line={shown + 1}) "
+                                "— lines already in context are never repeated; the outline says where the "
+                                "rest is." if can_read else ""))
+            continue
         shown, total = entry.get("pages_shown") or 0, entry.get("pages") or 0
         if entry.get("native"):
             lines.append(f'The PDF of "{title}" (page_id "{page_id}") is attached as a file to the '
@@ -4845,7 +5371,7 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
     references = scope.get("context_pages") or []
     if references:
         text += ("The user attached these library page IDs as context: " + json.dumps(references)
-                 + ". Read and search tools can access them, including their PDF text and notes. "
+                 + ". Read and search tools can access them, including their documents' text and notes. "
                  "Attachments outside the original page/folder scope are read-only. "
                  "Match @ mentions to their titles and Gamma page IDs in context.\n")
     text += coverage_lines(scope.get("coverage") or [], "read_page" in names)
@@ -4880,26 +5406,27 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
             "place. Use only page ids the tools returned.")
     if "read_page" in names or "search_library" in names:
         text += (
-            "\nFor any question about what a page or its PDF says — a number, a "
+            "\nFor any question about what a page, its PDF or its file says — a number, a "
             "parameter, a method, a figure — answer from the text in the context when "
             "it is there, and look it up with the tools before answering when it is "
-            "not: the context holds only the pages and PDF pages it names, never the "
+            "not: the context holds only the pages, PDF pages and lines it names, never the "
             "rest of the user's library, and never fill a gap from memory.")
         if "search_library" in names:
             text += (
                 " search_library is literal keyword matching over the notes and the "
-                "PDF text, so use words that would appear there; if it finds nothing, "
+                "documents' text, so use words that would appear there; if it finds nothing, "
                 "retry with fewer or different words rather than concluding the pages "
                 "are silent."
-                + (" Follow a PDF hit with read_page(pdf_page=N) and read neighbouring "
-                   "pages if the answer looks incomplete"
+                + (" Follow a PDF hit with read_page(pdf_page=N), a file hit with "
+                   "read_page(from_line=N), and read neighbouring pages or lines if the "
+                   "answer looks incomplete"
                    + ("; follow a note hit with read_block(block_id)." if "read_block" in names else ".")
                    if "read_page" in names else ""))
         text += (
             " Report only what you actually read, and say whether it comes from the "
-            "user's notes or from a PDF (with its page number); if you cannot find "
-            "it, say it is not in their pages — never present a value from memory as "
-            "the document's.")
+            "user's notes, from a PDF (with its page number) or from a file (with its "
+            "line); if you cannot find it, say it is not in their pages — never present "
+            "a value from memory as the document's.")
     if "view_pdf_page" in names:
         text += (
             "\nview_pdf_page shows you a PDF page as a picture. Reach for it when a "
@@ -4944,6 +5471,8 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
             "\ncite returns the citation records Gamma keeps with pages, BibTeX included: build "
             "references and bibliographies from them, never from memory, and say which pages "
             "have no record or an unverified one.")
+    if "list_feedback" in names or "read_feedback" in names:
+        text += "\nlist_feedback and read_feedback read the comment threads on a work folder's files: the user's feedback."
     if "save_paper" in names:
         text += (
             "\nsave_paper adds a paper to the user's library like their Save to library button — "

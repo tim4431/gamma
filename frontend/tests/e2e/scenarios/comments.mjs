@@ -697,14 +697,15 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const r = await tip.evaluate((el) => { const b = el.getBoundingClientRect(); return { left: b.left, top: b.top }; });
     assert(Math.hypot(r.left - release.x, r.top - release.y) < 40,
       `the popup opens by the pointer: its corner (${r.left}, ${r.top}), the release (${release.x}, ${release.y})`);
-    // the colours, the line, then the tools: Comment, Link
+    // the colours (and any highlighter of its own), their fold, a line, then the tools: Comment, Link
     const row = await tip.evaluate((el) => [...el.querySelector(".colorRow").children].map((c) => ({
-      kind: c.classList.contains("tipDivider") ? "line" : c.classList.contains("linkTipBtn") ? "tool" : "colour",
+      kind: c.classList.contains("tipDivider") ? "line" : c.classList.contains("markBtn") ? "mark"
+        : c.classList.contains("markFoldBtn") ? "fold" : c.classList.contains("linkTipBtn") ? "tool" : "colour",
       label: c.getAttribute("aria-label") || c.getAttribute("title") || "", left: c.getBoundingClientRect().left, right: c.getBoundingClientRect().right,
     })));
-    const line = row.findIndex((c) => c.kind === "line");
-    assert(line > 0 && row.slice(0, line).every((c) => c.kind === "colour") && row.slice(line + 1).every((c) => c.kind === "tool"),
-      `colours | tools: ${row.map((c) => c.kind).join(" ")}`);
+    const kinds = row.map((c) => c.kind).join(" ");
+    assert(/^(colour )+(mark )*fold line (tool ?)+$/.test(kinds), `colours | tools: ${kinds}`);
+    const line = row.findLastIndex((c) => c.kind === "line");
     assert(row[line - 1].right < row[line].left && row[line].right < row[line + 1].left, "the line sits between them");
     assertEq(row[line + 1].label, "Comment on this passage", "Comment is the first tool");
     assert(row[line + 2].label.startsWith("Link this reference"), `then Link: ${row[line + 2].label}`);
@@ -881,6 +882,85 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await popover(A).locator(".commentBody", { hasText: "Found it: the 2004 review" }).waitFor();
     await shot(A, "w8-narrow-fallback");
     await closePopover(A);
+    assertNoProblems(A);
+  });
+
+  await step("comments: a thread on handwriting from the lasso's Comment has a card level with the stroke, which a press on the stroke keeps; the Comments window names the page and a click jumps to the stroke", async () => {
+    await A.setViewportSize({ width: 1600, height: 900 });
+    const margin = A.locator('[data-page="1"] .commentMargin');
+    const zoomOut = A.getByRole("button", { name: "Zoom out", exact: true });
+    for (let i = 0; i < 12 && !(await margin.count()); i++) {
+      await zoomOut.click();
+      await sleep(200);
+    }
+    await margin.waitFor({ state: "attached", timeout: 5000 });
+    const groups = async () => (await ann.api(`/api/blocks/${reviewed}/subtree`)).block.children.filter((b) => b.properties?.ink_url);
+    await A.click("button[aria-label='Handwriting tools']");
+    await A.waitForSelector(".pdfInkBar");
+    const box = await A.locator('[data-page="1"]').boundingBox();
+    const stroke = async (from, to) => {
+      await A.mouse.move(box.x + from[0], box.y + from[1]);
+      await A.mouse.down();
+      await A.mouse.move(box.x + to[0], box.y + to[1], { steps: 12 });
+      await A.mouse.up();
+    };
+    await stroke([120, 420], [260, 440]);
+    const group = await until(async () => (await groups()).find((b) => b.properties.ink_strokes === 1) || null, { what: "the stroke's group saved" });
+    // the lasso round it, and Comment, the sixth button of the menu's first row
+    await A.keyboard.press("l");
+    await A.mouse.move(box.x + 100, box.y + 400);
+    await A.mouse.down();
+    for (const [x, y] of [[280, 400], [280, 460], [100, 460], [100, 400]]) await A.mouse.move(box.x + x, box.y + y, { steps: 4 });
+    await A.mouse.up();
+    await A.waitForSelector('[data-page="1"] .inkSelRect', { timeout: 5000 });
+    const menuRow = A.locator(".inkEditMenu .inkEditRow");
+    const labels = await menuRow.locator("button").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
+    assertEq(labels.indexOf("Comment"), labels.indexOf("Delete") - 1, `Comment stands before Delete: ${labels.join(", ")}`);
+    await menuRow.getByRole("button", { name: "Comment", exact: true }).click();
+    const fresh = margin.locator(".commentCard.active .commentNew");
+    await fresh.waitFor();
+    await focused(field(fresh), "the new comment's field takes the focus");
+    await A.keyboard.type("Is this arrow right?");
+    await A.keyboard.press("Shift+Enter");
+    const thread = await until(async () => (await ann.api(`/api/pages/${reviewed}/comments?state=all`)).threads.find((x) => x.block_id === group.id),
+      { what: "the ink thread is stored" });
+    const card = margin.locator(`.commentCard[data-card-for="${group.id}"]`);
+    await card.waitFor();
+    const look = () => A.evaluate((id) => ({
+      card: document.querySelector(`.commentCard[data-card-for="${id}"]`).getBoundingClientRect().top,
+      stroke: document.querySelector(`[data-page="1"] g[data-ink-id="${id}"]`).getBoundingClientRect().top,
+    }), group.id);
+    const at = await look();
+    assert(Math.abs(at.card - at.stroke) <= 40, `the card is level with the stroke: card ${at.card}, stroke ${at.stroke}`);
+    // a press on the stroke keeps the active card
+    const active = margin.locator(".commentCard.active");
+    await active.waitFor();
+    const strokeEl = A.locator(`[data-page="1"] g[data-ink-id="${group.id}"]`);
+    await strokeEl.dispatchEvent("pointerdown", { bubbles: true });
+    await sleep(200);
+    assertEq(await active.count(), 1, "the press on the stroke keeps the card");
+    await strokeEl.dispatchEvent("pointercancel", { bubbles: true }); // (the press the ink layer saw ends, drawing nothing)
+    await A.keyboard.press("Escape");
+    await active.waitFor({ state: "detached" });
+    await A.keyboard.press("Escape"); // the strip
+    await until(async () => !(await A.$(".pdfInkBar")), { what: "the strip closed" });
+    // the Comments window: the row names the handwriting's page, and a click makes its card the active one and flashes the stroke
+    await A.getByRole("button", { name: "View", exact: true }).click();
+    await A.locator(".menuPopover .ctxMenuItem", { hasText: "Comments" }).click();
+    await A.keyboard.press("Escape");
+    const panel = A.locator(".commentsPanel");
+    await panel.waitFor();
+    const row = panel.locator(`.commentsPanelRow[data-thread-id="${thread.id}"]`);
+    await row.waitFor();
+    assertEq((await row.locator(".commentsPanelAnchor").innerText()).trim(), "Handwriting on page 1", "what the thread is on");
+    await row.click();
+    await margin.locator(`.commentCard.active[data-card-for="${group.id}"]`).waitFor();
+    await A.locator(`[data-page="1"] .inkFlash`).waitFor({ timeout: 3000 });
+    await A.keyboard.press("Escape");
+    await A.getByRole("button", { name: "View", exact: true }).click();
+    await A.locator(".menuPopover .ctxMenuItem", { hasText: "Comments" }).click();
+    await A.keyboard.press("Escape");
+    await panel.waitFor({ state: "detached" });
     assertNoProblems(A);
   });
 

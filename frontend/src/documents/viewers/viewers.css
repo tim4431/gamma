@@ -1,0 +1,229 @@
+/* The document panes of documents/viewers/ (docs/dev/documents.md
+   "Viewers"): the code view (TextViewer.jsx), the picture, the player and
+   the file pane (FileViews.jsx). Layout and the CodeMirror chrome on the
+   tokens; the code's colours are app.css's .hljs-* palette. */
+
+/* The pane's place while its chunk loads (DocumentPane.jsx). */
+.docViewSkeleton { width: 100%; height: 100%; background: var(--bg-surface); }
+
+/* --- the code view ------------------------------------------------------ */
+.docTextView {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+.docTextBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+.docTextLang { font-weight: 600; color: var(--text-primary); }
+.docTextMeta { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.docTextBar .docTextSpacer { flex: 1; }
+.docTextNote {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border-subtle);
+}
+/* A line link's notice (TextViewer.jsx): where the mark went, when its line
+   moved or is past the end; the plain "Line N marked" is for a screen reader
+   alone (.srOnly). */
+.docMarkNotice {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--fs-xs);
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.docTextBody { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.docTextBody .textScaleBadge { padding-right: var(--space-4); }
+.docTextHost { flex: 1; min-height: 0; }
+.docTextFoot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-raised);
+}
+
+/* CodeMirror's chrome on the tokens. The editor fills its host; the text is
+   the monospace stack at the small size, scaled by Ctrl+wheel through
+   --text-scale (shared/ui/Widgets.jsx useTextScale). The scroller keeps
+   room at its foot for the × and the full-screen box over the pane. */
+.docTextView .cm-editor { height: 100%; font-size: calc(var(--fs-sm) * var(--text-scale, 1)); line-height: 1.5; color: var(--text-primary); background: var(--bg-surface); }
+.docTextView .cm-editor.cm-focused { outline: none; }
+.docTextView .cm-scroller { font-family: var(--font-mono); padding-bottom: 56px; overflow: auto; }
+.docTextView .cm-content { padding: var(--space-3) 0; caret-color: transparent; }
+.docTextView .cm-line { padding: 0 var(--space-4); }
+.docTextView .cm-gutters { background: var(--bg-surface); color: var(--text-muted); border-right: 1px solid var(--border-subtle); }
+.docTextView .cm-lineNumbers .cm-gutterElement { padding: 0 var(--space-3) 0 var(--space-4); min-width: 3ch; font-variant-numeric: tabular-nums; }
+.docTextView .cm-specialChar { color: var(--text-muted); }
+.docTextView .cm-panels { background: var(--bg-raised); color: var(--text-primary); border-color: var(--border-subtle); }
+.docTextView .cm-panels.cm-panels-top { border-bottom: 1px solid var(--border-subtle); }
+.docTextView .cm-panel.cm-search { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-2) var(--space-4); font-size: var(--fs-sm); }
+.docTextView .cm-panel.cm-search label { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--fs-xs); color: var(--text-secondary); }
+.docTextView .cm-panel.cm-search br { display: none; }
+.docTextView .cm-panel.cm-search [name="close"] { position: static; margin-left: auto; width: var(--ctl-close); height: var(--ctl-close); border-radius: var(--radius-full); background: none; border: 1px solid transparent; color: var(--text-secondary); font-size: var(--fs-md); cursor: pointer; }
+.docTextView .cm-panel.cm-search [name="close"]:hover { background: var(--bg-hover); color: var(--text-primary); }
+.docTextView .cm-textfield {
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+.docTextView .cm-textfield:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.docTextView .cm-button {
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  min-height: var(--ctl-btn-sm);
+  padding: var(--space-2) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  background-image: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.docTextView .cm-button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.docTextView .cm-button:active { background: var(--bg-active); }
+.docTextView .cm-searchMatch { background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 2px; }
+.docTextView .cm-searchMatch.cm-searchMatch-selected { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.docTextView .cm-selectionMatch { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* The lines a line link marks: the PDF citation mark's accent wash
+   (app.css .pdfCitationMark), still, with an accent bar at the gutter's
+   edge; a wrapped line is marked whole. */
+.docTextView .cm-line.docLineMark {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* --- the picture -------------------------------------------------------- */
+.imgViewer {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background: var(--bg-page);
+}
+/* The zoom layer: the scroller's first in-flow child at its content origin
+   (shared/lib/viewerZoom.js), as wide as the box it holds at least, so a
+   box narrower than the viewer centres and a wider one scrolls. */
+.imgLayer {
+  transform-origin: 0 0;
+  box-sizing: border-box;
+  min-width: 100%;
+  width: max-content;
+  padding: 16px;
+}
+/* The picture's box, scaledPx(frame) at the layer's zoom; a checkerboard of
+   the surface tones under a transparent picture, the same in every theme. */
+.imgBox {
+  --viewer-scale: inherit;
+  position: relative;
+  box-shadow: var(--shadow-2);
+  background: repeating-conic-gradient(var(--bg-raised) 0 25%, var(--bg-card) 0 50%) 0 0 / 16px 16px;
+}
+.imgBox.loading { width: 100%; min-height: 120px; box-shadow: none; background: none; }
+.imgBox.loading > img { visibility: hidden; }
+.imgBox.regionMode { touch-action: none; }
+.imgBox > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+/* A region (docs/dev/api.md "The highlight shape", image_position): drawn
+   as the PDF draws an area, an outline in its colour's line tone and a
+   wash of it; `commented` and `active` as the PDF's; dashed when drawn on
+   an earlier version of the picture; flashed once by a jump (app.css's
+   pdfHlFlash keyframes). */
+.imgRegion {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border: 2px solid var(--hl-line, var(--hl));
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--hl) 25%, transparent);
+  cursor: pointer;
+}
+.imgRegion.active { background: color-mix(in srgb, var(--hl) 50%, transparent); }
+.imgRegion.earlier { border-style: dashed; }
+.imgRegion.passive { cursor: default; }
+.imgRegion.imgRegionFlash { animation: pdfHlFlash 1s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .imgRegion.imgRegionFlash { animation: none; box-shadow: 0 0 0 3px var(--hl-line, var(--hl)); }
+}
+/* The rubber band while a region is dragged, and the drawn box while its
+   tip is open (shared/ui/regionDrag.js). */
+.regionMarquee {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1.5px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-radius: 2px;
+}
+/* The tip after a drag (the PDF's selection popup's look, app.css .plainTip). */
+.imgRegionTip { position: fixed; z-index: var(--z-tip); }
+
+/* --- the player and the file pane --------------------------------------- */
+.mediaViewer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 16px 16px 72px;
+  box-sizing: border-box;
+  background: var(--bg-page);
+}
+.mediaViewer > audio { width: min(100%, 560px); }
+.mediaViewer > video { max-width: 100%; max-height: 100%; }
+.filePane {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 16px 16px 72px;
+  box-sizing: border-box;
+  overflow: auto;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+.filePaneCard {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+  text-align: center;
+  max-width: 400px;
+}
+.filePaneCard .tileGlyph { width: 72px; height: 72px; margin-bottom: var(--space-2); }
+.filePaneName { font-weight: 600; overflow-wrap: anywhere; }
+.filePaneMeta { font-size: var(--fs-sm); color: var(--text-muted); }
+.filePaneHint { margin: var(--space-2) 0 var(--space-3); font-size: var(--fs-sm); line-height: var(--lh-ui); color: var(--text-secondary); }
+.filePaneActions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-4); }

@@ -507,9 +507,13 @@ set — some models reject it; see "Reasoning effort" below), optional `speed`
 (the provider's service tier; see "Speed" below), optional `system` override, the message's
 `images` and their budget `max_pictures` ("Pictures" below), and the context PAGES: `pages`
 (several — a report across pages) or, when empty, the one page of `page_id`
-(the open page). A page's PDF attachment is derived server-side
-(`blocks_store.page_attachment`) — `doc_id` is still accepted as a
-compatibility input: it resolves to the page carrying that PDF
+(the open page). A page's PDF attachment, or its text file, is derived
+server-side from its document (`documents.model.page_document`): the stored
+file it shows (`file_hash`), so a duplicated page reads the original's PDF; a
+text file's numbered lines, head and outline, are built from the page alone
+([ai_context.md](ai_context.md) "A text file"), so nothing in the request
+changes for one — `doc_id` is
+still accepted as a compatibility input: it resolves to the page carrying that PDF
 (`blocks_store.page_for_doc`) and does nothing when no page does; send
 `page_id`, nothing new may depend on `doc_id`. `stream: true` (the chat UI's
 mode) returns NDJSON lines of
@@ -962,6 +966,18 @@ measure. The reply keeps it as `shortened` and shows the pill
 model's window when the window fit shrank the budget (`budget` below
 `asked`, "Fitting the window" above).
 
+### The computer side
+
+On a work folder's file whose vault the account made, with an agent on
+(the desktop app's own server), the chat's header starts with a switch,
+**Gamma AI | Codex**, drawn even when Gamma AI is off or unset. The
+Codex side is not Gamma AI's: it talks to the agent on this computer, has
+its own conversations, strip, transcript and composer, and goes through
+none of this document's machinery (no provider, model, tools, Plan mode,
+approvals or chat buckets). It is [local_agents.md](local_agents.md)
+"The chat's computer side"; this side's PDF passages are the same App
+state on both.
+
 ### The composer
 
 The composer is one rounded box: the context chips on top, the message at
@@ -1031,16 +1047,17 @@ tick.
 References persist for follow-up questions and are saved as `contextPages`
 on each user message. Loading a conversation restores its last references;
 editing an earlier message reuses that message's references. Each contributes
-its title, metadata, summary, and PDF excerpt (or native PDF), with optional
-notes/highlights. The multi-paper text budget is shared by valid pages; a
+its title, metadata, summary, and PDF excerpt (or native PDF) or text
+file's numbered lines (head and outline), its open comment threads, with
+optional notes/highlights. The multi-paper text budget is shared by valid pages; a
 selection still centers the open paper's excerpt. Tool-enabled chats also
 receive document maps labelled with page IDs.
 
 Explicit references expand `read_page`, `read_block`, and `search_library`
 access within the current workspace, even outside the original page/folder.
-They never expand the editing scope. PDF search hits identify their Gamma
-page IDs so the assistant can read further or cite the matching paper,
-including when titles are identical. References are resolved server-side;
+They never expand the editing scope. PDF and file search hits identify their
+Gamma page IDs so the assistant can read further or cite the matching paper
+or line, including when titles are identical. References are resolved server-side;
 missing pages and non-page blocks are ignored.
 
 ### Pointing the chat at notes
@@ -1229,12 +1246,44 @@ bubble comes from the first; `view_pdf_page`, `view_ink`, `view_image` and
 `clip_region` chips carry `picture`, the URL the expanded chip shows; and
 the view tools' results tell the model it may embed that URL in its reply
 as a markdown image, which `ChatMarkdown` renders.
+
+**A picture page's region.** When the page's document is a picture
+([documents.md](documents.md) "The viewers"), `render_region` (the
+page-image route, the chat's region and view pictures, `picture_at`) draws
+it through `ai_pictures.image_region(ws, file, box, marks)`: `page` is 1
+(any other is "no such page"), `ink` does nothing. The function reads the
+stored file (an upload or a work folder's file read in place, at most
+`STORED_MAX_BYTES`), an SVG as MuPDF draws the box alone under its time
+limit (`pdf_image.svg_png`, [pictures.md](pictures.md#svg-pictures)), a
+raster with Pillow (the EXIF orientation applied,
+an animation's first frame, transparency on white), cuts the box (at
+least `REGION_MIN_PX`, 48, of the picture's own pixels a side) and scales
+it so the longer side is `RENDER_MAX_SIDE`, zooming at most
+`IMAGE_MAX_ZOOM` (4). Each mark `(box, color, strong)` is drawn as the
+viewer draws a region: an outline in the colour's line tone
+(`colors.line_color`), 2 px, 3 for a strong one, over a wash of the colour
+at a quarter of its alpha. The answer is `render_page`'s shape, `(bytes,
+"image/jpeg", width, height)`; None for a file not here, one that does not
+decode, a decompression bomb (`Image.MAX_IMAGE_PIXELS`) or one that changed
+under the read. The feedback reader's pictures of a region and of the
+whole picture are drawn by it ([feedback.md](feedback.md) "The pictures");
+the labels say "the picture" where a PDF's say "PDF page N".
 `GET /api/ai/selection-crop/{doc_id}` draws the selection pill's picture in
 saved replies. `ai_pictures.picture_at` gives the bytes of any of these
 pictures from the URL the chat shows it by: a stored upload as stored, a
 data URL decoded, a drawn one drawn as its route draws it. That is how the
 conversation export packs them
 ([chat_history.md](chat_history.md#exporting-a-conversation)).
+
+**Highlights drawn.** None of the chat's pictures draws Gamma's highlights.
+A feedback thread's region picture does ([feedback.md](feedback.md) "The
+pictures", `feedback/pictures.py`): the same page as
+`ink_view.page_with_handwriting` makes it, its `marks` being the page's
+highlights measured on the file drawn, which `pdf_export.page_with_ink(highlights=…)`
+adds as the export writes them (`_mark_annotation`) and MuPDF draws as the
+viewer does (the wash multiplied onto the text, an area's border and faint
+fill). It is rendered at `RENDER_MAX_SIDE` like the chat's regions, and
+kept in data.db by its content key, never as an upload.
 
 **The store and the upload GC.** A chat's pictures are stored uploads like a
 note's, and the saved conversation points at them, so `upload_gc.referenced`
@@ -1247,7 +1296,8 @@ stores a region or a handwriting view for the notes to embed
 
 Tests: `backend/tests/test_ai_pictures.py` (normalize, the routes, the
 request's pictures and budget, the earlier turns', the label lines, the
-view/clip/delete tools, the GC), `frontend/tests/chatPictures.test.mjs`,
+view/clip/delete tools, the GC), `backend/tests/test_ai_image_region.py`
+(a picture page's region and the route), `frontend/tests/chatPictures.test.mjs`,
 and the e2e step "a picked picture is stored and attached by URL".
 
 ## The library agent
@@ -1260,7 +1310,7 @@ What it can reach depends on where the chat is opened — every chat declares an
 - `"folder"` — the home/folder chat (`folder` = current path, `""` = root):
   tools reach the pages in that folder.
 - `"page"` — the page chat (`page_id` = the focused page, with or without a
-  PDF): tools reach only that page — the reading tools plus the note-block
+  document, a PDF or a text file): tools reach only that page — the reading tools plus the note-block
   editors; the page-level organizers (list/rename/move, folders and labels)
   don't exist there. The reading tools reach the pages inside it too, as
   attachments widen reading and never editing ([ai_tools.md](ai_tools.md)).
@@ -1274,7 +1324,11 @@ are always appended mechanically to the base prompt, so a custom prompt can
 change the agent's style but not widen its reach. Everything off (or no/invalid
 scope) = plain chat. Among those mechanical lines: with a reading tool armed,
 the model is asked to link the pages it refers to as `[title](/?page=<id>)`,
-which the chat opens in place (details in [ai_tools.md](ai_tools.md)).
+which the chat opens in place (details in [ai_tools.md](ai_tools.md)). With a
+document in context the system prompt also carries the citation rule
+(`ai_tools.CITATION_PROMPT`): a PDF passage as `[p. N](/?page=…&pdf_page=N&quote=…)`,
+a text file's line as `[<file name>:N](/?page=…&line=N&quote=<the line's
+verbatim text>)` ([pdf_citations.md](pdf_citations.md) "Line links").
 
 The changing tools (rename, move, folders and labels, the note editors) are
 armed only when `auth.can_write` lets the request write: an editor or
@@ -1348,7 +1402,7 @@ is opened in: `AgentToolPicker` in `settings/AssistantTools.jsx`, grouped
 rows with the same state menus and presets. It is bound to the same map, so
 a change in either place is the same change.
 `ChatDock` derives its kind from its props (`organizeFolder` set → folder;
-else `pageAttach` → pdf; else notes) and sends that kind's map as the
+else a PDF document, `isPdf(doc)` → pdf; else notes) and sends that kind's map as the
 request's `permissions`.
 
 One permission per capability: List pages (`list_pages`, the folder tree
@@ -1356,7 +1410,7 @@ One permission per capability: List pages (`list_pages`, the folder tree
 `read_chats`, and the citation records `cite`), Read note blocks, View pages
 and handwriting (`view` → `view_pdf_page`, a rendered page picture for a
 scan or a figure, `view_ink`, the user's handwriting, and `view_image`, the
-pictures a note embeds), Search library (`search_library` — notes and PDF text; the stored key is
+pictures a note embeds), Search library (`search_library` — notes, PDF text and text files; the stored key is
 still `search`), Search papers online (`web_search` → `search_papers`,
 `related_papers` and, when the account has a web engine for this chat,
 `search_web`), Fetch documents (`web_read` → `fetch_paper`; the web tools are
@@ -1503,7 +1557,9 @@ A call of a tool whose permission is Ask waits for the user
    It shows the change as `diff`, a list of `[kind, text]` pairs: `ctx` kept,
    `del` removed, `ins` added (`ai_tools.text_diff`). Words are compared one
    by one, and CJK text character by character; long kept stretches are cut
-   around "…". A page move has `from` / `to` instead. A created or moved
+   around "…". A note edit's preview also has `text`, the block's whole
+   new text, which its note draws against what it says (below). A page
+   move has `from` / `to` instead. A created or moved
    block has its `parent`, and `src_title` when it leaves its page. A
    saved paper has the folder it goes `to` and its source as the `diff`,
    plus `existed` and `page_id` when the library holds it already. A
@@ -1573,6 +1629,17 @@ allow (Enter) and Back (Escape). The buttons never take the focus
 themselves, so typing in the composer cannot answer a card. A deletion's
 card (`isDeletion`: a `delete_*` tool) has the same four, its Allow once
 `primary danger`.
+
+A note edit's card (`edit_block` with the preview's `text`) is drawn in
+its note too, wherever the note shows, as tracked changes
+([Watching the agent work](#watching-the-agent-work-live-footprint)): the
+text the card would write against what the note says now, with the card's
+four answers on the bar under it (Don't allow without the card's line for
+what to do instead). An answer there is the card's own, through the latest
+render's `decideApproval` (so Allow in this chat files its grant under the
+conversation as it is now), which the card then shows as answered
+(`answered`); an answer on the card, the call's action or the end of the
+reply takes the drawing away (`noteReview.settle`).
 
 - **Allow in this chat** is kept per account and conversation in this
   browser: localStorage `gamma-ai-chat-grants`, keyed by the conversation's
@@ -1912,11 +1979,52 @@ notes panel shows where the agent is, not just what it did.
   named sibling. When the action lands, the reload swaps in the real block.
   Only armed edit/create tools are previewed; other tools' arguments are
   never streamed. Non-stream callers never see progress lines.
+- A note's edits are drawn in the note as tracked changes, as in Overleaf's
+  review, by the permission they ran under, never asking twice. An edit set
+  to Ask is drawn before it is written, with its card's answers (above);
+  once allowed there it is not drawn again (its action carries `approval`).
+  An edit or a new block that ran without asking (Allow in Settings, or a
+  grant of the chat or of every chat) is drawn after it landed, as a record
+  that waits on nothing. The dock hands each action to `chat/noteReview.js`
+  (`landed`, with its conversation, reply and index), which keeps the
+  block's text before and after it (the action's `revert`); several edits
+  of one block in a row are one change, from the text before the first to
+  the text after the last. The note draws it while it still says what the
+  AI wrote: an open editor, a word typed since or a row that cannot be
+  edited shows the text as it is.
+  `editor/mdDiff.js` merges the two texts into one Markdown source with
+  marks around what changed. It compares lines first, then the words of two
+  lines of the same shape, a code fence, a formula across lines and a table
+  being one unit and a formula, code span, link, picture, ref, mention or
+  HTML tag one word, so each construct renders whole and the new text's
+  structure stands. A word that went goes in plain, its emphasis marks and
+  tags dropped and its punctuation escaped. `BlockMarkdown`'s `diff` adds
+  `rehypeDiffMarks` between the sanitizer and KaTeX, which turns the marks
+  into `<del class="mdDiff">` / `<ins class="mdDiff">` (the approval card's
+  colours), and a code block or display formula into a `.mdDiffBlock` with
+  a bar at its side; a new block's text renders as it is, tinted whole. The
+  bar under a record (`editor/NoteReviewBar.jsx`) has **Revert** (each step
+  back, newest first, through the dock's `sendRevert`, marked in its
+  conversation as a row's revert is; it waits while that reply streams, as
+  the rows do), **Hide** (no longer drawn; the note keeps the text) and,
+  with more than one change on the page, **Hide all**. Nothing there reads
+  as an approval: the write is done. A revert that stops says why, with
+  **Revert anyway** where it can be forced and no diff to show; it sends
+  the user to the chat's row for one whose row would show what forcing
+  writes. A revert or redo from a row stops the drawing. A note change's
+  link in the reply's list draws it again as it opens the note (`show`,
+  with the steps `changeSteps` finds in the saved conversation: the action
+  and the edits of its block chained to it), hidden, allowed on its card or
+  from before a reload. A press on the drawn text opens the editor where
+  it was pressed.
 
-Everything is display-only: marks and previews live in App state
+The marks, previews and the scan are display-only: they live in App state
 (`aiMarks`, `aiLive`, `aiScan` → `rowProps` → `BlockRow`/`BlockTree`),
 clear on page switch and when the reply ends, and never enter the block
-tree, the undo history or the op queue.
+tree, the undo history or the op queue. The tracked changes are held in
+this tab too, across page switches (`chat/noteReview.js`, the last 200
+blocks' changes), never saved: a reload draws none until a row's link
+asks, and the reply's rows keep the undo.
 
 ### Replay across turns
 
@@ -1925,7 +2033,8 @@ replays each saved reply's recorded actions as assistant `tool_calls` +
 `role:"tool"` turns, so the model keeps prior tool results across turns
 instead of re-listing. Every replayed result is prefixed with a note
 (`_REPLAYED_NOTE`): it is from an earlier turn, the notes may have changed,
-call again before quoting or editing. The base prompt says the same, so a
+call again before quoting or editing (a work folder's text file, too, may
+have changed under a replayed read: a rebuild, an edit). The base prompt says the same, so a
 request to read, show or check something is answered from a fresh call, not
 last turn's outline (the agent's own edits change what `read_block`
 returns). A change the user reverted from its row (`reverted` on the

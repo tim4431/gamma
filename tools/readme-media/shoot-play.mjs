@@ -209,7 +209,7 @@ async function seed(account) {
   ] } });
   // Every PDF indexed, for the search.
   for (let i = 0; ; i++) {
-    const s = await account.api(`/api/pdf-search?q=${encodeURIComponent(SEARCH)}&limit=1`);
+    const s = await account.api('/api/document-search', { method: 'POST', body: { q: SEARCH, limit: 1 } });
     if (!s.indexing) break;
     if (i === 300) throw new Error('The PDFs were never indexed');
     await wait(2000);

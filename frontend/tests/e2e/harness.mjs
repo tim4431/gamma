@@ -103,7 +103,12 @@ export class Server {
   // of them (a second each) would block the event loop past the backend's
   // 5 s keep-alive, and the next request would go down a socket it had closed.
   async manage(...args) {
-    const { stdout } = await execFileAsync(PYTHON, ["manage.py", ...args], {
+    return this.python("manage.py", ...args);
+  }
+  // A script of backend/ on this server's data dir (a seed such as
+  // tests/seed_work_folder.py, which imports gamma as manage.py does); its output.
+  async python(...args) {
+    const { stdout } = await execFileAsync(PYTHON, args, {
       cwd: BACKEND, env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, TMPDIR: this.tmpDir, ...this.env }, encoding: "utf8",
     });
     return stdout;
@@ -435,6 +440,23 @@ export async function arrived(locator) {
     for (let n = el.parentElement; n; n = n.parentElement) all.push(...n.getAnimations());
     return Promise.all(all.filter(finite).map((a) => a.finished.catch(() => {})));
   });
+}
+
+// A press of the mouse's back button over the middle of `over` (a
+// locator), else of the page, which Playwright's mouse has no name for:
+// through the DevTools protocol, as the hardware's reaches Chromium. Unless
+// the page takes it, its release goes back in the window's history.
+export async function pressMouseBack(page, over = null) {
+  const { width, height } = page.viewportSize();
+  const box = over ? await over.boundingBox() : { x: 0, y: 0, width, height };
+  const cdp = await page.context().newCDPSession(page);
+  const at = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2), button: "back", clickCount: 1 };
+  try {
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", buttons: 8, ...at });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", buttons: 0, ...at });
+  } finally {
+    await cdp.detach().catch(() => {});
+  }
 }
 
 // A selector's matches without the copies of closed surfaces on their way

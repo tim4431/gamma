@@ -1,11 +1,14 @@
 """Comments (gamma/comments.py, routers/comments.py, docs/dev/comments.md):
 threads on a note, a page and a highlight, replies, edits, deletes and
 tombstones, resolve and reopen; who may write them (the permission table
-row by row); a comment following its block — hidden in Recently deleted,
-orphaned by a delete and brought back by an undo, swept seven days on,
-moved with its block, purged with its page, through the subtree replace,
-the backup merge and the Gamma export; the room's nudge; a client id
-repeated. The suite's drift checks run after every test as always: a
+row by row, a token's name and its own comments, a feedback token's
+replies and resolves on a work folder's files); a comment following its
+block — hidden in Recently deleted, orphaned by a delete and brought back
+by an undo, swept seven days on, moved with its block, purged with its
+page, through the subtree replace, the backup merge and the Gamma export;
+the room's nudge and the write listeners; a client id repeated; the
+anchor a thread keeps, the Send waiting on it, a work folder's threads and
+its open count. The suite's drift checks run after every test as always: a
 comment write touches no page."""
 
 import io
@@ -16,10 +19,15 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import json
+from types import SimpleNamespace
+
 import pytest
 
-from conftest import account_of, drop_user, login, make_page, make_user, recv, recv_hello, workspace_of
+from conftest import (account_of, drop_user, login, make_folder, make_page, make_user, mark_work_folder, recv, recv_hello,
+                      thread_on, work_props, workspace_of)
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from gamma import comments
 from gamma.blocks_store import create_page
@@ -111,6 +119,38 @@ def _share(owner, page_id, **settings):
 def _changes(ws):
     with connect_pages_db(ws) as conn:
         return conn.execute("SELECT MAX(seq) FROM page_changes").fetchone()[0]
+
+
+def _bearer(user, ws, scope, name="Script"):
+    """A client holding a new token of ``user``'s for ``ws``, and the
+    token's id."""
+    from gamma.app import app
+    from gamma.integrations import create_token
+
+    item = create_token(account_of(user), ws, name, 1, scope=scope)
+    c = TestClient(app)
+    c.headers["Authorization"] = f"Bearer {item['token']}"
+    return c, item["id"]
+
+
+def _stored(ws, comment_id):
+    with connect_pages_db(ws) as conn:
+        return conn.execute("SELECT agent, agent_id, resolved_agent, anchor FROM comments WHERE id = ?",
+                            (comment_id,)).fetchone()
+
+
+@pytest.fixture(scope="module")
+def work(own):
+    """A work folder of cm_own's with one file, ``main.pdf``, made as its
+    vault makes it (no one follows it), and a library page beside it."""
+    from gamma.auth import DISK_CLIENT
+
+    w = make_folder(own, "cm-work")
+    mark_work_folder(own, w)
+    with connect_pages_db(workspace_of("cm_own")) as conn:
+        file = create_page(conn, "main.pdf", work_props(w, "main.pdf"), actor=account_of("cm_own"),
+                           client=DISK_CLIENT)["id"]
+    return SimpleNamespace(w=w, file=file, paper=make_page(own, "A library paper")["id"])
 
 
 # --- threads ------------------------------------------------------------------------
@@ -262,8 +302,9 @@ def test_after_write_hears_every_kind(own, monkeypatch):
     _ok(own.post(f"/api/comments/{root}/resolve", json={"resolved": False}), 200)
     _ok(own.delete(f"/api/comments/{reply}"), 200)
     me = account_of("cm_own")
-    # ``via``: the share the writer came through, "" for a member
-    base = {"actor": me, "page_id": page["id"], "block_id": note["id"], "thread_id": root, "via": ""}
+    # ``via``: the share the writer came through, "" for a member; no token wrote them
+    base = {"actor": me, "page_id": page["id"], "block_id": note["id"], "thread_id": root, "via": "", "agent": "",
+            "agent_id": ""}
     assert heard == [
         (ws, {"kind": "create", **base, "comment_id": root, "body": "first"}),
         (ws, {"kind": "reply", **base, "comment_id": reply, "body": "second"}),
@@ -278,6 +319,43 @@ def test_after_write_hears_every_kind(own, monkeypatch):
     [(_ws, event)] = [h for h in heard if h[0] == ws]
     assert root in event.pop("comment_ids") and event == {"kind": "sweep", "actor": "", "page_id": "", "block_id": "",
                                                           "thread_id": "", "comment_id": ""}
+
+
+def test_the_write_listeners_hear_every_write_and_one_that_fails_stops_nothing(own, monkeypatch):
+    from gamma import inbox
+
+    heard, told = [], []
+
+    def broken(ws, event):
+        raise RuntimeError("a listener that fails")
+
+    monkeypatch.setattr(comments, "write_listeners", [broken, lambda ws, event: heard.append((ws, event["kind"]))])
+    monkeypatch.setattr(inbox, "from_comment", lambda ws, event: told.append(event["kind"]))
+    ws = workspace_of("cm_own")
+    page = make_page(own, "Listened page")
+    root = _ok(_post(own, page["id"], page["id"], "first"))["thread"]["id"]
+    reply = _ok(_post(own, page["id"], page["id"], "second", thread_id=root))["comment"]["id"]
+    _ok(own.patch(f"/api/comments/{reply}", json={"body": "second, edited"}), 200)
+    _ok(own.post(f"/api/comments/{root}/resolve", json={"resolved": True}), 200)
+    _ok(own.post(f"/api/comments/{root}/resolve", json={"resolved": False}), 200)
+    _ok(own.delete(f"/api/comments/{reply}"), 200)
+    kinds = ["create", "reply", "edit", "resolve", "reopen", "delete"]
+    assert heard == [(ws, k) for k in kinds] and told == kinds  # the Inbox first, each listener after it
+    comments.after_write(ws, None)  # nothing changed: no one hears
+    assert len(heard) == len(kinds)
+
+
+def test_written_publishes_to_the_room_then_follows_the_write(own, monkeypatch):
+    from gamma import collab
+
+    published, followed = [], []
+    monkeypatch.setattr(collab, "publish", lambda ws, page, msg, exclude=None: published.append((page, msg, exclude)))
+    monkeypatch.setattr(comments, "after_write", lambda ws, event: followed.append(event))
+    comments.written("ws1", "p1", "b1", "t1", {"kind": "reply", "actor": "u1"}, client="tabA", via="shr")
+    assert published == [("p1", {"t": "comments", "block_id": "b1", "thread_id": "t1"}, "tabA")]
+    assert followed == [{"kind": "reply", "actor": "u1", "via": "shr"}]
+    comments.written("ws1", "p1", "", "", None)
+    assert published[-1] == ("p1", {"t": "comments", "block_id": "", "thread_id": ""}, "") and followed[-1] is None
 
 
 # --- who may comment ------------------------------------------------------------------
@@ -354,8 +432,6 @@ def test_an_edit_share_and_a_guest_through_a_share(own, out, guest):
 
 
 def test_guests_and_tokens(own, guest):
-    from fastapi.testclient import TestClient
-
     from gamma.app import app
     from gamma.integrations import create_token
 
@@ -372,29 +448,92 @@ def test_guests_and_tokens(own, guest):
         assert _post(bearer, page["id"], page["id"], f"by a {scope} token").status_code == status
         assert bearer.post(f"/api/comments/{root}/resolve", json={"resolved": True}).status_code == (
             403 if scope == "read" else 200)
-        assert bearer.patch(f"/api/comments/{root}", json={"body": "x"}).status_code == (
-            403 if scope == "read" else 200)
+        # the session's comment: read-only to the one, another writer's to the other
+        assert bearer.patch(f"/api/comments/{root}", json={"body": "x"}).status_code == 403
 
 
 def test_a_write_token_edits_and_deletes_its_own_only(own, edi, lab):
-    """The owner's write token: its own comments, never another's, though
-    the owner signed in deletes any."""
-    from fastapi.testclient import TestClient
-
-    from gamma.app import app
-    from gamma.integrations import create_token
-
+    """A token edits and deletes the comments it wrote, never another's,
+    its account's typed ones or another token's of the same account
+    included; its account signed in cannot edit what the token wrote, but
+    deletes it, and the owner signed in deletes any."""
     page = _block(own, "root", "Token rights page", ws=lab)
     theirs = _ok(_post(edi, page["id"], page["id"], "the editor's", ws=lab))["thread"]["id"]
-    bearer = TestClient(app)
-    bearer.headers["Authorization"] = f"Bearer {create_token(account_of('cm_own'), lab, 'w', 1, scope='write')['token']}"
+    typed = _ok(_post(own, page["id"], page["id"], "typed by its account", ws=lab))["thread"]["id"]
+    bearer, _ = _bearer("cm_own", lab, "write", "w")
+    other, _ = _bearer("cm_own", lab, "write", "another")
     mine = _ok(_post(bearer, page["id"], page["id"], "the token's", ws=lab))["comment"]
-    assert mine["author"] == "cm_own"
-    assert bearer.patch(f"/api/comments/{theirs}", json={"body": "x"}, headers=_in(lab)).status_code == 403
-    assert bearer.delete(f"/api/comments/{theirs}", headers=_in(lab)).status_code == 403
+    second = _ok(_post(bearer, page["id"], page["id"], "the token's too", ws=lab))["comment"]
+    assert mine["author"] == "cm_own" and mine["agent"] == "w"
+    for comment in (theirs, typed):
+        assert bearer.patch(f"/api/comments/{comment}", json={"body": "x"}, headers=_in(lab)).status_code == 403
+        assert bearer.delete(f"/api/comments/{comment}", headers=_in(lab)).status_code == 403
+    assert other.patch(f"/api/comments/{mine['id']}", json={"body": "x"}, headers=_in(lab)).status_code == 403
+    assert other.delete(f"/api/comments/{mine['id']}", headers=_in(lab)).status_code == 403
+    assert own.patch(f"/api/comments/{mine['id']}", json={"body": "x"}, headers=_in(lab)).status_code == 403
     assert _ok(bearer.patch(f"/api/comments/{mine['id']}", json={"body": "edited"}, headers=_in(lab)), 200)
     assert _ok(bearer.delete(f"/api/comments/{mine['id']}", headers=_in(lab)), 200)
+    assert _ok(own.delete(f"/api/comments/{second['id']}", headers=_in(lab)), 200)  # its account's session deletes it
     assert _ok(own.delete(f"/api/comments/{theirs}", headers=_in(lab)), 200)
+
+
+def test_a_token_signs_what_it_writes(own):
+    ws = workspace_of("cm_own")
+    page = make_page(own, "Signed page")
+    note = _block(own, page["id"], "a note")
+    first = _ok(_post(own, page["id"], note["id"], "typed"))
+    root = first["thread"]["id"]
+    assert first["comment"]["agent"] == "" and _stored(ws, root)[:3] == ("", "", "")
+    bearer, token_id = _bearer("cm_own", ws, "write", "Claude Code (OAuth)")
+    reply = _ok(_post(bearer, page["id"], note["id"], "done", thread_id=root))
+    assert reply["comment"]["author"] == "cm_own" and reply["comment"]["agent"] == "Claude Code"
+    assert _stored(ws, reply["comment"]["id"]) == ("Claude Code", token_id, "", None)  # a reply keeps no anchor
+    resolved = _ok(bearer.post(f"/api/comments/{root}/resolve", json={"resolved": True}), 200)["thread"]
+    assert (resolved["resolved_by"], resolved["resolved_agent"]) == ("cm_own", "Claude Code")
+    assert _stored(ws, root)[2] == "Claude Code"
+    reopened = _ok(own.post(f"/api/comments/{root}/resolve", json={"resolved": False}), 200)["thread"]
+    assert (reopened["resolved_by"], reopened["resolved_agent"]) == (None, "") and _stored(ws, root)[2] == ""
+    # the root keeps where it was opened; the thread says on which file, and no Send waits on it
+    anchor = json.loads(_stored(ws, root)[3])
+    assert (anchor["kind"], anchor["block"], anchor["doc_id"], anchor["page"]) == ("note", note["id"], "", None)
+    [thread] = _threads(own, page["id"])
+    assert (thread["made_on"], thread["sent"], thread["resolved_agent"]) == ("", None, "")
+    assert [c["agent"] for c in thread["comments"]] == ["", "Claude Code"]
+
+
+def test_a_retry_is_the_same_writers(own):
+    """A comment id a session's comment holds, retried by a token of the
+    same account, is taken (and the other way round)."""
+    ws = workspace_of("cm_own")
+    page = make_page(own, "Writer retry page")
+    bearer, _ = _bearer("cm_own", ws, "write")
+    _ok(_post(own, page["id"], page["id"], "typed", id="cmWriter1"))
+    assert _post(bearer, page["id"], page["id"], "typed", id="cmWriter1").status_code == 409
+    _ok(_post(bearer, page["id"], page["id"], "scripted", id="cmWriter2"))
+    assert _ok(_post(bearer, page["id"], page["id"], "scripted", id="cmWriter2"))["comment"]["id"] == "cmWriter2"
+    assert _post(own, page["id"], page["id"], "scripted", id="cmWriter2").status_code == 409
+
+
+def test_a_feedback_token_replies_and_resolves_on_a_work_folders_files_only(own, work):
+    ws = workspace_of("cm_own")
+    root = thread_on(own, work.file, work.file, "use the viridis palette")["id"]
+    elsewhere = thread_on(own, work.paper, work.paper, "a library page's thread")["id"]
+    bearer, token_id = _bearer("cm_own", ws, "feedback", "Claude Code")
+    assert [t["id"] for t in _threads(bearer, work.file)] == [root]
+    reply = _ok(_post(bearer, work.file, work.file, "Switched to viridis (plot.py:12).", thread_id=root))["comment"]
+    assert _stored(ws, reply["id"])[:2] == ("Claude Code", token_id)
+    assert _post(bearer, work.file, work.file, "a new thread").status_code == 403
+    assert bearer.patch(f"/api/comments/{reply['id']}", json={"body": "x"}).status_code == 403
+    assert bearer.delete(f"/api/comments/{reply['id']}").status_code == 403
+    assert _ok(bearer.post(f"/api/comments/{root}/resolve", json={"resolved": True}), 200)["thread"]["resolved_agent"] \
+        == "Claude Code"
+    assert bearer.post(f"/api/comments/{root}/resolve", json={"resolved": False}).status_code == 403
+    r = _post(bearer, work.paper, work.paper, "not feedback", thread_id=elsewhere)
+    assert r.status_code == 403 and "work folder" in r.text
+    assert bearer.post(f"/api/comments/{elsewhere}/resolve", json={"resolved": True}).status_code == 403
+    # writes elsewhere stay refused: it is a read token but for these
+    assert bearer.post(f"/api/pages/{work.file}/ops", json={"client": "t", "ops": [
+        {"op": "set", "id": work.file, "content": "renamed"}]}).status_code == 403
 
 
 # --- following the block --------------------------------------------------------------
@@ -535,6 +674,111 @@ def test_a_share_editor_never_brings_back_another_pages_hidden_threads(own, out)
     _ops(own, shared, [{"op": "delete", "id": "cmPriv1"}])
     _ops(own, elsewhere, [{"op": "insert", "id": "cmPriv1", "parent": elsewhere, "content": "pasted"}])
     assert {t["id"] for t in _threads(own, elsewhere)} == {secret, mine}
+
+
+# --- what the feedback reader reads -------------------------------------------------------
+
+def test_a_work_folders_threads_leave_out_trashed_files_and_orphans(own, work):
+    from gamma.auth import DISK_CLIENT
+
+    ws = workspace_of("cm_own")
+    with connect_pages_db(ws) as conn:
+        other = create_page(conn, "fig.pdf", work_props(work.w, "fig.pdf"), actor=account_of("cm_own"),
+                            client=DISK_CLIENT)["id"]
+        gone = create_page(conn, "old.pdf", work_props(work.w, "old.pdf"), actor=account_of("cm_own"),
+                           client=DISK_CLIENT)["id"]
+    on_file = thread_on(own, other, other, "on the figure")["id"]
+    note = _block(own, other, "a note on it")
+    orphaned = thread_on(own, other, note["id"], "on its note")["id"]
+    trashed = thread_on(own, gone, gone, "on a file that goes")["id"]
+    library = thread_on(own, work.paper, work.paper, "on a library page")["id"]
+    _ops(own, other, [{"op": "delete", "id": note["id"]}])
+    assert own.delete(f"/api/blocks/{gone}").status_code == 200
+    with connect_pages_db(ws) as conn:
+        found = {t["id"]: t for t in comments.threads_in_work_folder(conn, work.w)}
+        assert on_file in found and not {orphaned, trashed, library} & set(found)
+        assert found[on_file]["page_id"] == other and found[on_file]["comments"][0]["body"] == "on the figure"
+        _ok(own.post(f"/api/comments/{on_file}/resolve", json={"resolved": True}), 200)
+        assert on_file not in {t["id"] for t in comments.threads_in_work_folder(conn, work.w, state="open")}
+        assert on_file in {t["id"] for t in comments.threads_in_work_folder(conn, work.w, state="resolved")}
+        with pytest.raises(HTTPException):
+            comments.threads_in_work_folder(conn, work.w, state="later")
+
+
+def test_the_send_waiting_on_a_thread(own):
+    ws = workspace_of("cm_own")
+    page = make_page(own, "Sent page")
+    first = thread_on(own, page["id"], page["id"], "one")["id"]
+    second = thread_on(own, page["id"], page["id"], "two")["id"]
+    with connect_pages_db(ws) as conn:
+        conn.executemany("INSERT INTO feedback_requests (id, rev, work_folder, scope, scope_kind, by, at, state, "
+                         "state_at, detail, state_by) VALUES (?, ?, 'W', ?, 'file', 'u', ?, ?, ?, ?, ?)",
+                         [("cmReq1", 1, page["id"], "t1", "failed", "t1", "no build", "u"),
+                          ("cmReq2", 2, page["id"], "t2", "running", "t2", "compiling", "Codex"),
+                          ("cmReq3", 3, page["id"], "t3", "done", "t3", "", "Codex")])
+        conn.executemany("INSERT INTO feedback_request_threads (request_id, thread_id, answered_at) VALUES (?, ?, ?)",
+                         [("cmReq1", first, None), ("cmReq2", first, None), ("cmReq1", second, None),
+                          ("cmReq2", second, "t4"), ("cmReq3", second, None)])
+        conn.commit()
+        assert comments._sent(conn, [first, second, "none"]) == {
+            first: {"request_id": "cmReq2", "state": "running", "at": "t2", "detail": "compiling", "state_by": "Codex"},
+            second: {"request_id": "cmReq1", "state": "failed", "at": "t1", "detail": "no build", "state_by": "u"}}
+        assert comments._sent(conn, []) == {}
+    sent = {t["id"]: t["sent"] for t in _threads(own, page["id"])}
+    assert sent[first]["request_id"] == "cmReq2" and sent[second]["state"] == "failed"
+    assert sent[first]["state_by"] == "Codex"
+
+
+def test_a_local_agents_comment_says_so(own):
+    """A comment whose ``agent_id`` is ``local:…`` (an agent on this
+    computer, gamma/local_agents) carries ``agent_kind`` local; a token's
+    and a person's have no such key."""
+    ws = workspace_of("cm_own")
+    page = make_page(own, "Local agent page")
+    thread = thread_on(own, page["id"], page["id"], "fix it")["id"]
+    with connect_pages_db(ws) as conn:
+        for agent, agent_id in (("Codex", "local:codex"), ("Script", "tok1")):
+            comments.create(conn, page["id"], block_id=page["id"], body=f"{agent} here", author=account_of("cm_own"),
+                            author_name="cm_own", thread_id=thread, agent=agent, agent_id=agent_id)
+        got = comments.thread_of(conn, thread)["comments"]
+    assert [(c["agent"], c.get("agent_kind")) for c in got] == [("", None), ("Codex", "local"), ("Script", None)]
+    assert "agent_kind" not in got[0] and "agent_kind" not in got[2]
+
+
+def test_the_open_count_is_the_windows(own):
+    """A root neither resolved nor orphaned is open, a tombstone with
+    replies included: what the Comments window lists as open."""
+    ws = workspace_of("cm_own")
+    page = make_page(own, "Counted page")
+    note = _block(own, page["id"], "note")
+    tomb = thread_on(own, page["id"], page["id"], "deleted, its reply stays")["id"]
+    _ok(_post(own, page["id"], page["id"], "the reply", thread_id=tomb))
+    _ok(own.delete(f"/api/comments/{tomb}"), 200)
+    done = thread_on(own, page["id"], page["id"], "resolved")["id"]
+    _ok(own.post(f"/api/comments/{done}/resolve", json={"resolved": True}), 200)
+    thread_on(own, page["id"], note["id"], "orphaned")
+    _ops(own, page["id"], [{"op": "delete", "id": note["id"]}])
+    with connect_pages_db(ws) as conn:
+        assert comments.open_counts(conn, [page["id"]]) == {page["id"]: 1}
+        assert comments.has_open_thread(conn, page["id"]) is True
+    assert [t["id"] for t in _threads(own, page["id"], state="open")] == [tomb]
+    _ok(own.post(f"/api/comments/{tomb}/resolve", json={"resolved": True}), 200)
+    with connect_pages_db(ws) as conn:
+        assert comments.open_counts(conn, [page["id"]]) == {} and comments.has_open_thread(conn, page["id"]) is False
+
+
+def test_the_readers_find_the_page_after_the_columns_grew(own):
+    ws = workspace_of("cm_own")
+    page = make_page(own, "Columns page")
+    root = thread_on(own, page["id"], page["id"], "where am I")["id"]
+    me = account_of("cm_own")
+    with connect_pages_db(ws) as conn:
+        assert comments.page_of(conn, root) == page["id"]
+        assert comments.reported(conn, root) == {"page_id": page["id"], "author": "cm_own", "body": "where am I"}
+        assert comments.threads_for(conn, [page["id"]])[0]["page_id"] == page["id"]
+        assert comments.edit(conn, root, page_id=page["id"], body="here", author=me)["thread"]["page_id"] == page["id"]
+        assert comments.resolve(conn, root, page_id=page["id"], resolved=True, by=me)["thread"]["page_id"] == page["id"]
+        assert comments.delete(conn, root, page_id=page["id"], user=me)["page_id"] == page["id"]
 
 
 # --- copies -------------------------------------------------------------------------------

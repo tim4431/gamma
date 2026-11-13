@@ -1,6 +1,7 @@
 import React from "react";
 import { FileIcon, FolderIcon } from "../shared/ui/Icons";
-import { fmtBytes } from "../shared/lib/utils";
+import { fmtBytes } from "../shared/lib/format.js";
+import { formatLabel } from "../library/libraryUtils.js";
 import { reducedMotion } from "../shared/ui/motion.js";
 import { byName, rowItemIds, treeItemIds, treeSize } from "./importReview";
 import { t } from "../shared/i18n/i18n.js";
@@ -20,6 +21,15 @@ const ROWS = 300;
 // list of pages inside down to it) long enough to hold it and scrolls to it.
 // A page's sub-pages (`file.inside`, importReview.js buildImportTree) are a
 // list under its row.
+//
+// A tree read a directory at a time (the tracking dialog,
+// explorer/TrackDialog.jsx) passes two more props. `onOpenFolder(path)`:
+// a folder node whose `walked` is false starts closed and asks for its rows
+// the first time it opens, saying "Reading…" while `reading`. `boxOf(node)`
+// → {checked, indeterminate, disabled}: the box of a folder node or a file
+// in place of one counted from `selected`, and `onSelect(node, checked)`
+// gets the node. A file's `hint` is said after its size and `chip` stands
+// where the import review names its kind.
 
 function SelectionBox({ ids, selected, onSelect, label }) {
   const ref = React.useRef(null);
@@ -27,6 +37,18 @@ function SelectionBox({ ids, selected, onSelect, label }) {
   React.useEffect(() => { if (ref.current) ref.current.indeterminate = count > 0 && count < ids.length; }, [count, ids.length]);
   return <input ref={ref} type="checkbox" aria-label={label} checked={count === ids.length && count > 0}
     onChange={event => onSelect(ids, event.target.checked)} />;
+}
+function NodeBox({ node, boxOf, onSelect, label }) {
+  const ref = React.useRef(null);
+  const { checked, indeterminate, disabled } = boxOf(node);
+  React.useEffect(() => { if (ref.current) ref.current.indeterminate = !!indeterminate; }, [indeterminate]);
+  return <input ref={ref} type="checkbox" aria-label={label} checked={!!checked} disabled={!!disabled}
+    onChange={event => onSelect(node, event.target.checked)} />;
+}
+function Box({ node, ids, label, selected, onSelect, boxOf }) {
+  if (!onSelect) return null;
+  return boxOf ? <NodeBox node={node} boxOf={boxOf} onSelect={onSelect} label={label} />
+    : <SelectionBox ids={ids()} selected={selected} onSelect={onSelect} label={label} />;
 }
 function Folder({ name, child, open, reveal, ...tree }) {
   const [toggled, setToggled] = React.useState(null); // the reader's own open or close, else `open`
@@ -41,15 +63,23 @@ function Folder({ name, child, open, reveal, ...tree }) {
     const frame = requestAnimationFrame(() => setSnap(false));
     return () => cancelAnimationFrame(frame);
   }, [snap]);
-  const shown = toggled ?? open;
-  return <li><details className={snap ? "importTreeReveal" : undefined} open={shown} onToggle={event => { if (event.currentTarget.open !== shown) setToggled(event.currentTarget.open); }}>
-    <summary>{tree.onSelect ? <SelectionBox ids={treeItemIds(child)} selected={tree.selected} onSelect={tree.onSelect} label={t("Select folder {name}", { name: name })} /> : null}
-      <FolderIcon size={16} /><span>{name}</span></summary>
+  const unread = child.walked === false;
+  const shown = toggled ?? (open && !unread);
+  const toggle = event => {
+    const now = event.currentTarget.open;
+    if (now === shown) return;
+    setToggled(now);
+    if (now && unread && tree.onOpenFolder) tree.onOpenFolder(child.path);
+  };
+  return <li><details className={snap ? "importTreeReveal" : undefined} open={shown} onToggle={toggle}>
+    <summary><Box node={child} ids={() => treeItemIds(child)} label={t("Select folder {name}", { name: name })} {...tree} />
+      <FolderIcon size={16} /><span>{name}</span>{child.hint ? <small className="importTreeHint">{child.hint}</small> : null}</summary>
     {shown ? <TreeList node={child} open={open} reveal={reveal} {...tree} /> : null}
-    {!child.folders.size && !child.files.length ? <span className="importEmpty">{t("Empty folder")}</span> : null}
+    {child.reading ? <span className="importEmpty">{t("Reading…")}</span>
+      : !unread && !child.folders.size && !child.files.length ? <span className="importEmpty">{t("Empty folder")}</span> : null}
   </details></li>;
 }
-function FileRow({ file, library, selected, onSelect, complete, link }) {
+function FileRow({ file, library, selected, onSelect, complete, link, boxOf }) {
   const key = link ? link.rowKey(file) : null;
   const linked = key != null && link.linked(key);
   const lit = linked && link.lit.has(key);
@@ -60,7 +90,8 @@ function FileRow({ file, library, selected, onSelect, complete, link }) {
   return <div className={`importTreeFile${lit ? " linked" : ""}`}
     data-row={linked ? key : undefined} title={file.source_path || file.path}>
     {flash ? <span key={flash} className="importRowFlash" aria-hidden="true" /> : null}
-    {onSelect ? <SelectionBox ids={rowItemIds(file)} selected={selected} onSelect={onSelect} label={t("Import {name}", { name: file.name })} /> : null}
+    <Box node={file} ids={() => rowItemIds(file)} label={boxOf ? t("Track {name}", { name: file.name }) : t("Import {name}", { name: file.name })}
+      selected={selected} onSelect={onSelect} boxOf={boxOf} />
     <FileIcon size={16} />
     <div className="importFileText">
       {linked ? <button type="button" className="importRowLink" aria-pressed={link.pressed === key}
@@ -68,20 +99,22 @@ function FileRow({ file, library, selected, onSelect, complete, link }) {
       {library ? <small>{file.action === "skip" ? t("Already in library") : file.action === "merge" ? (complete ? t("Updated") : t("Update existing page")) : (complete ? t("Imported") : t("New page"))}
         {file.notes ? t(" · {notes} exported note{_s}", { notes: file.notes, _s: file.notes === 1 ? "" : "s" }) : ""}
         {file.attachments ? t(" · {n} attachment{_s}", { n: file.attachments, _s: file.attachments === 1 ? "" : "s" }) : ""}</small>
-        : <small>{fmtBytes(file.size)}{file.status === "not_imported" ? t(" · Not imported") : ""}</small>}
+        : <small>{fmtBytes(file.size)}{file.status === "not_imported" ? t(" · Not imported") : ""}{file.hint ? ` · ${file.hint}` : ""}</small>}
       {library && file.warnings?.length ? <small className="importWarning">{file.warnings.map(w => w.reason).join(" ")}</small> : null}
     </div>
-    {library ? <span className="importKind">{file.kind === "pdf" ? "PDF" : file.kind === "chat" ? t("Chat") : t("Page")}</span> : null}
+    {library ? <span className="importKind">{file.kind === "chat" ? t("Chat") : formatLabel(file.kind) || t("Page")}</span>
+      : file.chip ? <span className="importKind">{file.chip}</span> : null}
   </div>;
 }
-function TreeList({ node, library = false, selected, onSelect, complete = false, open = treeSize(node) <= OPEN_UP_TO, link, reveal, listRef }) {
+function TreeList({ node, library = false, selected, onSelect, complete = false, open = treeSize(node) <= OPEN_UP_TO, link, reveal, listRef,
+  onOpenFolder, boxOf }) {
   const [rows, setRows] = React.useState(ROWS);
   const [revealed, setRevealed] = React.useState(0);
   if (reveal && !reveal.path.length && reveal.n !== revealed) { // the row to show is one of these files
     setRevealed(reveal.n);
     if (reveal.index >= rows) setRows(Math.ceil((reveal.index + 1) / ROWS) * ROWS);
   }
-  const tree = { library, selected, onSelect, complete, link };
+  const tree = { library, selected, onSelect, complete, link, onOpenFolder, boxOf };
   // The row to show is a sub-page below the file at `index`: that file's list takes the rest.
   const inside = index => (reveal && !reveal.path.length && reveal.sub?.length && reveal.index === index
     ? { ...reveal, index: reveal.sub[0], sub: reveal.sub.slice(1) } : null);

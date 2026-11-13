@@ -1,6 +1,6 @@
 """POST /api/metadata/update — hand-edited paper metadata."""
 
-from conftest import make_page
+from conftest import doc_props, make_page
 
 
 def test_update_saves_meta_and_rebuilds_bibtex(guest):
@@ -92,12 +92,12 @@ def test_fetch_kicks_search_indexing_for_the_paper(guest, monkeypatch):
     """Setting a paper up (metadata fetch) starts indexing its PDF in the
     background, so search and the AI document map don't wait for the first
     search to notice it."""
-    import gamma.routers.search as search_mod
+    from gamma.search import indexer
     kicked = []
-    monkeypatch.setattr(search_mod, "_index_missing_async",
+    monkeypatch.setattr(indexer, "index_missing_async",
                         lambda user, doc_ids: kicked.append(list(doc_ids)) or True)
     doc_id = "f" * 24
-    page = make_page(guest, "Paper without a file yet", {"doc_id": doc_id})
+    page = make_page(guest, "Paper without a file yet", doc_props(doc_id))
     r = guest.post("/api/metadata/fetch", json={"block_id": page["id"]})
     assert r.status_code == 404  # no file, no ids, no AI — but the kick happened
     assert kicked == [[doc_id]]

@@ -39,18 +39,20 @@ export async function vaultScenarios(env) {
     const texts = async (id) => (await blocksOf(id)).map((b) => b.content);
     const pageTitled = async (title) => (await user.api("/api/blocks/root/children")).children.find((p) => (p.content || p.title) === title);
     // A file written as an editor that finished a while ago would leave it: a
-    // round takes a note only once it has settled (vault_sync SETTLE_NOTE_S).
+    // round takes a note only once it has settled (vault.kinds.SETTLE_NOTE_S).
     const write = (file, text) => {
       fs.writeFileSync(file, text);
       const before = new Date(Date.now() - 10_000);
       fs.utimesSync(file, before, before);
     };
     // A directory made a vault, its first round run: the directory and the link.
+    // It pushes everything, so it is a work folder (docs/dev/work_folders.md):
+    // its library switch is on, so its pages are in the library's listing too.
     const vaultOf = async (name, files, { pull = true, push = "everything" } = {}) => {
       const dir = path.join(disk, name);
       fs.mkdirSync(dir, { recursive: true });
       for (const [file, text] of Object.entries(files)) write(path.join(dir, file), text);
-      const link = await user.api("/api/folder-links", { method: "POST", body: { path: dir, new_folder: true, pull, push } });
+      const link = await user.api("/api/folder-links", { method: "POST", body: { path: dir, new_folder: true, pull, push, library: true } });
       await user.api(`/api/folder-links/${link.id}/sync?wait=1`, { method: "POST" });
       return { dir, link: await user.api(`/api/folder-links/${link.id}`) };
     };
@@ -232,7 +234,7 @@ export async function vaultScenarios(env) {
         await page.click("button[aria-label='Document']");
         const doc = page.locator(".attachPopover");
         await doc.locator(".ctxMenuItem", { hasText: "Download the PDF" }).waitFor();
-        for (const gone of ["Replace the PDF…", "Push from a file on this computer…", "Detach the PDF…"]) {
+        for (const gone of ["Replace the file…", "Push from a file on this computer…", "Detach the file…"]) {
           assertEq(await doc.locator(".ctxMenuItem", { hasText: gone }).count(), 0, `no ${gone}`);
         }
         await page.click("button[aria-label='Document']");
@@ -249,7 +251,7 @@ export async function vaultScenarios(env) {
         await dialog.waitFor({ state: "detached" });
         await until(async () => {
           const props = (await subtree(opened.page)).properties || {};
-          return !props.parent_page && !props.linked_file && JSON.stringify(props.folders) === JSON.stringify([shelf]);
+          return !props.parent_page && props.doc?.at === "store" && JSON.stringify(props.folders) === JSON.stringify([shelf]);
         }, { what: "out of Opened files, stored and filed" });
         await chip.waitFor({ state: "detached", timeout: 10000 });
         assertEq((await user.api(`/api/folder-links/page/${opened.page}`)).reader, null, "it reads no file any more");
@@ -361,7 +363,7 @@ export async function vaultScenarios(env) {
         }, { timeout: 20000, what: "the tab opens the page in the other workspace" });
         await page.locator(".tabStrip .tab", { hasText: "Carried paper" }).first().waitFor({ timeout: 15000 });
         const props = (await there.api(`/api/blocks/${opened.page}/subtree`)).block.properties || {};
-        assert(!props.parent_page && !props.linked_file, "stored, out of Opened files");
+        assert(!props.parent_page && props.doc?.at === "store", "stored, out of Opened files");
         assertEq(JSON.stringify(props.folders), JSON.stringify([kept]), "filed in the folder picked there");
         const left = await user.api(`/api/blocks/${opened.page}/subtree`, { raw: true });
         assertEq(left.status, 404, "the opened page here is gone");
@@ -389,7 +391,7 @@ export async function vaultScenarios(env) {
 
         await page.goto(at(doc.id));
         await page.click("button[aria-label='Document']");
-        await page.locator(".attachPopover .ctxMenuItem", { hasText: "Replace the PDF…" }).waitFor();
+        await page.locator(".attachPopover .ctxMenuItem", { hasText: "Replace the file…" }).waitFor();
         const push = page.locator('.attachPopover [data-guide="page.pushFile"]');
         assertEq((await push.innerText()).trim(), "Push from a file on this computer…", "the item and its guide anchor");
         await push.click();

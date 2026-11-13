@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from .. import collab, version
 from ..auth import (ANONYMOUS_NAME, SESSION_COOKIE, actor_of, is_link_visitor, link_name, link_ratelimit,
                     note_share_miss, require_ws_writer, requested_ws, resolve_ws, session_lookup,
-                    share_lookup, share_scope, share_via, workspace_access)
+                    share_lookup, share_scope, share_via, workspace_access, writer_client)
 from ..blocks_store import is_op_page
 from ..db import connect_pages_db
 from ..json_response import OrjsonResponse
@@ -52,7 +52,10 @@ def post_ops(page_id: str, payload: OpsRequest, request: Request):
     batch and stored as the writer's presence. A batch id already applied
     for this client gets the same answer again (without reports), nothing
     re-applied. A refused batch: ``{detail, missing?, conflict?, index?}``
-    (gamma/ops.py ``OpError``). A workspace editor or an edit share. Sync
+    (gamma/ops.py ``OpError``; ``locked``, a 403: the work-folder rule
+    keeps that op's file or folder to its vault). ``client`` is the writer's
+    as ``auth.writer_client`` takes it: the vault's and the mirror's names
+    only from an integration token. A workspace editor or an edit share. Sync
     def, like every endpoint that touches a database: the batch may wait on
     the workspace's write lock, and the fan-out (``collab.publish``) is
     scheduled on the sockets' loop from the worker thread."""
@@ -65,9 +68,9 @@ def post_ops(page_id: str, payload: OpsRequest, request: Request):
         cursor = {"block": payload.cursor.block[:64], "anchor": payload.cursor.anchor,
                   "head": payload.cursor.head}
     try:
-        result = commit_ops(ws, page_id, ops, actor=actor_of(request),
-                            client=payload.client[:32], share_scoped=scope is not None,
-                            cursor=cursor, batch_id=payload.batch[:64], via=share_via(request))
+        result = commit_ops(ws, page_id, ops, actor=actor_of(request), client=writer_client(request, payload.client),
+                            share_scoped=scope is not None, cursor=cursor, batch_id=payload.batch[:64],
+                            via=share_via(request))
     except OpError as e:
         body = {"detail": e.detail, **({"missing": e.missing} if e.missing else {}),
                 **({"conflict": e.conflict, "index": e.index} if e.conflict else {})}
@@ -81,7 +84,7 @@ def post_ops(page_id: str, payload: OpsRequest, request: Request):
 @router.post("/pages/{page_id}/plan")
 def post_plan(page_id: str, payload: PlanRequest, request: Request):
     """A synced vault's plan for the page, from the desktop app of another
-    computer (gamma/vault_http.py): ``{client, batch, seq, ops}`` → ``{seq}``,
+    computer (gamma/vault/http_remote.py): ``{client, batch, seq, ops}`` → ``{seq}``,
     every op in one transaction or none, refused whole (409, ``conflict``
     ``stale``) when the page's op log moved past ``seq``, the seq the plan
     was made at (gamma/ops.py ``commit_plan``); a batch id the log holds
@@ -92,8 +95,9 @@ def post_plan(page_id: str, payload: PlanRequest, request: Request):
         raise HTTPException(status_code=403, detail="a share link cannot write a plan")
     ops = [op.model_dump(exclude_unset=True) for op in payload.ops]
     try:
-        result = commit_plan(ws, page_id, ops, actor=actor_of(request), client=payload.client[:32],
-                             batch_id=payload.batch[:64], seq=payload.seq)
+        result = commit_plan(ws, page_id, ops, actor=actor_of(request),
+                             client=writer_client(request, payload.client), batch_id=payload.batch[:64],
+                             seq=payload.seq)
     except OpError as e:
         body = {"detail": e.detail, **({"conflict": e.conflict, "index": e.index} if e.conflict else {})}
         return JSONResponse(status_code=e.status, content=body)

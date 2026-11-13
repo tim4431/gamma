@@ -1,9 +1,13 @@
 """Comments: threads people leave on a note, a page or a highlight
 (docs/dev/comments.md).
 
-A thread hangs on one block: a note, a highlight (its block) or the page
-itself (its root block). It is its root comment, whose ``thread_id`` is its
-own id, and the replies that name it. The rows live in the workspace's
+A thread hangs on one block: a note, a highlight (its block), an ink group
+or the page itself (its root block). It is its root comment, whose
+``thread_id`` is its own id, and the replies that name it; the root keeps
+the place it was opened on (``anchor``, gamma/feedback/anchors.py). A
+comment an integration token wrote carries the token's display name and id
+(``agent``, ``agent_id``), and a thread one resolved its name
+(``resolved_agent``). The rows live in the workspace's
 pages.db, table ``comments`` (``db.COMMENTS_SCHEMA``), beside the blocks and
 never inside them, so no block reader (exports, the AI context, search,
 folder sync, the outliner, the merges, undo) has to skip them.
@@ -12,8 +16,9 @@ The writers here take an open pages.db connection, check and write under
 the workspace's write lock (``blocks_store.write_lock``) and commit. None of
 them touches the page (``touch_page``): a comment moves no change feed,
 starts no mirror round and does not reorder the home library. After its
-commit the caller hands the write's event to ``after_write``, the one place
-the derived work hangs on: the Inbox (gamma/inbox.py).
+commit the caller hands the write's event to ``written`` (the page's room,
+then ``after_write``), the one place the derived work hangs on: the Inbox
+(gamma/inbox.py) and the ``write_listeners`` (gamma/feedback/listeners.py).
 
 A comment follows its block (``orphan``, ``place``, ``purge``): the block
 deleted by an op marks it orphaned (hidden), the block brought back (an
@@ -27,21 +32,31 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
-from . import inbox
+from . import collab, inbox
 from .blocks_store import follow_page, new_block_id, valid_block_id, write_lock
 from .db import account_names, connect_pages_db, connect_users_db, format_stamp, page_now, parse_stamp, workspace_ids
+from .feedback import anchors
 from .logbuf import log
 
 MAX_BODY = 20_000          # characters of one comment
 ORPHAN_KEEP_DAYS = 7       # a comment whose block went is deleted this long after
 SWEEP_INTERVAL_S = 3600    # the app lifespan runs ``sweep`` at startup and this often
 STATES = ("open", "resolved", "all")
+LOCAL_AGENT = "local:"     # the ``agent_id`` prefix of a comment an agent on this computer wrote (``local:codex``)
 
 # The stored columns, in the table's order.
 COLUMNS = ("id, thread_id, block_id, page_id, author, author_name, body, created_at, updated_at, "
-           "resolved_at, resolved_by, deleted_at, orphaned_at")
-_ROW = ", ".join(f"c.{c}" for c in COLUMNS.split(", "))
+           "resolved_at, resolved_by, deleted_at, orphaned_at, agent, agent_id, resolved_agent, anchor")
+_FIELDS = COLUMNS.split(", ")
+_ROW = ", ".join(f"c.{c}" for c in _FIELDS)
+_AGENT, _AGENT_ID, _RESOLVED_AGENT, _ANCHOR = (_FIELDS.index(c) for c in ("agent", "agent_id", "resolved_agent", "anchor"))
+_PAGE = len(_FIELDS)  # where a ``{_ROW}, b.page_id`` row holds the page its block is on now
 _LIVE_PAGE = "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'"
+
+# What follows every committed comment write after the Inbox: ``fn(ws,
+# event)`` (``after_write``'s event), each called in turn, an error logged
+# and never raised (gamma/feedback/listeners.py appends its own).
+write_listeners: list = []
 
 
 # --- reading ----------------------------------------------------------------------
@@ -49,19 +64,23 @@ _LIVE_PAGE = "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'"
 def threads_for(conn, page_ids, *, state: str | None = None) -> list[dict]:
     """The threads on the pages ``page_ids`` (the blocks they hold now, the
     page roots included), oldest first, each ``{id, block_id, page_id,
-    resolved_at, resolved_by, created_at, last_at, comments: [{id,
-    thread_id, author, body, created_at, updated_at, deleted}]}`` with its
-    comments oldest first. ``state``: ``open`` (not resolved), ``resolved``,
-    or ``all`` / None. A comment whose block was deleted (orphaned) is left
-    out; a tombstone (a root deleted while it has replies) comes with
-    ``deleted`` true and no body. People are named by username:
-    ``author`` falls back to the name stored with the comment once the
-    account is gone, ``resolved_by`` to "". The API is its one caller (the
-    other readers leave comments out: docs/dev/comments.md "Not built"). The
-    caller decides which pages are readable (a page in Recently deleted is
-    no page of the library)."""
-    if state not in (None, *STATES):
-        raise HTTPException(status_code=400, detail="state must be open, resolved or all")
+    resolved_at, resolved_by, resolved_agent, made_on, sent, created_at,
+    last_at, comments: [{id, thread_id, author, agent, body, created_at,
+    updated_at, deleted}]}`` with its comments oldest first. ``state``:
+    ``open`` (not resolved), ``resolved``, or ``all`` / None. A comment
+    whose block was deleted (orphaned) is left out; a tombstone (a root
+    deleted while it has replies) comes with ``deleted`` true and no body.
+    People are named by username: ``author`` falls back to the name stored
+    with the comment once the account is gone, ``resolved_by`` to "";
+    ``agent`` / ``resolved_agent`` are the display names of the tokens that
+    wrote or resolved them ("" for a person), and a comment an agent on
+    this computer wrote carries ``agent_kind: "local"``. ``made_on`` is the file the
+    thread was opened on (its anchor's ``doc_id``, "" for none), ``sent``
+    the Send waiting on it (``_sent``) or None. The API and the feedback
+    reader are its callers (the other readers leave comments out:
+    docs/dev/comments.md "Not built"). The caller decides which pages are
+    readable (a page in Recently deleted is no page of the library)."""
+    _check_state(state)
     pages = sorted(set(page_ids))
     if not pages:
         return []
@@ -69,7 +88,26 @@ def threads_for(conn, page_ids, *, state: str | None = None) -> list[dict]:
         f"SELECT {_ROW}, b.page_id FROM comments c JOIN unified_blocks b ON b.id = c.block_id "
         "WHERE b.page_id IN (SELECT value FROM json_each(?)) AND c.orphaned_at IS NULL "
         "ORDER BY c.created_at, c.id", (json.dumps(pages),)).fetchall()
-    return _threads(rows, state)
+    return _threads(conn, rows, state)
+
+
+def threads_in_work_folder(conn, work_folder: str, *, state: str | None = None) -> list[dict]:
+    """The threads on the files of the work folder ``work_folder`` (the
+    live pages whose ``work_folder`` it is: a file in Recently deleted is
+    none), as ``threads_for`` gives them. One query by the pages' column
+    (``idx_ub_work_folder``)."""
+    _check_state(state)
+    rows = conn.execute(
+        f"SELECT {_ROW}, b.page_id FROM comments c JOIN unified_blocks b ON b.id = c.block_id "
+        "JOIN unified_blocks p ON p.id = b.page_id "
+        "WHERE p.work_folder = ? AND p.parent_id = 'root' AND c.orphaned_at IS NULL "
+        "ORDER BY c.created_at, c.id", (work_folder,)).fetchall()
+    return _threads(conn, rows, state)
+
+
+def _check_state(state) -> None:
+    if state not in (None, *STATES):
+        raise HTTPException(status_code=400, detail="state must be open, resolved or all")
 
 
 def thread_of(conn, thread_id: str) -> dict | None:
@@ -77,19 +115,65 @@ def thread_of(conn, thread_id: str) -> dict | None:
     rows = conn.execute(
         f"SELECT {_ROW}, b.page_id FROM comments c JOIN unified_blocks b ON b.id = c.block_id "
         "WHERE c.thread_id = ? AND c.orphaned_at IS NULL ORDER BY c.created_at, c.id", (thread_id,)).fetchall()
-    threads = _threads(rows, None)
+    threads = _threads(conn, rows, None)
     return threads[0] if threads else None
 
 
-def _threads(rows, state: str | None) -> list[dict]:
+def open_counts(conn, page_ids) -> dict[str, int]:
+    """``{page id: n}``: how many open threads each of the pages
+    ``page_ids`` shows (a root neither resolved nor orphaned, a tombstone
+    with replies included: the threads the Comments window lists as open),
+    pages with none left out. One query by the comments' page
+    (``idx_comments_page``): a work folder's list view counts a page of
+    rows with it."""
+    pages = sorted(set(page_ids))
+    if not pages:
+        return {}
+    return dict(conn.execute(
+        "SELECT page_id, COUNT(*) FROM comments WHERE page_id IN (SELECT value FROM json_each(?)) "
+        "AND id = thread_id AND resolved_at IS NULL AND orphaned_at IS NULL "
+        "GROUP BY page_id", (json.dumps(pages),)).fetchall())
+
+
+def has_open_thread(conn, page_id: str) -> bool:
+    """Whether the page shows an open thread (``open_counts``)."""
+    return bool(open_counts(conn, [page_id]))
+
+
+def _sent(conn, thread_ids) -> dict[str, dict]:
+    """``{thread id: {request_id, state, at, detail, state_by}}``: the
+    newest Send (gamma/feedback/requests.py) that names each of the threads
+    ``thread_ids`` and waits on it — sent, running or failed, the thread
+    not answered since; threads with none left out. ``state_by`` names who
+    set its state ("" while it is sent)."""
+    ids = sorted(set(thread_ids))
+    if not ids:
+        return {}
+    out = {}
+    for thread_id, request_id, state, at, detail, state_by in conn.execute(
+            "SELECT t.thread_id, r.id, r.state, r.at, r.detail, r.state_by FROM feedback_request_threads t "
+            "JOIN feedback_requests r ON r.id = t.request_id "
+            "WHERE t.thread_id IN (SELECT value FROM json_each(?)) AND t.answered_at IS NULL "
+            "AND r.state IN ('sent', 'running', 'failed') ORDER BY r.rev", (json.dumps(ids),)):
+        out[thread_id] = {"request_id": request_id, "state": state, "at": at, "detail": detail,
+                          "state_by": state_by}
+    return out
+
+
+def _threads(conn, rows, state: str | None) -> list[dict]:
     """``(*COLUMNS, live page id)`` rows, oldest first, folded into threads."""
     names = _names({r[4] for r in rows} | {r[10] for r in rows if r[10]})
     threads: dict[str, dict] = {}
     for r in rows:
         if r[0] == r[1]:
-            threads[r[0]] = {"id": r[0], "block_id": r[2], "page_id": r[13], "resolved_at": r[9],
+            anchor = anchors.parse(r[_ANCHOR])
+            threads[r[0]] = {"id": r[0], "block_id": r[2], "page_id": r[_PAGE], "resolved_at": r[9],
                              "resolved_by": names.get(r[10] or "", "") if r[9] else None,
+                             "resolved_agent": r[_RESOLVED_AGENT] if r[9] else "",
+                             "made_on": (anchor or {}).get("doc_id") or "", "sent": None,
                              "created_at": r[7], "last_at": r[9] or r[7], "comments": []}
+    for thread_id, sent in _sent(conn, threads).items():
+        threads[thread_id]["sent"] = sent
     for r in rows:
         thread = threads.get(r[1])
         if thread is None:
@@ -102,8 +186,11 @@ def _threads(rows, state: str | None) -> list[dict]:
 
 def _comment(row, names: dict) -> dict:
     deleted = bool(row[11])
-    return {"id": row[0], "thread_id": row[1], "author": names.get(row[4]) or row[5],
-            "body": "" if deleted else row[6], "created_at": row[7], "updated_at": row[8], "deleted": deleted}
+    out = {"id": row[0], "thread_id": row[1], "author": names.get(row[4]) or row[5], "agent": row[_AGENT],
+           "body": "" if deleted else row[6], "created_at": row[7], "updated_at": row[8], "deleted": deleted}
+    if (row[_AGENT_ID] or "").startswith(LOCAL_AGENT):
+        out["agent_kind"] = "local"  # an agent on the vault's computer wrote it (gamma/local_agents), not a token
+    return out
 
 
 def _names(user_ids) -> dict[str, str]:
@@ -129,7 +216,7 @@ def _on_page(conn, comment_id: str, page_id: str):
     ``page_id``: the page its write was authorized against, read before the
     write's lock."""
     row = _located(conn, comment_id)
-    if row[13] != page_id:
+    if row[_PAGE] != page_id:
         raise HTTPException(status_code=404, detail="comment not found")
     return row
 
@@ -137,7 +224,7 @@ def _on_page(conn, comment_id: str, page_id: str):
 def page_of(conn, comment_id: str) -> str:
     """The page a comment is on now (what its write is authorized against);
     404 as for a hidden comment."""
-    return _located(conn, comment_id)[13]
+    return _located(conn, comment_id)[_PAGE]
 
 
 def reported(conn, comment_id: str) -> dict:
@@ -148,7 +235,7 @@ def reported(conn, comment_id: str) -> dict:
     comment = _comment(row, _names([row[4]]))
     if comment["deleted"]:
         raise HTTPException(status_code=404, detail="comment not found")
-    return {"page_id": row[13], "author": comment["author"], "body": comment["body"]}
+    return {"page_id": row[_PAGE], "author": comment["author"], "body": comment["body"]}
 
 
 # --- writing -----------------------------------------------------------------------
@@ -162,30 +249,35 @@ def _clean_body(body) -> str:
 
 
 def create(conn, page_id: str, *, block_id: str, body: str, author: str, author_name: str,
-           comment_id: str = "", thread_id: str = "") -> dict:
+           comment_id: str = "", thread_id: str = "", agent: str = "", agent_id: str = "") -> dict:
     """A new thread on ``block_id`` (a block of the page, or the page
     itself), or with ``thread_id`` a reply in that thread (its root's id;
-    the block must be the thread's). ``comment_id``: the client's id for the
-    comment (a block id's shape), minted here when absent; a comment of that
-    id by the same author on this page is answered as stored, so a retry
-    writes nothing twice. The author follows the page from then on
-    (``blocks_store.follow_page``), unless they chose otherwise for it.
-    Returns ``{comment, thread, created, event}`` —
-    ``created`` false for such a retry, ``event`` for ``after_write``.
-    Commits. 404 unless the page is a page of the library, and for a retry
-    of a comment hidden since; 400 for a block outside it, a thread that is
-    no root of it, an id of the wrong shape or an empty text; 413 past
-    ``MAX_BODY``; 409 for an id another author's comment has, or one of a
-    comment on another page (the caller authorized this page only)."""
+    the block must be the thread's). A new thread keeps where it was opened
+    (``anchors.anchor_of``). ``agent`` / ``agent_id``: the display name and
+    id of the integration token writing it ("" for a session).
+    ``comment_id``: the client's id for the comment (a block id's shape),
+    minted here when absent; a comment of that id by the same author and
+    writer on this page is answered as stored, so a retry writes nothing
+    twice. A session's author follows the page from then on
+    (``blocks_store.follow_page``), unless they chose otherwise for it; a
+    token's comment makes no one follow it. Returns ``{comment, thread,
+    created, event}`` — ``created`` false for such a retry, ``event`` for
+    ``after_write``. Commits. 404 unless the page is a page of the library,
+    and for a retry of a comment hidden since; 400 for a block outside it,
+    a thread that is no root of it, an id of the wrong shape or an empty
+    text; 413 past ``MAX_BODY``; 409 for an id another author's or another
+    writer's comment has, or one of a comment on another page (the caller
+    authorized this page only)."""
     body = _clean_body(body)
     if comment_id and not valid_block_id(comment_id):
         raise HTTPException(status_code=400, detail=f"invalid comment id: {comment_id!r}")
     write_lock(conn)
     try:
         if comment_id:
-            row = conn.execute("SELECT author, thread_id FROM comments WHERE id = ?", (comment_id,)).fetchone()
+            row = conn.execute("SELECT author, thread_id, agent_id FROM comments WHERE id = ?",
+                               (comment_id,)).fetchone()
             if row:
-                if row[0] != author or _located(conn, comment_id)[13] != page_id:
+                if row[0] != author or row[2] != agent_id or _located(conn, comment_id)[_PAGE] != page_id:
                     raise HTTPException(status_code=409, detail="that comment id is taken")
                 conn.rollback()
                 thread = thread_of(conn, row[1])
@@ -205,11 +297,15 @@ def create(conn, page_id: str, *, block_id: str, body: str, author: str, author_
             if not root or root[0] != block_id:
                 raise HTTPException(status_code=400, detail="that thread is not on this block")
         comment_id = comment_id or new_block_id()
+        anchor = None if thread_id else json.dumps(anchors.anchor_of(conn, page_id, block_id))
         thread_id = thread_id or comment_id
         now = page_now()
-        conn.execute(f"INSERT INTO comments ({COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)",
-                     (comment_id, thread_id, block_id, page_id, author, author_name or "", body, now, now))
-        follow_page(conn, page_id, author, now=now)
+        conn.execute(f"INSERT INTO comments ({COLUMNS}) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, '', ?)",
+                     (comment_id, thread_id, block_id, page_id, author, author_name or "", body, now, now,
+                      agent, agent_id, anchor))
+        if not agent_id:
+            follow_page(conn, page_id, author, now=now)
         thread = thread_of(conn, thread_id)  # under the lock: no batch can hide its block before the answer
         conn.commit()
     except BaseException:
@@ -218,27 +314,30 @@ def create(conn, page_id: str, *, block_id: str, body: str, author: str, author_
     comment = next(c for c in thread["comments"] if c["id"] == comment_id)
     kind = "reply" if thread_id != comment_id else "create"
     return {"comment": comment, "thread": thread, "created": True,
-            "event": _event(kind, author, page_id, block_id, thread_id, comment_id, body=body)}
+            "event": _event(kind, author, page_id, block_id, thread_id, comment_id, body=body, agent=agent,
+                            agent_id=agent_id)}
 
 
-def edit(conn, comment_id: str, *, page_id: str, body: str, author: str) -> dict:
-    """Change a comment's text, its author only (403 otherwise; 404 for a
-    hidden comment, a tombstone or a comment no longer on ``page_id``, the
-    page the caller authorized). ``updated_at`` moves only when the text
-    changed. Returns ``{comment, thread, event}`` (``event`` None when
-    nothing changed). Commits."""
+def edit(conn, comment_id: str, *, page_id: str, body: str, author: str, agent_id: str = "") -> dict:
+    """Change a comment's text, its author only and through the writer that
+    wrote it: a session a session's comment, the token ``agent_id`` its own
+    (403 otherwise; 404 for a hidden comment, a tombstone or a comment no
+    longer on ``page_id``, the page the caller authorized). ``updated_at``
+    moves only when the text changed. Returns ``{comment, thread, event}``
+    (``event`` None when nothing changed). Commits."""
     body = _clean_body(body)
     write_lock(conn)
     try:
         row = _on_page(conn, comment_id, page_id)
         if row[11]:
             raise HTTPException(status_code=404, detail="comment not found")
-        if row[4] != author:
+        if row[4] != author or row[_AGENT_ID] != agent_id:
             raise HTTPException(status_code=403, detail="only its author can edit a comment")
         event = None
         if body != row[6]:
             conn.execute("UPDATE comments SET body = ?, updated_at = ? WHERE id = ?", (body, page_now(), comment_id))
-            event = _event("edit", author, row[13], row[2], row[1], comment_id, body=body, before=row[6])
+            event = _event("edit", author, row[_PAGE], row[2], row[1], comment_id, body=body, before=row[6],
+                           agent=row[_AGENT] if agent_id else "", agent_id=agent_id)
         thread = thread_of(conn, row[1])  # under the lock, as in ``create``
         conn.commit()
     except BaseException:
@@ -248,10 +347,11 @@ def edit(conn, comment_id: str, *, page_id: str, body: str, author: str) -> dict
             "event": event}
 
 
-def delete(conn, comment_id: str, *, page_id: str, user: str, owner: bool = False) -> dict:
+def delete(conn, comment_id: str, *, page_id: str, user: str, owner: bool = False, agent_id: str = "") -> dict:
     """Delete a comment on ``page_id`` (the page the caller authorized; 404
-    for a hidden comment or one that moved off it): its author's, or any one
-    for the workspace's owner (``owner``; 403 otherwise). A root that still has replies becomes a
+    for a hidden comment or one that moved off it): its author's, by a
+    session or by the token ``agent_id`` that wrote it, or any one for the
+    workspace's owner (``owner``; 403 otherwise). A root that still has replies becomes a
     tombstone (its text goes, the thread stays); a reply that was the last
     one under a tombstone takes the tombstone with it. Returns
     ``{thread_id, block_id, page_id, removed: [ids], thread (None once it
@@ -261,7 +361,7 @@ def delete(conn, comment_id: str, *, page_id: str, user: str, owner: bool = Fals
         row = _on_page(conn, comment_id, page_id)
         if row[11]:
             raise HTTPException(status_code=404, detail="comment not found")
-        if row[4] != user and not owner:
+        if not owner and (row[4] != user or (agent_id and row[_AGENT_ID] != agent_id)):
             raise HTTPException(status_code=403, detail="only its author can delete a comment")
         thread_id = row[1]
         replies = conn.execute("SELECT COUNT(*) FROM comments WHERE thread_id = ? AND id != thread_id",
@@ -280,15 +380,18 @@ def delete(conn, comment_id: str, *, page_id: str, user: str, owner: bool = Fals
     except BaseException:
         conn.rollback()
         raise
-    return {"thread_id": thread_id, "block_id": row[2], "page_id": row[13], "removed": removed,
+    return {"thread_id": thread_id, "block_id": row[2], "page_id": row[_PAGE], "removed": removed,
             "thread": thread_of(conn, thread_id),
-            "event": _event("delete", user, row[13], row[2], thread_id, comment_id, comment_ids=[comment_id])}
+            "event": _event("delete", user, row[_PAGE], row[2], thread_id, comment_id, comment_ids=[comment_id],
+                            agent=row[_AGENT] if agent_id else "", agent_id=agent_id)}
 
 
-def resolve(conn, comment_id: str, *, page_id: str, resolved: bool, by: str) -> dict:
+def resolve(conn, comment_id: str, *, page_id: str, resolved: bool, by: str, agent: str = "") -> dict:
     """Resolve a thread (``resolved``) or reopen it; ``comment_id`` is its
     root (400 for a reply), on ``page_id`` (the page the caller authorized;
-    404 for a hidden thread or one that moved off it). Resolving a resolved thread keeps who and when.
+    404 for a hidden thread or one that moved off it). ``agent``: the
+    display name of the token resolving it, kept as ``resolved_agent``
+    until a reopen. Resolving a resolved thread keeps who and when.
     Returns ``{thread, event}`` (``event`` None when nothing changed).
     Commits."""
     write_lock(conn)
@@ -299,12 +402,13 @@ def resolve(conn, comment_id: str, *, page_id: str, resolved: bool, by: str) -> 
         event = None
         if resolved != bool(row[9]):
             if resolved:
-                conn.execute("UPDATE comments SET resolved_at = ?, resolved_by = ? WHERE id = ?",
-                             (page_now(), by, comment_id))
+                conn.execute("UPDATE comments SET resolved_at = ?, resolved_by = ?, resolved_agent = ? WHERE id = ?",
+                             (page_now(), by, agent, comment_id))
             else:
-                conn.execute("UPDATE comments SET resolved_at = NULL, resolved_by = NULL WHERE id = ?", (comment_id,))
-            event = _event("resolve" if resolved else "reopen", by, row[13], row[2], comment_id, comment_id,
-                           thread_author=row[4])
+                conn.execute("UPDATE comments SET resolved_at = NULL, resolved_by = NULL, resolved_agent = '' "
+                             "WHERE id = ?", (comment_id,))
+            event = _event("resolve" if resolved else "reopen", by, row[_PAGE], row[2], comment_id, comment_id,
+                           thread_author=row[4], agent=agent)
         thread = thread_of(conn, comment_id)  # under the lock, as in ``create``
         conn.commit()
     except BaseException:
@@ -313,9 +417,21 @@ def resolve(conn, comment_id: str, *, page_id: str, resolved: bool, by: str) -> 
     return {"thread": thread, "event": event}
 
 
-def _event(kind: str, actor: str, page_id: str, block_id: str, thread_id: str, comment_id: str, **more) -> dict:
+def _event(kind: str, actor: str, page_id: str, block_id: str, thread_id: str, comment_id: str, *,
+           agent: str = "", agent_id: str = "", **more) -> dict:
     return {"kind": kind, "actor": actor, "page_id": page_id, "block_id": block_id,
-            "thread_id": thread_id, "comment_id": comment_id, **more}
+            "thread_id": thread_id, "comment_id": comment_id, **more, "agent": agent, "agent_id": agent_id}
+
+
+def written(ws: str, page_id: str, block_id: str, thread_id: str, event: dict | None, *, client: str = "",
+            via: str = "") -> None:
+    """A committed write: the page's room refetches its threads (all but
+    the writer's tab, ``client``), then what hangs on ``after_write``, the
+    event carrying the share the writer came through (``via``)."""
+    collab.publish(ws, page_id, {"t": "comments", "block_id": block_id, "thread_id": thread_id}, exclude=client)
+    if event:
+        event = {**event, "via": via}
+    after_write(ws, event)
 
 
 def after_write(ws: str, event: dict | None) -> None:
@@ -323,20 +439,26 @@ def after_write(ws: str, event: dict | None) -> None:
     its transaction is in: the Inbox (``inbox.from_comment``: the people a
     comment mentions, the thread's others on a reply, the page's followers
     on either, the thread's author on a resolve; a deleted comment's items
-    go). ``event`` is ``{kind,
-    actor, page_id, block_id, thread_id, comment_id, ...}``, ``kind`` one
-    of ``create`` (a new thread; ``body``), ``reply`` (``body``), ``edit``
-    (``body``, ``before``), ``delete`` (``comment_ids``), ``resolve`` /
-    ``reopen`` (``thread_author``) and ``sweep`` (``comment_ids``, the
-    orphans ``sweep`` deleted; no page or thread). None: nothing changed.
-    Never raises: a stored comment never answers an error because what
-    follows it failed."""
+    go), then each of the ``write_listeners``. ``event`` is ``{kind,
+    actor, page_id, block_id, thread_id, comment_id, agent, agent_id,
+    ...}`` (``agent`` / ``agent_id`` the token that wrote it, "" for a
+    session), ``kind`` one of ``create`` (a new thread; ``body``),
+    ``reply`` (``body``), ``edit`` (``body``, ``before``), ``delete``
+    (``comment_ids``), ``resolve`` / ``reopen`` (``thread_author``) and
+    ``sweep`` (``comment_ids``, the orphans ``sweep`` deleted; no page or
+    thread). None: nothing changed. Never raises: a stored comment never
+    answers an error because what follows it failed."""
     if not event:
         return
     try:
         inbox.from_comment(ws, event)
     except Exception as e:  # noqa: BLE001
         log.warning(f"[comments] what follows a {event.get('kind')} in workspace {ws} failed: {e}")
+    for listener in list(write_listeners):
+        try:
+            listener(ws, event)
+        except Exception as e:  # noqa: BLE001 — one listener never stops the others
+            log.warning(f"[comments] a listener of a {event.get('kind')} in workspace {ws} failed: {e}")
 
 
 # --- following the blocks ---------------------------------------------------------

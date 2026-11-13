@@ -14,6 +14,7 @@ stubbed. Accounts are ``zk_…``."""
 import json
 
 import pytest
+from conftest import doc_props
 from zotero_engine import (LIB, _block, _due, _edit, _link, _page_of, _pages, _paper, _rows, _stored_pdf,  # noqa: F401
                            _sync, _writes, background, fake, idle, made, me, no_relocation, owner_id)
 from zotero_fixtures import pdf_bytes
@@ -44,7 +45,7 @@ def _existing(owner_id, keys, ws=None):
     _paper(ws, "ziByRdf", "From an RDF import", zotero_key="#item_12",
            meta={"title": "Retrieval-augmented generation", "doi": "10.5555/rag", "year": "2020"})
     zotero_local.create_page(ws, page_id="ziByMd5", title="handout copy.pdf",
-                             props={"doc_id": _stored_pdf(ws, pdf_bytes("A standalone handout without metadata."))},
+                             props=doc_props(_stored_pdf(ws, pdf_bytes("A standalone handout without metadata."))),
                              actor="zi", client="t")
     return ws
 
@@ -149,8 +150,8 @@ def test_a_first_link_takes_zoteros_pdf_over_a_different_one_whose_annotations_z
     _link(me, workspace_id=ws, adopt="mine")
     _sync(me, ws)
     props = _block(ws, "ziOwnPdf")["props"]
-    assert props["doc_id"] != mine  # Zotero's file, whose annotations it holds, became the page's
-    assert file_md5(storage.open_path(ws, f"{props['doc_id']}.pdf")) == fake.data(LIB, keys["pdf"])["md5"]
+    assert props["doc"]["hash"] != mine  # Zotero's file, whose annotations it holds, became the page's
+    assert file_md5(storage.open_path(ws, f"{props['doc']['hash']}.pdf")) == fake.data(LIB, keys["pdf"])["md5"]
     assert fake.data(LIB, keys["pdf"])["md5"] != file_md5(storage.open_path(ws, f"{mine}.pdf"))
     assert [p for p, _, _ in no_relocation] == ["ziOwnPdf"]  # Gamma's highlights are placed on it
 
@@ -167,7 +168,7 @@ def test_a_first_link_taking_zoteros_brings_zoteros_pdf_over_the_pages_own(me, m
     _sync(me, ws)
     _sync(me, ws)
     props = _block(ws, "zfxOwnPdf")["props"]
-    assert file_md5(storage.open_path(ws, f"{props['doc_id']}.pdf")) == fake.data(LIB, keys["pdf"])["md5"]
+    assert file_md5(storage.open_path(ws, f"{props['doc']['hash']}.pdf")) == fake.data(LIB, keys["pdf"])["md5"]
     assert not [k for k, row in _rows(ws, "annotation").items() if row["detail"].get("reason") == WAIT_DIFFER]
 
 
@@ -184,7 +185,7 @@ def test_a_first_link_keeping_gammas_sends_its_pdf_over_an_unannotated_zotero_on
     _link(me, workspace_id=ws, adopt="mine")
     _sync(me, ws)
     _sync(me, ws)
-    assert _block(ws, "zfxNovel")["props"]["doc_id"] == mine
+    assert _block(ws, "zfxNovel")["props"]["doc"]["hash"] == mine
     assert fake.data(LIB, att)["md5"] == file_md5(storage.open_path(ws, f"{mine}.pdf"))
 
 
@@ -196,13 +197,13 @@ def test_a_standalone_pdf_paired_by_key_taking_zoteros_brings_zoteros_file(me, m
     mine = _stored_pdf(ws, pdf_bytes("My own different copy of the standalone."))
     zoteros = fake.data(LIB, key)["md5"]
     zotero_local.create_page(ws, page_id="zfxStand", title="Scanned handout", actor="zi", client="t",
-                             props={"doc_id": mine, "zotero_key": item_uri(LIB, key)})
+                             props={**doc_props(mine), "zotero_key": item_uri(LIB, key)})
     _link(me, workspace_id=ws, adopt="theirs")
     _sync(me, ws)
     _sync(me, ws)
     assert fake.data(LIB, key)["md5"] == zoteros
     props = _block(ws, "zfxStand")["props"]
-    assert file_md5(storage.open_path(ws, f"{props['doc_id']}.pdf")) == zoteros
+    assert file_md5(storage.open_path(ws, f"{props['doc']['hash']}.pdf")) == zoteros
 
 
 def _published(fake, owner_id, name, *, stored=True):
@@ -375,4 +376,4 @@ def test_a_force_push_over_a_pdf_zotero_storage_does_not_hold_sends_nothing(me, 
     assert not [1 for m, p, _ in fake.calls[calls:] if m == "POST" and p.endswith(f"/items/{att}/file")]
     row = _rows(ws)[att]
     assert not row["detail"].get("first")
-    assert _block(ws, "zfxWebdav")["props"]["doc_id"] == doc
+    assert _block(ws, "zfxWebdav")["props"]["doc"]["hash"] == doc

@@ -247,7 +247,7 @@ def find_notebooks(entries: list[ZipEntry], upload_name: str) -> list[nb.Bundle]
                  if not folder or e.path.startswith(folder + "/")}
         members = nb.Members(found)
         path = (upload_name or "Untitled.goodnotes") if not folder else folder
-        bundles.append(nb.Bundle(path=path, size=sum(e.size for e in found.values()), members=members))
+        bundles.append(nb.Bundle(path=path, size=sum(e.size for e in found.values()), members=members, folder=folder))
 
     def inside(path):
         return any(not k or path.startswith(k + "/") for k in kept)

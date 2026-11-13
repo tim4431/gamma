@@ -8,9 +8,14 @@
 // search: typo-tolerant, on the title or the folder/label chips (a sub-page
 // on its top's folders, and also on the pages it is in, its row's second
 // line), title hits first — in sections of their own with the matched
-// characters marked, and ends with two actions: search inside notes and PDFs
+// characters marked, and ends with two actions: search notes, PDFs and files
 // for the query (Ctrl+Enter; the workspace search opens with it) and create
 // a page titled with it (Shift+Enter). ↑↓ moves, Enter opens, Esc closes.
+//
+// For a member (`files`), the work folders' files the query names by name or
+// path follow the pages, under Files: the server's rows and marks
+// (explorer/useFileSearch.js, GET /api/files), each with its work folder and
+// directory under the name; a file a page row already lists is left out.
 //
 // A query starting with ">" is the command palette (Ctrl+Shift+P opens it
 // with the prefix typed): `commands()` — App's list of what applies right
@@ -18,13 +23,17 @@
 // filtered by the same matcher on the label and group, Enter runs the pick.
 
 import React, { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { FolderIcon, LabelIcon, PlusIcon, SearchIcon, TerminalIcon } from "../shared/ui/Icons";
+import { FileGlyph, FolderIcon, LabelIcon, PlusIcon, SearchIcon, TerminalIcon } from "../shared/ui/Icons";
 import { commandIcon } from "../app/commandIcons.jsx";
 import { chordLabel, composing } from "../shared/lib/hotkeys.js";
 import { MarkedText } from "../search/SearchPanel";
 import PageOption, { recencySections } from "./PageOption";
 import { createLibraryMatcher, rankLibraryPages } from "./librarySearch";
-import { filedIn, folderPath } from "./libraryUtils";
+import { filedIn, folderPath, formatRelativeTime } from "./libraryUtils";
+import { pageDocument } from "../documents/pageDocument.js";
+import { fileParts, fileRows } from "../explorer/fileSearch.js";
+import { useFileSearch } from "../explorer/useFileSearch.js";
+import { fileNameOf } from "../explorer/workPaths.js";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 import Palette from "../shared/ui/Palette";
@@ -38,13 +47,14 @@ const CREATE_CHORD = "Shift-Enter";
 
 export default function QuickOpen({
   open, prefix = "", commands, onClose, pages, recentViews, openTabs, currentPageId, onOpen,
-  tree, folderMeta = {}, onOpenFolder, onOpenLabel, onSearch, onCreate,
+  tree, folderMeta = {}, onOpenFolder, onOpenLabel, onSearch, onCreate, files = false, onOpenFile,
 }) {
   const [query, setQuery] = useState("");
   const commandMode = query.startsWith(COMMAND_PREFIX);
   const q = query.trim();
   const canSearch = !!onSearch;
   const canCreate = !!onCreate;
+  const search = useFileSearch({ query, enabled: open && files && !commandMode });
 
   // The box keeps the last query while closed: the prefix replaces it before
   // the open palette paints, or a key typed at once would be undone.
@@ -64,7 +74,7 @@ export default function QuickOpen({
   }, [open, pages, tree]);
 
   // One flat list for the keyboard; each row names the section it sits
-  // under: {key, section, page | folder | label | action | cmd}.
+  // under: {key, section, page | file | folder | label | action | cmd}.
   const results = useMemo(() => {
     if (!open) return [];
     if (commandMode) {
@@ -78,8 +88,9 @@ export default function QuickOpen({
     }
     const pageRows = rankLibraryPages(pages, tree, query, { recentViews, openTabs, limit: MAX_ROWS })
       .map((r) => ({ key: r.page.id, ...r }));
+    const found = fileRows(search.rows, pageRows);
     const match = createLibraryMatcher(query);
-    if (!match) return pageRows;
+    if (!match) return [...pageRows, ...found];
     // A folder matches on its own name or its path ("Physics / Rydberg").
     const folderRows = [...tree.folders.values()]
       .map((f) => { const path = folderPath(tree, f.id); return { folder: f, path, score: match(f.name, [path]) }; })
@@ -96,8 +107,8 @@ export default function QuickOpen({
     const actions = [];
     if (canSearch) actions.push({ key: "action:search", action: "search", section: "actions" });
     if (canCreate) actions.push({ key: "action:create", action: "create", section: "actions" });
-    return [...pageRows, ...folderRows, ...labelRows, ...actions];
-  }, [open, commandMode, commandList, pages, tree, recentViews, openTabs, query, canSearch, canCreate]);
+    return [...pageRows, ...found, ...folderRows, ...labelRows, ...actions];
+  }, [open, commandMode, commandList, pages, tree, recentViews, openTabs, query, canSearch, canCreate, search.rows]);
 
   if (!open) return null;
   const runAction = (action) => {
@@ -113,14 +124,21 @@ export default function QuickOpen({
     // a command that looks at the focus (rename, undo) would decline, and
     // the palette's focus hold would pull focus back from what it opens.
     if (r.cmd) setTimeout(r.cmd.run, 0);
+    else if (r.file) onOpenFile(r.file);
     else if (r.folder) onOpenFolder(r.folder.id);
     else if (r.label) onOpenLabel(r.label.id);
     else onOpen(r.page.id);
   };
   const sectionTitle = {
-    ...recencySections(), pages: t("Pages"), folders: t("Folders"), labels: t("Labels"), actions: t("Actions"),
+    ...recencySections(), pages: t("Pages"), files: t("Files"), folders: t("Folders"), labels: t("Labels"), actions: t("Actions"),
   };
-  const placeholder = commandMode ? t("Type a command") : t("Search pages by title or label");
+  const placeholder = commandMode ? t("Type a command") : t("Search pages, files, folders and labels");
+  // The line under the list while files are asked for, or when nothing but
+  // the actions answered (they are rows then, so the list's `empty` is not).
+  const note = commandMode || !q || !files ? null
+    : search.failed ? t("Files could not be searched.")
+    : search.loading ? (results.some((r) => r.file) ? null : t("Searching files…"))
+    : results.some((r) => !r.action) ? null : t("No matching pages or files.");
   const hint = commandMode
     ? t("↑↓ choose · Enter run · Esc close")
     : onCreate
@@ -143,9 +161,29 @@ export default function QuickOpen({
         <button {...props} data-action={r.action}>
           {search ? <SearchIcon size={16} /> : <PlusIcon size={16} />}
           <span className="quickOpenAction">
-            {search ? t("Search inside notes and PDFs for “{q}”", { q }) : t("Create page “{q}”", { q })}
+            {search ? t("Search notes, PDFs and files for “{q}”", { q }) : t("Create page “{q}”", { q })}
           </span>
           <em className="quickOpenTag quickOpenKey">{chordLabel(search ? SEARCH_CHORD : CREATE_CHORD)}</em>
+        </button>
+      );
+    }
+    if (r.file) {
+      const file = r.file;
+      // the server's spans: a path term's match is its to say
+      const name = fileNameOf(file);
+      const dir = file.dir || "";
+      const wName = tree.folders.get(file.properties?.work_folder)?.name || "";
+      return (
+        <button {...props} data-kind="file" title={`${name}\n${[wName, file.path].filter(Boolean).join(" / ")}`}>
+          <FileGlyph format={pageDocument(file)?.format} size={16} />
+          <span>
+            <strong><MarkedText parts={fileParts(name, file.match?.name)} /></strong>
+            <small className="quickOpenPath">
+              <span>{wName}</span>{dir ? <> / <MarkedText parts={fileParts(dir, file.match?.path)} /></> : null}
+            </small>
+          </span>
+          {file.id === currentPageId ? <em className="quickOpenTag">{t("Current")}</em>
+            : <em className="quickOpenTime">{formatRelativeTime(file.updated_at)}</em>}
         </button>
       );
     }
@@ -200,6 +238,7 @@ export default function QuickOpen({
       }}
       onClose={onClose}
       empty={commandMode ? t("No matching commands.") : pages.length ? t("No matching pages.") : t("No pages yet.")}
+      note={note}
       hint={hint}
     />
   );

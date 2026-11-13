@@ -104,21 +104,26 @@ set. MCP passes `mcp_tools`: every reading tool that stays inside the
 library, without the web tools, the change tools, `list_deleted` or
 `update_plan`. Its
 scope is read-only, and its `link_base` makes results carry absolute links
-to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
-[mcp.md](mcp.md) "Links in results").
+to pages, PDF pages, blocks and comment threads (`gamma_link`; the chat's
+results carry none, [mcp.md](mcp.md) "Links in results"). The two tools
+that answer feedback are the adapter's own, not the registry's
+([mcp.md](mcp.md) "Answering feedback"): the chat reads threads and never
+answers them.
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
-| `list_pages` | List pages | folder | List the folder's pages: id, title, attachments (`[pdf]` when the page carries a PDF, `[]` for text-only), folder paths or, for a sub-page, the page it is inside (`parent=`), labels, cached metadata (first author, year, venue), last-update date, most recently added first (library order), in batches (`limit`, `after`) |
+| `list_pages` | List pages | folder | List the folder's pages (at the library root, the pages the library lists): id, title, a work folder's file's `path=` in it, attachments (the document's format, `[pdf]`, `[text:latex]` with a text file's language, `[binary listed]`, `[]` for a page of notes) and `size=`, folder paths or, for a sub-page, the page it is inside (`parent=`), labels, cached metadata (first author, year, venue), last-update date, most recently added first (library order), in batches (`limit`, `after`) |
 | `list_folders` | List pages | folder | The folder tree below the chat's folder: every path with its implied parents, subfolders indented, library pages filed directly and in total; the pages in no folder at the root |
-| `read_page` | Read pages | folder + page | Read one page: title, the pages it is inside and the pages inside it, properties, the user's highlights and notes, and — when it carries a PDF — a windowed excerpt of the attachment's extracted text |
+| `read_page` | Read pages | folder + page | Read one page, by id or a work folder's file by its `path`: title, the pages it is inside and the pages inside it, properties, the user's highlights and notes, its open comment threads, and its document's text — a PDF's extracted text in windows by page and offset, a text file's numbered lines in windows by `from_line` / `to_line` |
 | `read_block` | Read note blocks | folder + page | Read a page's notes as an id-prefixed outline — the ids the editing tools take |
 | `read_chats` | Read pages | folder + page | Read the AI chat kept with a page or folder: the current conversation as a numbered transcript, the earlier ones by `chat_id` |
+| `list_feedback` | Read pages | folder + page | The user's feedback: the comment threads on a work folder's files (a work folder by name or id, a directory, a file; every work folder the chat reaches without one; a Send request's threads), each with its file, place, source line and comments, as Markdown, in batches (`limit`, `after`) |
+| `read_feedback` | Read pages | folder + page | One feedback item in any state, as Markdown and as JSON, with the pictures of its region now and as it was commented on |
 | `view_pdf_page` | View pages and handwriting | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
 | `view_ink` | View pages and handwriting | folder + page | Look at the user's handwriting as a picture: a group's strokes on their PDF page or page of paper, cropped to them, or the whole page with all its handwriting |
 | `view_image` | View pages and handwriting | folder + page | Look at the pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), or a picture block's own, all of them or one by index |
 | `cite` | Read pages | folder + page | The citation records kept with pages: the paper metadata, its BibTeX and the slide citation, for up to 50 pages |
-| `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND PDF text; hits carry a `source` (note hits: block id + page, PDF hits: page number). `search_pdfs` is its deprecated alias (replay only) |
+| `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND their documents' text; note hits name the block id and page, PDF hits the page number, file hits the file's path and line. `search_pdfs` is its deprecated alias (replay only) |
 | `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref, arXiv and OpenAlex at once, or a direct DOI / arXiv-id lookup — returning merged registry records (citation count, the start of the abstract) with the `doi:` / `arXiv:` string `fetch_paper` takes; an optional year filter and citation or recency order |
 | `related_papers` | Search papers online | folder + page | One step through OpenAlex's citation graph from a DOI, arXiv id or exact title: the works it cites, the works citing it, or related works, most cited first |
 | `search_web` | Search papers online | folder + page | General web search through the account's engine (the chat's own AI connection, Brave Search or SearXNG): titles, URLs and snippets as leads for `fetch_paper`. Offered only when an engine is available |
@@ -148,7 +153,13 @@ Optional `label` / `folder` / `title_contains` / `parent` filters narrow the lis
 `list_labels: true` returns just the label vocabulary with counts (at the
 library root every label, an unused one as 0 pages; in a folder the labels
 its pages carry). Each line shows the page's `folders=["A / B", …]` paths
-and `labels=[…]` names. A sub-page's line shows `parent=<page id>`, its
+and `labels=[…]` names, and its document as `attachments=[<format>]` (a
+text file's with its language, `[text:latex]`; a work folder's file listed
+without its bytes `[binary listed]`) with its `size=` in bytes when
+stored. A work folder's file shows `path="sections/method.tex"` after its
+title, its path inside the work folder (`work_folders.paths.page_path`,
+the folder tree read once a call), which `read_page(path=…)` takes. A
+sub-page's line shows `parent=<page id>`, its
 effective parent (`blocks_store.page_parents`), in place of `folders=`: it
 is filed where its top is, and naming those folders would invite a
 `move_page` on it. A `folder` filter (a path or an id,
@@ -159,6 +170,28 @@ the pages right inside that page, which is how the agent walks a page
 tree past what `read_page`'s header names; it rides along in the
 next-batch call, the summary reads "… inside page <id>", and a listing
 with nothing in it says "No pages match those filters."
+
+At the library root the pages are those the library lists
+([work_folders.md](work_folders.md) "The library rule",
+`work_folders.library.listed`, by a sub-page's top): a work folder's file
+not in the library is listed only where a folder named files it, the
+chat's own folder or the `folder` filter (a directory of the work folder,
+or the work folder itself), and the root's label counts and `label=`
+count listed pages alone. A page in the chat's context is listed whatever
+it is. An empty root reads "The library lists no page." The tools that
+change a page or a folder ask the work-folder rule up front, as a person
+(client `ai`), and answer what it refuses in its words: `rename_page` of
+a file named by its file, `move_page` of a file filed by its directory
+(a note of a work folder that pulls moves between its directories, its
+directory leading its folders), `move_page` of a library page into a work
+folder, `delete_page` and `restore_page` of a file that leaves and comes
+back with its file, `rename_folder` of a work folder's directory (its
+root takes a new name in Gamma), and `delete_folder` of a directory, of
+the root, or of a folder holding one ([work_folders.md](work_folders.md)
+"The op rule"). A folder named by its path for a write (`move_page`,
+`save_paper`) passes by every work folder from the top, so a name it
+shares makes a library folder; by its id, or in a reading tool, a work
+folder's directory is reached, and a write there goes by the rule.
 
 Pages come most recently added first: library order backwards
 (`position`). No op moves a page, so renaming, filing, labelling or
@@ -207,13 +240,26 @@ with `list_pages`.
 
 Returns a `page_report_section`: the page's title, where it sits among
 pages, a properties line
-(folders, labels, cached metadata, web source, attachment; for a sub-page
+(a work folder's file's `path:` and `work folder:`, folders, labels, cached
+metadata, web source, `document: <format> "<name>"`; for a sub-page
 `path: "Top" › "Mid" › "Page"` and `folders (its top page's): …`, the
 folders it is filed in, `ai_context.page_properties_line` through
-`blocks_store.filed_folders`), an excerpt of the
-attachment's extracted text when the page carries a PDF, then the page's
-highlights and nested notes. A page without an attachment returns its notes —
-they are its content. `pdf_chars` sizes the excerpt per call, capped by the
+`blocks_store.filed_folders`), its document's text — an excerpt of a PDF's
+extracted text, a window of a text file's lines (below), one line for a
+document of another format — then the page's highlights and nested notes,
+the text files its notes' chips link ([ai_context.md](ai_context.md) "File
+chips") and its open comment threads (ai_context.md "Open comment
+threads"). A page without a document returns its notes — they are its
+content. The page is named by `page_id`, or by `path`, a work folder's
+file's path (`_page_by_path`, through `work_folders.paths`): in the work
+folder of the chat's folder, else of a page chat's page, else the one the
+path's first segment names (`paper/sections/method.tex`); each name
+exactly, else ignoring case, and a name without an extension that names
+nothing tried with `.tex`, then `.bib`, as LaTeX writes them. No work
+folder answers "no work folder is named …", several pages refuse naming
+their ids, and the page then passes the scope check as any page. On MCP a
+bare `read_page(path=)` with several workspaces reads the default one
+unless `workspace` names another. `pdf_chars` sizes the window per call, capped by the
 Settings / AI / Tool usage / "Read window" preference (`gamma-ai-read-chars` →
 request `read_char_limit`, riding in the scope dict as `read_chars`; default
 cap 20 000 — `agent_tools` formats the effective cap into the armed spec so
@@ -222,7 +268,27 @@ the model knows what it may ask for). `pdf_page` starts the excerpt at a
 hit is followed up), and `pdf_offset` windows onward from there; while text
 remains, the excerpt names the next offset, so long documents are read in
 successive windows. The `pdf_*` names stay for compatibility; they mean
-"attachment text".
+"the document's text".
+
+A text file reads by lines. `from_line` (1-based) starts the window there
+and `to_line` (inclusive) ends it; without `to_line` as many lines go as
+fit `pdf_chars` with their numbers (`ai_context.text_window`, read from
+the file, streamed: a 64 MB log read for its first lines reads a few
+hundred KB). Each line is numbered as the context numbers it, under
+`[Lines 50–52 of 120. …]`, and a window that stops short ends
+`…[more lines remain — call read_page again with from_line=N to
+continue]`. The first window (`from_line` 1, no `to_line`) is the
+context's own pair, the head and the outline of the rest
+(`ai_context.text_head`, kept per file version). A `from_line` past the
+end answers "from_line 3000 is past the end — the file is 2,310 lines
+long"; `pdf_page` / `pdf_offset` on a text file, and `from_line` /
+`to_line` on a PDF, are answered with one line naming the other kind's
+arguments and ignored. A secrets file answers that its text is kept from
+the model, a listed file that there is nothing to read. The chip carries
+`lines: [first, last]` and the summary `Read “main.tex” l. 1–400`; on
+MCP the `[Links: …]` footer adds `line N: <url>&line=N (a range:
+&line=N-M; add &quote=<the first line's verbatim text, …>)` and the
+chip's `path`.
 
 Where the page sits among pages comes right after its `Gamma page ID:`
 line (`ai_context.page_family_lines`, so the chat's page context, MCP
@@ -266,25 +332,37 @@ answers "nothing more to read" (notes only); and the notes and highlights
 come once — with the first window of a read (`pdf_offset` 0, `pdf_page`
 1) or on `notes: true` — capped at the read window (a hint points at
 `read_block` for the rest), and not at all when the context carries them
-(`include_notes`, or a page without a PDF). The chip carries `pdf_pages`
+(`include_notes`, or a page without a PDF); the open threads come with them,
+and not for a page in the context, which holds them. A text file's entry
+names its lines the same way: a read of lines the head shows continues from
+the first line not shown ("lines 1–400 are in the context above; this read
+continues from line 401"), a range inside them and a file held whole
+answer "nothing more to read". The chip carries `pdf_pages`
 (`[first, last]`, from `page_report_section`'s `report`) — what the chat's
 coverage pill folds in as "read 3–5 with tools" — and its summary names
 the span. The agent prompt says the same from the other side
 (`coverage_lines`): which pages of which document are in context, and to
-read from the cut-short page on.
+read from the cut-short page on; for a text file, which lines, and
+`read_page(page_id, from_line=N)` for the rest.
 
 ### search_library (both scopes)
 
 One query over both FTS indexes for the in-scope pages: the notes index
 (`gamma/block_index.py`, in pages.db, kept current by every write — an
-edit made a moment ago is found) and the PDF index (`gamma/pdf_index.py`
-`pdf_missing`/`search_pdf` — the same indexes and query rules as
-`GET /api/search` / Ctrl+F).
+edit made a moment ago is found) and the document text index
+(`gamma/search/`: `index.pending`, and the hits `search/hits.build` makes
+for `GET /api/search` and `POST /api/document-search` too — the same
+indexes and query rules as Ctrl+F).
 Note hits come first as `- note [block_id] in "title" (page_id …): snippet`
-— ids `read_block` and the editors take — then PDF hits as `- PDF "title"
-p.N (page_id …): snippet`. Un-indexed PDFs are kicked to the background indexer and
-reported so the model knows
-results may be incomplete. The MATCH ANDs every term, so a zero-hit query is
+— ids `read_block` and the editors take — then the documents' hits in the
+index's one rank order: a PDF's as `- PDF "title" p.N (page_id …):
+snippet`, a text file's as `- file "sections/method.tex" l.118 (lines
+81–120; page_id …): <the matched line>`, its path in its work folder (a
+library file's title), the line the query matched in the run of lines the
+index holds and the run's span; on MCP each carries its link,
+`&pdf_page=N` or `&line=N`. Un-indexed documents of every format are
+kicked to the background indexer and counted ("3 document(s) not indexed
+yet") so the model knows results may be incomplete. The MATCH ANDs every term, so a zero-hit query is
 retried with only its longest words and the result labelled approximate —
 otherwise the strict query reads as "the pages are silent" and the model
 answers from memory. `search_pdfs` (the pre-Stage-2 name) is kept only as a
@@ -317,7 +395,9 @@ edit whose text carries the picture's own `](url)` is refused with that
 rule, so the line read never lands in the caption. A picture
 whose value names no file reads as its caption. (`read_page` shows the
 same notes without ids — context for answering; `read_block` is the
-editing view.)
+editing view.) A note's file chip of a text file shows the file's first
+lines under it, as the page section does ([ai_context.md](ai_context.md)
+"File chips"); a secrets file's chip says its text is kept from the model.
 
 ### read_chats (both scopes)
 
@@ -340,6 +420,48 @@ windowed by whole messages within the read budget (the "Read window"
 preference); the transcript ends by naming the `start` to continue from. The
 spec tells the model that replies in it are an AI's earlier answers, not the
 page's content. Shares the "Read pages" permission with `read_page`.
+
+### list_feedback and read_feedback (both scopes)
+
+The comment threads on a work folder's files, read as the user's feedback
+([feedback.md](feedback.md): the entries, their places, sources and
+pictures are `gamma/feedback/entries.py`'s, the text `markdown.render`'s).
+Both share the "Read pages" permission and reach MCP by `mcp_tools`' rule.
+The reader's modules load on the first call, since they bring SyncTeX and
+the region pictures.
+
+`list_feedback` lists the threads of a scope in the Markdown form the
+feedback files use (`pictures="tool"`: no image, a `Picture:
+read_feedback(thread_id=…)` line instead), a section per work folder, each
+headed `# Feedback on <name>`, a batch at a time (`limit`, default 20, at
+most 50; `after` the thread the previous batch ended at, and the result
+names the next call when more are left; a thread answered or resolved since
+its batch still marks where the listing goes on). `scope` is a work folder
+by id or by name (exactly, else ignoring case; exactly one), a directory's folder id or a
+file's page id; `state` open (the default), resolved or all; `request` a
+Send request's id, whose instruction line and state head its threads. In a
+folder chat without `scope` it lists every work folder the chat reaches
+(the chat's folder itself when that is a directory of one); a chat in a
+library folder reaches none and says so. A page chat lists its own page's
+threads and no other's, and on a library page answers "This page is no work
+folder's file: its comments are not feedback." (no error: nothing to list).
+The document's `owner` is the chat's account, which an agent uses to tell
+the person's comments from other members'. The action carries `page_id`
+when the scope is one file.
+
+`read_feedback(thread_id)` reads one item in any state: its Markdown form,
+then the entry as JSON (with the `picture_url` / `before_url` routes), and
+its pictures — the region now, then, after a rebuild, as it was commented
+on — on the action's `images` as `view_pdf_page` carries its picture,
+unless the model reads text only (`scope["pictures"] is False`; the tool is
+not in `PICTURE_TOOLS`, its text being useful alone). The action carries
+`page_id`, `block_id` and `pdf_page`, so MCP's `structuredContent` locates
+the thread. A reply's id, a hidden thread, a library page's thread and an
+unknown id are "no feedback item has that id".
+
+`gamma_link(scope, page_id, *, thread_id=…)` links a thread
+(`&page=&block=&thread=`, the address the Inbox opens), so an MCP entry
+links its card; in the chat the entries' links are their queries alone.
 
 ### view_pdf_page (both scopes)
 
@@ -365,7 +487,9 @@ returned by the tool calls above, in call order"; `ai_protocols/base.py`
 The armed prompt tells the model when a picture is worth its tokens
 (missing or garbled extracted text, a figure, handwriting) and to say when
 an answer was read from one. A page without a PDF, a page number past the
-end (the count is named) and a file MuPDF can't open are refused in text.
+end (the count is named) and a file MuPDF can't open are refused in text;
+a text file's page answers `"main.tex" is a text file: read it with
+read_page`.
 Its chip is 👁 "Looked at p. N of …", carrying `page_id` + `pdf_page` and
 `picture`, the `GET /api/ai/page-image/{page_id}?page=N` URL the expanded
 chip shows; the result names the same URL for the model to embed in its
@@ -1590,6 +1714,10 @@ stays. A reverted row has a redo button that puts the change back. Pages
 renamed, moved, labelled, deleted or restored by the agent — one or many in
 one call — and a deleted folder or label have one under "Changed in your
 library". To take back several at once, "Revert…" opens a dialog (below).
+A note that shows an edit or a new note made without asking as tracked
+changes has a Revert of its own on the bar under it, the same revert as the row's (`sendRevert`,
+marked in the conversation the same way), its steps newest first
+([ai.md](ai.md#watching-the-agent-work-live-footprint)).
 
 The note tools record what undoing and redoing their change needs, as
 `revert` on the action:

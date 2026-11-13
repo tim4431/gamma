@@ -19,6 +19,7 @@ a force test_zotero_sync_first_link's. Rounds run through
 stubbed. Accounts are ``zi_…``."""
 
 import pytest
+from conftest import doc_props
 from zotero_engine import (LIB, _block, _conflicts, _due, _edit, _folder_ops, _link, _page_of,  # noqa: F401
                            _pages, _paper, _paths, _rows, _stored_pdf, _sync, _writes, background, drop_pending, fake,
                            idle, made, me, no_relocation, owner_id)
@@ -93,10 +94,10 @@ def test_a_new_link_brings_every_item_as_a_page_with_its_record_labels_folders_a
     pdf = _rows(ws, "attachment")[keys["pdf"]]
     assert pdf["page_id"] == page and pdf["parent"] == keys["attention"] and pdf["state"] == "live"
     assert pdf["detail"]["md5"] == pdf["detail"]["gmd5"] == fake.data(LIB, keys["pdf"])["md5"]
-    assert block["props"]["doc_id"] == pdf["detail"]["doc_id"] and "zotero_pdf" not in block["props"]
+    assert block["props"]["doc"]["hash"] == pdf["detail"]["doc_id"] and "zotero_pdf" not in block["props"]
     assert keys["supplement"] not in _rows(ws)
-    assert _block(ws, standalone["page_id"])["props"]["doc_id"] and _block(ws, standalone["page_id"])["content"] == (
-        "Scanned handout")
+    handout = _block(ws, standalone["page_id"])
+    assert handout["props"]["doc"]["hash"] and handout["content"] == "Scanned handout"
     # the conference paper's PDF is a linked file: it waits, shown on the page
     linked = _rows(ws, "attachment")[keys["linked_pdf"]]
     assert linked["state"] == "waiting" and linked["detail"]["file"] == "linked"
@@ -149,7 +150,7 @@ def test_an_item_first_seen_in_zoteros_trash_brings_every_child_once_it_is_resto
     rows = _rows(ws)
     page = rows[key]["page_id"]
     assert rows[att]["page_id"] == rows[note]["page_id"] == rows[ann]["page_id"] == page
-    assert rows[ann]["state"] == "live" and _block(ws, page)["props"].get("doc_id")
+    assert rows[ann]["state"] == "live" and _block(ws, page)["props"].get("doc")
 
 
 # --- Zotero's changes ----------------------------------------------------------------------
@@ -421,7 +422,7 @@ def test_a_new_paper_page_becomes_an_item_with_its_pdf(me, made, fake, owner_id)
     with connect_pages_db(ws) as conn:
         folders = {name: fid for fid, _, name, _ in tree_rows(conn, FOLDERS)}
     doc = _stored_pdf(ws, pdf_bytes("A new paper written here."))
-    page = _paper(ws, "ziNewPaper", "Deep residual learning", doc_id=doc, original_filename="resnet.pdf",
+    page = _paper(ws, "ziNewPaper", "Deep residual learning", doc_id=doc, name="resnet.pdf",
                   folders=[folders["ML"]], meta={"doi": "10.1109/CVPR.2016.90", "kind": "conferencePaper"})
     status = _sync(me, ws)
     key = object_key(ws, LIB, "item", "", page, "")
@@ -501,7 +502,7 @@ def test_a_pdf_without_a_record_waits_for_its_lookup_and_stays_unless_sent_as_a_
     ws = _link(me)
     _sync(me, ws)
     doc = _stored_pdf(ws, pdf_bytes("Some slides."))
-    zotero_local.create_page(ws, page_id="ziSlides", title="slides.pdf", props={"doc_id": doc}, actor="zi",
+    zotero_local.create_page(ws, page_id="ziSlides", title="slides.pdf", props=doc_props(doc), actor="zi",
                              client="t")
     calls = len(fake.calls)
     _sync(me, ws)
@@ -973,7 +974,7 @@ def test_create_parent_item_in_zotero_binds_the_item_to_the_standalone_pdfs_page
     ws = _link(me)
     _sync(me, ws)
     page = _page_of(ws, keys["standalone_pdf"])
-    doc = _block(ws, page)["props"]["doc_id"]
+    doc = _block(ws, page)["props"]["doc"]["hash"]
     pages = len(_pages(ws))
     # Zotero's Create Parent Item (or Retrieve Metadata): a new item, the PDF moved under it
     parent = fake.add_item(LIB, {"itemType": "report", "title": "Lecture handout",
@@ -989,7 +990,7 @@ def test_create_parent_item_in_zotero_binds_the_item_to_the_standalone_pdfs_page
     assert att["parent"] == parent and att["page_id"] == page
     block = _block(ws, page)
     assert block["props"]["meta"]["title"] == "Lecture handout" and block["props"]["meta"]["kind"] == "report"
-    assert block["props"]["doc_id"] == doc and block["content"] == "Lecture handout"
+    assert block["props"]["doc"]["hash"] == doc and block["content"] == "Lecture handout"
     assert _writes(fake, calls) == []
     calls = len(fake.calls)
     _sync(me, ws)
@@ -1154,7 +1155,7 @@ def test_merge_items_in_zotero_gives_the_kept_page_the_pdf_and_trashes_the_other
     ws = _link(me)
     _sync(me, ws)
     kept, gone = _page_of(ws, keys["ppo"]), _page_of(ws, duplicate)
-    assert "doc_id" not in _block(ws, kept)["props"] and _block(ws, gone)["props"]["doc_id"]
+    assert "doc" not in _block(ws, kept)["props"] and _block(ws, gone)["props"]["doc"]["hash"]
     # Zotero's Merge Items: the duplicate's PDF moved to the kept item, the duplicate trashed
     fake.edit(LIB, copy_pdf, parentItem=keys["ppo"])
     fake.trash(LIB, duplicate)
@@ -1162,7 +1163,8 @@ def test_merge_items_in_zotero_gives_the_kept_page_the_pdf_and_trashes_the_other
     calls = len(fake.calls)
     _sync(me, ws)
     assert _block(ws, gone)["parent"] == TRASH
-    assert _block(ws, kept)["props"]["doc_id"] == _block(ws, gone)["props"]["doc_id"]  # the same file, not fetched
+    # the same file, not fetched
+    assert _block(ws, kept)["props"]["doc"]["hash"] == _block(ws, gone)["props"]["doc"]["hash"]
     assert len([1 for _, path, _ in fake.calls if path.endswith("/file")]) == downloads
     row = _rows(ws, "attachment")[copy_pdf]
     assert row["page_id"] == kept and row["parent"] == keys["ppo"]
@@ -1292,7 +1294,7 @@ def test_a_file_changed_in_zotero_brings_back_a_page_deleted_here(me, made, fake
     calls = len(fake.calls)
     _sync(me, ws)
     assert _block(ws, page)["parent"] == "root" and not fake.data(LIB, keys["attention"]).get("deleted")
-    assert file_md5(storage.open_path(ws, f"{_block(ws, page)['props']['doc_id']}.pdf")) == fake.data(
+    assert file_md5(storage.open_path(ws, f"{_block(ws, page)['props']['doc']['hash']}.pdf")) == fake.data(
         LIB, keys["pdf"])["md5"]
     assert _writes(fake, calls) == []
 

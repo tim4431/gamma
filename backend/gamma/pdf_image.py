@@ -27,7 +27,8 @@ image, at the size as shown.
 An SVG is vector content (``svg_xobject``): MuPDF lays it out as a page at
 its size as the browser shows it, and the page becomes a form XObject over
 the unit square an image fills, so every writer draws it as it draws any
-image. ``svg_png`` draws one as pixels, for what takes no SVG.
+image. ``svg_png`` draws one as pixels, for what takes no SVG. MuPDF draws
+an SVG in a process of its own, killed past a time limit (``SVG_APART``).
 
 A picture that can't be embedded (a corrupt file, an SVG past its bounds)
 is logged with the reason, and the writers draw its alt text instead.
@@ -41,10 +42,15 @@ the import's ``DecodeBudget``.
 """
 
 import base64
+import hashlib
 import io
 import re
 import struct
+import subprocess
+import sys
+import threading
 import zlib
+from collections import OrderedDict
 from urllib.parse import unquote_to_bytes
 from xml.etree import ElementTree
 
@@ -60,7 +66,7 @@ from pypdf.generic import (
     StreamObject,
 )
 
-from . import pdf_text
+from . import pdf_text, svg_draw
 from .logbuf import log
 from .markdown_export import UPLOAD_RE
 from .picture import image_size, picture_type, svg_size, svg_sized
@@ -81,6 +87,39 @@ BROWSER_FORMATS = ("PNG", "JPEG", "GIF", "WEBP", "BMP", "ICO", "AVIF")
 # can name millions of shapes, and MuPDF draws every one.
 MAX_SVG_BYTES = 8 << 20
 MAX_SVG_ELEMENTS = 500_000
+# Within those bounds MuPDF can still take minutes to draw an SVG (a path
+# of 600 000 points, thousands of translucent layers or masks, a page of
+# text), and nothing stops a call into it. So it draws one in a process of
+# its own (``gamma/svg_draw.py``), killed past SVG_DRAW_SECONDS, its address
+# space capped at SVG_DRAW_MEMORY where the system holds a process to one
+# (Linux). A drawing of the usual sort takes milliseconds, the 40 MP of
+# embedded pictures MAX_DECODED_PIXELS lets through a second and 300 MB.
+SVG_DRAW_SECONDS = 10
+SVG_DRAW_MEMORY = 1 << 30
+# The longer side, in pixels, an SVG's PDF (``svg_pdf``) is drawn at once,
+# to prove it draws in time: past the most an AI page picture of a page
+# holding it draws it at (pdf_text.RENDER_MAX_SIDE), and the Notability
+# export's PNG (notability_export.SVG_PNG_SIDE), which shares the drawing.
+SVG_DRAW_SIDE = 2048
+# The SVGs drawn at once, each a process: at most two, so a burst of
+# exports takes two processes' memory and cores, not one each.
+_SVG_DRAWS = threading.BoundedSemaphore(2)
+# What the drawings came to, by the file's content, the side and the region:
+# the PDF and the PNG, or why it does not draw, the newest last and
+# SVG_CACHE_BYTES in all. An export draws every SVG on its pages, and the
+# same page exported again then starts no process; a file that does not
+# draw in time costs SVG_DRAW_SECONDS once. The PDF is kept with the
+# drawing at SVG_DRAW_SIDE alone, the one ``svg_pdf`` reads.
+SVG_CACHE_BYTES = 64 << 20
+_svg_drawn: OrderedDict = OrderedDict()  # (sha256, side, box) -> (pdf, png) | str
+_svg_drawn_lock = threading.Lock()
+# The mobile apps run the server inside their own process, with no Python
+# to start another (iOS starts none at all): there an SVG is drawn in this
+# process, under the PyMuPDF lock, with no time limit. sys.platform is
+# "ios" on an iPad and its simulator and "android" on Android, where a
+# Python before 3.13 said "linux" and had sys.getandroidapilevel
+# (gamma_mobile._on_android reads both).
+SVG_APART = not (sys.platform in ("ios", "android") or hasattr(sys, "getandroidapilevel"))
 # An entity in an id or an href, past the five XML defines: MuPDF reads no
 # DTD and keeps it as written, so it names another element than the one
 # the parsed tree shows (``_check_svg``).
@@ -476,17 +515,20 @@ def _check_svg(data: bytes) -> None:
         raise ValueError("it draws past MAX_SVG_ELEMENTS elements")
 
 
-def svg_pdf(data: bytes) -> bytes:
-    """A one-page PDF of the SVG file ``data``, the page its size as the
-    browser shows it (``picture.svg_size``, set in the copy MuPDF reads,
-    ``picture.svg_sized``), in points as many as its pixels. ValueError
-    for a file that is no SVG, one past the bounds (``_check_svg``) or one
-    MuPDF cannot read, with MuPDF's warnings. Holds the PyMuPDF lock for the
-    open and the conversion."""
+def _svg_checked(data: bytes) -> bytes:
+    """The copy MuPDF reads of the SVG file ``data``: sized as the browser
+    shows it (``picture.svg_sized``). ValueError for a file that is no SVG
+    or one past the bounds (``_check_svg``)."""
     sized = svg_sized(data)
     if sized is None:
         raise ValueError("not an SVG")
     _check_svg(data)
+    return sized
+
+
+def _svg_pdf_here(sized: bytes) -> bytes:
+    """MuPDF's PDF of the sized SVG, converted in this process, under the
+    PyMuPDF lock and with no time limit: the mobile apps' way (``SVG_APART``)."""
     with pdf_text._lock:
         mupdf = pdf_text._pymupdf()
         mupdf.TOOLS.reset_mupdf_warnings()
@@ -500,12 +542,98 @@ def svg_pdf(data: bytes) -> bytes:
             doc.close()
 
 
-def svg_png(data: bytes, side: int) -> tuple[bytes, int, int]:
+def _svg_draw_command(side: int, box=None) -> list[str]:
+    """How a process of ``svg_draw`` is started: the frozen desktop server
+    runs it through its own entry (desktop/backend_entry.py), any other
+    Python runs the module as a script, ``-P`` keeping the package's folder
+    off the path, so none of its modules stands for one the script imports."""
+    args = [str(side), str(SVG_DRAW_MEMORY), *(str(v) for v in box or ())]
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--draw-svg", *args]
+    return [sys.executable, "-P", svg_draw.__file__, *args]
+
+
+def _svg_draw_apart(sized: bytes, side: int, box=None) -> tuple[bytes, bytes]:
+    """``(pdf, png)`` of the sized SVG from a process of ``svg_draw``, the
+    PNG ``side`` pixels on its longer side, of the region ``box`` when one
+    is given. ValueError when it does not draw or takes past
+    SVG_DRAW_SECONDS (the process is killed), OSError when it cannot be
+    started, ImportError when PyMuPDF does not load there. Holds no lock
+    while it waits."""
+    with _SVG_DRAWS:
+        with subprocess.Popen(_svg_draw_command(side, box), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)) as child:  # no console window
+            try:
+                out, err = child.communicate(sized, timeout=SVG_DRAW_SECONDS)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                raise ValueError(f"MuPDF took past SVG_DRAW_SECONDS ({SVG_DRAW_SECONDS} s) to draw it") from None
+    if child.returncode == svg_draw.NO_PYMUPDF:
+        raise ImportError("PyMuPDF does not load in the process that draws an SVG")
+    if child.returncode:
+        raise ValueError(err.decode("utf-8", "replace").strip() or f"its drawing ended with {child.returncode}")
+    (length,) = struct.unpack(">Q", out[:8])
+    return out[8:8 + length], out[8 + length:]
+
+
+def _svg_drawn_bytes(known) -> int:
+    return len(known) if isinstance(known, str) else len(known[0]) + len(known[1])
+
+
+def _svg_drawing(sized: bytes, side: int, box=None) -> tuple[bytes, bytes]:
+    """``_svg_draw_apart``, or what it came to before (``_svg_drawn``). A
+    process that did not start is a ValueError too, and is not kept. Only
+    the drawing at SVG_DRAW_SIDE with no box keeps the PDF; the others
+    answer ``b""`` for it."""
+    key = (hashlib.sha256(sized).digest(), side, box)
+    with _svg_drawn_lock:
+        known = _svg_drawn.get(key)
+        if known is not None:
+            _svg_drawn.move_to_end(key)
+    if known is None:
+        try:
+            known = _svg_draw_apart(sized, side, box)
+        except OSError as e:
+            raise ValueError(f"the process to draw it did not start: {e}") from None
+        except ValueError as e:
+            known = str(e)
+        else:
+            if (side, box) != (SVG_DRAW_SIDE, None):  # a PNG alone: no copy of the PDF for each side and region
+                known = (b"", known[1])
+        if _svg_drawn_bytes(known) <= SVG_CACHE_BYTES:
+            with _svg_drawn_lock:
+                _svg_drawn[key] = known
+                while sum(map(_svg_drawn_bytes, _svg_drawn.values())) > SVG_CACHE_BYTES:
+                    _svg_drawn.popitem(last=False)
+    if isinstance(known, str):
+        raise ValueError(known)
+    return known
+
+
+def svg_pdf(data: bytes) -> bytes:
+    """A one-page PDF of the SVG file ``data``, the page its size as the
+    browser shows it (``picture.svg_size``, set in the copy MuPDF reads,
+    ``picture.svg_sized``), in points as many as its pixels. ValueError
+    for a file that is no SVG, one past the bounds (``_check_svg``), one
+    MuPDF cannot read, with MuPDF's warnings, and one it does not draw at
+    SVG_DRAW_SIDE within SVG_DRAW_SECONDS (``SVG_APART``)."""
+    sized = _svg_checked(data)
+    return _svg_drawing(sized, SVG_DRAW_SIDE)[0] if SVG_APART else _svg_pdf_here(sized)
+
+
+def svg_png(data: bytes, side: int, box=None) -> tuple[bytes, int, int]:
     """The SVG file ``data`` drawn as a PNG, ``(bytes, width, height)``,
     its longer side ``side`` pixels and its aspect the browser's, clear
-    where it draws nothing: for what takes no SVG. ValueError as
-    ``svg_pdf`` raises it."""
-    raster, _pages = pdf_text.page_raster(svg_pdf(data), 1, lambda w, h: side / max(w, h), alpha=True)
+    where it draws nothing: for what takes no SVG. ``box`` = ``(x0, y0,
+    x1, y1)`` as fractions of the picture, top-left origin, draws just that
+    region, its longer side ``side``. ValueError as ``svg_pdf`` raises it,
+    the time limit counted for this drawing."""
+    sized = _svg_checked(data)
+    if SVG_APART:
+        png = _svg_drawing(sized, side, tuple(box) if box else None)[1]
+        return png, *image_size(png)
+    raster, _pages = pdf_text.page_raster(_svg_pdf_here(sized), 1, lambda w, h: side / max(w, h), box, alpha=True)
     return raster.png(), raster.width, raster.height
 
 

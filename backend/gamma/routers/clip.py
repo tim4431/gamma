@@ -6,7 +6,8 @@ app's ``openPdf`` orchestrates client-side: dedup by identifier,
 resolve the link to a PDF, store a copy, create the page, file it, and kick
 off the metadata lookup. When no PDF can be resolved the clip still becomes a
 page — one carrying the tab's URL as ``properties.web_url`` (and the clipped
-selection as its first block) instead of a PDF attachment — unless the request
+selection as its first block, or a web clip's article as its blocks:
+gamma/web_clip.py) instead of a PDF attachment — unless the request
 says ``web_fallback: false``: the extension first tries the download with the
 browser's own session, which gets past walls the server can't. The companions
 are read-only helpers for the popup (``/api/library/lookup`` for the "already in
@@ -17,7 +18,6 @@ pickers) and
 Session-only — never share-token readable. Design: docs/dev/extension.md.
 """
 
-import hashlib
 import json
 import re
 import threading
@@ -31,7 +31,6 @@ from ..blocks_store import (
     BLOCK_COLUMNS,
     FOLDERS,
     LABELS,
-    NOT_LINKED,
     block_to_dict,
     create_page,
     existing_in,
@@ -40,9 +39,9 @@ from ..blocks_store import (
     folder_chain,
     folder_paths,
     get_or_create_doc_page,
+    insert_page_tree,
     label_names,
     new_block_id,
-    page_attachment,
     page_for_doc,
     page_parents,
     page_top,
@@ -53,12 +52,18 @@ from ..blocks_store import (
     write_lock,
 )
 from ..db import connect_pages_db, get_pref, safe_doc_id
+from ..documents.model import own_hash, page_document, stored_name, upload_url, url_hash
 from ..logbuf import log
+from ..markdown_import import TooManyBlocks
 from ..net_guard import browsing_session
 from ..ops import after_commit, apply_ops, ensure_filing
 from ..server_settings import can_store
-from .. import pdf_meta, storage
-from ..storage import DIGEST_CHARS, pdf_url as stored_pdf_url, put_upload, url_filename
+from .. import pdf_meta, storage, upload_gc
+from ..storage import put_upload, url_filename
+from ..web_clip import MAX_HTML_CHARS, article_blocks
+from ..work_folders.filing import refusal_text
+from ..work_folders.library import SQL_LIBRARY_PDF, SQL_LISTED, is_library_pdf
+from ..work_folders.marks import Tree, filing_targets
 from .metadata import fetch_page_metadata, registry_record, web_names_a_work, web_record
 from .pdf import ARXIV_ID, download_pdf, resolve_source
 
@@ -91,35 +96,37 @@ def norm_arxiv(text: str) -> str:
     return m.group(1) if m else ""
 
 
-def url_doc_id(source_url: str) -> str:
-    """The proxy cache id for an external PDF URL (mirrors /api/pdf)."""
-    return hashlib.sha256(source_url.encode()).hexdigest()[:DIGEST_CHARS]
-
-
 def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict | None:
     """Lookup BY ATTACHMENT: the page whose PDF attachment is this paper, by
-    DOI, arXiv id, or any of its URLs — only pages carrying a ``doc_id`` are
-    candidates (a clip dedups against files, not titles), and a page reading
-    its PDF from this computer is none (``NOT_LINKED``). Identifier matches
-    come from the metadata cache (properties.meta), the identifiers the web
-    page it was saved from carried in its tags (properties.web_meta, there
-    before the lookup lands and after one that failed; never a DOI only
-    seen in that page's text) and the source URL; URL matches from the
-    proxy-cache hash, the attachment's URL (the stored source_url, else the
-    stored copy's), or the web page the extension saved it from (web_url)."""
+    DOI, arXiv id, or any of its URLs — only pages that own a PDF (the
+    ``doc_id`` column) are candidates (a clip dedups against files, not
+    titles), and only library documents (``SQL_LIBRARY_PDF``: a page reading
+    its PDF from this computer is none, nor is a work folder's file not in
+    the library). Identifier matches come from the metadata cache
+    (properties.meta), the identifiers the web page it was saved from
+    carried in its tags (properties.web_meta, there before the lookup lands
+    and after one that failed; never a DOI only seen in that page's text)
+    and the source URL; URL matches from the proxy-cache hash
+    (``url_hash``), the document's address (where it is shown from, else
+    its stored file's), or the web page the extension saved it from
+    (web_url)."""
     doi = (doi or "").lower()
     urls = tuple(u for u in urls if u)
-    url_ids = {url_doc_id(u) for u in urls}
+    url_ids = {url_hash(u) for u in urls}
     rows = conn.execute(
-        f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' AND {NOT_LINKED}"
+        f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE doc_id IS NOT NULL AND parent_id = 'root' "
+        f"AND {SQL_LIBRARY_PDF}"
     ).fetchall()
     for row in rows:
         props = json.loads(row[4] or "{}")
+        view = page_document(props)
+        if view is None:
+            continue
         meta = props.get("meta") or {}
         tags = props.get("web_meta") if isinstance(props.get("web_meta"), dict) else {}
-        src = page_attachment(props)["url"]
+        src = view["url"]
         web = str(props.get("web_url") or "")
-        if props.get("doc_id") in url_ids or (urls and (src in urls or web in urls)):
+        if own_hash(view) in url_ids or (urls and (src in urls or web in urls)):
             return block_to_dict(row)
         if doi and (doi in (str(meta.get("doi") or "").lower(), str(tags.get("doi") or "").lower())
                     or doi in src.lower() or norm_doi(web) == doi):
@@ -133,7 +140,7 @@ def find_page(conn, doi: str = "", arxiv_id: str = "", urls: tuple = ()) -> dict
 
 def find_web_page(conn, url: str) -> dict | None:
     """The page a web clip (no PDF) made from ``url`` — a root page whose
-    ``web_url`` is that URL and that carries no attachment. Pages WITH a PDF
+    ``web_url`` is that URL and that carries no document. Pages WITH a PDF
     are find_page's business (they dedup by identifier too)."""
     url = (url or "").strip()
     if not url:
@@ -142,21 +149,25 @@ def find_web_page(conn, url: str) -> dict | None:
             f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE parent_id = 'root' "
             "AND json_extract(properties, '$.web_url') = ?", (url,)).fetchall():
         props = json.loads(row[4] or "{}")
-        if not page_attachment(props):
+        if not page_document(props):
             return block_to_dict(row)
     return None
 
 
 def _filing(ws: str, actor: str, payload: "ClipRequest") -> tuple[str, list[str]]:
     """Where a clip files its page: ``(folder id or "", label ids)`` — the
-    request's ``folder`` (an id; 400 when it is no folder), else its
-    ``folder_path`` (names split on "/"), and its label names, each folder
-    or label made when it is missing (``ops.ensure_filing``)."""
+    request's ``folder`` (an id; 400 when it is no folder, or one of a work
+    folder's, whose files come from its directory), else its
+    ``folder_path`` (names split on "/", a work folder passed by), and its
+    label names, each folder or label made when it is missing
+    (``ops.ensure_filing``)."""
     names = split_path(payload.folder_path or "")
     labels = [str(label).strip() for label in (payload.labels or [])[:50] if str(label).strip()]
     with connect_pages_db(ws) as conn:
         if payload.folder and not folder_chain(conn, payload.folder):
             raise HTTPException(status_code=400, detail="no such folder")
+        if payload.folder and Tree.read(conn).work_of(payload.folder):
+            raise HTTPException(status_code=400, detail=refusal_text("directories"))
         folder_ids, label_ids = ensure_filing(ws, conn, paths=[names] if names and not payload.folder else [],
                                               labels=labels, actor=actor)
     return payload.folder or folder_ids.get(tuple(names), ""), list(dict.fromkeys(label_ids[n] for n in labels))
@@ -245,12 +256,13 @@ def _quote_content(text: str, source_url: str, title: str) -> str:
 
 
 def _result(conn, block: dict, existed: bool, note: str = "") -> dict:
-    """What a clip or a lookup answers about the page ``block``: ``folders``
+    """What a clip or a lookup answers about the page ``block``: ``doc_id``
+    the hash of the PDF it owns ("" for none, ``own_hash``), ``folders``
     the ones it is listed in (``filed_folders``: a sub-page's are its
     top's), ``labels`` its own."""
     props = block.get("properties") or {}
     out = {
-        "block_id": block["id"], "doc_id": props.get("doc_id", ""),
+        "block_id": block["id"], "doc_id": own_hash(page_document(props)),
         "title": block.get("content", ""), "existed": existed,
         "open_url": f"/?block={urllib.parse.quote(block['id'])}",
         "folders": filed_folders(conn, block["id"]), "labels": filing(props, LABELS),
@@ -261,6 +273,17 @@ def _result(conn, block: dict, existed: bool, note: str = "") -> dict:
 
 
 # --- endpoints -----------------------------------------------------------------
+
+class ClipArticle(BaseModel):
+    """A web clip's content (extension/clip.js): the tab's article, as
+    Mozilla's Readability finds it in the browser, or its selection."""
+    html: str = ""                # a clean fragment; "" when the browser found nothing to clip
+    kind: str = "article"         # "article" or "selection"
+    site: str = ""                # the site's name, the author and the date, for the source line
+    byline: str = ""
+    published: str = ""
+    images: dict[str, str] = {}   # a picture's address on the page → its copy the browser uploaded
+
 
 class ClipRequest(BaseModel):
     source_url: str = ""          # the tab the user saved from (kept as properties.web_url)
@@ -280,16 +303,51 @@ class ClipRequest(BaseModel):
     fetch_metadata: bool = True
     web_fallback: bool = True     # no PDF → a page with its web source; False → the 400 (the
                                   # extension then downloads it in the browser first)
+    article: ClipArticle | None = None  # a web clip: the page's content, made into its blocks
+
+
+def _article_tree(payload: ClipRequest, source_url: str, title: str) -> tuple[list, set[str]]:
+    """A web clip's blocks (gamma/web_clip.py) and the uploads they show;
+    none without an article. 413 past the blocks a page may hold."""
+    article = payload.article
+    if not article or not article.html.strip():
+        return [], set()
+    try:
+        return article_blocks(article.html, base_url=source_url, images=article.images, title=title,
+                              site=article.site, byline=article.byline, published=article.published)
+    except TooManyBlocks as exc:
+        raise HTTPException(status_code=413, detail=f"the clipped page has {exc}")
+
+
+def _new_web_page(conn, title: str, props: dict, tree: list, shown: set[str], actor: str) -> dict:
+    """A web clip's page, with its blocks when it has any: written in one
+    transaction, as an import writes a page (``insert_page_tree``), the
+    pictures it shows claimed in it. Commits."""
+    if not tree:
+        return create_page(conn, title, props, actor=actor)
+    page_id = new_block_id()
+    try:
+        insert_page_tree(conn, page_id, (title or "").strip() or "Untitled", props, tree, actor)
+        upload_gc.claim(conn, shown)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return block_to_dict(conn.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?",
+                                      (page_id,)).fetchone())
 
 
 def _clip_web_page(ws: str, actor: str, conn, payload: ClipRequest, source_url: str, title: str,
                    folder: str, labels: list[str], web_meta: dict, reason: str) -> dict:
     """The no-PDF outcome of a clip: a page carrying the tab as
     ``properties.web_url`` (title from the tab, else the URL) and what the
-    tab said about its paper as ``web_meta``, the clipped selection as its
-    first block. Re-clipping the same URL finds that page
-    (``find_web_page``) and only files it / appends the new selection —
-    looked up under the write lock, so two clips at once make one page."""
+    tab said about its paper as ``web_meta``; its blocks the clipped
+    article (``payload.article``), else the clipped selection as its first
+    block. Re-clipping the same URL finds that page (``find_web_page``) and
+    only files it / appends the new selection — looked up under the write
+    lock, so two clips at once make one page. ``reason`` says why a PDF the
+    clip named couldn't be had ("" for a page that named none), which the
+    answer's ``note`` repeats."""
     write_lock(conn)
     existing = find_web_page(conn, source_url)
     if existing:
@@ -300,15 +358,21 @@ def _clip_web_page(ws: str, actor: str, conn, payload: ClipRequest, source_url: 
     props = {"web_url": source_url} if source_url else {}
     if web_meta:
         props["web_meta"] = web_meta
-    block = create_page(conn, title or _web_title(source_url), props, actor=actor)
+    tree, shown = _article_tree(payload, source_url, title)
+    block = _new_web_page(conn, title or _web_title(source_url), props, tree, shown, actor)
     _append_selection(ws, actor, conn, block["id"], payload, source_url, title)
     block = _file_page(conn, ws, actor, block, folder, labels)
     # A DOI/arXiv id or a citation record found on the page still identifies
     # the work — the lookup needs no PDF for those, so the note can cite even
     # without one (a DOI only seen in the page's text is stored unconfirmed).
     _maybe_start_metadata(ws, actor, payload, block)
-    note = "No PDF found — saved as a page with its web source"
-    return _result(conn, block, existed=False, note=f"{note} ({reason})." if reason else note + ".")
+    note = ""
+    if reason:
+        note = f"No PDF found — saved as a page with its web source ({reason})."
+    elif payload.article and not tree:
+        note = ("Nothing was selected on the page, so only its link was saved." if payload.article.kind == "selection"
+                else "Gamma found no article text on this page, so only its link was saved.")
+    return _result(conn, block, existed=False, note=note)
 
 
 def _append_selection(ws: str, actor: str, conn, page_id: str, payload: ClipRequest, source_url: str,
@@ -323,11 +387,13 @@ def _append_selection(ws: str, actor: str, conn, page_id: str, payload: ClipRequ
 
 def _maybe_start_metadata(ws: str, actor: str, payload: ClipRequest, block: dict) -> None:
     """Start the page's lookup when the clip asks for one, the page has no
-    record yet and something names a work: its PDF, an identifier, a DOI
-    from the web page's text or a citation record (``web_names_a_work``)."""
+    record yet and something names a work: its PDF (a library PDF the page
+    owns, ``is_library_pdf``: a document of another format names no paper),
+    an identifier, a DOI from the web page's text or a citation record
+    (``web_names_a_work``)."""
     props = block.get("properties") or {}
     if payload.fetch_metadata and not props.get("meta") and (
-            props.get("doc_id") or web_names_a_work(props.get("web_meta"))):
+            is_library_pdf(props) or web_names_a_work(props.get("web_meta"))):
         _start_metadata(ws, actor, block["id"])
 
 
@@ -354,6 +420,8 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
     arxiv_id = norm_arxiv(payload.arxiv_id) or norm_arxiv(pdf_url) or norm_arxiv(source_url)
     web_meta = web_record(payload.record, trusted_doi, arxiv_id, text_doi)
     title = _clean_title(payload.title)
+    if payload.article and len(payload.article.html) > MAX_HTML_CHARS:
+        raise HTTPException(status_code=413, detail="the clipped page is too large")
     folder, labels = _filing(ws, actor, payload)
     note = ""
 
@@ -383,9 +451,9 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
             doc_id = safe_doc_id(payload.doc_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="invalid doc_id")
-        if not storage.exists(ws, f"{doc_id}.pdf"):
+        if not storage.exists(ws, stored_name(doc_id, ".pdf")):
             raise HTTPException(status_code=404, detail="no uploaded PDF with this doc_id — upload it first")
-        page_source = stored_pdf_url(doc_id)
+        page_source = upload_url(stored_name(doc_id, ".pdf"))
     else:
         # 2b. Resolve the best identifier to a fetchable PDF URL, then make
         #     sure it really delivers a PDF before any PDF page exists. A
@@ -401,13 +469,13 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
                 resolved = resolve_source(candidate, payload.allow_oa)
                 page_source = resolved["source_url"]
                 note = resolved.get("note", "")
-                doc_id = url_doc_id(page_source)
-                if not storage.exists(ws, f"{doc_id}.pdf"):
+                doc_id = url_hash(page_source)
+                if not storage.exists(ws, stored_name(doc_id, ".pdf")):
                     _, data = download_pdf(page_source, want_bytes=payload.save_copy,
                                            referer=resolved.get("referer", ""))
                     if payload.save_copy:
                         if can_store(ws, len(data)):
-                            put_upload(ws, f"{doc_id}.pdf", data)
+                            put_upload(ws, stored_name(doc_id, ".pdf"), data)
                             pdf_meta.schedule(ws, doc_id)
                         else:
                             log.info(f"[clip] not caching {doc_id} ({len(data)} bytes): over storage limits")
@@ -425,7 +493,7 @@ def save_clip(ws: str, actor: str, payload: ClipRequest) -> dict:
     # 3. The page, filed and tagged.
     with connect_pages_db(ws) as conn:
         # No tab title: the page is named after the URL's file name, else the
-        # doc id (attachment_props), marked auto_title for the metadata lookup.
+        # doc id (document_title), marked auto_title for the metadata lookup.
         write_lock(conn)  # whether the PDF has a page, and its creation, as one step
         existed = page_for_doc(conn, doc_id) is not None
         block = get_or_create_doc_page(conn, doc_id, title, page_source, ws=ws, actor=actor)
@@ -479,10 +547,11 @@ def library_preview(request: Request, doi: str = "", arxiv_id: str = "", url: st
 @router.get("/library/folders")
 def library_folders(request: Request):
     """The popup's pickers: ``{folders: [{id, path}], labels: [{id,
-    name}]}`` — every folder (``path`` its names from the top), recently
-    viewed first, and every label by name. A page counts for the folders it
-    is filed in, a page inside another page for its top's
-    (``blocks_store.filed_folders``' rule)."""
+    name}]}`` — every folder a clip may be filed in (``path`` its names
+    from the top; a work folder's are its vault's, ``marks.filing_targets``),
+    recently viewed first, and every label by name. A page the library lists
+    counts for the folders it is filed in, a page inside another page for
+    its top's (``blocks_store.filed_folders``' rule)."""
     user_id = require_user_id(request)
     ws = require_ws(request)
     recent_views, _ = get_pref(user_id, "recent-views", ws)
@@ -493,11 +562,12 @@ def library_folders(request: Request):
         and isinstance(entry.get("at"), str)
     }
     with connect_pages_db(ws) as conn:
-        paths = folder_paths(conn)
+        targets = set(filing_targets(Tree.read(conn)))
+        paths = {f: names for f, names in folder_paths(conn).items() if f in targets}
         parents = tree_parents(conn, FOLDERS)
         labels = label_names(conn)
         rows = conn.execute("SELECT id, updated_at, json_extract(properties, '$.folders') FROM unified_blocks "
-                            "WHERE parent_id = 'root'").fetchall()
+                            f"WHERE parent_id = 'root' AND {SQL_LISTED}").fetchall()
         tops = page_parents(conn)
     filed_in = {page_id: filing({FOLDERS: json.loads(filed or "[]")}, FOLDERS) for page_id, _, filed in rows}
     times = dict.fromkeys(paths, ("", ""))

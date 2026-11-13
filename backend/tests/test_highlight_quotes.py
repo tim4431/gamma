@@ -10,7 +10,7 @@ import sys
 import pytest
 from pypdf import PdfReader
 
-from conftest import make_page
+from conftest import doc_props, make_page
 
 from gamma import pdf_text
 from gamma.highlight_relocate import Doc
@@ -153,7 +153,7 @@ def test_an_import_without_pymupdf_writes_nothing_and_the_next_one_quotes(guest,
     up = guest.post("/api/uploads", files={"file": ("a.pdf", pdf_bytes, "application/pdf")})
     assert up.status_code == 200, up.text
     doc_id = up.json()["doc_id"]
-    page = make_page(guest, "Quoted", properties={"doc_id": doc_id, "source_url": up.json()["source_url"]})
+    page = make_page(guest, "Quoted", properties=doc_props(doc_id))
     body = {"block_id": page["id"], "doc_id": doc_id}
 
     with monkeypatch.context() as m:

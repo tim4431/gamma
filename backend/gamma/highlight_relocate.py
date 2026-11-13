@@ -14,10 +14,10 @@ characters before and after it as context, or the quote the viewer stored
 when that file is gone or the text under the rectangles is not the quote.
 
 Which file the rectangles were measured on, the position says:
-``pdf_position.doc_id`` names that stored file (a page ``doc_id``, the
-content hash) when it is not the page's current PDF, and a position
-without it was measured on the current one (what the viewer, the imports
-and a move by hand write). A replacement writes the outgoing file's id on
+``pdf_position.doc_id`` names that stored file (a page's ``doc.hash``)
+when it is not the page's current PDF, and a position without it was
+measured on the current one (what the viewer, the imports and a move by
+hand write). A replacement writes the outgoing file's id on
 every placed highlight that has none, in the transaction that changes the
 attachment, so a run that never wrote (stopped, failed, refused) leaves
 each highlight still pointing at the file its rectangles belong to. The
@@ -117,8 +117,9 @@ from typing import NamedTuple
 
 from . import highlights as shape
 from . import upload_gc
-from .blocks_store import attachment_file, load_json, page_attachment, write_lock
+from .blocks_store import load_json, write_lock
 from .db import connect_pages_db, safe_doc_id
+from .documents.model import file_hash, page_document, stored_name
 from .logbuf import log
 from .ops import MAX_OPS, after_commits, apply_batches
 from .pdf_export import display_size, pdf_point_to_viewer, viewer_rect_to_pdf
@@ -1894,7 +1895,7 @@ def relocate(ws: str, page_id: str, new_doc: str, *, actor: str, progress=None, 
             if doc_id == new_doc:
                 return new
             try:
-                name = f"{safe_doc_id(doc_id)}.pdf"
+                name = stored_name(safe_doc_id(doc_id), ".pdf")
             except ValueError:
                 return None
             if doc_id not in opened:
@@ -1921,9 +1922,9 @@ def _write(ws: str, page_id: str, new_doc: str, items: list[tuple[str, dict]], o
            counts: dict, *, actor: str) -> None:
     """``relocate``'s write, in one transaction under the page's write lock.
     The page must still be a live page (not deleted, not in Recently
-    deleted) and still carry ``new_doc`` (``attachment_file``: by its doc
-    id, or a duplicated page by its upload's address), else ValueError and
-    nothing is written. An op for a highlight deleted, or whose position or quote
+    deleted) and still show ``new_doc`` (``file_hash``: its ``doc.hash``,
+    a duplicated page's included), else ValueError and nothing is
+    written. An op for a highlight deleted, or whose position or quote
     changed since ``items`` were read (a person moved it meanwhile), is
     left out and its count in ``counts`` moves to ``changed``. The rest go
     as batches of at most ``MAX_OPS`` on the page, client ``relocate``,
@@ -1944,7 +1945,7 @@ def _write(ws: str, page_id: str, new_doc: str, items: list[tuple[str, dict]], o
             if not row or row[0] != "root":
                 raise ValueError("the page was deleted before its highlights were placed — restore it and "
                                  "choose Find highlights in this PDF")
-            if attachment_file(page_attachment(load_json(row[1] or "{}") or {})) != new_doc:
+            if file_hash(page_document(load_json(row[1] or "{}"))) != new_doc:
                 raise ValueError("the page's PDF changed again before the highlights were placed")
             now = {bid: state(props) for bid, props in page_highlights(conn, page_id, unplaced=True)}
             unchanged = []

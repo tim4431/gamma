@@ -95,6 +95,7 @@ from .blocks_store import (FOLDERS, LABELS, PARENT_PAGE, TRASH, TREES, create_pa
                            last_child_position, page_ancestors, page_descendants, page_parents, page_root_id,
                            with_sub_pages)
 from .db import connect_pages_db, connect_users_db, page_now
+from .documents import formats
 from .logbuf import log
 from .ops import (MAX_OPS, PLACED_KEYS, SYNC_CLIENT, OpError, _went_with, commit_ops, kept_out_of, latest_seq,
                   order_key_error, props_patch, restore_inside, restore_page, trash_page, went_inside)
@@ -111,7 +112,7 @@ CLIENT = SYNC_CLIENT       # the op-log client of every local write the engine m
 ACTOR = MIRROR_ACTOR       # ...and its actor (the remote's per-op authors are not carried over)
 MODES = ("two-way", "pull", "off")   # off = detached: the link (token, cursors, bases) is kept, no round runs
 ADOPT = ("theirs", "mine")           # whose version a never-reconciled page takes (a linked workspace, a force)
-VAULT_KINDS = ("file_won",)          # a synced vault's conflicts (gamma/vault_sync.py): its routes read them, a mirror's never
+VAULT_KINDS = ("file_won",)          # a synced vault's conflicts (gamma/vault/sync.py): its routes read them, a mirror's never
 NOT_VAULT = "kind NOT IN ('file_won')"   # VAULT_KINDS in SQL: what the mirror's and Zotero's reads and deletes keep to
 DEBOUNCE_S = 1.0                     # a local edit → a round once things have been quiet this long (the loop wakes for it)
 TICK_S = sync_clock.TICK_S           # the loop's clock (gamma/sync_clock.py)
@@ -120,7 +121,7 @@ UNKNOWN_SEQ = -1                     # a base saved before the remote's answer w
 STREAM_CHUNK = 256 * 1024
 PUSH_PART_BYTES = 8 * 1024 * 1024    # a pushed file's part: sent within the transport's 60 s on a slow link
 default_fetch = None       # the tests point this at an in-process TestClient; None = urllib
-UPLOAD_NAME_RE = re.compile(r"^[0-9a-f]{8,64}\.[a-z0-9]{1,8}$")
+UPLOAD_NAME_RE = re.compile(r"^[0-9a-f]{8,64}\.[a-z0-9]{1,12}$")  # a stored name: the extension as formats.EXTENSION_RE
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
@@ -307,7 +308,7 @@ class Remote:
         this file in parts (an older server: no parts at all, or every
         upload taken for a PDF), for the caller to send it whole. A part
         the remote holds already (409) goes on from where it stands."""
-        kind = "pdf" if name.endswith(".pdf") else "file"
+        kind = "pdf" if formats.format_of(name)[0] == "pdf" else "file"
         try:
             opened = self.post("/api/uploads/parts", {"size": size, "name": name, "kind": kind})
         except RemoteError as e:
@@ -1091,8 +1092,9 @@ def _pull_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
 
 def missing_uploads(ws: str, pages=None) -> set[str]:
     """The upload names the workspace's blocks show (content, props, a
-    page's ``doc_id``; not the files highlights hold) that it does not store (one listing of its files,
-    ``storage.list``); only those of ``pages`` (page ids) when given."""
+    block's ``doc``; not the files highlights hold) that it does not store
+    (one listing of its files, ``storage.list``); only those of ``pages``
+    (page ids) when given."""
     with connect_pages_db(ws) as conn:
         if pages is None:
             rows = conn.execute("SELECT content, properties FROM unified_blocks").fetchall()
@@ -1854,7 +1856,7 @@ def _pull_whole(ws: str, remote: Remote, page_id: str, remote_tree: dict, seq: i
     place in the library when no page here holds that key."""
     _pull_files(ws, remote, upload_refs(remote_tree.values(), held=False), report)
     with connect_pages_db(ws) as conn:
-        create_page(conn, remote_tree[page_id]["content"], remote_tree[page_id]["props"], actor=ACTOR,
+        create_page(conn, remote_tree[page_id]["content"], remote_tree[page_id]["props"], actor=ACTOR, client=CLIENT,
                     block_id=page_id, position=_free_page_key(conn, remote_tree[page_id]["position"]))
         _save_state(conn, page_id, UNKNOWN_SEQ, {page_id: remote_tree[page_id]})
     _apply_local(ws, page_id, diff({page_id: remote_tree[page_id]}, remote_tree, page_id, with_base=False),

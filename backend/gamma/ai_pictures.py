@@ -14,10 +14,10 @@ Where they come from:
 - The request's ``images`` (and the ``images`` of its history's user turns):
   a stored picture ``{"kind": "pasted"|"file", "url": "/api/uploads/<hash>.jpg",
   "width", "height", "name"?}`` — what ``POST /api/ai/pictures`` stored — or
-  a region of a PDF page the server renders on demand ``{"kind": "area"|"view",
-  "page_id", "page", "box": [x0, y0, x1, y1] (page fractions), "ink"?: true}``.
-  An older client's data URL string is still read (``data_url_picture``),
-  never stored.
+  a region of a PDF page, or of the picture a page shows, the server renders
+  on demand ``{"kind": "area"|"view", "page_id", "page", "box": [x0, y0, x1, y1]
+  (page fractions), "ink"?: true}``. An older client's data URL string is
+  still read (``data_url_picture``), never stored.
 - The context: pictures of selected passages whose text is unreliable,
   of area highlights in the notes, of attached handwriting blocks
   (gamma/ai_context.py builds them with :func:`picture`).
@@ -43,16 +43,22 @@ by, for the chat export (gamma/chat_export.py).
 import base64
 import io
 import json
+import math
 import re
+import warnings
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
-from .blocks_store import page_attachment, page_root_id
+from . import colors
+from .blocks_store import page_root_id
+from .documents.formats import IMAGE_EXTENSIONS, IMAGE_MEDIA_TYPES
+from .documents.model import is_image, page_document, pdf_file_hash
 from .logbuf import log
 from .pdf_image import svg_png
 from .pdf_text import RENDER_MAX_SIDE, image_part, render_page
-from .storage import IMAGE_EXTENSIONS, IMAGE_MEDIA_TYPES, UPLOAD_REF_RE, find_upload_file, store_file
+from .picture import svg_size
+from .storage import UPLOAD_REF_RE, find_upload_file, store_file
 
 DEFAULT_BUDGET = 12   # pictures per message (and newest earlier pictures kept)
 MAX_BUDGET = 64
@@ -64,6 +70,17 @@ STORED_MAX_BYTES = 25_000_000  # the most a stored picture is read back for the 
 GROUP_ORDER = ("user", "selection", "ink", "area")
 # Only a region on a page the user is pointing at: boxes are page fractions.
 REGION_KINDS = frozenset({"area", "view"})
+# A region cut out of a picture (``image_region``): the crop is at least
+# this many of the picture's own pixels a side (the viewer's smallest
+# region is 6 screen pixels, which may be one of a figure's), and the
+# picture is zoomed at most this much on its way to RENDER_MAX_SIDE.
+REGION_MIN_PX = 48
+IMAGE_MAX_ZOOM = 4.0
+# The wash under a region's outline, as a share of its colour's alpha:
+# the viewer's ``color-mix(in srgb, <color> 25%, transparent)``.
+REGION_FILL_SHARE = 0.25
+REGION_LINE_PX = 2
+REGION_STRONG_LINE_PX = 3
 
 _DATA_URL_RE = re.compile(r"^data:(image/(?:png|jpeg|jpg|gif|webp));base64,([A-Za-z0-9+/=]+)$")
 # The routes that draw a chat picture again from its parameters.
@@ -236,16 +253,166 @@ def parse_box(value) -> tuple | None:
     return tuple(round(v, 4) for v in (x0, y0, x1, y1))
 
 
-def page_doc_id(conn, page_id: str) -> str:
-    """The id of the PDF attached to the page ``page_id``, "" for a page
-    without one (or no such page)."""
+# --- the picture a page shows -------------------------------------------------------------
+
+def image_region(ws: str, name: str, box=None, marks=()) -> tuple[bytes, str, int, int] | None:
+    """The stored picture ``name`` (``<hash><ext>``: an upload, or a work
+    folder's file read in place) as a JPEG, ``(bytes, media_type, width,
+    height)`` as ``render_page`` shapes a picture, cut to ``box`` (fractions
+    of the picture, top-left origin) when one is given: what a feedback
+    thread's picture (gamma/feedback/pictures.py), the chat's page image of
+    a picture page and ``clip_region`` draw. An SVG is drawn by MuPDF under
+    its time limit (``pdf_image.svg_png``); a raster is read with Pillow, its
+    EXIF orientation applied, an animation's first frame, transparency on
+    white. The crop is at least ``REGION_MIN_PX`` of the picture's own
+    pixels a side (a vector picture has none), and the picture is scaled so
+    its longer side is ``RENDER_MAX_SIDE``, zoomed at most ``IMAGE_MAX_ZOOM``.
+    Each of ``marks``, ``(box, color, strong)``, is drawn as the viewer draws
+    a region: an outline in the colour's line tone (``colors.line_color``),
+    ``REGION_LINE_PX`` wide, ``REGION_STRONG_LINE_PX`` for a strong one, over
+    a wash of the colour at ``REGION_FILL_SHARE`` of its alpha. None for a
+    file not here or past ``STORED_MAX_BYTES``, one that is no picture
+    Pillow or MuPDF reads (truncated, broken), a decompression bomb
+    (``Image.MAX_IMAGE_PIXELS``) and a file that changed under the read."""
+    path = find_upload_file(name, ws)
+    if path is None:
+        return None
+    try:
+        size = path.stat().st_size
+        if size > STORED_MAX_BYTES:
+            return None
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if not data or len(data) != size:
+        return None
+    try:
+        if IMAGE_MEDIA_TYPES.get(name[name.rfind("."):].lower()) == "image/svg+xml":
+            drawn = _svg_region(data, box)
+        else:
+            drawn = _raster_region(data, box)
+    except Exception as error:  # noqa: BLE001 — a picture that will not draw is none
+        log.info(f"[ai_pictures] {name} does not draw: {error}")
+        return None
+    if drawn is None:
+        return None
+    image, frame = drawn
+    image = _with_marks(image, marks, frame)
+    out = io.BytesIO()
+    image.save(out, "JPEG", quality=JPEG_QUALITY)
+    return out.getvalue(), "image/jpeg", image.width, image.height
+
+
+def _zoom(width: float, height: float) -> float:
+    """Pixels per pixel (or per point) that bring the longer side to
+    ``RENDER_MAX_SIDE``, zooming at most ``IMAGE_MAX_ZOOM``."""
+    return min(RENDER_MAX_SIDE / max(width, height, 1), IMAGE_MAX_ZOOM)
+
+
+def _span(lo: float, hi: float, side: int) -> tuple[int, int]:
+    """``(lo, hi)`` in whole pixels, grown around its centre to at least
+    ``REGION_MIN_PX`` and kept inside ``[0, side]``."""
+    need = min(REGION_MIN_PX, side) - (hi - lo)
+    if need > 0:
+        lo, hi = lo - need / 2, hi + need / 2
+    if lo < 0:
+        lo, hi = 0.0, hi - lo
+    if hi > side:
+        lo, hi = lo - (hi - side), float(side)
+    lo, hi = max(0, math.floor(lo)), min(side, math.ceil(hi))
+    return (lo, hi) if hi > lo else (max(0, side - 1), side)
+
+
+def _raster_region(data: bytes, box):
+    """A raster's region as a Pillow RGB image with the frame the marks
+    are placed in; None past ``Image.MAX_IMAGE_PIXELS``."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+        with Image.open(io.BytesIO(data), formats=chat_formats()) as opened:
+            if Image.MAX_IMAGE_PIXELS is not None and opened.width * opened.height > Image.MAX_IMAGE_PIXELS:
+                return None
+            opened.load()
+            image = _on_white(ImageOps.exif_transpose(opened) or opened)
+    width, height = image.size
+    if box:
+        left, right = _span(box[0] * width, box[2] * width, width)
+        top, bottom = _span(box[1] * height, box[3] * height, height)
+    else:
+        left, top, right, bottom = 0, 0, width, height
+    image = image.crop((left, top, right, bottom))
+    scale = _zoom(image.width, image.height)
+    if scale != 1:
+        image = image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), Image.LANCZOS)
+    return image, (width, height, left, top, scale)
+
+
+def _svg_region(data: bytes, box):
+    """An SVG's region drawn by MuPDF (``pdf_image.svg_png``, the region
+    alone, under its time limit) as a Pillow RGB image on white, with the
+    frame the marks are placed in: its size as the browser shows it
+    (``picture.svg_size``) is its page's in points, so its pixels are those
+    points. ValueError when it does not draw."""
+    size = svg_size(data)
+    if size is None:
+        raise ValueError("not an SVG")
+    width, height = size
+    shown = ((box[2] - box[0]) * width, (box[3] - box[1]) * height) if box else (width, height)
+    side = max(1, round(max(shown) * _zoom(*shown)))
+    png, _w, _h = svg_png(data, side, box)
+    with Image.open(io.BytesIO(png), formats=["PNG"]) as drawn:
+        image = _on_white(drawn)
+    left, top = (box[0] * width, box[1] * height) if box else (0.0, 0.0)
+    return image, (width, height, left, top, side / max(shown))
+
+
+def _on_white(image):
+    """The image as RGB, its transparent parts on white."""
+    if "A" in image.getbands() or (image.mode == "P" and "transparency" in image.info):
+        image = image.convert("RGBA")
+        white = Image.new("RGB", image.size, "white")
+        white.paste(image, mask=image.getchannel("A"))
+        return white
+    return image.convert("RGB")
+
+
+def _with_marks(image, marks, frame):
+    """``image`` with ``marks`` (``image_region``) drawn on it. ``frame`` is
+    ``(width, height, left, top, scale)``: the picture's size in its own
+    pixels, where the crop begins there, and the pixels of the image per
+    pixel of the picture."""
+    if not marks:
+        return image
+    width, height, left, top, scale = frame
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    for mark, color, strong in marks:
+        rgba = colors.parse_color(color) or colors.parse_color(colors.DEFAULT_HIGHLIGHT)
+        line = colors.parse_color(colors.line_color(color) or colors.line_color(colors.DEFAULT_HIGHLIGHT))
+        x0, x1 = sorted(round((v * width - left) * scale) for v in (mark[0], mark[2]))
+        y0, y1 = sorted(round((v * height - top) * scale) for v in (mark[1], mark[3]))
+        fill = tuple(round(v * 255) for v in rgba[:3]) + (round(rgba[3] * REGION_FILL_SHARE * 255),)
+        draw.rectangle((x0, y0, x1, y1), fill=fill)
+        draw.rectangle((x0, y0, x1, y1), outline=tuple(round(v * 255) for v in line[:3]) + (255,),
+                       width=REGION_STRONG_LINE_PX if strong else REGION_LINE_PX)
+    return Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
+
+
+def _page_view(conn, page_id: str) -> dict | None:
+    """The document view of the page ``page_id`` (``page_document``), None
+    for a page without one or no such page."""
     row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
                        (page_id,)).fetchone()
     try:
-        attachment = page_attachment(json.loads(row[0] or "{}")) if row else None
+        return page_document(json.loads(row[0] or "{}")) if row else None
     except ValueError:
-        attachment = None
-    return attachment["id"] if attachment else ""
+        return None
+
+
+def page_doc_id(conn, page_id: str) -> str:
+    """The hash of the PDF the page ``page_id`` shows (``file_hash``: a
+    duplicated page's is the original's), "" for a page without one (or no
+    such page)."""
+    return pdf_file_hash(_page_view(conn, page_id))
 
 
 def page_pdf_path(ws: str, conn, page_id: str):
@@ -257,13 +424,24 @@ def page_pdf_path(ws: str, conn, page_id: str):
     return pdf_path(ws, doc_id) if doc_id else None
 
 
+def _is_picture_page(view) -> bool:
+    return is_image(view) and bool(view["file"])
+
+
 def render_region(ws: str, conn, page_id: str, page_no: int, box=None, ink: bool = False):
     """A PDF page of the page ``page_id`` (or its region ``box``) as a
     picture, with the user's handwriting written on it when ``ink``, over
     the pictures and text boxes placed on it (``ink_view.page_with_handwriting``):
     ``(image, pages)`` as ``render_page`` gives them — ``(None, 0)`` for a
     page without a PDF file here, ``(None, pages)`` for a page number past
-    the end."""
+    the end. A page whose document is a picture is that picture (or its
+    region, ``image_region``), one page long, with no handwriting."""
+    view = _page_view(conn, page_id)
+    if _is_picture_page(view):
+        if page_no != 1:
+            return None, 1
+        image = image_region(ws, view["file"], box)
+        return (image, 1) if image else (None, 0)
     path = page_pdf_path(ws, conn, page_id)
     if not path:
         return None, 0
@@ -281,7 +459,7 @@ def render_region(ws: str, conn, page_id: str, page_no: int, box=None, ink: bool
 def region_picture(ws: str, conn, ref: dict, group: str = "user") -> dict | None:
     """A picture of a region the user pointed at (``{"kind": "area"|"view",
     "page_id", "page", "box", "ink"?}``), rendered now; None when it cannot
-    be drawn (no PDF, a page past the end, a malformed box)."""
+    be drawn (no PDF or picture, a page past the end, a malformed box)."""
     page_id = str(ref.get("page_id") or "").strip()[:64]
     try:
         page_no = int(ref.get("page") or 0)
@@ -296,11 +474,13 @@ def region_picture(ws: str, conn, ref: dict, group: str = "user") -> dict | None
         return None
     title = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
     title = (title[0] if title else "") or "Untitled"
+    picture_page = _is_picture_page(_page_view(conn, page_id))
+    where = "the picture" if picture_page else f"PDF page {page_no} of"
     if ref.get("kind") == "view":
-        what = f"What the user sees: PDF page {page_no} of “{title[:80]}”" + (", the visible part" if box else "")
+        what = f"What the user sees: {where} “{title[:80]}”" + (", the visible part" if box else "")
     else:
-        what = f"A region the user marked on PDF page {page_no} of “{title[:80]}”"
-    if ink:
+        what = f"A region the user marked on {where} “{title[:80]}”"
+    if ink and not picture_page:
         what += ", with their handwriting on it"
     return picture(image, f"{what}, {image[2]}×{image[3]} px", group, page_id=page_id, page=page_no)
 
